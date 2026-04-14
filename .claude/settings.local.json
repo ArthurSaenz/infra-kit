@@ -1,0 +1,171 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/auto-format.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/typecheck.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/run-tests-async.sh",
+            "async": true,
+            "timeout": 300
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-files.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-destructive.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/suggest-commands.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/cmux-check.sh"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/notify.sh"
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/quality-gate.sh",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/setup-env.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'echo \"Reminder: Use pnpm (not npm/yarn). Run pnpm qa before committing. Current branch: $(git branch --show-current 2>/dev/null || echo unknown). Last commit: $(git log --oneline -1 2>/dev/null || echo none)\"'"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(terraform:*)",
+      "Bash(mv:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "Bash(grep:*)",
+      "Bash(done)",
+      "Bash(for:*)",
+      "Bash(rm:*)",
+      "Bash(cp:*)",
+      "Bash(tree:*)",
+      "Bash(curl:*)",
+      "Bash(cat:*)",
+      "Bash(wc:*)",
+      "Bash(tail:*)",
+      "Bash(pnpm:*)",
+      "Bash(pnpm run:*)",
+      "Bash(awk:*)",
+      "Bash(git log:*)",
+      "Bash(sed:*)",
+      "Bash(test:*)",
+      "Bash(xxd:*)",
+      "Bash(python3:*)",
+      "Bash(do echo \"=== $file ===\")",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "mcp__chrome-devtools__take_snapshot",
+      "mcp__chrome-devtools__take_screenshot",
+      "mcp__chrome-devtools__click",
+      "mcp__chrome-devtools__list_pages",
+      "mcp__chrome-devtools__evaluate_script",
+      "mcp__chrome-devtools__navigate_page",
+      "mcp__atlassian__getJiraIssue",
+      "mcp__atlassian__getAccessibleAtlassianResources",
+      "mcp__atlassian__search",
+      "mcp__atlassian__fetch",
+      "mcp__atlassian__getJiraIssueRemoteIssueLinks",
+      "mcp__shadcn__get_project_registries",
+      "mcp__shadcn__list_items_in_registries",
+      "mcp__shadcn__getComponents",
+      "Skill(skill-creator)",
+      "Skill(fe-architect)",
+      "Skill(fe-patterns)"
+    ],
+    "deny": []
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "atlassian",
+    "shadcn",
+    "infra-kit"
+  ]
+}

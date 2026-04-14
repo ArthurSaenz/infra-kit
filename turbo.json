@@ -1,0 +1,83 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"],
+      "env": ["VITE_*", "ROBOTS_FILE"]
+    },
+    "build-mobile-host": {
+      "dependsOn": [],
+      "cache": false,
+      "persistent": true,
+      "env": ["VITE_*"]
+    },
+    "build-dev": {
+      "dependsOn": ["^build-dev"],
+      "outputs": ["dist/**"]
+    },
+    "build-watch": {
+      "cache": false,
+      "persistent": true,
+      "inputs": ["$TURBO_DEFAULT$"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "inputs": ["$TURBO_DEFAULT$"]
+    },
+    "serve": {
+      "dependsOn": ["build"]
+    },
+    "storybook": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "persistent": true
+    },
+    "storybook-build": {
+      "dependsOn": ["^build"],
+      "outputs": ["storybook-static/**"]
+    },
+    "e2e-test": {
+      "dependsOn": ["playwright-install", "^build"]
+    },
+    "playwright-install": {
+      "cache": false
+    },
+    "test-unit": {
+      "dependsOn": ["^test-unit"],
+      "cache": false
+    },
+    "eslint-check": {
+      "dependsOn": ["^build"]
+    },
+    "eslint-fix": {
+      "dependsOn": ["^build"]
+    },
+    "prettier-check": {},
+    "prettier-fix": {},
+    "ts-check": {
+      "dependsOn": ["^build"]
+    },
+    "test": {
+      "dependsOn": ["^build"]
+    },
+    "test-report": {
+      "dependsOn": ["^build"]
+    },
+    "test-watch": {
+      "cache": false,
+      "persistent": true
+    },
+    "//#clean-cache": {
+      "cache": false,
+      "dependsOn": []
+    },
+    "clean-artifacts": {
+      "cache": false
+    },
+    "clean-cache": {
+      "cache": false
+    }
+  }
+}

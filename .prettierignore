@@ -1,0 +1,53 @@
+## File extensions — block all, then allow specific ones
+*.*
+!*.css
+!*.scss
+!*.mjs
+!*.js
+!*.cjs
+!*.json
+!*.jsx
+!*.less
+!*.md
+!*.mdx
+!*.ts
+!*.tsx
+
+*.yml
+
+## Build output
+.cache
+.turbo
+dist
+public
+storybook-static
+tmp
+coverage
+.coverage
+tsconfig.tsbuildinfo
+*.patch
+*.prerender
+
+## Dependencies
+node_modules
+
+## Mobile / native
+ios/App/
+android/app/
+gradlew
+
+## Playwright
+test-results
+playwright-report
+blob-report
+playwright/.cache/
+
+## Misc
+Makefile
+Dockerfile
+.DS_Store
+google-services.json
+categories-data-manifest.json
+routeTree.gen.ts
+hulyo_key_store
+travelist-keystore

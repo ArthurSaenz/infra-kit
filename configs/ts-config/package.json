@@ -1,0 +1,13 @@
+{
+  "name": "@pkg/ts-config",
+  "version": "1.0.0",
+  "author": "Asaf Semo",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "typescript-plugin-css-modules": "catalog:"
+  },
+  "engines": {
+    "node": ">=24.x"
+  }
+}

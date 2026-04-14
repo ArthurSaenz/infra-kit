@@ -1,0 +1,25 @@
+{
+  "name": "@pkg/prettier-config",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.mjs",
+  "module": "index.mjs",
+  "description": "Shared prettier config",
+  "author": "Arthur Saenko <arthur.saenz7@gmail.com> (https://github.com/ArthurSaenz)",
+  "keywords": [
+    "prettier",
+    "config",
+    "formatting"
+  ],
+  "devDependencies": {
+    "@trivago/prettier-plugin-sort-imports": "^6.0.2",
+    "prettier": "^3.8.1",
+    "prettier-plugin-astro": "^0.14.1",
+    "prettier-plugin-svelte": "^3.5.0",
+    "prettier-plugin-tailwindcss": "^0.7.2"
+  },
+  "engines": {
+    "node": ">=24.x"
+  }
+}

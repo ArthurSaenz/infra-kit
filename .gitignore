@@ -1,0 +1,82 @@
+# Dependencies
+node_modules
+.pnp*
+
+# Build output
+**/dist
+build
+out
+**/storybook-static
+
+# Turbo
+**/.turbo
+
+# TypeScript
+**/*.tsbuildinfo
+
+# Bundler caches
+vite.config.ts.timestamp-*.mjs
+.__mf__temp
+
+# Next.js
+**/.next
+
+# Serverless
+**/.serverless
+
+# Terraform
+/devops/terraform/**/.terraform/
+/devops/terraform/route53/.terraform.lock.hcl
+/devops/terraform/infrastructure/lambda_src/*.zip
+/devops/terraform/infrastructure/lambda_src/lambda_alarm_logs
+!/devops/terraform/infrastructure/lambda_src/lambda_alarm_logs/lambda_alarm_logs.py
+!/devops/terraform/infrastructure/lambda_src/lambda_alarm_logs/requirements.txt
+/devops/terraform/infrastructure/lambda_src/lambda_alarm_logs/slack/
+/devops/terraform/infrastructure/lambda_src/lambda_alarm_logs/slack_sdk/
+/devops/terraform/infrastructure/lambda_src/lambda_alarm_logs/slack_sdk-*.dist-info/
+
+# Environment
+**/.env
+
+# Linting & formatting
+**/.eslintcache
+
+# Testing - Playwright
+**/test-results/
+**/playwright-report/
+**/blob-report/
+**/playwright/.cache/
+
+# Testing - Vitest / Coverage
+.coverage
+coverage
+*.lcov
+.nyc_output
+
+# Logs
+*.log
+**/log.txt
+
+# Editors & IDEs
+.idea
+
+# Astro auto-generated files
+**/.astro/
+
+# LangGraph API
+.langgraph_api
+
+# Misc
+tmp
+stats.html
+.DS_Store
+dist-ssr
+.tanstack
+.output
+
+# Mobile / Firebase credentials
+apps/client/mobile-app/android/app/release
+google-services.json
+GoogleService-Info.plist
+hulyo_key_store
+travelist-keystore

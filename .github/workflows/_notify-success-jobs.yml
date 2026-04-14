@@ -1,0 +1,16 @@
+name: _notify-success-jobs
+
+on:
+  workflow_call:
+
+jobs:
+  success:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Notify Slack of success
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_MESSAGE: "✅ Successfully completed `${{ github.ref_name }}` to *${{ inputs.environment }}* environment\n• Workflow: ${{ github.workflow }}\n• Triggered by: ${{ github.actor }}"
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}

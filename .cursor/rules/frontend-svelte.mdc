@@ -1,0 +1,749 @@
+---
+globs: "*.svelte,**/*.svelte,**/*.svelte.ts"
+alwaysApply: false
+---
+
+# 🧭 SVELTE 5 PROJECT & CODE STANDARDS
+
+---
+
+## 📁 Folder Structure – Feature-Based (Svelte 5 / SvelteKit)
+```
+src/
+├── features/
+│   └── [feature-name]/
+│       ├── components/         # "Dumb" UI components – presentational only
+│       │   └── component-name/
+│       │       ├── component-name.svelte
+│       │       ├── component-name.module.scss (optional)
+│       │       └── index.ts
+│       ├── containers/         # "Smart" components – orchestrate state, routing, API
+│       │   └── container-name/
+│       │       ├── container-name.svelte
+│       │       └── index.ts
+│       ├── services.svelte.ts  # Business logic (stores, API clients, pure functions)
+│       ├── types.ts            # TypeScript interfaces/types
+│       ├── analytics.ts        # Analytics helpers
+│       └── index.ts            # Public API (re-exports)
+├── shared/
+│   ├── components/             # Generic, reusable UI
+│   │   └── component-name/
+│   │       ├── component-name.svelte
+│   │       ├── component-name.module.scss (optional)
+│   │       └── index.ts
+│   ├── stores/*                # Global stores (only when cross-feature)
+│   ├── utils/*                 # Pure utilities (e.g., cn, formatters)
+│   └── styles/*                # Global styles or Tailwind config
+```
+
+---
+
+## 📦 Public API Example
+```ts
+// features/[feature]/index.ts
+export * as someFeatureService from './services.svelte';
+export { default as SomeFeatureContainer } from './containers/some-feature-container';
+export { default as SomeComponent } from './components/some-component';
+export * from './types';
+```
+- UI inside `shared/components` **must stay generic** — no feature imports.  
+- Features remain **self-contained and composable**.
+
+---
+
+## 🧩 Component Structure
+
+**Component Structure in /features/[feature]/components/**
+```
+component-name/
+├── component-name.svelte
+├── component-name.module.scss (optional, if Tailwind cannot express the style)
+└── index.ts
+```
+
+**Component Structure in /features/[feature]/containers/**
+```
+container-name/
+├── container-name.svelte
+└── index.ts
+```
+
+**Component index.ts Example:**
+```ts
+// components/component-name/index.ts
+export { default } from './component-name.svelte';
+```
+
+**Container index.ts Example:**
+```ts
+// containers/container-name/index.ts
+export { default } from './container-name.svelte';
+```
+
+---
+
+## ⚙️ Core Principles
+- Use `.svelte` files with `lang="ts"`.
+- Use **TailwindCSS** for styling.  
+  If Tailwind cannot express a style (complex animation, pseudo-selectors), use `<style lang="scss">` **inside the component** — never global.
+- Follow import order: external → shared → feature → local.
+- Each `.svelte` file = one default export.
+- **Props via `$props()` with destructuring** — never use `export let` (Svelte 4 pattern).
+- **Events via callback props** — never use `createEventDispatcher` (Svelte 4 pattern).
+- **Use snippets instead of slots** — never use `<slot>` (Svelte 4 pattern).
+- **Event handlers use `onclick`, `onkeydown`, etc.** — never use `on:click` (Svelte 4 pattern).
+- **Prefer shorthand syntax `{onclick}` for named event handlers** — use `onclick={handler}` only for inline functions.
+- No closures or component creation inside `$effect`.
+
+---
+
+## ⚡ Reactivity Model — `$state`, `$derived`, `$effect`
+Svelte 5 replaces the `$:` syntax with **explicit reactive primitives**.
+
+| Purpose | Use | Example |
+|----------|-----|---------|
+| **Reactive data** | `$state()` | `const count = $state(0)` |
+| **Computed value** | `$derived()` | `const doubled = $derived(count * 2)` |
+| **Complex computation** | `$derived.by()` | `const total = $derived.by(() => { /* complex logic */ })` |
+| **Side-effect** | `$effect()` | `$effect(() => console.log(count))` |
+
+### 🧠 Rule of Thumb
+| Task | Function |
+|------|-----------|
+| Store or mutate data | `$state()` |
+| Compute from other values | `$derived()` |
+| Run code when data changes | `$effect()` |
+
+---
+
+### ✅ `$state()` — reactive value
+```svelte
+<script lang="ts">
+  const count = $state(0);
+  function onclick() {
+    count += 1; // triggers re-render
+  }
+</script>
+
+<button {onclick}>Clicked {count}</button>
+```
+
+---
+
+### ✅ `$derived()` — computed reactive value
+```svelte
+<script lang="ts">
+  const count = $state(0);
+  const doubled = $derived(count * 2);
+</script>
+
+<p>{count} → {doubled}</p>
+```
+
+For complex derivations, use `$derived.by()`:
+```svelte
+<script lang="ts">
+  const numbers = $state([1, 2, 3]);
+  const total = $derived.by(() => {
+    let sum = 0;
+    for (const n of numbers) {
+      sum += n;
+    }
+    return sum;
+  });
+
+  function onclick() {
+    numbers.push(numbers.length + 1);
+  }
+</script>
+
+<button {onclick}>
+  {numbers.join(' + ')} = {total}
+</button>
+```
+
+---
+
+### ✅ `$effect()` — side-effect
+```svelte
+<script lang="ts">
+  const count = $state(0);
+
+  $effect(() => {
+    console.log('count changed', count);
+    if (count > 5) alert('High!');
+  });
+</script>
+```
+> `$effect` re-runs whenever **dependencies used inside** change.  
+> Use cleanup by returning a function:
+```ts
+$effect(() => {
+  const id = setInterval(() => console.log('tick'), 1000);
+  return () => clearInterval(id);
+});
+```
+
+---
+
+## 🧩 Combined Example
+```svelte
+<script lang="ts">
+  const name = $state('');
+  const greeting = $derived(`Hello, ${name || 'stranger'}!`);
+
+  $effect(() => {
+    if (name) localStorage.setItem('name', name);
+  });
+</script>
+
+<input bind:value={name} placeholder="Your name" />
+<p>{greeting}</p>
+```
+
+---
+
+## 📜 File Declaration Order
+1. Imports  
+2. Types / interfaces  
+3. `<script lang="ts">`  
+4. Markup  
+5. `<style>` (Tailwind first; SCSS only when necessary)  
+6. Helpers (optional)
+
+---
+
+## 🧱 Utility Example (`cn`)
+```ts
+export function cn(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(' ');
+}
+```
+Usage:
+```svelte
+<div class={cn('btn', primary && 'btn--primary', className)} />
+```
+
+---
+
+## 🎨 Component Template
+```svelte
+<script lang="ts">
+  import { cn } from '$lib/shared/utils/cn';
+
+  interface ComponentProps {
+    prop1: string;
+    className?: string;
+    children?: import('svelte').Snippet;
+  }
+
+  let { prop1, className, children }: ComponentProps = $props();
+
+  const count = $state(0);
+  $effect(() => console.log('count changed', count));
+
+  function onclick() {
+    count++;
+  }
+</script>
+
+<div class={cn('component-name', className)}>
+  <button class="btn" {onclick}>
+    Clicked {count}
+  </button>
+  {#if children}
+    {@render children()}
+  {/if}
+</div>
+
+<style>
+  .btn {
+    @apply px-3 py-1 bg-blue-500 text-white rounded;
+  }
+</style>
+```
+
+---
+
+## 🧠 Container Template
+```svelte
+<script lang="ts">
+  import { $effect, $derived } from 'svelte';
+  import { someStore } from '../services.svelte';
+  import SomeComponent from '../components/some-component.svelte';
+
+  const data = $derived(someStore);
+  $effect(() => console.log('store changed', data));
+</script>
+
+<SomeComponent prop1={data?.title} />
+```
+
+---
+
+## 🧰 Services & Stores
+```ts
+import { $state, $derived } from 'svelte';
+
+export interface Item { 
+  id: string; 
+  title: string; 
+}
+
+const _items = $state<Item[]>([]);
+export const items = $derived(_items);
+
+export async function fetchItems(api = fetch) {
+  const res = await api('/api/items');
+  _items.length = 0;
+  _items.push(...await res.json());
+}
+
+export function reset() {
+  _items.length = 0;
+}
+```
+
+---
+
+## 🧩 Composition Patterns
+
+### Props with `$props()`
+**Always define TypeScript interfaces for props:**
+```svelte
+<script lang="ts">
+  interface ButtonProps {
+    label: string;
+    className?: string;
+    onclick?: (event: MouseEvent) => void;
+  }
+
+  let { label, className, onclick }: ButtonProps = $props();
+</script>
+
+<button class={className} {onclick}>{label}</button>
+```
+
+**Props are always required unless marked with `?` or given a default value:**
+```svelte
+<script lang="ts">
+  interface Props {
+    required: string;
+    optional?: string;
+    withDefault: string = 'default';
+  }
+  let { required, optional, withDefault }: Props = $props();
+</script>
+```
+
+**Prop renaming** (e.g., for reserved keywords):
+```svelte
+<script lang="ts">
+  let { class: className, ...rest } = $props();
+</script>
+
+<button class={className} {...rest}>click me</button>
+```
+
+**Spreading all props**:
+```svelte
+<script lang="ts">
+  let props = $props();
+</script>
+
+<button {...props}>click me</button>
+```
+
+### Snippets (replaces slots)
+**Default content**:
+```svelte
+<!-- Parent -->
+<Button>
+  Click me
+</Button>
+
+<!-- Button.svelte -->
+<script lang="ts">
+  interface ButtonProps {
+    children?: import('svelte').Snippet;
+  }
+  let { children }: ButtonProps = $props();
+</script>
+
+<button>
+  {#if children}
+    {@render children()}
+  {/if}
+</button>
+```
+
+**Multiple content placeholders**:
+```svelte
+<!-- Parent -->
+<Layout>
+  {#snippet header()}
+    <h1>Title</h1>
+  {/snippet}
+  
+  {#snippet main()}
+    <p>Content</p>
+  {/snippet}
+  
+  {#snippet footer()}
+    <p>Footer</p>
+  {/snippet}
+</Layout>
+
+<!-- Layout.svelte -->
+<script lang="ts">
+  interface LayoutProps {
+    header?: import('svelte').Snippet;
+    main?: import('svelte').Snippet;
+    footer?: import('svelte').Snippet;
+  }
+  let { header, main, footer }: LayoutProps = $props();
+</script>
+
+<header>
+  {#if header}
+    {@render header()}
+  {/if}
+</header>
+<main>
+  {#if main}
+    {@render main()}
+  {/if}
+</main>
+<footer>
+  {#if footer}
+    {@render footer()}
+  {/if}
+</footer>
+```
+
+**Passing data to snippets**:
+```svelte
+<!-- Parent -->
+<List items={['one', 'two', 'three']}>
+  {#snippet item(text)}
+    <span>{text}</span>
+  {/snippet}
+  
+  {#snippet empty()}
+    <span>No items yet</span>
+  {/snippet}
+</List>
+
+<!-- List.svelte -->
+<script lang="ts">
+  interface ListProps {
+    items: string[];
+    item?: import('svelte').Snippet<[string]>;
+    empty?: import('svelte').Snippet;
+  }
+  let { items, item, empty }: ListProps = $props();
+</script>
+
+{#if items.length}
+  <ul>
+    {#each items as entry}
+      <li>
+        {#if item}
+          {@render item(entry)}
+        {/if}
+      </li>
+    {/each}
+  </ul>
+{:else}
+  {#if empty}
+    {@render empty()}
+  {/if}
+{/if}
+```
+
+### Component Events (Callback Props)
+**Never use `createEventDispatcher`** — use callback props instead:
+```svelte
+<!-- Parent -->
+<Pump
+  inflate={(power) => {
+    size += power;
+    if (size > 75) burst = true;
+  }}
+  deflate={(power) => {
+    if (size > 0) size -= power;
+  }}
+/>
+
+<!-- Pump.svelte -->
+<script lang="ts">
+  interface PumpProps {
+    inflate?: (power: number) => void;
+    deflate?: (power: number) => void;
+  }
+  let { inflate, deflate }: PumpProps = $props();
+  let power = $state(5);
+
+  function handleInflate() {
+    inflate?.(power);
+  }
+
+  function handleDeflate() {
+    deflate?.(power);
+  }
+</script>
+
+<button onclick={handleInflate}>inflate</button>
+<button onclick={handleDeflate}>deflate</button>
+```
+
+### Event Handlers
+**Use `onclick`, `onkeydown`, etc.** (no colon). Prefer shorthand syntax `{onclick}` when using named functions:
+```svelte
+<script lang="ts">
+  const count = $state(0);
+  
+  function onclick() {
+    count++;
+  }
+</script>
+
+<button {onclick}>clicks: {count}</button>
+```
+
+**For inline handlers, use full syntax:**
+```svelte
+<button onclick={() => count++}>clicks: {count}</button>
+```
+
+**Multiple event handlers:**
+```svelte
+<script lang="ts">
+  function onclick(e: MouseEvent) {
+    one(e);
+    two(e);
+  }
+</script>
+
+<button {onclick}>
+  ...
+</button>
+```
+
+**When spreading props, local handlers go after:**
+```svelte
+<script lang="ts">
+  function onclick(e: MouseEvent) {
+    doStuff(e);
+    props.onclick?.(e);
+  }
+</script>
+
+<button
+  {...props}
+  {onclick}
+>
+  ...
+</button>
+```
+
+### Event Modifiers
+Event modifiers (`|once|preventDefault`) don't work with modern event handlers. Use wrapper functions:
+```svelte
+<script lang="ts">
+  function once(fn: ((event: Event) => void) | null) {
+    return function (event: Event) {
+      if (fn) fn.call(this, event);
+      fn = null;
+    };
+  }
+
+  function preventDefault(fn: ((event: Event) => void) | undefined) {
+    return function (event: Event) {
+      event.preventDefault();
+      fn?.call(this, event);
+    };
+  }
+</script>
+
+<button onclick={once(preventDefault(handler))}>...</button>
+```
+
+**Capture modifier**:
+```svelte
+<button onclickcapture={...}>...</button>
+```
+
+### Dynamic Component
+```svelte
+<Card Content={RichCard} />
+<svelte:component this={Content} />
+```
+> Avoid component creation inside `$effect` or reactive expressions.
+
+---
+
+## 🧭 Routing (SvelteKit)
+- Use `src/routes` for pages.  
+- Keep routes thin; delegate to feature containers.  
+- SSR logic in `+page.ts` / `+layout.ts`.  
+- Shared loaders/actions live in feature services.
+
+---
+
+## 🧱 Naming & Exports
+| Type | Convention |
+|------|-------------|
+| Components | `kebab-case` file → `PascalCase` export |
+| Stores / services | `camelCase` |
+| Types / interfaces | `PascalCase` |
+| Public API | via `index.ts` |
+
+---
+
+## 🧪 Testing & Stories
+- **Vitest** + **@testing-library/svelte**
+- **Storybook** with prop controls
+- Mock stores/services for isolation
+
+---
+
+## ⚙️ Linting & Formatting
+- ESLint (`eslint-plugin-svelte`) + Prettier (`prettier-plugin-svelte`)
+- Enforce import order, prop/event consistency, no unused vars
+- Tailwind plugin for class sorting (`prettier-plugin-tailwindcss`)
+
+---
+
+## 🚀 Performance & DX
+- Use `$derived` instead of chaining `$effect`.
+- Cleanup intervals/subscriptions inside `$effect(() => () => cleanup())`.
+- Favor small, composable components.
+- Avoid unnecessary global stores.
+- Keep DOM reactivity simple — `$state` → `$derived` → markup.
+- Use `$derived.by()` for complex computations instead of `$effect`.
+
+---
+
+## ❌ Anti-Patterns (Svelte 4 — DO NOT USE)
+
+### Never use these Svelte 4 patterns:
+
+**❌ `export let` for props:**
+```svelte
+<!-- WRONG -->
+<script>
+  export let name: string;
+</script>
+```
+```svelte
+<!-- CORRECT -->
+<script lang="ts">
+  interface Props {
+    name: string;
+  }
+  let { name }: Props = $props();
+</script>
+```
+
+**❌ `$:` reactive statements:**
+```svelte
+<!-- WRONG -->
+<script>
+  let count = 0;
+  $: doubled = count * 2;
+  $: {
+    console.log(count);
+  }
+</script>
+```
+```svelte
+<!-- CORRECT -->
+<script lang="ts">
+  const count = $state(0);
+  const doubled = $derived(count * 2);
+  $effect(() => console.log(count));
+</script>
+```
+
+**❌ `on:click` event handlers:**
+```svelte
+<!-- WRONG -->
+<button on:click={handler}>Click</button>
+```
+```svelte
+<!-- CORRECT -->
+<script lang="ts">
+  function onclick() {
+    // handler logic
+  }
+</script>
+<button {onclick}>Click</button>
+```
+
+**❌ `createEventDispatcher`:**
+```svelte
+<!-- WRONG -->
+<script>
+  import { createEventDispatcher } from 'svelte';
+  const dispatch = createEventDispatcher();
+  dispatch('click', data);
+</script>
+```
+```svelte
+<!-- CORRECT -->
+<script lang="ts">
+  interface Props {
+    onclick?: (data: any) => void;
+  }
+  let { onclick }: Props = $props();
+  onclick?.(data);
+</script>
+```
+
+**❌ `<slot>` for content:**
+```svelte
+<!-- WRONG -->
+<div>
+  <slot />
+  <slot name="footer" />
+</div>
+```
+```svelte
+<!-- CORRECT -->
+<script lang="ts">
+  interface Props {
+    children?: import('svelte').Snippet;
+    footer?: import('svelte').Snippet;
+  }
+  let { children, footer }: Props = $props();
+</script>
+<div>
+  {#if children}
+    {@render children()}
+  {/if}
+  {#if footer}
+    {@render footer()}
+  {/if}
+</div>
+```
+
+**❌ `$$props` and `$$restProps`:**
+```svelte
+<!-- WRONG -->
+<button {...$$restProps} on:click>...</button>
+```
+```svelte
+<!-- CORRECT -->
+<script lang="ts">
+  let { onclick, ...rest } = $props();
+</script>
+<button {...rest} {onclick}>...</button>
+```
+
+---
+
+## 🎨 CSS Rule
+> **TailwindCSS is preferred.**  
+> Use component-scoped **SCSS** only for complex selectors, animations, or keyframes not expressible via Tailwind utilities.  
+> Never use global SCSS or unscoped styles.

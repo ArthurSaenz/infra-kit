@@ -1,0 +1,41 @@
+{
+  "name": "@pkg/lib-be-dev",
+  "type": "module",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "dev-server": "./dist/dev-server.js"
+  },
+  "private": true,
+  "scripts": {
+    "clean-cache": "rm -rf .turbo .eslintcache tsconfig.tsbuildinfo",
+    "clean-artifacts": "rm -rf dist",
+    "build": "tsc -b",
+    "ts-check": "tsc --noEmit",
+    "prettier-check": "pnpm exec prettier --check * --no-error-on-unmatched-pattern --log-level warn --ignore-path ../../.prettierignore",
+    "prettier-fix": "pnpm exec prettier --write * --no-error-on-unmatched-pattern --log-level warn --ignore-path ../../.prettierignore",
+    "test": "pnpm exec vitest run --reporter=dot",
+    "test-watch": "pnpm exec vitest --watch",
+    "test-ui": "pnpm exec vitest --ui",
+    "test-report": "pnpm exec vitest run --coverage"
+  },
+  "devDependencies": {
+    "@pkg/ts-config": "workspace:*",
+    "@pkg/vitest-config": "workspace:*",
+    "@types/aws-lambda": "catalog:",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "catalog:"
+  },
+  "dependencies": {
+    "@aws-lambda-powertools/logger": "^2.32.0",
+    "chalk": "^5.6.2",
+    "chokidar": "^5.0.0",
+    "fastify": "5.8.4",
+    "js-yaml": "4.1.1"
+  },
+  "engines": {
+    "node": ">=24.x",
+    "pnpm": ">=10"
+  }
+}

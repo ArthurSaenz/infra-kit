@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "infra-kit": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["./node_modules/infra-kit/dist/mcp.js"]
+    }
+  }
+}

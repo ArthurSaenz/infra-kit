@@ -1,0 +1,485 @@
+---
+globs: *.astro
+alwaysApply: false
+---
+
+# Astro Component Standards
+
+## 🎯 When to Use Astro vs Svelte
+
+**Use Astro components when:**
+- No JavaScript interactivity is needed (static/presentational components)
+- Component is purely server-rendered with no client-side state
+- Zero JavaScript bundle size is desired
+- Simple data display or layout structure
+
+**Use Svelte components when:**
+- JavaScript interactivity is required (event handlers, state management, reactivity)
+- Client-side state or reactivity is needed (`$state`, `$derived`, `$effect`)
+- Component needs to respond to user interactions
+- Dynamic behavior or animations are required
+
+**Rule of thumb:** If it doesn't need JavaScript, use Astro. If it needs JavaScript, use Svelte.
+
+---
+
+## 📁 File Structure
+
+### Astro Component Template
+```astro
+---
+// apps/seo/ui/src/components/component-name.astro
+// 1. Imports (Astro, components, types, utilities)
+import Layout from '../layouts/Layout.astro';
+import SomeComponent from '../features/feature-name/components/some-component.svelte';
+
+// 2. TypeScript interfaces/types (if needed)
+interface ComponentProps {
+  title: string;
+  optional?: boolean;
+}
+
+// 3. Props destructuring
+const { title, optional = false }: ComponentProps = Astro.props;
+
+// 4. Data fetching/computation (if needed)
+const data = await fetchData();
+---
+
+<!-- 5. HTML template -->
+<Layout>
+  <main>
+    <h1>{title}</h1>
+    <SomeComponent client:load />
+  </main>
+</Layout>
+
+<!-- 6. Scoped styles (if needed) -->
+<style>
+  main {
+    padding: 1rem;
+  }
+</style>
+```
+
+### Component Organization
+```
+src/
+├── layouts/           # Page layouts (Layout.astro, etc.)
+├── pages/            # Route pages (index.astro, about.astro)
+├── components/       # Shared Astro components
+│   └── component-name/
+│       ├── component-name.astro
+│       └── index.ts
+└── features/         # Feature-based modules (same as React/Svelte)
+    └── [feature-name]/
+        ├── components/    # Svelte components
+        │   └── component-name/
+        │       ├── component-name.svelte
+        │       ├── component-name.module.scss (optional)
+        │       └── index.ts
+        ├── containers/    # Svelte containers
+        │   └── container-name/
+        │       ├── container-name.svelte
+        │       └── index.ts
+        └── *.astro        # Astro wrappers/integrations
+```
+
+---
+
+## 🧩 Component Structure
+
+**Astro Component Structure in /components/**
+```
+component-name/
+├── component-name.astro
+└── index.ts
+```
+
+**Component index.ts Example:**
+```ts
+// components/component-name/index.ts
+export { default } from './component-name.astro';
+```
+
+---
+
+## 🎯 Core Principles
+
+### Component Structure Order
+1. **Frontmatter section (`---`)**: All JavaScript/TypeScript logic
+2. **Template section**: HTML/JSX markup
+3. **Style section**: Scoped CSS (optional)
+
+### Frontmatter Best Practices
+- **Always use TypeScript**: Add type annotations for props
+- **Keep frontmatter pure**: No side effects, only data preparation
+- **Use async/await**: For data fetching in frontmatter
+- **Props interface**: Always define `ComponentNameProps` interface
+
+```astro
+---
+interface PageProps {
+  title: string;
+  description?: string;
+}
+
+const { title, description = 'Default description' }: PageProps = Astro.props;
+---
+```
+
+---
+
+## 🔌 Svelte Component Integration
+
+### Client Directives
+Use appropriate client directives for Svelte components:
+
+```astro
+---
+import SvelteComponent from '../features/feature/components/component.svelte';
+---
+
+<!-- Load immediately (default) -->
+<SvelteComponent client:load />
+
+<!-- Load when visible (lazy) -->
+<SvelteComponent client:visible />
+
+<!-- Load on idle (performance) -->
+<SvelteComponent client:idle />
+
+<!-- Load on media query -->
+<SvelteComponent client:media="(max-width: 768px)" />
+
+<!-- Only hydrate, no JS until interaction -->
+<SvelteComponent client:only="svelte" />
+```
+
+### When to Use Each Directive
+- **`client:load`**: Critical interactive components (headers, forms)
+- **`client:visible`**: Below-the-fold content (lazy loading)
+- **`client:idle`**: Non-critical features (analytics, widgets)
+- **`client:only`**: Client-only components (avoid SSR)
+
+---
+
+## 📐 Layout Patterns
+
+### Page Layout Structure
+```astro
+---
+// src/layouts/Layout.astro
+import HeaderContainer from '../features/header/containers/header-container.svelte';
+import FooterWrapper from '../components/FooterWrapper.astro';
+import '../styles/globals.css';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{Astro.props.title || 'Default Title'}</title>
+  </head>
+  <body class="min-h-screen flex flex-col">
+    <HeaderContainer client:load />
+    <div class="flex-1">
+      <slot />
+    </div>
+    <FooterWrapper />
+  </body>
+</html>
+
+<style>
+  html,
+  body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow-x: hidden;
+  }
+</style>
+```
+
+### Page Structure
+```astro
+---
+// src/pages/index.astro
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout>
+  <main>
+    <!-- Page content -->
+  </main>
+</Layout>
+```
+
+---
+
+## 🎨 Styling Guidelines
+
+### TailwindCSS (Preferred)
+- **Use Tailwind classes** for all styling
+- **Prefer utility classes** over custom CSS
+- **Use arbitrary values** when needed: `bg-[#606581]`, `rounded-[15px]`
+
+```astro
+<div class="max-w-[930px] mx-auto px-10 mb-5 flex flex-col gap-6 md:flex-row md:gap-[80px]">
+  <!-- Content -->
+</div>
+```
+
+### Scoped Styles (When Needed)
+- Use `<style>` for component-specific styles
+- Styles are automatically scoped to the component
+- Use `:global()` for global styles within component
+
+```astro
+<style>
+  .container {
+    padding: 1rem;
+  }
+
+  :global(.global-class) {
+    /* Global style */
+  }
+</style>
+```
+
+### Global Styles
+- Import global CSS in layouts: `import '../styles/globals.css';`
+- Use CSS variables for theming
+- Define in `src/styles/globals.css`
+
+---
+
+## 📦 Props & Data
+
+### Props Definition
+```astro
+---
+interface ComponentProps {
+  required: string;
+  optional?: number;
+  withDefault: boolean = true;
+}
+
+const { required, optional, withDefault }: ComponentProps = Astro.props;
+---
+
+<div>{required}</div>
+```
+
+### Data Fetching
+```astro
+---
+// Fetch data in frontmatter (runs at build time for static, request time for SSR)
+const response = await fetch('https://api.example.com/data');
+const data = await response.json();
+---
+
+<div>{data.title}</div>
+```
+
+### Content Collections (if used)
+```astro
+---
+import { getCollection } from 'astro:content';
+
+const posts = await getCollection('blog');
+---
+
+{#each posts as post}
+  <article>
+    <h2>{post.data.title}</h2>
+  </article>
+{/each}
+```
+
+---
+
+## 🔗 Routing & Navigation
+
+### File-Based Routing
+- `src/pages/index.astro` → `/`
+- `src/pages/about.astro` → `/about`
+- `src/pages/blog/[slug].astro` → `/blog/:slug`
+
+### Dynamic Routes
+```astro
+---
+// src/pages/blog/[slug].astro
+interface Props {
+  slug: string;
+}
+
+const { slug }: Props = Astro.params;
+const post = await getPost(slug);
+---
+
+<Layout>
+  <article>
+    <h1>{post.title}</h1>
+  </article>
+</Layout>
+```
+
+---
+
+## ⚡ Performance Best Practices
+
+### Image Optimization
+```astro
+---
+import { Image } from 'astro:assets';
+import myImage from '../assets/image.jpg';
+---
+
+<Image src={myImage} alt="Description" />
+```
+
+### Code Splitting
+- Astro automatically code-splits by route
+- Use client directives to control hydration
+- Prefer `client:visible` or `client:idle` for non-critical components
+
+### Asset Management
+- Static assets in `public/` (copied as-is)
+- Imported assets in `src/assets/` (optimized by Astro)
+- Use `import` for optimization, `public/` for direct URLs
+
+---
+
+## 🧩 Feature Integration Pattern
+
+### Astro Wrapper for Svelte Features
+```astro
+---
+// src/features/footer/containers/footer-astro.astro
+import Footer from '../components/footer.svelte';
+import { defineFooterColumns } from '../services.svelte';
+
+const columns = defineFooterColumns();
+---
+
+<Footer columns={columns} client:load />
+```
+
+### Page Using Features
+```astro
+---
+// src/pages/index.astro
+import Layout from '../layouts/Layout.astro';
+import { FooterAstro } from '../features/footer';
+---
+
+<Layout>
+  <main>
+    <!-- Page content -->
+  </main>
+  <FooterAstro client:load />
+</Layout>
+```
+
+---
+
+## 🚫 Anti-Patterns
+
+### ❌ Don't Use
+- **Inline styles** (use Tailwind or scoped styles)
+- **Global `<style>` without scoping** (use `:global()` or separate CSS file)
+- **`client:load` everywhere** (use appropriate directive)
+- **Props without TypeScript interfaces**
+- **Side effects in frontmatter** (only data preparation)
+- **Direct DOM manipulation** (use Svelte components for interactivity)
+
+### ✅ Do Use
+- **TypeScript interfaces for props**
+- **TailwindCSS for styling**
+- **Appropriate client directives**
+- **Feature-based organization**
+- **Layout components for structure**
+- **Scoped styles when needed**
+
+---
+
+## 📝 Code Style
+
+### Naming Conventions
+- **Files**: `kebab-case.astro` (e.g., `footer-wrapper.astro`)
+- **Components**: `PascalCase` in imports (e.g., `FooterWrapper`)
+- **Props interfaces**: `ComponentNameProps` (e.g., `FooterWrapperProps`)
+
+### Import Order
+1. Astro imports (`astro:assets`, `astro:content`)
+2. Layout imports
+3. Feature component imports
+4. Utility/type imports
+5. Style imports
+
+### Comments
+- Start file with path comment: `// apps/seo/ui/src/components/component-name.astro`
+- Comment purpose, not effect
+- Use JSDoc for complex functions
+
+---
+
+## 🔍 TypeScript Integration
+
+### Type Safety
+- Always define prop interfaces
+- Use TypeScript in frontmatter
+- Leverage Astro's built-in types
+
+```astro
+---
+import type { AstroGlobal } from 'astro';
+
+interface PageProps {
+  title: string;
+}
+
+const { title }: PageProps = Astro.props;
+const url: string = Astro.url.pathname;
+---
+```
+
+### Type Definitions
+- Extend `app.d.ts` for custom types
+- Use Astro's type helpers when available
+- Import types from feature modules
+
+---
+
+## 🎯 SEO & Meta Tags
+
+### Meta Tags in Layout
+```astro
+---
+interface LayoutProps {
+  title?: string;
+  description?: string;
+}
+
+const { title = 'Default Title', description = 'Default description' }: LayoutProps = Astro.props;
+---
+
+<head>
+  <title>{title}</title>
+  <meta name="description" content={description} />
+  <meta property="og:title" content={title} />
+  <meta property="og:description" content={description} />
+</head>
+```
+
+---
+
+## 🧪 Testing Considerations
+
+- Astro components are primarily for structure/layout
+- Test interactive logic in Svelte components
+- Use Astro for SSR/static generation testing
+- Integration tests for full page rendering

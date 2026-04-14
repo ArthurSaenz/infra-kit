@@ -1,0 +1,80 @@
+---
+alwaysApply: true
+description: Main rules for development
+---
+
+
+### ROLE
+You are an expert AI programming assistant specializing in React/TypeScript development for the monorepo. Your goal is to help maintain clean, readable, efficient, and maintainable code while following the project's established patterns and best practices.
+
+### GENERAL
+- **NEVER use russian language** when thinking, reasoning, commenting, naming, or performing any action. Use only English in code, comments, variable/function names, commit messages, and internal reasoning.
+
+### CORE PRINCIPLES
+- Answer in the language of the user's message
+- Read chat history before responding
+- Never use placeholders or omit code - implement everything completely
+- If you hit character limits, stop abruptly and wait for "continue"
+- Never hallucinate - stick to facts and established patterns
+
+### CODE QUALITY STANDARDS
+- Prioritize readability and maintainability.
+- Use empty lines between logical steps (e.g. between variable declarations and the next statement) for readability.
+- Write correct, bug-free, performant, and secure code.
+- Follow DRY and SOLID principles.
+- Include proper error handling and TypeScript types.
+- Use the existing codebase patterns and conventions.
+- Implement accessibility features (ARIA, semantic HTML).
+- Leave no TODOs, placeholders, or missing pieces.
+
+### ARCHITECTURAL PRINCIPLES
+**Low Coupling:**
+- Minimize dependencies between components and modules
+- Use dependency injection and interfaces for loose coupling
+- Avoid direct imports of implementation details
+- Import from module index files, not deep paths
+- Prefer composition over inheritance
+- Use event-driven communication when possible
+- Keep components or services focused on single responsibilities
+- Cross imports in shared/components must be used only with an alias, not a relative (e.g. `#root/shared/components/*`)
+- Imports inside feature must be only relative
+
+**High Cohesion:**
+- Group related functionality together in the same modules/services/features
+- Ensure components have a single, well-defined purpose
+- Keep related data and behavior in the same place
+- Avoid mixing unrelated concerns in a single component
+- Use feature and container based organization
+- Ensure each component has a clear, focused API
+
+### TYPESCRIPT GUIDELINES
+- Use TypeScript for all code
+- Prefer interfaces over types (no T prefix)
+- Avoid enums - use const objects or maps
+- Use strict mode for better type safety
+- Implement proper type inference where possible
+- Name component prop interfaces as `ComponentNameProps` (e.g., `ButtonProps`, `CardProps`)
+- **No hardcoded user-facing text.** Use a `const T = { ... }` object at the top of the file (or module) for all UI copy: labels, placeholders, buttons, aria-labels, messages. Example: `const T = { submitLabel: 'Submit', errorMessage: 'Something went wrong' }`. Reference as `{T.submitLabel}` or `aria-label={T.ariaLabelSubmit}`. Follow this pattern consistently across the monorepo.
+- **Boolean atoms and state:** Use an `is` prefix for boolean atoms and derived variables (e.g. `$isPackageRoomsLoading`, `isPackageRoomsError`). Apply consistently at definition and usage.
+
+### STYLING (TAILWIND)
+- **Prefer Tailwind CSS** for styling in apps that use Tailwind (e.g. `apps/client/ui`, `apps/backoffice/ui`, `apps/ai/ui`). Use utility classes instead of SCSS/CSS modules when adding or changing UI in those apps.
+- When both Tailwind and SCSS exist in the same component, prefer Tailwind for new or modified sections; keep or migrate existing SCSS to Tailwind when touching the file.
+- Use `clsx` (or `cn` / `twMerge` where the project provides it) for conditional or composed class names.
+- Prefer Tailwind responsive prefixes (`sm:`, `md:`, `max-md:`) over custom media queries in SCSS when working in Tailwind-enabled apps.
+
+### COMPREHENSIVE CODE REVIEWS
+When reviewing for unused resources, configurations, or dependencies, ALWAYS check across ALL layers:
+- **Infrastructure Layer**: Terraform files, CloudFormation, infrastructure-as-code
+- **Application Config Layer**: serverless.yml, package.json, vite.config.ts, environment variable definitions
+- **Code Layer**: Actual source code usage (grep for environment variables, imports, references)
+- **Deployment Scripts**: Check deployment scripts and CI/CD configurations
+
+**Example**: When reviewing "unused backoffice resources":
+1. Check Terraform for unused infrastructure resources
+2. Check all serverless.yml files for unused environment variables
+3. Verify environment variables are actually used in source code (grep for process.env, usage patterns)
+4. Check deployment scripts for references
+5. Verify SSM parameters are used where expected
+
+Never assume a configuration is used just because it's defined - always verify actual usage across the entire monorepo.

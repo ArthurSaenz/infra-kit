@@ -1,0 +1,84 @@
+---
+globs: *.tsx
+alwaysApply: false
+---
+### Folder Structure - Feature-Based Architecture
+```
+src/
+├── features/        # Feature-based modules
+│   └── [feature-name]/
+│       ├── components/*  # "Dumb" components - UI only, props in/out
+│       ├── containers/*  # "Smart" components - business logic, API calls
+│       ├── services.ts   # Business logic, API calls with Jotai state management
+│       ├── types.ts      # TypeScript type definitions
+│       ├── analytics.ts  # Analytics methods
+│       └── index.ts      # Feature public API for exports
+```
+
+
+- Every feature MUST have index.ts with clear public API
+```ts
+export * as someFeatureService from './service.ts'
+export { SomeFeatureContainer } from './containers/some-feature-container.tsx'
+export { someFeatureComponent } from './components/some-component.tsx'
+```
+
+- UI components in shared/components must be generic (no business logic)
+- Features should be independent and composable
+
+### REACT COMPONENT STANDARDS
+- Use only functional components with hooks
+- Use `cn` for conditional classes instead of ternary operators
+- Implement custom hooks for reusable logic
+- Use `.tsx` extension for JSX files
+- Always use named exports
+- Always use destructuring from a new line in component props
+- Follow declaration order in files: 1) imports, 2) types for props, 3) component, 4) others (translations, functions, etc.)
+- 
+
+**Component Template:**
+```tsx
+import { cn } from '#root/lib/utils'
+
+interface ComponentNameProps {
+  prop1: string;
+  prop2?: number;
+  className?: string;
+}
+
+export const ComponentName = (props: ComponentNameProps) => {
+  const { prop1, prop2, className } = props;
+
+  return (
+    <div className={clsx('grid', className)}>
+      {/* Component content */}
+    </div>
+  );
+};
+```
+
+**Component Structure in /shared/components**
+```
+component-name/
+├── __tests__/component-name.test.tsx
+├── .stories/component-name.stories.tsx
+├── component-name.tsx
+└── index.ts
+```
+
+**Components Injection as Props Patterns:**
+1. **Element Pattern**: Use for simple component placement (slot): `<Button icon={<Icon />} />`
+2. **Component Pattern**: Use when heavy customization needed: `<Button Icon={IconComponent} />`
+3. **Render Function Pattern**: Use when parent needs to modify rendering: `<Button renderIcon={(props) => <Icon {...props} />} />`
+
+- Avoid creating components inside render functions (performance anti-pattern)
+- Prefer composition over complex prop interfaces
+
+### DISPLAY VALUES AND EMPTY STATES
+- **Normalize at data/transform layer**: Empty or missing display values (e.g. placeholders like `'—'`) MUST be resolved in the transform or data layer, not in presentational components.
+- **Presentational components are dumb**: Do NOT add display fallbacks (e.g. `?? '—'`, `|| '—'`, `value ?? 'N/A'`) or conditional checks for empty values inside shared/presentational components. Pass already-normalized strings from the feature transform; the component only renders what it receives.
+- **Single source of truth**: "If nothing, show X" is a data/transform concern. The component should receive the final display string and render it as-is.
+
+### NO LITERAL STRING CHECKS FOR "undefined" / "null"
+- **Do NOT** check for the literal strings `'undefined'` or `'null'` in transforms or components (e.g. `value !== 'undefined'`, `value === 'null'`). Use normal JavaScript checks: truthiness (`value || fallback`), or `value != null`, or `value === undefined` / `value === null` for actual undefined/null.
+- If the API or DB returns the string `"undefined"` or `"null"`, fix the source (API, type, or persistence), not the consumer. Do not paper over bad data with string checks.

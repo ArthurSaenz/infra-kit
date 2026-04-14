@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "streetsidesoftware.code-spell-checker",
+    "pomber.git-file-history",
+    "mhutchie.git-graph",
+    "google.colab"
+  ]
+}

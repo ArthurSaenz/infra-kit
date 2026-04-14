@@ -1,0 +1,48 @@
+name: _code-quality-jobs
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        required: true
+        type: string
+      cache_version:
+        required: true
+        type: string
+
+jobs:
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Use Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install chromium --with-deps
+
+      - name: Run QA
+        run: pnpm run qa
+
+      - name: Notify Slack of failure
+        if: failure()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_MESSAGE: "Code quality for ${{ github.ref_name }} by ${{ github.actor }}"
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}

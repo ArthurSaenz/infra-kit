@@ -1,0 +1,24 @@
+{
+  "name": "@pkg/eslint-config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared eslint config",
+  "author": "Arthur Saenko <arthur.saenz7@gmail.com> (https://github.com/ArthurSaenz)",
+  "keywords": [
+    "eslint",
+    "config",
+    "linting"
+  ],
+  "main": "index.js",
+  "engines": {
+    "node": ">=24.x"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^8.1.0",
+    "@eslint-react/eslint-plugin": "^3.0.0",
+    "eslint": "^10.2.0",
+    "eslint-plugin-react-refresh": "0.5.2",
+    "eslint-plugin-sonarjs": "^4.0.2"
+  }
+}

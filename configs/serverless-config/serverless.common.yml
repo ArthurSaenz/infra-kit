@@ -1,0 +1,46 @@
+custom:
+    version: v1
+    deploymentBucket:
+        name: ${ssm:/hulyo/s3/buckets/bknd_deployment}
+        versioning: false
+        accelerate: true
+        blockPublicAccess: true
+
+    scheduleExpression:
+        rate20Minutes:
+            prod: rate(20 minutes)
+            dev: rate(20 minutes)
+            default: rate(1 day)
+        rate15Minutes:
+            prod: rate(15 minutes)
+            dev: rate(15 minutes)
+            default: rate(1 day)
+        rate10Minutes:
+            prod: rate(10 minutes)
+            dev: rate(10 minutes)
+            default: rate(1 day)
+        rate2Hours:
+            prod: rate(2 hours)
+            dev: rate(2 hours)
+            default: rate(1 day)
+        selfService:
+            prod: cron(0,20,40 5-21 * * ? *)
+            dev: rate(1 day)
+            default: rate(1 day)
+
+    patterns:
+        - '!.env'
+        - '!.turbo'
+        - '!src'
+        - '!tsconfig.*'
+        - '!test/**'
+        - '../../../node_modules/**'
+        - '!../../../node_modules/aws-sdk/**'
+        - '!../../../node_modules/@aws-sdk/**'
+        - '!../../../node_modules/.pnpm/node_modules/aws-sdk/**'
+        - '!../../../node_modules/.pnpm/node_modules/@aws-sdk/**'
+        - '!../../../node_modules/@types/**'
+        - '!../../../node_modules/.cache/**'
+        - '!../../../node_modules/@img/**'
+        - '!../../../node_modules/@opentelemetry/**'
+

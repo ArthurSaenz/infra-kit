@@ -1,0 +1,14 @@
+{
+  "name": "@pkg/serverless-config",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared serverless config",
+  "keywords": [
+    "serverless",
+    "config"
+  ],
+  "engines": {
+    "node": ">=24.x"
+  }
+}

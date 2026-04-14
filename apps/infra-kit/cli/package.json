@@ -1,0 +1,50 @@
+{
+  "name": "infra-kit",
+  "type": "module",
+  "version": "0.1.87",
+  "description": "infra-kit",
+  "main": "dist/cli.js",
+  "module": "dist/cli.js",
+  "bin": {
+    "infra-kit": "dist/cli.js",
+    "ik": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=24.x"
+  },
+  "scripts": {
+    "inspector": "npx @modelcontextprotocol/inspector node ./dist/mcp.js --debug",
+    "build": "pnpm run clean-artifacts && node ./scripts/build.js",
+    "clean-artifacts": "rm -rf dist",
+    "clean-cache": "rm -rf node_modules/.cache .eslintcache tsconfig.tsbuildinfo .turbo .swc",
+    "prettier-fix": "pnpm exec prettier **/* --write --no-error-on-unmatched-pattern --log-level warn --ignore-path ../../../.prettierignore",
+    "prettier-check": "pnpm exec prettier **/* --check --no-error-on-unmatched-pattern --log-level warn --ignore-path ../../../.prettierignore",
+    "eslint-check": "pnpm exec eslint --cache --quiet --report-unused-disable-directives ./src",
+    "eslint-fix": "pnpm exec eslint --cache --quiet --report-unused-disable-directives ./src --fix",
+    "ts-check": "tsc --noEmit",
+    "test": "pnpm exec vitest run --reporter=dot",
+    "test-watch": "pnpm exec vitest --watch",
+    "test-ui": "pnpm exec vitest --ui",
+    "test-report": "pnpm exec vitest run --coverage",
+    "qa": "pnpm run prettier-check && pnpm run eslint-check && pnpm run ts-check && pnpm run test && echo ✅ Success",
+    "fix": "pnpm run prettier-fix && pnpm run eslint-fix && pnpm run qa"
+  },
+  "dependencies": {
+    "@inquirer/checkbox": "^5.1.3",
+    "@inquirer/confirm": "^6.0.11",
+    "@inquirer/select": "^5.1.3",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "commander": "^14.0.3",
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.1.3",
+    "yaml": "^2.8.3",
+    "zod": "^3.25.76",
+    "zx": "^8.8.5"
+  },
+  "devDependencies": {
+    "@pkg/eslint-config": "workspace:*",
+    "@pkg/vitest-config": "workspace:*",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.9.3"
+  }
+}
