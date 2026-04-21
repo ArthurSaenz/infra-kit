@@ -1,1 +1,1 @@
-export { getCurrentWorktrees, getProjectRoot } from './git-utils'
+export { getCurrentWorktrees, getProjectRoot, getRepoName } from './git-utils'

@@ -9,8 +9,8 @@ import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
-import { ENVs } from 'src/lib/constants'
 import { getProjectRoot } from 'src/lib/git-utils'
+import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
@@ -63,6 +63,8 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
 
   commandEcho.addOption('--version', selectedVersion)
 
+  const { environments } = await getInfraKitConfig()
+
   let selectedEnv = ''
 
   if (env) {
@@ -72,7 +74,7 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
 
     selectedEnv = await select({
       message: '🧪 Select environment',
-      choices: ENVs.map((env) => {
+      choices: environments.map((env) => {
         return {
           name: env,
           value: env,
@@ -83,7 +85,7 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
 
   commandEcho.addOption('--env', selectedEnv)
 
-  if (!ENVs.includes(selectedEnv)) {
+  if (!environments.includes(selectedEnv)) {
     logger.error(`❌ Invalid environment: ${selectedEnv}. Exiting...`)
     process.exit(1)
   }

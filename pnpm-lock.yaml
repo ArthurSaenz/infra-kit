@@ -66,8 +66,8 @@ importers:
         specifier: 'catalog:'
         version: 19.2.3(@types/react@19.2.14)
       infra-kit:
-        specifier: 0.1.87
-        version: 0.1.87(@types/node@25.5.2)
+        specifier: 0.1.88
+        version: 0.1.88(@types/node@25.5.2)
       shadcn:
         specifier: ^4.2.0
         version: 4.2.0(@types/node@25.5.2)(typescript@5.9.3)
@@ -81,14 +81,14 @@ importers:
   apps/infra-kit/cli:
     dependencies:
       '@inquirer/checkbox':
-        specifier: ^5.1.3
-        version: 5.1.3(@types/node@25.5.2)
+        specifier: ^5.1.4
+        version: 5.1.4(@types/node@25.5.2)
       '@inquirer/confirm':
-        specifier: ^6.0.11
-        version: 6.0.11(@types/node@25.5.2)
+        specifier: ^6.0.12
+        version: 6.0.12(@types/node@25.5.2)
       '@inquirer/select':
-        specifier: ^5.1.3
-        version: 5.1.3(@types/node@25.5.2)
+        specifier: ^5.1.4
+        version: 5.1.4(@types/node@25.5.2)
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@3.25.76)
@@ -1054,8 +1054,8 @@ packages:
     resolution: {integrity: sha512-doc2sWgJpbFQ64UflSVd17ibMGDuxO1yKgOgLMwavzESnXjFWJqUeG8saYosqKpHp4kWiM5x1nXvEjbpx90gzw==}
     engines: {node: '>=23.5.0 || ^22.13.0 || ^21.7.0 || ^20.12.0'}
 
-  '@inquirer/checkbox@5.1.3':
-    resolution: {integrity: sha512-+G7I8CT+EHv/hasNfUl3P37DVoMoZfpA+2FXmM54dA8MxYle1YqucxbacxHalw1iAFSdKNEDTGNV7F+j1Ldqcg==}
+  '@inquirer/checkbox@5.1.4':
+    resolution: {integrity: sha512-w6KF8ZYRvqHhROkOTHXYC3qIV/KYEu5o12oLqQySvch61vrYtRxNSHTONSdJqWiFJPlCUQAHT5OgOIyuTr+MHQ==}
     engines: {node: '>=23.5.0 || ^22.13.0 || ^21.7.0 || ^20.12.0'}
     peerDependencies:
       '@types/node': '>=18'
@@ -1072,8 +1072,8 @@ packages:
       '@types/node':
         optional: true
 
-  '@inquirer/confirm@6.0.11':
-    resolution: {integrity: sha512-pTpHjg0iEIRMYV/7oCZUMf27/383E6Wyhfc/MY+AVQGEoUobffIYWOK9YLP2XFRGz/9i6WlTQh1CkFVIo2Y7XA==}
+  '@inquirer/confirm@6.0.12':
+    resolution: {integrity: sha512-h9FgGun3QwVYNj5TWIZZ+slii73bMoBFjPfVIGtnFuL4t8gBiNDV9PcSfIzkuxvgquJKt9nr1QzszpBzTbH8Og==}
     engines: {node: '>=23.5.0 || ^22.13.0 || ^21.7.0 || ^20.12.0'}
     peerDependencies:
       '@types/node': '>=18'
@@ -1090,8 +1090,8 @@ packages:
       '@types/node':
         optional: true
 
-  '@inquirer/core@11.1.8':
-    resolution: {integrity: sha512-/u+yJk2pOKNDOh1ZgdUH2RQaRx6OOH4I0uwL95qPvTFTIL38YBsuSC4r1yXBB3Q6JvNqFFc202gk0Ew79rrcjA==}
+  '@inquirer/core@11.1.9':
+    resolution: {integrity: sha512-BDE4fG22uYh1bGSifcj7JSx119TVYNViMhMu85usp4Fswrzh6M0DV3yld64jA98uOAa2GSQ4Bg4bZRm2d2cwSg==}
     engines: {node: '>=23.5.0 || ^22.13.0 || ^21.7.0 || ^20.12.0'}
     peerDependencies:
       '@types/node': '>=18'
@@ -1107,8 +1107,8 @@ packages:
     resolution: {integrity: sha512-NsSs4kzfm12lNetHwAn3GEuH317IzpwrMCbOuMIVytpjnJ90YYHNwdRgYGuKmVxwuIqSgqk3M5qqQt1cDk0tGQ==}
     engines: {node: '>=23.5.0 || ^22.13.0 || ^21.7.0 || ^20.12.0'}
 
-  '@inquirer/select@5.1.3':
-    resolution: {integrity: sha512-zYyqWgGQi3NhBcNq4Isc5rB3oEdQEh1Q/EcAnOW0FK4MpnXWkvSBYgA4cYrTM4A9UB573omouZbnL9JJ74Mq3A==}
+  '@inquirer/select@5.1.4':
+    resolution: {integrity: sha512-2kWcGKPMLAXAWRp1AH1SLsQmX+j0QjeljyXMUji9WMZC8nRDO0b7qquIGr6143E7KMLt3VAIGNXzwa/6PXQs4Q==}
     engines: {node: '>=23.5.0 || ^22.13.0 || ^21.7.0 || ^20.12.0'}
     peerDependencies:
       '@types/node': '>=18'
@@ -3262,8 +3262,8 @@ packages:
     resolution: {integrity: sha512-k92I/b08q4wvFscXCLvqfsHCrjrF7yiXsQuIVvVE7N82W3+aqpzuUdBbfhWcy/FZR3/4IgflMgKLOsvPDrGCJA==}
     deprecated: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
 
-  infra-kit@0.1.87:
-    resolution: {integrity: sha512-tU6G0AQwkKsiXrOXDUNhHU+yNhvWJjL4oVwiSjruc7tOgwZlvlBUOgET7dEQZ0aIyDujkxy1OBEHud0L6hGbaA==}
+  infra-kit@0.1.88:
+    resolution: {integrity: sha512-R+HFdxVyCYuArJDcQl3RMf/MAj95WUKStFWu/umqgXOksRhgk+ghZr2eSO5WVKMztjXKfKj/byyVl5Fem3Lp1A==}
     engines: {node: '>=24.x'}
     hasBin: true
 
@@ -5793,10 +5793,10 @@ snapshots:
 
   '@inquirer/ansi@2.0.5': {}
 
-  '@inquirer/checkbox@5.1.3(@types/node@25.5.2)':
+  '@inquirer/checkbox@5.1.4(@types/node@25.5.2)':
     dependencies:
       '@inquirer/ansi': 2.0.5
-      '@inquirer/core': 11.1.8(@types/node@25.5.2)
+      '@inquirer/core': 11.1.9(@types/node@25.5.2)
       '@inquirer/figures': 2.0.5
       '@inquirer/type': 4.0.5(@types/node@25.5.2)
     optionalDependencies:
@@ -5809,9 +5809,9 @@ snapshots:
     optionalDependencies:
       '@types/node': 25.5.2
 
-  '@inquirer/confirm@6.0.11(@types/node@25.5.2)':
+  '@inquirer/confirm@6.0.12(@types/node@25.5.2)':
     dependencies:
-      '@inquirer/core': 11.1.8(@types/node@25.5.2)
+      '@inquirer/core': 11.1.9(@types/node@25.5.2)
       '@inquirer/type': 4.0.5(@types/node@25.5.2)
     optionalDependencies:
       '@types/node': 25.5.2
@@ -5829,7 +5829,7 @@ snapshots:
     optionalDependencies:
       '@types/node': 25.5.2
 
-  '@inquirer/core@11.1.8(@types/node@25.5.2)':
+  '@inquirer/core@11.1.9(@types/node@25.5.2)':
     dependencies:
       '@inquirer/ansi': 2.0.5
       '@inquirer/figures': 2.0.5
@@ -5845,10 +5845,10 @@ snapshots:
 
   '@inquirer/figures@2.0.5': {}
 
-  '@inquirer/select@5.1.3(@types/node@25.5.2)':
+  '@inquirer/select@5.1.4(@types/node@25.5.2)':
     dependencies:
       '@inquirer/ansi': 2.0.5
-      '@inquirer/core': 11.1.8(@types/node@25.5.2)
+      '@inquirer/core': 11.1.9(@types/node@25.5.2)
       '@inquirer/figures': 2.0.5
       '@inquirer/type': 4.0.5(@types/node@25.5.2)
     optionalDependencies:
@@ -8119,11 +8119,11 @@ snapshots:
       wrappy: 1.0.2
     optional: true
 
-  infra-kit@0.1.87(@types/node@25.5.2):
+  infra-kit@0.1.88(@types/node@25.5.2):
     dependencies:
-      '@inquirer/checkbox': 5.1.3(@types/node@25.5.2)
-      '@inquirer/confirm': 6.0.11(@types/node@25.5.2)
-      '@inquirer/select': 5.1.3(@types/node@25.5.2)
+      '@inquirer/checkbox': 5.1.4(@types/node@25.5.2)
+      '@inquirer/confirm': 6.0.12(@types/node@25.5.2)
+      '@inquirer/select': 5.1.4(@types/node@25.5.2)
       '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
       commander: 14.0.3
       pino: 10.3.1

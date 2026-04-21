@@ -5,10 +5,11 @@ import process from 'node:process'
 import { z } from 'zod'
 import { $ } from 'zx'
 
+import { openCmuxWorkspaceWithLayout } from 'src/integrations/cmux'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
-import { getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
+import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
@@ -24,6 +25,7 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
   versions?: string
   cursor?: boolean
   githubDesktop?: boolean
+  cmux?: boolean
 }
 
 /**
@@ -31,7 +33,7 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
  * Creates worktrees for active release branches and removes unused ones
  */
 export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<ToolsExecutionResult> => {
-  const { confirmedCommand, all, versions, cursor, githubDesktop } = options
+  const { confirmedCommand, all, versions, cursor, githubDesktop, cmux } = options
 
   commandEcho.start('worktrees-add')
 
@@ -147,6 +149,18 @@ export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<Too
       commandEcho.addOption('--no-github-desktop', true)
     }
 
+    const openInCmux = cmux ?? (await confirm({ message: 'Open created worktrees in cmux?' }))
+
+    if (typeof cmux === 'undefined') {
+      commandEcho.setInteractive()
+    }
+
+    if (openInCmux) {
+      commandEcho.addOption('--cmux', true)
+    } else {
+      commandEcho.addOption('--no-cmux', true)
+    }
+
     const { branchesToCreate } = categorizeWorktrees({
       selectedReleaseBranches,
       currentWorktrees,
@@ -166,6 +180,19 @@ export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<Too
       for (const branch of createdWorktrees) {
         await $`github ${worktreeDir}/${branch}`
         await $`sleep 5`
+      }
+    }
+
+    if (openInCmux) {
+      const repoName = await getRepoName()
+
+      for (const branch of createdWorktrees) {
+        const version = branch.replace('release/', '')
+
+        await openCmuxWorkspaceWithLayout({
+          cwd: `${worktreeDir}/${branch}`,
+          title: `${repoName} ${version}`,
+        })
       }
     }
 
@@ -269,7 +296,7 @@ const logResults = (created: string[]): void => {
 export const worktreesAddMcpTool = {
   name: 'worktrees-add',
   description:
-    'Create local git worktrees for release branches under the worktrees directory and run "pnpm install" in each. Mutates the local filesystem. When invoked via MCP, pass either "versions" (comma-separated) or all=true — the branch picker and "open in Cursor / GitHub Desktop" follow-up prompts are unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls.',
+    'Create local git worktrees for release branches under the worktrees directory and run "pnpm install" in each. Mutates the local filesystem. When invoked via MCP, pass either "versions" (comma-separated) or all=true — the branch picker and "open in Cursor / GitHub Desktop / cmux" follow-up prompts are unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls.',
   inputSchema: {
     all: z
       .boolean()
@@ -294,6 +321,12 @@ export const worktreesAddMcpTool = {
       .optional()
       .describe(
         'Open each created worktree in GitHub Desktop. Defaults to false in MCP mode (the follow-up prompt is not shown).',
+      ),
+    cmux: z
+      .boolean()
+      .optional()
+      .describe(
+        'Open each created worktree in a new cmux workspace with a 3-pane layout (left-top, left-bottom, full-height right), all rooted at the worktree directory. Defaults to false in MCP mode (the follow-up prompt is not shown).',
       ),
   },
   outputSchema: {

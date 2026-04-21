@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { $ } from 'zx'
 
 /**
@@ -20,6 +21,19 @@ export const getCurrentWorktrees = async (type: 'release' | 'feature'): Promise<
   })
 }
 
+/**
+ * Extract a release branch name from a `git worktree list` output line.
+ *
+ * Returns `null` for lines that are not release worktrees.
+ *
+ * @example
+ * releaseWorktreePredicate('/path/to/release/v1.18.22  abc1234 [release/v1.18.22]')
+ * // => 'release/v1.18.22'
+ *
+ * @example
+ * releaseWorktreePredicate('/path/to/feature/login  abc1234 [feature/login]')
+ * // => null
+ */
 const releaseWorktreePredicate = (line: string): string | null => {
   const parts = line.split(' ').filter(Boolean)
 
@@ -28,6 +42,19 @@ const releaseWorktreePredicate = (line: string): string | null => {
   return `release/${parts[0]?.split('/').pop() || ''}`
 }
 
+/**
+ * Extract a feature branch name from a `git worktree list` output line.
+ *
+ * Returns `null` for lines that are not feature worktrees.
+ *
+ * @example
+ * featureWorktreePredicate('/path/to/feature/login-page  abc1234 [feature/login-page]')
+ * // => 'feature/login-page'
+ *
+ * @example
+ * featureWorktreePredicate('/path/to/release/v1.18.22  abc1234 [release/v1.18.22]')
+ * // => null
+ */
 const featureWorktreePredicate = (line: string): string | null => {
   const parts = line.split(' ').filter(Boolean)
 
@@ -43,4 +70,13 @@ export const getProjectRoot = async (): Promise<string> => {
   const result = await $`git rev-parse --show-toplevel`
 
   return result.stdout.trim()
+}
+
+/**
+ * Get the current repository name (basename of the project root)
+ */
+export const getRepoName = async (): Promise<string> => {
+  const projectRoot = await getProjectRoot()
+
+  return path.basename(projectRoot)
 }

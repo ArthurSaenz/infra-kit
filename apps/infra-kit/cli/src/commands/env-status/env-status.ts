@@ -51,6 +51,14 @@ export const envStatus = async (): Promise<ToolsExecutionResult> => {
     logger.info(
       `  ${sessionConfig}: ${sessionLoadedCount} of ${sessionTotalCount} vars loaded (project: ${sessionProject}, loadedAt: ${loadedAtDisplay}, session: ${sessionId})\n`,
     )
+
+    if (sessionTotalCount > 0 && sessionLoadedCount < sessionTotalCount) {
+      const missing = sessionTotalCount - sessionLoadedCount
+
+      logger.warn(
+        `  ${missing} cached var(s) are not present in the current process — env-load needs to be re-sourced, or vars were unset manually.`,
+      )
+    }
   } else {
     logger.info(`  Session ${sessionId}: no env loaded\n`)
   }

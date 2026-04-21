@@ -1,25 +1,23 @@
-import process from 'node:process'
 import { $ } from 'zx'
 
-import { logger } from 'src/lib/logger'
-
 /**
- * Validate Doppler CLI installation and authentication status and throw an error if not valid
+ * Validate Doppler CLI installation and authentication status. Throws on failure
+ * so callers (CLI entry, MCP tool handler) can translate to the right surface —
+ * CLI exits non-zero; MCP returns a structured tool error instead of tearing
+ * down the server.
  */
-export const validateDopplerCliAndAuth = async () => {
+export const validateDopplerCliAndAuth = async (): Promise<void> => {
   try {
     await $`doppler --version`
   } catch (error: unknown) {
-    logger.error({ error }, 'Error: Doppler CLI is not installed.')
-    logger.error('Please install it from: https://docs.doppler.com/docs/install-cli')
-    process.exit(1)
+    throw new Error('Doppler CLI is not installed. Install it from: https://docs.doppler.com/docs/install-cli', {
+      cause: error,
+    })
   }
 
   try {
     await $`doppler me`
   } catch (error: unknown) {
-    logger.error({ error }, 'Error: Doppler CLI is not authenticated.')
-    logger.error('Please authenticate by running: doppler login')
-    process.exit(1)
+    throw new Error('Doppler CLI is not authenticated. Run: doppler login', { cause: error })
   }
 }

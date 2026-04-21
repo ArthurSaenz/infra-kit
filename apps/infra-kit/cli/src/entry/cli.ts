@@ -15,12 +15,29 @@ import { ghReleaseList } from 'src/commands/gh-release-list'
 import { init } from 'src/commands/init'
 import { releaseCreate } from 'src/commands/release-create'
 import { releaseCreateBatch } from 'src/commands/release-create-batch'
+import { version } from 'src/commands/version'
 import { worktreesAdd } from 'src/commands/worktrees-add'
 import { worktreesList } from 'src/commands/worktrees-list'
 import { worktreesRemove } from 'src/commands/worktrees-remove'
 import { worktreesSync } from 'src/commands/worktrees-sync'
+import { logger } from 'src/lib/logger'
 
 const program = new Command()
+
+const runProgram = async (argv?: string[]): Promise<void> => {
+  try {
+    if (argv) {
+      await program.parseAsync(argv)
+    } else {
+      await program.parseAsync()
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+
+    logger.error(message)
+    process.exit(1)
+  }
+}
 
 program
   .command('merge-dev')
@@ -123,6 +140,8 @@ program
   .option('--no-cursor', 'Skip Cursor prompt')
   .option('-g, --github-desktop', 'Open created worktrees in GitHub Desktop')
   .option('--no-github-desktop', 'Skip GitHub Desktop prompt')
+  .option('-m, --cmux', 'Open created worktrees in cmux (3-pane layout)')
+  .option('--no-cmux', 'Skip cmux prompt')
   .action(async (options) => {
     await worktreesAdd({
       confirmedCommand: options.yes,
@@ -130,6 +149,7 @@ program
       versions: options.versions,
       cursor: options.cursor,
       githubDesktop: options.githubDesktop,
+      cmux: options.cmux,
     })
   })
 
@@ -155,6 +175,13 @@ program
   .description('Check installation and authentication status of gh and doppler CLIs')
   .action(async () => {
     await doctor()
+  })
+
+program
+  .command('version')
+  .description('Print the installed infra-kit CLI version')
+  .action(async () => {
+    await version()
   })
 
 program
@@ -204,7 +231,7 @@ if (process.argv.length <= 2) {
     'release-deliver',
   ]
   const worktreeCommands = ['worktrees-add', 'worktrees-list', 'worktrees-remove', 'worktrees-sync']
-  const envCommands = ['doctor', 'init', 'env-status', 'env-list', 'env-load', 'env-clear']
+  const envCommands = ['doctor', 'init', 'version', 'env-status', 'env-list', 'env-load', 'env-clear']
 
   const commandMap = new Map(
     program.commands.map((cmd) => {
@@ -250,7 +277,7 @@ if (process.argv.length <= 2) {
     { output: process.stderr },
   )
 
-  program.parse(['node', 'infra-kit', selected])
+  await runProgram(['node', 'infra-kit', selected])
 } else {
-  program.parse()
+  await runProgram()
 }

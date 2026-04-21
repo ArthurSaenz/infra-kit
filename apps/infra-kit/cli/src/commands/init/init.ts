@@ -38,7 +38,13 @@ const isBlockLine = (line: string): boolean => {
     line.startsWith('env-status') ||
     line.startsWith('if ') ||
     line.startsWith('  export INFRA_KIT_SESSION') ||
-    line.startsWith('fi')
+    line.startsWith('export _INFRA_KIT_') ||
+    line.startsWith(': ${_INFRA_KIT_') ||
+    line.startsWith('fi') ||
+    line.startsWith('zmodload ') ||
+    line.startsWith('autoload ') ||
+    line.startsWith('add-zsh-hook ') ||
+    line.startsWith('_infra_kit_autoload')
   )
 }
 
@@ -93,14 +99,53 @@ const buildShellBlock = (): string => {
 
   return [
     MARKER_START,
+    'zmodload zsh/stat 2>/dev/null',
+    'zmodload zsh/datetime 2>/dev/null',
     // eslint-disable-next-line no-template-curly-in-string
     'if [[ -z "${INFRA_KIT_SESSION}" ]]; then',
     '  export INFRA_KIT_SESSION=$(head -c 4 /dev/urandom | xxd -p)',
     'fi',
-    `env-load() { local f; f=$(${runCmd} env-load "$@") && source "$f" && ${runCmd} env-status; }`,
-    `env-clear() { local f; f=$(${runCmd} env-clear) && source "$f" && ${runCmd} env-status; }`,
+    // eslint-disable-next-line no-template-curly-in-string
+    ': ${_INFRA_KIT_LAST_LOAD_MTIME:=0}',
+    // eslint-disable-next-line no-template-curly-in-string
+    ': ${_INFRA_KIT_LAST_CLEAR_MTIME:=0}',
+    // eslint-disable-next-line no-template-curly-in-string
+    ': ${_INFRA_KIT_SHELL_STARTED:=${EPOCHSECONDS:-0}}',
+    'export _INFRA_KIT_LAST_LOAD_MTIME _INFRA_KIT_LAST_CLEAR_MTIME _INFRA_KIT_SHELL_STARTED',
+    `env-load() { local f m; f=$(${runCmd} env-load "$@") || return; m=$(zstat +mtime -- "$f" 2>/dev/null || echo 0); _INFRA_KIT_LAST_LOAD_MTIME=$m; source "$f"; ${runCmd} env-status; }`,
+    `env-clear() { local f m; f=$(${runCmd} env-clear) || return; m=$(zstat +mtime -- "$f" 2>/dev/null || echo 0); _INFRA_KIT_LAST_CLEAR_MTIME=$m; source "$f"; ${runCmd} env-status; }`,
     `env-status() { ${runCmd} env-status; }`,
     `alias ik='${runCmd}'`,
+    '_infra_kit_autoload() {',
+    '  [[ -z "$INFRA_KIT_SESSION" ]] && return',
+    // eslint-disable-next-line no-template-curly-in-string
+    '  local cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/infra-kit"',
+    '  local dir="$cache_root/$INFRA_KIT_SESSION"',
+    '  local load_file="$dir/env-load.sh"',
+    '  local clear_file="$dir/env-clear.sh"',
+    '  local mtime',
+    '  if [[ -f "$load_file" ]]; then',
+    '    mtime=$(zstat +mtime -- "$load_file" 2>/dev/null || echo 0)',
+    '    if (( mtime > _INFRA_KIT_LAST_LOAD_MTIME && mtime >= _INFRA_KIT_SHELL_STARTED )); then',
+    '      source "$load_file"',
+    '      _INFRA_KIT_LAST_LOAD_MTIME=$mtime',
+    // eslint-disable-next-line no-template-curly-in-string
+    '      print -u2 "infra-kit: auto-loaded vars for ${INFRA_KIT_ENV_CONFIG:-?}"',
+    '    fi',
+    '  fi',
+    '  if [[ -f "$clear_file" ]]; then',
+    '    mtime=$(zstat +mtime -- "$clear_file" 2>/dev/null || echo 0)',
+    '    if (( mtime > _INFRA_KIT_LAST_CLEAR_MTIME && mtime >= _INFRA_KIT_SHELL_STARTED )); then',
+    '      source "$clear_file"',
+    '      _INFRA_KIT_LAST_CLEAR_MTIME=$mtime',
+    '      print -u2 "infra-kit: auto-cleared env"',
+    '    fi',
+    '  fi',
+    '}',
+    'autoload -Uz add-zsh-hook',
+    'if (( _INFRA_KIT_SHELL_STARTED > 0 )); then',
+    '  add-zsh-hook precmd _infra_kit_autoload',
+    'fi',
     MARKER_END,
   ].join('\n')
 }
