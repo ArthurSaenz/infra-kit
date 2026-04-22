@@ -113,17 +113,20 @@ interface CreateReleaseBranchArgs {
   version: string
   jiraVersionUrl: string
   type: ReleaseType
+  description?: string
 }
 
 // Function to create a release branch
 export const createReleaseBranch = async (
   args: CreateReleaseBranchArgs,
 ): Promise<{ branchName: string; prUrl: string }> => {
-  const { version, jiraVersionUrl, type } = args
+  const { version, jiraVersionUrl, type, description } = args
   const titlePrefix = type === 'hotfix' ? 'Hotfix' : 'Release'
   const baseBranch = getBaseBranch(type)
 
   const branchName = `release/v${version}`
+
+  const body = description && description.trim() !== '' ? `${jiraVersionUrl}\n\n${description}` : `${jiraVersionUrl} \n`
 
   try {
     $.quiet = true
@@ -137,7 +140,7 @@ export const createReleaseBranch = async (
 
     // Create PR and capture URL
     const prResult =
-      await $`gh pr create --title "${titlePrefix} v${version}" --body "${jiraVersionUrl} \n" --base ${baseBranch} --head ${branchName}`
+      await $`gh pr create --title "${titlePrefix} v${version}" --body ${body} --base ${baseBranch} --head ${branchName}`
 
     const prLink = prResult.stdout.trim()
 

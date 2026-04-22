@@ -1,7 +1,7 @@
 {
   "name": "infra-kit",
   "type": "module",
-  "version": "0.1.92",
+  "version": "0.1.93",
   "description": "infra-kit",
   "main": "dist/cli.js",
   "module": "dist/cli.js",

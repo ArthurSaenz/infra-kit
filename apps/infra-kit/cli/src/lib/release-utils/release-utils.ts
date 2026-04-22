@@ -68,7 +68,7 @@ export const createSingleRelease = async (args: CreateSingleReleaseArgs): Promis
   const jiraVersionUrl = `${jiraConfig.baseUrl}/projects/${result.version!.projectId}/versions/${result.version!.id}/tab/release-report-all-issues`
 
   // 2. Create GitHub release branch
-  const releaseInfo = await createReleaseBranch({ version, jiraVersionUrl, type })
+  const releaseInfo = await createReleaseBranch({ version, jiraVersionUrl, type, description })
 
   return {
     version,
