@@ -5,7 +5,7 @@ import process from 'node:process'
 import { z } from 'zod'
 import { $ } from 'zx'
 
-import { openCmuxWorkspaceWithLayout } from 'src/integrations/cmux'
+import { buildCmuxWorkspaceTitle, openCmuxWorkspaceWithLayout } from 'src/integrations/cmux'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
@@ -187,11 +187,11 @@ export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<Too
       const repoName = await getRepoName()
 
       for (const branch of createdWorktrees) {
-        const version = branch.replace('release/', '')
+        const title = buildCmuxWorkspaceTitle({ repoName, branch })
 
         await openCmuxWorkspaceWithLayout({
           cwd: `${worktreeDir}/${branch}`,
-          title: `${repoName} ${version}`,
+          title,
         })
       }
     }

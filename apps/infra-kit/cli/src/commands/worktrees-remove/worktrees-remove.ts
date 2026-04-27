@@ -4,10 +4,11 @@ import process from 'node:process'
 import { z } from 'zod'
 import { $ } from 'zx'
 
+import { buildCmuxWorkspaceTitle, closeCmuxWorkspaceByTitle } from 'src/integrations/cmux'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
-import { getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
+import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
@@ -107,7 +108,13 @@ export const worktreesRemove = async (options: WorktreeManagementArgs): Promise<
       commandEcho.addOption('--yes', true)
     }
 
-    const removedWorktrees = await removeWorktrees(selectedReleaseBranches, worktreeDir)
+    const repoName = await getRepoName()
+
+    const removedWorktrees = await removeWorktrees({
+      branches: selectedReleaseBranches,
+      worktreeDir,
+      repoName,
+    })
 
     logResults(removedWorktrees)
 
@@ -133,13 +140,25 @@ export const worktreesRemove = async (options: WorktreeManagementArgs): Promise<
   }
 }
 
+interface RemoveWorktreesArgs {
+  branches: string[]
+  worktreeDir: string
+  repoName: string
+}
+
 /**
  * Remove worktrees for the specified branches and whole folder
  */
-const removeWorktrees = async (branches: string[], worktreeDir: string): Promise<string[]> => {
+const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string[]> => {
+  const { branches, worktreeDir, repoName } = args
+
   const results = await Promise.allSettled(
     branches.map(async (branch) => {
       const worktreePath = `${worktreeDir}/${branch}`
+
+      const title = buildCmuxWorkspaceTitle({ repoName, branch })
+
+      await closeCmuxWorkspaceByTitle(title)
 
       await $`git worktree remove ${worktreePath}`
 
