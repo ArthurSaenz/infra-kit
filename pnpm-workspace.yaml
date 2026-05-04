@@ -43,6 +43,23 @@ catalog:
 
 enableGlobalVirtualStore: true
 
+# Storybook 10 dynamically `import()`s the framework + addons by name from its own dist code.
+# Under enableGlobalVirtualStore, storybook's realpath sits outside the project tree, so the
+# walk-up never reaches the project root and these can't be resolved. Listing them as optional
+# peers makes pnpm symlink them as siblings of storybook in its virtual-store node_modules.
+packageExtensions:
+  storybook:
+    peerDependencies:
+      '@storybook/react-vite': '*'
+      '@storybook/addon-docs': '*'
+      '@storybook/addon-links': '*'
+      '@storybook/addon-vitest': '*'
+    peerDependenciesMeta:
+      '@storybook/react-vite': { optional: true }
+      '@storybook/addon-docs': { optional: true }
+      '@storybook/addon-links': { optional: true }
+      '@storybook/addon-vitest': { optional: true }
+
 supportedArchitectures:
   cpu:
     - arm64
