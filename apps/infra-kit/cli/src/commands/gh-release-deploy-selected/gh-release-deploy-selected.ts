@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import { resolve } from 'node:path'
 import process from 'node:process'
 import yaml from 'yaml'
-import { z } from 'zod'
+import { z } from 'zod/v4'
 import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'

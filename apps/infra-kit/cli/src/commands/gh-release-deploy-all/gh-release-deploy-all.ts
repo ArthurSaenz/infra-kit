@@ -1,6 +1,6 @@
 import select from '@inquirer/select'
 import process from 'node:process'
-import { z } from 'zod'
+import { z } from 'zod/v4'
 import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'

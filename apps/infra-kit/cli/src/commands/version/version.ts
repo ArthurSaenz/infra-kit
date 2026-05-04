@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from 'zod/v4'
 
 import { logger } from 'src/lib/logger'
 import type { ToolsExecutionResult } from 'src/types'

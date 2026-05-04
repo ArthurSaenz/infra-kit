@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { z } from 'zod'
+import { z } from 'zod/v4'
 
 import {
   ENV_CLEAR_FILE,

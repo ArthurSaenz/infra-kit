@@ -1,7 +1,7 @@
 {
   "name": "infra-kit",
   "type": "module",
-  "version": "0.1.94",
+  "version": "0.1.95",
   "description": "infra-kit",
   "main": "dist/cli.js",
   "module": "dist/cli.js",
@@ -45,6 +45,6 @@
     "@pkg/eslint-config": "workspace:*",
     "@pkg/vitest-config": "workspace:*",
     "esbuild": "^0.28.0",
-    "typescript": "^5.9.3"
+    "typescript": "catalog:"
   }
 }

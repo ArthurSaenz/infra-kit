@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from 'zod/v4'
 
 import { getDopplerProject } from 'src/integrations/doppler/doppler-project'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'

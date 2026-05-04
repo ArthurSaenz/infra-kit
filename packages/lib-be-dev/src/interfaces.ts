@@ -1,4 +1,4 @@
-import type { LogLevel, LoggerInterface } from '@aws-lambda-powertools/logger/lib/esm/types/Logger'
+import type { LogLevel, LoggerInterface } from '@aws-lambda-powertools/logger/types'
 
 /**
  * Logger interface for dev/local use. Extends AWS Powertools LoggerInterface

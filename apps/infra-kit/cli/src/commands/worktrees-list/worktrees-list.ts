@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from 'zod/v4'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { getCurrentWorktrees } from 'src/lib/git-utils'

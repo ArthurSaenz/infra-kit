@@ -4,8 +4,8 @@ import path from 'node:path'
 
 import { logger } from 'src/lib/logger'
 
-const MARKER_START = '# -- infra-kit:begin --'
-const MARKER_END = '# -- infra-kit:end --'
+export const MARKER_START = '# -- infra-kit:begin --'
+export const MARKER_END = '# -- infra-kit:end --'
 
 const LEGACY_PAIRED: [start: string, end: string][] = [['# region infra-kit', '# endregion infra-kit']]
 const LEGACY_SINGLE = '# infra-kit shell functions'
@@ -94,7 +94,7 @@ const removeExistingBlock = (content: string): string => {
   return before + (remaining ? `\n${remaining}` : '')
 }
 
-const buildShellBlock = (): string => {
+export const buildShellBlock = (): string => {
   const runCmd = 'pnpm exec infra-kit'
 
   return [

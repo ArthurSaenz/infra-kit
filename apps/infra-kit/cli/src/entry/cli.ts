@@ -16,13 +16,34 @@ import { init } from 'src/commands/init'
 import { releaseCreate } from 'src/commands/release-create'
 import { releaseCreateBatch } from 'src/commands/release-create-batch'
 import { version } from 'src/commands/version'
-import { worktreesAdd } from 'src/commands/worktrees-add'
+import { CURSOR_MODES, worktreesAdd } from 'src/commands/worktrees-add'
+import type { CursorMode } from 'src/commands/worktrees-add'
 import { worktreesList } from 'src/commands/worktrees-list'
 import { worktreesRemove } from 'src/commands/worktrees-remove'
 import { worktreesSync } from 'src/commands/worktrees-sync'
 import { logger } from 'src/lib/logger'
 
 const program = new Command()
+
+const normalizeCursorMode = (value: unknown): CursorMode | undefined => {
+  if (typeof value === 'undefined') {
+    return undefined
+  }
+
+  if (value === true) {
+    return 'workspace'
+  }
+
+  if (value === false) {
+    return 'none'
+  }
+
+  if (typeof value === 'string' && (CURSOR_MODES as readonly string[]).includes(value)) {
+    return value as CursorMode
+  }
+
+  throw new Error(`Invalid --cursor value "${String(value)}". Expected one of: ${CURSOR_MODES.join(', ')}.`)
+}
 
 const runProgram = async (argv?: string[]): Promise<void> => {
   try {
@@ -136,8 +157,8 @@ program
   .option('-y, --yes', 'Skip confirmation prompt')
   .option('-a, --all', 'Select all active release branches')
   .option('-v, --versions <versions>', 'Specify versions by comma, e.g. 1.2.5, 1.2.6')
-  .option('-c, --cursor', 'Open created worktrees in Cursor')
-  .option('--no-cursor', 'Skip Cursor prompt')
+  .option('-c, --cursor [mode]', 'Cursor mode for created worktrees: workspace (default) | windows | none')
+  .option('--no-cursor', 'Skip Cursor (alias for --cursor none)')
   .option('-g, --github-desktop', 'Open created worktrees in GitHub Desktop')
   .option('--no-github-desktop', 'Skip GitHub Desktop prompt')
   .option('-m, --cmux', 'Open created worktrees in cmux (3-pane layout)')
@@ -147,7 +168,7 @@ program
       confirmedCommand: options.yes,
       all: options.all,
       versions: options.versions,
-      cursor: options.cursor,
+      cursor: normalizeCursorMode(options.cursor),
       githubDesktop: options.githubDesktop,
       cmux: options.cmux,
     })

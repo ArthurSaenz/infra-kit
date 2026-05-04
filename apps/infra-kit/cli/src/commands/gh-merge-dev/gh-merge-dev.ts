@@ -2,7 +2,7 @@
 import checkbox from '@inquirer/checkbox'
 import confirm from '@inquirer/confirm'
 import process from 'node:process'
-import { z } from 'zod'
+import { z } from 'zod/v4'
 import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'

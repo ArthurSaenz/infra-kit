@@ -3,7 +3,7 @@ import { Buffer } from 'node:buffer'
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { z } from 'zod'
+import { z } from 'zod/v4'
 import { $ } from 'zx'
 
 import { validateDopplerCliAndAuth } from 'src/integrations/doppler'

@@ -38,6 +38,9 @@ vite.config.ts.timestamp-*.mjs
 # Environment
 **/.env
 
+# infra-kit local overrides
+infra-kit.local.yml
+
 # Linting & formatting
 **/.eslintcache
 

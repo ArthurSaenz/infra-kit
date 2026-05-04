@@ -1,1 +1,2 @@
-export { worktreesAdd, worktreesAddMcpTool } from './worktrees-add'
+export { CURSOR_MODES, worktreesAdd, worktreesAddMcpTool } from './worktrees-add'
+export type { CursorMode } from './worktrees-add'

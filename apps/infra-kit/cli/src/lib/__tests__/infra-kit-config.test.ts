@@ -14,17 +14,21 @@ vi.mock('src/lib/git-utils', () => {
   }
 })
 
-const VALID_YML = `dopplerProjectName: my-project
-environments:
+const VALID_YML = `environments:
   - dev
   - staging
-taskManagerProvider: linear
+envManagement:
+  provider: doppler
+  config:
+    name: my-project
 `
 
-const ALTERNATE_YML = `dopplerProjectName: other-project
-environments:
+const ALTERNATE_YML = `environments:
   - dev
-taskManagerProvider: false
+envManagement:
+  provider: doppler
+  config:
+    name: other-project
 `
 
 const withTmpRepo = async (fn: (tmp: string) => Promise<void>): Promise<void> => {
@@ -57,19 +61,65 @@ describe('getInfraKitConfig', () => {
 
       const cfg = await getInfraKitConfig()
 
-      expect(cfg.dopplerProjectName).toBe('my-project')
+      expect(cfg.envManagement.config.name).toBe('my-project')
       expect(cfg.environments).toEqual(['dev', 'staging'])
-      expect(cfg.taskManagerProvider).toBe('linear')
+      expect(cfg.taskManager).toBeUndefined()
+      expect(cfg.ide).toBeUndefined()
     })
   })
 
-  it('accepts taskManagerProvider: false as a literal boolean', async () => {
+  it('accepts ide and taskManager when provided', async () => {
     await withTmpRepo(async (tmp) => {
-      fs.writeFileSync(path.join(tmp, 'infra-kit.yml'), ALTERNATE_YML)
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.yml'),
+        `environments: [dev]
+envManagement:
+  provider: doppler
+  config:
+    name: p
+ide:
+  provider: cursor
+  config:
+    mode: workspace
+    workspaceConfigPath: ./ws.code-workspace
+taskManager:
+  provider: jira
+  config:
+    baseUrl: https://example.atlassian.net
+    projectId: 123
+`,
+      )
 
       const cfg = await getInfraKitConfig()
 
-      expect(cfg.taskManagerProvider).toBe(false)
+      expect(cfg.ide?.provider).toBe('cursor')
+
+      if (cfg.ide?.provider === 'cursor') {
+        expect(cfg.ide.config.mode).toBe('workspace')
+        expect(cfg.ide.config.workspaceConfigPath).toBe('./ws.code-workspace')
+      }
+
+      expect(cfg.taskManager?.provider).toBe('jira')
+    })
+  })
+
+  it('rejects ide.cursor mode=workspace without workspaceConfigPath', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.yml'),
+        `environments: [dev]
+envManagement:
+  provider: doppler
+  config:
+    name: p
+ide:
+  provider: cursor
+  config:
+    mode: workspace
+`,
+      )
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/workspaceConfigPath/)
     })
   })
 
@@ -83,7 +133,7 @@ describe('getInfraKitConfig', () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.yml'),
-        'dopplerProjectName: ""\nenvironments: []\ntaskManagerProvider: false\n',
+        'environments: []\nenvManagement:\n  provider: doppler\n  config:\n    name: ""\n',
       )
 
       await expect(getInfraKitConfig()).rejects.toThrow(/Invalid infra-kit.yml/)
@@ -98,7 +148,7 @@ describe('getInfraKitConfig', () => {
 
       const first = await getInfraKitConfig()
 
-      expect(first.dopplerProjectName).toBe('my-project')
+      expect(first.envManagement.config.name).toBe('my-project')
 
       // Advance mtime past the previous stat to simulate an edit; write new content.
       const future = new Date(Date.now() + 2_000)
@@ -108,7 +158,7 @@ describe('getInfraKitConfig', () => {
 
       const second = await getInfraKitConfig()
 
-      expect(second.dopplerProjectName).toBe('other-project')
+      expect(second.envManagement.config.name).toBe('other-project')
       expect(second.environments).toEqual(['dev'])
     })
   })

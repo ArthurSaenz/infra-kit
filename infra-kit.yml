@@ -1,8 +1,16 @@
-dopplerProjectName: infra-kit
-
 # `prod` env is protected from manual CLI commands
 environments:
   - dev
   - arthur
 
-taskManagerProvider: false
+envManagement:
+  provider: doppler
+  config:
+    name: infra-kit
+
+# Per-developer IDE config — copy uncommented into infra-kit.local.yml
+# ide:
+#   provider: cursor
+#   config:
+#     mode: workspace
+#     workspaceConfigPath: ../Main.code-workspace

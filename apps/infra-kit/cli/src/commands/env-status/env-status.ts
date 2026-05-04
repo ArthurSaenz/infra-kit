@@ -1,6 +1,6 @@
 import path from 'node:path'
 import process from 'node:process'
-import { z } from 'zod'
+import { z } from 'zod/v4'
 
 import { validateDopplerCliAndAuth } from 'src/integrations/doppler'
 import {

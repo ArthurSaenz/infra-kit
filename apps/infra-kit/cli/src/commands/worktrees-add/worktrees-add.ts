@@ -1,15 +1,18 @@
 /* eslint-disable sonarjs/cognitive-complexity */
 import checkbox from '@inquirer/checkbox'
 import confirm from '@inquirer/confirm'
+import select from '@inquirer/select'
 import process from 'node:process'
-import { z } from 'zod'
+import { z } from 'zod/v4'
 import { $ } from 'zx'
 
 import { buildCmuxWorkspaceTitle, openCmuxWorkspaceWithLayout } from 'src/integrations/cmux'
+import { addFoldersToCursorWorkspace, resolveCursorWorkspacePath } from 'src/integrations/cursor'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
+import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
@@ -20,10 +23,13 @@ const FEATURE_DIR = 'feature'
 const RELEASE_DIR = 'release'
 const RELEASE_BRANCH_PREFIX = 'release/v'
 
+export const CURSOR_MODES = ['workspace', 'windows', 'none'] as const
+export type CursorMode = (typeof CURSOR_MODES)[number]
+
 interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
   all: boolean
   versions?: string
-  cursor?: boolean
+  cursor?: CursorMode
   githubDesktop?: boolean
   cmux?: boolean
 }
@@ -124,17 +130,31 @@ export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<Too
       commandEcho.addOption('--yes', true)
     }
 
-    const openInCursor = cursor ?? (await confirm({ message: 'Open created worktrees in Cursor?' }))
+    const cursorMode: CursorMode =
+      cursor ??
+      (await select<CursorMode>({
+        message: 'Cursor mode for created worktrees?',
+        default: 'workspace',
+        choices: [
+          {
+            name: 'Add to workspace file',
+            value: 'workspace',
+            description: 'Append each worktree as a folder in ide.config.workspaceConfigPath, then open the workspace',
+          },
+          {
+            name: 'Open separate windows',
+            value: 'windows',
+            description: 'Open each created worktree in its own Cursor window',
+          },
+          { name: 'Skip', value: 'none', description: 'Do not open Cursor' },
+        ],
+      }))
 
     if (typeof cursor === 'undefined') {
       commandEcho.setInteractive()
     }
 
-    if (openInCursor) {
-      commandEcho.addOption('--cursor', true)
-    } else {
-      commandEcho.addOption('--no-cursor', true)
-    }
+    commandEcho.addOption('--cursor', cursorMode)
 
     const openInGithubDesktop =
       githubDesktop ?? (await confirm({ message: 'Open created worktrees in GitHub Desktop?' }))
@@ -170,7 +190,28 @@ export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<Too
 
     logResults(createdWorktrees)
 
-    if (openInCursor) {
+    if (cursorMode === 'workspace') {
+      const config = await getInfraKitConfig()
+      const cursorConfig = config.ide?.provider === 'cursor' ? config.ide.config : undefined
+
+      if (!cursorConfig?.workspaceConfigPath) {
+        logger.warn('⚠️ Skipping Cursor: ide.config.workspaceConfigPath is not set in infra-kit.yml')
+      } else {
+        const workspacePath = resolveCursorWorkspacePath(cursorConfig.workspaceConfigPath, projectRoot)
+
+        const folderPaths = createdWorktrees.map((branch) => {
+          return `${worktreeDir}/${branch}`
+        })
+
+        const { added, skipped } = await addFoldersToCursorWorkspace({ workspacePath, folderPaths })
+
+        const skippedSuffix = skipped.length > 0 ? ` (${skipped.length} already present)` : ''
+
+        logger.info(`✅ Added ${added.length} folder(s) to ${workspacePath}${skippedSuffix}`)
+
+        await $`cursor ${workspacePath}`
+      }
+    } else if (cursorMode === 'windows') {
       for (const branch of createdWorktrees) {
         await $`cursor ${worktreeDir}/${branch}`
       }
@@ -311,10 +352,10 @@ export const worktreesAddMcpTool = {
         'Comma-separated release versions to target (e.g. "1.2.5, 1.2.6"). Either "versions" or all=true must be provided for MCP calls. Overrides "all" when set.',
       ),
     cursor: z
-      .boolean()
+      .enum(CURSOR_MODES)
       .optional()
       .describe(
-        'Open each created worktree in Cursor. Defaults to false in MCP mode (the follow-up prompt is not shown).',
+        'Cursor open mode for created worktrees. "workspace" (default behavior when set interactively) appends each worktree as a folder to "ide.config.workspaceConfigPath" in infra-kit.yml and opens the workspace. "windows" opens each worktree in its own Cursor window. "none" skips Cursor. Defaults to "none" in MCP mode (the follow-up prompt is not shown).',
       ),
     githubDesktop: z
       .boolean()
