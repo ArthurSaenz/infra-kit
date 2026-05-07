@@ -68,8 +68,8 @@ importers:
         specifier: 'catalog:'
         version: 19.2.3(@types/react@19.2.14)
       infra-kit:
-        specifier: 0.1.95
-        version: 0.1.95(@types/node@25.6.0)
+        specifier: 0.1.98
+        version: 0.1.98(@types/node@25.6.0)
       shadcn:
         specifier: ^4.7.0
         version: 4.7.0(@types/node@25.6.0)(typescript@6.0.3)
@@ -3284,8 +3284,8 @@ packages:
     resolution: {integrity: sha512-k92I/b08q4wvFscXCLvqfsHCrjrF7yiXsQuIVvVE7N82W3+aqpzuUdBbfhWcy/FZR3/4IgflMgKLOsvPDrGCJA==}
     deprecated: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
 
-  infra-kit@0.1.95:
-    resolution: {integrity: sha512-/WwXc7t7cr85euugD3227kzuN7/KPjsFq4Fr45829Gwuq07ErZo0R0fyW77btY16B25IFMEp1bunt35/xG/LIQ==}
+  infra-kit@0.1.98:
+    resolution: {integrity: sha512-BiTbrKxLZ1OQGu/5dXWf34qNca5Fyf1k5DayUKZuFPYQYyrLPS3MEVD6/bky96RTKVxO+6BJjd/OcDgm+Ta7nQ==}
     engines: {node: '>=24.x'}
     hasBin: true
 
@@ -8195,7 +8195,7 @@ snapshots:
       wrappy: 1.0.2
     optional: true
 
-  infra-kit@0.1.95(@types/node@25.6.0):
+  infra-kit@0.1.98(@types/node@25.6.0):
     dependencies:
       '@inquirer/checkbox': 5.1.4(@types/node@25.6.0)
       '@inquirer/confirm': 6.0.12(@types/node@25.6.0)
