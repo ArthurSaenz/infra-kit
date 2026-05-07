@@ -1,3 +1,4 @@
 export { closeCmuxWorkspaceByTitle } from './close-workspace-by-title'
+export { listCmuxWorkspaceTitles } from './list-workspace-titles'
 export { openCmuxWorkspaceWithLayout } from './open-workspace-with-layout'
 export { buildCmuxWorkspaceTitle } from './workspace-title'

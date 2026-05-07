@@ -22,6 +22,29 @@ export const getCurrentWorktrees = async (type: 'release' | 'feature'): Promise<
 }
 
 /**
+ * Extract the branch name from a `git worktree list` output line.
+ *
+ * `git worktree list` formats each line as:
+ *   <path>  <hash> [<branch>]
+ *
+ * Reads the branch from the trailing `[branch]` token so it works for the
+ * main checkout too (whose path does not encode the branch name).
+ */
+const parseWorktreeBranch = (line: string): string | null => {
+  const trimmed = line.trimEnd()
+
+  if (!trimmed.endsWith(']')) return null
+
+  const open = trimmed.lastIndexOf('[')
+
+  if (open === -1) return null
+
+  const branch = trimmed.slice(open + 1, -1)
+
+  return branch.length > 0 ? branch : null
+}
+
+/**
  * Extract a release branch name from a `git worktree list` output line.
  *
  * Returns `null` for lines that are not release worktrees.
@@ -35,11 +58,9 @@ export const getCurrentWorktrees = async (type: 'release' | 'feature'): Promise<
  * // => null
  */
 const releaseWorktreePredicate = (line: string): string | null => {
-  const parts = line.split(' ').filter(Boolean)
+  const branch = parseWorktreeBranch(line)
 
-  if (parts.length < 3 || !parts[0]?.includes('release/v')) return null
-
-  return `release/${parts[0]?.split('/').pop() || ''}`
+  return branch?.startsWith('release/v') ? branch : null
 }
 
 /**
@@ -56,11 +77,9 @@ const releaseWorktreePredicate = (line: string): string | null => {
  * // => null
  */
 const featureWorktreePredicate = (line: string): string | null => {
-  const parts = line.split(' ').filter(Boolean)
+  const branch = parseWorktreeBranch(line)
 
-  if (parts.length < 3 || !parts[0]?.includes('feature/')) return null
-
-  return `feature/${parts[0]?.split('/').pop() || ''}`
+  return branch?.startsWith('feature/') ? branch : null
 }
 
 /**

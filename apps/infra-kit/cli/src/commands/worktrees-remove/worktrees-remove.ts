@@ -116,6 +116,7 @@ export const worktreesRemove = async (options: WorktreeManagementArgs): Promise<
       branches: selectedReleaseBranches,
       worktreeDir,
       repoName,
+      allSelected,
     })
 
     await syncCursorWorkspaceOnRemove({ removedWorktrees, worktreeDir, projectRoot })
@@ -148,13 +149,14 @@ interface RemoveWorktreesArgs {
   branches: string[]
   worktreeDir: string
   repoName: string
+  allSelected: boolean
 }
 
 /**
  * Remove worktrees for the specified branches and whole folder
  */
 const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string[]> => {
-  const { branches, worktreeDir, repoName } = args
+  const { branches, worktreeDir, repoName, allSelected } = args
 
   const results = await Promise.allSettled(
     branches.map(async (branch) => {
@@ -182,7 +184,7 @@ const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string[]> => 
     }
   }
 
-  if (removed.length === branches.length) {
+  if (allSelected && removed.length === branches.length) {
     await $`git worktree prune`
     await $`rm -rf ${worktreeDir}`
 

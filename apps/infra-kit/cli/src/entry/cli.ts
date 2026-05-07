@@ -2,6 +2,7 @@ import select, { Separator } from '@inquirer/select'
 import { Command, Option } from 'commander'
 import process from 'node:process'
 
+import { configEdit, configPath } from 'src/commands/config'
 import { doctor } from 'src/commands/doctor'
 import { envClear } from 'src/commands/env-clear'
 import { envList } from 'src/commands/env-list'
@@ -19,6 +20,7 @@ import { version } from 'src/commands/version'
 import { CURSOR_MODES, worktreesAdd } from 'src/commands/worktrees-add'
 import type { CursorMode } from 'src/commands/worktrees-add'
 import { worktreesList } from 'src/commands/worktrees-list'
+import { worktreesOpen } from 'src/commands/worktrees-open'
 import { worktreesRemove } from 'src/commands/worktrees-remove'
 import { worktreesSync } from 'src/commands/worktrees-sync'
 import { logger } from 'src/lib/logger'
@@ -79,25 +81,29 @@ program
 program
   .command('release-create')
   .description('Create a single release branch')
-  .option('-v, --version <version>', 'Specify the version to create, e.g. 1.2.5')
+  .option(
+    '-v, --version <version>',
+    'Version to create, e.g. "1.2.5", "next", or "next,next,1.2.7" (multi-value routes to batch)',
+  )
   .option('-d, --description <description>', 'Optional description for the Jira version')
   .addOption(new Option('-t, --type <type>', 'Release type (default: regular)').choices(['regular', 'hotfix']))
   .option('-y, --yes', 'Skip confirmation prompt')
-  .option('--no-checkout', 'Do not checkout the created branch after creation (checkout is default)')
   .action(async (options) => {
     await releaseCreate({
       version: options.version,
       description: options.description,
       type: options.type,
       confirmedCommand: options.yes,
-      checkout: options.checkout,
     })
   })
 
 program
   .command('release-create-batch')
   .description('Create multiple release branches (batch operation)')
-  .option('-v, --versions <versions>', 'Specify the versions to create by comma, e.g. 1.2.5, 1.2.6')
+  .option(
+    '-v, --versions <versions>',
+    'Comma-separated versions, e.g. "1.2.5, 1.2.6", "next,next", or "next,next,1.2.7"',
+  )
   .addOption(new Option('-t, --type <type>', 'Release type (default: regular)').choices(['regular', 'hotfix']))
   .option('-y, --yes', 'Skip confirmation prompt')
   .action(async (options) => {
@@ -192,6 +198,29 @@ program
   })
 
 program
+  .command('worktrees-open')
+  .description('Open Cursor + cmux for existing release worktrees (cold-start restore)')
+  .action(async () => {
+    await worktreesOpen()
+  })
+
+const configCmd = program.command('config').description('Manage infra-kit configuration files')
+
+configCmd
+  .command('path')
+  .description('Show the resolved config merge chain and file paths')
+  .action(async () => {
+    await configPath()
+  })
+
+configCmd
+  .command('edit')
+  .description('Open the user-scope per-project override file in $EDITOR')
+  .action(async () => {
+    await configEdit()
+  })
+
+program
   .command('doctor')
   .description('Check installation and authentication status of gh and doppler CLIs')
   .action(async () => {
@@ -251,8 +280,8 @@ if (process.argv.length <= 2) {
     'release-deploy-selected',
     'release-deliver',
   ]
-  const worktreeCommands = ['worktrees-add', 'worktrees-list', 'worktrees-remove', 'worktrees-sync']
-  const envCommands = ['doctor', 'init', 'version', 'env-status', 'env-list', 'env-load', 'env-clear']
+  const worktreeCommands = ['worktrees-add', 'worktrees-list', 'worktrees-open', 'worktrees-remove', 'worktrees-sync']
+  const envCommands = ['doctor', 'init', 'version', 'config', 'env-status', 'env-list', 'env-load', 'env-clear']
 
   const commandMap = new Map(
     program.commands.map((cmd) => {

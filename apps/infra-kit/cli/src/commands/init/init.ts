@@ -10,8 +10,33 @@ export const MARKER_END = '# -- infra-kit:end --'
 const LEGACY_PAIRED: [start: string, end: string][] = [['# region infra-kit', '# endregion infra-kit']]
 const LEGACY_SINGLE = '# infra-kit shell functions'
 
+const USER_GLOBAL_CONFIG_STUB = `# infra-kit user-global config
+#
+# Shared across every project on this machine. Loaded after each project's
+# infra-kit.yml and before ~/.infra-kit/projects/<repo-name>/infra-kit.yml.
+#
+# Top-level keys (envManagement, ide, taskManager, environments) replace
+# wholesale when set here. Uncomment values you want to apply globally.
+
+# Per-developer IDE config
+# ide:
+#   provider: cursor
+#   config:
+#     mode: workspace
+#     workspaceConfigPath: ../Main.code-workspace
+`
+
 /**
- * Append infra-kit shell functions directly to .zshrc.
+ * Append infra-kit shell functions to .zshrc and seed the user-global
+ * config stub at ~/.infra-kit/config.yml on first run. Idempotent: a
+ * subsequent run replaces the existing zshrc block in place and leaves
+ * the user-global config untouched.
+ *
+ * @example
+ * // CLI: `infra-kit init`  (or via the `pnpm dx-init` alias)
+ * // INFO: Added infra-kit shell functions to /Users/me/.zshrc
+ * // INFO: Wrote user-global config stub to /Users/me/.infra-kit/config.yml
+ * // INFO: Run `source ~/.zshrc` or open a new terminal to activate.
  */
 export const init = async (): Promise<void> => {
   const zshrcPath = path.join(os.homedir(), '.zshrc')
@@ -26,7 +51,35 @@ export const init = async (): Promise<void> => {
 
   fs.appendFileSync(zshrcPath, `\n${shellBlock}\n`)
   logger.info(`Added infra-kit shell functions to ${zshrcPath}`)
+
+  seedUserGlobalConfig()
+
   logger.info('Run `source ~/.zshrc` or open a new terminal to activate.')
+}
+
+/**
+ * Create `~/.infra-kit/config.yml` with the documented stub when absent.
+ * Skips silently if the file already exists so user edits are preserved.
+ *
+ * @example
+ * seedUserGlobalConfig()
+ * // first call:  writes ~/.infra-kit/config.yml from USER_GLOBAL_CONFIG_STUB
+ * // later calls: leaves the file alone, logs that it is already present
+ */
+const seedUserGlobalConfig = (): void => {
+  const userConfigDir = path.join(os.homedir(), '.infra-kit')
+  const userConfigPath = path.join(userConfigDir, 'config.yml')
+
+  if (fs.existsSync(userConfigPath)) {
+    logger.info(`User-global config already present at ${userConfigPath}`)
+
+    return
+  }
+
+  fs.mkdirSync(userConfigDir, { recursive: true })
+  fs.writeFileSync(userConfigPath, USER_GLOBAL_CONFIG_STUB, 'utf-8')
+
+  logger.info(`Wrote user-global config stub to ${userConfigPath}`)
 }
 
 const isBlockLine = (line: string): boolean => {

@@ -4,13 +4,14 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Import AFTER the mock is declared so the module picks up the mocked dep.
-import { getProjectRoot } from 'src/lib/git-utils'
+import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 
 import { getInfraKitConfig, resetInfraKitConfigCache } from '../infra-kit-config'
 
 vi.mock('src/lib/git-utils', () => {
   return {
     getProjectRoot: vi.fn(),
+    getRepoName: vi.fn(),
   }
 })
 
@@ -35,6 +36,7 @@ const withTmpRepo = async (fn: (tmp: string) => Promise<void>): Promise<void> =>
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'infra-kit-config-test-'))
 
   vi.mocked(getProjectRoot).mockResolvedValue(tmp)
+  vi.mocked(getRepoName).mockResolvedValue(path.basename(tmp))
   resetInfraKitConfigCache()
 
   try {

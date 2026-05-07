@@ -6,11 +6,9 @@ import { $ } from 'zx'
 
 import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
 import { getProjectRoot } from 'src/lib/git-utils/git-utils'
-import { getInfraKitConfig, resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
+import { getInfraKitConfig, getInfraKitConfigPaths, resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import type { ToolsExecutionResult } from 'src/types'
-
-const LOCAL_CONFIG_FILE = 'infra-kit.local.yml'
 
 interface CheckResult {
   name: string
@@ -110,32 +108,43 @@ const checkInfraKitConfigValid = async (): Promise<CheckResult> => {
     return {
       name,
       status: 'pass',
-      message: 'infra-kit.yml is valid (infra-kit.local.yml overrides applied if present)',
+      message: 'infra-kit.yml is valid (user overrides applied if present)',
     }
   } catch (err) {
     return { name, status: 'fail', message: (err as Error).message }
   }
 }
 
-const checkLocalConfigGitignored = async (): Promise<CheckResult> => {
-  const name = 'infra-kit.local.yml gitignored'
+/**
+ * Surface where this developer's user-scope override file would live and
+ * whether it has been created. Always passes — informational only — so the
+ * user knows the resolved project name and target path at a glance.
+ *
+ * @example
+ * await checkUserOverridePath()
+ * // {
+ * //   name: 'user override path',
+ * //   status: 'pass',
+ * //   message: '~/.infra-kit/projects/api/infra-kit.yml (not yet created) — project: api',
+ * // }
+ */
+const checkUserOverridePath = async (): Promise<CheckResult> => {
+  const name = 'user override path'
 
   try {
-    const root = await getProjectRoot()
+    const paths = await getInfraKitConfigPaths()
+    const home = os.homedir()
+    const display = paths.userProject.startsWith(home) ? `~${paths.userProject.slice(home.length)}` : paths.userProject
+    const exists = fs.existsSync(paths.userProject)
+    const suffix = exists ? '(exists)' : '(not yet created)'
 
-    await $({ cwd: root, nothrow: true })`git check-ignore -q ${LOCAL_CONFIG_FILE}`.then((result) => {
-      if (result.exitCode !== 0) {
-        throw new Error('not ignored')
-      }
-    })
-
-    return { name, status: 'pass', message: `${LOCAL_CONFIG_FILE} is covered by .gitignore` }
-  } catch {
     return {
       name,
-      status: 'fail',
-      message: `${LOCAL_CONFIG_FILE} is not gitignored. Add "${LOCAL_CONFIG_FILE}" to .gitignore.`,
+      status: 'pass',
+      message: `${display} ${suffix} — project: ${paths.projectName}`,
     }
+  } catch (err) {
+    return { name, status: 'fail', message: (err as Error).message }
   }
 }
 
@@ -184,7 +193,7 @@ export const doctor = async (): Promise<ToolsExecutionResult> => {
     Promise.resolve(checkZshrcInitialized()),
     checkPnpmWorkspaceVirtualStore(),
     checkInfraKitConfigValid(),
-    checkLocalConfigGitignored(),
+    checkUserOverridePath(),
   ])
 
   logger.info('Doctor check results:\n')
