@@ -105,7 +105,7 @@ export const configEdit = async (): Promise<ToolsExecutionResult> => {
   await fs.mkdir(path.dirname(paths.userProject), { recursive: true })
 
   if (!(await fileExists(paths.userProject))) {
-    const stub = `# infra-kit user override for ${paths.projectName}\n# This file is shallow-merged on top of project infra-kit.yml.\n# Top-level keys (envManagement, ide, taskManager, environments) replace wholesale.\n`
+    const stub = `# infra-kit user override for ${paths.projectName} — ~/.infra-kit/projects/${paths.projectName}/infra-kit.yml\n#\n# Layer 3 (highest precedence) of the config merge chain. Shallow-merged on\n# top of <repo>/infra-kit.yml and ~/.infra-kit/config.yml — top-level keys\n# (environments, envManagement, ide, taskManager, worktrees) replace wholesale.\n`
 
     await fs.writeFile(paths.userProject, stub, 'utf-8')
   }

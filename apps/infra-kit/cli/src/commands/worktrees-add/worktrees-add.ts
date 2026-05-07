@@ -130,8 +130,12 @@ export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<Too
       commandEcho.addOption('--yes', true)
     }
 
+    const config = await getInfraKitConfig()
+    const cursorConfig = config.ide?.provider === 'cursor' ? config.ide.config : undefined
+
     const cursorMode: CursorMode =
       cursor ??
+      cursorConfig?.mode ??
       (await select<CursorMode>({
         message: 'Cursor mode for created worktrees?',
         default: 'workspace',
@@ -150,16 +154,18 @@ export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<Too
         ],
       }))
 
-    if (typeof cursor === 'undefined') {
+    if (typeof cursor === 'undefined' && !cursorConfig?.mode) {
       commandEcho.setInteractive()
     }
 
     commandEcho.addOption('--cursor', cursorMode)
 
     const openInGithubDesktop =
-      githubDesktop ?? (await confirm({ message: 'Open created worktrees in GitHub Desktop?' }))
+      githubDesktop ??
+      config.worktrees?.openInGithubDesktop ??
+      (await confirm({ message: 'Open created worktrees in GitHub Desktop?' }))
 
-    if (typeof githubDesktop === 'undefined') {
+    if (typeof githubDesktop === 'undefined' && config.worktrees?.openInGithubDesktop === undefined) {
       commandEcho.setInteractive()
     }
 
@@ -169,9 +175,10 @@ export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<Too
       commandEcho.addOption('--no-github-desktop', true)
     }
 
-    const openInCmux = cmux ?? (await confirm({ message: 'Open created worktrees in cmux?' }))
+    const openInCmux =
+      cmux ?? config.worktrees?.openInCmux ?? (await confirm({ message: 'Open created worktrees in cmux?' }))
 
-    if (typeof cmux === 'undefined') {
+    if (typeof cmux === 'undefined' && config.worktrees?.openInCmux === undefined) {
       commandEcho.setInteractive()
     }
 
@@ -191,11 +198,8 @@ export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<Too
     logResults(createdWorktrees)
 
     if (cursorMode === 'workspace') {
-      const config = await getInfraKitConfig()
-      const cursorConfig = config.ide?.provider === 'cursor' ? config.ide.config : undefined
-
       if (!cursorConfig?.workspaceConfigPath) {
-        logger.warn('⚠️ Skipping Cursor: ide.config.workspaceConfigPath is not set in infra-kit.yml')
+        logger.warn('⚠️ Skipping Cursor: ide.config.workspaceConfigPath is not set in infra-kit config')
       } else {
         const workspacePath = resolveCursorWorkspacePath(cursorConfig.workspaceConfigPath, projectRoot)
 
@@ -355,19 +359,19 @@ export const worktreesAddMcpTool = {
       .enum(CURSOR_MODES)
       .optional()
       .describe(
-        'Cursor open mode for created worktrees. "workspace" (default behavior when set interactively) appends each worktree as a folder to "ide.config.workspaceConfigPath" in infra-kit.yml and opens the workspace. "windows" opens each worktree in its own Cursor window. "none" skips Cursor. Defaults to "none" in MCP mode (the follow-up prompt is not shown).',
+        'Cursor open mode for created worktrees. "workspace" appends each worktree as a folder to "ide.config.workspaceConfigPath" in infra-kit config and opens the workspace. "windows" opens each worktree in its own Cursor window. "none" skips Cursor. Resolution order: this flag → "ide.config.mode" from infra-kit config → interactive prompt (CLI) / "none" (MCP, no TTY).',
       ),
     githubDesktop: z
       .boolean()
       .optional()
       .describe(
-        'Open each created worktree in GitHub Desktop. Defaults to false in MCP mode (the follow-up prompt is not shown).',
+        'Open each created worktree in GitHub Desktop. Resolution order: this flag → "worktrees.openInGithubDesktop" from infra-kit config → interactive prompt (CLI) / false (MCP, no TTY).',
       ),
     cmux: z
       .boolean()
       .optional()
       .describe(
-        'Open each created worktree in a new cmux workspace with a 3-pane layout (left-top, left-bottom, full-height right), all rooted at the worktree directory. Defaults to false in MCP mode (the follow-up prompt is not shown).',
+        'Open each created worktree in a new cmux workspace with a 3-pane layout (left-top, left-bottom, full-height right), all rooted at the worktree directory. Resolution order: this flag → "worktrees.openInCmux" from infra-kit config → interactive prompt (CLI) / false (MCP, no TTY).',
       ),
   },
   outputSchema: {

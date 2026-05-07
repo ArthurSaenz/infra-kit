@@ -4,8 +4,8 @@ import {
   NoPriorVersionsError,
   collectKnownVersions,
   computeNextVersion,
-  resolveVersionTokens,
-  splitVersionInput,
+  parseReleaseSpec,
+  resolveReleaseEntries,
 } from '../next-version'
 
 describe('collectKnownVersions', () => {
@@ -70,43 +70,148 @@ describe('computeNextVersion', () => {
   })
 })
 
-describe('resolveVersionTokens', () => {
-  const known = collectKnownVersions({ remoteBranches: ['release/v1.63.0'] })
-
-  it('resolves "next,next" sequentially for regular', () => {
-    expect(resolveVersionTokens(['next', 'next'], 'regular', known)).toEqual(['1.64.0', '1.65.0'])
+describe('parseReleaseSpec', () => {
+  it('parses bare version as regular with no description', () => {
+    expect(parseReleaseSpec('1.2.5')).toEqual({ version: '1.2.5', type: 'regular' })
   })
 
-  it('mixes literals and next, advancing running max', () => {
-    expect(resolveVersionTokens(['next', '1.70.0', 'next'], 'regular', known)).toEqual(['1.64.0', '1.70.0', '1.71.0'])
+  it('parses version:type', () => {
+    expect(parseReleaseSpec('1.2.5:hotfix')).toEqual({ version: '1.2.5', type: 'hotfix' })
   })
 
-  it('accepts NEXT and " next " (case + whitespace insensitive)', () => {
-    expect(resolveVersionTokens(['NEXT', ' next '], 'regular', known)).toEqual(['1.64.0', '1.65.0'])
+  it('parses version:type:description', () => {
+    expect(parseReleaseSpec('1.2.5:regular:Holiday backend')).toEqual({
+      version: '1.2.5',
+      type: 'regular',
+      description: 'Holiday backend',
+    })
   })
 
-  it('strips leading v on explicit versions', () => {
-    expect(resolveVersionTokens(['v1.70.0'], 'regular', known)).toEqual(['1.70.0'])
+  it('preserves colons inside the description', () => {
+    expect(parseReleaseSpec('1.2.5:regular:Fixes: A and B')).toEqual({
+      version: '1.2.5',
+      type: 'regular',
+      description: 'Fixes: A and B',
+    })
   })
 
-  it('throws on invalid token', () => {
+  it('accepts the literal "next" token', () => {
+    expect(parseReleaseSpec('next:hotfix')).toEqual({ version: 'next', type: 'hotfix' })
+  })
+
+  it('lowercases the type', () => {
+    expect(parseReleaseSpec('1.2.5:HOTFIX')).toEqual({ version: '1.2.5', type: 'hotfix' })
+  })
+
+  it('drops empty description', () => {
+    expect(parseReleaseSpec('1.2.5:regular:')).toEqual({ version: '1.2.5', type: 'regular' })
+  })
+
+  it('throws on unknown type', () => {
     expect(() => {
-      return resolveVersionTokens(['nope'], 'regular', known)
-    }).toThrow(/Invalid version/)
+      return parseReleaseSpec('1.2.5:major')
+    }).toThrow(/Invalid release type/)
   })
 
-  it('hotfix sequence advances patch each step', () => {
-    expect(resolveVersionTokens(['next', 'next'], 'hotfix', known)).toEqual(['1.63.1', '1.63.2'])
+  it('throws on empty spec', () => {
+    expect(() => {
+      return parseReleaseSpec('   ')
+    }).toThrow(/empty/)
   })
 })
 
-describe('splitVersionInput', () => {
-  it('splits comma-separated input and trims', () => {
-    expect(splitVersionInput(' 1.2.3 , next, ,1.2.4 ')).toEqual(['1.2.3', 'next', '1.2.4'])
+describe('resolveReleaseEntries', () => {
+  const known = collectKnownVersions({ remoteBranches: ['release/v1.63.0'] })
+
+  it('passes through explicit semver entries unchanged', () => {
+    expect(
+      resolveReleaseEntries(
+        [
+          { version: '1.70.0', type: 'regular' },
+          { version: 'v1.70.1', type: 'hotfix' },
+        ],
+        known,
+      ),
+    ).toEqual([
+      { version: '1.70.0', type: 'regular' },
+      { version: '1.70.1', type: 'hotfix' },
+    ])
   })
 
-  it('returns empty array for empty input', () => {
-    expect(splitVersionInput('')).toEqual([])
-    expect(splitVersionInput('   ')).toEqual([])
+  it('resolves a single "next" using the entry type', () => {
+    expect(resolveReleaseEntries([{ version: 'next', type: 'regular' }], known)).toEqual([
+      { version: '1.64.0', type: 'regular' },
+    ])
+  })
+
+  it('advances sequential "next" tokens of the same type', () => {
+    expect(
+      resolveReleaseEntries(
+        [
+          { version: 'next', type: 'regular' },
+          { version: 'next', type: 'regular' },
+        ],
+        known,
+      ),
+    ).toEqual([
+      { version: '1.64.0', type: 'regular' },
+      { version: '1.65.0', type: 'regular' },
+    ])
+  })
+
+  it('advances sequential "next" tokens across mixed types', () => {
+    expect(
+      resolveReleaseEntries(
+        [
+          { version: 'next', type: 'regular' },
+          { version: 'next', type: 'hotfix' },
+        ],
+        known,
+      ),
+    ).toEqual([
+      { version: '1.64.0', type: 'regular' },
+      { version: '1.64.1', type: 'hotfix' },
+    ])
+  })
+
+  it('mixes literals and "next", advancing the running max', () => {
+    expect(
+      resolveReleaseEntries(
+        [
+          { version: 'next', type: 'regular' },
+          { version: '1.70.0', type: 'regular' },
+          { version: 'next', type: 'regular' },
+        ],
+        known,
+      ),
+    ).toEqual([
+      { version: '1.64.0', type: 'regular' },
+      { version: '1.70.0', type: 'regular' },
+      { version: '1.71.0', type: 'regular' },
+    ])
+  })
+
+  it('preserves description through resolution', () => {
+    expect(resolveReleaseEntries([{ version: 'next', type: 'regular', description: 'Holiday' }], known)).toEqual([
+      { version: '1.64.0', type: 'regular', description: 'Holiday' },
+    ])
+  })
+
+  it('accepts case-insensitive "next"', () => {
+    expect(resolveReleaseEntries([{ version: 'NEXT', type: 'regular' }], known)).toEqual([
+      { version: '1.64.0', type: 'regular' },
+    ])
+  })
+
+  it('throws on invalid version', () => {
+    expect(() => {
+      return resolveReleaseEntries([{ version: 'nope', type: 'regular' }], known)
+    }).toThrow(/Invalid version/)
+  })
+
+  it('throws NoPriorVersionsError when "next" with no known versions', () => {
+    expect(() => {
+      return resolveReleaseEntries([{ version: 'next', type: 'regular' }], [])
+    }).toThrow(NoPriorVersionsError)
   })
 })

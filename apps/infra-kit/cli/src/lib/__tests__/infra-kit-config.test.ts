@@ -37,11 +37,17 @@ const withTmpRepo = async (fn: (tmp: string) => Promise<void>): Promise<void> =>
 
   vi.mocked(getProjectRoot).mockResolvedValue(tmp)
   vi.mocked(getRepoName).mockResolvedValue(path.basename(tmp))
+  // Point os.homedir() at the tmp dir so user-scope override layers
+  // (~/.infra-kit/config.yml, ~/.infra-kit/projects/<repo>/infra-kit.yml)
+  // can't leak the developer's real config into the test.
+  const homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmp)
+
   resetInfraKitConfigCache()
 
   try {
     await fn(tmp)
   } finally {
+    homedirSpy.mockRestore()
     resetInfraKitConfigCache()
     fs.rmSync(tmp, { recursive: true, force: true })
   }
@@ -102,6 +108,50 @@ taskManager:
       }
 
       expect(cfg.taskManager?.provider).toBe('jira')
+    })
+  })
+
+  it('accepts a worktrees prompt-defaults block', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.yml'),
+        `environments: [dev]
+envManagement:
+  provider: doppler
+  config:
+    name: p
+worktrees:
+  openInGithubDesktop: false
+  openInCmux: true
+`,
+      )
+
+      const cfg = await getInfraKitConfig()
+
+      expect(cfg.worktrees?.openInGithubDesktop).toBe(false)
+      expect(cfg.worktrees?.openInCmux).toBe(true)
+    })
+  })
+
+  it('lets the user-global config layer supply a worktrees block when the project omits it', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.yml'), VALID_YML)
+
+      const userGlobalDir = path.join(tmp, '.infra-kit')
+
+      fs.mkdirSync(userGlobalDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(userGlobalDir, 'config.yml'),
+        `worktrees:
+  openInGithubDesktop: false
+  openInCmux: true
+`,
+      )
+
+      const cfg = await getInfraKitConfig()
+
+      expect(cfg.worktrees?.openInGithubDesktop).toBe(false)
+      expect(cfg.worktrees?.openInCmux).toBe(true)
     })
   })
 

@@ -10,20 +10,31 @@ export const MARKER_END = '# -- infra-kit:end --'
 const LEGACY_PAIRED: [start: string, end: string][] = [['# region infra-kit', '# endregion infra-kit']]
 const LEGACY_SINGLE = '# infra-kit shell functions'
 
-const USER_GLOBAL_CONFIG_STUB = `# infra-kit user-global config
+const USER_GLOBAL_CONFIG_STUB = `# infra-kit user-global config — ~/.infra-kit/config.yml
 #
-# Shared across every project on this machine. Loaded after each project's
-# infra-kit.yml and before ~/.infra-kit/projects/<repo-name>/infra-kit.yml.
+# Merge chain (later layers override earlier ones at top-level keys):
+#   1. <repo>/infra-kit.yml                            — committed project config (required)
+#   2. ~/.infra-kit/config.yml                         — this file (user-global)
+#   3. ~/.infra-kit/projects/<repo-name>/infra-kit.yml — user-scope per-project override
 #
-# Top-level keys (envManagement, ide, taskManager, environments) replace
-# wholesale when set here. Uncomment values you want to apply globally.
+# Merge is shallow: setting a top-level key here replaces that whole section
+# from layer 1. Arrays do not concatenate. Top-level keys recognized:
+# environments, envManagement, ide, taskManager, worktrees.
+#
+# Uncomment the blocks you want to apply globally across every project on this
+# machine. Per-project tweaks belong in layer 3 — run \`infra-kit config edit\`.
 
 # Per-developer IDE config
 # ide:
 #   provider: cursor
 #   config:
 #     mode: workspace
-#     workspaceConfigPath: ../Main.code-workspace
+#     workspaceConfigPath: /path/to/your.code-workspace
+
+# Worktree prompt defaults — silences the follow-up prompts in \`worktrees-add\`
+# worktrees:
+#   openInGithubDesktop: false
+#   openInCmux: true
 `
 
 /**

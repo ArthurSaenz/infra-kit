@@ -1,5 +1,5 @@
 import select, { Separator } from '@inquirer/select'
-import { Command, Option } from 'commander'
+import { Command } from 'commander'
 import process from 'node:process'
 
 import { configEdit, configPath } from 'src/commands/config'
@@ -15,7 +15,6 @@ import { ghReleaseDeploySelected } from 'src/commands/gh-release-deploy-selected
 import { ghReleaseList } from 'src/commands/gh-release-list'
 import { init } from 'src/commands/init'
 import { releaseCreate } from 'src/commands/release-create'
-import { releaseCreateBatch } from 'src/commands/release-create-batch'
 import { version } from 'src/commands/version'
 import { CURSOR_MODES, worktreesAdd } from 'src/commands/worktrees-add'
 import type { CursorMode } from 'src/commands/worktrees-add'
@@ -24,8 +23,13 @@ import { worktreesOpen } from 'src/commands/worktrees-open'
 import { worktreesRemove } from 'src/commands/worktrees-remove'
 import { worktreesSync } from 'src/commands/worktrees-sync'
 import { logger } from 'src/lib/logger'
+import { parseReleaseSpec } from 'src/lib/version-utils'
 
 const program = new Command()
+
+const collectReleaseSpec = (value: string, prev: string[]): string[] => {
+  return [...prev, value]
+}
 
 const normalizeCursorMode = (value: unknown): CursorMode | undefined => {
   if (typeof value === 'undefined') {
@@ -80,36 +84,20 @@ program
 
 program
   .command('release-create')
-  .description('Create a single release branch')
+  .description('Create one or more release branches (each entry can mix regular/hotfix and its own description)')
   .option(
-    '-v, --version <version>',
-    'Version to create, e.g. "1.2.5", "next", or "next,next,1.2.7" (multi-value routes to batch)',
+    '-r, --release <spec>',
+    'Release spec "version[:type[:description]]" (repeatable). Examples: "1.2.5", "1.2.5:hotfix", "next:regular:Holiday backend"',
+    collectReleaseSpec,
+    [],
   )
-  .option('-d, --description <description>', 'Optional description for the Jira version')
-  .addOption(new Option('-t, --type <type>', 'Release type (default: regular)').choices(['regular', 'hotfix']))
   .option('-y, --yes', 'Skip confirmation prompt')
   .action(async (options) => {
-    await releaseCreate({
-      version: options.version,
-      description: options.description,
-      type: options.type,
-      confirmedCommand: options.yes,
-    })
-  })
+    const specs = options.release as string[]
+    const releases = specs.length > 0 ? specs.map(parseReleaseSpec) : undefined
 
-program
-  .command('release-create-batch')
-  .description('Create multiple release branches (batch operation)')
-  .option(
-    '-v, --versions <versions>',
-    'Comma-separated versions, e.g. "1.2.5, 1.2.6", "next,next", or "next,next,1.2.7"',
-  )
-  .addOption(new Option('-t, --type <type>', 'Release type (default: regular)').choices(['regular', 'hotfix']))
-  .option('-y, --yes', 'Skip confirmation prompt')
-  .action(async (options) => {
-    await releaseCreateBatch({
-      versions: options.versions,
-      type: options.type,
+    await releaseCreate({
+      releases,
       confirmedCommand: options.yes,
     })
   })
@@ -275,7 +263,6 @@ if (process.argv.length <= 2) {
     'merge-dev',
     'release-list',
     'release-create',
-    'release-create-batch',
     'release-deploy-all',
     'release-deploy-selected',
     'release-deliver',

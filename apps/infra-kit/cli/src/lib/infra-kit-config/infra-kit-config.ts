@@ -56,11 +56,18 @@ const jiraTaskManagerSchema = z.object({
 
 const taskManagerSchema = z.discriminatedUnion('provider', [jiraTaskManagerSchema])
 
+// worktrees prompt defaults
+const worktreesConfigSchema = z.object({
+  openInGithubDesktop: z.boolean().optional(),
+  openInCmux: z.boolean().optional(),
+})
+
 const infraKitConfigSchema = z.object({
   environments: z.array(z.string().min(1)).min(1),
   envManagement: envManagementSchema,
   ide: ideSchema.optional(),
   taskManager: taskManagerSchema.optional(),
+  worktrees: worktreesConfigSchema.optional(),
 })
 
 const infraKitOverrideConfigSchema = infraKitConfigSchema.partial()

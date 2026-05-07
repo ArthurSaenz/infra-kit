@@ -97,26 +97,73 @@ const isNextToken = (token: string): boolean => {
   return token.trim().toLowerCase() === NEXT_TOKEN
 }
 
+export interface ReleaseEntry {
+  version: string
+  type: ReleaseType
+  description?: string
+}
+
+const isReleaseType = (value: string): value is ReleaseType => {
+  return value === 'regular' || value === 'hotfix'
+}
+
 /**
- * Resolve a list of input tokens (mix of "next" and explicit semver strings)
- * into concrete version strings. Each "next" advances based on the running
- * max so "next,next" produces sequential versions.
+ * Parse a CLI release spec of the form `version[:type[:description]]`.
+ * Type defaults to "regular". Description is everything after the second
+ * colon, so colons inside descriptions are preserved.
  */
-export const resolveVersionTokens = (tokens: string[], type: ReleaseType, known: SemVer[]): string[] => {
+export const parseReleaseSpec = (raw: string): ReleaseEntry => {
+  const spec = raw.trim()
+
+  if (spec === '') throw new Error('Release spec is empty')
+
+  const firstColon = spec.indexOf(':')
+
+  if (firstColon === -1) {
+    return { version: spec, type: 'regular' }
+  }
+
+  const version = spec.slice(0, firstColon).trim()
+  const rest = spec.slice(firstColon + 1)
+  const secondColon = rest.indexOf(':')
+
+  const typeRaw = secondColon === -1 ? rest.trim() : rest.slice(0, secondColon).trim()
+  const description = secondColon === -1 ? '' : rest.slice(secondColon + 1).trim()
+  const typeLower = typeRaw.toLowerCase()
+
+  if (!isReleaseType(typeLower)) {
+    throw new Error(`Invalid release type "${typeRaw}". Expected "regular" or "hotfix".`)
+  }
+
+  const entry: ReleaseEntry = { version, type: typeLower }
+
+  if (description !== '') entry.description = description
+
+  return entry
+}
+
+/**
+ * Resolve a list of release entries (each with its own type and optional
+ * "next" version token) into entries with concrete versions. Each "next"
+ * advances based on the running max so successive "next" tokens produce
+ * sequential versions, even across mixed types.
+ */
+export const resolveReleaseEntries = (entries: ReleaseEntry[], known: SemVer[]): ReleaseEntry[] => {
   const running: SemVer[] = [...known]
-  const resolved: string[] = []
 
-  for (const token of tokens) {
-    const trimmed = token.trim()
+  return entries.map((entry) => {
+    const trimmed = entry.version.trim()
 
-    if (trimmed === '') continue
+    if (trimmed === '') {
+      throw new Error('Release entry has an empty version')
+    }
 
     if (isNextToken(trimmed)) {
-      const next = computeNextVersion(running, type)
+      const next = computeNextVersion(running, entry.type)
 
-      resolved.push(next)
       running.push(parseVersion(`v${next}`))
-      continue
+
+      return { ...entry, version: next }
     }
 
     const parsed = tryParse(trimmed)
@@ -127,22 +174,14 @@ export const resolveVersionTokens = (tokens: string[], type: ReleaseType, known:
 
     const explicit = `${parsed[0]}.${parsed[1]}.${parsed[2]}`
 
-    resolved.push(explicit)
     running.push(parsed)
-  }
 
-  return resolved
+    return { ...entry, version: explicit }
+  })
 }
 
-/**
- * Split a raw user input into tokens, trimming and removing empties.
- * Accepts both whitespace-separated and comma-separated lists.
- */
-export const splitVersionInput = (input: string): string[] => {
-  return input
-    .split(',')
-    .map((t) => {
-      return t.trim()
-    })
-    .filter(Boolean)
+export const hasNextToken = (entries: ReleaseEntry[]): boolean => {
+  return entries.some((e) => {
+    return isNextToken(e.version)
+  })
 }

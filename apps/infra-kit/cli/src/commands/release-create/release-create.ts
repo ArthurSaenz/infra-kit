@@ -8,40 +8,23 @@ import { loadJiraConfig } from 'src/integrations/jira'
 import { commandEcho } from 'src/lib/command-echo'
 import { logger } from 'src/lib/logger'
 import { createSingleRelease, prepareGitForRelease } from 'src/lib/release-utils'
-import type { ReleaseType } from 'src/lib/release-utils'
+import type { ReleaseCreationResult, ReleaseType } from 'src/lib/release-utils'
 import {
-  NEXT_TOKEN,
   NoPriorVersionsError,
   computeNextVersion,
+  hasNextToken,
   loadExistingVersions,
-  resolveVersionTokens,
-  splitVersionInput,
+  parseVersion,
+  resolveReleaseEntries,
 } from 'src/lib/version-utils'
-import type { SemVer } from 'src/lib/version-utils'
+import type { ReleaseEntry, SemVer } from 'src/lib/version-utils'
 import type { RequiredConfirmedOptionArg, ToolsExecutionResult } from 'src/types'
 
-import { releaseCreateBatch } from '../release-create-batch/release-create-batch'
-
 interface ReleaseCreateArgs extends RequiredConfirmedOptionArg {
-  version?: string
-  description?: string
-  type?: ReleaseType
+  releases?: ReleaseEntry[]
 }
 
-const VERSION_PROMPT_HINT = '"1.2.5", "next", or "next,next,1.2.7"'
-
-const promptForType = async (): Promise<ReleaseType> => {
-  commandEcho.setInteractive()
-
-  return select<ReleaseType>({
-    message: 'Select release type:',
-    choices: [
-      { name: 'regular', value: 'regular' },
-      { name: 'hotfix', value: 'hotfix' },
-    ],
-    default: 'regular',
-  })
-}
+const VERSION_PROMPT_HINT = '"1.2.5" or "next"'
 
 const trySuggestNext = (known: SemVer[], type: ReleaseType): string | null => {
   try {
@@ -53,116 +36,111 @@ const trySuggestNext = (known: SemVer[], type: ReleaseType): string | null => {
   }
 }
 
-const exitOnNoPrior = (err: unknown): never => {
-  if (err instanceof NoPriorVersionsError) {
-    logger.error(err.message)
-    process.exit(1)
-  }
-
-  throw err
-}
-
-interface ResolveTokensArgs {
-  inputVersion: string | undefined
-  type: ReleaseType
-  ensureKnown: () => Promise<SemVer[]>
-}
-
-const resolveRawTokens = async (args: ResolveTokensArgs): Promise<string[]> => {
-  const { inputVersion, type, ensureKnown } = args
-
-  if (inputVersion && inputVersion.trim() !== '') {
-    return splitVersionInput(inputVersion)
-  }
-
-  commandEcho.setInteractive()
-
-  const suggestion = trySuggestNext(await ensureKnown(), type)
-  const defaultHint = suggestion ? ` [${suggestion}]` : ''
-  const answer = (await question(`Enter version(s) (e.g. ${VERSION_PROMPT_HINT})${defaultHint}: `)).trim()
-
-  if (answer === '') return suggestion ? [suggestion] : []
-
-  return splitVersionInput(answer)
-}
-
-const resolveVersionList = async (args: ResolveTokensArgs): Promise<string[]> => {
-  const rawTokens = await resolveRawTokens(args)
-
-  if (rawTokens.length === 0) {
-    logger.error('No version provided. Exiting...')
-    process.exit(1)
-  }
-
-  const needsKnown = rawTokens.some((t) => {
-    return t.toLowerCase() === NEXT_TOKEN
-  })
-
+const resolveOrExit = (entries: ReleaseEntry[], known: SemVer[]): ReleaseEntry[] => {
   try {
-    return resolveVersionTokens(rawTokens, args.type, needsKnown ? await args.ensureKnown() : [])
+    return resolveReleaseEntries(entries, known)
   } catch (err) {
-    return exitOnNoPrior(err)
+    if (err instanceof NoPriorVersionsError) {
+      logger.error(err.message)
+      process.exit(1)
+    }
+
+    throw err
   }
 }
 
-const resolveDescription = async (input: string | undefined): Promise<string> => {
-  if (input !== undefined) return input
-
+const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>): Promise<ReleaseEntry[]> => {
   commandEcho.setInteractive()
-  const answer = await question('Enter description (optional, press Enter to skip): ')
 
-  return answer.trim()
+  const baseKnown = await ensureKnown()
+  const running: SemVer[] = [...baseKnown]
+  const entries: ReleaseEntry[] = []
+  let addAnother = true
+
+  while (addAnother) {
+    const ordinal = entries.length + 1
+    const type = await select<ReleaseType>({
+      message: `Release #${ordinal} — select type:`,
+      choices: [
+        { name: 'regular', value: 'regular' },
+        { name: 'hotfix', value: 'hotfix' },
+      ],
+      default: 'regular',
+    })
+
+    const suggestion = trySuggestNext(running, type)
+    const defaultHint = suggestion ? ` [${suggestion}]` : ''
+    const versionAnswer = (await question(`  Version (e.g. ${VERSION_PROMPT_HINT})${defaultHint}: `)).trim()
+    const versionInput = versionAnswer === '' ? (suggestion ?? '') : versionAnswer
+
+    if (versionInput === '') {
+      logger.error('No version provided. Exiting...')
+      process.exit(1)
+    }
+
+    const resolved = resolveOrExit([{ version: versionInput, type }], running)[0] as ReleaseEntry
+
+    running.push(parseVersion(`v${resolved.version}`))
+
+    const description = (await question('  Description (optional, press Enter to skip): ')).trim()
+
+    entries.push({ ...resolved, ...(description !== '' ? { description } : {}) })
+
+    addAnother = await confirm({ message: 'Add another release?', default: false })
+  }
+
+  return entries
 }
 
-/**
- * Create a single release branch for the specified version
- * Includes Jira version creation and GitHub release branch creation
- */
-export const releaseCreate = async (args: ReleaseCreateArgs): Promise<ToolsExecutionResult> => {
-  const { version: inputVersion, description: inputDescription, type: inputType, confirmedCommand } = args
+const formatReleaseSummary = (entry: ReleaseEntry): string => {
+  const parts = [`v${entry.version}`, entry.type]
 
-  commandEcho.start('release-create')
+  if (entry.description) parts.push(entry.description)
 
-  // Load Jira config - it is now mandatory
-  const jiraConfig = await loadJiraConfig()
+  return parts.join(' · ')
+}
 
-  const type: ReleaseType = inputType ?? (await promptForType())
+const echoReleases = (entries: ReleaseEntry[]): void => {
+  for (const entry of entries) {
+    const spec = entry.description
+      ? `${entry.version}:${entry.type}:${entry.description}`
+      : `${entry.version}:${entry.type}`
 
-  commandEcho.addOption('--type', type)
+    commandEcho.addOption('--release', spec)
+  }
+}
 
-  let known: SemVer[] | null = null
-  const ensureKnown = async (): Promise<SemVer[]> => {
-    if (known === null) known = await loadExistingVersions()
+interface FailedRelease {
+  version: string
+  error: string
+}
 
-    return known
+const collectEntries = async (
+  inputReleases: ReleaseEntry[] | undefined,
+  ensureKnown: () => Promise<SemVer[]>,
+): Promise<ReleaseEntry[]> => {
+  if (inputReleases && inputReleases.length > 0) {
+    const known = hasNextToken(inputReleases) ? await ensureKnown() : []
+    const resolved = resolveOrExit(inputReleases, known)
+
+    echoReleases(resolved)
+
+    return resolved
   }
 
-  const resolvedVersions = await resolveVersionList({ inputVersion, type, ensureKnown })
+  const interactive = await promptForReleasesInteractive(ensureKnown)
 
-  if (resolvedVersions.length > 1) {
-    logger.info(`Detected ${resolvedVersions.length} versions, routing to release-create-batch...`)
+  echoReleases(interactive)
 
-    return releaseCreateBatch({
-      versions: resolvedVersions.join(','),
-      type,
-      confirmedCommand,
-    })
-  }
+  return interactive
+}
 
-  const trimmedVersion = resolvedVersions[0] as string
-
-  commandEcho.addOption('--version', trimmedVersion)
-
-  const description = await resolveDescription(inputDescription)
-
-  if (description) {
-    commandEcho.addOption('--description', description)
-  }
-
+const confirmReleases = async (entries: ReleaseEntry[], confirmedCommand: boolean): Promise<void> => {
+  const summary = entries.map(formatReleaseSummary).join('\n  - ')
   const answer = confirmedCommand
     ? true
     : await confirm({
-        message: `Are you sure you want to create release branch for version ${trimmedVersion}?`,
+        message: `Create the following ${entries.length} release(s)?\n  - ${summary}\n`,
       })
 
   if (!confirmedCommand) {
@@ -174,25 +152,105 @@ export const releaseCreate = async (args: ReleaseCreateArgs): Promise<ToolsExecu
     process.exit(0)
   }
 
-  // Track --yes flag if confirmation was interactive (user confirmed)
   commandEcho.addOption('--yes', true)
+}
 
-  await prepareGitForRelease(type)
+interface ExecuteOneArgs {
+  entry: ReleaseEntry
+  jiraConfig: Awaited<ReturnType<typeof loadJiraConfig>>
+}
 
-  const release = await createSingleRelease({ version: trimmedVersion, jiraConfig, description, type })
+const executeOne = async (
+  args: ExecuteOneArgs,
+): Promise<{ result?: ReleaseCreationResult; failure?: FailedRelease }> => {
+  const { entry, jiraConfig } = args
 
-  logger.info(`✅ Successfully created release: v${trimmedVersion}`)
-  logger.info(`🔗  GitHub PR: ${release.prUrl}`)
-  logger.info(`🔗  Jira Version: ${release.jiraVersionUrl}`)
+  try {
+    await prepareGitForRelease(entry.type)
+
+    const result = await createSingleRelease({
+      version: entry.version,
+      jiraConfig,
+      description: entry.description,
+      type: entry.type,
+    })
+
+    logger.info(`✅ Successfully created release: v${entry.version} (${entry.type})`)
+    logger.info(`🔗  GitHub PR: ${result.prUrl}`)
+    logger.info(`🔗  Jira Version: ${result.jiraVersionUrl}\n`)
+
+    return { result }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+
+    logger.error(`❌ Failed to create release: v${entry.version}`)
+    logger.error(`   Error: ${errorMessage}\n`)
+
+    return { failure: { version: entry.version, error: errorMessage } }
+  }
+}
+
+const logFinalSummary = (total: number, successCount: number, failureCount: number): void => {
+  if (successCount === total) {
+    logger.info(`✅ All ${total} release branch(es) were created successfully.`)
+  } else if (successCount > 0) {
+    logger.warn(`⚠️  ${successCount} of ${total} release branches were created successfully.`)
+    logger.warn(`❌  ${failureCount} release(s) failed.`)
+  } else {
+    logger.error(`❌ All ${total} release branch(es) failed to create.`)
+  }
+}
+
+/**
+ * Create one or more release branches. Each release carries its own type
+ * (regular/hotfix) and optional Jira description, so a single invocation
+ * may mix regular and hotfix releases off their respective base branches.
+ */
+export const releaseCreate = async (args: ReleaseCreateArgs): Promise<ToolsExecutionResult> => {
+  const { releases: inputReleases, confirmedCommand } = args
+
+  commandEcho.start('release-create')
+
+  const jiraConfig = await loadJiraConfig()
+
+  let known: SemVer[] | null = null
+  const ensureKnown = async (): Promise<SemVer[]> => {
+    if (known === null) known = await loadExistingVersions()
+
+    return known
+  }
+
+  const entries = await collectEntries(inputReleases, ensureKnown)
+
+  if (entries.length === 0) {
+    logger.error('No releases provided. Exiting...')
+    process.exit(1)
+  }
+
+  await confirmReleases(entries, Boolean(confirmedCommand))
+
+  const created: ReleaseCreationResult[] = []
+  const failed: FailedRelease[] = []
+
+  for (const entry of entries) {
+    const { result, failure } = await executeOne({ entry, jiraConfig })
+
+    if (result) created.push(result)
+    if (failure) failed.push(failure)
+  }
+
+  logFinalSummary(entries.length, created.length, failed.length)
 
   commandEcho.print()
 
   const structuredContent = {
-    version: trimmedVersion,
-    type,
-    branchName: release.branchName,
-    prUrl: release.prUrl,
-    jiraVersionUrl: release.jiraVersionUrl,
+    createdBranches: created.map((r) => {
+      return r.branchName
+    }),
+    successCount: created.length,
+    failureCount: failed.length,
+    releases: created,
+    failedReleases: failed,
   }
 
   return {
@@ -210,26 +268,48 @@ export const releaseCreate = async (args: ReleaseCreateArgs): Promise<ToolsExecu
 export const releaseCreateMcpTool = {
   name: 'release-create',
   description:
-    'Create a new release: cuts the release branch off the appropriate base (dev for regular releases, main for hotfixes), opens a GitHub release PR, and creates the matching Jira fix version. Does not switch the working tree to the new branch — the caller stays on the base branch. Confirmation is auto-skipped for MCP calls, so the caller is responsible for gating. "version" is required when invoked via MCP (the interactive input prompt is unreachable without a TTY); pass "next" to auto-compute the next version (regular bumps minor + resets patch; hotfix bumps patch on the highest minor) using the union of remote release branches and Jira fix versions. "type" / "description" default to regular / empty when omitted. For multiple versions in one call, prefer release-create-batch.',
+    'Create one or more releases in a single call. Each entry in "releases" carries its own version, type (regular|hotfix, default regular), and optional description, so regular and hotfix releases can be mixed in the same invocation. For each release this tool switches to the appropriate base branch (dev for regular, main for hotfix), cuts the release branch, opens a GitHub release PR, and creates the matching Jira fix version. The literal token "next" auto-increments from the union of remote release branches and Jira fix versions (regular bumps minor + resets patch; hotfix bumps patch on the highest minor); multiple "next" tokens advance sequentially across mixed types. Confirmation is auto-skipped for MCP calls, so the caller is responsible for gating. Continues on per-release failure and reports successes/failures.',
   inputSchema: {
-    version: z
-      .string()
-      .describe(
-        'Version to create (e.g., "1.2.5") or the literal token "next" for auto-increment. Required for MCP calls.',
-      ),
-    description: z.string().optional().describe('Optional description for the Jira version'),
-    type: z
-      .enum(['regular', 'hotfix'])
-      .optional()
-      .default('regular')
-      .describe('Release type: "regular" or "hotfix" (default: "regular")'),
+    releases: z
+      .array(
+        z.object({
+          version: z
+            .string()
+            .describe('Version to create (e.g., "1.2.5") or the literal token "next" for auto-increment.'),
+          type: z
+            .enum(['regular', 'hotfix'])
+            .optional()
+            .default('regular')
+            .describe('Release type: "regular" (branches off dev) or "hotfix" (branches off main).'),
+          description: z.string().optional().describe('Optional description for the Jira version.'),
+        }),
+      )
+      .min(1)
+      .describe('One or more releases to create. Each entry has its own version, type, and optional description.'),
   },
   outputSchema: {
-    version: z.string().describe('Version number'),
-    type: z.enum(['regular', 'hotfix']).describe('Release type'),
-    branchName: z.string().describe('Release branch name'),
-    prUrl: z.string().describe('GitHub PR URL'),
-    jiraVersionUrl: z.string().describe('Jira version URL'),
+    createdBranches: z.array(z.string()).describe('List of created release branch names'),
+    successCount: z.number().describe('Number of releases created successfully'),
+    failureCount: z.number().describe('Number of releases that failed'),
+    releases: z
+      .array(
+        z.object({
+          version: z.string().describe('Version number'),
+          type: z.enum(['regular', 'hotfix']).describe('Release type'),
+          branchName: z.string().describe('Release branch name'),
+          prUrl: z.string().describe('GitHub PR URL'),
+          jiraVersionUrl: z.string().describe('Jira version URL'),
+        }),
+      )
+      .describe('Detailed information for each created release with URLs'),
+    failedReleases: z
+      .array(
+        z.object({
+          version: z.string().describe('Version number that failed'),
+          error: z.string().describe('Error message'),
+        }),
+      )
+      .describe('List of releases that failed with error messages'),
   },
   handler: releaseCreate,
 }

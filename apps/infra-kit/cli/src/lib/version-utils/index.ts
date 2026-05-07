@@ -3,10 +3,12 @@ export {
   collectKnownVersions,
   computeNextVersion,
   type ExistingVersionsSources,
+  hasNextToken,
   NEXT_TOKEN,
   NoPriorVersionsError,
-  resolveVersionTokens,
+  parseReleaseSpec,
+  type ReleaseEntry,
+  resolveReleaseEntries,
   type SemVer,
-  splitVersionInput,
 } from './next-version'
 export { parseVersion, sortVersions } from './version-utils'
