@@ -93,7 +93,10 @@ prune_and_build() {
 
     # Install production dependencies if requested
     if [ "$install_prod" = "true" ]; then
-        run_command "Clean node_modules" "rm -rf ./node_modules"
+        # Clean root and all nested workspace node_modules. Nested ones contain dev deps
+        # (typescript, etc.) and recursive @pkg symlinks that serverless follows during packaging,
+        # which inflates the Lambda artifact past the 250 MB unzipped limit.
+        run_command "Clean all node_modules" "find . -name node_modules -type d -prune -exec rm -rf {} +"
         run_command "Install production dependencies" "pnpm install --frozen-lockfile --node-linker=hoisted --prod"
         run_command "Show node_modules size" "du -sm ./node_modules/ | awk '{print \$1 \" MB\"}'"
     fi

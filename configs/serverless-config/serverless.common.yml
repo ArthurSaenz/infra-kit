@@ -43,4 +43,8 @@ custom:
         - '!../../../node_modules/.cache/**'
         - '!../../../node_modules/@img/**'
         - '!../../../node_modules/@opentelemetry/**'
+        # Workspace pkgs are symlinked under node_modules/@pkg/<pkg> and serverless follows the
+        # symlinks. Their nested node_modules recursively reference other workspace pkgs, so
+        # without this exclusion the artifact balloons via duplicated @pkg copies at every depth.
+        - '!../../../node_modules/@pkg/*/node_modules/**'
 
