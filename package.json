@@ -62,12 +62,12 @@
     "@types/react-dom": "catalog:",
     "infra-kit": "0.1.99",
     "shadcn": "^4.7.0",
-    "turbo": "2.9.6",
+    "turbo": "2.9.12",
     "typescript": "catalog:"
   },
   "engines": {
     "node": ">=24.x",
     "pnpm": ">=10"
   },
-  "packageManager": "pnpm@10.33.0"
+  "packageManager": "pnpm@11.0.9"
 }

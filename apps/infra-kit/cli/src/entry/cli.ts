@@ -15,6 +15,7 @@ import { ghReleaseDeploySelected } from 'src/commands/gh-release-deploy-selected
 import { ghReleaseList } from 'src/commands/gh-release-list'
 import { init } from 'src/commands/init'
 import { releaseCreate } from 'src/commands/release-create'
+import { releaseDescEdit } from 'src/commands/release-desc-edit'
 import { version } from 'src/commands/version'
 import { CURSOR_MODES, worktreesAdd } from 'src/commands/worktrees-add'
 import type { CursorMode } from 'src/commands/worktrees-add'
@@ -98,6 +99,20 @@ program
 
     await releaseCreate({
       releases,
+      confirmedCommand: options.yes,
+    })
+  })
+
+program
+  .command('release-desc-edit')
+  .description("Edit a release's description in Jira and in the matching GitHub PR body")
+  .option('-v, --version <version>', 'Release version, e.g. 1.2.5')
+  .option('-d, --description <description>', 'New description (use "" to clear)')
+  .option('-y, --yes', 'Skip confirmation prompt')
+  .action(async (options) => {
+    await releaseDescEdit({
+      version: options.version,
+      description: options.description,
       confirmedCommand: options.yes,
     })
   })
@@ -263,6 +278,7 @@ if (process.argv.length <= 2) {
     'merge-dev',
     'release-list',
     'release-create',
+    'release-desc-edit',
     'release-deploy-all',
     'release-deploy-selected',
     'release-deliver',

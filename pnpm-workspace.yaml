@@ -81,3 +81,22 @@ supportedArchitectures:
 catalogs:
   conflicts_zod_h3_25_76:
     zod: ^3.25.76
+
+strictPeerDependencies: false
+
+publicHoistPattern:
+  - '*types*'
+  - '*eslint*'
+  - '*prettier*'
+  - '*stylelint*'
+  - '*typescript*'
+  - '*config*'
+  - '@storybook*'
+  - storybook*
+  - '*@testing-library*'
+  - '*@vitejs*'
+  - '*vitest*'
+  - '*@vitest*'
+
+allowBuilds:
+  msw: true

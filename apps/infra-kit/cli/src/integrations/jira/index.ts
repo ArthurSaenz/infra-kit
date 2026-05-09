@@ -1,9 +1,11 @@
 export {
   createJiraVersion,
   deliverJiraRelease,
+  findVersionByName,
   getProjectVersions,
   loadJiraConfig,
   loadJiraConfigOptional,
+  updateJiraVersion,
 } from './api.js'
 export type {
   CreateJiraVersionParams,

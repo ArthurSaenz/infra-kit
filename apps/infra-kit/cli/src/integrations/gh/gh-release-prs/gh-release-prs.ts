@@ -109,6 +109,27 @@ export const getReleasePRsWithInfo = async (): Promise<ReleasePRInfo[]> => {
   }
 }
 
+interface UpdateReleasePRBodyArgs {
+  branch: string
+  body: string
+}
+
+/**
+ * Update the body of an open release PR identified by its head branch.
+ */
+export const updateReleasePRBody = async (args: UpdateReleasePRBodyArgs): Promise<void> => {
+  const { branch, body } = args
+
+  try {
+    $.quiet = true
+    await $`gh pr edit ${branch} --body ${body}`
+    $.quiet = false
+  } catch (error: unknown) {
+    logger.error({ error, branch }, `Error updating release PR body for ${branch}`)
+    throw error
+  }
+}
+
 interface CreateReleaseBranchArgs {
   version: string
   jiraVersionUrl: string

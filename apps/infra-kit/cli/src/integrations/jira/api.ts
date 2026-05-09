@@ -145,7 +145,7 @@ export const getProjectVersions = async (config: JiraConfig): Promise<JiraVersio
  * @param config - Jira configuration
  * @returns JiraVersion if found, null otherwise
  */
-const findVersionByName = async (versionName: string, config: JiraConfig): Promise<JiraVersion | null> => {
+export const findVersionByName = async (versionName: string, config: JiraConfig): Promise<JiraVersion | null> => {
   try {
     const versions = await getProjectVersions(config)
     const version = versions.find((v) => {
@@ -166,29 +166,20 @@ const findVersionByName = async (versionName: string, config: JiraConfig): Promi
  * @param config - Jira configuration
  * @returns Result containing updated version or error
  */
-const updateJiraVersion = async (
+export const updateJiraVersion = async (
   params: UpdateJiraVersionParams,
   config: JiraConfig,
 ): Promise<UpdateJiraVersionResult> => {
   try {
     const { baseUrl, token, email } = config
 
-    // Prepare request body - only include fields that are provided
-    const requestBody: Record<string, any> = {
-      released: params.released ?? true,
-      archived: params.archived ?? false,
-    }
+    // Only include fields the caller explicitly passed.
+    const requestBody: Record<string, any> = {}
 
-    // Add releaseDate if provided, otherwise use current date when releasing
-    if (params.releaseDate) {
-      requestBody.releaseDate = params.releaseDate
-    } else if (params.released !== false) {
-      requestBody.releaseDate = new Date().toISOString().split('T')[0] // YYYY-MM-DD
-    }
-
-    if (params.description !== undefined) {
-      requestBody.description = params.description
-    }
+    if (params.released !== undefined) requestBody.released = params.released
+    if (params.archived !== undefined) requestBody.archived = params.archived
+    if (params.releaseDate !== undefined) requestBody.releaseDate = params.releaseDate
+    if (params.description !== undefined) requestBody.description = params.description
 
     const url = `${baseUrl}/rest/api/3/version/${params.versionId}`
     const credentials = btoa(`${email}:${token}`)
