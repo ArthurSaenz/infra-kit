@@ -8,7 +8,8 @@
   "module": "dist/index.es.js",
   "types": "dist/index.d.ts",
   "engines": {
-    "node": ">=24.x"
+    "node": ">=24.x",
+    "pnpm": ">=11"
   },
   "scripts": {
     "build-watch": "vite build --watch",
@@ -38,14 +39,14 @@
     "@pkg/eslint-config": "workspace:*",
     "@pkg/vitest-config": "workspace:*",
     "@types/lodash": "^4.17.24",
-    "@types/qs": "^6.14.0",
+    "@types/qs": "^6.15.1",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "clsx": "catalog:",
     "idb-keyval": "^6.2.2",
     "jotai": "catalog:",
-    "lodash": "^4.17.23",
+    "lodash": "^4.18.1",
     "qs": "^6.15.1",
     "react": "catalog:",
     "react-dom": "catalog:",

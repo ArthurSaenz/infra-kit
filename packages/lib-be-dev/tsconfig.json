@@ -1,6 +1,9 @@
 {
   "extends": "@pkg/ts-config/tsconfig.service.json",
   "compilerOptions": {
+    "paths": {
+      "#root/*": ["./src/*"]
+    },
     "outDir": "./dist",
     "rootDir": "./src"
   },

@@ -8,10 +8,10 @@
  * Env vars should be provided via secrets manager (e.g. `doppler run -- pnpm dev-server`) or shell.
  *
  * From monorepo root, invoke the script your root `package.json` wires to this file, for example:
- *   tsx packages/lib-be-dev/src/devServer.ts
- *   tsx packages/lib-be-dev/src/devServer.ts --watch
- *   tsx packages/lib-be-dev/src/devServer.ts --app=client,backoffice
- *   tsx packages/lib-be-dev/src/devServer.ts --exclude=cronjobs
+ *   tsx packages/lib-be-dev/src/dev-server.ts
+ *   tsx packages/lib-be-dev/src/dev-server.ts --watch
+ *   tsx packages/lib-be-dev/src/dev-server.ts --app=client,backoffice
+ *   tsx packages/lib-be-dev/src/dev-server.ts --exclude=cronjobs
  *
  * Runner messages append to `packages/lib-be-dev/log.txt`. Lambda / Powertools logs from handlers go to stdout.
  */

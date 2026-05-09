@@ -14,7 +14,7 @@ const supportsLS = (): boolean => {
   hasLS = true
 
   try {
-    if (!localStorage) {
+    if (!localStorage || typeof localStorage.getItem !== 'function') {
       hasLS = false
     }
     // eslint-disable-next-line sonarjs/no-ignored-exceptions, unused-imports/no-unused-vars

@@ -12,12 +12,13 @@
   ],
   "main": "index.js",
   "engines": {
-    "node": ">=24.x"
+    "node": ">=24.x",
+    "pnpm": ">=11"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^8.2.0",
     "@eslint-react/eslint-plugin": "^3.0.0",
-    "eslint": "^10.2.1",
+    "eslint": "^10.3.0",
     "eslint-plugin-react-refresh": "0.5.2",
     "eslint-plugin-sonarjs": "^4.0.3"
   }

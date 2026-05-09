@@ -32,8 +32,8 @@ tsconfig.tsbuildinfo
 node_modules
 
 ## Mobile / native
-ios/App/
-android/app/
+ios/App/**
+android/app/**
 gradlew
 
 ## Playwright

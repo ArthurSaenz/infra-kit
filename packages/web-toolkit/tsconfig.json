@@ -2,6 +2,9 @@
   "$schema": "https://json.schemastore.org/tsconfig",
   "display": "Web-toolkit",
   "compilerOptions": {
+    "paths": {
+      "#root/*": ["./src/*"]
+    },
     "incremental": true,
     "composite": true,
     "target": "ESNext",

@@ -6,13 +6,13 @@ Keep this package **identical** across monorepos that consume it (copy the whole
 
 ## Contents
 
-- **`devServer.ts`** — Discovers each `apps/<app>/api` tree that has `serverless.yml`, builds with Turbo, runs each stack locally.
+- **`dev-server.ts`** — Discovers each `apps/<app>/api` tree that has `serverless.yml`, builds with Turbo, runs each stack locally.
 - **`serverlessLocalRun.ts`** — Fastify server that loads HTTP routes from `serverless.yml` and invokes compiled handlers.
 - **`logger.ts`** — Chalk-based console logger implementing `ILogger` / Powertools-compatible surface.
 
 ## Dev server
 
-From the monorepo root, run whatever script your root `package.json` exposes (commonly `tsx packages/lib-be-dev/src/devServer.ts`).
+From the monorepo root, run whatever script your root `package.json` exposes (commonly `tsx packages/lib-be-dev/src/dev-server.ts`).
 
 | Flag                 | Purpose                                                                                                      |
 | -------------------- | ------------------------------------------------------------------------------------------------------------ |
