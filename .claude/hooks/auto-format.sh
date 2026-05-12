@@ -8,13 +8,13 @@ fi
 
 case "$FILE_PATH" in
   *.ts|*.tsx|*.js|*.jsx|*.json|*.css|*.scss|*.mjs|*.cjs)
-    pnpm exec prettier --write "$FILE_PATH" 2>/dev/null
+    pnpm exec prettier --log-level silent --write "$FILE_PATH" 2>/dev/null
     ;;
 esac
 
 case "$FILE_PATH" in
   *.ts|*.tsx|*.js|*.jsx)
-    pnpm exec eslint --fix "$FILE_PATH" 2>/dev/null
+    pnpm exec eslint --quiet --fix "$FILE_PATH" 2>/dev/null
     ;;
 esac
 

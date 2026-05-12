@@ -2,19 +2,19 @@ import checkbox from '@inquirer/checkbox'
 import select from '@inquirer/select'
 import fs from 'node:fs/promises'
 import { resolve } from 'node:path'
-import process from 'node:process'
 import yaml from 'yaml'
 import { z } from 'zod/v4'
 import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
+import { OperationError } from 'src/lib/errors/operation-error'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import type { ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
 
 interface GhReleaseDeploySelectedArgs {
   version: string
@@ -27,7 +27,7 @@ interface GhReleaseDeploySelectedArgs {
  * Deploy selected services from a release branch to an environment
  */
 // eslint-disable-next-line sonarjs/cognitive-complexity
-export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs): Promise<ToolsExecutionResult> => {
+export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs) => {
   const { version, env, services, skipTerraform } = args
 
   commandEcho.start('release-deploy-selected')
@@ -86,17 +86,22 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
   commandEcho.addOption('--env', selectedEnv)
 
   if (!environments.includes(selectedEnv)) {
-    logger.error(`❌ Invalid environment: ${selectedEnv}. Exiting...`)
-    process.exit(1)
+    throw new OperationError(undefined, {
+      operation: 'launch deploy-selected workflow',
+      remediation: `pass one of: ${environments.join(', ')}`,
+      stderrExcerpt: `invalid environment: ${selectedEnv}`,
+    })
   }
 
   // Parse available services from workflow file
   const availableServices = await parseServicesFromWorkflow()
 
   if (availableServices.length === 0) {
-    logger.error('❌ No services found in workflow file. Exiting...')
-
-    process.exit(1)
+    throw new OperationError(undefined, {
+      operation: 'launch deploy-selected workflow',
+      remediation: 'check .github/workflows/deploy-selected-services.yml for boolean service inputs',
+      stderrExcerpt: 'no services found in workflow file',
+    })
   }
 
   let selectedServices: string[] = []
@@ -120,8 +125,11 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
   commandEcho.addOption('--services', selectedServices)
 
   if (selectedServices.length === 0) {
-    logger.error('❌ No services selected. Exiting...')
-    process.exit(1)
+    throw new OperationError(undefined, {
+      operation: 'launch deploy-selected workflow',
+      remediation: `pass at least one service from: ${availableServices.join(', ')}`,
+      stderrExcerpt: 'no services selected',
+    })
   }
 
   // Validate all selected services
@@ -130,10 +138,11 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
   })
 
   if (invalidServices.length > 0) {
-    logger.error(
-      `❌ Invalid services: ${invalidServices.join(', ')}. Available services: ${availableServices.join(', ')}`,
-    )
-    process.exit(1)
+    throw new OperationError(undefined, {
+      operation: 'launch deploy-selected workflow',
+      remediation: `pass services from: ${availableServices.join(', ')}`,
+      stderrExcerpt: `invalid services: ${invalidServices.join(', ')}`,
+    })
   }
 
   const shouldSkipTerraform = skipTerraform ?? false
@@ -171,17 +180,15 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
     }
 
     return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(structuredContent, null, 2),
-        },
-      ],
+      content: textContent(JSON.stringify(structuredContent, null, 2)),
       structuredContent,
     }
   } catch (error: unknown) {
     logger.error({ error }, '❌ Error launching workflow')
-    process.exit(1)
+    throw new OperationError(error, {
+      operation: 'launch deploy-selected workflow',
+      remediation: "check 'gh workflow list' and that deploy-selected-services.yml exists on the target ref",
+    })
   }
 }
 
@@ -211,7 +218,7 @@ const parseServicesFromWorkflow = async (): Promise<string[]> => {
 }
 
 // MCP Tool Registration
-export const ghReleaseDeploySelectedMcpTool = {
+export const ghReleaseDeploySelectedMcpTool = defineMcpTool({
   name: 'gh-release-deploy-selected',
   description:
     'Dispatch the deploy-selected-services.yml GitHub Actions workflow to deploy a chosen subset of services from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Service names are validated against the boolean inputs declared in the workflow. Use gh-release-deploy-all for every service. "version", "env", and "services" are all required when invoked via MCP (interactive pickers are unavailable without a TTY).',
@@ -242,4 +249,4 @@ export const ghReleaseDeploySelectedMcpTool = {
     success: z.boolean().describe('Whether the deployment was successful'),
   },
   handler: ghReleaseDeploySelected,
-}
+})

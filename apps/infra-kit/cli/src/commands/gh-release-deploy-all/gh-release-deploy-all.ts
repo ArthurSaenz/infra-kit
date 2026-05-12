@@ -1,15 +1,15 @@
 import select from '@inquirer/select'
-import process from 'node:process'
 import { z } from 'zod/v4'
 import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
+import { OperationError } from 'src/lib/errors/operation-error'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import type { ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
 
 interface GhReleaseDeployAllArgs {
   version: string
@@ -20,7 +20,7 @@ interface GhReleaseDeployAllArgs {
 /**
  * Deploy a release branch to an environment
  */
-export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs): Promise<ToolsExecutionResult> => {
+export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs) => {
   const { version, env, skipTerraform } = args
 
   commandEcho.start('release-deploy-all')
@@ -79,8 +79,11 @@ export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs): Promise<
   commandEcho.addOption('--env', selectedEnv)
 
   if (!environments.includes(selectedEnv)) {
-    logger.error(`❌ Invalid environment: ${selectedEnv}. Exiting...`)
-    process.exit(1)
+    throw new OperationError(undefined, {
+      operation: 'launch deploy-all workflow',
+      remediation: `pass one of: ${environments.join(', ')}`,
+      stderrExcerpt: `invalid environment: ${selectedEnv}`,
+    })
   }
 
   const shouldSkipTerraform = skipTerraform ?? false
@@ -113,22 +116,20 @@ export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs): Promise<
     }
 
     return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(structuredContent, null, 2),
-        },
-      ],
+      content: textContent(JSON.stringify(structuredContent, null, 2)),
       structuredContent,
     }
   } catch (error: unknown) {
     logger.error({ error }, '❌ Error launching workflow')
-    process.exit(1)
+    throw new OperationError(error, {
+      operation: 'launch deploy-all workflow',
+      remediation: "check 'gh workflow list' and that deploy-all.yml exists on the target ref",
+    })
   }
 }
 
 // MCP Tool Registration
-export const ghReleaseDeployAllMcpTool = {
+export const ghReleaseDeployAllMcpTool = defineMcpTool({
   name: 'gh-release-deploy-all',
   description:
     'Dispatch the deploy-all.yml GitHub Actions workflow to deploy every service from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Use gh-release-deploy-selected for a subset of services. Pass version="dev" to deploy from the dev branch instead of a release branch. Both "version" and "env" are required when invoked via MCP (interactive pickers are unavailable without a TTY).',
@@ -153,4 +154,4 @@ export const ghReleaseDeployAllMcpTool = {
     success: z.boolean().describe('Whether the deployment was successful'),
   },
   handler: ghReleaseDeployAll,
-}
+})

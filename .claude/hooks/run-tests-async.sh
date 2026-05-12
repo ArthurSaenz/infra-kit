@@ -9,10 +9,10 @@ fi
 
 # If the file is a test file, run it directly
 if [[ "$FILE_PATH" == *.test.ts || "$FILE_PATH" == *.test.tsx ]]; then
-  RESULT=$(pnpm exec vitest run "$FILE_PATH" 2>&1)
+  RESULT=$(pnpm exec vitest run "$FILE_PATH" --reporter=minimal 2>&1)
 else
   # Run only tests related to the changed source file
-  RESULT=$(pnpm exec vitest related "$FILE_PATH" --run 2>&1)
+  RESULT=$(pnpm exec vitest related "$FILE_PATH" --run --reporter=minimal 2>&1)
 fi
 EXIT_CODE=$?
 

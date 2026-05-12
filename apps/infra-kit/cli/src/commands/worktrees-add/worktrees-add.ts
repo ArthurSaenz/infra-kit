@@ -11,12 +11,14 @@ import { addFoldersToCursorWorkspace, resolveCursorWorkspacePath } from 'src/int
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
+import { OperationError } from 'src/lib/errors/operation-error'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import type { RequiredConfirmedOptionArg, ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
+import type { RequiredConfirmedOptionArg } from 'src/types'
 
 // Constants
 const FEATURE_DIR = 'feature'
@@ -27,7 +29,7 @@ export const CURSOR_MODES = ['workspace', 'windows', 'none'] as const
 export type CursorMode = (typeof CURSOR_MODES)[number]
 
 interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
-  all: boolean
+  all?: boolean
   versions?: string
   cursor?: CursorMode
   githubDesktop?: boolean
@@ -38,7 +40,7 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
  * Manage git worktrees for release branches
  * Creates worktrees for active release branches and removes unused ones
  */
-export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<ToolsExecutionResult> => {
+export const worktreesAdd = async (options: WorktreeManagementArgs) => {
   const { confirmedCommand, all, versions, cursor, githubDesktop, cmux } = options
 
   commandEcho.start('worktrees-add')
@@ -71,7 +73,7 @@ export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<Too
         commandEcho.print()
 
         return {
-          content: [{ type: 'text', text: JSON.stringify({ createdWorktrees: [], count: 0 }, null, 2) }],
+          content: textContent(JSON.stringify({ createdWorktrees: [], count: 0 }, null, 2)),
           structuredContent: { createdWorktrees: [], count: 0 },
         }
       }
@@ -249,17 +251,15 @@ export const worktreesAdd = async (options: WorktreeManagementArgs): Promise<Too
     }
 
     return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(structuredContent, null, 2),
-        },
-      ],
+      content: textContent(JSON.stringify(structuredContent, null, 2)),
       structuredContent,
     }
   } catch (error) {
     logger.error({ error }, '❌ Error managing worktrees')
-    throw error
+    throw new OperationError(error, {
+      operation: 'create worktrees',
+      remediation: "verify branches don't already exist as worktrees: 'git worktree list'",
+    })
   }
 }
 
@@ -314,8 +314,12 @@ const createWorktrees = async (branches: string[], worktreeDir: string): Promise
       created.push(result.value)
     } else {
       const branch = branches[index]
+      const err = new OperationError(result.reason, {
+        operation: `git worktree add for ${branch}`,
+        remediation: 'check the branch name and that the parent dir is writable',
+      })
 
-      logger.error({ error: result.reason }, `❌ Failed to create worktree for ${branch}`)
+      logger.error({ error: result.reason, msg: err.message })
     }
   }
 
@@ -338,7 +342,7 @@ const logResults = (created: string[]): void => {
 }
 
 // MCP Tool Registration
-export const worktreesAddMcpTool = {
+export const worktreesAddMcpTool = defineMcpTool({
   name: 'worktrees-add',
   description:
     'Create local git worktrees for release branches under the worktrees directory and run "pnpm install" in each. Mutates the local filesystem. When invoked via MCP, pass either "versions" (comma-separated) or all=true — the branch picker and "open in Cursor / GitHub Desktop / cmux" follow-up prompts are unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls.',
@@ -379,4 +383,4 @@ export const worktreesAddMcpTool = {
     count: z.number().describe('Number of git worktrees created'),
   },
   handler: worktreesAdd,
-}
+})

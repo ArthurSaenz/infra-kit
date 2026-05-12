@@ -1,0 +1,7 @@
+{
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/Users/arthur/projects/infra-kit/apps/infra-kit/cli/src/lib/logger.ts\"}",
+  "error": "File does not exist. Note: your current working directory is /Users/arthur/projects/infra-kit. Did you mean logger?",
+  "timestamp": "2026-05-12T07:24:44.567Z",
+  "retry_count": 2
+}

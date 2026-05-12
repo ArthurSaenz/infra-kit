@@ -3,12 +3,12 @@ import { z } from 'zod/v4'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatVersionLabel, getJiraDescriptions } from 'src/lib/release-utils'
-import type { ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
 
 /**
  * List all open release branches
  */
-export const ghReleaseList = async (): Promise<ToolsExecutionResult> => {
+export const ghReleaseList = async () => {
   const releasePRs = await getReleasePRsWithInfo()
 
   const releases = releasePRs.map((pr) => {
@@ -52,18 +52,13 @@ export const ghReleaseList = async (): Promise<ToolsExecutionResult> => {
   }
 
   return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify(structuredContent, null, 2),
-      },
-    ],
+    content: textContent(JSON.stringify(structuredContent, null, 2)),
     structuredContent,
   }
 }
 
 // MCP Tool Registration
-export const ghReleaseListMcpTool = {
+export const ghReleaseListMcpTool = defineMcpTool({
   name: 'gh-release-list',
   description:
     'List every open release PR with its version, type (regular / hotfix), and associated Jira fix-version description. Read-only; sourced from GitHub and Jira.',
@@ -81,4 +76,4 @@ export const ghReleaseListMcpTool = {
     count: z.number().describe('Number of release branches'),
   },
   handler: ghReleaseList,
-}
+})

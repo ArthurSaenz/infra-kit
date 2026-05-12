@@ -13,12 +13,12 @@
     "clean-artifacts": "rm -rf dist",
     "build": "tsc -b",
     "ts-check": "tsc --noEmit",
-    "prettier-check": "pnpm exec prettier --check * --no-error-on-unmatched-pattern --log-level warn --ignore-path ../../.prettierignore",
-    "prettier-fix": "pnpm exec prettier --write * --no-error-on-unmatched-pattern --log-level warn --ignore-path ../../.prettierignore",
-    "test": "pnpm exec vitest run --reporter=dot",
-    "test-watch": "pnpm exec vitest --watch",
-    "test-ui": "pnpm exec vitest --ui",
-    "test-report": "pnpm exec vitest run --coverage"
+    "prettier-check": "pnpm exec prettier --check * --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../.prettierignore",
+    "prettier-fix": "pnpm exec prettier --write * --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../.prettierignore",
+    "test": "pnpm exec vitest run --reporter=minimal",
+    "test-watch": "pnpm exec vitest --watch --silent passed-only",
+    "test-ui": "pnpm exec vitest --ui --silent passed-only",
+    "test-report": "pnpm exec vitest run --coverage --silent passed-only"
   },
   "devDependencies": {
     "@pkg/ts-config": "workspace:*",

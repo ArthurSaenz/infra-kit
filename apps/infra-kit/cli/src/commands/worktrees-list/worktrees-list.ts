@@ -5,7 +5,7 @@ import { getCurrentWorktrees } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatVersionLabel, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import type { ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
 
 interface WorktreeInfo {
   version: string
@@ -16,14 +16,14 @@ interface WorktreeInfo {
 /**
  * List all release git worktrees with version, type, and Jira description
  */
-export const worktreesList = async (): Promise<ToolsExecutionResult> => {
+export const worktreesList = async () => {
   const currentWorktrees = await getCurrentWorktrees('release')
 
   if (currentWorktrees.length === 0) {
     logger.info('ℹ️ No active worktrees found')
 
     return {
-      content: [{ type: 'text', text: JSON.stringify({ worktrees: [], count: 0 }, null, 2) }],
+      content: textContent(JSON.stringify({ worktrees: [], count: 0 }, null, 2)),
       structuredContent: { worktrees: [], count: 0 },
     }
   }
@@ -70,18 +70,13 @@ export const worktreesList = async (): Promise<ToolsExecutionResult> => {
   }
 
   return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify(structuredContent, null, 2),
-      },
-    ],
+    content: textContent(JSON.stringify(structuredContent, null, 2)),
     structuredContent,
   }
 }
 
 // MCP Tool Registration
-export const worktreesListMcpTool = {
+export const worktreesListMcpTool = defineMcpTool({
   name: 'worktrees-list',
   description:
     'List existing release-branch worktrees with version, release type (regular / hotfix), and Jira fix-version description. Read-only.',
@@ -99,4 +94,4 @@ export const worktreesListMcpTool = {
     count: z.number().describe('Number of worktrees'),
   },
   handler: worktreesList,
-}
+})

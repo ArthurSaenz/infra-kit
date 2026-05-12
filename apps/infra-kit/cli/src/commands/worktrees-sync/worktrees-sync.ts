@@ -8,10 +8,12 @@ import { removeFoldersFromCursorWorkspace, resolveCursorWorkspacePath } from 'sr
 import { getReleasePRs } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
+import { OperationError } from 'src/lib/errors/operation-error'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
-import type { RequiredConfirmedOptionArg, ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
+import type { RequiredConfirmedOptionArg } from 'src/types'
 
 // Constants
 const RELEASE_BRANCH_PREFIX = 'release/v'
@@ -23,7 +25,7 @@ interface WorktreeSyncArgs extends RequiredConfirmedOptionArg {}
  *
  * Creates worktrees for active release branches and removes unused ones
  */
-export const worktreesSync = async (options: WorktreeSyncArgs): Promise<ToolsExecutionResult> => {
+export const worktreesSync = async (options: WorktreeSyncArgs) => {
   const { confirmedCommand } = options
 
   commandEcho.start('worktrees-sync')
@@ -82,17 +84,15 @@ export const worktreesSync = async (options: WorktreeSyncArgs): Promise<ToolsExe
     }
 
     return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(structuredContent, null, 2),
-        },
-      ],
+      content: textContent(JSON.stringify(structuredContent, null, 2)),
       structuredContent,
     }
   } catch (error) {
     logger.error({ error }, '❌ Error managing worktrees')
-    throw error
+    throw new OperationError(error, {
+      operation: 'sync worktrees with remote',
+      remediation: "ensure 'gh auth status' is ok and you can reach origin",
+    })
   }
 }
 
@@ -143,7 +143,12 @@ const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string[]> => 
       await $`git worktree remove ${worktreePath}`
       removed.push(branch)
     } catch (error) {
-      logger.error({ error, branch }, `❌ Failed to remove worktree for ${branch}`)
+      const err = new OperationError(error, {
+        operation: `remove stale worktree for ${branch}`,
+        remediation: 'inspect the worktree dir manually; rerun with the branch checked out elsewhere',
+      })
+
+      logger.error({ error, branch, msg: err.message })
     }
   }
 
@@ -207,7 +212,7 @@ const logResults = (removed: string[]): void => {
 }
 
 // MCP Tool Registration
-export const worktreesSyncMcpTool = {
+export const worktreesSyncMcpTool = defineMcpTool({
   name: 'worktrees-sync',
   description:
     'Remove worktrees whose release PR is no longer open (stale cleanup). Only removes — never creates; use worktrees-add to create worktrees for new releases. The CLI confirmation is auto-skipped for MCP calls, so the caller is responsible for gating.',
@@ -217,4 +222,4 @@ export const worktreesSyncMcpTool = {
     count: z.number().describe('Number of worktrees removed during sync'),
   },
   handler: worktreesSync,
-}
+})

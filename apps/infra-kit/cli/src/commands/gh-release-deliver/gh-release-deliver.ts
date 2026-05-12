@@ -7,10 +7,12 @@ import { $ } from 'zx'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { deliverJiraRelease, loadJiraConfigOptional } from 'src/integrations/jira'
 import { commandEcho } from 'src/lib/command-echo'
+import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import type { RequiredConfirmedOptionArg, ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
+import type { RequiredConfirmedOptionArg } from 'src/types'
 
 interface GhReleaseDeliverArgs extends RequiredConfirmedOptionArg {
   version: string
@@ -19,7 +21,7 @@ interface GhReleaseDeliverArgs extends RequiredConfirmedOptionArg {
 /**
  * Deliver a release branch to production
  */
-export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs): Promise<ToolsExecutionResult> => {
+export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
   const { version, confirmedCommand } = args
 
   commandEcho.start('release-deliver')
@@ -61,8 +63,11 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs): Promise<Tool
   })
 
   if (!prInfo) {
-    logger.error(`❌ Release branch ${selectedReleaseBranch} not found in open PRs. Exiting...`)
-    process.exit(1)
+    logger.error(`❌ Release branch ${selectedReleaseBranch} not found in open PRs.`)
+    throw new OperationError(undefined, {
+      operation: `deliver release ${selectedReleaseBranch}`,
+      remediation: `confirm an open PR exists for ${selectedReleaseBranch} ('gh pr list')`,
+    })
   }
 
   const releaseType: ReleaseType = detectReleaseType(prInfo.title)
@@ -145,22 +150,20 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs): Promise<Tool
     }
 
     return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(structuredContent, null, 2),
-        },
-      ],
+      content: textContent(JSON.stringify(structuredContent, null, 2)),
       structuredContent,
     }
   } catch (error: unknown) {
     logger.error({ error }, '❌ Error merging release branch into dev')
-    process.exit(1)
+    throw new OperationError(error, {
+      operation: 'merge release branch into dev',
+      remediation: "verify 'gh auth status' is ok and the release PR is mergeable",
+    })
   }
 }
 
 // MCP Tool Registration
-export const ghReleaseDeliverMcpTool = {
+export const ghReleaseDeliverMcpTool = defineMcpTool({
   name: 'gh-release-deliver',
   description:
     'Deliver a release to production. For hotfixes: squash-merges the release branch to main and dispatches the deploy-all workflow. For regular releases: squash-merges to dev, opens an RC PR, merges dev into main, dispatches the deploy-all workflow, then syncs main back to dev. Also releases the matching Jira fix version if Jira is configured. Dispatches the deploy workflow fire-and-forget — the tool returns once the workflow is accepted by GitHub, not when the deployment finishes. Irreversible production operation: the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. "version" is required when invoked via MCP (the picker is unreachable without a TTY).',
@@ -174,4 +177,4 @@ export const ghReleaseDeliverMcpTool = {
     success: z.boolean().describe('Whether the delivery was successful'),
   },
   handler: ghReleaseDeliver,
-}
+})

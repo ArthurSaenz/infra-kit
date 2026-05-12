@@ -9,16 +9,18 @@ import { removeFoldersFromCursorWorkspace, resolveCursorWorkspacePath } from 'sr
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
+import { OperationError } from 'src/lib/errors/operation-error'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import type { RequiredConfirmedOptionArg, ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
+import type { RequiredConfirmedOptionArg } from 'src/types'
 
 // Constants
 interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
-  all: boolean
+  all?: boolean
   versions?: string
 }
 
@@ -26,7 +28,7 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
  * Manage git worktrees for release branches
  * Creates worktrees for active release branches and removes unused ones
  */
-export const worktreesRemove = async (options: WorktreeManagementArgs): Promise<ToolsExecutionResult> => {
+export const worktreesRemove = async (options: WorktreeManagementArgs) => {
   const { confirmedCommand, all, versions } = options
 
   commandEcho.start('worktrees-remove')
@@ -40,7 +42,7 @@ export const worktreesRemove = async (options: WorktreeManagementArgs): Promise<
       commandEcho.print()
 
       return {
-        content: [{ type: 'text', text: JSON.stringify({ removedWorktrees: [], count: 0 }, null, 2) }],
+        content: textContent(JSON.stringify({ removedWorktrees: [], count: 0 }, null, 2)),
         structuredContent: { removedWorktrees: [], count: 0 },
       }
     }
@@ -131,17 +133,15 @@ export const worktreesRemove = async (options: WorktreeManagementArgs): Promise<
     }
 
     return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(structuredContent, null, 2),
-        },
-      ],
+      content: textContent(JSON.stringify(structuredContent, null, 2)),
       structuredContent,
     }
   } catch (error) {
     logger.error({ error }, '❌ Error managing worktrees')
-    throw error
+    throw new OperationError(error, {
+      operation: 'remove worktrees',
+      remediation: "check 'git worktree list' for the path; uncommitted changes block removal",
+    })
   }
 }
 
@@ -179,8 +179,12 @@ const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string[]> => 
       removed.push(result.value)
     } else {
       const branch = branches[index]
+      const err = new OperationError(result.reason, {
+        operation: `remove worktree for ${branch}`,
+        remediation: "check 'git worktree list' for the path; uncommitted changes block removal",
+      })
 
-      logger.error({ error: result.reason }, `❌ Failed to remove worktree for ${branch}`)
+      logger.error({ error: result.reason, msg: err.message })
     }
   }
 
@@ -252,7 +256,7 @@ const logResults = (removed: string[]): void => {
 }
 
 // MCP Tool Registration
-export const worktreesRemoveMcpTool = {
+export const worktreesRemoveMcpTool = defineMcpTool({
   name: 'worktrees-remove',
   description:
     'Remove local git worktrees for release branches. When everything is removed, also runs "git worktree prune" and deletes the worktrees directory. When invoked via MCP, pass either "versions" (comma-separated) or all=true — the branch picker is unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls, so the caller is responsible for gating.',
@@ -275,4 +279,4 @@ export const worktreesRemoveMcpTool = {
     count: z.number().describe('Number of git worktrees removed'),
   },
   handler: worktreesRemove,
-}
+})

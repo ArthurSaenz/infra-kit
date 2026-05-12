@@ -7,18 +7,20 @@ import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
+import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
-import type { RequiredConfirmedOptionArg, ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
+import type { RequiredConfirmedOptionArg } from 'src/types'
 
 interface GhMergeDevArgs extends RequiredConfirmedOptionArg {
-  all: boolean
+  all?: boolean
 }
 
 /**
  * Merge dev into every release branch
  */
-export const ghMergeDev = async (args: GhMergeDevArgs): Promise<ToolsExecutionResult> => {
+export const ghMergeDev = async (args: GhMergeDevArgs) => {
   const { all, confirmedCommand } = args
 
   commandEcho.start('merge-dev')
@@ -39,12 +41,9 @@ export const ghMergeDev = async (args: GhMergeDevArgs): Promise<ToolsExecutionRe
     commandEcho.print()
 
     return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({ successfulMerges: 0, failedMerges: 0, failedBranches: [], totalBranches: 0 }, null, 2),
-        },
-      ],
+      content: textContent(
+        JSON.stringify({ successfulMerges: 0, failedMerges: 0, failedBranches: [], totalBranches: 0 }, null, 2),
+      ),
       structuredContent: { successfulMerges: 0, failedMerges: 0, failedBranches: [], totalBranches: 0 },
     }
   }
@@ -149,12 +148,7 @@ export const ghMergeDev = async (args: GhMergeDevArgs): Promise<ToolsExecutionRe
   }
 
   return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify(structuredContent, null, 2),
-      },
-    ],
+    content: textContent(JSON.stringify(structuredContent, null, 2)),
     structuredContent,
   }
 }
@@ -175,7 +169,12 @@ const mergeDev = async (branch: string): Promise<boolean> => {
 
     return true
   } catch (error: unknown) {
-    logger.error({ error, branch }, `Error merging dev into ${branch}`)
+    const err = new OperationError(error, {
+      operation: `merge dev into ${branch}`,
+      remediation: "resolve conflicts manually or rerun after 'git fetch origin'",
+    })
+
+    logger.error({ error, branch, msg: err.message })
 
     await $`git reset --merge HEAD~1`
 
@@ -184,7 +183,7 @@ const mergeDev = async (branch: string): Promise<boolean> => {
 }
 
 // MCP Tool Registration
-export const ghMergeDevMcpTool = {
+export const ghMergeDevMcpTool = defineMcpTool({
   name: 'gh-merge-dev',
   description:
     'Merge origin/dev into every open regular (non-hotfix) release branch and push the result. Mutates local git state and the remote release branches. When invoked via MCP, pass all=true — the branch picker is unreachable without a TTY, and the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. Irreversible once pushed.',
@@ -203,4 +202,4 @@ export const ghMergeDevMcpTool = {
     totalBranches: z.number().describe('Total number of branches processed'),
   },
   handler: ghMergeDev,
-}
+})

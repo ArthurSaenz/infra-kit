@@ -19,7 +19,7 @@ import {
   getSessionCacheDir,
 } from 'src/lib/constants'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
-import type { ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
 
 interface EnvLoadArgs {
   config?: string
@@ -28,7 +28,7 @@ interface EnvLoadArgs {
 /**
  * Load environment variables from Doppler for the given config
  */
-export const envLoad = async (args: EnvLoadArgs): Promise<ToolsExecutionResult> => {
+export const envLoad = async (args: EnvLoadArgs) => {
   await validateDopplerCliAndAuth()
 
   const { config } = args
@@ -98,12 +98,7 @@ export const envLoad = async (args: EnvLoadArgs): Promise<ToolsExecutionResult> 
   }
 
   return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify(structuredContent, null, 2),
-      },
-    ],
+    content: textContent(JSON.stringify(structuredContent, null, 2)),
     structuredContent,
   }
 }
@@ -189,7 +184,7 @@ export const assertValidEnvContent = (content: string): void => {
 }
 
 // MCP Tool Registration
-export const envLoadMcpTool = {
+export const envLoadMcpTool = defineMcpTool({
   name: 'env-load',
   description:
     'Download the env vars for a Doppler config and write them to a temporary shell script. Does NOT mutate the calling process — returns the path to a script that must be sourced ("source <filePath>") for the vars to take effect. The infra-kit shell wrapper auto-sources; direct MCP callers must handle sourcing themselves or surface filePath to the user. "config" is required when invoked via MCP (the CLI interactive picker is unreachable without a TTY).',
@@ -205,4 +200,4 @@ export const envLoadMcpTool = {
     config: z.string().describe('Doppler config name'),
   },
   handler: envLoad,
-}
+})

@@ -8,7 +8,7 @@ import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/ini
 import { getProjectRoot } from 'src/lib/git-utils/git-utils'
 import { getInfraKitConfig, getInfraKitConfigPaths, resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
-import type { ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
 
 interface CheckResult {
   name: string
@@ -148,10 +148,58 @@ const checkUserOverridePath = async (): Promise<CheckResult> => {
   }
 }
 
+const RTK_REQUIRED_INDEXES = [1, 2, 3, 5, 7] as const
+
+const checkRtkConfigured = async (): Promise<CheckResult> => {
+  const name = 'rtk configured'
+
+  try {
+    const result = await $`rtk init --show`
+    const statusLines = result.stdout
+      .split('\n')
+      .map((l) => {
+        return l.trim()
+      })
+      .filter((l) => {
+        return l.startsWith('[ok]') || l.startsWith('[--]')
+      })
+
+    const failed: number[] = []
+
+    for (const idx of RTK_REQUIRED_INDEXES) {
+      const line = statusLines[idx - 1]
+
+      if (!line || !line.startsWith('[ok]')) {
+        failed.push(idx)
+      }
+    }
+
+    if (failed.length > 0) {
+      return {
+        name,
+        status: 'fail',
+        message: `rtk setup incomplete (items ${failed.join(', ')} not [ok]). Run: rtk init -g --auto-patch`,
+      }
+    }
+
+    return {
+      name,
+      status: 'pass',
+      message: 'rtk hook, RTK.md, global CLAUDE.md, settings.json, and Cursor hook are configured',
+    }
+  } catch (err) {
+    return {
+      name,
+      status: 'fail',
+      message: `Failed to run 'rtk init --show': ${(err as Error).message}`,
+    }
+  }
+}
+
 /**
- * Check installation and authentication status of gh, doppler, and aws CLIs
+ * Check installation and authentication status of gh, doppler, aws, and rtk CLIs
  */
-export const doctor = async (): Promise<ToolsExecutionResult> => {
+export const doctor = async () => {
   const checks: CheckResult[] = await Promise.all([
     checkCommand(
       'gh installed',
@@ -190,6 +238,13 @@ export const doctor = async (): Promise<ToolsExecutionResult> => {
     //   'AWS CLI is authenticated',
     //   'AWS CLI is not authenticated. Run: aws configure (or aws sso login)',
     // ),
+    checkCommand(
+      'rtk installed',
+      ['rtk', '--version'],
+      'RTK is installed',
+      'RTK is not installed. Install from: https://github.com/rtk-ai/rtk',
+    ),
+    checkRtkConfigured(),
     Promise.resolve(checkZshrcInitialized()),
     checkPnpmWorkspaceVirtualStore(),
     checkInfraKitConfigValid(),
@@ -214,20 +269,15 @@ export const doctor = async (): Promise<ToolsExecutionResult> => {
   }
 
   return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify(structuredContent, null, 2),
-      },
-    ],
+    content: textContent(JSON.stringify(structuredContent, null, 2)),
     structuredContent,
   }
 }
 
 // MCP Tool Registration
-export const doctorMcpTool = {
+export const doctorMcpTool = defineMcpTool({
   name: 'doctor',
-  description: 'Check installation and authentication status of gh, doppler, and aws CLIs',
+  description: 'Check installation and authentication status of gh, doppler, aws, and rtk CLIs',
   inputSchema: {},
   outputSchema: {
     checks: z
@@ -242,4 +292,4 @@ export const doctorMcpTool = {
     allPassed: z.boolean().describe('Whether all checks passed'),
   },
   handler: doctor,
-}
+})

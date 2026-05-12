@@ -13,12 +13,12 @@ import {
   parseVarNamesFromEnvFile,
 } from 'src/lib/constants'
 import { logger } from 'src/lib/logger'
-import type { ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
 
 /**
  * Show Doppler authentication status and detected project info
  */
-export const envStatus = async (): Promise<ToolsExecutionResult> => {
+export const envStatus = async () => {
   await validateDopplerCliAndAuth()
 
   logger.info('Environment session status:')
@@ -73,18 +73,13 @@ export const envStatus = async (): Promise<ToolsExecutionResult> => {
   }
 
   return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify(structuredContent, null, 2),
-      },
-    ],
+    content: textContent(JSON.stringify(structuredContent, null, 2)),
     structuredContent,
   }
 }
 
 // MCP Tool Registration
-export const envStatusMcpTool = {
+export const envStatusMcpTool = defineMcpTool({
   name: 'env-status',
   description:
     'Report which Doppler project/config is currently loaded in the terminal session, when it was loaded, and how many variables are cached. Read-only — use env-load / env-clear to change the terminal session.',
@@ -98,4 +93,4 @@ export const envStatusMcpTool = {
     sessionLoadedAt: z.string().nullable().describe('ISO 8601 timestamp of when the env was loaded'),
   },
   handler: envStatus,
-}
+})

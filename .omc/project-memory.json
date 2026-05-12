@@ -1,0 +1,195 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1778570547205,
+  "projectRoot": "/Users/arthur/projects/infra-kit",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": ">=24.x",
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "C/C++",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "Makefile"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "pnpm",
+    "runtime": "Node.js 24.x"
+  },
+  "build": {
+    "buildCommand": "pnpm build",
+    "testCommand": "pnpm test",
+    "lintCommand": null,
+    "devCommand": "pnpm dev",
+    "scripts": {
+      "env-use": "pnpm env use --global 24.14.1",
+      "setup": "pnpm env-use && pnpm install",
+      "reinstall": "pnpm run clean-artifacts && pnpm run clean-cache-root && pnpm run reset && pnpm store prune && pnpm run env-use && pnpm install --force",
+      "print-env-node": "pnpm env list --remote 24",
+      "upgrade-pnpm": "pnpm self-update",
+      "upgrade-deps": "pnpm --recursive --interactive --latest update",
+      "dedupe-deps": "pnpm dedupe",
+      "install-pnpm": "curl -fsSL https://get.pnpm.io/install.sh | sh -",
+      "packages-build": "pnpm exec turbo run build --filter='@pkg*' --force",
+      "clean-cache": "rm -rf .turbo ./node_modules/.cache",
+      "clean-artifacts": "pnpm exec turbo run clean-artifacts",
+      "clean-cache-root": "pnpm exec turbo run clean-cache",
+      "clean-packages": "rm -rf ./packages/*/dist ./packages/*/tsconfig.tsbuildinfo",
+      "reset": "rm -rf ./apps/*/*/node_modules ./packages/*/node_modules node_modules",
+      "build": "pnpm exec turbo build --env-mode=loose",
+      "mobile-host-build": "pnpm exec turbo run build-mobile-host --filter mobile-app",
+      "dev": "pnpm exec turbo run dev --concurrency=24 --env-mode=loose",
+      "storybook": "pnpm exec turbo run storybook --concurrency=24 --env-mode=loose",
+      "storybook-build": "pnpm exec turbo run storybook-build --env-mode=loose",
+      "dev-server": "tsx packages/lib-be-dev/src/devServer.ts",
+      "dev-server:watch": "tsx packages/lib-be-dev/src/devServer.ts --watch",
+      "eslint-check": "pnpm exec turbo run eslint-check --continue",
+      "eslint-fix": "pnpm exec turbo run eslint-fix --continue",
+      "prettier-check": "pnpm exec turbo run prettier-check --continue",
+      "prettier-fix": "pnpm exec turbo run prettier-fix --continue",
+      "ts-check": "pnpm exec turbo run ts-check --continue",
+      "dx-help": "pnpm exec infra-kit --help",
+      "dx-doctor": "pnpm exec infra-kit doctor",
+      "dx-env-load": "pnpm exec infra-kit env-load && echo 'Run manually: source <path>'",
+      "dx-env-clear": "pnpm exec infra-kit env-clear && echo 'Run manually: source <path>'",
+      "dx-env-status": "pnpm exec infra-kit env-status",
+      "dx-env-list": "pnpm exec infra-kit env-list",
+      "dx-init": "pnpm exec infra-kit init",
+      "dx-merge-dev": "pnpm exec infra-kit merge-dev",
+      "dx-release-list": "pnpm exec infra-kit release-list",
+      "dx-release-create": "pnpm exec infra-kit release-create",
+      "dx-release-create-batch": "pnpm exec infra-kit release-create-batch",
+      "dx-release-deploy-all": "pnpm exec infra-kit release-deploy-all",
+      "dx-release-deploy-selected": "pnpm exec infra-kit release-deploy-selected",
+      "dx-release-deliver": "pnpm exec infra-kit release-deliver",
+      "dx-worktrees-list": "pnpm exec infra-kit worktrees-list",
+      "dx-worktrees-sync": "pnpm exec infra-kit worktrees-sync",
+      "dx-worktrees-add": "pnpm exec infra-kit worktrees-add",
+      "dx-worktrees-remove": "pnpm exec infra-kit worktrees-remove",
+      "test": "pnpm exec turbo run test --continue",
+      "test-watch": "pnpm exec turbo run test-watch --continue",
+      "test-report": "pnpm exec turbo run test-report --continue",
+      "test-unit": "pnpm exec turbo test-unit --continue",
+      "test-ui": "vitest --ui",
+      "qa": "pnpm exec turbo run test ts-check prettier-check eslint-check --continue",
+      "fix": "pnpm run eslint-fix && pnpm run prettier-fix"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": true,
+    "workspaces": [],
+    "mainDirectories": [
+      "scripts",
+      "spec"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "apps": {
+      "path": "apps",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1778570547199,
+      "keyFiles": []
+    },
+    "configs": {
+      "path": "configs",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1778570547199,
+      "keyFiles": []
+    },
+    "devops": {
+      "path": "devops",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1778570547201,
+      "keyFiles": []
+    },
+    "packages": {
+      "path": "packages",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1778570547202,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 2,
+      "lastAccessed": 1778570547202,
+      "keyFiles": [
+        "copy-shared-repos-data.mjs"
+      ]
+    },
+    "spec": {
+      "path": "spec",
+      "purpose": "Test specifications",
+      "fileCount": 1,
+      "lastAccessed": 1778570547202,
+      "keyFiles": [
+        "harness-engineering-review.md"
+      ]
+    },
+    "tmp": {
+      "path": "tmp",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1778570547202,
+      "keyFiles": []
+    },
+    "devops/scripts": {
+      "path": "devops/scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 0,
+      "lastAccessed": 1778570547202,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "apps/infra-kit/cli/src/commands/doctor/doctor.ts",
+      "accessCount": 6,
+      "lastAccessed": 1778570861657,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/commands/doctor/index.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778570681876,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/commands/init/init.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778570684440,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/logger/index.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778570693332,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

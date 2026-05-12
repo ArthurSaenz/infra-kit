@@ -5,10 +5,11 @@ import { buildCmuxWorkspaceTitle, listCmuxWorkspaceTitles, openCmuxWorkspaceWith
 import { reconcileCursorWorkspaceFolders, resolveCursorWorkspacePath } from 'src/integrations/cursor'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
+import { OperationError } from 'src/lib/errors/operation-error'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
-import type { ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
 
 interface WorktreesOpenResult {
   openedCmux: string[]
@@ -23,7 +24,7 @@ interface WorktreesOpenResult {
  * workspace exists per worktree. Idempotent and additive — never removes
  * worktrees, never recreates running cmux workspaces.
  */
-export const worktreesOpen = async (): Promise<ToolsExecutionResult> => {
+export const worktreesOpen = async () => {
   commandEcho.start('worktrees-open')
 
   try {
@@ -46,12 +47,15 @@ export const worktreesOpen = async (): Promise<ToolsExecutionResult> => {
     commandEcho.print()
 
     return {
-      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+      content: textContent(JSON.stringify(result, null, 2)),
       structuredContent: { ...result },
     }
   } catch (error) {
     logger.error({ error }, '❌ Error opening worktrees')
-    throw error
+    throw new OperationError(error, {
+      operation: 'open worktrees',
+      remediation: "run 'worktrees-list' to confirm the branches exist",
+    })
   }
 }
 
@@ -180,7 +184,7 @@ const logResults = (result: WorktreesOpenResult, context: LogResultsContext): vo
 }
 
 // MCP Tool Registration
-export const worktreesOpenMcpTool = {
+export const worktreesOpenMcpTool = defineMcpTool({
   name: 'worktrees-open',
   description:
     'Open Cursor against the configured workspace file and ensure a cmux workspace exists for each existing release worktree. Idempotent and additive — never removes worktrees, never recreates running cmux workspaces. Use after a cold start (Cursor + cmux closed). For stale-worktree cleanup, use worktrees-sync.',
@@ -194,4 +198,4 @@ export const worktreesOpenMcpTool = {
       .describe('Number of dangling worktree folders removed from the Cursor workspace file'),
   },
   handler: worktreesOpen,
-}
+})

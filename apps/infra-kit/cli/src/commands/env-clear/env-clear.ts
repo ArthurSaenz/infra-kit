@@ -13,14 +13,14 @@ import {
   getSessionCacheDir,
   parseVarNamesFromEnvFile,
 } from 'src/lib/constants'
-import type { ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
 
 /**
  * Clear loaded env vars. Prints a file path to stdout that must be sourced to apply.
  * The env-clear shell alias does this automatically. Throws when no env is loaded
  * so CLI callers exit non-zero and MCP callers receive a structured tool error.
  */
-export const envClear = async (): Promise<ToolsExecutionResult> => {
+export const envClear = async () => {
   const cacheDir = getSessionCacheDir()
   const envLoadPath = path.join(cacheDir, ENV_LOAD_FILE)
 
@@ -58,18 +58,13 @@ export const envClear = async (): Promise<ToolsExecutionResult> => {
   }
 
   return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify(structuredContent, null, 2),
-      },
-    ],
+    content: textContent(JSON.stringify(structuredContent, null, 2)),
     structuredContent,
   }
 }
 
 // MCP Tool Registration
-export const envClearMcpTool = {
+export const envClearMcpTool = defineMcpTool({
   name: 'env-clear',
   description:
     'Generate a shell script that unsets every env var previously loaded by env-load for this session, plus the infra-kit session metadata vars. Does NOT mutate the calling process. When `infra-kit init` has installed the zsh shell integration, the user\'s terminal auto-sources the unset script on its next prompt (precmd hook) — so calling this via MCP will clear the vars in the shell that launched Claude Code automatically. Other callers must source "<filePath>" themselves or surface it to the user. Errors if no env is currently loaded.',
@@ -80,4 +75,4 @@ export const envClearMcpTool = {
     unsetStatements: z.array(z.string()).describe('Unset statements generated'),
   },
   handler: envClear,
-}
+})

@@ -6,6 +6,7 @@ import { question } from 'zx'
 
 import { loadJiraConfig } from 'src/integrations/jira'
 import { commandEcho } from 'src/lib/command-echo'
+import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { createSingleRelease, prepareGitForRelease } from 'src/lib/release-utils'
 import type { ReleaseCreationResult, ReleaseType } from 'src/lib/release-utils'
@@ -18,7 +19,8 @@ import {
   resolveReleaseEntries,
 } from 'src/lib/version-utils'
 import type { ReleaseEntry, SemVer } from 'src/lib/version-utils'
-import type { RequiredConfirmedOptionArg, ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
+import type { RequiredConfirmedOptionArg } from 'src/types'
 
 interface ReleaseCreateArgs extends RequiredConfirmedOptionArg {
   releases?: ReleaseEntry[]
@@ -41,8 +43,10 @@ const resolveOrExit = (entries: ReleaseEntry[], known: SemVer[]): ReleaseEntry[]
     return resolveReleaseEntries(entries, known)
   } catch (err) {
     if (err instanceof NoPriorVersionsError) {
-      logger.error(err.message)
-      process.exit(1)
+      throw new OperationError(err, {
+        operation: 'resolve release version',
+        remediation: 'pass an explicit version (e.g. "1.2.5") instead of "next" when there are no prior versions',
+      })
     }
 
     throw err
@@ -181,12 +185,14 @@ const executeOne = async (
 
     return { result }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error)
+    const err = new OperationError(error, {
+      operation: `create release v${entry.version} (${entry.type})`,
+      remediation: 'verify the version is unique and the base branch is clean',
+    })
 
-    logger.error(`❌ Failed to create release: v${entry.version}`)
-    logger.error(`   Error: ${errorMessage}\n`)
+    logger.error(`❌ ${err.message}\n`)
 
-    return { failure: { version: entry.version, error: errorMessage } }
+    return { failure: { version: entry.version, error: err.message } }
   }
 }
 
@@ -206,7 +212,7 @@ const logFinalSummary = (total: number, successCount: number, failureCount: numb
  * (regular/hotfix) and optional Jira description, so a single invocation
  * may mix regular and hotfix releases off their respective base branches.
  */
-export const releaseCreate = async (args: ReleaseCreateArgs): Promise<ToolsExecutionResult> => {
+export const releaseCreate = async (args: ReleaseCreateArgs) => {
   const { releases: inputReleases, confirmedCommand } = args
 
   commandEcho.start('release-create')
@@ -223,8 +229,11 @@ export const releaseCreate = async (args: ReleaseCreateArgs): Promise<ToolsExecu
   const entries = await collectEntries(inputReleases, ensureKnown)
 
   if (entries.length === 0) {
-    logger.error('No releases provided. Exiting...')
-    process.exit(1)
+    throw new OperationError(undefined, {
+      operation: 'create release',
+      remediation: 'pass at least one entry in "releases" (e.g. [{ version: "1.2.5", type: "regular" }])',
+      stderrExcerpt: 'no releases provided',
+    })
   }
 
   await confirmReleases(entries, Boolean(confirmedCommand))
@@ -254,18 +263,13 @@ export const releaseCreate = async (args: ReleaseCreateArgs): Promise<ToolsExecu
   }
 
   return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify(structuredContent, null, 2),
-      },
-    ],
+    content: textContent(JSON.stringify(structuredContent, null, 2)),
     structuredContent,
   }
 }
 
 // MCP Tool Registration
-export const releaseCreateMcpTool = {
+export const releaseCreateMcpTool = defineMcpTool({
   name: 'release-create',
   description:
     'Create one or more releases in a single call. Each entry in "releases" carries its own version, type (regular|hotfix, default regular), and optional description, so regular and hotfix releases can be mixed in the same invocation. For each release this tool switches to the appropriate base branch (dev for regular, main for hotfix), cuts the release branch, opens a GitHub release PR, and creates the matching Jira fix version. The literal token "next" auto-increments from the union of remote release branches and Jira fix versions (regular bumps minor + resets patch; hotfix bumps patch on the highest minor); multiple "next" tokens advance sequentially across mixed types. Confirmation is auto-skipped for MCP calls, so the caller is responsible for gating. Continues on per-release failure and reports successes/failures.',
@@ -312,4 +316,4 @@ export const releaseCreateMcpTool = {
       .describe('List of releases that failed with error messages'),
   },
   handler: releaseCreate,
-}
+})

@@ -52,8 +52,8 @@
     "test-watch": "pnpm exec turbo run test-watch --continue",
     "test-report": "pnpm exec turbo run test-report --continue",
     "test-unit": "pnpm exec turbo test-unit --continue",
-    "test-ui": "vitest --ui",
-    "qa": "pnpm exec turbo run test ts-check prettier-check eslint-check --continue",
+    "test-ui": "vitest --ui --silent passed-only",
+    "qa": "pnpm exec turbo run test ts-check prettier-check eslint-check --continue --output-logs=errors-only",
     "fix": "pnpm run eslint-fix && pnpm run prettier-fix"
   },
   "devDependencies": {

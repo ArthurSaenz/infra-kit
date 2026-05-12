@@ -6,15 +6,8 @@ export { configsManifestService } from './configs-manifest'
 export { debounce } from './debounce'
 export { DevToolLabel } from './dev-tool-label'
 export { E2EHydrationComp } from './e2e-test-hydration'
-export {
-  EXPERIMENT_STATE,
-  experimentsModel,
-  ExperimentsNames,
-  FeatureFlag,
-  getExperimentVariant,
-  ScriptExperimentsInit,
-} from './experiments'
-export type { ExperimentNameValue } from './experiments'
+export { defineExperiments, EXPERIMENT_STATE, getExperimentVariant, ScriptExperimentsInit } from './experiments'
+export type { ExperimentDefinition, ExperimentNameValue, ExperimentsConfig } from './experiments'
 export type { ExtractAtomActionArgs, ExtractAtomSetter, ExtractedAtomType } from './extracted-atom-type'
 export { gtmNoScript, gtmScript, ScriptGtm } from './gtm-connector'
 export { HttpClient, ServerError } from './http-client'

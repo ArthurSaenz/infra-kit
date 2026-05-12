@@ -8,12 +8,14 @@ import { getReleasePRsWithInfo, updateReleasePRBody } from 'src/integrations/gh'
 import { findVersionByName, loadJiraConfig, updateJiraVersion } from 'src/integrations/jira'
 import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
 import { commandEcho } from 'src/lib/command-echo'
+import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import type { RequiredConfirmedOptionArg, ToolsExecutionResult } from 'src/types'
+import { defineMcpTool, textContent } from 'src/types'
+import type { RequiredConfirmedOptionArg } from 'src/types'
 
-interface ReleaseDescEditArgs extends Partial<RequiredConfirmedOptionArg> {
+interface ReleaseDescEditArgs extends RequiredConfirmedOptionArg {
   version?: string
   description?: string
 }
@@ -53,8 +55,10 @@ const verifyReleasePRExists = async (selectedBranch: string): Promise<ReleaseTyp
   })
 
   if (!prInfo) {
-    logger.error(`❌ Release branch ${selectedBranch} not found in open PRs. Exiting...`)
-    process.exit(1)
+    throw new OperationError(undefined, {
+      operation: `edit description for ${selectedBranch}`,
+      remediation: `confirm an open PR exists for ${selectedBranch} ('gh pr list')`,
+    })
   }
 
   return detectReleaseType(prInfo.title)
@@ -73,7 +77,7 @@ const promptDescription = async (current: string): Promise<string> => {
  * GitHub release PR body. The PR body is rewritten canonically to
  * `<jiraVersionUrl>\n\n<description>` (matching `release-create`).
  */
-export const releaseDescEdit = async (args: ReleaseDescEditArgs): Promise<ToolsExecutionResult> => {
+export const releaseDescEdit = async (args: ReleaseDescEditArgs) => {
   const { version: versionArg, description: descriptionArg, confirmedCommand } = args
 
   commandEcho.start('release-desc-edit')
@@ -100,8 +104,10 @@ export const releaseDescEdit = async (args: ReleaseDescEditArgs): Promise<ToolsE
   const jiraVersion = await findVersionByName(versionName, jiraConfig)
 
   if (!jiraVersion) {
-    logger.error(`❌ Jira version "${versionName}" not found. Exiting...`)
-    process.exit(1)
+    throw new OperationError(undefined, {
+      operation: `edit description for ${versionName}`,
+      remediation: `create the Jira fix version "${versionName}" first or pick a different release`,
+    })
   }
 
   const previousDescription = jiraVersion.description ?? ''
@@ -130,7 +136,7 @@ export const releaseDescEdit = async (args: ReleaseDescEditArgs): Promise<ToolsE
     }
 
     return {
-      content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
+      content: textContent(JSON.stringify(structuredContent, null, 2)),
       structuredContent,
     }
   }
@@ -175,13 +181,13 @@ export const releaseDescEdit = async (args: ReleaseDescEditArgs): Promise<ToolsE
   }
 
   return {
-    content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
+    content: textContent(JSON.stringify(structuredContent, null, 2)),
     structuredContent,
   }
 }
 
 // MCP Tool Registration
-export const releaseDescEditMcpTool = {
+export const releaseDescEditMcpTool = defineMcpTool({
   name: 'release-desc-edit',
   description:
     "Edit a release's description in Jira and in the matching GitHub release PR body. Targets the Jira fix version named `v<version>` and the open PR on branch `release/v<version>`. The PR body is rewritten canonically to `<jiraVersionUrl>\\n\\n<description>` — any prior manual edits to the body are overwritten. Both `version` and `description` are required for MCP calls (the picker/prompt are unreachable without a TTY). Empty `description` clears the description on both sides. Confirmation is auto-skipped for MCP, so the caller is responsible for gating.",
@@ -198,4 +204,4 @@ export const releaseDescEditMcpTool = {
     changed: z.boolean().describe('Whether the description actually changed'),
   },
   handler: releaseDescEdit,
-}
+})
