@@ -7,11 +7,14 @@ import { $ } from 'zx'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { deliverJiraRelease, loadJiraConfigOptional } from 'src/integrations/jira'
 import { commandEcho } from 'src/lib/command-echo'
+import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { formatZxError } from 'src/lib/errors/format-zx-error'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
+import { removeWorktrees } from 'src/lib/worktrees'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
@@ -140,6 +143,30 @@ const resolveTargetInteractively = async (): Promise<ResolvedTarget> => {
   return { selectedReleaseBranch, releasePrTitle: prInfo.title }
 }
 
+/**
+ * `gh pr merge --delete-branch` also deletes the local branch, which fails if a
+ * worktree has it checked out (the actual root cause of the "Failed to merge
+ * release PR" surface error). Pre-remove any worktree for the release branch
+ * so the local delete can succeed.
+ */
+const removeReleaseWorktreeIfPresent = async (releaseBranch: string): Promise<void> => {
+  const worktreeBranches = await getCurrentWorktrees('release')
+
+  if (!worktreeBranches.includes(releaseBranch)) return
+
+  const [projectRoot, repoName] = await Promise.all([getProjectRoot(), getRepoName()])
+  const worktreeDir = `${projectRoot}${WORKTREES_DIR_SUFFIX}`
+
+  const removed = await removeWorktrees({ branches: [releaseBranch], worktreeDir, repoName })
+
+  if (removed.length === 0) {
+    throw new OperationError(undefined, {
+      operation: `remove worktree for ${releaseBranch} before merge`,
+      remediation: `run manually: git worktree remove ${worktreeDir}/${releaseBranch} (use --force if uncommitted changes)`,
+    })
+  }
+}
+
 interface MergeReleasePRArgs {
   selectedReleaseBranch: string
   releaseType: ReleaseType
@@ -147,7 +174,9 @@ interface MergeReleasePRArgs {
 
 const mergeReleasePR = async (args: MergeReleasePRArgs): Promise<void> => {
   const { selectedReleaseBranch, releaseType } = args
+
   const mergeTarget = releaseType === 'hotfix' ? 'main' : 'dev'
+
   const releasePr = await fetchPRByHead(selectedReleaseBranch)
 
   if (!releasePr) {
@@ -330,6 +359,7 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
 
   $.quiet = true
 
+  await removeReleaseWorktreeIfPresent(selectedReleaseBranch)
   await mergeReleasePR({ selectedReleaseBranch, releaseType })
 
   if (releaseType !== 'hotfix') {

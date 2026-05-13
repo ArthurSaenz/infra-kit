@@ -167,21 +167,45 @@
   },
   "hotPaths": [
     {
+      "path": "apps/infra-kit/cli/src/commands/gh-release-deliver/gh-release-deliver.ts",
+      "accessCount": 21,
+      "lastAccessed": 1778670191777,
+      "type": "file"
+    },
+    {
       "path": "apps/infra-kit/cli/src/commands/doctor/doctor.ts",
       "accessCount": 6,
       "lastAccessed": 1778570861657,
       "type": "file"
     },
     {
-      "path": "apps/infra-kit/cli/src/lib/logger/index.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778659303577,
+      "path": "apps/infra-kit/cli/src/commands/worktrees-remove/worktrees-remove.ts",
+      "accessCount": 6,
+      "lastAccessed": 1778670040691,
       "type": "file"
     },
     {
-      "path": "apps/infra-kit/cli/src/commands/gh-release-deliver/gh-release-deliver.ts",
+      "path": "apps/infra-kit/cli/src/lib/git-utils/git-utils.ts",
+      "accessCount": 3,
+      "lastAccessed": 1778670124902,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/git-utils/index.ts",
+      "accessCount": 3,
+      "lastAccessed": 1778670131182,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/worktrees/remove-worktrees.ts",
+      "accessCount": 3,
+      "lastAccessed": 1778670273880,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/logger/index.ts",
       "accessCount": 2,
-      "lastAccessed": 1778659552462,
+      "lastAccessed": 1778659303577,
       "type": "file"
     },
     {
@@ -254,6 +278,18 @@
       "path": "pnpm-workspace.yaml",
       "accessCount": 1,
       "lastAccessed": 1778660486276,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/worktrees/index.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778669998110,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/infra-kit-config/infra-kit-config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778670265649,
       "type": "file"
     }
   ],

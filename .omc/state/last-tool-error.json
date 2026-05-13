@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"rtk grep -n \\\"Error merging release branch into dev\\\" --type ts --type js -l\",\"description\":\"Find the error message source\"}",
-  "error": "Exit code 2\ngrep: unrecognized option `--type'\nusage: grep [-abcdDEFGHhIiJLlMmnOopqRSsUVvwXxZz] [-A num] [-B num] [-C[num]]\n\t[-e pattern] [-f file] [--binary-files=value] [--color=when]\n\t[--context[=num]] [--directories=action] [--label] [--line-buffered]\n\t[--null] [pattern] [file ...]",
-  "timestamp": "2026-05-13T08:00:11.603Z",
-  "retry_count": 1
-}

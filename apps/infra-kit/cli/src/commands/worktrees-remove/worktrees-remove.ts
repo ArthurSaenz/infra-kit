@@ -2,9 +2,7 @@ import checkbox from '@inquirer/checkbox'
 import confirm from '@inquirer/confirm'
 import process from 'node:process'
 import { z } from 'zod/v4'
-import { $ } from 'zx'
 
-import { buildCmuxWorkspaceTitle, closeCmuxWorkspaceByTitle } from 'src/integrations/cmux'
 import { removeFoldersFromCursorWorkspace, resolveCursorWorkspacePath } from 'src/integrations/cursor'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
@@ -15,6 +13,7 @@ import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
+import { removeWorktrees } from 'src/lib/worktrees'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
@@ -118,7 +117,7 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       branches: selectedReleaseBranches,
       worktreeDir,
       repoName,
-      allSelected,
+      pruneFolder: allSelected,
     })
 
     await syncCursorWorkspaceOnRemove({ removedWorktrees, worktreeDir, projectRoot })
@@ -143,60 +142,6 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       remediation: "check 'git worktree list' for the path; uncommitted changes block removal",
     })
   }
-}
-
-interface RemoveWorktreesArgs {
-  branches: string[]
-  worktreeDir: string
-  repoName: string
-  allSelected: boolean
-}
-
-/**
- * Remove worktrees for the specified branches and whole folder
- */
-const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string[]> => {
-  const { branches, worktreeDir, repoName, allSelected } = args
-
-  const results = await Promise.allSettled(
-    branches.map(async (branch) => {
-      const worktreePath = `${worktreeDir}/${branch}`
-
-      const title = buildCmuxWorkspaceTitle({ repoName, branch })
-
-      await closeCmuxWorkspaceByTitle(title)
-
-      await $`git worktree remove ${worktreePath}`
-
-      return branch
-    }),
-  )
-
-  const removed: string[] = []
-
-  for (const [index, result] of results.entries()) {
-    if (result.status === 'fulfilled') {
-      removed.push(result.value)
-    } else {
-      const branch = branches[index]
-      const err = new OperationError(result.reason, {
-        operation: `remove worktree for ${branch}`,
-        remediation: "check 'git worktree list' for the path; uncommitted changes block removal",
-      })
-
-      logger.error({ error: result.reason, msg: err.message })
-    }
-  }
-
-  if (allSelected && removed.length === branches.length) {
-    await $`git worktree prune`
-    await $`rm -rf ${worktreeDir}`
-
-    logger.info(`🗑️ Removed worktree folder: ${worktreeDir}`)
-    logger.info('')
-  }
-
-  return removed
 }
 
 interface SyncCursorWorkspaceOnRemoveArgs {
