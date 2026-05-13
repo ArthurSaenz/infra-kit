@@ -60,7 +60,7 @@
     "@pkg/prettier-config": "workspace:*",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
-    "infra-kit": "0.1.99",
+    "infra-kit": "0.1.101",
     "shadcn": "^4.7.0",
     "turbo": "2.9.12",
     "typescript": "catalog:"
