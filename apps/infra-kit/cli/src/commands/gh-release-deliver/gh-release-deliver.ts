@@ -7,6 +7,7 @@ import { $ } from 'zx'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { deliverJiraRelease, loadJiraConfigOptional } from 'src/integrations/jira'
 import { commandEcho } from 'src/lib/command-echo'
+import { formatZxError } from 'src/lib/errors/format-zx-error'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
@@ -18,14 +19,91 @@ interface GhReleaseDeliverArgs extends RequiredConfirmedOptionArg {
   version: string
 }
 
+type PRState = 'OPEN' | 'MERGED' | 'CLOSED'
+
+interface PRStatus {
+  number: number
+  state: PRState
+  title: string
+}
+
 /**
- * Deliver a release branch to production
+ * Wrap a delivery step so its failure logs structured zx fields and surfaces
+ * an `OperationError` whose message names the actual step that failed —
+ * instead of the previous blanket "merging release branch into dev" message.
  */
-export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
-  const { version, confirmedCommand } = args
+const runStep = async <T>(operation: string, remediation: string, fn: () => Promise<T>): Promise<T> => {
+  try {
+    return await fn()
+  } catch (error) {
+    logger.error({ err: formatZxError(error) }, `❌ Failed to ${operation}`)
+    throw new OperationError(error, { operation, remediation })
+  }
+}
 
-  commandEcho.start('release-deliver')
+/**
+ * Fetch the (most-recent) PR for the given head branch, across all states, so
+ * we can resume a partially-completed delivery: a PR merged on a prior attempt
+ * still appears here as `state: 'MERGED'`, letting the caller skip the merge.
+ */
+const fetchPRByHead = async (head: string): Promise<PRStatus | null> => {
+  const result = await $`gh pr list --head ${head} --state all --json number,state,title --limit 1`
+  const prs = JSON.parse(result.stdout) as PRStatus[]
 
+  return prs[0] ?? null
+}
+
+/**
+ * Find a MERGED RC PR (dev → main) whose title matches the given version, used
+ * to detect that a prior delivery run already merged the RC and we should skip
+ * the merge step on resume. Title-matched on purpose: an older MERGED RC PR
+ * from a different release must not short-circuit this version's flow.
+ */
+const fetchMergedRcPRForVersion = async (version: string): Promise<PRStatus | null> => {
+  const expectedTitle = `Release v${version} (RC)`
+  const result = await $`gh pr list --head dev --base main --state merged --json number,state,title --limit 20`
+  const prs = JSON.parse(result.stdout) as PRStatus[]
+  const match = prs.find((pr) => {
+    return pr.title === expectedTitle
+  })
+
+  return match ?? null
+}
+
+/**
+ * Find an open dev → main PR, if any. GitHub allows at most one open PR per
+ * head/base pair, so an existing open PR here is the RC PR for this release —
+ * even if its title was set by a previous (failed) delivery run. Adopting it
+ * is what makes the flow recoverable after a mid-run failure.
+ */
+const fetchOpenDevToMainPR = async (): Promise<PRStatus | null> => {
+  const result = await $`gh pr list --head dev --base main --state open --json number,state,title --limit 5`
+  const prs = JSON.parse(result.stdout) as PRStatus[]
+
+  return prs[0] ?? null
+}
+
+interface ResolvedTarget {
+  selectedReleaseBranch: string
+  releasePrTitle: string
+}
+
+const resolveTargetFromVersion = async (version: string): Promise<ResolvedTarget> => {
+  const selectedReleaseBranch = `release/v${version}`
+  const pr = await fetchPRByHead(selectedReleaseBranch)
+
+  if (!pr) {
+    logger.error(`❌ No PR found for branch ${selectedReleaseBranch}.`)
+    throw new OperationError(undefined, {
+      operation: `deliver release ${selectedReleaseBranch}`,
+      remediation: `confirm a PR exists ('gh pr list --head ${selectedReleaseBranch} --state all')`,
+    })
+  }
+
+  return { selectedReleaseBranch, releasePrTitle: pr.title }
+}
+
+const resolveTargetInteractively = async (): Promise<ResolvedTarget> => {
   const releasePRsInfo = await getReleasePRsWithInfo()
 
   const branches = releasePRsInfo.map((pr) => {
@@ -38,26 +116,15 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
     }),
   )
 
-  let selectedReleaseBranch = '' // "release/v1.8.0"
+  commandEcho.setInteractive()
 
-  if (version) {
-    selectedReleaseBranch = `release/v${version}`
-  } else {
-    commandEcho.setInteractive()
+  const descriptions = await getJiraDescriptions()
 
-    const descriptions = await getJiraDescriptions()
+  const selectedReleaseBranch = await select({
+    message: '🌿 Select release branch',
+    choices: formatBranchChoices({ branches, descriptions, types: releaseTypes }),
+  })
 
-    selectedReleaseBranch = await select({
-      message: '🌿 Select release branch',
-      choices: formatBranchChoices({ branches, descriptions, types: releaseTypes }),
-    })
-  }
-
-  const selectedVersion = selectedReleaseBranch.replace('release/v', '')
-
-  commandEcho.addOption('--version', selectedVersion)
-
-  // Check if release branch exists in the list
   const prInfo = releasePRsInfo.find((pr) => {
     return pr.branch === selectedReleaseBranch
   })
@@ -70,7 +137,178 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
     })
   }
 
-  const releaseType: ReleaseType = detectReleaseType(prInfo.title)
+  return { selectedReleaseBranch, releasePrTitle: prInfo.title }
+}
+
+interface MergeReleasePRArgs {
+  selectedReleaseBranch: string
+  releaseType: ReleaseType
+}
+
+const mergeReleasePR = async (args: MergeReleasePRArgs): Promise<void> => {
+  const { selectedReleaseBranch, releaseType } = args
+  const mergeTarget = releaseType === 'hotfix' ? 'main' : 'dev'
+  const releasePr = await fetchPRByHead(selectedReleaseBranch)
+
+  if (!releasePr) {
+    throw new OperationError(undefined, {
+      operation: `look up release PR for ${selectedReleaseBranch}`,
+      remediation: `verify the PR exists in GitHub`,
+    })
+  }
+
+  if (releasePr.state === 'MERGED') {
+    logger.info(`✓ Release PR ${selectedReleaseBranch} already merged — skipping`)
+
+    return
+  }
+
+  if (releasePr.state === 'CLOSED') {
+    throw new OperationError(undefined, {
+      operation: `merge release PR ${selectedReleaseBranch} into ${mergeTarget}`,
+      remediation: `the PR is closed without merge; reopen it or create a new release`,
+    })
+  }
+
+  await runStep(
+    `merge release PR ${selectedReleaseBranch} into ${mergeTarget}`,
+    `check 'gh pr view ${selectedReleaseBranch}' for mergeability and required reviews`,
+    async () => {
+      await $`gh pr merge ${selectedReleaseBranch} --squash --admin --delete-branch`
+    },
+  )
+}
+
+const resolveRcPRNumber = async (selectedVersion: string): Promise<number> => {
+  const expectedTitle = `Release v${selectedVersion} (RC)`
+  const existingOpen = await fetchOpenDevToMainPR()
+
+  // Adopt any existing open dev→main PR. GitHub permits only one open PR per
+  // head/base pair, so a stale open RC PR (left behind by a prior failed run
+  // — the single most common cause of "Error merging release branch into
+  // dev") blocks `gh pr create`. Retitle it instead of fighting it.
+  if (existingOpen) {
+    const rcNumber = existingOpen.number
+
+    if (existingOpen.title !== expectedTitle) {
+      logger.info(
+        `Adopting open dev → main PR #${rcNumber} ("${existingOpen.title}") and retitling for v${selectedVersion}`,
+      )
+      await runStep(
+        `retitle dev → main PR #${rcNumber} to "${expectedTitle}"`,
+        `update manually: gh pr edit ${rcNumber} --title "${expectedTitle}"`,
+        async () => {
+          await $`gh pr edit ${rcNumber} --title ${expectedTitle}`
+        },
+      )
+    }
+
+    return rcNumber
+  }
+
+  await runStep(
+    `create RC PR (dev → main) for v${selectedVersion}`,
+    `run 'gh pr create --base main --head dev' manually to surface the underlying error (e.g. no commits between dev and main)`,
+    async () => {
+      await $`gh pr create --base main --head dev --title ${expectedTitle} --body ""`
+    },
+  )
+
+  const created = await fetchOpenDevToMainPR()
+
+  if (!created) {
+    throw new OperationError(undefined, {
+      operation: `look up RC PR for v${selectedVersion}`,
+      remediation: `verify the RC PR was created ('gh pr list --head dev --base main')`,
+    })
+  }
+
+  return created.number
+}
+
+const ensureRcPRMerged = async (selectedVersion: string): Promise<void> => {
+  const alreadyMerged = await fetchMergedRcPRForVersion(selectedVersion)
+
+  if (alreadyMerged) {
+    logger.info(`✓ RC PR for v${selectedVersion} already merged into main — skipping`)
+
+    return
+  }
+
+  const rcNumber = await resolveRcPRNumber(selectedVersion)
+
+  await runStep(
+    `merge RC PR #${rcNumber} (dev → main) for v${selectedVersion}`,
+    `check 'gh pr view ${rcNumber}' for mergeability and required reviews`,
+    async () => {
+      await $`gh pr merge ${rcNumber} --squash --admin`
+    },
+  )
+}
+
+const dispatchDeployWorkflow = async (): Promise<void> => {
+  $.quiet = false
+
+  await runStep(
+    `dispatch deploy-all workflow on main`,
+    `check 'gh workflow list' and that you have permission to dispatch deploy-all.yml`,
+    async () => {
+      await $`gh workflow run deploy-all.yml --ref main -f environment=prod`
+    },
+  )
+
+  $.quiet = true
+}
+
+const syncMainIntoDev = async (): Promise<void> => {
+  await runStep(
+    `sync main back into dev`,
+    `run manually: git switch main && git pull && git switch dev && git pull && git merge main --no-edit && git push`,
+    async () => {
+      await $`git switch main && git pull && git switch dev && git pull && git merge main --no-edit && git push`
+    },
+  )
+}
+
+const deliverJiraReleaseSafely = async (selectedReleaseBranch: string): Promise<void> => {
+  const jiraConfig = await loadJiraConfigOptional()
+
+  if (!jiraConfig) {
+    logger.info('🔔 Jira is not configured, skipping Jira release delivery')
+
+    return
+  }
+
+  try {
+    const versionName = selectedReleaseBranch.replace('release/', '')
+
+    await deliverJiraRelease({ versionName }, jiraConfig)
+  } catch (error) {
+    logger.error({ err: formatZxError(error) }, 'Failed to deliver Jira release (non-blocking)')
+  }
+}
+
+/**
+ * Deliver a release branch to production. Each network/git step is run inside
+ * `runStep` so the surfaced error names the failing operation and includes the
+ * subprocess stderr. PR-merge steps are idempotent: if the release PR or RC PR
+ * is already MERGED, the step is skipped, so re-running after a mid-flight
+ * failure picks up where it stopped.
+ */
+export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
+  const { version, confirmedCommand } = args
+
+  commandEcho.start('release-deliver')
+
+  const { selectedReleaseBranch, releasePrTitle } = version
+    ? await resolveTargetFromVersion(version)
+    : await resolveTargetInteractively()
+
+  const selectedVersion = selectedReleaseBranch.replace('release/v', '')
+
+  commandEcho.addOption('--version', selectedVersion)
+
+  const releaseType: ReleaseType = detectReleaseType(releasePrTitle)
 
   const answer = confirmedCommand
     ? true
@@ -90,75 +328,35 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
   // Track --yes flag if confirmation was interactive (user confirmed)
   commandEcho.addOption('--yes', true)
 
-  try {
-    $.quiet = true
+  $.quiet = true
 
-    if (releaseType === 'hotfix') {
-      // Hotfix: merge directly into main, deploy, sync back to dev
-      await $`gh pr merge ${selectedReleaseBranch} --squash --admin --delete-branch`
+  await mergeReleasePR({ selectedReleaseBranch, releaseType })
 
-      $.quiet = false
+  if (releaseType !== 'hotfix') {
+    await ensureRcPRMerged(selectedVersion)
+  }
 
-      await $`gh workflow run deploy-all.yml --ref main -f environment=prod`
+  await dispatchDeployWorkflow()
+  await syncMainIntoDev()
 
-      $.quiet = true
+  $.quiet = false
 
-      // Sync main into dev
-      await $`git switch main && git pull && git switch dev && git pull && git merge main --no-edit && git push`
-    } else {
-      // Regular: merge into dev, create RC PR to main, merge to main, deploy, sync
-      await $`gh pr merge ${selectedReleaseBranch} --squash --admin --delete-branch`
-      await $`gh pr create --base main --head dev --title "Release v${selectedVersion} (RC)" --body ""`
-      await $`gh pr merge dev --squash --admin`
+  await deliverJiraReleaseSafely(selectedReleaseBranch)
 
-      $.quiet = false
+  logger.info(`Successfully delivered ${selectedReleaseBranch} to production!`)
 
-      await $`gh workflow run deploy-all.yml --ref main -f environment=prod`
+  commandEcho.print()
 
-      $.quiet = true
+  const structuredContent = {
+    releaseBranch: selectedReleaseBranch,
+    version: selectedVersion,
+    type: releaseType,
+    success: true,
+  }
 
-      // Sync main into dev
-      await $`git switch main && git pull && git switch dev && git pull && git merge main --no-edit && git push`
-    }
-
-    $.quiet = false
-
-    // Deliver Jira release if Jira is configured
-    const jiraConfig = await loadJiraConfigOptional()
-
-    if (jiraConfig) {
-      try {
-        const versionName = selectedReleaseBranch.replace('release/', '')
-
-        await deliverJiraRelease({ versionName }, jiraConfig)
-      } catch (error) {
-        logger.error({ error }, 'Failed to deliver Jira release (non-blocking)')
-      }
-    } else {
-      logger.info('🔔 Jira is not configured, skipping Jira release delivery')
-    }
-
-    logger.info(`Successfully delivered ${selectedReleaseBranch} to production!`)
-
-    commandEcho.print()
-
-    const structuredContent = {
-      releaseBranch: selectedReleaseBranch,
-      version: selectedReleaseBranch.replace('release/v', ''),
-      type: releaseType,
-      success: true,
-    }
-
-    return {
-      content: textContent(JSON.stringify(structuredContent, null, 2)),
-      structuredContent,
-    }
-  } catch (error: unknown) {
-    logger.error({ error }, '❌ Error merging release branch into dev')
-    throw new OperationError(error, {
-      operation: 'merge release branch into dev',
-      remediation: "verify 'gh auth status' is ok and the release PR is mergeable",
-    })
+  return {
+    content: textContent(JSON.stringify(structuredContent, null, 2)),
+    structuredContent,
   }
 }
 
@@ -166,7 +364,7 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
 export const ghReleaseDeliverMcpTool = defineMcpTool({
   name: 'gh-release-deliver',
   description:
-    'Deliver a release to production. For hotfixes: squash-merges the release branch to main and dispatches the deploy-all workflow. For regular releases: squash-merges to dev, opens an RC PR, merges dev into main, dispatches the deploy-all workflow, then syncs main back to dev. Also releases the matching Jira fix version if Jira is configured. Dispatches the deploy workflow fire-and-forget — the tool returns once the workflow is accepted by GitHub, not when the deployment finishes. Irreversible production operation: the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. "version" is required when invoked via MCP (the picker is unreachable without a TTY).',
+    'Deliver a release to production. For hotfixes: squash-merges the release branch to main and dispatches the deploy-all workflow. For regular releases: squash-merges to dev, opens an RC PR, merges dev into main, dispatches the deploy-all workflow, then syncs main back to dev. Also releases the matching Jira fix version if Jira is configured. Dispatches the deploy workflow fire-and-forget — the tool returns once the workflow is accepted by GitHub, not when the deployment finishes. PR-merge steps are idempotent: re-running after a partial failure skips PRs that are already merged. Irreversible production operation: the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. "version" is required when invoked via MCP (the picker is unreachable without a TTY).',
   inputSchema: {
     version: z.string().describe('Release version to deliver to production (e.g., "1.2.5"). Required for MCP calls.'),
   },

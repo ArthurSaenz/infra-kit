@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1778570547205,
+  "lastScanned": 1778659148906,
   "projectRoot": "/Users/arthur/projects/infra-kit",
   "techStack": {
     "languages": [
@@ -79,8 +79,8 @@
       "test-watch": "pnpm exec turbo run test-watch --continue",
       "test-report": "pnpm exec turbo run test-report --continue",
       "test-unit": "pnpm exec turbo test-unit --continue",
-      "test-ui": "vitest --ui",
-      "qa": "pnpm exec turbo run test ts-check prettier-check eslint-check --continue",
+      "test-ui": "vitest --ui --silent passed-only",
+      "qa": "pnpm exec turbo run test ts-check prettier-check eslint-check --continue --output-logs=errors-only",
       "fix": "pnpm run eslint-fix && pnpm run prettier-fix"
     }
   },
@@ -108,35 +108,35 @@
       "path": "apps",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778570547199,
+      "lastAccessed": 1778659148900,
       "keyFiles": []
     },
     "configs": {
       "path": "configs",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778570547199,
+      "lastAccessed": 1778659148900,
       "keyFiles": []
     },
     "devops": {
       "path": "devops",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778570547201,
+      "lastAccessed": 1778659148902,
       "keyFiles": []
     },
     "packages": {
       "path": "packages",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778570547202,
+      "lastAccessed": 1778659148902,
       "keyFiles": []
     },
     "scripts": {
       "path": "scripts",
       "purpose": "Build/utility scripts",
       "fileCount": 2,
-      "lastAccessed": 1778570547202,
+      "lastAccessed": 1778659148902,
       "keyFiles": [
         "copy-shared-repos-data.mjs"
       ]
@@ -145,7 +145,7 @@
       "path": "spec",
       "purpose": "Test specifications",
       "fileCount": 1,
-      "lastAccessed": 1778570547202,
+      "lastAccessed": 1778659148902,
       "keyFiles": [
         "harness-engineering-review.md"
       ]
@@ -154,14 +154,14 @@
       "path": "tmp",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1778570547202,
+      "lastAccessed": 1778659148902,
       "keyFiles": []
     },
     "devops/scripts": {
       "path": "devops/scripts",
       "purpose": "Build/utility scripts",
       "fileCount": 0,
-      "lastAccessed": 1778570547202,
+      "lastAccessed": 1778659148903,
       "keyFiles": []
     }
   },
@@ -170,6 +170,30 @@
       "path": "apps/infra-kit/cli/src/commands/doctor/doctor.ts",
       "accessCount": 6,
       "lastAccessed": 1778570861657,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/logger/index.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778659303577,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/commands/gh-release-deliver/gh-release-deliver.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778659552462,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 2,
+      "lastAccessed": 1778659880645,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/package.json",
+      "accessCount": 2,
+      "lastAccessed": 1778660499401,
       "type": "file"
     },
     {
@@ -185,9 +209,51 @@
       "type": "file"
     },
     {
-      "path": "apps/infra-kit/cli/src/lib/logger/index.ts",
+      "path": "apps/infra-kit/cli/src/integrations/gh/index.ts",
       "accessCount": 1,
-      "lastAccessed": 1778570693332,
+      "lastAccessed": 1778659319153,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/integrations/gh/gh-release-prs/index.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778659351855,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/integrations/gh/gh-release-prs/gh-release-prs.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778659356972,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/errors/__tests__/operation-error.test.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778659451716,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/entry/cli.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778659496131,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/errors/format-zx-error.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778659509995,
+      "type": "file"
+    },
+    {
+      "path": ".node-version",
+      "accessCount": 1,
+      "lastAccessed": 1778659872666,
+      "type": "file"
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "accessCount": 1,
+      "lastAccessed": 1778660486276,
       "type": "file"
     }
   ],

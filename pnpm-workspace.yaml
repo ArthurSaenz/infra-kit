@@ -5,9 +5,9 @@ packages:
   - '!**/test/**'
 
 catalog:
-  '@inquirer/checkbox': ^5.1.4
-  '@inquirer/confirm': ^6.0.12
-  '@inquirer/select': ^5.1.4
+  '@inquirer/checkbox': ^5.1.5
+  '@inquirer/confirm': ^6.0.13
+  '@inquirer/select': ^5.1.5
   '@modelcontextprotocol/sdk': ^1.29.0
   '@playwright/test': ^1.59.1
   '@tailwindcss/vite': ^4.2.2
@@ -47,7 +47,7 @@ catalog:
   vite: 8.0.10
   vite-plugin-dts: ^4.5.4
   vite-tsconfig-paths: ^6.1.1
-  yaml: ^2.8.4
+  yaml: ^2.9.0
   zod: 3.25.76
   zx: ^8.8.5
 
