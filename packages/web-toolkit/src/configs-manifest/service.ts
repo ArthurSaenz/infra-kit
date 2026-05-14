@@ -108,16 +108,34 @@ const fetchRootManifest = async <T>(args: {
   if (isSSR) return Promise.resolve(null)
 
   try {
-    const payload = await httpClient.fetch<T>(url, {
+    const cacheKey = `rootManifest:${url}.cacheData`
+    const cachedData = await idb.get<{ etag: string; data: T }>(cacheKey)
+    const isValidateCache = Boolean(cachedData?.etag && cachedData?.data)
+
+    const response = await httpClient.fetch<T>(url, {
       method: 'GET',
+      headers: isValidateCache && cachedData ? { 'If-None-Match': cachedData.etag } : undefined,
     })
+
+    if (response.status === 304 && cachedData) {
+      if (isEnabledDebug) {
+        // eslint-disable-next-line no-console
+        console.log('App manifest config (304, cached):', url, cachedData.data)
+      }
+
+      return cachedData.data
+    }
+
+    if (response.headers?.etag && response.body) {
+      await idb.set(cacheKey, { etag: response.headers.etag, data: response.body }, THROTTLE_TIME_IN_SECONDS)
+    }
 
     if (isEnabledDebug) {
       // eslint-disable-next-line no-console
-      console.log('App manifest config:', url, payload.body)
+      console.log('App manifest config:', url, response.body)
     }
 
-    return payload.body
+    return response.body
   } catch (error) {
     console.error('fetchRootManifest', error)
 
