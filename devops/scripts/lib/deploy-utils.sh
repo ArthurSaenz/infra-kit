@@ -194,8 +194,11 @@ deploy_frontend_ui() {
     run_command "Navigate to $app_path" "cd ./$app_path"
 
     # Sync to S3 (with optional destination path)
+    # --delete removes stale files left in S3 from prior builds (e.g. an old hashed
+    # filename after a rename), preventing half-deployed pairs where the new bundle
+    # references hashes that exist only in the new file but a stale sibling lingers.
     local s3_destination="s3://$s3_bucket$s3_dest_path"
-    run_command "Sync to S3" "aws s3 sync $s3_source_path $s3_destination $s3_sync_flags --only-show-errors"
+    run_command "Sync to S3" "aws s3 sync $s3_source_path $s3_destination $s3_sync_flags --delete --only-show-errors"
 
     # Invalidate CloudFront
     run_command "Invalidate CloudFront" "aws cloudfront create-invalidation --distribution-id $cloudfront_id --paths \"$cf_invalidation_path\""
