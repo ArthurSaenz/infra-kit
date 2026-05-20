@@ -107,7 +107,7 @@ const config = async (userOptions = {}) => {
       files: ['**/*.md'],
       rules: Object.fromEntries(Object.keys(sonarjs.configs.recommended.rules).map((rule) => [rule, 'off'])),
     },
-    { ignores: ['**/routeTree.gen.ts', '**/citiesOld.json', '**/airports.json', '**/.astro/', ...ignores] },
+    { ignores: ['**/routeTree.gen.ts', '**/citiesOld.json', '**/airports.json', '**/.astro/', '**/.omc/**', ...ignores] },
   )
 
   return baseConfig

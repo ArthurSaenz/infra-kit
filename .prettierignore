@@ -18,6 +18,7 @@
 ## Build output
 .cache
 .turbo
+.omc
 dist
 public
 storybook-static
