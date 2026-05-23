@@ -93,10 +93,10 @@ export const FeatureAContainer = (props: FeatureAContainerProps) => {
 
 ### Type Extraction Across Features
 
-Use `@pkg/web-toolkit` utilities for type-safe cross-feature props:
+Use `@wl/web-toolkit` utilities for type-safe cross-feature props:
 
 ```typescript
-import type { ExtractedAtomType, ExtractWriteOnlyAtomArgs, ExtractAtomSetter } from '@pkg/web-toolkit'
+import type { ExtractedAtomType, ExtractWriteOnlyAtomArgs, ExtractAtomSetter } from '@wl/web-toolkit'
 
 interface FeatureAContainerProps {
   // Read-only atom value

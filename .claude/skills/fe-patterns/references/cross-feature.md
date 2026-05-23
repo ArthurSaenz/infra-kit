@@ -220,7 +220,7 @@ Features access their own services internally but NEVER access another feature's
 1. **Inside a feature:** Containers import from their own `services` freely
 2. **Between features:** Page reads from Feature B's service, passes as props to Feature A
 3. **Never:** Feature A imports Feature B's service directly
-4. **Type extraction:** Use `@pkg/web-toolkit` utilities for type-safe prop definitions
+4. **Type extraction:** Use `@wl/web-toolkit` utilities for type-safe prop definitions
 
 ### Full Example: Two Features Sharing Data
 
@@ -271,14 +271,14 @@ export const ChartContainer = (props: ChartContainerProps) => {
 
 ## Type Extraction
 
-Use `@pkg/web-toolkit` type utilities to extract types from atoms without runtime imports.
+Use `@wl/web-toolkit` type utilities to extract types from atoms without runtime imports.
 
 ### Variant 1: `ExtractedAtomType` — Read-Only Atom Value
 
 Extract the value type `T` from `Atom<T>`. Use when passing atom values as props.
 
 ```typescript
-import type { ExtractedAtomType } from '@pkg/web-toolkit'
+import type { ExtractedAtomType } from '@wl/web-toolkit'
 
 // In page or consuming feature's types
 type UserData = ExtractedAtomType<typeof import('#root/features/user').userService.$userData>
@@ -296,7 +296,7 @@ Extract the argument type from a write-only atom's write function. Use when forw
 **Important:** The actual export is `ExtractAtomActionArgs`, not `ExtractWriteOnlyAtomArgs`.
 
 ```typescript
-import type { ExtractAtomActionArgs } from '@pkg/web-toolkit'
+import type { ExtractAtomActionArgs } from '@wl/web-toolkit'
 
 // Extract the args type from a Fx atom
 type UpdateUserArgs = ExtractAtomActionArgs<
@@ -314,7 +314,7 @@ interface MyContainerProps {
 Extract the updater function signature `(prev: Value) => Value` from a writable atom.
 
 ```typescript
-import type { ExtractAtomSetter } from '@pkg/web-toolkit'
+import type { ExtractAtomSetter } from '@wl/web-toolkit'
 
 type SetTheme = ExtractAtomSetter<typeof import('#root/features/theme').themeService.$theme>
 // Resolves to: (prev: ThemeConfig) => ThemeConfig

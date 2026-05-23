@@ -16,6 +16,7 @@ import { ghReleaseList } from 'src/commands/gh-release-list'
 import { init } from 'src/commands/init'
 import { releaseCreate } from 'src/commands/release-create'
 import { releaseDescEdit } from 'src/commands/release-desc-edit'
+import { validate } from 'src/commands/validate'
 import { version } from 'src/commands/version'
 import { CURSOR_MODES, worktreesAdd } from 'src/commands/worktrees-add'
 import type { CursorMode } from 'src/commands/worktrees-add'
@@ -224,6 +225,19 @@ configCmd
   })
 
 program
+  .command('validate')
+  .description('Validate against infra-kit.config.ts rules (--all for every package, --root for the monorepo root)')
+  .option('-a, --all', 'Validate every non-vendor workspace package')
+  .option('-r, --root', 'Validate the monorepo root (turbo pipeline + root commands)')
+  .action(async (options) => {
+    const result = await validate({ all: options.all, root: options.root })
+
+    if (!result.structuredContent.allPassed) {
+      process.exitCode = 1
+    }
+  })
+
+program
   .command('doctor')
   .description('Check installation and authentication status of gh and doppler CLIs')
   .action(async () => {
@@ -284,7 +298,17 @@ if (process.argv.length <= 2) {
     'release-deliver',
   ]
   const worktreeCommands = ['worktrees-add', 'worktrees-list', 'worktrees-open', 'worktrees-remove', 'worktrees-sync']
-  const envCommands = ['doctor', 'init', 'version', 'config', 'env-status', 'env-list', 'env-load', 'env-clear']
+  const envCommands = [
+    'validate',
+    'doctor',
+    'init',
+    'version',
+    'config',
+    'env-status',
+    'env-list',
+    'env-load',
+    'env-clear',
+  ]
 
   const commandMap = new Map(
     program.commands.map((cmd) => {

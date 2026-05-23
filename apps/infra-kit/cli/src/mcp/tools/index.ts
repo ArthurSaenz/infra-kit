@@ -11,6 +11,7 @@ import { ghReleaseDeploySelectedMcpTool } from 'src/commands/gh-release-deploy-s
 import { ghReleaseListMcpTool } from 'src/commands/gh-release-list'
 import { releaseCreateMcpTool } from 'src/commands/release-create'
 import { releaseDescEditMcpTool } from 'src/commands/release-desc-edit'
+import { validateMcpTool } from 'src/commands/validate'
 import { versionMcpTool } from 'src/commands/version'
 import { worktreesAddMcpTool } from 'src/commands/worktrees-add'
 import { worktreesListMcpTool } from 'src/commands/worktrees-list'
@@ -31,6 +32,7 @@ const tools = [
   ghReleaseDeployAllMcpTool,
   ghReleaseDeploySelectedMcpTool,
   ghReleaseListMcpTool,
+  validateMcpTool,
   versionMcpTool,
   worktreesAddMcpTool,
   worktreesListMcpTool,

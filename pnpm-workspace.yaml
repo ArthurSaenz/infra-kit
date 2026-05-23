@@ -1,7 +1,8 @@
 packages:
   - apps/*/*
   - packages/*
-  - configs/*
+  - vendor/packages/*
+  - vendor/configs/*
   - '!**/test/**'
 
 catalog:
@@ -84,6 +85,13 @@ catalogs:
 
 strictPeerDependencies: false
 
+# Pin TanStack to the set vendored @wl/docs-ui (react-start 1.168.9) type-checks against; a fresh
+# install otherwise drifts to react-router 1.170.7 / router-core 1.171.5 (fumadocs-core peer range)
+# and breaks ts-check. Matches the versions the other consumer repos resolve.
+overrides:
+  '@tanstack/react-router': 1.170.6
+  '@tanstack/router-core': 1.171.4
+
 publicHoistPattern:
   - '*types*'
   - '*eslint*'
@@ -99,4 +107,6 @@ publicHoistPattern:
   - '*@vitest*'
 
 allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
   msw: true

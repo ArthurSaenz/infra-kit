@@ -3,8 +3,16 @@
   "type": "module",
   "version": "0.1.102",
   "description": "infra-kit",
-  "main": "dist/cli.js",
-  "module": "dist/cli.js",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/entry/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/entry/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "infra-kit": "dist/cli.js"
   },
@@ -13,7 +21,8 @@
   },
   "scripts": {
     "inspector": "npx @modelcontextprotocol/inspector node ./dist/mcp.js --debug",
-    "build": "pnpm run clean-artifacts && node ./scripts/build.js",
+    "build": "pnpm run clean-artifacts && node ./scripts/build.js && tsc -p tsconfig.build.json",
+    "validate": "node ./dist/cli.js validate",
     "clean-artifacts": "rm -rf dist",
     "clean-cache": "rm -rf node_modules/.cache .eslintcache tsconfig.tsbuildinfo .turbo .swc",
     "prettier-fix": "pnpm exec prettier **/* --write --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
@@ -41,8 +50,8 @@
     "zx": "^8.8.5"
   },
   "devDependencies": {
-    "@pkg/eslint-config": "workspace:*",
-    "@pkg/vitest-config": "workspace:*",
+    "@wl/eslint-config": "workspace:*",
+    "@wl/vitest-config": "workspace:*",
     "esbuild": "^0.28.0",
     "typescript": "^6.0.3"
   }

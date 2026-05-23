@@ -125,7 +125,7 @@ Features communicate only at the page level. Three patterns:
 - **Component pattern:** `<Container SidebarComponent={OtherFeature} />` — parent controls props
 - **Render function:** `<Container renderSection={(props) => <OtherFeature {...props} />} />` — full control
 
-For type extraction across features, use `ExtractedAtomType`, `ExtractWriteOnlyAtomArgs`, `ExtractAtomSetter` from `@pkg/web-toolkit`.
+For type extraction across features, use `ExtractedAtomType`, `ExtractWriteOnlyAtomArgs`, `ExtractAtomSetter` from `@wl/web-toolkit`.
 
 See [rules.md](./references/core/rules.md) for cross-feature details.
 

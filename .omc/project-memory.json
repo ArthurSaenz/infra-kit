@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1778659148906,
+  "lastScanned": 1779466331351,
   "projectRoot": "/Users/arthur/projects/infra-kit",
   "techStack": {
     "languages": [
@@ -27,7 +27,7 @@
   },
   "build": {
     "buildCommand": "pnpm build",
-    "testCommand": "pnpm test",
+    "testCommand": "echo \"=== scripts/build.js ===\" && rtk read apps/infra-kit/cli/scripts/build.js 2>/dev/null && echo \"\" && echo \"=== tsconfig.json ===\" && rtk read apps/infra-kit/cli/tsconfig.json && echo \"\" && echo \"=== vitest.config.ts ===\" && rtk read apps/infra-kit/cli/vitest.config.ts",
     "lintCommand": null,
     "devCommand": "pnpm dev",
     "scripts": {
@@ -108,35 +108,35 @@
       "path": "apps",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778659148900,
+      "lastAccessed": 1779466331345,
       "keyFiles": []
     },
     "configs": {
       "path": "configs",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778659148900,
+      "lastAccessed": 1779466331345,
       "keyFiles": []
     },
     "devops": {
       "path": "devops",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778659148902,
+      "lastAccessed": 1779466331347,
       "keyFiles": []
     },
     "packages": {
       "path": "packages",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778659148902,
+      "lastAccessed": 1779466331348,
       "keyFiles": []
     },
     "scripts": {
       "path": "scripts",
       "purpose": "Build/utility scripts",
       "fileCount": 2,
-      "lastAccessed": 1778659148902,
+      "lastAccessed": 1779466331348,
       "keyFiles": [
         "copy-shared-repos-data.mjs"
       ]
@@ -145,7 +145,7 @@
       "path": "spec",
       "purpose": "Test specifications",
       "fileCount": 1,
-      "lastAccessed": 1778659148902,
+      "lastAccessed": 1779466331348,
       "keyFiles": [
         "harness-engineering-review.md"
       ]
@@ -154,142 +154,148 @@
       "path": "tmp",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1778659148902,
+      "lastAccessed": 1779466331348,
       "keyFiles": []
     },
     "devops/scripts": {
       "path": "devops/scripts",
       "purpose": "Build/utility scripts",
       "fileCount": 0,
-      "lastAccessed": 1778659148903,
+      "lastAccessed": 1779466331349,
       "keyFiles": []
     }
   },
   "hotPaths": [
     {
-      "path": "apps/infra-kit/cli/src/commands/gh-release-deliver/gh-release-deliver.ts",
-      "accessCount": 21,
-      "lastAccessed": 1778670191777,
+      "path": "apps/infra-kit/cli/src/commands/validate/validate.ts",
+      "accessCount": 10,
+      "lastAccessed": 1779547326948,
       "type": "file"
     },
     {
-      "path": "apps/infra-kit/cli/src/commands/doctor/doctor.ts",
+      "path": "apps/infra-kit/cli/src/lib/package-validator/__tests__/package-validator.test.ts",
+      "accessCount": 7,
+      "lastAccessed": 1779547488796,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/package-config/__tests__/package-config.test.ts",
+      "accessCount": 7,
+      "lastAccessed": 1779547523586,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/package-validator/package-validator.ts",
       "accessCount": 6,
-      "lastAccessed": 1778570861657,
-      "type": "file"
-    },
-    {
-      "path": "apps/infra-kit/cli/src/commands/worktrees-remove/worktrees-remove.ts",
-      "accessCount": 6,
-      "lastAccessed": 1778670040691,
-      "type": "file"
-    },
-    {
-      "path": "apps/infra-kit/cli/src/lib/git-utils/git-utils.ts",
-      "accessCount": 3,
-      "lastAccessed": 1778670124902,
-      "type": "file"
-    },
-    {
-      "path": "apps/infra-kit/cli/src/lib/git-utils/index.ts",
-      "accessCount": 3,
-      "lastAccessed": 1778670131182,
-      "type": "file"
-    },
-    {
-      "path": "apps/infra-kit/cli/src/lib/worktrees/remove-worktrees.ts",
-      "accessCount": 3,
-      "lastAccessed": 1778670273880,
-      "type": "file"
-    },
-    {
-      "path": "apps/infra-kit/cli/src/lib/logger/index.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778659303577,
-      "type": "file"
-    },
-    {
-      "path": "package.json",
-      "accessCount": 2,
-      "lastAccessed": 1778659880645,
-      "type": "file"
-    },
-    {
-      "path": "apps/infra-kit/cli/package.json",
-      "accessCount": 2,
-      "lastAccessed": 1778660499401,
-      "type": "file"
-    },
-    {
-      "path": "apps/infra-kit/cli/src/commands/doctor/index.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778570681876,
-      "type": "file"
-    },
-    {
-      "path": "apps/infra-kit/cli/src/commands/init/init.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778570684440,
-      "type": "file"
-    },
-    {
-      "path": "apps/infra-kit/cli/src/integrations/gh/index.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778659319153,
-      "type": "file"
-    },
-    {
-      "path": "apps/infra-kit/cli/src/integrations/gh/gh-release-prs/index.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778659351855,
-      "type": "file"
-    },
-    {
-      "path": "apps/infra-kit/cli/src/integrations/gh/gh-release-prs/gh-release-prs.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778659356972,
-      "type": "file"
-    },
-    {
-      "path": "apps/infra-kit/cli/src/lib/errors/__tests__/operation-error.test.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778659451716,
+      "lastAccessed": 1779547275155,
       "type": "file"
     },
     {
       "path": "apps/infra-kit/cli/src/entry/cli.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778659496131,
+      "accessCount": 6,
+      "lastAccessed": 1779547344222,
       "type": "file"
     },
     {
-      "path": "apps/infra-kit/cli/src/lib/errors/format-zx-error.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778659509995,
+      "path": "package.json",
+      "accessCount": 6,
+      "lastAccessed": 1779547418488,
       "type": "file"
     },
     {
-      "path": ".node-version",
-      "accessCount": 1,
-      "lastAccessed": 1778659872666,
+      "path": "apps/infra-kit/cli/src/lib/package-config/package-config.ts",
+      "accessCount": 5,
+      "lastAccessed": 1779547160637,
       "type": "file"
     },
     {
-      "path": "pnpm-workspace.yaml",
-      "accessCount": 1,
-      "lastAccessed": 1778660486276,
+      "path": "apps/infra-kit/cli/src/lib/package-config/index.ts",
+      "accessCount": 5,
+      "lastAccessed": 1779547233247,
       "type": "file"
     },
     {
-      "path": "apps/infra-kit/cli/src/lib/worktrees/index.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778669998110,
+      "path": "turbo.json",
+      "accessCount": 5,
+      "lastAccessed": 1779547435020,
       "type": "file"
     },
     {
-      "path": "apps/infra-kit/cli/src/lib/infra-kit-config/infra-kit-config.ts",
+      "path": "apps/infra-kit/cli/src/mcp/tools/index.ts",
+      "accessCount": 3,
+      "lastAccessed": 1779545465095,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/package.json",
+      "accessCount": 3,
+      "lastAccessed": 1779545835746,
+      "type": "file"
+    },
+    {
+      "path": "packages/serverless-config/package.json",
+      "accessCount": 3,
+      "lastAccessed": 1779545837227,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/package-validator/index.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779545831234,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/commands/validate/index.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779545831486,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/entry/index.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779545831724,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/infra-kit.config.js",
+      "accessCount": 2,
+      "lastAccessed": 1779545836619,
+      "type": "file"
+    },
+    {
+      "path": "packages/serverless-config/infra-kit.config.js",
+      "accessCount": 2,
+      "lastAccessed": 1779545837174,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/src/lib/package-config/package-config-schema.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779547225511,
+      "type": "file"
+    },
+    {
+      "path": "packages/serverless-config/infra-kit.config.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779547985720,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/tsconfig.json",
       "accessCount": 1,
-      "lastAccessed": 1778670265649,
+      "lastAccessed": 1779545842222,
+      "type": "file"
+    },
+    {
+      "path": "apps/infra-kit/cli/infra-kit.config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1779547378684,
+      "type": "file"
+    },
+    {
+      "path": "infra-kit.config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1779547389105,
       "type": "file"
     }
   ],

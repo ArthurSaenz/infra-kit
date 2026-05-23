@@ -1,0 +1,27 @@
+{
+  "name": "@wl/storybook-config",
+  "type": "module",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Shared storybook config and deps",
+  "author": "Arthur Saenko <arthur.saenz7@gmail.com> (https://github.com/ArthurSaenz)",
+  "keywords": [
+    "storybook",
+    "config",
+    "deps"
+  ],
+  "devDependencies": {
+    "@storybook/addon-docs": "^10.3.6",
+    "@storybook/addon-links": "^10.3.6",
+    "@storybook/addon-vitest": "10.3.6",
+    "@storybook/react-vite": "^10.3.6",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "storybook": "^10.3.6",
+    "vite": "catalog:"
+  },
+  "engines": {
+    "node": ">=24.x",
+    "pnpm": ">=11"
+  }
+}

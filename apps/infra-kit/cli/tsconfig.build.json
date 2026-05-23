@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "composite": false,
+    "incremental": false,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/entry/index.ts"],
+  "exclude": ["node_modules", "dist", ".turbo", "src/**/__tests__/**", "src/**/*.test.ts"]
+}

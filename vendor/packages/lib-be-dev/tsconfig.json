@@ -1,0 +1,12 @@
+{
+  "extends": "@wl/ts-config/tsconfig.service.json",
+  "compilerOptions": {
+    "paths": {
+      "#root/*": ["./src/*"]
+    },
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src"],
+  "exclude": ["dist", "node_modules"]
+}

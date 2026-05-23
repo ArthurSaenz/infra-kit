@@ -85,11 +85,11 @@ export const getUserFx = atom(
 
 ### Two Error Types
 
-1. **ServerError** (status 570) — Business logic errors from `@pkg/web-toolkit`
+1. **ServerError** (status 570) — Business logic errors from `@wl/web-toolkit`
 2. **Standard Error** — Infrastructure/network errors
 
 ```typescript
-import { ServerError } from '@pkg/web-toolkit'
+import { ServerError } from '@wl/web-toolkit'
 
 catch (error) {
   if (error instanceof ServerError) {
@@ -174,7 +174,7 @@ Sentry.captureException(error, {
 API caching is NOT standard. Only use for static config files with ETag support:
 
 ```typescript
-import { idb } from '@pkg/web-toolkit'
+import { idb } from '@wl/web-toolkit'
 
 const cachedData = await idb.get<{ etag: string; data: T }>(cacheKey)
 const response = await httpClient.fetch<T>(url, {
