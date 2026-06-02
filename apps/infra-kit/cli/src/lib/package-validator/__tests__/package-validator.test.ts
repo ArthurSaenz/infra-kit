@@ -177,13 +177,13 @@ describe('validatePackage — root / turbo', () => {
       packageJson: {
         name: 'monorepo',
         type: 'module',
-        scripts: { build: 'x', dev: 'x', test: 'x', qa: 'x', validate: 'x', fix: 'x' },
+        scripts: { build: 'x', dev: 'x', test: 'x', qa: 'x', check: 'x', fix: 'x' },
       },
       config: 'export default {}',
       files: {
         'pnpm-workspace.yaml': 'packages: []\n',
         'turbo.json': JSON.stringify({
-          tasks: { build: {}, test: {}, 'ts-check': {}, 'eslint-check': {}, 'prettier-check': {}, validate: {} },
+          tasks: { build: {}, test: {}, 'ts-check': {}, 'eslint-check': {}, 'prettier-check': {}, check: {} },
         }),
       },
     })
@@ -214,13 +214,13 @@ describe('validatePackage — root / turbo', () => {
 
     writePackage(dir, {
       packageJson: { name: 'monorepo', type: 'module' },
-      config: "export default { requiredScripts: [], requiredFiles: [], turbo: { requiredTasks: ['validate-root'] } }",
-      files: { 'turbo.json': JSON.stringify({ tasks: { '//#validate-root': {} } }) },
+      config: "export default { requiredScripts: [], requiredFiles: [], turbo: { requiredTasks: ['check-root'] } }",
+      files: { 'turbo.json': JSON.stringify({ tasks: { '//#check-root': {} } }) },
     })
 
     const result = await validatePackage(dir)
 
-    expect(result.checks).toContainEqual(expect.objectContaining({ name: 'turbo:validate-root', status: 'pass' }))
+    expect(result.checks).toContainEqual(expect.objectContaining({ name: 'turbo:check-root', status: 'pass' }))
   })
 })
 

@@ -60,12 +60,6 @@
     "ts-check": {
       "dependsOn": ["^build"]
     },
-    "validate": {
-      "dependsOn": ["build", "^build"]
-    },
-    "//#validate-root": {
-      "dependsOn": ["infra-kit#build"]
-    },
     "test": {
       "dependsOn": ["^build"]
     },

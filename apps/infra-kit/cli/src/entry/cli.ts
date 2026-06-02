@@ -2,6 +2,7 @@ import select, { Separator } from '@inquirer/select'
 import { Command } from 'commander'
 import process from 'node:process'
 
+import { check } from 'src/commands/check'
 import { configEdit, configPath } from 'src/commands/config'
 import { doctor } from 'src/commands/doctor'
 import { envClear } from 'src/commands/env-clear'
@@ -16,7 +17,6 @@ import { ghReleaseList } from 'src/commands/gh-release-list'
 import { init } from 'src/commands/init'
 import { releaseCreate } from 'src/commands/release-create'
 import { releaseDescEdit } from 'src/commands/release-desc-edit'
-import { validate } from 'src/commands/validate'
 import { version } from 'src/commands/version'
 import { CURSOR_MODES, worktreesAdd } from 'src/commands/worktrees-add'
 import type { CursorMode } from 'src/commands/worktrees-add'
@@ -225,12 +225,12 @@ configCmd
   })
 
 program
-  .command('validate')
-  .description('Validate against infra-kit.config.ts rules (--all for every package, --root for the monorepo root)')
-  .option('-a, --all', 'Validate every non-vendor workspace package')
-  .option('-r, --root', 'Validate the monorepo root (turbo pipeline + root commands)')
+  .command('check')
+  .description('Check against infra-kit.config.ts rules (--all for every package, --root for the monorepo root)')
+  .option('-a, --all', 'Check every non-vendor workspace package')
+  .option('-r, --root', 'Check the monorepo root (turbo pipeline + root commands)')
   .action(async (options) => {
-    const result = await validate({ all: options.all, root: options.root })
+    const result = await check({ all: options.all, root: options.root })
 
     if (!result.structuredContent.allPassed) {
       process.exitCode = 1
@@ -299,7 +299,7 @@ if (process.argv.length <= 2) {
   ]
   const worktreeCommands = ['worktrees-add', 'worktrees-list', 'worktrees-open', 'worktrees-remove', 'worktrees-sync']
   const envCommands = [
-    'validate',
+    'check',
     'doctor',
     'init',
     'version',

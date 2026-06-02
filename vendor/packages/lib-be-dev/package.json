@@ -21,14 +21,14 @@
     "test-report": "pnpm exec vitest run --coverage --silent passed-only"
   },
   "devDependencies": {
-    "@wl/ts-config": "workspace:*",
-    "@wl/vitest-config": "workspace:*",
     "@types/aws-lambda": "catalog:",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "catalog:"
+    "@types/node": "catalog:",
+    "@wl/ts-config": "workspace:*",
+    "@wl/vitest-config": "workspace:*"
   },
   "dependencies": {
-    "@aws-lambda-powertools/logger": "^2.33.0",
+    "@aws-lambda-powertools/logger": "^2.33.1",
     "chalk": "^5.6.2",
     "chokidar": "^5.0.0",
     "fastify": "5.8.5",

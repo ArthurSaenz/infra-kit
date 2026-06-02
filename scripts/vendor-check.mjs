@@ -4,14 +4,23 @@
 // require starter-workspace to be present, so it runs in CI for any consumer repo.
 //
 // Usage: node devops/scripts/lib/vendor-check.mjs   (exit 0 = clean, exit 1 = drift)
-
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 const VENDOR_DIR = 'vendor'
-const MANIFEST_SKIP_DIRS = new Set(['node_modules', 'dist', '.turbo', '.omc', '__screenshots__', '.output', '.source', '.nitro', '.tanstack'])
-const MANIFEST_SKIP_FILES = new Set(['.sync-manifest.json', '.eslintcache'])
+const MANIFEST_SKIP_DIRS = new Set([
+  'node_modules',
+  'dist',
+  '.turbo',
+  '.omc',
+  '__screenshots__',
+  '.output',
+  '.source',
+  '.nitro',
+  '.tanstack',
+])
+const MANIFEST_SKIP_FILES = new Set(['.sync-manifest.json', '.eslintcache', 'log.txt'])
 const MANIFEST_SKIP_SUFFIXES = ['.tsbuildinfo']
 
 const vendorRoot = join(process.cwd(), VENDOR_DIR)

@@ -9,7 +9,7 @@
     "config"
   ],
   "scripts": {
-    "validate": "infra-kit validate"
+    "check": "infra-kit check"
   },
   "engines": {
     "node": ">=24.x",

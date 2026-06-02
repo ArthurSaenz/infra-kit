@@ -55,9 +55,9 @@
     "test-report": "pnpm exec turbo run test-report --continue",
     "test-unit": "pnpm exec turbo test-unit --continue",
     "test-ui": "vitest --ui --silent passed-only",
-    "validate-root": "infra-kit validate --root",
-    "validate": "pnpm exec turbo run validate validate-root --continue --output-logs=errors-only",
-    "qa": "pnpm run vendor:check && pnpm exec turbo run test ts-check prettier-check eslint-check validate validate-root --continue --output-logs=errors-only",
+    "check-root": "infra-kit check --root",
+    "check": "pnpm exec turbo run check check-root --continue --output-logs=errors-only",
+    "qa": "pnpm run vendor:check && pnpm exec turbo run test ts-check prettier-check eslint-check check check-root --continue --output-logs=errors-only",
     "fix": "pnpm run eslint-fix && pnpm run prettier-fix"
   },
   "devDependencies": {

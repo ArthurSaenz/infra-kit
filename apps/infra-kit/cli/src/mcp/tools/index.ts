@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 
+import { checkMcpTool } from 'src/commands/check'
 import { envClearMcpTool } from 'src/commands/env-clear'
 import { envListMcpTool } from 'src/commands/env-list'
 import { envLoadMcpTool } from 'src/commands/env-load'
@@ -11,7 +12,6 @@ import { ghReleaseDeploySelectedMcpTool } from 'src/commands/gh-release-deploy-s
 import { ghReleaseListMcpTool } from 'src/commands/gh-release-list'
 import { releaseCreateMcpTool } from 'src/commands/release-create'
 import { releaseDescEditMcpTool } from 'src/commands/release-desc-edit'
-import { validateMcpTool } from 'src/commands/validate'
 import { versionMcpTool } from 'src/commands/version'
 import { worktreesAddMcpTool } from 'src/commands/worktrees-add'
 import { worktreesListMcpTool } from 'src/commands/worktrees-list'
@@ -32,7 +32,7 @@ const tools = [
   ghReleaseDeployAllMcpTool,
   ghReleaseDeploySelectedMcpTool,
   ghReleaseListMcpTool,
-  validateMcpTool,
+  checkMcpTool,
   versionMcpTool,
   worktreesAddMcpTool,
   worktreesListMcpTool,

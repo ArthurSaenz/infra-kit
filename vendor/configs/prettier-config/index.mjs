@@ -37,6 +37,7 @@ const config = (options = {}) => {
     endOfLine: 'auto',
     importOrder: [
       '^@pkg/(.*)$',
+      '^@wl/(.*)$',
       '^src/(.*)$',
       '^#root/entities/(.*)$',
       '^#root/features/(.*)$',

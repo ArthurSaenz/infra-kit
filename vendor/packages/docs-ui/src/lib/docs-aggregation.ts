@@ -100,6 +100,12 @@ export const createDocsAggregation = (params: { appDir: string; contentRel?: str
    * The apps glob requires a `docs/` directory nested under `apps/<app>/...`, so the docs app's
    * own README and src markdown are not swept in. Plain star/globstar only: fumadocs-mdx's
    * globber supports neither `!` negation nor extglobs.
+   *
+   * DEPLOY NOTE: these globs are resolved against `repoRoot` (the workspace root) at BUILD time,
+   * i.e. the docs site's content lives across the WHOLE monorepo, not inside this package. This is
+   * incompatible with `turbo prune` — pruning keeps only @wl/docs-ui's dependency graph and drops
+   * the `apps/<app>/docs`, `packages/<pkg>/docs` and `spec/docs` trees, so a pruned build produces an empty docs site.
+   * The docs deploy (devops/scripts/deploy-docs-fe.sh) MUST build from the full checkout, not a prune.
    */
   const includeGlobs = [
     'apps/*/**/docs/**/*.{md,mdx}',

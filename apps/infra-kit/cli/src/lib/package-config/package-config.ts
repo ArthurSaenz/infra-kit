@@ -69,14 +69,14 @@ export const DEFAULT_RULES: Readonly<ResolvedPackageRules> = {
 }
 
 /**
- * Baseline rules for the monorepo root (`infra-kit validate --root`). Checks the
+ * Baseline rules for the monorepo root (`infra-kit check --root`). Checks the
  * root commands, the workspace/turbo files, and that the turbo pipeline defines
  * the expected tasks — so the root's own config can also stay empty.
  */
 export const ROOT_DEFAULT_RULES: Readonly<ResolvedPackageRules> = {
-  requiredScripts: ['build', 'dev', 'test', 'qa', 'validate', 'fix'],
+  requiredScripts: ['build', 'dev', 'test', 'qa', 'check', 'fix'],
   requiredFiles: ['turbo.json', 'pnpm-workspace.yaml'],
-  turboTasks: ['build', 'test', 'ts-check', 'eslint-check', 'prettier-check', 'validate'],
+  turboTasks: ['build', 'test', 'ts-check', 'eslint-check', 'prettier-check', 'check'],
 }
 
 /**
