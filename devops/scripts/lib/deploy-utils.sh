@@ -103,25 +103,51 @@ prune_and_build() {
 }
 
 # Deploy backend API using Serverless Framework
-# Usage: deploy_backend_api "deploy-stage" "app-name" "app-path" "api-gateway-id" [post_deploy_function]
+# Usage: deploy_backend_api "deploy-stage" "app-name" "app-path" "api-gateway-id" [pre_deploy_function] [post_deploy_function]
 # Args:
 #   deploy-stage: The deployment stage (e.g., dev, staging, production)
 #   app-name: The turbo workspace name (e.g., backend-api, backoffice-api)
 #   app-path: Path to the API app relative to ./out (e.g., apps/client/api)
 #   api-gateway-id: The API Gateway ID variable value
+#   pre-deploy-function: Optional callback run AFTER build, BEFORE deploy (cwd ./out) — used for DB migrations
 #   post-deploy-function: Optional callback function to run after deployment
 deploy_backend_api() {
     local deploy_stage="$1"
     local app_name="$2"
     local app_path="$3"
     local api_gateway_id="$4"
-    local post_deploy_function="${5:-}"
+    local pre_deploy_function="${5:-}"
+    local post_deploy_function="${6:-}"
 
     # Setup tools
     setup_tools "true"
 
     # Prune and build with production dependencies
     prune_and_build "$app_name" "true"
+
+    # Run pre-deployment hooks BEFORE the serverless deploy. cwd is ./out here
+    # (prune_and_build leaves us there, before the per-app cd below), and the prod
+    # dependencies are already installed, so a pre-hook can run the built migration
+    # runner (node packages/lib-db/dist/migrate.js) with NO extra pnpm install.
+    if [ -n "$pre_deploy_function" ]; then
+        echo "${YELLOW}Checking for pre-deployment function: $pre_deploy_function${NC}"
+
+        if type "$pre_deploy_function" >/dev/null 2>&1; then
+            echo "${GREEN}Running pre-deployment hooks...${NC}"
+            export DEPLOY_STAGE="$deploy_stage"
+
+            if $pre_deploy_function; then
+                echo "${GREEN}Pre-deployment hooks completed successfully${NC}"
+            else
+                echo "${RED}Error: Pre-deployment hooks failed${NC}"
+                exit 1
+            fi
+        else
+            echo "${RED}Error: Pre-deployment function '$pre_deploy_function' not found${NC}"
+            type "$pre_deploy_function" 2>&1 || echo "Function not found"
+            exit 1
+        fi
+    fi
 
     # Navigate to app directory
     run_command "Navigate to $app_path" "cd ./$app_path"
