@@ -44,7 +44,7 @@
     "@wl/eslint-config": "workspace:*",
     "@wl/vitest-config": "workspace:*",
     "clsx": "catalog:",
-    "idb-keyval": "^6.2.4",
+    "idb-keyval": "^6.2.5",
     "jotai": "catalog:",
     "lodash": "^4.18.1",
     "qs": "^6.15.2",

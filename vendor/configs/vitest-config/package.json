@@ -11,14 +11,14 @@
   ],
   "devDependencies": {
     "@vitejs/plugin-react": "catalog:",
-    "@vitest/browser": "^4.1.7",
-    "@vitest/browser-playwright": "^4.1.7",
-    "@vitest/coverage-v8": "^4.1.7",
-    "@vitest/ui": "^4.1.7",
+    "@vitest/browser": "^4.1.8",
+    "@vitest/browser-playwright": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/ui": "^4.1.8",
     "playwright": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "vitest": "^4.1.7",
+    "vitest": "^4.1.8",
     "vitest-browser-react": "^2.2.0"
   },
   "engines": {
