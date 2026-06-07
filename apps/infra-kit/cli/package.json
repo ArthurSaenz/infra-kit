@@ -21,7 +21,7 @@
   },
   "scripts": {
     "inspector": "npx @modelcontextprotocol/inspector node ./dist/mcp.js --debug",
-    "build": "pnpm run clean-artifacts && node ./scripts/build.js && tsc -p tsconfig.build.json",
+    "build": "pnpm run clean-artifacts && node ./scripts/build.js",
     "check": "node ./dist/cli.js check",
     "clean-artifacts": "rm -rf dist",
     "clean-cache": "rm -rf node_modules/.cache .eslintcache tsconfig.tsbuildinfo .turbo .swc",
