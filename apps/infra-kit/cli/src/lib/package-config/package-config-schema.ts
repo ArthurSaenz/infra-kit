@@ -1,4 +1,4 @@
-import { z } from 'zod/v4'
+import { z } from 'zod'
 
 /**
  * Schema for the resolved (post-factory) package config object. `strictObject`

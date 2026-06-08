@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { z } from 'zod/v4'
+import { z } from 'zod'
 
 import { DEFAULT_RULES, packageConfigSchema, resolvePackageConfig } from 'src/lib/package-config'
 import type { ResolvedPackageRules } from 'src/lib/package-config'

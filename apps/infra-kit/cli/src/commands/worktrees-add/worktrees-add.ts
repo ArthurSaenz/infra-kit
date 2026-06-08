@@ -3,7 +3,7 @@ import checkbox from '@inquirer/checkbox'
 import confirm from '@inquirer/confirm'
 import select from '@inquirer/select'
 import process from 'node:process'
-import { z } from 'zod/v4'
+import { z } from 'zod'
 import { $ } from 'zx'
 
 import { buildCmuxWorkspaceTitle, openCmuxWorkspaceWithLayout } from 'src/integrations/cmux'

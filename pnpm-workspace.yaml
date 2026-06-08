@@ -54,7 +54,7 @@ catalog:
   vite-plugin-dts: ^5.0.2
   vite-tsconfig-paths: ^6.1.1
   yaml: ^2.9.0
-  zod: 3.25.76
+  zod: ^4.3.6
   zx: ^8.8.5
 
 enableGlobalVirtualStore: true
@@ -84,9 +84,6 @@ supportedArchitectures:
   os:
     - darwin
     - linux
-catalogs:
-  conflicts_zod_h3_25_76:
-    zod: ^3.25.76
 
 strictPeerDependencies: false
 

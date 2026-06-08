@@ -1,4 +1,4 @@
-import { z } from 'zod/v4'
+import { z } from 'zod'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { logger } from 'src/lib/logger'

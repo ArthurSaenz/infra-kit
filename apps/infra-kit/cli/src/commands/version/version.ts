@@ -1,4 +1,4 @@
-import { z } from 'zod/v4'
+import { z } from 'zod'
 
 import { logger } from 'src/lib/logger'
 import { defineMcpTool, textContent } from 'src/types'

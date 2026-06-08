@@ -2,7 +2,7 @@ import select, { Separator } from '@inquirer/select'
 import { Command } from 'commander'
 import process from 'node:process'
 
-import { check } from 'src/commands/check'
+import { audit } from 'src/commands/audit'
 import { configEdit, configPath } from 'src/commands/config'
 import { doctor } from 'src/commands/doctor'
 import { envClear } from 'src/commands/env-clear'
@@ -225,12 +225,12 @@ configCmd
   })
 
 program
-  .command('check')
-  .description('Check against infra-kit.config.ts rules (--all for every package, --root for the monorepo root)')
-  .option('-a, --all', 'Check every non-vendor workspace package')
-  .option('-r, --root', 'Check the monorepo root (turbo pipeline + root commands)')
+  .command('audit')
+  .description('Audit against infra-kit.config.ts rules (--all for every package, --root for the monorepo root)')
+  .option('-a, --all', 'Audit every non-vendor workspace package')
+  .option('-r, --root', 'Audit the monorepo root (turbo pipeline + root commands)')
   .action(async (options) => {
-    const result = await check({ all: options.all, root: options.root })
+    const result = await audit({ all: options.all, root: options.root })
 
     if (!result.structuredContent.allPassed) {
       process.exitCode = 1
@@ -299,7 +299,7 @@ if (process.argv.length <= 2) {
   ]
   const worktreeCommands = ['worktrees-add', 'worktrees-list', 'worktrees-open', 'worktrees-remove', 'worktrees-sync']
   const envCommands = [
-    'check',
+    'audit',
     'doctor',
     'init',
     'version',

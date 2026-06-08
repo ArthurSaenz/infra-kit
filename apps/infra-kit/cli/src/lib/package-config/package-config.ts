@@ -69,7 +69,7 @@ export const DEFAULT_RULES: Readonly<ResolvedPackageRules> = {
 }
 
 /**
- * Baseline rules for the monorepo root (`infra-kit check --root`). Checks the
+ * Baseline rules for the monorepo root (`infra-kit audit --root`). Checks the
  * root commands, the workspace/turbo files, and that the turbo pipeline defines
  * the expected tasks — so the root's own config can also stay empty.
  */

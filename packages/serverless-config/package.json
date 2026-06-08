@@ -9,7 +9,7 @@
     "config"
   ],
   "scripts": {
-    "check": "infra-kit check"
+    "check": "infra-kit audit"
   },
   "engines": {
     "node": ">=24.x",

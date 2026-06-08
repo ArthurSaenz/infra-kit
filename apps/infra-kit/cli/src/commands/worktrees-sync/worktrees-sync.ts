@@ -1,6 +1,6 @@
 import confirm from '@inquirer/confirm'
 import process from 'node:process'
-import { z } from 'zod/v4'
+import { z } from 'zod'
 import { $ } from 'zx'
 
 import { buildCmuxWorkspaceTitle, closeCmuxWorkspaceByTitle } from 'src/integrations/cmux'

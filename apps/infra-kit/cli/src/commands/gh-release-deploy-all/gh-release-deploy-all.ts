@@ -1,5 +1,5 @@
 import select from '@inquirer/select'
-import { z } from 'zod/v4'
+import { z } from 'zod'
 import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'

@@ -1,3 +1,4 @@
+/* eslint-disable sonarjs/no-os-command-from-path */
 import * as esbuild from 'esbuild'
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'

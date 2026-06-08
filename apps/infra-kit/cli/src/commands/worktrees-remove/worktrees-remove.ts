@@ -1,7 +1,7 @@
 import checkbox from '@inquirer/checkbox'
 import confirm from '@inquirer/confirm'
 import process from 'node:process'
-import { z } from 'zod/v4'
+import { z } from 'zod'
 
 import { removeFoldersFromCursorWorkspace, resolveCursorWorkspacePath } from 'src/integrations/cursor'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'

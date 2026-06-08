@@ -1,4 +1,4 @@
-import type { z } from 'zod/v4'
+import type { z } from 'zod'
 
 export interface ToolsExecutionResult<TStructured = Record<string, unknown>> {
   [x: string]: unknown

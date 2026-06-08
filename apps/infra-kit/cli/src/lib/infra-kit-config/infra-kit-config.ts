@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import yaml from 'yaml'
-import { z } from 'zod/v4'
+import { z } from 'zod'
 
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 

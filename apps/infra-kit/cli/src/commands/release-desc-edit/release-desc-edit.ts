@@ -1,7 +1,7 @@
 import confirm from '@inquirer/confirm'
 import select from '@inquirer/select'
 import process from 'node:process'
-import { z } from 'zod/v4'
+import { z } from 'zod'
 import { question } from 'zx'
 
 import { getReleasePRsWithInfo, updateReleasePRBody } from 'src/integrations/gh'

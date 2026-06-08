@@ -1,6 +1,6 @@
 import path from 'node:path'
 import process from 'node:process'
-import { z } from 'zod/v4'
+import { z } from 'zod'
 
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
@@ -10,24 +10,24 @@ import { discoverPackages, pathExists, validatePackage } from 'src/lib/package-v
 import type { PackageValidationResult } from 'src/lib/package-validator'
 import { defineMcpTool, textContent } from 'src/types'
 
-interface CheckOptions {
-  /** Check every non-vendor workspace package instead of just the current one. */
+interface AuditOptions {
+  /** Audit every non-vendor workspace package instead of just the current one. */
   all?: boolean
-  /** Check the monorepo root (turbo pipeline + root commands) instead of a package. */
+  /** Audit the monorepo root (turbo pipeline + root commands) instead of a package. */
   root?: boolean
   /** Directory to resolve the current package from. Defaults to `process.cwd()`. */
   cwd?: string
 }
 
-/** A directory to check plus the under-the-hood defaults that apply to it. */
-interface CheckTarget {
+/** A directory to audit plus the under-the-hood defaults that apply to it. */
+interface AuditTarget {
   dir: string
   baseline?: Readonly<ResolvedPackageRules>
 }
 
 /**
  * Walk upward from `start` to the nearest directory containing a package.json.
- * Used so `infra-kit check` (no `--all`) targets the package whose package.json
+ * Used so `infra-kit audit` (no `--all`) targets the package whose package.json
  * script invoked it, regardless of the exact working directory.
  *
  * @example
@@ -53,11 +53,11 @@ const findPackageRoot = async (start: string): Promise<string> => {
 }
 
 /**
- * Resolve which directories to check, and the baseline defaults each uses:
+ * Resolve which directories to audit, and the baseline defaults each uses:
  * `root` → the monorepo root with {@link ROOT_DEFAULT_RULES}; `all` → every
  * discovered non-vendor package; otherwise the package walked up from cwd.
  */
-const resolveTargets = async (options: CheckOptions): Promise<CheckTarget[]> => {
+const resolveTargets = async (options: AuditOptions): Promise<AuditTarget[]> => {
   if (options.root) {
     return [{ dir: await getProjectRoot(), baseline: ROOT_DEFAULT_RULES }]
   }
@@ -74,7 +74,7 @@ const resolveTargets = async (options: CheckOptions): Promise<CheckTarget[]> => 
 }
 
 /**
- * Print a package's check result as doctor-style `[PASS]`/`[FAIL]` lines.
+ * Print a package's audit result as doctor-style `[PASS]`/`[FAIL]` lines.
  */
 const logResult = (result: PackageValidationResult): void => {
   const header = result.passed ? 'PASS' : 'FAIL'
@@ -89,20 +89,20 @@ const logResult = (result: PackageValidationResult): void => {
 }
 
 /**
- * Check the monorepo root (`root`), every non-vendor workspace package (`all`),
+ * Audit the monorepo root (`root`), every non-vendor workspace package (`all`),
  * or the package resolved by walking up from the working directory (default —
- * the shape used by a package's `"check": "infra-kit check"` script). The
+ * the shape used by a package's `"check": "infra-kit audit"` script). The
  * returned `structuredContent.allPassed` lets the CLI set a non-zero exit code so
- * the check fails CI; this function never calls `process.exit` so the MCP tool
+ * the audit fails CI; this function never calls `process.exit` so the MCP tool
  * can reuse it.
  *
  * @example
- * // CLI inside packages/serverless-config: `infra-kit check`
- * await check()              // checks the current package
- * await check({ all: true }) // checks every non-vendor workspace package
- * await check({ root: true }) // checks the monorepo root (turbo + root commands)
+ * // CLI inside packages/serverless-config: `infra-kit audit`
+ * await audit()              // audits the current package
+ * await audit({ all: true }) // audits every non-vendor workspace package
+ * await audit({ root: true }) // audits the monorepo root (turbo + root commands)
  */
-export const check = async (options: CheckOptions = {}) => {
+export const audit = async (options: AuditOptions = {}) => {
   const targets = await resolveTargets(options)
 
   const results: PackageValidationResult[] = []
@@ -119,7 +119,7 @@ export const check = async (options: CheckOptions = {}) => {
     return result.passed
   })
 
-  logger.info(`\n${allPassed ? '✅ All valid' : '❌ Check failed'} (${results.length} checked)`)
+  logger.info(`\n${allPassed ? '✅ All valid' : '❌ Audit failed'} (${results.length} checked)`)
 
   const structuredContent = {
     allPassed,
@@ -138,13 +138,13 @@ export const check = async (options: CheckOptions = {}) => {
   }
 }
 
-const checkInputSchema = {
-  all: z.boolean().optional().describe('Check every non-vendor workspace package'),
-  root: z.boolean().optional().describe('Check the monorepo root (turbo pipeline + root commands)'),
+const auditInputSchema = {
+  all: z.boolean().optional().describe('Audit every non-vendor workspace package'),
+  root: z.boolean().optional().describe('Audit the monorepo root (turbo pipeline + root commands)'),
 }
 
-const checkOutputSchema = {
-  allPassed: z.boolean().describe('Whether every checked package passed all checks'),
+const auditOutputSchema = {
+  allPassed: z.boolean().describe('Whether every audited package passed all checks'),
   packages: z
     .array(
       z.object({
@@ -163,13 +163,13 @@ const checkOutputSchema = {
 }
 
 // MCP Tool Registration
-export const checkMcpTool = defineMcpTool({
-  name: 'check',
+export const auditMcpTool = defineMcpTool({
+  name: 'audit',
   description:
-    'Check packages against infra-kit.config.ts rules (config present and valid, required scripts, required files, and turbo tasks for the root). Defaults to the current package; all=true checks every non-vendor workspace package; root=true checks the monorepo root.',
-  inputSchema: checkInputSchema,
-  outputSchema: checkOutputSchema,
+    'Audit packages against infra-kit.config.ts rules (config present and valid, required scripts, required files, and turbo tasks for the root). Defaults to the current package; all=true audits every non-vendor workspace package; root=true audits the monorepo root.',
+  inputSchema: auditInputSchema,
+  outputSchema: auditOutputSchema,
   handler: (params) => {
-    return check({ all: params.all, root: params.root })
+    return audit({ all: params.all, root: params.root })
   },
 })
