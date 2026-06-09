@@ -1,7 +1,7 @@
 {
-  "name": "@infra-kit/eslint-plugin",
+  "name": "@slip-stream-kit/eslint-plugin",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Custom ESLint rules enforcing the white-label frontend architecture conventions",
   "author": "Arthur Saenko <arthur.saenz7@gmail.com> (https://github.com/ArthurSaenz)",
   "license": "MIT",

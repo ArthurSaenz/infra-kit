@@ -45,10 +45,19 @@ ruleTester.run('props-destructuring-newline', propsDestructuringNewline, {
     },
     // Component with no params.
     { code: 'const Comp = () => <div />' },
+    // No-props component with a block body — nothing to destructure, must not error.
+    { code: ['export const Page = () => {', '  const router = useRouter()', '', '  return <div />', '}'].join('\n') },
     // Hook (camelCase, no JSX) — not a component, inline destructuring is fine.
     { code: 'const useThing = ({ a }) => a' },
     // Plain helper (camelCase, no JSX) — not a component.
     { code: ['function merge({ a, b }) {', '  return a + b', '}'].join('\n') },
+    // Pattern already binds `props` via a rest element: renaming the param to `props`
+    // would collide with `const { icon, ...props } = props`, so the rule must skip it.
+    { code: ['function Icon({ icon, ...props }) {', '  return <svg />', '}'].join('\n') },
+    // Pattern binds `props` directly (shorthand) — same collision risk, must be skipped.
+    { code: 'const Comp = ({ props }) => <div />' },
+    // Pattern binds `props` via a nested rename — must also be skipped.
+    { code: 'const Comp = ({ data: props }) => <div>{props}</div>' },
   ],
   invalid: [
     // Arrow, block body, plain JS.

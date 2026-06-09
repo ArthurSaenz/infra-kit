@@ -112,3 +112,7 @@ allowBuilds:
   '@parcel/watcher': true
   esbuild: true
   msw: true
+
+minimumReleaseAgeExclude:
+  - '@slip-stream-kit/*'
+  - infra-kit

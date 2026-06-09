@@ -10,6 +10,8 @@ import { discoverPackages, pathExists, validatePackage } from 'src/lib/package-v
 import type { PackageValidationResult } from 'src/lib/package-validator'
 import { defineMcpTool, textContent } from 'src/types'
 
+// TODO [DO]: extract `audit` into its own standalone CLI tool, decoupled from infra-kit.
+
 interface AuditOptions {
   /** Audit every non-vendor workspace package instead of just the current one. */
   all?: boolean

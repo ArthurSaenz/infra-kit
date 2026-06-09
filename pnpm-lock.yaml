@@ -177,6 +177,9 @@ importers:
       '@eslint-react/eslint-plugin':
         specifier: ^5.8.12
         version: 5.8.12(eslint@10.4.1(jiti@2.7.0))(typescript@6.0.3)
+      '@slip-stream-kit/eslint-plugin':
+        specifier: ^0.1.1
+        version: 0.1.1(eslint@10.4.1(jiti@2.7.0))
       eslint:
         specifier: ^10.4.1
         version: 10.4.1(jiti@2.7.0)
@@ -2299,6 +2302,12 @@ packages:
   '@sindresorhus/merge-streams@4.0.0':
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
+
+  '@slip-stream-kit/eslint-plugin@0.1.1':
+    resolution: {integrity: sha512-ZrAPLq0Wo7O3X5ih8K25lMWkGqDq0hSczhnMFJ1qqIYwJrY+FjbRjg5HH9KpQt+a+Deifi6HTt5pe9cilYb6Lg==}
+    engines: {node: '>=24.x'}
+    peerDependencies:
+      eslint: '>=9'
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -8633,6 +8642,10 @@ snapshots:
   '@sindresorhus/base62@1.0.0': {}
 
   '@sindresorhus/merge-streams@4.0.0': {}
+
+  '@slip-stream-kit/eslint-plugin@0.1.1(eslint@10.4.1(jiti@2.7.0))':
+    dependencies:
+      eslint: 10.4.1(jiti@2.7.0)
 
   '@standard-schema/spec@1.1.0': {}
 

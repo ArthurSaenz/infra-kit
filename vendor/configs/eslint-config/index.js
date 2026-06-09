@@ -1,4 +1,5 @@
 import antfu from '@antfu/eslint-config'
+import wl from '@slip-stream-kit/eslint-plugin'
 import sonarjs from 'eslint-plugin-sonarjs'
 
 const config = async (userOptions = {}) => {
@@ -105,6 +106,17 @@ const config = async (userOptions = {}) => {
           },
         ]
       : [],
+
+    // White-label architecture rules: props destructuring + component file order
+    wl.configs.recommended,
+
+    // Only enforce component-file-order inside component folders. Components can live at
+    // src/components/** or be co-located inside a feature, so scan both trees.
+    {
+      rules: {
+        '@wl/component-file-order': ['error', { paths: ['**/components/**', '**/features/**'] }],
+      },
+    },
 
     // Temporary disable all sonarjs rules for markdown files
     {

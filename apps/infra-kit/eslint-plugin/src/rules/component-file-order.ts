@@ -6,6 +6,7 @@ import { matchesAnyGlob } from '../utils/path-match'
 
 interface Options {
   paths?: string[]
+  ignore?: string[]
 }
 
 // TS-only nodes are not modelled by estree; access their identifier structurally.
@@ -82,6 +83,12 @@ export const componentFileOrder: Rule.RuleModule = {
             description:
               'Optional glob patterns. When provided, the rule only runs for files whose path matches one of them.',
           },
+          ignore: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Optional glob patterns. The rule is skipped for files whose path matches one of them, even if it also matches `paths`.',
+          },
         },
         additionalProperties: false,
       },
@@ -95,6 +102,12 @@ export const componentFileOrder: Rule.RuleModule = {
   create(context) {
     const options = (context.options[0] ?? {}) as Options
     const paths = options.paths ?? []
+    const ignore = options.ignore ?? []
+
+    // `ignore` takes precedence: skip excluded files even when they also match `paths`.
+    if (ignore.length > 0 && matchesAnyGlob(context.filename, ignore)) {
+      return {}
+    }
 
     if (paths.length > 0 && !matchesAnyGlob(context.filename, paths)) {
       return {}

@@ -110,6 +110,18 @@ ruleTester.run('component-file-order', componentFileOrder, {
       filename: '/repo/src/components/comp.tsx',
       options: [{ paths: ['**/features/**'] }],
     },
+    // ignore option matches the filename — rule is skipped.
+    {
+      code: WRONG_ORDER,
+      filename: '/repo/src/generated/comp.tsx',
+      options: [{ ignore: ['**/generated/**'] }],
+    },
+    // ignore takes precedence over paths when both match.
+    {
+      code: WRONG_ORDER,
+      filename: '/repo/src/features/legacy/comp.tsx',
+      options: [{ paths: ['**/features/**'], ignore: ['**/legacy/**'] }],
+    },
   ],
   invalid: [
     // Import appears after the interface.
@@ -135,6 +147,13 @@ ruleTester.run('component-file-order', componentFileOrder, {
       code: WRONG_ORDER,
       filename: '/repo/src/features/user/comp.tsx',
       options: [{ paths: ['**/features/**'] }],
+      errors: [{ messageId: 'importsFirst' }],
+    },
+    // ignore option provided but the filename does not match — rule stays active.
+    {
+      code: WRONG_ORDER,
+      filename: '/repo/src/features/user/comp.tsx',
+      options: [{ ignore: ['**/generated/**'] }],
       errors: [{ messageId: 'importsFirst' }],
     },
     // Import after the component in a file with no props interface.

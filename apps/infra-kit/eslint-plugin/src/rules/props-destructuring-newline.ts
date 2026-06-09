@@ -11,6 +11,37 @@ interface WithRange {
 }
 type AnnotatedPattern = ESTree.ObjectPattern & { typeAnnotation?: ESTree.Node & WithRange } & WithRange
 
+// Recursively collect every identifier a destructuring pattern binds, so we can detect
+// whether it already introduces a `props` binding (e.g. a `...props` rest).
+const collectBoundNames = (node: ESTree.Node | null, names: Set<string>): void => {
+  if (!node) {
+    return
+  }
+
+  switch (node.type) {
+    case 'Identifier':
+      names.add(node.name)
+      break
+    case 'ObjectPattern':
+      for (const property of node.properties) collectBoundNames(property, names)
+      break
+    case 'ArrayPattern':
+      for (const element of node.elements) collectBoundNames(element, names)
+      break
+    case 'Property':
+      collectBoundNames(node.value, names)
+      break
+    case 'RestElement':
+      collectBoundNames(node.argument, names)
+      break
+    case 'AssignmentPattern':
+      collectBoundNames(node.left, names)
+      break
+    default:
+      break
+  }
+}
+
 export const propsDestructuringNewline: Rule.RuleModule = {
   meta: {
     type: 'suggestion',
@@ -39,6 +70,19 @@ export const propsDestructuringNewline: Rule.RuleModule = {
       }
 
       if (!isComponent(node)) {
+        return
+      }
+
+      // The fix renames the parameter to `props` and re-destructures it in the body
+      // (`const <pattern> = props`). If the pattern already binds `props` (e.g. a
+      // `...props` rest), that body binding collides with the new parameter and yields
+      // an invalid "Duplicate declaration props". There is no safe rename that keeps the
+      // `props` name the rule mandates, so skip these patterns entirely.
+      const boundNames = new Set<string>()
+
+      collectBoundNames(firstParam, boundNames)
+
+      if (boundNames.has('props')) {
         return
       }
 
