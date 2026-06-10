@@ -1,13 +1,13 @@
 {
   "source": "starter-workspace",
-  "commit": "252af7a5aa50f82f8b923a116f31aa56e237aa5c",
-  "syncedAt": "2026-06-07T19:12:17.528Z",
+  "commit": "0b342d4e3e5c33e67cebdf1cc4369cb6b8b8c4c4",
+  "syncedAt": "2026-06-10T06:36:36.180Z",
   "fileCount": 134,
   "files": {
     "README.md": "06b7aea87c83c143c72ce40d1cb8ecfcc7c28a3b61d879ea6839ae0f82570306",
     "configs/eslint-config/README.md": "c8d5ed7bc91ad1f1e0365e4982db51951170f5ea775d7081e024834796f21fa5",
-    "configs/eslint-config/index.js": "29ac7b31e07cbe0be6573a772ba7ed152432f258c0c89a584d88796f47df1945",
-    "configs/eslint-config/package.json": "188942e65414a61b86eaf976addf8669074359f54d9a53f2af2c647b09e91c22",
+    "configs/eslint-config/index.js": "99c997b95a03db168169bec671eb98b2ea70f98aef53039b6d38b5cd9d75d411",
+    "configs/eslint-config/package.json": "e0a8a58769f8076c9d5359850f2792183c635ec8cf06400c126c8f08708c1b39",
     "configs/prettier-config/index.mjs": "9deef6a12a750397eb82dea7edf886e0df12c861cf2c80708e3e4570eade2870",
     "configs/prettier-config/package.json": "66fdccce627afc5898ed967f8dfec7b8582ef84c31cfd4887f62bcd72ba835c9",
     "configs/storybook-config/package.json": "4ba6b575a296033341667f50122417fb7da60618b46a3665a21297e21c0f73a8",
