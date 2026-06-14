@@ -73,9 +73,9 @@ The worktree *creation* is fine; the *runtime isolation* needed for multiple age
 | Output sanity checks | Strong | Size cap + format check (`env-load.ts:143-189`). |
 | Token scoping | Unclear / likely Weak | Repo uses the developer's personal Doppler login (`doppler me`). Agents inherit that scope. No service-token / read-only path documented. For multi-agent, you want a per-agent scoped service token. |
 | Secret-value leakage in tool output | Strong | Tool returns `variableCount`, never values. |
-| Per-branch config mapping | Missing | `infra-kit.yml` declares only `[dev, arthur]`. No convention/automation for `dev_<branch>` configs that inherit from `dev`. |
+| Per-branch config mapping | Missing | `infra-kit.json` declares only `[dev, arthur]`. No convention/automation for `dev_<branch>` configs that inherit from `dev`. |
 | Fallback on Doppler outage | Weak | No cached encrypted snapshot; tool errors out. Acceptable for now, but for resilience: cache last-known-good with TTL + degraded-mode warning. |
-| Prod write-protection | OK (declared) | `infra-kit.yml` comment says `prod` is "protected from manual CLI commands" — verify this is enforced in code (search the env commands), not just on the honour system. |
+| Prod write-protection | OK (declared) | `prod` is intended to be "protected from manual CLI commands" (it is omitted from the `environments` allowlist in `infra-kit.json`) — verify this is enforced in code (search the env commands), not just on the honour system. |
 
 ### 4. Feedback loops — Strong on enforcement, weak on agent-readability
 
@@ -109,7 +109,7 @@ The Claude Code hook layer (`block-destructive.sh`, `protect-files.sh`) is doing
 | Per-tool blast classification | Missing | Tools should declare `destructive: true` so the harness can require an extra confirm out-of-band. |
 | Dry-run / preview | Missing | `release-create`, `gh-release-deploy-all`, `gh-release-deploy-selected`, `gh-merge-dev` are high-blast and have no `--dry-run` returning the planned changeset. |
 | Rollback tokens | Missing | After a destructive op, no `revert_token` is returned. If a release was wrong, recovery is manual. |
-| Refusal of prod actions from non-`main` | Unclear | The `prod`-protection comment in `infra-kit.yml` needs to be backed by code that refuses, not by convention. |
+| Refusal of prod actions from non-`main` | Unclear | The `prod`-protection intent (`prod` excluded from `infra-kit.json`'s `environments`) needs to be backed by code that refuses, not by convention. |
 
 ### 7. Documentation — Weak
 
@@ -150,7 +150,7 @@ Replace raw thrown errors with `{ category: 'auth'|'not_found'|'precondition'|'c
 Sections to add: `Worktree convention`, `How to use the MCP tools (when to pick which)`, `Parallel-agent rules` (one agent per worktree, ports/DB isolation contract), `Doppler config naming`, `Forbidden actions` (no force-push, no `prod` writes from agents). Keep CLAUDE.md as a thin pointer file: `Read AGENTS.md.` Target ≤200 lines.
 
 #### P0.6 — [BE] Verify and codify prod write-protection
-The `infra-kit.yml` comment ("prod is protected from manual CLI commands") must be enforced in code: env commands should reject `selectedConfig === 'prod'` unless an explicit `--break-glass` flag + interactive TTY. Add a snapshot test for the refusal.
+The `prod` write-protection intent ("prod is protected from manual CLI commands") must be enforced in code: env commands should reject `selectedConfig === 'prod'` unless an explicit `--break-glass` flag + interactive TTY. Add a snapshot test for the refusal.
 - Files: `env-load.ts:38-57`, `env-clear/`, `env-list/`.
 
 ### P1 — Should do (observability + agent ergonomics)
@@ -186,7 +186,7 @@ Every `release-create` / `gh-release-deploy-*` returns `{ revert_token: 'rt_...'
 Block `eslint-disable` and `@ts-ignore` in agent-touched code unless an exception is annotated. Closes a common escape hatch.
 
 #### P2.18 — [ROOT] `infra-kit doctor` enrichment
-You already have a `doctor/` command — extend it to verify: Doppler CLI present + authed, gh CLI present + authed, cmux installed, ports free, no stale worktree locks, `infra-kit.yml` valid. Run from `SessionStart` hook.
+You already have a `doctor/` command — extend it to verify: Doppler CLI present + authed, gh CLI present + authed, cmux installed, ports free, no stale worktree locks, `infra-kit.json` valid. Run from `SessionStart` hook.
 
 #### P2.19 — [ROOT] Per-tool worked examples
 In each tool's `description`, include a one-line "Example call:" with a JSON snippet. Empirically improves agent picker accuracy.

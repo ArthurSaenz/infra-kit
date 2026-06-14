@@ -4,49 +4,53 @@ import path from 'node:path'
 
 import { logger } from 'src/lib/logger'
 
+import { migrateLegacyConfig } from './migrate-config'
+
 export const MARKER_START = '# -- infra-kit:begin --'
 export const MARKER_END = '# -- infra-kit:end --'
 
 const LEGACY_PAIRED: [start: string, end: string][] = [['# region infra-kit', '# endregion infra-kit']]
 const LEGACY_SINGLE = '# infra-kit shell functions'
 
-const USER_GLOBAL_CONFIG_STUB = `# infra-kit user-global config — ~/.infra-kit/config.yml
-#
-# Merge chain (later layers override earlier ones at top-level keys):
-#   1. <repo>/infra-kit.yml                            — committed project config (required)
-#   2. ~/.infra-kit/config.yml                         — this file (user-global)
-#   3. ~/.infra-kit/projects/<repo-name>/infra-kit.yml — user-scope per-project override
-#
-# Merge is shallow: setting a top-level key here replaces that whole section
-# from layer 1. Arrays do not concatenate. Top-level keys recognized:
-# environments, envManagement, ide, taskManager, worktrees.
-#
-# Uncomment the blocks you want to apply globally across every project on this
-# machine. Per-project tweaks belong in layer 3 — run \`infra-kit config edit\`.
+// JSON can't carry comments, so the real config is an empty-but-valid object…
+const USER_GLOBAL_CONFIG_STUB = '{}\n'
 
-# Per-developer IDE config
-# ide:
-#   provider: cursor
-#   config:
-#     mode: workspace
-#     workspaceConfigPath: /path/to/your.code-workspace
-
-# Worktree prompt defaults — silences the follow-up prompts in \`worktrees-add\`
-# worktrees:
-#   openInGithubDesktop: false
-#   openInCmux: true
+// …and the annotated guidance lives next to it in a non-loaded .example.jsonc
+// (the loader only reads the three exact `infra-kit.json` / `config.json` files).
+const USER_GLOBAL_CONFIG_EXAMPLE = `// infra-kit user-global config — ~/.infra-kit/config.json
+//
+// Merge chain (later layers override earlier ones at top-level keys):
+//   1. <repo>/infra-kit.json                            — committed project config (required)
+//   2. ~/.infra-kit/config.json                         — user-global (the sibling of this file)
+//   3. ~/.infra-kit/projects/<repo-name>/infra-kit.json — user-scope per-project override
+//
+// Merge is shallow: setting a top-level key replaces that whole section from
+// layer 1. Arrays do not concatenate. Top-level keys recognized:
+// environments, envManagement, ide, taskManager, worktrees.
+//
+// This .example.jsonc is reference only — it is NOT loaded. Put real global
+// overrides in the sibling config.json (strict JSON: no comments, double-quoted
+// keys). Per-project tweaks belong in layer 3 — run \`infra-kit config edit\`.
+{
+  // "ide": {
+  //   "provider": "cursor",
+  //   "config": { "mode": "workspace", "workspaceConfigPath": "/path/to/your.code-workspace" }
+  // },
+  // "worktrees": { "openInGithubDesktop": false, "openInCmux": true }
+}
 `
 
 /**
- * Append infra-kit shell functions to .zshrc and seed the user-global
- * config stub at ~/.infra-kit/config.yml on first run. Idempotent: a
- * subsequent run replaces the existing zshrc block in place and leaves
+ * Append infra-kit shell functions to .zshrc, migrate any legacy
+ * `infra-kit.yml` config layers to JSON, and seed the user-global config at
+ * ~/.infra-kit/config.json on first run. Idempotent: a subsequent run replaces
+ * the existing zshrc block in place, has nothing left to migrate, and leaves
  * the user-global config untouched.
  *
  * @example
  * // CLI: `infra-kit init`  (or via the `pnpm dx-init` alias)
  * // INFO: Added infra-kit shell functions to /Users/me/.zshrc
- * // INFO: Wrote user-global config stub to /Users/me/.infra-kit/config.yml
+ * // INFO: Wrote user-global config to /Users/me/.infra-kit/config.json (see …/config.example.jsonc …)
  * // INFO: Run `source ~/.zshrc` or open a new terminal to activate.
  */
 export const init = async (): Promise<void> => {
@@ -63,23 +67,29 @@ export const init = async (): Promise<void> => {
   fs.appendFileSync(zshrcPath, `\n${shellBlock}\n`)
   logger.info(`Added infra-kit shell functions to ${zshrcPath}`)
 
+  // Convert any legacy infra-kit.yml config layers to JSON before seeding, so a
+  // migrated config.json is not re-seeded as an empty stub.
+  await migrateLegacyConfig()
+
   seedUserGlobalConfig()
 
   logger.info('Run `source ~/.zshrc` or open a new terminal to activate.')
 }
 
 /**
- * Create `~/.infra-kit/config.yml` with the documented stub when absent.
- * Skips silently if the file already exists so user edits are preserved.
+ * Create `~/.infra-kit/config.json` (empty `{}`) plus an annotated
+ * `~/.infra-kit/config.example.jsonc` reference when absent. Skips silently if
+ * the config already exists so user edits are preserved.
  *
  * @example
  * seedUserGlobalConfig()
- * // first call:  writes ~/.infra-kit/config.yml from USER_GLOBAL_CONFIG_STUB
- * // later calls: leaves the file alone, logs that it is already present
+ * // first call:  writes ~/.infra-kit/config.json ({}) + config.example.jsonc
+ * // later calls: leaves the config alone, logs that it is already present
  */
 const seedUserGlobalConfig = (): void => {
   const userConfigDir = path.join(os.homedir(), '.infra-kit')
-  const userConfigPath = path.join(userConfigDir, 'config.yml')
+  const userConfigPath = path.join(userConfigDir, 'config.json')
+  const userConfigExamplePath = path.join(userConfigDir, 'config.example.jsonc')
 
   if (fs.existsSync(userConfigPath)) {
     logger.info(`User-global config already present at ${userConfigPath}`)
@@ -89,8 +99,11 @@ const seedUserGlobalConfig = (): void => {
 
   fs.mkdirSync(userConfigDir, { recursive: true })
   fs.writeFileSync(userConfigPath, USER_GLOBAL_CONFIG_STUB, 'utf-8')
+  fs.writeFileSync(userConfigExamplePath, USER_GLOBAL_CONFIG_EXAMPLE, 'utf-8')
 
-  logger.info(`Wrote user-global config stub to ${userConfigPath}`)
+  logger.info(
+    `Wrote user-global config to ${userConfigPath} (see ${userConfigExamplePath} for the annotated reference)`,
+  )
 }
 
 const isBlockLine = (line: string): boolean => {

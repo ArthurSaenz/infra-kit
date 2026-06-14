@@ -12,7 +12,14 @@ import { formatZxError } from 'src/lib/errors/format-zx-error'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
-import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
+import { displayLabel, formatJiraName, formatRcTitle, parseBranchName } from 'src/lib/release-id'
+import type { ReleaseId } from 'src/lib/release-id'
+import {
+  detectReleaseType,
+  formatBranchChoices,
+  getJiraDescriptions,
+  resolveReleaseBranch,
+} from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 import { removeWorktrees } from 'src/lib/worktrees'
 import { defineMcpTool, textContent } from 'src/types'
@@ -62,8 +69,8 @@ const fetchPRByHead = async (head: string): Promise<PRStatus | null> => {
  * the merge step on resume. Title-matched on purpose: an older MERGED RC PR
  * from a different release must not short-circuit this version's flow.
  */
-const fetchMergedRcPRForVersion = async (version: string): Promise<PRStatus | null> => {
-  const expectedTitle = `Release v${version} (RC)`
+const fetchMergedRcPRForVersion = async (id: ReleaseId): Promise<PRStatus | null> => {
+  const expectedTitle = formatRcTitle(id)
   const result = await $`gh pr list --head dev --base main --state merged --json number,state,title --limit 20`
   const prs = JSON.parse(result.stdout) as PRStatus[]
   const match = prs.find((pr) => {
@@ -92,7 +99,7 @@ interface ResolvedTarget {
 }
 
 const resolveTargetFromVersion = async (version: string): Promise<ResolvedTarget> => {
-  const selectedReleaseBranch = `release/v${version}`
+  const selectedReleaseBranch = resolveReleaseBranch(version)
   const pr = await fetchPRByHead(selectedReleaseBranch)
 
   if (!pr) {
@@ -208,8 +215,9 @@ const mergeReleasePR = async (args: MergeReleasePRArgs): Promise<void> => {
   )
 }
 
-const resolveRcPRNumber = async (selectedVersion: string): Promise<number> => {
-  const expectedTitle = `Release v${selectedVersion} (RC)`
+const resolveRcPRNumber = async (id: ReleaseId): Promise<number> => {
+  const selectedLabel = displayLabel(id)
+  const expectedTitle = formatRcTitle(id)
   const existingOpen = await fetchOpenDevToMainPR()
 
   // Adopt any existing open dev→main PR. GitHub permits only one open PR per
@@ -221,7 +229,7 @@ const resolveRcPRNumber = async (selectedVersion: string): Promise<number> => {
 
     if (existingOpen.title !== expectedTitle) {
       logger.info(
-        `Adopting open dev → main PR #${rcNumber} ("${existingOpen.title}") and retitling for v${selectedVersion}`,
+        `Adopting open dev → main PR #${rcNumber} ("${existingOpen.title}") and retitling for ${selectedLabel}`,
       )
       await runStep(
         `retitle dev → main PR #${rcNumber} to "${expectedTitle}"`,
@@ -236,7 +244,7 @@ const resolveRcPRNumber = async (selectedVersion: string): Promise<number> => {
   }
 
   await runStep(
-    `create RC PR (dev → main) for v${selectedVersion}`,
+    `create RC PR (dev → main) for ${selectedLabel}`,
     `run 'gh pr create --base main --head dev' manually to surface the underlying error (e.g. no commits between dev and main)`,
     async () => {
       await $`gh pr create --base main --head dev --title ${expectedTitle} --body ""`
@@ -247,7 +255,7 @@ const resolveRcPRNumber = async (selectedVersion: string): Promise<number> => {
 
   if (!created) {
     throw new OperationError(undefined, {
-      operation: `look up RC PR for v${selectedVersion}`,
+      operation: `look up RC PR for ${selectedLabel}`,
       remediation: `verify the RC PR was created ('gh pr list --head dev --base main')`,
     })
   }
@@ -255,19 +263,20 @@ const resolveRcPRNumber = async (selectedVersion: string): Promise<number> => {
   return created.number
 }
 
-const ensureRcPRMerged = async (selectedVersion: string): Promise<void> => {
-  const alreadyMerged = await fetchMergedRcPRForVersion(selectedVersion)
+const ensureRcPRMerged = async (id: ReleaseId): Promise<void> => {
+  const selectedLabel = displayLabel(id)
+  const alreadyMerged = await fetchMergedRcPRForVersion(id)
 
   if (alreadyMerged) {
-    logger.info(`✓ RC PR for v${selectedVersion} already merged into main — skipping`)
+    logger.info(`✓ RC PR for ${selectedLabel} already merged into main — skipping`)
 
     return
   }
 
-  const rcNumber = await resolveRcPRNumber(selectedVersion)
+  const rcNumber = await resolveRcPRNumber(id)
 
   await runStep(
-    `merge RC PR #${rcNumber} (dev → main) for v${selectedVersion}`,
+    `merge RC PR #${rcNumber} (dev → main) for ${selectedLabel}`,
     `check 'gh pr view ${rcNumber}' for mergeability and required reviews`,
     async () => {
       await $`gh pr merge ${rcNumber} --squash --admin`
@@ -299,7 +308,7 @@ const syncMainIntoDev = async (): Promise<void> => {
   )
 }
 
-const deliverJiraReleaseSafely = async (selectedReleaseBranch: string): Promise<void> => {
+const deliverJiraReleaseSafely = async (id: ReleaseId): Promise<void> => {
   const jiraConfig = await loadJiraConfigOptional()
 
   if (!jiraConfig) {
@@ -309,7 +318,8 @@ const deliverJiraReleaseSafely = async (selectedReleaseBranch: string): Promise<
   }
 
   try {
-    const versionName = selectedReleaseBranch.replace('release/', '')
+    // Jira fix version name: `v1.2.3` | `<name>` — must match create-time formatJiraName.
+    const versionName = formatJiraName(id)
 
     await deliverJiraRelease({ versionName }, jiraConfig)
   } catch (error) {
@@ -333,9 +343,21 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
     ? await resolveTargetFromVersion(version)
     : await resolveTargetInteractively()
 
-  const selectedVersion = selectedReleaseBranch.replace('release/v', '')
+  // selectedReleaseBranch is always a release branch (operator ref strictly
+  // parsed, or picked from discovery-filtered choices) so this cannot be null.
+  const releaseId = parseBranchName(selectedReleaseBranch)
+
+  if (!releaseId) {
+    throw new OperationError(undefined, {
+      operation: `deliver release ${selectedReleaseBranch}`,
+      remediation: 'pass a version (e.g. "1.2.5") or a release name (e.g. "checkout-redesign")',
+    })
+  }
+
+  const selectedVersion = displayLabel(releaseId)
 
   commandEcho.addOption('--version', selectedVersion)
+  logger.info(`Delivering ${releaseId.kind === 'name' ? 'named release' : 'version'} ${selectedReleaseBranch}`)
 
   const releaseType: ReleaseType = detectReleaseType(releasePrTitle)
 
@@ -363,7 +385,7 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
   await mergeReleasePR({ selectedReleaseBranch, releaseType })
 
   if (releaseType !== 'hotfix') {
-    await ensureRcPRMerged(selectedVersion)
+    await ensureRcPRMerged(releaseId)
   }
 
   await dispatchDeployWorkflow()
@@ -371,7 +393,7 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
 
   $.quiet = false
 
-  await deliverJiraReleaseSafely(selectedReleaseBranch)
+  await deliverJiraReleaseSafely(releaseId)
 
   logger.info(`Successfully delivered ${selectedReleaseBranch} to production!`)
 
@@ -396,7 +418,11 @@ export const ghReleaseDeliverMcpTool = defineMcpTool({
   description:
     'Deliver a release to production. For hotfixes: squash-merges the release branch to main and dispatches the deploy-all workflow. For regular releases: squash-merges to dev, opens an RC PR, merges dev into main, dispatches the deploy-all workflow, then syncs main back to dev. Also releases the matching Jira fix version if Jira is configured. Dispatches the deploy workflow fire-and-forget — the tool returns once the workflow is accepted by GitHub, not when the deployment finishes. PR-merge steps are idempotent: re-running after a partial failure skips PRs that are already merged. Irreversible production operation: the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. "version" is required when invoked via MCP (the picker is unreachable without a TTY).',
   inputSchema: {
-    version: z.string().describe('Release version to deliver to production (e.g., "1.2.5"). Required for MCP calls.'),
+    version: z
+      .string()
+      .describe(
+        'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") to deliver to production. Required for MCP calls.',
+      ),
   },
   outputSchema: {
     releaseBranch: z.string().describe('The release branch that was delivered'),

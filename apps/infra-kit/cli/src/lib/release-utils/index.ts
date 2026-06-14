@@ -5,7 +5,11 @@ export {
   formatVersionLabel,
   getBaseBranch,
   getJiraDescriptions,
+  parseBranchChoices,
   prepareGitForRelease,
+  releaseBranchLabels,
   type ReleaseCreationResult,
+  releaseLabelFromBranch,
   type ReleaseType,
+  resolveReleaseBranch,
 } from './release-utils'

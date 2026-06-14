@@ -31,7 +31,7 @@ const fileExists = async (filePath: string): Promise<boolean> => {
  *
  * @example
  * // os.homedir() === '/Users/arthur'
- * tildify('/Users/arthur/.infra-kit/config.yml') // => '~/.infra-kit/config.yml'
+ * tildify('/Users/arthur/.infra-kit/config.json') // => '~/.infra-kit/config.json'
  * tildify('/etc/hosts')                          // => '/etc/hosts'
  */
 const tildify = (filePath: string): string => {
@@ -49,9 +49,9 @@ const tildify = (filePath: string): string => {
  * // CLI: `infra-kit config path`
  * // INFO: Project name: api
  * // INFO: Config merge chain (later overrides earlier):
- * // INFO:   [✓] project (committed)    ~/projects/api/infra-kit.yml
- * // INFO:   [ ] user global            ~/.infra-kit/config.yml
- * // INFO:   [✓] user project           ~/.infra-kit/projects/api/infra-kit.yml
+ * // INFO:   [✓] project (committed)    ~/projects/api/infra-kit.json
+ * // INFO:   [ ] user global            ~/.infra-kit/config.json
+ * // INFO:   [✓] user project           ~/.infra-kit/projects/api/infra-kit.json
  */
 export const configPath = async (): Promise<ToolsExecutionResult> => {
   const paths = await getInfraKitConfigPaths()
@@ -95,7 +95,8 @@ export const configPath = async (): Promise<ToolsExecutionResult> => {
  *
  * @example
  * // CLI: `infra-kit config edit`
- * // first run — creates ~/.infra-kit/projects/api/infra-kit.yml from a stub, then $EDITOR opens it
+ * // first run — creates ~/.infra-kit/projects/api/infra-kit.json ({}) + a sibling
+ * //             infra-kit.example.jsonc reference, then $EDITOR opens the .json
  * // subsequent runs — opens the existing file as-is
  */
 export const configEdit = async (): Promise<ToolsExecutionResult> => {
@@ -105,9 +106,15 @@ export const configEdit = async (): Promise<ToolsExecutionResult> => {
   await fs.mkdir(path.dirname(paths.userProject), { recursive: true })
 
   if (!(await fileExists(paths.userProject))) {
-    const stub = `# infra-kit user override for ${paths.projectName} — ~/.infra-kit/projects/${paths.projectName}/infra-kit.yml\n#\n# Layer 3 (highest precedence) of the config merge chain. Shallow-merged on\n# top of <repo>/infra-kit.yml and ~/.infra-kit/config.yml — top-level keys\n# (environments, envManagement, ide, taskManager, worktrees) replace wholesale.\n`
+    // JSON can't carry comments, so seed an empty-but-valid config and drop the
+    // annotated guidance next to it in a non-loaded .example.jsonc the loader
+    // never reads (it only globs the three exact `infra-kit.json` filenames).
+    const examplePath = exampleSiblingPath(paths.userProject)
 
-    await fs.writeFile(paths.userProject, stub, 'utf-8')
+    await fs.writeFile(paths.userProject, '{}\n', 'utf-8')
+    await fs.writeFile(examplePath, buildUserProjectExample(paths.projectName), 'utf-8')
+
+    logger.info(`Created ${tildify(paths.userProject)} — see ${tildify(examplePath)} for the annotated reference.`)
   }
 
   logger.info(`Opening ${tildify(paths.userProject)} in ${editor}`)
@@ -122,4 +129,39 @@ export const configEdit = async (): Promise<ToolsExecutionResult> => {
     content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
     structuredContent,
   }
+}
+
+/**
+ * Derive the non-loaded `.example.jsonc` sibling for a config path.
+ *
+ * @example
+ * exampleSiblingPath('/u/.infra-kit/projects/api/infra-kit.json')
+ * // => '/u/.infra-kit/projects/api/infra-kit.example.jsonc'
+ */
+const exampleSiblingPath = (jsonPath: string): string => {
+  return jsonPath.replace(/\.json$/, '.example.jsonc')
+}
+
+/**
+ * Annotated JSONC reference for the user-scope per-project override layer.
+ * Written alongside the real `{}` config so the guidance the old YAML stub
+ * carried in comments survives the move to JSON.
+ *
+ * @example
+ * buildUserProjectExample('api')
+ * // => '// infra-kit user override for api …\n{ … }\n'
+ */
+const buildUserProjectExample = (projectName: string): string => {
+  return `// infra-kit user override for ${projectName} — ~/.infra-kit/projects/${projectName}/infra-kit.json
+//
+// Layer 3 (highest precedence) of the config merge chain. Shallow-merged on top
+// of <repo>/infra-kit.json and ~/.infra-kit/config.json — top-level keys
+// (environments, envManagement, ide, taskManager, worktrees) replace wholesale.
+//
+// This .example.jsonc is reference only — it is NOT loaded. Put real overrides
+// in the sibling infra-kit.json (strict JSON: no comments, double-quoted keys).
+{
+  // "worktrees": { "openInGithubDesktop": false, "openInCmux": true }
+}
+`
 }

@@ -8,6 +8,7 @@ import { loadJiraConfig } from 'src/integrations/jira'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
+import { InvalidReleaseNameError, displayLabel, validateName } from 'src/lib/release-id'
 import { createSingleRelease, prepareGitForRelease } from 'src/lib/release-utils'
 import type { ReleaseCreationResult, ReleaseType } from 'src/lib/release-utils'
 import {
@@ -18,12 +19,12 @@ import {
   parseVersion,
   resolveReleaseEntries,
 } from 'src/lib/version-utils'
-import type { ReleaseEntry, SemVer } from 'src/lib/version-utils'
+import type { ReleaseEntry, ReleaseInput, SemVer } from 'src/lib/version-utils'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
 interface ReleaseCreateArgs extends RequiredConfirmedOptionArg {
-  releases?: ReleaseEntry[]
+  releases?: ReleaseInput[]
 }
 
 const VERSION_PROMPT_HINT = '"1.2.5" or "next"'
@@ -38,7 +39,7 @@ const trySuggestNext = (known: SemVer[], type: ReleaseType): string | null => {
   }
 }
 
-const resolveOrExit = (entries: ReleaseEntry[], known: SemVer[]): ReleaseEntry[] => {
+const resolveOrExit = (entries: ReleaseInput[], known: SemVer[]): ReleaseEntry[] => {
   try {
     return resolveReleaseEntries(entries, known)
   } catch (err) {
@@ -49,20 +50,80 @@ const resolveOrExit = (entries: ReleaseEntry[], known: SemVer[]): ReleaseEntry[]
       })
     }
 
+    if (err instanceof InvalidReleaseNameError) {
+      throw new OperationError(err, {
+        operation: 'validate release name',
+        remediation:
+          'use a kebab-case name like "checkout-redesign" (lowercase, digits, single hyphens, not a reserved word)',
+      })
+    }
+
     throw err
   }
+}
+
+const promptForVersionInput = async (running: SemVer[], type: ReleaseType): Promise<string> => {
+  const suggestion = trySuggestNext(running, type)
+  const defaultHint = suggestion ? ` [${suggestion}]` : ''
+  const versionAnswer = (await question(`  Version (e.g. ${VERSION_PROMPT_HINT})${defaultHint}: `)).trim()
+  const versionInput = versionAnswer === '' ? (suggestion ?? '') : versionAnswer
+
+  if (versionInput === '') {
+    logger.error('No version provided. Exiting...')
+    process.exit(1)
+  }
+
+  return versionInput
+}
+
+const promptForNameInput = async (): Promise<string> => {
+  const name = (await question('  Name (kebab-case, e.g. "checkout-redesign"): ')).trim()
+
+  if (name === '') {
+    logger.error('No name provided. Exiting...')
+    process.exit(1)
+  }
+
+  try {
+    validateName(name)
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+
+    logger.error(`${reason} Exiting...`)
+    process.exit(1)
+  }
+
+  return name
 }
 
 const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>): Promise<ReleaseEntry[]> => {
   commandEcho.setInteractive()
 
-  const baseKnown = await ensureKnown()
-  const running: SemVer[] = [...baseKnown]
+  let baseKnown: SemVer[] | null = null
+  const running: SemVer[] = []
+  const ensureRunning = async (): Promise<SemVer[]> => {
+    if (baseKnown === null) {
+      baseKnown = await ensureKnown()
+      running.push(...baseKnown)
+    }
+
+    return running
+  }
+
   const entries: ReleaseEntry[] = []
   let addAnother = true
 
   while (addAnother) {
     const ordinal = entries.length + 1
+    const kind = await select<'version' | 'name'>({
+      message: `Release #${ordinal} — version or name?`,
+      choices: [
+        { name: 'version (semver / next)', value: 'version' },
+        { name: 'name (free-form)', value: 'name' },
+      ],
+      default: 'version',
+    })
+
     const type = await select<ReleaseType>({
       message: `Release #${ordinal} — select type:`,
       choices: [
@@ -72,19 +133,22 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
       default: 'regular',
     })
 
-    const suggestion = trySuggestNext(running, type)
-    const defaultHint = suggestion ? ` [${suggestion}]` : ''
-    const versionAnswer = (await question(`  Version (e.g. ${VERSION_PROMPT_HINT})${defaultHint}: `)).trim()
-    const versionInput = versionAnswer === '' ? (suggestion ?? '') : versionAnswer
+    let resolved: ReleaseEntry
 
-    if (versionInput === '') {
-      logger.error('No version provided. Exiting...')
-      process.exit(1)
+    if (kind === 'name') {
+      const name = await promptForNameInput()
+
+      resolved = resolveOrExit([{ name, type }], [])[0] as ReleaseEntry
+    } else {
+      // Versions may need prior versions for "next"; load lazily.
+      const versionInput = await promptForVersionInput(await ensureRunning(), type)
+
+      resolved = resolveOrExit([{ version: versionInput, type }], running)[0] as ReleaseEntry
+
+      if (resolved.id.kind === 'version') {
+        running.push(parseVersion(`v${resolved.id.raw}`))
+      }
     }
-
-    const resolved = resolveOrExit([{ version: versionInput, type }], running)[0] as ReleaseEntry
-
-    running.push(parseVersion(`v${resolved.version}`))
 
     const description = (await question('  Description (optional, press Enter to skip): ')).trim()
 
@@ -97,7 +161,8 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
 }
 
 const formatReleaseSummary = (entry: ReleaseEntry): string => {
-  const parts = [`v${entry.version}`, entry.type]
+  const label = entry.id.kind === 'version' ? `v${entry.id.raw}` : entry.id.name
+  const parts = [label, entry.type]
 
   if (entry.description) parts.push(entry.description)
 
@@ -106,9 +171,17 @@ const formatReleaseSummary = (entry: ReleaseEntry): string => {
 
 const echoReleases = (entries: ReleaseEntry[]): void => {
   for (const entry of entries) {
+    if (entry.id.kind === 'name') {
+      // Named releases echo the --name form; description is not part of the
+      // flag and is set later via release-desc-edit / interactively.
+      commandEcho.addOption('--name', entry.id.name)
+
+      continue
+    }
+
     const spec = entry.description
-      ? `${entry.version}:${entry.type}:${entry.description}`
-      : `${entry.version}:${entry.type}`
+      ? `${entry.id.raw}:${entry.type}:${entry.description}`
+      : `${entry.id.raw}:${entry.type}`
 
     commandEcho.addOption('--release', spec)
   }
@@ -120,7 +193,7 @@ interface FailedRelease {
 }
 
 const collectEntries = async (
-  inputReleases: ReleaseEntry[] | undefined,
+  inputReleases: ReleaseInput[] | undefined,
   ensureKnown: () => Promise<SemVer[]>,
 ): Promise<ReleaseEntry[]> => {
   if (inputReleases && inputReleases.length > 0) {
@@ -168,31 +241,33 @@ const executeOne = async (
   args: ExecuteOneArgs,
 ): Promise<{ result?: ReleaseCreationResult; failure?: FailedRelease }> => {
   const { entry, jiraConfig } = args
+  const label = displayLabel(entry.id)
+  const prTitleLabel = entry.id.kind === 'version' ? `v${entry.id.raw}` : entry.id.name
 
   try {
     await prepareGitForRelease(entry.type)
 
     const result = await createSingleRelease({
-      version: entry.version,
+      id: entry.id,
       jiraConfig,
       description: entry.description,
       type: entry.type,
     })
 
-    logger.info(`✅ Successfully created release: v${entry.version} (${entry.type})`)
+    logger.info(`✅ Successfully created release: ${prTitleLabel} (${entry.type})`)
     logger.info(`🔗  GitHub PR: ${result.prUrl}`)
     logger.info(`🔗  Jira Version: ${result.jiraVersionUrl}\n`)
 
     return { result }
   } catch (error) {
     const err = new OperationError(error, {
-      operation: `create release v${entry.version} (${entry.type})`,
-      remediation: 'verify the version is unique and the base branch is clean',
+      operation: `create release ${prTitleLabel} (${entry.type})`,
+      remediation: 'verify the version or name is unique and the base branch is clean',
     })
 
     logger.error(`❌ ${err.message}\n`)
 
-    return { failure: { version: entry.version, error: err.message } }
+    return { failure: { version: label, error: err.message } }
   }
 }
 
@@ -272,24 +347,53 @@ export const releaseCreate = async (args: ReleaseCreateArgs) => {
 export const releaseCreateMcpTool = defineMcpTool({
   name: 'release-create',
   description:
-    'Create one or more releases in a single call. Each entry in "releases" carries its own version, type (regular|hotfix, default regular), and optional description, so regular and hotfix releases can be mixed in the same invocation. For each release this tool switches to the appropriate base branch (dev for regular, main for hotfix), cuts the release branch, opens a GitHub release PR, and creates the matching Jira fix version. The literal token "next" auto-increments from the union of remote release branches and Jira fix versions (regular bumps minor + resets patch; hotfix bumps patch on the highest minor); multiple "next" tokens advance sequentially across mixed types. Confirmation is auto-skipped for MCP calls, so the caller is responsible for gating. Continues on per-release failure and reports successes/failures.',
+    'Create one or more releases in a single call. Each entry in "releases" carries EITHER a "version" (semver or the literal token "next") OR a "name" (free-form kebab-case identifier) — exactly one is required and they are mutually exclusive. Each entry also has its own type (regular|hotfix, default regular) and optional description, so regular and hotfix releases can be mixed in the same invocation. For each release this tool switches to the appropriate base branch (dev for regular, main for hotfix), cuts the release branch (release/v<semver> for versions, release/n/<name> for names), opens a GitHub release PR, and creates the matching Jira fix version (v<semver> for versions, <name> for names). The literal token "next" auto-increments from the union of remote release branches and Jira fix versions (regular bumps minor + resets patch; hotfix bumps patch on the highest minor); multiple "next" tokens advance sequentially across mixed types. Named releases never auto-bump and "next" is version-only. Confirmation is auto-skipped for MCP calls, so the caller is responsible for gating. Continues on per-release failure and reports successes/failures.',
   inputSchema: {
     releases: z
       .array(
-        z.object({
-          version: z
-            .string()
-            .describe('Version to create (e.g., "1.2.5") or the literal token "next" for auto-increment.'),
-          type: z
-            .enum(['regular', 'hotfix'])
-            .optional()
-            .default('regular')
-            .describe('Release type: "regular" (branches off dev) or "hotfix" (branches off main).'),
-          description: z.string().optional().describe('Optional description for the Jira version.'),
-        }),
+        z
+          .object({
+            version: z
+              .string()
+              .optional()
+              .describe(
+                'Version to create (e.g., "1.2.5") or the literal token "next" for auto-increment. Mutually exclusive with "name".',
+              ),
+            name: z
+              .string()
+              .optional()
+              .describe(
+                'Free-form kebab-case release name (e.g., "checkout-redesign"). Mutually exclusive with "version". Named releases never auto-bump.',
+              ),
+            type: z
+              .enum(['regular', 'hotfix'])
+              .optional()
+              .default('regular')
+              .describe('Release type: "regular" (branches off dev) or "hotfix" (branches off main).'),
+            description: z.string().optional().describe('Optional description for the Jira version.'),
+          })
+          .refine(
+            (entry) => {
+              return (entry.version === undefined) !== (entry.name === undefined)
+            },
+            {
+              message: 'Each release entry must have exactly one of "version" or "name" (they are mutually exclusive).',
+            },
+          )
+          .transform((entry): ReleaseInput => {
+            return entry.name !== undefined
+              ? { name: entry.name, type: entry.type, ...(entry.description ? { description: entry.description } : {}) }
+              : {
+                  version: entry.version as string,
+                  type: entry.type,
+                  ...(entry.description ? { description: entry.description } : {}),
+                }
+          }),
       )
       .min(1)
-      .describe('One or more releases to create. Each entry has its own version, type, and optional description.'),
+      .describe(
+        'One or more releases to create. Each entry has exactly one of "version" or "name", plus its own type and optional description.',
+      ),
   },
   outputSchema: {
     createdBranches: z.array(z.string()).describe('List of created release branch names'),

@@ -11,7 +11,8 @@ import { OperationError } from 'src/lib/errors/operation-error'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
-import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
+import { formatBranchName, parseReleaseRef } from 'src/lib/release-id'
+import { detectReleaseType, formatBranchChoices, getJiraDescriptions, releaseBranchLabels } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 import { removeWorktrees } from 'src/lib/worktrees'
 import { defineMcpTool, textContent } from 'src/types'
@@ -56,7 +57,7 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       selectedReleaseBranches = currentWorktrees
     } else if (versions) {
       selectedReleaseBranches = versions.split(',').map((v) => {
-        return `release/v${v.trim()}`
+        return formatBranchName(parseReleaseRef(v.trim()))
       })
     } else {
       commandEcho.setInteractive()
@@ -82,12 +83,7 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
     if (allSelected) {
       commandEcho.addOption('--all', true)
     } else {
-      commandEcho.addOption(
-        '--versions',
-        selectedReleaseBranches.map((branch) => {
-          return branch.replace('release/v', '')
-        }),
-      )
+      commandEcho.addOption('--versions', releaseBranchLabels(selectedReleaseBranches))
     }
 
     // Ask for confirmation
@@ -216,7 +212,7 @@ export const worktreesRemoveMcpTool = defineMcpTool({
       .string()
       .optional()
       .describe(
-        'Comma-separated release versions to target (e.g. "1.2.5, 1.2.6"). Either "versions" or all=true must be provided for MCP calls. Overrides "all" when set.',
+        'Comma-separated release versions or names to target (e.g. "1.2.5, 1.2.6" or "checkout-redesign, 1.2.5"). Either "versions" or all=true must be provided for MCP calls. Overrides "all" when set.',
       ),
   },
   outputSchema: {

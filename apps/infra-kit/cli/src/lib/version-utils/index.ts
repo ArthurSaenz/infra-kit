@@ -4,10 +4,13 @@ export {
   computeNextVersion,
   type ExistingVersionsSources,
   hasNextToken,
+  type NamedReleaseInput,
   NEXT_TOKEN,
   NoPriorVersionsError,
   parseReleaseSpec,
   type ReleaseEntry,
+  type ReleaseInput,
+  type ReleaseSpec,
   resolveReleaseEntries,
   type SemVer,
 } from './next-version'

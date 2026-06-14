@@ -2,9 +2,37 @@ import { $ } from 'zx'
 
 import { getProjectVersions, loadJiraConfigOptional } from 'src/integrations/jira'
 import { logger } from 'src/lib/logger'
+import { parseBranchName } from 'src/lib/release-id'
 
 import { collectKnownVersions } from './next-version'
 import type { SemVer } from './next-version'
+
+/**
+ * Extract version-branch tokens from raw `git ls-remote` stdout. Each line is
+ * `<sha>\t<ref>`; refs are routed through release-id's lenient
+ * {@link parseBranchName} and only `kind: 'version'` ids are kept (named
+ * `release/n/*` branches are irrelevant to `next`-bump math and are dropped).
+ * Returns the no-`v` semver tokens (e.g. `1.2.3`) that
+ * {@link collectKnownVersions} parses as versions. Pure — no I/O — so it is
+ * unit-testable without the network.
+ */
+export const extractVersionBranches = (lsRemoteStdout: string): string[] => {
+  return lsRemoteStdout
+    .split('\n')
+    .map((line) => {
+      const tab = line.indexOf('\t')
+
+      if (tab === -1) return null
+
+      return parseBranchName(line.slice(tab + 1))
+    })
+    .filter((id): id is NonNullable<typeof id> => {
+      return id !== null && id.kind === 'version'
+    })
+    .map((id) => {
+      return id.raw
+    })
+}
 
 const parseRemoteRefs = async (): Promise<string[]> => {
   const previousQuiet = $.quiet
@@ -12,17 +40,8 @@ const parseRemoteRefs = async (): Promise<string[]> => {
   try {
     $.quiet = true
     const result = await $`git ls-remote --heads origin 'release/v*'`
-    const lines = result.stdout.split('\n')
 
-    return lines
-      .map((line) => {
-        const tab = line.indexOf('\t')
-
-        if (tab === -1) return ''
-
-        return line.slice(tab + 1).replace(/^refs\/heads\//, '')
-      })
-      .filter(Boolean)
+    return extractVersionBranches(result.stdout)
   } finally {
     $.quiet = previousQuiet
   }

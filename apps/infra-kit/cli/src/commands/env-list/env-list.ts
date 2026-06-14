@@ -8,7 +8,7 @@ import { defineMcpTool, textContent } from 'src/types'
 /**
  * List available Doppler configs for the detected project.
  *
- * Purely local: reads infra-kit.yml and does not call Doppler. We intentionally
+ * Purely local: reads infra-kit.json and does not call Doppler. We intentionally
  * do not run validateDopplerCliAndAuth here — users listing envs often do so
  * before `doppler login`, and a spurious auth error would be misleading.
  */
@@ -38,7 +38,7 @@ export const envList = async () => {
 export const envListMcpTool = defineMcpTool({
   name: 'env-list',
   description:
-    'List the environments the project is configured to support. Returns the `environments` list declared in infra-kit.yml at the project root (not a live fetch from Doppler) plus the Doppler project name resolved from the same file. Read-only.',
+    'List the environments the project is configured to support. Returns the `environments` list declared in infra-kit.json at the project root (not a live fetch from Doppler) plus the Doppler project name resolved from the same file. Read-only.',
   inputSchema: {},
   outputSchema: {
     project: z.string().describe('Detected Doppler project name'),

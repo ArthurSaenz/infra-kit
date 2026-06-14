@@ -3,6 +3,12 @@ import { $ } from 'zx'
 import { createReleaseBranch } from 'src/integrations/gh'
 import { createJiraVersion, getProjectVersions, loadJiraConfigOptional } from 'src/integrations/jira'
 import type { JiraConfig } from 'src/integrations/jira'
+import { OperationError } from 'src/lib/errors/operation-error'
+import { displayLabel, formatBranchName, formatJiraName, parseBranchName, parseReleaseRef } from 'src/lib/release-id'
+import type { ReleaseId } from 'src/lib/release-id'
+
+/** Sentinel ref for deploying from the `dev` branch instead of a release branch. */
+export const DEV_REF = 'dev'
 
 export type ReleaseType = 'regular' | 'hotfix'
 
@@ -39,7 +45,7 @@ export const prepareGitForRelease = async (type: ReleaseType = 'regular'): Promi
 }
 
 interface CreateSingleReleaseArgs {
-  version: string
+  id: ReleaseId
   jiraConfig: JiraConfig
   description?: string
   type?: ReleaseType
@@ -49,9 +55,10 @@ interface CreateSingleReleaseArgs {
  * Create a single release by creating both Jira version and GitHub release branch
  */
 export const createSingleRelease = async (args: CreateSingleReleaseArgs): Promise<ReleaseCreationResult> => {
-  const { version, jiraConfig, description, type = 'regular' } = args
-  // 1. Create Jira version (mandatory)
-  const versionName = `v${version}`
+  const { id, jiraConfig, description, type = 'regular' } = args
+  // 1. Create Jira version (mandatory). For versioned releases this is
+  // "v1.2.3" (byte-identical to before); for named releases it is "<name>".
+  const versionName = formatJiraName(id)
 
   const result = await createJiraVersion(
     {
@@ -68,10 +75,10 @@ export const createSingleRelease = async (args: CreateSingleReleaseArgs): Promis
   const jiraVersionUrl = `${jiraConfig.baseUrl}/projects/${result.version!.projectId}/versions/${result.version!.id}/tab/release-report-all-issues`
 
   // 2. Create GitHub release branch
-  const releaseInfo = await createReleaseBranch({ version, jiraVersionUrl, type, description })
+  const releaseInfo = await createReleaseBranch({ id, jiraVersionUrl, type, description })
 
   return {
-    version,
+    version: displayLabel(id),
     type,
     branchName: releaseInfo.branchName,
     prUrl: releaseInfo.prUrl,
@@ -130,32 +137,93 @@ interface FormatBranchChoicesArgs {
   types?: Map<string, ReleaseType>
 }
 
+interface ParsedBranchChoice {
+  branch: string
+  id: ReleaseId
+  /** Human display label: `1.2.3` | `<name>`. */
+  label: string
+}
+
+/**
+ * Parse branches into release ids, dropping any that do not parse (lenient
+ * discovery source). Exported for unit testing the version/name/junk split.
+ */
+export const parseBranchChoices = (branches: string[]): ParsedBranchChoice[] => {
+  return branches.flatMap((branch) => {
+    const id = parseBranchName(branch)
+
+    if (!id) return []
+
+    return [{ branch, id, label: displayLabel(id) }]
+  })
+}
+
+/**
+ * Resolve an operator-supplied release ref (version `1.2.3` / `v1.2.3` or name
+ * `checkout-redesign`) to its branch name (`release/v1.2.3` | `release/n/<name>`).
+ * Strict: surfaces a parse failure as an OperationError with remediation text.
+ */
+export const resolveReleaseBranch = (versionArg: string): string => {
+  try {
+    return formatBranchName(parseReleaseRef(versionArg))
+  } catch (error) {
+    throw new OperationError(error, {
+      operation: `resolve release ref "${versionArg}"`,
+      remediation: 'pass a version (e.g. "1.2.5") or a release name (e.g. "checkout-redesign")',
+    })
+  }
+}
+
+/**
+ * Render the human display label for a release branch. Returns the `dev`
+ * sentinel unchanged; otherwise derives `1.2.3` | `<name>` from the branch.
+ * Falls back to the raw branch when it does not parse as a release id.
+ */
+export const releaseLabelFromBranch = (branch: string): string => {
+  if (branch === DEV_REF) return DEV_REF
+
+  const id = parseBranchName(branch)
+
+  return id ? displayLabel(id) : branch
+}
+
+/**
+ * Render human display labels for a list of release branches, dropping any
+ * branch that does not parse as a release id (lenient discovery contract).
+ */
+export const releaseBranchLabels = (branches: string[]): string[] => {
+  return branches.flatMap((branch) => {
+    const id = parseBranchName(branch)
+
+    return id ? [displayLabel(id)] : []
+  })
+}
+
 /**
  * Format release branch names as checkbox choices with aligned type tags and Jira descriptions
  */
 export const formatBranchChoices = (args: FormatBranchChoicesArgs): { name: string; value: string }[] => {
   const { branches, descriptions, types } = args
 
-  const versionNames = branches.map((b) => {
-    return b.replace('release/v', '')
-  })
+  const parsed = parseBranchChoices(branches)
 
   const maxLen = Math.max(
-    ...versionNames.map((v) => {
-      return v.length
+    0,
+    ...parsed.map((p) => {
+      return p.label.length
     }),
   )
 
-  return branches.map((branch, i) => {
-    const version = versionNames[i] as string
+  return parsed.map(({ branch, id, label }) => {
     const type = types ? types.get(branch) || 'regular' : undefined
-    const desc = descriptions.get(`v${version}`)
-    const padding = ' '.repeat(maxLen - version.length + 3)
+    // Jira-descriptions map is keyed by the Jira version NAME (`v1.2.3` | `<name>`).
+    const desc = descriptions.get(formatJiraName(id))
+    const padding = ' '.repeat(maxLen - label.length + 3)
 
-    let name = type ? formatVersionLabel(version, type, maxLen) : version
+    let name = type ? formatVersionLabel(label, type, maxLen) : label
 
     if (desc) {
-      name = type ? `${name}  ${desc}` : `${version}${padding}${desc}`
+      name = type ? `${name}  ${desc}` : `${label}${padding}${desc}`
     }
 
     return { name, value: branch }

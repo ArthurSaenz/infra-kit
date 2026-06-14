@@ -14,7 +14,7 @@ interface OpenCmuxWorkspaceArgs {
 export const openCmuxWorkspaceWithLayout = async (args: OpenCmuxWorkspaceArgs): Promise<void> => {
   const { cwd, title } = args
 
-  const newWorkspaceOutput = (await $`cmux new-workspace --cwd ${cwd}`).stdout
+  const newWorkspaceOutput = (await $`cmux workspace create --cwd ${cwd}`).stdout
 
   const workspaceRef = parseWorkspaceRef(newWorkspaceOutput)
 
@@ -26,7 +26,7 @@ export const openCmuxWorkspaceWithLayout = async (args: OpenCmuxWorkspaceArgs): 
   await $`cmux new-split down --workspace ${workspaceRef} --surface ${leftTopRef}`
 
   if (title) {
-    await $`cmux rename-workspace --workspace ${workspaceRef} ${title}`
+    await $`cmux workspace rename --workspace ${workspaceRef} ${title}`
   }
 }
 
@@ -51,7 +51,7 @@ const parseFirstSurfaceRef = (output: string): string => {
 
 /**
  * Extracts the `workspace:<id>` reference from the output of
- * `cmux new-workspace`. The returned ref is used to target the newly
+ * `cmux workspace create`. The returned ref is used to target the newly
  * created workspace in follow-up `cmux` commands (splits, rename, etc.).
  *
  * @example
@@ -62,7 +62,7 @@ const parseWorkspaceRef = (output: string): string => {
   const match = output.match(/workspace:\d+/)
 
   if (!match) {
-    throw new Error('cmux: could not locate workspace ref in new-workspace output')
+    throw new Error('cmux: could not locate workspace ref in workspace create output')
   }
 
   return match[0]

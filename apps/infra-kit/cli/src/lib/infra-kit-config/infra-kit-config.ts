@@ -1,15 +1,14 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import yaml from 'yaml'
 import { z } from 'zod'
 
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 
-const INFRA_KIT_CONFIG_FILE = 'infra-kit.yml'
+const INFRA_KIT_CONFIG_FILE = 'infra-kit.json'
 
 const USER_CONFIG_DIR_NAME = '.infra-kit'
-const USER_GLOBAL_CONFIG_FILE = 'config.yml'
+const USER_GLOBAL_CONFIG_FILE = 'config.json'
 const USER_PROJECTS_DIR = 'projects'
 
 // envManagement
@@ -62,7 +61,7 @@ const worktreesConfigSchema = z.object({
   openInCmux: z.boolean().optional(),
 })
 
-const infraKitConfigSchema = z.object({
+export const infraKitConfigSchema = z.object({
   environments: z.array(z.string().min(1)).min(1),
   envManagement: envManagementSchema,
   ide: ideSchema.optional(),
@@ -70,7 +69,7 @@ const infraKitConfigSchema = z.object({
   worktrees: worktreesConfigSchema.optional(),
 })
 
-const infraKitOverrideConfigSchema = infraKitConfigSchema.partial()
+export const infraKitOverrideConfigSchema = infraKitConfigSchema.partial()
 
 export type InfraKitConfig = z.infer<typeof infraKitConfigSchema>
 
@@ -79,7 +78,7 @@ export interface InfraKitConfigPaths {
   main: string
   /** User-scope global overrides applied to every project. */
   userGlobal: string
-  /** User-scope per-project overrides — `<userProjectsDir>/<projectName>/infra-kit.yml`. */
+  /** User-scope per-project overrides — `<userProjectsDir>/<projectName>/infra-kit.json`. */
   userProject: string
   /** Repo basename (`path.basename(projectRoot)`) used to namespace the user-project file. */
   projectName: string
@@ -100,9 +99,9 @@ let cached: CacheEntry | null = null
  * @example
  * const paths = await getInfraKitConfigPaths()
  * // {
- * //   main:        '/Users/arthur/projects/api/infra-kit.yml',
- * //   userGlobal:  '/Users/arthur/.infra-kit/config.yml',
- * //   userProject: '/Users/arthur/.infra-kit/projects/api/infra-kit.yml',
+ * //   main:        '/Users/arthur/projects/api/infra-kit.json',
+ * //   userGlobal:  '/Users/arthur/.infra-kit/config.json',
+ * //   userProject: '/Users/arthur/.infra-kit/projects/api/infra-kit.json',
  * //   projectName: 'api',
  * // }
  */
@@ -120,19 +119,19 @@ export const getInfraKitConfigPaths = async (): Promise<InfraKitConfigPaths> => 
 }
 
 /**
- * Read and validate `infra-kit.yml`, with optional override layers shallow-merged
+ * Read and validate `infra-kit.json`, with optional override layers shallow-merged
  * on top in this order (later wins):
- *   1. project `infra-kit.yml`                            — committed source of truth
- *   2. `~/.infra-kit/config.yml`                          — user-global defaults
- *   3. `~/.infra-kit/projects/<repo-name>/infra-kit.yml`  — user-scope per-project overrides
+ *   1. project `infra-kit.json`                            — committed source of truth
+ *   2. `~/.infra-kit/config.json`                          — user-global defaults
+ *   3. `~/.infra-kit/projects/<repo-name>/infra-kit.json`  — user-scope per-project overrides
  *
  * Top-level keys (entire capability sections like `ide`, `envManagement`)
  * replace wholesale. Results are cached per file mtimes so the long-running
  * MCP server picks up edits without a restart.
  *
  * @example
- * // infra-kit.yml:           { environments: ['dev'], envManagement: { provider: 'doppler', config: { name: 'p' } } }
- * // ~/.infra-kit/config.yml: { ide: { provider: 'cursor', config: { mode: 'windows' } } }
+ * // infra-kit.json:           { "environments": ["dev"], "envManagement": { "provider": "doppler", "config": { "name": "p" } } }
+ * // ~/.infra-kit/config.json: { "ide": { "provider": "cursor", "config": { "mode": "windows" } } }
  * const cfg = await getInfraKitConfig()
  * // => { environments: ['dev'], envManagement: {...}, ide: { provider: 'cursor', config: { mode: 'windows' } } }
  */
@@ -145,7 +144,18 @@ export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
     mainStat = await fs.stat(paths.main)
   } catch {
     cached = null
-    throw new Error(`infra-kit.yml not found at ${paths.main}`)
+
+    // Bridge the YAML→JSON cutover: if a legacy infra-kit.yml is sitting where
+    // the JSON config should be, point the user at the one-shot migration.
+    const legacyYmlPath = paths.main.replace(/\.json$/, '.yml')
+
+    if (await statIfExists(legacyYmlPath)) {
+      throw new Error(
+        `infra-kit.json not found at ${paths.main}. A legacy infra-kit.yml exists — run \`infra-kit init\` to convert it.`,
+      )
+    }
+
+    throw new Error(`infra-kit.json not found at ${paths.main}`)
   }
 
   const [userGlobalStat, userProjectStat] = await Promise.all([
@@ -164,10 +174,10 @@ export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
   }
 
   const layers: ConfigLayer[] = [
-    { label: 'infra-kit.yml', path: paths.main, required: true },
-    { label: '~/.infra-kit/config.yml', path: paths.userGlobal, required: false },
+    { label: 'infra-kit.json', path: paths.main, required: true },
+    { label: '~/.infra-kit/config.json', path: paths.userGlobal, required: false },
     {
-      label: `~/.infra-kit/projects/${paths.projectName}/infra-kit.yml`,
+      label: `~/.infra-kit/projects/${paths.projectName}/infra-kit.json`,
       path: paths.userProject,
       required: false,
     },
@@ -224,8 +234,8 @@ const statIfExists = async (filePath: string): Promise<Awaited<ReturnType<typeof
  * `fs.readFile` that returns `null` instead of throwing on ENOENT.
  *
  * @example
- * const raw = await readIfExists('/missing.yml') // => null
- * const raw = await readIfExists('/exists.yml')  // => 'environments: [dev]\n'
+ * const raw = await readIfExists('/missing.json') // => null
+ * const raw = await readIfExists('/exists.json')  // => '{ "environments": ["dev"] }\n'
  */
 const readIfExists = async (filePath: string): Promise<string | null> => {
   try {
@@ -261,17 +271,18 @@ interface ConfigLayer {
 }
 
 /**
- * Read a single layer of the merge chain: parse the YAML if the file exists
+ * Read a single layer of the merge chain: parse the JSON if the file exists
  * and validate it against the override schema. Returns `null` if an optional
- * layer is missing; throws if the layer is required or invalid.
+ * layer is missing; throws if the layer is required, malformed, or invalid.
+ * An empty/whitespace-only file is treated as `{}` (JSON.parse would throw).
  *
  * @example
- * await loadLayer({ label: '~/.infra-kit/config.yml', path: '/missing.yml', required: false })
+ * await loadLayer({ label: '~/.infra-kit/config.json', path: '/missing.json', required: false })
  * // => null
  *
  * @example
- * // /home/me/.infra-kit/config.yml: 'ide:\n  provider: cursor\n  config: { mode: windows }'
- * await loadLayer({ label: '~/.infra-kit/config.yml', path: '/home/me/.infra-kit/config.yml', required: false })
+ * // /home/me/.infra-kit/config.json: '{ "ide": { "provider": "cursor", "config": { "mode": "windows" } } }'
+ * await loadLayer({ label: '~/.infra-kit/config.json', path: '/home/me/.infra-kit/config.json', required: false })
  * // => { ide: { provider: 'cursor', config: { mode: 'windows' } } }
  */
 const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | null> => {
@@ -285,7 +296,14 @@ const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | 
     return null
   }
 
-  const parsedRaw = yaml.parse(raw) ?? {}
+  let parsedRaw: unknown
+
+  try {
+    parsedRaw = raw.trim() === '' ? {} : JSON.parse(raw)
+  } catch (err) {
+    throw new Error(`Invalid JSON in ${layer.label} at ${layer.path}: ${(err as Error).message}`)
+  }
+
   const result = infraKitOverrideConfigSchema.safeParse(parsedRaw)
 
   if (!result.success) {

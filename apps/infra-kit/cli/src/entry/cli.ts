@@ -26,6 +26,7 @@ import { worktreesRemove } from 'src/commands/worktrees-remove'
 import { worktreesSync } from 'src/commands/worktrees-sync'
 import { logger } from 'src/lib/logger'
 import { parseReleaseSpec } from 'src/lib/version-utils'
+import type { ReleaseInput } from 'src/lib/version-utils'
 
 const program = new Command()
 
@@ -93,10 +94,22 @@ program
     collectReleaseSpec,
     [],
   )
+  .option(
+    '-n, --name <name>',
+    'Named release (repeatable). Bare kebab-case name, e.g. "checkout-redesign". Creates a regular release; set a description later via release-desc-edit. Can be combined with --release.',
+    collectReleaseSpec,
+    [],
+  )
   .option('-y, --yes', 'Skip confirmation prompt')
   .action(async (options) => {
     const specs = options.release as string[]
-    const releases = specs.length > 0 ? specs.map(parseReleaseSpec) : undefined
+    const names = options.name as string[]
+    const versionInputs: ReleaseInput[] = specs.map(parseReleaseSpec)
+    const nameInputs: ReleaseInput[] = names.map((name) => {
+      return { name, type: 'regular' as const }
+    })
+    const combined = [...versionInputs, ...nameInputs]
+    const releases = combined.length > 0 ? combined : undefined
 
     await releaseCreate({
       releases,
@@ -107,7 +120,7 @@ program
 program
   .command('release-desc-edit')
   .description("Edit a release's description in Jira and in the matching GitHub PR body")
-  .option('-v, --version <version>', 'Release version, e.g. 1.2.5')
+  .option('-v, --version <version>', 'Release version (e.g. 1.2.5) or release name (e.g. checkout-redesign)')
   .option('-d, --description <description>', 'New description (use "" to clear)')
   .option('-y, --yes', 'Skip confirmation prompt')
   .action(async (options) => {
@@ -121,7 +134,10 @@ program
 program
   .command('release-deploy-all')
   .description('Deploy any release branch to any environment')
-  .option('-v, --version <version>', 'Specify the version to deploy, e.g. 1.2.5')
+  .option(
+    '-v, --version <version>',
+    'Version (e.g. 1.2.5) or release name (e.g. checkout-redesign) to deploy; "dev" deploys from the dev branch',
+  )
   .option('-e, --env <env>', 'Specify the environment to deploy to, e.g. dev')
   .option('--skip-terraform', 'Skip terraform deployment step')
   .action(async (options) => {
@@ -131,7 +147,10 @@ program
 program
   .command('release-deploy-selected')
   .description('Deploy selected services from release branch to any environment')
-  .option('-v, --version <version>', 'Specify the version to deploy, e.g. 1.2.5')
+  .option(
+    '-v, --version <version>',
+    'Version (e.g. 1.2.5) or release name (e.g. checkout-redesign) to deploy; "dev" deploys from the dev branch',
+  )
   .option('-e, --env <env>', 'Specify the environment to deploy to, e.g. dev')
   .option('-s, --services <services...>', 'Specify services to deploy, e.g. client-be client-fe')
   .option('--skip-terraform', 'Skip terraform deployment step')
@@ -147,7 +166,7 @@ program
 program
   .command('release-deliver')
   .description('Release a new version to production')
-  .option('-v, --version <version>', 'Specify the version to release, e.g. 1.2.5')
+  .option('-v, --version <version>', 'Version (e.g. 1.2.5) or release name (e.g. checkout-redesign) to deliver')
   .option('-y, --yes', 'Skip confirmation prompt')
   .action(async (options) => {
     await ghReleaseDeliver({ version: options.version, confirmedCommand: options.yes })

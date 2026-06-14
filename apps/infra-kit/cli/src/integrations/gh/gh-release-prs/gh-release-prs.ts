@@ -2,9 +2,10 @@ import process from 'node:process'
 import { $ } from 'zx'
 
 import { logger } from 'src/lib/logger'
+import { compareReleaseIds, formatBranchName, formatPrTitle, parseBranchName } from 'src/lib/release-id'
+import type { ReleaseId } from 'src/lib/release-id'
 import { getBaseBranch } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import { sortVersions } from 'src/lib/version-utils'
 
 interface ReleasePR {
   headRefName: string
@@ -12,11 +13,36 @@ interface ReleasePR {
   state: string
   title: string
   baseRefName: string
+  createdAt: string
 }
 
 export interface ReleasePRInfo {
   branch: string
   title: string
+  createdAt: string
+}
+
+/**
+ * Sort release head refs in the locked deterministic order (versions block
+ * first by semver ascending, then names by PR creation date). Head refs that
+ * are not valid release branches (parseBranchName → null) are filtered out
+ * rather than throwing or NaN-sorting, so a stray junk branch can never break
+ * discovery. Carries each PR's createdAt for name ordering.
+ */
+const sortReleasePRs = (prs: ReleasePR[]): ReleasePR[] => {
+  return prs
+    .map((pr) => {
+      return { pr, id: parseBranchName(pr.headRefName) }
+    })
+    .filter((entry): entry is { pr: ReleasePR; id: NonNullable<typeof entry.id> } => {
+      return entry.id !== null
+    })
+    .sort((a, b) => {
+      return compareReleaseIds(a.id, b.id, { a: a.pr.createdAt, b: b.pr.createdAt })
+    })
+    .map((entry) => {
+      return entry.pr
+    })
 }
 
 /**
@@ -26,10 +52,10 @@ export interface ReleasePRInfo {
  */
 const fetchAllReleasePRs = async (): Promise<ReleasePR[]> => {
   const releasePRs =
-    await $`gh pr list --search "Release in:title" --base dev --json number,title,headRefName,state,baseRefName`
+    await $`gh pr list --search "Release in:title" --base dev --json number,title,headRefName,state,baseRefName,createdAt`
 
   const hotfixPRs =
-    await $`gh pr list --search "Hotfix in:title" --base main --json number,title,headRefName,state,baseRefName`
+    await $`gh pr list --search "Hotfix in:title" --base main --json number,title,headRefName,state,baseRefName,createdAt`
 
   const all: ReleasePR[] = [...JSON.parse(releasePRs.stdout), ...JSON.parse(hotfixPRs.stdout)]
 
@@ -46,10 +72,12 @@ const fetchAllReleasePRs = async (): Promise<ReleasePR[]> => {
 }
 
 /**
- * Fetch open release PRs from GitHub with 'Release' or 'Hotfix' in the title and base 'dev'.
- * Returns an array of headRefName strings sorted by semver in ascending order.
+ * Fetch open release PRs from GitHub with 'Release' or 'Hotfix' in the title.
+ * Returns an array of headRefName strings in the locked deterministic order
+ * (version branches first by semver ascending, then named branches by PR
+ * creation date). Unparseable head refs are filtered out.
  *
- * @returns [release/v1.18.22, release/v1.18.23, release/v1.18.24] (sorted by semver)
+ * @returns [release/v1.18.22, release/v1.18.23, release/n/checkout-redesign]
  */
 export const getReleasePRs = async (): Promise<string[]> => {
   try {
@@ -61,11 +89,9 @@ export const getReleasePRs = async (): Promise<string[]> => {
       process.exit(1)
     }
 
-    return sortVersions(
-      prs.map((pr) => {
-        return pr.headRefName
-      }),
-    )
+    return sortReleasePRs(prs).map((pr) => {
+      return pr.headRefName
+    })
   } catch (error) {
     logger.error({ error }, '❌ Error fetching release PRs')
 
@@ -75,7 +101,9 @@ export const getReleasePRs = async (): Promise<string[]> => {
 
 /**
  * Fetch open release PRs with title info (for detecting release type).
- * Returns ReleasePRInfo objects sorted by semver.
+ * Returns ReleasePRInfo objects in the locked deterministic order (version
+ * branches first by semver ascending, then named branches by PR creation
+ * date). Unparseable head refs are filtered out.
  */
 export const getReleasePRsWithInfo = async (): Promise<ReleasePRInfo[]> => {
   try {
@@ -86,21 +114,11 @@ export const getReleasePRsWithInfo = async (): Promise<ReleasePRInfo[]> => {
       process.exit(1)
     }
 
-    const sortedBranches = sortVersions(
-      prs.map((pr) => {
-        return pr.headRefName
-      }),
-    )
-    const prByBranch = new Map(
-      prs.map((pr) => {
-        return [pr.headRefName, pr]
-      }),
-    )
-
-    return sortedBranches.map((branch) => {
+    return sortReleasePRs(prs).map((pr) => {
       return {
-        branch,
-        title: prByBranch.get(branch)!.title,
+        branch: pr.headRefName,
+        title: pr.title,
+        createdAt: pr.createdAt,
       }
     })
   } catch (error) {
@@ -131,7 +149,7 @@ export const updateReleasePRBody = async (args: UpdateReleasePRBodyArgs): Promis
 }
 
 interface CreateReleaseBranchArgs {
-  version: string
+  id: ReleaseId
   jiraVersionUrl: string
   type: ReleaseType
   description?: string
@@ -141,11 +159,11 @@ interface CreateReleaseBranchArgs {
 export const createReleaseBranch = async (
   args: CreateReleaseBranchArgs,
 ): Promise<{ branchName: string; prUrl: string }> => {
-  const { version, jiraVersionUrl, type, description } = args
-  const titlePrefix = type === 'hotfix' ? 'Hotfix' : 'Release'
+  const { id, jiraVersionUrl, type, description } = args
+  const prTitle = formatPrTitle(id, type)
   const baseBranch = getBaseBranch(type)
 
-  const branchName = `release/v${version}`
+  const branchName = formatBranchName(id)
 
   const body = description && description.trim() !== '' ? `${jiraVersionUrl}\n\n${description}` : `${jiraVersionUrl} \n`
 
@@ -160,8 +178,7 @@ export const createReleaseBranch = async (
     await $`git push origin ${branchName}`
 
     // Create PR and capture URL
-    const prResult =
-      await $`gh pr create --title "${titlePrefix} v${version}" --body ${body} --base ${baseBranch} --head ${branchName}`
+    const prResult = await $`gh pr create --title "${prTitle}" --body ${body} --base ${baseBranch} --head ${branchName}`
 
     const prLink = prResult.stdout.trim()
 

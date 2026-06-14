@@ -1,6 +1,8 @@
 import path from 'node:path'
 import { $ } from 'zx'
 
+import { isReleaseBranch } from 'src/lib/release-id'
+
 /**
  * Get current git worktrees
  *
@@ -60,7 +62,7 @@ const parseWorktreeBranch = (line: string): string | null => {
 const releaseWorktreePredicate = (line: string): string | null => {
   const branch = parseWorktreeBranch(line)
 
-  return branch?.startsWith('release/v') ? branch : null
+  return isReleaseBranch(branch) ? branch : null
 }
 
 /**

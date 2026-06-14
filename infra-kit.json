@@ -1,0 +1,9 @@
+{
+  "environments": ["dev", "arthur"],
+  "envManagement": {
+    "provider": "doppler",
+    "config": {
+      "name": "infra-kit"
+    }
+  }
+}

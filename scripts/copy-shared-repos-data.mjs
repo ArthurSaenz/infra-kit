@@ -106,8 +106,8 @@ const COPY_CONFIG = [
   },
   {
     name: 'Infra Kit config',
-    source: 'infra-kit.yml',
-    target: 'infra-kit.yml',
+    source: 'infra-kit.json',
+    target: 'infra-kit.json',
     type: 'file',
   },
   {

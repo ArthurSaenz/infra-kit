@@ -15,7 +15,8 @@ import { OperationError } from 'src/lib/errors/operation-error'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
-import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
+import { formatBranchName, isReleaseBranch, parseReleaseRef } from 'src/lib/release-id'
+import { detectReleaseType, formatBranchChoices, getJiraDescriptions, releaseBranchLabels } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
@@ -23,7 +24,6 @@ import type { RequiredConfirmedOptionArg } from 'src/types'
 // Constants
 const FEATURE_DIR = 'feature'
 const RELEASE_DIR = 'release'
-const RELEASE_BRANCH_PREFIX = 'release/v'
 
 export const CURSOR_MODES = ['workspace', 'windows', 'none'] as const
 export type CursorMode = (typeof CURSOR_MODES)[number]
@@ -58,7 +58,7 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
 
     if (versions) {
       selectedReleaseBranches = versions.split(',').map((v) => {
-        return `release/v${v.trim()}`
+        return formatBranchName(parseReleaseRef(v.trim()))
       })
     } else {
       const releasePRsInfo = await getReleasePRsWithInfo()
@@ -103,12 +103,7 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     if (all) {
       commandEcho.addOption('--all', true)
     } else {
-      commandEcho.addOption(
-        '--versions',
-        selectedReleaseBranches.map((branch) => {
-          return branch.replace('release/v', '')
-        }),
-      )
+      commandEcho.addOption('--versions', releaseBranchLabels(selectedReleaseBranches))
     }
 
     // Ask for confirmation
@@ -282,7 +277,7 @@ const categorizeWorktrees = (args: CategorizeWorktreesArgs): { branchesToCreate:
   const { selectedReleaseBranches, currentWorktrees } = args
 
   const currentBranchNames = currentWorktrees.filter((branch) => {
-    return branch.startsWith(RELEASE_BRANCH_PREFIX)
+    return isReleaseBranch(branch)
   })
 
   const branchesToCreate = selectedReleaseBranches.filter((branch) => {
@@ -357,7 +352,7 @@ export const worktreesAddMcpTool = defineMcpTool({
       .string()
       .optional()
       .describe(
-        'Comma-separated release versions to target (e.g. "1.2.5, 1.2.6"). Either "versions" or all=true must be provided for MCP calls. Overrides "all" when set.',
+        'Comma-separated release versions or names to target (e.g. "1.2.5, 1.2.6" or "checkout-redesign, 1.2.5"). Either "versions" or all=true must be provided for MCP calls. Overrides "all" when set.',
       ),
     cursor: z
       .enum(CURSOR_MODES)

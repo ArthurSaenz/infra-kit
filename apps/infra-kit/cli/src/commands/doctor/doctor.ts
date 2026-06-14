@@ -108,7 +108,7 @@ const checkInfraKitConfigValid = async (): Promise<CheckResult> => {
     return {
       name,
       status: 'pass',
-      message: 'infra-kit.yml is valid (user overrides applied if present)',
+      message: 'infra-kit.json is valid (user overrides applied if present)',
     }
   } catch (err) {
     return { name, status: 'fail', message: (err as Error).message }
@@ -125,7 +125,7 @@ const checkInfraKitConfigValid = async (): Promise<CheckResult> => {
  * // {
  * //   name: 'user override path',
  * //   status: 'pass',
- * //   message: '~/.infra-kit/projects/api/infra-kit.yml (not yet created) — project: api',
+ * //   message: '~/.infra-kit/projects/api/infra-kit.json (not yet created) — project: api',
  * // }
  */
 const checkUserOverridePath = async (): Promise<CheckResult> => {

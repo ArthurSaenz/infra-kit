@@ -12,7 +12,13 @@ import { OperationError } from 'src/lib/errors/operation-error'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
-import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
+import {
+  detectReleaseType,
+  formatBranchChoices,
+  getJiraDescriptions,
+  releaseLabelFromBranch,
+  resolveReleaseBranch,
+} from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 
@@ -35,7 +41,7 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
   let selectedReleaseBranch = ''
 
   if (version) {
-    selectedReleaseBranch = version === 'dev' ? 'dev' : `release/v${version}`
+    selectedReleaseBranch = version === 'dev' ? 'dev' : resolveReleaseBranch(version)
   } else {
     commandEcho.setInteractive()
 
@@ -59,7 +65,7 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
     })
   }
 
-  const selectedVersion = selectedReleaseBranch === 'dev' ? 'dev' : selectedReleaseBranch.replace('release/v', '')
+  const selectedVersion = releaseLabelFromBranch(selectedReleaseBranch)
 
   commandEcho.addOption('--version', selectedVersion)
 
@@ -172,7 +178,7 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
 
     const structuredContent = {
       releaseBranch: selectedReleaseBranch,
-      version: selectedReleaseBranch.replace('release/v', ''),
+      version: selectedVersion,
       environment: selectedEnv,
       services: selectedServices,
       skipTerraformDeploy: shouldSkipTerraform,
@@ -226,7 +232,7 @@ export const ghReleaseDeploySelectedMcpTool = defineMcpTool({
     version: z
       .string()
       .describe(
-        'Release version to deploy from (e.g. "1.2.5") — resolves to the release/vX.Y.Z branch. Pass "dev" to deploy from the dev branch instead. Required for MCP calls.',
+        'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/n/<name> branch. Pass "dev" to deploy from the dev branch instead. Required for MCP calls.',
       ),
     env: z
       .string()

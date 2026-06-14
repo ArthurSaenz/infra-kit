@@ -1,3 +1,5 @@
+import { parseReleaseRef, validateName } from 'src/lib/release-id'
+import type { ReleaseId } from 'src/lib/release-id'
 import type { ReleaseType } from 'src/lib/release-utils'
 
 import { parseVersion, sortVersions } from './version-utils'
@@ -97,8 +99,38 @@ const isNextToken = (token: string): boolean => {
   return token.trim().toLowerCase() === NEXT_TOKEN
 }
 
-export interface ReleaseEntry {
+/**
+ * A release spec is the parsed form of a versioned release request: a raw
+ * version token (`"1.2.5"` or `"next"`) plus its type and optional
+ * description. This is the unchanged output of {@link parseReleaseSpec} and the
+ * versioned-input shape consumed by {@link resolveReleaseEntries}.
+ */
+export interface ReleaseSpec {
   version: string
+  type: ReleaseType
+  description?: string
+}
+
+/**
+ * A named release request: a bare kebab-case name plus its type and optional
+ * description. Named releases never auto-bump; `"next"` is version-only.
+ */
+export interface NamedReleaseInput {
+  name: string
+  type: ReleaseType
+  description?: string
+}
+
+/** Either a versioned spec or a named release request. */
+export type ReleaseInput = ReleaseSpec | NamedReleaseInput
+
+/**
+ * A fully resolved release entry. The {@link ReleaseId} carries the concrete
+ * identity (version or name) and is the single source for branch/PR/Jira
+ * formatting via the `release-id` module.
+ */
+export interface ReleaseEntry {
+  id: ReleaseId
   type: ReleaseType
   description?: string
 }
@@ -107,12 +139,16 @@ const isReleaseType = (value: string): value is ReleaseType => {
   return value === 'regular' || value === 'hotfix'
 }
 
+const isNamedReleaseInput = (input: ReleaseInput): input is NamedReleaseInput => {
+  return 'name' in input
+}
+
 /**
  * Parse a CLI release spec of the form `version[:type[:description]]`.
  * Type defaults to "regular". Description is everything after the second
  * colon, so colons inside descriptions are preserved.
  */
-export const parseReleaseSpec = (raw: string): ReleaseEntry => {
+export const parseReleaseSpec = (raw: string): ReleaseSpec => {
   const spec = raw.trim()
 
   if (spec === '') throw new Error('Release spec is empty')
@@ -135,23 +171,42 @@ export const parseReleaseSpec = (raw: string): ReleaseEntry => {
     throw new Error(`Invalid release type "${typeRaw}". Expected "regular" or "hotfix".`)
   }
 
-  const entry: ReleaseEntry = { version, type: typeLower }
+  const entry: ReleaseSpec = { version, type: typeLower }
 
   if (description !== '') entry.description = description
 
   return entry
 }
 
+const withDescription = (base: { id: ReleaseId; type: ReleaseType }, description?: string): ReleaseEntry => {
+  return description !== undefined && description !== '' ? { ...base, description } : base
+}
+
+const resolveNamedInput = (input: NamedReleaseInput): ReleaseEntry => {
+  const name = input.name.trim()
+
+  // validateName throws InvalidReleaseNameError with a specific message.
+  validateName(name)
+
+  return withDescription({ id: { kind: 'name', name, raw: name }, type: input.type }, input.description)
+}
+
 /**
- * Resolve a list of release entries (each with its own type and optional
- * "next" version token) into entries with concrete versions. Each "next"
- * advances based on the running max so successive "next" tokens produce
- * sequential versions, even across mixed types.
+ * Resolve a list of release inputs into entries carrying a concrete
+ * {@link ReleaseId}. Versioned inputs use the existing spec format: the
+ * `"next"` token advances based on the running max so successive `"next"`
+ * tokens produce sequential versions (even across mixed types), then the
+ * concrete version is wrapped in a {@link ReleaseId}. Named inputs are
+ * validated via `validateName` and never auto-bump.
  */
-export const resolveReleaseEntries = (entries: ReleaseEntry[], known: SemVer[]): ReleaseEntry[] => {
+export const resolveReleaseEntries = (entries: ReleaseInput[], known: SemVer[]): ReleaseEntry[] => {
   const running: SemVer[] = [...known]
 
   return entries.map((entry) => {
+    if (isNamedReleaseInput(entry)) {
+      return resolveNamedInput(entry)
+    }
+
     const trimmed = entry.version.trim()
 
     if (trimmed === '') {
@@ -163,7 +218,7 @@ export const resolveReleaseEntries = (entries: ReleaseEntry[], known: SemVer[]):
 
       running.push(parseVersion(`v${next}`))
 
-      return { ...entry, version: next }
+      return withDescription({ id: parseReleaseRef(next), type: entry.type }, entry.description)
     }
 
     const parsed = tryParse(trimmed)
@@ -176,12 +231,12 @@ export const resolveReleaseEntries = (entries: ReleaseEntry[], known: SemVer[]):
 
     running.push(parsed)
 
-    return { ...entry, version: explicit }
+    return withDescription({ id: parseReleaseRef(explicit), type: entry.type }, entry.description)
   })
 }
 
-export const hasNextToken = (entries: ReleaseEntry[]): boolean => {
+export const hasNextToken = (entries: ReleaseInput[]): boolean => {
   return entries.some((e) => {
-    return isNextToken(e.version)
+    return !isNamedReleaseInput(e) && isNextToken(e.version)
   })
 }

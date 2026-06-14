@@ -15,22 +15,15 @@ vi.mock('src/lib/git-utils', () => {
   }
 })
 
-const VALID_YML = `environments:
-  - dev
-  - staging
-envManagement:
-  provider: doppler
-  config:
-    name: my-project
-`
+const VALID_JSON = JSON.stringify({
+  environments: ['dev', 'staging'],
+  envManagement: { provider: 'doppler', config: { name: 'my-project' } },
+})
 
-const ALTERNATE_YML = `environments:
-  - dev
-envManagement:
-  provider: doppler
-  config:
-    name: other-project
-`
+const ALTERNATE_JSON = JSON.stringify({
+  environments: ['dev'],
+  envManagement: { provider: 'doppler', config: { name: 'other-project' } },
+})
 
 const withTmpRepo = async (fn: (tmp: string) => Promise<void>): Promise<void> => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'infra-kit-config-test-'))
@@ -38,7 +31,7 @@ const withTmpRepo = async (fn: (tmp: string) => Promise<void>): Promise<void> =>
   vi.mocked(getProjectRoot).mockResolvedValue(tmp)
   vi.mocked(getRepoName).mockResolvedValue(path.basename(tmp))
   // Point os.homedir() at the tmp dir so user-scope override layers
-  // (~/.infra-kit/config.yml, ~/.infra-kit/projects/<repo>/infra-kit.yml)
+  // (~/.infra-kit/config.json, ~/.infra-kit/projects/<repo>/infra-kit.json)
   // can't leak the developer's real config into the test.
   const homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmp)
 
@@ -63,9 +56,9 @@ describe('getInfraKitConfig', () => {
     vi.clearAllMocks()
   })
 
-  it('reads and validates a well-formed infra-kit.yml', async () => {
+  it('reads and validates a well-formed infra-kit.json', async () => {
     await withTmpRepo(async (tmp) => {
-      fs.writeFileSync(path.join(tmp, 'infra-kit.yml'), VALID_YML)
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
 
       const cfg = await getInfraKitConfig()
 
@@ -79,23 +72,13 @@ describe('getInfraKitConfig', () => {
   it('accepts ide and taskManager when provided', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
-        path.join(tmp, 'infra-kit.yml'),
-        `environments: [dev]
-envManagement:
-  provider: doppler
-  config:
-    name: p
-ide:
-  provider: cursor
-  config:
-    mode: workspace
-    workspaceConfigPath: ./ws.code-workspace
-taskManager:
-  provider: jira
-  config:
-    baseUrl: https://example.atlassian.net
-    projectId: 123
-`,
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: './ws.code-workspace' } },
+          taskManager: { provider: 'jira', config: { baseUrl: 'https://example.atlassian.net', projectId: 123 } },
+        }),
       )
 
       const cfg = await getInfraKitConfig()
@@ -114,16 +97,12 @@ taskManager:
   it('accepts a worktrees prompt-defaults block', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
-        path.join(tmp, 'infra-kit.yml'),
-        `environments: [dev]
-envManagement:
-  provider: doppler
-  config:
-    name: p
-worktrees:
-  openInGithubDesktop: false
-  openInCmux: true
-`,
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          worktrees: { openInGithubDesktop: false, openInCmux: true },
+        }),
       )
 
       const cfg = await getInfraKitConfig()
@@ -135,17 +114,14 @@ worktrees:
 
   it('lets the user-global config layer supply a worktrees block when the project omits it', async () => {
     await withTmpRepo(async (tmp) => {
-      fs.writeFileSync(path.join(tmp, 'infra-kit.yml'), VALID_YML)
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
 
       const userGlobalDir = path.join(tmp, '.infra-kit')
 
       fs.mkdirSync(userGlobalDir, { recursive: true })
       fs.writeFileSync(
-        path.join(userGlobalDir, 'config.yml'),
-        `worktrees:
-  openInGithubDesktop: false
-  openInCmux: true
-`,
+        path.join(userGlobalDir, 'config.json'),
+        JSON.stringify({ worktrees: { openInGithubDesktop: false, openInCmux: true } }),
       )
 
       const cfg = await getInfraKitConfig()
@@ -155,27 +131,90 @@ worktrees:
     })
   })
 
+  it('treats an empty optional layer file as {}', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
+
+      const userGlobalDir = path.join(tmp, '.infra-kit')
+
+      fs.mkdirSync(userGlobalDir, { recursive: true })
+      fs.writeFileSync(path.join(userGlobalDir, 'config.json'), '   \n')
+
+      const cfg = await getInfraKitConfig()
+
+      expect(cfg.envManagement.config.name).toBe('my-project')
+    })
+  })
+
+  it('throws a descriptive error on malformed JSON', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), '{ not valid json ')
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/Invalid JSON in infra-kit\.json/)
+    })
+  })
+
   it('rejects ide.cursor mode=workspace without workspaceConfigPath', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
-        path.join(tmp, 'infra-kit.yml'),
-        `environments: [dev]
-envManagement:
-  provider: doppler
-  config:
-    name: p
-ide:
-  provider: cursor
-  config:
-    mode: workspace
-`,
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: { provider: 'cursor', config: { mode: 'workspace' } },
+        }),
       )
 
       await expect(getInfraKitConfig()).rejects.toThrow(/workspaceConfigPath/)
     })
   })
 
-  it('throws when infra-kit.yml is missing', async () => {
+  it('throws a plain not-found error when neither infra-kit.json nor a legacy .yml exists', async () => {
+    await withTmpRepo(async () => {
+      await expect(getInfraKitConfig()).rejects.toThrow(/not found/)
+      await expect(getInfraKitConfig()).rejects.not.toThrow(/infra-kit init/)
+    })
+  })
+
+  it('points at `infra-kit init` when a legacy infra-kit.yml exists but infra-kit.json does not', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.yml'), 'environments:\n  - dev\n')
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/infra-kit init/)
+    })
+  })
+
+  it('ignores a non-loaded infra-kit.example.jsonc sibling', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
+      // Content that would FAIL schema if it were ever merged into the config.
+      fs.writeFileSync(path.join(tmp, 'infra-kit.example.jsonc'), '{\n  // comment\n  "environments": []\n}\n')
+
+      const cfg = await getInfraKitConfig()
+
+      expect(cfg.environments).toEqual(['dev', 'staging'])
+      expect(cfg.envManagement.config.name).toBe('my-project')
+    })
+  })
+
+  it('ignores a non-loaded config.example.jsonc in the user-global layer', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
+
+      const userGlobalDir = path.join(tmp, '.infra-kit')
+
+      fs.mkdirSync(userGlobalDir, { recursive: true })
+      // Schema-failing content that must never be merged.
+      fs.writeFileSync(path.join(userGlobalDir, 'config.example.jsonc'), '{\n  // comment\n  "environments": []\n}\n')
+
+      const cfg = await getInfraKitConfig()
+
+      expect(cfg.environments).toEqual(['dev', 'staging'])
+      expect(cfg.envManagement.config.name).toBe('my-project')
+    })
+  })
+
+  it('throws when infra-kit.json is missing', async () => {
     await withTmpRepo(async () => {
       await expect(getInfraKitConfig()).rejects.toThrow(/not found/)
     })
@@ -184,19 +223,19 @@ ide:
   it('throws a descriptive error on schema violations', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
-        path.join(tmp, 'infra-kit.yml'),
-        'environments: []\nenvManagement:\n  provider: doppler\n  config:\n    name: ""\n',
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({ environments: [], envManagement: { provider: 'doppler', config: { name: '' } } }),
       )
 
-      await expect(getInfraKitConfig()).rejects.toThrow(/Invalid infra-kit.yml/)
+      await expect(getInfraKitConfig()).rejects.toThrow(/Invalid infra-kit\.json/)
     })
   })
 
   it('re-reads the file when mtime changes (long-running MCP scenario)', async () => {
     await withTmpRepo(async (tmp) => {
-      const ymlPath = path.join(tmp, 'infra-kit.yml')
+      const jsonPath = path.join(tmp, 'infra-kit.json')
 
-      fs.writeFileSync(ymlPath, VALID_YML)
+      fs.writeFileSync(jsonPath, VALID_JSON)
 
       const first = await getInfraKitConfig()
 
@@ -205,8 +244,8 @@ ide:
       // Advance mtime past the previous stat to simulate an edit; write new content.
       const future = new Date(Date.now() + 2_000)
 
-      fs.writeFileSync(ymlPath, ALTERNATE_YML)
-      fs.utimesSync(ymlPath, future, future)
+      fs.writeFileSync(jsonPath, ALTERNATE_JSON)
+      fs.utimesSync(jsonPath, future, future)
 
       const second = await getInfraKitConfig()
 
@@ -217,9 +256,9 @@ ide:
 
   it('returns the cached value on repeated calls when mtime is unchanged', async () => {
     await withTmpRepo(async (tmp) => {
-      const ymlPath = path.join(tmp, 'infra-kit.yml')
+      const jsonPath = path.join(tmp, 'infra-kit.json')
 
-      fs.writeFileSync(ymlPath, VALID_YML)
+      fs.writeFileSync(jsonPath, VALID_JSON)
 
       const a = await getInfraKitConfig()
       const b = await getInfraKitConfig()

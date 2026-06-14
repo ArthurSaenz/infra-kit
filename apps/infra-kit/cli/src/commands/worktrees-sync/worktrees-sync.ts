@@ -12,11 +12,9 @@ import { OperationError } from 'src/lib/errors/operation-error'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
+import { isReleaseBranch } from 'src/lib/release-id'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
-
-// Constants
-const RELEASE_BRANCH_PREFIX = 'release/v'
 
 interface WorktreeSyncArgs extends RequiredConfirmedOptionArg {}
 
@@ -108,7 +106,7 @@ const categorizeWorktrees = (args: CategorizeWorktreesArgs): { branchesToRemove:
   const { releasePRsList, currentWorktrees } = args
 
   const currentBranchNames = currentWorktrees.filter((branch) => {
-    return branch.startsWith(RELEASE_BRANCH_PREFIX)
+    return isReleaseBranch(branch)
   })
 
   const branchesToRemove = currentBranchNames.filter((branch) => {

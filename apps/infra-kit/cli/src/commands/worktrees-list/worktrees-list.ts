@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { getCurrentWorktrees } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
+import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
 import { detectReleaseType, formatVersionLabel, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
@@ -36,12 +37,19 @@ export const worktreesList = async () => {
     }),
   )
 
-  const worktrees: WorktreeInfo[] = currentWorktrees.map((branch) => {
-    const version = branch.replace('release/', '')
-    const type = releaseTypes.get(branch) || 'regular'
-    const description = jiraDescriptions.get(version) || null
+  // Skip worktrees whose branch does not parse as a release id (lenient source).
+  const worktrees: WorktreeInfo[] = currentWorktrees.flatMap((branch) => {
+    const id = parseBranchName(branch)
 
-    return { version, type, description }
+    if (!id) return []
+
+    // Human label `1.2.3` | `<name>`; Jira-descriptions map is keyed by the
+    // Jira version NAME (`v1.2.3` | `<name>`) — same split as formatBranchChoices.
+    const version = displayLabel(id)
+    const type = releaseTypes.get(branch) || 'regular'
+    const description = jiraDescriptions.get(formatJiraName(id)) || null
+
+    return [{ version, type, description }]
   })
 
   // Log formatted output

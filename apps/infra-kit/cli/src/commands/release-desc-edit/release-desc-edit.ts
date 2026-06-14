@@ -10,7 +10,13 @@ import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
-import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
+import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
+import {
+  detectReleaseType,
+  formatBranchChoices,
+  getJiraDescriptions,
+  resolveReleaseBranch,
+} from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
@@ -87,7 +93,7 @@ export const releaseDescEdit = async (args: ReleaseDescEditArgs) => {
   let selectedBranch: string
 
   if (versionArg) {
-    selectedBranch = `release/v${versionArg}`
+    selectedBranch = resolveReleaseBranch(versionArg)
     await verifyReleasePRExists(selectedBranch)
   } else {
     commandEcho.setInteractive()
@@ -96,11 +102,23 @@ export const releaseDescEdit = async (args: ReleaseDescEditArgs) => {
     selectedBranch = picked.branch
   }
 
-  const selectedVersion = selectedBranch.replace('release/v', '')
+  // selectedBranch is always a release branch here (operator ref strictly parsed,
+  // or picked from discovery-filtered choices), so parseBranchName cannot be null.
+  const releaseId = parseBranchName(selectedBranch)
+
+  if (!releaseId) {
+    throw new OperationError(undefined, {
+      operation: `edit description for ${selectedBranch}`,
+      remediation: 'pass a version (e.g. "1.2.5") or a release name (e.g. "checkout-redesign")',
+    })
+  }
+
+  const selectedVersion = displayLabel(releaseId)
 
   commandEcho.addOption('--version', selectedVersion)
 
-  const versionName = `v${selectedVersion}`
+  // Jira fix version is named by the Jira convention: `v1.2.3` | `<name>`.
+  const versionName = formatJiraName(releaseId)
   const jiraVersion = await findVersionByName(versionName, jiraConfig)
 
   if (!jiraVersion) {
@@ -190,14 +208,16 @@ export const releaseDescEdit = async (args: ReleaseDescEditArgs) => {
 export const releaseDescEditMcpTool = defineMcpTool({
   name: 'release-desc-edit',
   description:
-    "Edit a release's description in Jira and in the matching GitHub release PR body. Targets the Jira fix version named `v<version>` and the open PR on branch `release/v<version>`. The PR body is rewritten canonically to `<jiraVersionUrl>\\n\\n<description>` — any prior manual edits to the body are overwritten. Both `version` and `description` are required for MCP calls (the picker/prompt are unreachable without a TTY). Empty `description` clears the description on both sides. Confirmation is auto-skipped for MCP, so the caller is responsible for gating.",
+    "Edit a release's description in Jira and in the matching GitHub release PR body. Accepts a release version or a release name: targets the Jira fix version named `v<version>` (versioned) or `<name>` (named) and the open PR on branch `release/v<version>` or `release/n/<name>`. The PR body is rewritten canonically to `<jiraVersionUrl>\\n\\n<description>` — any prior manual edits to the body are overwritten. Both `version` and `description` are required for MCP calls (the picker/prompt are unreachable without a TTY). Empty `description` clears the description on both sides. Confirmation is auto-skipped for MCP, so the caller is responsible for gating.",
   inputSchema: {
-    version: z.string().describe('Release version, e.g. "1.2.5".'),
+    version: z
+      .string()
+      .describe('Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign").'),
     description: z.string().describe('New description. Empty string clears the description.'),
   },
   outputSchema: {
     version: z.string().describe('Release version'),
-    branch: z.string().describe('Release branch name (e.g. "release/v1.2.5")'),
+    branch: z.string().describe('Release branch name (e.g. "release/v1.2.5" or "release/n/checkout-redesign")'),
     jiraVersionUrl: z.string().describe('Jira fix version URL'),
     previousDescription: z.string().describe('The description before the update'),
     newDescription: z.string().describe('The description after the update'),

@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { logger } from 'src/lib/logger'
+import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
 import { detectReleaseType, formatVersionLabel, getJiraDescriptions } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 
@@ -11,11 +12,21 @@ import { defineMcpTool, textContent } from 'src/types'
 export const ghReleaseList = async () => {
   const releasePRs = await getReleasePRsWithInfo()
 
-  const releases = releasePRs.map((pr) => {
-    return {
-      version: pr.branch.replace('release/', ''),
-      type: detectReleaseType(pr.title),
-    }
+  // Skip branches that do not parse as release ids (lenient discovery source).
+  const releases = releasePRs.flatMap((pr) => {
+    const id = parseBranchName(pr.branch)
+
+    if (!id) return []
+
+    return [
+      {
+        // Human display label: `1.2.3` | `<name>`.
+        version: displayLabel(id),
+        // Jira-descriptions map is keyed by the Jira version NAME (`v1.2.3` | `<name>`).
+        jiraKey: formatJiraName(id),
+        type: detectReleaseType(pr.title),
+      },
+    ]
   })
 
   const jiraDescriptions = await getJiraDescriptions()
@@ -28,7 +39,7 @@ export const ghReleaseList = async () => {
 
   const formattedLines = releases.map((release) => {
     const label = formatVersionLabel(release.version, release.type, maxVersionLength)
-    const description = jiraDescriptions.get(release.version)
+    const description = jiraDescriptions.get(release.jiraKey)
 
     if (description) {
       return `${label}  ${description}`
@@ -45,7 +56,7 @@ export const ghReleaseList = async () => {
       return {
         version: release.version,
         type: release.type,
-        description: jiraDescriptions.get(release.version) || null,
+        description: jiraDescriptions.get(release.jiraKey) || null,
       }
     }),
     count: releases.length,

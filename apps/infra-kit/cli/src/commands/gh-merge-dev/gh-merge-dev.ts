@@ -9,7 +9,7 @@ import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
-import { detectReleaseType, formatBranchChoices, getJiraDescriptions } from 'src/lib/release-utils'
+import { detectReleaseType, formatBranchChoices, getJiraDescriptions, releaseBranchLabels } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
@@ -70,12 +70,7 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
   if (allSelected) {
     commandEcho.addOption('--all', true)
   } else {
-    commandEcho.addOption(
-      '--versions',
-      selectedReleaseBranches.map((branch) => {
-        return branch.replace('release/v', '')
-      }),
-    )
+    commandEcho.addOption('--versions', releaseBranchLabels(selectedReleaseBranches))
   }
 
   // Validate input
