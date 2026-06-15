@@ -178,7 +178,7 @@ export const createReleaseBranch = async (
     await $`git push origin ${branchName}`
 
     // Create PR and capture URL
-    const prResult = await $`gh pr create --title "${prTitle}" --body ${body} --base ${baseBranch} --head ${branchName}`
+    const prResult = await $`gh pr create --title ${prTitle} --body ${body} --base ${baseBranch} --head ${branchName}`
 
     const prLink = prResult.stdout.trim()
 

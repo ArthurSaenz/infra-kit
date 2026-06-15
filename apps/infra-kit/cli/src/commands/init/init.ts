@@ -3,7 +3,9 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { logger } from 'src/lib/logger'
+import { removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
 
+import { writeAgentFiles } from './agent-files'
 import { migrateLegacyConfig } from './migrate-config'
 
 export const MARKER_START = '# -- infra-kit:begin --'
@@ -55,16 +57,22 @@ const USER_GLOBAL_CONFIG_EXAMPLE = `// infra-kit user-global config — ~/.infra
  */
 export const init = async (): Promise<void> => {
   const zshrcPath = path.join(os.homedir(), '.zshrc')
-  const shellBlock = buildShellBlock()
 
-  if (fs.existsSync(zshrcPath)) {
-    const content = fs.readFileSync(zshrcPath, 'utf-8')
-    const cleaned = removeExistingBlock(content)
+  // Strip any prior block (current or legacy markers) anywhere in the file, then
+  // append a fresh block at end-of-file via the shared managed-block utility —
+  // the historical `removeExistingBlock` + append behavior, now centralized.
+  const existing = fs.existsSync(zshrcPath) ? removeExistingBlock(fs.readFileSync(zshrcPath, 'utf-8')) : ''
 
-    fs.writeFileSync(zshrcPath, cleaned)
-  }
+  const updated = upsertManagedBlock({
+    content: existing,
+    body: buildShellBody(),
+    startMarker: MARKER_START,
+    endMarker: MARKER_END,
+    placement: 'append-end',
+  })
 
-  fs.appendFileSync(zshrcPath, `\n${shellBlock}\n`)
+  fs.writeFileSync(zshrcPath, updated)
+
   logger.info(`Added infra-kit shell functions to ${zshrcPath}`)
 
   // Convert any legacy infra-kit.yml config layers to JSON before seeding, so a
@@ -72,6 +80,10 @@ export const init = async (): Promise<void> => {
   await migrateLegacyConfig()
 
   seedUserGlobalConfig()
+
+  // Best-effort, non-fatal, repo-gated: keep the agent-instruction files in sync
+  // with the CLI surface. A no-op outside an infra-kit repo.
+  await writeAgentFiles()
 
   logger.info('Run `source ~/.zshrc` or open a new terminal to activate.')
 }
@@ -125,28 +137,15 @@ const isBlockLine = (line: string): boolean => {
   )
 }
 
-const removeBetween = (content: string, start: string, end: string): string | null => {
-  const startIdx = content.indexOf(start)
-  const endIdx = content.indexOf(end)
-
-  if (startIdx === -1 || endIdx === -1) return null
-
-  // eslint-disable-next-line sonarjs/slow-regex
-  const before = content.slice(0, startIdx).replace(/\n+$/, '')
-  const after = content.slice(endIdx + end.length).replace(/^\n+/, '')
-
-  return before + (after ? `\n${after}` : '')
-}
-
 const removeExistingBlock = (content: string): string => {
   // 1. Current markers
-  const result = removeBetween(content, MARKER_START, MARKER_END)
+  const result = removeManagedBlock(content, MARKER_START, MARKER_END)
 
   if (result !== null) return result
 
   // 2. Legacy paired markers (# region / # endregion)
   for (const [start, end] of LEGACY_PAIRED) {
-    const legacyResult = removeBetween(content, start, end)
+    const legacyResult = removeManagedBlock(content, start, end)
 
     if (legacyResult !== null) return legacyResult
   }
@@ -171,11 +170,14 @@ const removeExistingBlock = (content: string): string => {
   return before + (remaining ? `\n${remaining}` : '')
 }
 
-export const buildShellBlock = (): string => {
+/**
+ * The inner shell-function lines (no markers). Composed into the full marked
+ * block by {@link buildShellBlock} and fed to `upsertManagedBlock` by `init()`.
+ */
+export const buildShellBody = (): string => {
   const runCmd = 'pnpm exec infra-kit'
 
   return [
-    MARKER_START,
     'zmodload zsh/stat 2>/dev/null',
     'zmodload zsh/datetime 2>/dev/null',
     // eslint-disable-next-line no-template-curly-in-string
@@ -223,6 +225,13 @@ export const buildShellBlock = (): string => {
     'if (( _INFRA_KIT_SHELL_STARTED > 0 )); then',
     '  add-zsh-hook precmd _infra_kit_autoload',
     'fi',
-    MARKER_END,
   ].join('\n')
+}
+
+/**
+ * The full marker-delimited shell block (`MARKER_START … MARKER_END`). Kept as
+ * a single composed string so `doctor`'s exact-match freshness check stays valid.
+ */
+export const buildShellBlock = (): string => {
+  return `${MARKER_START}\n${buildShellBody()}\n${MARKER_END}`
 }

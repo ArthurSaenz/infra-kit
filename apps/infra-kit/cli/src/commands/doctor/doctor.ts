@@ -4,10 +4,17 @@ import path from 'node:path'
 import { z } from 'zod'
 import { $ } from 'zx'
 
+import {
+  AGENTS_IMPORT_END,
+  AGENTS_IMPORT_START,
+  AGENTS_MARKER_END,
+  AGENTS_MARKER_START,
+} from 'src/commands/init/agent-files'
 import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
 import { getProjectRoot } from 'src/lib/git-utils/git-utils'
 import { getInfraKitConfig, getInfraKitConfigPaths, resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
+import { hasManagedBlock } from 'src/lib/managed-block'
 import { defineMcpTool, textContent } from 'src/types'
 
 interface CheckResult {
@@ -197,10 +204,66 @@ const checkRtkConfigured = async (): Promise<CheckResult> => {
 }
 
 /**
+ * Check that the repo agent-instruction files managed by `infra-kit init` exist:
+ * the `AGENTS.md` block, the `@AGENTS.md` import region in `CLAUDE.md`, and the
+ * `.cursor/rules` block. Presence only. Repo-gated: returns no checks when run
+ * outside an infra-kit repo so doctor never crashes there.
+ */
+export const checkAgentFiles = async (): Promise<CheckResult[]> => {
+  let mainConfigPath: string
+
+  try {
+    mainConfigPath = (await getInfraKitConfigPaths()).main
+  } catch {
+    return []
+  }
+
+  if (!fs.existsSync(mainConfigPath)) return []
+
+  const root = path.dirname(mainConfigPath)
+
+  const blockPresent = (relPath: string, start: string, end: string): boolean => {
+    const filePath = path.join(root, relPath)
+    const content = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : ''
+
+    return hasManagedBlock(content, start, end)
+  }
+
+  const entries = [
+    {
+      name: 'AGENTS.md block',
+      present: blockPresent('AGENTS.md', AGENTS_MARKER_START, AGENTS_MARKER_END),
+      okMessage: 'AGENTS.md block present',
+      missingMessage: 'infra-kit block missing from AGENTS.md. Run: infra-kit init',
+    },
+    {
+      name: 'CLAUDE.md import',
+      present: blockPresent('CLAUDE.md', AGENTS_IMPORT_START, AGENTS_IMPORT_END),
+      okMessage: 'CLAUDE.md imports @AGENTS.md',
+      missingMessage: '@AGENTS.md import block missing from CLAUDE.md. Run: infra-kit init',
+    },
+    {
+      name: '.cursor/rules block',
+      present: blockPresent(path.join('.cursor', 'rules', 'infra-kit.mdc'), AGENTS_MARKER_START, AGENTS_MARKER_END),
+      okMessage: '.cursor/rules/infra-kit.mdc block present',
+      missingMessage: '.cursor/rules/infra-kit.mdc block missing. Run: infra-kit init',
+    },
+  ]
+
+  return entries.map((entry): CheckResult => {
+    return {
+      name: entry.name,
+      status: entry.present ? 'pass' : 'fail',
+      message: entry.present ? entry.okMessage : entry.missingMessage,
+    }
+  })
+}
+
+/**
  * Check installation and authentication status of gh, doppler, aws, and rtk CLIs
  */
 export const doctor = async () => {
-  const checks: CheckResult[] = await Promise.all([
+  const baseChecks: CheckResult[] = await Promise.all([
     checkCommand(
       'gh installed',
       ['gh', '--version'],
@@ -250,6 +313,8 @@ export const doctor = async () => {
     checkInfraKitConfigValid(),
     checkUserOverridePath(),
   ])
+
+  const checks: CheckResult[] = [...baseChecks, ...(await checkAgentFiles())]
 
   logger.info('Doctor check results:\n')
 

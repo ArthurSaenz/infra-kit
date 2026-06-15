@@ -286,7 +286,7 @@ program
 
 program
   .command('init')
-  .description('Inject shell integration into your profile .zshrc')
+  .description('Inject shell integration into .zshrc and sync repo agent-instruction files')
   .action(async () => {
     await init()
   })

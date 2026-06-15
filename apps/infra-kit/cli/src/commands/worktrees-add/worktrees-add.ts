@@ -6,7 +6,12 @@ import process from 'node:process'
 import { z } from 'zod'
 import { $ } from 'zx'
 
-import { buildCmuxWorkspaceTitle, openCmuxWorkspaceWithLayout } from 'src/integrations/cmux'
+import {
+  buildCmuxWorkspaceTitle,
+  canonicalizeCmuxTitle,
+  listCmuxWorkspaceTitles,
+  openCmuxWorkspaceWithLayout,
+} from 'src/integrations/cmux'
 import { addFoldersToCursorWorkspace, resolveCursorWorkspacePath } from 'src/integrations/cursor'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
@@ -227,9 +232,16 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
 
     if (openInCmux) {
       const repoName = await getRepoName()
+      const existingTitles = await listCmuxWorkspaceTitles()
 
       for (const branch of createdWorktrees) {
         const title = buildCmuxWorkspaceTitle({ repoName, branch })
+
+        // Skip branches whose cmux workspace is already open (canonical match),
+        // so re-running worktrees-add never duplicates an existing workspace.
+        if (existingTitles.has(canonicalizeCmuxTitle(title))) {
+          continue
+        }
 
         await openCmuxWorkspaceWithLayout({
           cwd: `${worktreeDir}/${branch}`,

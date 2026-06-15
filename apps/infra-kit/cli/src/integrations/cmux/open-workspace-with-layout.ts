@@ -26,7 +26,7 @@ export const openCmuxWorkspaceWithLayout = async (args: OpenCmuxWorkspaceArgs): 
   await $`cmux new-split down --workspace ${workspaceRef} --surface ${leftTopRef}`
 
   if (title) {
-    await $`cmux workspace rename --workspace ${workspaceRef} ${title}`
+    await $`cmux workspace rename --workspace ${workspaceRef} --title ${title}`
   }
 }
 

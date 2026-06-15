@@ -1,7 +1,12 @@
 import { z } from 'zod'
 import { $ } from 'zx'
 
-import { buildCmuxWorkspaceTitle, listCmuxWorkspaceTitles, openCmuxWorkspaceWithLayout } from 'src/integrations/cmux'
+import {
+  buildCmuxWorkspaceTitle,
+  canonicalizeCmuxTitle,
+  listCmuxWorkspaceTitles,
+  openCmuxWorkspaceWithLayout,
+} from 'src/integrations/cmux'
 import { reconcileCursorWorkspaceFolders, resolveCursorWorkspacePath } from 'src/integrations/cursor'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
@@ -113,7 +118,7 @@ interface OpenCmuxOutcome {
   skipped: string[]
 }
 
-const openCmux = async (args: OpenCmuxArgs): Promise<OpenCmuxOutcome> => {
+export const openCmux = async (args: OpenCmuxArgs): Promise<OpenCmuxOutcome> => {
   const { worktreeDir, currentBranches } = args
 
   if (currentBranches.length === 0) {
@@ -129,7 +134,9 @@ const openCmux = async (args: OpenCmuxArgs): Promise<OpenCmuxOutcome> => {
   for (const branch of currentBranches) {
     const title = buildCmuxWorkspaceTitle({ repoName, branch })
 
-    if (existingTitles.has(title)) {
+    // existingTitles holds canonical keys; match the built title the same way so
+    // dedup survives whitespace / cross-CLI-version title drift (no duplicates).
+    if (existingTitles.has(canonicalizeCmuxTitle(title))) {
       skipped.push(title)
       continue
     }
