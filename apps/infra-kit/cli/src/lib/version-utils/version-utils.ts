@@ -3,7 +3,7 @@
  *
  * SemVer-ONLY: this assumes a `v<semver>` token and will produce `NaN`s for
  * anything else. Callers that may see branch names or named releases
- * (`release/n/<name>`) MUST use the `release-id` module (`parseBranchName` /
+ * (`release/<name>`) MUST use the `release-id` module (`parseBranchName` /
  * `parseReleaseRef` + `compareReleaseIds`) instead. Only provably names-free
  * callers (the `collectKnownVersions` / `next`-bump math path) may use this.
  */

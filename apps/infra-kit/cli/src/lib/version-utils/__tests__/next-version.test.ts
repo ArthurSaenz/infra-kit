@@ -295,7 +295,7 @@ describe('resolveReleaseEntries', () => {
     it('named entry produces the named branch/PR/Jira output', () => {
       const { id } = resolve({ name: 'checkout-redesign', type: 'regular' })
 
-      expect(formatBranchName(id)).toBe('release/n/checkout-redesign')
+      expect(formatBranchName(id)).toBe('release/checkout-redesign')
       expect(formatPrTitle(id, 'regular')).toBe('Release checkout-redesign')
       expect(formatJiraName(id)).toBe('checkout-redesign')
     })

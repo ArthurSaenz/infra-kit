@@ -10,7 +10,7 @@ interface BuildCmuxWorkspaceTitleArgs {
  * `worktrees-remove`. Release branches are rendered via their release-id
  * display label so the title reads e.g. `"hulyo-monorepo 1.48.0"` for
  * `"release/v1.48.0"` and `"hulyo-monorepo checkout-redesign"` for
- * `"release/n/checkout-redesign"`. Non-release branches (cmux titles them too)
+ * `"release/checkout-redesign"`. Non-release branches (cmux titles them too)
  * fall back to the raw branch string.
  */
 export const buildCmuxWorkspaceTitle = (args: BuildCmuxWorkspaceTitleArgs): string => {

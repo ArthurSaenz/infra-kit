@@ -13,11 +13,11 @@ describe('extractVersionBranches', () => {
     expect(extractVersionBranches(stdout)).toEqual(['1.62.0', '1.64.5'])
   })
 
-  it('ignores named release/n/* branches (irrelevant to next-bump math)', () => {
+  it('ignores named release/<name> branches (irrelevant to next-bump math)', () => {
     const stdout = [
       lsRemoteLine('release/v1.0.0'),
-      lsRemoteLine('release/n/checkout-redesign'),
-      lsRemoteLine('release/n/zeta-feature'),
+      lsRemoteLine('release/checkout-redesign'),
+      lsRemoteLine('release/zeta-feature'),
     ].join('\n')
 
     expect(extractVersionBranches(stdout)).toEqual(['1.0.0'])
@@ -25,7 +25,7 @@ describe('extractVersionBranches', () => {
 
   it('ignores junk and non-release lines without throwing', () => {
     const stdout = [
-      lsRemoteLine('release/garbage'),
+      lsRemoteLine('release/Bad_Name'),
       lsRemoteLine('release/v2.3.4'),
       'malformed-line-without-tab',
       lsRemoteLine('feature/login'),

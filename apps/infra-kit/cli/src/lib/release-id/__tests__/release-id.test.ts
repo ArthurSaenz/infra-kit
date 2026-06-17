@@ -29,13 +29,13 @@ describe('parseBranchName', () => {
     expect(parseBranchName('release/v1.2.3')).toEqual(version(1, 2, 3))
   })
 
-  it('parses release/n/<name> as a name', () => {
-    expect(parseBranchName('release/n/checkout-redesign')).toEqual(name('checkout-redesign'))
+  it('parses release/<name> as a name', () => {
+    expect(parseBranchName('release/checkout-redesign')).toEqual(name('checkout-redesign'))
   })
 
   it('strips a leading refs/heads/ prefix for versions and names', () => {
     expect(parseBranchName('refs/heads/release/v2.0.1')).toEqual(version(2, 0, 1))
-    expect(parseBranchName('refs/heads/release/n/my-feature')).toEqual(name('my-feature'))
+    expect(parseBranchName('refs/heads/release/my-feature')).toEqual(name('my-feature'))
   })
 
   it('trims surrounding whitespace', () => {
@@ -48,23 +48,31 @@ describe('parseBranchName', () => {
     expect(parseBranchName('dev')).toBeNull()
   })
 
-  it('returns null for junk under the release/ prefix', () => {
-    expect(parseBranchName('release/foo')).toBeNull()
-    expect(parseBranchName('release/garbage')).toBeNull()
+  it('parses bare release/<kebab> as a name', () => {
+    expect(parseBranchName('release/foo')).toEqual(name('foo'))
+    expect(parseBranchName('release/garbage')).toEqual(name('garbage'))
   })
 
-  it('returns null for incomplete version branches', () => {
+  it('returns null for malformed version branches that are also not valid names', () => {
     expect(parseBranchName('release/v1.2')).toBeNull()
-    expect(parseBranchName('release/v1')).toBeNull()
     expect(parseBranchName('release/v1.2.3.4')).toBeNull()
-    expect(parseBranchName('release/vfoo')).toBeNull()
+  })
+
+  it('falls through to a name when the release/v segment is not valid semver', () => {
+    expect(parseBranchName('release/v1.2.3')).toEqual(version(1, 2, 3))
+    expect(parseBranchName('release/v1')).toEqual(name('v1'))
+    expect(parseBranchName('release/vfoo')).toEqual(name('vfoo'))
+    expect(parseBranchName('release/vnext')).toEqual(name('vnext'))
   })
 
   it('returns null for invalid names', () => {
-    expect(parseBranchName('release/n/Bad_Name')).toBeNull()
-    expect(parseBranchName('release/n/UPPER')).toBeNull()
-    expect(parseBranchName('release/n/main')).toBeNull()
-    expect(parseBranchName('release/n/')).toBeNull()
+    expect(parseBranchName('release/Bad_Name')).toBeNull()
+    expect(parseBranchName('release/UPPER')).toBeNull()
+    expect(parseBranchName('release/main')).toBeNull()
+    expect(parseBranchName('release/')).toBeNull()
+    // The retired release/n/<name> form is no longer valid: 'n/checkout-redesign'
+    // contains a slash and fails the kebab-case rule.
+    expect(parseBranchName('release/n/checkout-redesign')).toBeNull()
   })
 
   it('never throws on arbitrary input', () => {
@@ -81,19 +89,19 @@ describe('parseBranchName', () => {
 describe('parseReleaseRef', () => {
   it('delegates a release branch ref to parseBranchName', () => {
     expect(parseReleaseRef('release/v1.2.3')).toEqual(version(1, 2, 3))
-    expect(parseReleaseRef('release/n/checkout-redesign')).toEqual(name('checkout-redesign'))
+    expect(parseReleaseRef('release/checkout-redesign')).toEqual(name('checkout-redesign'))
     expect(parseReleaseRef('refs/heads/release/v3.4.5')).toEqual(version(3, 4, 5))
   })
 
   it('throws when a release branch ref is invalid', () => {
     expect(() => {
-      return parseReleaseRef('release/garbage')
+      return parseReleaseRef('release/Bad_Name')
     }).toThrow(InvalidReleaseRefError)
     expect(() => {
       return parseReleaseRef('release/v1.2')
     }).toThrow(InvalidReleaseRefError)
     expect(() => {
-      return parseReleaseRef('release/n/Bad_Name')
+      return parseReleaseRef('release/main')
     }).toThrow(InvalidReleaseRefError)
   })
 
@@ -204,7 +212,7 @@ describe('validateName', () => {
 describe('formatBranchName', () => {
   it('formats versions and names', () => {
     expect(formatBranchName(version(1, 2, 3))).toBe('release/v1.2.3')
-    expect(formatBranchName(name('checkout-redesign'))).toBe('release/n/checkout-redesign')
+    expect(formatBranchName(name('checkout-redesign'))).toBe('release/checkout-redesign')
   })
 })
 
@@ -244,13 +252,13 @@ describe('displayLabel', () => {
 describe('isReleaseBranch', () => {
   it('returns true for both branch schemes', () => {
     expect(isReleaseBranch('release/v1.2.3')).toBe(true)
-    expect(isReleaseBranch('release/n/checkout-redesign')).toBe(true)
+    expect(isReleaseBranch('release/checkout-redesign')).toBe(true)
     expect(isReleaseBranch('refs/heads/release/v1.2.3')).toBe(true)
   })
 
   it('returns false for junk', () => {
     expect(isReleaseBranch('feature/x')).toBe(false)
-    expect(isReleaseBranch('release/foo')).toBe(false)
+    expect(isReleaseBranch('release/Bad_Name')).toBe(false)
     expect(isReleaseBranch('main')).toBe(false)
   })
 

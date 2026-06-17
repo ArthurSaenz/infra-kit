@@ -14,7 +14,7 @@ describe('parseBranchChoices', () => {
   it('parses version and name branches and drops junk', () => {
     const result = parseBranchChoices([
       'release/v1.2.3',
-      'release/n/checkout-redesign',
+      'release/checkout-redesign',
       'feature/not-a-release',
       'release/v9.9', // malformed semver
     ])
@@ -31,7 +31,7 @@ describe('parseBranchChoices', () => {
 
     expect(labels).toEqual(['1.2.3', 'checkout-redesign'])
     expect(kinds).toEqual(['version', 'name'])
-    expect(branches).toEqual(['release/v1.2.3', 'release/n/checkout-redesign'])
+    expect(branches).toEqual(['release/v1.2.3', 'release/checkout-redesign'])
   })
 
   it('returns an empty array when nothing parses', () => {
@@ -42,7 +42,7 @@ describe('parseBranchChoices', () => {
 describe('formatBranchChoices', () => {
   it('labels versions and names, keying Jira descriptions by the Jira version name', () => {
     const choices = formatBranchChoices({
-      branches: ['release/v1.2.3', 'release/n/checkout-redesign'],
+      branches: ['release/v1.2.3', 'release/checkout-redesign'],
       // Jira descriptions are keyed by the Jira version NAME: `v1.2.3` | `<name>`.
       descriptions: new Map([
         ['v1.2.3', 'version desc'],
@@ -54,16 +54,16 @@ describe('formatBranchChoices', () => {
     expect(choices[0]?.value).toBe('release/v1.2.3')
     expect(choices[0]?.name).toContain('1.2.3')
     expect(choices[0]?.name).toContain('version desc')
-    expect(choices[1]?.value).toBe('release/n/checkout-redesign')
+    expect(choices[1]?.value).toBe('release/checkout-redesign')
     expect(choices[1]?.name).toContain('checkout-redesign')
     expect(choices[1]?.name).toContain('name desc')
   })
 
   it('includes the type tag when types are provided', () => {
     const choices = formatBranchChoices({
-      branches: ['release/n/checkout-redesign'],
+      branches: ['release/checkout-redesign'],
       descriptions: new Map(),
-      types: new Map([['release/n/checkout-redesign', 'hotfix']]),
+      types: new Map([['release/checkout-redesign', 'hotfix']]),
     })
 
     expect(choices[0]?.name).toContain('[hotfix]')
@@ -90,7 +90,7 @@ describe('resolveReleaseBranch', () => {
   })
 
   it('builds a name branch from a release name', () => {
-    expect(resolveReleaseBranch('checkout-redesign')).toBe('release/n/checkout-redesign')
+    expect(resolveReleaseBranch('checkout-redesign')).toBe('release/checkout-redesign')
   })
 
   it('throws an OperationError for junk input', () => {
@@ -113,7 +113,7 @@ describe('releaseLabelFromBranch', () => {
 
   it('labels version and name branches', () => {
     expect(releaseLabelFromBranch('release/v1.2.3')).toBe('1.2.3')
-    expect(releaseLabelFromBranch('release/n/checkout-redesign')).toBe('checkout-redesign')
+    expect(releaseLabelFromBranch('release/checkout-redesign')).toBe('checkout-redesign')
   })
 
   it('falls back to the raw branch when it does not parse', () => {

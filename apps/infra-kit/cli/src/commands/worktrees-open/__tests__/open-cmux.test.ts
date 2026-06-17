@@ -25,7 +25,7 @@ vi.mock('src/lib/git-utils', () => {
 
 const REPO = 'hulyo-monorepo'
 const WORKTREE_DIR = '/repos/project-worktrees'
-const BRANCHES = ['release/v1.48.0', 'release/n/checkout-redesign']
+const BRANCHES = ['release/v1.48.0', 'release/checkout-redesign']
 
 const titleFor = {
   versioned: `${REPO} 1.48.0`,
@@ -68,7 +68,7 @@ describe('openCmux dedup', () => {
     expect(result.opened).toEqual([titleFor.named])
     expect(openCmuxWorkspaceWithLayout).toHaveBeenCalledTimes(1)
     expect(openCmuxWorkspaceWithLayout).toHaveBeenCalledWith({
-      cwd: `${WORKTREE_DIR}/release/n/checkout-redesign`,
+      cwd: `${WORKTREE_DIR}/release/checkout-redesign`,
       title: titleFor.named,
     })
   })

@@ -31,7 +31,7 @@ export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs) => {
 
   commandEcho.start('release-deploy-all')
 
-  let selectedReleaseBranch = '' // "release/v1.8.0" | "release/n/checkout-redesign" | "dev"
+  let selectedReleaseBranch = '' // "release/v1.8.0" | "release/checkout-redesign" | "dev"
 
   if (version) {
     selectedReleaseBranch = version === 'dev' ? 'dev' : resolveReleaseBranch(version)
@@ -143,7 +143,7 @@ export const ghReleaseDeployAllMcpTool = defineMcpTool({
     version: z
       .string()
       .describe(
-        'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/n/<name> branch. Pass "dev" to deploy from the dev branch instead. Required for MCP calls.',
+        'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/<name> branch. Pass "dev" to deploy from the dev branch instead. Required for MCP calls.',
       ),
     env: z
       .string()

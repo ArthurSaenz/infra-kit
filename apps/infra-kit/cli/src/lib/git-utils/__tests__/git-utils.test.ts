@@ -23,8 +23,8 @@ describe('getCurrentWorktrees', () => {
     worktreeList.stdout = [
       asWorktreeLine('main'),
       asWorktreeLine('release/v1.18.22'),
-      asWorktreeLine('release/n/checkout-redesign'),
-      asWorktreeLine('release/garbage'),
+      asWorktreeLine('release/checkout-redesign'),
+      asWorktreeLine('release/Bad_Name'),
       asWorktreeLine('feature/login-page'),
       '/repos/project  abc1234 (bare)',
       '',
@@ -32,13 +32,13 @@ describe('getCurrentWorktrees', () => {
   })
 
   it('returns versioned AND named release worktrees for type release', async () => {
-    await expect(getCurrentWorktrees('release')).resolves.toEqual(['release/v1.18.22', 'release/n/checkout-redesign'])
+    await expect(getCurrentWorktrees('release')).resolves.toEqual(['release/v1.18.22', 'release/checkout-redesign'])
   })
 
   it('excludes junk release branches and non-release branches', async () => {
     const branches = await getCurrentWorktrees('release')
 
-    expect(branches).not.toContain('release/garbage')
+    expect(branches).not.toContain('release/Bad_Name')
     expect(branches).not.toContain('feature/login-page')
     expect(branches).not.toContain('main')
   })

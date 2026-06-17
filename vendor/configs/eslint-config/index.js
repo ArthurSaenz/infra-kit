@@ -82,7 +82,19 @@ const config = async (userOptions = {}) => {
         // Enforce public-API boundaries: features/services must be imported via their barrel
         // (index.ts), never their internals. `**/<kind>/*/**` anchors on the segment (not a
         // leading-segment count), so it matches every prefix (#root/, @/, src/, ../) at any
-        // depth, while the trailing `/**` requires >=1 inner segment — keeping the barrel allowed.
+        // depth, while the trailing `/**` requires >=1 inner segment — keeping the bare-directory
+        // barrel import allowed.
+        //
+        // The two `!`-negations carve the IMMEDIATE `index` barrel back out: an EXPLICIT barrel
+        // import (`.../<el>/index`, `.../<el>/index.js|ts|…`) is the public API and must pass —
+        // it is also the ONLY valid form under NodeNext/ESM, where a bare-directory import does
+        // not resolve. ESLint matches these globs with gitignore semantics, so `!` re-includes;
+        // `*` never crosses `/`, so a nested `.../internal/index.js` stays blocked. Keep the
+        // features/services carve-outs identical — the paired barrel tests guard each side's
+        // behavior. Known residual: a feature-nested-service barrel
+        // (`features/*/services/*/index.js`) cannot be re-included this way (gitignore forbids
+        // re-including under an excluded parent dir) — deferred to Phase 2.
+        //
         // String-only: bans deep imports but can't detect cross-element relationships (feature A
         // -> feature B); that is gated Phase 2, see .omc/plans/eslint-import-boundary-rules.md.
         'no-restricted-imports': [
@@ -90,12 +102,12 @@ const config = async (userOptions = {}) => {
           {
             patterns: [
               {
-                group: ['**/features/*/**'],
+                group: ['**/features/*/**', '!**/features/*/index', '!**/features/*/index.*'],
                 message:
                   "Importing private modules from a feature is prohibited. Use the feature's public API (index.ts) instead.",
               },
               {
-                group: ['**/services/*/**'],
+                group: ['**/services/*/**', '!**/services/*/index', '!**/services/*/index.*'],
                 message:
                   "Importing private modules from a service is prohibited. Use the service's public API (index.ts) instead.",
               },

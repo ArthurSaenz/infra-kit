@@ -208,7 +208,7 @@ export const releaseDescEdit = async (args: ReleaseDescEditArgs) => {
 export const releaseDescEditMcpTool = defineMcpTool({
   name: 'release-desc-edit',
   description:
-    "Edit a release's description in Jira and in the matching GitHub release PR body. Accepts a release version or a release name: targets the Jira fix version named `v<version>` (versioned) or `<name>` (named) and the open PR on branch `release/v<version>` or `release/n/<name>`. The PR body is rewritten canonically to `<jiraVersionUrl>\\n\\n<description>` — any prior manual edits to the body are overwritten. Both `version` and `description` are required for MCP calls (the picker/prompt are unreachable without a TTY). Empty `description` clears the description on both sides. Confirmation is auto-skipped for MCP, so the caller is responsible for gating.",
+    "Edit a release's description in Jira and in the matching GitHub release PR body. Accepts a release version or a release name: targets the Jira fix version named `v<version>` (versioned) or `<name>` (named) and the open PR on branch `release/v<version>` or `release/<name>`. The PR body is rewritten canonically to `<jiraVersionUrl>\\n\\n<description>` — any prior manual edits to the body are overwritten. Both `version` and `description` are required for MCP calls (the picker/prompt are unreachable without a TTY). Empty `description` clears the description on both sides. Confirmation is auto-skipped for MCP, so the caller is responsible for gating.",
   inputSchema: {
     version: z
       .string()
@@ -217,7 +217,7 @@ export const releaseDescEditMcpTool = defineMcpTool({
   },
   outputSchema: {
     version: z.string().describe('Release version'),
-    branch: z.string().describe('Release branch name (e.g. "release/v1.2.5" or "release/n/checkout-redesign")'),
+    branch: z.string().describe('Release branch name (e.g. "release/v1.2.5" or "release/checkout-redesign")'),
     jiraVersionUrl: z.string().describe('Jira fix version URL'),
     previousDescription: z.string().describe('The description before the update'),
     newDescription: z.string().describe('The description after the update'),

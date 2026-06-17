@@ -48,7 +48,7 @@ describe('canonicalizeCmuxTitle', () => {
     })
 
     it('built title canonicalizes to a stable key for a named release', () => {
-      const built = buildCmuxWorkspaceTitle({ repoName: 'hulyo-monorepo', branch: 'release/n/checkout-redesign' })
+      const built = buildCmuxWorkspaceTitle({ repoName: 'hulyo-monorepo', branch: 'release/checkout-redesign' })
 
       expect(canonicalizeCmuxTitle(built)).toBe('hulyo-monorepo checkout-redesign')
     })

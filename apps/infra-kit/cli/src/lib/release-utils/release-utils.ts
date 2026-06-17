@@ -160,7 +160,7 @@ export const parseBranchChoices = (branches: string[]): ParsedBranchChoice[] => 
 
 /**
  * Resolve an operator-supplied release ref (version `1.2.3` / `v1.2.3` or name
- * `checkout-redesign`) to its branch name (`release/v1.2.3` | `release/n/<name>`).
+ * `checkout-redesign`) to its branch name (`release/v1.2.3` | `release/<name>`).
  * Strict: surfaces a parse failure as an OperationError with remediation text.
  */
 export const resolveReleaseBranch = (versionArg: string): string => {

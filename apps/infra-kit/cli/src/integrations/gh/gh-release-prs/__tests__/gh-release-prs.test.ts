@@ -67,33 +67,33 @@ describe('getReleasePRs (discovery + sort)', () => {
 
   it('sorts version branches first by semver ascending (numeric, 1.9.0 < 1.10.0), then names by createdAt', async () => {
     responses.release = [
-      pr({ headRefName: 'release/n/zeta-feature', createdAt: '2026-01-10T00:00:00Z', title: 'Release zeta-feature' }),
+      pr({ headRefName: 'release/zeta-feature', createdAt: '2026-01-10T00:00:00Z', title: 'Release zeta-feature' }),
       pr({ headRefName: 'release/v1.10.0', createdAt: '2026-01-02T00:00:00Z' }),
-      pr({ headRefName: 'release/n/alpha-feature', createdAt: '2026-01-05T00:00:00Z', title: 'Release alpha-feature' }),
+      pr({ headRefName: 'release/alpha-feature', createdAt: '2026-01-05T00:00:00Z', title: 'Release alpha-feature' }),
       pr({ headRefName: 'release/v1.9.0', createdAt: '2026-01-01T00:00:00Z' }),
     ]
 
     await expect(getReleasePRs()).resolves.toEqual([
       'release/v1.9.0',
       'release/v1.10.0',
-      'release/n/alpha-feature',
-      'release/n/zeta-feature',
+      'release/alpha-feature',
+      'release/zeta-feature',
     ])
   })
 
   it('filters out unparseable junk branches instead of throwing or NaN-sorting', async () => {
     responses.release = [
-      pr({ headRefName: 'release/garbage', createdAt: '2026-01-01T00:00:00Z' }),
+      pr({ headRefName: 'release/Bad_Name', createdAt: '2026-01-01T00:00:00Z' }),
       pr({ headRefName: 'release/v1.2.3', createdAt: '2026-01-02T00:00:00Z' }),
       pr({ headRefName: 'totally-not-a-release', createdAt: '2026-01-03T00:00:00Z' }),
       pr({
-        headRefName: 'release/n/checkout-redesign',
+        headRefName: 'release/checkout-redesign',
         createdAt: '2026-01-04T00:00:00Z',
         title: 'Release checkout-redesign',
       }),
     ]
 
-    await expect(getReleasePRs()).resolves.toEqual(['release/v1.2.3', 'release/n/checkout-redesign'])
+    await expect(getReleasePRs()).resolves.toEqual(['release/v1.2.3', 'release/checkout-redesign'])
   })
 
   it('merges hotfix (base main) and release (base dev) sets', async () => {
@@ -119,14 +119,14 @@ describe('getReleasePRsWithInfo (discovery + sort)', () => {
 
   it('returns branch/title/createdAt in the locked order with junk filtered', async () => {
     responses.release = [
-      pr({ headRefName: 'release/n/beta-feature', createdAt: '2026-02-02T00:00:00Z', title: 'Release beta-feature' }),
-      pr({ headRefName: 'release/garbage', createdAt: '2026-02-03T00:00:00Z', title: 'Release garbage' }),
+      pr({ headRefName: 'release/beta-feature', createdAt: '2026-02-02T00:00:00Z', title: 'Release beta-feature' }),
+      pr({ headRefName: 'release/Bad_Name', createdAt: '2026-02-03T00:00:00Z', title: 'Release Bad_Name' }),
       pr({ headRefName: 'release/v3.1.0', createdAt: '2026-02-01T00:00:00Z', title: 'Release v3.1.0' }),
     ]
 
     await expect(getReleasePRsWithInfo()).resolves.toEqual([
       { branch: 'release/v3.1.0', title: 'Release v3.1.0', createdAt: '2026-02-01T00:00:00Z' },
-      { branch: 'release/n/beta-feature', title: 'Release beta-feature', createdAt: '2026-02-02T00:00:00Z' },
+      { branch: 'release/beta-feature', title: 'Release beta-feature', createdAt: '2026-02-02T00:00:00Z' },
     ])
   })
 })

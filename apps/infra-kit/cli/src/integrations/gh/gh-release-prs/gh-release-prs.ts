@@ -77,7 +77,7 @@ const fetchAllReleasePRs = async (): Promise<ReleasePR[]> => {
  * (version branches first by semver ascending, then named branches by PR
  * creation date). Unparseable head refs are filtered out.
  *
- * @returns [release/v1.18.22, release/v1.18.23, release/n/checkout-redesign]
+ * @returns [release/v1.18.22, release/v1.18.23, release/checkout-redesign]
  */
 export const getReleasePRs = async (): Promise<string[]> => {
   try {

@@ -232,7 +232,7 @@ export const ghReleaseDeploySelectedMcpTool = defineMcpTool({
     version: z
       .string()
       .describe(
-        'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/n/<name> branch. Pass "dev" to deploy from the dev branch instead. Required for MCP calls.',
+        'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/<name> branch. Pass "dev" to deploy from the dev branch instead. Required for MCP calls.',
       ),
     env: z
       .string()

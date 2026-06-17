@@ -18,7 +18,6 @@ const KEBAB_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 const RELEASE_BRANCH_PREFIX = 'release/'
 const VERSION_BRANCH_PREFIX = 'release/v'
-const NAME_BRANCH_PREFIX = 'release/n/'
 const REFS_HEADS_PREFIX = 'refs/heads/'
 
 const NEXT_TOKEN = 'next'
@@ -91,33 +90,35 @@ export const validateName = (name: string): void => {
 /**
  * Lenient parse of a git branch name into a {@link ReleaseId}. Tolerates a
  * leading `refs/heads/`. Returns `null` for anything that is not a valid
- * `release/v<semver>` or `release/n/<name>` branch. Never throws.
+ * `release/v<semver>` or `release/<name>` branch. Never throws.
+ *
+ * Precedence is version-first: `release/v<semver>` is a version, but if the
+ * segment after `release/v` is not a valid semver (e.g. `release/vnext`), the
+ * whole token after `release/` is treated as a candidate name instead.
  */
 export const parseBranchName = (branch: string): ReleaseId | null => {
   const stripped = stripRefsHeads(branch.trim())
+
+  if (!stripped.startsWith(RELEASE_BRANCH_PREFIX)) return null
 
   if (stripped.startsWith(VERSION_BRANCH_PREFIX)) {
     const semverPart = stripped.slice(VERSION_BRANCH_PREFIX.length)
     const match = BRANCH_SEMVER_RE.exec(semverPart)
 
-    if (!match) return null
-
-    return makeVersion(Number(match[1]), Number(match[2]), Number(match[3]))
-  }
-
-  if (stripped.startsWith(NAME_BRANCH_PREFIX)) {
-    const namePart = stripped.slice(NAME_BRANCH_PREFIX.length)
-
-    try {
-      validateName(namePart)
-    } catch {
-      return null
+    if (match) {
+      return makeVersion(Number(match[1]), Number(match[2]), Number(match[3]))
     }
-
-    return { kind: 'name', name: namePart, raw: namePart }
   }
 
-  return null
+  const namePart = stripped.slice(RELEASE_BRANCH_PREFIX.length)
+
+  try {
+    validateName(namePart)
+  } catch {
+    return null
+  }
+
+  return { kind: 'name', name: namePart, raw: namePart }
 }
 
 /**
@@ -138,7 +139,7 @@ export const parseReleaseRef = (input: string): ReleaseId => {
 
     if (!parsed) {
       throw new InvalidReleaseRefError(
-        `"${input}" looks like a release branch but is not a valid release/v<semver> or release/n/<name> ref.`,
+        `"${input}" looks like a release branch but is not a valid release/v<semver> or release/<name> ref.`,
       )
     }
 
@@ -168,11 +169,11 @@ export const parseReleaseRef = (input: string): ReleaseId => {
   return { kind: 'name', name: trimmed, raw: trimmed }
 }
 
-/** Render the branch name for a release id: `release/v1.2.3` | `release/n/<name>`. */
+/** Render the branch name for a release id: `release/v1.2.3` | `release/<name>`. */
 export const formatBranchName = (id: ReleaseId): string => {
   if (id.kind === 'version') return `${VERSION_BRANCH_PREFIX}${id.raw}`
 
-  return `${NAME_BRANCH_PREFIX}${id.name}`
+  return `${RELEASE_BRANCH_PREFIX}${id.name}`
 }
 
 /**

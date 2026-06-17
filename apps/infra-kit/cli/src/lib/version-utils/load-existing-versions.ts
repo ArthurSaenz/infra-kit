@@ -11,7 +11,7 @@ import type { SemVer } from './next-version'
  * Extract version-branch tokens from raw `git ls-remote` stdout. Each line is
  * `<sha>\t<ref>`; refs are routed through release-id's lenient
  * {@link parseBranchName} and only `kind: 'version'` ids are kept (named
- * `release/n/*` branches are irrelevant to `next`-bump math and are dropped).
+ * `release/<name>` branches are irrelevant to `next`-bump math and are dropped).
  * Returns the no-`v` semver tokens (e.g. `1.2.3`) that
  * {@link collectKnownVersions} parses as versions. Pure — no I/O — so it is
  * unit-testable without the network.

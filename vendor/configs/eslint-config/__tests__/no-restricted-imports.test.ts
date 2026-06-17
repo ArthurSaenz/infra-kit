@@ -32,6 +32,17 @@ describe('no-restricted-imports: feature public-API boundary', () => {
   it('allows a relative intra-feature import (./local)', () => {
     expect(messagesFor('features/beta/relative-ok.ts')).toHaveLength(0)
   })
+
+  // The explicit barrel (#root/features/alpha/index[.js]) IS the public API — and the only valid
+  // form under NodeNext/ESM. The `!**/features/*/index*` carve-outs allow it. This pairs with the
+  // service barrel test below to guard that both negation groups stay in sync.
+  it('allows the explicit feature barrel with extension (#root/features/alpha/index.js)', () => {
+    expect(messagesFor('features/beta/ok-barrel-index-ext.ts')).toHaveLength(0)
+  })
+
+  it('allows the explicit feature barrel without extension (#root/features/alpha/index)', () => {
+    expect(messagesFor('features/beta/ok-barrel-index-noext.ts')).toHaveLength(0)
+  })
 })
 
 describe('no-restricted-imports: service public-API boundary', () => {
@@ -41,6 +52,21 @@ describe('no-restricted-imports: service public-API boundary', () => {
 
   it('allows importing a service through its barrel (#root/services/email)', () => {
     expect(messagesFor('services/sms/ok-barrel.ts')).toHaveLength(0)
+  })
+
+  // Pairs with the feature barrel tests to guard the two negation groups stay in sync.
+  it('allows the explicit service barrel with extension (#root/services/email/index.js)', () => {
+    expect(messagesFor('services/sms/ok-barrel-index-ext.ts')).toHaveLength(0)
+  })
+
+  // Pins the exact reported false-positive shape: a RELATIVE explicit-index specifier.
+  it('allows a relative explicit service barrel (../email/index.js)', () => {
+    expect(messagesFor('services/sms/ok-barrel-relative-index.ts')).toHaveLength(0)
+  })
+
+  // Regression: only the IMMEDIATE barrel is exempt — a nested `internal/index.js` stays flagged.
+  it('flags a deep service import that ends in a nested index (#root/services/email/internal/index.js)', () => {
+    expectFlagged('services/sms/bad-deep-internal-index.ts', "service's public API")
   })
 })
 
