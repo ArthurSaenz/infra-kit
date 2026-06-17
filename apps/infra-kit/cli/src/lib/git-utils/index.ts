@@ -1,1 +1,8 @@
-export { getCurrentWorktrees, getProjectRoot, getRepoName } from './git-utils'
+export {
+  getCurrentBranch,
+  getCurrentWorktrees,
+  getProjectRoot,
+  getRepoName,
+  isInsideLinkedWorktree,
+  isWorkingTreeClean,
+} from './git-utils'

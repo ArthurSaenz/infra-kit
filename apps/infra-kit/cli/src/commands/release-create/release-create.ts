@@ -7,9 +7,10 @@ import { question } from 'zx'
 import { loadJiraConfig } from 'src/integrations/jira'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { assertManagementContext } from 'src/lib/git-guard'
 import { logger } from 'src/lib/logger'
 import { InvalidReleaseNameError, displayLabel, validateName } from 'src/lib/release-id'
-import { createSingleRelease, prepareGitForRelease } from 'src/lib/release-utils'
+import { createSingleRelease, getBaseBranch, prepareGitForRelease } from 'src/lib/release-utils'
 import type { ReleaseCreationResult, ReleaseType } from 'src/lib/release-utils'
 import {
   NoPriorVersionsError,
@@ -212,6 +213,28 @@ const collectEntries = async (
   return interactive
 }
 
+/**
+ * Reject a batch that mixes regular and hotfix releases. They branch off
+ * different bases (dev vs main), so the batch has no single required branch for
+ * the management guard — they must be created in separate invocations.
+ * Exported for unit testing without running the side-effecting handler.
+ */
+export const assertHomogeneousReleaseType = (entries: ReleaseEntry[]): void => {
+  const types = new Set(
+    entries.map((entry) => {
+      return entry.type
+    }),
+  )
+
+  if (types.size > 1) {
+    throw new OperationError(undefined, {
+      operation: 'create release',
+      remediation: 'create regular and hotfix releases in separate invocations',
+      stderrExcerpt: 'mixed regular and hotfix releases in one batch are not supported',
+    })
+  }
+}
+
 const confirmReleases = async (entries: ReleaseEntry[], confirmedCommand: boolean): Promise<void> => {
   const summary = entries.map(formatReleaseSummary).join('\n  - ')
   const answer = confirmedCommand
@@ -284,8 +307,10 @@ const logFinalSummary = (total: number, successCount: number, failureCount: numb
 
 /**
  * Create one or more release branches. Each release carries its own type
- * (regular/hotfix) and optional Jira description, so a single invocation
- * may mix regular and hotfix releases off their respective base branches.
+ * (regular/hotfix) and optional Jira description. All entries in a single
+ * invocation must share the same type — regular and hotfix releases branch off
+ * different bases (dev vs main), so mixed batches are rejected and must be
+ * created separately.
  */
 export const releaseCreate = async (args: ReleaseCreateArgs) => {
   const { releases: inputReleases, confirmedCommand } = args
@@ -310,6 +335,13 @@ export const releaseCreate = async (args: ReleaseCreateArgs) => {
       stderrExcerpt: 'no releases provided',
     })
   }
+
+  assertHomogeneousReleaseType(entries)
+
+  await assertManagementContext({
+    operation: 'create release',
+    requiredBranch: getBaseBranch(entries[0]!.type),
+  })
 
   await confirmReleases(entries, Boolean(confirmedCommand))
 
@@ -347,7 +379,7 @@ export const releaseCreate = async (args: ReleaseCreateArgs) => {
 export const releaseCreateMcpTool = defineMcpTool({
   name: 'release-create',
   description:
-    'Create one or more releases in a single call. Each entry in "releases" carries EITHER a "version" (semver or the literal token "next") OR a "name" (free-form kebab-case identifier) — exactly one is required and they are mutually exclusive. Each entry also has its own type (regular|hotfix, default regular) and optional description, so regular and hotfix releases can be mixed in the same invocation. For each release this tool switches to the appropriate base branch (dev for regular, main for hotfix), cuts the release branch (release/v<semver> for versions, release/n/<name> for names), opens a GitHub release PR, and creates the matching Jira fix version (v<semver> for versions, <name> for names). The literal token "next" auto-increments from the union of remote release branches and Jira fix versions (regular bumps minor + resets patch; hotfix bumps patch on the highest minor); multiple "next" tokens advance sequentially across mixed types. Named releases never auto-bump and "next" is version-only. Confirmation is auto-skipped for MCP calls, so the caller is responsible for gating. Continues on per-release failure and reports successes/failures.',
+    'Create one or more releases in a single call. Each entry in "releases" carries EITHER a "version" (semver or the literal token "next") OR a "name" (free-form kebab-case identifier) — exactly one is required and they are mutually exclusive. Each entry also has its own type (regular|hotfix, default regular) and optional description; all entries in one call must share the same type — mixed regular+hotfix batches are rejected (create them in separate invocations). For each release this tool switches to the appropriate base branch (dev for regular, main for hotfix), cuts the release branch (release/v<semver> for versions, release/n/<name> for names), opens a GitHub release PR, and creates the matching Jira fix version (v<semver> for versions, <name> for names). The literal token "next" auto-increments from the union of remote release branches and Jira fix versions (regular bumps minor + resets patch; hotfix bumps patch on the highest minor); multiple "next" tokens advance sequentially. Named releases never auto-bump and "next" is version-only. Must be run from the main repository checkout (not a linked worktree) on the matching base branch with a clean working tree. Confirmation is auto-skipped for MCP calls, so the caller is responsible for gating. Continues on per-release failure and reports successes/failures.',
   inputSchema: {
     releases: z
       .array(

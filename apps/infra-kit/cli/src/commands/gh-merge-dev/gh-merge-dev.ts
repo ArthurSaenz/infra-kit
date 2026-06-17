@@ -8,6 +8,7 @@ import { $ } from 'zx'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { assertManagementContext } from 'src/lib/git-guard'
 import { logger } from 'src/lib/logger'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions, releaseBranchLabels } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
@@ -24,6 +25,8 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
   const { all, confirmedCommand } = args
 
   commandEcho.start('merge-dev')
+
+  await assertManagementContext({ operation: 'merge dev into release branches', requiredBranch: 'dev' })
 
   // Only merge dev into regular releases (not hotfixes, which target main)
   const allPRs = await getReleasePRsWithInfo()

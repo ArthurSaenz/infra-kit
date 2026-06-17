@@ -94,6 +94,47 @@ export const getProjectRoot = async (): Promise<string> => {
 }
 
 /**
+ * Get the current git branch name (e.g. `dev`, `main`, `release/v1.2.3`).
+ */
+export const getCurrentBranch = async (): Promise<string> => {
+  const result = await $`git rev-parse --abbrev-ref HEAD`
+
+  return result.stdout.trim()
+}
+
+/**
+ * Whether the working tree has no staged, unstaged, or untracked changes.
+ */
+export const isWorkingTreeClean = async (): Promise<boolean> => {
+  const result = await $`git status --porcelain`
+
+  return result.stdout.trim().length === 0
+}
+
+/**
+ * Whether the current checkout is a linked git worktree rather than the main
+ * repository checkout.
+ *
+ * A linked worktree's git dir lives under `<main>/.git/worktrees/<name>`, so it
+ * differs from the shared common dir; in the main checkout the two resolve to
+ * the same path. Both are anchored to the toplevel so `--git-common-dir` (which
+ * git may report relative to cwd) resolves consistently.
+ */
+export const isInsideLinkedWorktree = async (): Promise<boolean> => {
+  const cwd = await getProjectRoot()
+
+  const [gitDirResult, commonDirResult] = await Promise.all([
+    $({ cwd })`git rev-parse --absolute-git-dir`,
+    $({ cwd })`git rev-parse --git-common-dir`,
+  ])
+
+  const gitDir = gitDirResult.stdout.trim()
+  const commonDir = path.resolve(cwd, commonDirResult.stdout.trim())
+
+  return gitDir !== commonDir
+}
+
+/**
  * Get the current repository name (basename of the project root)
  */
 export const getRepoName = async (): Promise<string> => {

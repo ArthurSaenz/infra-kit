@@ -10,6 +10,7 @@ import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { formatZxError } from 'src/lib/errors/format-zx-error'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { displayLabel, formatJiraName, formatRcTitle, parseBranchName } from 'src/lib/release-id'
@@ -338,6 +339,10 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
   const { version, confirmedCommand } = args
 
   commandEcho.start('release-deliver')
+
+  // Branch-agnostic (operates on release/RC PRs via gh and self-switches), so
+  // only the worktree + clean-tree legs apply.
+  await assertManagementContext({ operation: 'deliver release' })
 
   const { selectedReleaseBranch, releasePrTitle } = version
     ? await resolveTargetFromVersion(version)

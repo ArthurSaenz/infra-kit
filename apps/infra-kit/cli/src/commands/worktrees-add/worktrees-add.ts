@@ -17,6 +17,7 @@ import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
@@ -49,6 +50,8 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
   const { confirmedCommand, all, versions, cursor, githubDesktop, cmux } = options
 
   commandEcho.start('worktrees-add')
+
+  await assertManagementContext({ operation: 'create worktrees', requiredBranch: 'dev' })
 
   try {
     const currentWorktrees = await getCurrentWorktrees('release')
