@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "env-use": "pnpm env use --global 24.14.1",
+    "env-use": "pnpm env use --global 24.17.0",
     "setup": "pnpm env-use && pnpm install",
     "reinstall": "pnpm run clean-artifacts && pnpm run clean-cache-root && pnpm run reset && pnpm store prune && pnpm run env-use && pnpm install --force",
     "print-env-node": "pnpm env list --remote 24",
@@ -66,12 +66,12 @@
     "@wl/prettier-config": "workspace:*",
     "infra-kit": "workspace:*",
     "shadcn": "^4.10.0",
-    "turbo": "2.9.12",
+    "turbo": "2.9.18",
     "typescript": "catalog:"
   },
   "engines": {
     "node": ">=24.x",
     "pnpm": ">=10"
   },
-  "packageManager": "pnpm@11.1.1"
+  "packageManager": "pnpm@11.7.0"
 }
