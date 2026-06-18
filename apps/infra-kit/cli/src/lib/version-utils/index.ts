@@ -3,6 +3,7 @@ export {
   collectKnownVersions,
   computeNextVersion,
   type ExistingVersionsSources,
+  formatReleaseSpec,
   hasNextToken,
   type NamedReleaseInput,
   NEXT_TOKEN,

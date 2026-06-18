@@ -90,26 +90,15 @@ program
   .description('Create one or more release branches (each entry can mix regular/hotfix and its own description)')
   .option(
     '-r, --release <spec>',
-    'Release spec "version[:type[:description]]" (repeatable). Examples: "1.2.5", "1.2.5:hotfix", "next:regular:Holiday backend"',
-    collectReleaseSpec,
-    [],
-  )
-  .option(
-    '-n, --name <name>',
-    'Named release (repeatable). Bare kebab-case name, e.g. "checkout-redesign". Creates a regular release; set a description later via release-desc-edit. Can be combined with --release.',
+    'Release spec "<version|next|name>[:type[:description]]" (repeatable). The token is a semver ("1.2.5"), the literal "next", or a kebab-case name ("checkout-redesign"). Type is regular|hotfix (default regular). Examples: "1.2.5", "1.2.5:hotfix", "next:regular:Holiday backend", "checkout-redesign:regular:Q3 redesign".',
     collectReleaseSpec,
     [],
   )
   .option('-y, --yes', 'Skip confirmation prompt')
   .action(async (options) => {
     const specs = options.release as string[]
-    const names = options.name as string[]
-    const versionInputs: ReleaseInput[] = specs.map(parseReleaseSpec)
-    const nameInputs: ReleaseInput[] = names.map((name) => {
-      return { name, type: 'regular' as const }
-    })
-    const combined = [...versionInputs, ...nameInputs]
-    const releases = combined.length > 0 ? combined : undefined
+    const inputs: ReleaseInput[] = specs.map(parseReleaseSpec)
+    const releases = inputs.length > 0 ? inputs : undefined
 
     await releaseCreate({
       releases,

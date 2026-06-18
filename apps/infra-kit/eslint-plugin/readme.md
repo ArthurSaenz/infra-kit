@@ -133,3 +133,62 @@ every file (you can also scope it the usual way with flat-config `files`).
 
 Glob support: `*` matches within a path segment, `**` matches across segments,
 `?` matches a single character. A file matches if any pattern matches its path.
+
+### `require-component-stories`
+
+Require a co-located Storybook story for every dumb component. By default it enforces two layouts,
+mirroring the white-label `fe-architect` convention:
+
+| Layout | Component file | Required story |
+| --- | --- | --- |
+| Feature component | `features/<feature>/components/<name>-component.tsx` | `features/<feature>/__stories__/<name>-component.stories.tsx` (feature root) |
+| Shared default component | `components/default/<name>-component.tsx` | `components/default/__stories__/<name>-component.stories.tsx` (sibling) |
+
+A file is treated as a dumb component when it ends with the `-component` suffix, has a `.tsx`/`.jsx`
+extension, sits directly inside a `components/` directory (feature layout) or `components/default/`
+(shared layout), and — by default — actually declares a React component. Containers, nested
+`components/sub/*` files, barrels (`index.*`), and type files are never required to have stories. The
+story is satisfied when any candidate (`.tsx`, `.jsx`, `.ts`, `.js`) exists on disk.
+
+```js
+{
+  rules: {
+    '@wl/require-component-stories': 'error',
+  },
+}
+```
+
+#### Options (all optional)
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `paths` | `[]` | Restrict the rule to files matching these globs. |
+| `ignore` | `[]` | Skip files matching these globs (takes precedence over `paths`). |
+| `storiesDir` | `'__stories__'` | Directory name a story must live in. |
+| `storySuffix` | `'.stories'` | Suffix inserted before the extension. |
+| `storyExtensions` | `['.tsx', '.jsx', '.ts', '.js']` | Accepted story extensions, in priority order. |
+| `componentSuffix` | `'-component'` | Basename suffix a component must end with (`''` disables the check). |
+| `requireComponentAst` | `true` | When true, only require a story for files that actually declare a component. |
+| `extraTargets` | `[]` | Extra structured layouts: `{ componentsDir, anchorParentDir?, storyMode: 'feature-root' \| 'sibling' }`. |
+
+```js
+{
+  rules: {
+    '@wl/require-component-stories': ['error', {
+      extraTargets: [{ componentsDir: 'widgets', anchorParentDir: 'ui', storyMode: 'sibling' }],
+    }],
+  },
+}
+```
+
+#### Caveats
+
+- **Filesystem-coupled.** Unlike pure AST rules, this one checks the disk for a sibling story file,
+  so results depend on the working-tree state.
+- **`--cache`.** Adding or removing a story file does not change the component file, so a cached
+  ESLint result can go stale. Run without `--cache` in CI (or invalidate the cache) if you rely on
+  this rule as a gate.
+- **Case sensitivity.** The existence check is exact-case; a casing mismatch may pass on a
+  case-insensitive filesystem (macOS) and fail on a case-sensitive one (Linux CI).
+- **Unanchored globs.** `paths`/`ignore` patterns match anywhere in the path, so anchor them
+  (e.g. start with `**/`) when you need precision.

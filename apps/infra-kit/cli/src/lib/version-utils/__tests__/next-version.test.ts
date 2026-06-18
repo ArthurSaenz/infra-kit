@@ -6,6 +6,7 @@ import {
   NoPriorVersionsError,
   collectKnownVersions,
   computeNextVersion,
+  formatReleaseSpec,
   hasNextToken,
   parseReleaseSpec,
   resolveReleaseEntries,
@@ -131,6 +132,89 @@ describe('parseReleaseSpec', () => {
     expect(() => {
       return parseReleaseSpec('   ')
     }).toThrow(/empty/)
+  })
+
+  it('parses a bare name token into a named input', () => {
+    expect(parseReleaseSpec('checkout-redesign')).toEqual({ name: 'checkout-redesign', type: 'regular' })
+  })
+
+  it('parses name:type:description into a named input', () => {
+    expect(parseReleaseSpec('checkout-redesign:regular:Q3 work')).toEqual({
+      name: 'checkout-redesign',
+      type: 'regular',
+      description: 'Q3 work',
+    })
+  })
+
+  it('parses name:hotfix into a named hotfix input', () => {
+    expect(parseReleaseSpec('checkout-redesign:hotfix')).toEqual({ name: 'checkout-redesign', type: 'hotfix' })
+  })
+
+  it('treats a v-prefixed semver as a version, not a name', () => {
+    expect(parseReleaseSpec('v1.2.5')).toEqual({ version: 'v1.2.5', type: 'regular' })
+  })
+})
+
+describe('formatReleaseSpec', () => {
+  const entry = (id: ReleaseId, type: ReleaseEntry['type'], description?: string): ReleaseEntry => {
+    return description !== undefined ? { id, type, description } : { id, type }
+  }
+
+  it('renders a regular version as the bare token', () => {
+    expect(formatReleaseSpec(entry(versionId('1.2.5'), 'regular'))).toBe('1.2.5')
+  })
+
+  it('renders a hotfix version as token:hotfix', () => {
+    expect(formatReleaseSpec(entry(versionId('1.2.5'), 'hotfix'))).toBe('1.2.5:hotfix')
+  })
+
+  it('renders a version with a description as token:type:description', () => {
+    expect(formatReleaseSpec(entry(versionId('1.2.5'), 'regular', 'Holiday backend'))).toBe(
+      '1.2.5:regular:Holiday backend',
+    )
+  })
+
+  it('renders a regular named release as the bare name', () => {
+    expect(formatReleaseSpec(entry(nameId('checkout-redesign'), 'regular'))).toBe('checkout-redesign')
+  })
+
+  it('renders a named release with a description as name:type:description', () => {
+    expect(formatReleaseSpec(entry(nameId('checkout-redesign'), 'regular', 'Q3 work'))).toBe(
+      'checkout-redesign:regular:Q3 work',
+    )
+  })
+
+  it('renders a named hotfix as name:hotfix', () => {
+    expect(formatReleaseSpec(entry(nameId('checkout-redesign'), 'hotfix'))).toBe('checkout-redesign:hotfix')
+  })
+
+  it('preserves colons inside the description', () => {
+    expect(formatReleaseSpec(entry(versionId('1.2.5'), 'hotfix', 'Fixes: A and B'))).toBe('1.2.5:hotfix:Fixes: A and B')
+  })
+
+  it('treats an empty description as absent', () => {
+    expect(formatReleaseSpec(entry(versionId('1.2.5'), 'regular', ''))).toBe('1.2.5')
+  })
+})
+
+describe('formatReleaseSpec round-trips through parseReleaseSpec + resolveReleaseEntries', () => {
+  const known = collectKnownVersions({ remoteBranches: ['release/v1.63.0'] })
+
+  const roundTrip = (entry: ReleaseEntry): ReleaseEntry => {
+    return resolveReleaseEntries([parseReleaseSpec(formatReleaseSpec(entry))], known)[0] as ReleaseEntry
+  }
+
+  const cases: ReleaseEntry[] = [
+    { id: versionId('1.2.5'), type: 'regular' },
+    { id: versionId('1.2.5'), type: 'hotfix' },
+    { id: versionId('1.2.5'), type: 'regular', description: 'Holiday: backend' },
+    { id: nameId('checkout-redesign'), type: 'regular' },
+    { id: nameId('checkout-redesign'), type: 'hotfix' },
+    { id: nameId('checkout-redesign'), type: 'regular', description: 'Q3 work' },
+  ]
+
+  it.each(cases)('reconstructs %o', (entry) => {
+    expect(roundTrip(entry)).toEqual(entry)
   })
 })
 

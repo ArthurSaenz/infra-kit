@@ -144,38 +144,79 @@ const isNamedReleaseInput = (input: ReleaseInput): input is NamedReleaseInput =>
 }
 
 /**
- * Parse a CLI release spec of the form `version[:type[:description]]`.
- * Type defaults to "regular". Description is everything after the second
- * colon, so colons inside descriptions are preserved.
+ * Parse a CLI release spec of the form `<token>[:type[:description]]` into a
+ * {@link ReleaseInput}. The token determines the kind: a semver (`"1.2.5"`) or
+ * the literal `"next"` yields a versioned {@link ReleaseSpec}; anything else is
+ * treated as a named release ({@link NamedReleaseInput}) — the name is not
+ * validated here, {@link resolveReleaseEntries} runs `validateName` later. Type
+ * defaults to "regular". Description is everything after the second colon, so
+ * colons inside descriptions are preserved.
  */
-export const parseReleaseSpec = (raw: string): ReleaseSpec => {
+export const parseReleaseSpec = (raw: string): ReleaseInput => {
   const spec = raw.trim()
 
   if (spec === '') throw new Error('Release spec is empty')
 
   const firstColon = spec.indexOf(':')
+  let token = spec
+  let type: ReleaseType = 'regular'
+  let description = ''
 
-  if (firstColon === -1) {
-    return { version: spec, type: 'regular' }
+  if (firstColon !== -1) {
+    token = spec.slice(0, firstColon).trim()
+    const rest = spec.slice(firstColon + 1)
+    const secondColon = rest.indexOf(':')
+    const typeRaw = secondColon === -1 ? rest.trim() : rest.slice(0, secondColon).trim()
+
+    description = secondColon === -1 ? '' : rest.slice(secondColon + 1).trim()
+    const typeLower = typeRaw.toLowerCase()
+
+    if (!isReleaseType(typeLower)) {
+      throw new Error(`Invalid release type "${typeRaw}". Expected "regular" or "hotfix".`)
+    }
+
+    type = typeLower
   }
 
-  const version = spec.slice(0, firstColon).trim()
-  const rest = spec.slice(firstColon + 1)
-  const secondColon = rest.indexOf(':')
+  // A semver token or the "next" token is a versioned release; everything else
+  // is a named release. parseReleaseRef applies the same precedence downstream.
+  // Note: tryParse strips a leading "release/" prefix, so "release/1.2.3" reads
+  // as the version 1.2.3 (a real name can never contain a slash anyway).
+  if (isNextToken(token) || tryParse(token) !== null) {
+    const entry: ReleaseSpec = { version: token, type }
 
-  const typeRaw = secondColon === -1 ? rest.trim() : rest.slice(0, secondColon).trim()
-  const description = secondColon === -1 ? '' : rest.slice(secondColon + 1).trim()
-  const typeLower = typeRaw.toLowerCase()
+    if (description !== '') entry.description = description
 
-  if (!isReleaseType(typeLower)) {
-    throw new Error(`Invalid release type "${typeRaw}". Expected "regular" or "hotfix".`)
+    return entry
   }
 
-  const entry: ReleaseSpec = { version, type: typeLower }
+  const entry: NamedReleaseInput = { name: token, type }
 
   if (description !== '') entry.description = description
 
   return entry
+}
+
+/**
+ * Render a resolved {@link ReleaseEntry} as the canonical `--release` spec that
+ * reproduces it — the inverse of {@link parseReleaseSpec} composed with
+ * {@link resolveReleaseEntries}. The form is minimal: the bare token when the
+ * release is `regular` with no description, `token:hotfix` for a hotfix with no
+ * description, and `token:type:description` whenever a description is present
+ * (the type segment is required to reach the description segment). The token is
+ * the resolved {@link ReleaseId.raw} — a concrete semver for versions (so a
+ * resolved `"next"` pins its computed version) or the name for named releases.
+ */
+export const formatReleaseSpec = (entry: ReleaseEntry): string => {
+  const token = entry.id.raw
+
+  if (entry.description !== undefined && entry.description !== '') {
+    return `${token}:${entry.type}:${entry.description}`
+  }
+
+  if (entry.type === 'hotfix') return `${token}:hotfix`
+
+  return token
 }
 
 const withDescription = (base: { id: ReleaseId; type: ReleaseType }, description?: string): ReleaseEntry => {

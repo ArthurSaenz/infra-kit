@@ -191,3 +191,42 @@ export const getComponentFunction = (node: ESTree.Node | null | undefined): Comp
 
   return null
 }
+
+/** Unwrap an `export ...` statement to the declaration it wraps (or the statement itself). */
+const unwrapExport = (statement: ESTree.Statement | ESTree.ModuleDeclaration): ESTree.Node | null => {
+  if (statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration') {
+    return (statement.declaration as ESTree.Node | null) ?? null
+  }
+
+  return statement
+}
+
+/** Whether a single top-level declaration declares a React component. */
+const declaresComponent = (node: ESTree.Node | null): boolean => {
+  if (!node) {
+    return false
+  }
+
+  if (node.type === 'FunctionDeclaration') {
+    return isComponent(node)
+  }
+
+  if (node.type === 'VariableDeclaration') {
+    return node.declarations.some((declaration) => {
+      const fn = getComponentFunction(declaration.init)
+
+      return fn ? isComponent(fn) : false
+    })
+  }
+
+  const fn = getComponentFunction(node)
+
+  return fn ? isComponent(fn) : false
+}
+
+/** Whether any top-level statement in a program body declares a React component. */
+export const bodyDeclaresComponent = (body: Array<ESTree.Statement | ESTree.ModuleDeclaration>): boolean => {
+  return body.some((statement) => {
+    return declaresComponent(unwrapExport(statement))
+  })
+}

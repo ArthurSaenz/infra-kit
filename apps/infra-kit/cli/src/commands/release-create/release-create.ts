@@ -15,6 +15,7 @@ import type { ReleaseCreationResult, ReleaseType } from 'src/lib/release-utils'
 import {
   NoPriorVersionsError,
   computeNextVersion,
+  formatReleaseSpec,
   hasNextToken,
   loadExistingVersions,
   parseVersion,
@@ -171,20 +172,11 @@ const formatReleaseSummary = (entry: ReleaseEntry): string => {
 }
 
 const echoReleases = (entries: ReleaseEntry[]): void => {
+  // Every entry — versions, "next" (resolved to a concrete version), and named
+  // releases alike — echoes through the single --release flag. formatReleaseSpec
+  // produces a spec that parseReleaseSpec parses back into the same entry.
   for (const entry of entries) {
-    if (entry.id.kind === 'name') {
-      // Named releases echo the --name form; description is not part of the
-      // flag and is set later via release-desc-edit / interactively.
-      commandEcho.addOption('--name', entry.id.name)
-
-      continue
-    }
-
-    const spec = entry.description
-      ? `${entry.id.raw}:${entry.type}:${entry.description}`
-      : `${entry.id.raw}:${entry.type}`
-
-    commandEcho.addOption('--release', spec)
+    commandEcho.addOption('--release', formatReleaseSpec(entry))
   }
 }
 

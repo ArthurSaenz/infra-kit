@@ -7,7 +7,7 @@ const PLUGIN_NAME = '@wl'
 const plugin: ESLint.Plugin & { configs: Record<string, Linter.Config> } = {
   meta: {
     name: '@wl/eslint-plugin',
-    version: '0.1.1',
+    version: '0.1.3',
   },
   rules,
   configs: {},
@@ -29,6 +29,7 @@ plugin.configs.recommended = {
     [`${PLUGIN_NAME}/props-destructuring-newline`]: 'error',
     [`${PLUGIN_NAME}/props-destructuring-blank-line`]: 'error',
     [`${PLUGIN_NAME}/component-file-order`]: 'error',
+    [`${PLUGIN_NAME}/require-component-stories`]: 'error',
   },
 }
 

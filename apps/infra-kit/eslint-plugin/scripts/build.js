@@ -35,7 +35,9 @@ console.log('✅ Build was completed successfully: index.js -', +(stat.size / 10
 //    Rooting tsc at the single public entry (src/index.ts) walks only the
 //    reachable public surface via relative imports, so test files are excluded
 //    without a separate build config. `--ignoreConfig` is required because
-//    tsconfig.json is present alongside the input file.
+//    tsconfig.json is present alongside the input file. `--types node` is needed
+//    because some rules import `node:` builtins (e.g. fs/path) and, with the config
+//    ignored, tsc would not otherwise load @types/node to resolve those specifiers.
 execFileSync(
   'tsc',
   [
@@ -48,6 +50,8 @@ execFileSync(
     '--outDir',
     'dist',
     '--skipLibCheck',
+    '--types',
+    'node',
   ],
   { cwd: PKG_DIR, stdio: 'inherit' },
 )
