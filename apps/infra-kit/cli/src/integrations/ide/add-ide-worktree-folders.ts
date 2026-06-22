@@ -1,6 +1,4 @@
-import { $ } from 'zx'
-
-import { addFoldersToCursorWorkspace, resolveCursorWorkspacePath } from 'src/integrations/cursor'
+import { addFoldersToCursorWorkspace, launchCursor, resolveCursorWorkspacePath } from 'src/integrations/cursor'
 import { addFoldersToZedWorkspace } from 'src/integrations/zed'
 import { assertNever } from 'src/lib/assert-never'
 import { getInfraKitConfig, resolveConfiguredIdes } from 'src/lib/infra-kit-config'
@@ -56,7 +54,7 @@ export const addIdeWorktreeFolders = async (
 
         logger.info(`✅ Added ${added.length} folder(s) to ${workspacePath}${skippedSuffix}`)
 
-        await $`cursor ${workspacePath}`
+        await launchCursor(workspacePath)
 
         outcomes.push({ ran: true, provider: 'cursor', added: added.length, skipped: skipped.length })
         break

@@ -53,6 +53,21 @@ export const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string
     }
   }
 
+  // `git worktree remove` only deletes the leaf worktree, leaving the group
+  // folder (e.g. `release/`, `feature/`) behind. Remove it when it's now empty;
+  // `rmdir` is a no-op when the folder still holds other worktrees.
+  const groupDirs = new Set<string>()
+
+  for (const branch of removed) {
+    if (branch.includes('/')) {
+      groupDirs.add(`${worktreeDir}/${branch.split('/')[0]}`)
+    }
+  }
+
+  for (const groupDir of groupDirs) {
+    await $`rmdir ${groupDir}`.nothrow()
+  }
+
   if (pruneFolder && removed.length === branches.length) {
     await $`git worktree prune`
     await $`rm -rf ${worktreeDir}`

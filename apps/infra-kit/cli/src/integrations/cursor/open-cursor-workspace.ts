@@ -1,7 +1,6 @@
-import { $ } from 'zx'
-
 import { logger } from 'src/lib/logger'
 
+import { launchCursor } from './launch-cursor'
 import { reconcileCursorWorkspaceFolders } from './reconcile-workspace-folders'
 import { resolveCursorWorkspacePath } from './resolve-workspace-path'
 
@@ -58,7 +57,7 @@ export const openCursorWorkspace = async (args: OpenCursorWorkspaceArgs): Promis
     })
 
     if (!(skipRelaunchWhenEmpty && currentBranches.length === 0)) {
-      await $`cursor ${workspacePath}`
+      await launchCursor(workspacePath)
     }
 
     return { ran: true, added: added.length, removed: removed.length }

@@ -403,6 +403,12 @@ export const doctor = async () => {
       'RTK is installed',
       'RTK is not installed. Install from: https://github.com/rtk-ai/rtk',
     ),
+    checkCommand(
+      'typescript-language-server installed',
+      ['typescript-language-server', '--version'],
+      'typescript-language-server is installed',
+      'typescript-language-server is not installed. Install from: https://github.com/typescript-language-server/typescript-language-server#installing',
+    ),
     checkRtkConfigured(),
     Promise.resolve(checkZshrcInitialized()),
     checkPnpmWorkspaceVirtualStore(),

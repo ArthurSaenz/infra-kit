@@ -33,6 +33,7 @@ const cursor = vi.hoisted(() => {
     openCursorWorkspace: vi.fn(),
     addFoldersToCursorWorkspace: vi.fn(),
     removeFoldersFromCursorWorkspace: vi.fn(),
+    launchCursor: vi.fn(),
     resolveCursorWorkspacePath: vi.fn((value: string) => {
       return `/abs/${value}`
     }),
@@ -41,6 +42,13 @@ const cursor = vi.hoisted(() => {
 
 vi.mock('src/integrations/cursor', () => {
   return cursor
+})
+
+// Defense-in-depth: never let a test shell out to a real editor. Even if an
+// editor spawn leaks back into a layer this suite exercises directly, `$` is a
+// no-op here so `cursor <path>` can never open a real window during the run.
+vi.mock('zx', () => {
+  return { $: vi.fn() }
 })
 
 const zed = vi.hoisted(() => {
