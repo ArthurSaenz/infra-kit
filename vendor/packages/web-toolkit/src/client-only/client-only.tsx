@@ -29,7 +29,9 @@ export const clientOnly = <T extends React.ComponentType<any>>(
       })
   })
 
-  return ({ ref, ...props }: any & { ref?: React.RefObject<any | null> }) => {
+  return (props: any & { ref?: React.RefObject<any | null> }) => {
+    const { ref, fallback, ...rest } = props
+
     const [mounted, setMounted] = useState(false)
 
     useEffect(() => {
@@ -37,12 +39,11 @@ export const clientOnly = <T extends React.ComponentType<any>>(
     }, [])
 
     if (!mounted) {
-      return <>{props.fallback}</>
+      return <>{fallback}</>
     }
-    const { fallback, ...rest } = props
 
     return (
-      <Suspense fallback={<>{props.fallback}</>}>
+      <Suspense fallback={<>{fallback}</>}>
         <Component {...rest} ref={ref} />
       </Suspense>
     )

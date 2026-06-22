@@ -84,19 +84,6 @@ ruleTester.run('props-destructuring-newline', propsDestructuringNewline, {
         }
       `,
     },
-    // Pattern already binds `props` via a rest element: renaming the param to `props`
-    // would collide with `const { icon, ...props } = props`, so the rule must skip it.
-    {
-      code: dedent`
-        function Icon({ icon, ...props }) {
-          return <svg />
-        }
-      `,
-    },
-    // Pattern binds `props` directly (shorthand) — same collision risk, must be skipped.
-    { code: 'const Comp = ({ props }) => <div />' },
-    // Pattern binds `props` via a nested rename — must also be skipped.
-    { code: 'const Comp = ({ data: props }) => <div>{props}</div>' },
   ],
   invalid: [
     // Arrow, block body, plain JS.
@@ -217,6 +204,46 @@ ruleTester.run('props-destructuring-newline', propsDestructuringNewline, {
           return a
         })
       `,
+      errors: [{ messageId: 'destructureOnNewLine' }],
+    },
+    // Pattern binds `props` via a `...props` rest: still a violation, but there is no safe
+    // autofix (it would produce `const { icon, ...props } = props`), so it reports with no fix.
+    {
+      code: dedent`
+        function Icon({ icon, ...props }) {
+          return <svg />
+        }
+      `,
+      output: null,
+      errors: [{ messageId: 'destructureOnNewLine' }],
+    },
+    // Expression-bodied arrow returning JSX with a `...props` rest — reports, no autofix.
+    {
+      code: 'const Compo = ({ icon, ...props }) => <Icon />',
+      output: null,
+      errors: [{ messageId: 'destructureOnNewLine' }],
+    },
+    // Pattern binds `props` directly (shorthand) — same collision risk, reports with no fix.
+    {
+      code: 'const Comp = ({ props }) => <div />',
+      output: null,
+      errors: [{ messageId: 'destructureOnNewLine' }],
+    },
+    // Pattern binds `props` via a nested rename — reports with no fix.
+    {
+      code: 'const Comp = ({ data: props }) => <div>{props}</div>',
+      output: null,
+      errors: [{ messageId: 'destructureOnNewLine' }],
+    },
+    // Wrapped in forwardRef() with a `...props` rest: reports without a fix, and the `ref`
+    // second param is left untouched (no-fix path must not rewrite anything).
+    {
+      code: dedent`
+        const Comp = forwardRef(({ icon, ...props }, ref) => {
+          return <svg />
+        })
+      `,
+      output: null,
       errors: [{ messageId: 'destructureOnNewLine' }],
     },
   ],

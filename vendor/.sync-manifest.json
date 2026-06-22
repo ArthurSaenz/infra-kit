@@ -1,7 +1,7 @@
 {
   "source": "starter-workspace",
   "commit": "2901ce9258662eada1c1b63e2aac63edb391bb6b",
-  "syncedAt": "2026-06-22T07:44:17.771Z",
+  "syncedAt": "2026-06-22T09:27:39.314Z",
   "fileCount": 152,
   "files": {
     "README.md": "06b7aea87c83c143c72ce40d1cb8ecfcc7c28a3b61d879ea6839ae0f82570306",
@@ -17,7 +17,7 @@
     "configs/eslint-config/index.d.ts": "f7ff15c3328d296039111494188bb6073b85f627035b57662b52f260e716443c",
     "configs/eslint-config/index.js": "63ac4727feffa52a32d2e4a4c11ddfaf11b3334c4bec6214e2acb2a33e22a49c",
     "configs/eslint-config/infra-kit.config.ts": "f9fdfffbd0b3413efc4cfd0853b2fb31e2fce3e902a6bc0f4dd8473d921924e0",
-    "configs/eslint-config/package.json": "368e5650c233793e4d61bd8b26a5d93ccf1e66e6d419a2f85337ee61bae0d1e6",
+    "configs/eslint-config/package.json": "9c373110d69a24ebcc4871bbfbdd686a0371ee5a277139b5ac3fd71ef2eb056a",
     "configs/eslint-config/vitest.config.ts": "008162fee0b7f9ae6c2446179391d11d05cbf8ea2abc0740e63d404cafa78bd5",
     "configs/prettier-config/index.mjs": "9deef6a12a750397eb82dea7edf886e0df12c861cf2c80708e3e4570eade2870",
     "configs/prettier-config/infra-kit.config.ts": "f9fdfffbd0b3413efc4cfd0853b2fb31e2fce3e902a6bc0f4dd8473d921924e0",
@@ -78,7 +78,7 @@
     "packages/web-toolkit/src/branch/index.ts": "1bbe6f3305e4a3a9fdbbd36a1212fdc61dfdbafe19f7856f725e09c0ba0d2071",
     "packages/web-toolkit/src/client-cache/client-cache.ts": "eefb0b6e63f673e0e5fa683295d6dc7574fc7de8873e19f5d86f04d8854483a9",
     "packages/web-toolkit/src/client-cache/index.ts": "119286963cc135bec01b9902bfc1d97db68cf81032bf5eeb030b874aa9c8146b",
-    "packages/web-toolkit/src/client-only/client-only.tsx": "dd44c01b7ec9cd5f2a3eb13ac67b53a37a1cc14834de89bc5f2edcef9048d5e7",
+    "packages/web-toolkit/src/client-only/client-only.tsx": "4471bba403d8405a855330394b385891a56ef9ad337142d23bcf43e961d48a5e",
     "packages/web-toolkit/src/client-only/index.ts": "bd928dc8b73fea8ccd95d02bc59540926b51e8ddf8e35bddf75b7c46596d9d33",
     "packages/web-toolkit/src/cn/cn.ts": "9f6313c4cf115a07902bc47841585dc4a951711d9397c391e8016deddc3f99fd",
     "packages/web-toolkit/src/cn/index.ts": "cbd56562ee8bc7b8beeb59b2ff9aa5991323651c96f0513e7f3d95abb6b45462",

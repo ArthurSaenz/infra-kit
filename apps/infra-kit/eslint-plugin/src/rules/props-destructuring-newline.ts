@@ -75,71 +75,74 @@ export const propsDestructuringNewline: Rule.RuleModule = {
 
       // The fix renames the parameter to `props` and re-destructures it in the body
       // (`const <pattern> = props`). If the pattern already binds `props` (e.g. a
-      // `...props` rest), that body binding collides with the new parameter and yields
-      // an invalid "Duplicate declaration props". There is no safe rename that keeps the
-      // `props` name the rule mandates, so skip these patterns entirely.
+      // `...props` rest, a `{ props }` shorthand, or a `{ data: props }` rename), that
+      // body binding collides with the new parameter and yields an invalid "Duplicate
+      // declaration props". No safe rename keeps the `props` name the rule mandates —
+      // and an ESLint fixer cannot scope-rename the downstream `props.*` usages a rename
+      // would require — so these patterns are still reported (the inline destructuring is
+      // a violation regardless) but WITHOUT an autofix; the developer resolves them by hand.
       const boundNames = new Set<string>()
 
       collectBoundNames(firstParam, boundNames)
 
-      if (boundNames.has('props')) {
-        return
-      }
+      const bindsProps = boundNames.has('props')
 
       const objectPattern = firstParam as AnnotatedPattern
 
       context.report({
         node: firstParam,
         messageId: 'destructureOnNewLine',
-        fix(fixer) {
-          const text = sourceCode.getText()
-          const annotation = objectPattern.typeAnnotation
+        fix: bindsProps
+          ? undefined
+          : (fixer) => {
+              const text = sourceCode.getText()
+              const annotation = objectPattern.typeAnnotation
 
-          const patternStart = objectPattern.range![0]
-          const patternEnd = annotation ? annotation.range![0] : objectPattern.range![1]
-          const fullEnd = annotation ? annotation.range![1] : objectPattern.range![1]
+              const patternStart = objectPattern.range![0]
+              const patternEnd = annotation ? annotation.range![0] : objectPattern.range![1]
+              const fullEnd = annotation ? annotation.range![1] : objectPattern.range![1]
 
-          const patternText = text.slice(patternStart, patternEnd).trim()
-          const annotationText = annotation ? sourceCode.getText(annotation) : ''
+              const patternText = text.slice(patternStart, patternEnd).trim()
+              const annotationText = annotation ? sourceCode.getText(annotation) : ''
 
-          const fixes = [fixer.replaceTextRange([patternStart, fullEnd], `props${annotationText}`)]
+              const fixes = [fixer.replaceTextRange([patternStart, fullEnd], `props${annotationText}`)]
 
-          const destructureStatement = `const ${patternText} = props`
+              const destructureStatement = `const ${patternText} = props`
 
-          // Indentation of the line the component is declared on, used as the base for inserted code.
-          const lines = sourceCode.getLines()
-          const declarationLine = lines[node.loc!.start.line - 1] ?? ''
-          const baseIndent = declarationLine.slice(0, declarationLine.length - declarationLine.trimStart().length)
-          const innerIndent = `${baseIndent}  `
+              // Indentation of the line the component is declared on, used as the base for inserted code.
+              const lines = sourceCode.getLines()
+              const declarationLine = lines[node.loc!.start.line - 1] ?? ''
+              const baseIndent = declarationLine.slice(0, declarationLine.length - declarationLine.trimStart().length)
+              const innerIndent = `${baseIndent}  `
 
-          if (node.body.type === 'BlockStatement') {
-            const [firstStatement] = node.body.body
+              if (node.body.type === 'BlockStatement') {
+                const [firstStatement] = node.body.body
 
-            if (firstStatement) {
-              const indent = ' '.repeat(firstStatement.loc!.start.column)
+                if (firstStatement) {
+                  const indent = ' '.repeat(firstStatement.loc!.start.column)
 
-              fixes.push(fixer.insertTextBefore(firstStatement, `${destructureStatement}\n\n${indent}`))
-            } else {
-              const openBrace = sourceCode.getFirstToken(node.body)!
+                  fixes.push(fixer.insertTextBefore(firstStatement, `${destructureStatement}\n\n${indent}`))
+                } else {
+                  const openBrace = sourceCode.getFirstToken(node.body)!
 
-              fixes.push(fixer.insertTextAfter(openBrace, `\n${innerIndent}${destructureStatement}\n${baseIndent}`))
-            }
+                  fixes.push(fixer.insertTextAfter(openBrace, `\n${innerIndent}${destructureStatement}\n${baseIndent}`))
+                }
 
-            return fixes
-          }
+                return fixes
+              }
 
-          // Expression-bodied arrow (implicit return) — wrap it in a block.
-          const bodyText = sourceCode.getText(node.body)
+              // Expression-bodied arrow (implicit return) — wrap it in a block.
+              const bodyText = sourceCode.getText(node.body)
 
-          fixes.push(
-            fixer.replaceText(
-              node.body,
-              `{\n${innerIndent}${destructureStatement}\n\n${innerIndent}return ${bodyText}\n${baseIndent}}`,
-            ),
-          )
+              fixes.push(
+                fixer.replaceText(
+                  node.body,
+                  `{\n${innerIndent}${destructureStatement}\n\n${innerIndent}return ${bodyText}\n${baseIndent}}`,
+                ),
+              )
 
-          return fixes
-        },
+              return fixes
+            },
       })
     }
 
