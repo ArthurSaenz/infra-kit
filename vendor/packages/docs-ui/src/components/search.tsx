@@ -15,7 +15,7 @@ import type { SharedProps } from 'fumadocs-ui/components/dialog/search'
  * Static search client: downloads the prerendered Orama index from /api/search and
  * runs the query in the browser, so no server is needed at runtime (S3-friendly).
  */
-export default function StaticSearchDialog(props: SharedProps) {
+const StaticSearchDialog = (props: SharedProps) => {
   const { search, setSearch, query } = useDocsSearch({ type: 'static' })
 
   return (
@@ -32,3 +32,5 @@ export default function StaticSearchDialog(props: SharedProps) {
     </SearchDialog>
   )
 }
+
+export default StaticSearchDialog

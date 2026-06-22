@@ -13,7 +13,7 @@ type ScriptProps = React.ScriptHTMLAttributes<HTMLScriptElement> & {
   onUnMount?: () => void
 }
 
-export function Script(props: ScriptProps): React.ReactElement | null {
+export const Script = (props: ScriptProps): React.ReactElement | null => {
   const { id, src = '', onReady = null, strategy = 'afterInteractive', shouldUnMountScript, onUnMount } = props
 
   /**
