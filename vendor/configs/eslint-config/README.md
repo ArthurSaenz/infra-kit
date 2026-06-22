@@ -72,6 +72,31 @@ consumer that imports via a path alias (e.g. `#root` ⇒ `src`) must add a match
 (e.g. `eslint-import-resolver-typescript` in its `settings['import/resolver']`); otherwise
 aliased targets resolve as `unknown` and are silently not enforced.
 
+## Component conventions (`@wl/eslint-plugin`)
+
+On JSX/TSX files the config enables two white-label component rules (registered rule-by-rule, not
+the plugin's `recommended` preset):
+
+- **`@wl/component-file-order`** — enforces top-level order: imports → `*Props` interface/type →
+  component declaration. Report-only; activates only on files that contain a React component.
+- **`@wl/props-destructuring-newline`** (error, auto-fixable) — a component must accept a single
+  `props` parameter and destructure it on its own line in the body, never inline in the parameter
+  list. A function counts as a component when its name is PascalCase or it returns JSX.
+
+```tsx
+// ❌ inline destructuring in the parameter list
+const UserCard = ({ user, className }: UserCardProps) => {
+  return <div className={className}>{user.name}</div>
+}
+
+// ✅ destructure props on its own line in the body
+const UserCard = (props: UserCardProps) => {
+  const { user, className } = props
+
+  return <div className={className}>{user.name}</div>
+}
+```
+
 ## Tests
 
 ```bash

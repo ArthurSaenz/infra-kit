@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Import AFTER the mock is declared so the module picks up the mocked dep.
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 
-import { migrateLegacyConfig } from '../migrate-config'
+import { migrateLegacyConfig, normalizeLegacyIdeStructures } from '../migrate-config'
 
 vi.mock('src/lib/git-utils', () => {
   return {
@@ -155,6 +155,137 @@ describe('migrateLegacyConfig', () => {
         expect(fs.existsSync(yml)).toBe(false)
         expect(fs.existsSync(yml.replace(/\.yml$/, '.json'))).toBe(true)
       }
+    })
+  })
+})
+
+describe('normalizeLegacyIdeStructures', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('strips a legacy ide.config.mode from infra-kit.json (single provider) and preserves the rest', async () => {
+    await withTmpRepo(async (tmp) => {
+      const jsonPath = path.join(tmp, 'infra-kit.json')
+
+      writeFile(
+        jsonPath,
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: './ws.code-workspace' } },
+        }),
+      )
+
+      await normalizeLegacyIdeStructures()
+
+      const result = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))
+
+      expect(result.ide).toEqual({ provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } })
+      // Everything else preserved verbatim.
+      expect(result.environments).toEqual(['dev'])
+      expect(result.envManagement).toEqual({ provider: 'doppler', config: { name: 'p' } })
+    })
+  })
+
+  it('strips ide.config.mode from every entry of an array ide', async () => {
+    await withTmpRepo(async (tmp) => {
+      const jsonPath = path.join(tmp, 'infra-kit.json')
+
+      writeFile(
+        jsonPath,
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: [
+            { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: 'ws' } },
+            { provider: 'zed', config: { mode: 'windows' } },
+          ],
+        }),
+      )
+
+      await normalizeLegacyIdeStructures()
+
+      const result = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))
+
+      expect(result.ide).toEqual([
+        { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
+        { provider: 'zed', config: {} },
+      ])
+    })
+  })
+
+  it('normalizes the user-global config layer too', async () => {
+    await withTmpRepo(async (tmp) => {
+      const userGlobalJson = path.join(tmp, '.infra-kit', 'config.json')
+
+      writeFile(userGlobalJson, JSON.stringify({ ide: { provider: 'zed', config: { mode: 'windows' } } }))
+
+      await normalizeLegacyIdeStructures()
+
+      expect(JSON.parse(fs.readFileSync(userGlobalJson, 'utf-8')).ide).toEqual({ provider: 'zed', config: {} })
+    })
+  })
+
+  it('normalizes the user-project config layer too', async () => {
+    await withTmpRepo(async (tmp) => {
+      const projectName = path.basename(tmp)
+      const userProjectJson = path.join(tmp, '.infra-kit', 'projects', projectName, 'infra-kit.json')
+
+      writeFile(
+        userProjectJson,
+        JSON.stringify({ ide: { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: 'ws' } } }),
+      )
+
+      await normalizeLegacyIdeStructures()
+
+      expect(JSON.parse(fs.readFileSync(userProjectJson, 'utf-8')).ide).toEqual({
+        provider: 'cursor',
+        config: { workspaceConfigPath: 'ws' },
+      })
+    })
+  })
+
+  it('leaves an already-clean config byte-for-byte untouched (idempotent)', async () => {
+    await withTmpRepo(async (tmp) => {
+      const jsonPath = path.join(tmp, 'infra-kit.json')
+      const json =
+        '{"environments":["dev"],"envManagement":{"provider":"doppler","config":{"name":"p"}},"ide":{"provider":"zed","config":{}}}'
+
+      writeFile(jsonPath, json)
+
+      await normalizeLegacyIdeStructures()
+
+      expect(fs.readFileSync(jsonPath, 'utf-8')).toBe(json)
+    })
+  })
+
+  it('is a no-op when there is no ide config', async () => {
+    await withTmpRepo(async (tmp) => {
+      const jsonPath = path.join(tmp, 'infra-kit.json')
+      const json = '{"environments":["dev"],"envManagement":{"provider":"doppler","config":{"name":"p"}}}'
+
+      writeFile(jsonPath, json)
+
+      await normalizeLegacyIdeStructures()
+
+      expect(fs.readFileSync(jsonPath, 'utf-8')).toBe(json)
+    })
+  })
+
+  it('warns and skips malformed JSON without throwing', async () => {
+    await withTmpRepo(async (tmp) => {
+      const jsonPath = path.join(tmp, 'infra-kit.json')
+
+      writeFile(jsonPath, '{ not valid json ')
+
+      await expect(normalizeLegacyIdeStructures()).resolves.toBeUndefined()
+
+      expect(fs.readFileSync(jsonPath, 'utf-8')).toBe('{ not valid json ')
     })
   })
 })

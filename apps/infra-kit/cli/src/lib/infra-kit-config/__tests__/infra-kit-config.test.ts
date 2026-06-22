@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Import AFTER the mock is declared so the module picks up the mocked dep.
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 
-import { getInfraKitConfig, resetInfraKitConfigCache } from '../infra-kit-config'
+import { getInfraKitConfig, resetInfraKitConfigCache, resolveConfiguredIdes } from '../infra-kit-config'
+import type { InfraKitConfig } from '../infra-kit-config'
 
 vi.mock('src/lib/git-utils', () => {
   return {
@@ -76,21 +77,140 @@ describe('getInfraKitConfig', () => {
         JSON.stringify({
           environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: './ws.code-workspace' } },
+          ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } },
           taskManager: { provider: 'jira', config: { baseUrl: 'https://example.atlassian.net', projectId: 123 } },
         }),
       )
 
       const cfg = await getInfraKitConfig()
 
-      expect(cfg.ide?.provider).toBe('cursor')
+      const ide = resolveConfiguredIdes(cfg)[0]
 
-      if (cfg.ide?.provider === 'cursor') {
-        expect(cfg.ide.config.mode).toBe('workspace')
-        expect(cfg.ide.config.workspaceConfigPath).toBe('./ws.code-workspace')
+      if (!ide) {
+        throw new Error('expected one configured ide')
+      }
+
+      expect(ide.provider).toBe('cursor')
+
+      if (ide.provider === 'cursor') {
+        expect(ide.config.workspaceConfigPath).toBe('./ws.code-workspace')
       }
 
       expect(cfg.taskManager?.provider).toBe('jira')
+    })
+  })
+
+  it('accepts a zed ide provider with no workspaceConfigPath', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: { provider: 'zed', config: {} },
+        }),
+      )
+
+      const cfg = await getInfraKitConfig()
+
+      expect(resolveConfiguredIdes(cfg)[0]?.provider).toBe('zed')
+    })
+  })
+
+  it('strips a legacy "mode" key (backward compat)', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: { provider: 'zed', config: { mode: 'windows' } },
+        }),
+      )
+
+      const cfg = await getInfraKitConfig()
+
+      const ide = resolveConfiguredIdes(cfg)[0]
+
+      if (!ide) {
+        throw new Error('expected one configured ide')
+      }
+
+      expect(ide.provider).toBe('zed')
+      // The now-removed `mode` field is silently stripped, not rejected.
+      expect(ide.config).not.toHaveProperty('mode')
+    })
+  })
+
+  it('accepts an array of IDE providers (multi-editor)', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: [
+            { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } },
+            { provider: 'zed', config: {} },
+          ],
+        }),
+      )
+
+      const cfg = await getInfraKitConfig()
+
+      expect(
+        resolveConfiguredIdes(cfg).map((ide) => {
+          return ide.provider
+        }),
+      ).toEqual(['cursor', 'zed'])
+    })
+  })
+
+  it('rejects an array with a duplicate provider at parse time', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: [
+            { provider: 'cursor', config: { workspaceConfigPath: './a.code-workspace' } },
+            { provider: 'cursor', config: { workspaceConfigPath: './b.code-workspace' } },
+          ],
+        }),
+      )
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/each IDE provider may appear at most once/)
+    })
+  })
+
+  it('rejects an empty IDE array', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: [],
+        }),
+      )
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/Invalid infra-kit\.json/)
+    })
+  })
+
+  it('rejects an unknown ide provider', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: { provider: 'vscode', config: {} },
+        }),
+      )
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/Invalid infra-kit\.json/)
     })
   })
 
@@ -154,18 +274,21 @@ describe('getInfraKitConfig', () => {
     })
   })
 
-  it('rejects ide.cursor mode=workspace without workspaceConfigPath', async () => {
+  it('rejects cursor without workspaceConfigPath', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
           environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: { provider: 'cursor', config: { mode: 'workspace' } },
+          ide: { provider: 'cursor', config: {} },
         }),
       )
 
-      await expect(getInfraKitConfig()).rejects.toThrow(/workspaceConfigPath/)
+      // Cursor requires workspaceConfigPath; with the single|array union the
+      // inner message collapses to the union-level "Invalid input → at ide",
+      // but the config is still rejected (which is what matters).
+      await expect(getInfraKitConfig()).rejects.toThrow(/Invalid infra-kit\.json/)
     })
   })
 
@@ -266,5 +389,45 @@ describe('getInfraKitConfig', () => {
       // Same object reference — no re-parse.
       expect(a).toBe(b)
     })
+  })
+})
+
+describe('resolveConfiguredIdes', () => {
+  const base = {
+    environments: ['dev'],
+    envManagement: { provider: 'doppler', config: { name: 'p' } },
+  } as InfraKitConfig
+
+  it('wraps a single ide object in an array', () => {
+    const cfg = {
+      ...base,
+      ide: { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
+    } as InfraKitConfig
+
+    expect(
+      resolveConfiguredIdes(cfg).map((ide) => {
+        return ide.provider
+      }),
+    ).toEqual(['cursor'])
+  })
+
+  it('returns an ide array as-is', () => {
+    const cfg = {
+      ...base,
+      ide: [
+        { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
+        { provider: 'zed', config: {} },
+      ],
+    } as InfraKitConfig
+
+    expect(
+      resolveConfiguredIdes(cfg).map((ide) => {
+        return ide.provider
+      }),
+    ).toEqual(['cursor', 'zed'])
+  })
+
+  it('returns an empty array when ide is unset', () => {
+    expect(resolveConfiguredIdes(base)).toEqual([])
   })
 })

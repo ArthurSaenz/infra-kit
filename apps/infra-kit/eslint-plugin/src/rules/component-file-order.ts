@@ -1,7 +1,7 @@
 import type { Rule } from 'eslint'
 import type * as ESTree from 'estree'
 
-import { getComponentFunction, isComponent } from '../utils/component'
+import { declaresComponent, getDeclaredComponentName, unwrapExport } from '../utils/component'
 import { matchesAnyGlob } from '../utils/path-match'
 
 interface Options {
@@ -17,51 +17,199 @@ interface NamedDeclaration {
 
 const PROPS_SUFFIX = 'Props'
 
-/** Unwrap an `export ...` statement to the declaration it wraps (or the statement itself). */
-const unwrapExport = (statement: ESTree.Statement | ESTree.ModuleDeclaration): ESTree.Node | null => {
-  if (statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration') {
-    return (statement.declaration as ESTree.Node | null) ?? null
+/**
+ * Count the directive prologue — the leading run of string-literal expression statements
+ * (`'use client'`, `'use server'`, `'use strict'`) at the top of the file. They are
+ * legitimate file-leading content (like imports) and must not count as "stray" before the
+ * props interface. Per the ECMAScript spec a directive is only one that *precedes* any other
+ * statement, so we stop at the first non-string-literal statement rather than matching any
+ * bare string anywhere in the body.
+ */
+const getDirectivePrologueCount = (body: Array<ESTree.Statement | ESTree.ModuleDeclaration>): number => {
+  let count = 0
+
+  for (const statement of body) {
+    const isStringExpression =
+      statement.type === 'ExpressionStatement' &&
+      statement.expression.type === 'Literal' &&
+      typeof statement.expression.value === 'string'
+
+    if (!isStringExpression) {
+      break
+    }
+
+    count += 1
   }
 
-  return statement
+  return count
 }
 
-/** Whether a declaration is a props interface/type alias (`SomethingProps`). */
-const isPropsTypeDeclaration = (node: ESTree.Node | null): boolean => {
+/** The name of a props interface/type alias (`SomethingProps`), or null when it is neither. */
+const getPropsTypeName = (node: ESTree.Node | null): string | null => {
   if (!node) {
-    return false
+    return null
   }
 
   const named = node as NamedDeclaration
 
   if (named.type !== 'TSInterfaceDeclaration' && named.type !== 'TSTypeAliasDeclaration') {
-    return false
+    return null
   }
 
-  return named.id?.name?.endsWith(PROPS_SUFFIX) ?? false
+  const name = named.id?.name
+
+  return name?.endsWith(PROPS_SUFFIX) ? name : null
 }
 
-/** Whether a top-level declaration declares a React component. */
-const declaresComponent = (node: ESTree.Node | null): boolean => {
-  if (!node) {
-    return false
-  }
+interface ComponentRef {
+  index: number
+  name: string | null
+}
 
-  if (node.type === 'FunctionDeclaration') {
-    return isComponent(node)
-  }
+interface TopLevel {
+  importIndices: number[]
+  components: ComponentRef[]
+  // First index of each `*Props` declaration, keyed by its name.
+  propsIndexByName: Map<string, number>
+  // Local binding names introduced by imports — used to detect a props type that is
+  // imported (e.g. `import type { CompProps }`) rather than declared in the file.
+  importedNames: Set<string>
+}
 
-  if (node.type === 'VariableDeclaration') {
-    return node.declarations.some((declaration) => {
-      const fn = getComponentFunction(declaration.init)
+/** Classify each top-level statement into imports, components, local props types, and import bindings. */
+const collectTopLevel = (body: Array<ESTree.Statement | ESTree.ModuleDeclaration>): TopLevel => {
+  const importIndices: number[] = []
+  const components: ComponentRef[] = []
+  const propsIndexByName = new Map<string, number>()
+  const importedNames = new Set<string>()
 
-      return fn ? isComponent(fn) : false
+  body.forEach((statement, index) => {
+    if (statement.type === 'ImportDeclaration') {
+      importIndices.push(index)
+
+      for (const specifier of statement.specifiers) {
+        importedNames.add(specifier.local.name)
+      }
+
+      return
+    }
+
+    const declaration = unwrapExport(statement)
+
+    const propsName = getPropsTypeName(declaration)
+
+    if (propsName !== null && !propsIndexByName.has(propsName)) {
+      propsIndexByName.set(propsName, index)
+    }
+
+    if (declaresComponent(declaration)) {
+      components.push({ index, name: getDeclaredComponentName(declaration) })
+    }
+  })
+
+  return { importIndices, components, propsIndexByName, importedNames }
+}
+
+/**
+ * Whether any top-level statement in the half-open range `[directiveCount, boundary)` is a stray —
+ * i.e. not an import and not part of the leading directive prologue. `skipIndex` excludes a single
+ * known-good statement (the component itself, when scanning the gap before its props interface).
+ */
+const hasStrayBefore = (
+  body: Array<ESTree.Statement | ESTree.ModuleDeclaration>,
+  boundary: number,
+  directiveCount: number,
+  skipIndex?: number,
+): boolean => {
+  return body.some((statement, index) => {
+    return index < boundary && index >= directiveCount && index !== skipIndex && statement.type !== 'ImportDeclaration'
+  })
+}
+
+type MessageId =
+  | 'importsFirst'
+  | 'interfaceImmediatelyBeforeComponent'
+  | 'interfaceImmediatelyAfterImports'
+  | 'componentImmediatelyAfterImports'
+
+// A pending report, expressed as a body index plus the message to raise against it.
+interface Violation {
+  index: number
+  messageId: MessageId
+}
+
+/** Imports that sit after the first component (or its props interface) must move up. */
+const findImportOrderViolations = (importIndices: number[], importBoundary: number): Violation[] => {
+  return importIndices
+    .filter((importIndex) => {
+      return importIndex > importBoundary
     })
+    .map((importIndex) => {
+      return { index: importIndex, messageId: 'importsFirst' }
+    })
+}
+
+/**
+ * Each component's own `<Name>Props` interface, when present, must sit immediately before the
+ * component. Matching by name keeps a sibling component's props from being judged against this one.
+ */
+const findAdjacencyViolations = (components: ComponentRef[], propsIndexByName: Map<string, number>): Violation[] => {
+  const violations: Violation[] = []
+
+  for (const component of components) {
+    if (component.name === null) {
+      continue
+    }
+
+    const propsIndex = propsIndexByName.get(`${component.name}${PROPS_SUFFIX}`)
+
+    if (propsIndex !== undefined && propsIndex !== component.index - 1) {
+      violations.push({ index: propsIndex, messageId: 'interfaceImmediatelyBeforeComponent' })
+    }
   }
 
-  const fn = getComponentFunction(node)
+  return violations
+}
 
-  return fn ? isComponent(fn) : false
+/**
+ * The first component is anchored to the import block: no stray top-level definition may wedge
+ * between the imports and the props interface — or, when the props type is *imported* rather than
+ * declared in the file, between the imports and the component itself. Only the first component is
+ * anchored; later interfaces are governed solely by the adjacency check. Each `every` guard skips
+ * when an import sits after its anchor, since that misorder is already reported by `importsFirst`.
+ */
+const findAnchorViolations = (
+  body: Array<ESTree.Statement | ESTree.ModuleDeclaration>,
+  directiveCount: number,
+  importIndices: number[],
+  first: ComponentRef,
+  firstPropsName: string | null,
+  firstPropsIndex: number | undefined,
+  importedNames: Set<string>,
+): Violation[] => {
+  const violations: Violation[] = []
+
+  const importsBeforeInterface =
+    firstPropsIndex !== undefined &&
+    importIndices.every((importIndex) => {
+      return importIndex < firstPropsIndex
+    })
+
+  if (importsBeforeInterface && hasStrayBefore(body, firstPropsIndex!, directiveCount, first.index)) {
+    violations.push({ index: firstPropsIndex!, messageId: 'interfaceImmediatelyAfterImports' })
+  }
+
+  const firstPropsImported =
+    firstPropsIndex === undefined && firstPropsName !== null && importedNames.has(firstPropsName)
+  const importsBeforeComponent = importIndices.every((importIndex) => {
+    return importIndex < first.index
+  })
+
+  if (firstPropsImported && importsBeforeComponent && hasStrayBefore(body, first.index, directiveCount)) {
+    violations.push({ index: first.index, messageId: 'componentImmediatelyAfterImports' })
+  }
+
+  return violations
 }
 
 export const componentFileOrder: Rule.RuleModule = {
@@ -69,7 +217,7 @@ export const componentFileOrder: Rule.RuleModule = {
     type: 'suggestion',
     docs: {
       description:
-        'Enforce a strict top-level order in React component files: imports first, then the component props interface/type, then the component declaration.',
+        'Enforce a strict top-level order in React component files: imports first, then — for each component — its props interface/type declared immediately before the component.',
       recommended: true,
       url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin',
     },
@@ -95,7 +243,12 @@ export const componentFileOrder: Rule.RuleModule = {
     ],
     messages: {
       importsFirst: 'Imports must come before the component interface and declaration.',
-      interfaceBeforeComponent: 'The component props interface must be declared before the component.',
+      interfaceImmediatelyBeforeComponent:
+        'The component props interface must be declared immediately before the component.',
+      interfaceImmediatelyAfterImports:
+        'The component props interface must be declared immediately after the imports, with no other declarations in between.',
+      componentImmediatelyAfterImports:
+        'When the component props type is imported, the component must be declared immediately after the imports, with no other declarations in between.',
     },
   },
 
@@ -117,47 +270,40 @@ export const componentFileOrder: Rule.RuleModule = {
       Program(program) {
         const body = program.body
 
-        const importIndices: number[] = []
-        const propsIndices: number[] = []
-        let componentIndex = -1
+        // Leading directive prologue (`'use client'`, ...) — excluded from the stray checks.
+        const directiveCount = getDirectivePrologueCount(body)
 
-        body.forEach((statement, index) => {
-          if (statement.type === 'ImportDeclaration') {
-            importIndices.push(index)
-
-            return
-          }
-
-          const declaration = unwrapExport(statement)
-
-          if (isPropsTypeDeclaration(declaration)) {
-            propsIndices.push(index)
-          }
-
-          if (componentIndex === -1 && declaresComponent(declaration)) {
-            componentIndex = index
-          }
-        })
+        const { importIndices, components, propsIndexByName, importedNames } = collectTopLevel(body)
 
         // The rule only governs files that actually contain a component.
-        if (componentIndex === -1) {
+        if (components.length === 0) {
           return
         }
 
-        // Imports must precede the first props interface and the component.
-        const importBoundary = Math.min(componentIndex, ...propsIndices)
+        const first = components[0]!
+        const firstPropsName = first.name === null ? null : `${first.name}${PROPS_SUFFIX}`
+        const firstPropsIndex = firstPropsName === null ? undefined : propsIndexByName.get(firstPropsName)
+        // `importBoundary` is intentionally directive-insensitive: a leading directive prologue
+        // shifts every subsequent index up uniformly, so it never crosses this boundary. The
+        // prologue is excluded only from the stray checks, where the raw index matters.
+        const importBoundary = Math.min(first.index, firstPropsIndex ?? first.index)
 
-        for (const importIndex of importIndices) {
-          if (importIndex > importBoundary) {
-            context.report({ node: body[importIndex]!, messageId: 'importsFirst' })
-          }
-        }
+        const violations = [
+          ...findImportOrderViolations(importIndices, importBoundary),
+          ...findAdjacencyViolations(components, propsIndexByName),
+          ...findAnchorViolations(
+            body,
+            directiveCount,
+            importIndices,
+            first,
+            firstPropsName,
+            firstPropsIndex,
+            importedNames,
+          ),
+        ]
 
-        // The props interface/type must precede the component declaration.
-        for (const propsIndex of propsIndices) {
-          if (propsIndex > componentIndex) {
-            context.report({ node: body[propsIndex]!, messageId: 'interfaceBeforeComponent' })
-          }
+        for (const violation of violations) {
+          context.report({ node: body[violation.index]!, messageId: violation.messageId })
         }
       },
     }

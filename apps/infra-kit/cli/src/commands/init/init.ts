@@ -6,7 +6,7 @@ import { logger } from 'src/lib/logger'
 import { removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
 
 import { writeAgentFiles } from './agent-files'
-import { migrateLegacyConfig } from './migrate-config'
+import { migrateLegacyConfig, normalizeLegacyIdeStructures } from './migrate-config'
 
 export const MARKER_START = '# -- infra-kit:begin --'
 export const MARKER_END = '# -- infra-kit:end --'
@@ -36,18 +36,27 @@ const USER_GLOBAL_CONFIG_EXAMPLE = `// infra-kit user-global config — ~/.infra
 {
   // "ide": {
   //   "provider": "cursor",
-  //   "config": { "mode": "workspace", "workspaceConfigPath": "/path/to/your.code-workspace" }
+  //   "config": { "workspaceConfigPath": "/path/to/your.code-workspace" }
   // },
+  // // Or, for Zed (no workspace file — one window with all worktrees via "zed <root> <wt...>"):
+  // "ide": { "provider": "zed", "config": {} },
+  // // Or drive BOTH editors at once with an array (at most one entry per provider):
+  // "ide": [
+  //   { "provider": "cursor", "config": { "workspaceConfigPath": "/path/to/your.code-workspace" } },
+  //   { "provider": "zed", "config": {} }
+  // ],
   // "worktrees": { "openInGithubDesktop": false, "openInCmux": true }
 }
 `
 
 /**
  * Append infra-kit shell functions to .zshrc, migrate any legacy
- * `infra-kit.yml` config layers to JSON, and seed the user-global config at
- * ~/.infra-kit/config.json on first run. Idempotent: a subsequent run replaces
- * the existing zshrc block in place, has nothing left to migrate, and leaves
- * the user-global config untouched.
+ * `infra-kit.yml` config layers to JSON, normalize existing JSON configs from
+ * the old IDE structure to the new one (strip the removed `ide.config.mode`),
+ * and seed the user-global config at ~/.infra-kit/config.json on first run.
+ * Idempotent: a subsequent run replaces the existing zshrc block in place, has
+ * nothing left to migrate or normalize, and leaves the user-global config
+ * untouched.
  *
  * @example
  * // CLI: `infra-kit init`  (or via the `pnpm dx-init` alias)
@@ -78,6 +87,10 @@ export const init = async (): Promise<void> => {
   // Convert any legacy infra-kit.yml config layers to JSON before seeding, so a
   // migrated config.json is not re-seeded as an empty stub.
   await migrateLegacyConfig()
+
+  // Migrate existing JSON configs from the old IDE structure to the new one
+  // (strip the removed `ide.config.mode` field). No-op for already-clean configs.
+  await normalizeLegacyIdeStructures()
 
   seedUserGlobalConfig()
 

@@ -11,7 +11,13 @@ import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { formatZxError } from 'src/lib/errors/format-zx-error'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
-import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
+import {
+  deleteLocalBranch,
+  deleteRemoteBranch,
+  getCurrentWorktrees,
+  getProjectRoot,
+  getRepoName,
+} from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { displayLabel, formatJiraName, formatRcTitle, parseBranchName } from 'src/lib/release-id'
 import type { ReleaseId } from 'src/lib/release-id'
@@ -309,6 +315,30 @@ const syncMainIntoDev = async (): Promise<void> => {
   )
 }
 
+/**
+ * Best-effort cleanup of the delivered release branch, locally and on `origin`.
+ *
+ * Idempotent backstop to `gh pr merge --delete-branch` (in `mergeReleasePR`):
+ * that flag is skipped when the release PR was already merged on a prior
+ * attempt, so an idempotent re-run would otherwise leave the branch behind.
+ * Each delete is isolated — a failure (e.g. the branch checked out in a stray
+ * worktree, or a remote hiccup) logs a warning naming the branch and never
+ * aborts delivery, since the irreversible merge and deploy already happened.
+ */
+const removeDeliveredReleaseBranch = async (branch: string): Promise<void> => {
+  try {
+    await deleteLocalBranch(branch)
+  } catch (error) {
+    logger.warn({ err: formatZxError(error) }, `Failed to delete local branch ${branch} (non-blocking)`)
+  }
+
+  try {
+    await deleteRemoteBranch(branch)
+  } catch (error) {
+    logger.warn({ err: formatZxError(error) }, `Failed to delete remote branch ${branch} (non-blocking)`)
+  }
+}
+
 const deliverJiraReleaseSafely = async (id: ReleaseId): Promise<void> => {
   const jiraConfig = await loadJiraConfigOptional()
 
@@ -395,6 +425,7 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
 
   await dispatchDeployWorkflow()
   await syncMainIntoDev()
+  await removeDeliveredReleaseBranch(selectedReleaseBranch)
 
   $.quiet = false
 

@@ -1,7 +1,6 @@
 /* eslint-disable sonarjs/cognitive-complexity */
 import checkbox from '@inquirer/checkbox'
 import confirm from '@inquirer/confirm'
-import select from '@inquirer/select'
 import process from 'node:process'
 import { z } from 'zod'
 import { $ } from 'zx'
@@ -12,14 +11,15 @@ import {
   listCmuxWorkspaceTitles,
   openCmuxWorkspaceWithLayout,
 } from 'src/integrations/cmux'
-import { addFoldersToCursorWorkspace, resolveCursorWorkspacePath } from 'src/integrations/cursor'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
+import { IDE_MODES, addIdeWorktreeFolders } from 'src/integrations/ide'
+import type { IdeMode } from 'src/integrations/ide'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
-import { getInfraKitConfig } from 'src/lib/infra-kit-config'
+import { getInfraKitConfig, resolveConfiguredIdes } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { formatBranchName, isReleaseBranch, parseReleaseRef } from 'src/lib/release-id'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions, releaseBranchLabels } from 'src/lib/release-utils'
@@ -31,13 +31,12 @@ import type { RequiredConfirmedOptionArg } from 'src/types'
 const FEATURE_DIR = 'feature'
 const RELEASE_DIR = 'release'
 
-export const CURSOR_MODES = ['workspace', 'windows', 'none'] as const
-export type CursorMode = (typeof CURSOR_MODES)[number]
-
 interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
   all?: boolean
   versions?: string
-  cursor?: CursorMode
+  ide?: IdeMode
+  /** @deprecated Alias for `ide`, kept for back-compat. Ignored when `ide` is set. */
+  cursor?: IdeMode
   githubDesktop?: boolean
   cmux?: boolean
 }
@@ -47,7 +46,9 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
  * Creates worktrees for active release branches and removes unused ones
  */
 export const worktreesAdd = async (options: WorktreeManagementArgs) => {
-  const { confirmedCommand, all, versions, cursor, githubDesktop, cmux } = options
+  const { confirmedCommand, all, versions, githubDesktop, cmux } = options
+  // `cursor` is the deprecated alias for `ide`; `ide` wins when both are present.
+  const ide = options.ide ?? options.cursor
 
   commandEcho.start('worktrees-add')
 
@@ -136,34 +137,13 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     }
 
     const config = await getInfraKitConfig()
-    const cursorConfig = config.ide?.provider === 'cursor' ? config.ide.config : undefined
 
-    const cursorMode: CursorMode =
-      cursor ??
-      cursorConfig?.mode ??
-      (await select<CursorMode>({
-        message: 'Cursor mode for created worktrees?',
-        default: 'workspace',
-        choices: [
-          {
-            name: 'Add to workspace file',
-            value: 'workspace',
-            description: 'Append each worktree as a folder in ide.config.workspaceConfigPath, then open the workspace',
-          },
-          {
-            name: 'Open separate windows',
-            value: 'windows',
-            description: 'Open each created worktree in its own Cursor window',
-          },
-          { name: 'Skip', value: 'none', description: 'Do not open Cursor' },
-        ],
-      }))
+    // One attach style: every configured editor gets the worktrees added to its
+    // workspace. Per-run skip is `--ide none` / `--no-ide`; no editor configured
+    // means there's nothing to open.
+    const ideMode: IdeMode = ide ?? (resolveConfiguredIdes(config).length > 0 ? 'workspace' : 'none')
 
-    if (typeof cursor === 'undefined' && !cursorConfig?.mode) {
-      commandEcho.setInteractive()
-    }
-
-    commandEcho.addOption('--cursor', cursorMode)
+    commandEcho.addOption('--ide', ideMode)
 
     const openInGithubDesktop =
       githubDesktop ??
@@ -202,28 +182,8 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
 
     logResults(createdWorktrees)
 
-    if (cursorMode === 'workspace') {
-      if (!cursorConfig?.workspaceConfigPath) {
-        logger.warn('⚠️ Skipping Cursor: ide.config.workspaceConfigPath is not set in infra-kit config')
-      } else {
-        const workspacePath = resolveCursorWorkspacePath(cursorConfig.workspaceConfigPath, projectRoot)
-
-        const folderPaths = createdWorktrees.map((branch) => {
-          return `${worktreeDir}/${branch}`
-        })
-
-        const { added, skipped } = await addFoldersToCursorWorkspace({ workspacePath, folderPaths })
-
-        const skippedSuffix = skipped.length > 0 ? ` (${skipped.length} already present)` : ''
-
-        logger.info(`✅ Added ${added.length} folder(s) to ${workspacePath}${skippedSuffix}`)
-
-        await $`cursor ${workspacePath}`
-      }
-    } else if (cursorMode === 'windows') {
-      for (const branch of createdWorktrees) {
-        await $`cursor ${worktreeDir}/${branch}`
-      }
+    if (ideMode === 'workspace') {
+      await addIdeWorktreeFolders({ projectRoot, worktreeDir, branches: createdWorktrees })
     }
 
     if (openInGithubDesktop) {
@@ -369,12 +329,16 @@ export const worktreesAddMcpTool = defineMcpTool({
       .describe(
         'Comma-separated release versions or names to target (e.g. "1.2.5, 1.2.6" or "checkout-redesign, 1.2.5"). Either "versions" or all=true must be provided for MCP calls. Overrides "all" when set.',
       ),
-    cursor: z
-      .enum(CURSOR_MODES)
+    ide: z
+      .enum(IDE_MODES)
       .optional()
       .describe(
-        'Cursor open mode for created worktrees. "workspace" appends each worktree as a folder to "ide.config.workspaceConfigPath" in infra-kit config and opens the workspace. "windows" opens each worktree in its own Cursor window. "none" skips Cursor. Resolution order: this flag → "ide.config.mode" from infra-kit config → interactive prompt (CLI) / "none" (MCP, no TTY).',
+        'Editor open mode for created worktrees, applied to all configured editors (Cursor and/or Zed, per the "ide" config). "workspace" (the only attach style) adds each worktree to every configured editor workspace and opens it. "none" skips the editor. Resolution order: this flag → "workspace" when at least one "ide" is configured → "none" otherwise.',
       ),
+    cursor: z
+      .enum(IDE_MODES)
+      .optional()
+      .describe('Deprecated alias for "ide". Prefer "ide". Ignored when "ide" is provided.'),
     githubDesktop: z
       .boolean()
       .optional()

@@ -142,3 +142,38 @@ export const getRepoName = async (): Promise<string> => {
 
   return path.basename(projectRoot)
 }
+
+/**
+ * Delete a local branch if it exists and is not the current checkout.
+ *
+ * Idempotent: a no-op when the branch is absent (`git branch --list` prints
+ * nothing). Uses force `-D` because a delivered release branch was
+ * squash-merged — its tip is unreachable from the base, so `-d` would refuse
+ * with "not fully merged". The delete itself still rejects if the branch is
+ * checked out in another worktree; callers decide how to handle that.
+ */
+export const deleteLocalBranch = async (branch: string): Promise<void> => {
+  const listed = await $`git branch --list ${branch}`
+
+  if (listed.stdout.trim().length === 0) return
+
+  if ((await getCurrentBranch()) === branch) return
+
+  await $`git branch -D ${branch}`
+}
+
+/**
+ * Delete a branch on the `origin` remote if it exists.
+ *
+ * Idempotent: a no-op when the branch is absent on the remote. Existence is
+ * probed with `git ls-remote --heads` (empty stdout = absent) rather than
+ * `--exit-code`, so a genuine network/auth failure rejects and propagates to
+ * the caller instead of being silently misread as "branch absent".
+ */
+export const deleteRemoteBranch = async (branch: string): Promise<void> => {
+  const refs = await $`git ls-remote --heads origin ${branch}`
+
+  if (refs.stdout.trim().length === 0) return
+
+  await $`git push origin --delete ${branch}`
+}

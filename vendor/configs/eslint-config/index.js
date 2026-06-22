@@ -1,6 +1,6 @@
 import antfu from '@antfu/eslint-config'
+import wl from '@slip-stream-kit/eslint-plugin'
 import boundaries from 'eslint-plugin-boundaries'
-// import wl from '@slip-stream-kit/eslint-plugin'
 import sonarjs from 'eslint-plugin-sonarjs'
 
 const config = async (userOptions = {}) => {
@@ -205,8 +205,10 @@ const config = async (userOptions = {}) => {
         ]
       : [],
 
-    // White-label architecture rules: props destructuring + component file order
-    // wl.configs.recommended,
+    // White-label component-file conventions, consumed from the plugin's `configs.recommended`
+    // preset (the single source of truth for rule scope/rationale). Spread so each preset block
+    // becomes a positional antfu config.
+    ...wl.configs.recommended,
 
     // Temporary disable all sonarjs rules for markdown files
     {

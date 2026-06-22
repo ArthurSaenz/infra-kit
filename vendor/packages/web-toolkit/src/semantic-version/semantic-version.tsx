@@ -1,11 +1,5 @@
 import { useEffect } from 'react'
 
-declare global {
-  interface Window {
-    _app?: Record<string, any>
-  }
-}
-
 interface SemanticVersionProps {
   version: string
   env: string
@@ -31,4 +25,10 @@ export const SemanticVersion = (props: SemanticVersionProps) => {
   }, [])
 
   return null
+}
+
+declare global {
+  interface Window {
+    _app?: Record<string, any>
+  }
 }

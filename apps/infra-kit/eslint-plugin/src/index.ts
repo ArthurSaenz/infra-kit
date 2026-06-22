@@ -4,37 +4,54 @@ import { rules } from './rules'
 
 const PLUGIN_NAME = '@wl'
 
-const plugin: ESLint.Plugin & { configs: Record<string, Linter.Config> } = {
+const plugin: ESLint.Plugin & { configs: Record<string, Linter.Config | Linter.Config[]> } = {
   meta: {
     name: '@wl/eslint-plugin',
-    version: '0.1.3',
+    version: '0.1.11',
   },
   rules,
   configs: {},
 }
 
 /**
- * Flat-config preset that registers the plugin and turns every rule on.
+ * Flat-config preset that registers the plugin and turns every rule on, scoped to
+ * the files each rule is meant for. It is an array of config blocks, so spread it:
  *
  * @example
  * import wl from '@wl/eslint-plugin'
  *
- * export default [wl.configs.recommended]
+ * export default [...wl.configs.recommended]
  */
-plugin.configs.recommended = {
-  plugins: {
-    [PLUGIN_NAME]: plugin,
+plugin.configs.recommended = [
+  {
+    files: ['**/*.tsx'],
+    plugins: {
+      [PLUGIN_NAME]: plugin,
+    },
+    rules: {
+      [`${PLUGIN_NAME}/props-destructuring-newline`]: 'error',
+      [`${PLUGIN_NAME}/props-destructuring-blank-line`]: 'error',
+      [`${PLUGIN_NAME}/props-type-reference`]: 'error',
+      [`${PLUGIN_NAME}/component-file-order`]: 'error',
+      // Pages and routes are excluded: route/page modules commonly use `function`
+      // declarations (and framework conventions like default-exported page functions).
+      [`${PLUGIN_NAME}/component-arrow-function`]: ['error', { ignore: ['**/pages/**', '**/routes/**'] }],
+      [`${PLUGIN_NAME}/require-component-stories`]: 'error',
+    },
   },
-  rules: {
-    [`${PLUGIN_NAME}/props-destructuring-newline`]: 'error',
-    [`${PLUGIN_NAME}/props-destructuring-blank-line`]: 'error',
-    [`${PLUGIN_NAME}/component-file-order`]: 'error',
-    [`${PLUGIN_NAME}/require-component-stories`]: 'error',
+  // Storybook stories legitimately deviate from the imports → *Props → component
+  // order (meta/args/decorators/render fns), so component-file-order would only
+  // produce noise there. Every other rule stays enabled for story files.
+  {
+    files: ['**/*.stories.{ts,tsx}'],
+    rules: {
+      [`${PLUGIN_NAME}/component-file-order`]: 'off',
+    },
   },
-}
+]
 
 export const meta: ESLint.Plugin['meta'] = plugin.meta
-export const configs: Record<string, Linter.Config> = plugin.configs
+export const configs: Record<string, Linter.Config | Linter.Config[]> = plugin.configs
 export { rules }
 
 export default plugin

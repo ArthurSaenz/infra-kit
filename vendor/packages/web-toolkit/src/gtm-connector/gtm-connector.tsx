@@ -1,5 +1,19 @@
 import { Script } from '../script'
 
+export interface ScriptGtmProps {
+  gtmId: string
+}
+
+export const ScriptGtm = (props: ScriptGtmProps) => {
+  const { gtmId } = props
+
+  return (
+    <Script id="gtm" strategy="afterInteractive">
+      {gtmScript(gtmId)}
+    </Script>
+  )
+}
+
 export const gtmNoScript = (gtmId: string) => {
   return `<!-- Google Tag Manager (noscript) -->
     <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=${gtmId}"
@@ -13,18 +27,4 @@ export const gtmScript = (gtmId: string) => {
     j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
     })(window,document,'script','dataLayer','${gtmId}');`
-}
-
-export interface ScriptGtmProps {
-  gtmId: string
-}
-
-export const ScriptGtm = (props: ScriptGtmProps) => {
-  const { gtmId } = props
-
-  return (
-    <Script id="gtm" strategy="afterInteractive">
-      {gtmScript(gtmId)}
-    </Script>
-  )
 }

@@ -144,3 +144,107 @@ export const migrateLegacyConfig = async (): Promise<void> => {
     resetInfraKitConfigCache()
   }
 }
+
+/**
+ * Surgically strip the removed `ide.config.mode` field from a parsed config
+ * object (single-provider or array form). The windows-removal made `mode` a dead
+ * key — the loader already ignores it, so this only matters for keeping the
+ * on-disk file clean. Returns `changed: false` (and the input untouched) when
+ * there is no `mode` to remove, so callers can skip rewriting clean files.
+ *
+ * Only `mode` is removed — every other key is preserved verbatim (no full-schema
+ * re-validation), so a config that is otherwise invalid or carries forward-compat
+ * keys is never altered beyond the dead field.
+ */
+const stripLegacyIdeMode = (parsed: Record<string, unknown>): { changed: boolean; result: Record<string, unknown> } => {
+  const ide = parsed.ide
+
+  if (ide === null || typeof ide !== 'object') {
+    return { changed: false, result: parsed }
+  }
+
+  let changed = false
+
+  const stripEntry = (entry: unknown): unknown => {
+    if (entry === null || typeof entry !== 'object' || !('config' in entry)) {
+      return entry
+    }
+
+    const config = (entry as { config: unknown }).config
+
+    if (config === null || typeof config !== 'object' || !('mode' in config)) {
+      return entry
+    }
+
+    changed = true
+
+    const restConfig = Object.fromEntries(
+      Object.entries(config as Record<string, unknown>).filter(([key]) => {
+        return key !== 'mode'
+      }),
+    )
+
+    return { ...(entry as Record<string, unknown>), config: restConfig }
+  }
+
+  const nextIde = Array.isArray(ide) ? ide.map(stripEntry) : stripEntry(ide)
+
+  if (!changed) {
+    return { changed: false, result: parsed }
+  }
+
+  return { changed: true, result: { ...parsed, ide: nextIde } }
+}
+
+/**
+ * Normalize any existing `infra-kit.json` config layers (project, user-global,
+ * user-project) from the old IDE structure to the new one by removing the
+ * removed `ide.config.mode` field. Run by `infra-kit init` after the YAML→JSON
+ * migration. Best-effort and non-fatal per layer; only rewrites a file when its
+ * `ide` config actually carries the dead key, so clean configs are left byte-for-
+ * byte untouched (idempotent). Resets the config cache when anything changed.
+ *
+ * @example
+ * await normalizeLegacyIdeStructures()
+ * // ✓ Normalized ide config in infra-kit.json (removed legacy "mode")
+ * // (no output when no config carries a legacy "mode")
+ */
+export const normalizeLegacyIdeStructures = async (): Promise<void> => {
+  let paths: Awaited<ReturnType<typeof getInfraKitConfigPaths>>
+
+  try {
+    paths = await getInfraKitConfigPaths()
+  } catch {
+    return
+  }
+
+  const jsonPaths = [paths.main, paths.userGlobal, paths.userProject]
+
+  let normalized = 0
+
+  for (const jsonPath of jsonPaths) {
+    if (!(await fileExists(jsonPath))) continue
+
+    try {
+      const raw = await fs.readFile(jsonPath, 'utf-8')
+
+      if (raw.trim() === '') continue
+
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      const { changed, result } = stripLegacyIdeMode(parsed)
+
+      if (!changed) continue
+
+      await fs.writeFile(jsonPath, `${JSON.stringify(result, null, 2)}\n`, 'utf-8')
+
+      logger.info(`✓ Normalized ide config in ${tildify(jsonPath)} (removed legacy "mode")`)
+      normalized++
+    } catch (err) {
+      logger.info(`⚠ Skipped normalizing ${tildify(jsonPath)} — ${(err as Error).message}`)
+    }
+  }
+
+  if (normalized > 0) {
+    resetInfraKitConfigCache()
+  }
+}

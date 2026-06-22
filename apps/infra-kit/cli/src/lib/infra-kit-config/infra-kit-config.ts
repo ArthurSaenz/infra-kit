@@ -22,27 +22,36 @@ const dopplerEnvManagementSchema = z.object({
 const envManagementSchema = z.discriminatedUnion('provider', [dopplerEnvManagementSchema])
 
 // ide
-const cursorIdeConfigSchema = z
-  .object({
-    mode: z.enum(['workspace', 'windows']).default('workspace'),
-    workspaceConfigPath: z.string().min(1).optional(),
-  })
-  .refine(
-    (v) => {
-      return v.mode !== 'workspace' || !!v.workspaceConfigPath
-    },
-    {
-      message: 'workspaceConfigPath is required when mode is "workspace"',
-      path: ['workspaceConfigPath'],
-    },
-  )
+// There is one attach style: each worktree is added to the configured editor's
+// workspace and opened (no per-window mode). Cursor needs a `.code-workspace`
+// path to reconcile its `folders` array against.
+const cursorIdeConfigSchema = z.object({
+  workspaceConfigPath: z.string().min(1),
+})
 
 const cursorIdeSchema = z.object({
   provider: z.literal('cursor'),
   config: cursorIdeConfigSchema,
 })
 
-const ideSchema = z.discriminatedUnion('provider', [cursorIdeSchema])
+// Zed has no portable workspace file (no `.code-workspace`) and no folder-remove
+// CLI: a multi-worktree workspace is realized by a single `zed <root> <wt...>`
+// invocation. So `config` carries no settings — there's no path to point at.
+const zedIdeConfigSchema = z.object({})
+
+const zedIdeSchema = z.object({
+  provider: z.literal('zed'),
+  config: zedIdeConfigSchema,
+})
+
+const ideSchema = z.discriminatedUnion('provider', [cursorIdeSchema, zedIdeSchema])
+
+// `ide` accepts a single provider (back-compat) OR an array to drive multiple
+// editors at once (e.g. Cursor + Zed). Normalized to an array everywhere via
+// `resolveConfiguredIdes`. Uniqueness-by-provider is enforced at parse time by a
+// `.superRefine` on the full config schema (see below) — not here, so the message
+// survives `z.union` error aggregation.
+const idesSchema = z.union([ideSchema, z.array(ideSchema).min(1)])
 
 // taskManager
 const jiraTaskManagerSchema = z.object({
@@ -61,17 +70,66 @@ const worktreesConfigSchema = z.object({
   openInCmux: z.boolean().optional(),
 })
 
-export const infraKitConfigSchema = z.object({
+// Base object shape, kept separate so `.partial()` (which only works on a plain
+// ZodObject, not the `.superRefine`-wrapped full schema) can derive the override
+// schema from it.
+const infraKitConfigObject = z.object({
   environments: z.array(z.string().min(1)).min(1),
   envManagement: envManagementSchema,
-  ide: ideSchema.optional(),
+  ide: idesSchema.optional(),
   taskManager: taskManagerSchema.optional(),
   worktrees: worktreesConfigSchema.optional(),
 })
 
-export const infraKitOverrideConfigSchema = infraKitConfigSchema.partial()
+// Full schema = base object + a parse-time uniqueness check on the `ide` array.
+// This runs inside the *merged* `safeParse` in getInfraKitConfig, so it's the
+// gate for the final config. (The override layers use the `.partial()` form
+// below, which drops this object-level refinement — acceptable, the merged
+// parse is authoritative.)
+export const infraKitConfigSchema = infraKitConfigObject.superRefine((cfg, ctx) => {
+  if (!Array.isArray(cfg.ide)) return
+
+  const seen = new Set<string>()
+
+  for (const entry of cfg.ide) {
+    if (seen.has(entry.provider)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'each IDE provider may appear at most once',
+        path: ['ide'],
+      })
+
+      return
+    }
+
+    seen.add(entry.provider)
+  }
+})
+
+export const infraKitOverrideConfigSchema = infraKitConfigObject.partial()
 
 export type InfraKitConfig = z.infer<typeof infraKitConfigSchema>
+
+/** A single resolved IDE entry (`{ provider, config }`). */
+export type ConfiguredIde = z.infer<typeof ideSchema>
+
+/**
+ * Normalize the `ide` config (single object, array, or unset) into a flat list.
+ * Validation-free: assumes already-parsed input (uniqueness is enforced by the
+ * schema). The one source of truth for "which editors are configured."
+ *
+ * @example
+ * resolveConfiguredIdes({ ide: { provider: 'cursor', config: {...} } }) // => [cursor]
+ * resolveConfiguredIdes({ ide: [cursor, zed] })                         // => [cursor, zed]
+ * resolveConfiguredIdes({})                                             // => []
+ */
+export const resolveConfiguredIdes = (config: InfraKitConfig): ConfiguredIde[] => {
+  const ide = config.ide
+
+  if (!ide) return []
+
+  return Array.isArray(ide) ? ide : [ide]
+}
 
 export interface InfraKitConfigPaths {
   /** Committed project config (required). */
@@ -131,9 +189,9 @@ export const getInfraKitConfigPaths = async (): Promise<InfraKitConfigPaths> => 
  *
  * @example
  * // infra-kit.json:           { "environments": ["dev"], "envManagement": { "provider": "doppler", "config": { "name": "p" } } }
- * // ~/.infra-kit/config.json: { "ide": { "provider": "cursor", "config": { "mode": "windows" } } }
+ * // ~/.infra-kit/config.json: { "ide": { "provider": "cursor", "config": { "workspaceConfigPath": "./ws.code-workspace" } } }
  * const cfg = await getInfraKitConfig()
- * // => { environments: ['dev'], envManagement: {...}, ide: { provider: 'cursor', config: { mode: 'windows' } } }
+ * // => { environments: ['dev'], envManagement: {...}, ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } } }
  */
 export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
   const paths = await getInfraKitConfigPaths()
@@ -281,9 +339,9 @@ interface ConfigLayer {
  * // => null
  *
  * @example
- * // /home/me/.infra-kit/config.json: '{ "ide": { "provider": "cursor", "config": { "mode": "windows" } } }'
+ * // /home/me/.infra-kit/config.json: '{ "ide": { "provider": "cursor", "config": { "workspaceConfigPath": "./ws.code-workspace" } } }'
  * await loadLayer({ label: '~/.infra-kit/config.json', path: '/home/me/.infra-kit/config.json', required: false })
- * // => { ide: { provider: 'cursor', config: { mode: 'windows' } } }
+ * // => { ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } } }
  */
 const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | null> => {
   const raw = await readIfExists(layer.path)

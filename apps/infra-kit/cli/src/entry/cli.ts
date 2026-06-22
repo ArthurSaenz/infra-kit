@@ -18,12 +18,14 @@ import { init } from 'src/commands/init'
 import { releaseCreate } from 'src/commands/release-create'
 import { releaseDescEdit } from 'src/commands/release-desc-edit'
 import { version } from 'src/commands/version'
-import { CURSOR_MODES, worktreesAdd } from 'src/commands/worktrees-add'
-import type { CursorMode } from 'src/commands/worktrees-add'
+import { worktreesAdd } from 'src/commands/worktrees-add'
 import { worktreesList } from 'src/commands/worktrees-list'
 import { worktreesOpen } from 'src/commands/worktrees-open'
+import { worktreesReload } from 'src/commands/worktrees-reload'
 import { worktreesRemove } from 'src/commands/worktrees-remove'
 import { worktreesSync } from 'src/commands/worktrees-sync'
+import { IDE_MODES } from 'src/integrations/ide'
+import type { IdeMode } from 'src/integrations/ide'
 import { logger } from 'src/lib/logger'
 import { parseReleaseSpec } from 'src/lib/version-utils'
 import type { ReleaseInput } from 'src/lib/version-utils'
@@ -34,7 +36,7 @@ const collectReleaseSpec = (value: string, prev: string[]): string[] => {
   return [...prev, value]
 }
 
-const normalizeCursorMode = (value: unknown): CursorMode | undefined => {
+const normalizeIdeMode = (value: unknown, flagName: '--ide' | '--cursor'): IdeMode | undefined => {
   if (typeof value === 'undefined') {
     return undefined
   }
@@ -47,11 +49,11 @@ const normalizeCursorMode = (value: unknown): CursorMode | undefined => {
     return 'none'
   }
 
-  if (typeof value === 'string' && (CURSOR_MODES as readonly string[]).includes(value)) {
-    return value as CursorMode
+  if (typeof value === 'string' && (IDE_MODES as readonly string[]).includes(value)) {
+    return value as IdeMode
   }
 
-  throw new Error(`Invalid --cursor value "${String(value)}". Expected one of: ${CURSOR_MODES.join(', ')}.`)
+  throw new Error(`Invalid ${flagName} value "${String(value)}". Expected one of: ${IDE_MODES.join(', ')}.`)
 }
 
 const runProgram = async (argv?: string[]): Promise<void> => {
@@ -175,18 +177,23 @@ program
   .option('-y, --yes', 'Skip confirmation prompt')
   .option('-a, --all', 'Select all active release branches')
   .option('-v, --versions <versions>', 'Specify versions by comma, e.g. 1.2.5, 1.2.6')
-  .option('-c, --cursor [mode]', 'Cursor mode for created worktrees: workspace (default) | windows | none')
-  .option('--no-cursor', 'Skip Cursor (alias for --cursor none)')
+  .option('-i, --ide [mode]', 'Editor mode for created worktrees: workspace (default) | none')
+  .option('--no-ide', 'Skip the editor (alias for --ide none)')
+  .option('-c, --cursor [mode]', 'Deprecated alias for --ide')
+  .option('--no-cursor', 'Deprecated alias for --no-ide')
   .option('-g, --github-desktop', 'Open created worktrees in GitHub Desktop')
   .option('--no-github-desktop', 'Skip GitHub Desktop prompt')
   .option('-m, --cmux', 'Open created worktrees in cmux (3-pane layout)')
   .option('--no-cmux', 'Skip cmux prompt')
   .action(async (options) => {
+    // `--ide` wins over the deprecated `--cursor` alias when both are provided.
+    const ide = normalizeIdeMode(options.ide, '--ide') ?? normalizeIdeMode(options.cursor, '--cursor')
+
     await worktreesAdd({
       confirmedCommand: options.yes,
       all: options.all,
       versions: options.versions,
-      cursor: normalizeCursorMode(options.cursor),
+      ide,
       githubDesktop: options.githubDesktop,
       cmux: options.cmux,
     })
@@ -211,9 +218,16 @@ program
 
 program
   .command('worktrees-open')
-  .description('Open Cursor + cmux for existing release worktrees (cold-start restore)')
+  .description('Open the configured editor (Cursor/Zed) + cmux for existing release worktrees (cold-start restore)')
   .action(async () => {
     await worktreesOpen()
+  })
+
+program
+  .command('worktrees-reload')
+  .description('Close all cmux/editor worktree windows, then reopen the current release worktrees')
+  .action(async () => {
+    await worktreesReload()
   })
 
 const configCmd = program.command('config').description('Manage infra-kit configuration files')
@@ -305,7 +319,14 @@ if (process.argv.length <= 2) {
     'release-deploy-selected',
     'release-deliver',
   ]
-  const worktreeCommands = ['worktrees-add', 'worktrees-list', 'worktrees-open', 'worktrees-remove', 'worktrees-sync']
+  const worktreeCommands = [
+    'worktrees-add',
+    'worktrees-list',
+    'worktrees-open',
+    'worktrees-reload',
+    'worktrees-remove',
+    'worktrees-sync',
+  ]
   const envCommands = [
     'audit',
     'doctor',

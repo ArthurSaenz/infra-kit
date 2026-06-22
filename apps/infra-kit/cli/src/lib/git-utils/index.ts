@@ -1,4 +1,6 @@
 export {
+  deleteLocalBranch,
+  deleteRemoteBranch,
   getCurrentBranch,
   getCurrentWorktrees,
   getProjectRoot,

@@ -1,20 +1,15 @@
 import { Fragment, useState } from 'react'
 
-declare global {
-  interface Window {
-    _app?: Record<string, any>
-    DevToolService?: any
-  }
+interface DevToolLabelProps {
+  release?: string
 }
-
-const isSSR = typeof window === 'undefined'
 
 /**
  * @description Dev tool label component for displaying the dev label in the bottom right corner of the screen
  *
  * Also see component SemanticVersion
  */
-export const DevToolLabel = (props: { release?: string }) => {
+export const DevToolLabel = (props: DevToolLabelProps) => {
   const { release = '' } = props
 
   const [devLabel] = useState<string>(() => {
@@ -88,3 +83,12 @@ const getDevLabel = (branchName: string) => {
 
   return chunks.at(-1) || ''
 }
+
+declare global {
+  interface Window {
+    _app?: Record<string, any>
+    DevToolService?: any
+  }
+}
+
+const isSSR = typeof window === 'undefined'

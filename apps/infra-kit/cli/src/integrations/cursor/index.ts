@@ -1,4 +1,5 @@
 export { addFoldersToCursorWorkspace } from './add-folders-to-workspace'
+export { openCursorWorkspace } from './open-cursor-workspace'
 export { reconcileCursorWorkspaceFolders } from './reconcile-workspace-folders'
 export { removeFoldersFromCursorWorkspace } from './remove-folders-from-workspace'
 export { resolveCursorWorkspacePath } from './resolve-workspace-path'

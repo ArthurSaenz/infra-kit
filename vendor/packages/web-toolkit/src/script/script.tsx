@@ -2,17 +2,6 @@ import { useEffect, useRef } from 'react'
 
 import { requestIdleCallback } from './request-idle-callback'
 
-const ScriptCache = new Map()
-const LoadCache = new Set()
-
-const DOMAttributeNames: Record<string, string> = {
-  acceptCharset: 'accept-charset',
-  className: 'class',
-  htmlFor: 'for',
-  httpEquiv: 'http-equiv',
-  noModule: 'noModule',
-}
-
 type ScriptProps = React.ScriptHTMLAttributes<HTMLScriptElement> & {
   strategy?: 'afterInteractive' | 'lazyOnload'
   id?: string
@@ -22,6 +11,83 @@ type ScriptProps = React.ScriptHTMLAttributes<HTMLScriptElement> & {
   children?: React.ReactNode
   shouldUnMountScript?: boolean
   onUnMount?: () => void
+}
+
+export function Script(props: ScriptProps): React.ReactElement | null {
+  const { id, src = '', onReady = null, strategy = 'afterInteractive', shouldUnMountScript, onUnMount } = props
+
+  /**
+   * - First mount:
+   *   1. The useEffect for onReady executes
+   *   2. hasOnReadyEffectCalled.current is false, but the script hasn't loaded yet (not in LoadCache)
+   *      onReady is skipped, set hasOnReadyEffectCalled.current to true
+   *   3. The useEffect for loadScript executes
+   *   4. hasLoadScriptEffectCalled.current is false, loadScript executes
+   *      Once the script is loaded, the onLoad and onReady will be called by then
+   *   [If strict mode is enabled / is wrapped in <OffScreen /> component]
+   *   5. The useEffect for onReady executes again
+   *   6. hasOnReadyEffectCalled.current is true, so entire effect is skipped
+   *   7. The useEffect for loadScript executes again
+   *   8. hasLoadScriptEffectCalled.current is true, so entire effect is skipped
+   *
+   * - Second mount:
+   *   1. The useEffect for onReady executes
+   *   2. hasOnReadyEffectCalled.current is false, but the script has already loaded (found in LoadCache)
+   *      onReady is called, set hasOnReadyEffectCalled.current to true
+   *   3. The useEffect for loadScript executes
+   *   4. The script is already loaded, loadScript bails out
+   *   [If strict mode is enabled / is wrapped in <OffScreen /> component]
+   *   5. The useEffect for onReady executes again
+   *   6. hasOnReadyEffectCalled.current is true, so entire effect is skipped
+   *   7. The useEffect for loadScript executes again
+   *   8. hasLoadScriptEffectCalled.current is true, so entire effect is skipped
+   */
+  const hasOnReadyEffectCalled = useRef(false)
+
+  useEffect(() => {
+    const cacheKey = id || src
+
+    if (!hasOnReadyEffectCalled.current) {
+      // Run onReady if script has loaded before but component is re-mounted
+      if (onReady && cacheKey && LoadCache.has(cacheKey)) {
+        onReady()
+      }
+
+      hasOnReadyEffectCalled.current = true
+    }
+  }, [onReady, id, src])
+
+  useEffect(() => {
+    if (strategy === 'afterInteractive') {
+      loadScript(props)
+    }
+
+    if (strategy === 'lazyOnload') {
+      loadLazyScript(props)
+    }
+
+    if (shouldUnMountScript) {
+      return () => {
+        removeScript(props)
+        onUnMount?.()
+      }
+    }
+  }, [])
+
+  return null
+}
+
+Object.defineProperty(Script, '__customScript', { value: true })
+
+const ScriptCache = new Map()
+const LoadCache = new Set()
+
+const DOMAttributeNames: Record<string, string> = {
+  acceptCharset: 'accept-charset',
+  className: 'class',
+  htmlFor: 'for',
+  httpEquiv: 'http-equiv',
+  noModule: 'noModule',
 }
 
 const ignoreProps = [
@@ -154,69 +220,3 @@ function removeScript(props: ScriptProps) {
   ScriptCache.delete(src)
   LoadCache.delete(cacheKey)
 }
-
-export function Script(props: ScriptProps): React.ReactElement | null {
-  const { id, src = '', onReady = null, strategy = 'afterInteractive', shouldUnMountScript, onUnMount } = props
-
-  /**
-   * - First mount:
-   *   1. The useEffect for onReady executes
-   *   2. hasOnReadyEffectCalled.current is false, but the script hasn't loaded yet (not in LoadCache)
-   *      onReady is skipped, set hasOnReadyEffectCalled.current to true
-   *   3. The useEffect for loadScript executes
-   *   4. hasLoadScriptEffectCalled.current is false, loadScript executes
-   *      Once the script is loaded, the onLoad and onReady will be called by then
-   *   [If strict mode is enabled / is wrapped in <OffScreen /> component]
-   *   5. The useEffect for onReady executes again
-   *   6. hasOnReadyEffectCalled.current is true, so entire effect is skipped
-   *   7. The useEffect for loadScript executes again
-   *   8. hasLoadScriptEffectCalled.current is true, so entire effect is skipped
-   *
-   * - Second mount:
-   *   1. The useEffect for onReady executes
-   *   2. hasOnReadyEffectCalled.current is false, but the script has already loaded (found in LoadCache)
-   *      onReady is called, set hasOnReadyEffectCalled.current to true
-   *   3. The useEffect for loadScript executes
-   *   4. The script is already loaded, loadScript bails out
-   *   [If strict mode is enabled / is wrapped in <OffScreen /> component]
-   *   5. The useEffect for onReady executes again
-   *   6. hasOnReadyEffectCalled.current is true, so entire effect is skipped
-   *   7. The useEffect for loadScript executes again
-   *   8. hasLoadScriptEffectCalled.current is true, so entire effect is skipped
-   */
-  const hasOnReadyEffectCalled = useRef(false)
-
-  useEffect(() => {
-    const cacheKey = id || src
-
-    if (!hasOnReadyEffectCalled.current) {
-      // Run onReady if script has loaded before but component is re-mounted
-      if (onReady && cacheKey && LoadCache.has(cacheKey)) {
-        onReady()
-      }
-
-      hasOnReadyEffectCalled.current = true
-    }
-  }, [onReady, id, src])
-
-  useEffect(() => {
-    if (strategy === 'afterInteractive') {
-      loadScript(props)
-    }
-
-    if (strategy === 'lazyOnload') {
-      loadLazyScript(props)
-    }
-
-    if (shouldUnMountScript) {
-      return () => {
-        removeScript(props)
-        onUnMount?.()
-      }
-    }
-  }, [])
-
-  return null
-}
-
-Object.defineProperty(Script, '__customScript', { value: true })

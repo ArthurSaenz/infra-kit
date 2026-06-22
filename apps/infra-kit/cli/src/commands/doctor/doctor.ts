@@ -12,7 +12,12 @@ import {
 } from 'src/commands/init/agent-files'
 import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
 import { getProjectRoot } from 'src/lib/git-utils/git-utils'
-import { getInfraKitConfig, getInfraKitConfigPaths, resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
+import {
+  getInfraKitConfig,
+  getInfraKitConfigPaths,
+  resetInfraKitConfigCache,
+  resolveConfiguredIdes,
+} from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { hasManagedBlock } from 'src/lib/managed-block'
 import { defineMcpTool, textContent } from 'src/types'
@@ -152,6 +157,97 @@ const checkUserOverridePath = async (): Promise<CheckResult> => {
     }
   } catch (err) {
     return { name, status: 'fail', message: (err as Error).message }
+  }
+}
+
+interface IdeProbe {
+  ok: boolean
+  label: string
+  failMsg: string
+}
+
+const IDE_PROBE_META: Record<'cursor' | 'zed', { command: string[]; label: string; failMsg: string }> = {
+  cursor: {
+    command: ['cursor', '--version'],
+    label: 'Cursor',
+    failMsg: 'Cursor is not installed. Install from: https://cursor.com/',
+  },
+  zed: {
+    command: ['zed', '--version'],
+    label: 'Zed',
+    failMsg: 'Zed is not installed. Install from: https://zed.dev/',
+  },
+}
+
+const probeIde = async (provider: 'cursor' | 'zed'): Promise<IdeProbe> => {
+  const meta = IDE_PROBE_META[provider]
+
+  try {
+    await $`${meta.command}`
+
+    return { ok: true, label: meta.label, failMsg: meta.failMsg }
+  } catch {
+    return { ok: false, label: meta.label, failMsg: meta.failMsg }
+  }
+}
+
+/**
+ * Check that every editor configured under `ide` is installed. Reads the merged
+ * infra-kit config and probes each matching binary (`cursor`/`zed`). Passes only
+ * if all configured editors are present; fails listing any that are missing.
+ * Informational pass when no IDE is configured or the config can't be read — an
+ * unconfigured editor is a valid setup, and config validity is reported
+ * separately by `checkInfraKitConfigValid`.
+ */
+export const checkIdeInstalled = async (): Promise<CheckResult> => {
+  const name = 'ide installed'
+
+  let providers: ('cursor' | 'zed')[]
+
+  try {
+    resetInfraKitConfigCache()
+    const config = await getInfraKitConfig()
+
+    providers = resolveConfiguredIdes(config).map((ide) => {
+      return ide.provider
+    })
+  } catch {
+    return { name, status: 'pass', message: 'Skipped — infra-kit config could not be read (see config check)' }
+  }
+
+  if (providers.length === 0) {
+    return { name, status: 'pass', message: 'No IDE configured (ide unset)' }
+  }
+
+  const probes = await Promise.all(
+    providers.map((provider) => {
+      return probeIde(provider)
+    }),
+  )
+  const missing = probes.filter((probe) => {
+    return !probe.ok
+  })
+
+  if (missing.length === 0) {
+    return {
+      name,
+      status: 'pass',
+      message: `Installed: ${probes
+        .map((probe) => {
+          return probe.label
+        })
+        .join(', ')}`,
+    }
+  }
+
+  return {
+    name,
+    status: 'fail',
+    message: missing
+      .map((probe) => {
+        return probe.failMsg
+      })
+      .join('; '),
   }
 }
 
@@ -312,6 +408,7 @@ export const doctor = async () => {
     checkPnpmWorkspaceVirtualStore(),
     checkInfraKitConfigValid(),
     checkUserOverridePath(),
+    checkIdeInstalled(),
   ])
 
   const checks: CheckResult[] = [...baseChecks, ...(await checkAgentFiles())]

@@ -53,7 +53,7 @@ const getCalleeName = (callee: ESTree.CallExpression['callee']): string | null =
  * such as `memo`/`forwardRef` so that `const Comp = memo(({ a }) => ...)` is
  * still recognised by its PascalCase variable name.
  */
-const getComponentName = (node: ComponentFunction): string | null => {
+export const getComponentName = (node: ComponentFunction): string | null => {
   if (node.type === 'FunctionDeclaration') {
     return node.id?.name ?? null
   }
@@ -193,7 +193,7 @@ export const getComponentFunction = (node: ESTree.Node | null | undefined): Comp
 }
 
 /** Unwrap an `export ...` statement to the declaration it wraps (or the statement itself). */
-const unwrapExport = (statement: ESTree.Statement | ESTree.ModuleDeclaration): ESTree.Node | null => {
+export const unwrapExport = (statement: ESTree.Statement | ESTree.ModuleDeclaration): ESTree.Node | null => {
   if (statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration') {
     return (statement.declaration as ESTree.Node | null) ?? null
   }
@@ -202,7 +202,7 @@ const unwrapExport = (statement: ESTree.Statement | ESTree.ModuleDeclaration): E
 }
 
 /** Whether a single top-level declaration declares a React component. */
-const declaresComponent = (node: ESTree.Node | null): boolean => {
+export const declaresComponent = (node: ESTree.Node | null): boolean => {
   if (!node) {
     return false
   }
@@ -222,6 +222,38 @@ const declaresComponent = (node: ESTree.Node | null): boolean => {
   const fn = getComponentFunction(node)
 
   return fn ? isComponent(fn) : false
+}
+
+/**
+ * Resolve the name of the React component declared by a single top-level declaration,
+ * or null when the declaration is not a component or the component is anonymous
+ * (e.g. `export default () => <div />`). Mirrors `declaresComponent`'s node dispatch and
+ * resolves the name through component wrappers (`memo`/`forwardRef`).
+ */
+export const getDeclaredComponentName = (node: ESTree.Node | null): string | null => {
+  if (!node) {
+    return null
+  }
+
+  if (node.type === 'FunctionDeclaration') {
+    return isComponent(node) ? getComponentName(node) : null
+  }
+
+  if (node.type === 'VariableDeclaration') {
+    for (const declaration of node.declarations) {
+      const fn = getComponentFunction(declaration.init)
+
+      if (fn && isComponent(fn)) {
+        return getComponentName(fn)
+      }
+    }
+
+    return null
+  }
+
+  const fn = getComponentFunction(node)
+
+  return fn && isComponent(fn) ? getComponentName(fn) : null
 }
 
 /** Whether any top-level statement in a program body declares a React component. */

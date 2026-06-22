@@ -3,14 +3,13 @@ import confirm from '@inquirer/confirm'
 import process from 'node:process'
 import { z } from 'zod'
 
-import { removeFoldersFromCursorWorkspace, resolveCursorWorkspacePath } from 'src/integrations/cursor'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
+import { removeIdeWorktreeFolders } from 'src/integrations/ide'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
-import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { formatBranchName, parseReleaseRef } from 'src/lib/release-id'
 import { detectReleaseType, formatBranchChoices, getJiraDescriptions, releaseBranchLabels } from 'src/lib/release-utils'
@@ -119,7 +118,7 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       pruneFolder: allSelected,
     })
 
-    await syncCursorWorkspaceOnRemove({ removedWorktrees, worktreeDir, projectRoot })
+    await removeIdeWorktreeFolders({ projectRoot, worktreeDir, branches: removedWorktrees })
 
     logResults(removedWorktrees)
 
@@ -140,47 +139,6 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       operation: 'remove worktrees',
       remediation: "check 'git worktree list' for the path; uncommitted changes block removal",
     })
-  }
-}
-
-interface SyncCursorWorkspaceOnRemoveArgs {
-  removedWorktrees: string[]
-  worktreeDir: string
-  projectRoot: string
-}
-
-/**
- * Strip removed worktrees from the configured Cursor workspace's `folders` array.
- * No-op if Cursor isn't configured, mode isn't "workspace", or no worktrees were removed.
- */
-const syncCursorWorkspaceOnRemove = async (args: SyncCursorWorkspaceOnRemoveArgs): Promise<void> => {
-  const { removedWorktrees, worktreeDir, projectRoot } = args
-
-  if (removedWorktrees.length === 0) {
-    return
-  }
-
-  const config = await getInfraKitConfig()
-  const cursorConfig = config.ide?.provider === 'cursor' ? config.ide.config : undefined
-
-  if (!cursorConfig || cursorConfig.mode !== 'workspace' || !cursorConfig.workspaceConfigPath) {
-    return
-  }
-
-  const workspacePath = resolveCursorWorkspacePath(cursorConfig.workspaceConfigPath, projectRoot)
-
-  const folderPaths = removedWorktrees.map((branch) => {
-    return `${worktreeDir}/${branch}`
-  })
-
-  try {
-    const { removed } = await removeFoldersFromCursorWorkspace({ workspacePath, folderPaths })
-
-    if (removed.length > 0) {
-      logger.info(`✅ Removed ${removed.length} folder(s) from ${workspacePath}`)
-    }
-  } catch (error) {
-    logger.warn({ error }, `⚠️ Failed to update Cursor workspace at ${workspacePath}`)
   }
 }
 

@@ -27,6 +27,11 @@ export interface ExperimentDefinition {
 
 export type ExperimentsConfig = Record<string, ExperimentDefinition>
 
+export interface FeatureFlagProps<Id extends string = string> {
+  variants: Variants
+  experimentId: Id
+}
+
 type NamesOf<T extends ExperimentsConfig> = { [K in keyof T]: T[K]['vwoId'] }
 
 /**
@@ -187,8 +192,9 @@ export const defineExperiments = <const T extends ExperimentsConfig>(config: T) 
     return values[id]
   }
 
-  const FeatureFlag = (props: { variants: Variants; experimentId: IdValue }) => {
+  const FeatureFlag = (props: FeatureFlagProps<IdValue>) => {
     const { variants, experimentId } = props
+
     const values = useAtomValue($experimentsValuesMap)
 
     return <Experiment value={values[experimentId]} variants={variants} />
