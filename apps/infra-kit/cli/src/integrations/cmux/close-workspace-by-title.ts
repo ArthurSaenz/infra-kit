@@ -30,7 +30,7 @@ export const closeCmuxWorkspaceByTitle = async (title: string): Promise<void> =>
  * title matches `title`, or undefined if no match. Both sides are compared via
  * {@link canonicalizeCmuxTitle} so a workspace stored under a drifted title
  * (whitespace, or an older CLI's `v`-prefixed semver) is still found — keeping
- * close symmetric with the dedup in `worktrees-open`.
+ * close symmetric with the cmux open dedup in `worktrees-reload`.
  *
  * Each line looks like:
  *   "  workspace:8  hulyo-monorepo 1.48.0"

@@ -27,8 +27,9 @@ interface WorktreesReloadResult {
 /**
  * Reload command: closes every open cmux workspace for the release worktrees on
  * disk, then reopens the full set — cmux workspaces are recreated fresh and the
- * configured editor workspace is reconciled and relaunched. Unlike the additive
- * `worktrees-open`, this is disruptive: it tears down live cmux windows first.
+ * configured editor workspace is reconciled and relaunched. The single
+ * window-restore command: also serves the cold-start case (editor + cmux closed),
+ * at the cost of tearing down any live cmux windows first.
  *
  * The editor has no per-window close primitive, so its "reload" is a reconcile +
  * relaunch of the configured workspace. Safe to run from any branch
@@ -49,7 +50,7 @@ export const worktreesReload = async () => {
     // Phase 2 — reopen. cmux and Cursor are independent surfaces, so reopen them
     // concurrently to shrink the window where the just-closed cmux workspaces are gone.
     const [ideOutcomes, { opened: openedCmux }] = await Promise.all([
-      openIdeWorkspace({ projectRoot, worktreeDir, currentBranches, skipRelaunchWhenEmpty: true }),
+      openIdeWorkspace({ projectRoot, worktreeDir, currentBranches }),
       reopenCmux({ worktreeDir, currentBranches, repoName }),
     ])
 
@@ -144,7 +145,7 @@ interface ReopenCmuxOutcome {
  * Recreate a cmux workspace for every release worktree on disk. Force-opens each
  * branch (no dedup against the live workspace list): reload has just awaited the
  * close of these workspaces, so it favours liveness — guaranteeing every branch
- * ends up open — over the additive dedup that `worktrees-open` relies on.
+ * ends up open.
  */
 export const reopenCmux = async (args: ReopenCmuxArgs): Promise<ReopenCmuxOutcome> => {
   const { worktreeDir, currentBranches, repoName } = args
@@ -212,7 +213,7 @@ const logResults = (result: WorktreesReloadResult, context: LogResultsContext): 
 export const worktreesReloadMcpTool = defineMcpTool({
   name: 'worktrees-reload',
   description:
-    'Close all open cmux workspaces for the current release worktrees, then reopen the full set. Disruptive — closes live cmux windows (unlike the additive worktrees-open). Every configured editor (Cursor and/or Zed) is reconciled + relaunched (no per-window close). Safe to run from any branch. Use to refresh stale windows after restarting cmux/the editor.',
+    'Close all open cmux workspaces for the current release worktrees, then reopen the full set — the single window-restore command. Every configured editor (Cursor and/or Zed) is reconciled + relaunched (no per-window close). Disruptive: closes live cmux windows first. Safe to run from any branch. Use to refresh stale windows or to restore everything after a cold start (editor + cmux closed).',
   inputSchema: {},
   outputSchema: {
     closedCmux: z.array(z.string()).describe('Titles of cmux workspaces a close was attempted for (best-effort)'),

@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import { getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
-import { hasManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
+import { hasManagedBlock, removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
 
 import packageJson from '../../../package.json' with { type: 'json' }
 
@@ -13,23 +13,18 @@ export const AGENTS_MARKER_END = '<!-- infra-kit:end -->'
 /** The version line lives on its own line (OMC `OMC:VERSION:` precedent) so the markers stay constant-matchable. */
 const AGENTS_VERSION_PREFIX = '<!-- infra-kit:version '
 
-/** Separate marker pair for the small `@AGENTS.md` import region injected into CLAUDE.md. */
+/**
+ * Marker pair for the legacy `@AGENTS.md` import region once injected into CLAUDE.md.
+ * Migration-only now: `writeAgentFiles` strips this region so the full guidance body
+ * can take its place. TODO(remove after ~2 release cycles once repos have re-run init).
+ */
 export const AGENTS_IMPORT_START = '<!-- infra-kit:import:begin -->'
 export const AGENTS_IMPORT_END = '<!-- infra-kit:import:end -->'
 
 const AGENTS_FILE = 'AGENTS.md'
 const CLAUDE_FILE = 'CLAUDE.md'
-const CURSOR_RULE_REL = path.join('.cursor', 'rules', 'infra-kit.mdc')
 
-const CURSOR_FRONTMATTER = [
-  '---',
-  'description: infra-kit CLI usage and conventions',
-  'alwaysApply: true',
-  '---',
-  '',
-].join('\n')
-
-export type WriteAction = 'created' | 'updated' | 'unchanged'
+export type WriteAction = 'created' | 'updated' | 'unchanged' | 'removed'
 
 export interface AgentFileWrite {
   path: string
@@ -66,7 +61,7 @@ const buildAgentsBody = (version: string): string => {
     '## Commands (`ik` = `pnpm exec infra-kit`)',
     '',
     '- `ik env-load -c <config>` / `ik env-clear` / `ik env-status` — load, clear, or inspect Doppler env vars for a config (e.g. `dev`). Source the returned file to apply.',
-    '- `ik worktrees-add` / `worktrees-list` / `worktrees-open` / `worktrees-remove` / `worktrees-sync` — manage release and feature git worktrees.',
+    '- `ik worktrees-add` / `worktrees-list` / `worktrees-reload` / `worktrees-remove` / `worktrees-sync` — manage release and feature git worktrees.',
     '- `ik release-create` / `release-list` / `release-deploy-all` / `release-deploy-selected` / `release-deliver` / `release-desc-edit` — release-branch and deploy flow.',
     '- `ik merge-dev` — merge the dev branch into every release branch.',
     '- `ik audit` — audit packages against `infra-kit.config.ts` rules.',
@@ -86,6 +81,13 @@ const assertNotSymlink = (filePath: string): void => {
   }
 }
 
+/** Copy a file to a timestamped `<file>.backup.<timestamp>` sibling. */
+const backupFile = (filePath: string): void => {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+
+  fs.copyFileSync(filePath, `${filePath}.backup.${stamp}`)
+}
+
 /**
  * Write `nextContent` to `filePath` with OMC-style safety: refuse symlinks,
  * back up the prior file with a timestamp before overwriting, and skip the
@@ -99,11 +101,7 @@ const writeManaged = (filePath: string, nextContent: string): WriteAction => {
 
   if (previous === nextContent) return 'unchanged'
 
-  if (existed) {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-
-    fs.copyFileSync(filePath, `${filePath}.backup.${stamp}`)
-  }
+  if (existed) backupFile(filePath)
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   fs.writeFileSync(filePath, nextContent, 'utf-8')
@@ -124,10 +122,39 @@ const assertBlockPresent = (filePath: string, start: string, end: string): void 
 }
 
 /**
- * Generate (or refresh) the repo agent-instruction files: the `AGENTS.md`
- * guidance block, a managed `@AGENTS.md` import region in `CLAUDE.md`
- * (preserving existing content), and a `.cursor/rules` rule file. Repo-gated:
- * a no-op outside an infra-kit repo. Idempotent and non-destructive.
+ * Migrate a legacy `AGENTS.md` now that the guidance lives solely in `CLAUDE.md`.
+ * Strips the infra-kit managed block, then asymmetrically:
+ * - no infra-kit block at all (hand-authored, not ours) → leave untouched (`unchanged`),
+ * - file was purely generated (nothing but whitespace remains) → back up + delete (`removed`),
+ * - hand-authored content surrounds the block → back up + write the block-free remainder (`updated`).
+ * Every destructive path leaves a timestamped `.backup.` first.
+ */
+const migrateLegacyAgentsFile = (agentsPath: string): WriteAction => {
+  if (!fs.existsSync(agentsPath)) return 'unchanged'
+
+  assertNotSymlink(agentsPath)
+
+  const content = fs.readFileSync(agentsPath, 'utf-8')
+  const stripped = removeManagedBlock(content, AGENTS_MARKER_START, AGENTS_MARKER_END)
+
+  if (stripped === null) return 'unchanged'
+
+  if (stripped.trim() === '') {
+    backupFile(agentsPath)
+    fs.rmSync(agentsPath)
+
+    return 'removed'
+  }
+
+  return writeManaged(agentsPath, stripped)
+}
+
+/**
+ * Generate (or refresh) the repo agent-instruction guidance, now hosted solely in
+ * `CLAUDE.md` (preserving hand-authored content outside the markers). Also migrates
+ * legacy setups — stripping the old `@AGENTS.md` import region from `CLAUDE.md` and
+ * backing up/removing a now-redundant `AGENTS.md`. Repo-gated: a no-op outside an
+ * infra-kit repo. Idempotent (within a CLI version) and non-destructive.
  *
  * @example
  * await writeAgentFiles()
@@ -156,40 +183,33 @@ export const writeAgentFiles = async (): Promise<WriteAgentFilesResult> => {
 
   const agentsPath = path.join(root, AGENTS_FILE)
   const claudePath = path.join(root, CLAUDE_FILE)
-  const cursorPath = path.join(root, CURSOR_RULE_REL)
 
-  const agentsContent = upsertManagedBlock({
-    content: readOr(agentsPath, ''),
+  // CLAUDE.md now hosts the full guidance body. Strip the legacy `@AGENTS.md`
+  // import region first (if present), then upsert the body under the begin/end
+  // markers — disjoint marker pairs, so the two operations never collide.
+  let claudeContent = readOr(claudePath, '')
+
+  claudeContent = removeManagedBlock(claudeContent, AGENTS_IMPORT_START, AGENTS_IMPORT_END) ?? claudeContent
+  claudeContent = upsertManagedBlock({
+    content: claudeContent,
     body,
     startMarker: AGENTS_MARKER_START,
     endMarker: AGENTS_MARKER_END,
+    placement: 'replace-in-place',
   })
 
-  const claudeContent = upsertManagedBlock({
-    content: readOr(claudePath, ''),
-    body: `@${AGENTS_FILE}`,
-    startMarker: AGENTS_IMPORT_START,
-    endMarker: AGENTS_IMPORT_END,
-  })
-
-  const cursorContent = upsertManagedBlock({
-    content: readOr(cursorPath, CURSOR_FRONTMATTER),
-    body,
-    startMarker: AGENTS_MARKER_START,
-    endMarker: AGENTS_MARKER_END,
-  })
-
+  // CLAUDE.md is the only file we manage. A legacy AGENTS.md is migrated away.
   const written: AgentFileWrite[] = [
-    { path: agentsPath, action: writeManaged(agentsPath, agentsContent) },
     { path: claudePath, action: writeManaged(claudePath, claudeContent) },
-    { path: cursorPath, action: writeManaged(cursorPath, cursorContent) },
+    { path: agentsPath, action: migrateLegacyAgentsFile(agentsPath) },
   ]
 
-  assertBlockPresent(agentsPath, AGENTS_MARKER_START, AGENTS_MARKER_END)
-  assertBlockPresent(claudePath, AGENTS_IMPORT_START, AGENTS_IMPORT_END)
-  assertBlockPresent(cursorPath, AGENTS_MARKER_START, AGENTS_MARKER_END)
+  assertBlockPresent(claudePath, AGENTS_MARKER_START, AGENTS_MARKER_END)
 
   for (const file of written) {
+    // Always report CLAUDE.md; only mention a migrated file when it actually changed.
+    if (file.action === 'unchanged' && file.path !== claudePath) continue
+
     logger.info(`  ${file.action.padEnd(9)} ${path.relative(root, file.path)}`)
   }
 

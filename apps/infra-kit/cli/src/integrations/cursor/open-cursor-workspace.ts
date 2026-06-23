@@ -9,13 +9,6 @@ interface OpenCursorWorkspaceArgs {
   worktreeDir: string
   currentBranches: string[]
   /**
-   * When true, skip the `cursor <workspace>` relaunch if there are no release
-   * worktrees (folder reconcile still runs to strip dangling entries). Lets
-   * `worktrees-reload` avoid popping an empty Cursor window while keeping the
-   * cold-start `worktrees-open` behaviour (relaunch unconditionally) intact.
-   */
-  skipRelaunchWhenEmpty: boolean
-  /**
    * The Cursor entry's config, selected by the facade from the (possibly
    * multi-IDE) infra-kit config. Passed in rather than re-read here so this
    * opener acts on the exact entry the caller chose — essential once `ide` can
@@ -32,14 +25,16 @@ interface OpenCursorWorkspaceOutcome {
 
 /**
  * Reconciles the configured Cursor `.code-workspace` `folders` array against the
- * set of release worktrees on disk, then launches Cursor against it. Shared by
- * `worktrees-open` (cold-start restore) and `worktrees-reload` (close + reopen).
+ * set of release worktrees on disk, then launches Cursor against it (the folder
+ * reconcile still runs when there are no worktrees, but the relaunch is skipped
+ * so `worktrees-reload` never pops an empty Cursor window). Used by
+ * `worktrees-reload`.
  *
  * No-ops (returns `ran: false`) when the Cursor entry has no `workspaceConfigPath`.
  * All failures are swallowed into a warning — opening Cursor is best-effort.
  */
 export const openCursorWorkspace = async (args: OpenCursorWorkspaceArgs): Promise<OpenCursorWorkspaceOutcome> => {
-  const { projectRoot, worktreeDir, currentBranches, skipRelaunchWhenEmpty, cursorConfig } = args
+  const { projectRoot, worktreeDir, currentBranches, cursorConfig } = args
 
   if (!cursorConfig.workspaceConfigPath) {
     logger.warn('⚠️ Skipping Cursor: workspaceConfigPath is not set.')
@@ -56,7 +51,7 @@ export const openCursorWorkspace = async (args: OpenCursorWorkspaceArgs): Promis
       currentBranches,
     })
 
-    if (!(skipRelaunchWhenEmpty && currentBranches.length === 0)) {
+    if (currentBranches.length > 0) {
       await launchCursor(workspacePath)
     }
 

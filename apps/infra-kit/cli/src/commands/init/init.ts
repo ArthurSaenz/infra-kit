@@ -45,7 +45,13 @@ const USER_GLOBAL_CONFIG_EXAMPLE = `// infra-kit user-global config — ~/.infra
   //   { "provider": "cursor", "config": { "workspaceConfigPath": "/path/to/your.code-workspace" } },
   //   { "provider": "zed", "config": {} }
   // ],
-  // "worktrees": { "openInGithubDesktop": false, "openInCmux": true }
+  // "worktrees": {
+  //   "openInGithubDesktop": false,
+  //   "openInCmux": true,
+  //   // cmux pane layout for opened worktrees: "two-columns" (default, left | right)
+  //   // or "three-pane" (left split top/bottom + full-height right).
+  //   "cmux": { "layout": "two-columns" }
+  // }
 }
 `
 

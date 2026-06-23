@@ -20,7 +20,6 @@ import { releaseDescEdit } from 'src/commands/release-desc-edit'
 import { version } from 'src/commands/version'
 import { worktreesAdd } from 'src/commands/worktrees-add'
 import { worktreesList } from 'src/commands/worktrees-list'
-import { worktreesOpen } from 'src/commands/worktrees-open'
 import { worktreesReload } from 'src/commands/worktrees-reload'
 import { worktreesRemove } from 'src/commands/worktrees-remove'
 import { worktreesSync } from 'src/commands/worktrees-sync'
@@ -217,15 +216,10 @@ program
   })
 
 program
-  .command('worktrees-open')
-  .description('Open the configured editor (Cursor/Zed) + cmux for existing release worktrees (cold-start restore)')
-  .action(async () => {
-    await worktreesOpen()
-  })
-
-program
   .command('worktrees-reload')
-  .description('Close all cmux/editor worktree windows, then reopen the current release worktrees')
+  .description(
+    'Close all cmux/editor worktree windows, then reopen the current release worktrees (also cold-start restore)',
+  )
   .action(async () => {
     await worktreesReload()
   })
@@ -319,14 +313,7 @@ if (process.argv.length <= 2) {
     'release-deploy-selected',
     'release-deliver',
   ]
-  const worktreeCommands = [
-    'worktrees-add',
-    'worktrees-list',
-    'worktrees-open',
-    'worktrees-reload',
-    'worktrees-remove',
-    'worktrees-sync',
-  ]
+  const worktreeCommands = ['worktrees-add', 'worktrees-list', 'worktrees-reload', 'worktrees-remove', 'worktrees-sync']
   const envCommands = [
     'audit',
     'doctor',

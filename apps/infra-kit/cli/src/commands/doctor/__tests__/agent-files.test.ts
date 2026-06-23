@@ -61,50 +61,28 @@ describe('checkAgentFiles', () => {
     )
   })
 
-  it('passes all three checks right after init runs the agent-files step', async () => {
+  it('checks only CLAUDE.md after init runs the agent-files step — no AGENTS.md or .cursor check', async () => {
     await withTmpRepo(async () => {
       await writeAgentFiles()
 
       const checks = await checkAgentFiles()
 
-      expect(statusOf(checks, 'AGENTS.md block')).toBe('pass')
-      expect(statusOf(checks, 'CLAUDE.md import')).toBe('pass')
-      expect(statusOf(checks, '.cursor/rules block')).toBe('pass')
+      expect(checks).toHaveLength(1)
+      expect(statusOf(checks, 'CLAUDE.md block')).toBe('pass')
+      // The legacy AGENTS.md and .cursor/rules checks no longer exist.
+      expect(statusOf(checks, 'AGENTS.md block')).toBeUndefined()
+      expect(statusOf(checks, '.cursor/rules block')).toBeUndefined()
     })
   })
 
-  it('flags AGENTS.md present but CLAUDE.md import removed', async () => {
+  it('flags a missing CLAUDE.md block', async () => {
     await withTmpRepo(async (tmp) => {
       await writeAgentFiles()
-      // User deletes CLAUDE.md (drops the @AGENTS.md import) but keeps AGENTS.md.
       fs.rmSync(path.join(tmp, 'CLAUDE.md'))
 
       const checks = await checkAgentFiles()
 
-      expect(statusOf(checks, 'AGENTS.md block')).toBe('pass')
-      expect(statusOf(checks, 'CLAUDE.md import')).toBe('fail')
-    })
-  })
-
-  it('flags a missing .cursor/rules block', async () => {
-    await withTmpRepo(async (tmp) => {
-      await writeAgentFiles()
-      fs.rmSync(path.join(tmp, '.cursor', 'rules', 'infra-kit.mdc'))
-
-      const checks = await checkAgentFiles()
-
-      expect(statusOf(checks, '.cursor/rules block')).toBe('fail')
-    })
-  })
-
-  it('flags a missing AGENTS.md block', async () => {
-    await withTmpRepo(async (tmp) => {
-      await writeAgentFiles()
-      fs.rmSync(path.join(tmp, 'AGENTS.md'))
-
-      const checks = await checkAgentFiles()
-
-      expect(statusOf(checks, 'AGENTS.md block')).toBe('fail')
+      expect(statusOf(checks, 'CLAUDE.md block')).toBe('fail')
     })
   })
 })

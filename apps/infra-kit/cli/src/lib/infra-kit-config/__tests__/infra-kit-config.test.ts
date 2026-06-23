@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Import AFTER the mock is declared so the module picks up the mocked dep.
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 
-import { getInfraKitConfig, resetInfraKitConfigCache, resolveConfiguredIdes } from '../infra-kit-config'
+import {
+  getInfraKitConfig,
+  resetInfraKitConfigCache,
+  resolveCmuxLayout,
+  resolveConfiguredIdes,
+} from '../infra-kit-config'
 import type { InfraKitConfig } from '../infra-kit-config'
 
 vi.mock('src/lib/git-utils', () => {
@@ -429,5 +434,68 @@ describe('resolveConfiguredIdes', () => {
 
   it('returns an empty array when ide is unset', () => {
     expect(resolveConfiguredIdes(base)).toEqual([])
+  })
+})
+
+describe('resolveCmuxLayout', () => {
+  const base = {
+    environments: ['dev'],
+    envManagement: { provider: 'doppler', config: { name: 'p' } },
+  } as InfraKitConfig
+
+  it('defaults to two-columns when worktrees.cmux is unset', () => {
+    expect(resolveCmuxLayout(base)).toBe('two-columns')
+  })
+
+  it('defaults to two-columns when worktrees is set but cmux.layout is unset', () => {
+    const cfg = { ...base, worktrees: { openInCmux: true } } as InfraKitConfig
+
+    expect(resolveCmuxLayout(cfg)).toBe('two-columns')
+  })
+
+  it('returns the explicit two-columns layout', () => {
+    const cfg = { ...base, worktrees: { cmux: { layout: 'two-columns' } } } as InfraKitConfig
+
+    expect(resolveCmuxLayout(cfg)).toBe('two-columns')
+  })
+
+  it('returns the explicit three-pane layout', () => {
+    const cfg = { ...base, worktrees: { cmux: { layout: 'three-pane' } } } as InfraKitConfig
+
+    expect(resolveCmuxLayout(cfg)).toBe('three-pane')
+  })
+})
+
+describe('worktrees.cmux schema validation', () => {
+  it('accepts a valid cmux.layout and round-trips it through getInfraKitConfig', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          worktrees: { openInCmux: true, cmux: { layout: 'three-pane' } },
+        }),
+      )
+
+      const cfg = await getInfraKitConfig()
+
+      expect(resolveCmuxLayout(cfg)).toBe('three-pane')
+    })
+  })
+
+  it('rejects an unknown cmux.layout value', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          worktrees: { cmux: { layout: 'four-pane' } },
+        }),
+      )
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/Invalid.*infra-kit/i)
+    })
   })
 })

@@ -6,12 +6,6 @@ interface OpenZedWorkspaceArgs {
   projectRoot: string
   worktreeDir: string
   currentBranches: string[]
-  /**
-   * When true, skip launching Zed if there are no release worktrees. Lets
-   * `worktrees-reload` avoid popping a bare Zed window while keeping the
-   * cold-start `worktrees-open` behaviour (launch unconditionally) intact.
-   */
-  skipRelaunchWhenEmpty: boolean
 }
 
 interface OpenZedWorkspaceOutcome {
@@ -23,8 +17,8 @@ interface OpenZedWorkspaceOutcome {
 /**
  * Opens a single Zed workspace containing the project root plus every release
  * worktree, via one `zed <root> <wt...>` invocation (Zed realizes a multi-folder
- * workspace from multiple path arguments). Shared by `worktrees-open` (cold-start
- * restore) and `worktrees-reload` (relaunch).
+ * workspace from multiple path arguments). Used by `worktrees-reload`; skips the
+ * launch when there are no worktrees so it never pops a bare Zed window.
  *
  * Zed has no portable workspace file and no folder-remove CLI, so there is
  * nothing to reconcile: `added` is the number of worktrees opened and `removed`
@@ -32,9 +26,9 @@ interface OpenZedWorkspaceOutcome {
  * best-effort, mirroring the Cursor integration.
  */
 export const openZedWorkspace = async (args: OpenZedWorkspaceArgs): Promise<OpenZedWorkspaceOutcome> => {
-  const { projectRoot, worktreeDir, currentBranches, skipRelaunchWhenEmpty } = args
+  const { projectRoot, worktreeDir, currentBranches } = args
 
-  if (skipRelaunchWhenEmpty && currentBranches.length === 0) {
+  if (currentBranches.length === 0) {
     return { ran: false, added: 0, removed: 0 }
   }
 

@@ -161,7 +161,7 @@ const buildUserProjectExample = (projectName: string): string => {
 // This .example.jsonc is reference only — it is NOT loaded. Put real overrides
 // in the sibling infra-kit.json (strict JSON: no comments, double-quoted keys).
 {
-  // "worktrees": { "openInGithubDesktop": false, "openInCmux": true }
+  // "worktrees": { "openInGithubDesktop": false, "openInCmux": true, "cmux": { "layout": "two-columns" } }
 }
 `
 }

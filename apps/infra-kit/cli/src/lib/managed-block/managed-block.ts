@@ -4,8 +4,8 @@
  *
  * This is the same mechanism `infra-kit init` already uses for the `~/.zshrc`
  * shell block (`# -- infra-kit:begin -- … # -- infra-kit:end --`), lifted here so
- * it can be reused for the repo agent-instruction files (`AGENTS.md`,
- * `CLAUDE.md` import region, `.cursor/rules`). It mirrors the design of OMC's
+ * it can be reused for the repo agent-instruction guidance block in `CLAUDE.md`.
+ * It mirrors the design of OMC's
  * `<!-- OMC:START --> … <!-- OMC:END -->` CLAUDE.md installer.
  */
 

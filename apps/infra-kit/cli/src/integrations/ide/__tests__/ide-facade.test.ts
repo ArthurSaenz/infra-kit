@@ -73,7 +73,6 @@ const baseOpenArgs = {
   projectRoot: '/repo',
   worktreeDir: '/repo.worktrees',
   currentBranches: ['release/v1.0.0'],
-  skipRelaunchWhenEmpty: false,
 }
 
 beforeEach(() => {

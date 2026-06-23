@@ -4,12 +4,7 @@ import path from 'node:path'
 import { z } from 'zod'
 import { $ } from 'zx'
 
-import {
-  AGENTS_IMPORT_END,
-  AGENTS_IMPORT_START,
-  AGENTS_MARKER_END,
-  AGENTS_MARKER_START,
-} from 'src/commands/init/agent-files'
+import { AGENTS_MARKER_END, AGENTS_MARKER_START } from 'src/commands/init/agent-files'
 import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
 import { getProjectRoot } from 'src/lib/git-utils/git-utils'
 import {
@@ -300,10 +295,11 @@ const checkRtkConfigured = async (): Promise<CheckResult> => {
 }
 
 /**
- * Check that the repo agent-instruction files managed by `infra-kit init` exist:
- * the `AGENTS.md` block, the `@AGENTS.md` import region in `CLAUDE.md`, and the
- * `.cursor/rules` block. Presence only. Repo-gated: returns no checks when run
- * outside an infra-kit repo so doctor never crashes there.
+ * Check that the repo agent-instruction guidance managed by `infra-kit init` exists:
+ * the guidance block in `CLAUDE.md`. Presence only. Repo-gated: returns no checks
+ * when run outside an infra-kit repo so doctor never crashes there. A repo that
+ * predates the AGENTS.md→CLAUDE.md migration will report this check as failing until
+ * `infra-kit init` is re-run.
  */
 export const checkAgentFiles = async (): Promise<CheckResult[]> => {
   let mainConfigPath: string
@@ -316,43 +312,17 @@ export const checkAgentFiles = async (): Promise<CheckResult[]> => {
 
   if (!fs.existsSync(mainConfigPath)) return []
 
-  const root = path.dirname(mainConfigPath)
+  const claudePath = path.join(path.dirname(mainConfigPath), 'CLAUDE.md')
+  const content = fs.existsSync(claudePath) ? fs.readFileSync(claudePath, 'utf-8') : ''
+  const present = hasManagedBlock(content, AGENTS_MARKER_START, AGENTS_MARKER_END)
 
-  const blockPresent = (relPath: string, start: string, end: string): boolean => {
-    const filePath = path.join(root, relPath)
-    const content = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : ''
-
-    return hasManagedBlock(content, start, end)
-  }
-
-  const entries = [
+  return [
     {
-      name: 'AGENTS.md block',
-      present: blockPresent('AGENTS.md', AGENTS_MARKER_START, AGENTS_MARKER_END),
-      okMessage: 'AGENTS.md block present',
-      missingMessage: 'infra-kit block missing from AGENTS.md. Run: infra-kit init',
-    },
-    {
-      name: 'CLAUDE.md import',
-      present: blockPresent('CLAUDE.md', AGENTS_IMPORT_START, AGENTS_IMPORT_END),
-      okMessage: 'CLAUDE.md imports @AGENTS.md',
-      missingMessage: '@AGENTS.md import block missing from CLAUDE.md. Run: infra-kit init',
-    },
-    {
-      name: '.cursor/rules block',
-      present: blockPresent(path.join('.cursor', 'rules', 'infra-kit.mdc'), AGENTS_MARKER_START, AGENTS_MARKER_END),
-      okMessage: '.cursor/rules/infra-kit.mdc block present',
-      missingMessage: '.cursor/rules/infra-kit.mdc block missing. Run: infra-kit init',
+      name: 'CLAUDE.md block',
+      status: present ? 'pass' : 'fail',
+      message: present ? 'CLAUDE.md block present' : 'infra-kit block missing from CLAUDE.md. Run: infra-kit init',
     },
   ]
-
-  return entries.map((entry): CheckResult => {
-    return {
-      name: entry.name,
-      status: entry.present ? 'pass' : 'fail',
-      message: entry.present ? entry.okMessage : entry.missingMessage,
-    }
-  })
 }
 
 /**

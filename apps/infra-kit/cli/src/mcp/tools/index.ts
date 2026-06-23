@@ -15,7 +15,6 @@ import { releaseDescEditMcpTool } from 'src/commands/release-desc-edit'
 import { versionMcpTool } from 'src/commands/version'
 import { worktreesAddMcpTool } from 'src/commands/worktrees-add'
 import { worktreesListMcpTool } from 'src/commands/worktrees-list'
-import { worktreesOpenMcpTool } from 'src/commands/worktrees-open'
 import { worktreesReloadMcpTool } from 'src/commands/worktrees-reload'
 import { worktreesRemoveMcpTool } from 'src/commands/worktrees-remove'
 import { worktreesSyncMcpTool } from 'src/commands/worktrees-sync'
@@ -37,7 +36,6 @@ const tools = [
   versionMcpTool,
   worktreesAddMcpTool,
   worktreesListMcpTool,
-  worktreesOpenMcpTool,
   worktreesReloadMcpTool,
   worktreesRemoveMcpTool,
   worktreesSyncMcpTool,

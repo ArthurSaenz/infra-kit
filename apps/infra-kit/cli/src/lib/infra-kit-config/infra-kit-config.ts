@@ -64,10 +64,22 @@ const jiraTaskManagerSchema = z.object({
 
 const taskManagerSchema = z.discriminatedUnion('provider', [jiraTaskManagerSchema])
 
+// cmux pane layout for opened worktree workspaces. Named presets keep the config
+// typo-proof (an enum, not a free string) and let the opener switch on a single
+// value; extend the enum + the opener's switch to add a layout.
+//   two-columns — left | right, both full-height (default)
+//   three-pane  — left split top/bottom + full-height right (legacy layout)
+const cmuxLayouts = ['two-columns', 'three-pane'] as const
+
+const cmuxConfigSchema = z.object({
+  layout: z.enum(cmuxLayouts).optional(),
+})
+
 // worktrees prompt defaults
 const worktreesConfigSchema = z.object({
   openInGithubDesktop: z.boolean().optional(),
   openInCmux: z.boolean().optional(),
+  cmux: cmuxConfigSchema.optional(),
 })
 
 // Base object shape, kept separate so `.partial()` (which only works on a plain
@@ -129,6 +141,25 @@ export const resolveConfiguredIdes = (config: InfraKitConfig): ConfiguredIde[] =
   if (!ide) return []
 
   return Array.isArray(ide) ? ide : [ide]
+}
+
+/** A cmux pane layout preset (see {@link cmuxLayouts}). */
+export type CmuxLayout = (typeof cmuxLayouts)[number]
+
+/** The layout applied when `worktrees.cmux.layout` is left unset. */
+export const DEFAULT_CMUX_LAYOUT: CmuxLayout = 'two-columns'
+
+/**
+ * Resolve the cmux pane layout for opened worktree workspaces, falling back to
+ * {@link DEFAULT_CMUX_LAYOUT} when unconfigured. The one source of truth for
+ * "which layout should the cmux opener build."
+ *
+ * @example
+ * resolveCmuxLayout({ worktrees: { cmux: { layout: 'three-pane' } } }) // => 'three-pane'
+ * resolveCmuxLayout({})                                                // => 'two-columns'
+ */
+export const resolveCmuxLayout = (config: InfraKitConfig): CmuxLayout => {
+  return config.worktrees?.cmux?.layout ?? DEFAULT_CMUX_LAYOUT
 }
 
 export interface InfraKitConfigPaths {

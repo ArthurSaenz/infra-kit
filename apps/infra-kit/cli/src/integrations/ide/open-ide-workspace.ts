@@ -9,15 +9,15 @@ interface OpenIdeWorkspaceArgs {
   projectRoot: string
   worktreeDir: string
   currentBranches: string[]
-  skipRelaunchWhenEmpty: boolean
 }
 
 /**
- * Provider-agnostic entry point for the cold-start / reload open: for every
- * configured editor, reconciles (or, for Zed, simply assembles) the workspace
- * against the release worktrees on disk and launches it. Returns one outcome per
- * configured provider (empty array when no IDE is configured). Iterates
- * sequentially — `worktrees-reload` already wraps this call in an outer
+ * Provider-agnostic entry point for the reload open: for every configured
+ * editor, reconciles (or, for Zed, simply assembles) the workspace against the
+ * release worktrees on disk and launches it — skipping the launch when there are
+ * no worktrees, so `worktrees-reload` never pops a bare editor window. Returns
+ * one outcome per configured provider (empty array when no IDE is configured).
+ * Iterates sequentially — `worktrees-reload` already wraps this call in an outer
  * `Promise.all` with cmux, so a `Promise.all` here would compound editor-spawn
  * concurrency. Best-effort — every provider swallows failures into a warning.
  */

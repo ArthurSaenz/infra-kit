@@ -349,7 +349,7 @@ export const worktreesAddMcpTool = defineMcpTool({
       .boolean()
       .optional()
       .describe(
-        'Open each created worktree in a new cmux workspace with a 3-pane layout (left-top, left-bottom, full-height right), all rooted at the worktree directory. Resolution order: this flag → "worktrees.openInCmux" from infra-kit config → interactive prompt (CLI) / false (MCP, no TTY).',
+        'Open each created worktree in a new cmux workspace, all rooted at the worktree directory. Pane layout follows "worktrees.cmux.layout" (default "two-columns": left | right; or "three-pane": left split top/bottom + full-height right). Resolution order: this flag → "worktrees.openInCmux" from infra-kit config → interactive prompt (CLI) / false (MCP, no TTY).',
       ),
   },
   outputSchema: {

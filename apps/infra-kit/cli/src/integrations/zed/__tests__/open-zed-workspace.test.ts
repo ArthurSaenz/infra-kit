@@ -37,7 +37,6 @@ describe('openZedWorkspace', () => {
       projectRoot: '/repo',
       worktreeDir: '/repo.worktrees',
       currentBranches: ['release/v1.0.0', 'release/v1.1.0'],
-      skipRelaunchWhenEmpty: false,
     })
 
     expect(zx.calls).toHaveLength(1)
@@ -45,25 +44,11 @@ describe('openZedWorkspace', () => {
     expect(outcome).toEqual({ ran: true, added: 2, removed: 0 })
   })
 
-  it('still opens the bare project root when there are worktrees but relaunch is not skipped', async () => {
+  it('skips launching when there are no worktrees', async () => {
     const outcome = await openZedWorkspace({
       projectRoot: '/repo',
       worktreeDir: '/repo.worktrees',
       currentBranches: [],
-      skipRelaunchWhenEmpty: false,
-    })
-
-    expect(zx.calls).toHaveLength(1)
-    expect(zx.calls[0]?.[0]).toEqual(['/repo'])
-    expect(outcome).toEqual({ ran: true, added: 0, removed: 0 })
-  })
-
-  it('skips launching when skipRelaunchWhenEmpty is set and there are no worktrees', async () => {
-    const outcome = await openZedWorkspace({
-      projectRoot: '/repo',
-      worktreeDir: '/repo.worktrees',
-      currentBranches: [],
-      skipRelaunchWhenEmpty: true,
     })
 
     expect(zx.calls).toHaveLength(0)
@@ -77,7 +62,6 @@ describe('openZedWorkspace', () => {
       projectRoot: '/repo',
       worktreeDir: '/repo.worktrees',
       currentBranches: ['release/v1.0.0'],
-      skipRelaunchWhenEmpty: false,
     })
 
     expect(outcome).toEqual({ ran: false, added: 0, removed: 0 })
