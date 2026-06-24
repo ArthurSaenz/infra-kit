@@ -55,6 +55,7 @@ const zed = vi.hoisted(() => {
   return {
     openZedWorkspace: vi.fn(),
     addFoldersToZedWorkspace: vi.fn(),
+    reuseZedWorkspace: vi.fn(),
   }
 })
 
@@ -190,7 +191,14 @@ describe('addIdeWorktreeFolders', () => {
 })
 
 describe('removeIdeWorktreeFolders', () => {
-  const args = { projectRoot: '/repo', worktreeDir: '/repo.worktrees', branches: ['release/v1.0.0'] }
+  // currentWorktrees \ removedWorktrees => remaining = ['release/v1.1.0']
+  const args = {
+    projectRoot: '/repo',
+    worktreeDir: '/repo.worktrees',
+    currentWorktrees: ['release/v1.0.0', 'release/v1.1.0'],
+    removedWorktrees: ['release/v1.0.0'],
+    allowEditorRelaunch: false,
+  }
 
   it('removes from the Cursor workspace', async () => {
     config.value = cursorConfig
@@ -211,31 +219,63 @@ describe('removeIdeWorktreeFolders', () => {
     expect(outcomes).toEqual([{ provider: 'cursor', supported: true, removed: [] }])
   })
 
-  it('reports unsupported for Zed without throwing', async () => {
+  it('does NOT relaunch Zed on the non-interactive path (allowEditorRelaunch: false)', async () => {
     config.value = zedConfig
 
-    const outcomes = await removeIdeWorktreeFolders(args)
+    const outcomes = await removeIdeWorktreeFolders({ ...args, allowEditorRelaunch: false })
 
-    expect(outcomes).toEqual([{ provider: 'zed', supported: false, removed: [] }])
+    expect(zed.reuseZedWorkspace).not.toHaveBeenCalled()
+    expect(outcomes).toEqual([{ provider: 'zed', supported: true, removed: [] }])
   })
 
-  it('removes from Cursor AND reports Zed unsupported when both are configured', async () => {
+  it('relaunches Zed with the remaining set on the interactive path (allowEditorRelaunch: true)', async () => {
+    config.value = zedConfig
+
+    const outcomes = await removeIdeWorktreeFolders({ ...args, allowEditorRelaunch: true })
+
+    expect(zed.reuseZedWorkspace).toHaveBeenCalledWith({
+      projectRoot: '/repo',
+      worktreeDir: '/repo.worktrees',
+      remainingBranches: ['release/v1.1.0'],
+    })
+    expect(outcomes).toEqual([{ provider: 'zed', supported: true, removed: [] }])
+  })
+
+  it('reports Zed removed:[] when the relaunch swallowed a failure (ran:false), never throwing', async () => {
+    config.value = zedConfig
+    // reuseZedWorkspace is best-effort: it swallows launch failures internally and resolves
+    // { ran: false } rather than rejecting, so the facade never sees a throw.
+    zed.reuseZedWorkspace.mockResolvedValue({ ran: false })
+
+    const outcomes = await removeIdeWorktreeFolders({ ...args, allowEditorRelaunch: true })
+
+    expect(outcomes).toEqual([{ provider: 'zed', supported: true, removed: [] }])
+  })
+
+  it('removes from Cursor surgically AND relaunches Zed when both are configured (interactive)', async () => {
     config.value = bothConfig
     cursor.removeFoldersFromCursorWorkspace.mockResolvedValue({ removed: ['x'], notFound: [] })
 
-    const outcomes = await removeIdeWorktreeFolders(args)
+    const outcomes = await removeIdeWorktreeFolders({ ...args, allowEditorRelaunch: true })
 
+    expect(cursor.removeFoldersFromCursorWorkspace).toHaveBeenCalled()
+    expect(zed.reuseZedWorkspace).toHaveBeenCalledWith({
+      projectRoot: '/repo',
+      worktreeDir: '/repo.worktrees',
+      remainingBranches: ['release/v1.1.0'],
+    })
     expect(outcomes).toEqual([
       { provider: 'cursor', supported: true, removed: ['x'] },
-      { provider: 'zed', supported: false, removed: [] },
+      { provider: 'zed', supported: true, removed: [] },
     ])
   })
 
-  it('short-circuits to an empty array when there are no branches (no config read needed)', async () => {
+  it('short-circuits to an empty array when nothing was removed (no config read needed)', async () => {
     config.value = zedConfig
 
-    const outcomes = await removeIdeWorktreeFolders({ ...args, branches: [] })
+    const outcomes = await removeIdeWorktreeFolders({ ...args, removedWorktrees: [] })
 
+    expect(zed.reuseZedWorkspace).not.toHaveBeenCalled()
     expect(outcomes).toEqual([])
   })
 

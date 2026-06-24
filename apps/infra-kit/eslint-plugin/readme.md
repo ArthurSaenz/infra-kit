@@ -11,8 +11,8 @@ pnpm add -D @wl/eslint-plugin
 ## Usage (flat config)
 
 Enable everything via the recommended preset. It is an array of config blocks
-(rules scoped to `*.tsx`, with `component-file-order` turned off for
-`*.stories.{ts,tsx}`), so spread it:
+(rules scoped to `*.tsx`, with `component-file-order` and `props-type-name`
+turned off for `*.stories.{ts,tsx}`), so spread it:
 
 ```js
 // eslint.config.js
@@ -136,12 +136,61 @@ matching files, `ignore` skips matching files (and takes precedence over
 }
 ```
 
+### `props-type-name`
+
+A React component's props type must be named **`<ComponentName>Props`** (e.g.
+`ButtonProps` for `Button`). This complements `props-type-reference`: that rule
+requires a _named_ type (not an inline literal); this rule requires that name to
+follow the convention. Report-only.
+
+```tsx
+// ❌ Incorrect — props type does not match the component name
+const Button = (props: Props) => <button>{props.label}</button>
+function Card({ title }: CardConfig) {
+  return <div>{title}</div>
+}
+
+// ✅ Correct — `<ComponentName>Props`
+const Button = (props: ButtonProps) => <button>{props.label}</button>
+function Card({ title }: CardProps) {
+  return <div>{title}</div>
+}
+```
+
+The component is detected the same way as the other rules (PascalCase name
+through `memo`/`forwardRef`/`observer` wrappers, or a JSX return). Only a simple
+named type reference on the first parameter is checked: inline object types are
+the `props-type-reference` rule's concern, and anonymous components, untyped
+props, and qualified/generic annotations (`NS.Props`, `FC<Props>`) are left
+alone. An imported props type with a non-conventional name is still flagged —
+use `paths`/`ignore` to exempt it.
+
+The recommended preset turns this rule **off for `*.stories.{ts,tsx}`**: story
+templates legitimately reference the component's own props type (e.g.
+`const Template = (args: ButtonProps) => ...`) rather than `<TemplateName>Props`.
+
+#### Option: `paths` / `ignore` (optional)
+
+Same glob semantics as `component-file-order`: `paths` restricts the rule to
+matching files, `ignore` skips matching files (and takes precedence over
+`paths`).
+
+```js
+{
+  rules: {
+    '@wl/props-type-name': ['error', { ignore: ['**/*.stories.tsx'] }],
+  },
+}
+```
+
 ### `component-file-order`
 
 Enforce a strict top-level order in files that contain a React component:
-**imports → component props interface/type → component declaration**. Constants
-and helpers between the interface and the component are allowed. Report-only (it
-does not auto-reorder code).
+**imports → component props interface/type → component declaration**, with the
+props interface declared **immediately before** the component — no constants,
+helpers, or other declarations wedged between them. Helpers are allowed _after_
+the component (or between two separate component blocks). Report-only (it does
+not auto-reorder code).
 
 ```tsx
 // ❌ Incorrect — interface before imports, or component before its interface
@@ -162,15 +211,18 @@ const Card = (props: CardProps) => {
 }
 ```
 
-The rule activates only when the file actually contains a component. The "props
-interface" is any top-level `interface`/`type` whose name ends in `Props`.
+The rule activates only when the file actually contains a component. A
+component's props interface is matched by the **type its parameter actually
+references** (e.g. `Props` in `(props: Props)`), not by a name convention — so an
+interface named anything is enforced, as long as the component uses it. (When the
+parameter has no resolvable named type, the rule falls back to looking for a
+`<ComponentName>Props` interface.)
 
 When the first component's props type is **imported** (e.g.
 `import type { CardProps } from './types'`) instead of declared in the file,
 there is no in-file interface to anchor against — so the component itself must
 sit immediately after the imports, with no stray top-level definitions wedged in
-between. Only the first component is anchored this way; the props binding must be
-the conventional `<ComponentName>Props` name for the check to apply.
+between. Only the first component is anchored this way.
 
 ```tsx
 // ❌ Incorrect — props imported, but a stray const sits before the component

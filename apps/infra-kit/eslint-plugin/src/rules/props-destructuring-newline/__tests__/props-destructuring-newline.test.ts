@@ -2,8 +2,8 @@ import tsParser from '@typescript-eslint/parser'
 import { RuleTester } from 'eslint'
 import { afterAll, describe, it } from 'vitest'
 
+import { dedent } from '../../../test-utils/dedent'
 import { propsDestructuringNewline } from '../props-destructuring-newline'
-import { dedent } from './_dedent'
 
 // Wire ESLint's RuleTester into vitest's lifecycle so each case becomes a real test.
 const ruleTesterHooks = RuleTester as unknown as {

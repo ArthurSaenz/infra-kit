@@ -26,7 +26,16 @@ export interface AddIdeWorktreeFoldersOutcome {
 
 export interface RemoveIdeWorktreeFoldersOutcome {
   provider: IdeProvider
-  /** False when the configured provider has no folder-remove capability (Zed). */
+  /**
+   * True when the provider can reflect a removal. Both providers now report
+   * `true`; `false` is reserved for a future provider with no remove capability.
+   */
   supported: boolean
+  /**
+   * Folders confirmed removed. For Cursor this is the real diff of the
+   * `.code-workspace` `folders` array. For Zed it is ALWAYS `[]`: the only
+   * mechanism (`zed --reuse`) replaces the whole window without producing a
+   * diff, so it confirms no specific removal even when it refreshed the window.
+   */
   removed: string[]
 }

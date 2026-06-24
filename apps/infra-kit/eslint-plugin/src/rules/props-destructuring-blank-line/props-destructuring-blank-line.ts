@@ -1,8 +1,8 @@
 import type { Rule } from 'eslint'
 import type * as ESTree from 'estree'
 
-import type { ComponentFunction } from '../utils/component'
-import { isComponent } from '../utils/component'
+import type { ComponentFunction } from '../../utils/component'
+import { isComponent } from '../../utils/component'
 
 /** Whether a statement is `const { ... } = props` (destructuring the `props` identifier). */
 const isPropsDestructuring = (statement: ESTree.Statement): boolean => {
@@ -88,5 +88,3 @@ export const propsDestructuringBlankLine: Rule.RuleModule = {
     }
   },
 }
-
-export default propsDestructuringBlankLine

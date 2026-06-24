@@ -2,8 +2,8 @@ import tsParser from '@typescript-eslint/parser'
 import { RuleTester } from 'eslint'
 import { afterAll, describe, it } from 'vitest'
 
+import { dedent } from '../../../test-utils/dedent'
 import { componentFileOrder } from '../component-file-order'
-import { dedent } from './_dedent'
 
 // Wire ESLint's RuleTester into vitest's lifecycle so each case becomes a real test.
 const ruleTesterHooks = RuleTester as unknown as {
@@ -316,6 +316,62 @@ ruleTester.run('component-file-order', componentFileOrder, {
         const B = (props: BProps) => <div>{SOMETHING ? props.b : null}</div>
       `,
     },
+    // Props interface whose name does NOT follow the `<Component>Props` convention, declared
+    // immediately before the component — valid. The component is matched by the type its parameter
+    // actually references (`Props`), not by a name guess.
+    {
+      code: dedent`
+        import x from 'x'
+
+        interface Props {
+          a: string
+        }
+
+        const UserCard = (props: Props) => {
+          return x ? props.a : null
+        }
+      `,
+    },
+    // Two components sharing one props type. A single declaration cannot sit immediately before
+    // both, so adjacency is unenforceable for a shared type and is intentionally skipped.
+    {
+      code: dedent`
+        import x from 'x'
+
+        interface Props {
+          a: string
+        }
+
+        const A = (props: Props) => <span>{x ? props.a : null}</span>
+
+        const B = (props: Props) => <div>{props.a}</div>
+      `,
+    },
+    // A qualified-name props annotation (`NS.Props`) is not a simple named reference, so it does not
+    // resolve; the rule falls back to the `<Component>Props` convention, finds no such local type,
+    // and reports nothing rather than crashing.
+    {
+      code: dedent`
+        import x from 'x'
+
+        const UserCard = (props: NS.Props) => {
+          return x ? props : null
+        }
+      `,
+    },
+    // forwardRef-wrapped component with its props interface immediately before it — valid. The props
+    // type is resolved from the inner function's first parameter, through the wrapper.
+    {
+      code: dedent`
+        import { forwardRef } from 'react'
+
+        interface Props {
+          a: string
+        }
+
+        const Comp = forwardRef((props: Props, ref) => <div ref={ref}>{props.a}</div>)
+      `,
+    },
   ],
   invalid: [
     // Interface before the import, and separated from the component by the import.
@@ -520,6 +576,78 @@ ruleTester.run('component-file-order', componentFileOrder, {
         const Comp = (props: CompProps) => (SOMETHING && x ? <div>{props.a}</div> : null)
       `,
       errors: [{ messageId: 'componentImmediatelyAfterImports' }],
+    },
+    // The reported bug: a props interface whose name does NOT match the component, with a stray
+    // declaration wedged between it and the component. The interface must be immediately before the
+    // component regardless of its name — matched via the parameter type the component references.
+    {
+      code: dedent`
+        interface Props {
+          name: string
+        }
+
+        const DEFAULT_NAME = 'Anonymous'
+
+        export const UserCard = ({ name }: Props) => {
+          return <div>{name || DEFAULT_NAME}</div>
+        }
+      `,
+      errors: [{ messageId: 'interfaceImmediatelyBeforeComponent' }],
+    },
+    // Non-convention props name with a stray between the imports and the (correctly adjacent)
+    // interface — the imports-anchor check still fires for a generically named props type.
+    {
+      code: dedent`
+        import x from 'x'
+
+        const SOMETHING = 1
+
+        interface Props {
+          a: string
+        }
+
+        const UserCard = (props: Props) => {
+          return SOMETHING ? <div>{x ? props.a : null}</div> : null
+        }
+      `,
+      errors: [{ messageId: 'interfaceImmediatelyAfterImports' }],
+    },
+    // forwardRef-wrapped component with a stray wedged between its interface and the component —
+    // adjacency is enforced through the wrapper.
+    {
+      code: dedent`
+        import { forwardRef } from 'react'
+
+        interface Props {
+          a: string
+        }
+
+        const HELPERS = { a: 1 }
+
+        const Comp = forwardRef((props: Props, ref) => <div ref={ref}>{props.a || HELPERS.a}</div>)
+      `,
+      errors: [{ messageId: 'interfaceImmediatelyBeforeComponent' }],
+    },
+    // Disagreement case: the component references `UserCardProps`, but a differently-named interface
+    // (`Props`) sits adjacent. The parameter type is authoritative, so the violation fires on the
+    // real (non-adjacent) `UserCardProps`, not the conveniently-adjacent `Props`.
+    {
+      code: dedent`
+        import x from 'x'
+
+        interface UserCardProps {
+          a: string
+        }
+
+        interface Props {
+          b: string
+        }
+
+        const UserCard = (props: UserCardProps) => {
+          return x ? props.a : null
+        }
+      `,
+      errors: [{ messageId: 'interfaceImmediatelyBeforeComponent' }],
     },
   ],
 })

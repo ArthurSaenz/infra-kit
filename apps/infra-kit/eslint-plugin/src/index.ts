@@ -32,6 +32,7 @@ plugin.configs.recommended = [
       [`${PLUGIN_NAME}/props-destructuring-newline`]: 'error',
       [`${PLUGIN_NAME}/props-destructuring-blank-line`]: 'error',
       [`${PLUGIN_NAME}/props-type-reference`]: 'error',
+      [`${PLUGIN_NAME}/props-type-name`]: 'error',
       [`${PLUGIN_NAME}/component-file-order`]: 'error',
       // Pages and routes are excluded: route/page modules commonly use `function`
       // declarations (and framework conventions like default-exported page functions).
@@ -39,13 +40,17 @@ plugin.configs.recommended = [
       [`${PLUGIN_NAME}/require-component-stories`]: 'error',
     },
   },
-  // Storybook stories legitimately deviate from the imports → *Props → component
-  // order (meta/args/decorators/render fns), so component-file-order would only
-  // produce noise there. Every other rule stays enabled for story files.
+  // Storybook stories legitimately deviate from the component conventions: the
+  // imports → *Props → component order (meta/args/decorators/render fns), and
+  // named templates that reference the *component's* props type (e.g.
+  // `const Template = (args: ButtonProps) => ...`) rather than their own
+  // `<TemplateName>Props`. So both the ordering and the props-type-name rules
+  // would only produce noise there. Every other rule stays enabled for stories.
   {
     files: ['**/*.stories.{ts,tsx}'],
     rules: {
       [`${PLUGIN_NAME}/component-file-order`]: 'off',
+      [`${PLUGIN_NAME}/props-type-name`]: 'off',
     },
   },
 ]

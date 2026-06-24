@@ -2,10 +2,10 @@ import type { Rule } from 'eslint'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 
-import { bodyDeclaresComponent } from '../utils/component'
-import { matchesAnyGlob } from '../utils/path-match'
-import type { ExtraTarget, StoryPathOptions } from '../utils/story-path'
-import { DEFAULT_STORY_PATH_OPTIONS, classifyComponent, deriveExpectedStoryPaths } from '../utils/story-path'
+import { bodyDeclaresComponent } from '../../utils/component'
+import { matchesAnyGlob } from '../../utils/path-match'
+import type { ExtraTarget, StoryPathOptions } from '../../utils/story-path'
+import { DEFAULT_STORY_PATH_OPTIONS, classifyComponent, deriveExpectedStoryPaths } from '../../utils/story-path'
 
 interface Options {
   paths?: string[]
@@ -163,5 +163,3 @@ export const requireComponentStories: Rule.RuleModule = {
     }
   },
 }
-
-export default requireComponentStories

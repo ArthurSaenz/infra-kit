@@ -118,7 +118,16 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       pruneFolder: allSelected,
     })
 
-    await removeIdeWorktreeFolders({ projectRoot, worktreeDir, branches: removedWorktrees })
+    // `!confirmedCommand` is the interactive path (a human used the picker/confirm). Only there
+    // do we let Zed's destructive `--reuse` relaunch fire; MCP/--yes runs (confirmedCommand=true)
+    // and worktrees-sync never relaunch an editor window.
+    await removeIdeWorktreeFolders({
+      projectRoot,
+      worktreeDir,
+      currentWorktrees,
+      removedWorktrees,
+      allowEditorRelaunch: !confirmedCommand,
+    })
 
     logResults(removedWorktrees)
 

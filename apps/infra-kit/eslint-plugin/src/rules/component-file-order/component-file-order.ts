@@ -1,8 +1,13 @@
 import type { Rule } from 'eslint'
 import type * as ESTree from 'estree'
 
-import { declaresComponent, getDeclaredComponentName, unwrapExport } from '../utils/component'
-import { matchesAnyGlob } from '../utils/path-match'
+import {
+  declaresComponent,
+  getComponentPropsTypeName,
+  getDeclaredComponentName,
+  unwrapExport,
+} from '../../utils/component'
+import { matchesAnyGlob } from '../../utils/path-match'
 
 interface Options {
   paths?: string[]
@@ -44,8 +49,12 @@ const getDirectivePrologueCount = (body: Array<ESTree.Statement | ESTree.ModuleD
   return count
 }
 
-/** The name of a props interface/type alias (`SomethingProps`), or null when it is neither. */
-const getPropsTypeName = (node: ESTree.Node | null): string | null => {
+/**
+ * The name of a top-level interface or type-alias declaration, or null when it is neither.
+ * Unlike the props lookup, this is name-agnostic: any local type declaration is indexed so a
+ * component can be matched against the type it actually references, whatever that type is called.
+ */
+const getTypeDeclName = (node: ESTree.Node | null): string | null => {
   if (!node) {
     return null
   }
@@ -56,31 +65,33 @@ const getPropsTypeName = (node: ESTree.Node | null): string | null => {
     return null
   }
 
-  const name = named.id?.name
-
-  return name?.endsWith(PROPS_SUFFIX) ? name : null
+  return named.id?.name ?? null
 }
 
 interface ComponentRef {
   index: number
   name: string | null
+  // The type name the component uses for its props — resolved from its parameter annotation, or
+  // the `<Name>Props` convention when the parameter carries no resolvable named type. Null when
+  // neither is available (e.g. an anonymous component with no typed props parameter).
+  propsName: string | null
 }
 
 interface TopLevel {
   importIndices: number[]
   components: ComponentRef[]
-  // First index of each `*Props` declaration, keyed by its name.
-  propsIndexByName: Map<string, number>
+  // First index of each top-level type declaration, keyed by its name.
+  declIndexByName: Map<string, number>
   // Local binding names introduced by imports — used to detect a props type that is
   // imported (e.g. `import type { CompProps }`) rather than declared in the file.
   importedNames: Set<string>
 }
 
-/** Classify each top-level statement into imports, components, local props types, and import bindings. */
+/** Classify each top-level statement into imports, components, local type declarations, and import bindings. */
 const collectTopLevel = (body: Array<ESTree.Statement | ESTree.ModuleDeclaration>): TopLevel => {
   const importIndices: number[] = []
   const components: ComponentRef[] = []
-  const propsIndexByName = new Map<string, number>()
+  const declIndexByName = new Map<string, number>()
   const importedNames = new Set<string>()
 
   body.forEach((statement, index) => {
@@ -96,18 +107,23 @@ const collectTopLevel = (body: Array<ESTree.Statement | ESTree.ModuleDeclaration
 
     const declaration = unwrapExport(statement)
 
-    const propsName = getPropsTypeName(declaration)
+    const declName = getTypeDeclName(declaration)
 
-    if (propsName !== null && !propsIndexByName.has(propsName)) {
-      propsIndexByName.set(propsName, index)
+    if (declName !== null && !declIndexByName.has(declName)) {
+      declIndexByName.set(declName, index)
     }
 
     if (declaresComponent(declaration)) {
-      components.push({ index, name: getDeclaredComponentName(declaration) })
+      const name = getDeclaredComponentName(declaration)
+      // Prefer the type the component's parameter actually references; fall back to the
+      // `<Name>Props` convention only when no named parameter type is resolvable.
+      const propsName = getComponentPropsTypeName(declaration) ?? (name === null ? null : `${name}${PROPS_SUFFIX}`)
+
+      components.push({ index, name, propsName })
     }
   })
 
-  return { importIndices, components, propsIndexByName, importedNames }
+  return { importIndices, components, declIndexByName, importedNames }
 }
 
 /**
@@ -150,18 +166,31 @@ const findImportOrderViolations = (importIndices: number[], importBoundary: numb
 }
 
 /**
- * Each component's own `<Name>Props` interface, when present, must sit immediately before the
- * component. Matching by name keeps a sibling component's props from being judged against this one.
+ * Each component's props type, when declared locally, must sit immediately before the component.
+ * The type is matched by the name the component's parameter actually references, so an interface
+ * named anything (`Props`, `UserCardProps`, ...) is judged — not just the `<Name>Props` convention.
+ * A type referenced by more than one component is skipped: a single declaration cannot sit
+ * immediately before two components, so adjacency is unenforceable and would misfire.
  */
-const findAdjacencyViolations = (components: ComponentRef[], propsIndexByName: Map<string, number>): Violation[] => {
+const findAdjacencyViolations = (components: ComponentRef[], declIndexByName: Map<string, number>): Violation[] => {
   const violations: Violation[] = []
 
+  const referenceCount = new Map<string, number>()
+
   for (const component of components) {
-    if (component.name === null) {
+    if (component.propsName !== null) {
+      referenceCount.set(component.propsName, (referenceCount.get(component.propsName) ?? 0) + 1)
+    }
+  }
+
+  for (const component of components) {
+    const propsName = component.propsName
+
+    if (propsName === null || (referenceCount.get(propsName) ?? 0) > 1) {
       continue
     }
 
-    const propsIndex = propsIndexByName.get(`${component.name}${PROPS_SUFFIX}`)
+    const propsIndex = declIndexByName.get(propsName)
 
     if (propsIndex !== undefined && propsIndex !== component.index - 1) {
       violations.push({ index: propsIndex, messageId: 'interfaceImmediatelyBeforeComponent' })
@@ -273,7 +302,7 @@ export const componentFileOrder: Rule.RuleModule = {
         // Leading directive prologue (`'use client'`, ...) — excluded from the stray checks.
         const directiveCount = getDirectivePrologueCount(body)
 
-        const { importIndices, components, propsIndexByName, importedNames } = collectTopLevel(body)
+        const { importIndices, components, declIndexByName, importedNames } = collectTopLevel(body)
 
         // The rule only governs files that actually contain a component.
         if (components.length === 0) {
@@ -281,8 +310,8 @@ export const componentFileOrder: Rule.RuleModule = {
         }
 
         const first = components[0]!
-        const firstPropsName = first.name === null ? null : `${first.name}${PROPS_SUFFIX}`
-        const firstPropsIndex = firstPropsName === null ? undefined : propsIndexByName.get(firstPropsName)
+        const firstPropsName = first.propsName
+        const firstPropsIndex = firstPropsName === null ? undefined : declIndexByName.get(firstPropsName)
         // `importBoundary` is intentionally directive-insensitive: a leading directive prologue
         // shifts every subsequent index up uniformly, so it never crosses this boundary. The
         // prologue is excluded only from the stray checks, where the raw index matters.
@@ -290,7 +319,7 @@ export const componentFileOrder: Rule.RuleModule = {
 
         const violations = [
           ...findImportOrderViolations(importIndices, importBoundary),
-          ...findAdjacencyViolations(components, propsIndexByName),
+          ...findAdjacencyViolations(components, declIndexByName),
           ...findAnchorViolations(
             body,
             directiveCount,
@@ -309,5 +338,3 @@ export const componentFileOrder: Rule.RuleModule = {
     }
   },
 }
-
-export default componentFileOrder

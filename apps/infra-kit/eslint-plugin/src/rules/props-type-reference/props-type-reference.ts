@@ -1,9 +1,8 @@
 import type { Rule } from 'eslint'
-import type * as ESTree from 'estree'
 
-import type { ComponentFunction } from '../utils/component'
-import { getComponentName, isComponent } from '../utils/component'
-import { matchesAnyGlob } from '../utils/path-match'
+import type { ComponentFunction } from '../../utils/component'
+import { getAnnotatedParam, getComponentName, isComponent } from '../../utils/component'
+import { matchesAnyGlob } from '../../utils/path-match'
 
 interface Options {
   paths?: string[]
@@ -20,15 +19,6 @@ interface AnnotatedNode {
 }
 
 const INLINE_OBJECT_TYPE = 'TSTypeLiteral'
-
-/**
- * The parameter that actually carries the props type annotation. A default value wraps the
- * parameter in an `AssignmentPattern` (`(props: { x } = {})`), moving the annotation onto its
- * `.left`; unwrap one layer so the inline-type check sees the annotated binding either way.
- */
-const getAnnotatedParam = (param: ESTree.Pattern): ESTree.Pattern => {
-  return param.type === 'AssignmentPattern' ? param.left : param
-}
 
 export const propsTypeReference: Rule.RuleModule = {
   meta: {
@@ -110,5 +100,3 @@ export const propsTypeReference: Rule.RuleModule = {
     }
   },
 }
-
-export default propsTypeReference

@@ -1,9 +1,9 @@
 import type { Rule } from 'eslint'
 import type * as ESTree from 'estree'
 
-import { getComponentFunction, getComponentName, isComponent, unwrapExport } from '../utils/component'
-import type { ComponentFunction } from '../utils/component'
-import { matchesAnyGlob } from '../utils/path-match'
+import { getComponentFunction, getComponentName, isComponent, unwrapExport } from '../../utils/component'
+import type { ComponentFunction } from '../../utils/component'
+import { matchesAnyGlob } from '../../utils/path-match'
 
 interface Options {
   paths?: string[]
@@ -148,5 +148,3 @@ export const componentArrowFunction: Rule.RuleModule = {
     }
   },
 }
-
-export default componentArrowFunction

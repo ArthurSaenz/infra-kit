@@ -1,8 +1,8 @@
 import type { Rule } from 'eslint'
 import type * as ESTree from 'estree'
 
-import type { ComponentFunction } from '../utils/component'
-import { isComponent } from '../utils/component'
+import type { ComponentFunction } from '../../utils/component'
+import { isComponent } from '../../utils/component'
 
 // Minimal structural views over nodes that estree's types do not fully model:
 // the optional TS type annotation and `range` that the parser attaches to params.
@@ -153,5 +153,3 @@ export const propsDestructuringNewline: Rule.RuleModule = {
     }
   },
 }
-
-export default propsDestructuringNewline

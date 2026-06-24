@@ -192,6 +192,80 @@ export const getComponentFunction = (node: ESTree.Node | null | undefined): Comp
   return null
 }
 
+// TS-only nodes are not modelled by estree. A parameter's `typeAnnotation` wraps the type node;
+// for a named type that inner node is a `TSTypeReference` whose `typeName` is the referenced
+// identifier (`Props`, `ButtonProps`, ...). Inline object types, qualified names (`NS.Props`) and
+// generics surface a different `typeName` shape and are intentionally left unresolved.
+interface TypeReferenceNode {
+  type?: string
+  typeName?: { type?: string; name?: string }
+}
+
+interface AnnotatedParam {
+  typeAnnotation?: {
+    typeAnnotation?: TypeReferenceNode
+  }
+}
+
+/**
+ * The parameter that actually carries the props type annotation. A default value wraps the
+ * parameter in an `AssignmentPattern` (`(props: Props = {})`), moving the annotation onto its
+ * `.left`; unwrap one layer so the annotation is found either way.
+ */
+export const getAnnotatedParam = (param: ESTree.Pattern): ESTree.Pattern => {
+  return param.type === 'AssignmentPattern' ? param.left : param
+}
+
+/** The named type referenced by a component function's first parameter (`Props`), or null. */
+export const getPropsTypeNameFromFunction = (node: ComponentFunction): string | null => {
+  const firstParam = node.params[0]
+
+  if (!firstParam) {
+    return null
+  }
+
+  const inner = (getAnnotatedParam(firstParam) as AnnotatedParam).typeAnnotation?.typeAnnotation
+
+  if (inner?.type !== 'TSTypeReference' || inner.typeName?.type !== 'Identifier') {
+    return null
+  }
+
+  return inner.typeName.name ?? null
+}
+
+/**
+ * Resolve the props type name a component *uses* — the named type on its first parameter —
+ * looking through component wrappers (`memo`/`forwardRef`). Returns null when the component is
+ * anonymous of props (no parameter) or its props type is not a simple named reference (inline
+ * object, qualified name, generic). Mirrors `getDeclaredComponentName`'s node dispatch so a
+ * `const`-declared arrow component resolves through its `init`, not the `VariableDeclaration`.
+ */
+export const getComponentPropsTypeName = (node: ESTree.Node | null): string | null => {
+  if (!node) {
+    return null
+  }
+
+  if (node.type === 'FunctionDeclaration') {
+    return isComponent(node) ? getPropsTypeNameFromFunction(node) : null
+  }
+
+  if (node.type === 'VariableDeclaration') {
+    for (const declaration of node.declarations) {
+      const fn = getComponentFunction(declaration.init)
+
+      if (fn && isComponent(fn)) {
+        return getPropsTypeNameFromFunction(fn)
+      }
+    }
+
+    return null
+  }
+
+  const fn = getComponentFunction(node)
+
+  return fn && isComponent(fn) ? getPropsTypeNameFromFunction(fn) : null
+}
+
 /** Unwrap an `export ...` statement to the declaration it wraps (or the statement itself). */
 export const unwrapExport = (statement: ESTree.Statement | ESTree.ModuleDeclaration): ESTree.Node | null => {
   if (statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration') {
