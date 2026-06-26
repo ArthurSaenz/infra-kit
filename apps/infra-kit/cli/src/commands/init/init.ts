@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import process from 'node:process'
 
 import { logger } from 'src/lib/logger'
 import { removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
@@ -33,7 +34,7 @@ const USER_GLOBAL_CONFIG_EXAMPLE = `// infra-kit user-global config — ~/.infra
 //
 // Merge is shallow: setting a top-level key replaces that whole section from
 // layer 1. Arrays do not concatenate. Top-level keys recognized:
-// environments, envManagement, ide, taskManager, worktrees.
+// environments, envManagement, ide, taskManager, worktrees, envAutoLoad.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real global
 // overrides in the sibling infra-kit.json (strict JSON: no comments, double-quoted
@@ -74,19 +75,27 @@ const USER_GLOBAL_CONFIG_EXAMPLE = `// infra-kit user-global config — ~/.infra
   //   // cmux pane layout for opened worktrees: "two-columns" (default, left | right)
   //   // or "three-pane" (left split top/bottom + full-height right).
   //   "cmux": { "layout": "two-columns" }
-  // }
+  // },
+  //
+  // // Auto-load Doppler env when working inside this project/worktree. Omit to
+  // // disable. "trigger" (pick one): "shell-startup" (new shells) | "cli-invocation"
+  // // (before each infra-kit command, primes subsequent commands). "config" is the
+  // // environment to load (must be one of "environments"). Requires the committed
+  // // infra-kit.json at the git repo root, and the zsh shell integration
+  // // (infra-kit init + a new shell). zsh only.
+  // "envAutoLoad": { "trigger": "shell-startup", "config": "dev" }
 }
 `
 
 // The machine-local factory registry lives at ~/.infra-kit/vendor.json (strict
 // JSON). This annotated sibling documents every property; the real file is
-// scaffolded by \`infra-kit vendor-config --init\`, NOT by init.
+// scaffolded by \`infra-kit vendor config --init\`, NOT by init.
 const VENDOR_CONFIG_EXAMPLE = `// infra-kit factory registry — ~/.infra-kit/vendor.json
 //
 // Machine-local registry the vendor commands (sync/manifest/diff) read to know
 // where your project repos live and which ones to stamp. This .example.jsonc is
 // reference only — it is NOT loaded. The real file is the strict-JSON sibling
-// vendor.json (no comments, double-quoted keys); run \`infra-kit vendor-config --init\`
+// vendor.json (no comments, double-quoted keys); run \`infra-kit vendor config --init\`
 // to scaffold it.
 {
   // "workspaceDir": "~/projects",   // string (absolute or ~-prefixed) — where target repos are cloned
@@ -154,6 +163,17 @@ export const init = async (): Promise<void> => {
   // with the CLI surface. A no-op outside an infra-kit repo.
   await writeAgentFiles()
 
+  // The shell integration is zsh-only (zmodload zsh/stat, add-zsh-hook, ${dir:h}).
+  // Warn non-fatally if the user's login shell isn't zsh so the block isn't a
+  // silent no-op for them.
+  const shell = process.env.SHELL ?? ''
+
+  if (!shell.includes('zsh')) {
+    logger.warn(
+      `Your login shell ($SHELL=${shell || 'unset'}) is not zsh. The infra-kit shell integration (env-load/env-clear/auto-load) is zsh-only and won't activate in bash/fish.`,
+    )
+  }
+
   logger.info('Run `source ~/.zshrc` or open a new terminal to activate.')
 }
 
@@ -165,7 +185,7 @@ export const init = async (): Promise<void> => {
  * run so existing users always get the current, complete schema documentation.
  *
  * Deliberately seeds NO real `vendor.json` — that is scaffolded by
- * `infra-kit vendor-config --init` (a stub here would block `--init`, trip the
+ * `infra-kit vendor config --init` (a stub here would block `--init`, trip the
  * factory migration's no-overwrite guard, and fail the schema's `targets.min(1)`).
  *
  * @example
@@ -301,6 +321,31 @@ export const buildShellBody = (): string => {
     'autoload -Uz add-zsh-hook',
     'if (( _INFRA_KIT_SHELL_STARTED > 0 )); then',
     '  add-zsh-hook precmd _infra_kit_autoload',
+    'fi',
+    // One-shot env auto-load when a NEW shell opens inside an infra-kit project
+    // or worktree (config: envAutoLoad.trigger "shell-startup"). Cheap pure-zsh
+    // project gate (walk up for infra-kit.json) avoids spawning node in unrelated
+    // shells; the INFRA_KIT_ENV_CONFIG guard skips subshells that already inherited
+    // a loaded env. The spawn is DETACHED+backgrounded ( ... & ) so it never blocks
+    // the prompt; it only WRITES env-load.sh and the precmd hook above is the sole
+    // sourcer (picked up on a subsequent prompt). Trade-off: the gate can't read the
+    // merged JSON config, so a fresh shell in a project WITHOUT envAutoLoad still
+    // spawns one background process that resolves config, finds nothing, and exits.
+    '_infra_kit_startup_autoload() {',
+    '  [[ -z "$INFRA_KIT_SESSION" ]] && return',
+    '  [[ -n "$INFRA_KIT_ENV_CONFIG" ]] && return',
+    '  local dir="$PWD"',
+    '  while [[ "$dir" != / ]]; do',
+    '    if [[ -f "$dir/infra-kit.json" ]]; then',
+    `      ( ${runCmd} env-autoload & ) >/dev/null 2>&1`,
+    '      return',
+    '    fi',
+    // eslint-disable-next-line no-template-curly-in-string
+    '    dir="${dir:h}"',
+    '  done',
+    '}',
+    'if (( _INFRA_KIT_SHELL_STARTED > 0 )); then',
+    '  _infra_kit_startup_autoload',
     'fi',
   ].join('\n')
 }

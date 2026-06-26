@@ -10,6 +10,19 @@ export const INFRA_KIT_SESSION_VAR = 'INFRA_KIT_SESSION'
 export const INFRA_KIT_ENV_CONFIG_VAR = 'INFRA_KIT_ENV_CONFIG'
 export const INFRA_KIT_ENV_PROJECT_VAR = 'INFRA_KIT_ENV_PROJECT'
 export const INFRA_KIT_ENV_LOADED_AT_VAR = 'INFRA_KIT_ENV_LOADED_AT'
+/**
+ * Marker exported into env-load.sh ONLY when the load was triggered automatically
+ * (see lib/env-autoload). Its presence is the sole signal distinguishing an
+ * auto-loaded env from a deliberate manual `env-load`, so auto-load never
+ * clobbers a manual choice. A manual load unsets it.
+ */
+export const INFRA_KIT_ENV_AUTOLOADED_VAR = 'INFRA_KIT_ENV_AUTOLOADED'
+/**
+ * Suppression sentinel exported by env-clear. While set in a shell, cli-invocation
+ * auto-load stays silent (a deliberate clear must not be immediately re-loaded).
+ * Lifted by a manual `env-load` or a new shell.
+ */
+export const INFRA_KIT_ENV_CLEARED_VAR = 'INFRA_KIT_ENV_CLEARED'
 
 /**
  * Matches a line of the form `KEY=...` where KEY is an env-var identifier

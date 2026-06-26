@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { z } from 'zod'
 
-import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
+import { getProjectRoot } from 'src/lib/git-utils'
 
 const INFRA_KIT_CONFIG_FILE = 'infra-kit.json'
 
@@ -89,6 +89,22 @@ const worktreesConfigSchema = z.object({
   cmux: cmuxConfigSchema.optional(),
 })
 
+// env auto-load: opt-in convenience that primes Doppler env when you work inside
+// this project / a worktree. Absent => disabled. `trigger` selects the moment
+// (pick one):
+//   shell-startup  — when a new shell opens inside the project
+//   cli-invocation — before each `infra-kit` command (primes SUBSEQUENT commands)
+// `config` names which environment to load. It is intentionally NOT validated
+// against `environments` here: an invalid name must DISABLE the feature at
+// resolve time (lib/env-autoload), never throw inside the merged-config parse and
+// brick every command.
+const envAutoLoadSchema = z
+  .object({
+    trigger: z.enum(['shell-startup', 'cli-invocation']),
+    config: z.string().min(1),
+  })
+  .strict()
+
 // Base object shape, kept separate so `.partial()` (which only works on a plain
 // ZodObject, not the `.superRefine`-wrapped full schema) can derive the override
 // schema from it.
@@ -98,6 +114,7 @@ const infraKitConfigObject = z.object({
   ide: idesSchema.optional(),
   taskManager: taskManagerSchema.optional(),
   worktrees: worktreesConfigSchema.optional(),
+  envAutoLoad: envAutoLoadSchema.optional(),
 })
 
 // Full schema = base object + a parse-time uniqueness check on the `ide` array.
@@ -128,6 +145,9 @@ export const infraKitConfigSchema = infraKitConfigObject.superRefine((cfg, ctx) 
 export const infraKitOverrideConfigSchema = infraKitConfigObject.partial()
 
 export type InfraKitConfig = z.infer<typeof infraKitConfigSchema>
+
+/** Resolved env auto-load config (`{ trigger, config }`), or `undefined` when off. */
+export type EnvAutoLoadConfig = z.infer<typeof envAutoLoadSchema>
 
 /** A single resolved IDE entry (`{ provider, config }`). */
 export type ConfiguredIde = z.infer<typeof ideSchema>
@@ -203,7 +223,9 @@ let cached: CacheEntry | null = null
  */
 export const getInfraKitConfigPaths = async (): Promise<InfraKitConfigPaths> => {
   const projectRoot = await getProjectRoot()
-  const projectName = await getRepoName()
+  // Repo name is the project-root basename (same as getRepoName), derived here to
+  // avoid a second `git rev-parse` — getRepoName would re-resolve the root.
+  const projectName = path.basename(projectRoot)
   const userConfigDir = path.join(os.homedir(), USER_CONFIG_DIR_NAME)
 
   return {

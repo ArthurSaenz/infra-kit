@@ -124,12 +124,14 @@ const buildUserProjectExample = (projectName: string): string => {
 //
 // Layer 3 (highest precedence) of the config merge chain. Shallow-merged on top
 // of <repo>/infra-kit.json and ~/.infra-kit/infra-kit.json — top-level keys
-// (environments, envManagement, ide, taskManager, worktrees) replace wholesale.
+// (environments, envManagement, ide, taskManager, worktrees, envAutoLoad) replace wholesale.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real overrides
 // in the sibling infra-kit.json (strict JSON: no comments, double-quoted keys).
 {
-  // "worktrees": { "openInGithubDesktop": false, "openInCmux": true, "cmux": { "layout": "two-columns" } }
+  // "worktrees": { "openInGithubDesktop": false, "openInCmux": true, "cmux": { "layout": "two-columns" } },
+  // // Auto-load Doppler env here. trigger (pick one): shell-startup | cli-invocation; config: an environment name.
+  // "envAutoLoad": { "trigger": "shell-startup", "config": "dev" }
 }
 `
 }

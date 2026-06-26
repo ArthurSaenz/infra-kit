@@ -12,6 +12,8 @@ import { commandEcho } from 'src/lib/command-echo'
 import {
   ENV_LOAD_FILE,
   ENV_VAR_LINE_PATTERN,
+  INFRA_KIT_ENV_AUTOLOADED_VAR,
+  INFRA_KIT_ENV_CLEARED_VAR,
   INFRA_KIT_ENV_CONFIG_VAR,
   INFRA_KIT_ENV_LOADED_AT_VAR,
   INFRA_KIT_ENV_PROJECT_VAR,
@@ -25,12 +27,112 @@ interface EnvLoadArgs {
   config?: string
 }
 
+interface WriteEnvLoadFileArgs {
+  /** Resolved Doppler config / environment name (no interactive picker here). */
+  config: string
+  /**
+   * Marks the produced file as auto-loaded. `true` writes the
+   * INFRA_KIT_ENV_AUTOLOADED marker; `false` (a manual load) instead unsets the
+   * marker and lifts any clear suppression so a deliberate load wins.
+   */
+  autoLoaded?: boolean
+}
+
+export interface EnvLoadFileResult {
+  filePath: string
+  variableCount: number
+  project: string
+  config: string
+}
+
+interface EnvLoadFileLinesArgs {
+  envContent: string
+  config: string
+  project: string
+  loadedAt: string
+  autoLoaded: boolean
+}
+
+/**
+ * The auto-load marker lines appended to env-load.sh. Pure so the marker policy
+ * is unit-testable without touching Doppler or the filesystem.
+ *
+ * @example
+ * buildAutoLoadMarkerLines(true)  // => ["INFRA_KIT_ENV_AUTOLOADED='1'"]
+ * buildAutoLoadMarkerLines(false) // => ['unset INFRA_KIT_ENV_AUTOLOADED', 'unset INFRA_KIT_ENV_CLEARED']
+ */
+const buildAutoLoadMarkerLines = (autoLoaded: boolean): string[] => {
+  if (autoLoaded) {
+    return [`${INFRA_KIT_ENV_AUTOLOADED_VAR}=${shellSingleQuote('1')}`]
+  }
+
+  // Manual load: drop any auto marker so auto-load never re-clobbers a deliberate
+  // choice, and lift a prior clear suppression so the manual load takes effect.
+  return [`unset ${INFRA_KIT_ENV_AUTOLOADED_VAR}`, `unset ${INFRA_KIT_ENV_CLEARED_VAR}`]
+}
+
+/**
+ * Build the dotenv-format shell lines for env-load.sh. Pure (no I/O) so callers
+ * can assert the exact marker behavior. `set -a`/`set +a` auto-export every
+ * assignment when the file is sourced.
+ */
+export const buildEnvLoadFileLines = ({
+  envContent,
+  config,
+  project,
+  loadedAt,
+  autoLoaded,
+}: EnvLoadFileLinesArgs): string[] => {
+  return [
+    'set -a',
+    envContent,
+    `${INFRA_KIT_ENV_CONFIG_VAR}=${shellSingleQuote(config)}`,
+    `${INFRA_KIT_ENV_PROJECT_VAR}=${shellSingleQuote(project)}`,
+    `${INFRA_KIT_ENV_LOADED_AT_VAR}=${shellSingleQuote(loadedAt)}`,
+    ...buildAutoLoadMarkerLines(autoLoaded),
+    'set +a',
+  ]
+}
+
+/**
+ * Download Doppler secrets for a resolved config and atomically write env-load.sh
+ * to the session cache dir. Does NOT print to stdout — shared by the CLI/MCP
+ * `envLoad` entry (which prints the path) and the auto-load path (which lets the
+ * shell precmd hook source the file).
+ */
+export const writeEnvLoadFile = async ({
+  config,
+  autoLoaded = false,
+}: WriteEnvLoadFileArgs): Promise<EnvLoadFileResult> => {
+  await validateDopplerCliAndAuth()
+
+  const project = await getDopplerProject()
+
+  const envContent = await downloadDopplerSecrets(project, config)
+
+  assertValidEnvContent(envContent)
+
+  const loadedAt = new Date().toISOString()
+  const envFileLines = buildEnvLoadFileLines({ envContent, config, project, loadedAt, autoLoaded })
+
+  const cacheDir = getSessionCacheDir()
+  const envFilePath = path.resolve(cacheDir, ENV_LOAD_FILE)
+
+  fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
+  atomicWriteFileSync(envFilePath, `${envFileLines.join('\n')}\n`, 0o600)
+
+  return {
+    filePath: envFilePath,
+    variableCount: countEnvVarLines(envContent),
+    project,
+    config,
+  }
+}
+
 /**
  * Load environment variables from Doppler for the given config
  */
 export const envLoad = async (args: EnvLoadArgs) => {
-  await validateDopplerCliAndAuth()
-
   const { config } = args
 
   commandEcho.start('env-load')
@@ -40,6 +142,11 @@ export const envLoad = async (args: EnvLoadArgs) => {
   if (config) {
     selectedConfig = config
   } else {
+    // Validate auth before the interactive picker so an unauthenticated user fails
+    // fast instead of choosing an env first. writeEnvLoadFile re-checks (cheap) for
+    // the non-interactive path where this branch is skipped.
+    await validateDopplerCliAndAuth()
+
     const { environments } = await getInfraKitConfig()
 
     commandEcho.setInteractive()
@@ -58,43 +165,21 @@ export const envLoad = async (args: EnvLoadArgs) => {
 
   commandEcho.addOption('--config', selectedConfig)
 
-  const project = await getDopplerProject()
-
-  const envContent = await downloadDopplerSecrets(project, selectedConfig)
-
-  assertValidEnvContent(envContent)
-
-  // Build env file content in dotenv format
-  const loadedAt = new Date().toISOString()
-  const envFileLines = [
-    'set -a',
-    envContent,
-    `${INFRA_KIT_ENV_CONFIG_VAR}=${shellSingleQuote(selectedConfig)}`,
-    `${INFRA_KIT_ENV_PROJECT_VAR}=${shellSingleQuote(project)}`,
-    `${INFRA_KIT_ENV_LOADED_AT_VAR}=${shellSingleQuote(loadedAt)}`,
-    'set +a',
-  ]
-
-  const cacheDir = getSessionCacheDir()
-  const envFilePath = path.resolve(cacheDir, ENV_LOAD_FILE)
-
-  fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
-  atomicWriteFileSync(envFilePath, `${envFileLines.join('\n')}\n`, 0o600)
+  // A manual load is authoritative: autoLoaded=false drops the auto marker.
+  const result = await writeEnvLoadFile({ config: selectedConfig, autoLoaded: false })
 
   // REQUIRED
-  process.stdout.write(`${envFilePath}\n`)
+  process.stdout.write(`${result.filePath}\n`)
 
   // Logs to stderr (pino → pretty-print), so it doesn't pollute the captured
   // file path that the shell wrapper reads from stdout.
   commandEcho.print()
 
-  const varCount = countEnvVarLines(envContent)
-
   const structuredContent = {
-    filePath: envFilePath,
-    variableCount: varCount,
-    project,
-    config: selectedConfig,
+    filePath: result.filePath,
+    variableCount: result.variableCount,
+    project: result.project,
+    config: result.config,
   }
 
   return {

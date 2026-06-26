@@ -393,6 +393,80 @@ strictly greater than the ceiling are reported (`count === max` is allowed).
 Same glob semantics as the other rules: `paths` restricts the rule to matching
 files, `ignore` skips matching files (and takes precedence over `paths`).
 
+### `max-components-per-file`
+
+Caps how many React components a single file may declare; extra components
+belong in their own files. This keeps files focused and discoverable instead of
+growing into multi-component junk drawers.
+
+```tsx
+// ❌ Incorrect — 5 components in one file (default ceiling is 4)
+const A = () => <div />
+const B = () => <div />
+const C = () => <div />
+const D = () => <div />
+const E = () => <div /> // reported here: "This file declares 5 components (max 4)"
+
+// ✅ Correct — split the extra component into its own file
+```
+
+Only **top-level** declarations are counted. A multi-declarator statement
+(`const A = () => …, B = () => …`) counts each component separately. Re-exports
+(`export { X } from './x'`) declare nothing and are not counted, and
+`styled.div\`…\`` tagged templates are not component functions, so they are not
+counted either. Nested / in-render components are intentionally out of scope —
+that is a different concern (component identity / re-render stability), better
+served by `react/no-unstable-nested-components`.
+
+Detection uses the same heuristic as the other rules (PascalCase name through
+`memo`/`forwardRef`/`observer` wrappers, or a JSX return). A consequence worth
+knowing: a PascalCase-named function that returns a non-JSX value (e.g. a factory
+`const Make = () => ({ … })`) is counted as a component, because the name
+short-circuits the check. This is consistent across the plugin.
+
+The rule reports **once per file**, anchored to the first component over the
+limit, rather than once per excess component — there is no autofix, so a single
+file-scoped diagnostic is more useful than N copies of the same advice.
+
+In the recommended preset the ceiling is `4` for `*.tsx` generally and tightened
+to `1` for dumb `*-component.tsx` files (matching the one-component-per-file
+convention the props/order/stories rules already assume); `**/pages/**` and
+`**/routes/**` are exempt, since route/page modules legitimately co-locate
+multiple route or layout components. For a file that genuinely needs to break the
+ceiling, use an inline `// eslint-disable-next-line @wl/max-components-per-file`.
+
+#### Why a custom rule (vs `react/no-multi-comp`)
+
+`eslint-plugin-react`'s `no-multi-comp` covers similar ground but effectively
+enforces a fixed ceiling of 1 (it flags the 2nd+ component) and cannot be
+configured to an arbitrary limit. This rule exists because it (1) supports a
+configurable `maxComponents` ceiling, (2) supports tiered per-file-type limits
+via flat-config layering, and (3) reuses this plugin's centralized component
+detection so its behavior matches the sibling `@wl` rules. (`eslint-plugin-react`
+is not a dependency of this repo.)
+
+#### Option: `maxComponents` (optional)
+
+The component ceiling before the rule reports. Defaults to `4`. Only counts
+strictly greater than the ceiling are reported (`count === max` is allowed).
+
+```js
+{
+  rules: {
+    '@wl/max-components-per-file': ['error', { maxComponents: 2 }],
+  },
+}
+```
+
+#### Option: `paths` / `ignore` (optional)
+
+Same glob semantics as the other rules: `paths` restricts the rule to matching
+files, `ignore` skips matching files (and takes precedence over `paths`).
+
+> **Flat-config note:** options are **replaced**, not merged, across matching
+> config blocks. If you override `maxComponents` for a glob, re-declare `ignore`
+> in that same block or its exemptions are lost.
+
 ### `require-component-stories`
 
 Require a co-located Storybook story for every dumb component. By default it enforces two layouts,

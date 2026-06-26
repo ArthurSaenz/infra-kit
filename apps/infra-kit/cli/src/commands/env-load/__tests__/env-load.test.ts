@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { DOPPLER_MAX_OUTPUT_BYTES, assertDopplerOutputSize, assertValidEnvContent, shellSingleQuote } from '../env-load'
+import {
+  DOPPLER_MAX_OUTPUT_BYTES,
+  assertDopplerOutputSize,
+  assertValidEnvContent,
+  buildEnvLoadFileLines,
+  shellSingleQuote,
+} from '../env-load'
 
 describe('shellSingleQuote', () => {
   it('wraps plain values in single quotes', () => {
@@ -128,5 +134,34 @@ describe('assertDopplerOutputSize', () => {
     expect(() => {
       return assertDopplerOutputSize(multiByte)
     }).toThrow(/unexpectedly large output/)
+  })
+})
+
+describe('buildEnvLoadFileLines', () => {
+  const args = { envContent: 'A=1\nB=2', config: 'dev', project: 'proj', loadedAt: '2026-01-01T00:00:00.000Z' }
+
+  it('wraps the body in set -a / set +a and records config/project/loadedAt', () => {
+    const lines = buildEnvLoadFileLines({ ...args, autoLoaded: false })
+
+    expect(lines[0]).toBe('set -a')
+    expect(lines.at(-1)).toBe('set +a')
+    expect(lines).toContain("INFRA_KIT_ENV_CONFIG='dev'")
+    expect(lines).toContain("INFRA_KIT_ENV_PROJECT='proj'")
+    expect(lines).toContain("INFRA_KIT_ENV_LOADED_AT='2026-01-01T00:00:00.000Z'")
+  })
+
+  it('writes the AUTOLOADED marker only when autoLoaded is true', () => {
+    const lines = buildEnvLoadFileLines({ ...args, autoLoaded: true })
+
+    expect(lines).toContain("INFRA_KIT_ENV_AUTOLOADED='1'")
+    expect(lines).not.toContain('unset INFRA_KIT_ENV_AUTOLOADED')
+  })
+
+  it('drops the marker and lifts the clear sentinel on a manual load (autoLoaded false)', () => {
+    const lines = buildEnvLoadFileLines({ ...args, autoLoaded: false })
+
+    expect(lines).toContain('unset INFRA_KIT_ENV_AUTOLOADED')
+    expect(lines).toContain('unset INFRA_KIT_ENV_CLEARED')
+    expect(lines).not.toContain("INFRA_KIT_ENV_AUTOLOADED='1'")
   })
 })

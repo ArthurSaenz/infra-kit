@@ -1,0 +1,235 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`command catalog — MCP exposure policy > matches the golden MCP tools/list surface (names + schema shape) 1`] = `
+[
+  {
+    "input": [
+      "all",
+      "root",
+    ],
+    "name": "audit",
+    "output": [
+      "allPassed",
+      "packages",
+    ],
+  },
+  {
+    "input": [],
+    "name": "env-clear",
+    "output": [
+      "filePath",
+      "unsetStatements",
+      "variableCount",
+    ],
+  },
+  {
+    "input": [],
+    "name": "env-list",
+    "output": [
+      "configs",
+      "project",
+    ],
+  },
+  {
+    "input": [
+      "config",
+    ],
+    "name": "env-load",
+    "output": [
+      "config",
+      "filePath",
+      "project",
+      "variableCount",
+    ],
+  },
+  {
+    "input": [],
+    "name": "env-status",
+    "output": [
+      "autoLoaded",
+      "cleared",
+      "sessionConfig",
+      "sessionId",
+      "sessionLoadedAt",
+      "sessionLoadedCount",
+      "sessionProject",
+      "sessionTotalCount",
+    ],
+  },
+  {
+    "input": [
+      "all",
+    ],
+    "name": "gh-merge-dev",
+    "output": [
+      "failedBranches",
+      "failedMerges",
+      "successfulMerges",
+      "totalBranches",
+    ],
+  },
+  {
+    "input": [
+      "version",
+    ],
+    "name": "gh-release-deliver",
+    "output": [
+      "releaseBranch",
+      "success",
+      "type",
+      "version",
+    ],
+  },
+  {
+    "input": [
+      "env",
+      "skipTerraform",
+      "version",
+    ],
+    "name": "gh-release-deploy-all",
+    "output": [
+      "environment",
+      "releaseBranch",
+      "skipTerraformDeploy",
+      "success",
+      "version",
+    ],
+  },
+  {
+    "input": [
+      "env",
+      "services",
+      "skipTerraform",
+      "version",
+    ],
+    "name": "gh-release-deploy-selected",
+    "output": [
+      "environment",
+      "releaseBranch",
+      "services",
+      "skipTerraformDeploy",
+      "success",
+      "version",
+    ],
+  },
+  {
+    "input": [],
+    "name": "gh-release-list",
+    "output": [
+      "count",
+      "releases",
+    ],
+  },
+  {
+    "input": [
+      "releases",
+    ],
+    "name": "release-create",
+    "output": [
+      "createdBranches",
+      "failedReleases",
+      "failureCount",
+      "releases",
+      "successCount",
+    ],
+  },
+  {
+    "input": [
+      "description",
+      "version",
+    ],
+    "name": "release-desc-edit",
+    "output": [
+      "branch",
+      "changed",
+      "jiraVersionUrl",
+      "newDescription",
+      "previousDescription",
+      "version",
+    ],
+  },
+  {
+    "input": [],
+    "name": "vendor-check",
+    "output": [
+      "added",
+      "fileCount",
+      "modified",
+      "ok",
+      "removed",
+      "status",
+    ],
+  },
+  {
+    "input": [
+      "repos",
+    ],
+    "name": "vendor-diff",
+    "output": [
+      "drifted",
+      "entries",
+      "ok",
+    ],
+  },
+  {
+    "input": [],
+    "name": "version",
+    "output": [
+      "version",
+    ],
+  },
+  {
+    "input": [
+      "all",
+      "cmux",
+      "cursor",
+      "githubDesktop",
+      "ide",
+      "versions",
+    ],
+    "name": "worktrees-add",
+    "output": [
+      "count",
+      "createdWorktrees",
+    ],
+  },
+  {
+    "input": [],
+    "name": "worktrees-list",
+    "output": [
+      "count",
+      "worktrees",
+    ],
+  },
+  {
+    "input": [],
+    "name": "worktrees-reload",
+    "output": [
+      "closedCmux",
+      "ideFoldersAdded",
+      "ideFoldersRemoved",
+      "ideProviders",
+      "openedCmux",
+    ],
+  },
+  {
+    "input": [
+      "all",
+      "versions",
+    ],
+    "name": "worktrees-remove",
+    "output": [
+      "count",
+      "removedWorktrees",
+    ],
+  },
+  {
+    "input": [],
+    "name": "worktrees-sync",
+    "output": [
+      "count",
+      "removedWorktrees",
+    ],
+  },
+]
+`;

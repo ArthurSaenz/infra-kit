@@ -42,6 +42,11 @@ plugin.configs.recommended = [
       // variable or sub-component. Warn-class by nature (`type: 'suggestion'`);
       // severity confirmed against a repo-wide dry run at the default ceiling.
       [`${PLUGIN_NAME}/max-jsx-return-size`]: 'error',
+      // Caps component declarations per file; extra components belong in their own
+      // files. Pages and routes are excluded (framework conventions co-locate
+      // route trees and default-exported page functions). Ceiling confirmed
+      // against a repo-wide dry run at the default.
+      [`${PLUGIN_NAME}/max-components-per-file`]: ['error', { ignore: ['**/pages/**', '**/routes/**'] }],
     },
   },
   // Storybook stories legitimately deviate from the component conventions: the
@@ -55,6 +60,21 @@ plugin.configs.recommended = [
     rules: {
       [`${PLUGIN_NAME}/component-file-order`]: 'off',
       [`${PLUGIN_NAME}/props-type-name`]: 'off',
+    },
+  },
+  // Dumb presentational files (`*-component.tsx`) follow the one-component-per-file
+  // convention the props/order/stories rules already assume, so they get a tighter
+  // ceiling of 1. This MUST come AFTER the global `**/*.tsx` block: flat config
+  // REPLACES rule options across matching blocks (it does not merge), and `ignore`
+  // is re-declared here so pages/routes dumb-components keep their exemption.
+  // A repo-wide dry run found zero `*-component.tsx` files declaring >1 component.
+  {
+    files: ['**/*-component.tsx'],
+    rules: {
+      [`${PLUGIN_NAME}/max-components-per-file`]: [
+        'error',
+        { maxComponents: 1, ignore: ['**/pages/**', '**/routes/**'] },
+      ],
     },
   },
 ]

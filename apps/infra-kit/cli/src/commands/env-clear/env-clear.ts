@@ -6,6 +6,8 @@ import { z } from 'zod'
 import {
   ENV_CLEAR_FILE,
   ENV_LOAD_FILE,
+  INFRA_KIT_ENV_AUTOLOADED_VAR,
+  INFRA_KIT_ENV_CLEARED_VAR,
   INFRA_KIT_ENV_CONFIG_VAR,
   INFRA_KIT_ENV_LOADED_AT_VAR,
   INFRA_KIT_ENV_PROJECT_VAR,
@@ -14,6 +16,25 @@ import {
   parseVarNamesFromEnvFile,
 } from 'src/lib/constants'
 import { defineMcpTool, textContent } from 'src/types'
+
+/**
+ * Build the lines for env-clear.sh: `unset` every loaded var plus the session
+ * metadata (config/project/loadedAt) and the auto-load marker, then EXPORT the
+ * clear sentinel so cli-invocation auto-load stays suppressed in this shell until
+ * an explicit `env-load` (which unsets it) or a new shell. Pure for testability.
+ */
+export const buildEnvClearLines = (varNames: string[]): string[] => {
+  return [
+    ...varNames.map((v) => {
+      return `unset ${v}`
+    }),
+    `unset ${INFRA_KIT_ENV_CONFIG_VAR}`,
+    `unset ${INFRA_KIT_ENV_PROJECT_VAR}`,
+    `unset ${INFRA_KIT_ENV_LOADED_AT_VAR}`,
+    `unset ${INFRA_KIT_ENV_AUTOLOADED_VAR}`,
+    `export ${INFRA_KIT_ENV_CLEARED_VAR}='1'`,
+  ]
+}
 
 /**
  * Clear loaded env vars. Prints a file path to stdout that must be sourced to apply.
@@ -30,14 +51,7 @@ export const envClear = async () => {
 
   const varNames = parseVarNamesFromEnvFile(envLoadPath)
 
-  const unsetLines = [
-    ...varNames.map((v) => {
-      return `unset ${v}`
-    }),
-    `unset ${INFRA_KIT_ENV_CONFIG_VAR}`,
-    `unset ${INFRA_KIT_ENV_PROJECT_VAR}`,
-    `unset ${INFRA_KIT_ENV_LOADED_AT_VAR}`,
-  ]
+  const unsetLines = buildEnvClearLines(varNames)
 
   const clearFilePath = path.resolve(cacheDir, ENV_CLEAR_FILE)
 

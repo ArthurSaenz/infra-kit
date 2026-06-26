@@ -4,6 +4,7 @@ import type { Rule } from 'eslint'
 // `moduleResolution: bundler`; a future switch to node16/nodenext would require explicit paths.
 import { componentArrowFunction } from './component-arrow-function'
 import { componentFileOrder } from './component-file-order'
+import { maxComponentsPerFile } from './max-components-per-file'
 import { maxJsxReturnSize } from './max-jsx-return-size'
 import { propsDestructuringBlankLine } from './props-destructuring-blank-line'
 import { propsDestructuringNewline } from './props-destructuring-newline'
@@ -18,6 +19,7 @@ export const rules: Record<string, Rule.RuleModule> = {
   'props-type-name': propsTypeName,
   'component-file-order': componentFileOrder,
   'component-arrow-function': componentArrowFunction,
+  'max-components-per-file': maxComponentsPerFile,
   'max-jsx-return-size': maxJsxReturnSize,
   'require-component-stories': requireComponentStories,
 }
