@@ -6,6 +6,7 @@
 export * from '#root/catalog'
 export * from '#root/detector-ids'
 export * from '#root/detectors/ai-agentic'
+export * from '#root/detectors/async-correctness'
 export * from '#root/detectors/change-patterns'
 export * from '#root/detectors/code-quality'
 export * from '#root/detectors/complexity'

@@ -129,6 +129,18 @@ describe('detector fields', () => {
     }
   })
 
+  it('enabledInRepo:false detectors name the dormant rule (plugin + rule + note)', () => {
+    for (const d of allDetectors) {
+      if (d.existing?.enabledInRepo === false) {
+        expect(d.existing.plugin?.trim(), `${d.id} enabledInRepo:false needs a plugin`).toBeTruthy()
+        expect(d.existing.rule?.trim(), `${d.id} enabledInRepo:false needs a rule`).toBeTruthy()
+        expect(d.existing.note?.trim(), `${d.id} enabledInRepo:false needs a note`).toBeTruthy()
+        // A dormant rule enforces nothing, so it must read as a gap.
+        expect(d.existing.status, `${d.id} enabledInRepo:false must be status:'none'`).toBe('none')
+      }
+    }
+  })
+
   it('ai-agentic detectors are measurable (concrete option) or proposed', () => {
     const measurableTypes = ['number', 'enum', 'string[]']
     const aiAgentic = allDetectors.filter((d) => {

@@ -159,6 +159,7 @@ export const bootstrap = () => {
       fixable: null,
       recommended: false,
     },
+    tags: ['ai-agentic'],
     references: ['https://archlinter.github.io/archlint/detectors/'],
     existing: { status: 'none' },
   },
@@ -198,11 +199,140 @@ export const increment = () => {
       fixable: null,
       recommended: true,
     },
+    tags: ['ai-agentic'],
     references: ['https://archlinter.github.io/archlint/detectors/'],
     existing: {
-      status: 'partial',
-      plugin: 'eslint-core',
+      status: 'covered',
+      plugin: 'import-lite',
       rule: 'import/no-mutable-exports',
+      note: 'eslint-plugin-import-lite rule (not eslint-core); error in resolved config',
     },
+  },
+  {
+    id: 'redos-regex',
+    group: DetectorGroup.runtimeSafety,
+    scope: 'file',
+    title: 'Regex vulnerable to catastrophic backtracking (ReDoS)',
+    description: 'A regular expression with super-linear (often exponential) backtracking on adversarial input.',
+    rationale:
+      'Nested/ambiguous quantifiers (e.g. (a+)+) make matching blow up on crafted input, freezing the event loop — a denial-of-service vector. The danger is invisible in the pattern text; a detector surfaces it.',
+    defaultSeverity: Severity.error,
+    appliesTo: 'any',
+    status: 'stable',
+    tags: ['regexp', 'security'],
+    examples: [
+      {
+        label: 'nested quantifier',
+        bad: `const re = /^(a+)+$/
+export function check(input: string) {
+  return re.test(input)
+}`,
+        good: `const re = /^a+$/
+export function check(input: string) {
+  return re.test(input)
+}`,
+      },
+    ],
+    references: ['https://archlinter.github.io/archlint/detectors/'],
+    existing: {
+      status: 'covered',
+      plugin: 'regexp',
+      rule: 'regexp/no-super-linear-backtracking',
+      note: 'regexp/no-super-linear-backtracking (error) + sonarjs/slow-regex (error) both run in the resolved config',
+    },
+    eslint: { messageId: 'redosRegex', fixable: null, recommended: true },
+  },
+  {
+    id: 'control-char-regex',
+    group: DetectorGroup.runtimeSafety,
+    scope: 'file',
+    title: 'Literal control character in a regex',
+    description: 'A regular expression containing a raw control character (e.g. a literal NUL or backspace byte).',
+    rationale:
+      'A literal control character is almost always an accident — it is invisible in most editors and to an agent reading the source, so the pattern silently matches something other than intended.',
+    defaultSeverity: Severity.error,
+    appliesTo: 'any',
+    status: 'stable',
+    tags: ['regexp'],
+    examples: [
+      {
+        label: 'literal control char vs explicit escape',
+        bad: `const re = new RegExp('\\x00')
+export const hasNul = (s: string) => re.test(s)`,
+        good: `const re = /\\u0000/
+export const hasNul = (s: string) => re.test(s)`,
+      },
+    ],
+    references: ['https://archlinter.github.io/archlint/detectors/'],
+    existing: {
+      status: 'covered',
+      plugin: 'eslint-core',
+      rule: 'no-control-regex',
+      note: 'core no-control-regex (error) runs; regexp/no-control-character is not in the enabled recommended subset',
+    },
+    eslint: { messageId: 'controlCharRegex', fixable: null, recommended: true },
+  },
+  {
+    id: 'no-deprecated-node-api',
+    group: DetectorGroup.runtimeSafety,
+    scope: 'file',
+    title: 'Use of a deprecated Node.js API',
+    description: 'Calls to Node APIs marked deprecated (e.g. the unsafe Buffer constructor).',
+    rationale:
+      'Deprecated Node APIs are removal-time-bombs and several (like new Buffer) are security hazards. Surfacing them keeps backend code forward-compatible and legible.',
+    defaultSeverity: Severity.warn,
+    appliesTo: 'backend',
+    status: 'stable',
+    tags: ['node'],
+    examples: [
+      {
+        label: 'unsafe Buffer constructor',
+        bad: `export function alloc(n: number) {
+  return new Buffer(n)
+}`,
+        good: `export function alloc(n: number) {
+  return Buffer.alloc(n)
+}`,
+      },
+    ],
+    references: ['https://github.com/eslint-community/eslint-plugin-n/blob/master/docs/rules/no-deprecated-api.md'],
+    existing: {
+      status: 'none',
+      enabledInRepo: false,
+      plugin: 'eslint-plugin-n',
+      rule: 'n/no-deprecated-api',
+      note: 'eslint-plugin-n is installed (via antfu) but n/no-deprecated-api is not enabled in the resolved TS config',
+    },
+    eslint: { messageId: 'noDeprecatedNodeApi', fixable: null, recommended: true },
+  },
+  {
+    id: 'prefer-node-protocol',
+    group: DetectorGroup.runtimeSafety,
+    scope: 'file',
+    title: 'Import Node builtins via the node: protocol',
+    description: "Importing a Node.js builtin without the node: protocol prefix (e.g. 'fs' instead of 'node:fs').",
+    rationale:
+      'The node: prefix makes a builtin import unambiguous — self-documenting that it is a runtime module, not a package, and immune to shadowing by a same-named dependency. Clearer for both bundlers and agents.',
+    defaultSeverity: Severity.warn,
+    appliesTo: 'backend',
+    status: 'stable',
+    tags: ['node'],
+    examples: [
+      {
+        label: 'bare vs node: import',
+        bad: `import { readFile } from 'fs/promises'
+export const read = readFile`,
+        good: `import { readFile } from 'node:fs/promises'
+export const read = readFile`,
+      },
+    ],
+    references: ['https://github.com/sindresorhus/eslint-plugin-unicorn/blob/main/docs/rules/prefer-node-protocol.md'],
+    existing: {
+      status: 'covered',
+      plugin: 'unicorn',
+      rule: 'unicorn/prefer-node-protocol',
+      note: 'unicorn/prefer-node-protocol (error) runs in the resolved config',
+    },
+    eslint: { messageId: 'preferNodeProtocol', fixable: 'code', recommended: true },
   },
 ]

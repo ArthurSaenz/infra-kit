@@ -37,9 +37,9 @@ import { useCartStore } from '../cart'
     ],
     existing: {
       status: 'covered',
-      plugin: 'boundaries',
+      plugin: 'eslint-core',
       rule: 'no-restricted-imports',
-      note: 'no-restricted-imports + boundaries enforce feature barrels/relationships.',
+      note: 'core no-restricted-imports (error) bans deep feature/service imports; boundaries/dependencies (warn) enforces the relationships. Both run in the resolved config.',
     },
     tags: ['ai-agentic'],
   },
@@ -116,7 +116,13 @@ function isSessionExpired(ageSeconds: number): boolean {
         description: 'Literals exempt from the rule.',
       },
     ],
-    existing: { status: 'partial', plugin: 'eslint-core', rule: 'no-magic-numbers' },
+    existing: {
+      status: 'none',
+      enabledInRepo: false,
+      plugin: 'eslint-core',
+      rule: 'no-magic-numbers',
+      note: 'core no-magic-numbers installed but not enabled by @antfu/eslint-config (absent from the resolved config)',
+    },
     tags: ['ai-agentic'],
   },
   {
@@ -157,7 +163,13 @@ function isSessionExpired(ageSeconds: number): boolean {
         description: 'Required casing per symbol kind.',
       },
     ],
-    existing: { status: 'partial', plugin: 'eslint-core', rule: 'ts/naming-convention' },
+    existing: {
+      status: 'none',
+      enabledInRepo: false,
+      plugin: '@typescript-eslint',
+      rule: 'ts/naming-convention',
+      note: 'type-aware rule, dormant — no tsconfigPath passed to antfu, so it never runs',
+    },
     tags: ['ai-agentic'],
   },
   {
@@ -168,7 +180,7 @@ function isSessionExpired(ageSeconds: number): boolean {
     description:
       'Flags modules that have no clear public entry point, allowing consumers to reach into internal files.',
     rationale:
-      'When a module exposes no explicit public API, agents must scan all of its files to understand what is intended for consumption. A single index barrel collapses that surface to one file: agents read the barrel to understand the module, internals to understand implementation — a predictable, two-level contract that scales with codebase size.',
+      'When a module exposes no explicit public API, agents must scan all of its files to understand what is intended for consumption. A single index barrel collapses that surface to one file: agents read the barrel to understand the module, internals to understand implementation — a predictable, two-level contract that scales with codebase size. Mirror image of barrel-file: public-api-surface flags a module with NO clear public index, while barrel-file flags an index that re-exports TOO MUCH.',
     defaultSeverity: Severity.warn,
     appliesTo: 'any',
     status: 'stable',
@@ -246,7 +258,13 @@ function processPayload(raw: unknown): string {
         description: 'Files/globs allowed to use any.',
       },
     ],
-    existing: { status: 'partial', plugin: 'eslint-core', rule: 'ts/no-explicit-any' },
+    existing: {
+      status: 'none',
+      enabledInRepo: false,
+      plugin: '@typescript-eslint',
+      rule: 'ts/no-explicit-any',
+      note: 'off by default — not enabled by @antfu/eslint-config lessOpinionated (absent from the resolved config)',
+    },
     tags: ['ai-agentic'],
   },
   {
@@ -298,7 +316,7 @@ function legacyTransform(input: string): string {
     description:
       'Flags modules that export more distinct symbols than the configured threshold, exceeding a reasonable agent working-memory budget.',
     rationale:
-      'When an agent loads a module to understand it, every exported symbol is a separate concept to track. A module exporting 30 unrelated utilities forces the agent to hold all 30 in context simultaneously. Splitting into focused modules with fewer exports lets an agent load only what is relevant — smaller surface, faster comprehension, fewer hallucinations about symbol relationships. Metric is export count, not line count, to stay distinct from large-file detectors.',
+      'When an agent loads a module to understand it, every exported symbol is a separate concept to track. A module exporting 30 unrelated utilities forces the agent to hold all 30 in context simultaneously. Splitting into focused modules with fewer exports lets an agent load only what is relevant — smaller surface, faster comprehension, fewer hallucinations about symbol relationships. Metric is export count, not line count, to stay distinct from large-file detectors. Unlike god-module (project scope, flags responsibility diffusion and high importer counts), ai-context-bloat is a file-scope, pure export-count comprehension budget with no coupling analysis.',
     defaultSeverity: Severity.warn,
     appliesTo: 'any',
     status: 'stable',
@@ -385,6 +403,87 @@ export const MAX_RETRIES = 3`,
       status: 'none',
       note: 'Needs a declared project error policy baseline before it is enforceable.',
     },
+    tags: ['ai-agentic'],
+  },
+  {
+    id: 'no-default-export',
+    group: DetectorGroup.aiAgentic,
+    scope: 'file',
+    title: 'Avoid default exports',
+    description: 'A module using `export default` instead of a named export.',
+    rationale:
+      'Default exports are renamed at every import site, so an agent grepping for a symbol name finds nothing and cannot build a reliable symbol→file map. Named exports are the foundation of agent navigation.',
+    defaultSeverity: Severity.warn,
+    appliesTo: 'any',
+    status: 'stable',
+    examples: [
+      {
+        label: 'default export vs named export',
+        bad: `export default function handler() {}`,
+        good: `export function handler() {}`,
+        note: 'Use a named export so the symbol is greppable at every import site.',
+      },
+    ],
+    eslint: {
+      messageId: 'noDefaultExport',
+      fixable: null,
+      recommended: true,
+    },
+    options: [
+      {
+        name: 'allow',
+        type: 'string[]',
+        default: [],
+        description: 'Globs allowed to use default exports (e.g. framework entrypoints).',
+      },
+    ],
+    existing: {
+      status: 'none',
+      enabledInRepo: false,
+      plugin: 'import-lite',
+      rule: 'import/no-default-export',
+      note: 'rule installed via import-lite but not enabled by @antfu/eslint-config (absent from the resolved config)',
+    },
+    references: ['https://github.com/eslint-community/eslint-plugin-import-x'],
+    tags: ['ai-agentic'],
+  },
+  {
+    id: 'comment-staleness',
+    group: DetectorGroup.aiAgentic,
+    scope: 'file',
+    title: 'Stale / contradictory comment',
+    description:
+      'A doc comment or JSDoc whose parameter names or described behavior no longer match the code (e.g. a renamed param).',
+    rationale:
+      'False context is more dangerous to an LLM than missing context — a comment that disagrees with the signature actively misleads an agent. (Same theme as commented-out-code and todo-debt.)',
+    defaultSeverity: Severity.warn,
+    appliesTo: 'any',
+    status: 'proposed',
+    examples: [
+      {
+        label: 'JSDoc param name out of sync with function signature',
+        bad: `/**
+ * @param userId - the account identifier
+ */
+function getAccount(accountId: string): Account {
+  return db.accounts.get(accountId)
+}`,
+        good: `/**
+ * @param accountId - the account identifier
+ */
+function getAccount(accountId: string): Account {
+  return db.accounts.get(accountId)
+}`,
+        note: 'Keep JSDoc param names in sync with the actual parameter names.',
+      },
+    ],
+    eslint: {
+      messageId: 'staleComment',
+      fixable: null,
+      recommended: false,
+    },
+    existing: { status: 'none' },
+    references: ['https://archlinter.github.io/archlint/detectors/'],
     tags: ['ai-agentic'],
   },
 ]

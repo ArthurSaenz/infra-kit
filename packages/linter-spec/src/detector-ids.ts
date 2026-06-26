@@ -23,12 +23,16 @@ export const DETECTOR_IDS = [
   'high-coupling',
   'module-cohesion',
   'feature-envy',
+  'import-fan-in',
   // code-quality
   'dead-code',
   'dead-symbols',
   'orphan-types',
   'barrel-file',
   'primitive-obsession',
+  'commented-out-code',
+  'unnecessary-condition',
+  're-export-depth',
   // complexity
   'cyclomatic-complexity',
   'cognitive-complexity',
@@ -44,6 +48,10 @@ export const DETECTOR_IDS = [
   'hub-dependency',
   'side-effect-import',
   'shared-mutable-state',
+  'redos-regex',
+  'control-char-regex',
+  'no-deprecated-node-api',
+  'prefer-node-protocol',
   // metrics
   'abstractness',
   'scattered-config',
@@ -58,6 +66,12 @@ export const DETECTOR_IDS = [
   'todo-debt',
   'ai-context-bloat',
   'error-handling-consistency',
+  'no-default-export',
+  'comment-staleness',
+  // async-correctness
+  'floating-promise',
+  'misused-promise',
+  'only-throw-error',
 ] as const
 
 export type DetectorId = (typeof DETECTOR_IDS)[number]

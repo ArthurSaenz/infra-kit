@@ -25,6 +25,8 @@ export const DetectorGroup = {
   metrics: 'metrics',
   /** Custom rules for AI-agentic legibility (our own extensions). */
   aiAgentic: 'ai-agentic',
+  /** Async/promise and error-flow correctness (much of it type-aware). */
+  asyncCorrectness: 'async-correctness',
 } as const
 
 // eslint-disable-next-line ts/no-redeclare -- intentional const-object + derived-union idiom

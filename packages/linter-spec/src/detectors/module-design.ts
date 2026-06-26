@@ -11,7 +11,7 @@ export const moduleDesignDetectors: Detector[] = [
     description:
       'A single module exports far more symbols than a focused unit of responsibility should, indicating that multiple concerns have accumulated in one place.',
     rationale:
-      'God modules become a gravitational sink: every new feature touches them, merge conflicts multiply, and the surface area an AI or developer must load to understand one concern includes dozens of unrelated ones. Splitting by responsibility yields modules small enough to reason about in isolation and test without mocking the world.',
+      'God modules become a gravitational sink: every new feature touches them, merge conflicts multiply, and the surface area an AI or developer must load to understand one concern includes dozens of unrelated ones. Splitting by responsibility yields modules small enough to reason about in isolation and test without mocking the world. Unlike ai-context-bloat — a file-scope detector that flags export count as a pure comprehension-budget concern — god-module operates at project scope and is driven by responsibility and coupling: it considers how many other modules import this one and whether those importers represent distinct concerns.',
     defaultSeverity: Severity.warn,
     appliesTo: 'any',
     status: 'stable',
@@ -264,5 +264,45 @@ class Discount {
     ],
     references: ['https://archlinter.github.io/archlint/detectors/'],
     existing: { status: 'none' },
+  },
+  {
+    id: 'import-fan-in',
+    group: DetectorGroup.moduleDesign,
+    scope: 'graph',
+    title: 'High import fan-in (load-bearing symbol)',
+    description: 'A single exported symbol imported by a large fraction of the codebase.',
+    rationale:
+      'A symbol imported everywhere is high-blast-radius: editing its signature, semantics, or side effects ripples to every importer simultaneously. In an agentic flow, an agent must recognise before touching such a symbol that the change is not local — it is effectively a global contract change. This complements hub-dependency (which tracks over-reliance on an external package) with the internal-symbol case: a homegrown export that has become load-bearing across the module graph.',
+    defaultSeverity: Severity.info,
+    appliesTo: 'any',
+    status: 'stable',
+    examples: [
+      {
+        label: 'Fragile util imported everywhere vs stable narrow contract',
+        bad: `// src/lib/format.ts
+export function formatAmount(value: number, currency: string, locale: string, decimals: number) {
+  return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: decimals }).format(value)
+}
+// imported by 40+ modules with different argument combinations`,
+        good: `// src/lib/format.ts
+export interface FormatAmountOptions { currency: string; locale?: string; decimals?: number }
+export function formatAmount(value: number, options: FormatAmountOptions) {
+  const { currency, locale = 'en-US', decimals = 2 } = options
+  return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: decimals }).format(value)
+}
+// stable options-object signature — adding fields is non-breaking`,
+      },
+    ],
+    options: [
+      {
+        name: 'maxImporters',
+        type: 'number',
+        default: 30,
+        description: 'Max modules that may import a single symbol before it is flagged.',
+      },
+    ],
+    references: ['https://archlinter.github.io/archlint/detectors/'],
+    existing: { status: 'none' },
+    tags: ['ai-agentic'],
   },
 ]

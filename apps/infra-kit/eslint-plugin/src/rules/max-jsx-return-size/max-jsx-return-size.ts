@@ -31,23 +31,12 @@ const isNode = (value: unknown): value is ESTree.Node => {
   return typeof value === 'object' && value !== null && typeof (value as { type?: unknown }).type === 'string'
 }
 
-/**
- * Count the `JSXElement` nodes in an expression subtree. estree does not model
- * JSX, so traversal is driven by the parser-provided `visitorKeys` (real child
- * keys only — excludes `parent`/`loc`/`range`), falling back to `Object.keys`;
- * `parent` is skipped explicitly to guard against infinite recursion.
- *
- * `JSXElement` counts 1; `JSXFragment` counts 0 (a no-op wrapper) but still
- * recurses. The walk descends into nested function scopes, so inline-callback
- * JSX (`.map(() => <li/>)`) is counted once within its enclosing return — the
- * counterpart to `collectOwnReturnArguments`, which skips those scopes.
- */
-const countJsxElements = (node: ESTree.Node, visitorKeys: VisitorKeys): number => {
-  const type = node.type as string
-
-  let total = type === 'JSXElement' ? 1 : 0
-
-  const keys = visitorKeys[type] ?? Object.keys(node)
+// estree does not model JSX, so child traversal is driven by the parser-provided
+// `visitorKeys` (real child keys only — excludes `parent`/`loc`/`range`), falling
+// back to `Object.keys`; `parent` is skipped explicitly to guard recursion.
+const childNodes = (node: ESTree.Node, visitorKeys: VisitorKeys): ESTree.Node[] => {
+  const children: ESTree.Node[] = []
+  const keys = visitorKeys[node.type as string] ?? Object.keys(node)
 
   for (const key of keys) {
     if (key === 'parent') {
@@ -57,17 +46,111 @@ const countJsxElements = (node: ESTree.Node, visitorKeys: VisitorKeys): number =
     const value = (node as unknown as Record<string, unknown>)[key]
 
     if (Array.isArray(value)) {
-      for (const item of value) {
-        if (isNode(item)) {
-          total += countJsxElements(item, visitorKeys)
-        }
-      }
+      children.push(...value.filter(isNode))
     } else if (isNode(value)) {
-      total += countJsxElements(value, visitorKeys)
+      children.push(value)
     }
   }
 
-  return total
+  return children
+}
+
+/**
+ * Count the `JSXElement` nodes in an expression subtree. `JSXElement` counts 1;
+ * `JSXFragment` counts 0 (a no-op wrapper) but still recurses. The walk descends
+ * into nested function scopes, so inline-callback JSX (`.map(() => <li/>)`) is
+ * counted once within its enclosing return — the counterpart to
+ * `collectOwnReturnArguments`, which skips those scopes.
+ */
+const countJsxElements = (node: ESTree.Node, visitorKeys: VisitorKeys): number => {
+  const self = (node.type as string) === 'JSXElement' ? 1 : 0
+
+  return childNodes(node, visitorKeys).reduce((total, child) => {
+    return total + countJsxElements(child, visitorKeys)
+  }, self)
+}
+
+// Structural views over JSX nodes estree does not type. A JSX element's tag name
+// is on `openingElement.name`, which is an identifier (`name` is a string), a
+// member expression (`Foo.Bar`), or a namespaced name (`svg:rect`) — so the
+// child slots are read as `unknown` and narrowed per node type.
+interface JsxNameNode {
+  type?: string
+  name?: unknown
+  object?: unknown
+  property?: unknown
+  namespace?: unknown
+}
+
+interface JsxElementNode {
+  openingElement?: { name?: unknown }
+  loc?: { start: { line: number } }
+}
+
+const jsxNameToString = (node: unknown): string => {
+  const name = node as JsxNameNode | null | undefined
+
+  switch (name?.type) {
+    case 'JSXIdentifier':
+      return typeof name.name === 'string' ? name.name : 'element'
+    case 'JSXMemberExpression':
+      return `${jsxNameToString(name.object)}.${jsxNameToString(name.property)}`
+    case 'JSXNamespacedName':
+      return `${jsxNameToString(name.namespace)}:${jsxNameToString(name.name)}`
+    default:
+      return 'element'
+  }
+}
+
+// The JSXElements directly under `root` (descending only through non-element
+// wrappers like fragments, expression containers, conditionals, and `.map`
+// callbacks). A parent always out-counts its children, so the largest of these
+// is the single biggest block a reader could lift out of the return.
+const topLevelElements = (root: ESTree.Node, visitorKeys: VisitorKeys): ESTree.Node[] => {
+  const elements: ESTree.Node[] = []
+
+  const walk = (node: ESTree.Node, isRoot: boolean): void => {
+    if (!isRoot && (node.type as string) === 'JSXElement') {
+      elements.push(node)
+
+      return
+    }
+
+    for (const child of childNodes(node, visitorKeys)) {
+      walk(child, false)
+    }
+  }
+
+  walk(root, true)
+
+  return elements
+}
+
+interface LargestBlock {
+  name: string
+  line: number
+  count: number
+}
+
+/** The biggest extractable JSX block inside a return, for an actionable message. */
+const largestBlock = (root: ESTree.Node, visitorKeys: VisitorKeys): LargestBlock | null => {
+  let best: { node: ESTree.Node; count: number } | null = null
+
+  for (const element of topLevelElements(root, visitorKeys)) {
+    const count = countJsxElements(element, visitorKeys)
+
+    if (!best || count > best.count) {
+      best = { node: element, count }
+    }
+  }
+
+  if (!best) {
+    return null
+  }
+
+  const element = best.node as unknown as JsxElementNode
+
+  return { name: jsxNameToString(element.openingElement?.name), line: element.loc?.start.line ?? 0, count: best.count }
 }
 
 /** The component function(s) declared by a single top-level declaration. */
@@ -140,8 +223,14 @@ export const maxJsxReturnSize: Rule.RuleModule = {
       },
     ],
     messages: {
+      // Points at the single biggest block so a human or AI fix loop knows
+      // exactly what to lift out.
       tooManyElements:
-        'This return renders {{count}} JSX elements (max {{max}}). Extract part of {{name}} into a variable or a sub-component.',
+        '{{name}} renders {{count}} JSX elements in one return (max {{max}}). Extract the largest block — <{{largest}}> at line {{line}} ({{largestCount}} elements) — into a variable or a sub-component.',
+      // Fallback when no single block dominates (e.g. many flat siblings): there is
+      // nothing meaningful to point at, so advise splitting.
+      tooManyElementsFlat:
+        '{{name}} renders {{count}} JSX elements in one return (max {{max}}). Split it into smaller sub-components or extract groups of elements into variables.',
     },
   },
 
@@ -171,8 +260,20 @@ export const maxJsxReturnSize: Rule.RuleModule = {
       for (const argument of collectOwnReturnArguments(fn)) {
         const count = countJsxElements(argument, visitorKeys)
 
-        if (count > max) {
-          context.report({ node: argument, messageId: 'tooManyElements', data: { count, max, name } })
+        if (count <= max) {
+          continue
+        }
+
+        const largest = largestBlock(argument, visitorKeys)
+
+        if (largest && largest.count >= 2) {
+          context.report({
+            node: argument,
+            messageId: 'tooManyElements',
+            data: { count, max, name, largest: largest.name, line: largest.line, largestCount: largest.count },
+          })
+        } else {
+          context.report({ node: argument, messageId: 'tooManyElementsFlat', data: { count, max, name } })
         }
       }
     }

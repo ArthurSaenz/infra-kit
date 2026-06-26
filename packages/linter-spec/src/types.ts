@@ -54,20 +54,42 @@ export interface DetectorOption {
 }
 
 /** A linter/plugin already present in the repo's toolchain. */
-export type ExistingPlugin = 'sonarjs' | 'boundaries' | 'slip-stream-kit' | 'eslint-core' | (string & {})
+export type ExistingPlugin =
+  | 'sonarjs'
+  | 'boundaries'
+  | 'slip-stream-kit'
+  | 'eslint-core'
+  | '@typescript-eslint'
+  | 'unicorn'
+  | 'regexp'
+  | 'import-lite'
+  | 'unused-imports'
+  | 'eslint-plugin-n'
+  | (string & {})
 
 /**
  * Records whether the repo's existing ESLint chain already covers this detector.
  * Makes the catalog an honest gap-map rather than a greenfield re-spec.
  *
- * - `covered` — an existing rule enforces the SAME invariant.
- * - `partial` — an existing rule catches a SUBSET/approximation.
- * - `none`    — no existing rule; a genuine gap (the catalog's real value).
+ * `status` describes what ACTUALLY RUNS in this repo:
+ * - `covered` — a RUNNING rule enforces the SAME invariant.
+ * - `partial` — a RUNNING rule catches a SUBSET/approximation.
+ * - `none`    — no running rule catches it (a genuine gap — the catalog's real value).
+ *
+ * `enabledInRepo` is an ORTHOGONAL axis: set it to `false` when a rule for this
+ * detector EXISTS in the installed toolchain but is off/dormant (e.g. a
+ * type-aware `ts/*` rule with no `tsconfigPath`, or a rule explicitly disabled
+ * in the vendor config). A dormant rule enforces nothing, so it stays
+ * `status: 'none'`; `enabledInRepo: false` records that turning it on is
+ * possible, and `plugin`/`rule`/`note` MUST then name the rule and the gating
+ * reason. Query "what runs today" = `enabledInRepo !== false && status !== 'none'`.
  */
 export interface ExistingCoverage {
   status: 'covered' | 'partial' | 'none'
   plugin?: ExistingPlugin
   rule?: string
+  /** `false` = a rule exists in the toolchain but is off/dormant (requires plugin+rule+note). */
+  enabledInRepo?: boolean
   /** Optional note on what is/isn't covered. */
   note?: string
 }

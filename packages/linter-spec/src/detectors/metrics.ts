@@ -11,10 +11,10 @@ export const metricsDetectors: Detector[] = [
     description:
       'A module sits in the "zone of pain" (highly concrete + heavily depended-on) or the "zone of uselessness" (highly abstract + no dependents), violating the ideal A+I≈1 balance from Robert Martin\'s package metrics.',
     rationale:
-      'Martin\'s Abstractness (A) and Instability (I) metrics define a "main sequence" where A+I≈1. Modules in the zone of pain are concrete yet load-bearing — any change ripples everywhere. Modules in the zone of uselessness are abstract but never used — dead weight that confuses readers and AI tools. Keeping modules on or near the main sequence lets stable modules be abstract (swappable) and concrete modules be volatile (free to change).',
+      'Martin\'s Abstractness (A) and Instability (I) metrics define a "main sequence" where A+I≈1. Modules in the zone of pain are concrete yet load-bearing — any change ripples everywhere. Modules in the zone of uselessness are abstract but never used — dead weight that confuses readers and AI tools. Keeping modules on or near the main sequence lets stable modules be abstract (swappable) and concrete modules be volatile (free to change). The A+I "main sequence" distance is a theoretical metric with no agreed crisp, actionable threshold.',
     defaultSeverity: Severity.info,
     appliesTo: 'any',
-    status: 'stable',
+    status: 'proposed',
     examples: [
       {
         label: 'Zone of pain: concrete class imported by everything',

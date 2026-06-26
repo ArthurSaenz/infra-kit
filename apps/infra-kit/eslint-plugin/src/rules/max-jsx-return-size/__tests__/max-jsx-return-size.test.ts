@@ -121,14 +121,20 @@ ruleTester.run('max-jsx-return-size', maxJsxReturnSize, {
       code: 'const Foo = () => <div><section><span /><span /></section></div>',
       filename: COMPONENT_FILE,
       options: [{ maxElements: 3 }],
-      errors: [{ messageId: 'tooManyElements', data: { count: 4, max: 3, name: 'Foo' } }],
+      errors: [
+        {
+          messageId: 'tooManyElements',
+          data: { count: 4, max: 3, name: 'Foo', largest: 'section', line: 1, largestCount: 3 },
+        },
+      ],
     },
-    // #10 — boundary +1: count 3 === max(2)+1 reports exactly once.
+    // #10 — boundary +1: count 3 === max(2)+1 reports exactly once. Flat siblings
+    // (each span = 1) → the no-dominant-block message variant.
     {
       code: 'const Foo = () => <div><span /><span /></div>',
       filename: COMPONENT_FILE,
       options: [{ maxElements: 2 }],
-      errors: [{ messageId: 'tooManyElements', data: { count: 3, max: 2, name: 'Foo' } }],
+      errors: [{ messageId: 'tooManyElementsFlat', data: { count: 3, max: 2, name: 'Foo' } }],
     },
     // #11 — two over-threshold returns (both if-branches) → two errors (per-return).
     {
@@ -144,8 +150,8 @@ ruleTester.run('max-jsx-return-size', maxJsxReturnSize, {
       filename: COMPONENT_FILE,
       options: [{ maxElements: 2 }],
       errors: [
-        { messageId: 'tooManyElements', data: { count: 3, max: 2, name: 'Foo' } },
-        { messageId: 'tooManyElements', data: { count: 3, max: 2, name: 'Foo' } },
+        { messageId: 'tooManyElementsFlat', data: { count: 3, max: 2, name: 'Foo' } },
+        { messageId: 'tooManyElementsFlat', data: { count: 3, max: 2, name: 'Foo' } },
       ],
     },
     // #12 — small guard (1) not reported; only the oversized main return (3).
@@ -159,21 +165,26 @@ ruleTester.run('max-jsx-return-size', maxJsxReturnSize, {
       `,
       filename: COMPONENT_FILE,
       options: [{ maxElements: 2 }],
-      errors: [{ messageId: 'tooManyElements', data: { count: 3, max: 2, name: 'Foo' } }],
+      errors: [{ messageId: 'tooManyElementsFlat', data: { count: 3, max: 2, name: 'Foo' } }],
     },
     // #13 — arrow implicit-return over threshold (no block): main, a, b = 3 > 2.
     {
       code: 'const Foo = () => <main><a /><b /></main>',
       filename: COMPONENT_FILE,
       options: [{ maxElements: 2 }],
-      errors: [{ messageId: 'tooManyElements', data: { count: 3, max: 2, name: 'Foo' } }],
+      errors: [{ messageId: 'tooManyElementsFlat', data: { count: 3, max: 2, name: 'Foo' } }],
     },
     // #14 — inline-callback JSX counts in the parent return (Option A): ul, li, a = 3.
     {
       code: 'const Foo = () => <ul>{items.map(() => <li><a /></li>)}</ul>',
       filename: COMPONENT_FILE,
       options: [{ maxElements: 2 }],
-      errors: [{ messageId: 'tooManyElements', data: { count: 3, max: 2, name: 'Foo' } }],
+      errors: [
+        {
+          messageId: 'tooManyElements',
+          data: { count: 3, max: 2, name: 'Foo', largest: 'li', line: 1, largestCount: 2 },
+        },
+      ],
     },
     // #15 — DOUBLE-COUNT REGRESSION: with maxElements 1, the outer return (3) AND
     // the inline callback body alone (li, a = 2) would each trip under the rejected
@@ -183,41 +194,77 @@ ruleTester.run('max-jsx-return-size', maxJsxReturnSize, {
       code: 'const Foo = () => <ul>{items.map(() => <li><a /></li>)}</ul>',
       filename: COMPONENT_FILE,
       options: [{ maxElements: 1 }],
-      errors: [{ messageId: 'tooManyElements', data: { count: 3, max: 1, name: 'Foo' } }],
+      errors: [
+        {
+          messageId: 'tooManyElements',
+          data: { count: 3, max: 1, name: 'Foo', largest: 'li', line: 1, largestCount: 2 },
+        },
+      ],
     },
     // #16 — `paths` matches → reported.
     {
       code: 'const Foo = () => <div><span /><span /></div>',
       filename: 'src/components/default/foo-component.tsx',
       options: [{ maxElements: 2, paths: ['**/components/**'] }],
-      errors: [{ messageId: 'tooManyElements', data: { count: 3, max: 2, name: 'Foo' } }],
+      errors: [{ messageId: 'tooManyElementsFlat', data: { count: 3, max: 2, name: 'Foo' } }],
     },
     // #17 — anonymous default component → name falls back to `component`.
     {
       code: 'export default () => <div><span /><span /></div>',
       filename: COMPONENT_FILE,
       options: [{ maxElements: 2 }],
-      errors: [{ messageId: 'tooManyElements', data: { count: 3, max: 2, name: 'component' } }],
+      errors: [{ messageId: 'tooManyElementsFlat', data: { count: 3, max: 2, name: 'component' } }],
     },
-    // #18 — default applied (no `maxElements`): 21 elements > DEFAULT_MAX_ELEMENTS (20).
+    // #18 — default applied (no `maxElements`): 21 flat elements > DEFAULT_MAX_ELEMENTS (20).
     {
       code: `const Big = () => <div>${TWENTY_SPANS}</div>`,
       filename: COMPONENT_FILE,
-      errors: [{ messageId: 'tooManyElements', data: { count: 21, max: 20, name: 'Big' } }],
+      errors: [{ messageId: 'tooManyElementsFlat', data: { count: 21, max: 20, name: 'Big' } }],
     },
     // #19 — conditional branches are SUMMED: a, b, c, d = 4 > 3.
     {
       code: 'const Foo = () => (cond ? <a><b /></a> : <c><d /></c>)',
       filename: COMPONENT_FILE,
       options: [{ maxElements: 3 }],
-      errors: [{ messageId: 'tooManyElements', data: { count: 4, max: 3, name: 'Foo' } }],
+      errors: [
+        {
+          messageId: 'tooManyElements',
+          data: { count: 4, max: 3, name: 'Foo', largest: 'a', line: 1, largestCount: 2 },
+        },
+      ],
     },
-    // #20 — JSX in attributes is counted: Widget, Icon, Bolt = 3 > 2.
+    // #20 — JSX in attributes is counted: Panel, Icon, Bolt = 3 > 2; largest block is <Icon>.
     {
       code: 'const Widget = () => <Panel icon={<Icon><Bolt /></Icon>} />',
       filename: COMPONENT_FILE,
       options: [{ maxElements: 2 }],
-      errors: [{ messageId: 'tooManyElements', data: { count: 3, max: 2, name: 'Widget' } }],
+      errors: [
+        {
+          messageId: 'tooManyElements',
+          data: { count: 3, max: 2, name: 'Widget', largest: 'Icon', line: 1, largestCount: 2 },
+        },
+      ],
+    },
+    // #21 — multi-line: the largest block's actual line is reported (not hardcoded).
+    // <section> sits on line 4 of the dedented source.
+    {
+      code: dedent`
+        const Foo = () => {
+          return (
+            <div>
+              <section><span /><span /></section>
+            </div>
+          )
+        }
+      `,
+      filename: COMPONENT_FILE,
+      options: [{ maxElements: 3 }],
+      errors: [
+        {
+          messageId: 'tooManyElements',
+          data: { count: 4, max: 3, name: 'Foo', largest: 'section', line: 4, largestCount: 3 },
+        },
+      ],
     },
   ],
 })

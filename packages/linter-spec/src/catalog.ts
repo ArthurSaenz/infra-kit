@@ -1,5 +1,6 @@
 import type { DetectorId } from '#root/detector-ids'
 import { aiAgenticDetectors } from '#root/detectors/ai-agentic'
+import { asyncCorrectnessDetectors } from '#root/detectors/async-correctness'
 import { changePatternsDetectors } from '#root/detectors/change-patterns'
 import { codeQualityDetectors } from '#root/detectors/code-quality'
 import { complexityDetectors } from '#root/detectors/complexity'
@@ -21,6 +22,7 @@ export const allDetectors: Detector[] = [
   ...runtimeSafetyDetectors,
   ...metricsDetectors,
   ...aiAgenticDetectors,
+  ...asyncCorrectnessDetectors,
 ]
 
 /** All detectors keyed by id — the single typed lookup table (ids are the catalog's source of truth). */

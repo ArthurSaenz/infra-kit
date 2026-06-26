@@ -11,10 +11,10 @@ export const changePatternsDetectors: Detector[] = [
     description:
       'A single conceptual change — such as adding a new variant, a new event type, or a new operation — forces edits scattered across many unrelated modules.',
     rationale:
-      'Shotgun surgery is the inverse of a cohesion problem: the concept is fragmented across the codebase instead of being housed in one place. Every new variant requires the developer to hunt down every switch statement, every type union, every if-else chain that mentions the concept. Detection requires git change-history analysis to identify which files co-change on the same commits; the examples below illustrate the structural shape of the smell without needing history.',
+      'Shotgun surgery is the inverse of a cohesion problem: the concept is fragmented across the codebase instead of being housed in one place. Every new variant requires the developer to hunt down every switch statement, every type union, every if-else chain that mentions the concept. Detection requires git change-history analysis to identify which files co-change on the same commits; the examples below illustrate the structural shape of the smell without needing history. Because detection requires git/change history, there is no crisp static threshold yet.',
     defaultSeverity: Severity.info,
     appliesTo: 'any',
-    status: 'stable',
+    status: 'proposed',
     examples: [
       {
         label: 'Switch-based dispatch scattered across modules',
@@ -81,10 +81,10 @@ const dispatch = (action: string) => {
     description:
       'A public interface, type, or API surface changes frequently, requiring updates in every consumer on each revision.',
     rationale:
-      'A public interface is a contract; every breaking change multiplies the cost by the number of consumers. Frequent changes signal that the interface absorbed implementation detail that should have stayed private, or that the abstraction level is wrong. Detection uses git history to measure interface churn and fan-out impact; the examples below show the structural difference between a leaky interface and a stable narrow contract.',
+      'A public interface is a contract; every breaking change multiplies the cost by the number of consumers. Frequent changes signal that the interface absorbed implementation detail that should have stayed private, or that the abstraction level is wrong. Detection uses git history to measure interface churn and fan-out impact; the examples below show the structural difference between a leaky interface and a stable narrow contract. Because detection requires git/change history, there is no crisp static threshold yet.',
     defaultSeverity: Severity.info,
     appliesTo: 'any',
-    status: 'stable',
+    status: 'proposed',
     examples: [
       {
         label: 'Leaky interface exposes internals vs stable narrow contract',

@@ -9,7 +9,8 @@ export const complexityDetectors: Detector[] = [
     scope: 'file',
     title: 'High cyclomatic complexity',
     description: 'Functions whose count of independent control-flow paths exceeds a threshold.',
-    rationale: 'Many branches are hard to test exhaustively and hard for an agent to follow; each path hides bugs.',
+    rationale:
+      'Many branches are hard to test exhaustively and hard for an agent to follow; each path hides bugs. Cognitive complexity is the nesting-weighted, readability-oriented sibling — run cyclomatic for raw branch/path count, cognitive for how hard the function is to read (SonarSource treats cognitive as the readability successor).',
     defaultSeverity: Severity.warn,
     appliesTo: 'any',
     status: 'stable',
@@ -22,7 +23,13 @@ export const complexityDetectors: Detector[] = [
       },
     ],
     references: ['https://archlinter.github.io/archlint/detectors/'],
-    existing: { status: 'covered', plugin: 'eslint-core', rule: 'complexity' },
+    existing: {
+      status: 'none',
+      enabledInRepo: false,
+      plugin: 'eslint-core',
+      rule: 'complexity',
+      note: 'core complexity rule installed but not enabled by @antfu/eslint-config lessOpinionated (absent from the resolved config)',
+    },
     eslint: { messageId: 'tooComplex', fixable: null, recommended: true },
     examples: [
       {
@@ -90,7 +97,13 @@ function process(items: string[]) {
     status: 'stable',
     options: [{ name: 'maxDepth', type: 'number', default: 4, description: 'Max block nesting depth.' }],
     references: ['https://archlinter.github.io/archlint/detectors/'],
-    existing: { status: 'partial', plugin: 'eslint-core', rule: 'max-depth' },
+    existing: {
+      status: 'none',
+      enabledInRepo: false,
+      plugin: 'eslint-core',
+      rule: 'max-depth',
+      note: 'core max-depth installed but not enabled by @antfu/eslint-config lessOpinionated (absent from the resolved config)',
+    },
     eslint: { messageId: 'tooDeep', fixable: null, recommended: false },
     examples: [
       {
@@ -130,7 +143,13 @@ function process(items: string[]) {
       },
     ],
     references: ['https://archlinter.github.io/archlint/detectors/'],
-    existing: { status: 'covered', plugin: 'eslint-core', rule: 'max-params' },
+    existing: {
+      status: 'none',
+      enabledInRepo: false,
+      plugin: 'eslint-core',
+      rule: 'max-params',
+      note: 'core max-params installed but not enabled by @antfu/eslint-config lessOpinionated (absent from the resolved config)',
+    },
     eslint: { messageId: 'tooManyParams', fixable: null, recommended: false },
     examples: [
       {
@@ -163,7 +182,13 @@ function createUser(opts: UserOpts) {
     status: 'stable',
     options: [{ name: 'maxLines', type: 'number', default: 400, description: 'Max number of lines per source file.' }],
     references: ['https://archlinter.github.io/archlint/detectors/'],
-    existing: { status: 'partial', plugin: 'eslint-core', rule: 'max-lines' },
+    existing: {
+      status: 'none',
+      enabledInRepo: false,
+      plugin: 'eslint-core',
+      rule: 'max-lines',
+      note: 'core max-lines/max-lines-per-function installed but not enabled by @antfu/eslint-config lessOpinionated (absent from the resolved config)',
+    },
     eslint: { messageId: 'tooManyLines', fixable: null, recommended: false },
     examples: [
       {

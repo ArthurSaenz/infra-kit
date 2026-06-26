@@ -71,7 +71,12 @@ export function formatDate(d: Date): string {
       recommended: true,
     },
     references: ['https://archlinter.github.io/archlint/detectors/'],
-    existing: { status: 'covered', plugin: 'eslint-core', rule: 'no-unused-vars' },
+    existing: {
+      status: 'covered',
+      plugin: 'unused-imports',
+      rule: 'unused-imports/no-unused-vars',
+      note: 'core/ts no-unused-vars are off; antfu delegates to unused-imports/no-unused-vars + no-unused-imports (both error in resolved config)',
+    },
   },
   {
     id: 'orphan-types',
@@ -115,7 +120,7 @@ export type UserId = string
     description:
       'Flags index files that re-export more symbols than the configured threshold, coupling every consumer to the entire module surface.',
     rationale:
-      'A barrel that re-exports everything forces bundlers to pull in the whole module and makes dependency analysis opaque. Importing directly from the source file (or narrowing the barrel) keeps build graphs lean and refactors safe.',
+      'A barrel that re-exports everything forces bundlers to pull in the whole module and makes dependency analysis opaque. Importing directly from the source file (or narrowing the barrel) keeps build graphs lean and refactors safe. See also public-api-surface: barrel-file and public-api-surface are two ends of one axis — barrel-file flags an index that re-exports too much, while public-api-surface flags a module with no public index at all.',
     defaultSeverity: Severity.warn,
     appliesTo: 'any',
     status: 'stable',
@@ -179,5 +184,119 @@ function transferFunds(fromAccount: AccountId, toAccount: AccountId, amount: Cen
     },
     references: ['https://archlinter.github.io/archlint/detectors/'],
     existing: { status: 'none' },
+  },
+  {
+    id: 'commented-out-code',
+    group: DetectorGroup.codeQuality,
+    scope: 'file',
+    title: 'Commented-out code',
+    description: 'Blocks of real code that have been commented out rather than deleted.',
+    rationale:
+      'Commented-out code is dead weight that version control already preserves. It misleads an agent into treating stale logic as live context, and rots silently as the surrounding code changes.',
+    defaultSeverity: Severity.warn,
+    appliesTo: 'any',
+    status: 'stable',
+    examples: [
+      {
+        label: 'commented block vs cleaned',
+        bad: `export function total(items: number[]) {
+  // const tax = 0.2
+  // return items.reduce((a, b) => a + b, 0) * (1 + tax)
+  return items.reduce((a, b) => a + b, 0)
+}`,
+        good: `export function total(items: number[]) {
+  return items.reduce((a, b) => a + b, 0)
+}`,
+      },
+    ],
+    references: ['https://archlinter.github.io/archlint/detectors/'],
+    existing: {
+      status: 'none',
+      enabledInRepo: false,
+      plugin: 'sonarjs',
+      rule: 'sonarjs/no-commented-code',
+      note: 'rule installed but turned OFF in vendor/configs/eslint-config/index.js ("temporary disable, must be enabled")',
+    },
+    eslint: { messageId: 'commentedOutCode', fixable: null, recommended: false },
+    tags: ['ai-agentic'],
+  },
+  {
+    id: 'unnecessary-condition',
+    group: DetectorGroup.codeQuality,
+    scope: 'project',
+    title: 'Unnecessary (always-true / always-false) condition',
+    description:
+      'A condition whose outcome is statically determined — always truthy or always falsy — so a branch is dead.',
+    rationale:
+      'A condition that can only go one way is dead logic an agent will misread as a real branch. The general case (e.g. a value that is never null) needs type narrowing across the program, hence project scope.',
+    defaultSeverity: Severity.warn,
+    appliesTo: 'any',
+    status: 'stable',
+    examples: [
+      {
+        label: 'always-truthy guard',
+        bad: `function label(name: string) {
+  if (name) {
+    return name
+  }
+  return 'anon'
+}`,
+        good: `function label(name: string | undefined) {
+  if (name) {
+    return name
+  }
+  return 'anon'
+}`,
+        note: 'Illustrative/syntactic. The full rule (ts/no-unnecessary-condition) is type-dependent; sonarjs/no-gratuitous-expressions catches a runtime subset.',
+      },
+    ],
+    references: ['https://typescript-eslint.io/rules/no-unnecessary-condition/'],
+    existing: {
+      status: 'partial',
+      plugin: 'sonarjs',
+      rule: 'sonarjs/no-gratuitous-expressions',
+      note: 'sonarjs/no-gratuitous-expressions (error) catches a subset of always-true/false expressions; the full type-narrowing ts/no-unnecessary-condition is type-aware and dormant',
+    },
+    tags: ['ai-agentic'],
+  },
+  {
+    id: 're-export-depth',
+    group: DetectorGroup.codeQuality,
+    scope: 'project',
+    title: 'Deep re-export chain (barrel laundering)',
+    description:
+      'A symbol reachable only through multiple chained re-exports (index re-exporting from another index, repeatedly).',
+    rationale:
+      'Deep re-export chains are the #1 agent-navigation killer — to answer "where is this actually defined?" an agent must traverse N barrel hops. Each hop is a blind spot: the real declaration site is hidden behind layers of index files, making context retrieval unpredictable and symbol resolution expensive. Squarely agentic.',
+    defaultSeverity: Severity.warn,
+    appliesTo: 'any',
+    status: 'stable',
+    examples: [
+      {
+        label: 'chained re-export hops',
+        bad: `// features/index.ts
+export { thing } from './thing'
+
+// thing/index.ts
+export { thing } from './impl'
+
+// impl/index.ts
+export { thing } from './thing'`,
+        good: `// import the concrete module directly — one hop
+import { thing } from './features/thing/impl/thing'
+export { thing }`,
+      },
+    ],
+    options: [
+      {
+        name: 'maxDepth',
+        type: 'number',
+        default: 2,
+        description: 'Max re-export hops to a concrete declaration.',
+      },
+    ],
+    references: ['https://archlinter.github.io/archlint/detectors/'],
+    existing: { status: 'none' },
+    tags: ['ai-agentic'],
   },
 ]

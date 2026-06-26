@@ -362,6 +362,19 @@ their own. A top-level JSX-returning helper (e.g. `const renderRow = () => <li /
 is treated as a component and measured. The message names the component when
 resolvable and uses a generic `component` for anonymous defaults.
 
+**Actionable message.** When one block dominates the return, the message points
+at it — its tag, line, and element count — so a human (or an automated lint →
+fix → lint loop) knows exactly what to lift out:
+
+```
+Dashboard renders 28 JSX elements in one return (max 20). Extract the largest
+block — <section> at line 14 (12 elements) — into a variable or a sub-component.
+```
+
+When no single block dominates (e.g. many flat sibling elements), there is
+nothing useful to point at, so the message instead advises splitting the return
+into smaller sub-components.
+
 #### Option: `maxElements` (optional)
 
 The element ceiling before the rule reports. Defaults to `20`. Only counts
