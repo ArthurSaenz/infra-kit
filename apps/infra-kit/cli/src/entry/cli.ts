@@ -17,6 +17,11 @@ import { ghReleaseList } from 'src/commands/gh-release-list'
 import { init } from 'src/commands/init'
 import { releaseCreate } from 'src/commands/release-create'
 import { releaseDescEdit } from 'src/commands/release-desc-edit'
+import { vendorCheck } from 'src/commands/vendor-check'
+import { vendorConfig } from 'src/commands/vendor-config'
+import { vendorDiff } from 'src/commands/vendor-diff'
+import { vendorManifest } from 'src/commands/vendor-manifest'
+import { vendorSync } from 'src/commands/vendor-sync'
 import { version } from 'src/commands/version'
 import { worktreesAdd } from 'src/commands/worktrees-add'
 import { worktreesList } from 'src/commands/worktrees-list'
@@ -33,6 +38,11 @@ const program = new Command()
 
 const collectReleaseSpec = (value: string, prev: string[]): string[] => {
   return [...prev, value]
+}
+
+/** Parse a `--repos a,b,c` option into a target-name list (undefined = all). */
+const parseRepos = (value: unknown): string[] | undefined => {
+  return typeof value === 'string' ? value.split(',').filter(Boolean) : undefined
 }
 
 const normalizeIdeMode = (value: unknown, flagName: '--ide' | '--cursor'): IdeMode | undefined => {
@@ -253,6 +263,56 @@ program
     }
   })
 
+const vendorCmd = program.command('vendor').description('Verify and sync the mirrored vendor/ tree')
+
+vendorCmd
+  .command('check')
+  .description('Verify vendor/ matches vendor/.sync-manifest.json (self-contained; for any consumer repo)')
+  .action(async () => {
+    const result = await vendorCheck()
+
+    if (!result.structuredContent.ok) {
+      process.exitCode = 1
+    }
+  })
+
+vendorCmd
+  .command('sync')
+  .description('Copy vendored files from the source repo into each target and regenerate manifests')
+  .option('-y, --yes', 'Skip confirmation prompt')
+  .option('-r, --repos <repos>', 'Restrict to comma-separated target repo names')
+  .action(async (options) => {
+    await vendorSync({ confirmedCommand: options.yes, repos: parseRepos(options.repos) })
+  })
+
+vendorCmd
+  .command('manifest')
+  .description('Regenerate each target vendor/.sync-manifest.json + README from current content (no copy)')
+  .option('-r, --repos <repos>', 'Restrict to comma-separated target repo names')
+  .action(async (options) => {
+    await vendorManifest({ confirmedCommand: true, repos: parseRepos(options.repos) })
+  })
+
+vendorCmd
+  .command('diff')
+  .description('Source-aware drift check (rsync dry-run) of each target vendored subtree vs the source')
+  .option('-r, --repos <repos>', 'Restrict to comma-separated target repo names')
+  .action(async (options) => {
+    const result = await vendorDiff({ repos: parseRepos(options.repos) })
+
+    if (!result.structuredContent.ok) {
+      process.exitCode = 1
+    }
+  })
+
+program
+  .command('vendor-config')
+  .description('Show the machine-local factory config (~/.infra-kit/vendor.json) or scaffold it with --init')
+  .option('--init', 'Scaffold ~/.infra-kit/vendor.json (skips if it already exists)')
+  .action(async (options) => {
+    await vendorConfig({ init: options.init })
+  })
+
 program
   .command('doctor')
   .description('Check installation and authentication status of gh and doppler CLIs')
@@ -316,6 +376,8 @@ if (process.argv.length <= 2) {
   const worktreeCommands = ['worktrees-add', 'worktrees-list', 'worktrees-reload', 'worktrees-remove', 'worktrees-sync']
   const envCommands = [
     'audit',
+    'vendor',
+    'vendor-config',
     'doctor',
     'init',
     'version',

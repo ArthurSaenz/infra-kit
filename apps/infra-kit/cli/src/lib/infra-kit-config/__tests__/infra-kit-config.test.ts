@@ -37,7 +37,7 @@ const withTmpRepo = async (fn: (tmp: string) => Promise<void>): Promise<void> =>
   vi.mocked(getProjectRoot).mockResolvedValue(tmp)
   vi.mocked(getRepoName).mockResolvedValue(path.basename(tmp))
   // Point os.homedir() at the tmp dir so user-scope override layers
-  // (~/.infra-kit/config.json, ~/.infra-kit/projects/<repo>/infra-kit.json)
+  // (~/.infra-kit/infra-kit.json, ~/.infra-kit/projects/<repo>/infra-kit.json)
   // can't leak the developer's real config into the test.
   const homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmp)
 
@@ -245,7 +245,7 @@ describe('getInfraKitConfig', () => {
 
       fs.mkdirSync(userGlobalDir, { recursive: true })
       fs.writeFileSync(
-        path.join(userGlobalDir, 'config.json'),
+        path.join(userGlobalDir, 'infra-kit.json'),
         JSON.stringify({ worktrees: { openInGithubDesktop: false, openInCmux: true } }),
       )
 
@@ -263,7 +263,7 @@ describe('getInfraKitConfig', () => {
       const userGlobalDir = path.join(tmp, '.infra-kit')
 
       fs.mkdirSync(userGlobalDir, { recursive: true })
-      fs.writeFileSync(path.join(userGlobalDir, 'config.json'), '   \n')
+      fs.writeFileSync(path.join(userGlobalDir, 'infra-kit.json'), '   \n')
 
       const cfg = await getInfraKitConfig()
 
@@ -325,7 +325,7 @@ describe('getInfraKitConfig', () => {
     })
   })
 
-  it('ignores a non-loaded config.example.jsonc in the user-global layer', async () => {
+  it('ignores a non-loaded infra-kit.example.jsonc in the user-global layer', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
 
@@ -333,7 +333,10 @@ describe('getInfraKitConfig', () => {
 
       fs.mkdirSync(userGlobalDir, { recursive: true })
       // Schema-failing content that must never be merged.
-      fs.writeFileSync(path.join(userGlobalDir, 'config.example.jsonc'), '{\n  // comment\n  "environments": []\n}\n')
+      fs.writeFileSync(
+        path.join(userGlobalDir, 'infra-kit.example.jsonc'),
+        '{\n  // comment\n  "environments": []\n}\n',
+      )
 
       const cfg = await getInfraKitConfig()
 

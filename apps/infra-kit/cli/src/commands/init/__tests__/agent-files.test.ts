@@ -146,7 +146,7 @@ describe('writeAgentFiles', () => {
         return f.startsWith('CLAUDE.md.backup.')
       })
 
-      expect(backups.length).toBe(1)
+      expect(backups).toHaveLength(1)
       expect(fs.readFileSync(path.join(tmp, backups[0]!), 'utf-8')).toContain('previous content without markers')
     })
   })
@@ -176,7 +176,7 @@ describe('writeAgentFiles', () => {
           return f.startsWith('AGENTS.md.backup.')
         })
 
-        expect(backups.length).toBe(1)
+        expect(backups).toHaveLength(1)
 
         // CLAUDE.md now carries the full block and no longer imports @AGENTS.md.
         const claude = fs.readFileSync(path.join(tmp, 'CLAUDE.md'), 'utf-8')
@@ -206,7 +206,7 @@ describe('writeAgentFiles', () => {
           return f.startsWith('AGENTS.md.backup.')
         })
 
-        expect(backups.length).toBe(1)
+        expect(backups).toHaveLength(1)
       })
     })
 
@@ -223,7 +223,7 @@ describe('writeAgentFiles', () => {
           return f.startsWith('AGENTS.md.backup.')
         })
 
-        expect(backups.length).toBe(0)
+        expect(backups).toHaveLength(0)
       })
     })
 
@@ -259,7 +259,7 @@ describe('writeAgentFiles', () => {
         return f.startsWith('infra-kit.mdc.backup.')
       })
 
-      expect(backups.length).toBe(0)
+      expect(backups).toHaveLength(0)
     })
   })
 })

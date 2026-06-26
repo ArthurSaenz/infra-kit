@@ -1,0 +1,42 @@
+{
+  "name": "@pkg/linter-spec",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Declarative catalog of code-architecture linter detectors (design spec, no detection logic)",
+  "keywords": [
+    "linter",
+    "detectors",
+    "architecture",
+    "eslint",
+    "spec"
+  ],
+  "main": "dist/index.es.js",
+  "module": "dist/index.es.js",
+  "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=24.x",
+    "pnpm": ">=11"
+  },
+  "scripts": {
+    "build": "vite build",
+    "clean-artifacts": "rm -rf dist",
+    "clean-cache": "rm -rf node_modules/.cache .eslintcache tsconfig.tsbuildinfo .turbo .swc",
+    "prettier-fix": "pnpm exec prettier **/* --write --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../.prettierignore",
+    "prettier-check": "pnpm exec prettier **/* --check --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../.prettierignore",
+    "eslint-check": "pnpm exec eslint --cache --quiet --report-unused-disable-directives ./src",
+    "eslint-fix": "pnpm exec eslint --cache --quiet --report-unused-disable-directives ./src --fix",
+    "ts-check": "tsc --noEmit",
+    "test": "pnpm exec vitest run --reporter=minimal",
+    "test-watch": "pnpm exec vitest --watch --silent passed-only",
+    "qa": "pnpm run prettier-check && pnpm run eslint-check && pnpm run ts-check && pnpm run test && echo ✅ Success",
+    "fix": "pnpm run prettier-fix && pnpm run eslint-fix && pnpm run qa"
+  },
+  "devDependencies": {
+    "@wl/eslint-config": "workspace:*",
+    "@wl/vitest-config": "workspace:*",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-dts": "catalog:"
+  }
+}

@@ -308,6 +308,78 @@ to add your own, e.g. an `app/` router):
 }
 ```
 
+### `max-jsx-return-size`
+
+Warn when a single component **return** renders too many JSX elements. Large
+return blocks are hard to scan; the fix is to extract part of the markup into a
+variable or a sub-component. Report-only — the remedy is left to the developer
+(no autofix), because safely extracting JSX touches scope, hooks, and keys.
+
+```tsx
+// ❌ Incorrect — one return renders too many elements (default max 20)
+const Dashboard = () => (
+  <div>
+    <header>…</header>
+    <main>… lots of nested markup …</main>
+    <footer>…</footer>
+  </div>
+)
+
+// ✅ Correct — extract parts into variables or sub-components
+const Dashboard = () => {
+  const header = <header>…</header>
+  const footer = <footer>…</footer>
+
+  return (
+    <div>
+      {header}
+      <Main />
+      {footer}
+    </div>
+  )
+}
+```
+
+The metric is a **count of `JSXElement` nodes in the returned expression** —
+formatting-independent (Prettier reflow never changes the verdict). Each return
+in a component is measured on its own, so a small guard such as
+`if (loading) return <Spinner />` is never penalised by a large sibling return.
+
+Counting rules:
+
+- **Extraction lowers the count.** JSX hoisted into a variable is referenced as
+  `{header}` (a JSX expression container, not a `JSXElement`), so it is not
+  counted — extracting strictly reduces the number.
+- **Fragments are free.** `<>…</>` contributes `0`; its children still count.
+- **Inline-callback JSX counts** in the parent return: `<ul>{items.map(() => <li />)}</ul>`
+  counts `<ul>` and `<li>` (extract a `<Row />` sub-component to reduce it).
+- **Conditional branches are summed:** `cond ? <A /> : <B />` counts both sides.
+- **JSX in attributes is counted:** `<Foo icon={<Icon />} />` counts `Foo` and `Icon`.
+
+Only **top-level declared** components are inspected (same as
+`component-arrow-function`), so anonymous inline callbacks are never reported on
+their own. A top-level JSX-returning helper (e.g. `const renderRow = () => <li />`)
+is treated as a component and measured. The message names the component when
+resolvable and uses a generic `component` for anonymous defaults.
+
+#### Option: `maxElements` (optional)
+
+The element ceiling before the rule reports. Defaults to `20`. Only counts
+strictly greater than the ceiling are reported (`count === max` is allowed).
+
+```js
+{
+  rules: {
+    '@wl/max-jsx-return-size': ['error', { maxElements: 25 }],
+  },
+}
+```
+
+#### Option: `paths` / `ignore` (optional)
+
+Same glob semantics as the other rules: `paths` restricts the rule to matching
+files, `ignore` skips matching files (and takes precedence over `paths`).
+
 ### `require-component-stories`
 
 Require a co-located Storybook story for every dumb component. By default it enforces two layouts,

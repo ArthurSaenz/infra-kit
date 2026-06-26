@@ -15,6 +15,7 @@ import {
 } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { hasManagedBlock } from 'src/lib/managed-block'
+import { tildify } from 'src/lib/path-display'
 import { defineMcpTool, textContent } from 'src/types'
 
 interface CheckResult {
@@ -84,7 +85,7 @@ const checkPnpmWorkspaceVirtualStore = async (): Promise<CheckResult> => {
     }
 
     const content = fs.readFileSync(yamlPath, 'utf-8')
-    // eslint-disable-next-line sonarjs/slow-regex
+    // eslint-disable-next-line sonarjs/super-linear-regex
     const enabled = /^\s*enableGlobalVirtualStore\s*:\s*true\s*$/m.test(content)
 
     if (!enabled) {
@@ -152,6 +153,54 @@ const checkUserOverridePath = async (): Promise<CheckResult> => {
     }
   } catch (err) {
     return { name, status: 'fail', message: (err as Error).message }
+  }
+}
+
+/**
+ * Surface a lingering legacy `~/.infra-kit/config.json` left behind after the
+ * user-global config was renamed to `infra-kit.json`. The on-`init` auto-rename
+ * is the migration path, but a user who edits the file and never re-runs `init`
+ * would silently have their overrides stop applying — this makes that visible.
+ *
+ * Branches on whether the canonical `infra-kit.json` already exists so the
+ * message is accurate: only the "no infra-kit.json yet" case means overrides are
+ * not being applied; when both exist the legacy file is merely stale.
+ * Informational pass (no warning) when the paths can't resolve — mirrors
+ * {@link checkIdeInstalled}: nothing to surface if there's no resolvable target.
+ *
+ * @example
+ * await checkLegacyUserGlobalConfig()
+ * // { name: 'legacy user-global config', status: 'fail', message: 'Legacy user-global config.json found …' }
+ */
+export const checkLegacyUserGlobalConfig = async (): Promise<CheckResult> => {
+  const name = 'legacy user-global config'
+
+  let paths: Awaited<ReturnType<typeof getInfraKitConfigPaths>>
+
+  try {
+    paths = await getInfraKitConfigPaths()
+  } catch {
+    return { name, status: 'pass', message: 'Skipped — infra-kit config paths could not be resolved' }
+  }
+
+  const legacyPath = path.join(path.dirname(paths.userGlobal), 'config.json')
+
+  if (!fs.existsSync(legacyPath)) {
+    return { name, status: 'pass', message: 'No legacy user-global config.json' }
+  }
+
+  if (!fs.existsSync(paths.userGlobal)) {
+    return {
+      name,
+      status: 'fail',
+      message: `Legacy user-global config.json found at ${tildify(legacyPath)} — run \`infra-kit init\` to migrate it (your overrides are not being applied).`,
+    }
+  }
+
+  return {
+    name,
+    status: 'fail',
+    message: `Stale legacy config.json found at ${tildify(legacyPath)} — ${tildify(paths.userGlobal)} is active; remove the old file.`,
   }
 }
 
@@ -384,6 +433,7 @@ export const doctor = async () => {
     checkPnpmWorkspaceVirtualStore(),
     checkInfraKitConfigValid(),
     checkUserOverridePath(),
+    checkLegacyUserGlobalConfig(),
     checkIdeInstalled(),
   ])
 

@@ -7,8 +7,15 @@ import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 
 const INFRA_KIT_CONFIG_FILE = 'infra-kit.json'
 
-const USER_CONFIG_DIR_NAME = '.infra-kit'
-const USER_GLOBAL_CONFIG_FILE = 'config.json'
+/**
+ * Directory under the user's home that holds all machine-local infra-kit config:
+ * the runtime `infra-kit.json` merge layer, per-project overrides, and the factory
+ * registry (`vendor.json`). Single source of truth for `.infra-kit`, reused
+ * by the vendor factory-config loader (no import cycle — this module imports no
+ * `lib/vendor` code).
+ */
+export const USER_CONFIG_DIR_NAME = '.infra-kit'
+const USER_GLOBAL_CONFIG_FILE = 'infra-kit.json'
 const USER_PROJECTS_DIR = 'projects'
 
 // envManagement
@@ -189,7 +196,7 @@ let cached: CacheEntry | null = null
  * const paths = await getInfraKitConfigPaths()
  * // {
  * //   main:        '/Users/arthur/projects/api/infra-kit.json',
- * //   userGlobal:  '/Users/arthur/.infra-kit/config.json',
+ * //   userGlobal:  '/Users/arthur/.infra-kit/infra-kit.json',
  * //   userProject: '/Users/arthur/.infra-kit/projects/api/infra-kit.json',
  * //   projectName: 'api',
  * // }
@@ -211,7 +218,7 @@ export const getInfraKitConfigPaths = async (): Promise<InfraKitConfigPaths> => 
  * Read and validate `infra-kit.json`, with optional override layers shallow-merged
  * on top in this order (later wins):
  *   1. project `infra-kit.json`                            — committed source of truth
- *   2. `~/.infra-kit/config.json`                          — user-global defaults
+ *   2. `~/.infra-kit/infra-kit.json`                       — user-global defaults
  *   3. `~/.infra-kit/projects/<repo-name>/infra-kit.json`  — user-scope per-project overrides
  *
  * Top-level keys (entire capability sections like `ide`, `envManagement`)
@@ -220,7 +227,7 @@ export const getInfraKitConfigPaths = async (): Promise<InfraKitConfigPaths> => 
  *
  * @example
  * // infra-kit.json:           { "environments": ["dev"], "envManagement": { "provider": "doppler", "config": { "name": "p" } } }
- * // ~/.infra-kit/config.json: { "ide": { "provider": "cursor", "config": { "workspaceConfigPath": "./ws.code-workspace" } } }
+ * // ~/.infra-kit/infra-kit.json: { "ide": { "provider": "cursor", "config": { "workspaceConfigPath": "./ws.code-workspace" } } }
  * const cfg = await getInfraKitConfig()
  * // => { environments: ['dev'], envManagement: {...}, ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } } }
  */
@@ -264,7 +271,7 @@ export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
 
   const layers: ConfigLayer[] = [
     { label: 'infra-kit.json', path: paths.main, required: true },
-    { label: '~/.infra-kit/config.json', path: paths.userGlobal, required: false },
+    { label: '~/.infra-kit/infra-kit.json', path: paths.userGlobal, required: false },
     {
       label: `~/.infra-kit/projects/${paths.projectName}/infra-kit.json`,
       path: paths.userProject,
@@ -366,12 +373,12 @@ interface ConfigLayer {
  * An empty/whitespace-only file is treated as `{}` (JSON.parse would throw).
  *
  * @example
- * await loadLayer({ label: '~/.infra-kit/config.json', path: '/missing.json', required: false })
+ * await loadLayer({ label: '~/.infra-kit/infra-kit.json', path: '/missing.json', required: false })
  * // => null
  *
  * @example
- * // /home/me/.infra-kit/config.json: '{ "ide": { "provider": "cursor", "config": { "workspaceConfigPath": "./ws.code-workspace" } } }'
- * await loadLayer({ label: '~/.infra-kit/config.json', path: '/home/me/.infra-kit/config.json', required: false })
+ * // /home/me/.infra-kit/infra-kit.json: '{ "ide": { "provider": "cursor", "config": { "workspaceConfigPath": "./ws.code-workspace" } } }'
+ * await loadLayer({ label: '~/.infra-kit/infra-kit.json', path: '/home/me/.infra-kit/infra-kit.json', required: false })
  * // => { ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } } }
  */
 const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | null> => {

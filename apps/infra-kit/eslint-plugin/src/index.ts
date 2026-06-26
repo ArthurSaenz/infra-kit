@@ -38,6 +38,10 @@ plugin.configs.recommended = [
       // declarations (and framework conventions like default-exported page functions).
       [`${PLUGIN_NAME}/component-arrow-function`]: ['error', { ignore: ['**/pages/**', '**/routes/**'] }],
       [`${PLUGIN_NAME}/require-component-stories`]: 'error',
+      // Advisory: flags returns that render too many JSX elements; extract into a
+      // variable or sub-component. Warn-class by nature (`type: 'suggestion'`);
+      // severity confirmed against a repo-wide dry run at the default ceiling.
+      [`${PLUGIN_NAME}/max-jsx-return-size`]: 'error',
     },
   },
   // Storybook stories legitimately deviate from the component conventions: the

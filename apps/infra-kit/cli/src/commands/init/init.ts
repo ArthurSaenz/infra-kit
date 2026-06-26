@@ -6,7 +6,12 @@ import { logger } from 'src/lib/logger'
 import { removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
 
 import { writeAgentFiles } from './agent-files'
-import { migrateLegacyConfig, normalizeLegacyIdeStructures } from './migrate-config'
+import {
+  migrateFactoryConfigToJson,
+  migrateLegacyConfig,
+  migrateUserGlobalConfigFilename,
+  normalizeLegacyIdeStructures,
+} from './migrate-config'
 
 export const MARKER_START = '# -- infra-kit:begin --'
 export const MARKER_END = '# -- infra-kit:end --'
@@ -18,12 +23,12 @@ const LEGACY_SINGLE = '# infra-kit shell functions'
 const USER_GLOBAL_CONFIG_STUB = '{}\n'
 
 // …and the annotated guidance lives next to it in a non-loaded .example.jsonc
-// (the loader only reads the three exact `infra-kit.json` / `config.json` files).
-const USER_GLOBAL_CONFIG_EXAMPLE = `// infra-kit user-global config — ~/.infra-kit/config.json
+// (the loader only reads the three exact `infra-kit.json` files).
+const USER_GLOBAL_CONFIG_EXAMPLE = `// infra-kit user-global config — ~/.infra-kit/infra-kit.json
 //
 // Merge chain (later layers override earlier ones at top-level keys):
 //   1. <repo>/infra-kit.json                            — committed project config (required)
-//   2. ~/.infra-kit/config.json                         — user-global (the sibling of this file)
+//   2. ~/.infra-kit/infra-kit.json                      — user-global (the sibling of this file)
 //   3. ~/.infra-kit/projects/<repo-name>/infra-kit.json — user-scope per-project override
 //
 // Merge is shallow: setting a top-level key replaces that whole section from
@@ -31,9 +36,21 @@ const USER_GLOBAL_CONFIG_EXAMPLE = `// infra-kit user-global config — ~/.infra
 // environments, envManagement, ide, taskManager, worktrees.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real global
-// overrides in the sibling config.json (strict JSON: no comments, double-quoted
+// overrides in the sibling infra-kit.json (strict JSON: no comments, double-quoted
 // keys). Per-project tweaks belong in layer 3 — run \`infra-kit config edit\`.
+//
+// Every recognized key is documented below. NOTE: \`environments\` and
+// \`envManagement\` are REQUIRED in the committed project infra-kit.json (layer 1)
+// and are usually NOT set in this user-global layer — they are shown here only to
+// document the full, valid config shape.
 {
+  // "environments": ["dev", "staging", "prod"],   // string[] (>=1) — required in layer 1
+  //
+  // "envManagement": {                            // required in layer 1; provider-tagged
+  //   "provider": "doppler",
+  //   "config": { "name": "my-doppler-project" }
+  // },
+  //
   // "ide": {
   //   "provider": "cursor",
   //   "config": { "workspaceConfigPath": "/path/to/your.code-workspace" }
@@ -45,6 +62,12 @@ const USER_GLOBAL_CONFIG_EXAMPLE = `// infra-kit user-global config — ~/.infra
   //   { "provider": "cursor", "config": { "workspaceConfigPath": "/path/to/your.code-workspace" } },
   //   { "provider": "zed", "config": {} }
   // ],
+  //
+  // "taskManager": {
+  //   "provider": "jira",
+  //   "config": { "baseUrl": "https://acme.atlassian.net", "projectId": 123 }
+  // },
+  //
   // "worktrees": {
   //   "openInGithubDesktop": false,
   //   "openInCmux": true,
@@ -55,19 +78,36 @@ const USER_GLOBAL_CONFIG_EXAMPLE = `// infra-kit user-global config — ~/.infra
 }
 `
 
+// The machine-local factory registry lives at ~/.infra-kit/vendor.json (strict
+// JSON). This annotated sibling documents every property; the real file is
+// scaffolded by \`infra-kit vendor-config --init\`, NOT by init.
+const VENDOR_CONFIG_EXAMPLE = `// infra-kit factory registry — ~/.infra-kit/vendor.json
+//
+// Machine-local registry the vendor commands (sync/manifest/diff) read to know
+// where your project repos live and which ones to stamp. This .example.jsonc is
+// reference only — it is NOT loaded. The real file is the strict-JSON sibling
+// vendor.json (no comments, double-quoted keys); run \`infra-kit vendor-config --init\`
+// to scaffold it.
+{
+  // "workspaceDir": "~/projects",   // string (absolute or ~-prefixed) — where target repos are cloned
+  // "targets": ["my-repo-a", "my-repo-b"]   // string[] (>=1) — repo dir names resolved under workspaceDir
+}
+`
+
 /**
- * Append infra-kit shell functions to .zshrc, migrate any legacy
- * `infra-kit.yml` config layers to JSON, normalize existing JSON configs from
- * the old IDE structure to the new one (strip the removed `ide.config.mode`),
- * and seed the user-global config at ~/.infra-kit/config.json on first run.
- * Idempotent: a subsequent run replaces the existing zshrc block in place, has
- * nothing left to migrate or normalize, and leaves the user-global config
- * untouched.
+ * Append infra-kit shell functions to .zshrc, migrate any legacy `infra-kit.yml`
+ * config layers to JSON, normalize existing JSON configs from the old IDE structure
+ * (strip the removed `ide.config.mode`), convert a legacy factory `vendor.config.ts`
+ * to `vendor.json`, and seed the user-global config at ~/.infra-kit/infra-kit.json on
+ * first run. Idempotent: a subsequent run replaces the existing zshrc block in place,
+ * has nothing left to migrate or normalize, and leaves the REAL config files
+ * (infra-kit.json / vendor.json) untouched — but the annotated `.example.jsonc`
+ * reference files are refreshed on every run so they always reflect the current schema.
  *
  * @example
  * // CLI: `infra-kit init`  (or via the `pnpm dx-init` alias)
  * // INFO: Added infra-kit shell functions to /Users/me/.zshrc
- * // INFO: Wrote user-global config to /Users/me/.infra-kit/config.json (see …/config.example.jsonc …)
+ * // INFO: Wrote user-global config to /Users/me/.infra-kit/infra-kit.json (see …/infra-kit.example.jsonc …)
  * // INFO: Run `source ~/.zshrc` or open a new terminal to activate.
  */
 export const init = async (): Promise<void> => {
@@ -91,12 +131,22 @@ export const init = async (): Promise<void> => {
   logger.info(`Added infra-kit shell functions to ${zshrcPath}`)
 
   // Convert any legacy infra-kit.yml config layers to JSON before seeding, so a
-  // migrated config.json is not re-seeded as an empty stub.
+  // migrated infra-kit.json is not re-seeded as an empty stub.
   await migrateLegacyConfig()
 
   // Migrate existing JSON configs from the old IDE structure to the new one
   // (strip the removed `ide.config.mode` field). No-op for already-clean configs.
   await normalizeLegacyIdeStructures()
+
+  // Rename a legacy user-global config.json → infra-kit.json (single canonical
+  // filename). MUST run before seeding: otherwise the seeder checks the new name,
+  // doesn't find it, and writes an empty stub that shadows the user's real config.
+  await migrateUserGlobalConfigFilename()
+
+  // Convert a legacy machine-local factory config from executable TS
+  // (~/.infra-kit/vendor.config.ts) to static JSON (~/.infra-kit/vendor.json).
+  // Independent of the infra-kit.json layers; grouped with the other migrations.
+  await migrateFactoryConfigToJson()
 
   seedUserGlobalConfig()
 
@@ -108,33 +158,41 @@ export const init = async (): Promise<void> => {
 }
 
 /**
- * Create `~/.infra-kit/config.json` (empty `{}`) plus an annotated
- * `~/.infra-kit/config.example.jsonc` reference when absent. Skips silently if
- * the config already exists so user edits are preserved.
+ * Seed the user-global config on first run and (re)write the annotated reference
+ * files. The real `~/.infra-kit/infra-kit.json` (empty `{}`) is written only when
+ * absent so user edits are preserved. The non-loaded `.example.jsonc` reference
+ * files (`infra-kit.example.jsonc` + `vendor.example.jsonc`) are rewritten on EVERY
+ * run so existing users always get the current, complete schema documentation.
+ *
+ * Deliberately seeds NO real `vendor.json` — that is scaffolded by
+ * `infra-kit vendor-config --init` (a stub here would block `--init`, trip the
+ * factory migration's no-overwrite guard, and fail the schema's `targets.min(1)`).
  *
  * @example
  * seedUserGlobalConfig()
- * // first call:  writes ~/.infra-kit/config.json ({}) + config.example.jsonc
- * // later calls: leaves the config alone, logs that it is already present
+ * // first call:  writes ~/.infra-kit/infra-kit.json ({}) + both .example.jsonc files
+ * // later calls: leaves infra-kit.json alone, refreshes both .example.jsonc files
  */
-const seedUserGlobalConfig = (): void => {
+export const seedUserGlobalConfig = (): void => {
   const userConfigDir = path.join(os.homedir(), '.infra-kit')
-  const userConfigPath = path.join(userConfigDir, 'config.json')
-  const userConfigExamplePath = path.join(userConfigDir, 'config.example.jsonc')
+  const userConfigPath = path.join(userConfigDir, 'infra-kit.json')
+
+  fs.mkdirSync(userConfigDir, { recursive: true })
+
+  // Reference examples are non-loaded docs — always refresh them so re-running init
+  // delivers the current schema (and the newly-added vendor example) to existing users.
+  fs.writeFileSync(path.join(userConfigDir, 'infra-kit.example.jsonc'), USER_GLOBAL_CONFIG_EXAMPLE, 'utf-8')
+  fs.writeFileSync(path.join(userConfigDir, 'vendor.example.jsonc'), VENDOR_CONFIG_EXAMPLE, 'utf-8')
 
   if (fs.existsSync(userConfigPath)) {
-    logger.info(`User-global config already present at ${userConfigPath}`)
+    logger.info(`User-global config already present at ${userConfigPath} (refreshed reference examples)`)
 
     return
   }
 
-  fs.mkdirSync(userConfigDir, { recursive: true })
   fs.writeFileSync(userConfigPath, USER_GLOBAL_CONFIG_STUB, 'utf-8')
-  fs.writeFileSync(userConfigExamplePath, USER_GLOBAL_CONFIG_EXAMPLE, 'utf-8')
 
-  logger.info(
-    `Wrote user-global config to ${userConfigPath} (see ${userConfigExamplePath} for the annotated reference)`,
-  )
+  logger.info(`Wrote user-global config to ${userConfigPath} (see the sibling .example.jsonc files for reference)`)
 }
 
 const isBlockLine = (line: string): boolean => {
@@ -174,7 +232,7 @@ const removeExistingBlock = (content: string): string => {
 
   if (legacyIdx === -1) return content
 
-  // eslint-disable-next-line sonarjs/slow-regex
+  // eslint-disable-next-line sonarjs/super-linear-regex
   const before = content.slice(0, legacyIdx).replace(/\n+$/, '')
   const afterLines = content.slice(legacyIdx).split('\n')
 

@@ -1,44 +1,12 @@
 import fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { $ } from 'zx'
 
 import { getInfraKitConfigPaths, resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
+import { fileExists, tildify } from 'src/lib/path-display'
 import type { ToolsExecutionResult } from 'src/types'
-
-/**
- * Resolve whether a file is reachable, suppressing ENOENT into a boolean.
- *
- * @example
- * await fileExists('/etc/hosts')   // => true
- * await fileExists('/nope.txt')    // => false
- */
-const fileExists = async (filePath: string): Promise<boolean> => {
-  try {
-    await fs.access(filePath)
-
-    return true
-  } catch {
-    return false
-  }
-}
-
-/**
- * Replace the user's home prefix with `~` so logged paths stay short and
- * portable across machines. Leaves non-home paths untouched.
- *
- * @example
- * // os.homedir() === '/Users/arthur'
- * tildify('/Users/arthur/.infra-kit/config.json') // => '~/.infra-kit/config.json'
- * tildify('/etc/hosts')                          // => '/etc/hosts'
- */
-const tildify = (filePath: string): string => {
-  const home = os.homedir()
-
-  return filePath.startsWith(home) ? `~${filePath.slice(home.length)}` : filePath
-}
 
 /**
  * Print the file paths that participate in the config merge chain along with
@@ -50,7 +18,7 @@ const tildify = (filePath: string): string => {
  * // INFO: Project name: api
  * // INFO: Config merge chain (later overrides earlier):
  * // INFO:   [✓] project (committed)    ~/projects/api/infra-kit.json
- * // INFO:   [ ] user global            ~/.infra-kit/config.json
+ * // INFO:   [ ] user global            ~/.infra-kit/infra-kit.json
  * // INFO:   [✓] user project           ~/.infra-kit/projects/api/infra-kit.json
  */
 export const configPath = async (): Promise<ToolsExecutionResult> => {
@@ -155,7 +123,7 @@ const buildUserProjectExample = (projectName: string): string => {
   return `// infra-kit user override for ${projectName} — ~/.infra-kit/projects/${projectName}/infra-kit.json
 //
 // Layer 3 (highest precedence) of the config merge chain. Shallow-merged on top
-// of <repo>/infra-kit.json and ~/.infra-kit/config.json — top-level keys
+// of <repo>/infra-kit.json and ~/.infra-kit/infra-kit.json — top-level keys
 // (environments, envManagement, ide, taskManager, worktrees) replace wholesale.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real overrides

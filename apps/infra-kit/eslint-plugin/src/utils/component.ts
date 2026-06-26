@@ -17,7 +17,7 @@ const isPascalCase = (name: string): boolean => {
   return /^[A-Z]/.test(name)
 }
 
-const isJsxNode = (node: ESTree.Node | null | undefined): boolean => {
+export const isJsxNode = (node: ESTree.Node | null | undefined): boolean => {
   if (!node) {
     return false
   }
@@ -78,22 +78,33 @@ export const getComponentName = (node: ComponentFunction): string | null => {
   return null
 }
 
-/** Whether a function returns JSX, scanning its own body without descending into nested functions. */
-const returnsJsx = (node: ComponentFunction): boolean => {
+/**
+ * Collect every *own* return argument of a function — the expression of each
+ * `return <expr>` reachable without entering a nested function scope, plus the
+ * implicit-return body of an expression-bodied arrow.
+ *
+ * Bare `return;` (a null argument) contributes nothing, so callers never receive
+ * a null and can safely walk each result. This is the multi-return counterpart
+ * to the boolean `returnsJsx`, which is defined in terms of it; the deliberate
+ * "skip nested scopes" behaviour answers *which* returns belong to this function
+ * (a `return` inside an inline `.map`/IIFE callback is that callback's return,
+ * not this one's).
+ */
+export const collectOwnReturnArguments = (node: ComponentFunction): ESTree.Expression[] => {
   if (node.body.type !== 'BlockStatement') {
-    return isJsxNode(node.body)
+    return [node.body]
   }
 
-  let found = false
+  const args: ESTree.Expression[] = []
 
   const visit = (current: ESTree.Node | null | undefined): void => {
-    if (found || !current || NESTED_SCOPES.has(current.type)) {
+    if (!current || NESTED_SCOPES.has(current.type)) {
       return
     }
 
     if (current.type === 'ReturnStatement') {
-      if (isJsxNode(current.argument)) {
-        found = true
+      if (current.argument) {
+        args.push(current.argument)
       }
 
       return
@@ -141,7 +152,12 @@ const returnsJsx = (node: ComponentFunction): boolean => {
 
   node.body.body.forEach(visit)
 
-  return found
+  return args
+}
+
+/** Whether a function returns JSX, scanning its own body without descending into nested functions. */
+const returnsJsx = (node: ComponentFunction): boolean => {
+  return collectOwnReturnArguments(node).some(isJsxNode)
 }
 
 /** A function is treated as a React component when it is PascalCase-named or returns JSX. */

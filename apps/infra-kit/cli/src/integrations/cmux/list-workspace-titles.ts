@@ -24,7 +24,7 @@ export const listCmuxWorkspaceTitles = async (): Promise<Set<string>> => {
     const titles = new Set<string>()
 
     for (const rawLine of output.split('\n')) {
-      // eslint-disable-next-line sonarjs/slow-regex, regexp/no-super-linear-backtracking
+      // eslint-disable-next-line sonarjs/super-linear-regex, regexp/no-super-linear-backtracking
       const match = rawLine.match(/^[* ]\s*workspace:\d+\s+(.+?)(?:\s+\[selected\])?\s*$/)
 
       if (!match) {
