@@ -13,6 +13,14 @@ export default defineConfig(() => {
     test: {
       environment: 'node',
       setupFiles: ['./vitest.setup.ts'],
+      server: {
+        deps: {
+          // ink-testing-library imports `ink` without declaring it as a dep, so
+          // pnpm's strict isolation hides it. Inlining lets vite resolve `ink`
+          // from this package's node_modules.
+          inline: ['ink-testing-library'],
+        },
+      },
     },
   }
 })

@@ -28,7 +28,17 @@ await esbuild.build({
   outdir: OUT_DIR,
   sourcemap: true,
   minify: true,
-  external: Object.keys(packageJson.dependencies),
+  // `splitting` is required so the dynamically-imported Ink TUI (src/tui/*) lands
+  // in a separate lazy chunk. Without it, the auto-injected `react/jsx-runtime`
+  // import would be hoisted into the eager cli.js/mcp.js bundle and load React on
+  // every invocation — breaking the "no React on machine paths" guarantee.
+  splitting: true,
+  // Automatic JSX runtime so .tsx needs no `import React`. Pairs with
+  // tsconfig `"jsx": "react-jsx"`.
+  jsx: 'automatic',
+  // Externalize deps + the React JSX runtime subpaths (the `react` key alone
+  // does not cover subpaths in esbuild's external matching).
+  external: [...Object.keys(packageJson.dependencies), 'react/jsx-runtime', 'react/jsx-dev-runtime'],
 })
 
 for (const entryPoint of entryPoints) {

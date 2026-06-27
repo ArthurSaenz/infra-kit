@@ -506,59 +506,83 @@ if (process.argv.length <= 2) {
     }),
   )
 
-  const allNames = [...releaseCommands, ...worktreeCommands, ...envCommands]
-  const presentNames = allNames.filter((name) => {
-    return commandMap.has(name)
-  })
+  const groups = [
+    { label: 'Release Management', names: releaseCommands },
+    { label: 'Worktrees', names: worktreeCommands },
+    { label: 'Environment', names: envCommands },
+  ]
 
-  // Pre-compute aligned "name  description" labels via the shared renderer so
-  // every group's first column lines up (replaces the hand-rolled padEnd).
-  const alignedLabels = formatAlignedRows(
-    presentNames.map((name) => {
-      return [name, commandMap.get(name)!.description()] as const
-    }),
-  )
-  const labelByName = new Map<string, string>()
-
-  presentNames.forEach((name, index) => {
-    labelByName.set(name, alignedLabels[index] ?? name)
-  })
-
-  const toChoices = (names: string[]) => {
+  // Flat {name, description, group} list shared by both the Ink palette and the
+  // Inquirer fallback; descriptions come from Commander (single source).
+  const paletteItems = groups.flatMap(({ label, names }) => {
     return names
       .filter((name) => {
         return commandMap.has(name)
       })
       .map((name) => {
-        return {
-          name: labelByName.get(name) ?? name,
-          value: name,
-        }
+        return { name, description: commandMap.get(name)!.description(), group: label }
       })
+  })
+
+  let selected: string | null
+
+  // Interactive TTY → Ink command palette, loaded lazily via dynamic import so
+  // React/Ink never touch the MCP / `--json` / non-TTY code paths. Otherwise fall
+  // back to the Inquirer menu (scripts, pipes, CI).
+  if (process.stdout.isTTY && process.stdin.isTTY) {
+    const { runCommandPalette } = await import('src/tui/boot')
+
+    selected = await runCommandPalette(paletteItems)
+  } else {
+    const alignedLabels = formatAlignedRows(
+      paletteItems.map((item) => {
+        return [item.name, item.description] as const
+      }),
+    )
+    const labelByName = new Map<string, string>()
+
+    paletteItems.forEach((item, index) => {
+      labelByName.set(item.name, alignedLabels[index] ?? item.name)
+    })
+
+    const toChoices = (names: string[]) => {
+      return names
+        .filter((name) => {
+          return commandMap.has(name)
+        })
+        .map((name) => {
+          return {
+            name: labelByName.get(name) ?? name,
+            value: name,
+          }
+        })
+    }
+
+    selected = await select(
+      {
+        message: 'Select a command to run',
+        choices: [
+          new Separator(' '),
+          new Separator('— Release Management —'),
+          ...toChoices(releaseCommands),
+          new Separator(' '),
+          new Separator('— Worktrees —'),
+          ...toChoices(worktreeCommands),
+          new Separator(' '),
+          new Separator('— Environment —'),
+          ...toChoices(envCommands),
+        ],
+      },
+      { output: process.stderr },
+    )
   }
 
-  const selected = await select(
-    {
-      message: 'Select a command to run',
-      choices: [
-        new Separator(' '),
-        new Separator('— Release Management —'),
-        ...toChoices(releaseCommands),
-        new Separator(' '),
-        new Separator('— Worktrees —'),
-        ...toChoices(worktreeCommands),
-        new Separator(' '),
-        new Separator('— Environment —'),
-        ...toChoices(envCommands),
-      ],
-    },
-    { output: process.stderr },
-  )
-
   // The menu is a guided surface; don't nag about deprecated flat names here.
-  invokedViaMenu.value = true
+  if (selected) {
+    invokedViaMenu.value = true
 
-  await runProgram(['node', 'infra-kit', selected])
+    await runProgram(['node', 'infra-kit', selected])
+  }
 } else {
   await runProgram()
 }
