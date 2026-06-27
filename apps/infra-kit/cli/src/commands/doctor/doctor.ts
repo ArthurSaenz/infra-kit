@@ -6,6 +6,7 @@ import { $ } from 'zx'
 
 import { AGENTS_MARKER_END, AGENTS_MARKER_START } from 'src/commands/init/agent-files'
 import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
+import { getDopplerProject, listDopplerProjects } from 'src/integrations/doppler'
 import { getProjectRoot } from 'src/lib/git-utils/git-utils'
 import {
   getInfraKitConfig,
@@ -120,6 +121,44 @@ const checkInfraKitConfigValid = async (): Promise<CheckResult> => {
     }
   } catch (err) {
     return { name, status: 'fail', message: (err as Error).message }
+  }
+}
+
+/**
+ * Verify the Doppler project configured in infra-kit.json (`envManagement.config.name`)
+ * actually exists in the authenticated account — the proactive catch for the
+ * mismatch that otherwise only surfaces as a cryptic `env-load` failure. Skips
+ * (informational pass) when the config can't be read or the project list can't be
+ * fetched (auth/network), so a logged-out user isn't misdiagnosed as
+ * missing-project — the adjacent `doppler authenticated` check owns that failure.
+ */
+export const checkDopplerProjectExists = async (): Promise<CheckResult> => {
+  const name = 'doppler project exists'
+
+  let project: string
+
+  try {
+    project = await getDopplerProject()
+  } catch {
+    return { name, status: 'pass', message: 'Skipped — infra-kit config could not be read (see config check)' }
+  }
+
+  const projects = await listDopplerProjects()
+
+  if (projects === null) {
+    return { name, status: 'pass', message: 'Skipped — could not list Doppler projects (see doppler auth check)' }
+  }
+
+  if (projects.includes(project)) {
+    return { name, status: 'pass', message: `Doppler project "${project}" exists` }
+  }
+
+  return {
+    name,
+    status: 'fail',
+    message: `Doppler project "${project}" not found (set in infra-kit.json → envManagement.config.name). Available: ${
+      projects.length > 0 ? projects.join(', ') : 'none'
+    }`,
   }
 }
 
@@ -432,6 +471,7 @@ export const doctor = async () => {
     Promise.resolve(checkZshrcInitialized()),
     checkPnpmWorkspaceVirtualStore(),
     checkInfraKitConfigValid(),
+    checkDopplerProjectExists(),
     checkUserOverridePath(),
     checkLegacyUserGlobalConfig(),
     checkIdeInstalled(),

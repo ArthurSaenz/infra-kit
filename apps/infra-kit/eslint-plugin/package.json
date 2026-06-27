@@ -52,7 +52,7 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "@typescript-eslint/parser": "^8.61.1",
+    "@typescript-eslint/parser": "^8.62.0",
     "@wl/eslint-config": "workspace:*",
     "esbuild": "^0.28.0",
     "eslint": "^10.5.0",

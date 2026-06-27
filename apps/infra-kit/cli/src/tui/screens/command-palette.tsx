@@ -1,5 +1,5 @@
 import { Box, Text, useApp, useInput } from 'ink'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import type { PaletteItem } from '../types'
 
@@ -30,6 +30,17 @@ export const CommandPalette = (props: CommandPaletteProps) => {
   const { exit } = useApp()
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
+  // When set, the component renders `null` for one frame so Ink erases the list
+  // before unmount commits its final frame (Ink's `log.done()` would otherwise
+  // freeze the last drawn frame — the command list — into the scrollback).
+  const [submitted, setSubmitted] = useState(false)
+
+  // Exit only after the empty frame has committed, so the list is wiped first.
+  useEffect(() => {
+    if (submitted) {
+      exit()
+    }
+  }, [submitted, exit])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -46,9 +57,13 @@ export const CommandPalette = (props: CommandPaletteProps) => {
   const activeIndex = Math.min(index, Math.max(0, filtered.length - 1))
 
   useInput((input, key) => {
+    if (submitted) {
+      return
+    }
+
     if (key.escape || (key.ctrl && input === 'c')) {
       onCancel()
-      exit()
+      setSubmitted(true)
 
       return
     }
@@ -58,20 +73,31 @@ export const CommandPalette = (props: CommandPaletteProps) => {
 
       if (selected) {
         onSelect(selected.name)
-        exit()
+        setSubmitted(true)
       }
 
       return
     }
 
     if (key.upArrow) {
-      setIndex(Math.max(0, activeIndex - 1))
+      const n = filtered.length
+
+      // Wrap to the bottom when stepping up past the first item. The `+ n`
+      // sidesteps JS negative modulo (e.g. -1 % 5 === -1, not 4).
+      if (n > 0) {
+        setIndex((activeIndex - 1 + n) % n)
+      }
 
       return
     }
 
     if (key.downArrow) {
-      setIndex(Math.min(filtered.length - 1, activeIndex + 1))
+      const n = filtered.length
+
+      // Wrap to the top when stepping down past the last item.
+      if (n > 0) {
+        setIndex((activeIndex + 1) % n)
+      }
 
       return
     }
@@ -89,6 +115,11 @@ export const CommandPalette = (props: CommandPaletteProps) => {
       setIndex(0)
     }
   })
+
+  // Final frame: render nothing so Ink erases the list on its way out.
+  if (submitted) {
+    return null
+  }
 
   let lastGroup = ''
 
@@ -111,6 +142,8 @@ export const CommandPalette = (props: CommandPaletteProps) => {
 
             return (
               <Box flexDirection="column" key={item.name}>
+                {/* Blank line between groups (not before the very first group). */}
+                {showGroup && position > 0 ? <Text> </Text> : null}
                 {showGroup ? <Text color="yellow">{`— ${item.group} —`}</Text> : null}
                 <Text color={isActive ? 'green' : undefined}>
                   {isActive ? '› ' : '  '}

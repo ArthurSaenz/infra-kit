@@ -6,8 +6,14 @@ import process from 'node:process'
 import { z } from 'zod'
 import { $ } from 'zx'
 
-import { validateDopplerCliAndAuth } from 'src/integrations/doppler'
-import { getDopplerProject } from 'src/integrations/doppler/doppler-project'
+import {
+  buildDopplerNotFoundMessage,
+  classifyDopplerDownloadError,
+  getDopplerProject,
+  listDopplerConfigs,
+  listDopplerProjects,
+  validateDopplerCliAndAuth,
+} from 'src/integrations/doppler'
 import { commandEcho } from 'src/lib/command-echo'
 import {
   ENV_LOAD_FILE,
@@ -20,6 +26,7 @@ import {
   atomicWriteFileSync,
   getSessionCacheDir,
 } from 'src/lib/constants'
+import { extractStderr } from 'src/lib/errors/operation-error'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { defineMcpTool, textContent } from 'src/types'
 
@@ -207,10 +214,15 @@ const downloadDopplerSecrets = async (project: string, config: string): Promise<
 
   $.quiet = true
   try {
-    const result =
-      await $`doppler secrets download --no-file --format env --project ${project} --config ${config}`.timeout(
+    let result
+
+    try {
+      result = await $`doppler secrets download --no-file --format env --project ${project} --config ${config}`.timeout(
         DOPPLER_DOWNLOAD_TIMEOUT_MS,
       )
+    } catch (error: unknown) {
+      throw await translateDopplerDownloadError(error, project, config)
+    }
 
     assertDopplerOutputSize(result.stdout)
 
@@ -218,6 +230,26 @@ const downloadDopplerSecrets = async (project: string, config: string): Promise<
   } finally {
     $.quiet = prevQuiet
   }
+}
+
+/**
+ * Turn a raw `doppler secrets download` failure into an actionable error. A
+ * recognized project/config not-found is enriched (on this error path only) with
+ * the list of available names and rethrown as a clean `Error` pointing at the
+ * exact infra-kit.json field. Anything else — auth, network, timeout — is
+ * rethrown untouched so it degrades to the existing behavior, never worse.
+ */
+const translateDopplerDownloadError = async (error: unknown, project: string, config: string): Promise<Error> => {
+  const stderr = extractStderr(error) ?? (error instanceof Error ? error.message : String(error))
+  const kind = classifyDopplerDownloadError(stderr)
+
+  if (kind === 'unknown') {
+    return error instanceof Error ? error : new Error(String(error))
+  }
+
+  const available = kind === 'project' ? await listDopplerProjects() : await listDopplerConfigs(project)
+
+  return new Error(buildDopplerNotFoundMessage({ kind, project, config, available }))
 }
 
 export const assertDopplerOutputSize = (stdout: string): void => {

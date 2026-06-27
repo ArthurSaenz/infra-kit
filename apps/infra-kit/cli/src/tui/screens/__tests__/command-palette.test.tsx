@@ -71,6 +71,32 @@ describe('commandPalette', () => {
     expect(onSelect).toHaveBeenCalledWith('worktrees-list')
   })
 
+  it('arrow-up from the first command wraps to the last', async () => {
+    const onSelect = vi.fn()
+    const { stdin } = render(<CommandPalette items={items} onSelect={onSelect} onCancel={vi.fn()} />)
+
+    stdin.write('[A') // arrow up from first
+    await settle()
+    stdin.write('\r')
+    await settle()
+
+    expect(onSelect).toHaveBeenCalledWith('env-status')
+  })
+
+  it('arrow-down from the last command wraps to the first', async () => {
+    const onSelect = vi.fn()
+    const { stdin } = render(<CommandPalette items={items} onSelect={onSelect} onCancel={vi.fn()} />)
+
+    stdin.write('[A') // arrow up from first -> wraps to last (env-status)
+    await settle()
+    stdin.write('[B') // arrow down from last -> wraps to first (release-list)
+    await settle()
+    stdin.write('\r')
+    await settle()
+
+    expect(onSelect).toHaveBeenCalledWith('release-list')
+  })
+
   it('typing then Enter selects the filtered command', async () => {
     const onSelect = vi.fn()
     const { stdin } = render(<CommandPalette items={items} onSelect={onSelect} onCancel={vi.fn()} />)
@@ -81,6 +107,19 @@ describe('commandPalette', () => {
     await settle()
 
     expect(onSelect).toHaveBeenCalledWith('env-status')
+  })
+
+  it('clears the rendered list after a command is selected', async () => {
+    const { lastFrame, stdin } = render(<CommandPalette items={items} onSelect={vi.fn()} onCancel={vi.fn()} />)
+
+    expect(lastFrame() ?? '').toContain('release-list')
+
+    stdin.write('\r')
+    await settle()
+
+    // Final frame renders empty so Ink erases the list instead of freezing it
+    // into the scrollback above the command's own output.
+    expect(lastFrame() ?? '').not.toContain('release-list')
   })
 
   it('esc cancels without selecting', async () => {

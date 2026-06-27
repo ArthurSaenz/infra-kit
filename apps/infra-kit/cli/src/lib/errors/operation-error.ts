@@ -15,7 +15,7 @@ export interface OperationErrorContext {
  * extractStderr({ stderr: 'fatal: ...' })     // 'fatal: ...'
  * extractStderr({ stderr: '' })               // undefined  (empty treated as missing)
  */
-const extractStderr = (cause: unknown): string | undefined => {
+export const extractStderr = (cause: unknown): string | undefined => {
   if (cause === null || typeof cause !== 'object') return undefined
   const stderr = (cause as { stderr?: unknown }).stderr
 
