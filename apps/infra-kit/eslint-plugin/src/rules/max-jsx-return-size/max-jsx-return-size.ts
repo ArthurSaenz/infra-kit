@@ -195,7 +195,7 @@ export const maxJsxReturnSize: Rule.RuleModule = {
       description:
         'Warn when a component return renders too many JSX elements; extract parts into variables or sub-components.',
       recommended: true,
-      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin',
+      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin#max-jsx-return-size',
     },
     schema: [
       {

@@ -148,11 +148,18 @@ type MessageId =
   | 'interfaceImmediatelyAfterImports'
   | 'componentImmediatelyAfterImports'
 
-// A pending report, expressed as a body index plus the message to raise against it.
+// A pending report, expressed as a body index plus the message to raise against it. `data`
+// carries the identifier names interpolated into the message so an AI fix loop reads the
+// concrete interface/component to move — omitted for `importsFirst`, which stays generic.
 interface Violation {
   index: number
   messageId: MessageId
+  data?: Record<string, string>
 }
+
+// Fallback when a component is anonymous (e.g. `export default (props: Props) => …`), matching
+// the `ANONYMOUS_NAME` convention the sibling rules use for a name-less component.
+const ANONYMOUS_COMPONENT = 'component'
 
 /** Imports that sit after the first component (or its props interface) must move up. */
 const findImportOrderViolations = (importIndices: number[], importBoundary: number): Violation[] => {
@@ -193,7 +200,11 @@ const findAdjacencyViolations = (components: ComponentRef[], declIndexByName: Ma
     const propsIndex = declIndexByName.get(propsName)
 
     if (propsIndex !== undefined && propsIndex !== component.index - 1) {
-      violations.push({ index: propsIndex, messageId: 'interfaceImmediatelyBeforeComponent' })
+      violations.push({
+        index: propsIndex,
+        messageId: 'interfaceImmediatelyBeforeComponent',
+        data: { interface: propsName, component: component.name ?? ANONYMOUS_COMPONENT },
+      })
     }
   }
 
@@ -225,7 +236,12 @@ const findAnchorViolations = (
     })
 
   if (importsBeforeInterface && hasStrayBefore(body, firstPropsIndex!, directiveCount, first.index)) {
-    violations.push({ index: firstPropsIndex!, messageId: 'interfaceImmediatelyAfterImports' })
+    violations.push({
+      index: firstPropsIndex!,
+      messageId: 'interfaceImmediatelyAfterImports',
+      // `firstPropsIndex !== undefined` implies `firstPropsName !== null` (it is derived from it).
+      data: { interface: firstPropsName!, component: first.name ?? ANONYMOUS_COMPONENT },
+    })
   }
 
   const firstPropsImported =
@@ -235,7 +251,12 @@ const findAnchorViolations = (
   })
 
   if (firstPropsImported && importsBeforeComponent && hasStrayBefore(body, first.index, directiveCount)) {
-    violations.push({ index: first.index, messageId: 'componentImmediatelyAfterImports' })
+    violations.push({
+      index: first.index,
+      messageId: 'componentImmediatelyAfterImports',
+      // `firstPropsImported` requires `firstPropsName !== null`.
+      data: { interface: firstPropsName!, component: first.name ?? ANONYMOUS_COMPONENT },
+    })
   }
 
   return violations
@@ -248,7 +269,7 @@ export const componentFileOrder: Rule.RuleModule = {
       description:
         'Enforce a strict top-level order in React component files: imports first, then — for each component — its props interface/type declared immediately before the component.',
       recommended: true,
-      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin',
+      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin#component-file-order',
     },
     schema: [
       {
@@ -271,13 +292,17 @@ export const componentFileOrder: Rule.RuleModule = {
       },
     ],
     messages: {
+      // Generic on purpose: fires on a misplaced import, and the constraint is "before *every*
+      // component", so naming a single component would mislead in a multi-component file.
       importsFirst: 'Imports must come before the component interface and declaration.',
+      // "props type" (not "interface"): the rule matches both `interface` and `type` alias props
+      // declarations, so the neutral term reads correctly for either.
       interfaceImmediatelyBeforeComponent:
-        'The component props interface must be declared immediately before the component.',
+        'Declare the props type `{{interface}}` immediately before component `{{component}}` (no declarations between them).',
       interfaceImmediatelyAfterImports:
-        'The component props interface must be declared immediately after the imports, with no other declarations in between.',
+        'Declare the props type `{{interface}}` (for component `{{component}}`) immediately after the imports, with no other declarations in between.',
       componentImmediatelyAfterImports:
-        'When the component props type is imported, the component must be declared immediately after the imports, with no other declarations in between.',
+        'Props type `{{interface}}` is imported, so declare component `{{component}}` immediately after the imports, with no other declarations in between.',
     },
   },
 
@@ -332,7 +357,7 @@ export const componentFileOrder: Rule.RuleModule = {
         ]
 
         for (const violation of violations) {
-          context.report({ node: body[violation.index]!, messageId: violation.messageId })
+          context.report({ node: body[violation.index]!, messageId: violation.messageId, data: violation.data })
         }
       },
     }

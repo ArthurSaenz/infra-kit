@@ -49,7 +49,7 @@ export const propsDestructuringNewline: Rule.RuleModule = {
       description:
         'Require React components to accept a single props parameter and destructure it on its own line in the body, rather than destructuring inline in the parameter list.',
       recommended: true,
-      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin',
+      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin#props-destructuring-newline',
     },
     fixable: 'code',
     schema: [],

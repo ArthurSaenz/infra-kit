@@ -70,7 +70,7 @@ export const maxComponentsPerFile: Rule.RuleModule = {
       description:
         'Limit the number of React components declared in a single file; move extra components into their own files.',
       recommended: true,
-      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin',
+      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin#max-components-per-file',
     },
     schema: [
       {

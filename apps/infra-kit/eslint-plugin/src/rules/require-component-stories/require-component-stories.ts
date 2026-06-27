@@ -51,7 +51,7 @@ export const requireComponentStories: Rule.RuleModule = {
     docs: {
       description: 'Require a co-located Storybook story for every dumb component.',
       recommended: true,
-      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin',
+      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin#require-component-stories',
     },
     schema: [
       {

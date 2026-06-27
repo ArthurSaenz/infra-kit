@@ -95,7 +95,7 @@ export const componentArrowFunction: Rule.RuleModule = {
       description:
         'Enforce that React components are declared as arrow functions, not `function` declarations or function expressions.',
       recommended: true,
-      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin',
+      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin#component-arrow-function',
     },
     schema: [
       {

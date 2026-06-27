@@ -1,6 +1,6 @@
 import tsParser from '@typescript-eslint/parser'
 import { RuleTester } from 'eslint'
-import { afterAll, describe, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 
 import { dedent } from '../../../test-utils/dedent'
 import { componentFileOrder } from '../component-file-order'
@@ -375,9 +375,13 @@ ruleTester.run('component-file-order', componentFileOrder, {
   ],
   invalid: [
     // Interface before the import, and separated from the component by the import.
+    // `data` asserts the message now interpolates the real interface + component names.
     {
       code: WRONG_ORDER,
-      errors: [{ messageId: 'interfaceImmediatelyBeforeComponent' }, { messageId: 'importsFirst' }],
+      errors: [
+        { messageId: 'interfaceImmediatelyBeforeComponent', data: { interface: 'CompProps', component: 'Comp' } },
+        { messageId: 'importsFirst' },
+      ],
     },
     // Component declared before its interface.
     {
@@ -466,7 +470,7 @@ ruleTester.run('component-file-order', componentFileOrder, {
           return SOMETHING ? <div>{x ? props.a : null}</div> : null
         }
       `,
-      errors: [{ messageId: 'interfaceImmediatelyAfterImports' }],
+      errors: [{ messageId: 'interfaceImmediatelyAfterImports', data: { interface: 'CompProps', component: 'Comp' } }],
     },
     // A stray type/helper (non-const) between the imports and the props interface.
     {
@@ -545,7 +549,7 @@ ruleTester.run('component-file-order', componentFileOrder, {
           return SOMETHING && x ? <div>{props.a}</div> : null
         }
       `,
-      errors: [{ messageId: 'componentImmediatelyAfterImports' }],
+      errors: [{ messageId: 'componentImmediatelyAfterImports', data: { interface: 'CompProps', component: 'Comp' } }],
     },
     // Props type imported, with a stray type alias between the imports and the component.
     {
@@ -647,7 +651,35 @@ ruleTester.run('component-file-order', componentFileOrder, {
           return x ? props.a : null
         }
       `,
-      errors: [{ messageId: 'interfaceImmediatelyBeforeComponent' }],
+      // The message names the authoritative referenced type (`UserCardProps`), not the
+      // conveniently-adjacent `Props`.
+      errors: [
+        {
+          messageId: 'interfaceImmediatelyBeforeComponent',
+          data: { interface: 'UserCardProps', component: 'UserCard' },
+        },
+      ],
     },
   ],
+})
+
+// The three component-anchored messages must carry identifier placeholders (so an AI fix loop
+// reads the concrete interface/component), while `importsFirst` stays generic on purpose.
+describe('component-file-order message templates', () => {
+  const messages = componentFileOrder.meta?.messages ?? {}
+
+  it('interpolates names into the three anchored messages', () => {
+    for (const id of [
+      'interfaceImmediatelyBeforeComponent',
+      'interfaceImmediatelyAfterImports',
+      'componentImmediatelyAfterImports',
+    ] as const) {
+      expect(messages[id]).toContain('{{interface}}')
+      expect(messages[id]).toContain('{{component}}')
+    }
+  })
+
+  it('keeps importsFirst generic (no placeholders)', () => {
+    expect(messages.importsFirst).toBe('Imports must come before the component interface and declaration.')
+  })
 })

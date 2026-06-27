@@ -18,7 +18,7 @@ export const propsTypeName: Rule.RuleModule = {
       description:
         "Require a React component's props type to be named `<ComponentName>Props` (e.g. `ButtonProps` for `Button`).",
       recommended: true,
-      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin',
+      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin#props-type-name',
     },
     schema: [
       {

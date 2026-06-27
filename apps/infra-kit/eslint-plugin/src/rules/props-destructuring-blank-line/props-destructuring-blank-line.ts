@@ -26,7 +26,7 @@ export const propsDestructuringBlankLine: Rule.RuleModule = {
       description:
         'Require a blank line after the `const { ... } = props` destructuring statement at the top of a React component body.',
       recommended: true,
-      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin',
+      url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin#props-destructuring-blank-line',
     },
     fixable: 'whitespace',
     schema: [],
