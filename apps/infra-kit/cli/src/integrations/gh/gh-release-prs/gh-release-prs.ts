@@ -1,6 +1,6 @@
-import process from 'node:process'
 import { $ } from 'zx'
 
+import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { compareReleaseIds, formatBranchName, formatPrTitle, parseBranchName } from 'src/lib/release-id'
 import type { ReleaseId } from 'src/lib/release-id'
@@ -84,18 +84,21 @@ export const getReleasePRs = async (): Promise<string[]> => {
     const prs = await fetchAllReleasePRs()
 
     if (prs.length === 0) {
-      logger.error('❌ No release PRs found. Check the project folder for the script. Exiting...')
-
-      process.exit(1)
+      throw new OperationError(undefined, {
+        operation: 'find open release PRs',
+        remediation: 'open a release PR first, or check you are in the right repo',
+      })
     }
 
     return sortReleasePRs(prs).map((pr) => {
       return pr.headRefName
     })
   } catch (error) {
+    if (error instanceof OperationError) throw error
+
     logger.error({ error }, '❌ Error fetching release PRs')
 
-    process.exit(1)
+    throw new OperationError(error, { operation: 'fetch release PRs' })
   }
 }
 
@@ -110,8 +113,10 @@ export const getReleasePRsWithInfo = async (): Promise<ReleasePRInfo[]> => {
     const prs = await fetchAllReleasePRs()
 
     if (prs.length === 0) {
-      logger.error('❌ No release PRs found. Check the project folder for the script. Exiting...')
-      process.exit(1)
+      throw new OperationError(undefined, {
+        operation: 'find open release PRs',
+        remediation: 'open a release PR first, or check you are in the right repo',
+      })
     }
 
     return sortReleasePRs(prs).map((pr) => {
@@ -122,8 +127,11 @@ export const getReleasePRsWithInfo = async (): Promise<ReleasePRInfo[]> => {
       }
     })
   } catch (error) {
+    if (error instanceof OperationError) throw error
+
     logger.error({ error }, '❌ Error fetching release PRs')
-    process.exit(1)
+
+    throw new OperationError(error, { operation: 'fetch release PRs' })
   }
 }
 

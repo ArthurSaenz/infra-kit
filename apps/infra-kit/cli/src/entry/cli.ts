@@ -168,9 +168,15 @@ const configureReleaseDeployAll = (cmd: Command): Command => {
     )
     .option('-e, --env <env>', 'Specify the environment to deploy to, e.g. dev')
     .option('--skip-terraform', 'Skip terraform deployment step')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .action(async (options) => {
       emit(
-        await ghReleaseDeployAll({ version: options.version, env: options.env, skipTerraform: options.skipTerraform }),
+        await ghReleaseDeployAll({
+          version: options.version,
+          env: options.env,
+          skipTerraform: options.skipTerraform,
+          confirmedCommand: options.yes,
+        }),
       )
     })
 }
@@ -185,6 +191,7 @@ const configureReleaseDeploySelected = (cmd: Command): Command => {
     .option('-e, --env <env>', 'Specify the environment to deploy to, e.g. dev')
     .option('-s, --services <services...>', 'Specify services to deploy, e.g. client-be client-fe')
     .option('--skip-terraform', 'Skip terraform deployment step')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .action(async (options) => {
       emit(
         await ghReleaseDeploySelected({
@@ -192,6 +199,7 @@ const configureReleaseDeploySelected = (cmd: Command): Command => {
           env: options.env,
           services: options.services,
           skipTerraform: options.skipTerraform,
+          confirmedCommand: options.yes,
         }),
       )
     })

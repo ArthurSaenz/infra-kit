@@ -12,7 +12,6 @@ const EXPECTED_EXPOSED_TOOLS = [
   'gh-merge-dev',
   'release-create',
   'release-desc-edit',
-  'gh-release-deliver',
   'gh-release-deploy-all',
   'gh-release-deploy-selected',
   'gh-release-list',
@@ -23,15 +22,22 @@ const EXPECTED_EXPOSED_TOOLS = [
   'worktrees-add',
   'worktrees-list',
   'worktrees-reload',
-  'worktrees-remove',
   'worktrees-sync',
 ]
 
-// Deliberately NOT exposed as MCP tools (mutating / host-inspecting).
-const EXPECTED_UNEXPOSED_WITH_TOOL = ['doctor', 'vendor-sync', 'vendor-manifest']
+// Deliberately NOT exposed as MCP tools (mutating / host-inspecting / irreversible).
+// release-deliver (prod delivery + admin-merge) and worktrees-remove (rm -rf) are
+// CLI-only by design.
+const EXPECTED_UNEXPOSED_WITH_TOOL = [
+  'doctor',
+  'vendor-sync',
+  'vendor-manifest',
+  'gh-release-deliver',
+  'worktrees-remove',
+]
 
 describe('command catalog — MCP exposure policy', () => {
-  it('exposes exactly the same 20 MCP tools as before (set-equal, order-independent)', () => {
+  it('exposes exactly the expected 18 MCP tools (set-equal, order-independent)', () => {
     const exposedNames = getExposedMcpTools()
       .map((tool) => {
         return tool.name
@@ -39,7 +45,18 @@ describe('command catalog — MCP exposure policy', () => {
       .sort()
 
     expect(exposedNames).toEqual([...EXPECTED_EXPOSED_TOOLS].sort())
-    expect(exposedNames).toHaveLength(20)
+    expect(exposedNames).toHaveLength(18)
+  })
+
+  it('never exposes the irreversible release-deliver / worktrees-remove tools', () => {
+    const exposedNames = new Set(
+      getExposedMcpTools().map((tool) => {
+        return tool.name
+      }),
+    )
+
+    expect(exposedNames.has('gh-release-deliver')).toBe(false)
+    expect(exposedNames.has('worktrees-remove')).toBe(false)
   })
 
   it('keeps doctor, vendor-sync and vendor-manifest UNEXPOSED even though they have tools', () => {

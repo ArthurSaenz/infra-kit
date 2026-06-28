@@ -1,4 +1,5 @@
 import checkbox from '@inquirer/checkbox'
+import confirm from '@inquirer/confirm'
 import select from '@inquirer/select'
 import fs from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -27,6 +28,32 @@ interface GhReleaseDeploySelectedArgs {
   env: string
   services: string[]
   skipTerraform?: boolean
+  confirmedCommand?: boolean
+}
+
+interface ConfirmDeployArgs {
+  confirmedCommand?: boolean
+  branch: string
+  env: string
+}
+
+/**
+ * Gate the workflow dispatch behind an interactive confirmation. Returns true to
+ * proceed; `confirmedCommand` (CLI `--yes`) skips the prompt. Mirrors the
+ * confirm+commandEcho pattern used by worktrees-remove.
+ */
+const confirmDeploy = async (args: ConfirmDeployArgs): Promise<boolean> => {
+  const { confirmedCommand, branch, env } = args
+
+  if (confirmedCommand) return true
+
+  commandEcho.setInteractive()
+
+  const answer = await confirm({ message: `Deploy ${branch} → ${env}?`, default: false })
+
+  if (answer) commandEcho.addOption('--yes', true)
+
+  return answer
 }
 
 /**
@@ -34,7 +61,7 @@ interface GhReleaseDeploySelectedArgs {
  */
 // eslint-disable-next-line sonarjs/cognitive-complexity
 export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs) => {
-  const { version, env, services, skipTerraform } = args
+  const { version, env, services, skipTerraform, confirmedCommand } = args
 
   commandEcho.start('release-deploy-selected')
 
@@ -155,6 +182,24 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
 
   if (shouldSkipTerraform) {
     commandEcho.addOption('--skip-terraform', true)
+  }
+
+  if (!(await confirmDeploy({ confirmedCommand, branch: selectedReleaseBranch, env: selectedEnv }))) {
+    logger.info('Deployment cancelled')
+
+    const structuredContent = {
+      releaseBranch: selectedReleaseBranch,
+      version: selectedVersion,
+      environment: selectedEnv,
+      services: selectedServices,
+      skipTerraformDeploy: shouldSkipTerraform,
+      success: false,
+    }
+
+    return {
+      content: textContent(JSON.stringify(structuredContent, null, 2)),
+      structuredContent,
+    }
   }
 
   try {

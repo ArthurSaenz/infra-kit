@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { $ } from 'zx'
 
+import { OperationError } from 'src/lib/errors/operation-error'
+
 import type { VendorConfig } from './config-schema'
 import { expandTilde } from './factory-config'
 import { writeManifest } from './manifest'
@@ -163,6 +165,24 @@ export interface VendorSyncResult {
   repos: { repo: string; copied: number; total: number; skipped: boolean }[]
 }
 
+/**
+ * Defense-in-depth path-traversal guard: throw if `child` resolves outside
+ * `root`. The schema's `safeRelPath` already rejects `..`/absolute segments at
+ * load time; this re-checks the resolved absolute paths so a symlink or odd join
+ * can never escape the source/target repo root.
+ */
+const assertContained = (root: string, child: string, label: string, rel: string, itemName: string): void => {
+  const resolvedRoot = path.resolve(root)
+  const resolved = path.resolve(child)
+
+  if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) {
+    throw new OperationError(undefined, {
+      operation: `sync vendor item ${itemName}`,
+      stderrExcerpt: `${label} escapes repo root: ${rel}`,
+    })
+  }
+}
+
 /** Copy every configured item into each existing target, then write its manifest. */
 export const runSync = async (
   config: VendorConfig,
@@ -186,6 +206,10 @@ export const runSync = async (
     for (const item of config.copy) {
       const source = path.join(sourceRoot, item.source)
       const target = path.join(targetRoot, item.target)
+
+      assertContained(sourceRoot, source, 'source', item.source, item.name)
+      assertContained(targetRoot, target, 'target', item.target, item.name)
+
       const ok = item.type === 'directory' ? await copyDirectory(source, target) : await copyFile(source, target)
 
       if (ok) {

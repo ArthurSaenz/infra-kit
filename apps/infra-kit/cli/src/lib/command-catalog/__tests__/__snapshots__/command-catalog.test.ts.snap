@@ -70,18 +70,6 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
   },
   {
     "input": [
-      "version",
-    ],
-    "name": "gh-release-deliver",
-    "output": [
-      "releaseBranch",
-      "success",
-      "type",
-      "version",
-    ],
-  },
-  {
-    "input": [
       "env",
       "skipTerraform",
       "version",
@@ -210,17 +198,6 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
       "ideFoldersRemoved",
       "ideProviders",
       "openedCmux",
-    ],
-  },
-  {
-    "input": [
-      "all",
-      "versions",
-    ],
-    "name": "worktrees-remove",
-    "output": [
-      "count",
-      "removedWorktrees",
     ],
   },
   {

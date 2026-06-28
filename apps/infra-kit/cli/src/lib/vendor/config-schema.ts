@@ -16,14 +16,32 @@ import { z } from 'zod'
 export const VENDOR_CONFIG_FILE = 'vendor.config.ts'
 
 /**
+ * A non-empty, repo-relative path with no `..` segments and no absolute prefix
+ * (POSIX `/`, UNC/`\`, or a Windows drive like `C:`). Containment guard for
+ * vendor copy items so a malicious/typo config can't read or write outside the
+ * source/target repo roots. Kept as a string/regex check (no `node:path`) to
+ * respect this file's node-free constraint — `sync-ops.ts` does the resolved
+ * runtime containment assert as defense in depth.
+ */
+const safeRelPath = z.string().refine(
+  (p) => {
+    const isAbsolute = /^(?:[/\\]|[a-z]:)/i.test(p)
+    const hasDotDotSegment = p.split(/[\\/]/).includes('..')
+
+    return !isAbsolute && !hasDotDotSegment && p.trim().length > 0
+  },
+  { message: 'must be a non-empty repo-relative path without ".." segments' },
+)
+
+/**
  * One item to sync from the source repo into each target. `vendored: true` marks
  * workspace packages that must land under `vendor/` (the single-source-of-truth
  * code); everything else is root-level tooling that stays at the repo root.
  */
 export const vendorCopyItemSchema = z.object({
   name: z.string(),
-  source: z.string(),
-  target: z.string(),
+  source: safeRelPath,
+  target: safeRelPath,
   type: z.enum(['file', 'directory']),
   vendored: z.boolean().optional(),
 })

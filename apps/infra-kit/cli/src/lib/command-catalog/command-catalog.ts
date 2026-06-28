@@ -90,13 +90,17 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mcpTool: ghReleaseDeploySelectedMcpTool,
     mcpExposed: true,
   },
-  { cliName: 'release-deliver', menuGroup: 'release', mcpTool: ghReleaseDeliverMcpTool, mcpExposed: true },
+  // release-deliver does prod delivery + admin-merge — genuinely irreversible,
+  // so it is CLI-only by design (mirrors the vendor-sync/manifest rationale).
+  { cliName: 'release-deliver', menuGroup: 'release', mcpTool: ghReleaseDeliverMcpTool, mcpExposed: false },
 
   // --- Worktrees (menu group) ---
   { cliName: 'worktrees-add', menuGroup: 'worktrees', mcpTool: worktreesAddMcpTool, mcpExposed: true },
   { cliName: 'worktrees-list', menuGroup: 'worktrees', mcpTool: worktreesListMcpTool, mcpExposed: true },
   { cliName: 'worktrees-reload', menuGroup: 'worktrees', mcpTool: worktreesReloadMcpTool, mcpExposed: true },
-  { cliName: 'worktrees-remove', menuGroup: 'worktrees', mcpTool: worktreesRemoveMcpTool, mcpExposed: true },
+  // worktrees-remove runs rm -rf on worktree dirs — genuinely irreversible, so
+  // it is CLI-only by design (mirrors the vendor-sync/manifest rationale).
+  { cliName: 'worktrees-remove', menuGroup: 'worktrees', mcpTool: worktreesRemoveMcpTool, mcpExposed: false },
   { cliName: 'worktrees-sync', menuGroup: 'worktrees', mcpTool: worktreesSyncMcpTool, mcpExposed: true },
 
   // --- Environment (menu group) ---

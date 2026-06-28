@@ -1,6 +1,6 @@
-import process from 'node:process'
 import { $ } from 'zx'
 
+import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 
 /**
@@ -11,15 +11,19 @@ export const validateGitHubCliAndAuth = async () => {
     await $`gh --version`
   } catch (error: unknown) {
     logger.error({ error }, 'Error: GitHub CLI (gh) is not installed.')
-    logger.error('Please install it from: https://cli.github.com/')
-    process.exit(1)
+    throw new OperationError(error, {
+      operation: 'verify GitHub CLI is installed',
+      remediation: 'install gh from https://cli.github.com/',
+    })
   }
 
   try {
     await $`gh auth status`
   } catch (error: unknown) {
     logger.error({ error }, 'Error: GitHub CLI (gh) is not authenticated.')
-    logger.error('Please authenticate it from: https://cli.github.com/manual/gh_auth_login or type "gh auth login"')
-    process.exit(1)
+    throw new OperationError(error, {
+      operation: 'verify GitHub CLI authentication',
+      remediation: 'run "gh auth login" (https://cli.github.com/manual/gh_auth_login)',
+    })
   }
 }
