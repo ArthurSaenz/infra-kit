@@ -31,9 +31,7 @@ export interface InfraKitPackageConfig {
  * `defineConfig` input: a plain object, a sync factory, or an async factory.
  */
 export type InfraKitPackageConfigInput =
-  | InfraKitPackageConfig
-  | (() => InfraKitPackageConfig)
-  | (() => Promise<InfraKitPackageConfig>)
+  InfraKitPackageConfig | (() => InfraKitPackageConfig) | (() => Promise<InfraKitPackageConfig>)
 
 /**
  * Identity helper that gives `infra-kit.config.js` authors full type inference
