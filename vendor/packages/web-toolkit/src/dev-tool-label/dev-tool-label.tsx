@@ -5,9 +5,11 @@ interface DevToolLabelProps {
 }
 
 /**
- * @description Dev tool label component for displaying the dev label in the bottom right corner of the screen
+ * Dev tool label component that renders a fixed-position button with the current branch name for non-production environments.
  *
- * Also see component SemanticVersion
+ * @example
+ *     <DevToolLabel release="feature/my-branch" />
+ *
  */
 export const DevToolLabel = (props: DevToolLabelProps) => {
   const { release = '' } = props

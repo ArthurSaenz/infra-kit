@@ -8,6 +8,14 @@ type LoaderSource = Parameters<typeof loader>[0]['source']
  * Build the fumadocs source for a docs app. The consuming app injects its generated
  * `source` (from `collections/server`), its docs base URL, and the path -> slug mapper
  * (from the pure `./slugs` helpers — keep node-only modules out of the client bundle).
+ *
+ * @example
+ *     const docsSource = createDocsSource({
+ *         source,
+ *         baseUrl: '/docs',
+ *         pathToSlugs: makePathToSlugs({ appContentRel: 'spec/docs' }),
+ *     })
+ *
  */
 export const createDocsSource = (params: {
   source: LoaderSource

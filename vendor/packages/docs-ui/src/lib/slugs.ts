@@ -6,7 +6,13 @@
  * The fs-bound aggregation lives in `./docs-aggregation`, which imports these helpers.
  */
 
-/** Normalize Windows separators to POSIX. Avoids `path.sep` so this stays node-free. */
+/**
+ * Normalize Windows separators to POSIX. Avoids `path.sep` so this stays node-free.
+ *
+ * @example
+ *     const posix = toPosix('packages\\lib\\docs\\index.md')
+ *
+ */
 export const toPosix = (p: string): string => {
   return p.split('\\').join('/')
 }
@@ -34,6 +40,11 @@ export const titleCase = (value: string): string => {
  *  - packages/lib-be-api/src/api/auth.md     -> ['lib-be-api-api', 'auth']
  *  - <appContentRel>/index.mdx               -> []          (docs landing)
  *  - a folder readme/index                   -> ['<group>']  (group landing)
+ *
+ * @example
+ *     const pathToSlugs = makePathToSlugs({ appContentRel: 'spec/docs' })
+ *     pathToSlugs('apps/ai/agent/docs/draft.md') // => ['ai-agent', 'draft']
+ *
  */
 export const makePathToSlugs = (params: { appContentRel: string }) => {
   const { appContentRel } = params
@@ -85,7 +96,14 @@ export const makePathToSlugs = (params: { appContentRel: string }) => {
   }
 }
 
-/** Build the path -> human-readable title fallback, bound to the same app content dir. */
+/**
+ * Build the path -> human-readable title fallback, bound to the same app content dir.
+ *
+ * @example
+ *     const deriveTitle = makeDeriveTitle({ appContentRel: 'spec/docs' })
+ *     deriveTitle('apps/ai/agent/docs/use-hook.md') // => 'Use Hook'
+ *
+ */
 export const makeDeriveTitle = (params: { appContentRel: string }) => {
   const pathToSlugs = makePathToSlugs(params)
 

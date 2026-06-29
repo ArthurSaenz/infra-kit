@@ -2,9 +2,13 @@ import { useEffect, useRef } from 'react'
 
 /**
  * Executes a callback function at a specified interval.
+ *
  * @param callback The function to be executed.
  * @param delay The delay in milliseconds between each execution of the callback function.
  * @param isImmediateExecuting Optional. Specifies whether the callback function should be executed immediately upon setting up the interval. Default is false.
+ * @example
+ *     useInterval(() => { console.log('tick') }, 1000)
+ *
  */
 export function useInterval(callback: () => void, delay: number | null, isImmediateExecuting?: boolean) {
   const savedCallback = useRef(callback)

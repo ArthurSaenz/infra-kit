@@ -3,16 +3,16 @@
 ## What this test file is actually checking
 
 `boundaries.test.ts` verifies an **ESLint architectural rule** (`boundaries/dependencies`).
-It doesn't test app code — it lints a tiny fake project and checks that the rule *flags* the
-bad imports and *allows* the good ones.
+It doesn't test app code — it lints a tiny fake project and checks that the rule _flags_ the
+bad imports and _allows_ the good ones.
 
 ## How the fake project is built (inline, in a temp dir)
 
 There is **no committed fixture tree** any more. `boundaries/dependencies` resolves each import's
-target on disk to classify it, so the targets must be real files — but the *importer* under test is
+target on disk to classify it, so the targets must be real files — but the _importer_ under test is
 written inline so the code lives next to its expectation:
 
-- `_boundaries-tree.ts` materializes a fixed **scaffold** (the import *targets*: the
+- `_boundaries-tree.ts` materializes a fixed **scaffold** (the import _targets_: the
   `alpha`/`email`/`shared` barrels + internals) into a fresh `mkdtemp` directory in `beforeAll`,
   and removes it in `afterAll`.
 - Each test calls `lintAt(relPath, code)`: it writes the inline importer `code` to `relPath` inside
@@ -38,15 +38,15 @@ The policy being enforced (stated in the comment at the top of the test file):
 Every title is `flags …` (= must be rejected) or `allows …` (= must be permitted).
 The other words are jargon:
 
-| Word in title        | What it means                                                        | Concrete example                                       |
-| -------------------- | ------------------------------------------------------------------- | ------------------------------------------------------ |
-| **runtime** import   | A *value* import — pulls real code that exists when the program runs | `import { thing } from '../alpha'`                     |
-| **type-only** import | `import type …` — erased by the compiler, no runtime dependency      | `import type { Thing } from '../alpha/internal/thing'` |
-| **cross-feature**    | beta importing from alpha (sibling → sibling)                       | `features/beta` → `features/alpha`                     |
-| **cross-service**    | sms importing from email                                            | `services/sms` → `services/email`                      |
-| **barrel**           | the folder's `index.ts` (its public entry point)                    | `from '../alpha'` resolves to `alpha/index.ts`         |
-| **internals** / **deep import** | reaching *past* the barrel into a private file           | `from '../alpha/internal/thing'`                       |
-| **shared layer**     | the `shared/` folder                                                | `from '../../shared'`                                  |
+| Word in title                   | What it means                                                        | Concrete example                                       |
+| ------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------ |
+| **runtime** import              | A _value_ import — pulls real code that exists when the program runs | `import { thing } from '../alpha'`                     |
+| **type-only** import            | `import type …` — erased by the compiler, no runtime dependency      | `import type { Thing } from '../alpha/internal/thing'` |
+| **cross-feature**               | beta importing from alpha (sibling → sibling)                        | `features/beta` → `features/alpha`                     |
+| **cross-service**               | sms importing from email                                             | `services/sms` → `services/email`                      |
+| **barrel**                      | the folder's `index.ts` (its public entry point)                     | `from '../alpha'` resolves to `alpha/index.ts`         |
+| **internals** / **deep import** | reaching _past_ the barrel into a private file                       | `from '../alpha/internal/thing'`                       |
+| **shared layer**                | the `shared/` folder                                                 | `from '../../shared'`                                  |
 
 ## Reading three titles end-to-end
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import config from '../index.js'
+import config from '../src/index.js'
 import { code, expectClean, expectFlagged, lintCase } from './_lint-case.js'
 
 // Phase 1: the path-based `no-restricted-imports` rule. Deep imports into a feature/service are

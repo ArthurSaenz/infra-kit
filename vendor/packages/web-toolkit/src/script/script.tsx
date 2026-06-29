@@ -13,6 +13,13 @@ type ScriptProps = React.ScriptHTMLAttributes<HTMLScriptElement> & {
   onUnMount?: () => void
 }
 
+/**
+ * Injects a `<script>` element into the document with strategy-controlled timing and load callbacks.
+ *
+ * @example
+ *     <Script src="https://cdn.example.com/lib.js" strategy="lazyOnload" onReady={() => initLib()} />
+ *
+ */
 export const Script = (props: ScriptProps): React.ReactElement | null => {
   const { id, src = '', onReady = null, strategy = 'afterInteractive', shouldUnMountScript, onUnMount } = props
 
@@ -101,6 +108,13 @@ const ignoreProps = [
   'onUnMount',
 ]
 
+/**
+ * Creates and appends a `<script>` DOM element, deduplicating by cache key and wiring load/error callbacks.
+ *
+ * @example
+ *     loadScript({ src: 'https://cdn.example.com/lib.js', id: 'my-lib', onLoad: () => console.log('loaded') })
+ *
+ */
 const loadScript = (props: ScriptProps): void => {
   const { src, id, onLoad = () => {}, onReady = null, dangerouslySetInnerHTML, children = '', onError } = props
 
@@ -121,7 +135,13 @@ const loadScript = (props: ScriptProps): void => {
     return
   }
 
-  /** Execute after the script first loaded */
+  /**
+   * Execute after the script first loaded.
+   *
+   * @example
+   *     afterLoad()
+   *
+   */
   const afterLoad = () => {
     // Run onReady for the first time after load event
     if (onReady) {

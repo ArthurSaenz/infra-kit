@@ -7,6 +7,14 @@ export const Route = createFileRoute('/')({
   component: Home,
 })
 
+/**
+ * Landing page: renders HomeLayout with a link to the docs index.
+ * Registered as the root index route component via createFileRoute.
+ *
+ * @example
+ *     createFileRoute('/')({ component: Home })
+ *
+ */
 function Home() {
   return (
     <HomeLayout {...baseOptions(appName)}>

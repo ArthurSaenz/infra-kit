@@ -9,6 +9,10 @@ export interface NotFoundProps {
 /**
  * Parameterized 404. The consuming app supplies its own layout options (e.g. nav title)
  * so this stays white-label — no hardcoded brand name.
+ *
+ * @example
+ *     <NotFound baseOptions={{ nav: { title: 'My App' } }} />
+ *
  */
 export const NotFound = (props: NotFoundProps) => {
   const { baseOptions } = props

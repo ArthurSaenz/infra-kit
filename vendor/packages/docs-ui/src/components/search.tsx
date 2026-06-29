@@ -16,6 +16,11 @@ type StaticSearchDialogProps = SharedProps
 /**
  * Static search client: downloads the prerendered Orama index from /api/search and
  * runs the query in the browser, so no server is needed at runtime (S3-friendly).
+ *
+ * @example
+ *     import SearchDialog from '@/components/search'
+ *     <RootProvider search={{ SearchDialog }}><Outlet /></RootProvider>
+ *
  */
 const StaticSearchDialog = (props: StaticSearchDialogProps) => {
   const { search, setSearch, query } = useDocsSearch({ type: 'static' })

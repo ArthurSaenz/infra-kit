@@ -25,7 +25,13 @@ import { makeDeriveTitle, makePathToSlugs, toPosix } from './slugs.ts'
 
 const WORKSPACE_MARKER = 'pnpm-workspace.yaml'
 
-/** Walk up from `startDir` until a directory containing `pnpm-workspace.yaml` is found. */
+/**
+ * Walk up from `startDir` until a directory containing `pnpm-workspace.yaml` is found.
+ *
+ * @example
+ *     const root = resolveRepoRoot(import.meta.dirname)
+ *
+ */
 export const resolveRepoRoot = (startDir: string): string => {
   let dir = path.resolve(startDir)
 
@@ -83,6 +89,10 @@ const IGNORE_RE =
  * @param contentRel the repo-root-relative dir holding the docs app's own landing content.
  *   Defaults to `spec/docs` — the docs app lives inside `vendor/`, so its landing content is
  *   kept per-repo under the repo-root `spec/docs/` dir (outside vendor), NOT alongside the app.
+ *
+ * @example
+ *     const agg = createDocsAggregation({ appDir: import.meta.dirname })
+ *
  */
 export const createDocsAggregation = (params: { appDir: string; contentRel?: string }): DocsAggregation => {
   const { appDir, contentRel = 'spec/docs' } = params
@@ -131,7 +141,13 @@ export const createDocsAggregation = (params: { appDir: string; contentRel?: str
     return IGNORE_RE.test(rel)
   }
 
-  /** All doc files that match the convention, relative to the repo root (sorted, ignores filtered). */
+  /**
+   * All doc files that match the convention, relative to the repo root (sorted, ignores filtered).
+   *
+   * @example
+   *     const rels = await getAllDocRelPaths()
+   *
+   */
   const getAllDocRelPaths = async (): Promise<string[]> => {
     const out: string[] = []
 
@@ -148,6 +164,10 @@ export const createDocsAggregation = (params: { appDir: string; contentRel?: str
    * Read a top-level frontmatter `slug:` override from a doc file, mirroring fumadocs'
    * `slugsFromData('slug')` (string split on '/'). Returns null when there is no frontmatter
    * block or no `slug` key, so the caller falls back to pathToSlugs.
+   *
+   * @example
+   *     const override = await readDocSlugOverride('/repo/apps/ai/docs/guide.md')
+   *
    */
   const readDocSlugOverride = async (absPath: string): Promise<string[] | null> => {
     let raw: string
@@ -175,7 +195,13 @@ export const createDocsAggregation = (params: { appDir: string; contentRel?: str
     })
   }
 
-  /** Every doc URL (`/docs/...`) for prerender seeding. */
+  /**
+   * Every doc URL (`/docs/...`) for prerender seeding.
+   *
+   * @example
+   *     const urls = await getAllDocUrls()
+   *
+   */
   const getAllDocUrls = async (): Promise<string[]> => {
     const rels = await getAllDocRelPaths()
 

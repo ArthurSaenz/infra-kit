@@ -8,6 +8,13 @@ export const getPathWithSearchParams = (path: string, params?: Record<string, un
   return path
 }
 
+/**
+ * Converts a URLSearchParams instance into a plain object, splitting comma-separated values into arrays.
+ *
+ * @example
+ *     const result = parseSearchParams(new URLSearchParams('foo=a,b&bar=c'))
+ *
+ */
 export const parseSearchParams = (urlSearchParams: URLSearchParams): Record<string, string[] | string> => {
   const entries = urlSearchParams.entries()
   const result: Record<string, string[] | string> = {}

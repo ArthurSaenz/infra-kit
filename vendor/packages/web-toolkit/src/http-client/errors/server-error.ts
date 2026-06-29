@@ -10,6 +10,13 @@ export class ErrorBase<T extends string> extends Error {
   metaData?: any
   cause?: any
 
+  /**
+   * Constructs an `ErrorBase` instance with type, message, and optional metadata fields.
+   *
+   * @example
+   *     throw new ErrorBase({ type: 'NOT_FOUND', message: 'Resource not found', extraData: { id: 42 } })
+   *
+   */
   constructor(args: { type: T; message: string; cause?: any; extraData?: any; metaData?: any }) {
     super()
 

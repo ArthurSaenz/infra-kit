@@ -4,6 +4,13 @@ export interface ScriptExperimentsInitProps {
   accountId: number
 }
 
+/**
+ * React component that injects the VWO initialisation snippet into the page for the given account.
+ *
+ * @example
+ *     <ScriptExperimentsInit accountId={1234} />
+ *
+ */
 export const ScriptExperimentsInit = (props: ScriptExperimentsInitProps) => {
   const { accountId } = props
 

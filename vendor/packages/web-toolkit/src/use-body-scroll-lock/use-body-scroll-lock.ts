@@ -34,6 +34,14 @@ interface Options {
   locked?: boolean
 }
 
+/**
+ * Locks or unlocks the body scroll for a given element.
+ *
+ * @example
+ *     const ref = useRef<HTMLElement>(null)
+ *     useBodyScrollLock(ref, { locked: true })
+ *
+ */
 export const useBodyScrollLock = (
   scrollLockTarget: React.RefObject<HTMLElement | null>,
   options: Options = {},

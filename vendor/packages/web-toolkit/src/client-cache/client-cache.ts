@@ -9,12 +9,22 @@ const _localStorage = typeof window === 'undefined' ? fakeLs : window.localStora
 
 const namespace = 'v1'
 /**
+ * Returns the namespaced localStorage key for a given cache name.
+ *
+ * @example
+ *     getKey('user') // => 'v1.user'
+ *
  * @deprecated
  */
 const getKey = (name: string) => {
   return `${namespace}.${name}`
 }
 /**
+ * Returns the namespaced localStorage key for the updatedAt timestamp of a given cache name.
+ *
+ * @example
+ *     updatedAtKey('user') // => 'v1.user.updatedAt'
+ *
  * @deprecated
  */
 const updatedAtKey = (name: string) => {
@@ -22,6 +32,11 @@ const updatedAtKey = (name: string) => {
 }
 
 /**
+ * Asynchronously saves a value to localStorage under the given name via a deferred setTimeout.
+ *
+ * @example
+ *     save('user', { id: 1 })
+ *
  * @deprecated
  */
 export const save = (name: string, value: unknown, updatedAt?: string) => {
@@ -30,6 +45,11 @@ export const save = (name: string, value: unknown, updatedAt?: string) => {
   }, 1)
 }
 /**
+ * Synchronously saves a value to localStorage under the given name.
+ *
+ * @example
+ *     saveSync('user', { id: 1 })
+ *
  * @deprecated
  */
 export const saveSync = (name: string, value: unknown, updatedAt?: string | undefined) => {
@@ -42,6 +62,11 @@ export const saveSync = (name: string, value: unknown, updatedAt?: string | unde
   _localStorage.setItem(updatedAtKey(name), updatedAt || Date.now().toString())
 }
 /**
+ * Loads and JSON-parses a value from localStorage by name.
+ *
+ * @example
+ *     const user = load<User>('user')
+ *
  * @deprecated
  */
 export const load = <T>(name: string): T | undefined => {
@@ -63,6 +88,11 @@ export const load = <T>(name: string): T | undefined => {
   return result
 }
 /**
+ * Returns the stored updatedAt timestamp string for the given name, or undefined if absent.
+ *
+ * @example
+ *     const ts = getUpdatedAt('user')
+ *
  * @deprecated
  */
 const getUpdatedAt = (name: string): string | undefined => {
@@ -72,12 +102,22 @@ const getUpdatedAt = (name: string): string | undefined => {
 }
 
 /**
+ * Returns true if a cached value exists under the given name.
+ *
+ * @example
+ *     const exists = isExist('user')
+ *
  * @deprecated
  */
 export const isExist = (name: string): boolean => {
   return getUpdatedAt(name) !== undefined
 }
 /**
+ * Returns true if a cached value exists and was stored within the given number of seconds.
+ *
+ * @example
+ *     const fresh = isExistAndFresh('user', 300)
+ *
  * @deprecated
  */
 export const isExistAndFresh = (name: string, notOlderThan: number): boolean => {

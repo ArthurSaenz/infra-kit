@@ -94,6 +94,13 @@ export const defineExperiments = <const T extends ExperimentsConfig>(config: T) 
 
   const $experimentsValuesMap = atom(initialExperimentsValues)
 
+  /**
+   * Reads DEBUG_EXPERIMENTS from localStorage and returns a map of experiment ID to variant, falling back to defaults.
+   *
+   * @example
+   *     const values = getDevDebugExperimentsValues()
+   *
+   */
   const getDevDebugExperimentsValues = (): Record<IdValue, ExperimentNameValue> => {
     const experimentsLS = ls.get(DEBUG_EXPERIMENTS_KEY) as Record<string, string> | null
 
@@ -120,6 +127,14 @@ export const defineExperiments = <const T extends ExperimentsConfig>(config: T) 
     return values
   }
 
+  /**
+   * Registers the experiments debug API on `window._app.experiments` for QA console access.
+   *
+   * @example
+   *     attachImplementedExperiments()
+   *     // window._app.experiments.setVariant('12', 'variation-1')
+   *
+   */
   const attachImplementedExperiments = () => {
     window._app = window._app || {}
     window._app.experiments = {
@@ -154,6 +169,13 @@ export const defineExperiments = <const T extends ExperimentsConfig>(config: T) 
     return next ?? prev
   }
 
+  /**
+   * React hook that wires VWO callbacks (or debug overrides) to update the experiments atom on mount.
+   *
+   * @example
+   *     experimentsModel.useExperimentsInit({ isEnabledDebug: false })
+   *
+   */
   const useExperimentsInit = (args: { isEnabledDebug: boolean }) => {
     const { isEnabledDebug } = args
     const setOptimizeAtom = useSetAtom($experimentsValuesMap)

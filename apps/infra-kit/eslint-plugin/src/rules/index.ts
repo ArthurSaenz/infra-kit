@@ -11,6 +11,7 @@ import { propsDestructuringNewline } from './props-destructuring-newline'
 import { propsTypeName } from './props-type-name'
 import { propsTypeReference } from './props-type-reference'
 import { requireComponentStories } from './require-component-stories'
+import { requireJsdocExample } from './require-jsdoc-example'
 
 export const rules: Record<string, Rule.RuleModule> = {
   'props-destructuring-newline': propsDestructuringNewline,
@@ -22,4 +23,5 @@ export const rules: Record<string, Rule.RuleModule> = {
   'max-components-per-file': maxComponentsPerFile,
   'max-jsx-return-size': maxJsxReturnSize,
   'require-component-stories': requireComponentStories,
+  'require-jsdoc-example': requireJsdocExample,
 }

@@ -30,6 +30,13 @@ export class HttpClient<R extends string = string> {
     this.fetchInstance = fetchInstance
   }
 
+  /**
+   * Performs an HTTP request and returns the parsed response body with status and headers.
+   *
+   * @example
+   *     const { body, status } = await client.fetch<User>('/users/1', { method: 'GET', token: authToken })
+   *
+   */
   async fetch<T = unknown>(
     uri: string,
     options: FetchOptions = {},
@@ -122,6 +129,10 @@ export class HttpClient<R extends string = string> {
 
 /**
  * Check if content-type JSON
+ *
+ * @example
+ *     const isJson = contentTypeIs(response.headers, 'application/json')
+ *
  */
 function contentTypeIs(headers: Headers, type: string): boolean {
   return headers.get('content-type')?.includes(type) || false
@@ -152,6 +163,13 @@ export interface FetchWrapArgs {
   fetchInstance: typeof fetch
 }
 
+/**
+ * Wraps a fetch call with optional AWS WAF integration and retry/delay logic.
+ *
+ * @example
+ *     const response = await fetchWrap({ url: '/api/data', options: { method: 'GET' }, config: { retries: 3, delay: 200 }, fetchInstance: fetch })
+ *
+ */
 const fetchWrap = async (args: FetchWrapArgs) => {
   const { url, options, config, fetchInstance } = args
 

@@ -3,7 +3,7 @@ import type { Linter } from 'eslint'
 import path from 'node:path'
 import { expect } from 'vitest'
 
-import config from '../index.js'
+import config from '../src/index.js'
 
 // Declarative lint harness for the glob/path-driven suites. Each case carries inline `code` and a
 // virtual `fileName`; `lintCase` lints the string under that virtual path against the REAL exported

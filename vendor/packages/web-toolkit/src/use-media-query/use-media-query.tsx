@@ -2,6 +2,13 @@ import { useEffect, useState } from 'react'
 
 import { isSSR } from '../ssr'
 
+/**
+ * Returns whether a given CSS media query matches the current viewport.
+ *
+ * @example
+ *     const isMobile = useMediaQuery('(max-width: 768px)')
+ *
+ */
 export const useMediaQuery = (query: string) => {
   const [matches, setMatches] = useState(isSSR ? false : window.matchMedia(query).matches)
 

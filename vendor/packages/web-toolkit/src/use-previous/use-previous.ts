@@ -2,8 +2,12 @@ import { useEffect, useRef } from 'react'
 
 /**
  * Returns the previous value of a given variable.
+ *
  * @param value The current value you want to track.
  * @returns The value from the previous render, or undefined on the initial render.
+ * @example
+ *     const previousCount = usePrevious(count)
+ *
  */
 export function usePrevious<T>(value: T): T | undefined {
   const ref = useRef<T | undefined>(undefined)

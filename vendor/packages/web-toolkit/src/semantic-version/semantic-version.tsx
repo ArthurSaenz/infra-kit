@@ -8,7 +8,11 @@ interface SemanticVersionProps {
 }
 
 /**
- * @description Semantic version of application and other dev metadata with injected from build to window object
+ * React component that injects semantic version and build metadata into the window object.
+ *
+ * @example
+ *     <SemanticVersion version="1.0.0" env="production" release="v1.0.0" commitHash="abc123" />
+ *
  */
 export const SemanticVersion = (props: SemanticVersionProps) => {
   const { version, env, release, commitHash } = props

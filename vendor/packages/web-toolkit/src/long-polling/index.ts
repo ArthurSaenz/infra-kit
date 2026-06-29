@@ -6,6 +6,18 @@ export interface PollArgs<T> {
   firstDelayMs?: number
 }
 
+/**
+ * Polls an async function at a fixed interval until a condition is no longer met or the attempt limit is reached.
+ *
+ * @example
+ *     const result = await poll({
+ *         fn: () => fetchStatus(jobId),
+ *         condition: (res) => res.status === 'pending',
+ *         intervalMs: 2000,
+ *         maxAttempts: 10,
+ *     })
+ *
+ */
 export const poll = async <T>(args: PollArgs<T>): Promise<T> => {
   const { fn, condition, intervalMs, maxAttempts = 10, firstDelayMs = 0 } = args
 

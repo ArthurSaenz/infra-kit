@@ -7,7 +7,7 @@ const PLUGIN_NAME = '@wl'
 const plugin: ESLint.Plugin & { configs: Record<string, Linter.Config | Linter.Config[]> } = {
   meta: {
     name: '@wl/eslint-plugin',
-    version: '0.1.14',
+    version: '0.1.20',
   },
   rules,
   configs: {},
@@ -75,6 +75,23 @@ plugin.configs.recommended = [
         'error',
         { maxComponents: 1, ignore: ['**/pages/**', '**/routes/**'] },
       ],
+    },
+  },
+  // `require-jsdoc-example` targets named functions, which overwhelmingly live in
+  // plain `.ts` lib/util modules (not just `.tsx`), so it gets its OWN block scoped
+  // to both extensions — the tsx-only blocks above would never reach where it
+  // matters. Severity is `warn` (not `error`) so first adoption does not break
+  // consumers' CI; the graduated defaults (minComplexity 8 → require a JSDoc block,
+  // exampleComplexity 12 → also require `@example`) are left implicit. Flat config
+  // REPLACES rule options across matching blocks, so this rule lives only here and
+  // relies on no option merging.
+  {
+    files: ['**/*.ts', '**/*.tsx'],
+    plugins: {
+      [PLUGIN_NAME]: plugin,
+    },
+    rules: {
+      [`${PLUGIN_NAME}/require-jsdoc-example`]: 'warn',
     },
   },
 ]

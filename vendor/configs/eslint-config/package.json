@@ -10,25 +10,45 @@
     "config",
     "linting"
   ],
-  "main": "index.js",
-  "types": "index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=24.x",
     "pnpm": ">=11"
   },
   "scripts": {
+    "build": "pnpm run clean-artifacts && tsc -p tsconfig.json",
+    "clean-artifacts": "rm -rf dist",
+    "clean-cache": "rm -rf node_modules/.cache .eslintcache tsconfig.tsbuildinfo .turbo",
+    "prettier-fix": "pnpm exec prettier **/* --write --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
+    "prettier-check": "pnpm exec prettier **/* --check --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
+    "ts-check": "tsc --noEmit",
     "test": "pnpm exec vitest run --reporter=minimal",
-    "test-watch": "pnpm exec vitest --watch"
+    "test-watch": "pnpm exec vitest --watch",
+    "qa": "pnpm run prettier-check && pnpm run ts-check && pnpm run test && echo ✅ Success",
+    "fix": "pnpm run prettier-fix && pnpm run qa"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^9.1.0",
-    "@eslint-react/eslint-plugin": "^5.9.2",
-    "@slip-stream-kit/eslint-plugin": "^0.1.17",
+    "@eslint-react/eslint-plugin": "^5.10.0",
+    "@slip-stream-kit/eslint-plugin": "^0.1.20",
     "@wl/vitest-config": "workspace:*",
     "eslint": "^10.6.0",
     "eslint-plugin-boundaries": "^6.0.2",
     "eslint-plugin-react-refresh": "0.5.3",
     "eslint-plugin-sonarjs": "^4.1.0",
-    "eslint-plugin-svelte": "^3.19.0"
+    "eslint-plugin-svelte": "^3.20.0",
+    "typescript": "catalog:"
   }
 }

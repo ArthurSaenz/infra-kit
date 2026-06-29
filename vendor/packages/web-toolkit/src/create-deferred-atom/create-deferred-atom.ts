@@ -16,6 +16,15 @@ export interface DeferredAtom<Value, Args> {
 //
 // dismissFx() drops the current waiters silently (their `await` never
 // clears `$data`. It does NOT reject, so callers don't need a try/catch.
+/**
+ * Creates a deferred atom that opens an async waiting state and resolves it from an external trigger.
+ *
+ * @example
+ *     const modal = createDeferredAtom<string, { title: string }>()
+ *     // Open: const result = await store.set(modal.openFx, { title: 'Confirm?' })
+ *     // Resolve: store.set(modal.resolveFx, 'confirmed')
+ *
+ */
 export const createDeferredAtom = <Value, Args>(): DeferredAtom<Value, Args> => {
   const $data = atom<Args | null>(null)
 

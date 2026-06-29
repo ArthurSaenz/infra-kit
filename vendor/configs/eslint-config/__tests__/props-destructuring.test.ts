@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import config from '../index.js'
+import config from '../src/index.js'
 
 // The RULE's behavior (inline flagged, body clean, hooks ignored, auto-fix, edge cases) is owned
 // by the plugin's own RuleTester suite in @slip-stream-kit/eslint-plugin. This package only needs

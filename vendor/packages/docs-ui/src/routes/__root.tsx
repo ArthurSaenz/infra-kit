@@ -18,6 +18,14 @@ export const Route = createRootRoute({
   component: RootComponent,
 })
 
+/**
+ * Root HTML shell: provides RootProvider (fumadocs), HeadContent, Scripts, and the Outlet.
+ * Registered as the root route component via createRootRoute.
+ *
+ * @example
+ *     createRootRoute({ component: RootComponent })
+ *
+ */
 function RootComponent() {
   return (
     <html suppressHydrationWarning>

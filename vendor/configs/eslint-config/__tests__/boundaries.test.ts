@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import config from '../index.js'
+import config from '../src/index.js'
 import { makeTree } from './_boundaries-tree.js'
 import { code, only } from './_lint-case.js'
 

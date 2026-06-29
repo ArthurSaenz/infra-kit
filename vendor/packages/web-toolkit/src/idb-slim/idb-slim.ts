@@ -5,9 +5,15 @@ import * as idb from 'idb-keyval'
  */
 
 /**
+ * Stores a value in IndexedDB with a time-to-live expiry.
+ *
  * @param {string} key - A key to identify the value.
  * @param {any} value - A value associated with the key.
  * @param {number} ttl - Time to live in seconds.
+ *
+ * @example
+ *     await set('session', { token: 'abc' }, 3600)
+ *
  */
 export const set = async <T>(key: string, value: T, ttl: number) => {
   try {
@@ -23,8 +29,14 @@ export const set = async <T>(key: string, value: T, ttl: number) => {
 }
 
 /**
+ * Retrieves a value from IndexedDB if it exists and has not expired.
+ *
  * @param {string} key - A key to identify the data.
  * @returns {any|null} returns the value associated with the key if its exists and is not expired. Returns `null` otherwise
+ *
+ * @example
+ *     const session = await get<{ token: string }>('session')
+ *
  */
 export const get = async <T = unknown>(key: IDBValidKey): Promise<T | null> => {
   try {
@@ -78,6 +90,13 @@ const isInternalExpiryTimestampKey = (key: IDBValidKey) => {
   return (key as string).match(/__ExpiryTimeStamp__\w*/g)
 }
 
+/**
+ * Returns all internal expiry timestamp keys currently stored in IndexedDB.
+ *
+ * @example
+ *     const keys = await getAllInternalTimestampKeys()
+ *
+ */
 const getAllInternalTimestampKeys = async (): Promise<IDBValidKey[] | null> => {
   try {
     const keys = await all()
@@ -94,6 +113,13 @@ const getAllInternalTimestampKeys = async (): Promise<IDBValidKey[] | null> => {
   }
 }
 
+/**
+ * Removes all keys from IndexedDB whose TTL has elapsed.
+ *
+ * @example
+ *     await removeExpiredKeys()
+ *
+ */
 export const removeExpiredKeys = async () => {
   try {
     const keys = await getAllInternalTimestampKeys()

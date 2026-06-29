@@ -28,6 +28,14 @@ interface CreateConfigAtomProps {
   updateLastConfigRefetch?: () => void
 }
 
+/**
+ * Creates a config atom bundle for fetching and caching a manifest file via the given HTTP client.
+ *
+ * @example
+ *     const { $config, refetchConfigData, InitDebugManifestCache } =
+ *         create<AppConfig>({ manifestFileUrl: '/config.json', httpClient, isEnabledDebug: false })
+ *
+ */
 export const create = <T>(args: CreateConfigAtomProps) => {
   const { manifestFileUrl, httpClient, isEnabledDebug, updateLastConfigRefetch } = args
 
@@ -90,6 +98,13 @@ export const create = <T>(args: CreateConfigAtomProps) => {
   return { $config, refetchConfigData, InitDebugManifestCache, fetchManifestConfigFile, $configRefetchLoading } as const
 }
 
+/**
+ * Fetches the root manifest JSON from the given URL, using IndexedDB ETag caching to avoid re-downloads.
+ *
+ * @example
+ *     const data = await fetchRootManifest<AppConfig>({ url: '/manifest.json', httpClient, isEnabledDebug: false })
+ *
+ */
 const fetchRootManifest = async <T>(args: {
   url: string
   httpClient: HttpClient
@@ -143,6 +158,14 @@ const fetchRootManifest = async <T>(args: {
   }
 }
 
+/**
+ * Returns a typed async function that fetches a named config file with ETag caching and optional debug logging.
+ *
+ * @example
+ *     const fetchFile = getManifestConfigFile({ httpClient, isEnabledDebug: false })
+ *     const data = await fetchFile<FeatureFlags>('features', '/features.json')
+ *
+ */
 const getManifestConfigFile = ({ httpClient, isEnabledDebug }: { httpClient: HttpClient; isEnabledDebug: boolean }) => {
   return async <T>(key: string, url?: string, isAllowDebug = false): Promise<T> => {
     if (isSSR) {
@@ -210,6 +233,13 @@ const getManifestConfigFile = ({ httpClient, isEnabledDebug }: { httpClient: Htt
   }
 }
 
+/**
+ * Attaches manifest cache debug controls to `window._app.manifestCache` for use in the browser console.
+ *
+ * @example
+ *     attachDebugManifestCache({ refetchConfigData: () => store.set(refetchAtom, null) })
+ *
+ */
 const attachDebugManifestCache = (args: { refetchConfigData: () => void }) => {
   const { refetchConfigData } = args
 

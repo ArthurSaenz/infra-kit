@@ -19,6 +19,13 @@ export const usePortal = (id: string) => {
   })
 }
 
+/**
+ * Returns or creates a DOM element to be used as a portal mount point.
+ *
+ * @example
+ *     const node = getPortalNode('modal-root')
+ *
+ */
 const getPortalNode = (id: string): Element | null => {
   if (isBrowser) {
     let node = document.querySelector(`#${id}`)
