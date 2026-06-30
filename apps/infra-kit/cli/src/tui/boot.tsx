@@ -34,11 +34,26 @@ export const runCommandPalette = async (items: PaletteItem[]): Promise<string | 
       { stdout: process.stderr as unknown as NodeJS.WriteStream },
     )
 
+    // Ink `unref()`s process.stdin when it tears down raw mode on exit. That ref
+    // is process-wide and never restored, so the next consumer of stdin — the
+    // Inquirer prompt the selected command opens (e.g. the worktrees-remove
+    // checkbox) — reads from an unref'd handle that no longer keeps the event
+    // loop alive. Once the command's git/gh subprocesses settle, the loop drains
+    // mid-prompt, Node flags entry/cli.ts's top-level await as unsettled, and the
+    // process exits with code 13 (the prompt dies on arrival). Re-ref stdin so it
+    // holds the loop while a prompt is reading; an idle ref'd stdin does not block
+    // exit, so non-interactive follow-up commands still terminate normally.
+    const restoreStdinRef = () => {
+      process.stdin.ref()
+    }
+
     waitUntilExit()
       .then(() => {
+        restoreStdinRef()
         resolve(selected)
       })
       .catch(() => {
+        restoreStdinRef()
         resolve(null)
       })
   })

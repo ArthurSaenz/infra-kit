@@ -98,8 +98,9 @@ export const commandCatalog: CommandCatalogEntry[] = [
   { cliName: 'worktrees-add', menuGroup: 'worktrees', mcpTool: worktreesAddMcpTool, mcpExposed: true },
   { cliName: 'worktrees-list', menuGroup: 'worktrees', mcpTool: worktreesListMcpTool, mcpExposed: true },
   { cliName: 'worktrees-reload', menuGroup: 'worktrees', mcpTool: worktreesReloadMcpTool, mcpExposed: true },
-  // worktrees-remove runs rm -rf on worktree dirs — genuinely irreversible, so
-  // it is CLI-only by design (mirrors the vendor-sync/manifest rationale).
+  // worktrees-remove runs `git worktree remove` on each leaf worktree —
+  // genuinely irreversible (uncommitted work is lost), so it is CLI-only by
+  // design (mirrors the vendor-sync/manifest rationale).
   { cliName: 'worktrees-remove', menuGroup: 'worktrees', mcpTool: worktreesRemoveMcpTool, mcpExposed: false },
   { cliName: 'worktrees-sync', menuGroup: 'worktrees', mcpTool: worktreesSyncMcpTool, mcpExposed: true },
 

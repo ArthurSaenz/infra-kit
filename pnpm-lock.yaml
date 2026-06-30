@@ -120,7 +120,7 @@ importers:
         specifier: ^13.1.3
         version: 13.1.3
       react:
-        specifier: 'catalog:'
+        specifier: 19.2.7
         version: 19.2.7
       yaml:
         specifier: ^2.9.0

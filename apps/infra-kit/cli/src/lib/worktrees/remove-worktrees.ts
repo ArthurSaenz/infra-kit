@@ -16,9 +16,10 @@ interface RemoveWorktreesArgs {
  * returning the branches that were removed cleanly. Failures are logged but
  * never thrown, so a single bad worktree doesn't poison a batch removal.
  *
- * When `pruneFolder` is true and every branch was removed, also prune the
- * worktree metadata and delete the worktrees folder — used by the
- * `worktrees-remove` "all" path to leave the filesystem clean.
+ * When `pruneFolder` is true and every branch was removed, also run
+ * `git worktree prune` to clear stale worktree metadata. The `<repo>-worktrees`
+ * container directory and its `release/`/`feature/` subfolders are deliberately
+ * left in place so the per-repo worktree scaffold persists even when empty.
  */
 export const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string[]> => {
   const { branches, worktreeDir, repoName, pruneFolder = false } = args
@@ -53,27 +54,12 @@ export const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string
     }
   }
 
-  // `git worktree remove` only deletes the leaf worktree, leaving the group
-  // folder (e.g. `release/`, `feature/`) behind. Remove it when it's now empty;
-  // `rmdir` is a no-op when the folder still holds other worktrees.
-  const groupDirs = new Set<string>()
-
-  for (const branch of removed) {
-    if (branch.includes('/')) {
-      groupDirs.add(`${worktreeDir}/${branch.split('/')[0]}`)
-    }
-  }
-
-  for (const groupDir of groupDirs) {
-    await $`rmdir ${groupDir}`.nothrow()
-  }
-
+  // `git worktree remove` deletes only the leaf worktree. We intentionally leave
+  // the `<repo>-worktrees` container and its `release/`/`feature/` group folders
+  // in place so the worktree scaffold survives an empty state (it is recreated
+  // lazily by `worktrees-add` via `mkdir -p` regardless).
   if (pruneFolder && removed.length === branches.length) {
     await $`git worktree prune`
-    await $`rm -rf ${worktreeDir}`
-
-    logger.info(`🗑️ Removed worktree folder: ${worktreeDir}`)
-    logger.info('')
   }
 
   return removed

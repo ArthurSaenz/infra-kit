@@ -170,7 +170,7 @@ const logResults = (removed: string[]): void => {
 export const worktreesRemoveMcpTool = defineMcpTool({
   name: 'worktrees-remove',
   description:
-    'Remove local git worktrees for release branches. When everything is removed, also runs "git worktree prune" and deletes the worktrees directory. When invoked via MCP, pass either "versions" (comma-separated) or all=true — the branch picker is unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls, so the caller is responsible for gating.',
+    'Remove local git worktrees for release branches. When everything is removed, also runs "git worktree prune" to clear stale metadata; the worktrees directory and its release/feature subfolders are left in place. When invoked via MCP, pass either "versions" (comma-separated) or all=true — the branch picker is unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls, so the caller is responsible for gating.',
   inputSchema: {
     all: z
       .boolean()
