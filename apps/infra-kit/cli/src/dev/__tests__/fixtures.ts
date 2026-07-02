@@ -164,9 +164,9 @@ export async function canBind(port: number): Promise<boolean> {
 }
 
 /**
- * Boot a server against `apiDir` on `port`, restoring cwd afterward. `loadRoutes()`
- * reads `serverless.yml` relative to cwd, so we chdir into the api dir for start().
- * The caller owns the returned server's lifecycle (call `close()` in teardown).
+ * Boot a server against `apiDir` on `port`. No `chdir`: `ServerlessLocalRun` reads
+ * `serverless.yml` and imports the handler from `controllersPath` (absolute), so booting
+ * is cwd-independent. The caller owns the returned server's lifecycle (call `close()` in teardown).
  */
 export async function boot(
   apiDir: string,
@@ -174,16 +174,9 @@ export async function boot(
   appName = 'testapp',
   prefixUrl = PREFIX,
 ): Promise<ServerlessLocalRun> {
-  const original = process.cwd()
-
-  process.chdir(apiDir)
   const server = new ServerlessLocalRun({ controllersPath: apiDir, prefixUrl, port, appName })
 
-  try {
-    await server.start()
-  } finally {
-    process.chdir(original)
-  }
+  await server.start()
 
   return server
 }

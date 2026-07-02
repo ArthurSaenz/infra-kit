@@ -1,13 +1,14 @@
+import { Logger } from '@aws-lambda-powertools/logger'
 import type { APIGatewayProxyEvent, APIGatewayProxyEventQueryStringParameters, Context } from 'aws-lambda'
 import fastify from 'fastify'
 import * as fs from 'node:fs'
 import type { Server } from 'node:http'
 import * as path from 'node:path'
+import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { parse as parseYaml } from 'yaml'
 
 import type { ILogger } from './interfaces.js'
-import { Logger } from './logger.js'
 
 export interface IServerConfig {
   controllersPath: string
@@ -18,6 +19,16 @@ export interface IServerConfig {
 }
 
 type HandlerResult = Promise<{ body: string; headers: Record<string, string>; statusCode: number }>
+
+/** Default simulated Lambda timeout; overridable via `DEV_SERVER_TIMEOUT_MS`. */
+const DEFAULT_LAMBDA_TIMEOUT_MS = 30_000
+
+/** Resolve the simulated Lambda timeout (ms), honoring `DEV_SERVER_TIMEOUT_MS` when it parses. */
+const resolveLambdaTimeoutMs = (): number => {
+  const raw = Number.parseInt(process.env.DEV_SERVER_TIMEOUT_MS ?? '', 10)
+
+  return Number.isNaN(raw) ? DEFAULT_LAMBDA_TIMEOUT_MS : raw
+}
 
 export class ServerlessLocalRun {
   /** Busts Node ESM `import()` cache on each new server instance (watch restart). */
@@ -32,9 +43,12 @@ export class ServerlessLocalRun {
     }
   > = {}
 
+  /** `method urlAction` keys reserved synchronously, so duplicates are caught before any async import. */
+  private readonly registeredRouteKeys = new Set<string>()
+
   constructor(private readonly serverConfig: IServerConfig) {
     this.importCacheBust = `${Date.now()}`
-    this.logger = new Logger({ serviceName: 'LocalServer', minLevel: 'DEBUG', maxExtraDataLength: 2000 })
+    this.logger = new Logger({ serviceName: 'LocalServer', logLevel: 'DEBUG' })
     this.serverConfig.prefixUrl = this.serverConfig.prefixUrl ?? ''
     this.server = fastify({ logger: false })
 
@@ -64,7 +78,7 @@ export class ServerlessLocalRun {
 
     await this.server.listen({ port: this.serverConfig.port, host: '127.0.0.1' })
 
-    this.logger.complete(`Server listening on http://127.0.0.1:${this.serverConfig.port}`, {
+    this.logger.info(`Server listening on http://127.0.0.1:${this.serverConfig.port}`, {
       address: `http://127.0.0.1:${this.serverConfig.port}`,
     })
   }
@@ -99,7 +113,8 @@ export class ServerlessLocalRun {
   }
 
   private loadRoutes(): Promise<void>[] {
-    const fileContents = fs.readFileSync('serverless.yml', 'utf8')
+    const serverlessYmlPath = path.join(this.serverConfig.controllersPath, 'serverless.yml')
+    const fileContents = fs.readFileSync(serverlessYmlPath, 'utf8')
     const data = parseYaml(fileContents) as {
       functions: Record<string, { events?: Array<{ http?: { method: string; path: string } }>; handler?: string }>
     }
@@ -114,25 +129,38 @@ export class ServerlessLocalRun {
 
         if (!http) continue
         this.logger.debug(`Registering route: ${http.method} /${http.path} -> ${funcName}`)
-        p.push(this.defineRoute(http.method, { http }, funcDef))
+        p.push(this.defineRoute(http, funcDef))
       }
     }
 
     return p
   }
 
-  private async defineRoute(
-    httpMethod: string,
-    element: { http: { method: string; path: string } },
-    funcDef: { handler?: string },
-  ): Promise<void> {
-    let url = element.http.path.toString()
+  private async defineRoute(http: { method: string; path: string }, funcDef: { handler?: string }): Promise<void> {
+    let url = http.path.toString()
 
     url = url.replaceAll('{', ':').replaceAll('}', '')
 
     let urlAction = path.posix.join(this.serverConfig.prefixUrl ?? '', url)
 
     urlAction = urlAction[0] === '/' ? urlAction : `/${urlAction}`
+
+    const validMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
+    const method = String(http.method).toUpperCase()
+
+    if (!validMethods.includes(method)) {
+      throw new Error(`Invalid HTTP method: "${http.method}" for URL: ${urlAction}`)
+    }
+
+    // Key on method + path: two events can share a path but differ by method (e.g. GET/POST /users),
+    // so keying on the path alone would let one handler overwrite the other. Reserve the key
+    // synchronously (before the first `await`) so concurrent route loads detect a true duplicate.
+    const routeKey = `${method} ${urlAction}`
+
+    if (this.registeredRouteKeys.has(routeKey)) {
+      throw new Error(`Duplicate route: ${routeKey}`)
+    }
+    this.registeredRouteKeys.add(routeKey)
 
     const handlerStr = funcDef.handler ?? ''
     const parts = handlerStr.split('.')
@@ -149,17 +177,9 @@ export class ServerlessLocalRun {
       (event: APIGatewayProxyEvent, ctx: Context, log: ILogger) => HandlerResult
     >
 
-    this.controllers[urlAction] = { action, handler }
+    this.controllers[routeKey] = { action, handler }
 
     const traceLogger = this.logger.createChild({ serviceName: 'RequestLogger' })
-
-    const validMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
-
-    const method = String(httpMethod).toUpperCase()
-
-    if (!validMethods.includes(method)) {
-      throw new Error(`Invalid HTTP method: "${httpMethod}" for URL: ${urlAction}`)
-    }
 
     this.logger.debug(`Adding fastify route: ${method} ${urlAction}`)
 
@@ -173,9 +193,9 @@ export class ServerlessLocalRun {
           code: (n: number) => { send: (body: unknown) => void }
         },
       ) => {
-        const controller = this.controllers[urlAction]
+        const controller = this.controllers[routeKey]
 
-        if (!controller) throw new Error(`No controller for ${urlAction}`)
+        if (!controller) throw new Error(`No controller for ${routeKey}`)
         const handlerFn = controller.action[controller.handler]
 
         if (!handlerFn) throw new Error(`No handler ${controller.handler} for ${urlAction}`)
@@ -254,7 +274,7 @@ export class ServerlessLocalRun {
 
   private getContext(): Context {
     const startTime = Date.now()
-    const timeoutMs = 30000
+    const timeoutMs = resolveLambdaTimeoutMs()
     const datePart = new Date().toISOString().split('T')[0] ?? ''
 
     return {
