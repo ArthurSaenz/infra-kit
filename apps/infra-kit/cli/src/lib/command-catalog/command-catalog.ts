@@ -109,6 +109,10 @@ export const commandCatalog: CommandCatalogEntry[] = [
   { cliName: 'vendor', menuGroup: 'environment', mcpTool: null, mcpExposed: false },
   { cliName: 'vendor-config', menuGroup: 'environment', mcpTool: null, mcpExposed: false },
   { cliName: 'doctor', menuGroup: 'environment', mcpTool: doctorMcpTool, mcpExposed: false },
+  // Long-running local dev server (fastify + chokidar). Not an MCP tool — it never
+  // returns, so it can't fit the request/response tool contract. menuGroup null:
+  // the no-arg picker drives one-shot commands, not a blocking foreground process.
+  { cliName: 'dev', menuGroup: null, mcpTool: null, mcpExposed: false },
   { cliName: 'init', menuGroup: 'environment', mcpTool: null, mcpExposed: false },
   { cliName: 'version', menuGroup: 'environment', mcpTool: versionMcpTool, mcpExposed: true },
   { cliName: 'config', menuGroup: 'environment', mcpTool: null, mcpExposed: false },

@@ -5,11 +5,8 @@ import type { ConfigRules } from '../types.js'
 import { sonarjsRecommended } from './base.js'
 
 /**
- * Function-level JSDoc enforcement was handed off to the custom `@wl/require-jsdoc-example` rule, which
- * applies a graduated cognitive-complexity gate (require a JSDoc block at complexity ≥ 8, require an
- * `@example` at ≥ 12) and is already wired in via that plugin's recommended preset. The three
- * off-the-shelf `jsdoc/*` function-doc rules below are therefore intentionally disabled so the two
- * layers don't double-report. Do NOT re-enable them without first removing the `@wl` rule.
+ * These jsdoc/* function-doc rules are off because `@wl/require-jsdoc-example` covers the same ground.
+ * Don't re-enable without first removing the @wl rule, or the two layers double-report.
  */
 export const jsdoc: TypedFlatConfigItem = {
   files: [GLOB_TS],

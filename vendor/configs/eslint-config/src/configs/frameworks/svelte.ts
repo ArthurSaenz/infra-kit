@@ -3,7 +3,7 @@ import type { TypedFlatConfigItem } from '@antfu/eslint-config'
 import { GLOB_SVELTE } from '../../globs.js'
 import type { ConfigRules } from '../../types.js'
 
-// Svelte-specific overrides, applied only in svelte mode (registered via the framework registry).
+// Svelte-specific overrides (svelte mode only).
 export const svelteConfig: TypedFlatConfigItem = {
   files: [GLOB_SVELTE],
   rules: {

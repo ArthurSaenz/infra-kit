@@ -16,6 +16,7 @@ import { IDE_MODES, addIdeWorktreeFolders } from 'src/integrations/ide'
 import type { IdeMode } from 'src/integrations/ide'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
+import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
@@ -225,6 +226,11 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
       structuredContent,
     }
   } catch (error) {
+    // A cancelled prompt (Ctrl-C / Esc) is a user back-out, not a failure: let it
+    // reach the top-level boundary untouched so it exits cleanly, instead of being
+    // logged as an error with a misleading "branches already exist" remediation.
+    if (isPromptCancellation(error)) throw error
+
     logger.error({ error }, '❌ Error managing worktrees')
     throw new OperationError(error, {
       operation: 'create worktrees',

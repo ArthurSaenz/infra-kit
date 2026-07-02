@@ -1,4 +1,5 @@
 import type { TypedFlatConfigItem } from '@antfu/eslint-config'
+import type { Linter } from 'eslint'
 import sonarjs from 'eslint-plugin-sonarjs'
 
 import type { ConfigRules } from '../types.js'
@@ -7,13 +8,9 @@ import type { ConfigRules } from '../types.js'
 export const antfuBaseOptions = { lessOpinionated: true }
 
 /** sonarjs recommended preset. Composed early so later layers can override its rules. */
-export const sonarjsRecommended = sonarjs.configs.recommended
+export const sonarjsRecommended: Linter.Config = sonarjs.configs.recommended
 
-/**
- * Project-wide rule overrides. Applied after antfu base + sonarjs (so these win); consumer
- * `rules`/`userConfigs` win over these — see `factory.ts`. Order reproduces the published baseline
- * byte-for-byte; do not reorder or dedupe.
- */
+/** Project-wide rule overrides, applied after antfu + sonarjs so these win; consumer rules win over these. */
 export const overrides: TypedFlatConfigItem = {
   rules: {
     'antfu/top-level-function': 'off',
@@ -53,7 +50,6 @@ export const overrides: TypedFlatConfigItem = {
     'style/jsx-wrap-multilines': 'off',
     'style/indent-binary-ops': 'off',
     'style/indent': 'off',
-    // Each style/* key appears once — TS1117 forbids duplicate object keys, so don't add a second.
     'style/jsx-curly-newline': 'off',
     'style/quotes': 'off',
 
@@ -64,20 +60,15 @@ export const overrides: TypedFlatConfigItem = {
     'sonarjs/mouse-events-a11y': 'off',
     'sonarjs/no-array-index-key': 'off',
 
-    'sonarjs/no-commented-code': 'off', // TODO: re-enable
+    'sonarjs/no-commented-code': 'off',
 
     'unicorn/no-new-array': 'off',
 
-    // prettier lowercases hex literals, conflicting with unicorn/number-literal-case (wants
-    // uppercase) — let prettier win.
+    // prettier lowercases hex literals; let it win over unicorn/number-literal-case.
     'unicorn/number-literal-case': 'off',
 
-    // Phase-1 public-API boundary (string-only): features/services may be imported only via their
-    // index barrel, not internals. ESLint matches these globs with gitignore semantics, so the
-    // `!**/…/index*` negations re-include the explicit barrel (also the only valid form under
-    // NodeNext/ESM). Can't detect cross-element relations (feature A -> B) — that's the Phase-2
-    // boundaries layer. Known residual: a feature-nested-service barrel can't be re-included
-    // (gitignore forbids re-including under an excluded parent) — deferred to Phase 2.
+    // Public-API boundary: feature/service internals are blocked; the `!**/index*` negations re-include
+    // the barrel (gitignore glob semantics). Cross-element relations are the Phase-2 boundaries layer.
     'no-restricted-imports': [
       'error',
       {

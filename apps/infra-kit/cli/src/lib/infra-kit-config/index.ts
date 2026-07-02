@@ -11,6 +11,8 @@ export {
 export type {
   CmuxLayout,
   ConfiguredIde,
+  DevAppConfig,
+  DevConfig,
   EnvAutoLoadConfig,
   InfraKitConfig,
   InfraKitConfigPaths,

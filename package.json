@@ -39,6 +39,7 @@
     "dx-env-status": "pnpm exec infra-kit env-status",
     "dx-env-list": "pnpm exec infra-kit env-list",
     "dx-init": "pnpm exec infra-kit init",
+    "dx-dev": "pnpm exec infra-kit dev",
     "dx-merge-dev": "pnpm exec infra-kit release merge-dev",
     "dx-release-list": "pnpm exec infra-kit release list",
     "dx-release-create": "pnpm exec infra-kit release create",

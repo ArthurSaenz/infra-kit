@@ -33,6 +33,7 @@ import { IDE_MODES } from 'src/integrations/ide'
 import type { IdeMode } from 'src/integrations/ide'
 import { getMenuGroupCommands } from 'src/lib/command-catalog'
 import { runEnvAutoLoad } from 'src/lib/env-autoload'
+import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { addJsonOption, emit, jsonOutput } from 'src/lib/json-output'
 import { logger } from 'src/lib/logger'
 import { formatAlignedRows } from 'src/lib/render'
@@ -78,6 +79,14 @@ const runProgram = async (argv?: string[]): Promise<void> => {
       await program.parseAsync()
     }
   } catch (error) {
+    // Ctrl-C / Esc out of any prompt is a deliberate back-out, not a failure:
+    // exit quietly with success so it matches the explicit "Operation cancelled."
+    // decline path and never trips scripts/CI into treating a cancel as an error.
+    if (isPromptCancellation(error)) {
+      logger.info('Operation cancelled.')
+      process.exit(0)
+    }
+
     const message = error instanceof Error ? error.message : String(error)
 
     logger.error(message)
@@ -414,6 +423,21 @@ program
   })
 
 program
+  .command('dev')
+  .description('Run local dev servers for every apps/<app>/api with a serverless.yml (watch, filter, port)')
+  .option('-w, --watch', 'Rebuild and restart on file save')
+  .option('--app <names>', 'Only run these apps (comma-separated folder names)')
+  .option('--exclude <names>', 'Skip these apps (comma-separated folder names)')
+  .option('--port <port>', 'Explicit port override (beats env/config for every app)')
+  .action(async (options) => {
+    // Lazy import so fastify/chokidar (and the whole dev stack) never load on the
+    // eager cli graph — they land in a split chunk reached only for `infra-kit dev`.
+    const { runDevServer, toDevServerOptions } = await import('src/entry/dev-server')
+
+    await runDevServer(toDevServerOptions(options))
+  })
+
+program
   .command('version')
   .description('Print the installed infra-kit CLI version')
   .action(async () => {
@@ -476,9 +500,10 @@ program.commands.forEach(addJsonOption)
 // (avoids recursion — `env-autoload`/`env-load` would re-enter), plus the
 // host-inspecting / meta commands where priming Doppler env would be surprising
 // (`init` bootstraps the shell block, `doctor` inspects auth, `version` prints a
-// string). `--help`/`--version`/the bare-arg menu don't fire preAction at all.
+// string, `dev` is a long-running server that manages its own env). `--help`/
+// `--version`/the bare-arg menu don't fire preAction at all.
 const isAutoLoadExcludedCommand = (name: string): boolean => {
-  return name.startsWith('env-') || name === 'init' || name === 'doctor' || name === 'version'
+  return name.startsWith('env-') || name === 'init' || name === 'doctor' || name === 'version' || name === 'dev'
 }
 
 program.hook('preAction', async (_thisCommand, actionCommand) => {
@@ -532,57 +557,63 @@ if (process.argv.length <= 2) {
       })
   })
 
-  let selected: string | null
+  let selected: string | null = null
 
   // Interactive TTY → Ink command palette, loaded lazily via dynamic import so
   // React/Ink never touch the MCP / `--json` / non-TTY code paths. Otherwise fall
-  // back to the Inquirer menu (scripts, pipes, CI).
-  if (process.stdout.isTTY && process.stdin.isTTY) {
-    const { runCommandPalette } = await import('src/tui/boot')
+  // back to the Inquirer menu (scripts, pipes, CI). Ctrl-C / Esc at the menu
+  // throws from the Inquirer fallback; treat it as a clean exit (nothing picked).
+  try {
+    if (process.stdout.isTTY && process.stdin.isTTY) {
+      const { runCommandPalette } = await import('src/tui/boot')
 
-    selected = await runCommandPalette(paletteItems)
-  } else {
-    const alignedLabels = formatAlignedRows(
-      paletteItems.map((item) => {
-        return [item.name, item.description] as const
-      }),
-    )
-    const labelByName = new Map<string, string>()
+      selected = await runCommandPalette(paletteItems)
+    } else {
+      const alignedLabels = formatAlignedRows(
+        paletteItems.map((item) => {
+          return [item.name, item.description] as const
+        }),
+      )
+      const labelByName = new Map<string, string>()
 
-    paletteItems.forEach((item, index) => {
-      labelByName.set(item.name, alignedLabels[index] ?? item.name)
-    })
+      paletteItems.forEach((item, index) => {
+        labelByName.set(item.name, alignedLabels[index] ?? item.name)
+      })
 
-    const toChoices = (names: string[]) => {
-      return names
-        .filter((name) => {
-          return commandMap.has(name)
-        })
-        .map((name) => {
-          return {
-            name: labelByName.get(name) ?? name,
-            value: name,
-          }
-        })
+      const toChoices = (names: string[]) => {
+        return names
+          .filter((name) => {
+            return commandMap.has(name)
+          })
+          .map((name) => {
+            return {
+              name: labelByName.get(name) ?? name,
+              value: name,
+            }
+          })
+      }
+
+      selected = await select(
+        {
+          message: 'Select a command to run',
+          choices: [
+            new Separator(' '),
+            new Separator('— Release Management —'),
+            ...toChoices(releaseCommands),
+            new Separator(' '),
+            new Separator('— Worktrees —'),
+            ...toChoices(worktreeCommands),
+            new Separator(' '),
+            new Separator('— Environment —'),
+            ...toChoices(envCommands),
+          ],
+        },
+        { output: process.stderr },
+      )
     }
-
-    selected = await select(
-      {
-        message: 'Select a command to run',
-        choices: [
-          new Separator(' '),
-          new Separator('— Release Management —'),
-          ...toChoices(releaseCommands),
-          new Separator(' '),
-          new Separator('— Worktrees —'),
-          ...toChoices(worktreeCommands),
-          new Separator(' '),
-          new Separator('— Environment —'),
-          ...toChoices(envCommands),
-        ],
-      },
-      { output: process.stderr },
-    )
+  } catch (error) {
+    // Ctrl-C / Esc at the menu is a clean back-out; leave `selected` as null.
+    if (!isPromptCancellation(error)) throw error
   }
 
   // The menu is a guided surface; don't nag about deprecated flat names here.

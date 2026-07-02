@@ -10,14 +10,14 @@ describe('buildShellBody — env auto-load shell-startup block', () => {
     expect(body).toContain('_infra_kit_startup_autoload\n')
   })
 
-  it('gates on a session and skips subshells that already inherited an env', () => {
+  it('gates on a session and skips the spawn only when the env is for THIS project root', () => {
     expect(body).toContain('[[ -z "$INFRA_KIT_SESSION" ]] && return')
-    expect(body).toContain('[[ -n "$INFRA_KIT_ENV_CONFIG" ]] && return')
+    expect(body).toContain('[[ -n "$INFRA_KIT_ENV_CONFIG" && "$dir" == "$INFRA_KIT_ENV_PROJECT_ROOT" ]] && return')
   })
 
-  it('walks up for infra-kit.json (project/worktree gate) before spawning node', () => {
+  it('walks up for infra-kit.json with a fixed-point break (no infinite loop on empty $PWD)', () => {
     expect(body).toContain('[[ -f "$dir/infra-kit.json" ]]')
-    expect(body).toContain('while [[ "$dir" != / ]]')
+    expect(body).toContain('while [[ -n "$dir" && "$dir" != "$prev" ]]')
   })
 
   it('spawns env-autoload backgrounded and silenced (precmd does the sourcing)', () => {

@@ -299,23 +299,19 @@ export const buildShellBody = (): string => {
     '  local dir="$cache_root/$INFRA_KIT_SESSION"',
     '  local load_file="$dir/env-load.sh"',
     '  local clear_file="$dir/env-clear.sh"',
-    '  local mtime',
-    '  if [[ -f "$load_file" ]]; then',
-    '    mtime=$(zstat +mtime -- "$load_file" 2>/dev/null || echo 0)',
-    '    if (( mtime > _INFRA_KIT_LAST_LOAD_MTIME && mtime >= _INFRA_KIT_SHELL_STARTED )); then',
-    '      source "$load_file"',
-    '      _INFRA_KIT_LAST_LOAD_MTIME=$mtime',
+    '  local load_mtime=0 clear_mtime=0',
+    '  [[ -f "$load_file" ]] && load_mtime=$(zstat +mtime -- "$load_file" 2>/dev/null || echo 0)',
+    '  [[ -f "$clear_file" ]] && clear_mtime=$(zstat +mtime -- "$clear_file" 2>/dev/null || echo 0)',
+    '  if (( load_mtime > _INFRA_KIT_LAST_LOAD_MTIME && load_mtime >= _INFRA_KIT_SHELL_STARTED && load_mtime >= clear_mtime )); then',
+    '    source "$load_file"',
+    '    _INFRA_KIT_LAST_LOAD_MTIME=$load_mtime',
     // eslint-disable-next-line no-template-curly-in-string
-    '      print -u2 "infra-kit: auto-loaded vars for ${INFRA_KIT_ENV_CONFIG:-?}"',
-    '    fi',
+    '    print -u2 "infra-kit: auto-loaded vars for ${INFRA_KIT_ENV_CONFIG:-?}"',
     '  fi',
-    '  if [[ -f "$clear_file" ]]; then',
-    '    mtime=$(zstat +mtime -- "$clear_file" 2>/dev/null || echo 0)',
-    '    if (( mtime > _INFRA_KIT_LAST_CLEAR_MTIME && mtime >= _INFRA_KIT_SHELL_STARTED )); then',
-    '      source "$clear_file"',
-    '      _INFRA_KIT_LAST_CLEAR_MTIME=$mtime',
-    '      print -u2 "infra-kit: auto-cleared env"',
-    '    fi',
+    '  if (( clear_mtime > _INFRA_KIT_LAST_CLEAR_MTIME && clear_mtime >= _INFRA_KIT_SHELL_STARTED && clear_mtime > load_mtime )); then',
+    '    source "$clear_file"',
+    '    _INFRA_KIT_LAST_CLEAR_MTIME=$clear_mtime',
+    '    print -u2 "infra-kit: auto-cleared env"',
     '  fi',
     '}',
     'autoload -Uz add-zsh-hook',
@@ -325,21 +321,24 @@ export const buildShellBody = (): string => {
     // One-shot env auto-load when a NEW shell opens inside an infra-kit project
     // or worktree (config: envAutoLoad.trigger "shell-startup"). Cheap pure-zsh
     // project gate (walk up for infra-kit.json) avoids spawning node in unrelated
-    // shells; the INFRA_KIT_ENV_CONFIG guard skips subshells that already inherited
-    // a loaded env. The spawn is DETACHED+backgrounded ( ... & ) so it never blocks
-    // the prompt; it only WRITES env-load.sh and the precmd hook above is the sole
-    // sourcer (picked up on a subsequent prompt). Trade-off: the gate can't read the
-    // merged JSON config, so a fresh shell in a project WITHOUT envAutoLoad still
-    // spawns one background process that resolves config, finds nothing, and exits.
+    // shells; the spawn is skipped only when the already-loaded env belongs to THIS
+    // project root (INFRA_KIT_ENV_PROJECT_ROOT), so cd'ing into a DIFFERENT project
+    // re-loads instead of silently keeping the previous project's secrets. The spawn
+    // is DETACHED+backgrounded ( ... & ) so it never blocks the prompt; it only
+    // WRITES env-load.sh and the precmd hook above is the sole sourcer (picked up on
+    // a subsequent prompt). Trade-off: the gate can't read the merged JSON config, so
+    // a fresh shell in a project WITHOUT envAutoLoad still spawns one background
+    // process that resolves config, finds nothing, and exits.
     '_infra_kit_startup_autoload() {',
     '  [[ -z "$INFRA_KIT_SESSION" ]] && return',
-    '  [[ -n "$INFRA_KIT_ENV_CONFIG" ]] && return',
-    '  local dir="$PWD"',
-    '  while [[ "$dir" != / ]]; do',
+    '  local dir="$PWD" prev=""',
+    '  while [[ -n "$dir" && "$dir" != "$prev" ]]; do',
     '    if [[ -f "$dir/infra-kit.json" ]]; then',
+    '      [[ -n "$INFRA_KIT_ENV_CONFIG" && "$dir" == "$INFRA_KIT_ENV_PROJECT_ROOT" ]] && return',
     `      ( ${runCmd} env-autoload & ) >/dev/null 2>&1`,
     '      return',
     '    fi',
+    '    prev="$dir"',
     // eslint-disable-next-line no-template-curly-in-string
     '    dir="${dir:h}"',
     '  done',

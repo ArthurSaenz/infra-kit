@@ -10,6 +10,7 @@ import {
   INFRA_KIT_ENV_CLEARED_VAR,
   INFRA_KIT_ENV_CONFIG_VAR,
   INFRA_KIT_ENV_LOADED_AT_VAR,
+  INFRA_KIT_ENV_PROJECT_ROOT_VAR,
   INFRA_KIT_ENV_PROJECT_VAR,
   atomicWriteFileSync,
   getSessionCacheDir,
@@ -30,6 +31,7 @@ export const buildEnvClearLines = (varNames: string[]): string[] => {
     }),
     `unset ${INFRA_KIT_ENV_CONFIG_VAR}`,
     `unset ${INFRA_KIT_ENV_PROJECT_VAR}`,
+    `unset ${INFRA_KIT_ENV_PROJECT_ROOT_VAR}`,
     `unset ${INFRA_KIT_ENV_LOADED_AT_VAR}`,
     `unset ${INFRA_KIT_ENV_AUTOLOADED_VAR}`,
     `export ${INFRA_KIT_ENV_CLEARED_VAR}='1'`,
@@ -63,7 +65,8 @@ export const envClear = async () => {
   process.stdout.write(`${clearFilePath}\n`)
 
   // Remove env load file so the next env-clear call correctly reports "no env loaded".
-  fs.unlinkSync(envLoadPath)
+  // `force` so concurrent clears don't throw ENOENT when another already removed it.
+  fs.rmSync(envLoadPath, { force: true })
 
   const structuredContent = {
     filePath: clearFilePath,

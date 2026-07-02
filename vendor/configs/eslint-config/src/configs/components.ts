@@ -4,13 +4,10 @@ import wl from '@slip-stream-kit/eslint-plugin'
 import { GLOB_TS } from '../globs.js'
 import type { ConfigRules } from '../types.js'
 
-// White-label component-file conventions, from the plugin's `configs.recommended` preset. Some @wl
-// rules are muted in `configs/temp-disabled.ts`, not here.
+// White-label component conventions (plugin's recommended preset); some @wl rules are muted in temp-disabled.ts.
 export const wlComponentsRecommended: TypedFlatConfigItem[] = [
   ...(wl.configs.recommended as TypedFlatConfigItem[]),
-  // The preset ships `@wl/require-jsdoc-example` at `warn` for soft, non-breaking adoption; we enforce
-  // it at `error` to match the other @wl rules. It is currently muted in `configs/temp-disabled.ts`
-  // until adoption completes — the `error` severity here is the intended state once that mute is lifted.
+  // Preset ships require-jsdoc-example at `warn`; we bump to `error` (muted in temp-disabled.ts until adoption).
   {
     name: 'wl/require-jsdoc-example-error',
     files: [GLOB_TS],

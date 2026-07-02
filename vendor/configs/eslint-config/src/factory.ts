@@ -17,9 +17,7 @@ declare const console: { warn: (...args: unknown[]) => void }
 const hasKeys = (obj: object): boolean => Object.keys(obj).length > 0
 
 /**
- * Build the shared flat ESLint config as a single `antfu(...)` call. Each layer is gated by an option
- * (see `resolveOptions`); layers are positional in the original order, and `rules`/`userConfigs` are
- * appended only when non-empty, so the default call shape never changes.
+ * Build the shared flat ESLint config as one `antfu(...)` call; each layer is gated by an option.
  *
  * @example
  * export default createConfig({ mode: 'svelte', boundaries: 'error', ignores: ['dist'] })
@@ -42,8 +40,7 @@ export const createConfig = async (userOptions: ConfigOptions = {}): Promise<Typ
     ...(o.components ? wlComponentsRecommended : []),
     ...(o.jsdoc ? [jsdoc] : []),
     ...(o.markdown ? [markdown] : []),
-    // Appended after every rule-bearing layer so its `'off'` entries win — the single place for
-    // temporary rule disables. Kept before `o.rules`/`userConfigs` so consumers can still override.
+    // Appended after all rule layers so its `'off'` wins, but before consumer rules so they can override.
     tempDisabledRules(o),
     ignores(o.ignores),
     ...(hasKeys(o.rules) ? [{ rules: o.rules }] : []),

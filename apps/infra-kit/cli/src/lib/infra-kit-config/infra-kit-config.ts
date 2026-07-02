@@ -89,6 +89,21 @@ const worktreesConfigSchema = z.object({
   cmux: cmuxConfigSchema.optional(),
 })
 
+// dev-server per-app overrides. Maps an app folder name (e.g. `client`) to its
+// local dev port and/or URL prefix. Both keys optional. An app absent from the
+// map falls back to env (`{APP}_PORT` / `PORT`) then the built-in defaults, so
+// the map is intentionally NOT validated against the discovered apps here — an
+// unknown app name is simply ignored at resolve time (lib/dev), never a parse
+// error that would brick every command.
+const devAppConfigSchema = z
+  .object({
+    port: z.number().int().positive().optional(),
+    prefixUrl: z.string().min(1).optional(),
+  })
+  .strict()
+
+const devConfigSchema = z.record(z.string().min(1), devAppConfigSchema)
+
 // env auto-load: opt-in convenience that primes Doppler env when you work inside
 // this project / a worktree. Absent => disabled. `trigger` selects the moment
 // (pick one):
@@ -115,6 +130,7 @@ const infraKitConfigObject = z.object({
   taskManager: taskManagerSchema.optional(),
   worktrees: worktreesConfigSchema.optional(),
   envAutoLoad: envAutoLoadSchema.optional(),
+  dev: devConfigSchema.optional(),
 })
 
 // Full schema = base object + a parse-time uniqueness check on the `ide` array.
@@ -148,6 +164,12 @@ export type InfraKitConfig = z.infer<typeof infraKitConfigSchema>
 
 /** Resolved env auto-load config (`{ trigger, config }`), or `undefined` when off. */
 export type EnvAutoLoadConfig = z.infer<typeof envAutoLoadSchema>
+
+/** Per-app dev-server overrides (`{ port?, prefixUrl? }`). */
+export type DevAppConfig = z.infer<typeof devAppConfigSchema>
+
+/** The full `dev` section: a map of app folder name to its {@link DevAppConfig}. */
+export type DevConfig = z.infer<typeof devConfigSchema>
 
 /** A single resolved IDE entry (`{ provider, config }`). */
 export type ConfiguredIde = z.infer<typeof ideSchema>

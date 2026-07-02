@@ -20,8 +20,10 @@ import { logger } from 'src/lib/logger'
 /** Which moment a concrete callsite represents. Matches the config `trigger`. */
 export type AutoLoadTrigger = EnvAutoLoadConfig['trigger']
 
-/** Per-session flag file that de-dups the auto-load warning (misconfig or failure). */
-const WARN_SENTINEL_FILE = 'autoload-warn.flag'
+/** Per-session flag de-duping the MISCONFIG warning (bad envAutoLoad.config). */
+const WARN_MISCONFIG_SENTINEL_FILE = 'autoload-warn-misconfig.flag'
+/** Per-session flag de-duping the transient-FAILURE warning (Doppler down/unauth). */
+const WARN_FAIL_SENTINEL_FILE = 'autoload-warn-fail.flag'
 
 /** Per-session marker recording the last auto-load failure (mtime = when). */
 const FAIL_SENTINEL_FILE = 'autoload-fail.flag'
@@ -76,6 +78,7 @@ export const resolveEnvAutoLoad = async (canWarn = true): Promise<ResolvedEnvAut
         `infra-kit: envAutoLoad.config "${autoLoad.config}" is not one of environments [${config.environments.join(
           ', ',
         )}] — env auto-load disabled.`,
+        WARN_MISCONFIG_SENTINEL_FILE,
       )
     }
 
@@ -182,7 +185,18 @@ export const runEnvAutoLoad = async ({ expectedTrigger }: RunEnvAutoLoadArgs): P
     // re-probed on every command in the same session.
     if (recentlyFailed()) return null
 
-    const result = await writeEnvLoadFile({ config: resolved.config, autoLoaded: true })
+    const preWriteMtime = readLoadFileMtime()
+    const result = await writeEnvLoadFile({
+      config: resolved.config,
+      autoLoaded: true,
+      // Re-check after the slow Doppler download: abort if a clear or a manual load
+      // landed meanwhile, so a backgrounded auto-load never clobbers a deliberate action.
+      beforeWrite: () => {
+        return !isClearedOnDisk() && !manualLoadLandedSince(preWriteMtime)
+      },
+    })
+
+    if (!result) return null
 
     clearFailure()
 
@@ -195,7 +209,7 @@ export const runEnvAutoLoad = async ({ expectedTrigger }: RunEnvAutoLoadArgs): P
     // Surface the failure once per session on the interactive channel; stay silent
     // (debug only) on the backgrounded shell-startup path.
     if (canWarn) {
-      warnOnce(`infra-kit: env auto-load failed — ${reason} (will retry later)`)
+      warnOnce(`infra-kit: env auto-load failed — ${reason} (will retry later)`, WARN_FAIL_SENTINEL_FILE)
     } else {
       logger.debug(`env auto-load skipped: ${reason}`)
     }
@@ -212,6 +226,40 @@ const readAutoLoadEnvSnapshot = (): AutoLoadEnvSnapshot => {
     currentConfig: process.env[INFRA_KIT_ENV_CONFIG_VAR],
     currentProject: process.env[INFRA_KIT_ENV_PROJECT_VAR],
     autoLoadedMarker: process.env[INFRA_KIT_ENV_AUTOLOADED_VAR],
+  }
+}
+
+/** mtime of the on-disk env-load.sh, or null if absent/unreadable. */
+const readLoadFileMtime = (): number | null => {
+  try {
+    return fs.statSync(path.join(getSessionCacheDir(), ENV_LOAD_FILE)).mtimeMs
+  } catch {
+    return null
+  }
+}
+
+/**
+ * True when a MANUAL env-load landed on disk after `sinceMtime` (the file now
+ * exists, is newer, and carries the manual-load `unset INFRA_KIT_ENV_AUTOLOADED`
+ * line). Used to abort an in-flight auto-load so it never clobbers a deliberate load.
+ */
+const manualLoadLandedSince = (sinceMtime: number | null): boolean => {
+  try {
+    const p = path.join(getSessionCacheDir(), ENV_LOAD_FILE)
+
+    if (!fs.existsSync(p)) return false
+
+    const mtime = fs.statSync(p).mtimeMs
+
+    if (sinceMtime !== null && mtime <= sinceMtime) return false
+
+    // Anchor to a whole line so the marker can't match inside a single-quoted
+    // secret value that happens to contain this literal text.
+    const manualMarker = new RegExp(`^unset ${INFRA_KIT_ENV_AUTOLOADED_VAR}$`, 'm')
+
+    return manualMarker.test(fs.readFileSync(p, 'utf-8'))
+  } catch {
+    return false
   }
 }
 
@@ -277,10 +325,10 @@ const clearFailure = (): void => {
  * does not spam a warning on every cli-invocation. Falls back to a plain warn when
  * no session cache dir is available.
  */
-const warnOnce = (message: string): void => {
+const warnOnce = (message: string, sentinelFile: string): void => {
   try {
     const dir = getSessionCacheDir()
-    const flagPath = path.join(dir, WARN_SENTINEL_FILE)
+    const flagPath = path.join(dir, sentinelFile)
 
     if (fs.existsSync(flagPath)) return
 

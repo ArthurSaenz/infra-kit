@@ -1,0 +1,102 @@
+import { describe, expect, it } from 'vitest'
+
+import {
+  DEFAULT_PORT,
+  DEFAULT_PREFIX_URL,
+  findPortConflicts,
+  parsePortString,
+  resolvePort,
+  resolvePrefixUrl,
+} from 'src/dev/ports'
+
+/**
+ * Pure port / prefix resolution. Every function is side-effect free, so these
+ * specs pass `env` and `devConfig` in as plain objects — no fixtures, no cwd,
+ * no process.env mutation.
+ */
+describe('resolvePort — precedence order', () => {
+  it('falls back to the 3010 default when nothing is set', () => {
+    expect(resolvePort('client', {}, {})).toBe(DEFAULT_PORT)
+  })
+
+  it('uses dev.<app>.port from config over the default', () => {
+    expect(resolvePort('client', {}, { client: { port: 3200 } })).toBe(3200)
+  })
+
+  it('lets PORT beat the config port', () => {
+    expect(resolvePort('client', { PORT: '3300' }, { client: { port: 3200 } })).toBe(3300)
+  })
+
+  it('lets {APP}_PORT beat PORT and config', () => {
+    expect(resolvePort('client', { PORT: '3300', CLIENT_PORT: '3400' }, { client: { port: 3200 } })).toBe(3400)
+  })
+
+  it('maps a hyphenated app name to UPPER_SNAKE_CASE for the {APP}_PORT key', () => {
+    expect(resolvePort('search-engine', { SEARCH_ENGINE_PORT: '3500' }, {})).toBe(3500)
+  })
+
+  it('lets an explicit portOverride beat every env var and config source', () => {
+    expect(resolvePort('client', { PORT: '3300', CLIENT_PORT: '3400' }, { client: { port: 3200 } }, 3999)).toBe(3999)
+  })
+
+  it('honors portOverride 0 and does NOT fall through to a lower tier', () => {
+    // 0 is a valid "pick a free port" request; only null/undefined means "unset".
+    expect(resolvePort('client', { CLIENT_PORT: '3400' }, { client: { port: 3200 } }, 0)).toBe(0)
+  })
+
+  it('strips surrounding quotes on a {APP}_PORT env value', () => {
+    // Secrets managers can export values wrapped in quotes.
+    expect(resolvePort('client', { CLIENT_PORT: '"3400"' }, {})).toBe(3400)
+  })
+})
+
+describe('resolvePrefixUrl — config over default', () => {
+  it('defaults to /api/v1 when nothing is configured', () => {
+    expect(resolvePrefixUrl('client', {})).toBe(DEFAULT_PREFIX_URL)
+  })
+
+  it('honors dev.<app>.prefixUrl over the default', () => {
+    expect(resolvePrefixUrl('client', { client: { prefixUrl: '/custom/v2' } })).toBe('/custom/v2')
+  })
+})
+
+describe('parsePortString — raw port coercion', () => {
+  it('strips a single pair of surrounding quotes', () => {
+    expect(parsePortString('"3400"')).toBe(3400)
+    expect(parsePortString("'3400'")).toBe(3400)
+  })
+
+  it('returns undefined for non-numeric input', () => {
+    expect(parsePortString('abc')).toBeUndefined()
+  })
+
+  it('returns undefined for undefined and blank input', () => {
+    expect(parsePortString(undefined)).toBeUndefined()
+    expect(parsePortString('')).toBeUndefined()
+  })
+})
+
+describe('findPortConflicts — duplicate detection', () => {
+  it('reports the duplicate port and every colliding app when two apps share a port', () => {
+    const result = findPortConflicts([
+      { name: 'client', port: 3010 },
+      { name: 'backoffice', port: 3010 },
+    ])
+
+    expect(result.duplicatePorts).toEqual([3010])
+    expect(result.conflictingApps).toEqual([
+      { name: 'client', port: 3010 },
+      { name: 'backoffice', port: 3010 },
+    ])
+  })
+
+  it('reports no conflict when every app resolves to a distinct port', () => {
+    const result = findPortConflicts([
+      { name: 'client', port: 3010 },
+      { name: 'backoffice', port: 3011 },
+    ])
+
+    expect(result.duplicatePorts).toEqual([])
+    expect(result.conflictingApps).toEqual([])
+  })
+})

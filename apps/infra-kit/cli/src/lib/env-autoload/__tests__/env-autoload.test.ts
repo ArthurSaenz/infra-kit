@@ -215,7 +215,21 @@ describe('runEnvAutoLoad', () => {
     const result = await runEnvAutoLoad({ expectedTrigger: 'shell-startup' })
 
     expect(result).toBe('/cache/env-load.sh')
-    expect(writeEnvLoadFile).toHaveBeenCalledWith({ config: 'dev', autoLoaded: true })
+    expect(writeEnvLoadFile).toHaveBeenCalledWith(expect.objectContaining({ config: 'dev', autoLoaded: true }))
+  })
+
+  it('returns null without throwing or warning when the write is aborted (beforeWrite returned false)', async () => {
+    vi.mocked(getInfraKitConfig).mockResolvedValue({
+      ...baseConfig,
+      envAutoLoad: { trigger: 'cli-invocation', config: 'dev' },
+    } as never)
+    vi.mocked(writeEnvLoadFile).mockResolvedValue(null)
+
+    const result = await runEnvAutoLoad({ expectedTrigger: 'cli-invocation' })
+
+    expect(result).toBeNull()
+    expect(logger.warn).not.toHaveBeenCalled()
+    expect(logger.debug).not.toHaveBeenCalled()
   })
 
   it('returns null without fetching when the configured trigger is for the other callsite', async () => {

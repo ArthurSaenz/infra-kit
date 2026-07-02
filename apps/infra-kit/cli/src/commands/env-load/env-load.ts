@@ -17,16 +17,17 @@ import {
 import { commandEcho } from 'src/lib/command-echo'
 import {
   ENV_LOAD_FILE,
-  ENV_VAR_LINE_PATTERN,
   INFRA_KIT_ENV_AUTOLOADED_VAR,
   INFRA_KIT_ENV_CLEARED_VAR,
   INFRA_KIT_ENV_CONFIG_VAR,
   INFRA_KIT_ENV_LOADED_AT_VAR,
+  INFRA_KIT_ENV_PROJECT_ROOT_VAR,
   INFRA_KIT_ENV_PROJECT_VAR,
   atomicWriteFileSync,
   getSessionCacheDir,
 } from 'src/lib/constants'
 import { extractStderr } from 'src/lib/errors/operation-error'
+import { getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { defineMcpTool, textContent } from 'src/types'
 
@@ -43,6 +44,12 @@ interface WriteEnvLoadFileArgs {
    * marker and lifts any clear suppression so a deliberate load wins.
    */
   autoLoaded?: boolean
+  /**
+   * Auto-load only: re-checked AFTER the Doppler download, immediately before the
+   * atomic write. Return false to abort (a clear or a manual load landed during the
+   * slow download). Manual loads omit it and always write.
+   */
+  beforeWrite?: () => boolean
 }
 
 export interface EnvLoadFileResult {
@@ -53,9 +60,10 @@ export interface EnvLoadFileResult {
 }
 
 interface EnvLoadFileLinesArgs {
-  envContent: string
+  pairs: Array<[string, string]>
   config: string
   project: string
+  projectRoot: string
   loadedAt: string
   autoLoaded: boolean
 }
@@ -84,21 +92,39 @@ const buildAutoLoadMarkerLines = (autoLoaded: boolean): string[] => {
  * assignment when the file is sourced.
  */
 export const buildEnvLoadFileLines = ({
-  envContent,
+  pairs,
   config,
   project,
+  projectRoot,
   loadedAt,
   autoLoaded,
 }: EnvLoadFileLinesArgs): string[] => {
   return [
     'set -a',
-    envContent,
+    ...pairs.map(([key, value]) => {
+      return `${key}=${shellSingleQuote(value)}`
+    }),
     `${INFRA_KIT_ENV_CONFIG_VAR}=${shellSingleQuote(config)}`,
     `${INFRA_KIT_ENV_PROJECT_VAR}=${shellSingleQuote(project)}`,
+    `${INFRA_KIT_ENV_PROJECT_ROOT_VAR}=${shellSingleQuote(projectRoot)}`,
     `${INFRA_KIT_ENV_LOADED_AT_VAR}=${shellSingleQuote(loadedAt)}`,
     ...buildAutoLoadMarkerLines(autoLoaded),
     'set +a',
   ]
+}
+
+/**
+ * Project root (git top-level) the loaded env belongs to, for the cross-project
+ * shell gate. Returns '' when this isn't a git checkout so a non-git infra-kit
+ * project still loads — the shell gate then fails open (spawns rather than skips)
+ * instead of breaking the whole load on `git rev-parse` throwing.
+ */
+const resolveProjectRootSafe = async (): Promise<string> => {
+  try {
+    return await getProjectRoot()
+  } catch {
+    return ''
+  }
 }
 
 /**
@@ -110,27 +136,31 @@ export const buildEnvLoadFileLines = ({
 export const writeEnvLoadFile = async ({
   config,
   autoLoaded = false,
-}: WriteEnvLoadFileArgs): Promise<EnvLoadFileResult> => {
+  beforeWrite,
+}: WriteEnvLoadFileArgs): Promise<EnvLoadFileResult | null> => {
   await validateDopplerCliAndAuth()
 
   const project = await getDopplerProject()
+  const projectRoot = await resolveProjectRootSafe()
 
-  const envContent = await downloadDopplerSecrets(project, config)
-
-  assertValidEnvContent(envContent)
+  const pairs = await downloadDopplerSecrets(project, config)
 
   const loadedAt = new Date().toISOString()
-  const envFileLines = buildEnvLoadFileLines({ envContent, config, project, loadedAt, autoLoaded })
+  const envFileLines = buildEnvLoadFileLines({ pairs, config, project, projectRoot, loadedAt, autoLoaded })
 
   const cacheDir = getSessionCacheDir()
   const envFilePath = path.resolve(cacheDir, ENV_LOAD_FILE)
+
+  // Re-check suppression immediately before the atomic write: a clear or a manual
+  // load may have landed during the slow Doppler download (auto-load path only).
+  if (beforeWrite && !beforeWrite()) return null
 
   fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
   atomicWriteFileSync(envFilePath, `${envFileLines.join('\n')}\n`, 0o600)
 
   return {
     filePath: envFilePath,
-    variableCount: countEnvVarLines(envContent),
+    variableCount: pairs.length,
     project,
     config,
   }
@@ -175,6 +205,10 @@ export const envLoad = async (args: EnvLoadArgs) => {
   // A manual load is authoritative: autoLoaded=false drops the auto marker.
   const result = await writeEnvLoadFile({ config: selectedConfig, autoLoaded: false })
 
+  // A manual load passes no beforeWrite, so it always writes — this guards the
+  // invariant (and narrows the nullable result) rather than handling a real path.
+  if (!result) throw new Error('env-load: write was unexpectedly aborted')
+
   // REQUIRED
   process.stdout.write(`${result.filePath}\n`)
 
@@ -209,7 +243,7 @@ export const DOPPLER_MAX_OUTPUT_BYTES = 1024 * 1024
  */
 const DOPPLER_DOWNLOAD_TIMEOUT_MS = 30_000
 
-const downloadDopplerSecrets = async (project: string, config: string): Promise<string> => {
+const downloadDopplerSecrets = async (project: string, config: string): Promise<Array<[string, string]>> => {
   const prevQuiet = $.quiet
 
   $.quiet = true
@@ -217,16 +251,17 @@ const downloadDopplerSecrets = async (project: string, config: string): Promise<
     let result
 
     try {
-      result = await $`doppler secrets download --no-file --format env --project ${project} --config ${config}`.timeout(
-        DOPPLER_DOWNLOAD_TIMEOUT_MS,
-      )
+      result =
+        await $`doppler secrets download --no-file --format json --project ${project} --config ${config}`.timeout(
+          DOPPLER_DOWNLOAD_TIMEOUT_MS,
+        )
     } catch (error: unknown) {
       throw await translateDopplerDownloadError(error, project, config)
     }
 
     assertDopplerOutputSize(result.stdout)
 
-    return result.stdout.trim()
+    return parseDopplerSecretsJson(result.stdout)
   } finally {
     $.quiet = prevQuiet
   }
@@ -262,42 +297,59 @@ export const assertDopplerOutputSize = (stdout: string): void => {
   }
 }
 
-const countEnvVarLines = (content: string): number => {
-  return content.split('\n').filter((line) => {
-    return ENV_VAR_LINE_PATTERN.test(line)
-  }).length
-}
-
-const SHELL_DIRECTIVE_LINES = new Set(['set -a', 'set +a'])
-
 export const shellSingleQuote = (value: string): string => {
   const escaped = value.replaceAll("'", "'\\''")
 
   return `'${escaped}'`
 }
 
+/** A valid POSIX env-var name: a letter or underscore, then word characters. */
+const ENV_VAR_NAME_PATTERN = /^[A-Z_]\w*$/i
+
 /**
- * Guard against Doppler returning non-env output (auth warnings on stdout,
- * partial downloads, HTML error pages, etc.). Every non-blank, non-directive
- * line must match KEY=VALUE — skipping directives keeps future format tweaks
- * cheap without loosening the check.
+ * Parse the `doppler secrets download --format json` output (a flat
+ * `{"KEY":"value"}` map) into ordered `[key, value]` pairs, validating the shape
+ * and every name/value. Values are returned RAW — callers must single-quote them
+ * before emitting shell (an unquoted `a$(cmd)b` would execute on `source`).
+ *
+ * @example
+ * parseDopplerSecretsJson('{"FOO":"bar","BAZ":"a$(x)"}')
+ * // => [['FOO', 'bar'], ['BAZ', 'a$(x)']]
  */
-export const assertValidEnvContent = (content: string): void => {
-  if (content.trim().length === 0) {
+export const parseDopplerSecretsJson = (stdout: string): Array<[string, string]> => {
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(stdout)
+  } catch {
+    throw new Error(`doppler returned non-JSON output for env-load (got: ${JSON.stringify(stdout.slice(0, 80))})`)
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('doppler returned unexpected JSON shape for env-load (expected an object of KEY: value pairs)')
+  }
+
+  const pairs: Array<[string, string]> = []
+
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!ENV_VAR_NAME_PATTERN.test(key)) {
+      throw new Error(
+        `doppler returned an invalid env var name for env-load (got: ${JSON.stringify(key.slice(0, 80))})`,
+      )
+    }
+
+    if (typeof value !== 'string') {
+      throw new TypeError(`doppler returned a non-string value for "${key}" (got ${typeof value})`)
+    }
+
+    pairs.push([key, value])
+  }
+
+  if (pairs.length === 0) {
     throw new Error('doppler returned empty output for env-load')
   }
 
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim()
-
-    if (trimmed.length === 0 || SHELL_DIRECTIVE_LINES.has(trimmed)) continue
-
-    if (!ENV_VAR_LINE_PATTERN.test(trimmed)) {
-      throw new Error(
-        `doppler returned unexpected output for env-load (expected KEY=value lines, got: ${JSON.stringify(trimmed.slice(0, 80))})`,
-      )
-    }
-  }
+  return pairs
 }
 
 // MCP Tool Registration

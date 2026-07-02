@@ -1,16 +1,13 @@
 import { frameworks } from './configs/frameworks/index.js'
 import type { ConfigOptions, ResolvedOptions } from './types.js'
 
-/** A mode is "known" iff it's in the framework registry — the single source of truth, so adding an
- *  entry there is the only edit needed to register a mode. */
+/** A mode is "known" iff it's in the framework registry (the single source of truth for modes). */
 export const isKnownMode = (mode: string): boolean => {
   return mode in frameworks
 }
 
 /**
- * Normalize user options to a fully-resolved shape. The defaults reproduce the published baseline
- * byte-for-byte (react, boundaries 'warn', every layer on, empty rules/userConfigs); changing one
- * changes the zero-drift baseline.
+ * Normalize user options to a fully-resolved shape (defaults: react, boundaries 'warn', every layer on).
  *
  * @example
  * resolveOptions({ boundaries: false }) // boundaries layer dropped, everything else default

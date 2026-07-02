@@ -9,6 +9,12 @@ export const ENV_CLEAR_FILE = 'env-clear.sh'
 export const INFRA_KIT_SESSION_VAR = 'INFRA_KIT_SESSION'
 export const INFRA_KIT_ENV_CONFIG_VAR = 'INFRA_KIT_ENV_CONFIG'
 export const INFRA_KIT_ENV_PROJECT_VAR = 'INFRA_KIT_ENV_PROJECT'
+/**
+ * Absolute project root (git top-level) the loaded env belongs to. Lets the shell
+ * startup gate tell a same-project subshell (skip) from a NEW project (load), so a
+ * different project's secrets are never silently kept after `cd`/new shell.
+ */
+export const INFRA_KIT_ENV_PROJECT_ROOT_VAR = 'INFRA_KIT_ENV_PROJECT_ROOT'
 export const INFRA_KIT_ENV_LOADED_AT_VAR = 'INFRA_KIT_ENV_LOADED_AT'
 /**
  * Marker exported into env-load.sh ONLY when the load was triggered automatically
@@ -31,18 +37,48 @@ export const INFRA_KIT_ENV_CLEARED_VAR = 'INFRA_KIT_ENV_CLEARED'
  */
 export const ENV_VAR_LINE_PATTERN = /^([A-Z_]\w*)=/i
 
+/**
+ * Track whether a physical line leaves us inside an open single-quoted value,
+ * mirroring how `shellSingleQuote` emits values (`'…'`, with literal quotes as
+ * `'\''`). Outside a quote a backslash escapes the next char; inside a quote a
+ * `'` closes it. Lets the parser skip the continuation lines of a multiline value.
+ */
+const advanceSingleQuoteState = (line: string, startInQuote: boolean): boolean => {
+  let inQuote = startInQuote
+
+  for (let i = 0; i < line.length; i++) {
+    if (!inQuote && line[i] === '\\') {
+      i++
+      continue
+    }
+
+    if (line[i] === "'") {
+      inQuote = !inQuote
+    }
+  }
+
+  return inQuote
+}
+
 export const parseVarNamesFromEnvFile = (filePath: string): string[] => {
   if (!fs.existsSync(filePath)) return []
 
   const content = fs.readFileSync(filePath, 'utf-8')
   const names: string[] = []
+  let inQuote = false
 
   for (const line of content.split('\n')) {
-    const match = ENV_VAR_LINE_PATTERN.exec(line)
+    // Only a line that starts OUTSIDE a quoted value can be a real assignment;
+    // continuation lines of a multiline secret value are skipped.
+    if (!inQuote) {
+      const match = ENV_VAR_LINE_PATTERN.exec(line)
 
-    if (match) {
-      names.push(match[1]!)
+      if (match) {
+        names.push(match[1]!)
+      }
     }
+
+    inQuote = advanceSingleQuoteState(line, inQuote)
   }
 
   return names

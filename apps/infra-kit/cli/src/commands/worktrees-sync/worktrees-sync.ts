@@ -8,6 +8,7 @@ import { getReleasePRs } from 'src/integrations/gh'
 import { removeIdeWorktreeFolders } from 'src/integrations/ide'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
+import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
@@ -96,6 +97,11 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
       structuredContent,
     }
   } catch (error) {
+    // A cancelled prompt (Ctrl-C / Esc) is a user back-out, not a failure: let it
+    // reach the top-level boundary untouched so it exits cleanly, instead of being
+    // logged as an error with a misleading remediation.
+    if (isPromptCancellation(error)) throw error
+
     logger.error({ error }, '❌ Error managing worktrees')
     throw new OperationError(error, {
       operation: 'sync worktrees with remote',

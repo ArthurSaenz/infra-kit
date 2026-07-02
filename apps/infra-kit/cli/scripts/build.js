@@ -52,10 +52,10 @@ for (const entryPoint of entryPoints) {
 }
 
 // 2. Emit the public type declarations with tsc (esbuild does not generate them).
-//    The library entry (src/entry/index.ts) only re-exports the package-config
-//    API via relative imports, so tsc needs no project config — a direct CLI
-//    call replaces the separate tsconfig.build.json. `--ignoreConfig` is
-//    required because tsconfig.json is present alongside the input file.
+//    The library entry (src/entry/index.ts) only re-exports public API via relative
+//    imports, so tsc needs no project config — a direct CLI call replaces the separate
+//    tsconfig.build.json. `--ignoreConfig` is required because tsconfig.json is present
+//    alongside the input file.
 execFileSync(
   'tsc',
   [

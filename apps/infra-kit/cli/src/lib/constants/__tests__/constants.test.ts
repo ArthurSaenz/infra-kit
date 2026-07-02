@@ -70,6 +70,28 @@ describe('parseVarNamesFromEnvFile', () => {
       expect(parseVarNamesFromEnvFile(file)).toEqual(['API_KEY_2', '_INTERNAL'])
     })
   })
+
+  it('does not surface KEY=-looking lines embedded inside a multiline single-quoted value', () => {
+    withTmpDir((dir) => {
+      const file = path.join(dir, 'env.sh')
+
+      // A multiline secret value (e.g. a PEM key) whose body contains a line that
+      // looks like an assignment must NOT yield a spurious var name to unset.
+      fs.writeFileSync(file, "set -a\nPRIVATE_KEY='line1\nNOT_A_VAR=evil\nline3'\nFOO=bar\nset +a\n")
+      expect(parseVarNamesFromEnvFile(file)).toEqual(['PRIVATE_KEY', 'FOO'])
+    })
+  })
+
+  it('handles a single-quoted value containing the escaped-quote idiom', () => {
+    withTmpDir((dir) => {
+      const file = path.join(dir, 'env.sh')
+
+      // shellSingleQuote("it's") => 'it'\''s' — quote state must end balanced so
+      // the following assignment is still detected.
+      fs.writeFileSync(file, "GREETING='it'\\''s'\nNEXT=ok\n")
+      expect(parseVarNamesFromEnvFile(file)).toEqual(['GREETING', 'NEXT'])
+    })
+  })
 })
 
 describe('getSessionCacheDir', () => {

@@ -5,14 +5,8 @@ import { GLOB_SRC_ALL } from '../globs.js'
 import type { ConfigRules } from '../types.js'
 
 /**
- * Phase 2 — relationship-aware import boundaries via the single modern `boundaries/dependencies`
- * rule (v6 deprecates `entry-point`/`element-types`). Policy:
- *   - sibling cross-imports (feature/service) are TYPE-ONLY — no runtime coupling.
- *   - shared is the runtime exception: features/services may value-import it via its barrel; shared
- *     itself may not depend outward, even on types.
- *   - same-element imports are exempt.
- * Severity is parameterized (default 'warn'; dormant where there's no features/services tree);
- * promote to 'error' after a clean baseline.
+ * Relationship-aware import boundaries: sibling feature/service imports are type-only; shared is the
+ * runtime exception (value-import via its barrel only). Severity is parameterized (default 'warn').
  *
  * @example
  * boundaries('error') // stricter; only the rule severity changes
@@ -21,8 +15,7 @@ export const boundaries = (severity: 'warn' | 'error' = 'warn'): TypedFlatConfig
   files: [GLOB_SRC_ALL],
   plugins: { boundaries: boundariesPlugin },
   settings: {
-    // node resolver — no native deps. Consumers using path aliases (`#root` => src) should add their
-    // own resolver (e.g. eslint-import-resolver-typescript) so boundaries can classify them.
+    // node resolver; consumers using path aliases must add their own (e.g. eslint-import-resolver-typescript).
     'import/resolver': {
       node: { extensions: ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'] },
     },
@@ -40,19 +33,17 @@ export const boundaries = (severity: 'warn' | 'error' = 'warn'): TypedFlatConfig
     ],
   },
   rules: {
-    // Policy is in the header; inline notes mark each `allow` exception.
     'boundaries/dependencies': [
       severity,
       {
         default: 'disallow',
         rules: [
-          // VALUE exception: features/services may use shared at runtime, via its barrel only.
+          // VALUE exception: feature/service -> shared at runtime, barrel only.
           {
             from: { type: ['feature', 'service'] },
             allow: { to: { type: 'shared', internalPath: 'index.{ts,tsx,js,jsx}' } },
           },
-          // TYPE-ONLY cross-element imports — the only way siblings reference each other (types are
-          // erased at runtime, so no coupling). `from: shared` is absent: shared depends on nothing.
+          // TYPE-ONLY cross-element imports (erased at runtime). shared is absent here: it depends on nothing.
           {
             from: { type: ['feature', 'service'] },
             dependency: { kind: 'type' },

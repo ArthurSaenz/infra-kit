@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   DOPPLER_MAX_OUTPUT_BYTES,
   assertDopplerOutputSize,
-  assertValidEnvContent,
   buildEnvLoadFileLines,
+  parseDopplerSecretsJson,
   shellSingleQuote,
 } from '../env-load'
 
@@ -31,68 +31,6 @@ describe('shellSingleQuote', () => {
 
   it('does not alter backslashes (single-quoted shell strings treat them literally)', () => {
     expect(shellSingleQuote(String.raw`a\b`)).toBe(String.raw`'a\b'`)
-  })
-})
-
-describe('assertValidEnvContent', () => {
-  it('throws on empty content', () => {
-    expect(() => {
-      return assertValidEnvContent('')
-    }).toThrow(/empty output/)
-  })
-
-  it('throws on whitespace-only content', () => {
-    expect(() => {
-      return assertValidEnvContent('   \n\n  ')
-    }).toThrow(/empty output/)
-  })
-
-  it('accepts a single KEY=value line', () => {
-    expect(() => {
-      return assertValidEnvContent('FOO=bar')
-    }).not.toThrow()
-  })
-
-  it('accepts multiple KEY=value lines', () => {
-    expect(() => {
-      return assertValidEnvContent('FOO=bar\nBAZ=qux\nQUUX=123')
-    }).not.toThrow()
-  })
-
-  it('ignores `set -a` / `set +a` directives', () => {
-    expect(() => {
-      return assertValidEnvContent('set -a\nFOO=bar\nset +a')
-    }).not.toThrow()
-  })
-
-  it('ignores blank lines between KEY=value lines', () => {
-    expect(() => {
-      return assertValidEnvContent('FOO=bar\n\nBAZ=qux')
-    }).not.toThrow()
-  })
-
-  it('throws when first non-blank line is not KEY=value', () => {
-    expect(() => {
-      return assertValidEnvContent('<html>error</html>\nFOO=bar')
-    }).toThrow(/unexpected output/)
-  })
-
-  it('throws when a later line is garbage (not only first-line validation)', () => {
-    expect(() => {
-      return assertValidEnvContent('FOO=bar\n<html>error</html>')
-    }).toThrow(/unexpected output/)
-  })
-
-  it('throws when a line looks like a shell command rather than an assignment', () => {
-    expect(() => {
-      return assertValidEnvContent('FOO=bar\nunset BAR')
-    }).toThrow(/unexpected output/)
-  })
-
-  it('accepts values containing = characters (connection strings)', () => {
-    expect(() => {
-      return assertValidEnvContent('DB_URL=host=db;user=admin\nFOO=bar')
-    }).not.toThrow()
   })
 })
 
@@ -138,15 +76,27 @@ describe('assertDopplerOutputSize', () => {
 })
 
 describe('buildEnvLoadFileLines', () => {
-  const args = { envContent: 'A=1\nB=2', config: 'dev', project: 'proj', loadedAt: '2026-01-01T00:00:00.000Z' }
+  const args = {
+    pairs: [
+      ['A', '1'],
+      ['B', '2'],
+    ] as Array<[string, string]>,
+    config: 'dev',
+    project: 'proj',
+    projectRoot: '/repo',
+    loadedAt: '2026-01-01T00:00:00.000Z',
+  }
 
-  it('wraps the body in set -a / set +a and records config/project/loadedAt', () => {
+  it('wraps the body in set -a / set +a and records config/project/projectRoot/loadedAt', () => {
     const lines = buildEnvLoadFileLines({ ...args, autoLoaded: false })
 
     expect(lines[0]).toBe('set -a')
     expect(lines.at(-1)).toBe('set +a')
+    expect(lines).toContain("A='1'")
+    expect(lines).toContain("B='2'")
     expect(lines).toContain("INFRA_KIT_ENV_CONFIG='dev'")
     expect(lines).toContain("INFRA_KIT_ENV_PROJECT='proj'")
+    expect(lines).toContain("INFRA_KIT_ENV_PROJECT_ROOT='/repo'")
     expect(lines).toContain("INFRA_KIT_ENV_LOADED_AT='2026-01-01T00:00:00.000Z'")
   })
 
@@ -163,5 +113,88 @@ describe('buildEnvLoadFileLines', () => {
     expect(lines).toContain('unset INFRA_KIT_ENV_AUTOLOADED')
     expect(lines).toContain('unset INFRA_KIT_ENV_CLEARED')
     expect(lines).not.toContain("INFRA_KIT_ENV_AUTOLOADED='1'")
+  })
+})
+
+describe('buildEnvLoadFileLines — injection neutralization (single-quoting)', () => {
+  const baseArgs = {
+    config: 'dev',
+    project: 'proj',
+    projectRoot: '/repo',
+    loadedAt: '2026-01-01T00:00:00.000Z',
+    autoLoaded: false as const,
+  }
+
+  it('single-quotes shell-active values so nothing expands or executes on source', () => {
+    const pairs: Array<[string, string]> = [
+      ['CMD', 'a$(id)b'],
+      ['VAR', 'x$HOME'],
+      ['TICK', '`whoami`'],
+      ['Q', "it's"],
+      ['NL', 'line1\nline2'],
+    ]
+
+    const lines = buildEnvLoadFileLines({ ...baseArgs, pairs })
+
+    // Each value line is exactly KEY=<posix-single-quoted value>.
+    expect(lines).toContain("CMD='a$(id)b'")
+    expect(lines).toContain("VAR='x$HOME'")
+    expect(lines).toContain("TICK='`whoami`'")
+    expect(lines).toContain(String.raw`Q='it'\''s'`)
+    // The newline stays literal inside the single quotes.
+    expect(lines).toContain("NL='line1\nline2'")
+
+    // The load-bearing guarantee: no emitted value line carries an unescaped
+    // command substitution, backtick, or a double-quote-wrapped value.
+    const valueLines = lines.filter((line) => {
+      return /^(?:CMD|VAR|TICK|Q|NL)=/.test(line)
+    })
+
+    for (const line of valueLines) {
+      const value = line.slice(line.indexOf('=') + 1)
+
+      expect(value.startsWith("'")).toBe(true)
+      expect(value.endsWith("'")).toBe(true)
+      expect(value).not.toMatch(/^"/)
+    }
+  })
+})
+
+describe('parseDopplerSecretsJson', () => {
+  it('parses a flat KEY:value object into ordered pairs (values returned raw)', () => {
+    expect(parseDopplerSecretsJson('{"FOO":"bar","BAZ":"a$(x)"}')).toEqual([
+      ['FOO', 'bar'],
+      ['BAZ', 'a$(x)'],
+    ])
+  })
+
+  it('throws on non-JSON output', () => {
+    expect(() => {
+      return parseDopplerSecretsJson('<html>nope</html>')
+    }).toThrow(/non-JSON output/)
+  })
+
+  it('throws on a JSON array (wrong shape)', () => {
+    expect(() => {
+      return parseDopplerSecretsJson('["FOO","bar"]')
+    }).toThrow(/unexpected JSON shape/)
+  })
+
+  it('throws on an empty object', () => {
+    expect(() => {
+      return parseDopplerSecretsJson('{}')
+    }).toThrow(/empty output/)
+  })
+
+  it('throws on an invalid env var name', () => {
+    expect(() => {
+      return parseDopplerSecretsJson('{"1BAD":"x"}')
+    }).toThrow(/invalid env var name/)
+  })
+
+  it('throws on a non-string value', () => {
+    expect(() => {
+      return parseDopplerSecretsJson('{"FOO":123}')
+    }).toThrow(/non-string value/)
   })
 })
