@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import process from 'node:process'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ServerlessLocalRun } from 'src/dev/serverless-local-run'
 
@@ -127,14 +127,11 @@ describe('serverlessLocalRun — CORS + health', () => {
   })
 
   it('reports app:null on /__health when the appName is omitted', async () => {
-    const original = process.cwd()
-
-    process.chdir(apiDir)
+    // No chdir needed: the runner reads serverless.yml + the handler from controllersPath.
     const server = new ServerlessLocalRun({ controllersPath: apiDir, prefixUrl: PREFIX, port })
 
     running.push(server)
     await server.start()
-    process.chdir(original)
 
     const res = await fetch(`http://127.0.0.1:${port}/__health`)
 
@@ -291,5 +288,169 @@ describe('serverlessLocalRun — reload picks up a changed handler on a fresh in
     const stillV1 = (await (await fetch(`http://127.0.0.1:${port}${PREFIX}/ping`)).json()) as { version: number }
 
     expect(stillV1.version).toBe(1)
+  })
+})
+
+describe('serverlessLocalRun — route key includes the HTTP method', () => {
+  it('routes GET and POST on the same path to their OWN handlers (no method collision)', async () => {
+    writeServerless(
+      apiDir,
+      [
+        'service: t',
+        'functions:',
+        '  getThing:',
+        '    handler: dist/handler.getThing',
+        '    events:',
+        '      - http:',
+        '          method: get',
+        '          path: thing',
+        '  postThing:',
+        '    handler: dist/handler.postThing',
+        '    events:',
+        '      - http:',
+        '          method: post',
+        '          path: thing',
+        '',
+      ].join('\n'),
+    )
+    writeHandler(
+      apiDir,
+      [
+        'const ok = (route) => ({ statusCode: 200, headers: {}, body: JSON.stringify({ route }) })',
+        'export const getThing = async () => ok("get-thing")',
+        'export const postThing = async () => ok("post-thing")',
+        '',
+      ].join('\n'),
+    )
+
+    running.push(await boot(apiDir, port))
+
+    const getBody = (await (await fetch(`http://127.0.0.1:${port}${PREFIX}/thing`)).json()) as { route: string }
+    const postBody = (await (await fetch(`http://127.0.0.1:${port}${PREFIX}/thing`, { method: 'POST' })).json()) as {
+      route: string
+    }
+
+    // Before the fix, both would resolve to whichever route registered last.
+    expect(getBody.route).toBe('get-thing')
+    expect(postBody.route).toBe('post-thing')
+  })
+
+  it('throws on a genuinely duplicate method+path route', async () => {
+    writeServerless(
+      apiDir,
+      [
+        'service: t',
+        'functions:',
+        '  a:',
+        '    handler: dist/handler.ping',
+        '    events:',
+        '      - http:',
+        '          method: get',
+        '          path: dup',
+        '  b:',
+        '    handler: dist/handler.ping',
+        '    events:',
+        '      - http:',
+        '          method: get',
+        '          path: dup',
+        '',
+      ].join('\n'),
+    )
+
+    await expect(boot(apiDir, port)).rejects.toThrow(/Duplicate route/)
+  })
+})
+
+describe('serverlessLocalRun — injected handler logger (real Powertools)', () => {
+  it('lets a handler call info/debug/warn/error + createChild().info() without throwing, emitting output', async () => {
+    const prevDev = process.env.POWERTOOLS_DEV
+
+    process.env.POWERTOOLS_DEV = 'true'
+
+    writeHandler(
+      apiDir,
+      [
+        'export const ping = async (event, ctx, log) => {',
+        "  log.info('info-mark')",
+        "  log.debug('debug-mark')",
+        "  log.warn('warn-mark')",
+        "  log.error('error-mark')",
+        "  log.createChild({ serviceName: 'child' }).info('child-mark')",
+        '  return { statusCode: 200, headers: {}, body: JSON.stringify({ ok: true }) }',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // Powertools DEV routes through the global console (info/debug -> stdout, warn/error -> stderr).
+    // Spy the console methods directly — Node's Console dispatches writes through internal symbols
+    // that a process.stdout.write spy would miss.
+    const captured: string[] = []
+    const collect = (...args: unknown[]): void => {
+      captured.push(
+        args
+          .map((a) => {
+            return String(a)
+          })
+          .join(' '),
+      )
+    }
+    const spies = (['log', 'info', 'debug', 'warn', 'error'] as const).map((method) => {
+      return vi.spyOn(console, method).mockImplementation(collect as never)
+    })
+
+    try {
+      running.push(await boot(apiDir, port))
+
+      const res = await fetch(`http://127.0.0.1:${port}${PREFIX}/ping`)
+
+      // A 200 means every log.* / createChild call returned without throwing (functional-break check).
+      expect(res.status).toBe(200)
+    } finally {
+      for (const spy of spies) {
+        spy.mockRestore()
+      }
+      if (prevDev == null) {
+        delete process.env.POWERTOOLS_DEV
+      } else {
+        process.env.POWERTOOLS_DEV = prevDev
+      }
+    }
+
+    const all = captured.join('')
+
+    expect(all).toContain('info-mark')
+    expect(all).toContain('debug-mark')
+    expect(all).toContain('warn-mark')
+    expect(all).toContain('error-mark')
+    expect(all).toContain('child-mark')
+  })
+})
+
+describe('serverlessLocalRun — cwd independence (no chdir)', () => {
+  it('imports the handler at the runner cwd, not the app dir (process.chdir removed)', async () => {
+    writeHandler(
+      apiDir,
+      [
+        // Captured at module-eval time, i.e. when the runner `import()`s the handler.
+        'const cwdAtImport = process.cwd()',
+        'export const ping = async () => ({',
+        '  statusCode: 200,',
+        '  headers: {},',
+        '  body: JSON.stringify({ cwdAtImport }),',
+        '})',
+        '',
+      ].join('\n'),
+    )
+
+    const bootCwd = process.cwd()
+
+    running.push(await boot(apiDir, port))
+
+    const body = (await (await fetch(`http://127.0.0.1:${port}${PREFIX}/ping`)).json()) as { cwdAtImport: string }
+
+    // The handler module imported under the runner's cwd — NOT after a chdir into the app dir.
+    expect(body.cwdAtImport).toBe(bootCwd)
+    expect(body.cwdAtImport).not.toBe(apiDir)
   })
 })

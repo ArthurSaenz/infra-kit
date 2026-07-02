@@ -127,3 +127,122 @@ describe('start — port-conflict pre-check', () => {
     await expect(runner.start()).rejects.not.toThrow(/Port conflict/)
   })
 })
+
+describe('start — --port single-app guard', () => {
+  it('rejects up front when --port is set with more than one selected app', async () => {
+    const root = temp.register(makeMonorepo([{ name: 'client' }, { name: 'backoffice' }]))
+
+    delete process.env.PORT
+    process.chdir(root)
+    // --port forces the same port on every app, so >1 app can never satisfy it.
+    const runner = new DevServerRunner({ port: 9999 })
+
+    await expect(runner.start()).rejects.toThrow(/--port requires a single app/)
+  })
+
+  it('applies --port to the single selected app and boots it on that port', async () => {
+    const root = temp.register(makeMonorepo([{ name: 'solo', packageName: 'solo-api', withHandler: true }]))
+    const overridePort = await getFreePort()
+    const apiDir = path.join(root, 'apps', 'solo', 'api')
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
+    }
+
+    process.chdir(root)
+    const runner = new DevServerRunner({ port: overridePort }, fakeRunBuild)
+
+    await runner.start()
+
+    try {
+      const health = (await (await fetch(`http://127.0.0.1:${overridePort}/__health`)).json()) as {
+        app: string
+        port: number
+      }
+
+      expect(health).toMatchObject({ app: 'solo', port: overridePort })
+    } finally {
+      await runner.shutdown()
+    }
+  })
+})
+
+describe('devServerRunner — --watch rebuild + restart on change', () => {
+  it('rebuilds and restarts the app on a src change, serving the new build on the same port', async () => {
+    const root = temp.register(makeMonorepo([{ name: 'gamma', packageName: 'gamma-api', withHandler: true }]))
+    // The runner resolves cwd to its canonical path (on macOS /var -> /private/var), and chokidar
+    // watches that canonical path. Build the write paths from the same realpath so the change event
+    // matches the watched dir string.
+    const realRoot = fs.realpathSync(root)
+    const apiDir = path.join(realRoot, 'apps', 'gamma', 'api')
+    const srcDir = path.join(apiDir, 'src')
+    const watchedFile = path.join(srcDir, 'index.ts')
+
+    // A src dir must exist before start() so the watcher picks it up (ignoreInitial skips existing files).
+    fs.mkdirSync(srcDir, { recursive: true })
+    fs.writeFileSync(watchedFile, 'export const v = 1\n')
+
+    const gammaPort = await getFreePort()
+
+    process.env.GAMMA_PORT = String(gammaPort)
+    // Hermetic polling so the watch fires without relying on native fs events.
+    process.env.DEV_SERVER_CHOKIDAR_POLL = '1'
+
+    // The injected build writes whatever version the test currently wants into dist.
+    let handlerVersion = 1
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(handlerVersion))
+    }
+
+    process.chdir(root)
+    const runner = new DevServerRunner({ watch: true }, fakeRunBuild)
+
+    await runner.start()
+
+    try {
+      const v1 = (await (await fetch(`http://127.0.0.1:${gammaPort}/api/v1/ping`)).json()) as { version: number }
+
+      expect(v1.version).toBe(1)
+
+      // Let chokidar finish its initial scan before the triggering write, otherwise the write races
+      // the scan and is absorbed as initial state (the runner doesn't expose a 'ready' signal).
+      await new Promise((r) => {
+        return setTimeout(r, 1200)
+      })
+
+      // Bump the build output, then trigger a watched change to drive the restart pipeline.
+      handlerVersion = 2
+      fs.writeFileSync(watchedFile, 'export const v = 2\n')
+
+      // Poll the SAME port until the restarted server serves v2 (the observed outcome is the assertion).
+      const deadline = Date.now() + 8000
+      let sawV2 = false
+
+      while (Date.now() < deadline && !sawV2) {
+        try {
+          const body = (await (await fetch(`http://127.0.0.1:${gammaPort}/api/v1/ping`)).json()) as {
+            version: number
+          }
+
+          if (body.version === 2) {
+            sawV2 = true
+            break
+          }
+        } catch {
+          // The server is briefly down mid-restart (close -> delay -> listen); keep polling.
+        }
+        await new Promise((r) => {
+          return setTimeout(r, 100)
+        })
+      }
+
+      // A v2 response proves: change detected -> classified as app -> debounced -> restart([gamma])
+      // -> rebuild -> close -> restart on the same port.
+      expect(sawV2).toBe(true)
+    } finally {
+      await runner.shutdown()
+    }
+
+    // shutdown() closed the watcher, so the port frees up.
+    expect(await canBind(gammaPort)).toBe(true)
+  }, 15000)
+})

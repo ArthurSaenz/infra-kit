@@ -14,6 +14,7 @@
  * handlers go to stdout.
  */
 import chokidar from 'chokidar'
+import type { FSWatcher } from 'chokidar'
 import { exec } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -73,14 +74,13 @@ const launchScript = async (script: string, logFn?: LogFn): Promise<void> => {
   }
 }
 
-/**
- * Write a message to both console and log file
- */
-function log(message: string, level: 'info' | 'warn' | 'error' | 'debug' = 'info'): void {
-  const timestamp = new Date().toISOString()
-  const logLine = `[${timestamp}] [${level.toUpperCase()}] ${message}\n`
+/** Append raw text to the runner-only log file (the single tee-to-file seam). */
+function appendLogFile(text: string): void {
+  fs.appendFileSync(LOG_FILE_PATH, text)
+}
 
-  // Write to console
+/** Write a message to the console (routed by level) and tee it to the log file. */
+function log(message: string, level: 'info' | 'warn' | 'error' | 'debug' = 'info'): void {
   if (level === 'error') {
     console.error(message)
   } else if (level === 'warn') {
@@ -89,19 +89,15 @@ function log(message: string, level: 'info' | 'warn' | 'error' | 'debug' = 'info
     process.stdout.write(`${message}\n`)
   }
 
-  // Append to log file
-  fs.appendFileSync(LOG_FILE_PATH, logLine)
+  appendLogFile(`[${new Date().toISOString()}] [${level.toUpperCase()}] ${message}\n`)
 }
 
-/**
- * Write table output to both console and log file
- */
+/** Write pre-formatted table lines to stdout and tee them to the log file. */
 function logTable(lines: string[]): void {
   const output = `${lines.join('\n')}\n`
 
   process.stdout.write(`${output}\n`)
-
-  fs.appendFileSync(LOG_FILE_PATH, `${output}\n`)
+  appendLogFile(`${output}\n`)
 }
 
 interface IApiAppConfig {
@@ -139,6 +135,8 @@ export class DevServerRunner {
   private readonly monorepoRoot: string
   private readonly appServers: IAppServer[] = []
   private watchDebounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
+  /** Active chokidar watcher in `--watch` mode; closed on {@link shutdown}. */
+  private watcher: FSWatcher | null = null
   private static readonly WATCH_DEBOUNCE_MS = 400
   /** Serialized restarts so rapid saves never bind :port while the previous server is still shutting down. */
   private restartWorkChain: Promise<void> = Promise.resolve()
@@ -232,6 +230,7 @@ export class DevServerRunner {
 
     log(`📦 Discovered ${apps.length} API app(s): ${this.formatAppList(apps)}`)
 
+    this.assertPortOverrideSingleApp(apps)
     this.assertNoPortConflicts(apps)
 
     await this.buildApps(apps, watch)
@@ -273,6 +272,27 @@ export class DevServerRunner {
     }
 
     return selected
+  }
+
+  /**
+   * `--port` forces the same port on every app, so with more than one selected app it would always
+   * collide. Fail up front with a clear message instead of tripping the generic port-conflict guard.
+   */
+  private assertPortOverrideSingleApp(apps: IApiAppConfig[]): void {
+    if (this.options.port == null || apps.length <= 1) {
+      return
+    }
+
+    const names = apps
+      .map((a) => {
+        return a.name
+      })
+      .join(', ')
+
+    log(`⚠️  --port ${this.options.port} was given, but ${apps.length} apps are selected: ${names}`, 'error')
+    log('   --port sets one port for every app, which always collides. Narrow with --app=<name>,', 'error')
+    log('   or set distinct {APP}_PORT env vars / dev.<app>.port config instead.', 'error')
+    throw new Error(`--port requires a single app (got ${apps.length}: ${names})`)
   }
 
   /** Throw (after logging remediation tips) when two apps resolve to the same port. */
@@ -317,43 +337,45 @@ export class DevServerRunner {
     }
   }
 
-  /** Start each app in turn, collecting the ones that boot; per-app failures are logged, not fatal. */
+  /**
+   * Start every app concurrently, collecting the ones that boot; per-app failures are logged,
+   * not fatal. Safe to parallelize because each app has a distinct port (guarded up-front) and a
+   * distinct `ServerlessLocalRun`, and `startOneApp` no longer mutates cwd. Push order into
+   * `appServers` is non-deterministic but nothing depends on it (the table renders from `apps`).
+   */
   private async startAllApps(apps: IApiAppConfig[]): Promise<void> {
-    for (const app of apps) {
-      try {
-        const server = await this.startOneApp(app)
+    await Promise.all(
+      apps.map(async (app) => {
+        try {
+          const server = await this.startOneApp(app)
 
-        if (server) {
-          this.appServers.push({ app, server })
+          if (server) {
+            this.appServers.push({ app, server })
+          }
+        } catch (error) {
+          log(`❌ Failed to start ${app.name}: ${String(error)}`, 'error')
         }
-      } catch (error) {
-        log(`❌ Failed to start ${app.name}: ${String(error)}`, 'error')
-      }
-    }
+      }),
+    )
   }
 
   private async startOneApp(app: IApiAppConfig): Promise<ServerlessLocalRun | null> {
     log(`🔄 Starting ${app.name}...`)
 
-    const originalCwd = process.cwd()
+    // No `process.chdir` here: `ServerlessLocalRun` reads `serverless.yml` and imports the
+    // compiled handler from `controllersPath` (absolute), so the runner never mutates cwd —
+    // which is what makes concurrent boot/restart safe.
+    const server = new ServerlessLocalRun({
+      controllersPath: app.path,
+      prefixUrl: app.prefixUrl,
+      port: app.port,
+      appName: app.name,
+    })
 
-    process.chdir(app.path)
+    await server.start()
+    log(`✅ ${app.name} started on port ${app.port}`)
 
-    try {
-      const server = new ServerlessLocalRun({
-        controllersPath: app.path,
-        prefixUrl: app.prefixUrl,
-        port: app.port,
-        appName: app.name,
-      })
-
-      await server.start()
-      log(`✅ ${app.name} started on port ${app.port}`)
-
-      return server
-    } finally {
-      process.chdir(originalCwd)
-    }
+    return server
   }
 
   /** Run restart jobs one after another (watch can fire faster than close + listen). */
@@ -378,96 +400,81 @@ export class DevServerRunner {
     })
   }
 
-  private restartApp(app: IApiAppConfig): Promise<void> {
+  /**
+   * Schedule a rebuild + restart of the given apps (1 or N), serialized against other
+   * restarts via {@link scheduleRestartWork}. A single-app watch change passes `[app]`;
+   * a package change passes every running app.
+   */
+  private restart(apps: IApiAppConfig[]): Promise<void> {
     return this.scheduleRestartWork(() => {
-      return this.runRestartApp(app)
+      return this.runRestart(apps)
     })
   }
 
-  private async runRestartApp(app: IApiAppConfig): Promise<void> {
-    const idx = this.appServers.findIndex((e) => {
-      return e.app.name === app.name
-    })
-
-    if (idx < 0) return
-
-    const entry = this.appServers[idx]
-
-    if (!entry) return
-
-    log(`🔄 Rebuilding ${app.name}...`, 'debug')
-    try {
-      await this.runBuild(`pnpm exec turbo run build --filter=${app.packageName} --env-mode=loose --force`)
-    } catch {
-      log(`⚠️  Build failed for ${app.name}, skipping restart`, 'warn')
-
-      return
-    }
-    log(`🔄 Restarting ${app.name}...`)
-    try {
-      await entry.server.close()
-    } catch (err) {
-      log(`   Close warning: ${String(err)}`, 'debug')
-    }
-    await this.delayPortRelease()
-    try {
-      const newServer = await this.startOneApp(app)
-
-      if (newServer) {
-        this.appServers[idx] = { app, server: newServer }
-      }
-    } catch (error) {
-      log(`❌ Failed to restart ${app.name}: ${String(error)}`, 'error')
-    }
+  /** Resolve the requested apps to their live server slots (dropping any not running). */
+  private resolveRestartTargets(apps: IApiAppConfig[]): Array<{ idx: number; app: IApiAppConfig }> {
+    return apps
+      .map((app) => {
+        return {
+          idx: this.appServers.findIndex((e) => {
+            return e.app.name === app.name
+          }),
+          app,
+        }
+      })
+      .filter((t) => {
+        return t.idx >= 0
+      })
   }
 
-  private restartAllApps(): Promise<void> {
-    return this.scheduleRestartWork(() => {
-      return this.runRestartAllApps()
-    })
-  }
+  private async runRestart(apps: IApiAppConfig[]): Promise<void> {
+    const targets = this.resolveRestartTargets(apps)
 
-  private async runRestartAllApps(): Promise<void> {
-    log('📦 Lib/package changed — rebuilding all apps...')
+    if (targets.length === 0) return
 
-    const filters = this.appServers
-      .map((a) => {
-        return `--filter=${a.app.packageName}`
+    const label = targets.length === 1 ? targets[0]!.app.name : `${targets.length} apps`
+    const filters = targets
+      .map((t) => {
+        return `--filter=${t.app.packageName}`
       })
       .join(' ')
 
+    log(`🔄 Rebuilding ${label}...`)
     try {
       await this.runBuild(`pnpm exec turbo run build ${filters} --env-mode=loose --force`)
     } catch {
-      log('⚠️  Build failed for all apps, skipping restart', 'warn')
+      log(`⚠️  Build failed for ${label}, skipping restart`, 'warn')
 
       return
     }
 
-    for (let i = 0; i < this.appServers.length; i++) {
-      try {
-        await this.appServers[i]!.server.close()
-      } catch (err) {
-        log(`   Close warning: ${String(err)}`, 'debug')
-      }
-    }
+    log(`🔄 Restarting ${label}...`)
+    await Promise.all(
+      targets.map(async ({ idx }) => {
+        try {
+          await this.appServers[idx]!.server.close()
+        } catch (err) {
+          log(`   Close warning: ${String(err)}`, 'debug')
+        }
+      }),
+    )
 
     await this.delayPortRelease()
 
-    for (let i = 0; i < this.appServers.length; i++) {
-      const { app } = this.appServers[i]!
+    await Promise.all(
+      targets.map(async ({ idx, app }) => {
+        try {
+          const newServer = await this.startOneApp(app)
 
-      try {
-        const newServer = await this.startOneApp(app)
-
-        if (newServer) {
-          this.appServers[i] = { app, server: newServer }
+          if (newServer) {
+            this.appServers[idx] = { app, server: newServer }
+          }
+        } catch (error) {
+          log(`❌ Failed to restart ${app.name}: ${String(error)}`, 'error')
         }
-      } catch (error) {
-        log(`❌ Failed to restart ${app.name}: ${String(error)}`, 'error')
-      }
-    }
-    log('✅ All apps rebuilt and restarted')
+      }),
+    )
+    log(`✅ Rebuilt and restarted ${label}`)
   }
 
   private setupWatch(apps: IApiAppConfig[]): void {
@@ -489,6 +496,8 @@ export class DevServerRunner {
       ...(usePoll ? { usePolling: true, interval: 400 } : {}),
     })
 
+    this.watcher = watcher
+
     if (usePoll) {
       log('👀 chokidar: usePolling enabled (DEV_SERVER_CHOKIDAR_POLL=1)', 'debug')
     }
@@ -499,18 +508,10 @@ export class DevServerRunner {
       const change = classifyChange(filePath, appSrcDirs, packageSrcDirs)
 
       if (change.kind === 'package') {
-        const key = '__packages__'
-        const existing = this.watchDebounceTimers.get(key)
-
-        if (existing) clearTimeout(existing)
-        const timer = setTimeout(() => {
-          this.watchDebounceTimers.delete(key)
-          this.restartAllApps().catch((err) => {
-            log(`Restart all error: ${String(err)}`, 'error')
-          })
-        }, DevServerRunner.WATCH_DEBOUNCE_MS)
-
-        this.watchDebounceTimers.set(key, timer)
+        // A shared package changed — every app depends on it, so rebuild + restart all.
+        this.scheduleDebounced('__packages__', () => {
+          return this.restart(apps)
+        })
 
         return
       }
@@ -521,22 +522,32 @@ export class DevServerRunner {
 
       if (!app) return
 
-      const key = app.name
-      const existing = this.watchDebounceTimers.get(key)
-
-      if (existing) clearTimeout(existing)
-
-      const timer = setTimeout(() => {
-        this.watchDebounceTimers.delete(key)
-        this.restartApp(app).catch((err) => {
-          log(`Restart error: ${String(err)}`, 'error')
-        })
-      }, DevServerRunner.WATCH_DEBOUNCE_MS)
-
-      this.watchDebounceTimers.set(key, timer)
+      this.scheduleDebounced(app.name, () => {
+        return this.restart([app])
+      })
     })
 
     log(`👀 Watching ${appSrcDirs.length} app(s) + ${packageSrcDirs.length} package(s) for changes...`)
+  }
+
+  /**
+   * Debounce a restart under `key`: cancel any pending timer for the same key and start
+   * a fresh {@link DevServerRunner.WATCH_DEBOUNCE_MS} timer, so a burst of saves collapses
+   * into one restart. Errors from the scheduled work are logged, never thrown.
+   */
+  private scheduleDebounced(key: string, work: () => Promise<void>): void {
+    const existing = this.watchDebounceTimers.get(key)
+
+    if (existing) clearTimeout(existing)
+
+    const timer = setTimeout(() => {
+      this.watchDebounceTimers.delete(key)
+      work().catch((err) => {
+        log(`Restart error (${key}): ${String(err)}`, 'error')
+      })
+    }, DevServerRunner.WATCH_DEBOUNCE_MS)
+
+    this.watchDebounceTimers.set(key, timer)
   }
 
   private printServerTable(apps: IApiAppConfig[]): void {
@@ -563,9 +574,23 @@ export class DevServerRunner {
     logTable(lines)
   }
 
-  /** Close all running servers. Does not exit the process — the entry point owns exit. */
+  /**
+   * Stop watching, cancel any pending debounced restart, and close all running servers.
+   * Does not exit the process — the entry point owns exit.
+   */
   public async shutdown(): Promise<void> {
     log('🛑 Shutting down all servers...')
+
+    for (const timer of this.watchDebounceTimers.values()) {
+      clearTimeout(timer)
+    }
+    this.watchDebounceTimers.clear()
+
+    if (this.watcher) {
+      await this.watcher.close()
+      this.watcher = null
+    }
+
     for (const { server } of this.appServers) {
       try {
         await server.close()
