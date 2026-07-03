@@ -90,49 +90,11 @@ export function normalizeAppInclude(include?: string[] | null): string[] | null 
   return filtered.length > 0 ? filtered : null
 }
 
-/** Existing `packages/<pkg>/src` directories under the monorepo root. */
-export function getPackageSrcDirs(root: string): string[] {
-  const packagesDir = path.join(root, 'packages')
-
-  if (!fs.existsSync(packagesDir)) return []
-
-  const names = fs
-    .readdirSync(packagesDir, { withFileTypes: true })
-    .filter((d) => {
-      return d.isDirectory()
-    })
-    .map((d) => {
-      return d.name
-    })
-  const dirs: string[] = []
-
-  for (const name of names) {
-    const srcDir = path.join(packagesDir, name, 'src')
-
-    if (fs.existsSync(srcDir) && fs.statSync(srcDir).isDirectory()) {
-      dirs.push(srcDir)
-    }
-  }
-
-  return dirs
-}
-
-/** Existing `<app.path>/src` directories for the given apps (order preserved). */
-export function getAppSrcDirs(apps: Array<{ path: string }>): string[] {
-  return apps
-    .map((app) => {
-      return path.join(app.path, 'src')
-    })
-    .filter((dir) => {
-      return fs.existsSync(dir)
-    })
-}
-
 /**
  * Existing `packages/<pkg>/dist` directories under the monorepo root — the compiled
- * outputs `turbo watch` rewrites. Watched (alongside app dist) in `--watch-mode=turbo`
- * because editing a shared lib rewrites only the lib's `dist`, never the dependent
- * app's, so a package-dist change is the only signal that a lib was rebuilt.
+ * outputs `turbo watch` rewrites. Watched (alongside app dist) because editing a shared
+ * lib rewrites only the lib's `dist`, never the dependent app's, so a package-dist change
+ * is the only signal that a lib was rebuilt.
  */
 export function getPackageDistDirs(root: string): string[] {
   const packagesDir = path.join(root, 'packages')
@@ -171,46 +133,18 @@ export function getAppDistDirs(apps: Array<{ path: string }>): string[] {
     })
 }
 
-/** How a watched file change should be routed. */
+/** How a watched dist change should be routed. */
 export interface ChangeClassification {
   kind: 'app' | 'package'
-  /** For app changes: the matched app src dir (undefined when nothing matched). */
+  /** For app changes: the matched app dist dir (undefined when nothing matched). */
   app?: string
 }
 
 /**
- * Decide whether a changed path belongs to a shared package or a single app.
- * Package matches take precedence (a package change rebuilds every app). For app
- * matches, the matched app src dir is returned so the caller can restart the
- * owning app; `undefined` when the path matches neither.
- */
-export function classifyChange(
-  changedPath: string,
-  appSrcDirs: string[],
-  packageSrcDirs: string[],
-): ChangeClassification {
-  const normalized = path.normalize(changedPath)
-
-  const inPackage = packageSrcDirs.some((dir) => {
-    return normalized.startsWith(path.normalize(dir))
-  })
-
-  if (inPackage) {
-    return { kind: 'package' }
-  }
-
-  const matchedDir = appSrcDirs.find((dir) => {
-    return normalized.startsWith(path.normalize(dir))
-  })
-
-  return { kind: 'app', app: matchedDir }
-}
-
-/**
- * Route a changed compiled-output path (in `--watch-mode=turbo`) the same way
- * {@link classifyChange} routes a source path: a `packages/<pkg>/dist` change is a
- * shared-package rebuild (restart every app), an `<app>/dist` change restarts only
- * that app (the matched app dist dir is returned; `undefined` when nothing matched).
+ * Route a changed compiled-output path: a `packages/<pkg>/dist` change is a shared-package
+ * rebuild (restart every app), an `<app>/dist` change restarts only that app (the matched
+ * app dist dir is returned; `undefined` when the path matches neither). Package matches take
+ * precedence.
  */
 export function classifyDistChange(
   changedPath: string,

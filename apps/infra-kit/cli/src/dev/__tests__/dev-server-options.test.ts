@@ -44,18 +44,6 @@ describe('toDevServerOptions — CLI flag parsing', () => {
   it('parses a combined flag set (--app --watch) in one pass', () => {
     const opts = toDevServerOptions({ app: 'a,b', watch: true } satisfies DevCliOptions)
 
-    expect(opts).toEqual({ watch: true, include: ['a', 'b'], watchMode: 'oneshot' })
-  })
-
-  it('defaults watchMode to oneshot when --watch-mode is absent', () => {
-    expect(toDevServerOptions({} satisfies DevCliOptions).watchMode).toBe('oneshot')
-  })
-
-  it('passes --watch-mode=turbo through', () => {
-    expect(toDevServerOptions({ watchMode: 'turbo' } satisfies DevCliOptions).watchMode).toBe('turbo')
-  })
-
-  it('coerces an unrecognized --watch-mode value to oneshot', () => {
-    expect(toDevServerOptions({ watchMode: 'nonsense' } satisfies DevCliOptions).watchMode).toBe('oneshot')
+    expect(opts).toEqual({ watch: true, include: ['a', 'b'] })
   })
 })

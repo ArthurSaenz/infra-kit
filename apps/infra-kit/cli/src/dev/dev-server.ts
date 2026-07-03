@@ -25,14 +25,11 @@ import type { DevConfig } from 'src/lib/infra-kit-config'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 
 import {
-  classifyChange,
   classifyDistChange,
   discoverApiApps as discoverApiAppsBare,
   findMonorepoRoot,
   getAppDistDirs,
-  getAppSrcDirs,
   getPackageDistDirs,
-  getPackageSrcDirs,
   normalizeAppInclude as normalizeAppIncludePure,
 } from './discovery.js'
 import { findPortConflicts, resolvePort as resolvePortPure, resolvePrefixUrl as resolvePrefixUrlPure } from './ports.js'
@@ -186,18 +183,14 @@ interface IApiAppConfig {
  * itself. App selection is `--app` only; ports come from env/config (see `resolvePort`).
  */
 export interface DevServerOptions {
-  /** Rebuild + restart on file save. */
+  /**
+   * Watch mode: start a long-lived `turbo watch build` engine (incremental rebuilds
+   * + dependency fan-out) and restart the affected server(s) when compiled `dist/`
+   * changes. Without it, `dev` builds and serves once and exits on signal.
+   */
   watch?: boolean
   /** Only run these app folder names (null/empty = all discovered). */
   include?: string[] | null
-  /**
-   * How `--watch` rebuilds:
-   * - `oneshot` (default): chokidar watches `src`, each change runs a one-shot
-   *   `turbo run build --force`. Today's behavior; the safe rollback.
-   * - `turbo`: a long-lived `turbo watch build` engine rebuilds incrementally and
-   *   chokidar watches compiled `dist/` to trigger the restart.
-   */
-  watchMode?: 'oneshot' | 'turbo'
 }
 
 interface IAppServer {
@@ -220,7 +213,7 @@ export class DevServerRunner {
   private readonly runBuild: BuildRunner
   /** `turbo watch` spawn seam — real detached child by default, injectable for tests. */
   private readonly turboWatchFactory: TurboWatchFactory
-  /** Live `turbo watch` engine in `--watch-mode=turbo`; reaped on {@link shutdown}. */
+  /** Live `turbo watch` engine in `--watch` mode; reaped on {@link shutdown}. */
   private turboWatch: TurboWatchHandle | null = null
 
   constructor(
@@ -457,15 +450,14 @@ export class DevServerRunner {
   }
 
   /**
-   * Schedule a (rebuild +) restart of the given apps (1 or N), serialized against other
-   * restarts via {@link scheduleRestartWork}. A single-app watch change passes `[app]`;
-   * a package change passes every running app. `build` is `false` in `--watch-mode=turbo`,
-   * where the long-lived `turbo watch` engine has already rebuilt `dist/` — the runner only
-   * needs to bounce the fastify server(s).
+   * Schedule a restart of the given apps (1 or N), serialized against other restarts via
+   * {@link scheduleRestartWork}. A single-app dist change passes `[app]`; a dependency-package
+   * dist change passes every running app. The `turbo watch` engine has already rebuilt `dist/`,
+   * so the runner only bounces the fastify server(s) — no build here.
    */
-  private restart(apps: IApiAppConfig[], build = true): Promise<void> {
+  private restart(apps: IApiAppConfig[]): Promise<void> {
     return this.scheduleRestartWork(() => {
-      return this.runRestart(apps, build)
+      return this.runRestart(apps)
     })
   }
 
@@ -485,32 +477,12 @@ export class DevServerRunner {
       })
   }
 
-  private async runRestart(apps: IApiAppConfig[], build: boolean): Promise<void> {
+  private async runRestart(apps: IApiAppConfig[]): Promise<void> {
     const targets = this.resolveRestartTargets(apps)
 
     if (targets.length === 0) return
 
     const label = targets.length === 1 ? targets[0]!.app.name : `${targets.length} apps`
-
-    if (build) {
-      const filters = targets
-        .map((t) => {
-          return `--filter=${t.app.packageName}`
-        })
-        .join(' ')
-
-      log(`🔄 Rebuilding ${label}...`)
-      try {
-        // Thread `log` as the logFn so a failed rebuild surfaces the captured tsc/turbo
-        // stdout/stderr (launchScript only tees them when a logFn is passed) — otherwise
-        // a watch-time build error is swallowed behind the terse "skipping restart" line.
-        await this.runBuild(`pnpm exec turbo run build ${filters} --env-mode=loose --force`, log)
-      } catch {
-        log(`⚠️  Build failed for ${label}, skipping restart`, 'warn')
-
-        return
-      }
-    }
 
     log(`🔄 Restarting ${label}...`)
     await Promise.all(
@@ -538,27 +510,17 @@ export class DevServerRunner {
         }
       }),
     )
-    log(`✅ Rebuilt and restarted ${label}`)
-  }
-
-  /** Dispatch to the src-watch (oneshot) or dist-watch + turbo-watch-engine (turbo) strategy. */
-  private setupWatch(apps: IApiAppConfig[]): void {
-    if ((this.options.watchMode ?? 'oneshot') === 'turbo') {
-      this.setupTurboWatch(apps)
-
-      return
-    }
-    this.setupSrcWatch(apps)
+    log(`✅ Restarted ${label}`)
   }
 
   /**
-   * `--watch-mode=turbo`: start the long-lived `turbo watch build` engine, then watch
-   * compiled `dist/` output to trigger restarts. A change under an app's `dist` restarts
-   * that app; a change under any `packages/<pkg>/dist` restarts every app (editing a shared
-   * lib rewrites only the lib's `dist`, so a package-dist change is the lib-rebuild signal).
-   * Restarts are build-less here — the engine already rebuilt `dist/`.
+   * Start the long-lived `turbo watch build` engine, then watch compiled `dist/` output to
+   * trigger restarts. A change under an app's `dist` restarts that app; a change under any
+   * `packages/<pkg>/dist` restarts every app (editing a shared lib rewrites only the lib's
+   * `dist`, so a package-dist change is the lib-rebuild signal). Restarts are build-less —
+   * the engine already rebuilt `dist/`.
    */
-  private setupTurboWatch(apps: IApiAppConfig[]): void {
+  private setupWatch(apps: IApiAppConfig[]): void {
     this.turboWatch = this.turboWatchFactory({
       packageNames: apps.map((a) => {
         return a.packageName
@@ -566,7 +528,7 @@ export class DevServerRunner {
       cwd: process.cwd(),
       logFile: LOG_FILE_PATH,
     })
-    log('👀 Watch mode: turbo — started `turbo watch build` engine; watching dist output')
+    log('👀 Watch mode: started `turbo watch build` engine; watching dist output')
 
     const appDistDirs = getAppDistDirs(apps)
     const packageDistDirs = getPackageDistDirs(this.monorepoRoot)
@@ -603,9 +565,9 @@ export class DevServerRunner {
       const change = classifyDistChange(filePath, appDistDirs, packageDistDirs)
 
       if (change.kind === 'package') {
-        // A dependency package's dist was rebuilt — restart every app (build-less).
+        // A dependency package's dist was rebuilt — restart every app.
         this.scheduleDebounced('__packages__', () => {
-          return this.restart(apps, false)
+          return this.restart(apps)
         })
 
         return
@@ -618,68 +580,11 @@ export class DevServerRunner {
       if (!app) return
 
       this.scheduleDebounced(app.name, () => {
-        return this.restart([app], false)
-      })
-    })
-
-    log(`👀 Watching ${appDistDirs.length} app dist + ${packageDistDirs.length} package dist dir(s) for changes...`)
-  }
-
-  /**
-   * `--watch-mode=oneshot` (default): chokidar watches `src`; each change runs a one-shot
-   * `turbo run build --force` then restarts. Preserved verbatim as the rollback path.
-   */
-  private setupSrcWatch(apps: IApiAppConfig[]): void {
-    const appSrcDirs = getAppSrcDirs(apps)
-    const packageSrcDirs = getPackageSrcDirs(this.monorepoRoot)
-    const allWatchDirs = [...appSrcDirs, ...packageSrcDirs]
-
-    if (allWatchDirs.length === 0) {
-      log('⚠️  No app or package src directories found to watch', 'warn')
-
-      return
-    }
-
-    const usePoll = process.env.DEV_SERVER_CHOKIDAR_POLL === '1'
-
-    const watcher = chokidar.watch(allWatchDirs, {
-      ignoreInitial: true,
-      awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 },
-      ...(usePoll ? { usePolling: true, interval: 400 } : {}),
-    })
-
-    this.watcher = watcher
-
-    if (usePoll) {
-      log('👀 chokidar: usePolling enabled (DEV_SERVER_CHOKIDAR_POLL=1)', 'debug')
-    }
-
-    watcher.on('change', (filePath: string) => {
-      log(`👀 Change detected: ${filePath}`, 'debug')
-
-      const change = classifyChange(filePath, appSrcDirs, packageSrcDirs)
-
-      if (change.kind === 'package') {
-        // A shared package changed — every app depends on it, so rebuild + restart all.
-        this.scheduleDebounced('__packages__', () => {
-          return this.restart(apps)
-        })
-
-        return
-      }
-
-      const app = apps.find((a) => {
-        return path.join(a.path, 'src') === change.app
-      })
-
-      if (!app) return
-
-      this.scheduleDebounced(app.name, () => {
         return this.restart([app])
       })
     })
 
-    log(`👀 Watching ${appSrcDirs.length} app(s) + ${packageSrcDirs.length} package(s) for changes...`)
+    log(`👀 Watching ${appDistDirs.length} app dist + ${packageDistDirs.length} package dist dir(s) for changes...`)
   }
 
   /**

@@ -16,12 +16,6 @@ import type { DevServerOptions } from 'src/dev/dev-server'
 export interface DevCliOptions {
   watch?: boolean
   app?: string
-  watchMode?: string
-}
-
-/** Coerce the raw `--watch-mode` value to the typed union; anything unrecognized → `oneshot`. */
-const parseWatchMode = (value: string | undefined): 'oneshot' | 'turbo' => {
-  return value === 'turbo' ? 'turbo' : 'oneshot'
 }
 
 /** Split a comma-separated flag value into a trimmed, non-empty list (`null` when unset/empty). */
@@ -46,7 +40,6 @@ export const toDevServerOptions = (raw: DevCliOptions): DevServerOptions => {
   return {
     watch: raw.watch ?? false,
     include: splitList(raw.app),
-    watchMode: parseWatchMode(raw.watchMode),
   }
 }
 
@@ -91,7 +84,6 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
     .description('Run local dev servers for every apps/<app>/api that has a serverless.yml')
     .option('-w, --watch', 'Rebuild and restart on file save')
     .option('--app <names>', 'Only run these apps (comma-separated folder names)')
-    .option('--watch-mode <mode>', 'Rebuild strategy in --watch: oneshot (default) or turbo (turbo watch build)')
 
   program.parse(argv)
 

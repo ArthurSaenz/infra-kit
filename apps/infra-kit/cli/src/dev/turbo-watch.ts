@@ -5,13 +5,13 @@
  */
 /* eslint-disable sonarjs/no-os-command-from-path */
 /**
- * `turbo watch build` engine for `--watch-mode=turbo`.
+ * `turbo watch build` engine for `infra-kit dev --watch`.
  *
  * Spawns ONE long-lived `turbo watch build` child that owns incremental rebuilds and
  * dependency-graph fan-out. Its stdout is teed to the runner log but NEVER parsed for
  * control flow: piped `turbo watch` block-buffers stdout and emits no per-task completion
  * marker for `tsc -b` tasks, so the dev-server derives "a build finished" from watching
- * `dist/` output instead (see {@link file://./dev-server.ts} `setupTurboWatch`).
+ * `dist/` output instead (see {@link file://./dev-server.ts} `setupWatch`).
  *
  * The child is a 5-deep tree (`sh → pnpm → node → turbo → native binary`); killing the
  * wrapper PID orphans the rest. So it is spawned `detached` (its own process group) and

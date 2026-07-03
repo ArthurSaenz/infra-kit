@@ -3,7 +3,6 @@ import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
-  classifyChange,
   classifyDistChange,
   discoverApiApps,
   findMonorepoRoot,
@@ -99,31 +98,6 @@ describe('normalizeAppInclude — --app list normalization', () => {
 
   it('keeps a non-empty list and drops falsy entries', () => {
     expect(normalizeAppInclude(['client', ''])).toEqual(['client'])
-  })
-})
-
-describe('classifyChange — route a changed file to app vs package', () => {
-  const appSrcDirs = ['/repo/apps/client/api/src']
-  const packageSrcDirs = ['/repo/packages/core/src']
-
-  it('classifies an app-src path as an app change and returns the matched app dir', () => {
-    const change = classifyChange('/repo/apps/client/api/src/handler.ts', appSrcDirs, packageSrcDirs)
-
-    expect(change).toEqual({ kind: 'app', app: '/repo/apps/client/api/src' })
-  })
-
-  it('classifies a package-src path as a package change', () => {
-    const change = classifyChange('/repo/packages/core/src/index.ts', appSrcDirs, packageSrcDirs)
-
-    expect(change).toEqual({ kind: 'package' })
-  })
-
-  it('gives package matches precedence when a path could match both', () => {
-    // Same dir listed as both an app and a package src — package is checked first.
-    const shared = ['/repo/shared/src']
-    const change = classifyChange('/repo/shared/src/x.ts', shared, shared)
-
-    expect(change.kind).toBe('package')
   })
 })
 
