@@ -26,14 +26,19 @@ import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 
 import {
   classifyChange,
+  classifyDistChange,
   discoverApiApps as discoverApiAppsBare,
   findMonorepoRoot,
+  getAppDistDirs,
   getAppSrcDirs,
+  getPackageDistDirs,
   getPackageSrcDirs,
   normalizeAppInclude as normalizeAppIncludePure,
 } from './discovery.js'
 import { findPortConflicts, resolvePort as resolvePortPure, resolvePrefixUrl as resolvePrefixUrlPure } from './ports.js'
 import { ServerlessLocalRun } from './serverless-local-run.js'
+import { defaultTurboWatchFactory } from './turbo-watch.js'
+import type { TurboWatchFactory, TurboWatchHandle } from './turbo-watch.js'
 
 /** Runner-only log file, resolved under the consumer repo's `.infra-kit/` dir at startup. */
 let LOG_FILE_PATH = path.join(process.cwd(), '.infra-kit', 'dev-server.log')
@@ -185,6 +190,14 @@ export interface DevServerOptions {
   watch?: boolean
   /** Only run these app folder names (null/empty = all discovered). */
   include?: string[] | null
+  /**
+   * How `--watch` rebuilds:
+   * - `oneshot` (default): chokidar watches `src`, each change runs a one-shot
+   *   `turbo run build --force`. Today's behavior; the safe rollback.
+   * - `turbo`: a long-lived `turbo watch build` engine rebuilds incrementally and
+   *   chokidar watches compiled `dist/` to trigger the restart.
+   */
+  watchMode?: 'oneshot' | 'turbo'
 }
 
 interface IAppServer {
@@ -205,10 +218,19 @@ export class DevServerRunner {
   private readonly options: DevServerOptions
   /** Build runner seam — real turbo shell-out by default, injectable for tests. */
   private readonly runBuild: BuildRunner
+  /** `turbo watch` spawn seam — real detached child by default, injectable for tests. */
+  private readonly turboWatchFactory: TurboWatchFactory
+  /** Live `turbo watch` engine in `--watch-mode=turbo`; reaped on {@link shutdown}. */
+  private turboWatch: TurboWatchHandle | null = null
 
-  constructor(options: DevServerOptions = {}, runBuild: BuildRunner = launchScript) {
+  constructor(
+    options: DevServerOptions = {},
+    runBuild: BuildRunner = launchScript,
+    turboWatchFactory: TurboWatchFactory = defaultTurboWatchFactory,
+  ) {
     this.options = options
     this.runBuild = runBuild
+    this.turboWatchFactory = turboWatchFactory
     initLogFile()
 
     // Walk up from the consumer repo cwd to the monorepo root.
@@ -435,13 +457,15 @@ export class DevServerRunner {
   }
 
   /**
-   * Schedule a rebuild + restart of the given apps (1 or N), serialized against other
+   * Schedule a (rebuild +) restart of the given apps (1 or N), serialized against other
    * restarts via {@link scheduleRestartWork}. A single-app watch change passes `[app]`;
-   * a package change passes every running app.
+   * a package change passes every running app. `build` is `false` in `--watch-mode=turbo`,
+   * where the long-lived `turbo watch` engine has already rebuilt `dist/` — the runner only
+   * needs to bounce the fastify server(s).
    */
-  private restart(apps: IApiAppConfig[]): Promise<void> {
+  private restart(apps: IApiAppConfig[], build = true): Promise<void> {
     return this.scheduleRestartWork(() => {
-      return this.runRestart(apps)
+      return this.runRestart(apps, build)
     })
   }
 
@@ -461,28 +485,31 @@ export class DevServerRunner {
       })
   }
 
-  private async runRestart(apps: IApiAppConfig[]): Promise<void> {
+  private async runRestart(apps: IApiAppConfig[], build: boolean): Promise<void> {
     const targets = this.resolveRestartTargets(apps)
 
     if (targets.length === 0) return
 
     const label = targets.length === 1 ? targets[0]!.app.name : `${targets.length} apps`
-    const filters = targets
-      .map((t) => {
-        return `--filter=${t.app.packageName}`
-      })
-      .join(' ')
 
-    log(`🔄 Rebuilding ${label}...`)
-    try {
-      // Thread `log` as the logFn so a failed rebuild surfaces the captured tsc/turbo
-      // stdout/stderr (launchScript only tees them when a logFn is passed) — otherwise
-      // a watch-time build error is swallowed behind the terse "skipping restart" line.
-      await this.runBuild(`pnpm exec turbo run build ${filters} --env-mode=loose --force`, log)
-    } catch {
-      log(`⚠️  Build failed for ${label}, skipping restart`, 'warn')
+    if (build) {
+      const filters = targets
+        .map((t) => {
+          return `--filter=${t.app.packageName}`
+        })
+        .join(' ')
 
-      return
+      log(`🔄 Rebuilding ${label}...`)
+      try {
+        // Thread `log` as the logFn so a failed rebuild surfaces the captured tsc/turbo
+        // stdout/stderr (launchScript only tees them when a logFn is passed) — otherwise
+        // a watch-time build error is swallowed behind the terse "skipping restart" line.
+        await this.runBuild(`pnpm exec turbo run build ${filters} --env-mode=loose --force`, log)
+      } catch {
+        log(`⚠️  Build failed for ${label}, skipping restart`, 'warn')
+
+        return
+      }
     }
 
     log(`🔄 Restarting ${label}...`)
@@ -514,7 +541,95 @@ export class DevServerRunner {
     log(`✅ Rebuilt and restarted ${label}`)
   }
 
+  /** Dispatch to the src-watch (oneshot) or dist-watch + turbo-watch-engine (turbo) strategy. */
   private setupWatch(apps: IApiAppConfig[]): void {
+    if ((this.options.watchMode ?? 'oneshot') === 'turbo') {
+      this.setupTurboWatch(apps)
+
+      return
+    }
+    this.setupSrcWatch(apps)
+  }
+
+  /**
+   * `--watch-mode=turbo`: start the long-lived `turbo watch build` engine, then watch
+   * compiled `dist/` output to trigger restarts. A change under an app's `dist` restarts
+   * that app; a change under any `packages/<pkg>/dist` restarts every app (editing a shared
+   * lib rewrites only the lib's `dist`, so a package-dist change is the lib-rebuild signal).
+   * Restarts are build-less here — the engine already rebuilt `dist/`.
+   */
+  private setupTurboWatch(apps: IApiAppConfig[]): void {
+    this.turboWatch = this.turboWatchFactory({
+      packageNames: apps.map((a) => {
+        return a.packageName
+      }),
+      cwd: process.cwd(),
+      logFile: LOG_FILE_PATH,
+    })
+    log('👀 Watch mode: turbo — started `turbo watch build` engine; watching dist output')
+
+    const appDistDirs = getAppDistDirs(apps)
+    const packageDistDirs = getPackageDistDirs(this.monorepoRoot)
+    const allDistDirs = [...appDistDirs, ...packageDistDirs]
+
+    if (allDistDirs.length === 0) {
+      log('⚠️  No app or package dist directories found to watch (were they built?)', 'warn')
+
+      return
+    }
+
+    const usePoll = process.env.DEV_SERVER_CHOKIDAR_POLL === '1'
+
+    const watcher = chokidar.watch(allDistDirs, {
+      ignoreInitial: true,
+      awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 },
+      // Ignore tsc's incremental bookkeeping + sourcemaps: they rewrite on every build
+      // (even content-identical ones) and would bounce fastify onto no real change.
+      ignored: (p: string): boolean => {
+        return p.endsWith('.tsbuildinfo') || p.endsWith('.map')
+      },
+      ...(usePoll ? { usePolling: true, interval: 400 } : {}),
+    })
+
+    this.watcher = watcher
+
+    if (usePoll) {
+      log('👀 chokidar: usePolling enabled (DEV_SERVER_CHOKIDAR_POLL=1)', 'debug')
+    }
+
+    watcher.on('change', (filePath: string) => {
+      log(`👀 dist change detected: ${filePath}`, 'debug')
+
+      const change = classifyDistChange(filePath, appDistDirs, packageDistDirs)
+
+      if (change.kind === 'package') {
+        // A dependency package's dist was rebuilt — restart every app (build-less).
+        this.scheduleDebounced('__packages__', () => {
+          return this.restart(apps, false)
+        })
+
+        return
+      }
+
+      const app = apps.find((a) => {
+        return path.join(a.path, 'dist') === change.app
+      })
+
+      if (!app) return
+
+      this.scheduleDebounced(app.name, () => {
+        return this.restart([app], false)
+      })
+    })
+
+    log(`👀 Watching ${appDistDirs.length} app dist + ${packageDistDirs.length} package dist dir(s) for changes...`)
+  }
+
+  /**
+   * `--watch-mode=oneshot` (default): chokidar watches `src`; each change runs a one-shot
+   * `turbo run build --force` then restarts. Preserved verbatim as the rollback path.
+   */
+  private setupSrcWatch(apps: IApiAppConfig[]): void {
     const appSrcDirs = getAppSrcDirs(apps)
     const packageSrcDirs = getPackageSrcDirs(this.monorepoRoot)
     const allWatchDirs = [...appSrcDirs, ...packageSrcDirs]
@@ -628,6 +743,14 @@ export class DevServerRunner {
    */
   public async shutdown(): Promise<void> {
     log('🛑 Shutting down all servers...')
+
+    // Reap the `turbo watch` engine FIRST so it can't write fresh dist and trip the
+    // watcher mid-teardown. Reaped here (not only in the entry signal handler) because
+    // tests and any non-signal caller invoke shutdown() directly.
+    if (this.turboWatch) {
+      this.turboWatch.kill()
+      this.turboWatch = null
+    }
 
     for (const timer of this.watchDebounceTimers.values()) {
       clearTimeout(timer)

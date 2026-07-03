@@ -128,6 +128,49 @@ export function getAppSrcDirs(apps: Array<{ path: string }>): string[] {
     })
 }
 
+/**
+ * Existing `packages/<pkg>/dist` directories under the monorepo root — the compiled
+ * outputs `turbo watch` rewrites. Watched (alongside app dist) in `--watch-mode=turbo`
+ * because editing a shared lib rewrites only the lib's `dist`, never the dependent
+ * app's, so a package-dist change is the only signal that a lib was rebuilt.
+ */
+export function getPackageDistDirs(root: string): string[] {
+  const packagesDir = path.join(root, 'packages')
+
+  if (!fs.existsSync(packagesDir)) return []
+
+  const names = fs
+    .readdirSync(packagesDir, { withFileTypes: true })
+    .filter((d) => {
+      return d.isDirectory()
+    })
+    .map((d) => {
+      return d.name
+    })
+  const dirs: string[] = []
+
+  for (const name of names) {
+    const distDir = path.join(packagesDir, name, 'dist')
+
+    if (fs.existsSync(distDir) && fs.statSync(distDir).isDirectory()) {
+      dirs.push(distDir)
+    }
+  }
+
+  return dirs
+}
+
+/** Existing `<app.path>/dist` directories for the given apps (order preserved). */
+export function getAppDistDirs(apps: Array<{ path: string }>): string[] {
+  return apps
+    .map((app) => {
+      return path.join(app.path, 'dist')
+    })
+    .filter((dir) => {
+      return fs.existsSync(dir)
+    })
+}
+
 /** How a watched file change should be routed. */
 export interface ChangeClassification {
   kind: 'app' | 'package'
@@ -157,6 +200,34 @@ export function classifyChange(
   }
 
   const matchedDir = appSrcDirs.find((dir) => {
+    return normalized.startsWith(path.normalize(dir))
+  })
+
+  return { kind: 'app', app: matchedDir }
+}
+
+/**
+ * Route a changed compiled-output path (in `--watch-mode=turbo`) the same way
+ * {@link classifyChange} routes a source path: a `packages/<pkg>/dist` change is a
+ * shared-package rebuild (restart every app), an `<app>/dist` change restarts only
+ * that app (the matched app dist dir is returned; `undefined` when nothing matched).
+ */
+export function classifyDistChange(
+  changedPath: string,
+  appDistDirs: string[],
+  packageDistDirs: string[],
+): ChangeClassification {
+  const normalized = path.normalize(changedPath)
+
+  const inPackage = packageDistDirs.some((dir) => {
+    return normalized.startsWith(path.normalize(dir))
+  })
+
+  if (inPackage) {
+    return { kind: 'package' }
+  }
+
+  const matchedDir = appDistDirs.find((dir) => {
     return normalized.startsWith(path.normalize(dir))
   })
 

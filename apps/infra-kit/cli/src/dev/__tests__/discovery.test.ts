@@ -1,10 +1,14 @@
+import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   classifyChange,
+  classifyDistChange,
   discoverApiApps,
   findMonorepoRoot,
+  getAppDistDirs,
+  getPackageDistDirs,
   getPackageName,
   normalizeAppInclude,
 } from 'src/dev/discovery'
@@ -120,5 +124,52 @@ describe('classifyChange — route a changed file to app vs package', () => {
     const change = classifyChange('/repo/shared/src/x.ts', shared, shared)
 
     expect(change.kind).toBe('package')
+  })
+})
+
+describe('classifyDistChange — route a compiled-output path to app vs package', () => {
+  const appDistDirs = ['/repo/apps/client/api/dist']
+  const packageDistDirs = ['/repo/packages/lib-core/dist']
+
+  it('classifies an app-dist path as an app change and returns the matched app dist dir', () => {
+    const change = classifyDistChange('/repo/apps/client/api/dist/controllers/x.js', appDistDirs, packageDistDirs)
+
+    expect(change).toEqual({ kind: 'app', app: '/repo/apps/client/api/dist' })
+  })
+
+  it('classifies a package-dist path as a package change (a lib was rebuilt → restart all)', () => {
+    const change = classifyDistChange('/repo/packages/lib-core/dist/index.js', appDistDirs, packageDistDirs)
+
+    expect(change).toEqual({ kind: 'package' })
+  })
+
+  it('returns an app change with undefined dir when nothing matches', () => {
+    const change = classifyDistChange('/repo/elsewhere/dist/x.js', appDistDirs, packageDistDirs)
+
+    expect(change).toEqual({ kind: 'app', app: undefined })
+  })
+})
+
+describe('getPackageDistDirs / getAppDistDirs — existing dist dirs only', () => {
+  it('returns packages/<pkg>/dist dirs that exist and skips those without a dist', () => {
+    const root = temp.register(makeMonorepo([{ name: 'client', withHandler: true }]))
+
+    // makeMonorepo only scaffolds apps/*; add a packages/ tree with one built + one unbuilt pkg.
+    fs.mkdirSync(path.join(root, 'packages', 'lib-core', 'dist'), { recursive: true })
+    fs.mkdirSync(path.join(root, 'packages', 'lib-unbuilt', 'src'), { recursive: true })
+
+    const distDirs = getPackageDistDirs(root)
+
+    expect(distDirs).toContain(path.join(root, 'packages', 'lib-core', 'dist'))
+    expect(distDirs).not.toContain(path.join(root, 'packages', 'lib-unbuilt', 'dist'))
+  })
+
+  it('returns <app.path>/dist dirs that exist (withHandler apps have one)', () => {
+    const root = temp.register(makeMonorepo([{ name: 'client', withHandler: true }]))
+    const apiDir = path.join(root, 'apps', 'client', 'api')
+
+    const distDirs = getAppDistDirs([{ path: apiDir }])
+
+    expect(distDirs).toEqual([path.join(apiDir, 'dist')])
   })
 })

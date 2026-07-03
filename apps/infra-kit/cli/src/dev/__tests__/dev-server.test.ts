@@ -402,3 +402,96 @@ describe('devServerRunner — --watch rebuild + restart on change', () => {
     expect(await canBind(gammaPort)).toBe(true)
   }, 15000)
 })
+
+describe('devServerRunner — --watch-mode=turbo (dist-watch, build-less restart)', () => {
+  it('restarts on a dist change without rebuilding, spawns the turbo engine, and reaps it on shutdown', async () => {
+    const root = temp.register(makeMonorepo([{ name: 'omega', packageName: 'omega-api', withHandler: true }]))
+    const realRoot = fs.realpathSync(root)
+    const apiDir = path.join(realRoot, 'apps', 'omega', 'api')
+    const distHandler = path.join(apiDir, 'dist', 'handler.js')
+
+    const omegaPort = await getFreePort()
+
+    process.env.OMEGA_PORT = String(omegaPort)
+    // Hermetic polling so the dist watcher fires without relying on native fs events.
+    process.env.DEV_SERVER_CHOKIDAR_POLL = '1'
+
+    // Fake build: boot build only. In turbo mode the on-change rebuild is owned by the
+    // (faked) turbo engine, so runBuild must NOT be called again after boot.
+    const buildCalls: string[] = []
+    const fakeRunBuild = async (cmd: string): Promise<void> => {
+      buildCalls.push(cmd)
+      fs.writeFileSync(distHandler, handlerSource(1))
+    }
+
+    // No-op turbo engine: record that it was asked to start (+ with which packages) and
+    // that it was killed on shutdown, without spawning a real child.
+    let killed = false
+    let spawnedPackages: string[] | null = null
+    const fakeTurboWatch = (opts: { packageNames: string[] }): { kill: () => void } => {
+      spawnedPackages = opts.packageNames
+
+      return {
+        kill: (): void => {
+          killed = true
+        },
+      }
+    }
+
+    process.chdir(root)
+    const runner = new DevServerRunner({ watch: true, watchMode: 'turbo' }, fakeRunBuild, fakeTurboWatch)
+
+    await runner.start()
+
+    try {
+      const v1 = (await (await fetch(`http://127.0.0.1:${omegaPort}/api/v1/ping`)).json()) as { version: number }
+
+      expect(v1.version).toBe(1)
+
+      // The turbo engine was started, scoped to the app package.
+      expect(spawnedPackages).toEqual(['omega-api'])
+
+      // Exactly one build so far: the boot build. No rebuild happens on a dist change.
+      const buildsAfterBoot = buildCalls.length
+
+      expect(buildsAfterBoot).toBe(1)
+
+      // Let chokidar finish its initial scan, then simulate the turbo engine emitting a
+      // fresh dist build (v2) — the signal the dev-server restarts on.
+      await new Promise((r) => {
+        return setTimeout(r, 1200)
+      })
+      fs.writeFileSync(distHandler, handlerSource(2))
+
+      const deadline = Date.now() + 8000
+      let sawV2 = false
+
+      while (Date.now() < deadline && !sawV2) {
+        try {
+          const body = (await (await fetch(`http://127.0.0.1:${omegaPort}/api/v1/ping`)).json()) as { version: number }
+
+          if (body.version === 2) {
+            sawV2 = true
+            break
+          }
+        } catch {
+          // Server briefly down mid-restart; keep polling.
+        }
+        await new Promise((r) => {
+          return setTimeout(r, 100)
+        })
+      }
+
+      // Restarted and served the new dist on the same port…
+      expect(sawV2).toBe(true)
+      // …without any additional build (the restart is build-less in turbo mode).
+      expect(buildCalls).toHaveLength(buildsAfterBoot)
+    } finally {
+      await runner.shutdown()
+    }
+
+    // shutdown() reaped the turbo engine and freed the port.
+    expect(killed).toBe(true)
+    expect(await canBind(omegaPort)).toBe(true)
+  }, 15000)
+})
