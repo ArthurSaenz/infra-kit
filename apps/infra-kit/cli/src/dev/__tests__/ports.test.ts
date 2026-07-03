@@ -35,13 +35,9 @@ describe('resolvePort — precedence order', () => {
     expect(resolvePort('search-engine', { SEARCH_ENGINE_PORT: '3500' }, {})).toBe(3500)
   })
 
-  it('lets an explicit portOverride beat every env var and config source', () => {
-    expect(resolvePort('client', { PORT: '3300', CLIENT_PORT: '3400' }, { client: { port: 3200 } }, 3999)).toBe(3999)
-  })
-
-  it('honors portOverride 0 and does NOT fall through to a lower tier', () => {
+  it('honors {APP}_PORT = 0 and does NOT fall through to a lower tier', () => {
     // 0 is a valid "pick a free port" request; only null/undefined means "unset".
-    expect(resolvePort('client', { CLIENT_PORT: '3400' }, { client: { port: 3200 } }, 0)).toBe(0)
+    expect(resolvePort('client', { CLIENT_PORT: '0' }, { client: { port: 3200 } })).toBe(0)
   })
 
   it('strips surrounding quotes on a {APP}_PORT env value', () => {

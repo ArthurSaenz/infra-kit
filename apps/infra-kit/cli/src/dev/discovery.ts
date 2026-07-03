@@ -83,18 +83,11 @@ export function discoverApiApps(root: string): DiscoveredApiApp[] {
   return apps
 }
 
-/** Normalize the include/exclude option lists to `null` when empty. */
-export function normalizeAppFilters(options: { include?: string[] | null; exclude?: string[] | null }): {
-  include: string[] | null
-  exclude: string[] | null
-} {
-  const include = options.include?.filter(Boolean) ?? []
-  const exclude = options.exclude?.filter(Boolean) ?? []
+/** Normalize the `--app` include list: drop empties, and collapse an empty list to `null`. */
+export function normalizeAppInclude(include?: string[] | null): string[] | null {
+  const filtered = include?.filter(Boolean) ?? []
 
-  return {
-    include: include.length > 0 ? include : null,
-    exclude: exclude.length > 0 ? exclude : null,
-  }
+  return filtered.length > 0 ? filtered : null
 }
 
 /** Existing `packages/<pkg>/src` directories under the monorepo root. */

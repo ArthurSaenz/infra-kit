@@ -3,8 +3,8 @@
  *
  * Discovers and runs API apps under each `apps/<app>/api` folder that contains `serverless.yml`.
  *
- * Ports: `--port` flag, then `{APP}_PORT`, then `process.env.PORT`, then `dev.<app>.port`
- * from infra-kit.json, else 3010. URL prefix: `dev.<app>.prefixUrl`, else `/api/v1`.
+ * Ports: `{APP}_PORT`, then `process.env.PORT`, then `dev.<app>.port` from infra-kit.json,
+ * else 3010. URL prefix: `dev.<app>.prefixUrl`, else `/api/v1`.
  * Env vars should be provided via secrets manager (e.g. `doppler run -- pnpm dev-server`) or shell.
  *
  * This module is side-effect free on import: call `run()` (or construct `DevServerRunner`
@@ -30,7 +30,7 @@ import {
   findMonorepoRoot,
   getAppSrcDirs,
   getPackageSrcDirs,
-  normalizeAppFilters as normalizeAppFiltersPure,
+  normalizeAppInclude as normalizeAppIncludePure,
 } from './discovery.js'
 import { findPortConflicts, resolvePort as resolvePortPure, resolvePrefixUrl as resolvePrefixUrlPure } from './ports.js'
 import { ServerlessLocalRun } from './serverless-local-run.js'
@@ -100,6 +100,71 @@ function logTable(lines: string[]): void {
   appendLogFile(`${output}\n`)
 }
 
+/** Center `s` within `width` columns (clamped, so a too-long string is never truncated). */
+function center(s: string, width: number): string {
+  const pad = Math.max(0, width - s.length)
+  const left = Math.floor(pad / 2)
+
+  return `${' '.repeat(left)}${s}${' '.repeat(pad - left)}`
+}
+
+/**
+ * Render a box-drawn table whose column widths are computed from the longest cell in
+ * each column, so every emitted line shares one width regardless of app-name length
+ * (the old fixed `padEnd` misaligned on long names). Borders are generated from the
+ * same widths, so they always match the rows.
+ */
+function renderTable(title: string, headers: string[], rows: string[][]): string[] {
+  const widths = headers.map((header, i) => {
+    return Math.max(
+      header.length,
+      ...rows.map((row) => {
+        return (row[i] ?? '').length
+      }),
+    )
+  })
+  // Grow the last column if the title is wider than the columns, so the title band never clips.
+  const columnsInner =
+    widths.reduce((sum, w) => {
+      return sum + w + 2
+    }, 0) +
+    (widths.length - 1)
+
+  const lastIdx = widths.length - 1
+
+  if (lastIdx >= 0 && title.length + 2 > columnsInner) {
+    widths[lastIdx] = (widths[lastIdx] ?? 0) + (title.length + 2 - columnsInner)
+  }
+
+  const inner =
+    widths.reduce((sum, w) => {
+      return sum + w + 2
+    }, 0) +
+    (widths.length - 1)
+  const blocks = widths.map((w) => {
+    return '─'.repeat(w + 2)
+  })
+  const rowLine = (cells: string[]): string => {
+    return `│ ${cells
+      .map((c, i) => {
+        return (c ?? '').padEnd(widths[i]!)
+      })
+      .join(' │ ')} │`
+  }
+
+  return [
+    '',
+    `┌${'─'.repeat(inner)}┐`,
+    `│${center(title, inner)}│`,
+    `├${blocks.join('┬')}┤`,
+    rowLine(headers),
+    `├${blocks.join('┼')}┤`,
+    ...rows.map(rowLine),
+    `└${blocks.join('┴')}┘`,
+    '',
+  ]
+}
+
 interface IApiAppConfig {
   /** App folder name (e.g. backoffice, client) */
   name: string
@@ -111,19 +176,15 @@ interface IApiAppConfig {
 }
 
 /**
- * Runner options, parsed by the CLI entry point (`--watch`, `--app`, `--exclude`,
- * `--port`) and threaded through `run()`. The entry owns flag parsing; the runner
- * never reads `process.argv` itself.
+ * Runner options, parsed by the CLI entry point (`--watch`, `--app`) and threaded
+ * through `run()`. The entry owns flag parsing; the runner never reads `process.argv`
+ * itself. App selection is `--app` only; ports come from env/config (see `resolvePort`).
  */
 export interface DevServerOptions {
   /** Rebuild + restart on file save. */
   watch?: boolean
   /** Only run these app folder names (null/empty = all discovered). */
   include?: string[] | null
-  /** Skip these app folder names. */
-  exclude?: string[] | null
-  /** Explicit port override — beats every env/config source for every app. */
-  port?: number
 }
 
 interface IAppServer {
@@ -190,14 +251,14 @@ export class DevServerRunner {
     }
   }
 
-  /** Thin delegator to the pure {@link normalizeAppFiltersPure} over the runner's options. */
-  private normalizeAppFilters(): { include: string[] | null; exclude: string[] | null } {
-    return normalizeAppFiltersPure({ include: this.options.include, exclude: this.options.exclude })
+  /** Thin delegator to the pure {@link normalizeAppIncludePure} over the runner's `--app` list. */
+  private normalizeAppInclude(): string[] | null {
+    return normalizeAppIncludePure(this.options.include)
   }
 
-  /** Thin delegator to the pure {@link resolvePortPure}, threading env + the `--port` override. */
+  /** Thin delegator to the pure {@link resolvePortPure}, threading env + config. */
   private resolvePort(appName: string, devConfig: DevConfig): number {
-    return resolvePortPure(appName, process.env, devConfig, this.options.port)
+    return resolvePortPure(appName, process.env, devConfig)
   }
 
   /** Thin delegator to the pure {@link resolvePrefixUrlPure}. */
@@ -206,7 +267,7 @@ export class DevServerRunner {
   }
 
   public async start(): Promise<void> {
-    const { include, exclude } = this.normalizeAppFilters()
+    const include = this.normalizeAppInclude()
     const watch = this.options.watch ?? false
     const devConfig = await this.loadDevConfig()
 
@@ -220,7 +281,7 @@ export class DevServerRunner {
     }
     log(`📂 Monorepo root: ${this.monorepoRoot}`)
 
-    const apps = this.selectApps(this.discoverApiApps(devConfig), include, exclude)
+    const apps = this.selectApps(this.discoverApiApps(devConfig), include)
 
     if (apps.length === 0) {
       log('⚠️  No API apps found to run', 'warn')
@@ -230,7 +291,6 @@ export class DevServerRunner {
 
     log(`📦 Discovered ${apps.length} API app(s): ${this.formatAppList(apps)}`)
 
-    this.assertPortOverrideSingleApp(apps)
     this.assertNoPortConflicts(apps)
 
     await this.buildApps(apps, watch)
@@ -238,6 +298,7 @@ export class DevServerRunner {
 
     log('🎉 All servers started!')
     this.printServerTable(apps)
+    this.printRouteDump()
     log(`📝 Handler logs (AWS Powertools, logger.info/debug, etc.) → this terminal. Runner-only file: ${LOG_FILE_PATH}`)
 
     if (watch && this.appServers.length > 0) {
@@ -254,45 +315,17 @@ export class DevServerRunner {
       .join(', ')
   }
 
-  /** Apply the `--app`/`--exclude` filters (logging each applied filter). */
-  private selectApps(apps: IApiAppConfig[], include: string[] | null, exclude: string[] | null): IApiAppConfig[] {
-    let selected = apps
-
-    if (include) {
-      selected = selected.filter((app) => {
-        return include.includes(app.name)
-      })
-      log(`🔍 Filtering to apps: ${include.join(', ')}`)
-    }
-    if (exclude) {
-      selected = selected.filter((app) => {
-        return !exclude.includes(app.name)
-      })
-      log(`🚫 Excluding apps: ${exclude.join(', ')}`)
+  /** Apply the `--app` include filter (logging it when applied). */
+  private selectApps(apps: IApiAppConfig[], include: string[] | null): IApiAppConfig[] {
+    if (!include) {
+      return apps
     }
 
-    return selected
-  }
+    log(`🔍 Filtering to apps: ${include.join(', ')}`)
 
-  /**
-   * `--port` forces the same port on every app, so with more than one selected app it would always
-   * collide. Fail up front with a clear message instead of tripping the generic port-conflict guard.
-   */
-  private assertPortOverrideSingleApp(apps: IApiAppConfig[]): void {
-    if (this.options.port == null || apps.length <= 1) {
-      return
-    }
-
-    const names = apps
-      .map((a) => {
-        return a.name
-      })
-      .join(', ')
-
-    log(`⚠️  --port ${this.options.port} was given, but ${apps.length} apps are selected: ${names}`, 'error')
-    log('   --port sets one port for every app, which always collides. Narrow with --app=<name>,', 'error')
-    log('   or set distinct {APP}_PORT env vars / dev.<app>.port config instead.', 'error')
-    throw new Error(`--port requires a single app (got ${apps.length}: ${names})`)
+    return apps.filter((app) => {
+      return include.includes(app.name)
+    })
   }
 
   /** Throw (after logging remediation tips) when two apps resolve to the same port. */
@@ -305,8 +338,9 @@ export class DevServerRunner {
 
     log(`⚠️  Port conflict detected! ${duplicatePorts.join(', ')}`, 'error')
     log(`Conflicting apps: ${this.formatAppList(conflictingApps)}`, 'error')
-    log('\n💡 Tip: Set distinct env vars like `CLIENT_PORT=`, `SEARCH_ENGINE_PORT=`, …', 'error')
-    log('   Or use --exclude=appname to skip conflicting apps\n', 'error')
+    log('\n💡 Tip: give each app a distinct port via `{APP}_PORT` env (e.g. `CLIENT_PORT=`,', 'error')
+    log('   `SEARCH_ENGINE_PORT=`) or `dev.<app>.port` in infra-kit.json; or run a subset with', 'error')
+    log('   `--app=<name>,<name>`.\n', 'error')
     throw new Error(`Port conflict detected: ${duplicatePorts.join(', ')}`)
   }
 
@@ -441,7 +475,10 @@ export class DevServerRunner {
 
     log(`🔄 Rebuilding ${label}...`)
     try {
-      await this.runBuild(`pnpm exec turbo run build ${filters} --env-mode=loose --force`)
+      // Thread `log` as the logFn so a failed rebuild surfaces the captured tsc/turbo
+      // stdout/stderr (launchScript only tees them when a logFn is passed) — otherwise
+      // a watch-time build error is swallowed behind the terse "skipping restart" line.
+      await this.runBuild(`pnpm exec turbo run build ${filters} --env-mode=loose --force`, log)
     } catch {
       log(`⚠️  Build failed for ${label}, skipping restart`, 'warn')
 
@@ -550,28 +587,39 @@ export class DevServerRunner {
     this.watchDebounceTimers.set(key, timer)
   }
 
+  /**
+   * Print the running-server table. The `Base URL` column carries each app's
+   * `prefixUrl` (e.g. `/api/v1`) so it is copy-pasteable — the old table showed a bare
+   * `http://localhost:<port>` that 404s against prefixed handler routes. A `Health`
+   * column surfaces the unprefixed `/__health` liveness URL.
+   */
   private printServerTable(apps: IApiAppConfig[]): void {
-    const lines = [
-      '',
-      '┌──────────────────────────────────────────────────────────────┐',
-      '│                    🖥️  Running Servers                       │',
-      '├──────────────────────────┬───────┬───────────────────────────┤',
-      '│ App                      │ Port  │ URL                       │',
-      '├──────────────────────────┼───────┼───────────────────────────┤',
-    ]
+    const rows = apps.map((app) => {
+      return [
+        app.name,
+        String(app.port),
+        `http://localhost:${app.port}${app.prefixUrl}`,
+        `http://localhost:${app.port}/__health`,
+      ]
+    })
 
-    for (const app of apps) {
-      const name = app.name.padEnd(24)
-      const port = String(app.port).padEnd(5)
-      const url = `http://localhost:${app.port}`.padEnd(25)
+    logTable(renderTable('🖥️  Running Servers', ['App', 'Port', 'Base URL', 'Health'], rows))
+  }
 
-      lines.push(`│ ${name} │ ${port} │ ${url} │`)
+  /**
+   * Dump each running app's registered `METHOD /path` routes at startup so the
+   * emulator is self-describing (no need to open `serverless.yml` to learn the routes).
+   * Reads the live route set via {@link ServerlessLocalRun.getRegisteredRoutes}.
+   */
+  private printRouteDump(): void {
+    if (this.appServers.length === 0) return
+
+    log('🗺️  Registered routes:')
+    for (const { app, server } of this.appServers) {
+      const routes = server.getRegisteredRoutes()
+
+      log(`   ${app.name} (${routes.length}): ${routes.length > 0 ? routes.join(', ') : '(none)'}`)
     }
-
-    lines.push('└──────────────────────────┴───────┴───────────────────────────┘')
-    lines.push('')
-
-    logTable(lines)
   }
 
   /**

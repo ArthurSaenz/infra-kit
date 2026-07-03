@@ -11,6 +11,7 @@ import * as net from 'node:net'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import process from 'node:process'
+import { vi } from 'vitest'
 
 import { ServerlessLocalRun } from 'src/dev/serverless-local-run'
 
@@ -224,4 +225,17 @@ export function snapshotCwd(): string {
 /** Restore a cwd snapshot taken by {@link snapshotCwd}. */
 export function restoreCwd(dir: string): void {
   process.chdir(dir)
+}
+
+/**
+ * Spy `process.stdout.write`, pushing every written chunk into `sink`. The caller owns
+ * the returned spy's lifecycle (`spy.mockRestore()` in a `finally`). Used by the dev-server
+ * table / route-dump / request-log tests to assert on captured startup + request output.
+ */
+export function spyStdoutWrite(sink: string[]): ReturnType<typeof vi.spyOn> {
+  return vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown): boolean => {
+    sink.push(String(chunk))
+
+    return true
+  }) as never)
 }

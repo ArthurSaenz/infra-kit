@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ServerlessLocalRun } from 'src/dev/serverless-local-run'
 
-import { PREFIX, boot, canBind, getFreePort, handlerSource, makeApiFixture } from './fixtures'
+import { PREFIX, boot, canBind, getFreePort, handlerSource, makeApiFixture, spyStdoutWrite } from './fixtures'
 
 /** Overwrite the compiled handler in an api fixture with custom source. */
 const writeHandler = (apiDir: string, source: string): void => {
@@ -424,6 +424,83 @@ describe('serverlessLocalRun — injected handler logger (real Powertools)', () 
     expect(all).toContain('warn-mark')
     expect(all).toContain('error-mark')
     expect(all).toContain('child-mark')
+  })
+})
+
+describe('serverlessLocalRun — getRegisteredRoutes', () => {
+  it('returns the registered METHOD /path keys (sorted) and excludes /__health', async () => {
+    const server = await boot(apiDir, port)
+
+    running.push(server)
+
+    // The api fixture declares ping (GET), echo (POST) and item/{id} (GET); {id} -> :id.
+    expect(server.getRegisteredRoutes()).toEqual([
+      `GET ${PREFIX}/item/:id`,
+      `GET ${PREFIX}/ping`,
+      `POST ${PREFIX}/echo`,
+    ])
+    // The internal liveness route is registered outside defineRoute and must not appear.
+    expect(
+      server.getRegisteredRoutes().some((r) => {
+        return r.includes('__health')
+      }),
+    ).toBe(false)
+  })
+})
+
+describe('serverlessLocalRun — opt-in request logging (DEV_SERVER_REQUEST_LOG)', () => {
+  it('emits one "<method> <url> → <status> <ms>ms" line per request when set to 1', async () => {
+    process.env.DEV_SERVER_REQUEST_LOG = '1'
+    const writes: string[] = []
+    const spy = spyStdoutWrite(writes)
+
+    try {
+      // The hook is wired in the constructor from the env, so boot AFTER setting it.
+      running.push(await boot(apiDir, port))
+      await fetch(`http://127.0.0.1:${port}${PREFIX}/ping`)
+      // onResponse fires just after the response is sent; give it a beat.
+      await new Promise((r) => {
+        return setTimeout(r, 50)
+      })
+    } finally {
+      spy.mockRestore()
+      delete process.env.DEV_SERVER_REQUEST_LOG
+    }
+
+    // The request line is the only output using the ' → ' arrow (Powertools JSON never does).
+    const reqLines = writes.filter((w) => {
+      return w.includes('→')
+    })
+
+    expect(reqLines.length).toBeGreaterThanOrEqual(1)
+
+    const joined = reqLines.join('')
+
+    expect(joined).toContain('GET')
+    expect(joined).toContain(`${PREFIX}/ping`)
+    expect(joined).toContain('200')
+  })
+
+  it('writes no request line when the env var is unset', async () => {
+    delete process.env.DEV_SERVER_REQUEST_LOG
+    const writes: string[] = []
+    const spy = spyStdoutWrite(writes)
+
+    try {
+      running.push(await boot(apiDir, port))
+      await fetch(`http://127.0.0.1:${port}${PREFIX}/ping`)
+      await new Promise((r) => {
+        return setTimeout(r, 50)
+      })
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(
+      writes.filter((w) => {
+        return w.includes('→')
+      }),
+    ).toHaveLength(0)
   })
 })
 

@@ -424,11 +424,9 @@ program
 
 program
   .command('dev')
-  .description('Run local dev servers for every apps/<app>/api with a serverless.yml (watch, filter, port)')
+  .description('Run local dev servers for every apps/<app>/api with a serverless.yml (watch, filter by --app)')
   .option('-w, --watch', 'Rebuild and restart on file save')
   .option('--app <names>', 'Only run these apps (comma-separated folder names)')
-  .option('--exclude <names>', 'Skip these apps (comma-separated folder names)')
-  .option('--port <port>', 'Explicit port override (beats env/config for every app)')
   .action(async (options) => {
     // Lazy import so fastify/chokidar (and the whole dev stack) never load on the
     // eager cli graph — they land in a split chunk reached only for `infra-kit dev`.

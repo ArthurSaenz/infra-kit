@@ -12,12 +12,10 @@ import { pathToFileURL } from 'node:url'
 import { run } from 'src/dev/dev-server'
 import type { DevServerOptions } from 'src/dev/dev-server'
 
-/** Raw option object as produced by Commander (comma-joined strings, string port). */
+/** Raw option object as produced by Commander (comma-joined strings). */
 export interface DevCliOptions {
   watch?: boolean
   app?: string
-  exclude?: string
-  port?: string
 }
 
 /** Split a comma-separated flag value into a trimmed, non-empty list (`null` when unset/empty). */
@@ -39,13 +37,9 @@ const splitList = (value: string | undefined): string[] | null => {
  * `infra-kit dev` subcommand and the standalone entry so the two never diverge.
  */
 export const toDevServerOptions = (raw: DevCliOptions): DevServerOptions => {
-  const port = raw.port != null ? Number.parseInt(raw.port, 10) : undefined
-
   return {
     watch: raw.watch ?? false,
     include: splitList(raw.app),
-    exclude: splitList(raw.exclude),
-    ...(port != null && !Number.isNaN(port) ? { port } : {}),
   }
 }
 
@@ -90,8 +84,6 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
     .description('Run local dev servers for every apps/<app>/api that has a serverless.yml')
     .option('-w, --watch', 'Rebuild and restart on file save')
     .option('--app <names>', 'Only run these apps (comma-separated folder names)')
-    .option('--exclude <names>', 'Skip these apps (comma-separated folder names)')
-    .option('--port <port>', 'Explicit port override (beats env/config for every app)')
 
   program.parse(argv)
 

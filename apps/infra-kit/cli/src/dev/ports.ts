@@ -33,24 +33,14 @@ export function parsePortString(raw: string | undefined): number | undefined {
 /**
  * Resolve the PORT for an API app (highest priority first):
  *
- * 1. **`portOverride`** — explicit CLI `--port` override, beats everything (port `0` is valid)
- * 2. **`{APP}_PORT`** — e.g. `CLIENT_PORT`, `SEARCH_ENGINE_PORT` (secrets manager or shell)
- * 3. **`PORT`** — shared fallback (multi-app: use distinct `{APP}_PORT` in env)
- * 4. **`dev.<app>.port`** from infra-kit.json
- * 5. Default {@link DEFAULT_PORT}
+ * 1. **`{APP}_PORT`** — e.g. `CLIENT_PORT`, `SEARCH_ENGINE_PORT` (secrets manager or shell)
+ * 2. **`PORT`** — shared fallback (multi-app: use distinct `{APP}_PORT` in env)
+ * 3. **`dev.<app>.port`** from infra-kit.json
+ * 4. Default {@link DEFAULT_PORT}
  *
  * Per-app env keys use the app folder name in **UPPER_SNAKE_CASE** (hyphens → underscores).
  */
-export function resolvePort(
-  appName: string,
-  env: NodeJS.ProcessEnv,
-  devConfig: DevConfig,
-  portOverride?: number,
-): number {
-  if (portOverride != null) {
-    return portOverride
-  }
-
+export function resolvePort(appName: string, env: NodeJS.ProcessEnv, devConfig: DevConfig): number {
   const prefix = appName.replace(/-/g, '_').toUpperCase()
   const prefixedKey = `${prefix}_PORT`
 

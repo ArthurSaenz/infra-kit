@@ -30,6 +30,16 @@ const resolveLambdaTimeoutMs = (): number => {
   return Number.isNaN(raw) ? DEFAULT_LAMBDA_TIMEOUT_MS : raw
 }
 
+/**
+ * Whether to emit a one-line `<method> <url> → <status> <ms>ms` log per request.
+ * Off by default; opt in with `DEV_SERVER_REQUEST_LOG=1` (kept out of the Powertools
+ * JSON logger so the line stays terminal-readable). Mirrors the env-reader precedent
+ * of {@link resolveLambdaTimeoutMs}.
+ */
+const isRequestLogEnabled = (): boolean => {
+  return process.env.DEV_SERVER_REQUEST_LOG === '1'
+}
+
 export class ServerlessLocalRun {
   /** Busts Node ESM `import()` cache on each new server instance (watch restart). */
   private readonly importCacheBust: string
@@ -69,6 +79,28 @@ export class ServerlessLocalRun {
         }
       },
     )
+
+    // Opt-in per-request log line (raw stdout, not the Powertools JSON logger) so live
+    // traffic is visible in the dev terminal. Off unless DEV_SERVER_REQUEST_LOG=1.
+    if (isRequestLogEnabled()) {
+      this.server.addHook(
+        'onResponse',
+        async (request: { method: string; url: string }, reply: { statusCode: number; elapsedTime: number }) => {
+          const ms = Math.round(reply.elapsedTime)
+
+          process.stdout.write(`${request.method} ${request.url} → ${reply.statusCode} ${ms}ms\n`)
+        },
+      )
+    }
+  }
+
+  /**
+   * The registered `METHOD /path` route keys (sorted). Excludes the internal
+   * `/__health` liveness route, which is registered outside {@link defineRoute} and
+   * never added to {@link registeredRouteKeys}. Used by the runner's startup route dump.
+   */
+  public getRegisteredRoutes(): string[] {
+    return [...this.registeredRouteKeys].sort()
   }
 
   public async start(): Promise<void> {

@@ -6,7 +6,7 @@ import {
   discoverApiApps,
   findMonorepoRoot,
   getPackageName,
-  normalizeAppFilters,
+  normalizeAppInclude,
 } from 'src/dev/discovery'
 
 import { createTempTracker, makeMonorepo } from './fixtures'
@@ -85,16 +85,16 @@ describe('getPackageName — package.json name with fallback', () => {
   })
 })
 
-describe('normalizeAppFilters — include/exclude normalization', () => {
-  it('normalizes empty and whitespace-only lists to null', () => {
-    expect(normalizeAppFilters({ include: [], exclude: [''] })).toEqual({ include: null, exclude: null })
+describe('normalizeAppInclude — --app list normalization', () => {
+  it('normalizes empty, whitespace-only, undefined, and null lists to null', () => {
+    expect(normalizeAppInclude([])).toBeNull()
+    expect(normalizeAppInclude([''])).toBeNull()
+    expect(normalizeAppInclude(undefined)).toBeNull()
+    expect(normalizeAppInclude(null)).toBeNull()
   })
 
-  it('keeps non-empty lists and drops falsy entries', () => {
-    expect(normalizeAppFilters({ include: ['client', ''], exclude: ['backoffice'] })).toEqual({
-      include: ['client'],
-      exclude: ['backoffice'],
-    })
+  it('keeps a non-empty list and drops falsy entries', () => {
+    expect(normalizeAppInclude(['client', ''])).toEqual(['client'])
   })
 })
 
