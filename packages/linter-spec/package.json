@@ -29,6 +29,7 @@
     "ts-check": "tsc --noEmit",
     "test": "pnpm exec vitest run --reporter=minimal",
     "test-watch": "pnpm exec vitest --watch --silent passed-only",
+    "infra-kit-check": "infra-kit audit",
     "qa": "pnpm run prettier-check && pnpm run eslint-check && pnpm run ts-check && pnpm run test && echo ✅ Success",
     "fix": "pnpm run prettier-fix && pnpm run eslint-fix && pnpm run qa"
   },

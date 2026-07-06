@@ -99,6 +99,11 @@ export interface AppSpec {
   api?: boolean
   /** Also write package.json (type:module) + a real dist/handler.js so the app can actually boot. */
   withHandler?: boolean
+  /**
+   * Also scaffold `apps/<name>/ui/package.json`. `dev` (default true) controls whether it declares a
+   * `scripts.dev` — a UI without one must be ignored by {@link discoverUiApps}.
+   */
+  ui?: { packageName?: string; dev?: boolean }
 }
 
 /** Build a hermetic monorepo: pnpm-workspace.yaml + `apps/<app>/api/serverless.yml` per spec. */
@@ -124,6 +129,17 @@ export function makeMonorepo(apps: AppSpec[]): string {
     if (app.withHandler) {
       fs.mkdirSync(path.join(apiDir, 'dist'), { recursive: true })
       fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
+    }
+    if (app.ui) {
+      const uiDir = path.join(root, 'apps', app.name, 'ui')
+
+      fs.mkdirSync(uiDir, { recursive: true })
+      const pkg: { name: string; scripts?: Record<string, string> } = {
+        name: app.ui.packageName ?? `${app.name}-ui`,
+      }
+
+      if (app.ui.dev !== false) pkg.scripts = { dev: 'vite' }
+      fs.writeFileSync(path.join(uiDir, 'package.json'), JSON.stringify(pkg))
     }
   }
 

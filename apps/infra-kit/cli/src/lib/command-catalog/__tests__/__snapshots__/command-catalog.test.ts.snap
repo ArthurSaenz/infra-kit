@@ -18,6 +18,7 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     "name": "env-clear",
     "output": [
       "filePath",
+      "purged",
       "unsetStatements",
       "variableCount",
     ],

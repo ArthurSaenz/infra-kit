@@ -1,7 +1,7 @@
 {
   "name": "infra-kit",
   "type": "module",
-  "version": "0.1.126",
+  "version": "0.1.128",
   "description": "infra-kit",
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -21,7 +21,7 @@
   "scripts": {
     "inspector": "npx @modelcontextprotocol/inspector node ./dist/mcp.js --debug",
     "build": "pnpm run clean-artifacts && node ./scripts/build.js",
-    "check": "node ./dist/cli.js check",
+    "infra-kit-check": "infra-kit audit",
     "clean-artifacts": "rm -rf dist",
     "clean-cache": "rm -rf node_modules/.cache .eslintcache tsconfig.tsbuildinfo .turbo .swc",
     "prettier-fix": "pnpm exec prettier **/* --write --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
@@ -45,7 +45,7 @@
     "chalk": "^5.6.2",
     "chokidar": "^5.0.0",
     "commander": "^15.0.0",
-    "fastify": "5.9.0",
+    "fastify": "5.10.0",
     "ink": "^7.1.0",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3",

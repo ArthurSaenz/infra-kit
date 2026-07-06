@@ -19,12 +19,12 @@
  */
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
-import process from 'node:process'
+
+import { superviseChild } from './managed-child.js'
+import type { ManagedChild } from './managed-child.js'
 
 /** Handle to the running `turbo watch` child; `kill()` reaps the whole process group. */
-export interface TurboWatchHandle {
-  kill: () => void
-}
+export type TurboWatchHandle = ManagedChild
 
 /** Injectable spawn seam so tests run the orchestrator without a real turbo child. */
 export type TurboWatchFactory = (opts: TurboWatchOptions) => TurboWatchHandle
@@ -58,21 +58,5 @@ export const defaultTurboWatchFactory: TurboWatchFactory = ({ packageNames, cwd,
     { cwd, detached: true, stdio: ['ignore', out, out] },
   )
 
-  // Don't keep the event loop alive on the child; the runner owns lifecycle via kill().
-  child.unref()
-
-  return {
-    kill: (): void => {
-      const pid = child.pid
-
-      if (pid == null) return
-      try {
-        // Negative pid → signal the whole process group (detached made the child a leader),
-        // so pnpm→node→turbo→native-binary are all reaped, not just the wrapper.
-        process.kill(-pid, 'SIGTERM')
-      } catch {
-        // Already exited (ESRCH) — nothing to reap.
-      }
-    },
-  }
+  return superviseChild(child)
 }

@@ -93,7 +93,7 @@ const logResult = (result: PackageValidationResult): void => {
 /**
  * Audit the monorepo root (`root`), every non-vendor workspace package (`all`),
  * or the package resolved by walking up from the working directory (default —
- * the shape used by a package's `"check": "infra-kit audit"` script). The
+ * the shape used by a package's `"infra-kit-check": "infra-kit audit"` script). The
  * returned `structuredContent.allPassed` lets the CLI set a non-zero exit code so
  * the audit fails CI; this function never calls `process.exit` so the MCP tool
  * can reuse it.

@@ -177,13 +177,20 @@ describe('validatePackage — root / turbo', () => {
       packageJson: {
         name: 'monorepo',
         type: 'module',
-        scripts: { build: 'x', dev: 'x', test: 'x', qa: 'x', check: 'x', fix: 'x' },
+        scripts: { build: 'x', dev: 'x', test: 'x', qa: 'x', 'infra-kit-check': 'x', fix: 'x' },
       },
       config: 'export default {}',
       files: {
         'pnpm-workspace.yaml': 'packages: []\n',
         'turbo.json': JSON.stringify({
-          tasks: { build: {}, test: {}, 'ts-check': {}, 'eslint-check': {}, 'prettier-check': {}, check: {} },
+          tasks: {
+            build: {},
+            test: {},
+            'ts-check': {},
+            'eslint-check': {},
+            'prettier-check': {},
+            'infra-kit-check': {},
+          },
         }),
       },
     })

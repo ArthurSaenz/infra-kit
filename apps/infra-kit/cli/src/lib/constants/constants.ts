@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -5,6 +6,21 @@ import process from 'node:process'
 
 export const ENV_LOAD_FILE = 'env-load.sh'
 export const ENV_CLEAR_FILE = 'env-clear.sh'
+
+/** Subdir of the cache root holding the project-scoped WARM caches (one dir per
+ *  project, keyed by {@link warmCacheKey}). Kept in sync with the zsh block in
+ *  init.ts, which reads `$cache_root/projects/$key/env-load.sh`. */
+export const WARM_CACHE_SUBDIR = 'projects'
+
+/**
+ * Default warm-cache TTL in seconds (2h). Governs BOTH the node-side eviction
+ * sweep and the zsh-side source gate (`_INFRA_KIT_WARM_TTL` in the shell block);
+ * the two MUST stay equal, so this constant is the single source of truth and the
+ * shell default is emitted from it. Short by design: a warm file older than this
+ * is never sourced (bounds a revoked/rotated secret served at prompt-0) and is
+ * deleted on the next write. The background refresh lands in ~1-2s regardless.
+ */
+export const DEFAULT_WARM_TTL_SECONDS = 2 * 60 * 60
 
 export const INFRA_KIT_SESSION_VAR = 'INFRA_KIT_SESSION'
 export const INFRA_KIT_ENV_CONFIG_VAR = 'INFRA_KIT_ENV_CONFIG'
@@ -104,6 +120,28 @@ export const getSessionCacheDir = (): string => {
   }
 
   return path.join(getCacheRoot(), session)
+}
+
+/**
+ * The warm-cache key for a project: the hex SHA-256 of its CANONICAL (realpath'd)
+ * directory. This MUST be byte-identical to the zsh block's
+ * `printf %s "$canon" | shasum -a 256 | cut -c1-64` — same input string (no
+ * trailing newline), same digest, full 64-hex output — or a warm file written by
+ * node is never found by the shell. The shell passes the already-canonicalized
+ * dir via `--project-dir`, so node hashes that VERBATIM (it does not re-resolve).
+ */
+export const warmCacheKey = (canonicalProjectDir: string): string => {
+  return crypto.createHash('sha256').update(canonicalProjectDir, 'utf8').digest('hex')
+}
+
+/** Root holding all project-scoped warm caches: `$cacheRoot/projects`. */
+export const getWarmCacheRoot = (): string => {
+  return path.join(getCacheRoot(), WARM_CACHE_SUBDIR)
+}
+
+/** This project's warm-cache dir: `$cacheRoot/projects/<warmCacheKey>`. */
+export const getProjectWarmCacheDir = (canonicalProjectDir: string): string => {
+  return path.join(getWarmCacheRoot(), warmCacheKey(canonicalProjectDir))
 }
 
 /**

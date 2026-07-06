@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   classifyDistChange,
   discoverApiApps,
+  discoverUiApps,
   findMonorepoRoot,
   getAppDistDirs,
   getPackageDistDirs,
@@ -145,5 +146,36 @@ describe('getPackageDistDirs / getAppDistDirs — existing dist dirs only', () =
     const distDirs = getAppDistDirs([{ path: apiDir }])
 
     expect(distDirs).toEqual([path.join(apiDir, 'dist')])
+  })
+})
+
+describe('discoverUiApps — frontends with a `dev` script', () => {
+  it('discovers apps/<app>/ui that declare a dev script, resolving the package name', () => {
+    const root = temp.register(
+      makeMonorepo([
+        { name: 'backoffice', ui: { packageName: 'backoffice-ui' } },
+        { name: 'client', ui: { packageName: 'website-ui' } },
+      ]),
+    )
+
+    const uiApps = discoverUiApps(root)
+
+    expect(uiApps).toEqual([
+      { name: 'backoffice', packageName: 'backoffice-ui', path: path.join(root, 'apps', 'backoffice', 'ui') },
+      { name: 'client', packageName: 'website-ui', path: path.join(root, 'apps', 'client', 'ui') },
+    ])
+  })
+
+  it('ignores a ui folder that has no dev script', () => {
+    const root = temp.register(makeMonorepo([{ name: 'seo', ui: { dev: false } }]))
+
+    expect(discoverUiApps(root)).toEqual([])
+  })
+
+  it('returns [] when there is no apps/ dir (UIs are optional, unlike api discovery)', () => {
+    const root = temp.register(makeMonorepo([]))
+
+    fs.rmSync(path.join(root, 'apps'), { recursive: true, force: true })
+    expect(discoverUiApps(root)).toEqual([])
   })
 })

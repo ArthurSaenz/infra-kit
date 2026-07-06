@@ -7,6 +7,7 @@ import { $ } from 'zx'
 import { AGENTS_MARKER_END, AGENTS_MARKER_START } from 'src/commands/init/agent-files'
 import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
 import { getDopplerProject, listDopplerProjects } from 'src/integrations/doppler'
+import { DEFAULT_WARM_TTL_SECONDS, ENV_LOAD_FILE, getProjectWarmCacheDir } from 'src/lib/constants'
 import { getProjectRoot } from 'src/lib/git-utils/git-utils'
 import {
   getInfraKitConfig,
@@ -17,6 +18,7 @@ import {
 import { logger } from 'src/lib/logger'
 import { hasManagedBlock } from 'src/lib/managed-block'
 import { tildify } from 'src/lib/path-display'
+import { canonicalizeProjectRoot } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
 
 interface CheckResult {
@@ -72,6 +74,50 @@ const checkZshrcInitialized = (): CheckResult => {
   }
 
   return { name, status: 'pass', message: 'infra-kit shell block in ~/.zshrc is up to date' }
+}
+
+/**
+ * Surface the state of the project-scoped warm env cache (populated by an
+ * auto-loaded shell startup). Informational only — always passes — since a
+ * missing or stale warm file just means the next auto-load will (re)populate
+ * it rather than indicating a problem.
+ */
+const checkWarmCache = async (): Promise<CheckResult> => {
+  const name = 'warm cache'
+
+  let root: string
+
+  try {
+    root = await getProjectRoot()
+  } catch {
+    return { name, status: 'pass', message: 'warm cache: not a git project' }
+  }
+
+  const canon = canonicalizeProjectRoot(root)
+
+  if (!canon) {
+    return { name, status: 'pass', message: 'warm cache: unavailable' }
+  }
+
+  const warmFile = path.join(getProjectWarmCacheDir(canon), ENV_LOAD_FILE)
+
+  if (!fs.existsSync(warmFile)) {
+    return { name, status: 'pass', message: 'warm cache: none yet (populated on next auto-load)' }
+  }
+
+  const ageSeconds = Math.floor((Date.now() - fs.statSync(warmFile).mtimeMs) / 1000)
+  const ageMinutes = Math.floor(ageSeconds / 60)
+  const ttlMinutes = Math.floor(DEFAULT_WARM_TTL_SECONDS / 60)
+
+  if (ageSeconds >= DEFAULT_WARM_TTL_SECONDS) {
+    return {
+      name,
+      status: 'pass',
+      message: `warm cache: present but stale (${ageMinutes}m old, TTL ${ttlMinutes}m) — will refresh`,
+    }
+  }
+
+  return { name, status: 'pass', message: `warm cache: present, ${ageMinutes}m old` }
 }
 
 const checkPnpmWorkspaceVirtualStore = async (): Promise<CheckResult> => {
@@ -467,8 +513,15 @@ export const doctor = async () => {
       'typescript-language-server is installed',
       'typescript-language-server is not installed. Install from: https://github.com/typescript-language-server/typescript-language-server#installing',
     ),
+    checkCommand(
+      'cmux installed',
+      ['cmux', '--version'],
+      'cmux is installed',
+      'cmux is not installed. Install from: https://cmux.com/',
+    ),
     checkRtkConfigured(),
     Promise.resolve(checkZshrcInitialized()),
+    checkWarmCache(),
     checkPnpmWorkspaceVirtualStore(),
     checkInfraKitConfigValid(),
     checkDopplerProjectExists(),

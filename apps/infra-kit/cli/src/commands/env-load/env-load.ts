@@ -29,6 +29,7 @@ import {
 import { extractStderr } from 'src/lib/errors/operation-error'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
+import { canonicalizeProjectRoot, evictStaleWarmCaches, shouldWriteWarm, writeWarmCache } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
 
 interface EnvLoadArgs {
@@ -50,6 +51,13 @@ interface WriteEnvLoadFileArgs {
    * slow download). Manual loads omit it and always write.
    */
   beforeWrite?: () => boolean
+  /**
+   * Canonical (realpath'd) project dir the SHELL passed via `--project-dir` on the
+   * shell-startup auto-load spawn. Its presence (with `autoLoaded`) is what enables
+   * the project-scoped WARM cache write; see {@link shouldWriteWarm}. Undefined for
+   * manual loads and the cli-invocation trigger — those write no warm copy.
+   */
+  projectDir?: string
 }
 
 export interface EnvLoadFileResult {
@@ -137,6 +145,7 @@ export const writeEnvLoadFile = async ({
   config,
   autoLoaded = false,
   beforeWrite,
+  projectDir,
 }: WriteEnvLoadFileArgs): Promise<EnvLoadFileResult | null> => {
   await validateDopplerCliAndAuth()
 
@@ -147,6 +156,7 @@ export const writeEnvLoadFile = async ({
 
   const loadedAt = new Date().toISOString()
   const envFileLines = buildEnvLoadFileLines({ pairs, config, project, projectRoot, loadedAt, autoLoaded })
+  const fileContents = `${envFileLines.join('\n')}\n`
 
   const cacheDir = getSessionCacheDir()
   const envFilePath = path.resolve(cacheDir, ENV_LOAD_FILE)
@@ -156,7 +166,19 @@ export const writeEnvLoadFile = async ({
   if (beforeWrite && !beforeWrite()) return null
 
   fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
-  atomicWriteFileSync(envFilePath, `${envFileLines.join('\n')}\n`, 0o600)
+  atomicWriteFileSync(envFilePath, fileContents, 0o600)
+
+  // Project-scoped WARM copy: lets the NEXT shell source these vars instantly at
+  // startup (pure zsh, no Doppler) before this session's fresh file lands. Gated so
+  // it only fires for a shell-startup auto-load whose realpath'd git root matches the
+  // dir the shell keyed on (see shouldWriteWarm). Each warm write also sweeps stale
+  // warm dirs — we own the only cache reaper in the codebase.
+  const canonicalProjectRoot = canonicalizeProjectRoot(projectRoot)
+
+  if (shouldWriteWarm({ autoLoaded, projectDir, canonicalProjectRoot })) {
+    writeWarmCache(projectDir!, fileContents)
+    evictStaleWarmCaches()
+  }
 
   return {
     filePath: envFilePath,

@@ -115,6 +115,31 @@ describe('decideAutoLoad — project-aware freshness', () => {
   })
 })
 
+describe('decideAutoLoad — force (shell-startup warm refresh)', () => {
+  // Regression for the warm-cache refresh defect: after a WARM source the shell has
+  // exported the auto-load marker + same config, which the backgrounded refresh
+  // inherits. Without `force` the refresh self-skips and stale warm secrets persist.
+  it('forces a fresh load past the same-config no-op skip', () => {
+    expect(decideAutoLoad(buildInput({ env: loadedEnv() }))).toBe('skip')
+    expect(decideAutoLoad(buildInput({ env: loadedEnv(), force: true }))).toBe('load')
+  })
+
+  it('force does NOT override the clear guard', () => {
+    expect(decideAutoLoad(buildInput({ env: loadedEnv({ cleared: '1' }), force: true }))).toBe('skip')
+  })
+
+  it('force does NOT override the manual-load guard', () => {
+    expect(
+      decideAutoLoad(
+        buildInput({
+          env: { session: 'sess-1', currentConfig: 'prod', currentProject: 'my-project', autoLoadedMarker: undefined },
+          force: true,
+        }),
+      ),
+    ).toBe('skip')
+  })
+})
+
 describe('resolveEnvAutoLoad', () => {
   const ORIGINAL_ENV = { ...process.env }
   let cacheRoot: string

@@ -277,12 +277,14 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     // that it was killed on shutdown, without spawning a real child.
     let killed = false
     let spawnedPackages: string[] | null = null
-    const fakeTurboWatch = (opts: { packageNames: string[] }): { kill: () => void } => {
+    const fakeTurboWatch = (opts: { packageNames: string[] }): { kill: () => Promise<void> } => {
       spawnedPackages = opts.packageNames
 
       return {
-        kill: (): void => {
+        kill: (): Promise<void> => {
           killed = true
+
+          return Promise.resolve()
         },
       }
     }
@@ -342,5 +344,77 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     // shutdown() reaped the turbo engine and freed the port.
     expect(killed).toBe(true)
     expect(await canBind(omegaPort)).toBe(true)
+  }, 15000)
+})
+
+describe('devServerRunner — --ui (frontends via delegated turbo run dev)', () => {
+  it('warms UI deps, spawns the ui-dev child scoped to ui packages, and reaps it on shutdown', async () => {
+    const root = temp.register(
+      makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }]),
+    )
+    const apiDir = path.join(root, 'apps', 'shop', 'api')
+    const shopPort = await getFreePort()
+
+    process.env.SHOP_PORT = String(shopPort)
+
+    const buildCalls: string[] = []
+    const fakeRunBuild = async (cmd: string): Promise<void> => {
+      buildCalls.push(cmd)
+      fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
+    }
+
+    // turbo watch isn't used without --watch; a no-op factory keeps the seam satisfied.
+    const noopTurboWatch = (): { kill: () => Promise<void> } => {
+      return {
+        kill: (): Promise<void> => {
+          return Promise.resolve()
+        },
+      }
+    }
+
+    let uiKilled = false
+    let uiPackages: string[] | null = null
+    let uiConcurrency = 0
+    const fakeUiDev = (opts: { packageNames: string[]; concurrency: number }): { kill: () => Promise<void> } => {
+      uiPackages = opts.packageNames
+      uiConcurrency = opts.concurrency
+
+      return {
+        kill: (): Promise<void> => {
+          uiKilled = true
+
+          return Promise.resolve()
+        },
+      }
+    }
+
+    process.chdir(root)
+    const runner = new DevServerRunner({ ui: true }, fakeRunBuild, noopTurboWatch, fakeUiDev)
+
+    await runner.start()
+
+    try {
+      // The API app still boots and serves (api + ui run together).
+      const health = (await (await fetch(`http://127.0.0.1:${shopPort}/__health`)).json()) as { app: string }
+
+      expect(health.app).toBe('shop')
+
+      // The ui-dev child was spawned, scoped to the UI package only, with adequate concurrency.
+      expect(uiPackages).toEqual(['shop-ui'])
+      expect(uiConcurrency).toBeGreaterThanOrEqual(1)
+
+      // A UI dependency-closure warm build ran (deps-only `^...`, not the UI's own build).
+      expect(
+        buildCalls.some((c) => {
+          return c.includes('shop-ui^...')
+        }),
+      ).toBe(true)
+    } finally {
+      await runner.shutdown()
+    }
+
+    // shutdown() reaped the ui-dev child and freed the API port.
+    expect(uiKilled).toBe(true)
+    expect(await canBind(shopPort)).toBe(true)
   }, 15000)
 })

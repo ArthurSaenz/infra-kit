@@ -60,9 +60,9 @@ setup_tools() {
     local include_serverless="${1:-true}"
 
     if [ "$include_serverless" = "true" ]; then
-        run_command "Install turbo and serverless" "pnpm add -g turbo@2.10.0 serverless@3.39.0"
+        run_command "Install turbo and serverless" "pnpm add -g turbo@2.10.3 serverless@3.39.0"
     else
-        run_command "Install turbo" "pnpm add -g turbo@2.10.0"
+        run_command "Install turbo" "pnpm add -g turbo@2.10.3"
     fi
 }
 

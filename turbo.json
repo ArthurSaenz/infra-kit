@@ -57,6 +57,7 @@
     },
     "prettier-check": {},
     "prettier-fix": {},
+    "infra-kit-check": {},
     "ts-check": {
       "dependsOn": ["^build"]
     },

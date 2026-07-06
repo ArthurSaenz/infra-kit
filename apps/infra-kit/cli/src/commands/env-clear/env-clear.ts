@@ -16,7 +16,38 @@ import {
   getSessionCacheDir,
   parseVarNamesFromEnvFile,
 } from 'src/lib/constants'
+import { getProjectRoot } from 'src/lib/git-utils'
+import { canonicalizeProjectRoot, invalidateProjectWarmCache } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
+
+export interface EnvClearArgs {
+  /**
+   * Also invalidate this project's WARM cache. `false` (default) writes a transient
+   * clear-marker so the next shell skips warm-source once; `true` deletes the warm
+   * dir outright (durable — warm won't resume until the next auto-load rewrites it).
+   */
+  purge?: boolean
+}
+
+/**
+ * Invalidate the current project's warm cache alongside the session clear, so a
+ * NEW shell doesn't warm-load what the user just cleared. Resolves the project root
+ * itself (git top-level, realpath'd) to match the warm key; a non-git project never
+ * had a warm file, so it is a no-op. Best-effort — never blocks the session clear.
+ */
+const clearProjectWarmCache = async (purge: boolean): Promise<void> => {
+  let projectRoot = ''
+
+  try {
+    projectRoot = await getProjectRoot()
+  } catch {
+    return // non-git: no warm cache to invalidate
+  }
+
+  const canon = canonicalizeProjectRoot(projectRoot)
+
+  if (canon) invalidateProjectWarmCache(canon, purge)
+}
 
 /**
  * Build the lines for env-clear.sh: `unset` every loaded var plus the session
@@ -40,18 +71,24 @@ export const buildEnvClearLines = (varNames: string[]): string[] => {
 
 /**
  * Clear loaded env vars. Prints a file path to stdout that must be sourced to apply.
- * The env-clear shell alias does this automatically. Throws when no env is loaded
- * so CLI callers exit non-zero and MCP callers receive a structured tool error.
+ * The env-clear shell alias does this automatically. Also invalidates the project's
+ * WARM cache so a new shell doesn't re-load what was just cleared. Throws when no env
+ * is loaded AND `--purge` was not passed (a bare clear needs something to clear; a
+ * purge is a standalone warm-cache wipe that works regardless of session state).
  */
-export const envClear = async () => {
+export const envClear = async ({ purge = false }: EnvClearArgs = {}) => {
   const cacheDir = getSessionCacheDir()
   const envLoadPath = path.join(cacheDir, ENV_LOAD_FILE)
+  const hasLoadedEnv = fs.existsSync(envLoadPath)
 
-  if (!fs.existsSync(envLoadPath)) {
+  if (!hasLoadedEnv && !purge) {
     throw new Error('No loaded environment found. Run `env-load` first.')
   }
 
-  const varNames = parseVarNamesFromEnvFile(envLoadPath)
+  // Warm invalidation is independent of the current session's load state.
+  await clearProjectWarmCache(purge)
+
+  const varNames = hasLoadedEnv ? parseVarNamesFromEnvFile(envLoadPath) : []
 
   const unsetLines = buildEnvClearLines(varNames)
 
@@ -66,12 +103,13 @@ export const envClear = async () => {
 
   // Remove env load file so the next env-clear call correctly reports "no env loaded".
   // `force` so concurrent clears don't throw ENOENT when another already removed it.
-  fs.rmSync(envLoadPath, { force: true })
+  if (hasLoadedEnv) fs.rmSync(envLoadPath, { force: true })
 
   const structuredContent = {
     filePath: clearFilePath,
     variableCount: varNames.length,
     unsetStatements: unsetLines,
+    purged: purge,
   }
 
   return {
@@ -90,6 +128,9 @@ export const envClearMcpTool = defineMcpTool({
     filePath: z.string().describe('Path to the file that must be sourced to apply'),
     variableCount: z.number().describe('Number of variables cleared'),
     unsetStatements: z.array(z.string()).describe('Unset statements generated'),
+    purged: z.boolean().describe('Whether the project warm cache was purged outright'),
   },
-  handler: envClear,
+  handler: () => {
+    return envClear()
+  },
 })

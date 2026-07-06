@@ -72,9 +72,9 @@ export const DEFAULT_RULES: Readonly<ResolvedPackageRules> = {
  * the expected tasks — so the root's own config can also stay empty.
  */
 export const ROOT_DEFAULT_RULES: Readonly<ResolvedPackageRules> = {
-  requiredScripts: ['build', 'dev', 'test', 'qa', 'check', 'fix'],
+  requiredScripts: ['build', 'dev', 'test', 'qa', 'infra-kit-check', 'fix'],
   requiredFiles: ['turbo.json', 'pnpm-workspace.yaml'],
-  turboTasks: ['build', 'test', 'ts-check', 'eslint-check', 'prettier-check', 'check'],
+  turboTasks: ['build', 'test', 'ts-check', 'eslint-check', 'prettier-check', 'infra-kit-check'],
 }
 
 /**

@@ -16,6 +16,7 @@ import type { DevServerOptions } from 'src/dev/dev-server'
 export interface DevCliOptions {
   watch?: boolean
   app?: string
+  ui?: boolean
 }
 
 /** Split a comma-separated flag value into a trimmed, non-empty list (`null` when unset/empty). */
@@ -40,6 +41,7 @@ export const toDevServerOptions = (raw: DevCliOptions): DevServerOptions => {
   return {
     watch: raw.watch ?? false,
     include: splitList(raw.app),
+    ui: raw.ui ?? false,
   }
 }
 
@@ -84,6 +86,7 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
     .description('Run local dev servers for every apps/<app>/api that has a serverless.yml')
     .option('-w, --watch', 'Rebuild and restart on file save')
     .option('--app <names>', 'Only run these apps (comma-separated folder names)')
+    .option('--ui', 'Also run frontends (apps/<app>/ui with a `dev` script) via turbo run dev')
 
   program.parse(argv)
 

@@ -1,10 +1,13 @@
 export {
   atomicWriteFileSync,
+  DEFAULT_WARM_TTL_SECONDS,
   ENV_CLEAR_FILE,
   ENV_LOAD_FILE,
   ENV_VAR_LINE_PATTERN,
   getCacheRoot,
+  getProjectWarmCacheDir,
   getSessionCacheDir,
+  getWarmCacheRoot,
   INFRA_KIT_ENV_AUTOLOADED_VAR,
   INFRA_KIT_ENV_CLEARED_VAR,
   INFRA_KIT_ENV_CONFIG_VAR,
@@ -14,5 +17,6 @@ export {
   INFRA_KIT_SESSION_VAR,
   LOG_FILE_PATH,
   parseVarNamesFromEnvFile,
+  warmCacheKey,
   WORKTREES_DIR_SUFFIX,
 } from './constants'

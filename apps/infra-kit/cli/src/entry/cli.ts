@@ -427,6 +427,7 @@ program
   .description('Run local dev servers for every apps/<app>/api with a serverless.yml (watch, filter by --app)')
   .option('-w, --watch', 'Rebuild and restart on file save')
   .option('--app <names>', 'Only run these apps (comma-separated folder names)')
+  .option('--ui', 'Also run frontends (apps/<app>/ui with a `dev` script) via turbo run dev')
   .action(async (options) => {
     // Lazy import so fastify/chokidar (and the whole dev stack) never load on the
     // eager cli graph — they land in a split chunk reached only for `infra-kit dev`.
@@ -474,8 +475,9 @@ program
 program
   .command('env-clear')
   .description('Clear loaded env vars. Source the returned file path to apply.')
-  .action(async () => {
-    emit(await envClear())
+  .option('--purge', "Also delete this project's warm cache outright (durable disable)")
+  .action(async (options) => {
+    emit(await envClear({ purge: Boolean(options.purge) }))
   })
 
 // Internal: driven by the init shell-startup integration (backgrounded). Writes
@@ -484,8 +486,11 @@ program
 program
   .command('env-autoload', { hidden: true })
   .description('Internal: prime env for the shell-startup auto-load trigger')
-  .action(async () => {
-    await envAutoload()
+  // The shell passes its already-canonicalized (`${dir:A}`) project dir so node can
+  // key the warm cache identically; see writeEnvLoadFile / shouldWriteWarm.
+  .option('--project-dir <dir>', 'Canonical project dir for the warm-cache key (shell-startup only)')
+  .action(async (options) => {
+    await envAutoload({ projectDir: options.projectDir })
   })
 
 // Register `--json` on every command, then resolve the flag before each action

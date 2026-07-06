@@ -109,6 +109,15 @@ export interface AutoLoadDecisionInput {
   targetConfig: string
   targetProject: string
   env: AutoLoadEnvSnapshot
+  /**
+   * Bypass ONLY the "already auto-loaded, same config+project" no-op skip, forcing
+   * a fresh Doppler fetch. The shell-startup refresh sets this: after a WARM source
+   * the shell has already exported INFRA_KIT_ENV_AUTOLOADED + the same config, which
+   * the child process inherits — without `force` the refresh would self-skip and the
+   * warm (possibly rotated) secrets would never be replaced this session. Does NOT
+   * relax the clear/manual-load guards.
+   */
+  force?: boolean
 }
 
 export type AutoLoadDecision = 'load' | 'skip'
@@ -125,7 +134,7 @@ export type AutoLoadDecision = 'load' | 'skip'
  *    sharing one session don't leak each other's secrets).
  */
 export const decideAutoLoad = (input: AutoLoadDecisionInput): AutoLoadDecision => {
-  const { trigger, expectedTrigger, targetConfig, targetProject, env } = input
+  const { trigger, expectedTrigger, targetConfig, targetProject, env, force } = input
 
   if (trigger !== expectedTrigger) return 'skip'
 
@@ -136,8 +145,10 @@ export const decideAutoLoad = (input: AutoLoadDecisionInput): AutoLoadDecision =
   // Manual load present (a config is loaded but it wasn't auto-loaded) — leave it.
   if (env.currentConfig && !env.autoLoadedMarker) return 'skip'
 
-  // Our own auto-load already matches the target config+project — nothing to do.
-  if (env.autoLoadedMarker && env.currentConfig === targetConfig && env.currentProject === targetProject) {
+  // Our own auto-load already matches the target config+project — normally a no-op,
+  // but `force` (the shell-startup warm refresh) must re-fetch: the shell just warm
+  // -sourced these same markers, so skipping here would strand stale secrets.
+  if (!force && env.autoLoadedMarker && env.currentConfig === targetConfig && env.currentProject === targetProject) {
     return 'skip'
   }
 
@@ -146,6 +157,20 @@ export const decideAutoLoad = (input: AutoLoadDecisionInput): AutoLoadDecision =
 
 export interface RunEnvAutoLoadArgs {
   expectedTrigger: AutoLoadTrigger
+  /**
+   * Canonical (realpath'd) project dir, forwarded to `writeEnvLoadFile` to enable
+   * the project-scoped WARM cache. Only the shell-startup spawn passes it (via
+   * `--project-dir`); the cli-invocation trigger omits it, so warm is a
+   * shell-startup-only optimization.
+   */
+  projectDir?: string
+  /**
+   * Force a fresh fetch past the "already auto-loaded, same config" no-op skip. The
+   * shell-startup refresh sets this so a preceding WARM source (which exports the
+   * same markers the child inherits) is always replaced by fresh secrets. See
+   * {@link decideAutoLoad}. The cli-invocation trigger leaves it false.
+   */
+  force?: boolean
 }
 
 /**
@@ -157,7 +182,11 @@ export interface RunEnvAutoLoadArgs {
  * channel. No producer-side lock — a rare cold-shell double-fetch is tolerated (the
  * second write is atomic and idempotent).
  */
-export const runEnvAutoLoad = async ({ expectedTrigger }: RunEnvAutoLoadArgs): Promise<string | null> => {
+export const runEnvAutoLoad = async ({
+  expectedTrigger,
+  projectDir,
+  force,
+}: RunEnvAutoLoadArgs): Promise<string | null> => {
   // Only the cli-invocation / interactive callsite reaches a TTY; the shell-startup
   // spawn discards stderr, so warning there is invisible and would poison the dedup.
   const canWarn = expectedTrigger === 'cli-invocation'
@@ -173,6 +202,7 @@ export const runEnvAutoLoad = async ({ expectedTrigger }: RunEnvAutoLoadArgs): P
       targetConfig: resolved.config,
       targetProject: resolved.project,
       env: readAutoLoadEnvSnapshot(),
+      force,
     })
 
     if (decision === 'skip') return null
@@ -189,6 +219,7 @@ export const runEnvAutoLoad = async ({ expectedTrigger }: RunEnvAutoLoadArgs): P
     const result = await writeEnvLoadFile({
       config: resolved.config,
       autoLoaded: true,
+      projectDir,
       // Re-check after the slow Doppler download: abort if a clear or a manual load
       // landed meanwhile, so a backgrounded auto-load never clobbers a deliberate action.
       beforeWrite: () => {

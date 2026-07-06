@@ -27,15 +27,19 @@ import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import {
   classifyDistChange,
   discoverApiApps as discoverApiAppsBare,
+  discoverUiApps as discoverUiAppsBare,
   findMonorepoRoot,
   getAppDistDirs,
   getPackageDistDirs,
   normalizeAppInclude as normalizeAppIncludePure,
 } from './discovery.js'
+import type { DiscoveredUiApp } from './discovery.js'
 import { findPortConflicts, resolvePort as resolvePortPure, resolvePrefixUrl as resolvePrefixUrlPure } from './ports.js'
 import { ServerlessLocalRun } from './serverless-local-run.js'
 import { defaultTurboWatchFactory } from './turbo-watch.js'
 import type { TurboWatchFactory, TurboWatchHandle } from './turbo-watch.js'
+import { defaultUiDevFactory } from './ui-dev.js'
+import type { UiDevFactory, UiDevHandle } from './ui-dev.js'
 
 /** Runner-only log file, resolved under the consumer repo's `.infra-kit/` dir at startup. */
 let LOG_FILE_PATH = path.join(process.cwd(), '.infra-kit', 'dev-server.log')
@@ -189,8 +193,14 @@ export interface DevServerOptions {
    * changes. Without it, `dev` builds and serves once and exits on signal.
    */
   watch?: boolean
-  /** Only run these app folder names (null/empty = all discovered). */
+  /** Only run these app folder names (null/empty = all discovered). Filters BOTH api and ui apps. */
   include?: string[] | null
+  /**
+   * Also run frontends: discover `apps/<app>/ui` with a `dev` script and start them via one
+   * delegated `turbo run dev` child (streamed to the terminal). Default (unset) = api-only,
+   * preserving today's behavior.
+   */
+  ui?: boolean
 }
 
 interface IAppServer {
@@ -215,15 +225,21 @@ export class DevServerRunner {
   private readonly turboWatchFactory: TurboWatchFactory
   /** Live `turbo watch` engine in `--watch` mode; reaped on {@link shutdown}. */
   private turboWatch: TurboWatchHandle | null = null
+  /** `turbo run dev` (frontends) spawn seam — real detached child by default, injectable for tests. */
+  private readonly uiDevFactory: UiDevFactory
+  /** Live `turbo run dev` frontend engine in `--ui` mode; reaped on {@link shutdown}. */
+  private uiDev: UiDevHandle | null = null
 
   constructor(
     options: DevServerOptions = {},
     runBuild: BuildRunner = launchScript,
     turboWatchFactory: TurboWatchFactory = defaultTurboWatchFactory,
+    uiDevFactory: UiDevFactory = defaultUiDevFactory,
   ) {
     this.options = options
     this.runBuild = runBuild
     this.turboWatchFactory = turboWatchFactory
+    this.uiDevFactory = uiDevFactory
     initLogFile()
 
     // Walk up from the consumer repo cwd to the monorepo root.
@@ -297,28 +313,111 @@ export class DevServerRunner {
     log(`📂 Monorepo root: ${this.monorepoRoot}`)
 
     const apps = this.selectApps(this.discoverApiApps(devConfig), include)
+    const uiApps = (this.options.ui ?? false) ? this.selectUiApps(include) : []
 
-    if (apps.length === 0) {
-      log('⚠️  No API apps found to run', 'warn')
+    if (apps.length === 0 && uiApps.length === 0) {
+      log(this.options.ui ? '⚠️  No API or UI apps found to run' : '⚠️  No API apps found to run', 'warn')
 
       return
     }
 
-    log(`📦 Discovered ${apps.length} API app(s): ${this.formatAppList(apps)}`)
+    // Build the API boot closure (dist must exist before servers import handlers).
+    if (apps.length > 0) {
+      log(`📦 Discovered ${apps.length} API app(s): ${this.formatAppList(apps)}`)
+      this.assertNoPortConflicts(apps)
+      await this.buildApps(apps, watch)
+    }
 
-    this.assertNoPortConflicts(apps)
+    // Warm the UI dependency closure BEFORE spawning any persistent child (turbo watch / turbo run
+    // dev), so both see a warm cache and the cold-cache double-build race can't corrupt shared dist.
+    if (uiApps.length > 0) {
+      await this.buildUiApps(uiApps)
+    }
 
-    await this.buildApps(apps, watch)
-    await this.startAllApps(apps)
-
-    log('🎉 All servers started!')
-    this.printServerTable(apps)
-    this.printRouteDump()
-    log(`📝 Handler logs (AWS Powertools, logger.info/debug, etc.) → this terminal. Runner-only file: ${LOG_FILE_PATH}`)
+    if (apps.length > 0) {
+      await this.startAllApps(apps)
+      log('🎉 All servers started!')
+      this.printServerTable(apps)
+      this.printRouteDump()
+      log(
+        `📝 Handler logs (AWS Powertools, logger.info/debug, etc.) → this terminal. Runner-only file: ${LOG_FILE_PATH}`,
+      )
+    }
 
     if (watch && this.appServers.length > 0) {
       this.setupWatch(apps)
     }
+
+    // Frontends last: their delegated `turbo run dev` streams raw to the terminal below the BE table.
+    if (uiApps.length > 0) {
+      this.startUiDev(uiApps)
+    }
+  }
+
+  /** Discover `apps/<app>/ui` frontends (with a `dev` script), applying the `--app` include filter. */
+  private selectUiApps(include: string[] | null): DiscoveredUiApp[] {
+    const uiApps = discoverUiAppsBare(this.monorepoRoot)
+    const selected = include
+      ? uiApps.filter((a) => {
+          return include.includes(a.name)
+        })
+      : uiApps
+
+    if (selected.length > 0) {
+      log(
+        `🎨 Discovered ${selected.length} UI app(s): ${selected
+          .map((a) => {
+            return a.name
+          })
+          .join(', ')}`,
+      )
+    }
+
+    return selected
+  }
+
+  /**
+   * Warm ONLY each UI's dependency closure (`<pkg>^...` — deps, excluding the UI itself, so no full
+   * production `vite build`) with a cache-friendly (non-`--force`) turbo build. Non-fatal: if it
+   * fails, `turbo run dev`'s own `^build` retries and surfaces the error in its streamed output.
+   */
+  private async buildUiApps(uiApps: DiscoveredUiApp[]): Promise<void> {
+    const filters = uiApps
+      .map((a) => {
+        return `--filter=${a.packageName}^...`
+      })
+      .join(' ')
+
+    log('🔨 Warming UI dependency build cache (turbo)...')
+    try {
+      await this.runBuild(`pnpm exec turbo run build ${filters} --env-mode=loose`, log)
+      log('✅ UI deps built')
+    } catch (error) {
+      log(`⚠️  UI dep warm build failed (continuing; turbo run dev will build): ${String(error)}`, 'warn')
+    }
+  }
+
+  /**
+   * Start the frontends via ONE delegated `turbo run dev` child (streamed to the terminal). Reaped
+   * on {@link shutdown}. Concurrency ≥ the persistent UI `dev` task count (turbo hard-errors otherwise).
+   */
+  private startUiDev(uiApps: DiscoveredUiApp[]): void {
+    const names = uiApps
+      .map((a) => {
+        return a.name
+      })
+      .join(', ')
+
+    log(`🎨 Starting ${uiApps.length} UI dev server(s) via \`turbo run dev\`: ${names}`)
+    log('   (framework dev output streams below; each prints its own local URL)')
+
+    this.uiDev = this.uiDevFactory({
+      packageNames: uiApps.map((a) => {
+        return a.packageName
+      }),
+      cwd: process.cwd(),
+      concurrency: Math.max(uiApps.length + 4, 12),
+    })
   }
 
   /** Render an app list as `name:port, name:port` for log lines. */
@@ -649,12 +748,18 @@ export class DevServerRunner {
   public async shutdown(): Promise<void> {
     log('🛑 Shutting down all servers...')
 
-    // Reap the `turbo watch` engine FIRST so it can't write fresh dist and trip the
-    // watcher mid-teardown. Reaped here (not only in the entry signal handler) because
-    // tests and any non-signal caller invoke shutdown() directly.
+    // Reap the long-lived engines FIRST (group SIGTERM→SIGKILL) so neither writes fresh dist nor
+    // holds a port mid-teardown. Reaped here (not only in the entry signal handler) because tests
+    // and any non-signal caller invoke shutdown() directly. Awaited so the SIGKILL escalation
+    // completes before the entry point's `process.exit`.
     if (this.turboWatch) {
-      this.turboWatch.kill()
+      await this.turboWatch.kill()
       this.turboWatch = null
+    }
+
+    if (this.uiDev) {
+      await this.uiDev.kill()
+      this.uiDev = null
     }
 
     for (const timer of this.watchDebounceTimers.values()) {

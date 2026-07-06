@@ -56,8 +56,8 @@
     "test-report": "pnpm exec turbo run test-report --continue",
     "test-unit": "pnpm exec turbo test-unit --continue",
     "test-ui": "vitest --ui --silent passed-only",
-    "check-root": "infra-kit audit --root",
-    "check": "pnpm exec turbo run check check-root --continue --output-logs=errors-only",
+    "infra-kit-check-root": "infra-kit audit --root",
+    "infra-kit-check": "pnpm exec turbo run infra-kit-check --continue --output-logs=errors-only && pnpm run infra-kit-check-root",
     "qa": "pnpm exec turbo run test ts-check prettier-check eslint-check --continue --output-logs=errors-only",
     "fix": "pnpm run eslint-fix && pnpm run prettier-fix"
   },
@@ -67,12 +67,12 @@
     "@wl/prettier-config": "workspace:*",
     "infra-kit": "workspace:*",
     "shadcn": "^4.12.0",
-    "turbo": "2.10.0",
+    "turbo": "2.10.3",
     "typescript": "catalog:"
   },
   "engines": {
     "node": ">=24.x",
     "pnpm": ">=10"
   },
-  "packageManager": "pnpm@11.9.0"
+  "packageManager": "pnpm@11.10.0"
 }

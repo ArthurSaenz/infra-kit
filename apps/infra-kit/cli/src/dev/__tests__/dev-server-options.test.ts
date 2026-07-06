@@ -44,6 +44,14 @@ describe('toDevServerOptions — CLI flag parsing', () => {
   it('parses a combined flag set (--app --watch) in one pass', () => {
     const opts = toDevServerOptions({ app: 'a,b', watch: true } satisfies DevCliOptions)
 
-    expect(opts).toEqual({ watch: true, include: ['a', 'b'] })
+    expect(opts).toEqual({ watch: true, include: ['a', 'b'], ui: false })
+  })
+
+  it('defaults ui to false when --ui is absent (api-only, backward compatible)', () => {
+    expect(toDevServerOptions({} satisfies DevCliOptions).ui).toBe(false)
+  })
+
+  it('passes --ui through as true', () => {
+    expect(toDevServerOptions({ ui: true } satisfies DevCliOptions).ui).toBe(true)
   })
 })

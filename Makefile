@@ -49,9 +49,6 @@ dx-doctor:	## Run infra-kit doctor diagnostics
 dx-init:	## Initialize infra-kit configuration
 	pnpm run dx-init
 
-dx-dev:	## Run local dev servers for every apps/<app>/api with a serverless.yml
-	pnpm run dx-dev
-
 dx-env-load:	## Load environment variables
 	pnpm run dx-env-load
 

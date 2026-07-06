@@ -83,6 +83,66 @@ export function discoverApiApps(root: string): DiscoveredApiApp[] {
   return apps
 }
 
+/** Bare metadata for a discovered UI app (a frontend with its own framework `dev` script). */
+export interface DiscoveredUiApp {
+  /** App folder name (e.g. backoffice, client). */
+  name: string
+  /** package.json `name` — used as the exact `turbo run dev --filter` target. */
+  packageName: string
+  /** Absolute path to `apps/<app>/ui`. */
+  path: string
+}
+
+/** True when `<dir>/package.json` declares a non-empty `scripts.dev`. */
+function hasDevScript(dir: string): boolean {
+  const pkgPath = path.join(dir, 'package.json')
+
+  if (!fs.existsSync(pkgPath)) return false
+
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as { scripts?: Record<string, string> }
+
+    return typeof pkg.scripts?.dev === 'string' && pkg.scripts.dev.length > 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Discover every `apps/<app>/ui` whose package.json declares a `dev` script — the frontends
+ * `infra-kit dev --ui` runs (via one delegated `turbo run dev`). Lenient: no `apps/` dir → `[]`
+ * (UIs are optional), unlike {@link discoverApiApps} which requires it.
+ */
+export function discoverUiApps(root: string): DiscoveredUiApp[] {
+  const appsDir = path.join(root, 'apps')
+  const apps: DiscoveredUiApp[] = []
+
+  if (!fs.existsSync(appsDir)) return apps
+
+  const appDirs = fs
+    .readdirSync(appsDir, { withFileTypes: true })
+    .filter((dirent) => {
+      return dirent.isDirectory()
+    })
+    .map((dirent) => {
+      return dirent.name
+    })
+
+  for (const appName of appDirs) {
+    const uiPath = path.join(appsDir, appName, 'ui')
+
+    if (fs.existsSync(uiPath) && hasDevScript(uiPath)) {
+      apps.push({
+        name: appName,
+        packageName: getPackageName(uiPath, appName),
+        path: uiPath,
+      })
+    }
+  }
+
+  return apps
+}
+
 /** Normalize the `--app` include list: drop empties, and collapse an empty list to `null`. */
 export function normalizeAppInclude(include?: string[] | null): string[] | null {
   const filtered = include?.filter(Boolean) ?? []
