@@ -21,7 +21,7 @@
   "scripts": {
     "inspector": "npx @modelcontextprotocol/inspector node ./dist/mcp.js --debug",
     "build": "pnpm run clean-artifacts && node ./scripts/build.js",
-    "infra-kit-check": "infra-kit audit",
+    "infra-kit-check": "pnpm exec infra-kit audit",
     "clean-artifacts": "rm -rf dist",
     "clean-cache": "rm -rf node_modules/.cache .eslintcache tsconfig.tsbuildinfo .turbo .swc",
     "prettier-fix": "pnpm exec prettier **/* --write --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",

@@ -9,7 +9,7 @@
     "config"
   ],
   "scripts": {
-    "infra-kit-check": "infra-kit audit"
+    "infra-kit-check": "pnpm exec infra-kit audit"
   },
   "engines": {
     "node": ">=24.x",

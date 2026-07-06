@@ -44,7 +44,7 @@
     "test": "pnpm exec vitest run --reporter=minimal",
     "test-watch": "pnpm exec vitest --watch --silent passed-only",
     "test-report": "pnpm exec vitest run --coverage --silent passed-only",
-    "infra-kit-check": "infra-kit audit",
+    "infra-kit-check": "pnpm exec infra-kit audit",
     "qa": "pnpm run prettier-check && pnpm run eslint-check && pnpm run ts-check && pnpm run test && echo ✅ Success",
     "fix": "pnpm run prettier-fix && pnpm run eslint-fix && pnpm run qa"
   },
