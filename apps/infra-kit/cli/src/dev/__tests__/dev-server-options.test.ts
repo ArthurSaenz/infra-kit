@@ -44,7 +44,7 @@ describe('toDevServerOptions — CLI flag parsing', () => {
   it('parses a combined flag set (--app --watch) in one pass', () => {
     const opts = toDevServerOptions({ app: 'a,b', watch: true } satisfies DevCliOptions)
 
-    expect(opts).toEqual({ watch: true, include: ['a', 'b'], ui: false })
+    expect(opts).toEqual({ watch: true, include: ['a', 'b'], ui: false, cmux: false, self: false })
   })
 
   it('defaults ui to false when --ui is absent (api-only, backward compatible)', () => {
@@ -53,5 +53,21 @@ describe('toDevServerOptions — CLI flag parsing', () => {
 
   it('passes --ui through as true', () => {
     expect(toDevServerOptions({ ui: true } satisfies DevCliOptions).ui).toBe(true)
+  })
+
+  it('defaults cmux to false when --cmux is absent', () => {
+    expect(toDevServerOptions({} satisfies DevCliOptions).cmux).toBe(false)
+  })
+
+  it('passes --cmux through as true', () => {
+    expect(toDevServerOptions({ cmux: true } satisfies DevCliOptions).cmux).toBe(true)
+  })
+
+  it('defaults self to false when --self is absent', () => {
+    expect(toDevServerOptions({} satisfies DevCliOptions).self).toBe(false)
+  })
+
+  it('passes --self through as true', () => {
+    expect(toDevServerOptions({ self: true } satisfies DevCliOptions).self).toBe(true)
   })
 })

@@ -1,5 +1,6 @@
 export { canonicalizeCmuxTitle } from './canonicalize-cmux-title'
 export { closeCmuxWorkspaceByTitle } from './close-workspace-by-title'
 export { listCmuxWorkspaceTitles } from './list-workspace-titles'
+export { closeCmuxDevWorkspace, isCmuxAvailable, openCmuxDevWorkspace } from './open-dev-workspace'
 export { openCmuxWorkspaceWithLayout } from './open-workspace-with-layout'
 export { buildCmuxWorkspaceTitle } from './workspace-title'

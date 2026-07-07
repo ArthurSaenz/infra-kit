@@ -428,6 +428,11 @@ program
   .option('-w, --watch', 'Rebuild and restart on file save')
   .option('--app <names>', 'Only run these apps (comma-separated folder names)')
   .option('--ui', 'Also run frontends (apps/<app>/ui with a `dev` script) via turbo run dev')
+  .option(
+    '--cmux',
+    'Run each app in its own cmux pane (one workspace, N panes; falls back to single terminal if cmux is unavailable)',
+  )
+  .option('--self', 'Run only the app of the current directory (infer from cwd; use inside apps/<app>/…)')
   .action(async (options) => {
     // Lazy import so fastify/chokidar (and the whole dev stack) never load on the
     // eager cli graph — they land in a split chunk reached only for `infra-kit dev`.

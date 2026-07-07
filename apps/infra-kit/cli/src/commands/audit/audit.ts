@@ -10,6 +10,8 @@ import { discoverPackages, pathExists, validatePackage } from 'src/lib/package-v
 import type { PackageValidationResult } from 'src/lib/package-validator'
 import { defineMcpTool, textContent } from 'src/types'
 
+import { checkDevPresets } from './preset-proxy-check'
+
 // TODO [DO]: extract `audit` into its own standalone CLI tool, decoupled from infra-kit.
 
 interface AuditOptions {
@@ -111,6 +113,18 @@ export const audit = async (options: AuditOptions = {}) => {
 
   for (const target of targets) {
     results.push(await validatePackage(target.dir, target.baseline))
+  }
+
+  // Root audit also validates project-level devPresets proxy locality (a `local`
+  // route override must have its backend launched by the preset). Skipped when the
+  // project declares no presets. Only meaningful at the root — presets live in the
+  // project infra-kit.json, not in any single package.
+  if (options.root) {
+    const presetResult = await checkDevPresets(targets[0]!.dir)
+
+    if (presetResult) {
+      results.push(presetResult)
+    }
   }
 
   for (const result of results) {

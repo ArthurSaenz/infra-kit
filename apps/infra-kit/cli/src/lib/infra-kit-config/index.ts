@@ -13,7 +13,10 @@ export type {
   ConfiguredIde,
   DevAppConfig,
   DevConfig,
+  DevPreset,
+  DevPresets,
   EnvAutoLoadConfig,
   InfraKitConfig,
   InfraKitConfigPaths,
+  ProxySource,
 } from './infra-kit-config'

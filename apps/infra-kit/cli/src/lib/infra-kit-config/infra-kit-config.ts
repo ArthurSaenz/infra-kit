@@ -104,6 +104,36 @@ const devAppConfigSchema = z
 
 const devConfigSchema = z.record(z.string().min(1), devAppConfigSchema)
 
+// devPresets: named local-dev sessions, declared in the per-project infra-kit.json
+// (team presets committed; personal ones layered via the user-project override).
+// Each preset names launch targets (apps/<app>/{api,ui}), optional per-backend
+// `watchDeps`, per-route proxy-source overrides, and a `cmux` layout flag; it is
+// consumed by `infra-kit dev <preset>` and resolved by src/dev/presets. The SHAPE
+// is strict (typos in a preset surface as parse errors), but unknown app/route
+// NAMES are intentionally NOT validated here — they resolve at run time against the
+// discovered apps, so a stale preset never bricks every command.
+const proxySourceSchema = z.enum(['local', 'cloud'])
+
+const devPresetAppSchema = z
+  .object({
+    // api targets only: watch the backend's dist + shared-package subdeps and restart on change.
+    watchDeps: z.boolean().optional(),
+    // route path (e.g. `/api`) → source, overriding that route's config.ts default for this session.
+    proxy: z.record(z.string().min(1), proxySourceSchema).optional(),
+  })
+  .strict()
+
+const devPresetSchema = z
+  .object({
+    // Launch-target key (`client`, `client/ui`, `client/api`, `*/api`) → its settings. Omit = all.
+    apps: z.record(z.string().min(1), devPresetAppSchema).optional(),
+    // Run each launched target in its own cmux pane (one workspace, N panes).
+    cmux: z.boolean().optional(),
+  })
+  .strict()
+
+const devPresetsSchema = z.record(z.string().min(1), devPresetSchema)
+
 // env auto-load: opt-in convenience that primes Doppler env when you work inside
 // this project / a worktree. Absent => disabled. `trigger` selects the moment
 // (pick one):
@@ -131,6 +161,7 @@ const infraKitConfigObject = z.object({
   worktrees: worktreesConfigSchema.optional(),
   envAutoLoad: envAutoLoadSchema.optional(),
   dev: devConfigSchema.optional(),
+  devPresets: devPresetsSchema.optional(),
 })
 
 // Full schema = base object + a parse-time uniqueness check on the `ide` array.
@@ -170,6 +201,15 @@ export type DevAppConfig = z.infer<typeof devAppConfigSchema>
 
 /** The full `dev` section: a map of app folder name to its {@link DevAppConfig}. */
 export type DevConfig = z.infer<typeof devConfigSchema>
+
+/** A proxy route's resolved source in a preset override (`'local' | 'cloud'`). */
+export type ProxySource = z.infer<typeof proxySourceSchema>
+
+/** A single dev preset (`{ apps?, cmux? }`) from the `devPresets` map. */
+export type DevPreset = z.infer<typeof devPresetSchema>
+
+/** The `devPresets` map: preset name → {@link DevPreset}. */
+export type DevPresets = z.infer<typeof devPresetsSchema>
 
 /** A single resolved IDE entry (`{ provider, config }`). */
 export type ConfiguredIde = z.infer<typeof ideSchema>

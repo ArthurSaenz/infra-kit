@@ -201,6 +201,20 @@ export interface DevServerOptions {
    * preserving today's behavior.
    */
   ui?: boolean
+  /**
+   * Run each discovered API app in its own cmux pane (one workspace, N panes), supervised by a
+   * resident process that closes the workspace on signal. Falls back to single-process dev when
+   * cmux is absent. Handled by `runCmuxDevServer`, not the in-process `DevServerRunner`.
+   */
+  cmux?: boolean
+  /**
+   * Infer the single app to run from the current working directory (equivalent to
+   * `--app=<that app>`), so every app can share the identical script
+   * `pnpm exec infra-kit dev --self` instead of hardcoding its own folder name.
+   * Resolved by the entry point (`resolveSelfAppName`) into `include` before this
+   * runner ever sees it; the runner itself does not read `self`.
+   */
+  self?: boolean
 }
 
 interface IAppServer {
@@ -312,11 +326,13 @@ export class DevServerRunner {
     }
     log(`📂 Monorepo root: ${this.monorepoRoot}`)
 
+    // Run everything an app exposes: API emulators + frontends (any `apps/<app>/ui` with a `dev`
+    // script). `--app` narrows BOTH. There is no api-only/ui-only toggle — `--app` is the one selector.
     const apps = this.selectApps(this.discoverApiApps(devConfig), include)
-    const uiApps = (this.options.ui ?? false) ? this.selectUiApps(include) : []
+    const uiApps = this.selectUiApps(include)
 
     if (apps.length === 0 && uiApps.length === 0) {
-      log(this.options.ui ? '⚠️  No API or UI apps found to run' : '⚠️  No API apps found to run', 'warn')
+      log('⚠️  No API or UI apps found to run', 'warn')
 
       return
     }

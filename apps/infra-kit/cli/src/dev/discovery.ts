@@ -151,6 +151,32 @@ export function normalizeAppInclude(include?: string[] | null): string[] | null 
 }
 
 /**
+ * Infer the current app's folder name from `startDir`, so a per-app script can
+ * run `infra-kit dev --self` without hardcoding its own app name. Walks up to the
+ * monorepo root (via {@link findMonorepoRoot}), then takes the first path segment
+ * of `startDir` relative to `<root>/apps` — e.g. `apps/config-handler/api` and
+ * `apps/config-handler` both resolve to `config-handler`. Throws when `startDir`
+ * isn't inside `<root>/apps/<app>/...` (repo root, or an unrelated path).
+ *
+ * @example
+ * resolveSelfAppName('/repo/apps/config-handler/api') // => 'config-handler'
+ */
+export function resolveSelfAppName(startDir: string): string {
+  const root = findMonorepoRoot(startDir)
+  const relative = path.relative(path.join(root, 'apps'), startDir)
+  const firstSegment = relative.split(path.sep)[0]
+  const isOutsideApps = relative === '' || relative.startsWith('..') || path.isAbsolute(relative)
+
+  if (isOutsideApps || !firstSegment) {
+    throw new Error(
+      `--self: not inside an apps/<app> directory (cwd: ${startDir}). Run from an app folder or use --app=<name>.`,
+    )
+  }
+
+  return firstSegment
+}
+
+/**
  * Existing `packages/<pkg>/dist` directories under the monorepo root — the compiled
  * outputs `turbo watch` rewrites. Watched (alongside app dist) because editing a shared
  * lib rewrites only the lib's `dist`, never the dependent app's, so a package-dist change

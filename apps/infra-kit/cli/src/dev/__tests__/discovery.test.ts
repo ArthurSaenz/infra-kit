@@ -11,6 +11,7 @@ import {
   getPackageDistDirs,
   getPackageName,
   normalizeAppInclude,
+  resolveSelfAppName,
 } from 'src/dev/discovery'
 
 import { createTempTracker, makeMonorepo } from './fixtures'
@@ -177,5 +178,38 @@ describe('discoverUiApps — frontends with a `dev` script', () => {
 
     fs.rmSync(path.join(root, 'apps'), { recursive: true, force: true })
     expect(discoverUiApps(root)).toEqual([])
+  })
+})
+
+describe('resolveSelfAppName — infer the current app from cwd', () => {
+  it('resolves the app name when cwd is apps/<app>/api', () => {
+    const root = temp.register(makeMonorepo([{ name: 'config-handler' }]))
+    const apiDir = path.join(root, 'apps', 'config-handler', 'api')
+
+    expect(resolveSelfAppName(apiDir)).toBe('config-handler')
+  })
+
+  it('resolves the app name when cwd is apps/<app> itself', () => {
+    const root = temp.register(makeMonorepo([{ name: 'config-handler' }]))
+    const appDir = path.join(root, 'apps', 'config-handler')
+
+    expect(resolveSelfAppName(appDir)).toBe('config-handler')
+  })
+
+  it('throws when cwd is the monorepo root (not inside apps/<app>)', () => {
+    const root = temp.register(makeMonorepo([{ name: 'config-handler' }]))
+
+    expect(() => {
+      return resolveSelfAppName(root)
+    }).toThrow(/not inside an apps\/<app> directory/)
+  })
+
+  it('throws when cwd is outside apps/ entirely', () => {
+    const root = temp.register(makeMonorepo([{ name: 'config-handler' }]))
+    const outsideDir = path.join(root, 'packages', 'lib-core')
+
+    expect(() => {
+      return resolveSelfAppName(outsideDir)
+    }).toThrow(/not inside an apps\/<app> directory/)
   })
 })

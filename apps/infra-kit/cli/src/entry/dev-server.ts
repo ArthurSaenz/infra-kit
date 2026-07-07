@@ -9,14 +9,19 @@ import { Command } from 'commander'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
+import { runCmuxDevServer } from 'src/dev/cmux-dev'
 import { run } from 'src/dev/dev-server'
 import type { DevServerOptions } from 'src/dev/dev-server'
+import { resolveSelfAppName } from 'src/dev/discovery'
+import { isCmuxAvailable } from 'src/integrations/cmux'
 
 /** Raw option object as produced by Commander (comma-joined strings). */
 export interface DevCliOptions {
   watch?: boolean
   app?: string
   ui?: boolean
+  cmux?: boolean
+  self?: boolean
 }
 
 /** Split a comma-separated flag value into a trimmed, non-empty list (`null` when unset/empty). */
@@ -36,13 +41,32 @@ const splitList = (value: string | undefined): string[] | null => {
 /**
  * Map raw Commander flags to the orchestrator's typed options. Shared by the
  * `infra-kit dev` subcommand and the standalone entry so the two never diverge.
+ * `self` is passed through as-is here — it's resolved to `include` later, in
+ * `runDevServer`, where `--app` (if also given) is allowed to win.
  */
 export const toDevServerOptions = (raw: DevCliOptions): DevServerOptions => {
   return {
     watch: raw.watch ?? false,
     include: splitList(raw.app),
     ui: raw.ui ?? false,
+    cmux: raw.cmux ?? false,
+    self: raw.self ?? false,
   }
+}
+
+/**
+ * Resolve `--self` into an `include` list, without mutating `options`. `--app` (an
+ * explicit `include`) wins over `--self` when both are given — self is only a
+ * convenience default for scripts that don't want to hardcode their app name.
+ * Lets `resolveSelfAppName`'s error (not inside `apps/<app>/...`) propagate as-is;
+ * the caller's top-level catch turns it into a clean message + non-zero exit.
+ */
+const resolveSelfOptions = (options: DevServerOptions): DevServerOptions => {
+  if (!options.self || options.include) {
+    return options
+  }
+
+  return { ...options, include: [resolveSelfAppName(process.cwd())] }
 }
 
 /**
@@ -50,7 +74,22 @@ export const toDevServerOptions = (raw: DevCliOptions): DevServerOptions => {
  * cleanly before exiting. This is the ONLY place SIGINT/SIGTERM handlers and
  * `process.exit` live for the dev-server feature.
  */
-export const runDevServer = async (options: DevServerOptions): Promise<void> => {
+export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> => {
+  const options = resolveSelfOptions(rawOptions)
+
+  // `--cmux`: one workspace, one pane per app. `runCmuxDevServer` owns its own
+  // signal handling and never returns, so return before wiring the in-process
+  // handlers below. Fall through to single-process dev when cmux isn't installed.
+  if (options.cmux) {
+    if (await isCmuxAvailable()) {
+      await runCmuxDevServer(options)
+
+      return
+    }
+
+    process.stdout.write('cmux not available; falling back to single-terminal dev\n')
+  }
+
   const runner = await run(options)
 
   let shuttingDown = false
@@ -87,6 +126,11 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
     .option('-w, --watch', 'Rebuild and restart on file save')
     .option('--app <names>', 'Only run these apps (comma-separated folder names)')
     .option('--ui', 'Also run frontends (apps/<app>/ui with a `dev` script) via turbo run dev')
+    .option(
+      '--cmux',
+      'Run each app in its own cmux pane (one workspace, N panes; falls back to single terminal if cmux is unavailable)',
+    )
+    .option('--self', 'Run only the app of the current directory (infer from cwd; use inside apps/<app>/…)')
 
   program.parse(argv)
 
