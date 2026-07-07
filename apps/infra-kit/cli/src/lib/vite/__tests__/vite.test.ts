@@ -1,11 +1,13 @@
 import { Buffer } from 'node:buffer'
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { InfraKitDevProxy } from '../../package-config/package-config'
-import { infraKitDev, resolveProxyConfig, slugifyRelease } from '../vite'
+import { infraKitDev, readLocalSet, resolveProxyConfig, slugifyRelease } from '../vite'
 
 const FIXTURES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures')
 
@@ -128,6 +130,147 @@ describe('resolveProxyConfig', () => {
       changeOrigin: true,
     })
   })
+
+  it('emits each local route with its OWN per-package recorded release (not one global slug)', () => {
+    // Two packages, each `from: ['local']`, with DIFFERENT recorded releases.
+    const multiLocal: InfraKitDevProxy = {
+      templates: FIXTURE_PROXY.templates,
+      routes: {
+        '/api': { packageName: 'client-api', from: ['local', 'cloud'], default: 'cloud' },
+        '/media': { packageName: 'media', from: ['local', 'cloud'], default: 'cloud' },
+      },
+    }
+
+    const proxy = resolveProxyConfig({
+      proxy: multiLocal,
+      localSet: new Set(['client-api', 'media']),
+      env: 'arthur',
+      // Global slug must NOT be used when a per-package release is recorded.
+      getRelease: () => {
+        throw new Error('per-package release should win over the global slug')
+      },
+      localInfo: new Map([
+        ['client-api', { port: 3110, release: '2-4' }],
+        ['media', { port: 3111, release: 'feat-x' }],
+      ]),
+    })
+
+    expect(proxy['/api']).toEqual({ target: 'http://2-4.client-api.localhost', changeOrigin: true })
+    expect(proxy['/media']).toEqual({ target: 'http://feat-x.media.localhost', changeOrigin: true })
+  })
+
+  it('falls back to the global release slug when a fragment records no release', () => {
+    const localOnly: InfraKitDevProxy = {
+      templates: FIXTURE_PROXY.templates,
+      routes: { '/api': { packageName: 'client-api', from: ['local', 'cloud'], default: 'cloud' } },
+    }
+
+    const proxy = resolveProxyConfig({
+      proxy: localOnly,
+      localSet: new Set(['client-api']),
+      env: 'arthur',
+      getRelease: () => {
+        return slugifyRelease('release/2.4')
+      },
+      // Package present but with no recorded release → global slug is used.
+      localInfo: new Map([['client-api', { port: 3110 }]]),
+    })
+
+    expect(proxy['/api']).toEqual({ target: 'http://2-4.client-api.localhost', changeOrigin: true })
+  })
+})
+
+/** Create an isolated temp repo root; caller writes fragments under it. */
+const makeTempRoot = (): string => {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'ik-vite-'))
+}
+
+describe('readLocalSet (dev-context fragment directory merge)', () => {
+  const roots: string[] = []
+
+  afterEach(() => {
+    while (roots.length > 0) {
+      fs.rmSync(roots.pop()!, { recursive: true, force: true })
+    }
+  })
+
+  const writeFragment = (dir: string, name: string, contents: string): void => {
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, name), contents)
+  }
+
+  it('f6a: merges TWO valid fragments into a localSet containing BOTH packages', () => {
+    const root = makeTempRoot()
+
+    roots.push(root)
+    const dir = path.join(root, '.infra-kit', 'dev-context')
+
+    writeFragment(dir, 'client-api.json', JSON.stringify({ package: 'client-api', port: 3110, pid: 1, writtenAt: 1 }))
+    writeFragment(dir, 'media.json', JSON.stringify({ package: 'media', port: 3111, pid: 2, writtenAt: 2 }))
+
+    const localSet = readLocalSet(root)
+
+    expect(localSet.has('client-api')).toBe(true)
+    expect(localSet.has('media')).toBe(true)
+    expect(localSet.size).toBe(2)
+  })
+
+  it('f6c: a corrupt fragment is SKIPPED while the valid one is still selected', () => {
+    const root = makeTempRoot()
+
+    roots.push(root)
+    const dir = path.join(root, '.infra-kit', 'dev-context')
+
+    writeFragment(dir, 'client-api.json', JSON.stringify({ package: 'client-api', port: 3110, pid: 1, writtenAt: 1 }))
+    // Truncated / invalid JSON — must not collapse the whole set.
+    writeFragment(dir, 'media.json', '{ "package": "media", "port":')
+
+    const localSet = readLocalSet(root)
+
+    expect(localSet.has('client-api')).toBe(true)
+    expect(localSet.has('media')).toBe(false)
+    expect(localSet.size).toBe(1)
+  })
+
+  it('f6c: dev-context directory absent (ENOENT) → empty set (distinct back-compat branch)', () => {
+    const root = makeTempRoot()
+
+    roots.push(root)
+
+    // No `.infra-kit/dev-context/` anywhere up-tree from this isolated temp root.
+    const localSet = readLocalSet(root)
+
+    expect(localSet.size).toBe(0)
+  })
+
+  it('back-compat: reads a legacy single dev-context.json when the directory is absent', () => {
+    const root = makeTempRoot()
+
+    roots.push(root)
+    fs.mkdirSync(path.join(root, '.infra-kit'), { recursive: true })
+    fs.writeFileSync(path.join(root, '.infra-kit', 'dev-context.json'), JSON.stringify({ packages: ['client-api'] }))
+
+    const localSet = readLocalSet(root)
+
+    expect(localSet.has('client-api')).toBe(true)
+    expect(localSet.size).toBe(1)
+  })
+
+  it('the fragment directory wins over a legacy file when both exist', () => {
+    const root = makeTempRoot()
+
+    roots.push(root)
+    const dir = path.join(root, '.infra-kit', 'dev-context')
+
+    writeFragment(dir, 'media.json', JSON.stringify({ package: 'media', port: 3111, pid: 2, writtenAt: 2 }))
+    fs.writeFileSync(path.join(root, '.infra-kit', 'dev-context.json'), JSON.stringify({ packages: ['client-api'] }))
+
+    const localSet = readLocalSet(root)
+
+    // Directory is preferred: legacy `client-api` is NOT merged in.
+    expect(localSet.has('media')).toBe(true)
+    expect(localSet.has('client-api')).toBe(false)
+  })
 })
 
 describe('infraKitDev (config loading)', () => {
@@ -226,6 +369,52 @@ describe('infraKitDev (config loading)', () => {
 
     for (const entry of Object.values(proxy)) {
       expect(entry.headers).toEqual({ Authorization: expectedHeader })
+    }
+  })
+
+  it('resolves a route to local using the fragment-recorded release when the package is started', async () => {
+    process.env.INFRA_KIT_ENV = 'arthur'
+    delete process.env.E2E__BASIC_AUTH_USERNAME
+    delete process.env.E2E__BASIC_AUTH_PASSWORD
+
+    // Isolated package dir: its own config + a started `backend-api` fragment.
+    const pkg = fs.mkdtempSync(path.join(os.tmpdir(), 'ik-vite-e2e-'))
+
+    try {
+      fs.writeFileSync(
+        path.join(pkg, 'infra-kit.config.ts'),
+        [
+          'export default {',
+          '  dev: {',
+          '    proxy: {',
+          '      templates: {',
+          "        local: 'http://<release>.<packageName>.localhost',",
+          "        cloud: 'https://<env>.hulyo.co.il',",
+          '      },',
+          '      routes: {',
+          "        '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },",
+          '      },',
+          '    },',
+          '  },',
+          '}',
+          '',
+        ].join('\n'),
+      )
+
+      const dir = path.join(pkg, '.infra-kit', 'dev-context')
+
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(
+        path.join(dir, 'backend-api.json'),
+        JSON.stringify({ package: 'backend-api', port: 3110, pid: 1, writtenAt: 1, release: 'feat-x' }),
+      )
+
+      const { proxy } = await infraKitDev({ cwd: pkg })
+
+      // Uses the fragment's recorded `feat-x` release — no git derivation.
+      expect(proxy['/api']).toEqual({ target: 'http://feat-x.backend-api.localhost', changeOrigin: true })
+    } finally {
+      fs.rmSync(pkg, { recursive: true, force: true })
     }
   })
 })

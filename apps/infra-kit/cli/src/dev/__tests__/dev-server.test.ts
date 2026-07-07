@@ -102,20 +102,38 @@ describe('devServerRunner — start/shutdown lifecycle (fake build, real spawn)'
 })
 
 describe('start — port-conflict pre-check', () => {
-  it('throws a clear error naming the port when two apps resolve to the same port', async () => {
+  it('throws a clear error naming the port when two apps are EXPLICITLY pinned to the same port', async () => {
     const root = temp.register(makeMonorepo([{ name: 'client' }, { name: 'backoffice' }]))
 
-    // No per-app config and no env override => both resolve to 3010.
+    // Both apps explicitly pinned to the SAME port via {APP}_PORT => a real conflict.
+    // The duplicate-port guard runs before any turbo build, so start() rejects
+    // hermetically without ever shelling out.
     delete process.env.PORT
+    process.env.CLIENT_PORT = '3010'
+    process.env.BACKOFFICE_PORT = '3010'
     process.chdir(root)
     const runner = new DevServerRunner({})
 
-    // The duplicate-port guard runs before any turbo build, so start() rejects
-    // hermetically without ever shelling out.
     await expect(runner.start()).rejects.toThrow(/Port conflict detected: 3010/)
   })
 
-  it('does not throw the conflict error when apps resolve to distinct ports', async () => {
+  it('t2: does NOT throw for ≥2 apps with no explicit port (relaxed gate: unconfigured apps bind ephemeral)', async () => {
+    const root = temp.register(makeMonorepo([{ name: 'client' }, { name: 'backoffice' }]))
+
+    // No per-app {APP}_PORT / dev.<app>.port and no PORT => both are unconfigured.
+    // They'd both resolve to DEFAULT_PORT statically, but the relaxed gate excludes
+    // unconfigured apps (each binds its own `listen(0)` port), so it must NOT throw.
+    // The build step then fails (no turbo in the fixture) — proving we got past the gate.
+    delete process.env.PORT
+    delete process.env.CLIENT_PORT
+    delete process.env.BACKOFFICE_PORT
+    process.chdir(root)
+    const runner = new DevServerRunner({})
+
+    await expect(runner.start()).rejects.not.toThrow(/Port conflict/)
+  })
+
+  it('does not throw the conflict error when apps are explicitly pinned to distinct ports', async () => {
     const root = temp.register(makeMonorepo([{ name: 'client' }, { name: 'backoffice' }]))
 
     // Distinct per-app ports via env keep the pre-check happy; the build step then
@@ -347,7 +365,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
   }, 15000)
 })
 
-describe('devServerRunner — --ui (frontends via delegated turbo run dev)', () => {
+describe('devServerRunner — frontends (default preset runs api + ui)', () => {
   it('warms UI deps, spawns the ui-dev child scoped to ui packages, and reaps it on shutdown', async () => {
     const root = temp.register(
       makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }]),
@@ -389,7 +407,8 @@ describe('devServerRunner — --ui (frontends via delegated turbo run dev)', () 
     }
 
     process.chdir(root)
-    const runner = new DevServerRunner({ ui: true }, fakeRunBuild, noopTurboWatch, fakeUiDev)
+    // No preset → default `*` runs everything the app exposes (api + ui).
+    const runner = new DevServerRunner({}, fakeRunBuild, noopTurboWatch, fakeUiDev)
 
     await runner.start()
 

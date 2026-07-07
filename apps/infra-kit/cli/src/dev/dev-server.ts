@@ -15,14 +15,15 @@
  */
 import chokidar from 'chokidar'
 import type { FSWatcher } from 'chokidar'
-import { exec } from 'node:child_process'
+import { exec, execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import process from 'node:process'
 import util from 'node:util'
 
-import type { DevConfig } from 'src/lib/infra-kit-config'
+import type { DevConfig, DevPreset, DevPresets } from 'src/lib/infra-kit-config'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
+import { slugifyRelease } from 'src/lib/release-slug'
 
 import {
   classifyDistChange,
@@ -34,7 +35,12 @@ import {
   normalizeAppInclude as normalizeAppIncludePure,
 } from './discovery.js'
 import type { DiscoveredUiApp } from './discovery.js'
-import { findPortConflicts, resolvePort as resolvePortPure, resolvePrefixUrl as resolvePrefixUrlPure } from './ports.js'
+import {
+  findPortConflicts,
+  resolvePreferredPort as resolvePreferredPortPure,
+  resolvePrefixUrl as resolvePrefixUrlPure,
+} from './ports.js'
+import { resolvePreset } from './presets.js'
 import { ServerlessLocalRun } from './serverless-local-run.js'
 import { defaultTurboWatchFactory } from './turbo-watch.js'
 import type { TurboWatchFactory, TurboWatchHandle } from './turbo-watch.js'
@@ -177,7 +183,12 @@ interface IApiAppConfig {
   /** Package name from package.json (e.g. sls-trvl-client) */
   packageName: string
   path: string
-  port: number
+  /**
+   * EXPLICITLY-configured preferred port (`{APP}_PORT`/`PORT`/`dev.<app>.port`), or
+   * `undefined` when unconfigured. Under dynamic allocation this is only a bind hint — the
+   * ACTUAL port is the ephemeral one bound at start time (see {@link IAppServer.boundPort}).
+   */
+  preferredPort: number | undefined
   prefixUrl: string
 }
 
@@ -196,11 +207,11 @@ export interface DevServerOptions {
   /** Only run these app folder names (null/empty = all discovered). Filters BOTH api and ui apps. */
   include?: string[] | null
   /**
-   * Also run frontends: discover `apps/<app>/ui` with a `dev` script and start them via one
-   * delegated `turbo run dev` child (streamed to the terminal). Default (unset) = api-only,
-   * preserving today's behavior.
+   * Named dev preset (`infra-kit dev <preset>`) from `devPresets` in the project's infra-kit config.
+   * It selects the launch targets (`apps/<app>/{api,ui}`); resolved by {@link file://./presets.ts}.
+   * Unset → run everything (`*`). `include` (`--app`/`--self`) further narrows the resolved set.
    */
-  ui?: boolean
+  preset?: string
   /**
    * Run each discovered API app in its own cmux pane (one workspace, N panes), supervised by a
    * resident process that closes the workspace on signal. Falls back to single-process dev when
@@ -220,10 +231,49 @@ export interface DevServerOptions {
 interface IAppServer {
   app: IApiAppConfig
   server: ServerlessLocalRun
+  /** The ACTUAL port bound at start (ephemeral or preferred), reported by `server.start()`. */
+  boundPort: number
+}
+
+/**
+ * One `.infra-kit/dev-context/<app>.json` fragment. `package` (feeds the vite helper's
+ * `readLocalSet`) is the app's package name; `port` is the ACTUAL bound port (the writer
+ * IS the binder). `release` lets the helper prefer the runner-recorded slug over its own
+ * git derivation; `pid`/`writtenAt` are staleness metadata.
+ */
+interface DevContextFragment {
+  package: string
+  port: number
+  pid: number
+  writtenAt: number
+  release?: string
+}
+
+/**
+ * Slugified `<release>` for the app's git branch (resolved from the app's own dir), or
+ * `undefined` outside a git repo / on an empty slug. Never throws — a missing repo just
+ * omits the recorded slug, and the vite helper falls back to its own git derivation.
+ */
+const readAppRelease = (cwd: string): string | undefined => {
+  try {
+    // eslint-disable-next-line sonarjs/no-os-command-from-path
+    const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, encoding: 'utf-8' }).trim()
+    const slug = slugifyRelease(branch)
+
+    return slug === '' ? undefined : slug
+  } catch {
+    return undefined
+  }
 }
 
 export class DevServerRunner {
   private readonly monorepoRoot: string
+  /**
+   * `<cwd>/.infra-kit/dev-context` — the fragment directory this runner writes its own
+   * per-app `<app>.json` into (mirrors {@link LOG_FILE_PATH}'s cwd-relative resolution). The
+   * `infra-kit/vite` helper searches up-tree for this dir and merges the fragments.
+   */
+  private readonly devContextDir: string
   private readonly appServers: IAppServer[] = []
   private watchDebounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
   /** Active chokidar watcher in `--watch` mode; closed on {@link shutdown}. */
@@ -255,6 +305,7 @@ export class DevServerRunner {
     this.turboWatchFactory = turboWatchFactory
     this.uiDevFactory = uiDevFactory
     initLogFile()
+    this.devContextDir = path.join(process.cwd(), '.infra-kit', 'dev-context')
 
     // Walk up from the consumer repo cwd to the monorepo root.
     this.monorepoRoot = findMonorepoRoot(process.cwd())
@@ -274,7 +325,7 @@ export class DevServerRunner {
     return discoverApiAppsBare(this.monorepoRoot).map((app) => {
       return {
         ...app,
-        port: this.resolvePort(app.name, devConfig),
+        preferredPort: this.resolvePreferredPort(app.name, devConfig),
         prefixUrl: this.resolvePrefixUrl(app.name, devConfig),
       }
     })
@@ -301,14 +352,48 @@ export class DevServerRunner {
     return normalizeAppIncludePure(this.options.include)
   }
 
-  /** Thin delegator to the pure {@link resolvePortPure}, threading env + config. */
-  private resolvePort(appName: string, devConfig: DevConfig): number {
-    return resolvePortPure(appName, process.env, devConfig)
+  /** Thin delegator to the pure {@link resolvePreferredPortPure}, threading env + config. */
+  private resolvePreferredPort(appName: string, devConfig: DevConfig): number | undefined {
+    return resolvePreferredPortPure(appName, process.env, devConfig)
   }
 
   /** Thin delegator to the pure {@link resolvePrefixUrlPure}. */
   private resolvePrefixUrl(appName: string, devConfig: DevConfig): string {
     return resolvePrefixUrlPure(appName, devConfig)
+  }
+
+  /** Load the top-level `devPresets` map from the resolved infra-kit config (defensive: `{}` on failure). */
+  private async loadDevPresets(): Promise<DevPresets> {
+    try {
+      return (await getInfraKitConfig()).devPresets ?? {}
+    } catch {
+      return {}
+    }
+  }
+
+  /**
+   * The preset definition to run: the named preset (`infra-kit dev <preset>`; throws with the
+   * available names when unknown), or a default `{ apps: { '*': {} } }` (every discovered app +
+   * part) when no preset was given.
+   */
+  private resolvePresetDef(devPresets: DevPresets): DevPreset {
+    const name = this.options.preset
+
+    if (name == null) {
+      return { apps: { '*': {} } }
+    }
+
+    const def = devPresets[name]
+
+    if (!def) {
+      const available = Object.keys(devPresets)
+
+      throw new Error(
+        `Unknown dev preset "${name}". Available: ${available.length > 0 ? available.join(', ') : '(none defined in devPresets)'}`,
+      )
+    }
+
+    return def
   }
 
   public async start(): Promise<void> {
@@ -326,20 +411,66 @@ export class DevServerRunner {
     }
     log(`📂 Monorepo root: ${this.monorepoRoot}`)
 
-    // Run everything an app exposes: API emulators + frontends (any `apps/<app>/ui` with a `dev`
-    // script). `--app` narrows BOTH. There is no api-only/ui-only toggle — `--app` is the one selector.
-    const apps = this.selectApps(this.discoverApiApps(devConfig), include)
-    const uiApps = this.selectUiApps(include)
+    // What to run is a named preset (`infra-kit dev <preset>`), resolved against the discovered app
+    // parts (api/ui). No preset → run everything (`*`). `--app`/`--self` (`include`) further narrow it.
+    const apiAppsAll = this.discoverApiApps(devConfig)
+    const uiAppsAll = discoverUiAppsBare(this.monorepoRoot)
+    const resolved = resolvePreset(this.resolvePresetDef(await this.loadDevPresets()), {
+      api: apiAppsAll.map((a) => {
+        return a.name
+      }),
+      ui: uiAppsAll.map((a) => {
+        return a.name
+      }),
+    })
+
+    if (resolved.unmatched.length > 0) {
+      log(`⚠️  Preset targets not found (skipped): ${resolved.unmatched.join(', ')}`, 'warn')
+    }
+
+    const apiNames = new Set(
+      resolved.targets
+        .filter((t) => {
+          return t.part === 'api'
+        })
+        .map((t) => {
+          return t.app
+        }),
+    )
+    const uiNames = new Set(
+      resolved.targets
+        .filter((t) => {
+          return t.part === 'ui'
+        })
+        .map((t) => {
+          return t.app
+        }),
+    )
+    const passesInclude = (name: string): boolean => {
+      return !include || include.includes(name)
+    }
+    const apps = apiAppsAll.filter((a) => {
+      return apiNames.has(a.name) && passesInclude(a.name)
+    })
+    const uiApps = uiAppsAll.filter((a) => {
+      return uiNames.has(a.name) && passesInclude(a.name)
+    })
 
     if (apps.length === 0 && uiApps.length === 0) {
-      log('⚠️  No API or UI apps found to run', 'warn')
+      log('⚠️  No API or UI apps to run for this preset', 'warn')
 
       return
     }
 
     // Build the API boot closure (dist must exist before servers import handlers).
     if (apps.length > 0) {
-      log(`📦 Discovered ${apps.length} API app(s): ${this.formatAppList(apps)}`)
+      log(
+        `📦 Discovered ${apps.length} API app(s): ${apps
+          .map((a) => {
+            return a.name
+          })
+          .join(', ')}`,
+      )
       this.assertNoPortConflicts(apps)
       await this.buildApps(apps, watch)
     }
@@ -353,7 +484,7 @@ export class DevServerRunner {
     if (apps.length > 0) {
       await this.startAllApps(apps)
       log('🎉 All servers started!')
-      this.printServerTable(apps)
+      this.printServerTable()
       this.printRouteDump()
       log(
         `📝 Handler logs (AWS Powertools, logger.info/debug, etc.) → this terminal. Runner-only file: ${LOG_FILE_PATH}`,
@@ -368,28 +499,6 @@ export class DevServerRunner {
     if (uiApps.length > 0) {
       this.startUiDev(uiApps)
     }
-  }
-
-  /** Discover `apps/<app>/ui` frontends (with a `dev` script), applying the `--app` include filter. */
-  private selectUiApps(include: string[] | null): DiscoveredUiApp[] {
-    const uiApps = discoverUiAppsBare(this.monorepoRoot)
-    const selected = include
-      ? uiApps.filter((a) => {
-          return include.includes(a.name)
-        })
-      : uiApps
-
-    if (selected.length > 0) {
-      log(
-        `🎨 Discovered ${selected.length} UI app(s): ${selected
-          .map((a) => {
-            return a.name
-          })
-          .join(', ')}`,
-      )
-    }
-
-    return selected
   }
 
   /**
@@ -445,22 +554,21 @@ export class DevServerRunner {
       .join(', ')
   }
 
-  /** Apply the `--app` include filter (logging it when applied). */
-  private selectApps(apps: IApiAppConfig[], include: string[] | null): IApiAppConfig[] {
-    if (!include) {
-      return apps
-    }
-
-    log(`🔍 Filtering to apps: ${include.join(', ')}`)
-
-    return apps.filter((app) => {
-      return include.includes(app.name)
-    })
-  }
-
-  /** Throw (after logging remediation tips) when two apps resolve to the same port. */
+  /**
+   * Throw (after logging remediation tips) when two apps are EXPLICITLY pinned to the same
+   * port. Apps with no explicit port bind an ephemeral `listen(0)` port each (collision-free
+   * by construction), so they are excluded from the gate — otherwise the default multi-app
+   * run would false-throw on the shared `DEFAULT_PORT` before dynamic allocation de-conflicts.
+   */
   private assertNoPortConflicts(apps: IApiAppConfig[]): void {
-    const { duplicatePorts, conflictingApps } = findPortConflicts(apps)
+    const explicitApps = apps
+      .filter((app) => {
+        return app.preferredPort != null
+      })
+      .map((app) => {
+        return { name: app.name, port: app.preferredPort! }
+      })
+    const { duplicatePorts, conflictingApps } = findPortConflicts(explicitApps)
 
     if (duplicatePorts.length === 0) {
       return
@@ -511,10 +619,10 @@ export class DevServerRunner {
     await Promise.all(
       apps.map(async (app) => {
         try {
-          const server = await this.startOneApp(app)
+          const started = await this.startOneApp(app)
 
-          if (server) {
-            this.appServers.push({ app, server })
+          if (started) {
+            this.appServers.push({ app, ...started })
           }
         } catch (error) {
           log(`❌ Failed to start ${app.name}: ${String(error)}`, 'error')
@@ -523,7 +631,7 @@ export class DevServerRunner {
     )
   }
 
-  private async startOneApp(app: IApiAppConfig): Promise<ServerlessLocalRun | null> {
+  private async startOneApp(app: IApiAppConfig): Promise<{ server: ServerlessLocalRun; boundPort: number } | null> {
     log(`🔄 Starting ${app.name}...`)
 
     // No `process.chdir` here: `ServerlessLocalRun` reads `serverless.yml` and imports the
@@ -532,14 +640,54 @@ export class DevServerRunner {
     const server = new ServerlessLocalRun({
       controllersPath: app.path,
       prefixUrl: app.prefixUrl,
-      port: app.port,
+      port: app.preferredPort,
       appName: app.name,
     })
 
-    await server.start()
-    log(`✅ ${app.name} started on port ${app.port}`)
+    // `start()` binds an ephemeral (or preferred-then-ephemeral) port and RETURNS the actual
+    // one — consume THAT, never the static preferred hint, so the log/table/health agree.
+    const boundPort = await server.start()
 
-    return server
+    // Record the ACTUAL bound port in this runner's own dev-context fragment. Inside startOneApp
+    // (the shared start+restart path) so a watch-restart refreshes the port instead of orphaning
+    // a stale fragment (M2). Non-fatal: a fragment-write failure must not down the server.
+    try {
+      this.writeDevContextFragment(app, boundPort)
+    } catch (error) {
+      log(`⚠️  Failed to write dev-context fragment for ${app.name}: ${String(error)}`, 'warn')
+    }
+
+    log(`✅ ${app.name} started on port ${boundPort}`)
+
+    return { server, boundPort }
+  }
+
+  /**
+   * Atomically write this runner's `.infra-kit/dev-context/<app>.json` fragment recording the
+   * ACTUAL bound port (REV-5: serialize to a same-dir temp file, then `renameSync` into place, so a
+   * concurrent reader — the vite helper's directory merge — never observes torn JSON). Each runner
+   * writes ONLY its own app's fragment, so cmux panes never clobber each other.
+   */
+  private writeDevContextFragment(app: IApiAppConfig, boundPort: number): void {
+    const release = readAppRelease(app.path)
+    const fragment: DevContextFragment = {
+      package: app.packageName,
+      port: boundPort,
+      pid: process.pid,
+      writtenAt: Date.now(),
+      ...(release ? { release } : {}),
+    }
+    const target = path.join(this.devContextDir, `${app.name}.json`)
+    const tmp = path.join(this.devContextDir, `${app.name}.json.${process.pid}.tmp`)
+
+    fs.mkdirSync(this.devContextDir, { recursive: true })
+    fs.writeFileSync(tmp, JSON.stringify(fragment, null, 2))
+    fs.renameSync(tmp, target)
+  }
+
+  /** Remove THIS runner's own `<app>.json` fragment on shutdown (never another runner's). */
+  private removeDevContextFragment(app: IApiAppConfig): void {
+    fs.rmSync(path.join(this.devContextDir, `${app.name}.json`), { force: true })
   }
 
   /** Run restart jobs one after another (watch can fire faster than close + listen). */
@@ -615,10 +763,10 @@ export class DevServerRunner {
     await Promise.all(
       targets.map(async ({ idx, app }) => {
         try {
-          const newServer = await this.startOneApp(app)
+          const restarted = await this.startOneApp(app)
 
-          if (newServer) {
-            this.appServers[idx] = { app, server: newServer }
+          if (restarted) {
+            this.appServers[idx] = { app, ...restarted }
           }
         } catch (error) {
           log(`❌ Failed to restart ${app.name}: ${String(error)}`, 'error')
@@ -728,13 +876,13 @@ export class DevServerRunner {
    * `http://localhost:<port>` that 404s against prefixed handler routes. A `Health`
    * column surfaces the unprefixed `/__health` liveness URL.
    */
-  private printServerTable(apps: IApiAppConfig[]): void {
-    const rows = apps.map((app) => {
+  private printServerTable(): void {
+    const rows = this.appServers.map(({ app, boundPort }) => {
       return [
         app.name,
-        String(app.port),
-        `http://localhost:${app.port}${app.prefixUrl}`,
-        `http://localhost:${app.port}/__health`,
+        String(boundPort),
+        `http://localhost:${boundPort}${app.prefixUrl}`,
+        `http://localhost:${boundPort}/__health`,
       ]
     })
 
@@ -788,12 +936,15 @@ export class DevServerRunner {
       this.watcher = null
     }
 
-    for (const { server } of this.appServers) {
+    for (const { app, server } of this.appServers) {
       try {
         await server.close()
       } catch {
         // ignore
       }
+      // Remove this runner's own dev-context fragment so a stopped app drops out of the
+      // helper's localSet (only its own — the directory model keeps runners independent).
+      this.removeDevContextFragment(app)
     }
     log(`📝 Logs saved to: ${LOG_FILE_PATH}`)
   }

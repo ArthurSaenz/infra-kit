@@ -11,15 +11,12 @@ import * as path from 'node:path'
 import process from 'node:process'
 
 import { closeCmuxDevWorkspace, openCmuxDevWorkspace } from 'src/integrations/cmux'
-import type { DevConfig } from 'src/lib/infra-kit-config'
-import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 
 import { buildCmuxLayout } from './cmux-layout.js'
 import type { DevServerOptions } from './dev-server.js'
 import { discoverApiApps, findMonorepoRoot, normalizeAppInclude } from './discovery.js'
 import type { DiscoveredApiApp } from './discovery.js'
-import { resolvePort } from './ports.js'
 
 /** Build the per-pane primitive command for each app (append `--watch` when requested). */
 export const buildPaneCommands = (appNames: string[], watch: boolean): string[] => {
@@ -41,14 +38,16 @@ const selectApiApps = (root: string, include: string[] | null): DiscoveredApiApp
   })
 }
 
-/** Log each app + its resolved port and the opened workspace ref. */
-const logDevWorkspace = (apps: DiscoveredApiApp[], devConfig: DevConfig, ref: string): void => {
+/**
+ * Log each app pane and the opened workspace ref. Ports are NOT shown here: each
+ * pane binds a dynamic (ephemeral) port at runtime and prints its own real port —
+ * the supervisor cannot know it at spawn time, so a static resolved port would lie.
+ */
+const logDevWorkspace = (apps: DiscoveredApiApp[], ref: string): void => {
   logger.info(`🧩 Opened cmux dev workspace ${ref} with ${apps.length} pane(s):`)
 
   for (const app of apps) {
-    const port = resolvePort(app.name, process.env, devConfig)
-
-    logger.info(`   • ${app.name} → http://localhost:${port} (infra-kit dev --app=${app.name})`)
+    logger.info(`   • ${app.name} (infra-kit dev --app=${app.name})`)
   }
 }
 
@@ -93,7 +92,6 @@ const registerShutdown = (ref: string): void => {
  */
 export const runCmuxDevServer = async (options: DevServerOptions): Promise<void> => {
   const root = findMonorepoRoot(process.cwd())
-  const devConfig = (await getInfraKitConfig()).dev ?? {}
   const apps = selectApiApps(root, normalizeAppInclude(options.include))
 
   if (apps.length === 0) {
@@ -112,7 +110,7 @@ export const runCmuxDevServer = async (options: DevServerOptions): Promise<void>
   const title = `${path.basename(root)} dev`
   const ref = await openCmuxDevWorkspace({ cwd: root, title, layout })
 
-  logDevWorkspace(apps, devConfig, ref)
+  logDevWorkspace(apps, ref)
   registerShutdown(ref)
 
   // Stay resident until a signal fires. A never-resolving promise alone does NOT

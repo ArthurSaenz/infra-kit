@@ -6,6 +6,7 @@ import {
   findPortConflicts,
   parsePortString,
   resolvePort,
+  resolvePreferredPort,
   resolvePrefixUrl,
 } from 'src/dev/ports'
 
@@ -43,6 +44,25 @@ describe('resolvePort — precedence order', () => {
   it('strips surrounding quotes on a {APP}_PORT env value', () => {
     // Secrets managers can export values wrapped in quotes.
     expect(resolvePort('client', { CLIENT_PORT: '"3400"' }, {})).toBe(3400)
+  })
+})
+
+describe('resolvePreferredPort — explicit-only (no DEFAULT_PORT fallback)', () => {
+  it('returns undefined when nothing is explicitly configured (no DEFAULT_PORT fallback)', () => {
+    expect(resolvePreferredPort('client', {}, {})).toBeUndefined()
+  })
+
+  it('returns dev.<app>.port from config when set', () => {
+    expect(resolvePreferredPort('client', {}, { client: { port: 3200 } })).toBe(3200)
+  })
+
+  it('lets PORT and {APP}_PORT take precedence, in that order', () => {
+    expect(resolvePreferredPort('client', { PORT: '3300' }, { client: { port: 3200 } })).toBe(3300)
+    expect(resolvePreferredPort('client', { PORT: '3300', CLIENT_PORT: '3400' }, {})).toBe(3400)
+  })
+
+  it('preserves an explicit {APP}_PORT = 0 (ephemeral request), not undefined', () => {
+    expect(resolvePreferredPort('client', { CLIENT_PORT: '0' }, {})).toBe(0)
   })
 })
 

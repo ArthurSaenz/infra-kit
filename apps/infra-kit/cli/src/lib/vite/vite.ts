@@ -13,6 +13,7 @@ import type {
   InfraKitDevProxySource,
 } from '../package-config/package-config'
 import { packageConfigSchema } from '../package-config/package-config-schema'
+import { slugifyRelease } from '../release-slug/release-slug'
 
 /**
  * Env-name handle read at vite-config time to fill the `<env>` placeholder in a
@@ -25,8 +26,36 @@ const INFRA_KIT_ENV = 'INFRA_KIT_ENV'
 /** Per-package config filename, mirrored from the CLI's `PACKAGE_CONFIG_FILE`. */
 const PACKAGE_CONFIG_FILE = 'infra-kit.config.ts'
 
-/** Repo-relative path to the local dev-package manifest, searched upward from cwd. */
+/**
+ * Repo-relative dev-context fragment DIRECTORY, searched upward from cwd. Each
+ * runner (single-process or cmux pane) writes its OWN `<app>.json` fragment here
+ * recording its real bound port + release; the helper merges them (see
+ * {@link readLocalContext}). This is the current source of truth.
+ */
+const DEV_CONTEXT_DIR = path.join('.infra-kit', 'dev-context')
+
+/**
+ * Legacy single-file dev-context manifest, searched upward from cwd. Read only as
+ * a transitional back-compat path when {@link DEV_CONTEXT_DIR} is absent (the
+ * directory wins per-package when both exist).
+ */
 const DEV_CONTEXT_FILE = path.join('.infra-kit', 'dev-context.json')
+
+/**
+ * One `.infra-kit/dev-context/<app>.json` fragment. `package` + `port` are the
+ * load-bearing fields the helper reads (`package` → localSet, `port` → the real
+ * bound port for a future `127.0.0.1:<port>` mode / Layer B route); `release` lets
+ * the helper prefer the runner-recorded slug over its own git derivation.
+ * `pid`/`writtenAt` are staleness metadata (unused on the read path here). Kept
+ * lenient (not `.strict()`) so extra writer fields never reject a valid fragment.
+ */
+const devContextFragmentSchema = z.object({
+  package: z.string(),
+  port: z.number(),
+  pid: z.number().optional(),
+  writtenAt: z.number().optional(),
+  release: z.string().optional(),
+})
 
 /**
  * A single Vite `server.proxy` entry. `changeOrigin` is always set; the
@@ -83,25 +112,12 @@ const buildBasicAuthHeader = (env: NodeJS.ProcessEnv, override?: InfraKitBasicAu
 }
 
 /**
- * Slugify a git branch into a `<release>` token: strip a leading git-flow prefix
- * (`feature/`, `release/`, …), lowercase, collapse non-alphanumeric runs to `-`,
- * and trim stray dashes.
- *
- * @example
- * slugifyRelease('release/2.4')     // => '2-4'
- * slugifyRelease('feature/HUL-123') // => 'hul-123'
+ * Re-exported from the shared, dependency-light `lib/release-slug` module so the
+ * published `infra-kit/vite` surface (`entry/vite.ts:7`) is unchanged while the
+ * dev-server's fragment writer derives `<release>` from the SAME implementation
+ * (no slug drift). See {@link slugifyRelease}.
  */
-export const slugifyRelease = (branch: string): string => {
-  // Collect the alphanumeric runs and join with `-`. Doing it this way (rather
-  // than collapse-then-trim) is linear and sidesteps a super-linear trim regex,
-  // while inherently dropping any leading/trailing separators.
-  const runs = branch
-    .replace(/^(?:feature|feat|release|hotfix|bugfix|fix|chore)\//i, '')
-    .toLowerCase()
-    .match(/[a-z0-9]+/g)
-
-  return runs ? runs.join('-') : ''
-}
+export { slugifyRelease }
 
 /** Fill the `<release>`/`<packageName>`/`<env>` placeholders in a URL template. */
 const interpolate = (template: string, values: { release: string; packageName: string; env: string }): string => {
@@ -131,6 +147,8 @@ interface ResolveRouteArgs {
   localSet: ReadonlySet<string>
   env: string | undefined
   getRelease: () => string
+  /** Per-package runtime data (recorded release/port) from the dev-context merge. */
+  localInfo?: ReadonlyMap<string, LocalPackageInfo>
 }
 
 /** Resolve one route into a Vite proxy entry (or throw an actionable error). */
@@ -141,12 +159,19 @@ const resolveRoute = ({
   localSet,
   env,
   getRelease,
+  localInfo,
 }: ResolveRouteArgs): InfraKitViteProxyEntry => {
   const source = pickSource(route, localSet)
 
   if (source === 'local') {
+    // Prefer THIS package's runner-recorded release slug (R4) over the single
+    // global git derivation, so cross-branch FE/BE pairings don't drift the
+    // emitted `<release>` from the segment the runner aliased. Fall back to the
+    // global git slug only when the fragment carried no release.
+    const release = localInfo?.get(route.packageName)?.release ?? getRelease()
+
     const target = interpolate(templates.local, {
-      release: getRelease(),
+      release,
       packageName: route.packageName,
       env: env ?? '',
     })
@@ -172,6 +197,8 @@ interface ResolveProxyArgs {
   getRelease: () => string
   /** Pre-computed `Authorization` header value applied uniformly to every route. */
   authHeader?: string
+  /** Per-package runtime data (recorded release/port) from the dev-context merge. */
+  localInfo?: ReadonlyMap<string, LocalPackageInfo>
 }
 
 /**
@@ -186,12 +213,13 @@ export const resolveProxyConfig = ({
   env,
   getRelease,
   authHeader,
+  localInfo,
 }: ResolveProxyArgs): InfraKitViteProxy => {
   const result: InfraKitViteProxy = {}
   const headers = authHeader ? { Authorization: authHeader } : undefined
 
   for (const [routePath, route] of Object.entries(proxy.routes)) {
-    const entry = resolveRoute({ routePath, route, templates: proxy.templates, localSet, env, getRelease })
+    const entry = resolveRoute({ routePath, route, templates: proxy.templates, localSet, env, getRelease, localInfo })
 
     result[routePath] = headers ? { ...entry, headers } : entry
   }
@@ -279,21 +307,101 @@ const findUp = (start: string, relative: string): string | undefined => {
   }
 }
 
-/**
- * Read the set of locally-running packages from the nearest
- * `.infra-kit/dev-context.json` (searched upward from cwd). Absent file → empty
- * set, i.e. the frontend-only case where every route resolves to cloud.
- */
-export const readLocalSet = (cwd: string): ReadonlySet<string> => {
-  const file = findUp(cwd, DEV_CONTEXT_FILE)
+/** Per-package runtime data merged from the dev-context fragment directory. */
+export interface LocalPackageInfo {
+  /** The real bound port the runner recorded (available for a future direct mode). */
+  port: number
+  /** The runner-recorded release slug, preferred over the helper's git derivation. */
+  release?: string
+}
 
-  if (!file) return new Set()
+/**
+ * The locally-running package set plus a `package → { port, release }` map merged
+ * from the dev-context fragments. `packages` feeds `pickSource`; `info` lets a
+ * `local` route emit the per-package recorded release (see {@link resolveRoute}).
+ */
+export interface LocalContext {
+  packages: ReadonlySet<string>
+  info: ReadonlyMap<string, LocalPackageInfo>
+}
+
+/** An empty {@link LocalContext} (frontend-only / dev-context absent). */
+const emptyLocalContext = (): LocalContext => {
+  return { packages: new Set(), info: new Map() }
+}
+
+/**
+ * Merge every `<app>.json` fragment in the dev-context directory into a
+ * {@link LocalContext}. Two DISTINCT failure branches (do NOT collapse them into
+ * one directory-wide catch):
+ *  - `readdir`-ENOENT (directory vanished mid-race) → empty context, matching the
+ *    dir-absent back-compat behaviour.
+ *  - a single corrupt/truncated/invalid `<app>.json` → that ONE fragment is
+ *    SKIPPED (per-fragment `safeParse` isolation); the rest still merge, so one bad
+ *    fragment never collapses the whole localSet to empty (which would silently
+ *    drop a started package to cloud).
+ */
+const readFragmentDir = (dir: string): LocalContext => {
+  let entries: string[]
 
   try {
-    return new Set(extractPackages(JSON.parse(fs.readFileSync(file, 'utf-8'))))
+    entries = fs.readdirSync(dir)
   } catch {
-    return new Set()
+    return emptyLocalContext()
   }
+
+  const packages = new Set<string>()
+  const info = new Map<string, LocalPackageInfo>()
+
+  for (const name of entries) {
+    if (!name.endsWith('.json')) continue
+
+    try {
+      const parsed = devContextFragmentSchema.safeParse(JSON.parse(fs.readFileSync(path.join(dir, name), 'utf-8')))
+
+      if (!parsed.success) continue
+
+      packages.add(parsed.data.package)
+      info.set(parsed.data.package, { port: parsed.data.port, release: parsed.data.release })
+    } catch {
+      // Corrupt/truncated fragment (JSON.parse / read failure): skip ONLY this one.
+      continue
+    }
+  }
+
+  return { packages, info }
+}
+
+/**
+ * Read the locally-running package context, searched upward from `cwd`. Prefers
+ * the `.infra-kit/dev-context/` fragment DIRECTORY (merged via
+ * {@link readFragmentDir}); when it is absent, falls back to the legacy single
+ * `.infra-kit/dev-context.json` file (read as before — no per-package release);
+ * when neither exists → empty context (frontend-only, every route resolves cloud).
+ */
+export const readLocalContext = (cwd: string): LocalContext => {
+  const dir = findUp(cwd, DEV_CONTEXT_DIR)
+
+  if (dir) return readFragmentDir(dir)
+
+  const legacy = findUp(cwd, DEV_CONTEXT_FILE)
+
+  if (!legacy) return emptyLocalContext()
+
+  try {
+    return { packages: new Set(extractPackages(JSON.parse(fs.readFileSync(legacy, 'utf-8')))), info: new Map() }
+  } catch {
+    return emptyLocalContext()
+  }
+}
+
+/**
+ * Read the set of locally-running packages (searched upward from `cwd`). Thin
+ * wrapper over {@link readLocalContext} preserving the historical `Set`-returning
+ * contract. Absent dev-context → empty set (frontend-only cloud resolution).
+ */
+export const readLocalSet = (cwd: string): ReadonlySet<string> => {
+  return readLocalContext(cwd).packages
 }
 
 /** Current git branch of `cwd` (raw, un-slugified). */
@@ -304,11 +412,12 @@ const readGitBranch = (cwd: string): string => {
 
 /**
  * Resolve a package's `dev` block into a spreadable Vite `server` fragment. Loads
- * the package's `infra-kit.config.ts`, reads the local dev set from
- * `.infra-kit/dev-context.json`, and interpolates the local/cloud templates.
- * `<env>` comes from `INFRA_KIT_ENV`; `<release>` from the slugified git branch
- * (computed lazily, only when a local route needs it). Returns `{ proxy: {} }`
- * when there is no `dev` block.
+ * the package's `infra-kit.config.ts`, merges the local dev set from the
+ * `.infra-kit/dev-context/` fragment directory, and interpolates the local/cloud
+ * templates. `<env>` comes from `INFRA_KIT_ENV`; `<release>` from each package's
+ * runner-recorded fragment when present, else the slugified git branch (computed
+ * lazily, only when a local route needs it). Returns `{ proxy: {} }` when there is
+ * no `dev` block.
  *
  * @example
  * // vite.config.ts
@@ -322,14 +431,14 @@ export const infraKitDev = async (options: InfraKitDevOptions = {}): Promise<{ p
 
   if (!dev?.proxy) return { proxy: {} }
 
-  const localSet = readLocalSet(cwd)
+  const { packages: localSet, info: localInfo } = readLocalContext(cwd)
   const env = process.env[INFRA_KIT_ENV]
   const authHeader = buildBasicAuthHeader(process.env, options.basicAuth)
   const getRelease = once(() => {
     return slugifyRelease(readGitBranch(cwd))
   })
 
-  return { proxy: resolveProxyConfig({ proxy: dev.proxy, localSet, env, getRelease, authHeader }) }
+  return { proxy: resolveProxyConfig({ proxy: dev.proxy, localSet, env, getRelease, authHeader, localInfo }) }
 }
 
 /**

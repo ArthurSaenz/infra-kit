@@ -1,8 +1,10 @@
 import * as fs from 'node:fs'
+import * as net from 'node:net'
 import * as path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { DEFAULT_PORT } from 'src/dev/ports'
 import { ServerlessLocalRun } from 'src/dev/serverless-local-run'
 
 import { PREFIX, boot, canBind, getFreePort, handlerSource, makeApiFixture, spyStdoutWrite } from './fixtures'
@@ -501,6 +503,81 @@ describe('serverlessLocalRun — opt-in request logging (DEV_SERVER_REQUEST_LOG)
         return w.includes('→')
       }),
     ).toHaveLength(0)
+  })
+})
+
+/** Occupy `port` with a bare TCP listener; returns a closer to release it. */
+const occupyPort = async (portToHold: number): Promise<() => Promise<void>> => {
+  const srv = net.createServer()
+
+  await new Promise<void>((resolve, reject) => {
+    srv.once('error', reject)
+    srv.listen(portToHold, '127.0.0.1', resolve)
+  })
+
+  return () => {
+    return new Promise<void>((resolve) => {
+      srv.close(() => {
+        return resolve()
+      })
+    })
+  }
+}
+
+describe('serverlessLocalRun — dynamic bound-port read-back (listen(0) seam)', () => {
+  it('with NO configured port: start() returns a real ephemeral port and /__health reports it', async () => {
+    const server = new ServerlessLocalRun({ controllersPath: apiDir, prefixUrl: PREFIX, appName: 'testapp' })
+
+    running.push(server)
+
+    const boundPort = await server.start()
+
+    // A real OS-assigned ephemeral port — never the static DEFAULT_PORT and never 0.
+    expect(boundPort).not.toBe(DEFAULT_PORT)
+    expect(boundPort).not.toBe(0)
+    expect(boundPort).toBeGreaterThan(0)
+
+    // The mutated serverConfig.port surfaces the REAL bound port on /__health.
+    const body = (await (await fetch(`http://127.0.0.1:${boundPort}/__health`)).json()) as { port: number }
+
+    expect(body.port).toBe(boundPort)
+  })
+
+  it('with an explicitly-configured FREE port: binds exactly that port', async () => {
+    const server = new ServerlessLocalRun({ controllersPath: apiDir, prefixUrl: PREFIX, port, appName: 'testapp' })
+
+    running.push(server)
+
+    const boundPort = await server.start()
+
+    expect(boundPort).toBe(port)
+
+    const body = (await (await fetch(`http://127.0.0.1:${port}/__health`)).json()) as { port: number }
+
+    expect(body.port).toBe(port)
+  })
+
+  it('with an explicitly-configured TAKEN port: falls back to a different ephemeral port (no throw)', async () => {
+    // Occupy the preferred port so the preferred bind hits EADDRINUSE and must fall back.
+    const release = await occupyPort(port)
+    const server = new ServerlessLocalRun({ controllersPath: apiDir, prefixUrl: PREFIX, port, appName: 'testapp' })
+
+    running.push(server)
+
+    try {
+      const boundPort = await server.start()
+
+      // Fell back to a real, different ephemeral port — not the taken one, not 0.
+      expect(boundPort).not.toBe(port)
+      expect(boundPort).not.toBe(0)
+      expect(boundPort).toBeGreaterThan(0)
+
+      const body = (await (await fetch(`http://127.0.0.1:${boundPort}/__health`)).json()) as { port: number }
+
+      expect(body.port).toBe(boundPort)
+    } finally {
+      await release()
+    }
   })
 })
 

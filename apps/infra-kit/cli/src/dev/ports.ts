@@ -41,6 +41,22 @@ export function parsePortString(raw: string | undefined): number | undefined {
  * Per-app env keys use the app folder name in **UPPER_SNAKE_CASE** (hyphens → underscores).
  */
 export function resolvePort(appName: string, env: NodeJS.ProcessEnv, devConfig: DevConfig): number {
+  return resolvePreferredPort(appName, env, devConfig) ?? DEFAULT_PORT
+}
+
+/**
+ * Resolve the EXPLICITLY-configured port for an API app — `{APP}_PORT`, then `PORT`, then
+ * `dev.<app>.port` — or `undefined` when none is set. Unlike {@link resolvePort} this does
+ * NOT fall back to {@link DEFAULT_PORT}: it distinguishes an app the developer pinned to a
+ * port (a preferred bind target) from an unconfigured app (which binds ephemeral straight
+ * away under dynamic allocation). Used by the dev-server to (a) pick the preferred bind
+ * port and (b) relax the conflict gate to explicit ports only.
+ */
+export function resolvePreferredPort(
+  appName: string,
+  env: NodeJS.ProcessEnv,
+  devConfig: DevConfig,
+): number | undefined {
   const prefix = appName.replace(/-/g, '_').toUpperCase()
   const prefixedKey = `${prefix}_PORT`
 
@@ -56,13 +72,7 @@ export function resolvePort(appName: string, env: NodeJS.ProcessEnv, devConfig: 
     return fromPort
   }
 
-  const fromConfig = devConfig[appName]?.port
-
-  if (fromConfig != null) {
-    return fromConfig
-  }
-
-  return DEFAULT_PORT
+  return devConfig[appName]?.port ?? undefined
 }
 
 /**

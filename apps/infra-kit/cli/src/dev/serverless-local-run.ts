@@ -13,9 +13,20 @@ import type { ILogger } from './interfaces.js'
 export interface IServerConfig {
   controllersPath: string
   prefixUrl?: string
-  port: number
+  /**
+   * PREFERRED bind port. A number is tried first and, on `EADDRINUSE`, the runner falls
+   * back to an ephemeral `listen(0)` port. `undefined` (no explicit config) binds an
+   * ephemeral port straight away. After {@link ServerlessLocalRun.start} the field is
+   * mutated in place to the ACTUAL bound port so `/__health` reports the real port.
+   */
+  port?: number
   /** App folder name, surfaced by the `/__health` endpoint. Optional. */
   appName?: string
+}
+
+/** True when a listen error is a port-already-in-use (`EADDRINUSE`) failure. */
+const isAddressInUse = (error: unknown): boolean => {
+  return (error as { code?: string } | null)?.code === 'EADDRINUSE'
 }
 
 type HandlerResult = Promise<{ body: string; headers: Record<string, string>; statusCode: number }>
@@ -103,16 +114,63 @@ export class ServerlessLocalRun {
     return [...this.registeredRouteKeys].sort()
   }
 
-  public async start(): Promise<void> {
+  /**
+   * Boot the server and RETURN the actual bound port. Under dynamic allocation the port is
+   * a runtime fact known only after `listen`, so the caller must consume this return value
+   * (never the static config port). {@link serverConfig.port} is mutated in place to the
+   * bound port so `/__health` reports the real value.
+   */
+  public async start(): Promise<number> {
     this.registerHealthRoute()
 
     await Promise.all(this.loadRoutes())
 
-    await this.server.listen({ port: this.serverConfig.port, host: '127.0.0.1' })
+    const boundPort = await this.listenWithFallback()
 
-    this.logger.info(`Server listening on http://127.0.0.1:${this.serverConfig.port}`, {
-      address: `http://127.0.0.1:${this.serverConfig.port}`,
+    this.serverConfig.port = boundPort
+
+    this.logger.info(`Server listening on http://127.0.0.1:${boundPort}`, {
+      address: `http://127.0.0.1:${boundPort}`,
     })
+
+    return boundPort
+  }
+
+  /**
+   * Bind the server and return the ACTUAL bound port. With an explicitly-configured
+   * preferred port, try it first and fall back to an ephemeral `listen(0)` on `EADDRINUSE`
+   * so extra worktrees never collide; with no preferred port (`undefined`), bind ephemeral
+   * straight away. Non-`EADDRINUSE` errors propagate.
+   */
+  private async listenWithFallback(): Promise<number> {
+    const preferred = this.serverConfig.port
+
+    if (preferred != null) {
+      try {
+        await this.server.listen({ port: preferred, host: '127.0.0.1' })
+
+        return this.readBoundPort()
+      } catch (error) {
+        if (!isAddressInUse(error)) {
+          throw error
+        }
+      }
+    }
+
+    await this.server.listen({ port: 0, host: '127.0.0.1' })
+
+    return this.readBoundPort()
+  }
+
+  /** Read the concrete bound port from the underlying HTTP server after `listen`. */
+  private readBoundPort(): number {
+    const address = (this.server.server as Server).address()
+
+    if (address == null || typeof address === 'string') {
+      throw new Error('Server address unavailable after listen()')
+    }
+
+    return address.port
   }
 
   /** Close the server (for watch/restart). */

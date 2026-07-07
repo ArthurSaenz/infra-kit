@@ -19,7 +19,8 @@ import { isCmuxAvailable } from 'src/integrations/cmux'
 export interface DevCliOptions {
   watch?: boolean
   app?: string
-  ui?: boolean
+  /** Named preset positional (`infra-kit dev <preset>`); selects launch targets from `devPresets`. */
+  preset?: string
   cmux?: boolean
   self?: boolean
 }
@@ -48,7 +49,7 @@ export const toDevServerOptions = (raw: DevCliOptions): DevServerOptions => {
   return {
     watch: raw.watch ?? false,
     include: splitList(raw.app),
-    ui: raw.ui ?? false,
+    preset: raw.preset,
     cmux: raw.cmux ?? false,
     self: raw.self ?? false,
   }
@@ -122,10 +123,10 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
 
   program
     .name('infra-kit-dev-server')
-    .description('Run local dev servers for every apps/<app>/api that has a serverless.yml')
+    .description('Run local dev servers for the apps in a named devPresets preset (or all apps)')
+    .argument('[preset]', 'Named preset from devPresets (omit to run every app)')
     .option('-w, --watch', 'Rebuild and restart on file save')
-    .option('--app <names>', 'Only run these apps (comma-separated folder names)')
-    .option('--ui', 'Also run frontends (apps/<app>/ui with a `dev` script) via turbo run dev')
+    .option('--app <names>', 'Further narrow to these app folder names (comma-separated)')
     .option(
       '--cmux',
       'Run each app in its own cmux pane (one workspace, N panes; falls back to single terminal if cmux is unavailable)',
@@ -134,7 +135,7 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
 
   program.parse(argv)
 
-  await runDevServer(toDevServerOptions(program.opts<DevCliOptions>()))
+  await runDevServer(toDevServerOptions({ ...program.opts<DevCliOptions>(), preset: program.args[0] }))
 }
 
 // Self-execute only when run directly (`node dist/dev-server.js`), not when the
