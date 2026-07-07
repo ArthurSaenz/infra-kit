@@ -24,6 +24,38 @@ export interface InfraKitPackageConfig {
     /** Tasks that must be defined in turbo.json `tasks`. */
     requiredTasks?: string[]
   }
+  /** Local-dev configuration. Accepted-and-inert to the audit; consumed by the dev server. */
+  dev?: InfraKitDev
+}
+
+/** A proxy route's allowed backend source. */
+export type InfraKitDevProxySource = 'local' | 'cloud'
+
+export interface InfraKitDevProxyRoute {
+  /** Backend package this route targets when resolved locally. */
+  packageName: string
+  /** Capabilities this route can resolve to. Must be non-empty. */
+  from: InfraKitDevProxySource[]
+  /**
+   * Source used when a local backend for this package isn't active. Required when
+   * `from` lists more than one source; redundant (and omitted) for a single-source
+   * route. When set, must be one of `from`.
+   */
+  default?: InfraKitDevProxySource
+}
+
+export interface InfraKitDevProxy {
+  /** URL templates. Placeholders like `<release>`/`<packageName>`/`<env>` are substituted at dev time. */
+  templates: {
+    local: string
+    cloud: string
+  }
+  /** Path-prefix (e.g. `/api`, `/api/v1`, `/media`) → route definition. */
+  routes: Record<string, InfraKitDevProxyRoute>
+}
+
+export interface InfraKitDev {
+  proxy?: InfraKitDevProxy
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   INFRA_KIT_ENV_LOADED_AT_VAR,
   INFRA_KIT_ENV_PROJECT_ROOT_VAR,
   INFRA_KIT_ENV_PROJECT_VAR,
+  INFRA_KIT_ENV_VAR,
   atomicWriteFileSync,
   getSessionCacheDir,
   parseVarNamesFromEnvFile,
@@ -60,6 +61,7 @@ export const buildEnvClearLines = (varNames: string[]): string[] => {
     ...varNames.map((v) => {
       return `unset ${v}`
     }),
+    `unset ${INFRA_KIT_ENV_VAR}`,
     `unset ${INFRA_KIT_ENV_CONFIG_VAR}`,
     `unset ${INFRA_KIT_ENV_PROJECT_VAR}`,
     `unset ${INFRA_KIT_ENV_PROJECT_ROOT_VAR}`,

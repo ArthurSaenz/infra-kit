@@ -23,6 +23,14 @@ export const WARM_CACHE_SUBDIR = 'projects'
 export const DEFAULT_WARM_TTL_SECONDS = 2 * 60 * 60
 
 export const INFRA_KIT_SESSION_VAR = 'INFRA_KIT_SESSION'
+/**
+ * The active environment/config NAME (e.g. `dev`, `arthur`), exported plainly so
+ * non-shell consumers can read it from `process.env`. Notably `infra-kit/vite`'s
+ * `infraKitDev()` reads this to interpolate the `<env>` placeholder in cloud proxy
+ * targets. Mirrors {@link INFRA_KIT_ENV_CONFIG_VAR} (same value) but is the stable,
+ * purpose-named handle for tooling rather than the shell session-metadata var.
+ */
+export const INFRA_KIT_ENV_VAR = 'INFRA_KIT_ENV'
 export const INFRA_KIT_ENV_CONFIG_VAR = 'INFRA_KIT_ENV_CONFIG'
 export const INFRA_KIT_ENV_PROJECT_VAR = 'INFRA_KIT_ENV_PROJECT'
 /**

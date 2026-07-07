@@ -23,6 +23,7 @@ import {
   INFRA_KIT_ENV_LOADED_AT_VAR,
   INFRA_KIT_ENV_PROJECT_ROOT_VAR,
   INFRA_KIT_ENV_PROJECT_VAR,
+  INFRA_KIT_ENV_VAR,
   atomicWriteFileSync,
   getSessionCacheDir,
 } from 'src/lib/constants'
@@ -112,6 +113,9 @@ export const buildEnvLoadFileLines = ({
     ...pairs.map(([key, value]) => {
       return `${key}=${shellSingleQuote(value)}`
     }),
+    // Purpose-named env-name handle for non-shell tooling (e.g. infra-kit/vite's
+    // `<env>` proxy interpolation). Single-quoted like every sourced value.
+    `${INFRA_KIT_ENV_VAR}=${shellSingleQuote(config)}`,
     `${INFRA_KIT_ENV_CONFIG_VAR}=${shellSingleQuote(config)}`,
     `${INFRA_KIT_ENV_PROJECT_VAR}=${shellSingleQuote(project)}`,
     `${INFRA_KIT_ENV_PROJECT_ROOT_VAR}=${shellSingleQuote(projectRoot)}`,

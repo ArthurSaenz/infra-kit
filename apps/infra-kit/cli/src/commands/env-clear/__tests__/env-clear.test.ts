@@ -13,6 +13,7 @@ describe('buildEnvClearLines', () => {
   it('unsets the session metadata vars and the auto-load marker', () => {
     const lines = buildEnvClearLines([])
 
+    expect(lines).toContain('unset INFRA_KIT_ENV')
     expect(lines).toContain('unset INFRA_KIT_ENV_CONFIG')
     expect(lines).toContain('unset INFRA_KIT_ENV_PROJECT')
     expect(lines).toContain('unset INFRA_KIT_ENV_LOADED_AT')

@@ -94,10 +94,17 @@ describe('buildEnvLoadFileLines', () => {
     expect(lines.at(-1)).toBe('set +a')
     expect(lines).toContain("A='1'")
     expect(lines).toContain("B='2'")
+    expect(lines).toContain("INFRA_KIT_ENV='dev'")
     expect(lines).toContain("INFRA_KIT_ENV_CONFIG='dev'")
     expect(lines).toContain("INFRA_KIT_ENV_PROJECT='proj'")
     expect(lines).toContain("INFRA_KIT_ENV_PROJECT_ROOT='/repo'")
     expect(lines).toContain("INFRA_KIT_ENV_LOADED_AT='2026-01-01T00:00:00.000Z'")
+  })
+
+  it('exports the purpose-named INFRA_KIT_ENV handle, single-quoted', () => {
+    const lines = buildEnvLoadFileLines({ ...args, config: 'arthur', autoLoaded: false })
+
+    expect(lines).toContain("INFRA_KIT_ENV='arthur'")
   })
 
   it('writes the AUTOLOADED marker only when autoLoaded is true', () => {

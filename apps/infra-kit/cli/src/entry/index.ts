@@ -2,7 +2,14 @@
 // relative imports (no `src/*` alias) so the emitted .d.ts stays portable for
 // external consumers. Keep this surface minimal.
 export { defineConfig } from '../lib/package-config/package-config'
-export type { InfraKitPackageConfig, InfraKitPackageConfigInput } from '../lib/package-config/package-config'
+export type {
+  InfraKitDev,
+  InfraKitDevProxy,
+  InfraKitDevProxyRoute,
+  InfraKitDevProxySource,
+  InfraKitPackageConfig,
+  InfraKitPackageConfigInput,
+} from '../lib/package-config/package-config'
 // Vendor sync config authoring (`import { defineVendorConfig } from 'infra-kit'`).
 // Imported from the node-free schema module so the emitted .d.ts needs no node types.
 export { defineVendorConfig } from '../lib/vendor/config-schema'

@@ -52,14 +52,16 @@ for (const entryPoint of entryPoints) {
 }
 
 // 2. Emit the public type declarations with tsc (esbuild does not generate them).
-//    The library entry (src/entry/index.ts) only re-exports public API via relative
-//    imports, so tsc needs no project config — a direct CLI call replaces the separate
-//    tsconfig.build.json. `--ignoreConfig` is required because tsconfig.json is present
-//    alongside the input file.
+//    The public library entries (src/entry/index.ts and the lightweight
+//    src/entry/vite.ts) only re-export public API via relative imports, so tsc
+//    needs no project config — a direct CLI call replaces the separate
+//    tsconfig.build.json. `--ignoreConfig` is required because tsconfig.json is
+//    present alongside the input files.
 execFileSync(
   'tsc',
   [
     'src/entry/index.ts',
+    'src/entry/vite.ts',
     '--ignoreConfig',
     '--declaration',
     '--emitDeclarationOnly',
@@ -68,8 +70,19 @@ execFileSync(
     '--outDir',
     'dist',
     '--skipLibCheck',
+    // `--ignoreConfig` drops tsconfig, so the module/resolution/types that the
+    // vite entry's node-builtin imports (`node:child_process`, …) need must be
+    // passed explicitly. Bundler resolution also handles the `node:` protocol.
+    '--target',
+    'esnext',
+    '--module',
+    'esnext',
+    '--moduleResolution',
+    'bundler',
+    '--types',
+    'node',
   ],
   { cwd: PKG_DIR, stdio: 'inherit' },
 )
 
-console.log('✅ Type declarations emitted: dist/entry/index.d.ts')
+console.log('✅ Type declarations emitted: dist/entry/index.d.ts, dist/entry/vite.d.ts')

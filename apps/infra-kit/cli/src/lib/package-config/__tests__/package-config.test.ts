@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { DEFAULT_RULES, ROOT_DEFAULT_RULES, defineConfig, resolvePackageConfig } from '../package-config'
+import type { InfraKitPackageConfig } from '../package-config'
 import { packageConfigSchema } from '../package-config-schema'
 
 describe('defineConfig', () => {
@@ -89,6 +90,122 @@ describe('packageConfigSchema', () => {
 
   it('rejects an unknown key inside turbo', () => {
     const result = packageConfigSchema.safeParse({ turbo: { tasks: ['build'] } })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('accepts a full dev.proxy config and leaves resolvePackageConfig output unchanged', () => {
+    const config: InfraKitPackageConfig = {
+      dev: {
+        proxy: {
+          templates: {
+            local: 'http://localhost:<port>',
+            cloud: 'https://<release>-<packageName>.<env>.example.com',
+          },
+          routes: {
+            '/api': { packageName: '@app/backend', from: ['local', 'cloud'], default: 'cloud' },
+            '/media': { packageName: '@app/media', from: ['cloud'] },
+          },
+        },
+      },
+    }
+
+    // Same shape typed through the public `defineConfig` entry point.
+    expect(defineConfig(config)).toBe(config)
+
+    const parsed = packageConfigSchema.safeParse(config)
+
+    expect(parsed.success).toBe(true)
+    // `dev` is inert to the audit: resolved rules match a config with no `dev` key.
+    expect(resolvePackageConfig(config)).toEqual(resolvePackageConfig({}))
+  })
+
+  it('rejects an empty `from` array in a proxy route', () => {
+    const result = packageConfigSchema.safeParse({
+      dev: {
+        proxy: {
+          templates: { local: 'l', cloud: 'c' },
+          routes: { '/api': { packageName: '@app/backend', from: [] } },
+        },
+      },
+    })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects an unknown key inside a proxy route', () => {
+    const result = packageConfigSchema.safeParse({
+      dev: {
+        proxy: {
+          templates: { local: 'l', cloud: 'c' },
+          routes: { '/api': { packageName: '@app/backend', from: ['local'], foo: true } },
+        },
+      },
+    })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('accepts a single-source proxy route with no `default`', () => {
+    const result = packageConfigSchema.safeParse({
+      dev: {
+        proxy: {
+          templates: { local: 'l', cloud: 'c' },
+          routes: { '/media': { packageName: '@app/media', from: ['cloud'] } },
+        },
+      },
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects a proxy route whose `default` is not listed in `from`', () => {
+    const result = packageConfigSchema.safeParse({
+      dev: {
+        proxy: {
+          templates: { local: 'l', cloud: 'c' },
+          routes: { '/api': { packageName: '@app/backend', from: ['cloud'], default: 'local' } },
+        },
+      },
+    })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects a proxy route missing the required `default`', () => {
+    const result = packageConfigSchema.safeParse({
+      dev: {
+        proxy: {
+          templates: { local: 'l', cloud: 'c' },
+          routes: { '/api': { packageName: '@app/backend', from: ['local', 'cloud'] } },
+        },
+      },
+    })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('accepts a proxy route whose `default` is listed in `from`', () => {
+    const result = packageConfigSchema.safeParse({
+      dev: {
+        proxy: {
+          templates: { local: 'l', cloud: 'c' },
+          routes: { '/api': { packageName: '@app/backend', from: ['local', 'cloud'], default: 'local' } },
+        },
+      },
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  it('accepts a config with no dev key (backwards compatible)', () => {
+    const result = packageConfigSchema.safeParse({ requiredScripts: ['build'] })
+
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects an unknown key inside dev (strict)', () => {
+    const result = packageConfigSchema.safeParse({ dev: { prot: 3010 } })
 
     expect(result.success).toBe(false)
   })
