@@ -1,75 +1,30 @@
+#!/usr/bin/env node
+// The hashbang must stay on line 1: `npm i -g` symlinks the bin and execs it
+// directly, unlike pnpm's `.bin` shim which invokes `node <path>` explicitly.
+// esbuild preserves it on this entry only — never on the library entries.
 import select, { Separator } from '@inquirer/select'
-import { Command } from 'commander'
+import { realpathSync } from 'node:fs'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 
-import { audit } from 'src/commands/audit'
-import { configEdit, configPath } from 'src/commands/config'
-import { doctor } from 'src/commands/doctor'
-import { envAutoload } from 'src/commands/env-autoload'
-import { envClear } from 'src/commands/env-clear'
-import { envList } from 'src/commands/env-list'
-import { envLoad } from 'src/commands/env-load'
-import { envStatus } from 'src/commands/env-status'
-import { ghMergeDev } from 'src/commands/gh-merge-dev'
-import { ghReleaseDeliver } from 'src/commands/gh-release-deliver'
-import { ghReleaseDeployAll } from 'src/commands/gh-release-deploy-all'
-import { ghReleaseDeploySelected } from 'src/commands/gh-release-deploy-selected'
-import { ghReleaseList } from 'src/commands/gh-release-list'
-import { init } from 'src/commands/init'
-import { releaseCreate } from 'src/commands/release-create'
-import { releaseDescEdit } from 'src/commands/release-desc-edit'
-import { vendorCheck } from 'src/commands/vendor-check'
-import { vendorConfig } from 'src/commands/vendor-config'
-import { vendorDiff } from 'src/commands/vendor-diff'
-import { vendorManifest } from 'src/commands/vendor-manifest'
-import { vendorSync } from 'src/commands/vendor-sync'
-import { version } from 'src/commands/version'
-import { worktreesAdd } from 'src/commands/worktrees-add'
-import { worktreesList } from 'src/commands/worktrees-list'
-import { worktreesReload } from 'src/commands/worktrees-reload'
-import { worktreesRemove } from 'src/commands/worktrees-remove'
-import { worktreesSync } from 'src/commands/worktrees-sync'
-import { IDE_MODES } from 'src/integrations/ide'
-import type { IdeMode } from 'src/integrations/ide'
-import { getMenuGroupCommands } from 'src/lib/command-catalog'
-import { runEnvAutoLoad } from 'src/lib/env-autoload'
+import { commandCatalog, getMenuGroupCommands } from 'src/lib/command-catalog'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
-import { addJsonOption, emit, jsonOutput } from 'src/lib/json-output'
+import { isLocalNodeModulesInstall, safeRealpath } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
+import { buildProgram, invokedViaMenu } from 'src/lib/program'
 import { formatAlignedRows } from 'src/lib/render'
-import { parseReleaseSpec } from 'src/lib/version-utils'
-import type { ReleaseInput } from 'src/lib/version-utils'
+import { captureSessionReportPath } from 'src/lib/session/report'
+import { runSession, sessionGateEnabled } from 'src/lib/session/run-session'
+import { maybeAutoUpdate } from 'src/lib/update-check'
 
-const program = new Command()
+import packageJson from '../../package.json' with { type: 'json' }
 
-const collectReleaseSpec = (value: string, prev: string[]): string[] => {
-  return [...prev, value]
-}
+// Capture (and delete from the env) the session-shell report path BEFORE any command runs, so the
+// running command can write its report while no descendant (gh / git / a hook / $EDITOR) inherits the
+// var and clobbers the file. A no-op for a normal top-level invocation (the var is unset).
+captureSessionReportPath()
 
-/** Parse a `--repos a,b,c` option into a target-name list (undefined = all). */
-const parseRepos = (value: unknown): string[] | undefined => {
-  return typeof value === 'string' ? value.split(',').filter(Boolean) : undefined
-}
-
-const normalizeIdeMode = (value: unknown, flagName: '--ide' | '--cursor'): IdeMode | undefined => {
-  if (typeof value === 'undefined') {
-    return undefined
-  }
-
-  if (value === true) {
-    return 'workspace'
-  }
-
-  if (value === false) {
-    return 'none'
-  }
-
-  if (typeof value === 'string' && (IDE_MODES as readonly string[]).includes(value)) {
-    return value as IdeMode
-  }
-
-  throw new Error(`Invalid ${flagName} value "${String(value)}". Expected one of: ${IDE_MODES.join(', ')}.`)
-}
+const program = buildProgram()
 
 const runProgram = async (argv?: string[]): Promise<void> => {
   try {
@@ -94,468 +49,67 @@ const runProgram = async (argv?: string[]): Promise<void> => {
   }
 }
 
-// --- Deprecation support for flat command aliases (Phase 3 grouping) ---
-// Flat names (`release-create`, `worktrees-add`, `vendor-config`, ...) are kept
-// as working aliases of the grouped forms (`release create`, ...) for one
-// release cycle. They warn once when invoked directly, but stay silent when the
-// interactive no-arg menu drives them (the menu is a guided surface).
-const invokedViaMenu = { value: false }
+/**
+ * Best-effort nudge when the CLI runs out of a project-local `node_modules`. Advisory only: it must never
+ * throw and never change the exit code.
+ *
+ * The cwd clause inside `isLocalNodeModulesInstall` is what distinguishes a project-local install from a
+ * global root — BOTH contain a `node_modules` segment (`pnpm root -g` is
+ * `/Users/<me>/Library/pnpm/global/5/node_modules`). Without it we would nag every global pnpm user.
+ *
+ * `logger` is pino-pretty with `destination: 2`, i.e. stderr — never stdout, so `--json` payloads and the
+ * MCP child's stdio framing stay clean. It is still suppressed for `--json` (machine consumers want no
+ * chatter) and for `mcp` (that child's stdio should carry nothing but the transport).
+ */
+const warnIfLocalInstall = (): void => {
+  try {
+    if (process.env.INFRA_KIT_NO_LOCATION_WARN) return
+    if (process.argv.includes('--json') || process.argv[2] === 'mcp') return
 
-const deprecatedAlias = (cmd: Command, preferred: string): Command => {
-  return cmd.hook('preAction', () => {
-    if (!invokedViaMenu.value) {
-      logger.warn(`"${cmd.name()}" is a deprecated alias; use "${preferred}" instead.`)
+    if (isLocalNodeModulesInstall(realpathSync(fileURLToPath(import.meta.url)), process.cwd(), safeRealpath)) {
+      logger.info('Running from a project-local node_modules. Install globally for faster startup: npm i -g infra-kit')
     }
-  })
-}
-
-// --- Command configurators (one source of options + action, shared by the
-// grouped form and its flat alias so the two can never diverge) ---
-const configureMergeDev = (cmd: Command): Command => {
-  return cmd
-    .description('Merge dev branch into every release branch')
-    .option('-a, --all', 'Select all active release branches')
-    .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (options) => {
-      emit(await ghMergeDev({ all: options.all, confirmedCommand: options.yes }))
-    })
-}
-
-const configureReleaseList = (cmd: Command): Command => {
-  return cmd.description('List all release branches').action(async () => {
-    emit(await ghReleaseList())
-  })
-}
-
-const configureReleaseCreate = (cmd: Command): Command => {
-  return cmd
-    .description('Create one or more release branches (each entry can mix regular/hotfix and its own description)')
-    .option(
-      '-r, --release <spec>',
-      'Release spec "<version|next|name>[:type[:description]]" (repeatable). The token is a semver ("1.2.5"), the literal "next", or a kebab-case name ("checkout-redesign"). Type is regular|hotfix (default regular). Examples: "1.2.5", "1.2.5:hotfix", "next:regular:Holiday backend", "checkout-redesign:regular:Q3 redesign".',
-      collectReleaseSpec,
-      [],
-    )
-    .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (options) => {
-      const specs = options.release as string[]
-      const inputs: ReleaseInput[] = specs.map(parseReleaseSpec)
-      const releases = inputs.length > 0 ? inputs : undefined
-
-      emit(
-        await releaseCreate({
-          releases,
-          confirmedCommand: options.yes,
-        }),
-      )
-    })
-}
-
-const configureReleaseDescEdit = (cmd: Command): Command => {
-  return cmd
-    .description("Edit a release's description in Jira and in the matching GitHub PR body")
-    .option('-v, --version <version>', 'Release version (e.g. 1.2.5) or release name (e.g. checkout-redesign)')
-    .option('-d, --description <description>', 'New description (use "" to clear)')
-    .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (options) => {
-      emit(
-        await releaseDescEdit({
-          version: options.version,
-          description: options.description,
-          confirmedCommand: options.yes,
-        }),
-      )
-    })
-}
-
-const configureReleaseDeployAll = (cmd: Command): Command => {
-  return cmd
-    .description('Deploy any release branch to any environment')
-    .option(
-      '-v, --version <version>',
-      'Version (e.g. 1.2.5) or release name (e.g. checkout-redesign) to deploy; "dev" deploys from the dev branch',
-    )
-    .option('-e, --env <env>', 'Specify the environment to deploy to, e.g. dev')
-    .option('--skip-terraform', 'Skip terraform deployment step')
-    .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (options) => {
-      emit(
-        await ghReleaseDeployAll({
-          version: options.version,
-          env: options.env,
-          skipTerraform: options.skipTerraform,
-          confirmedCommand: options.yes,
-        }),
-      )
-    })
-}
-
-const configureReleaseDeploySelected = (cmd: Command): Command => {
-  return cmd
-    .description('Deploy selected services from release branch to any environment')
-    .option(
-      '-v, --version <version>',
-      'Version (e.g. 1.2.5) or release name (e.g. checkout-redesign) to deploy; "dev" deploys from the dev branch',
-    )
-    .option('-e, --env <env>', 'Specify the environment to deploy to, e.g. dev')
-    .option('-s, --services <services...>', 'Specify services to deploy, e.g. client-be client-fe')
-    .option('--skip-terraform', 'Skip terraform deployment step')
-    .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (options) => {
-      emit(
-        await ghReleaseDeploySelected({
-          version: options.version,
-          env: options.env,
-          services: options.services,
-          skipTerraform: options.skipTerraform,
-          confirmedCommand: options.yes,
-        }),
-      )
-    })
-}
-
-const configureReleaseDeliver = (cmd: Command): Command => {
-  return cmd
-    .description('Release a new version to production')
-    .option('-v, --version <version>', 'Version (e.g. 1.2.5) or release name (e.g. checkout-redesign) to deliver')
-    .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (options) => {
-      emit(await ghReleaseDeliver({ version: options.version, confirmedCommand: options.yes }))
-    })
-}
-
-const configureWorktreesSync = (cmd: Command): Command => {
-  return cmd
-    .description('Remove release worktrees whose PRs are no longer open')
-    .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (options) => {
-      emit(await worktreesSync({ confirmedCommand: options.yes }))
-    })
-}
-
-const configureWorktreesAdd = (cmd: Command): Command => {
-  return cmd
-    .description('Add git worktrees for release branches')
-    .option('-y, --yes', 'Skip confirmation prompt')
-    .option('-a, --all', 'Select all active release branches')
-    .option('-v, --versions <versions>', 'Specify versions by comma, e.g. 1.2.5, 1.2.6')
-    .option('-i, --ide [mode]', 'Editor mode for created worktrees: workspace (default) | none')
-    .option('--no-ide', 'Skip the editor (alias for --ide none)')
-    .option('-c, --cursor [mode]', 'Deprecated alias for --ide')
-    .option('--no-cursor', 'Deprecated alias for --no-ide')
-    .option('-g, --github-desktop', 'Open created worktrees in GitHub Desktop')
-    .option('--no-github-desktop', 'Skip GitHub Desktop prompt')
-    .option('-m, --cmux', 'Open created worktrees in cmux (3-pane layout)')
-    .option('--no-cmux', 'Skip cmux prompt')
-    .action(async (options) => {
-      // `--ide` wins over the deprecated `--cursor` alias when both are provided.
-      const ide = normalizeIdeMode(options.ide, '--ide') ?? normalizeIdeMode(options.cursor, '--cursor')
-
-      emit(
-        await worktreesAdd({
-          confirmedCommand: options.yes,
-          all: options.all,
-          versions: options.versions,
-          ide,
-          githubDesktop: options.githubDesktop,
-          cmux: options.cmux,
-        }),
-      )
-    })
-}
-
-const configureWorktreesList = (cmd: Command): Command => {
-  return cmd.description('List all git worktrees with detailed information').action(async () => {
-    emit(await worktreesList())
-  })
-}
-
-const configureWorktreesRemove = (cmd: Command): Command => {
-  return cmd
-    .description('Remove git worktrees for release branches')
-    .option('-y, --yes', 'Skip confirmation prompt')
-    .option('-a, --all', 'Select all active release branches')
-    .option('-v, --versions <versions>', 'Specify versions by comma, e.g. 1.2.5, 1.2.6')
-    .action(async (options) => {
-      emit(await worktreesRemove({ confirmedCommand: options.yes, all: options.all, versions: options.versions }))
-    })
-}
-
-const configureWorktreesReload = (cmd: Command): Command => {
-  return cmd
-    .description(
-      'Close all cmux/editor worktree windows, then reopen the current release worktrees (also cold-start restore)',
-    )
-    .action(async () => {
-      emit(await worktreesReload())
-    })
-}
-
-const configureVendorConfig = (cmd: Command): Command => {
-  return cmd
-    .description('Show the machine-local factory config (~/.infra-kit/vendor.json) or scaffold it with --init')
-    .option('--init', 'Scaffold ~/.infra-kit/vendor.json (skips if it already exists)')
-    .action(async (options) => {
-      emit(await vendorConfig({ init: options.init }))
-    })
-}
-
-// --- Grouped command surface (preferred form) ---
-const releaseGroup = program.command('release').description('Release management commands')
-
-configureMergeDev(releaseGroup.command('merge-dev'))
-configureReleaseList(releaseGroup.command('list'))
-configureReleaseCreate(releaseGroup.command('create'))
-configureReleaseDescEdit(releaseGroup.command('desc-edit'))
-configureReleaseDeployAll(releaseGroup.command('deploy-all'))
-configureReleaseDeploySelected(releaseGroup.command('deploy-selected'))
-configureReleaseDeliver(releaseGroup.command('deliver'))
-
-const worktreesGroup = program.command('worktrees').description('Git worktree management commands')
-
-configureWorktreesAdd(worktreesGroup.command('add'))
-configureWorktreesList(worktreesGroup.command('list'))
-configureWorktreesRemove(worktreesGroup.command('remove'))
-configureWorktreesSync(worktreesGroup.command('sync'))
-configureWorktreesReload(worktreesGroup.command('reload'))
-
-// --- Deprecated flat aliases (kept one release cycle; warn when used directly) ---
-deprecatedAlias(configureMergeDev(program.command('merge-dev')), 'release merge-dev')
-deprecatedAlias(configureReleaseList(program.command('release-list')), 'release list')
-deprecatedAlias(configureReleaseCreate(program.command('release-create')), 'release create')
-deprecatedAlias(configureReleaseDescEdit(program.command('release-desc-edit')), 'release desc-edit')
-deprecatedAlias(configureReleaseDeployAll(program.command('release-deploy-all')), 'release deploy-all')
-deprecatedAlias(configureReleaseDeploySelected(program.command('release-deploy-selected')), 'release deploy-selected')
-deprecatedAlias(configureReleaseDeliver(program.command('release-deliver')), 'release deliver')
-deprecatedAlias(configureWorktreesAdd(program.command('worktrees-add')), 'worktrees add')
-deprecatedAlias(configureWorktreesList(program.command('worktrees-list')), 'worktrees list')
-deprecatedAlias(configureWorktreesRemove(program.command('worktrees-remove')), 'worktrees remove')
-deprecatedAlias(configureWorktreesSync(program.command('worktrees-sync')), 'worktrees sync')
-deprecatedAlias(configureWorktreesReload(program.command('worktrees-reload')), 'worktrees reload')
-
-const configCmd = program.command('config').description('Manage infra-kit configuration files')
-
-configCmd
-  .command('path')
-  .description('Show the resolved config merge chain and file paths')
-  .action(async () => {
-    emit(await configPath())
-  })
-
-configCmd
-  .command('edit')
-  .description('Open the user-scope per-project override file in $EDITOR')
-  .action(async () => {
-    emit(await configEdit())
-  })
-
-program
-  .command('audit')
-  .description('Audit against infra-kit.config.ts rules (--all for every package, --root for the monorepo root)')
-  .option('-a, --all', 'Audit every non-vendor workspace package')
-  .option('-r, --root', 'Audit the monorepo root (turbo pipeline + root commands)')
-  .action(async (options) => {
-    const result = await audit({ all: options.all, root: options.root })
-
-    emit(result)
-
-    if (!result.structuredContent.allPassed) {
-      process.exitCode = 1
-    }
-  })
-
-const vendorCmd = program.command('vendor').description('Verify and sync the mirrored vendor/ tree')
-
-vendorCmd
-  .command('check')
-  .description('Verify vendor/ matches vendor/.sync-manifest.json (self-contained; for any consumer repo)')
-  .action(async () => {
-    const result = await vendorCheck()
-
-    emit(result)
-
-    if (!result.structuredContent.ok) {
-      process.exitCode = 1
-    }
-  })
-
-vendorCmd
-  .command('sync')
-  .description('Copy vendored files from the source repo into each target and regenerate manifests')
-  .option('-y, --yes', 'Skip confirmation prompt')
-  .option('-r, --repos <repos>', 'Restrict to comma-separated target repo names')
-  .action(async (options) => {
-    emit(await vendorSync({ confirmedCommand: options.yes, repos: parseRepos(options.repos) }))
-  })
-
-vendorCmd
-  .command('manifest')
-  .description('Regenerate each target vendor/.sync-manifest.json + README from current content (no copy)')
-  .option('-r, --repos <repos>', 'Restrict to comma-separated target repo names')
-  .action(async (options) => {
-    emit(await vendorManifest({ confirmedCommand: true, repos: parseRepos(options.repos) }))
-  })
-
-vendorCmd
-  .command('diff')
-  .description('Source-aware drift check (rsync dry-run) of each target vendored subtree vs the source')
-  .option('-r, --repos <repos>', 'Restrict to comma-separated target repo names')
-  .action(async (options) => {
-    const result = await vendorDiff({ repos: parseRepos(options.repos) })
-
-    emit(result)
-
-    if (!result.structuredContent.ok) {
-      process.exitCode = 1
-    }
-  })
-
-// Grouped form (preferred); the flat `vendor-config` below is a deprecated alias.
-configureVendorConfig(vendorCmd.command('config'))
-
-deprecatedAlias(configureVendorConfig(program.command('vendor-config')), 'vendor config')
-
-program
-  .command('doctor')
-  .description('Check installation and authentication status of gh and doppler CLIs')
-  .action(async () => {
-    emit(await doctor())
-  })
-
-program
-  .command('dev')
-  .description('Run local dev servers for a named devPresets preset (or all apps); api + ui')
-  .argument('[preset]', 'Named preset from devPresets (omit to run every app)')
-  .option('-w, --watch', 'Rebuild and restart on file save')
-  .option('--app <names>', 'Further narrow to these app folder names (comma-separated)')
-  .option(
-    '--cmux',
-    'Run each app in its own cmux pane (one workspace, N panes; falls back to single terminal if cmux is unavailable)',
-  )
-  .option('--self', 'Run only the app of the current directory (infer from cwd; use inside apps/<app>/…)')
-  .action(async (preset, options) => {
-    // Lazy import so fastify/chokidar (and the whole dev stack) never load on the
-    // eager cli graph — they land in a split chunk reached only for `infra-kit dev`.
-    const { runDevServer, toDevServerOptions } = await import('src/entry/dev-server')
-
-    await runDevServer(toDevServerOptions({ ...options, preset }))
-  })
-
-program
-  .command('version')
-  .description('Print the installed infra-kit CLI version')
-  .action(async () => {
-    emit(await version())
-  })
-
-program
-  .command('env-status')
-  .description('Show which env is loaded in this session (local introspection; no Doppler call)')
-  .action(async () => {
-    emit(await envStatus())
-  })
-
-program
-  .command('env-list')
-  .description('List available Doppler configs for the detected project')
-  .action(async () => {
-    emit(await envList())
-  })
-
-program
-  .command('init')
-  .description('Inject shell integration into .zshrc and sync repo agent-instruction files')
-  .action(async () => {
-    emit(await init())
-  })
-
-program
-  .command('env-load')
-  .description('Load Doppler env vars for a config. Source the returned file path to apply.')
-  .option('-c, --config <config>', 'Environment config name to load (e.g. dev, arthur)')
-  .action(async (options) => {
-    emit(await envLoad({ config: options.config }))
-  })
-
-program
-  .command('env-clear')
-  .description('Clear loaded env vars. Source the returned file path to apply.')
-  .option('--purge', "Also delete this project's warm cache outright (durable disable)")
-  .action(async (options) => {
-    emit(await envClear({ purge: Boolean(options.purge) }))
-  })
-
-// Internal: driven by the init shell-startup integration (backgrounded). Writes
-// env-load.sh when envAutoLoad is configured + eligible; the precmd hook sources
-// it. Hidden + no stdout output so it never pollutes the shell or the menu.
-program
-  .command('env-autoload', { hidden: true })
-  .description('Internal: prime env for the shell-startup auto-load trigger')
-  // The shell passes its already-canonicalized (`${dir:A}`) project dir so node can
-  // key the warm cache identically; see writeEnvLoadFile / shouldWriteWarm.
-  .option('--project-dir <dir>', 'Canonical project dir for the warm-cache key (shell-startup only)')
-  .action(async (options) => {
-    await envAutoload({ projectDir: options.projectDir })
-  })
-
-// Register `--json` on every command, then resolve the flag before each action
-// runs. In JSON mode we lower the logger to `warn` so the human-oriented info
-// lines stop cluttering stderr while errors still surface; the structured
-// payload is written to stdout by `emit`. No handler logic is affected.
-program.commands.forEach(addJsonOption)
-
-// Commands excluded from the cli-invocation auto-load trigger: the env-* family
-// (avoids recursion — `env-autoload`/`env-load` would re-enter), plus the
-// host-inspecting / meta commands where priming Doppler env would be surprising
-// (`init` bootstraps the shell block, `doctor` inspects auth, `version` prints a
-// string, `dev` is a long-running server that manages its own env). `--help`/
-// `--version`/the bare-arg menu don't fire preAction at all.
-const isAutoLoadExcludedCommand = (name: string): boolean => {
-  return name.startsWith('env-') || name === 'init' || name === 'doctor' || name === 'version' || name === 'dev'
-}
-
-program.hook('preAction', async (_thisCommand, actionCommand) => {
-  // `optsWithGlobals` (not `opts`) so `--json` is seen on grouped subcommands:
-  // for `release list --json` Commander binds the post-subcommand flag to the
-  // parent `release` group, so the leaf's own `opts()` would not carry it.
-  jsonOutput.enabled = Boolean(actionCommand.optsWithGlobals().json)
-
-  if (jsonOutput.enabled) {
-    logger.level = 'warn'
+  } catch {
+    // Advisory only — a failure to advise is never a failure of the command.
   }
+}
 
-  // cli-invocation auto-load: primes the shell env for SUBSEQUENT commands. The
-  // current command does NOT see these vars — a child process can't mutate its
-  // parent shell; the precmd hook sources the written file on the next prompt.
-  // runEnvAutoLoad self-gates on config trigger and swallows transient failures,
-  // so this is a no-op unless configured for cli-invocation and never blocks.
-  if (!isAutoLoadExcludedCommand(actionCommand.name())) {
-    await runEnvAutoLoad({ expectedTrigger: 'cli-invocation' })
-  }
-})
+warnIfLocalInstall()
 
-if (process.argv.length <= 2) {
-  // Menu groups derive from the single command catalog (no hand-maintained
-  // name arrays). Membership and order live in src/lib/command-catalog.
-  const releaseCommands = getMenuGroupCommands('release')
-  const worktreeCommands = getMenuGroupCommands('worktrees')
-  const envCommands = getMenuGroupCommands('environment')
+// Fire-and-forget: reads a cached timestamp, and at most once a day hands off to a detached
+// `dist/update-check.js` that fetches, and silently installs, AFTER this process exits. Adds no
+// startup latency, never throws, never changes the exit code. Opt out with INFRA_KIT_NO_AUTO_UPDATE.
+maybeAutoUpdate(packageJson.version)
 
-  const commandMap = new Map(
+/**
+ * Bare-invocation interactive menu: build the grouped command palette from the single command
+ * catalog and let the user pick one command (returns its name, or null when nothing is picked).
+ * Interactive TTY → Ink command palette, loaded lazily via dynamic import so React/Ink never touch
+ * the MCP / `--json` / non-TTY code paths. Otherwise falls back to the Inquirer menu (scripts, pipes,
+ * CI). Ctrl-C / Esc at the menu backs out cleanly (returns null).
+ */
+const commandMapByName = (): Map<string, (typeof program.commands)[number]> => {
+  return new Map(
     program.commands.map((cmd) => {
       return [cmd.name(), cmd]
     }),
   )
+}
 
+/**
+ * Flat {name, description, group} palette list shared by the Ink palette, the Inquirer fallback, and
+ * the session shell. Membership and order live in the command catalog; descriptions come from
+ * Commander (single source).
+ */
+const buildPaletteItems = (): { name: string; description: string; group: string }[] => {
+  const commandMap = commandMapByName()
   const groups = [
-    { label: 'Release Management', names: releaseCommands },
-    { label: 'Worktrees', names: worktreeCommands },
-    { label: 'Environment', names: envCommands },
+    { label: 'Release Management', names: getMenuGroupCommands('release') },
+    { label: 'Worktrees', names: getMenuGroupCommands('worktrees') },
+    { label: 'Environment', names: getMenuGroupCommands('environment') },
   ]
 
-  // Flat {name, description, group} list shared by both the Ink palette and the
-  // Inquirer fallback; descriptions come from Commander (single source).
-  const paletteItems = groups.flatMap(({ label, names }) => {
+  return groups.flatMap(({ label, names }) => {
     return names
       .filter((name) => {
         return commandMap.has(name)
@@ -564,13 +118,18 @@ if (process.argv.length <= 2) {
         return { name, description: commandMap.get(name)!.description(), group: label }
       })
   })
+}
+
+const runInteractiveMenu = async (): Promise<string | null> => {
+  const releaseCommands = getMenuGroupCommands('release')
+  const worktreeCommands = getMenuGroupCommands('worktrees')
+  const envCommands = getMenuGroupCommands('environment')
+  const commandMap = commandMapByName()
+  const paletteItems = buildPaletteItems()
 
   let selected: string | null = null
 
-  // Interactive TTY → Ink command palette, loaded lazily via dynamic import so
-  // React/Ink never touch the MCP / `--json` / non-TTY code paths. Otherwise fall
-  // back to the Inquirer menu (scripts, pipes, CI). Ctrl-C / Esc at the menu
-  // throws from the Inquirer fallback; treat it as a clean exit (nothing picked).
+  // Ctrl-C / Esc at the menu throws from the Inquirer fallback; treat it as a clean exit.
   try {
     if (process.stdout.isTTY && process.stdin.isTTY) {
       const { runCommandPalette } = await import('src/tui/boot')
@@ -624,11 +183,63 @@ if (process.argv.length <= 2) {
     if (!isPromptCancellation(error)) throw error
   }
 
-  // The menu is a guided surface; don't nag about deprecated flat names here.
-  if (selected) {
-    invokedViaMenu.value = true
+  return selected
+}
 
-    await runProgram(['node', 'infra-kit', selected])
+/**
+ * Persistent session shell: bare `infra-kit` in a capable interactive TTY keeps running after each
+ * command. Each pick echoes `$ infra-kit <canonical argv>` and spawns it as a fresh child that
+ * inherits this terminal, so the command's real output lands in the scrollback and stays there, closed
+ * out by a status footer. React-free loop logic lives in `src/lib/session`; the Ink palette is reached
+ * only through the lazy `src/tui/boot` import.
+ */
+const runSessionShell = async (): Promise<void> => {
+  const { runCommandPalette } = await import('src/tui/boot')
+  const cliPath = fileURLToPath(import.meta.url)
+  const catalogByName = new Map(
+    commandCatalog.map((entry) => {
+      return [entry.cliName, entry]
+    }),
+  )
+
+  await runSession(buildPaletteItems(), {
+    renderPalette: runCommandPalette,
+    resolveCommand: (name) => {
+      const entry = catalogByName.get(name)
+
+      return entry
+        ? {
+            groupPath: entry.groupPath,
+            entersAltScreen: entry.entersAltScreen,
+            sessionEnvNotice: entry.sessionEnvNotice,
+          }
+        : undefined
+    },
+    cliPath,
+  })
+}
+
+if (process.argv.length <= 2) {
+  const streams = {
+    stdoutIsTTY: Boolean(process.stdout.isTTY),
+    stdinIsTTY: Boolean(process.stdin.isTTY),
+    // The palette and the transcript both render to stderr; redirect it and the shell is unusable.
+    stderrIsTTY: Boolean(process.stderr.isTTY),
+  }
+
+  if (sessionGateEnabled(process.env, streams)) {
+    // A capable interactive TTY → the persistent session shell (exit code always 0).
+    await runSessionShell()
+  } else {
+    // Pipes / CI / non-TTY / opt-out → today's one-shot behaviour and exit codes.
+    const selected = await runInteractiveMenu()
+
+    // The menu is a guided surface; don't nag about deprecated flat names here.
+    if (selected) {
+      invokedViaMenu.value = true
+
+      await runProgram(['node', 'infra-kit', selected])
+    }
   }
 } else {
   await runProgram()
