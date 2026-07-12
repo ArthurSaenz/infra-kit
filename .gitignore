@@ -44,6 +44,9 @@ vite.config.ts.timestamp-*.mjs
 # OMC (oh-my-claudecode) local state
 **/.omc/
 
+# infra-kit local state
+**/.infra-kit/
+
 # Testing - Playwright
 **/test-results/
 **/playwright-report/
