@@ -325,4 +325,59 @@ describe('runSession loop', () => {
       expect(resets[0]?.entersAltScreen).toBe(true)
     })
   })
+
+  /**
+   * Force-quitting a child means MASHING Ctrl-C, so SIGINTs keep landing after the one that killed it —
+   * during the terminal reset, the report read and the footer. The session used to hand Ctrl-C back the
+   * instant the child's `exit` fired, so those trailing signals took the "no child running" branch and
+   * `exit(0)`-ed the WHOLE SHELL. Expected: return to the palette.
+   *
+   * `resetTerminal` runs inside precisely that window, so firing SIGINT from it reproduces the race
+   * deterministically — no timing, no PTY.
+   */
+  describe('a SIGINT arriving after the child exits but before the palette is re-armed', () => {
+    it('returns to the palette instead of killing the session shell', async () => {
+      const log: string[] = []
+      const exits: number[] = []
+      const handlers = new Map<NodeJS.Signals, () => void>()
+
+      await runSession(items, {
+        renderPalette: pickThenQuit(['vendor-check', null], log),
+        resolveCommand: resolveVendorCheck,
+        cliPath: '/dist/cli.js',
+        spawn: fakeSpawnFor([{ code: 130, signal: 'SIGINT' }], log) as never,
+        now: () => {
+          return 0
+        },
+        write: () => {
+          return undefined
+        },
+        env: { PATH: '/usr/bin' } as NodeJS.ProcessEnv,
+        ascii: true,
+        signals: {
+          register: (signal, handler) => {
+            handlers.set(signal, handler)
+          },
+          unregister: (signal) => {
+            handlers.delete(signal)
+          },
+          exit: (code) => {
+            exits.push(code)
+          },
+          raise: () => {
+            return undefined
+          },
+        },
+        resetTerminal: () => {
+          // The trailing Ctrl-C of a user still hammering the key at the child they just killed.
+          log.push('late-sigint')
+          handlers.get('SIGINT')?.()
+        },
+      })
+
+      expect(exits).toEqual([])
+      // The second `render` is the proof: the loop survived and drew the palette again.
+      expect(log).toEqual(['render', 'spawn', 'late-sigint', 'render'])
+    })
+  })
 })

@@ -99,7 +99,7 @@ const waitForExit = (child: ChildProcess): Promise<{ code: number | null; signal
 const runOne = async (
   command: SessionCommand,
   deps: Required<Pick<RunSessionDeps, 'spawn' | 'now' | 'env' | 'cliPath' | 'ascii' | 'resetTerminal'>>,
-  setChildRunning: (running: boolean) => void,
+  markChildOwnsSigint: () => void,
 ): Promise<string> => {
   const reportPath = newReportPath()
   const childEnv: NodeJS.ProcessEnv = {
@@ -113,7 +113,7 @@ const runOne = async (
 
   let result: { code: number | null; signal: NodeJS.Signals | null } = { code: 1, signal: null }
 
-  setChildRunning(true)
+  markChildOwnsSigint()
   try {
     // `stdio: 'inherit'` on the primary screen: the child writes straight to the user's terminal, so
     // its output lands in the scrollback and stays there. Never pipe — a piped child loses its TTY,
@@ -129,9 +129,11 @@ const runOne = async (
     // tear the session down.
     result = { code: 1, signal: null }
   } finally {
-    setChildRunning(false)
-    // After EVERY child, not just cancelled ones: a child killed mid-draw leaves the cursor hidden,
-    // the colour set, or the cursor parked mid-line, and the footer would be welded onto it.
+    // NOT the place to hand SIGINT back. The child's `exit` has fired, but the terminal reset below, the
+    // report read, and the footer + palette draw are all still ahead — and a user force-quitting the child
+    // MASHES Ctrl-C, so more SIGINTs are still landing. Clearing the flag here made every one of them take
+    // the "no child running" branch and `exit(0)` the WHOLE SESSION SHELL instead of returning to the
+    // palette. The loop clears it immediately before `renderPalette`, once the palette can own Ctrl-C.
     deps.resetTerminal({ entersAltScreen: command.entersAltScreen })
   }
 
@@ -344,7 +346,16 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
     },
   }
 
-  let childRunning = false
+  /**
+   * Does the CHILD own Ctrl-C right now?
+   *
+   * Deliberately WIDER than "a child process is alive". It stays true from the spawn until the palette is
+   * about to be drawn again — covering the terminal reset, the report read and the footer — because a user
+   * force-quitting a child MASHES Ctrl-C, and the trailing SIGINTs land in exactly that gap. Letting one of
+   * them reach the "no child running" branch is what used to `exit(0)` the entire session shell instead of
+   * returning to the palette.
+   */
+  let childOwnsSigint = false
   const noopSignals: SessionSignals = {
     dispose: () => {
       return undefined
@@ -360,11 +371,25 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
     deps.installSignals === false
       ? noopSignals
       : installSessionSignals(() => {
-          return childRunning
+          return childOwnsSigint
         }, signals)
 
   try {
     for (;;) {
+      // An external SIGTERM arrived mid-child. We deferred it so the child could finish and its entry
+      // could be committed; honour it now rather than re-rendering the palette over a `kill`.
+      if (sessionSignals.quitRequested()) {
+        return
+      }
+
+      // Hand Ctrl-C back to the palette HERE, and nowhere earlier. Everything between the child's exit
+      // and this line — the terminal reset, the report read, the footer — is still fair game for the
+      // trailing SIGINTs of a user mashing Ctrl-C at the child, and one of those reaching the
+      // "no child running" branch would `exit(0)` the entire session. From this line on, the palette's
+      // Ink holds stdin in raw mode (which disables ISIG), so a Ctrl-C there arrives as a `0x03` byte it
+      // handles itself — not as a SIGINT at all.
+      childOwnsSigint = false
+
       const selected = await deps.renderPalette(items)
 
       if (selected == null) {
@@ -384,18 +409,13 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
       write(`\n${header}\n`)
       sessionSignals.childStarted()
 
-      const entry = await runOne(command, resolved, (running) => {
-        childRunning = running
+      const entry = await runOne(command, resolved, () => {
+        childOwnsSigint = true
       })
 
       // Leading newline: the child may have exited mid-line, and the footer must not be welded to it.
+      // Still inside the child's SIGINT window — see the top of the loop.
       write(`\n${entry}\n`)
-
-      // An external SIGTERM arrived mid-child. We deferred it so the child could finish and its entry
-      // could be committed above; honour it now rather than re-rendering the palette over a `kill`.
-      if (sessionSignals.quitRequested()) {
-        return
-      }
     }
   } finally {
     sessionSignals.dispose()

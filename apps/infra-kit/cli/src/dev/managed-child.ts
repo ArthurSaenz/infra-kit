@@ -14,8 +14,15 @@
  * So teardown snapshots the descendant process groups BEFORE signalling (once turbo dies its
  * children reparent to init and can no longer be found by walking `ppid`), waits for the whole
  * set to exit, and only then force-kills whatever is left.
+ *
+ * The same fact — reparenting blinds the `ppid` walk — is why a snapshot taken only at teardown is not
+ * enough. When turbo dies on its OWN (a crash, an OOM kill) there is no teardown to snapshot from, and
+ * the tasks it never reaped are already unreachable. So the snapshot is instead kept ROLLING for the
+ * child's whole life, and each group is stamped with its leader's `lstart`: a pgid is a bare integer the
+ * kernel will happily recycle, and the leader's start time is the only proof that the group we are about
+ * to SIGKILL is still the one we saw.
  */
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import process from 'node:process'
 
@@ -41,17 +48,42 @@ const REAP_TIMEOUT_MS = 2000
 /** Absolute path to `ps` — present on both macOS and Linux, and immune to `PATH` substitution. */
 const PS_BIN = '/bin/ps'
 
-/** One row of `ps -eo pid=,ppid=,pgid=`. */
+/**
+ * How often the live process table is sampled while a supervised child is alive, to keep
+ * {@link ManagedChild}'s group snapshot current. See {@link superviseChild} for why a snapshot taken
+ * only at kill-time is too late. Async (`execFile`, not `execFileSync`), so it never blocks the event
+ * loop the in-process backends share.
+ */
+const SAMPLE_INTERVAL_MS = 1000
+
+/** `ps` columns: the `ppid` walk needs pid/ppid/pgid, and the reuse guard needs the leader's `lstart`. */
+const PS_ARGS = ['-eo', 'pid=,ppid=,pgid=,lstart='] as const
+
+/** Cap on `ps` output; a busy machine's full process table stays far below this. */
+const PS_MAX_BUFFER = 8 << 20
+
+/** One row of `ps -eo pid=,ppid=,pgid=,lstart=`. */
 export interface ProcRow {
   pid: number
   ppid: number
   pgid: number
+  /** The process's start time as `ps` prints it (`Mon Jul 13 13:21:14 2026`); `''` when unavailable. */
+  lstart: string
 }
 
-/** Parse `ps -eo pid=,ppid=,pgid=` output, skipping any line that isn't three integers. */
+/**
+ * The subset of a {@link ProcRow} that describes the process TREE. The `ppid` walk needs nothing else,
+ * so the functions that only walk take this — `lstart` is the reuse guard's concern, not the topology's.
+ */
+export type TopologyRow = Pick<ProcRow, 'pid' | 'ppid' | 'pgid'>
+
+/**
+ * Parse `ps -eo pid=,ppid=,pgid=,lstart=`, skipping any line that doesn't start with three integers.
+ * `lstart` is whitespace-separated and multi-token, so it is everything after the third column.
+ */
 export const parseProcRows = (raw: string): ProcRow[] => {
   return raw.split('\n').flatMap((line) => {
-    const [rawPid, rawPpid, rawPgid] = line.trim().split(/\s+/)
+    const [rawPid, rawPpid, rawPgid, ...rest] = line.trim().split(/\s+/)
 
     if (rawPid == null || rawPpid == null || rawPgid == null) return []
 
@@ -61,7 +93,80 @@ export const parseProcRows = (raw: string): ProcRow[] => {
 
     if (!Number.isInteger(pid) || !Number.isInteger(ppid) || !Number.isInteger(pgid)) return []
 
-    return [{ pid, ppid, pgid }]
+    return [{ pid, ppid, pgid, lstart: rest.join(' ') }]
+  })
+}
+
+/**
+ * A process group, stamped with its LEADER's start time at the moment the group was observed.
+ *
+ * The start time is the whole point. A pgid on its own is a bare integer: by the time we come to reap
+ * it the kernel may have recycled it onto an unrelated process, and `kill(-pgid, …)` would then destroy
+ * a stranger's group. The leader's `lstart` is the identity that survives — a recycled pgid necessarily
+ * has a NEWER birth time than the one recorded, so it is refused.
+ */
+export interface GroupSnapshot {
+  pgid: number
+  leaderStart: string
+}
+
+/** Map every process group in `rows` to its leader's start time (the leader is the pid equal to the pgid). */
+const leaderStarts = (rows: ProcRow[]): Map<number, string> => {
+  const starts = new Map<number, string>()
+
+  for (const row of rows) {
+    if (row.pid === row.pgid) starts.set(row.pgid, row.lstart)
+  }
+
+  return starts
+}
+
+/**
+ * {@link collectDoomedGroups}, but each group is stamped with its leader's start time so it can be
+ * validated later. Groups whose leader is not in `rows` are dropped: with no leader there is nothing to
+ * stamp, so nothing could prove the group is still the one we saw, and the reuse guard must fail closed.
+ *
+ * @example
+ * const rows = [
+ *   { pid: 10, ppid: 1, pgid: 10, lstart: 'Mon Jul 13 13:00:00 2026' },
+ *   { pid: 20, ppid: 10, pgid: 20, lstart: 'Mon Jul 13 13:00:01 2026' },
+ * ]
+ * snapshotGroups(10, rows) // => [{ pgid: 10, leaderStart: '…13:00:00…' }, { pgid: 20, leaderStart: '…13:00:01…' }]
+ */
+export const snapshotGroups = (rootPid: number, rows: ProcRow[], excludePgid?: number): GroupSnapshot[] => {
+  const starts = leaderStarts(rows)
+
+  return collectDoomedGroups(rootPid, rows, excludePgid).flatMap((pgid) => {
+    const leaderStart = starts.get(pgid)
+
+    if (leaderStart == null || leaderStart === '') return []
+
+    return [{ pgid, leaderStart }]
+  })
+}
+
+/**
+ * SIGKILL every snapshotted group whose leader is STILL the same process, and return the pgids killed.
+ *
+ * A group whose leader has since exited is skipped (nothing to kill, and no way to prove ownership of
+ * whatever else may share the pgid). A group whose leader's start time no longer matches is a recycled
+ * pgid belonging to a stranger — skipped, loudly and deliberately. This is the guard that makes reaping
+ * from a stale snapshot safe, and it is why the snapshot records `lstart` at all.
+ */
+export const reapSnapshot = (snapshot: readonly GroupSnapshot[], rows: ProcRow[]): number[] => {
+  const starts = leaderStarts(rows)
+
+  return snapshot.flatMap(({ pgid, leaderStart }) => {
+    if (starts.get(pgid) !== leaderStart) return []
+
+    try {
+      process.kill(-pgid, 'SIGKILL')
+    } catch {
+      // Raced us to exit (ESRCH) — nothing to kill.
+      return []
+    }
+
+    return [pgid]
   })
 }
 
@@ -74,8 +179,8 @@ export const parseProcRows = (raw: string): ProcRow[] => {
  * const rows = [{ pid: 10, ppid: 1, pgid: 10 }, { pid: 20, ppid: 10, pgid: 20 }]
  * collectDoomedGroups(10, rows, 5) // => [10, 20]
  */
-export const collectDoomedGroups = (rootPid: number, rows: ProcRow[], excludePgid?: number): number[] => {
-  const childrenOf = new Map<number, ProcRow[]>()
+export const collectDoomedGroups = (rootPid: number, rows: TopologyRow[], excludePgid?: number): number[] => {
+  const childrenOf = new Map<number, TopologyRow[]>()
 
   for (const row of rows) {
     const siblings = childrenOf.get(row.ppid)
@@ -109,14 +214,28 @@ export const collectDoomedGroups = (rootPid: number, rows: ProcRow[], excludePgi
  */
 const snapshotProcRows = (): ProcRow[] => {
   try {
-    return parseProcRows(execFileSync(PS_BIN, ['-eo', 'pid=,ppid=,pgid='], { encoding: 'utf8', maxBuffer: 8 << 20 }))
+    return parseProcRows(execFileSync(PS_BIN, [...PS_ARGS], { encoding: 'utf8', maxBuffer: PS_MAX_BUFFER }))
   } catch {
     return []
   }
 }
 
+/**
+ * {@link snapshotProcRows}, off the event loop. The rolling sampler runs on a timer for the whole life
+ * of a dev session, and the in-process backends share this loop — a synchronous `ps` every second would
+ * stall every request that lands during it. Resolves to `[]` on failure, degrading to the previous
+ * snapshot rather than clobbering it.
+ */
+const snapshotProcRowsAsync = async (): Promise<ProcRow[]> => {
+  return new Promise((resolve) => {
+    execFile(PS_BIN, [...PS_ARGS], { encoding: 'utf8', maxBuffer: PS_MAX_BUFFER }, (error, stdout) => {
+      resolve(error ? [] : parseProcRows(stdout))
+    })
+  })
+}
+
 /** Does `pid` currently exist and name a direct child of `parentPid`? Guards against pid reuse. */
-export const isChildOf = (pid: number, parentPid: number, rows: ProcRow[]): boolean => {
+export const isChildOf = (pid: number, parentPid: number, rows: TopologyRow[]): boolean => {
   return rows.some((row) => {
     return row.pid === pid && row.ppid === parentPid
   })
@@ -209,6 +328,12 @@ export type UnexpectedExitHandler = (detail: string) => void
  * walk that finds them must run while turbo is still alive. Then SIGTERM every doomed group,
  * poll until all are gone, and SIGKILL the survivors. Resolves once nothing is left.
  *
+ * That covers the ORDERLY death, where we choose the moment and can walk the tree first. It does not
+ * cover turbo CRASHING, because reparenting happens at termination — strictly before Node hands us the
+ * `exit` event — so by then the walk is already blind. A rolling snapshot (see `sample`) is therefore
+ * kept for the child's whole life, and both the crash path and a `kill()` on an already-dead child reap
+ * from it, validating each group against its leader's start time so a recycled pgid is never killed.
+ *
  * `onUnexpectedExit` (optional) fires when the child dies WITHOUT `kill()` having been called —
  * the "engine died silently" case. A `killing` latch, set at the top of `kill()` before any signal
  * goes out, suppresses the callback for the exit our own teardown causes, so it reports only genuine
@@ -226,6 +351,53 @@ export function superviseChild(
 
   // Latched by kill() before it signals, so the child's own teardown exit is not misreported as a crash.
   let killing = false
+  // Set by the `exit` listener, so a sampler callback still in flight cannot clobber the final snapshot.
+  let exited = false
+  /** Last known process groups beneath this child, refreshed while it is alive. See the sampler below. */
+  let groups: GroupSnapshot[] = []
+  let sampler: NodeJS.Timeout | null = null
+
+  const stopSampling = (): void => {
+    if (sampler) clearInterval(sampler)
+    sampler = null
+  }
+
+  /**
+   * Refresh {@link groups} while the child is alive.
+   *
+   * This is what makes a crash survivable. Reaping walks `ppid` from the child — but a process that
+   * dies has ALREADY reparented its children to init by the time Node delivers `exit`, so a walk
+   * started from the corpse finds only the corpse's own group. Verified: while turbo is alive the walk
+   * yields `[turbo, vite]`; inside the `exit` handler it yields `[turbo]`, and vite (`ppid=1`, still
+   * running, still holding its port) is unreachable forever. There is no window to race — the only way
+   * to know vite's group after turbo dies is to have written it down BEFORE turbo died.
+   *
+   * An empty result is discarded rather than stored: `ps` failing, or racing the child's own death,
+   * must degrade to the previous snapshot, never erase it.
+   */
+  const sample = async (): Promise<void> => {
+    const pid = child.pid
+
+    if (pid == null || exited || killing) return
+
+    const rows = await snapshotProcRowsAsync()
+
+    if (rows.length === 0 || exited || killing) return
+
+    const ownPgid = rows.find((row) => {
+      return row.pid === process.pid
+    })?.pgid
+    const next = snapshotGroups(pid, rows, ownPgid)
+
+    if (next.length > 0) groups = next
+  }
+
+  void sample()
+  sampler = setInterval(() => {
+    void sample()
+  }, SAMPLE_INTERVAL_MS)
+  // The timer must never be the reason the process stays alive — it outlives nothing.
+  sampler.unref()
 
   const reportUnexpected = (detail: string): void => {
     if (killing) return
@@ -233,6 +405,16 @@ export function superviseChild(
   }
 
   child.on('exit', (code, signal) => {
+    exited = true
+    stopSampling()
+
+    // The child died WITHOUT us killing it — a turbo crash, or an OOM kill. Turbo puts each of its
+    // tasks in a process group of its OWN, and a turbo that dies this way reaps none of them, so
+    // `vite`/`tsc` survive holding their ports. Nothing can find them by walking (see `sample`), and
+    // the `kill()` below would bail on an already-exited child. Reaping from the snapshot here is the
+    // only thing standing between a crashed engine and a permanently orphaned dev server.
+    if (!killing) reapSnapshot(groups, snapshotProcRows())
+
     reportUnexpected(`exited unexpectedly (code=${code ?? 'null'}, signal=${signal ?? 'null'})`)
   })
   child.on('error', (error: Error) => {
@@ -243,15 +425,22 @@ export function superviseChild(
     kill: async (): Promise<void> => {
       // Latch FIRST: the child WILL emit `exit` during the reap below, and that exit is ours, not a crash.
       killing = true
+      stopSampling()
 
       const pid = child.pid
 
       if (pid == null) return
 
-      // Two guards against the same hazard: once the child is reaped the OS may recycle `pid`
-      // onto an unrelated process, and `kill(-pid, …)` would then destroy a stranger's group.
-      // A turbo that exits on its own reaps its own tasks, so bailing here strands nothing.
-      if (child.exitCode !== null || child.signalCode !== null) return
+      // Once the child is reaped the OS may recycle `pid` onto an unrelated process, and `kill(-pid, …)`
+      // would then destroy a stranger's group — so an exited child is never walked. It is not simply
+      // skipped either: a turbo that CRASHED left its task groups running, and this is the Ctrl-C that
+      // has to clear them. The snapshot is the only surviving handle on those groups, and `reapSnapshot`
+      // re-validates each one against its leader's start time, so a recycled pgid is refused.
+      if (child.exitCode !== null || child.signalCode !== null) {
+        reapSnapshot(groups, snapshotProcRows())
+
+        return
+      }
 
       const rows = snapshotProcRows()
 

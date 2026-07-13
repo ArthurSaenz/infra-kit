@@ -5,17 +5,63 @@ import * as path from 'node:path'
 import process from 'node:process'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { collectDoomedGroups, isChildOf, parseProcRows, superviseChild } from '../managed-child.js'
+import {
+  collectDoomedGroups,
+  isChildOf,
+  parseProcRows,
+  reapSnapshot,
+  snapshotGroups,
+  superviseChild,
+} from '../managed-child.js'
 
 describe('parseProcRows', () => {
-  it('parses pid/ppid/pgid triples and skips malformed lines', () => {
-    const raw = ['  101   1   101', '  202 101   202', 'header junk', '', '  303 202 303 extra'].join('\n')
+  it('parses pid/ppid/pgid and the multi-token lstart, skipping malformed lines', () => {
+    const raw = [
+      '  101   1   101 Mon Jul 13 13:21:14 2026',
+      '  202 101   202 Mon Jul 13 13:21:15 2026',
+      'header junk',
+      '',
+      '  303 202 303',
+    ].join('\n')
 
     expect(parseProcRows(raw)).toEqual([
-      { pid: 101, ppid: 1, pgid: 101 },
-      { pid: 202, ppid: 101, pgid: 202 },
-      { pid: 303, ppid: 202, pgid: 303 },
+      { pid: 101, ppid: 1, pgid: 101, lstart: 'Mon Jul 13 13:21:14 2026' },
+      { pid: 202, ppid: 101, pgid: 202, lstart: 'Mon Jul 13 13:21:15 2026' },
+      // No lstart column — still a usable topology row, just not one the reuse guard can stamp.
+      { pid: 303, ppid: 202, pgid: 303, lstart: '' },
     ])
+  })
+})
+
+describe('snapshotGroups / reapSnapshot', () => {
+  const rows = [
+    { pid: 10, ppid: 1, pgid: 10, lstart: 'Mon Jul 13 13:00:00 2026' }, // turbo (group leader)
+    { pid: 20, ppid: 10, pgid: 20, lstart: 'Mon Jul 13 13:00:01 2026' }, // vite — its OWN group
+  ]
+
+  it('stamps each descendant group with its leader’s start time', () => {
+    expect(snapshotGroups(10, rows)).toEqual([
+      { pgid: 10, leaderStart: 'Mon Jul 13 13:00:00 2026' },
+      { pgid: 20, leaderStart: 'Mon Jul 13 13:00:01 2026' },
+    ])
+  })
+
+  it('drops a group whose leader is absent — with nothing to stamp, the reuse guard must fail closed', () => {
+    // vite's group exists (the child is in it) but its LEADER is not in the table.
+    const headless = [
+      { pid: 10, ppid: 1, pgid: 10, lstart: 'Mon Jul 13 13:00:00 2026' },
+      { pid: 21, ppid: 10, pgid: 20, lstart: 'Mon Jul 13 13:00:02 2026' },
+    ]
+
+    expect(snapshotGroups(10, headless)).toEqual([{ pgid: 10, leaderStart: 'Mon Jul 13 13:00:00 2026' }])
+  })
+
+  it('refuses a recycled pgid whose leader was born after the snapshot — the whole point of lstart', () => {
+    const snapshot = snapshotGroups(10, rows)
+    // pgid 20 still exists, but it is now a STRANGER's group: same integer, newer leader.
+    const recycled = [{ pid: 20, ppid: 1, pgid: 20, lstart: 'Mon Jul 13 19:45:00 2026' }]
+
+    expect(reapSnapshot(snapshot, recycled)).toEqual([])
   })
 })
 
@@ -143,6 +189,108 @@ describe('superviseChild', () => {
 
     expect(alive(child.pid as number)).toBe(false)
     expect(alive(grandchildPid)).toBe(false)
+  }, 30_000)
+})
+
+/**
+ * The crash path, end to end, with real processes.
+ *
+ * This is the case a `ppid` walk cannot serve: an engine that dies on its own has ALREADY reparented its
+ * tasks to init by the time Node delivers `exit`, so the walk finds only the corpse's own group. Both
+ * tests below fail without the rolling snapshot — the grandchild survives, holding its port, forever.
+ */
+describe('superviseChild — a CRASHED engine must not strand its task groups', () => {
+  let grandchildPid = 0
+
+  afterEach(() => {
+    if (grandchildPid > 0) {
+      try {
+        process.kill(-grandchildPid, 'SIGKILL')
+      } catch {
+        // already reaped — which is what these tests assert
+      }
+      grandchildPid = 0
+    }
+  })
+
+  /** Spawn the turbo topology: a detached engine whose task sits in a process group of its OWN. */
+  const spawnEngineWithTask = async (): Promise<{ child: ReturnType<typeof spawn>; taskPid: number }> => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'managed-child-crash-'))
+    const taskPidFile = path.join(dir, 'task.pid')
+
+    const engineSrc = `
+      const { spawn } = require('node:child_process')
+      const fs = require('node:fs')
+      const task = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' })
+      task.unref()
+      fs.writeFileSync(${JSON.stringify(taskPidFile)}, String(task.pid))
+      setInterval(() => {}, 1000)
+    `
+    const child = spawn(process.execPath, ['-e', engineSrc], { detached: true, stdio: 'ignore' })
+    const deadline = Date.now() + 10_000
+
+    while (Date.now() < deadline && !fs.existsSync(taskPidFile)) {
+      await new Promise((r) => {
+        setTimeout(r, 25)
+      })
+    }
+
+    const taskPid = Number(fs.readFileSync(taskPidFile, 'utf8'))
+
+    expect(alive(taskPid)).toBe(true)
+
+    return { child, taskPid }
+  }
+
+  /** Let the rolling sampler observe the task at least once — it is the only record that survives the crash. */
+  const letSamplerObserve = async (): Promise<void> => {
+    await new Promise((r) => {
+      setTimeout(r, 1400)
+    })
+  }
+
+  it('reaps the orphaned task group when the engine is SIGKILLed (a crash / OOM kill)', async () => {
+    const { child, taskPid } = await spawnEngineWithTask()
+
+    grandchildPid = taskPid
+    superviseChild(child, 500)
+    await letSamplerObserve()
+
+    // Crash the engine. It reaps nothing — exactly what a turbo OOM kill does to its vite tasks.
+    process.kill(child.pid as number, 'SIGKILL')
+
+    const deadline = Date.now() + 10_000
+
+    while (Date.now() < deadline && alive(taskPid)) {
+      await new Promise((r) => {
+        setTimeout(r, 50)
+      })
+    }
+
+    expect(alive(taskPid)).toBe(false)
+    grandchildPid = 0
+  }, 30_000)
+
+  it('reaps the task group on a later kill() too — the Ctrl-C after a crash must still clean up', async () => {
+    const { child, taskPid } = await spawnEngineWithTask()
+
+    grandchildPid = taskPid
+
+    // No sampler-driven reap: supervise, observe, then crash while suppressing the automatic path by
+    // racing kill() in right after. The point is that kill() on an ALREADY-EXITED child still clears the
+    // stranded group instead of bailing (which is what the old `exitCode !== null` early-return did).
+    const managed = superviseChild(child, 500)
+
+    await letSamplerObserve()
+    process.kill(child.pid as number, 'SIGKILL')
+    await new Promise((r) => {
+      setTimeout(r, 300)
+    })
+
+    await managed.kill()
+
+    expect(alive(taskPid)).toBe(false)
+    grandchildPid = 0
   }, 30_000)
 })
 

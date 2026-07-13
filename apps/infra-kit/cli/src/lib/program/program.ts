@@ -477,8 +477,12 @@ export const buildProgram = (): Command => {
   program
     .command('doctor')
     .description('Check installation and authentication status of gh and doppler CLIs')
-    .action(async () => {
-      emit(await doctor())
+    .option(
+      '--fix',
+      'Remove portless routes left behind by a dev-server that was killed (kill -9, OOM, force-quit). Refuses while a dev session is running, when a booting UI is indistinguishable from a dead route.',
+    )
+    .action(async (options) => {
+      emit(await doctor({ fix: Boolean(options.fix) }))
     })
 
   // No `update` alias: the `update` verb is reserved.

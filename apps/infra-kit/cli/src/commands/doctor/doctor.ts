@@ -4,10 +4,12 @@ import path from 'node:path'
 import { z } from 'zod'
 import { $ } from 'zx'
 
+import { decidePrune, isDevSessionRunning } from 'src/commands/doctor/prune-routes'
 import { AGENTS_MARKER_END, AGENTS_MARKER_START } from 'src/commands/init/agent-files'
 import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
 import {
   caFingerprintMatches,
+  createPortlessDriver,
   defaultIsListening,
   defaultIsProxyServing,
   formatPortlessCommand,
@@ -727,10 +729,74 @@ export const checkPortless = async (deps: PortlessCheckDeps = {}): Promise<Check
   ]
 }
 
+/** Seams for {@link pruneStalePortlessRoutes}: the daemon, the wire and the process table, all injectable. */
+export interface PruneRoutesDeps {
+  routes?: () => PortlessRoute[]
+  isListening?: (port: number) => Promise<boolean>
+  /** Is a dev session alive? Defaults to a `ps` scan — see {@link isDevSessionRunning}. */
+  devSessionRunning?: () => boolean
+  removeAlias?: (name: string) => Promise<void>
+}
+
+/**
+ * `doctor --fix`: remove the portless routes a dead dev-server left behind.
+ *
+ * The counterpart to {@link checkPortlessStaleRoutes}, which only ever REPORTS. Acting on the same
+ * evidence needs one more guard, and it is not optional: "nothing is listening" cannot distinguish a dead
+ * route from a UI whose vite has not bound its port yet (`assignUiPort` registers the alias, then
+ * `getFreePort` RELEASES the port until vite boots — and a UI alias has no dev-context fragment to
+ * corroborate it with). Every such false positive requires a dev session to be running, so a live dev
+ * session withholds the prune entirely. See `prune-routes.ts` for the full argument.
+ */
+export const pruneStalePortlessRoutes = async (deps: PruneRoutesDeps = {}): Promise<CheckResult> => {
+  const name = 'portless routes'
+  const readRoutes = deps.routes ?? listRoutes
+  const isListening = deps.isListening ?? defaultIsListening
+  const devRunning = deps.devSessionRunning ?? isDevSessionRunning
+  const routes = readRoutes()
+
+  if (routes.length === 0) return { name, status: 'pass', message: 'No portless routes registered' }
+
+  const probed = await Promise.all(
+    routes.map(async (route) => {
+      return { name: route.name, port: route.port, live: await isListening(route.port) }
+    }),
+  )
+  const { prunable, withheld } = decidePrune(probed, devRunning())
+
+  if (withheld.length > 0) {
+    return {
+      name,
+      status: 'fail',
+      message:
+        `${withheld.length} route(s) look stale (${withheld.join(', ')}), but a dev session is running — ` +
+        'a UI that has not bound its port yet is indistinguishable from a dead one, so nothing was removed. ' +
+        'Stop dev and re-run `infra-kit doctor --fix`.',
+    }
+  }
+
+  if (prunable.length === 0) {
+    return { name, status: 'pass', message: `${routes.length} portless route(s), all live` }
+  }
+
+  const removeAlias = deps.removeAlias ?? createPortlessDriver().removeAlias
+
+  // Serial, not `Promise.all`: each removal shells out to portless, which takes its own route lock.
+  for (const alias of prunable) {
+    await removeAlias(alias)
+  }
+
+  return {
+    name,
+    status: 'pass',
+    message: `Removed ${prunable.length} stale portless route(s): ${prunable.join(', ')}`,
+  }
+}
+
 /**
  * Check installation and authentication status of gh, doppler, aws, and rtk CLIs
  */
-export const doctor = async () => {
+export const doctor = async (options: { fix?: boolean } = {}) => {
   const baseChecks: CheckResult[] = await Promise.all([
     checkCommand(
       'gh installed',
@@ -791,7 +857,21 @@ export const doctor = async () => {
     checkIdeInstalled(),
   ])
 
-  const checks: CheckResult[] = [...baseChecks, ...(await checkPortless()), ...(await checkAgentFiles())]
+  const portlessChecks = await checkPortless()
+
+  // `--fix` SWAPS the read-only stale-route check for the one that actually removes them, so the report
+  // never prints a "stale route" failure beside the line that just cleaned it up.
+  if (options.fix) {
+    const pruned = await pruneStalePortlessRoutes()
+    const index = portlessChecks.findIndex((check) => {
+      return check.name === pruned.name
+    })
+
+    if (index >= 0) portlessChecks[index] = pruned
+    else portlessChecks.push(pruned)
+  }
+
+  const checks: CheckResult[] = [...baseChecks, ...portlessChecks, ...(await checkAgentFiles())]
 
   logger.info('Doctor check results:\n')
 
@@ -833,5 +913,9 @@ export const doctorMcpTool = defineMcpTool({
       .describe('List of all check results'),
     allPassed: z.boolean().describe('Whether all checks passed'),
   },
-  handler: doctor,
+  // Read-only on purpose: `--fix` is NOT reachable here. The MCP boundary auto-confirms every tool call,
+  // so a state-mutating flag must never be one `handler: doctor` away from an agent invoking it.
+  handler: () => {
+    return doctor()
+  },
 })
