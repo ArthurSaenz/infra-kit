@@ -1,9 +1,12 @@
 export {
+  DEFAULT_DEV_PROXY_PORT,
   getInfraKitConfig,
   getInfraKitConfigPaths,
+  infraKitConfigObject,
   infraKitConfigSchema,
   infraKitOverrideConfigSchema,
   resetInfraKitConfigCache,
+  resetMergedConfigCache,
   resolveCmuxLayout,
   resolveConfiguredIdes,
   USER_CONFIG_DIR_NAME,

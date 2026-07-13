@@ -8,9 +8,10 @@ import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
+import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import {
   detectReleaseType,
-  formatBranchChoices,
+  formatBranchPickerItems,
   getJiraDescriptions,
   releaseLabelFromBranch,
   resolveReleaseBranch,
@@ -79,10 +80,10 @@ export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs) => {
 
     const descriptions = await getJiraDescriptions()
 
-    selectedReleaseBranch = await select({
-      message: '🌿 Select release branch',
-      choices: [{ name: 'dev', value: 'dev' }, ...formatBranchChoices({ branches, descriptions, types: releaseTypes })],
-    })
+    selectedReleaseBranch = await pickReleaseBranch([
+      { value: 'dev', label: 'dev' },
+      ...formatBranchPickerItems({ branches, descriptions, types: releaseTypes }),
+    ])
   }
 
   const selectedVersion = releaseLabelFromBranch(selectedReleaseBranch)

@@ -25,7 +25,20 @@ const ANSI = {
   cursor: '\u001B[?25h',
   /** Re-enable autowrap (DECAWM). */
   wrap: '\u001B[?7h',
-  /** Reset the scroll region to the full screen (DECSTBM) — a stuck region traps all later output. */
+  /** Save the cursor position (DECSC). See `scrollRegion`. */
+  saveCursor: '\u001B7',
+  /** Restore the cursor position saved by DECSC (DECRC). See `scrollRegion`. */
+  restoreCursor: '\u001B8',
+  /**
+   * Reset the scroll region to the full screen (DECSTBM) — a stuck region traps all later output.
+   *
+   * DECSTBM ALSO HOMES THE CURSOR. That is not a quirk, it is the spec, and it is why this escape must
+   * always be bracketed by DECSC/DECRC. Sent bare, it moved the cursor to the top-left after EVERY
+   * child — so the status footer, and then the next palette frame, were drawn from row 1 straight over
+   * the command's own output. That is the whole "welded rows" bug: `✓ ok · 2.9s` printed on top of an
+   * unrelated line, and the palette's `❯ ` printed over the head of the command's own `ERROR:` line,
+   * leaving `❯ ROR: …` behind.
+   */
   scrollRegion: '\u001B[r',
   /** Leave the alternate screen — only for a child that entered it and may not have left it. */
   primaryBuffer: '\u001B[?1049l',
@@ -44,7 +57,7 @@ export interface ResetTerminalDeps {
  * @example
  * const out: string[] = []
  * resetTerminal({ entersAltScreen: false }, { write: (s) => out.push(s), stdin: {} })
- * out.join('') // => '\r\u001B[0m\u001B[?25h\u001B[?7h\u001B[r'
+ * out.join('') // => '\u001B7\u001B[r\u001B8\r\u001B[0m\u001B[?25h\u001B[?7h'
  */
 export const resetTerminal = (opts: { entersAltScreen?: boolean }, deps?: ResetTerminalDeps): void => {
   const write =
@@ -54,7 +67,18 @@ export const resetTerminal = (opts: { entersAltScreen?: boolean }, deps?: ResetT
     })
   const stdin = deps?.stdin ?? process.stdin
 
-  const escapes = [ANSI.column, ANSI.sgr, ANSI.cursor, ANSI.wrap, ANSI.scrollRegion]
+  // DECSTBM homes the cursor, so the scroll-region reset is bracketed by save/restore: the cursor must
+  // end up exactly where the child left it — below the child's output — or everything written next (the
+  // footer, the next palette frame) lands on top of that output instead of after it.
+  const escapes = [
+    ANSI.saveCursor,
+    ANSI.scrollRegion,
+    ANSI.restoreCursor,
+    ANSI.column,
+    ANSI.sgr,
+    ANSI.cursor,
+    ANSI.wrap,
+  ]
 
   // Only for a child that owns the alternate screen: if it was killed before restoring the primary
   // buffer, everything we draw next would land in a buffer the terminal is about to throw away.

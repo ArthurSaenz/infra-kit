@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { question } from 'zx'
 
 import { loadJiraConfig } from 'src/integrations/jira'
-import { commandEcho } from 'src/lib/command-echo'
+import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { logger } from 'src/lib/logger'
@@ -229,20 +229,8 @@ export const assertHomogeneousReleaseType = (entries: ReleaseEntry[]): void => {
 
 const confirmReleases = async (entries: ReleaseEntry[], confirmedCommand: boolean): Promise<void> => {
   const summary = entries.map(formatReleaseSummary).join('\n  - ')
-  const answer = confirmedCommand
-    ? true
-    : await confirm({
-        message: `Create the following ${entries.length} release(s)?\n  - ${summary}\n`,
-      })
 
-  if (!confirmedCommand) {
-    commandEcho.setInteractive()
-  }
-
-  if (!answer) {
-    logger.info('Operation cancelled. Exiting...')
-    process.exit(0)
-  }
+  await confirmOrExit(confirmedCommand, `Create the following ${entries.length} release(s)?\n  - ${summary}\n`)
 
   commandEcho.addOption('--yes', true)
 }

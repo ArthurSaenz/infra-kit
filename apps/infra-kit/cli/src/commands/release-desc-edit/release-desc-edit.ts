@@ -1,19 +1,17 @@
-import confirm from '@inquirer/confirm'
-import select from '@inquirer/select'
-import process from 'node:process'
 import { z } from 'zod'
 import { question } from 'zx'
 
 import { getReleasePRsWithInfo, updateReleasePRBody } from 'src/integrations/gh'
 import { findVersionByName, loadJiraConfig, updateJiraVersion } from 'src/integrations/jira'
 import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
-import { commandEcho } from 'src/lib/command-echo'
+import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
+import { pickReleaseBranch as pickReleaseBranchPrompt } from 'src/lib/prompts/release-picker'
 import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
 import {
   detectReleaseType,
-  formatBranchChoices,
+  formatBranchPickerItems,
   getJiraDescriptions,
   resolveReleaseBranch,
 } from 'src/lib/release-utils'
@@ -46,10 +44,7 @@ const pickReleaseBranch = async (): Promise<{ branch: string; type: ReleaseType 
   )
   const descriptions = await getJiraDescriptions()
 
-  const branch = await select({
-    message: '🌿 Select release branch',
-    choices: formatBranchChoices({ branches, descriptions, types }),
-  })
+  const branch = await pickReleaseBranchPrompt(formatBranchPickerItems({ branches, descriptions, types }))
 
   return { branch, type: types.get(branch) || 'regular' }
 }
@@ -140,17 +135,14 @@ export const releaseDescEdit = async (args: ReleaseDescEditArgs) => {
     newDescription = await promptDescription(previousDescription)
   }
 
-  if (newDescription === previousDescription) {
-    logger.info(`No change — description for ${versionName} is already: "${previousDescription}"`)
-    commandEcho.print()
-
+  const buildResult = (changed: boolean) => {
     const structuredContent = {
       version: selectedVersion,
       branch: selectedBranch,
       jiraVersionUrl: buildJiraVersionUrl(jiraConfig, jiraVersion),
       previousDescription,
       newDescription,
-      changed: false,
+      changed,
     }
 
     return {
@@ -159,20 +151,17 @@ export const releaseDescEdit = async (args: ReleaseDescEditArgs) => {
     }
   }
 
-  const answer = confirmedCommand
-    ? true
-    : await confirm({
-        message: `Update description for ${versionName}?\n  from: "${previousDescription}"\n  to:   "${newDescription}"\n`,
-      })
+  if (newDescription === previousDescription) {
+    logger.info(`No change — description for ${versionName} is already: "${previousDescription}"`)
+    commandEcho.print()
 
-  if (!confirmedCommand) {
-    commandEcho.setInteractive()
+    return buildResult(false)
   }
 
-  if (!answer) {
-    logger.info('Operation cancelled. Exiting...')
-    process.exit(0)
-  }
+  await confirmOrExit(
+    confirmedCommand,
+    `Update description for ${versionName}?\n  from: "${previousDescription}"\n  to:   "${newDescription}"\n`,
+  )
 
   commandEcho.addOption('--yes', true)
 
@@ -189,19 +178,7 @@ export const releaseDescEdit = async (args: ReleaseDescEditArgs) => {
 
   commandEcho.print()
 
-  const structuredContent = {
-    version: selectedVersion,
-    branch: selectedBranch,
-    jiraVersionUrl,
-    previousDescription,
-    newDescription,
-    changed: true,
-  }
-
-  return {
-    content: textContent(JSON.stringify(structuredContent, null, 2)),
-    structuredContent,
-  }
+  return buildResult(true)
 }
 
 // MCP Tool Registration

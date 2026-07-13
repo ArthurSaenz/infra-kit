@@ -1,12 +1,35 @@
 # [DO] Local Dev Infrastructure Plan — Backend, Port Management & Git Worktrees
 
-> Status: **design / proposal** · Owner: infra-kit · Last updated: 2026-07-06
+> Status: **largely implemented** · Owner: infra-kit · Last updated: 2026-07-10
 >
-> This document captures the requirements and a proposed architecture for the next
-> phase of local-development tooling in `infra-kit`, focused on **running the backend
-> across multiple git worktrees simultaneously** without port collisions, with stable
-> URLs that also work from **Postman**. Frontend is considered solved (Vite defaults +
-> proxy + port management) and is only revisited where it consumes the backend.
+> This document captures the requirements and architecture for local-development tooling
+> in `infra-kit`, focused on **running the backend across multiple git worktrees
+> simultaneously** without port collisions, with stable URLs that also work from
+> **Postman**. Frontend is considered solved (Vite defaults + proxy + port management)
+> and is only revisited where it consumes the backend.
+>
+> ### What actually shipped, and where this plan diverges from it
+>
+> Read this before trusting any section below — the plan was written first and the
+> implementation corrected it twice.
+>
+> | Piece | Status |
+> |---|---|
+> | **Layer A** — per-worktree ports, `.infra-kit/dev-context/<app>.json` fragments | **Committed** (`ecd7dd2`) |
+> | **Layer B** — portless proxy, `<release>.<package>.localhost` addressing | **Implemented, not yet committed** |
+> | `infra-kit/vite` `dev.proxy` helper | **Committed** (`2e85c4d`) |
+> | cmux runner + `devServersPresets` proxy-locality audit | **Committed** (`30ca9a6`) |
+> | `/etc/hosts` sync, `:80` service install, movable `<package>.localhost` focus alias | **Not done** (the privileged half) |
+> | Postman environment generation from `worktrees-add`/`sync` | **Not done** |
+>
+> Two divergences the sections below still describe the old way:
+>
+> 1. **`dev.proxy` lives in the per-package `infra-kit.config.ts`**, not in `infra-kit.json`
+>    as §8a says. Proxy routes describe a frontend's own topology and are committed with it;
+>    only machine-local runtime values (`dev.<app>.port`, `devProxy.port`, `devServersPresets`)
+>    stay in `infra-kit.json`.
+> 2. **Layer A shipped A2 (dynamic `listen(0)`)**, not the A1 deterministic
+>    `base + slot*stride` offsets this plan recommends in §3.
 
 ---
 

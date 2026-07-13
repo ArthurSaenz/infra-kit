@@ -2,7 +2,7 @@ import { Box, Text, useApp, useInput, useWindowSize } from 'ink'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { PaletteItem } from '../types'
-import { paletteWindow } from './palette-window'
+import { listLayout, paletteWindow } from './palette-window'
 
 interface CommandPaletteProps {
   items: PaletteItem[]
@@ -25,6 +25,7 @@ export const CommandPalette = (props: CommandPaletteProps) => {
     hint: 'Select a command — type to filter, ↑↓ to move, Enter to run, Esc to cancel',
     prompt: '❯ ',
     empty: 'No matching commands',
+    tiny: 'terminal too short — resize to pick a command',
     more: '…',
   }
   const nameWidth = 24
@@ -62,10 +63,19 @@ export const CommandPalette = (props: CommandPaletteProps) => {
 
   const activeIndex = Math.min(index, Math.max(0, filtered.length - 1))
 
-  // The slice that fits this terminal. A 25-command list is 33 rows: taller than an 80x24 window or
-  // any split pane, which would make the frame unreadable (and make Ink clear the screen on every
-  // keystroke). `safe-stderr` is what makes an overflowing frame harmless; this is what avoids one.
-  const view = paletteWindow(filtered, windowStart, activeIndex, rows)
+  // The slice that fits this terminal, and how much chrome we may spend around it. A frame taller than
+  // the viewport corrupts the cursor (see palette-window.ts) — every row here is budgeted, and every
+  // row below is `wrap="truncate"` so one command is always exactly one row.
+  const layout = listLayout(rows)
+  const view = paletteWindow(filtered, windowStart, activeIndex, rows, {
+    chromeRows: layout.chromeRows,
+    // A compact frame drops group headers, so they must not be budgeted for either.
+    groupOf: layout.groups
+      ? (item) => {
+          return item.group
+        }
+      : undefined,
+  })
 
   // Commit the scroll position once the frame that used it has rendered.
   useEffect(() => {
@@ -158,21 +168,40 @@ export const CommandPalette = (props: CommandPaletteProps) => {
     return null
   }
 
+  // Too short for even one command row plus a prompt. One truncated line always fits.
+  if (layout.mode === 'tiny') {
+    return (
+      <Text dimColor wrap="truncate">
+        {T.tiny}
+      </Text>
+    )
+  }
+
   let lastGroup = ''
 
   return (
     <Box flexDirection="column">
-      <Text dimColor>{T.hint}</Text>
+      {layout.mode === 'full' ? (
+        <Text dimColor wrap="truncate">
+          {T.hint}
+        </Text>
+      ) : null}
       <Box>
         <Text color="cyan">{T.prompt}</Text>
-        <Text>{query}</Text>
+        {/* truncate-START on the input: overflow must eat the head of the filter, never the character
+            being typed. */}
+        <Text wrap="truncate-start">{query}</Text>
       </Box>
-      <Box flexDirection="column" marginTop={1}>
-        {filtered.length === 0 ? <Text dimColor>{T.empty}</Text> : null}
-        {view.hiddenBefore > 0 ? <Text dimColor>{`${T.more} ${view.hiddenBefore} above`}</Text> : null}
+      <Box flexDirection="column" marginTop={layout.mode === 'full' ? 1 : 0}>
+        {filtered.length === 0 ? (
+          <Text dimColor wrap="truncate">
+            {T.empty}
+          </Text>
+        ) : null}
+        {view.hiddenBefore > 0 ? <Text dimColor wrap="truncate">{`${T.more} ${view.hiddenBefore} above`}</Text> : null}
         {view.visible.map((item, position) => {
           const isActive = view.start + position === activeIndex
-          const showGroup = item.group !== lastGroup
+          const showGroup = layout.groups && item.group !== lastGroup
 
           lastGroup = item.group
 
@@ -180,15 +209,19 @@ export const CommandPalette = (props: CommandPaletteProps) => {
             <Box flexDirection="column" key={item.name}>
               {/* Blank line between groups (not before the first row of the window). */}
               {showGroup && position > 0 ? <Text> </Text> : null}
-              {showGroup ? <Text color="yellow">{`— ${item.group} —`}</Text> : null}
-              <Text color={isActive ? 'green' : undefined}>
+              {showGroup ? <Text color="yellow" wrap="truncate">{`— ${item.group} —`}</Text> : null}
+              {/* `wrap="truncate"` is load-bearing, not cosmetic: it is what makes "one command = one
+                  row" true at any width, which is what keeps the frame shorter than the viewport. Ink
+                  reads the wrap style off the OUTER <Text> only — it squashes the nested <Text> into
+                  this one's string — so it must live here. */}
+              <Text color={isActive ? 'green' : undefined} wrap="truncate">
                 {isActive ? '› ' : '  '}
                 {item.name.padEnd(nameWidth)} <Text dimColor>{item.description}</Text>
               </Text>
             </Box>
           )
         })}
-        {view.hiddenAfter > 0 ? <Text dimColor>{`${T.more} ${view.hiddenAfter} below`}</Text> : null}
+        {view.hiddenAfter > 0 ? <Text dimColor wrap="truncate">{`${T.more} ${view.hiddenAfter} below`}</Text> : null}
       </Box>
     </Box>
   )

@@ -38,14 +38,10 @@ const createCommandEcho = () => {
     },
 
     /**
-     * Print the equivalent CLI command if there was interactive input
+     * Format the tracked options into a replayable flag string (empty when none).
      */
-    print(): void {
-      if (!isInteractive || options.length === 0) {
-        return
-      }
-
-      const formattedOptions = options
+    formatOptions(): string {
+      return options
         .map((opt) => {
           if (typeof opt.value === 'boolean') {
             return opt.value ? opt.flag : ''
@@ -59,8 +55,30 @@ const createCommandEcho = () => {
         })
         .filter(Boolean)
         .join(' ')
+    },
 
-      logger.info(`📟 Equivalent command: \npnpm exec infra-kit ${commandName} ${formattedOptions}\n`)
+    /**
+     * The recorded interactive flags for the session shell's report side channel, so the transcript's
+     * equivalent line carries the resolved options (`--versions "1.2.5"`), not just the bare command.
+     * `null` when nothing was recorded — the caller then falls back to the bare spawned argv.
+     */
+    snapshot(): { formattedOptions: string } | null {
+      if (options.length === 0) {
+        return null
+      }
+
+      return { formattedOptions: this.formatOptions() }
+    },
+
+    /**
+     * Print the equivalent CLI command if there was interactive input
+     */
+    print(): void {
+      if (!isInteractive || options.length === 0) {
+        return
+      }
+
+      logger.info(`📟 Equivalent command: \npnpm exec infra-kit ${commandName} ${this.formatOptions()}\n`)
     },
 
     /**

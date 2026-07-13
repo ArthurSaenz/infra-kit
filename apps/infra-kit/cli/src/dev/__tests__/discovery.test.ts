@@ -113,10 +113,10 @@ describe('classifyDistChange — route a compiled-output path to app vs package'
     expect(change).toEqual({ kind: 'app', app: '/repo/apps/client/api/dist' })
   })
 
-  it('classifies a package-dist path as a package change (a lib was rebuilt → restart all)', () => {
+  it('classifies a package-dist path as a package change and returns the matched package dist dir (scoping identity)', () => {
     const change = classifyDistChange('/repo/packages/lib-core/dist/index.js', appDistDirs, packageDistDirs)
 
-    expect(change).toEqual({ kind: 'package' })
+    expect(change).toEqual({ kind: 'package', packageDir: '/repo/packages/lib-core/dist' })
   })
 
   it('returns an app change with undefined dir when nothing matches', () => {
@@ -148,6 +148,40 @@ describe('getPackageDistDirs / getAppDistDirs — existing dist dirs only', () =
 
     expect(distDirs).toEqual([path.join(apiDir, 'dist')])
   })
+
+  it('includes a shared package living under apps/<app>/<part>, not just packages/<pkg>', () => {
+    // The pnpm workspace glob is `apps/*/*`, so a shared library can legally live beside an app —
+    // hulyo's `@pkg/ai-mcp` is `apps/ai/mcp`, and two backends depend on it. Scanning only
+    // `packages/*` leaves such a package watched by NOBODY: turbo rebuilds its dist, the runner
+    // never sees the change, and every dependent backend keeps serving stale code.
+    const root = temp.register(makeMonorepo([{ name: 'ai', withHandler: true }]))
+
+    fs.mkdirSync(path.join(root, 'apps', 'ai', 'mcp', 'dist'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'apps', 'ai', 'mcp', 'package.json'), JSON.stringify({ name: '@pkg/ai-mcp' }))
+
+    expect(getPackageDistDirs(root)).toContain(path.join(root, 'apps', 'ai', 'mcp', 'dist'))
+  })
+
+  it('excludes the app-owned api/ui parts, which are app dist dirs rather than shared packages', () => {
+    // `apps/<app>/api/dist` is already covered by getAppDistDirs, and `apps/<app>/ui/dist` belongs to a
+    // frontend. Treating either as a shared package would make a UI rebuild bounce every backend.
+    const root = temp.register(makeMonorepo([{ name: 'client', withHandler: true, ui: { packageName: 'website-ui' } }]))
+
+    fs.mkdirSync(path.join(root, 'apps', 'client', 'ui', 'dist'), { recursive: true })
+
+    const distDirs = getPackageDistDirs(root)
+
+    expect(distDirs).not.toContain(path.join(root, 'apps', 'client', 'api', 'dist'))
+    expect(distDirs).not.toContain(path.join(root, 'apps', 'client', 'ui', 'dist'))
+  })
+
+  it('skips an apps/<app>/<part> dir that has no package.json (not a workspace member)', () => {
+    const root = temp.register(makeMonorepo([{ name: 'ai', withHandler: true }]))
+
+    fs.mkdirSync(path.join(root, 'apps', 'ai', 'scratch', 'dist'), { recursive: true })
+
+    expect(getPackageDistDirs(root)).not.toContain(path.join(root, 'apps', 'ai', 'scratch', 'dist'))
+  })
 })
 
 describe('discoverUiApps — frontends with a `dev` script', () => {
@@ -162,9 +196,22 @@ describe('discoverUiApps — frontends with a `dev` script', () => {
     const uiApps = discoverUiApps(root)
 
     expect(uiApps).toEqual([
-      { name: 'backoffice', packageName: 'backoffice-ui', path: path.join(root, 'apps', 'backoffice', 'ui') },
-      { name: 'client', packageName: 'website-ui', path: path.join(root, 'apps', 'client', 'ui') },
+      {
+        name: 'backoffice',
+        packageName: 'backoffice-ui',
+        path: path.join(root, 'apps', 'backoffice', 'ui'),
+        managedPort: true,
+      },
+      { name: 'client', packageName: 'website-ui', path: path.join(root, 'apps', 'client', 'ui'), managedPort: true },
     ])
+  })
+
+  it('marks a UI whose vite config does not reference `infra-kit/vite` as unmanaged', () => {
+    // The runner may only advertise (and alias) a port the UI will actually bind — which is exactly the
+    // set of UIs that call `infraKitDev()`. Everything else prints its own URL.
+    const root = temp.register(makeMonorepo([{ name: 'client', ui: { packageName: 'website-ui', viteConfig: false } }]))
+
+    expect(discoverUiApps(root)[0]?.managedPort).toBe(false)
   })
 
   it('ignores a ui folder that has no dev script', () => {

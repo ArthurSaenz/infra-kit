@@ -14,6 +14,31 @@ import type {
 } from './types.js'
 
 /**
+ * Throws a normalized error when a Jira API response is not OK, logging the
+ * status, statusText, and response body under the given context message.
+ * @param response - The fetch Response to check
+ * @param context - Log message describing the failed operation
+ */
+const assertJiraOk = async (response: Response, context: string): Promise<void> => {
+  if (response.ok) {
+    return
+  }
+
+  const errorText = await response.text()
+
+  logger.error(
+    {
+      status: response.status,
+      statusText: response.statusText,
+      error: errorText,
+    },
+    context,
+  )
+
+  throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+}
+
+/**
  * Creates a new version in Jira using the REST API
  * @param params - Version creation parameters
  * @param config - Jira configuration (baseUrl, token, projectId)
@@ -26,26 +51,14 @@ export const createJiraVersion = async (
   try {
     const { baseUrl, token, email, projectId } = config
 
-    // Use current date if not provided
-    // const releaseDate =
-    //   params.releaseDate || new Date().toISOString().split('T')[0] // 2025-12-06
-
-    // Prepare request body
     const requestBody = {
       name: params.name,
       projectId: params.projectId || projectId,
       description: params.description || '',
-      //   releaseDate,
       released: params.released || false,
       archived: params.archived || false,
     }
 
-    // logger.info(
-    //   { version: params.name, projectId: requestBody.projectId },
-    //   'Creating Jira version',
-    // )
-
-    // Make API request
     const url = `${baseUrl}/rest/api/3/version`
 
     // Create Basic auth credentials
@@ -61,27 +74,9 @@ export const createJiraVersion = async (
       body: JSON.stringify(requestBody),
     })
 
-    if (!response.ok) {
-      const errorText = await response.text()
-
-      logger.error(
-        {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorText,
-        },
-        'Failed to create Jira version',
-      )
-
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-    }
+    await assertJiraOk(response, 'Failed to create Jira version')
 
     const version = (await response.json()) as JiraVersion
-
-    // logger.info(
-    //   { versionId: version.id, versionName: version.name },
-    //   'Successfully created Jira version',
-    // )
 
     return {
       success: true,
@@ -114,20 +109,7 @@ export const getProjectVersions = async (config: JiraConfig): Promise<JiraVersio
       },
     })
 
-    if (!response.ok) {
-      const errorText = await response.text()
-
-      logger.error(
-        {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorText,
-        },
-        'Failed to get Jira project versions',
-      )
-
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-    }
+    await assertJiraOk(response, 'Failed to get Jira project versions')
 
     const versions = (await response.json()) as JiraVersion[]
 
@@ -194,20 +176,7 @@ export const updateJiraVersion = async (
       body: JSON.stringify(requestBody),
     })
 
-    if (!response.ok) {
-      const errorText = await response.text()
-
-      logger.error(
-        {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorText,
-        },
-        'Failed to update Jira version',
-      )
-
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-    }
+    await assertJiraOk(response, 'Failed to update Jira version')
 
     const version = (await response.json()) as JiraVersion
 

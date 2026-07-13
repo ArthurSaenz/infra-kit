@@ -97,6 +97,10 @@ describe('buildShellBody — warm cache', () => {
   it('forwards args on the env-clear wrapper so `env-clear --purge` reaches the CLI', () => {
     expect(body).toContain('env-clear "$@"')
   })
+
+  it('does NOT define an `ik` alias — the global bin provides it, and an alias would shadow it', () => {
+    expect(body).not.toContain('alias ik=')
+  })
 })
 
 describe('buildShellBody — async notice (prompt-safe printing)', () => {

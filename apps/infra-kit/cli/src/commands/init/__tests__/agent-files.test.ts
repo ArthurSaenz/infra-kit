@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
+import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 
 import {
   AGENTS_IMPORT_END,
@@ -17,6 +18,11 @@ vi.mock('src/lib/git-utils', () => {
   return {
     getProjectRoot: vi.fn(),
     getRepoName: vi.fn(),
+    // Mirror the real signature: with a linked-worktree-free test repo the main
+    // root IS the given toplevel, so echo the passed cwd back.
+    getMainRepoRoot: vi.fn(async (cwd?: string) => {
+      return cwd
+    }),
   }
 })
 
@@ -36,9 +42,15 @@ const withTmpRepo = async (fn: (tmp: string) => Promise<void>, opts: { repo?: bo
     writeFile(path.join(tmp, 'infra-kit.json'), '{"environments":["dev"]}\n')
   }
 
+  // getInfraKitConfigPaths memoizes on `cwd + homedir`, neither of which changes between
+  // tests here (only the mocked getProjectRoot does), so the memo would hand this test the
+  // PREVIOUS test's already-deleted tmp repo. Drop it on entry and exit.
+  resetInfraKitConfigCache()
+
   try {
     await fn(tmp)
   } finally {
+    resetInfraKitConfigCache()
     fs.rmSync(tmp, { recursive: true, force: true })
   }
 }

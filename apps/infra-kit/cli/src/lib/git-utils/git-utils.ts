@@ -94,6 +94,38 @@ export const getProjectRoot = async (): Promise<string> => {
 }
 
 /**
+ * Absolute path to the MAIN repository root — invariant across the main checkout
+ * and all of its linked worktrees. A linked worktree's `--show-toplevel` is the
+ * worktree's own path, but its `--git-common-dir` still points at the shared
+ * `<main>/.git`, so the parent of the resolved common dir is always the main repo.
+ * This is the stable identity to key per-repo state on (unlike `getProjectRoot`,
+ * whose basename is the worktree's leaf directory inside a worktree).
+ *
+ * Submodules are the one exception: their common dir is
+ * `<super>/.git/modules/<name>`, whose parent (`.../.git/modules`) is not a repo
+ * root — there is no meaningful "main repo" to converge on — so we fall back to
+ * the caller-supplied toplevel unchanged. Callers must pass a git toplevel as
+ * `cwd` (e.g. the result of {@link getProjectRoot}); the fallback assumes it.
+ *
+ * @example
+ * // main checkout: common dir '.git' → resolve → '<main>/.git' → dirname → '<main>'
+ * await getMainRepoRoot('/Users/me/projects/hulyo')            // => '/Users/me/projects/hulyo'
+ * // linked worktree: common dir '<main>/.git' → dirname → '<main>'
+ * await getMainRepoRoot('/Users/me/projects/hulyo-worktrees/feature/x') // => '/Users/me/projects/hulyo'
+ */
+export const getMainRepoRoot = async (cwd?: string): Promise<string> => {
+  const root = cwd ?? (await getProjectRoot())
+  const commonDir = (await $({ cwd: root })`git rev-parse --git-common-dir`).stdout.trim()
+  const resolved = path.resolve(root, commonDir)
+
+  // Submodule: common dir sits under `<super>/.git/modules/<name>` — no stable
+  // main-repo root to key on, so keep the caller's own toplevel.
+  if (resolved.includes(`${path.sep}.git${path.sep}modules${path.sep}`)) return root
+
+  return path.dirname(resolved)
+}
+
+/**
  * Get the current git branch name (e.g. `dev`, `main`, `release/v1.2.3`).
  */
 export const getCurrentBranch = async (): Promise<string> => {

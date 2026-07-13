@@ -41,6 +41,6 @@
     "isolatedModules": true,
     "skipLibCheck": true
   },
-  "include": ["src", "vitest.setup.ts"],
+  "include": ["src", "scripts", "vitest.setup.ts"],
   "exclude": ["node_modules", "dist", ".turbo"]
 }

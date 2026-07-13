@@ -45,7 +45,6 @@ blob-report
 playwright/.cache/
 
 ## Misc
-Makefile
 Dockerfile
 .DS_Store
 google-services.json

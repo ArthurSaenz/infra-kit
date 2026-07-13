@@ -17,12 +17,42 @@ import { buildCmuxLayout } from './cmux-layout.js'
 import type { DevServerOptions } from './dev-server.js'
 import { discoverApiApps, findMonorepoRoot, normalizeAppInclude } from './discovery.js'
 import type { DiscoveredApiApp } from './discovery.js'
+import { registerSignalShutdown } from './signal-shutdown.js'
 
-/** Build the per-pane primitive command for each app (append `--watch` when requested). */
-export const buildPaneCommands = (appNames: string[], watch: boolean): string[] => {
-  return appNames.map((name) => {
-    return `pnpm exec infra-kit dev --app=${name}${watch ? ' --watch' : ''}`
+/** One cmux pane: the app it runs, and (optionally) the exact `<app>/<part>` targets selected for it. */
+export interface PaneSpec {
+  app: string
+  /**
+   * Exact target keys for this pane. When absent the pane falls back to `--app=<name>`, which expands to
+   * EVERY part the app has (both the api and the ui glob targets) — right for a plain `--cmux`, wrong for a wizard selection
+   * that deliberately unticked a part. `--app` has app-name granularity and cannot express `<app>/api`
+   * alone; that is exactly what `--target` exists for.
+   */
+  targets?: string[]
+}
+
+/** Build the per-pane primitive command for each pane (append `--watch` when requested). */
+export const buildPaneCommands = (panes: PaneSpec[], watch: boolean): string[] => {
+  return panes.map(({ app, targets }) => {
+    const selector = targets && targets.length > 0 ? `--target=${targets.join(',')}` : `--app=${app}`
+
+    return `pnpm exec infra-kit dev ${selector}${watch ? ' --watch' : ''}`
   })
+}
+
+/** The concrete `<app>/<part>` keys of an in-memory preset, grouped by app. Glob keys (those whose app segment is a bare star) are skipped. */
+export const paneTargetsByApp = (presetDef: DevServerOptions['presetDef']): Map<string, string[]> => {
+  const byApp = new Map<string, string[]>()
+
+  for (const key of Object.keys(presetDef?.apps ?? {})) {
+    const app = key.split('/')[0]
+
+    if (app === undefined || app === '*') continue
+
+    byApp.set(app, [...(byApp.get(app) ?? []), key])
+  }
+
+  return byApp
 }
 
 /** Discover API apps under `root`, applying the optional `--app` include filter. */
@@ -52,31 +82,16 @@ const logDevWorkspace = (apps: DiscoveredApiApp[], ref: string): void => {
 }
 
 /**
- * Register SIGINT/SIGTERM handlers that close the workspace `ref` (once, guarded
- * against a double-fire) and then exit — this is the supervisor's whole teardown.
+ * Register SIGINT/SIGTERM handlers that close the workspace `ref` — the supervisor's whole
+ * teardown. No force-deadline: closing a workspace is a single call, not a child reap, and a
+ * second signal is already an unconditional escape (see {@link registerSignalShutdown}).
  */
 const registerShutdown = (ref: string): void => {
-  let shuttingDown = false
-
-  const shutdown = (signal: NodeJS.Signals): void => {
-    if (shuttingDown) return
-    shuttingDown = true
-
-    void (async () => {
-      try {
-        logger.info(`\nReceived ${signal}, closing cmux dev workspace ${ref}...`)
-        await closeCmuxDevWorkspace(ref)
-      } finally {
-        process.exit(0)
-      }
-    })()
-  }
-
-  process.on('SIGINT', () => {
-    return shutdown('SIGINT')
-  })
-  process.on('SIGTERM', () => {
-    return shutdown('SIGTERM')
+  registerSignalShutdown({
+    onSignal: async (signal) => {
+      logger.info(`\nReceived ${signal}, closing cmux dev workspace ${ref}...`)
+      await closeCmuxDevWorkspace(ref)
+    },
   })
 }
 
@@ -100,9 +115,12 @@ export const runCmuxDevServer = async (options: DevServerOptions): Promise<void>
     return
   }
 
+  // A wizard run hands down its in-memory preset, so each pane reproduces the exact parts that were
+  // ticked. A plain `--cmux` has no presetDef and falls back to `--app=<name>` (every part), unchanged.
+  const targetsByApp = paneTargetsByApp(options.presetDef)
   const commands = buildPaneCommands(
     apps.map((app) => {
-      return app.name
+      return { app: app.name, targets: targetsByApp.get(app.name) }
     }),
     options.watch ?? false,
   )

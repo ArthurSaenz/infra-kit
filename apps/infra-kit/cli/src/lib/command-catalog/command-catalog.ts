@@ -1,6 +1,7 @@
 import type { z } from 'zod'
 
-import { auditMcpTool } from 'src/commands/audit'
+// TEMP: `audit` is disabled — restore this import together with the catalog entry below.
+// import { auditMcpTool } from 'src/commands/audit'
 import { doctorMcpTool } from 'src/commands/doctor'
 import { envClearMcpTool } from 'src/commands/env-clear'
 import { envListMcpTool } from 'src/commands/env-list'
@@ -52,8 +53,28 @@ export interface CatalogMcpTool {
  * in, and whether the command is exposed as an MCP tool.
  */
 
+/**
+ * The menu groups, in display order — the SINGLE source of both membership and presentation. `cli.ts`
+ * renders the palette by mapping over this list, so adding, renaming, or reordering a group is a
+ * one-line edit here and nowhere else. (The group list used to be restated three times in `cli.ts`, and
+ * the labels a fourth time in the Inquirer separators.)
+ *
+ * One group per CLI noun, ordered by how often it is reached for. `Develop` leads because `dev` is the
+ * daily driver. `Environment` means the Doppler env commands and nothing else — it used to be a
+ * 13-entry drawer holding config, vendor, and setup commands too, which made its name a lie.
+ */
+export const MENU_GROUPS = [
+  { key: 'develop', label: 'Develop' },
+  { key: 'release', label: 'Release Management' },
+  { key: 'worktrees', label: 'Worktrees' },
+  { key: 'environment', label: 'Environment' },
+  { key: 'configuration', label: 'Configuration' },
+  { key: 'vendor', label: 'Vendor' },
+  { key: 'setup', label: 'Setup & Diagnostics' },
+] as const
+
 /** Top-level menu group for the no-arg interactive picker (null = not shown). */
-export type MenuGroup = 'release' | 'worktrees' | 'environment'
+export type MenuGroup = (typeof MENU_GROUPS)[number]['key']
 
 export interface CommandCatalogEntry {
   /** CLI command name as registered in Commander (flat form, e.g. `merge-dev`). */
@@ -88,6 +109,20 @@ export interface CommandCatalogEntry {
    * / `env-clear`.
    */
   sessionEnvNotice?: boolean
+  /**
+   * A foreground process that runs until the user stops it, rather than doing a unit of work and
+   * exiting. Only `dev`. It breaks BOTH of the session shell's assumptions about a child, so the two
+   * consequences are deliberately carried by ONE flag — they must never be set apart:
+   *
+   * 1. **It produces no verdict.** Its Commander action RESOLVES seconds after boot (the process stays
+   *    alive on fastify/chokidar handles, not on a pending promise), so `postAction` would write a
+   *    session report while the server is merely *starting*. Report-presence means "the command produced
+   *    a verdict" (see `session/report.ts`), so the report is suppressed for it entirely.
+   * 2. **It exits `128 + signo`, not 0.** It installs its own SIGINT handler and exits 130 on a Ctrl-C
+   *    — deliberately, so a supervisor sees an honest signal death. Without this flag the session would
+   *    read that as a failure and stamp every normal dev exit `✗ failed`.
+   */
+  longRunning?: boolean
 }
 
 /**
@@ -97,6 +132,28 @@ export interface CommandCatalogEntry {
  * tools by name), so the registration order need not match the array order.
  */
 export const commandCatalog: CommandCatalogEntry[] = [
+  // --- Develop (menu group) ---
+  // The local dev server, and the reason most people open this menu at all — so it leads.
+  //
+  // It is a long-running foreground child, which the one-shot Inquirer menu could not host: that menu
+  // ran the pick IN-PROCESS, so a dev server would have blocked the menu process forever. The session
+  // shell spawns every pick as a separate child on the primary screen and swallows SIGINT while one
+  // runs, so Ctrl-C stops only the dev server and the palette comes back. See `longRunning` for the two
+  // session assumptions it still breaks (no verdict; exits 128+signo).
+  //
+  // Spawning the BARE `['dev']` path is deliberate: `shouldRunWizard` fires on exactly bare + TTY +
+  // non-json, so a menu pick lands in the interactive wizard — the wizard IS the flag picker.
+  //
+  // Not an MCP tool: it never returns a result, so it cannot fit the request/response tool contract.
+  {
+    cliName: 'dev',
+    menuGroup: 'develop',
+    mcpTool: null,
+    mcpExposed: false,
+    groupPath: ['dev'],
+    longRunning: true,
+  },
+
   // --- Release Management (menu group) ---
   {
     cliName: 'merge-dev',
@@ -190,46 +247,13 @@ export const commandCatalog: CommandCatalogEntry[] = [
     groupPath: ['worktrees', 'sync'],
   },
 
-  // --- Environment (menu group) ---
+  // --- Environment (menu group): the Doppler env commands, and ONLY those ---
   // Every menu-eligible entry must be a Commander LEAF (an action, no subcommands) so the session
   // shell's report discriminator holds. The bare `vendor`/`config` GROUPS are menuGroup:null — a bare
   // group prints help and exits non-zero, which the shell would misreport. Their useful leaves
-  // (vendor-check/diff/config, config-path/edit) are surfaced here instead, each with a hidden flat
-  // Commander alias (see src/lib/program/program.ts) so the palette can introspect + single-token dispatch.
-  { cliName: 'audit', menuGroup: 'environment', mcpTool: auditMcpTool, mcpExposed: true, groupPath: ['audit'] },
-  {
-    cliName: 'vendor-check',
-    menuGroup: 'environment',
-    mcpTool: vendorCheckMcpTool,
-    mcpExposed: true,
-    groupPath: ['vendor', 'check'],
-  },
-  {
-    cliName: 'vendor-diff',
-    menuGroup: 'environment',
-    mcpTool: vendorDiffMcpTool,
-    mcpExposed: true,
-    groupPath: ['vendor', 'diff'],
-  },
-  {
-    cliName: 'vendor-config',
-    menuGroup: 'environment',
-    mcpTool: null,
-    mcpExposed: false,
-    groupPath: ['vendor', 'config'],
-  },
-  { cliName: 'config-path', menuGroup: 'environment', mcpTool: null, mcpExposed: false, groupPath: ['config', 'path'] },
-  {
-    cliName: 'config-edit',
-    menuGroup: 'environment',
-    mcpTool: null,
-    mcpExposed: false,
-    groupPath: ['config', 'edit'],
-    entersAltScreen: true,
-  },
-  { cliName: 'doctor', menuGroup: 'environment', mcpTool: doctorMcpTool, mcpExposed: false, groupPath: ['doctor'] },
-  { cliName: 'init', menuGroup: 'environment', mcpTool: null, mcpExposed: false, groupPath: ['init'] },
-  { cliName: 'version', menuGroup: 'environment', mcpTool: versionMcpTool, mcpExposed: true, groupPath: ['version'] },
+  // (vendor-check/diff/config, config-path/edit) are surfaced in the Vendor/Configuration groups below,
+  // each with a hidden flat Commander alias (see src/lib/program/program.ts) so the palette can
+  // introspect + single-token dispatch.
   {
     cliName: 'env-status',
     menuGroup: 'environment',
@@ -255,14 +279,59 @@ export const commandCatalog: CommandCatalogEntry[] = [
     sessionEnvNotice: true,
   },
 
+  // --- Configuration (menu group) ---
+  {
+    cliName: 'config-path',
+    menuGroup: 'configuration',
+    mcpTool: null,
+    mcpExposed: false,
+    groupPath: ['config', 'path'],
+  },
+  {
+    cliName: 'config-edit',
+    menuGroup: 'configuration',
+    mcpTool: null,
+    mcpExposed: false,
+    groupPath: ['config', 'edit'],
+    entersAltScreen: true,
+  },
+
+  // --- Vendor (menu group) ---
+  {
+    cliName: 'vendor-check',
+    menuGroup: 'vendor',
+    mcpTool: vendorCheckMcpTool,
+    mcpExposed: true,
+    groupPath: ['vendor', 'check'],
+  },
+  {
+    cliName: 'vendor-diff',
+    menuGroup: 'vendor',
+    mcpTool: vendorDiffMcpTool,
+    mcpExposed: true,
+    groupPath: ['vendor', 'diff'],
+  },
+  {
+    cliName: 'vendor-config',
+    menuGroup: 'vendor',
+    mcpTool: null,
+    mcpExposed: false,
+    groupPath: ['vendor', 'config'],
+  },
+
+  // --- Setup & Diagnostics (menu group) ---
+  // `init`/`doctor` set the machine up and check it; `audit` checks the REPO against its config rules.
+  // Both answer "is this in a good state?", which is why they sit together.
+  { cliName: 'init', menuGroup: 'setup', mcpTool: null, mcpExposed: false, groupPath: ['init'] },
+  { cliName: 'doctor', menuGroup: 'setup', mcpTool: doctorMcpTool, mcpExposed: false, groupPath: ['doctor'] },
+  // TEMP: `audit` removed from the catalog (CLI + MCP + menu). Restore with the import at the top.
+  // { cliName: 'audit', menuGroup: 'setup', mcpTool: auditMcpTool, mcpExposed: true, groupPath: ['audit'] },
+  { cliName: 'version', menuGroup: 'setup', mcpTool: versionMcpTool, mcpExposed: true, groupPath: ['version'] },
+
   // --- Not menu items (groups, long-running, or internal) ---
   // Bare groups: help + non-zero exit, so they never belong in the leaf-only menu.
   { cliName: 'vendor', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['vendor'] },
   { cliName: 'config', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['config'] },
-  // Long-running local dev server (fastify + chokidar). Not an MCP tool — it never
-  // returns, so it can't fit the request/response tool contract. menuGroup null:
-  // the no-arg picker drives one-shot commands, not a blocking foreground process.
-  { cliName: 'dev', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['dev'] },
   // Internal shell-startup trigger; hidden from the menu and never an MCP tool
   // (it can't apply env to a shell — only the zsh integration sources the file).
   { cliName: 'env-autoload', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['env-autoload'] },
@@ -302,5 +371,20 @@ export const getExposedMcpTools = (): CatalogMcpTool[] => {
 export const getMenuGroupCommands = (group: MenuGroup): string[] => {
   return commandCatalog.flatMap((entry) => {
     return entry.menuGroup === group ? [entry.cliName] : []
+  })
+}
+
+/**
+ * True when the invoked command runs until the user stops it (see {@link CommandCatalogEntry.longRunning}).
+ * Keyed by the SPACE-JOINED Commander path (`'dev'`, `'vendor check'`) so it matches what `commandPath()`
+ * hands the `postAction` hook, not the flat alias.
+ *
+ * @example
+ * isLongRunningCommand('dev')          // => true  (no verdict to report; exits 128+signo)
+ * isLongRunningCommand('vendor check') // => false
+ */
+export const isLongRunningCommand = (commandPath: string): boolean => {
+  return commandCatalog.some((entry) => {
+    return entry.longRunning === true && entry.groupPath.join(' ') === commandPath
   })
 }

@@ -4,10 +4,11 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Import AFTER the mock is declared so the module picks up the mocked dep.
-import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
+import { getMainRepoRoot, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 
 import {
   getInfraKitConfig,
+  getInfraKitConfigPaths,
   resetInfraKitConfigCache,
   resolveCmuxLayout,
   resolveConfiguredIdes,
@@ -18,6 +19,7 @@ vi.mock('src/lib/git-utils', () => {
   return {
     getProjectRoot: vi.fn(),
     getRepoName: vi.fn(),
+    getMainRepoRoot: vi.fn(),
   }
 })
 
@@ -36,6 +38,8 @@ const withTmpRepo = async (fn: (tmp: string) => Promise<void>): Promise<void> =>
 
   vi.mocked(getProjectRoot).mockResolvedValue(tmp)
   vi.mocked(getRepoName).mockResolvedValue(path.basename(tmp))
+  // No linked worktree in this fixture: the main repo root is the project root.
+  vi.mocked(getMainRepoRoot).mockResolvedValue(tmp)
   // Point os.homedir() at the tmp dir so user-scope override layers
   // (~/.infra-kit/infra-kit.json, ~/.infra-kit/projects/<repo>/infra-kit.json)
   // can't leak the developer's real config into the test.
@@ -397,6 +401,190 @@ describe('getInfraKitConfig', () => {
       // Same object reference — no re-parse.
       expect(a).toBe(b)
     })
+  })
+})
+
+describe('getInfraKitConfigPaths', () => {
+  afterEach(() => {
+    resetInfraKitConfigCache()
+    vi.clearAllMocks()
+  })
+
+  it('keys the per-project override on the main repo root, not the worktree leaf', async () => {
+    // Simulate a linked worktree: the checkout toplevel (getProjectRoot) is the
+    // worktree's own path, while getMainRepoRoot resolves to the shared main repo.
+    // The per-project override must converge on the MAIN repo name, so every
+    // worktree of `hulyo` reads ~/.infra-kit/projects/hulyo/…, not …/feature-x/….
+    const mainRoot = path.join(os.tmpdir(), 'hulyo')
+    const worktreeRoot = path.join(os.tmpdir(), 'hulyo-worktrees', 'feature-x')
+    const home = path.join(os.tmpdir(), 'fake-home')
+
+    vi.mocked(getProjectRoot).mockResolvedValue(worktreeRoot)
+    vi.mocked(getMainRepoRoot).mockResolvedValue(mainRoot)
+    const homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(home)
+
+    resetInfraKitConfigCache()
+
+    try {
+      const paths = await getInfraKitConfigPaths()
+
+      // Namespace key follows the main repo, not the worktree leaf dir.
+      expect(paths.projectName).toBe('hulyo')
+      expect(paths.projectName).not.toBe('feature-x')
+      expect(paths.userProject).toBe(path.join(home, '.infra-kit', 'projects', 'hulyo', 'infra-kit.json'))
+      // Layer-1 committed config stays worktree-local (checked out per branch).
+      expect(paths.main).toBe(path.join(worktreeRoot, 'infra-kit.json'))
+      // Layer-2 user-global is home-scoped, unaffected by the worktree.
+      expect(paths.userGlobal).toBe(path.join(home, '.infra-kit', 'infra-kit.json'))
+    } finally {
+      homedirSpy.mockRestore()
+      resetInfraKitConfigCache()
+    }
+  })
+
+  it('keys off the project root in a plain checkout (main === project root)', async () => {
+    const root = path.join(os.tmpdir(), 'hulyo')
+    const home = path.join(os.tmpdir(), 'fake-home')
+
+    vi.mocked(getProjectRoot).mockResolvedValue(root)
+    vi.mocked(getMainRepoRoot).mockResolvedValue(root)
+    const homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(home)
+
+    resetInfraKitConfigCache()
+
+    try {
+      const paths = await getInfraKitConfigPaths()
+
+      expect(paths.projectName).toBe('hulyo')
+      expect(paths.userProject).toBe(path.join(home, '.infra-kit', 'projects', 'hulyo', 'infra-kit.json'))
+    } finally {
+      homedirSpy.mockRestore()
+      resetInfraKitConfigCache()
+    }
+  })
+})
+
+describe('getInfraKitConfigPaths memoization', () => {
+  afterEach(() => {
+    resetInfraKitConfigCache()
+    vi.clearAllMocks()
+  })
+
+  it('spawns git at most once per process across repeated path resolutions', async () => {
+    const root = path.join(os.tmpdir(), 'memo-repo')
+    const home = path.join(os.tmpdir(), 'memo-home')
+
+    vi.mocked(getProjectRoot).mockResolvedValue(root)
+    vi.mocked(getMainRepoRoot).mockResolvedValue(root)
+    const homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(home)
+
+    resetInfraKitConfigCache()
+
+    try {
+      const first = await getInfraKitConfigPaths()
+      const second = await getInfraKitConfigPaths()
+      const third = await getInfraKitConfigPaths()
+
+      // The memo's actual contract: two `git rev-parse` spawns for the whole process, not 2N.
+      expect(getProjectRoot).toHaveBeenCalledTimes(1)
+      expect(getMainRepoRoot).toHaveBeenCalledTimes(1)
+      expect(second).toBe(first)
+      expect(third).toBe(first)
+    } finally {
+      homedirSpy.mockRestore()
+      resetInfraKitConfigCache()
+    }
+  })
+
+  it('does not re-spawn git when getInfraKitConfig is called repeatedly', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
+
+      await getInfraKitConfigPaths()
+      await getInfraKitConfig()
+      await getInfraKitConfig()
+
+      // getInfraKitConfigPaths runs BEFORE the mtime cache, so without the memo this would be 3.
+      expect(getProjectRoot).toHaveBeenCalledTimes(1)
+      expect(getMainRepoRoot).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('rotates the memo when os.homedir() changes (homedir is part of the key)', async () => {
+    const root = path.join(os.tmpdir(), 'memo-repo')
+    const homeA = path.join(os.tmpdir(), 'memo-home-a')
+    const homeB = path.join(os.tmpdir(), 'memo-home-b')
+
+    vi.mocked(getProjectRoot).mockResolvedValue(root)
+    vi.mocked(getMainRepoRoot).mockResolvedValue(root)
+    const homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(homeA)
+
+    resetInfraKitConfigCache()
+
+    try {
+      const first = await getInfraKitConfigPaths()
+
+      expect(first.userGlobal).toBe(path.join(homeA, '.infra-kit', 'infra-kit.json'))
+
+      // A cwd-only key would serve homeA's (in the real suite: already-deleted) paths back here.
+      homedirSpy.mockReturnValue(homeB)
+
+      const second = await getInfraKitConfigPaths()
+
+      expect(second.userGlobal).toBe(path.join(homeB, '.infra-kit', 'infra-kit.json'))
+      expect(second.userProject).toBe(path.join(homeB, '.infra-kit', 'projects', 'memo-repo', 'infra-kit.json'))
+      expect(getProjectRoot).toHaveBeenCalledTimes(2)
+    } finally {
+      homedirSpy.mockRestore()
+      resetInfraKitConfigCache()
+    }
+  })
+
+  it('never memoizes a rejection (outside a git repo stays a throw on every call)', async () => {
+    const home = path.join(os.tmpdir(), 'memo-home')
+
+    vi.mocked(getProjectRoot).mockRejectedValue(new Error('not a git repository'))
+    const homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(home)
+
+    resetInfraKitConfigCache()
+
+    try {
+      await expect(getInfraKitConfigPaths()).rejects.toThrow(/not a git repository/)
+      await expect(getInfraKitConfigPaths()).rejects.toThrow(/not a git repository/)
+
+      // Both calls really hit the primitive — the failure is recomputed, not cached.
+      expect(getProjectRoot).toHaveBeenCalledTimes(2)
+    } finally {
+      homedirSpy.mockRestore()
+      resetInfraKitConfigCache()
+    }
+  })
+
+  it('resetInfraKitConfigCache() clears the path memo', async () => {
+    const root = path.join(os.tmpdir(), 'memo-repo')
+    const home = path.join(os.tmpdir(), 'memo-home')
+
+    vi.mocked(getProjectRoot).mockResolvedValue(root)
+    vi.mocked(getMainRepoRoot).mockResolvedValue(root)
+    const homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(home)
+
+    resetInfraKitConfigCache()
+
+    try {
+      await getInfraKitConfigPaths()
+
+      expect(getProjectRoot).toHaveBeenCalledTimes(1)
+
+      resetInfraKitConfigCache()
+
+      await getInfraKitConfigPaths()
+
+      expect(getProjectRoot).toHaveBeenCalledTimes(2)
+      expect(getMainRepoRoot).toHaveBeenCalledTimes(2)
+    } finally {
+      homedirSpy.mockRestore()
+      resetInfraKitConfigCache()
+    }
   })
 })
 

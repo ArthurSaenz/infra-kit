@@ -19,11 +19,11 @@ import process from 'node:process'
  */
 
 /** DECSED 3 — "erase saved lines". The only escape that can destroy scrollback. */
-const ERASE_SCROLLBACK = /\u001B\[3J/g
+const ERASE_SCROLLBACK = '\u001B[3J'
 
-/** Drop every scrollback-erasing escape from a frame. */
+/** Drop every scrollback-erasing escape from a frame (split/join: a regex here holds a control char). */
 const scrub = (chunk: unknown): unknown => {
-  return typeof chunk === 'string' ? chunk.replace(ERASE_SCROLLBACK, '') : chunk
+  return typeof chunk === 'string' ? chunk.split(ERASE_SCROLLBACK).join('') : chunk
 }
 
 /**

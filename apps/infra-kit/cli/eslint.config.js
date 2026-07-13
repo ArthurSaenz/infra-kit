@@ -7,7 +7,17 @@ import config from '@wl/eslint-config'
  * `no-restricted-imports` only flags static imports — dynamic import() is allowed.
  */
 const noTuiOnMachinePaths = {
-  files: ['src/entry/cli.ts', 'src/entry/mcp.ts', 'src/commands/**/*.ts', 'src/commands/**/*.tsx'],
+  files: [
+    'src/entry/cli.ts',
+    'src/entry/mcp.ts',
+    'src/commands/**/*.ts',
+    'src/commands/**/*.tsx',
+    // The release-picker shim is the one lib module that legally reaches the TUI —
+    // but only through a dynamic import(). Linting it here means an accidental
+    // static ink/react/src/tui import fails at edit time, not just in the
+    // hand-maintained no-react-boundary test.
+    'src/lib/prompts/**/*.ts',
+  ],
   rules: {
     'no-restricted-imports': [
       'error',

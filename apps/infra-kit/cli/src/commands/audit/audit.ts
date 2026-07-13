@@ -115,7 +115,7 @@ export const audit = async (options: AuditOptions = {}) => {
     results.push(await validatePackage(target.dir, target.baseline))
   }
 
-  // Root audit also validates project-level devPresets proxy locality (a `local`
+  // Root audit also validates project-level devServersPresets proxy locality (a `local`
   // route override must have its backend launched by the preset). Skipped when the
   // project declares no presets. Only meaningful at the root — presets live in the
   // project infra-kit.json, not in any single package.

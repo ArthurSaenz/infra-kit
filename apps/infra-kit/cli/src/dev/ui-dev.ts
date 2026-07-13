@@ -7,27 +7,48 @@
 /**
  * Frontend dev engine for `infra-kit dev --ui`.
  *
- * Delegates FE to ONE `turbo run dev` child (turbo owns the `dev` fan-out, `^build` ordering
- * and concurrency) rather than infra-kit spawning each framework itself — the same delegation
- * choice already made for builds via `turbo watch`. infra-kit treats UIs opaquely: it runs their
- * `dev` script (vite/vike/astro/…) and never encodes per-framework knowledge.
+ * Delegates FE to ONE `turbo run dev` child (turbo owns the `dev` fan-out and concurrency) rather than
+ * infra-kit spawning each framework itself — the same delegation choice already made for builds via
+ * `turbo watch`. infra-kit treats UIs opaquely: it runs their `dev` script (vite/vike/astro/…) and
+ * never encodes per-framework knowledge.
  *
- * Unlike the `turbo watch` child, this one's stdio is INHERITED — the framework dev servers own
- * their own TTY output (HMR overlays, URLs, spinners), so it streams raw to the terminal below the
- * BE server table rather than being teed into the runner log (which would corrupt it with ANSI).
+ * This child's stdio is PIPED, never inherited. With `inherit`, turbo and the framework write straight
+ * to the TTY, bypassing the renderer entirely: turbo's run chrome interleaves with the pinned footer,
+ * and vite's `Local:` URL contradicts the proxy hero URL the ready header already shows. Piping makes
+ * `infra-kit dev` the single owner of the terminal — every line is tee'd verbatim to the runner log,
+ * and the framework's own lines are routed through `onLine` into the renderer's tagged tail, so vite's
+ * URLs, HMR notices and compile errors surface INSIDE the UI instead of fighting it.
+ *
+ * `--only` keeps that tail signal-dense. A `dev` task `dependsOn: ["^build"]`, so turbo would otherwise
+ * re-walk the whole dependency closure and emit one `cache hit` line per dep — work the runner already
+ * did in `buildUiApps` (`turbo run build <pkg>^...`) before spawning this child. `--only` drops those
+ * `^build` tasks from the graph, so the redundant walk never happens. `--output-logs=new-only` collapses
+ * any stray cache-hit replay, `--no-update-notifier` drops turbo's "Update available" banner, and
+ * `--ui=stream` pins line-oriented output (turbo picks it anyway off a pipe, but it is cheap to be
+ * explicit, and it is what `parseTurboDevLine`'s `<pkg>:dev:` prefix contract depends on).
  *
  * Detached → its own process group; reaped as a group (SIGTERM→SIGKILL) via {@link superviseChild}.
  */
 import { spawn } from 'node:child_process'
+import process from 'node:process'
+import type { Readable } from 'node:stream'
 
 import { superviseChild } from './managed-child.js'
-import type { ManagedChild } from './managed-child.js'
+import type { ManagedChild, UnexpectedExitHandler } from './managed-child.js'
 
 /** Handle to the running `turbo run dev` child; `kill()` reaps the whole process group. */
 export type UiDevHandle = ManagedChild
 
 /** Injectable spawn seam so tests run the orchestrator without a real turbo child. */
 export type UiDevFactory = (opts: UiDevOptions) => UiDevHandle
+
+/** One framework output line, already stripped of turbo's `<pkg>:dev:` prefix. */
+export interface TurboDevLine {
+  /** The turbo package name that emitted the line (e.g. `website-ui`). */
+  pkg: string
+  /** The framework's own text, ANSI-stripped. */
+  text: string
+}
 
 export interface UiDevOptions {
   /** UI app package names; each becomes an exact `--filter=<pkg>` (turbo runs its `dev` task). */
@@ -39,24 +60,182 @@ export interface UiDevOptions {
    * turbo hard-errors when persistent tasks exceed concurrency (default 10).
    */
   concurrency: number
+  /**
+   * Extra env merged over `process.env` for the turbo child (Layer B passes `INFRA_KIT_UI_PORTS`).
+   * `turbo … --env-mode=loose` passes the full env through to each vite `dev` task. Omit → inherit only.
+   */
+  env?: Record<string, string>
+  /** Raw child output (turbo chrome included, ANSI intact) appended verbatim to the runner log. */
+  appendLog?: (text: string) => void
+  /** One call per framework output line; turbo's own chrome is filtered out first. */
+  onLine?: (line: TurboDevLine) => void
+  /**
+   * Called if the child dies on its own (not via `kill()`): every UI's live reload silently stops, so
+   * the runner surfaces it. Optional so the injected test factory can ignore it.
+   */
+  onUnexpectedExit?: UnexpectedExitHandler
+}
+
+/* eslint-disable no-control-regex, sonarjs/no-control-regex -- terminal escapes and control chars are, by definition, control chars. */
+/** An OSC sequence: ESC `]` ... terminated by BEL or ST. Frameworks emit these for terminal hyperlinks. */
+const OSC_ESCAPE = /\u001B\][\s\S]*?(?:\u0007|\u001B\\)/g
+/** A CSI escape: ESC `[`, parameter bytes, intermediate bytes, final byte. Covers every SGR colour. */
+const CSI_ESCAPE = /\u001B\[[0-9;?]*[\u0020-\u002F]*[\u0040-\u007E]/g
+/**
+ * Every remaining C0 control char except TAB. CR is the dangerous one: written straight to a TTY it
+ * snaps the cursor to column 0, smearing the row and the pinned footer below it - exactly the corruption
+ * that piping the child was meant to end. LF cannot appear here: `pumpLines` already split on it.
+ */
+const CONTROL_CHARS = /[\u0000-\u0008\u000B-\u001F\u007F]/g
+/* eslint-enable no-control-regex, sonarjs/no-control-regex */
+
+/**
+ * Make a raw child line safe for the renderer's tail: drop terminal escapes (which would fight the
+ * scroll region) and stray control chars (which would move the cursor), leaving plain text the renderer
+ * styles itself. Order matters - OSC is matched before the bare-control sweep can eat its leading ESC.
+ */
+export const stripAnsi = (text: string): string => {
+  return text.replace(OSC_ESCAPE, '').replace(CSI_ESCAPE, '').replace(CONTROL_CHARS, '')
+}
+
+/** Turbo's per-task line prefix under `--ui=stream`: `<pkg>:dev:`. */
+const TASK_PREFIX = /^([^\s:]+):dev:[ \t]?/
+
+/**
+ * Per-task bookkeeping turbo emits before the framework speaks: the cache verdict
+ * (`cache bypass, force executing <hash>`) and the echoed command (`$ pnpm exec vike dev`).
+ * Neither is dev signal — both are already implied by the app appearing in the ready header.
+ */
+const isTaskChrome = (text: string): boolean => {
+  return /^cache (?:bypass|hit|miss)/.test(text) || text.startsWith('$ ')
 }
 
 /**
- * Default factory: spawn `pnpm exec turbo run dev --filter=<pkg> … --concurrency=N --env-mode=loose`
- * detached, streaming to the parent terminal, and reap the process group on `kill()`.
+ * One raw turbo line → the framework line to surface, or `null` to drop it.
+ *
+ * Turbo's run chrome (`• Packages in scope: …`, `• Running dev in 1 packages`, `• Remote caching
+ * disabled`, the closing task summary, pnpm's `ELIFECYCLE` teardown) carries no `<pkg>:dev:` prefix.
+ * Requiring that prefix drops all of it under one rule instead of chasing a brittle denylist, and what
+ * survives is exactly the framework's own stdout/stderr — including its errors.
+ *
+ * @example
+ * parseTurboDevLine('website-ui:dev: ready in 384 ms') // => { pkg: 'website-ui', text: 'ready in 384 ms' }
+ * parseTurboDevLine('• Remote caching disabled')       // => null
+ */
+export const parseTurboDevLine = (raw: string): TurboDevLine | null => {
+  const line = stripAnsi(raw).trimEnd()
+  const match = TASK_PREFIX.exec(line)
+
+  if (match == null) {
+    return null
+  }
+
+  const text = line.slice(match[0].length)
+
+  if (text.trim() === '' || isTaskChrome(text.trim())) {
+    return null
+  }
+
+  return { pkg: match[1]!, text }
+}
+
+/**
+ * Cap for the newline-less carry buffer. A framework that renders progress with bare CR and never a LF
+ * would otherwise grow `pending` without bound for the life of the dev session.
+ */
+const MAX_PENDING_CHARS = 64 * 1024
+
+/**
+ * Split a piped stream into lines: tee every chunk verbatim to the log, and route each complete
+ * framework line to `onLine`. A trailing partial line is flushed on `end`, so a framework that exits
+ * without a final newline never swallows its last (often the most interesting) line.
+ *
+ * The `data` listener is attached unconditionally — NOT gated on `onLine`/`appendLog` being set. A piped
+ * child whose stdout is never read blocks once the OS pipe buffer fills, so draining is the contract
+ * here; the sinks are merely optional consumers of what we drain.
+ */
+const pumpLines = (stream: Readable | null, opts: Pick<UiDevOptions, 'appendLog' | 'onLine'>): void => {
+  if (stream == null) {
+    return
+  }
+
+  let pending = ''
+
+  const emit = (raw: string): void => {
+    const parsed = parseTurboDevLine(raw)
+
+    if (parsed != null) opts.onLine?.(parsed)
+  }
+
+  stream.setEncoding('utf-8')
+  stream.on('data', (chunk: string) => {
+    opts.appendLog?.(chunk)
+    pending += chunk
+
+    const lines = pending.split('\n')
+
+    pending = lines.pop() ?? ''
+    for (const raw of lines) {
+      emit(raw)
+    }
+
+    if (pending.length > MAX_PENDING_CHARS) {
+      emit(pending)
+      pending = ''
+    }
+  })
+  stream.on('end', () => {
+    if (pending === '') return
+    emit(pending)
+    pending = ''
+  })
+  // A readable that emits `error` with no listener THROWS, taking the whole dev session down. The child's
+  // lifecycle is already owned by `superviseChild`, so a read error (pty EIO, a pipe torn down mid-SIGKILL)
+  // only needs recording, never escalation.
+  stream.on('error', (err: Error) => {
+    opts.appendLog?.(`[infra-kit] ui dev stream error: ${err.message}\n`)
+  })
+}
+
+/**
+ * Default factory: spawn `pnpm exec turbo run dev --filter=<pkg> … --only` detached with piped stdio,
+ * fan its output into the runner log + the renderer's tail, and reap the process group on `kill()`.
  *
  * Exact `--filter=<pkg>` (no `...`) selects only the UI packages, so an API app that also defines a
  * `dev` task is never picked up.
  */
-export const defaultUiDevFactory: UiDevFactory = ({ packageNames, cwd, concurrency }) => {
+export const defaultUiDevFactory: UiDevFactory = ({
+  packageNames,
+  cwd,
+  concurrency,
+  env,
+  appendLog,
+  onLine,
+  onUnexpectedExit,
+}) => {
   const filters = packageNames.map((name) => {
     return `--filter=${name}`
   })
   const child = spawn(
     'pnpm',
-    ['exec', 'turbo', 'run', 'dev', ...filters, `--concurrency=${concurrency}`, '--env-mode=loose'],
-    { cwd, detached: true, stdio: ['ignore', 'inherit', 'inherit'] },
+    [
+      'exec',
+      'turbo',
+      'run',
+      'dev',
+      ...filters,
+      `--concurrency=${concurrency}`,
+      '--env-mode=loose',
+      '--only',
+      '--output-logs=new-only',
+      '--no-update-notifier',
+      '--ui=stream',
+    ],
+    { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } },
   )
 
-  return superviseChild(child)
+  pumpLines(child.stdout, { appendLog, onLine })
+  pumpLines(child.stderr, { appendLog, onLine })
+
+  return superviseChild(child, undefined, onUnexpectedExit)
 }

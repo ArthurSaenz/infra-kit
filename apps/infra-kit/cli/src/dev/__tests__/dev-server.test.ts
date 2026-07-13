@@ -1,22 +1,32 @@
+import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { DevServerRunner } from 'src/dev/dev-server'
+import type { DevUi } from 'src/dev/dev-ui'
+import type { ReadySummary } from 'src/dev/render'
+import { stripAnsi } from 'src/dev/render'
+import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config'
 
 import {
+  FAKE_PORTLESS_BIN,
   canBind,
   createTempTracker,
+  daemonNeverStarts,
   getFreePort,
   handlerSource,
+  makeFakeProxy,
   makeMonorepo,
   restoreCwd,
   restoreEnv,
   snapshotCwd,
   snapshotEnv,
   spyStdoutWrite,
+  workingProxy,
 } from './fixtures'
+import type { FakeProxy } from './fixtures'
 
 /**
  * Deterministic orchestration tier: a real monorepo fixture + the REAL ServerlessLocalRun
@@ -37,6 +47,114 @@ afterEach(() => {
   restoreCwd(cwdSnapshot)
   restoreEnv(envSnapshot)
   temp.cleanup()
+})
+
+/** A no-op turbo child (watch build / run dev): spawns nothing, resolves on kill. Shared across tests. */
+const noopTurboChild = (): { kill: () => Promise<void> } => {
+  return {
+    kill: (): Promise<void> => {
+      return Promise.resolve()
+    },
+  }
+}
+
+describe('devServerRunner — an app that fails to start', () => {
+  /**
+   * The regression: `startAllApps` logged the failure but never pushed the app to `appServers`, and
+   * `printReady` renders the table FROM `appServers`. So a dead backend had no row at all — not even
+   * `● down` — while the header still printed a green `ready in Xs`. A half-dead session was
+   * indistinguishable from a healthy one.
+   */
+  it('gives the dead app a ● failed row and drops the green "ready" claim, while the survivor keeps serving', async () => {
+    const root = temp.register(
+      makeMonorepo([
+        { name: 'alpha', packageName: 'alpha-api', withHandler: true },
+        { name: 'beta', packageName: 'beta-api', withHandler: true },
+      ]),
+    )
+    const alphaPort = await getFreePort()
+    const betaPort = await getFreePort()
+
+    process.env.ALPHA_PORT = String(alphaPort)
+    process.env.BETA_PORT = String(betaPort)
+
+    // alpha builds clean; beta's handler blows up at import, exactly like the real
+    // `config is missing field: 'connectionURL'` validation error that started this.
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(path.join(root, 'apps', 'alpha', 'api', 'dist', 'handler.js'), handlerSource(1))
+      fs.writeFileSync(
+        path.join(root, 'apps', 'beta', 'api', 'dist', 'handler.js'),
+        'throw new Error("config is missing field: \'connectionURL\'")\n',
+      )
+    }
+
+    const stdout: string[] = []
+
+    spyStdoutWrite(stdout)
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      {},
+      fakeRunBuild,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    // A PARTIAL failure must stay resident — the survivor is still useful and watch can recover beta.
+    await runner.start()
+
+    const painted = stripAnsi(stdout.join(''))
+
+    // The dead app is on screen, named, with its reason — not silently missing.
+    expect(painted).toContain('beta/api')
+    expect(painted).toContain('● failed')
+    expect(painted).toContain("config is missing field: 'connectionURL'")
+
+    // And the header no longer claims a clean ready.
+    expect(painted).toContain('1 failed')
+    expect(painted).not.toMatch(/ready in \d/)
+
+    // The survivor really is serving.
+    const health = (await (await fetch(`http://127.0.0.1:${alphaPort}/__health`)).json()) as { app: string }
+
+    expect(health).toMatchObject({ app: 'alpha' })
+
+    await runner.shutdown()
+  })
+
+  it('exits non-zero rather than idling behind a banner when EVERY app failed and there is no UI', async () => {
+    const root = temp.register(makeMonorepo([{ name: 'alpha', packageName: 'alpha-api', withHandler: true }]))
+
+    process.env.ALPHA_PORT = String(await getFreePort())
+
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(path.join(root, 'apps', 'alpha', 'api', 'dist', 'handler.js'), 'throw new Error("boom")\n')
+    }
+
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      {},
+      fakeRunBuild,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    // Nothing is left to serve, watch, or proxy. Resident-but-empty would exit 0 when interrupted,
+    // so a script or CI step would read this catastrophe as a success.
+    await expect(runner.start()).rejects.toThrow(/no app started/)
+
+    await runner.shutdown()
+  })
 })
 
 describe('devServerRunner — start/shutdown lifecycle (fake build, real spawn)', () => {
@@ -67,9 +185,19 @@ describe('devServerRunner — start/shutdown lifecycle (fake build, real spawn)'
       }
     }
 
-    // The runner resolves the monorepo root from cwd, so run from the fixture root.
+    // The runner resolves the monorepo root from cwd, so run from the fixture root. A working proxy is
+    // injected (8th arg) so the boot never depends on a portless daemon running on the host.
     process.chdir(root)
-    const runner = new DevServerRunner({}, fakeRunBuild)
+    const runner = new DevServerRunner(
+      {},
+      fakeRunBuild,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
 
     await runner.start()
 
@@ -112,7 +240,18 @@ describe('start — port-conflict pre-check', () => {
     process.env.CLIENT_PORT = '3010'
     process.env.BACKOFFICE_PORT = '3010'
     process.chdir(root)
-    const runner = new DevServerRunner({})
+    // A working proxy is injected so the conflict guard (which runs after `ensureProxy`) is reached
+    // hermetically, without a portless daemon on the host.
+    const runner = new DevServerRunner(
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
 
     await expect(runner.start()).rejects.toThrow(/Port conflict detected: 3010/)
   })
@@ -128,7 +267,18 @@ describe('start — port-conflict pre-check', () => {
     delete process.env.CLIENT_PORT
     delete process.env.BACKOFFICE_PORT
     process.chdir(root)
-    const runner = new DevServerRunner({})
+    // A working proxy is injected so `ensureProxy` (which precedes the build) is hermetic; the build then
+    // fails on the missing turbo, proving we got past both the proxy step and the conflict gate.
+    const runner = new DevServerRunner(
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
 
     await expect(runner.start()).rejects.not.toThrow(/Port conflict/)
   })
@@ -141,7 +291,17 @@ describe('start — port-conflict pre-check', () => {
     process.env.CLIENT_PORT = '3010'
     process.env.BACKOFFICE_PORT = '3011'
     process.chdir(root)
-    const runner = new DevServerRunner({})
+    // Working proxy injected so `ensureProxy` is hermetic (see the sibling relaxed-gate test).
+    const runner = new DevServerRunner(
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
 
     await expect(runner.start()).rejects.not.toThrow(/Port conflict/)
   })
@@ -172,7 +332,17 @@ describe('start — --app selection + env-resolved port', () => {
     process.env.CLIENT_PORT = String(clientPort)
     process.env.BACKOFFICE_PORT = String(backofficePort)
     process.chdir(root)
-    const runner = new DevServerRunner({ include: ['client'] }, fakeRunBuild)
+    // Working proxy injected (8th arg) so the real boot below is hermetic — no host portless daemon.
+    const runner = new DevServerRunner(
+      { include: ['client'] },
+      fakeRunBuild,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
 
     await runner.start()
 
@@ -197,6 +367,8 @@ describe('start — --app selection + env-resolved port', () => {
 const bootAndCaptureStdout = async (
   temp: ReturnType<typeof createTempTracker>,
   appName: string,
+  verbose = false,
+  routes = false,
 ): Promise<{ out: string; runner: DevServerRunner }> => {
   const root = temp.register(makeMonorepo([{ name: appName, packageName: `${appName}-api`, withHandler: true }]))
   const port = await getFreePort()
@@ -212,7 +384,18 @@ const bootAndCaptureStdout = async (
   const spy = spyStdoutWrite(writes)
 
   process.chdir(root)
-  const runner = new DevServerRunner({}, fakeRunBuild)
+  // Working proxy injected (8th arg) so every header/narration test that boots through this helper is
+  // hermetic and never depends on a portless daemon running on the host.
+  const runner = new DevServerRunner(
+    { verbose, routes },
+    fakeRunBuild,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    workingProxy(),
+  )
 
   try {
     await runner.start()
@@ -223,47 +406,313 @@ const bootAndCaptureStdout = async (
   return { out: writes.join(''), runner }
 }
 
-describe('devServerRunner — startup server table', () => {
-  it('renders truthful, aligned rows: prefix in the base URL, a /__health URL, equal-width lines', async () => {
-    // A long app name is exactly what broke the old fixed-width padEnd(24) table.
+describe('devServerRunner — startup ready header', () => {
+  it('leads with a tagged endpoint row: <app>/api tag, a prefix-carrying URL, and a health dot', async () => {
     const longName = 'super-long-application-name'
     const { out, runner } = await bootAndCaptureStdout(temp, longName)
 
     try {
-      // Truthful: the base URL carries the /api/v1 prefix and the health URL is shown.
+      // The endpoint row is the hero: `<app>/api  http://localhost:<port>/api/v1  ● ok`.
+      expect(out).toContain(`${longName}/api`)
       expect(out).toContain('/api/v1')
-      expect(out).toContain('/__health')
-      expect(out).toContain(longName)
-
-      // Aligned: every box-drawn line shares one width (measured in UTF-16 units, as the
-      // renderer computes them — the title emoji is a surrogate pair, so code-point counts differ).
-      const tableLines = out.split('\n').filter((line) => {
-        return /^[┌│├└]/.test(line)
-      })
-
-      expect(tableLines.length).toBeGreaterThan(0)
+      expect(out).toContain('● ok')
+      // The redundant scheme legend is gone; the log link + separator rule close the calm header.
+      expect(out).not.toContain('scheme')
+      expect(out).toMatch(/logs → .*logs\.txt/)
+      expect(out).toContain('─'.repeat(60))
+      // No box-drawn table lines survive the redesign.
       expect(
-        new Set(
-          tableLines.map((line) => {
-            return line.length
-          }),
-        ).size,
-      ).toBe(1)
+        out.split('\n').filter((line) => {
+          return /^[┌│├└]/.test(line)
+        }),
+      ).toHaveLength(0)
     } finally {
       await runner.shutdown()
     }
   }, 15000)
 })
 
-describe('devServerRunner — startup route dump', () => {
-  it('lists each app registered METHOD /path routes at startup', async () => {
-    const { out, runner } = await bootAndCaptureStdout(temp, 'epsilon')
+describe('devServerRunner — startup route dump (--routes)', () => {
+  it('lists each app registered METHOD /path routes only when --routes is set', async () => {
+    // Opt-in: the route dump prints to the terminal only with --routes (no longer verbose-gated).
+    const { out, runner } = await bootAndCaptureStdout(temp, 'epsilon', false, true)
 
     try {
       expect(out).toContain('Registered routes')
       expect(out).toContain('epsilon')
       // The monorepo fixture declares a single GET /api/v1/ping route.
       expect(out).toContain('GET /api/v1/ping')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('omits the route dump by default (no --routes)', async () => {
+    const { out, runner } = await bootAndCaptureStdout(temp, 'epsilon')
+
+    try {
+      expect(out).not.toContain('Registered routes')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+})
+
+describe('devServerRunner — quiet by default (--verbose)', () => {
+  it('suppresses boot narration from stdout by default, but keeps the server panel', async () => {
+    const { out, runner } = await bootAndCaptureStdout(temp, 'zeta')
+
+    try {
+      // Narration steps are gated out of the terminal…
+      expect(out).not.toContain('Starting Development Server Runner')
+      expect(out).not.toContain('Build complete')
+      expect(out).not.toContain('Registered routes')
+      // …while the endpoint header (the hero) still shows.
+      expect(out).toContain('/api/v1')
+      expect(out).toContain('zeta/api')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('--verbose surfaces the full boot narration', async () => {
+    const { out, runner } = await bootAndCaptureStdout(temp, 'zeta', true)
+
+    try {
+      expect(out).toContain('Starting Development Server Runner')
+      expect(out).toContain('Build complete')
+      // The route dump is no longer verbose-gated (it moved to --routes); assert other narration.
+      expect(out).toContain('All servers started')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('gates debug-level chatter (the Doppler banner) unless --verbose', async () => {
+    process.env.DOPPLER_ENVIRONMENT = 'dev'
+
+    const quiet = await bootAndCaptureStdout(temp, 'theta')
+
+    await quiet.runner.shutdown()
+
+    const loud = await bootAndCaptureStdout(temp, 'theta', true)
+
+    await loud.runner.shutdown()
+
+    // `debug`-level lines (e.g. the Doppler banner, per-save dist-change ticks) must not leak into
+    // the quiet terminal — only --verbose surfaces them. Both always reach the log file.
+    expect(quiet.out).not.toContain('Doppler env detected')
+    expect(loud.out).toContain('Doppler env detected')
+  }, 15000)
+
+  it('closes shutdown on a visible "dev stopped" line even in quiet mode', async () => {
+    const { runner } = await bootAndCaptureStdout(temp, 'kappa')
+
+    // Capture ONLY the shutdown output (the boot spy is already restored) so we assert on what
+    // Ctrl-C leaves on screen: infra-kit's own closing line, not the child's raw teardown noise.
+    const writes: string[] = []
+    const spy = spyStdoutWrite(writes)
+
+    await runner.shutdown()
+    spy.mockRestore()
+
+    // Not verbose-gated: the runner booted with verbose:false, yet the confirmation still reaches stdout.
+    expect(writes.join('')).toContain('dev stopped')
+  }, 15000)
+})
+
+/*
+ * `git` from PATH in a test fixture — trusted, fixed literal args. Same posture as the dev-server's own
+ * `git rev-parse` (readAppRelease) which carries this disable inline.
+ */
+/* eslint-disable sonarjs/no-os-command-from-path */
+/** Make `root` a git repo checked out on `branch` with one commit (so `rev-parse --abbrev-ref HEAD` resolves). */
+const gitInitOnBranch = (root: string, branch: string): void => {
+  execFileSync('git', ['init', '-q'], { cwd: root })
+  execFileSync('git', ['checkout', '-q', '-b', branch], { cwd: root })
+  execFileSync(
+    'git',
+    ['-c', 'user.email=t@test.dev', '-c', 'user.name=Test', 'commit', '--allow-empty', '-q', '-m', 'init'],
+    { cwd: root },
+  )
+}
+/* eslint-enable sonarjs/no-os-command-from-path */
+
+/**
+ * Construct an api-only monorepo runner with an injected portless driver WITHOUT starting it; returns
+ * the runner, the monorepo root (for dev-context fragment assertions) and the driver's records. The
+ * caller decides whether `start()` should resolve or reject, so both the happy path ({@link bootWithProxy})
+ * and the proxy-failure reject tests share this one setup instead of copy-pasting the fixture wiring.
+ */
+const setupProxyRunner = async (
+  temp: ReturnType<typeof createTempTracker>,
+  appName: string,
+  branch: string,
+  available: boolean,
+  packageName = `${appName}-api`,
+  daemonOk?: (port: number) => boolean,
+): Promise<{ runner: DevServerRunner; root: string } & FakeProxy> => {
+  const root = temp.register(makeMonorepo([{ name: appName, packageName, withHandler: true }]))
+
+  gitInitOnBranch(root, branch)
+  const port = await getFreePort()
+
+  process.env[`${appName.toUpperCase()}_PORT`] = String(port)
+  const apiDir = path.join(root, 'apps', appName, 'api')
+  const fakeRunBuild = async (): Promise<void> => {
+    fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
+  }
+
+  process.chdir(root)
+  const fake = makeFakeProxy(available, daemonOk)
+  const { driver } = fake
+  // ctor positions: options, runBuild, turboWatchFactory, uiDevFactory, dryRunner, renderer, healthProbe, proxy
+  const runner = new DevServerRunner({}, fakeRunBuild, undefined, undefined, undefined, undefined, undefined, driver)
+
+  return { runner, root, ...fake }
+}
+
+/** {@link setupProxyRunner} + a successful `start()` — the happy-path boot used by most Layer-B tests. */
+const bootWithProxy = async (
+  temp: ReturnType<typeof createTempTracker>,
+  appName: string,
+  branch: string,
+  available: boolean,
+  packageName = `${appName}-api`,
+  daemonOk?: (port: number) => boolean,
+): Promise<{ runner: DevServerRunner; root: string } & FakeProxy> => {
+  const setup = await setupProxyRunner(temp, appName, branch, available, packageName, daemonOk)
+
+  await setup.runner.start()
+
+  return setup
+}
+
+describe('devServerRunner — Layer B portless aliases', () => {
+  it('registers <release>.<package> for a backend on start and removes it on shutdown', async () => {
+    const { runner, registered, removed } = await bootWithProxy(temp, 'client', 'feat-x', true)
+
+    try {
+      expect(registered).toContainEqual(['feat-x.client-api', expect.any(Number)])
+    } finally {
+      await runner.shutdown()
+    }
+    expect(removed).toContain('feat-x.client-api')
+  }, 15000)
+
+  it('rejects the boot when portless is unavailable (there is no localhost fallback)', async () => {
+    // A dev URL is a portless-served hostname and nothing else, so an unavailable proxy is a fatal start
+    // error, not a degraded mode — `start()` must reject naming the fix rather than boot into dead routes.
+    const { runner } = await setupProxyRunner(temp, 'client', 'feat-x', false)
+
+    await expect(runner.start()).rejects.toThrow(/portless is not installed/)
+  }, 15000)
+
+  it('slugifies a scoped package name into a legal DNS label before registering the alias', async () => {
+    // Regression: `@hulyo/client-ui` went into the alias raw, so portless rejected the hostname
+    // (`Invalid hostname "feat-x.@hulyo"`). The driver swallows that into a best-effort `false`, so
+    // BOTH the API row and the UI row silently fell back to `http://localhost:<port>` — the hero URLs
+    // just never appeared, with no error surfaced to the user.
+    const { runner, registered, removed } = await bootWithProxy(temp, 'client', 'feat-x', true, '@hulyo/client-ui')
+
+    try {
+      expect(registered).toContainEqual(['feat-x.hulyo-client-ui', expect.any(Number)])
+      // No registered alias may carry a character portless rejects.
+      for (const [name] of registered) expect(name).toMatch(/^[a-z0-9.-]+$/)
+    } finally {
+      await runner.shutdown()
+    }
+    // Cleanup must deregister the exact slugified name it registered (no leaked alias).
+    expect(removed).toContain('feat-x.hulyo-client-ui')
+  }, 15000)
+
+  it('only ever checks :443 — the port is not negotiable', async () => {
+    // A port-free `https://` URL can only be served from the implicit HTTPS port, so there is exactly one
+    // port to check. No `--proxy-port`, no `devProxy.port`, no unprivileged fallback: every one of those
+    // would put the port straight back into the URL, which is the thing this design removes.
+    const { runner, ensuredPorts } = await bootWithProxy(temp, 'client', 'feat-x', true)
+
+    try {
+      expect(ensuredPorts).toEqual([DEFAULT_DEV_PROXY_PORT])
+      expect(DEFAULT_DEV_PROXY_PORT).toBe(443)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('rejects the boot when no daemon serves :443, naming BOTH fixes as commands that actually RUN', async () => {
+    // There is no fallback to degrade into, so this refusal is the entire user experience of an
+    // un-provisioned machine. It has to name the two commands that fix it — and distinguish them: the
+    // install needs root, `trust` explicitly does not.
+    //
+    // Both must be printed as `<node> <abs>/portless/dist/cli.js …`, never as a bare `portless …`: portless
+    // lives in node_modules and is not on PATH, and sudo swaps PATH for secure_path — so the bare form dies
+    // with `sudo: portless: command not found`, which is exactly what a user hit. Asserting the bare string
+    // is what let that ship, so the bare form is asserted ABSENT here.
+    const { runner, ensuredPorts } = await setupProxyRunner(
+      temp,
+      'client',
+      'feat-x',
+      true,
+      undefined,
+      daemonNeverStarts,
+    )
+
+    const error = await runner.start().then(
+      () => {
+        return new Error('start() resolved, but an un-provisioned machine must refuse to boot')
+      },
+      (err: unknown) => {
+        return err as Error
+      },
+    )
+
+    // Elevated as `sudo <absolute node> …`: sudo resolves an interpreter it is handed, never a name it would
+    // have to look up on the PATH it just replaced with secure_path. The bin is the one the INJECTED driver
+    // reports, and it contains a space — so this also proves the rendering is quoted, which a shell-safe
+    // fixture path could not.
+    expect(error.message).toContain(`sudo ${process.execPath} '${FAKE_PORTLESS_BIN}' service install`)
+    expect(error.message).toContain(`${process.execPath} '${FAKE_PORTLESS_BIN}' trust`)
+    expect(error.message).not.toContain('sudo portless service install')
+    expect(error.message).not.toMatch(/^ *portless trust$/m)
+    // Probed :443 and stopped. A probe of an unprivileged port would mean a fallback still exists.
+    expect(ensuredPorts).toEqual([DEFAULT_DEV_PROXY_PORT])
+  }, 15000)
+
+  it('publishes `origin` in the fragment and NEVER a proxyPort an old helper could misgraft', async () => {
+    // The fragment is the contract between the self-updating CLI and each consumer's PINNED
+    // `infra-kit/vite`. An old helper's `withProxyPort` grafts any port != 80 onto its target, so writing
+    // `proxyPort: 443` would have yielded `http://<alias>:443` — plain HTTP into a TLS listener, silently.
+    // The runner publishes the finished origin instead, and the helper obeys it verbatim.
+    const { runner, root } = await bootWithProxy(temp, 'client', 'feat-x', true)
+
+    try {
+      const raw = fs.readFileSync(path.join(root, '.infra-kit', 'dev-context', 'client.json'), 'utf-8')
+      const fragment = JSON.parse(raw) as { alias?: string; origin?: string; proxyPort?: number }
+
+      expect(fragment.alias).toBe('feat-x.client-api.localhost')
+      expect(fragment.origin).toBe('https://feat-x.client-api.localhost')
+      expect(fragment.proxyPort).toBeUndefined()
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('writes the fragment AFTER the alias is registered, carrying release, alias, origin and bound port', async () => {
+    // The fragment is the ONLY channel telling `infra-kit/vite` how to reach this app. It must be written
+    // AFTER registerAppAlias, or it could only ever claim `alias: undefined` and the frontend would target
+    // an app it believes is unreachable. `port` is the app's own bound port (provenance); `origin` is what
+    // the helper actually proxies to.
+    const { runner, root } = await bootWithProxy(temp, 'client', 'feat-x', true)
+
+    try {
+      const raw = fs.readFileSync(path.join(root, '.infra-kit', 'dev-context', 'client.json'), 'utf-8')
+      const fragment = JSON.parse(raw) as { release?: string; alias?: string; origin?: string; port: number }
+
+      expect(fragment.release).toBe('feat-x')
+      expect(fragment.alias).toBe('feat-x.client-api.localhost')
+      expect(fragment.origin).toBe('https://feat-x.client-api.localhost')
+      expect(fragment.port).toBeGreaterThan(0)
     } finally {
       await runner.shutdown()
     }
@@ -295,8 +744,10 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     // that it was killed on shutdown, without spawning a real child.
     let killed = false
     let spawnedPackages: string[] | null = null
-    const fakeTurboWatch = (opts: { packageNames: string[] }): { kill: () => Promise<void> } => {
-      spawnedPackages = opts.packageNames
+    let spawnedUiClosure: string[] | null = null
+    const fakeTurboWatch = (opts: { depInclusive: string[]; depClosure: string[] }): { kill: () => Promise<void> } => {
+      spawnedPackages = opts.depInclusive
+      spawnedUiClosure = opts.depClosure
 
       return {
         kill: (): Promise<void> => {
@@ -307,8 +758,28 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
       }
     }
 
+    // Hermetic `--dry` closure source (Option B): records which app packages it was asked to
+    // resolve, so watch mode never shells out to real turbo in the fixture.
+    const dryCalls: string[] = []
+    const fakeDryRunner = (packageName: string): Promise<string[]> => {
+      dryCalls.push(packageName)
+
+      return Promise.resolve([packageName])
+    }
+
     process.chdir(root)
-    const runner = new DevServerRunner({ watch: true }, fakeRunBuild, fakeTurboWatch)
+    // Inject a working proxy (8th ctor arg) so the boot is hermetic and does not depend on a portless
+    // daemon running on the host; this test is about the dist-watch restart, not proxy resolution.
+    const runner = new DevServerRunner(
+      { watch: true },
+      fakeRunBuild,
+      fakeTurboWatch,
+      undefined,
+      fakeDryRunner,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
 
     await runner.start()
 
@@ -317,8 +788,14 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
 
       expect(v1.version).toBe(1)
 
-      // The turbo engine was started, scoped to the app package.
+      // The turbo engine was started, scoped to the app package (dep-inclusive). No UI apps in this
+      // fixture → the dep-closure (UI) filter set is empty, so backend-only watch is byte-identical to before.
       expect(spawnedPackages).toEqual(['omega-api'])
+      expect(spawnedUiClosure).toEqual([])
+
+      // Watch mode builds the dependency-closure map from the launched app package(s) via the
+      // injected `--dry` source, proving the closure wiring is invoked at start.
+      expect(dryCalls).toEqual(['omega-api'])
 
       // Exactly one build so far: the boot build. No rebuild happens on a dist change.
       const buildsAfterBoot = buildCalls.length
@@ -363,6 +840,252 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     expect(killed).toBe(true)
     expect(await canBind(omegaPort)).toBe(true)
   }, 15000)
+
+  it('re-probes health after a restart and reports the probe verdict in the summary', async () => {
+    // A restart that binds its port but fails its /__health probe must be reported ● down (leading ⚠️),
+    // not a bare "✅ Restarted". Inject a probe that always reports down and assert the summary honours it.
+    const root = temp.register(makeMonorepo([{ name: 'omega', packageName: 'omega-api', withHandler: true }]))
+    const realRoot = fs.realpathSync(root)
+    const distHandler = path.join(realRoot, 'apps', 'omega', 'api', 'dist', 'handler.js')
+    const omegaPort = await getFreePort()
+
+    process.env.OMEGA_PORT = String(omegaPort)
+    process.env.DEV_SERVER_CHOKIDAR_POLL = '1'
+
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(distHandler, handlerSource(1))
+    }
+    const logs: string[] = []
+    const noop = (): void => {}
+    const renderer: DevUi = {
+      narrate: noop,
+      log: (message) => {
+        logs.push(message)
+      },
+      logFn: noop,
+      bootStep: noop,
+      stopSpinner: noop,
+      ready: noop,
+      event: noop,
+      dispose: noop,
+    }
+
+    process.chdir(root)
+    const runner = new DevServerRunner(
+      { watch: true },
+      fakeRunBuild,
+      noopTurboChild,
+      undefined,
+      (packageName: string): Promise<string[]> => {
+        return Promise.resolve([packageName])
+      },
+      renderer,
+      // Probe always reports down — the restart physically succeeds, so this isolates the REPORT.
+      () => {
+        return Promise.resolve(false)
+      },
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    try {
+      await new Promise((r) => {
+        return setTimeout(r, 1200)
+      })
+      fs.writeFileSync(distHandler, handlerSource(2))
+
+      const deadline = Date.now() + 8000
+      let summaryLine: string | undefined
+
+      while (Date.now() < deadline && summaryLine === undefined) {
+        summaryLine = logs.find((l) => {
+          return l.includes('Restarted omega')
+        })
+        if (summaryLine !== undefined) break
+        await new Promise((r) => {
+          return setTimeout(r, 100)
+        })
+      }
+
+      expect(summaryLine).toBeDefined()
+      expect(summaryLine).toContain('● down')
+      expect(summaryLine).toContain('⚠️')
+      expect(summaryLine).not.toContain('✅')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('scopes a shared-package rebuild to only the dependent backend, leaving an unrelated one alone', async () => {
+    const root = temp.register(
+      makeMonorepo([
+        { name: 'appx', packageName: 'appx-api', withHandler: true },
+        { name: 'appy', packageName: 'appy-api', withHandler: true },
+      ]),
+    )
+    const realRoot = fs.realpathSync(root)
+
+    // A shared package that ONLY appx depends on (per the injected closure below).
+    const sharedDist = path.join(realRoot, 'packages', 'shared', 'dist')
+
+    fs.mkdirSync(sharedDist, { recursive: true })
+    fs.writeFileSync(path.join(realRoot, 'packages', 'shared', 'package.json'), JSON.stringify({ name: 'shared' }))
+    fs.writeFileSync(path.join(sharedDist, 'index.js'), 'export const v = 1\n')
+
+    process.env.DEV_SERVER_CHOKIDAR_POLL = '1'
+
+    // Boot build re-writes each app's dist handler (as the real turbo build would); no rebuild on change.
+    const bootBuild = async (): Promise<void> => {
+      for (const app of ['appx', 'appy']) {
+        fs.writeFileSync(path.join(realRoot, 'apps', app, 'api', 'dist', 'handler.js'), handlerSource(1))
+      }
+    }
+    // appx depends on `shared`; appy does not — so a `shared` rebuild must restart appx only.
+    const dryRunner = (packageName: string): Promise<string[]> => {
+      return Promise.resolve(packageName === 'appx-api' ? ['appx-api', 'shared'] : ['appy-api'])
+    }
+
+    process.chdir(root)
+    // Working proxy injected (8th arg) so the two-app boot is hermetic — no host portless daemon.
+    const runner = new DevServerRunner(
+      { watch: true },
+      bootBuild,
+      noopTurboChild,
+      undefined,
+      dryRunner,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    // Each restart rewrites the app's dev-context fragment with a fresh `writtenAt`, so the fragment
+    // timestamp is the restart signal (the build-less restart leaves the handler version unchanged).
+    const writtenAt = (app: string): number => {
+      const raw = fs.readFileSync(path.join(root, '.infra-kit', 'dev-context', `${app}.json`), 'utf-8')
+
+      return (JSON.parse(raw) as { writtenAt: number }).writtenAt
+    }
+
+    await runner.start()
+
+    try {
+      const beforeX = writtenAt('appx')
+      const beforeY = writtenAt('appy')
+
+      // Let chokidar finish its initial scan, then rebuild the shared package's dist.
+      await new Promise((r) => {
+        return setTimeout(r, 1200)
+      })
+      fs.writeFileSync(path.join(sharedDist, 'index.js'), 'export const v = 2\n')
+
+      const deadline = Date.now() + 8000
+      let restartedX = false
+
+      while (Date.now() < deadline && !restartedX) {
+        if (writtenAt('appx') > beforeX) {
+          restartedX = true
+          break
+        }
+        await new Promise((r) => {
+          return setTimeout(r, 100)
+        })
+      }
+
+      // The dependent backend re-bound…
+      expect(restartedX).toBe(true)
+      // …and the unrelated backend, which does not depend on `shared`, was left untouched.
+      expect(writtenAt('appy')).toBe(beforeY)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+})
+
+describe('devServerRunner — liveness monitor', () => {
+  it('flags a backend unhealthy after two consecutive failed probes, then logs recovery once', async () => {
+    const root = temp.register(makeMonorepo([{ name: 'omega', packageName: 'omega-api', withHandler: true }]))
+    const realRoot = fs.realpathSync(root)
+    const distHandler = path.join(realRoot, 'apps', 'omega', 'api', 'dist', 'handler.js')
+
+    process.env.OMEGA_PORT = String(await getFreePort())
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(distHandler, handlerSource(1))
+    }
+    const logs: string[] = []
+    const noop = (): void => {}
+    const renderer: DevUi = {
+      narrate: noop,
+      log: (message) => {
+        logs.push(message)
+      },
+      logFn: noop,
+      bootStep: noop,
+      stopSpinner: noop,
+      ready: noop,
+      event: noop,
+      dispose: noop,
+    }
+
+    // Scripted verdicts consumed in call order: boot probe (printReady) = healthy, then two failures
+    // (unhealthy edge fires on the SECOND), then a success (recovery edge). Steady healthy afterwards, so
+    // no further transitions — proving both edges fire exactly once.
+    const verdicts = [true, false, false, true]
+    let i = 0
+    const scriptedProbe = (): Promise<boolean> => {
+      const v = verdicts[i] ?? true
+
+      if (i < verdicts.length) i += 1
+
+      return Promise.resolve(v)
+    }
+
+    process.chdir(root)
+    const runner = new DevServerRunner(
+      { livenessIntervalMs: 25 },
+      fakeRunBuild,
+      undefined,
+      undefined,
+      undefined,
+      renderer,
+      scriptedProbe,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    try {
+      const deadline = Date.now() + 8000
+
+      while (Date.now() < deadline) {
+        const down = logs.some((l) => {
+          return l.includes('omega/api unhealthy')
+        })
+        const up = logs.some((l) => {
+          return l.includes('omega/api recovered')
+        })
+
+        if (down && up) break
+        await new Promise((r) => {
+          return setTimeout(r, 25)
+        })
+      }
+
+      const downs = logs.filter((l) => {
+        return l.includes('omega/api unhealthy')
+      })
+      const ups = logs.filter((l) => {
+        return l.includes('omega/api recovered')
+      })
+
+      // Exactly one of each — edge-triggered, not level-triggered (a single failure never logs; a steady
+      // state emits nothing).
+      expect(downs).toHaveLength(1)
+      expect(ups).toHaveLength(1)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
 })
 
 describe('devServerRunner — frontends (default preset runs api + ui)', () => {
@@ -382,14 +1105,6 @@ describe('devServerRunner — frontends (default preset runs api + ui)', () => {
     }
 
     // turbo watch isn't used without --watch; a no-op factory keeps the seam satisfied.
-    const noopTurboWatch = (): { kill: () => Promise<void> } => {
-      return {
-        kill: (): Promise<void> => {
-          return Promise.resolve()
-        },
-      }
-    }
-
     let uiKilled = false
     let uiPackages: string[] | null = null
     let uiConcurrency = 0
@@ -407,8 +1122,18 @@ describe('devServerRunner — frontends (default preset runs api + ui)', () => {
     }
 
     process.chdir(root)
-    // No preset → default `*` runs everything the app exposes (api + ui).
-    const runner = new DevServerRunner({}, fakeRunBuild, noopTurboWatch, fakeUiDev)
+    // No preset → default `*` runs everything the app exposes (api + ui). Working proxy injected (8th arg)
+    // so the real boot is hermetic — no host portless daemon.
+    const runner = new DevServerRunner(
+      {},
+      fakeRunBuild,
+      noopTurboChild,
+      fakeUiDev,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
 
     await runner.start()
 
@@ -435,5 +1160,533 @@ describe('devServerRunner — frontends (default preset runs api + ui)', () => {
     // shutdown() reaped the ui-dev child and freed the API port.
     expect(uiKilled).toBe(true)
     expect(await canBind(shopPort)).toBe(true)
+  }, 15000)
+
+  it('--watch: the turbo engine watches API deps (dep-inclusive) AND the UI dep closure (`^...`)', async () => {
+    const root = temp.register(
+      makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }]),
+    )
+    const apiDir = path.join(root, 'apps', 'shop', 'api')
+
+    process.env.SHOP_PORT = String(await getFreePort())
+
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
+    }
+
+    let depInclusive: string[] | null = null
+    let depClosure: string[] | null = null
+    const fakeTurboWatch = (opts: { depInclusive: string[]; depClosure: string[] }): { kill: () => Promise<void> } => {
+      depInclusive = opts.depInclusive
+      depClosure = opts.depClosure
+
+      return {
+        kill: (): Promise<void> => {
+          return Promise.resolve()
+        },
+      }
+    }
+
+    const fakeDryRunner = (pkg: string): Promise<string[]> => {
+      return Promise.resolve([pkg])
+    }
+
+    process.chdir(root)
+    // `noopTurboChild` doubles as the no-op ui-dev factory (this test only asserts the turbo-watch filters).
+    // Working proxy injected (8th arg) so the boot is hermetic — no host portless daemon.
+    const runner = new DevServerRunner(
+      { watch: true },
+      fakeRunBuild,
+      fakeTurboWatch,
+      noopTurboChild,
+      fakeDryRunner,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    try {
+      // API app → dep-inclusive (`...<pkg>`); UI app → dep-closure-only (`<pkg>^...`), so a FE-only lib edit
+      // rebuilds via turbo and vite reloads, without production-building the UI itself.
+      expect(depInclusive).toEqual(['shop-api'])
+      expect(depClosure).toEqual(['shop-ui'])
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+})
+
+/** A silent {@link DevUi} that captures the single {@link ReadySummary} the runner paints. */
+const makeCapturingRenderer = (): {
+  renderer: DevUi
+  summary: () => ReadySummary
+  bootSteps: string[]
+  narrations: string[]
+} => {
+  let captured: ReadySummary | null = null
+  const bootSteps: string[] = []
+  const narrations: string[] = []
+  const noop = (): void => {}
+  const renderer: DevUi = {
+    narrate: (message) => {
+      narrations.push(message)
+    },
+    log: noop,
+    logFn: noop,
+    bootStep: (phase) => {
+      bootSteps.push(phase)
+    },
+    stopSpinner: noop,
+    ready: (s) => {
+      captured = s
+    },
+    event: noop,
+    dispose: noop,
+  }
+
+  return {
+    renderer,
+    bootSteps,
+    narrations,
+    summary: () => {
+      if (captured == null) throw new Error('ready() was never called')
+
+      return captured
+    },
+  }
+}
+
+/**
+ * Boot an api+ui monorepo with an injected portless driver and capture both what the ready header
+ * painted and the env the ui-dev child was handed.
+ */
+const bootWithUi = async (
+  branch: string,
+  proxyAvailable: boolean,
+  viteConfig = true,
+): Promise<{
+  runner: DevServerRunner
+  summary: () => ReadySummary
+  uiEnv: () => Record<string, string> | undefined
+  registered: Array<[string, number]>
+  bootSteps: string[]
+  narrations: string[]
+}> => {
+  const root = temp.register(
+    makeMonorepo([
+      { name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui', viteConfig } },
+    ]),
+  )
+
+  gitInitOnBranch(root, branch)
+  const apiDir = path.join(root, 'apps', 'shop', 'api')
+
+  process.env.SHOP_PORT = String(await getFreePort())
+  const fakeRunBuild = async (): Promise<void> => {
+    fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
+  }
+
+  let uiEnv: Record<string, string> | undefined
+  const fakeUiDev = (opts: { env?: Record<string, string> }): { kill: () => Promise<void> } => {
+    uiEnv = opts.env
+
+    return {
+      kill: (): Promise<void> => {
+        return Promise.resolve()
+      },
+    }
+  }
+
+  process.chdir(root)
+  const { renderer, summary, bootSteps, narrations } = makeCapturingRenderer()
+  const { driver, registered } = makeFakeProxy(proxyAvailable)
+  const runner = new DevServerRunner(
+    {},
+    fakeRunBuild,
+    noopTurboChild,
+    fakeUiDev,
+    undefined,
+    renderer,
+    () => {
+      return Promise.resolve(true)
+    },
+    driver,
+  )
+
+  await runner.start()
+
+  return {
+    runner,
+    summary,
+    registered,
+    bootSteps,
+    narrations,
+    uiEnv: () => {
+      return uiEnv
+    },
+  }
+}
+
+describe('devServerRunner — the UI gets the same port-free HTTPS URL as a backend', () => {
+  it('renders the aliased hero URL as the UI endpoint row', async () => {
+    // The UI gets a real endpoint row (not a bare "vite prints its URL below" reference line): its port is
+    // pre-assigned and aliased, so the port-free `https://<release>.<package>.localhost` hero URL is
+    // knowable before vite ever binds.
+    const { runner, summary } = await bootWithUi('feat-x', true)
+
+    try {
+      const ui = summary().endpoints.find((e) => {
+        return e.tag === 'shop/ui'
+      })
+
+      expect(ui?.url).toBe('https://feat-x.shop-ui.localhost')
+      // It is an endpoint row, not a reference line.
+      expect(summary().uiRefs).toHaveLength(0)
+      // vite owns its own readiness — no health dot on a UI row.
+      expect(ui?.healthy).toBeNull()
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('hands the vite child BOTH the assigned port and the alias it actually registered', async () => {
+    const { runner, uiEnv } = await bootWithUi('feat-x', true)
+
+    try {
+      const map = JSON.parse(uiEnv()?.INFRA_KIT_UI_PORTS ?? '{}') as Record<string, { port: number; alias: string }>
+
+      // `strictPort` on the vite side turns any drift from this assigned port into a loud failure, so the
+      // port the runner advertised (and aliased) is exactly the one vite binds.
+      expect(map['shop-ui']?.port).toBeGreaterThan(0)
+
+      // The alias must round-trip. It is what the helper turns into `hmr: { protocol: 'wss', host: <alias> }`
+      // — the page is served over https://<alias>, so an HMR socket derived from vite's own bound port is
+      // blocked as mixed content and hot reload dies silently. Publishing only the port (the old shape)
+      // left the helper with no alias and it emitted no `hmr` at all: HMR was wired to nothing.
+      expect(map['shop-ui']?.alias).toBe('feat-x.shop-ui.localhost')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('keeps the honest reference line for a UI whose vite config does not wire infraKitDev()', async () => {
+    // Such a UI ignores INFRA_KIT_UI_PORTS and binds its own port, so a pre-assigned URL would be a lie
+    // (and an alias pointed at it would 502). It must claim no port at all.
+    const { runner, summary, uiEnv } = await bootWithUi('feat-x', true, false)
+
+    try {
+      expect(summary().uiRefs).toEqual([{ tag: 'shop/ui' }])
+      expect(
+        summary().endpoints.some((e) => {
+          return e.tag === 'shop/ui'
+        }),
+      ).toBe(false)
+      // No map entry → no assigned port is handed down, so vite falls back to picking (and printing) its
+      // own. The child may still receive NODE_EXTRA_CA_CERTS: that is unrelated to port assignment (it is
+      // what lets any node client validate portless's private CA), so assert the port env specifically
+      // rather than "no env at all".
+      expect(uiEnv()?.INFRA_KIT_UI_PORTS).toBeUndefined()
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('registers no alias for an unwired UI even when the proxy IS up', async () => {
+    // An alias pointed at a port the UI never binds resolves to a 502, which is worse than no alias.
+    const { runner, summary, registered } = await bootWithUi('feat-x', true, false)
+
+    try {
+      expect(summary().uiRefs).toEqual([{ tag: 'shop/ui' }])
+      // The backend still aliases; only the unwired UI is skipped.
+      expect(registered).toContainEqual(['feat-x.shop-api', expect.any(Number)])
+      expect(
+        registered.some(([name]) => {
+          return name.includes('shop-ui')
+        }),
+      ).toBe(false)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('never prints a port or an http:// scheme on a UI row', async () => {
+    // Pinned as a regression rather than re-asserting the exact string above: a `:<port>` suffix would mean
+    // the proxy is not on 443 (which `ensureProxy` refuses to start), and an `http://` UI row would be a
+    // plain-HTTP request into a TLS listener — the silent-failure class this migration exists to remove.
+    const { runner, summary } = await bootWithUi('feat-x', true)
+
+    try {
+      const ui = summary().endpoints.find((e) => {
+        return e.tag === 'shop/ui'
+      })
+
+      expect(ui?.url).toMatch(/^https:\/\//)
+      expect(ui?.url).not.toMatch(/:\d+/)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+})
+
+describe('devServerRunner — boot narration stays terse', () => {
+  it('covers the api build and the ui dep warm with ONE boot step naming both packages', async () => {
+    const { runner, bootSteps } = await bootWithUi('feat-x', true)
+
+    try {
+      // Two boot steps would only make the spinner flip between near-identical lines: the builds run
+      // back to back with nothing observable in between.
+      const buildSteps = bootSteps.filter((s) => {
+        return s.includes('building') || s.includes('warming')
+      })
+
+      expect(buildSteps).toHaveLength(1)
+      expect(buildSteps[0]).toContain('shop-api')
+      expect(buildSteps[0]).toContain('shop-ui')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('never narrates the absolute monorepo root (it painted as the dim subtitle under the spinner)', async () => {
+    const { runner, narrations } = await bootWithUi('feat-x', true)
+
+    try {
+      expect(
+        narrations.some((n) => {
+          return n.includes('Monorepo root')
+        }),
+      ).toBe(false)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+})
+
+describe('devServerRunner — shutdown ordering (aliases before the child reap)', () => {
+  it('deregisters every portless alias BEFORE reaping turbo/ui, so a force-quit cannot strand one', async () => {
+    // The reap escalates SIGTERM→SIGKILL per child and can take seconds. Deregistering aliases after it
+    // means a second Ctrl-C during that window leaves an alias pointing at a dead backend — the 502 on
+    // the next start. `removed` alone cannot catch a regression here: it records WHICH aliases went, not
+    // WHEN. One shared `events` sink across all three fakes is what makes the order observable.
+    const events: string[] = []
+    const root = temp.register(
+      makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }]),
+    )
+
+    gitInitOnBranch(root, 'feat-x')
+
+    const apiDir = path.join(root, 'apps', 'shop', 'api')
+
+    process.env.SHOP_PORT = String(await getFreePort())
+
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
+    }
+    const killRecorder = (label: string) => {
+      return (): { kill: () => Promise<void> } => {
+        return {
+          kill: (): Promise<void> => {
+            events.push(label)
+
+            return Promise.resolve()
+          },
+        }
+      }
+    }
+    const fakeDryRunner = (pkg: string): Promise<string[]> => {
+      return Promise.resolve([pkg])
+    }
+    const { driver, removed } = makeFakeProxy(true, undefined, events)
+
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { watch: true },
+      fakeRunBuild,
+      killRecorder('turboKill'),
+      killRecorder('uiKill'),
+      fakeDryRunner,
+      undefined,
+      undefined,
+      driver,
+    )
+
+    await runner.start()
+    await runner.shutdown()
+
+    // Both children were reaped and at least one alias was deregistered — otherwise the ordering
+    // assertion below would pass vacuously on an empty or partial event log.
+    expect(events).toContain('turboKill')
+    expect(events).toContain('uiKill')
+    expect(removed.length).toBeGreaterThan(0)
+
+    expect(events.indexOf('removeAlias')).toBeGreaterThanOrEqual(0)
+    expect(events.indexOf('removeAlias')).toBeLessThan(events.indexOf('turboKill'))
+    expect(events.indexOf('removeAlias')).toBeLessThan(events.indexOf('uiKill'))
+  }, 15000)
+})
+
+/**
+ * The private surface these teardown tests drive directly. Reaching in is deliberate: the only public path
+ * to a restart is a chokidar `dist/` event, whose delivery timing is far too loose to race against a
+ * teardown on purpose. `IApiAppConfig` is module-local to dev-server.ts, so apps stay opaque here — they are
+ * only ever round-tripped out of `appServers` and straight back into `restart`.
+ */
+interface RunnerTeardownPrivates {
+  appServers: Array<{ app: unknown }>
+  scheduleDebounced: (key: string, work: () => Promise<void>) => void
+  restart: (apps: unknown[]) => Promise<void>
+  registeredAliases: Set<string>
+  watcher: unknown
+  closureMap: unknown
+  closureBuild: Promise<void>
+}
+
+const noopBuild = async (): Promise<void> => {}
+
+describe('devServerRunner — the watcher never waits on the dependency-closure map', () => {
+  it('arms the watcher before the closure map resolves, scoping restarts only once it lands', async () => {
+    // Building the map shells out to `turbo --dry` once per app (~1s on a 7-backend repo). Awaiting it
+    // before arming chokidar left a full second AFTER "ready" in which a save was watched by nobody and
+    // silently dropped. Scoping is an optimisation; it must never be bought with a blind window — the
+    // watcher arms on the fail-safe `null` map (restart-all) and the map is swapped in when turbo answers.
+    const root = temp.register(makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true }]))
+
+    gitInitOnBranch(root, 'feat-x')
+    process.env.SHOP_PORT = String(await getFreePort())
+    process.chdir(root)
+
+    // A deliberately slow turbo: if start() awaited the map, it would pay this 500ms.
+    const slowDryRunner = (pkg: string): Promise<string[]> => {
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          return resolve([pkg])
+        }, 500)
+      })
+    }
+
+    const runner = new DevServerRunner(
+      { watch: true },
+      noopBuild,
+      noopTurboChild,
+      noopTurboChild,
+      slowDryRunner,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    const priv = runner as unknown as RunnerTeardownPrivates
+
+    // The moment start() returns: watching already, map not yet in hand.
+    expect(priv.watcher).not.toBeNull()
+    expect(priv.closureMap).toBeNull()
+
+    await priv.closureBuild
+
+    // Once turbo answers, restarts become scoped.
+    expect(priv.closureMap).not.toBeNull()
+
+    await runner.shutdown()
+  }, 15000)
+})
+
+describe('devServerRunner — teardown re-entry (a restart must never resurrect an alias)', () => {
+  it('does not re-register an alias when a debounced restart fires during the child reap', async () => {
+    // `shutdown()` deregisters aliases and then spends SECONDS reaping children. An armed debounce timer
+    // firing inside that window re-enters startOneApp → registerAppAlias, adding an alias back into a set
+    // nothing drains again: it survives the process and 502s on the next start. The reap is faked slow
+    // (600ms > the 400ms debounce) so the window is real and the race is deterministic, not timing-luck.
+    const root = temp.register(makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true }]))
+
+    gitInitOnBranch(root, 'feat-x')
+
+    const apiDir = path.join(root, 'apps', 'shop', 'api')
+
+    process.env.SHOP_PORT = String(await getFreePort())
+
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
+    }
+    const slowKill = (): { kill: () => Promise<void> } => {
+      return {
+        kill: async (): Promise<void> => {
+          await new Promise((r) => {
+            return setTimeout(r, 600)
+          })
+        },
+      }
+    }
+    const fakeDryRunner = (pkg: string): Promise<string[]> => {
+      return Promise.resolve([pkg])
+    }
+    const { driver, registered, removed } = makeFakeProxy(true)
+
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { watch: true },
+      fakeRunBuild,
+      slowKill,
+      slowKill,
+      fakeDryRunner,
+      undefined,
+      undefined,
+      driver,
+    )
+
+    await runner.start()
+
+    const priv = runner as unknown as RunnerTeardownPrivates
+    const apps = priv.appServers.map((e) => {
+      return e.app
+    })
+
+    // Arm a restart exactly as a `dist/` change would, then tear down before it fires.
+    priv.scheduleDebounced('shop', () => {
+      return priv.restart(apps)
+    })
+
+    await runner.shutdown()
+
+    // Give any (incorrectly) surviving timer more than its full debounce to do damage.
+    await new Promise((r) => {
+      return setTimeout(r, 700)
+    })
+
+    // The invariant, stated two ways: nothing is left registered, and every registration was matched
+    // by a removal. A resurrected alias breaks both (the set is non-empty; registers outnumber removes).
+    expect(priv.registeredAliases.size).toBe(0)
+    expect(registered).toHaveLength(removed.length)
+  }, 15000)
+
+  it('turns a restart requested after shutdown into a no-op', async () => {
+    // The in-flight/queued path needs no timing window at all: `shutdown()` does not await a restart that
+    // is already running, so a job that queues behind it would re-alias after the removal.
+    const root = temp.register(makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true }]))
+
+    gitInitOnBranch(root, 'feat-x')
+    process.env.SHOP_PORT = String(await getFreePort())
+    process.chdir(root)
+
+    const { driver, registered, removed } = makeFakeProxy(true)
+    const runner = new DevServerRunner({}, noopBuild, undefined, undefined, undefined, undefined, undefined, driver)
+
+    await runner.start()
+
+    const priv = runner as unknown as RunnerTeardownPrivates
+    const apps = priv.appServers.map((e) => {
+      return e.app
+    })
+
+    await runner.shutdown()
+    await priv.restart(apps)
+
+    expect(priv.registeredAliases.size).toBe(0)
+    expect(registered).toHaveLength(removed.length)
   }, 15000)
 })

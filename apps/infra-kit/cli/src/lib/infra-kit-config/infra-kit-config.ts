@@ -1,9 +1,10 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import process from 'node:process'
 import { z } from 'zod'
 
-import { getProjectRoot } from 'src/lib/git-utils'
+import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 
 const INFRA_KIT_CONFIG_FILE = 'infra-kit.json'
 
@@ -104,14 +105,16 @@ const devAppConfigSchema = z
 
 const devConfigSchema = z.record(z.string().min(1), devAppConfigSchema)
 
-// devPresets: named local-dev sessions, declared in the per-project infra-kit.json
+// devServersPresets: named local-dev sessions, declared in the per-project infra-kit.json
 // (team presets committed; personal ones layered via the user-project override).
 // Each preset names launch targets (apps/<app>/{api,ui}), optional per-backend
 // `watchDeps`, per-route proxy-source overrides, and a `cmux` layout flag; it is
-// consumed by `infra-kit dev <preset>` and resolved by src/dev/presets. The SHAPE
-// is strict (typos in a preset surface as parse errors), but unknown app/route
-// NAMES are intentionally NOT validated here — they resolve at run time against the
-// discovered apps, so a stale preset never bricks every command.
+// consumed by `infra-kit dev <preset>` and resolved by src/dev/presets. Each target key
+// names exactly one workspace package (`<app>/api` or `<app>/ui`) — a bare `<app>` is a
+// folder, not a package, and is rejected. The SHAPE is strict (typos in a preset surface
+// as parse errors), but unknown app/route NAMES are intentionally NOT validated here —
+// they resolve at run time against the discovered apps, so a stale preset never bricks
+// every command.
 const proxySourceSchema = z.enum(['local', 'cloud'])
 
 const devPresetAppSchema = z
@@ -125,7 +128,7 @@ const devPresetAppSchema = z
 
 const devPresetSchema = z
   .object({
-    // Launch-target key (`client`, `client/ui`, `client/api`, `*/api`) → its settings. Omit = all.
+    // Launch-target key — one package: `client/ui`, `client/api`, `*/api`. Omit `apps` = all.
     apps: z.record(z.string().min(1), devPresetAppSchema).optional(),
     // Run each launched target in its own cmux pane (one workspace, N panes).
     cmux: z.boolean().optional(),
@@ -133,6 +136,22 @@ const devPresetSchema = z
   .strict()
 
 const devPresetsSchema = z.record(z.string().min(1), devPresetSchema)
+
+// DEPRECATED (accepted and ignored). Layer-B local-dev proxy (portless).
+//
+// The proxy port is no longer negotiable: every dev URL is `https://<release>.<packageName>.localhost`
+// with NO port, and the only port that can serve a port-free HTTPS URL is 443. A configurable port would
+// put the port straight back into the URL — the exact thing this design removes.
+//
+// The key is still PARSED so it does not brick anything: `infraKitConfigObject` is `.strict()` and
+// `getInfraKitConfig` THROWS on an unknown key, so simply deleting it would hard-fail EVERY infra-kit
+// command (not just `dev`) on any machine whose config still carries it — arriving unannounced, because
+// the CLI self-updates. It is read by nothing and silently ignored. Remove one release from now.
+const devProxyConfigSchema = z
+  .object({
+    port: z.number().int().positive().optional(),
+  })
+  .strict()
 
 // env auto-load: opt-in convenience that primes Doppler env when you work inside
 // this project / a worktree. Absent => disabled. `trigger` selects the moment
@@ -153,16 +172,40 @@ const envAutoLoadSchema = z
 // Base object shape, kept separate so `.partial()` (which only works on a plain
 // ZodObject, not the `.superRefine`-wrapped full schema) can derive the override
 // schema from it.
-const infraKitConfigObject = z.object({
-  environments: z.array(z.string().min(1)).min(1),
-  envManagement: envManagementSchema,
-  ide: idesSchema.optional(),
-  taskManager: taskManagerSchema.optional(),
-  worktrees: worktreesConfigSchema.optional(),
-  envAutoLoad: envAutoLoadSchema.optional(),
-  dev: devConfigSchema.optional(),
-  devPresets: devPresetsSchema.optional(),
-})
+//
+// `.strict()` for the same reason every leaf schema below is: this is the one config file humans
+// hand-edit, and a non-strict top level silently swallows the typo that matters most. `devServersPreset`
+// (missing `s`) or `dev-proxy` would parse clean and turn the feature off with no message. The `dev` and
+// `devServersPresets` values stay open `z.record`s — app and preset NAMES are user-chosen — so strictness
+// applies to the key set, not the contents.
+export const infraKitConfigObject = z
+  .object({
+    environments: z.array(z.string().min(1)).min(1),
+    envManagement: envManagementSchema,
+    ide: idesSchema.optional(),
+    taskManager: taskManagerSchema.optional(),
+    worktrees: worktreesConfigSchema.optional(),
+    envAutoLoad: envAutoLoadSchema.optional(),
+    dev: devConfigSchema.optional(),
+    devServersPresets: devPresetsSchema.optional(),
+    devProxy: devProxyConfigSchema.optional(),
+  })
+  .strict()
+
+/**
+ * The portless proxy's listen port. `443` — the implicit HTTPS port — because that is the ONLY port that
+ * can serve a port-free `https://<release>.<packageName>.localhost` URL, which is the whole point.
+ *
+ * It is privileged, so the daemon must already be running: `infra-kit dev` PROBES it and never elevates
+ * (portless binds `:443` by re-execing through `sudo` with an inherited stdio, which a detached child can
+ * never answer). One-time, out-of-band: a root `portless service install`, which `dev` and `doctor` print
+ * for the user as an absolute-path command (portless is not on `PATH`; see `formatPortlessCommand`). There
+ * is deliberately no unprivileged fallback — a fallback puts the port back in the URL.
+ *
+ * Not a constant of convenience: it is the single value that decides the scheme, and TLS on 443 is
+ * portless's own default (our previous `--no-tls` was the deviation).
+ */
+export const DEFAULT_DEV_PROXY_PORT = 443
 
 // Full schema = base object + a parse-time uniqueness check on the `ide` array.
 // This runs inside the *merged* `safeParse` in getInfraKitConfig, so it's the
@@ -205,10 +248,10 @@ export type DevConfig = z.infer<typeof devConfigSchema>
 /** A proxy route's resolved source in a preset override (`'local' | 'cloud'`). */
 export type ProxySource = z.infer<typeof proxySourceSchema>
 
-/** A single dev preset (`{ apps?, cmux? }`) from the `devPresets` map. */
+/** A single dev preset (`{ apps?, cmux? }`) from the `devServersPresets` map. */
 export type DevPreset = z.infer<typeof devPresetSchema>
 
-/** The `devPresets` map: preset name → {@link DevPreset}. */
+/** The `devServersPresets` map: preset name → {@link DevPreset}. */
 export type DevPresets = z.infer<typeof devPresetsSchema>
 
 /** A single resolved IDE entry (`{ provider, config }`). */
@@ -269,10 +312,45 @@ interface CacheEntry {
 
 let cached: CacheEntry | null = null
 
+interface PathsCacheEntry {
+  key: string
+  value: InfraKitConfigPaths
+}
+
+/**
+ * Memo slot for {@link getInfraKitConfigPaths}. SINGLE-ENTRY, not a `Map`: the resolver's only
+ * inputs are `process.cwd()` and `os.homedir()`, and production never mutates either (there is zero
+ * `process.chdir` outside tests), so one key covers the whole process lifetime. A `Map` would buy
+ * nothing there and could hand a chdir'ing test file a stale sibling entry; a single slot that
+ * recomputes on key mismatch is strictly safer and identically fast.
+ */
+let cachedPaths: PathsCacheEntry | null = null
+
+/**
+ * Cache key for {@link cachedPaths}. `homedir` is load-bearing, not decoration: the resolver reads
+ * it directly, and a dozen test files swap it for a fresh `mkdtemp` home WITHOUT chdir'ing — a
+ * cwd-only key would hand test B test A's already-deleted temp home.
+ *
+ * @example
+ * pathsCacheKey() // => '/Users/arthur/projects/api /Users/arthur'
+ */
+const pathsCacheKey = (): string => {
+  return `${process.cwd()} ${os.homedir()}`
+}
+
 /**
  * Resolve every file path that participates in the config merge chain. Always
  * returns paths even for files that don't yet exist, so callers can use them
  * for "where would my override go?" prompts.
+ *
+ * Memoized on `cwd + homedir` (see {@link cachedPaths}) because the two `git rev-parse` spawns below
+ * run BEFORE the mtime cache in `getInfraKitConfig`, so without this every call paid for both. The
+ * memo is populated on success only — `getProjectRoot` rejects outside a git repo and callers depend
+ * on that rejection, so a cached rejection would be a stateful negative path. Cleared by
+ * {@link resetInfraKitConfigCache}.
+ *
+ * Safe to memoize: this is a pure path resolver (inputs = cwd + homedir; it returns paths, never
+ * file contents), so filesystem mutation cannot invalidate it.
  *
  * @example
  * const paths = await getInfraKitConfigPaths()
@@ -284,18 +362,34 @@ let cached: CacheEntry | null = null
  * // }
  */
 export const getInfraKitConfigPaths = async (): Promise<InfraKitConfigPaths> => {
+  const key = pathsCacheKey()
+
+  if (cachedPaths && cachedPaths.key === key) {
+    return cachedPaths.value
+  }
+
   const projectRoot = await getProjectRoot()
-  // Repo name is the project-root basename (same as getRepoName), derived here to
-  // avoid a second `git rev-parse` — getRepoName would re-resolve the root.
-  const projectName = path.basename(projectRoot)
+  // Namespace the per-project override on the MAIN repo root, not `projectRoot`.
+  // Inside a linked worktree `projectRoot` is the worktree's own path, so its
+  // basename is the worktree's leaf dir (e.g. `feature-x`), which would key the
+  // override to a different, per-worktree file. `getMainRepoRoot` resolves the
+  // shared git common dir so every worktree of a repo converges on one key. The
+  // second `git rev-parse` this costs is fine — the merged config is mtime-cached.
+  const mainRepoRoot = await getMainRepoRoot(projectRoot)
+  const projectName = path.basename(mainRepoRoot)
   const userConfigDir = path.join(os.homedir(), USER_CONFIG_DIR_NAME)
 
-  return {
+  const value: InfraKitConfigPaths = {
     main: path.join(projectRoot, INFRA_KIT_CONFIG_FILE),
     userGlobal: path.join(userConfigDir, USER_GLOBAL_CONFIG_FILE),
     userProject: path.join(userConfigDir, USER_PROJECTS_DIR, projectName, INFRA_KIT_CONFIG_FILE),
     projectName,
   }
+
+  // Populate only after both git calls RESOLVED — never cache a rejection.
+  cachedPaths = { key, value }
+
+  return value
 }
 
 /**
@@ -385,14 +479,38 @@ export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
 }
 
 /**
- * For tests — drops the in-memory cache so the next read hits disk.
+ * Drop ONLY the merged-config cache ({@link cached}), keeping the path memo ({@link cachedPaths})
+ * intact. For writers of a merge layer — the config bootstrap, which creates the layer-3
+ * `~/.infra-kit/projects/<repo>/infra-kit.json`.
+ *
+ * WHY this exists separately from {@link resetInfraKitConfigCache}: writing the layer-3 file changes
+ * the MERGE RESULT (a stale merged config would miss the new layer) but it cannot change the
+ * RESOLVED PATHS — those are a pure function of `cwd + homedir`, and creating a file mutates
+ * neither. Blowing away the path memo there would just make the very run that creates the file
+ * re-spawn both `git rev-parse` processes for nothing: 4 spawns instead of 2.
+ *
+ * @example
+ * await fs.writeFile(paths.userProject, '{}\n', 'utf-8')
+ * resetMergedConfigCache()
+ * await getInfraKitConfig()      // sees the new layer-3 layer
+ * await getInfraKitConfigPaths() // still served from the memo — zero extra git spawns
+ */
+export const resetMergedConfigCache = (): void => {
+  cached = null
+}
+
+/**
+ * For tests — drops BOTH in-memory caches: the mtime-fingerprinted merged config and the
+ * `cwd + homedir`-keyed path memo ({@link cachedPaths}). The next read re-spawns `git rev-parse`
+ * and re-hits disk. Production writers want the narrower {@link resetMergedConfigCache}.
  *
  * @example
  * resetInfraKitConfigCache()
- * await getInfraKitConfig() // re-reads files even if mtimes look unchanged
+ * await getInfraKitConfig() // re-resolves paths and re-reads files even if mtimes look unchanged
  */
 export const resetInfraKitConfigCache = (): void => {
   cached = null
+  cachedPaths = null
 }
 
 /**

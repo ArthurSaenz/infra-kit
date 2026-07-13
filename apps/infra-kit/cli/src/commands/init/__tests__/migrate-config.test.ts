@@ -12,6 +12,11 @@ vi.mock('src/lib/git-utils', () => {
   return {
     getProjectRoot: vi.fn(),
     getRepoName: vi.fn(),
+    // Mirror the real signature: with a linked-worktree-free test repo the main
+    // root IS the given toplevel, so echo the passed cwd back.
+    getMainRepoRoot: vi.fn(async (cwd?: string) => {
+      return cwd
+    }),
   }
 })
 

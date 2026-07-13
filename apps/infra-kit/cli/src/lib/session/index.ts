@@ -16,5 +16,11 @@ export {
 export type { SessionReportRecord } from './report'
 export { resetTerminal } from './reset-terminal'
 export type { ResetTerminalDeps } from './reset-terminal'
-export { runSession, sessionGateEnabled } from './run-session'
-export type { RunSessionDeps, SessionCommand, SessionPaletteItem } from './run-session'
+export { installSessionSignals, runSession, sessionGateEnabled } from './run-session'
+export type {
+  RunSessionDeps,
+  SessionCommand,
+  SessionPaletteItem,
+  SessionSignalDeps,
+  SessionSignals,
+} from './run-session'

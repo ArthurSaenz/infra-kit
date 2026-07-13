@@ -4,7 +4,7 @@ import { OperationError } from 'src/lib/errors/operation-error'
 
 import {
   DEV_REF,
-  formatBranchChoices,
+  formatBranchPickerItems,
   parseBranchChoices,
   releaseLabelFromBranch,
   resolveReleaseBranch,
@@ -39,9 +39,9 @@ describe('parseBranchChoices', () => {
   })
 })
 
-describe('formatBranchChoices', () => {
+describe('formatBranchPickerItems', () => {
   it('labels versions and names, keying Jira descriptions by the Jira version name', () => {
-    const choices = formatBranchChoices({
+    const items = formatBranchPickerItems({
       branches: ['release/v1.2.3', 'release/checkout-redesign'],
       // Jira descriptions are keyed by the Jira version NAME: `v1.2.3` | `<name>`.
       descriptions: new Map([
@@ -50,34 +50,68 @@ describe('formatBranchChoices', () => {
       ]),
     })
 
-    expect(choices).toHaveLength(2)
-    expect(choices[0]?.value).toBe('release/v1.2.3')
-    expect(choices[0]?.name).toContain('1.2.3')
-    expect(choices[0]?.name).toContain('version desc')
-    expect(choices[1]?.value).toBe('release/checkout-redesign')
-    expect(choices[1]?.name).toContain('checkout-redesign')
-    expect(choices[1]?.name).toContain('name desc')
+    expect(items).toHaveLength(2)
+    expect(items[0]).toEqual({
+      value: 'release/v1.2.3',
+      label: '1.2.3',
+      description: 'version desc',
+      type: undefined,
+    })
+    expect(items[1]).toEqual({
+      value: 'release/checkout-redesign',
+      label: 'checkout-redesign',
+      description: 'name desc',
+      type: undefined,
+    })
   })
 
-  it('includes the type tag when types are provided', () => {
-    const choices = formatBranchChoices({
+  it('leaves the description undefined when Jira has none for that branch', () => {
+    const items = formatBranchPickerItems({
+      branches: ['release/v1.2.3'],
+      descriptions: new Map(),
+    })
+
+    expect(items[0]?.description).toBeUndefined()
+  })
+
+  it('includes the resolved type when a types map is provided', () => {
+    const items = formatBranchPickerItems({
       branches: ['release/checkout-redesign'],
       descriptions: new Map(),
       types: new Map([['release/checkout-redesign', 'hotfix']]),
     })
 
-    expect(choices[0]?.name).toContain('[hotfix]')
+    expect(items[0]?.type).toBe('hotfix')
+  })
+
+  it('defaults to "regular" when a types map is provided but the branch is absent from it', () => {
+    const items = formatBranchPickerItems({
+      branches: ['release/checkout-redesign'],
+      descriptions: new Map(),
+      types: new Map(),
+    })
+
+    expect(items[0]?.type).toBe('regular')
+  })
+
+  it('leaves type undefined when no types map is provided', () => {
+    const items = formatBranchPickerItems({
+      branches: ['release/checkout-redesign'],
+      descriptions: new Map(),
+    })
+
+    expect(items[0]?.type).toBeUndefined()
   })
 
   it('drops branches that do not parse as release ids', () => {
-    const choices = formatBranchChoices({
+    const items = formatBranchPickerItems({
       branches: ['release/v1.2.3', 'feature/not-a-release'],
       descriptions: new Map(),
     })
 
     expect(
-      choices.map((c) => {
-        return c.value
+      items.map((i) => {
+        return i.value
       }),
     ).toEqual(['release/v1.2.3'])
   })

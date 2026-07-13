@@ -72,14 +72,11 @@ const fetchAllReleasePRs = async (): Promise<ReleasePR[]> => {
 }
 
 /**
- * Fetch open release PRs from GitHub with 'Release' or 'Hotfix' in the title.
- * Returns an array of headRefName strings in the locked deterministic order
- * (version branches first by semver ascending, then named branches by PR
- * creation date). Unparseable head refs are filtered out.
- *
- * @returns [release/v1.18.22, release/v1.18.23, release/checkout-redesign]
+ * Fetch, guard against empty, and sort all open release PRs in the locked
+ * deterministic order. Shared core of the two public variants below; wraps the
+ * gh calls so a fetch failure surfaces as an OperationError.
  */
-export const getReleasePRs = async (): Promise<string[]> => {
+const loadSortedReleasePRs = async (): Promise<ReleasePR[]> => {
   try {
     const prs = await fetchAllReleasePRs()
 
@@ -90,9 +87,7 @@ export const getReleasePRs = async (): Promise<string[]> => {
       })
     }
 
-    return sortReleasePRs(prs).map((pr) => {
-      return pr.headRefName
-    })
+    return sortReleasePRs(prs)
   } catch (error) {
     if (error instanceof OperationError) throw error
 
@@ -103,36 +98,37 @@ export const getReleasePRs = async (): Promise<string[]> => {
 }
 
 /**
+ * Fetch open release PRs from GitHub with 'Release' or 'Hotfix' in the title.
+ * Returns an array of headRefName strings in the locked deterministic order
+ * (version branches first by semver ascending, then named branches by PR
+ * creation date). Unparseable head refs are filtered out.
+ *
+ * @returns [release/v1.18.22, release/v1.18.23, release/checkout-redesign]
+ */
+export const getReleasePRs = async (): Promise<string[]> => {
+  const prs = await loadSortedReleasePRs()
+
+  return prs.map((pr) => {
+    return pr.headRefName
+  })
+}
+
+/**
  * Fetch open release PRs with title info (for detecting release type).
  * Returns ReleasePRInfo objects in the locked deterministic order (version
  * branches first by semver ascending, then named branches by PR creation
  * date). Unparseable head refs are filtered out.
  */
 export const getReleasePRsWithInfo = async (): Promise<ReleasePRInfo[]> => {
-  try {
-    const prs = await fetchAllReleasePRs()
+  const prs = await loadSortedReleasePRs()
 
-    if (prs.length === 0) {
-      throw new OperationError(undefined, {
-        operation: 'find open release PRs',
-        remediation: 'open a release PR first, or check you are in the right repo',
-      })
+  return prs.map((pr) => {
+    return {
+      branch: pr.headRefName,
+      title: pr.title,
+      createdAt: pr.createdAt,
     }
-
-    return sortReleasePRs(prs).map((pr) => {
-      return {
-        branch: pr.headRefName,
-        title: pr.title,
-        createdAt: pr.createdAt,
-      }
-    })
-  } catch (error) {
-    if (error instanceof OperationError) throw error
-
-    logger.error({ error }, '❌ Error fetching release PRs')
-
-    throw new OperationError(error, { operation: 'fetch release PRs' })
-  }
+  })
 }
 
 interface UpdateReleasePRBodyArgs {

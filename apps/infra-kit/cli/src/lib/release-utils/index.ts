@@ -1,7 +1,7 @@
 export {
   createSingleRelease,
   detectReleaseType,
-  formatBranchChoices,
+  formatBranchPickerItems,
   formatVersionLabel,
   getBaseBranch,
   getJiraDescriptions,

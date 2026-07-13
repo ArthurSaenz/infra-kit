@@ -4,6 +4,10 @@ import { createReleaseBranch } from 'src/integrations/gh'
 import { createJiraVersion, getProjectVersions, loadJiraConfigOptional } from 'src/integrations/jira'
 import type { JiraConfig } from 'src/integrations/jira'
 import { OperationError } from 'src/lib/errors/operation-error'
+// Type-only cross-layer import: src/lib/prompts/types.ts is intentionally a
+// zero-import leaf so it can be imported from any layer (including this one)
+// without creating a cycle.
+import type { BranchPickerItem } from 'src/lib/prompts/types'
 import { displayLabel, formatBranchName, formatJiraName, parseBranchName, parseReleaseRef } from 'src/lib/release-id'
 import type { ReleaseId } from 'src/lib/release-id'
 
@@ -199,33 +203,24 @@ export const releaseBranchLabels = (branches: string[]): string[] => {
   })
 }
 
+const deriveBranchType = (branch: string, types?: Map<string, ReleaseType>): ReleaseType | undefined => {
+  return types ? types.get(branch) || 'regular' : undefined
+}
+
 /**
- * Format release branch names as checkbox choices with aligned type tags and Jira descriptions
+ * Format release branch names as Ink picker items. Labels and descriptions
+ * are returned as separate fields — the picker renders and pads them itself.
  */
-export const formatBranchChoices = (args: FormatBranchChoicesArgs): { name: string; value: string }[] => {
+export const formatBranchPickerItems = (args: FormatBranchChoicesArgs): BranchPickerItem[] => {
   const { branches, descriptions, types } = args
 
-  const parsed = parseBranchChoices(branches)
-
-  const maxLen = Math.max(
-    0,
-    ...parsed.map((p) => {
-      return p.label.length
-    }),
-  )
-
-  return parsed.map(({ branch, id, label }) => {
-    const type = types ? types.get(branch) || 'regular' : undefined
-    // Jira-descriptions map is keyed by the Jira version NAME (`v1.2.3` | `<name>`).
-    const desc = descriptions.get(formatJiraName(id))
-    const padding = ' '.repeat(maxLen - label.length + 3)
-
-    let name = type ? formatVersionLabel(label, type, maxLen) : label
-
-    if (desc) {
-      name = type ? `${name}  ${desc}` : `${label}${padding}${desc}`
+  return parseBranchChoices(branches).map(({ branch, id, label }) => {
+    return {
+      value: branch,
+      label,
+      // Jira-descriptions map is keyed by the Jira version NAME (`v1.2.3` | `<name>`).
+      description: descriptions.get(formatJiraName(id)),
+      type: deriveBranchType(branch, types),
     }
-
-    return { name, value: branch }
   })
 }

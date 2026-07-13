@@ -13,6 +13,7 @@ import * as path from 'node:path'
 import process from 'node:process'
 import { vi } from 'vitest'
 
+import type { PortlessDriver } from 'src/dev/proxy/portless-driver'
 import { ServerlessLocalRun } from 'src/dev/serverless-local-run'
 
 /** Default URL prefix the fixtures serve routes under (matches the runner default). */
@@ -101,9 +102,11 @@ export interface AppSpec {
   withHandler?: boolean
   /**
    * Also scaffold `apps/<name>/ui/package.json`. `dev` (default true) controls whether it declares a
-   * `scripts.dev` — a UI without one must be ignored by {@link discoverUiApps}.
+   * `scripts.dev` — a UI without one must be ignored by {@link discoverUiApps}. `viteConfig` (default
+   * true) writes a `vite.config.ts` wiring `infra-kit/vite`, which is what marks the UI's port as
+   * runner-managed; set it false to model a framework that picks its own port.
    */
-  ui?: { packageName?: string; dev?: boolean }
+  ui?: { packageName?: string; dev?: boolean; viteConfig?: boolean }
 }
 
 /** Build a hermetic monorepo: pnpm-workspace.yaml + `apps/<app>/api/serverless.yml` per spec. */
@@ -140,6 +143,18 @@ export function makeMonorepo(apps: AppSpec[]): string {
 
       if (app.ui.dev !== false) pkg.scripts = { dev: 'vite' }
       fs.writeFileSync(path.join(uiDir, 'package.json'), JSON.stringify(pkg))
+      if (app.ui.viteConfig !== false) {
+        fs.writeFileSync(
+          path.join(uiDir, 'vite.config.ts'),
+          [
+            "import { infraKitDev } from 'infra-kit/vite'",
+            "import { defineConfig } from 'vite'",
+            '',
+            'export default defineConfig(async ({ command }) => ({ server: await infraKitDev({ command }) }))',
+            '',
+          ].join('\n'),
+        )
+      }
     }
   }
 
@@ -254,4 +269,84 @@ export function spyStdoutWrite(sink: string[]): ReturnType<typeof vi.spyOn> {
 
     return true
   }) as never)
+}
+
+/** Records what a {@link makeFakeProxy} driver was asked to do, for assertions. */
+export interface FakeProxy {
+  driver: PortlessDriver
+  registered: Array<[string, number]>
+  removed: string[]
+  /** Ports `ensureDaemon` was asked to bring up — proves the resolved proxy port reaches the daemon. */
+  ensuredPorts: number[]
+}
+
+/** A `daemonOk` that refuses every port — portless is installed, but no daemon ever comes up. */
+export const daemonNeverStarts = (): boolean => {
+  return false
+}
+
+/**
+ * A fake portless driver that records register/remove/ensure calls; `available` gates the whole feature.
+ * `daemonOk` decides per-port whether the daemon comes up — the real driver refuses a privileged port it
+ * cannot bind, which is exactly what drives the unprivileged fallback. Defaults to `available` for every
+ * port (the historical all-or-nothing fake).
+ *
+ * `events` is an optional ORDERED sink shared with other fakes (e.g. a fake `turboWatch.kill`). `removed`
+ * alone proves only THAT an alias was deregistered, never WHEN — so an ordering regression in `shutdown()`
+ * would pass unnoticed. Push into a shared `events` array from every fake to assert relative order.
+ */
+/**
+ * The `dist/cli.js` the fake driver claims to run. The **space is deliberate**: a checkout under
+ * `~/My Projects` is not exotic, and it is the only way a caller that renders a remediation gets its shell
+ * quoting exercised end-to-end. A shell-safe path here would let an unquoted rendering pass.
+ */
+export const FAKE_PORTLESS_BIN = '/Users/dev/My Projects/repo/node_modules/portless/dist/cli.js'
+
+export const makeFakeProxy = (
+  available: boolean,
+  daemonOk: (port: number) => boolean = () => {
+    return available
+  },
+  events?: string[],
+): FakeProxy => {
+  const registered: Array<[string, number]> = []
+  const removed: string[] = []
+  const ensuredPorts: number[] = []
+  const driver: PortlessDriver = {
+    binPath: () => {
+      return available ? FAKE_PORTLESS_BIN : null
+    },
+    isAvailable: () => {
+      return Promise.resolve(available)
+    },
+    isProxyServing: (port) => {
+      ensuredPorts.push(port)
+
+      return Promise.resolve(available && daemonOk(port))
+    },
+    registerAlias: (name, port) => {
+      registered.push([name, port])
+
+      return Promise.resolve(true)
+    },
+    removeAlias: (name) => {
+      removed.push(name)
+      events?.push('removeAlias')
+
+      return Promise.resolve()
+    },
+  }
+
+  return { driver, registered, removed, ensuredPorts }
+}
+
+/**
+ * A working portless driver (its daemon comes up on every port). EVERY test that reaches
+ * `DevServerRunner.start()` must inject this (8th ctor arg): without it the runner builds the REAL
+ * driver, and `start()` then depends on a portless daemon happening to run on the host — a green that
+ * survives only on the author's machine, and which spawns an unreaped daemon plus mutates the
+ * machine-global `~/.portless/routes.json` everywhere else.
+ */
+export const workingProxy = (): PortlessDriver => {
+  return makeFakeProxy(true).driver
 }

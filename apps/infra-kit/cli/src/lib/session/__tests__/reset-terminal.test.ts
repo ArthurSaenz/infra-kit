@@ -37,6 +37,22 @@ describe('resetTerminal', () => {
     expect(written).toContain('[r')
   })
 
+  it('brackets the scroll-region reset in DECSC/DECRC so it cannot move the cursor', () => {
+    // Built from the code point so the assertion cannot be silently "fixed" by an editor that
+    // normalises escape sequences in the source.
+    const ESC = String.fromCharCode(27)
+    const written = capture({})
+
+    // THE regression guard. DECSTBM (`ESC[r`) homes the cursor — that is the spec, not a quirk. Sent
+    // bare, it parked the cursor at row 1 after every child, so the status footer and the next palette
+    // frame were drawn over the command's own output (`✓ ok · 2.9s` welded onto an unrelated line; the
+    // palette's `❯ ` welded onto `ERROR: …`, leaving `❯ ROR: …`). Save/restore must wrap it.
+    expect(written).toContain(`${ESC}7${ESC}[r${ESC}8`)
+
+    // And the save must come before ANY cursor-moving escape, or it saves the wrong position.
+    expect(written.indexOf(`${ESC}7`)).toBe(0)
+  })
+
   it('does NOT leave the alternate screen for an ordinary command (we never entered it)', () => {
     expect(capture({})).not.toContain('[?1049l')
     expect(capture({ entersAltScreen: false })).not.toContain('[?1049l')

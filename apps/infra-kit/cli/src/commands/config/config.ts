@@ -1,17 +1,21 @@
-import fs from 'node:fs/promises'
-import path from 'node:path'
 import process from 'node:process'
 import { $ } from 'zx'
 
+import { seedCreatedMessage, seedUserProjectConfig } from 'src/lib/config-bootstrap'
+import { describeOverrides, readOverrideSummary } from 'src/lib/config-overrides'
 import { getInfraKitConfigPaths, resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { fileExists, tildify } from 'src/lib/path-display'
 import type { ToolsExecutionResult } from 'src/types'
 
 /**
- * Print the file paths that participate in the config merge chain along with
- * existence markers, so the user can see at a glance which override layers
- * are active.
+ * Print the file paths that participate in the config merge chain along with existence markers, so
+ * the user can see at a glance which override layers are active. The user-project row additionally
+ * reports its CONTENT — an auto-seeded empty file is indistinguishable from a real one by existence
+ * alone, since every command now seeds layer 3.
+ *
+ * `layers[].exists` keeps its original meaning (the file exists) and still drives the markers;
+ * `hasOverrides` / `overrideKeys` are top-level additions describing the user-project layer only.
  *
  * @example
  * // CLI: `infra-kit config path`
@@ -19,7 +23,7 @@ import type { ToolsExecutionResult } from 'src/types'
  * // INFO: Config merge chain (later overrides earlier):
  * // INFO:   [✓] project (committed)    ~/projects/api/infra-kit.json
  * // INFO:   [ ] user global            ~/.infra-kit/infra-kit.json
- * // INFO:   [✓] user project           ~/.infra-kit/projects/api/infra-kit.json
+ * // INFO:   [✓] user project           ~/.infra-kit/projects/api/infra-kit.json (2 override(s): ide, dev)
  */
 export const configPath = async (): Promise<ToolsExecutionResult> => {
   const paths = await getInfraKitConfigPaths()
@@ -34,13 +38,20 @@ export const configPath = async (): Promise<ToolsExecutionResult> => {
     }),
   )
 
+  const userProjectExists = rows.at(-1)?.exists === true
+  const summary = await readOverrideSummary(paths.userProject, userProjectExists)
+  // Absent layer-3: no suffix — the `[ ]` marker already says it. (`doctor` owns the louder
+  // "the seed should have created this" reading of the same state.)
+  const note = userProjectExists ? describeOverrides(summary) : ''
+
   logger.info(`Project name: ${paths.projectName}\n`)
   logger.info('Config merge chain (later overrides earlier):\n')
 
   for (const row of rows) {
     const marker = row.exists ? '  [✓]' : '  [ ]'
+    const suffix = row.path === paths.userProject && note !== '' ? ` ${note}` : ''
 
-    logger.info(`${marker} ${row.label.padEnd(22)} ${tildify(row.path)}`)
+    logger.info(`${marker} ${row.label.padEnd(22)} ${tildify(row.path)}${suffix}`)
   }
 
   const structuredContent = {
@@ -48,6 +59,8 @@ export const configPath = async (): Promise<ToolsExecutionResult> => {
     layers: rows.map((r) => {
       return { label: r.label, path: r.path, exists: r.exists }
     }),
+    hasOverrides: summary.hasOverrides,
+    overrideKeys: summary.overrideKeys,
   }
 
   return {
@@ -57,32 +70,31 @@ export const configPath = async (): Promise<ToolsExecutionResult> => {
 }
 
 /**
- * Open the user-scope per-project override file in $EDITOR, creating the
- * parent directory and a stub file on first use. Resets the config cache
- * after the editor exits so subsequent reads pick up edits without a restart.
+ * Open the user-scope per-project override file in $EDITOR, creating it (and refreshing its
+ * annotated `.example.jsonc` sibling) on first use. Resets the config cache after the editor exits
+ * so subsequent reads pick up the user's edits without a restart.
+ *
+ * This double-seeds in practice: the program's preAction hook already ran the gated
+ * `ensureUserProjectConfig()`, and this runs the ungated primitive again. `seedUserProjectConfig` is
+ * idempotent (zero writes in steady state), so that is harmless — and the ungated call must STAY: it
+ * is what makes `config edit` work in a context where the gate declined (no committed project
+ * config, `INFRA_KIT_NO_SEED`, or a seed that failed). Asking to edit the file is consent to create
+ * it.
  *
  * @example
  * // CLI: `infra-kit config edit`
  * // first run — creates ~/.infra-kit/projects/api/infra-kit.json ({}) + a sibling
  * //             infra-kit.example.jsonc reference, then $EDITOR opens the .json
- * // subsequent runs — opens the existing file as-is
+ * // subsequent runs — opens the existing file as-is (a stale example is refreshed silently)
  */
 export const configEdit = async (): Promise<ToolsExecutionResult> => {
   const paths = await getInfraKitConfigPaths()
   const editor = process.env.EDITOR || process.env.VISUAL || 'vi'
 
-  await fs.mkdir(path.dirname(paths.userProject), { recursive: true })
+  const seed = await seedUserProjectConfig(paths)
 
-  if (!(await fileExists(paths.userProject))) {
-    // JSON can't carry comments, so seed an empty-but-valid config and drop the
-    // annotated guidance next to it in a non-loaded .example.jsonc the loader
-    // never reads (it only globs the three exact `infra-kit.json` filenames).
-    const examplePath = exampleSiblingPath(paths.userProject)
-
-    await fs.writeFile(paths.userProject, '{}\n', 'utf-8')
-    await fs.writeFile(examplePath, buildUserProjectExample(paths.projectName), 'utf-8')
-
-    logger.info(`Created ${tildify(paths.userProject)} — see ${tildify(examplePath)} for the annotated reference.`)
+  if (seed.createdConfig) {
+    logger.info(seedCreatedMessage(seed))
   }
 
   logger.info(`Opening ${tildify(paths.userProject)} in ${editor}`)
@@ -97,41 +109,4 @@ export const configEdit = async (): Promise<ToolsExecutionResult> => {
     content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
     structuredContent,
   }
-}
-
-/**
- * Derive the non-loaded `.example.jsonc` sibling for a config path.
- *
- * @example
- * exampleSiblingPath('/u/.infra-kit/projects/api/infra-kit.json')
- * // => '/u/.infra-kit/projects/api/infra-kit.example.jsonc'
- */
-const exampleSiblingPath = (jsonPath: string): string => {
-  return jsonPath.replace(/\.json$/, '.example.jsonc')
-}
-
-/**
- * Annotated JSONC reference for the user-scope per-project override layer.
- * Written alongside the real `{}` config so the guidance the old YAML stub
- * carried in comments survives the move to JSON.
- *
- * @example
- * buildUserProjectExample('api')
- * // => '// infra-kit user override for api …\n{ … }\n'
- */
-const buildUserProjectExample = (projectName: string): string => {
-  return `// infra-kit user override for ${projectName} — ~/.infra-kit/projects/${projectName}/infra-kit.json
-//
-// Layer 3 (highest precedence) of the config merge chain. Shallow-merged on top
-// of <repo>/infra-kit.json and ~/.infra-kit/infra-kit.json — top-level keys
-// (environments, envManagement, ide, taskManager, worktrees, envAutoLoad) replace wholesale.
-//
-// This .example.jsonc is reference only — it is NOT loaded. Put real overrides
-// in the sibling infra-kit.json (strict JSON: no comments, double-quoted keys).
-{
-  // "worktrees": { "openInGithubDesktop": false, "openInCmux": true, "cmux": { "layout": "two-columns" } },
-  // // Auto-load Doppler env here. trigger (pick one): shell-startup | cli-invocation; config: an environment name.
-  // "envAutoLoad": { "trigger": "shell-startup", "config": "dev" }
-}
-`
 }

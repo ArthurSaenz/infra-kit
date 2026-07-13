@@ -1,12 +1,10 @@
-import confirm from '@inquirer/confirm'
-import process from 'node:process'
 import { z } from 'zod'
 import { $ } from 'zx'
 
 import { buildCmuxWorkspaceTitle, closeCmuxWorkspaceByTitle } from 'src/integrations/cmux'
 import { getReleasePRs } from 'src/integrations/gh'
 import { removeIdeWorktreeFolders } from 'src/integrations/ide'
-import { commandEcho } from 'src/lib/command-echo'
+import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
@@ -40,20 +38,7 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
     const releasePRsList = await getReleasePRs()
 
     // Ask for confirmation
-    const answer = confirmedCommand
-      ? true
-      : await confirm({
-          message: 'Are you sure you want to proceed with these worktree changes?',
-        })
-
-    if (!confirmedCommand) {
-      commandEcho.setInteractive()
-    }
-
-    if (!answer) {
-      logger.info('Operation cancelled. Exiting...')
-      process.exit(0)
-    }
+    await confirmOrExit(confirmedCommand, 'Are you sure you want to proceed with these worktree changes?')
 
     // Track --yes flag if confirmation was interactive (user confirmed)
     if (!confirmedCommand) {

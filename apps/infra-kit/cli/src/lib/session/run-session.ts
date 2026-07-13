@@ -38,6 +38,12 @@ export interface SessionCommand {
   entersAltScreen?: boolean
   /** Append the "applies after you exit" notice (env-load/clear can't mutate the parent shell). */
   sessionEnvNotice?: boolean
+  /**
+   * Runs until the user stops it (`dev`). It writes no report (its action resolves at boot, long before
+   * it is done) and exits `128 + signo` on a Ctrl-C rather than dying by the signal, so `classifyOutcome`
+   * needs to be told — otherwise every normal stop reads as a failure.
+   */
+  longRunning?: boolean
 }
 
 /** A palette row — structurally compatible with the Ink palette's `PaletteItem`, no React dependency. */
@@ -63,8 +69,10 @@ export interface RunSessionDeps {
   ascii?: boolean
   /** Terminal hygiene after each child (default: the real escapes; tests inject a spy). */
   resetTerminal?: (opts: { entersAltScreen?: boolean }) => void
-  /** Install real SIGINT/SIGTSTP handlers (default true; tests pass false to stay signal-free). */
+  /** Install the real signal handlers (default true; tests pass false to stay signal-free). */
   installSignals?: boolean
+  /** Process seams for those handlers (default: the real `process`). Tests inject fakes to assert policy. */
+  signals?: SessionSignalDeps
 }
 
 /** The replayable command line for a pick — echoed as the header, and the default equivalent line. */
@@ -128,7 +136,7 @@ const runOne = async (
   }
 
   const record = readAndUnlinkReport(reportPath)
-  const outcome = classifyOutcome(result.code, result.signal, record != null)
+  const outcome = classifyOutcome(result.code, result.signal, record != null, command.longRunning)
   const headerLine = commandLine(command)
   const equivalent = record?.equivalent ?? equivalentLine(headerLine, true)
 
@@ -145,36 +153,121 @@ const runOne = async (
   })
 }
 
+/** Process-level seams for the signal owners (tests inject fakes; production wires `process`). */
+export interface SessionSignalDeps {
+  register: (signal: NodeJS.Signals, handler: () => void) => void
+  unregister: (signal: NodeJS.Signals, handler: () => void) => void
+  exit: (code: number) => void
+  /** Deliver a signal to THIS process (used to take SIGTSTP's default action: stop). */
+  raise: (signal: NodeJS.Signals) => void
+}
+
+/** The session's live signal owner: handler teardown, plus the state the loop must consult. */
+export interface SessionSignals {
+  /** Remove every installed handler. */
+  dispose: () => void
+  /** Call when a child is about to run — resets the per-child signal history. */
+  childStarted: () => void
+  /** True when an external SIGTERM asked us to stop; the loop must exit after the current child. */
+  quitRequested: () => boolean
+}
+
 /**
- * Install the session's state-aware signal owners. While a child runs, SIGINT is swallowed so the
- * tty-delivered signal kills only the child (which installs no SIGINT handler) and the parent
- * survives to render `⊘ cancelled` and loop; between iterations (cooked mode) SIGINT quits cleanly.
- * Returns a cleanup that removes both handlers.
+ * Install the session's state-aware signal owners. The child is spawned WITHOUT `detached`, so it shares
+ * this process's group — every tty-delivered signal reaches the child directly, and the parent's job is
+ * only to decide what IT does.
  *
- * SIGTSTP is ignored for the session's lifetime: a suspended session would leave a half-drawn palette
- * frame and a child holding the tty. KNOWN LIMITATION — Ctrl-Z during a child hangs the terminal:
- * SIGTSTP goes to the whole foreground process group, so the child stops while the parent ignores the
- * signal and keeps awaiting an exit that never comes. Pre-existing; fixing it means forwarding the
- * stop to the child's pgid and re-arming on SIGCONT.
+ * - **SIGINT** — swallowed while a child runs, so the tty's Ctrl-C stops only the child and the parent
+ *   survives to render `⊘ cancelled` and loop. Between iterations it ends the session (exit 0).
+ * - **SIGTERM** — DEFERRED, not dropped, while a child runs: we finish the child, commit its transcript
+ *   entry, and then end the session. Dropping it outright would make the session unkillable by anything
+ *   short of SIGKILL for as long as a child ran — and `dev` runs for hours.
+ *
+ *   The exception is pnpm's RELAY. Under `pnpm exec infra-kit`, pnpm forwards a SIGTERM to us moments
+ *   after the tty's Ctrl-C — that SIGTERM is an artifact of the SIGINT the user already aimed at the
+ *   child, not a request to kill the session, so a SIGTERM that FOLLOWS a SIGINT within the same child
+ *   is swallowed. (Causality, not a timing heuristic: the relay only exists because of the Ctrl-C.)
+ *   Without a handler at all, that relay was an instant unhandled parent death — the shell prompt
+ *   returned while the child still owned the tty and wrote teardown output over it.
+ * - **SIGHUP** — NEVER swallowed. It means the terminal is gone, so staying alive would leave the
+ *   session looping on a dead tty, drawing palette frames into a closed fd. Always exit (129). The child
+ *   gets its own SIGHUP and is responsible for its own reap (see `dev/signal-shutdown.ts`).
+ * - **SIGTSTP** — Ctrl-Z. While a child runs we STOP OURSELVES, because the tty already delivered
+ *   SIGTSTP to the whole foreground group: the child has stopped, and if the parent merely ignored the
+ *   signal (as it used to) it would sit in `waitForExit` awaiting an exit that can never come, wedging
+ *   the terminal with no prompt and no way back. Stopping too suspends the FOREGROUND GROUP as a unit,
+ *   so the user's shell reclaims the tty and prints a prompt; `fg` sends SIGCONT to the group and both
+ *   resume. Handlers survive stop/continue, so there is nothing to re-arm.
+ *
+ *   CAVEAT — a child's own DETACHED descendants keep running: `dev`'s turbo/vite children sit in their
+ *   own process groups, so a Ctrl-Z out of `dev` suspends `dev` itself while its servers stay up and
+ *   bound to their ports. Recoverable with `fg`, and strictly better than the wedge it replaced, but
+ *   "suspended" is not the whole truth for `dev`. Between iterations SIGTSTP stays IGNORED: suspending
+ *   mid-palette would strand a half-drawn Ink frame on the screen.
  */
-const installSessionSignals = (isChildRunning: () => boolean): (() => void) => {
+export const installSessionSignals = (isChildRunning: () => boolean, deps: SessionSignalDeps): SessionSignals => {
+  // Per-child signal history: a SIGTERM is pnpm's relay only if a SIGINT preceded it for THIS child.
+  let sigintSeenDuringChild = false
+  let quitRequested = false
+
   const onSigint = (): void => {
     if (isChildRunning()) {
+      // The child got its own copy from the tty; ours only records that the Ctrl-C happened, so a
+      // SIGTERM arriving next can be recognised as pnpm's relay rather than an external kill.
+      sigintSeenDuringChild = true
+
       return
     }
-    // Cooked between-iterations window: a real Ctrl-C here should end the session (exit 0).
-    process.exit(0)
+
+    deps.exit(0)
+  }
+  const onSigterm = (): void => {
+    if (!isChildRunning()) {
+      deps.exit(0)
+
+      return
+    }
+
+    if (sigintSeenDuringChild) {
+      // pnpm's relay of the Ctrl-C the user aimed at the child. Not a request to end the session.
+      return
+    }
+
+    // A genuine external `kill`. Let the child finish and its entry commit, then stop.
+    quitRequested = true
+  }
+  const onSighup = (): void => {
+    // The tty is gone. There is nothing left to render into and no user to render for.
+    deps.exit(129)
   }
   const onSigtstp = (): void => {
-    // Ignore unconditionally: suspending mid-child or mid-palette would strand a partial frame.
+    if (!isChildRunning()) {
+      // Mid-palette: ignore, or we would suspend with a partial frame committed to the screen.
+      return
+    }
+
+    // SIGSTOP cannot be caught — this takes the default action the handler is suppressing.
+    deps.raise('SIGSTOP')
   }
 
-  process.on('SIGINT', onSigint)
-  process.on('SIGTSTP', onSigtstp)
+  deps.register('SIGINT', onSigint)
+  deps.register('SIGTERM', onSigterm)
+  deps.register('SIGHUP', onSighup)
+  deps.register('SIGTSTP', onSigtstp)
 
-  return () => {
-    process.off('SIGINT', onSigint)
-    process.off('SIGTSTP', onSigtstp)
+  return {
+    dispose: () => {
+      deps.unregister('SIGINT', onSigint)
+      deps.unregister('SIGTERM', onSigterm)
+      deps.unregister('SIGHUP', onSighup)
+      deps.unregister('SIGTSTP', onSigtstp)
+    },
+    childStarted: () => {
+      sigintSeenDuringChild = false
+    },
+    quitRequested: () => {
+      return quitRequested
+    },
   }
 }
 
@@ -236,15 +329,39 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
       return process.stderr.write(text)
     })
 
+  const signals: SessionSignalDeps = deps.signals ?? {
+    register: (signal, handler) => {
+      process.on(signal, handler)
+    },
+    unregister: (signal, handler) => {
+      process.off(signal, handler)
+    },
+    exit: (code) => {
+      process.exit(code)
+    },
+    raise: (signal) => {
+      process.kill(process.pid, signal)
+    },
+  }
+
   let childRunning = false
-  const cleanupSignals =
+  const noopSignals: SessionSignals = {
+    dispose: () => {
+      return undefined
+    },
+    childStarted: () => {
+      return undefined
+    },
+    quitRequested: () => {
+      return false
+    },
+  }
+  const sessionSignals =
     deps.installSignals === false
-      ? () => {
-          return undefined
-        }
+      ? noopSignals
       : installSessionSignals(() => {
           return childRunning
-        })
+        }, signals)
 
   try {
     for (;;) {
@@ -265,6 +382,7 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
       const header = formatRunHeader(commandLine(command))
 
       write(`\n${header}\n`)
+      sessionSignals.childStarted()
 
       const entry = await runOne(command, resolved, (running) => {
         childRunning = running
@@ -272,8 +390,14 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
 
       // Leading newline: the child may have exited mid-line, and the footer must not be welded to it.
       write(`\n${entry}\n`)
+
+      // An external SIGTERM arrived mid-child. We deferred it so the child could finish and its entry
+      // could be committed above; honour it now rather than re-rendering the palette over a `kill`.
+      if (sessionSignals.quitRequested()) {
+        return
+      }
     }
   } finally {
-    cleanupSignals()
+    sessionSignals.dispose()
   }
 }

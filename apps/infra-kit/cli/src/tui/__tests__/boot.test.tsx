@@ -25,9 +25,11 @@ vi.mock('ink', () => {
   }
 })
 
-const { runCommandPalette } = await import('../boot')
+const { runBranchMultiPicker, runBranchPicker, runCommandPalette } = await import('../boot')
 
 const items: PaletteItem[] = [{ name: 'worktrees-remove', description: 'remove', group: 'Worktrees' }]
+
+const branchItems = [{ value: 'release/1.2.3', label: 'release/1.2.3' }]
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -57,5 +59,73 @@ describe('runCommandPalette stdin lifecycle', () => {
 
     expect(await runCommandPalette(items)).toBeNull()
     expect(refSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('runBranchPicker stdin lifecycle', () => {
+  it('re-refs process.stdin and returns the selected value', async () => {
+    const refSpy = vi.spyOn(process.stdin, 'ref').mockReturnValue(process.stdin)
+
+    waitUntilExit.mockResolvedValue(undefined)
+
+    const pending = runBranchPicker(branchItems)
+
+    ;(rendered?.props as { onSelect: (value: string) => void }).onSelect('release/1.2.3')
+
+    expect(await pending).toBe('release/1.2.3')
+    expect(refSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-refs process.stdin and resolves null when the teardown rejects', async () => {
+    const refSpy = vi.spyOn(process.stdin, 'ref').mockReturnValue(process.stdin)
+
+    waitUntilExit.mockRejectedValue(new Error('forced close'))
+
+    expect(await runBranchPicker(branchItems)).toBeNull()
+    expect(refSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('runBranchMultiPicker stdin lifecycle', () => {
+  it('re-refs process.stdin and returns the submitted values', async () => {
+    const refSpy = vi.spyOn(process.stdin, 'ref').mockReturnValue(process.stdin)
+
+    waitUntilExit.mockResolvedValue(undefined)
+
+    const pending = runBranchMultiPicker(branchItems)
+
+    ;(rendered?.props as { onSubmit: (values: string[]) => void }).onSubmit(['release/1.2.3'])
+
+    expect(await pending).toStrictEqual(['release/1.2.3'])
+    expect(refSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-refs process.stdin and resolves null when the teardown rejects', async () => {
+    const refSpy = vi.spyOn(process.stdin, 'ref').mockReturnValue(process.stdin)
+
+    waitUntilExit.mockRejectedValue(new Error('forced close'))
+
+    expect(await runBranchMultiPicker(branchItems)).toBeNull()
+    expect(refSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ink → Ink lifecycle (bare-menu palette → picker in one process)', () => {
+  it('re-refs process.stdin after each teardown across back-to-back renders', async () => {
+    const refSpy = vi.spyOn(process.stdin, 'ref').mockReturnValue(process.stdin)
+
+    waitUntilExit.mockResolvedValue(undefined)
+
+    const palettePending = runCommandPalette(items)
+
+    ;(rendered?.props as { onSelect: (name: string) => void }).onSelect('worktrees-remove')
+    expect(await palettePending).toBe('worktrees-remove')
+    expect(refSpy).toHaveBeenCalledTimes(1)
+
+    const pickerPending = runBranchMultiPicker(branchItems)
+
+    ;(rendered?.props as { onSubmit: (values: string[]) => void }).onSubmit(['release/1.2.3'])
+    expect(await pickerPending).toStrictEqual(['release/1.2.3'])
+    expect(refSpy).toHaveBeenCalledTimes(2)
   })
 })

@@ -1,6 +1,26 @@
 import { describe, expect, it } from 'vitest'
 
-import { commandCatalog, getExposedMcpTools, getMenuGroupCommands } from '../command-catalog'
+import { buildProgram, commandPath } from 'src/lib/program'
+
+import {
+  MENU_GROUPS,
+  commandCatalog,
+  getExposedMcpTools,
+  getMenuGroupCommands,
+  isLongRunningCommand,
+} from '../command-catalog'
+
+/**
+ * Every menu-eligible command name, derived from MENU_GROUPS rather than a second hardcoded group list.
+ * This is what keeps the guards below honest: a new group is covered by the leaf invariant and the
+ * self-update/mcp exclusion the moment it is declared, with no test edit. A hardcoded list would go
+ * quietly stale and stop checking the very commands a regrouping just added.
+ */
+const allMenuNames = (): string[] => {
+  return MENU_GROUPS.flatMap(({ key }) => {
+    return getMenuGroupCommands(key)
+  })
+}
 
 // The exact MCP tool surface that was hand-listed in src/mcp/tools/index.ts
 // before the catalog refactor. The catalog must keep this byte-for-byte.
@@ -15,7 +35,8 @@ const EXPECTED_EXPOSED_TOOLS = [
   'gh-release-deploy-all',
   'gh-release-deploy-selected',
   'gh-release-list',
-  'audit',
+  // TEMP: `audit` is disabled in the catalog — restore this entry with the command.
+  // 'audit',
   'vendor-check',
   'vendor-diff',
   'version',
@@ -37,7 +58,8 @@ const EXPECTED_UNEXPOSED_WITH_TOOL = [
 ]
 
 describe('command catalog — MCP exposure policy', () => {
-  it('exposes exactly the expected 18 MCP tools (set-equal, order-independent)', () => {
+  // TEMP: 18 while `audit` is in the catalog; it is disabled, so the surface is 17.
+  it('exposes exactly the expected 17 MCP tools (set-equal, order-independent)', () => {
     const exposedNames = getExposedMcpTools()
       .map((tool) => {
         return tool.name
@@ -45,7 +67,7 @@ describe('command catalog — MCP exposure policy', () => {
       .sort()
 
     expect(exposedNames).toEqual([...EXPECTED_EXPOSED_TOOLS].sort())
-    expect(exposedNames).toHaveLength(18)
+    expect(exposedNames).toHaveLength(17)
   })
 
   it('never exposes the irreversible release-deliver / worktrees-remove tools', () => {
@@ -82,6 +104,30 @@ describe('command catalog — MCP exposure policy', () => {
       if (entry.mcpExposed) {
         expect(entry.mcpTool, `${entry.cliName} is exposed but has no tool`).not.toBeNull()
       }
+    }
+  })
+
+  // The MCP boundary auto-confirms every tool: an agent must never be able to trigger an unattended
+  // global package install, nor recursively launch the server it is already talking to.
+  it('keeps self-update and mcp off the MCP surface and out of every menu group', () => {
+    const exposedNames = new Set(
+      getExposedMcpTools().map((tool) => {
+        return tool.name
+      }),
+    )
+    const menuNames = new Set(allMenuNames())
+
+    for (const cliName of ['self-update', 'mcp']) {
+      const entry = commandCatalog.find((candidate) => {
+        return candidate.cliName === cliName
+      })
+
+      expect(entry, `${cliName} must be in the catalog`).toBeDefined()
+      expect(entry?.mcpTool).toBeNull()
+      expect(entry?.mcpExposed).toBe(false)
+      expect(entry?.menuGroup).toBeNull()
+      expect(exposedNames.has(cliName)).toBe(false)
+      expect(menuNames.has(cliName)).toBe(false)
     }
   })
 
@@ -130,7 +176,8 @@ describe('command catalog — CLI/MCP name parity', () => {
     'worktrees-reload': 'worktrees-reload',
     'worktrees-remove': 'worktrees-remove',
     'worktrees-sync': 'worktrees-sync',
-    audit: 'audit',
+    // TEMP: `audit` is disabled in the catalog — restore this entry with the command.
+    // audit: 'audit',
     doctor: 'doctor',
     version: 'version',
     'env-status': 'env-status',
@@ -157,7 +204,9 @@ describe('command catalog — CLI/MCP name parity', () => {
 })
 
 describe('command catalog — menu grouping', () => {
-  it('preserves the three menu groups in display order', () => {
+  it('preserves each menu group in display order', () => {
+    expect(getMenuGroupCommands('develop')).toEqual(['dev'])
+
     expect(getMenuGroupCommands('release')).toEqual([
       'merge-dev',
       'release-list',
@@ -176,18 +225,105 @@ describe('command catalog — menu grouping', () => {
       'worktrees-sync',
     ])
 
-    expect(getMenuGroupCommands('environment')).toEqual([
-      'audit',
-      'vendor',
-      'vendor-config',
-      'doctor',
-      'init',
-      'version',
-      'config',
-      'env-status',
-      'env-list',
-      'env-load',
-      'env-clear',
-    ])
+    // `Environment` is the Doppler env commands and nothing else. It used to be a 13-entry drawer that
+    // also held config, vendor, and setup commands — the four groups below are what came out of it.
+    expect(getMenuGroupCommands('environment')).toEqual(['env-status', 'env-list', 'env-load', 'env-clear'])
+    expect(getMenuGroupCommands('configuration')).toEqual(['config-path', 'config-edit'])
+    expect(getMenuGroupCommands('vendor')).toEqual(['vendor-check', 'vendor-diff', 'vendor-config'])
+    // TEMP: `audit` is disabled in the catalog — restore it between `doctor` and `version`.
+    expect(getMenuGroupCommands('setup')).toEqual(['init', 'doctor', 'version'])
+  })
+
+  /**
+   * `dev` is the only long-running command. The flag drives TWO things that must never drift apart: the
+   * `postAction` report is suppressed for it (its action resolves at boot, so a report would claim a
+   * verdict the server has not produced), and `classifyOutcome` reads its `128 + signo` exit as a cancel
+   * rather than a failure. Keyed by the SPACE-JOINED Commander path, which is what `postAction` is handed.
+   */
+  it('marks dev — and only dev — as long-running, keyed by its Commander path', () => {
+    expect(isLongRunningCommand('dev')).toBe(true)
+
+    // Every other menu command does a unit of work and exits: it must still write its report.
+    for (const name of allMenuNames()) {
+      if (name === 'dev') continue
+
+      const entry = commandCatalog.find((candidate) => {
+        return candidate.cliName === name
+      })
+
+      expect(isLongRunningCommand(entry!.groupPath.join(' ')), `"${name}" must not be long-running`).toBe(false)
+    }
+  })
+
+  it('does not match an unknown path', () => {
+    expect(isLongRunningCommand('nope')).toBe(false)
+    expect(isLongRunningCommand('')).toBe(false)
+  })
+
+  /**
+   * The report suppression only fires if the string `postAction` COMPUTES (`commandPath(actionCommand)`)
+   * equals the string the catalog MATCHES (`groupPath.join(' ')`). Asserting against a hand-typed `'dev'`
+   * would pin neither. This resolves the real Commander leaf out of a real program and feeds it through
+   * the real `commandPath`, so the two sides are pinned to each other rather than to my assumption.
+   *
+   * The latent trap it guards: a catalog command can have BOTH a grouped path and a hidden flat alias
+   * (`vendor check` / `vendor-check`), which produce different `commandPath()` strings. `dev` has only
+   * one form today — the day a long-running command grows an alias, this fails instead of silently
+   * emitting a wrong footer.
+   */
+  it('agrees with the real commandPath() the postAction hook feeds it', () => {
+    const leaf = buildProgram().commands.find((command) => {
+      return command.name() === 'dev'
+    })
+
+    expect(leaf, 'dev must be a registered top-level command').toBeDefined()
+    expect(commandPath(leaf!)).toBe('dev')
+    expect(isLongRunningCommand(commandPath(leaf!))).toBe(true)
+  })
+
+  // A group with no commands renders a dangling `— Label —` header over nothing. Cheap to assert once
+  // the group list is data, and it is the failure mode of a rename that misses the catalog entries.
+  it('every declared menu group has at least one command', () => {
+    for (const { key, label } of MENU_GROUPS) {
+      expect(getMenuGroupCommands(key), `group "${label}" would render an empty header`).not.toHaveLength(0)
+    }
+  })
+
+  // NOTE: there is deliberately NO "entry names an undeclared group" test — `menuGroup` is typed
+  // `MenuGroup | null` and `MenuGroup` is DERIVED from MENU_GROUPS, so an undeclared group is a compile
+  // error. A runtime assertion there could never fail; it would read as coverage while checking nothing.
+
+  // Every menu-eligible catalog entry MUST resolve to a Commander leaf (an action, no subcommands).
+  // A bare group (`vendor`, `config`) prints help and exits non-zero, which the session shell would
+  // misreport as a failure. This guard is what makes "menu-eligible ⇒ leaf" a structural invariant
+  // rather than an assertion. It walks a freshly-built, side-effect-free program (buildProgram).
+  it('every menu-eligible command resolves to a Commander leaf (action, no subcommands)', () => {
+    const program = buildProgram()
+    const topLevel = new Map(
+      program.commands.map((cmd) => {
+        return [cmd.name(), cmd]
+      }),
+    )
+
+    for (const name of allMenuNames()) {
+      const cmd = topLevel.get(name)
+
+      expect(cmd, `menu entry "${name}" must be a registered top-level command`).toBeDefined()
+      expect(cmd!.commands, `menu entry "${name}" must be a leaf (no subcommands)`).toHaveLength(0)
+    }
+  })
+
+  it('every catalog entry carries a groupPath whose first token is a real top-level command', () => {
+    const program = buildProgram()
+    const topLevel = new Set(
+      program.commands.map((cmd) => {
+        return cmd.name()
+      }),
+    )
+
+    for (const entry of commandCatalog) {
+      expect(entry.groupPath.length, `${entry.cliName} groupPath must be non-empty`).toBeGreaterThan(0)
+      expect(topLevel.has(entry.groupPath[0]!), `${entry.cliName} groupPath[0] must be a top-level command`).toBe(true)
+    }
   })
 })

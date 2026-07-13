@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import process from 'node:process'
@@ -8,7 +8,15 @@ import { DevServerRunner } from 'src/dev/dev-server'
 import { DEFAULT_PORT } from 'src/dev/ports'
 import { readLocalContext, readLocalSet } from 'src/lib/vite/vite'
 
-import { createTempTracker, makeMonorepo, restoreCwd, restoreEnv, snapshotCwd, snapshotEnv } from './fixtures'
+import {
+  createTempTracker,
+  makeMonorepo,
+  restoreCwd,
+  restoreEnv,
+  snapshotCwd,
+  snapshotEnv,
+  workingProxy,
+} from './fixtures'
 
 /**
  * Story 2 — the dev-context fragment WRITE side. Each runner writes its own
@@ -85,7 +93,16 @@ describe('dev-context fragment — T1: records the ACTUAL bound ephemeral port',
     delete process.env.SOLO_PORT
     process.chdir(root)
 
-    const runner = new DevServerRunner({}, noopBuild)
+    const runner = new DevServerRunner(
+      {},
+      noopBuild,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
 
     await runner.start()
 
@@ -141,7 +158,16 @@ describe('dev-context fragment — F6a: two apps write two distinct fragments', 
     delete process.env.BETA_PORT
     process.chdir(root)
 
-    const runner = new DevServerRunner({}, noopBuild)
+    const runner = new DevServerRunner(
+      {},
+      noopBuild,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
 
     await runner.start()
 
@@ -179,7 +205,16 @@ describe('dev-context fragment — M2: a restart refreshes the recorded port', (
     delete process.env.OMEGA_PORT
     process.chdir(root)
 
-    const runner = new DevServerRunner({}, noopBuild)
+    const runner = new DevServerRunner(
+      {},
+      noopBuild,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
 
     await runner.start()
 
@@ -220,7 +255,16 @@ describe('dev-context fragment — shutdown removes only the runner own fragment
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, 'other.json'), JSON.stringify({ package: 'other-api', port: 9999, pid: 1 }))
 
-    const runner = new DevServerRunner({}, noopBuild)
+    const runner = new DevServerRunner(
+      {},
+      noopBuild,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
 
     await runner.start()
 
@@ -233,4 +277,45 @@ describe('dev-context fragment — shutdown removes only the runner own fragment
     expect(fs.existsSync(path.join(dir, 'gamma.json'))).toBe(false)
     expect(fs.existsSync(path.join(dir, 'other.json'))).toBe(true)
   }, 15000)
+})
+
+describe('dev-context fragment — a dead writer never keeps a package pinned local', () => {
+  it('drops a fragment whose pid has exited, and keeps one whose writer is alive', () => {
+    // A runner killed with SIGKILL cannot clean up: its fragment AND its portless alias both survive.
+    // Reading that fragment as authoritative routes the package's `/api` at an alias nothing serves —
+    // a silent 502 with no diagnostic. The writer already stamps `pid`; the read side must honour it.
+    const root = temp.register(makeMonorepo([{ name: 'gamma', packageName: 'gamma-api', withHandler: true }]))
+
+    process.chdir(root)
+
+    // A genuinely dead pid: spawn a process, let it exit, reuse its (now reaped) id. Beats a large
+    // made-up number, which could collide with a live process and make this test flaky.
+    const deadPid = spawnSync(process.execPath, ['-e', '']).pid!
+    const dir = contextDir()
+
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(
+      path.join(dir, 'crashed.json'),
+      JSON.stringify({ package: 'crashed-api', port: 9998, pid: deadPid }),
+    )
+    fs.writeFileSync(path.join(dir, 'live.json'), JSON.stringify({ package: 'live-api', port: 9999, pid: process.pid }))
+
+    const localSet = readLocalSet(root)
+
+    expect(localSet.has('crashed-api')).toBe(false)
+    expect(localSet.has('live-api')).toBe(true)
+  })
+
+  it('trusts a fragment with no pid at all (written before the field existed)', () => {
+    const root = temp.register(makeMonorepo([{ name: 'gamma', packageName: 'gamma-api', withHandler: true }]))
+
+    process.chdir(root)
+
+    const dir = contextDir()
+
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'legacy.json'), JSON.stringify({ package: 'legacy-api', port: 9997 }))
+
+    expect(readLocalSet(root).has('legacy-api')).toBe(true)
+  })
 })

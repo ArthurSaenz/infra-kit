@@ -1,16 +1,18 @@
-/* eslint-disable sonarjs/cognitive-complexity */
-import checkbox from '@inquirer/checkbox'
-import confirm from '@inquirer/confirm'
-import process from 'node:process'
 import { z } from 'zod'
 import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
-import { commandEcho } from 'src/lib/command-echo'
+import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { logger } from 'src/lib/logger'
-import { detectReleaseType, formatBranchChoices, getJiraDescriptions, releaseBranchLabels } from 'src/lib/release-utils'
+import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
+import {
+  detectReleaseType,
+  formatBranchPickerItems,
+  getJiraDescriptions,
+  releaseBranchLabels,
+} from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
@@ -60,11 +62,10 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
 
     const descriptions = await getJiraDescriptions()
 
-    selectedReleaseBranches = await checkbox({
-      required: true,
-      message: '🌿 Select release branches',
-      choices: formatBranchChoices({ branches: releasePRsList, descriptions }),
-    })
+    selectedReleaseBranches = await pickReleaseBranches(
+      formatBranchPickerItems({ branches: releasePRsList, descriptions }),
+      { required: true },
+    )
   }
 
   // Track --all flag if all branches were selected (either via flag or interactively)
@@ -76,26 +77,10 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
     commandEcho.addOption('--versions', releaseBranchLabels(selectedReleaseBranches))
   }
 
-  // Validate input
-  // if (selectedReleaseBranches.length === 0) {
-  //   console.error('No branches provided. Exiting...')
-  //   process.exit(1)
-  // }
-
-  const answer = confirmedCommand
-    ? true
-    : await confirm({
-        message: `Are you sure you want to merge dev into these branches: ${selectedReleaseBranches.join(', ')}?`,
-      })
-
-  if (!confirmedCommand) {
-    commandEcho.setInteractive()
-  }
-
-  if (!answer) {
-    logger.info('Operation cancelled. Exiting...')
-    process.exit(0)
-  }
+  await confirmOrExit(
+    confirmedCommand,
+    `Are you sure you want to merge dev into these branches: ${selectedReleaseBranches.join(', ')}?`,
+  )
 
   // Track --yes flag if confirmation was interactive (user confirmed)
   if (!confirmedCommand) {

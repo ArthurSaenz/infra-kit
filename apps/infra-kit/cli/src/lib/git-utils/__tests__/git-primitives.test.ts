@@ -4,6 +4,7 @@ import {
   deleteLocalBranch,
   deleteRemoteBranch,
   getCurrentBranch,
+  getMainRepoRoot,
   isInsideLinkedWorktree,
   isWorkingTreeClean,
 } from 'src/lib/git-utils'
@@ -122,6 +123,42 @@ describe('isInsideLinkedWorktree', () => {
     git.commonDir = '/repo/.git'
 
     await expect(isInsideLinkedWorktree()).resolves.toBe(true)
+  })
+})
+
+describe('getMainRepoRoot', () => {
+  beforeEach(() => {
+    git.toplevel = '/repo'
+    git.commonDir = '.git'
+  })
+
+  it('returns the checkout root in the main checkout (relative common dir)', async () => {
+    // Main checkout: `--git-common-dir` is the relative `.git`, resolved against
+    // the passed toplevel → `<root>/.git`, whose parent is the root itself.
+    await expect(getMainRepoRoot('/repo')).resolves.toBe('/repo')
+  })
+
+  it('resolves to the MAIN repo root from inside a linked worktree', async () => {
+    // Worktree: `--git-common-dir` is the ABSOLUTE `<main>/.git`, so the parent
+    // is the main repo — not the worktree's own leaf dir.
+    git.commonDir = '/repo/.git'
+
+    await expect(getMainRepoRoot('/repo-worktrees/feature/x')).resolves.toBe('/repo')
+  })
+
+  it('falls back to the given toplevel inside a submodule (no stable main root)', async () => {
+    // Submodule common dir lives under `<super>/.git/modules/<name>`; its parent
+    // is `.git/modules`, not a repo root, so keep the caller's toplevel.
+    git.commonDir = '/super/.git/modules/sub'
+
+    await expect(getMainRepoRoot('/super/sub')).resolves.toBe('/super/sub')
+  })
+
+  it('resolves its own toplevel via getProjectRoot when no cwd is given', async () => {
+    git.toplevel = '/repo'
+    git.commonDir = '.git'
+
+    await expect(getMainRepoRoot()).resolves.toBe('/repo')
   })
 })
 

@@ -3,17 +3,6 @@
 exports[`command catalog — MCP exposure policy > matches the golden MCP tools/list surface (names + schema shape) 1`] = `
 [
   {
-    "input": [
-      "all",
-      "root",
-    ],
-    "name": "audit",
-    "output": [
-      "allPassed",
-      "packages",
-    ],
-  },
-  {
     "input": [],
     "name": "env-clear",
     "output": [

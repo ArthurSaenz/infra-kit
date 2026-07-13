@@ -39,7 +39,7 @@ const lintAt = async (relPath: string, source: string): Promise<Linter.LintMessa
 
 const expectFlagged = (messages: Linter.LintMessage[]) => {
   expect(messages).toHaveLength(1)
-  expect(messages[0]?.message).toContain('no rule allowing')
+  expect(messages[0]?.message).toContain('no policy allowing')
 }
 
 const expectClean = (messages: Linter.LintMessage[]) => {

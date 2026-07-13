@@ -3,6 +3,9 @@ import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 
+import { seedCreatedMessage, seedUserProjectConfig } from 'src/lib/config-bootstrap'
+import { CONFIG_STUB, buildUserGlobalExample, buildVendorExample } from 'src/lib/config-templates'
+import { getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
 
@@ -19,89 +22,6 @@ export const MARKER_END = '# -- infra-kit:end --'
 
 const LEGACY_PAIRED: [start: string, end: string][] = [['# region infra-kit', '# endregion infra-kit']]
 const LEGACY_SINGLE = '# infra-kit shell functions'
-
-// JSON can't carry comments, so the real config is an empty-but-valid object…
-const USER_GLOBAL_CONFIG_STUB = '{}\n'
-
-// …and the annotated guidance lives next to it in a non-loaded .example.jsonc
-// (the loader only reads the three exact `infra-kit.json` files).
-const USER_GLOBAL_CONFIG_EXAMPLE = `// infra-kit user-global config — ~/.infra-kit/infra-kit.json
-//
-// Merge chain (later layers override earlier ones at top-level keys):
-//   1. <repo>/infra-kit.json                            — committed project config (required)
-//   2. ~/.infra-kit/infra-kit.json                      — user-global (the sibling of this file)
-//   3. ~/.infra-kit/projects/<repo-name>/infra-kit.json — user-scope per-project override
-//
-// Merge is shallow: setting a top-level key replaces that whole section from
-// layer 1. Arrays do not concatenate. Top-level keys recognized:
-// environments, envManagement, ide, taskManager, worktrees, envAutoLoad.
-//
-// This .example.jsonc is reference only — it is NOT loaded. Put real global
-// overrides in the sibling infra-kit.json (strict JSON: no comments, double-quoted
-// keys). Per-project tweaks belong in layer 3 — run \`infra-kit config edit\`.
-//
-// Every recognized key is documented below. NOTE: \`environments\` and
-// \`envManagement\` are REQUIRED in the committed project infra-kit.json (layer 1)
-// and are usually NOT set in this user-global layer — they are shown here only to
-// document the full, valid config shape.
-{
-  // "environments": ["dev", "staging", "prod"],   // string[] (>=1) — required in layer 1
-  //
-  // "envManagement": {                            // required in layer 1; provider-tagged
-  //   "provider": "doppler",
-  //   "config": { "name": "my-doppler-project" }
-  // },
-  //
-  // "ide": {
-  //   "provider": "cursor",
-  //   "config": { "workspaceConfigPath": "/path/to/your.code-workspace" }
-  // },
-  // // Or, for Zed (no workspace file — one window with all worktrees via "zed <root> <wt...>"):
-  // "ide": { "provider": "zed", "config": {} },
-  // // Or drive BOTH editors at once with an array (at most one entry per provider):
-  // "ide": [
-  //   { "provider": "cursor", "config": { "workspaceConfigPath": "/path/to/your.code-workspace" } },
-  //   { "provider": "zed", "config": {} }
-  // ],
-  //
-  // "taskManager": {
-  //   "provider": "jira",
-  //   "config": { "baseUrl": "https://acme.atlassian.net", "projectId": 123 }
-  // },
-  //
-  // "worktrees": {
-  //   "openInGithubDesktop": false,
-  //   "openInCmux": true,
-  //   // cmux pane layout for opened worktrees: "two-columns" (default, left | right)
-  //   // or "three-pane" (left split top/bottom + full-height right).
-  //   "cmux": { "layout": "two-columns" }
-  // },
-  //
-  // // Auto-load Doppler env when working inside this project/worktree. Omit to
-  // // disable. "trigger" (pick one): "shell-startup" (new shells) | "cli-invocation"
-  // // (before each infra-kit command, primes subsequent commands). "config" is the
-  // // environment to load (must be one of "environments"). Requires the committed
-  // // infra-kit.json at the git repo root, and the zsh shell integration
-  // // (infra-kit init + a new shell). zsh only.
-  // "envAutoLoad": { "trigger": "shell-startup", "config": "dev" }
-}
-`
-
-// The machine-local factory registry lives at ~/.infra-kit/vendor.json (strict
-// JSON). This annotated sibling documents every property; the real file is
-// scaffolded by \`infra-kit vendor config --init\`, NOT by init.
-const VENDOR_CONFIG_EXAMPLE = `// infra-kit factory registry — ~/.infra-kit/vendor.json
-//
-// Machine-local registry the vendor commands (sync/manifest/diff) read to know
-// where your project repos live and which ones to stamp. This .example.jsonc is
-// reference only — it is NOT loaded. The real file is the strict-JSON sibling
-// vendor.json (no comments, double-quoted keys); run \`infra-kit vendor config --init\`
-// to scaffold it.
-{
-  // "workspaceDir": "~/projects",   // string (absolute or ~-prefixed) — where target repos are cloned
-  // "targets": ["my-repo-a", "my-repo-b"]   // string[] (>=1) — repo dir names resolved under workspaceDir
-}
-`
 
 /**
  * Append infra-kit shell functions to .zshrc, migrate any legacy `infra-kit.yml`
@@ -163,6 +83,9 @@ export const init = async (): Promise<void> => {
   // with the CLI surface. A no-op outside an infra-kit repo.
   await writeAgentFiles()
 
+  // Close the legacy-yml migration gap so a single `dx-init` leaves EVERY example current.
+  await reseedUserProjectConfig()
+
   // The shell integration is zsh-only (zmodload zsh/stat, add-zsh-hook, ${dir:h}).
   // Warn non-fatally if the user's login shell isn't zsh so the block isn't a
   // silent no-op for them.
@@ -201,8 +124,8 @@ export const seedUserGlobalConfig = (): void => {
 
   // Reference examples are non-loaded docs — always refresh them so re-running init
   // delivers the current schema (and the newly-added vendor example) to existing users.
-  fs.writeFileSync(path.join(userConfigDir, 'infra-kit.example.jsonc'), USER_GLOBAL_CONFIG_EXAMPLE, 'utf-8')
-  fs.writeFileSync(path.join(userConfigDir, 'vendor.example.jsonc'), VENDOR_CONFIG_EXAMPLE, 'utf-8')
+  fs.writeFileSync(path.join(userConfigDir, 'infra-kit.example.jsonc'), buildUserGlobalExample(), 'utf-8')
+  fs.writeFileSync(path.join(userConfigDir, 'vendor.example.jsonc'), buildVendorExample(), 'utf-8')
 
   if (fs.existsSync(userConfigPath)) {
     logger.info(`User-global config already present at ${userConfigPath} (refreshed reference examples)`)
@@ -210,9 +133,52 @@ export const seedUserGlobalConfig = (): void => {
     return
   }
 
-  fs.writeFileSync(userConfigPath, USER_GLOBAL_CONFIG_STUB, 'utf-8')
+  fs.writeFileSync(userConfigPath, CONFIG_STUB, 'utf-8')
 
   logger.info(`Wrote user-global config to ${userConfigPath} (see the sibling .example.jsonc files for reference)`)
+}
+
+/**
+ * Re-run the layer-3 seed at the END of `init()`, closing the legacy-yml migration gap.
+ *
+ * The per-command seed lives in the program's preAction hook, which evaluates its "is this an
+ * infra-kit repo?" gate (does `<repo-root>/infra-kit.json` exist?) BEFORE the action body runs. On
+ * the legacy-yml migration path `init()` itself CREATES that file (`migrateLegacyConfig`), so the
+ * gate had already declined and this very run would otherwise leave the layer-3 example unwritten —
+ * self-healing only on the user's next command. Re-running the gate here makes one `dx-init` enough.
+ *
+ * The UNGATED primitive, deliberately: `ensureUserProjectConfig()` is an ENTRY-BOUNDARY primitive
+ * whose once-per-process guard has ALREADY fired in preAction, so calling it here would be a silent
+ * no-op. It is unusable as a re-seed hook. Anything else (no git repo, no project config, an
+ * unwritable `$HOME`) degrades to a debug line — seeding a reference file must never fail `init`.
+ *
+ * Separate from {@link seedUserGlobalConfig}, which keeps its layer-2-only duty and stays sync.
+ *
+ * Honours `INFRA_KIT_NO_SEED` itself: the primitive is ungated by design, so without this check the
+ * kill switch would be airtight on every path EXCEPT `init`.
+ *
+ * @example
+ * await reseedUserProjectConfig()
+ * // after a legacy infra-kit.yml migration:
+ * // INFO: Created ~/.infra-kit/projects/api/infra-kit.json — see …/infra-kit.example.jsonc …
+ */
+const reseedUserProjectConfig = async (): Promise<void> => {
+  if (process.env.INFRA_KIT_NO_SEED) return
+
+  try {
+    const paths = await getInfraKitConfigPaths()
+
+    // The same D2 gate the preAction seed applies — re-evaluated now that the migrations have run.
+    if (!fs.existsSync(paths.main)) return
+
+    const result = await seedUserProjectConfig(paths)
+
+    if (result.createdConfig) {
+      logger.info(seedCreatedMessage(result))
+    }
+  } catch (err) {
+    logger.debug({ err, msg: 'Skipped seeding the user-project config (init).' })
+  }
 }
 
 const isBlockLine = (line: string): boolean => {
@@ -296,7 +262,9 @@ export const buildShellBody = (): string => {
     `env-load() { local f m; f=$(${runCmd} env-load "$@") || return; m=$(zstat +mtime -- "$f" 2>/dev/null || echo 0); _INFRA_KIT_LAST_LOAD_MTIME=$m; source "$f"; ${runCmd} env-status; }`,
     `env-clear() { local f m; f=$(${runCmd} env-clear "$@") || return; m=$(zstat +mtime -- "$f" 2>/dev/null || echo 0); _INFRA_KIT_LAST_CLEAR_MTIME=$m; source "$f"; ${runCmd} env-status; }`,
     `env-status() { ${runCmd} env-status; }`,
-    `alias ik='${runCmd}'`,
+    // No `alias ik=…` here: a global install provides real `infra-kit` and `ik` bins, and an alias
+    // would SHADOW the global `ik`, forcing the project-local `pnpm exec` even when a global CLI exists.
+    // (`isBlockLine` still lists `alias ` so re-running `init` strips the stale alias from old configs.)
     // Print an async notice without corrupting an already-drawn prompt. The
     // startup poll fires via `sched` at an IDLE prompt (ZLE active) which does
     // NOT redraw the prompt, so a bare `print` lands appended to the visible

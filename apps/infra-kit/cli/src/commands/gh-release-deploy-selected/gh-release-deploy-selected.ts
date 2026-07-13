@@ -13,9 +13,10 @@ import { OperationError } from 'src/lib/errors/operation-error'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
+import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import {
   detectReleaseType,
-  formatBranchChoices,
+  formatBranchPickerItems,
   getJiraDescriptions,
   releaseLabelFromBranch,
   resolveReleaseBranch,
@@ -86,10 +87,10 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
 
     const descriptions = await getJiraDescriptions()
 
-    selectedReleaseBranch = await select({
-      message: '🌿 Select release branch',
-      choices: [{ name: 'dev', value: 'dev' }, ...formatBranchChoices({ branches, descriptions, types: releaseTypes })],
-    })
+    selectedReleaseBranch = await pickReleaseBranch([
+      { value: 'dev', label: 'dev' },
+      ...formatBranchPickerItems({ branches, descriptions, types: releaseTypes }),
+    ])
   }
 
   const selectedVersion = releaseLabelFromBranch(selectedReleaseBranch)
@@ -184,22 +185,26 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
     commandEcho.addOption('--skip-terraform', true)
   }
 
-  if (!(await confirmDeploy({ confirmedCommand, branch: selectedReleaseBranch, env: selectedEnv }))) {
-    logger.info('Deployment cancelled')
-
+  const buildResult = (success: boolean) => {
     const structuredContent = {
       releaseBranch: selectedReleaseBranch,
       version: selectedVersion,
       environment: selectedEnv,
       services: selectedServices,
       skipTerraformDeploy: shouldSkipTerraform,
-      success: false,
+      success,
     }
 
     return {
       content: textContent(JSON.stringify(structuredContent, null, 2)),
       structuredContent,
     }
+  }
+
+  if (!(await confirmDeploy({ confirmedCommand, branch: selectedReleaseBranch, env: selectedEnv }))) {
+    logger.info('Deployment cancelled')
+
+    return buildResult(false)
   }
 
   try {
@@ -221,19 +226,7 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
 
     commandEcho.print()
 
-    const structuredContent = {
-      releaseBranch: selectedReleaseBranch,
-      version: selectedVersion,
-      environment: selectedEnv,
-      services: selectedServices,
-      skipTerraformDeploy: shouldSkipTerraform,
-      success: true,
-    }
-
-    return {
-      content: textContent(JSON.stringify(structuredContent, null, 2)),
-      structuredContent,
-    }
+    return buildResult(true)
   } catch (error: unknown) {
     logger.error({ error }, '❌ Error launching workflow')
     throw new OperationError(error, {

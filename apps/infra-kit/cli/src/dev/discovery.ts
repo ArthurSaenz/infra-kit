@@ -91,6 +91,48 @@ export interface DiscoveredUiApp {
   packageName: string
   /** Absolute path to `apps/<app>/ui`. */
   path: string
+  /**
+   * True when this UI's vite config wires `infra-kit/vite`'s `infraKitDev()` helper — the ONLY thing
+   * that makes it honor the runner-assigned `INFRA_KIT_UI_PORTS` port (which it binds with `strictPort`).
+   *
+   * The runner treats frameworks opaquely, so it cannot assume a pre-assigned port is the port the child
+   * will bind. Without this signal it would print a confident, wrong URL for any UI that picks its own
+   * port (vike, astro, a hand-rolled vite config). Unwired → the runner claims no port and the UI keeps
+   * its honest "vite prints its URL below" reference line.
+   */
+  managedPort: boolean
+}
+
+/** Vite config filenames checked for the `infra-kit/vite` import, in vite's own resolution order. */
+const VITE_CONFIG_FILES = [
+  'vite.config.ts',
+  'vite.config.mts',
+  'vite.config.cts',
+  'vite.config.js',
+  'vite.config.mjs',
+  'vite.config.cjs',
+]
+
+/**
+ * True when `<dir>`'s vite config references the `infra-kit/vite` helper module. A text match, not a
+ * module load: the config is TypeScript the runner must not execute, and importing it would run the
+ * consumer's own side effects. False negatives (a config that re-exports the helper from a shared
+ * preset) cost only the reference line, never a wrong URL — the safe direction to be wrong in.
+ */
+export function usesInfraKitVite(dir: string): boolean {
+  for (const file of VITE_CONFIG_FILES) {
+    const configPath = path.join(dir, file)
+
+    if (!fs.existsSync(configPath)) continue
+
+    try {
+      return fs.readFileSync(configPath, 'utf-8').includes('infra-kit/vite')
+    } catch {
+      return false
+    }
+  }
+
+  return false
 }
 
 /** True when `<dir>/package.json` declares a non-empty `scripts.dev`. */
@@ -136,6 +178,7 @@ export function discoverUiApps(root: string): DiscoveredUiApp[] {
         name: appName,
         packageName: getPackageName(uiPath, appName),
         path: uiPath,
+        managedPort: usesInfraKitVite(uiPath),
       })
     }
   }
@@ -176,32 +219,69 @@ export function resolveSelfAppName(startDir: string): string {
   return firstSegment
 }
 
-/**
- * Existing `packages/<pkg>/dist` directories under the monorepo root — the compiled
- * outputs `turbo watch` rewrites. Watched (alongside app dist) because editing a shared
- * lib rewrites only the lib's `dist`, never the dependent app's, so a package-dist change
- * is the only signal that a lib was rebuilt.
- */
-export function getPackageDistDirs(root: string): string[] {
-  const packagesDir = path.join(root, 'packages')
+/** App-part directory names that are apps in their own right, never shared packages. See {@link getPackageDistDirs}. */
+const APP_PART_DIRS = new Set(['api', 'ui'])
 
-  if (!fs.existsSync(packagesDir)) return []
+/** `<dir>/dist` when it exists and is a directory, else `undefined`. */
+const existingDistDir = (dir: string): string | undefined => {
+  const distDir = path.join(dir, 'dist')
 
-  const names = fs
-    .readdirSync(packagesDir, { withFileTypes: true })
+  return fs.existsSync(distDir) && fs.statSync(distDir).isDirectory() ? distDir : undefined
+}
+
+/** Immediate subdirectory names of `dir`, or `[]` when `dir` does not exist. */
+const subdirNames = (dir: string): string[] => {
+  if (!fs.existsSync(dir)) return []
+
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
     .filter((d) => {
       return d.isDirectory()
     })
     .map((d) => {
       return d.name
     })
+}
+
+/**
+ * Existing dist directories of every SHARED workspace package — the compiled outputs `turbo watch`
+ * rewrites. Watched (alongside app dist) because editing a shared lib rewrites only the lib's `dist`,
+ * never the dependent app's, so a package-dist change is the only signal that a lib was rebuilt.
+ *
+ * Two homes, because the pnpm workspace globs cover `packages/<pkg>` as well as `apps/<app>/<part>`:
+ *  - `packages/<pkg>/dist` — the obvious one.
+ *  - `apps/<app>/<part>/dist` where `<part>` is neither `api` nor `ui` and the dir is a real workspace
+ *    member (it has a `package.json`). A shared library may legally live beside the app that owns it —
+ *    hulyo's `@pkg/ai-mcp` is `apps/ai/mcp`, and two backends depend on it. Scanning only `packages`
+ *    left such a package watched by nobody: turbo rebuilt its dist, the runner never saw the change, and
+ *    every dependent backend kept serving stale code.
+ *
+ * `api`/`ui` parts are excluded deliberately: an api's dist is already covered by {@link getAppDistDirs},
+ * and treating a frontend's dist as a shared package would bounce every backend on a UI rebuild.
+ */
+export function getPackageDistDirs(root: string): string[] {
   const dirs: string[] = []
 
-  for (const name of names) {
-    const distDir = path.join(packagesDir, name, 'dist')
+  for (const name of subdirNames(path.join(root, 'packages'))) {
+    const distDir = existingDistDir(path.join(root, 'packages', name))
 
-    if (fs.existsSync(distDir) && fs.statSync(distDir).isDirectory()) {
-      dirs.push(distDir)
+    if (distDir !== undefined) dirs.push(distDir)
+  }
+
+  const appsDir = path.join(root, 'apps')
+
+  for (const app of subdirNames(appsDir)) {
+    for (const part of subdirNames(path.join(appsDir, app))) {
+      if (APP_PART_DIRS.has(part)) continue
+
+      const partDir = path.join(appsDir, app, part)
+
+      // A workspace member, not a stray build artifact directory.
+      if (!fs.existsSync(path.join(partDir, 'package.json'))) continue
+
+      const distDir = existingDistDir(partDir)
+
+      if (distDir !== undefined) dirs.push(distDir)
     }
   }
 
@@ -224,13 +304,16 @@ export interface ChangeClassification {
   kind: 'app' | 'package'
   /** For app changes: the matched app dist dir (undefined when nothing matched). */
   app?: string
+  /** For package changes: the matched `packages/<pkg>/dist` dir (the change identity used to scope restarts). */
+  packageDir?: string
 }
 
 /**
  * Route a changed compiled-output path: a `packages/<pkg>/dist` change is a shared-package
- * rebuild (restart every app), an `<app>/dist` change restarts only that app (the matched
- * app dist dir is returned; `undefined` when the path matches neither). Package matches take
- * precedence.
+ * rebuild — the matched package dist dir is returned so the caller can restart only the apps
+ * whose dependency closure includes it. An `<app>/dist` change restarts only that app (the
+ * matched app dist dir is returned; `undefined` when the path matches neither). Package matches
+ * take precedence.
  */
 export function classifyDistChange(
   changedPath: string,
@@ -239,12 +322,12 @@ export function classifyDistChange(
 ): ChangeClassification {
   const normalized = path.normalize(changedPath)
 
-  const inPackage = packageDistDirs.some((dir) => {
+  const matchedPackageDir = packageDistDirs.find((dir) => {
     return normalized.startsWith(path.normalize(dir))
   })
 
-  if (inPackage) {
-    return { kind: 'package' }
+  if (matchedPackageDir) {
+    return { kind: 'package', packageDir: matchedPackageDir }
   }
 
   const matchedDir = appDistDirs.find((dir) => {

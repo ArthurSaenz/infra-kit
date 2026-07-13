@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { isPromptCancellation } from '../is-prompt-cancellation'
 import { OperationError } from '../operation-error'
+import { PromptCancelledError } from '../prompt-cancelled-error'
 
 /** Mirrors the @inquirer/core error shape (matched by `name`, not class). */
 const makeNamedError = (name: string): Error => {
@@ -19,6 +20,19 @@ describe('isPromptCancellation', () => {
 
   it('detects a signal-driven AbortPromptError', () => {
     expect(isPromptCancellation(makeNamedError('AbortPromptError'))).toBe(true)
+  })
+
+  it('detects the Ink pickers own PromptCancelledError', () => {
+    expect(isPromptCancellation(new PromptCancelledError())).toBe(true)
+  })
+
+  it('unwraps a PromptCancelledError re-wrapped in an OperationError', () => {
+    const wrapped = new OperationError(new PromptCancelledError(), {
+      operation: 'remove worktrees',
+      remediation: 'irrelevant',
+    })
+
+    expect(isPromptCancellation(wrapped)).toBe(true)
   })
 
   it('unwraps a cancellation re-wrapped in an OperationError', () => {

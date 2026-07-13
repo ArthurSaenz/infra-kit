@@ -21,7 +21,7 @@ import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 
 import { superviseChild } from './managed-child.js'
-import type { ManagedChild } from './managed-child.js'
+import type { ManagedChild, UnexpectedExitHandler } from './managed-child.js'
 
 /** Handle to the running `turbo watch` child; `kill()` reaps the whole process group. */
 export type TurboWatchHandle = ManagedChild
@@ -30,27 +30,64 @@ export type TurboWatchHandle = ManagedChild
 export type TurboWatchFactory = (opts: TurboWatchOptions) => TurboWatchHandle
 
 export interface TurboWatchOptions {
-  /** App package names; each becomes a `--filter=...<pkg>` (dependency-inclusive) arg. */
-  packageNames: string[]
+  /**
+   * API app package names, watched DEPENDENCY-INCLUSIVE (`--filter=...<pkg>`): rebuild the app AND its
+   * dependency closure, so editing a shared lib the backend uses triggers a rebuild + restart.
+   */
+  depInclusive: string[]
+  /**
+   * UI app package names, watched DEP-CLOSURE-ONLY (`--filter=<pkg>^...`): rebuild the frontend's shared-lib
+   * dependencies but NEVER the UI's own `build` (that would run a production `vite build` — the UI's live
+   * dev is owned by the separate `turbo run dev`/vite child). Covers FE-only libs + UI-only sessions.
+   */
+  depClosure: string[]
   /** Consumer repo cwd the child runs in (turbo resolves the consumer's own pin here). */
   cwd: string
   /** Runner log file; the child's stdout+stderr are appended to it. */
   logFile: string
+  /**
+   * Called if the engine dies on its own (not via `kill()`): incremental rebuilds silently stop, so
+   * the runner surfaces it. Optional so the injected test factory can ignore it.
+   */
+  onUnexpectedExit?: UnexpectedExitHandler
 }
 
 /**
- * Default factory: spawn `pnpm exec turbo watch build --filter=...<pkg> ... --continue=dependencies-successful
+ * Build the `--filter=` arg vector: `...<pkg>` (dependency-inclusive) for each API package, `<pkg>^...`
+ * (dependencies only, excluding the package itself) for each UI package. Pure/order-stable so the exact
+ * emitted args are unit-testable; API-only input reproduces the historical `--filter=...<pkg>` vector.
+ *
+ * @example
+ * buildTurboWatchFilters(['api-a'], ['ui-a']) // => ['--filter=...api-a', '--filter=ui-a^...']
+ */
+export const buildTurboWatchFilters = (depInclusive: string[], depClosure: string[]): string[] => {
+  return [
+    ...depInclusive.map((name) => {
+      return `--filter=...${name}`
+    }),
+    ...depClosure.map((name) => {
+      return `--filter=${name}^...`
+    }),
+  ]
+}
+
+/**
+ * Default factory: spawn `pnpm exec turbo watch build <filters> --continue=dependencies-successful
  * --env-mode=loose` detached, tee output to `logFile`, and reap the process group on `kill()`.
  *
- * `--filter=...<pkg>` (the leading `...`) includes each app's dependencies, so editing a
- * shared lib triggers a rebuild. `--continue=dependencies-successful` keeps the watcher
- * alive when one package fails to compile, so a shared-lib type error never tears down the
- * whole engine and the last-good `dist/` keeps serving.
+ * Filters come from {@link buildTurboWatchFilters}: `...<api>` (dep-inclusive) rebuilds a backend + its
+ * closure; `<ui>^...` (dep-closure-only) rebuilds the frontend's shared libs without production-building
+ * the UI. `--continue=dependencies-successful` keeps the watcher alive when one package fails to compile,
+ * so a shared-lib type error never tears down the whole engine and the last-good `dist/` keeps serving.
  */
-export const defaultTurboWatchFactory: TurboWatchFactory = ({ packageNames, cwd, logFile }) => {
-  const filters = packageNames.map((name) => {
-    return `--filter=...${name}`
-  })
+export const defaultTurboWatchFactory: TurboWatchFactory = ({
+  depInclusive,
+  depClosure,
+  cwd,
+  logFile,
+  onUnexpectedExit,
+}) => {
+  const filters = buildTurboWatchFilters(depInclusive, depClosure)
   const out = fs.openSync(logFile, 'a')
   const child = spawn(
     'pnpm',
@@ -58,5 +95,5 @@ export const defaultTurboWatchFactory: TurboWatchFactory = ({ packageNames, cwd,
     { cwd, detached: true, stdio: ['ignore', out, out] },
   )
 
-  return superviseChild(child)
+  return superviseChild(child, undefined, onUnexpectedExit)
 }

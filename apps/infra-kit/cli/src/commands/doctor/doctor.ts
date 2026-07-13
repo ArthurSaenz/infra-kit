@@ -6,10 +6,23 @@ import { $ } from 'zx'
 
 import { AGENTS_MARKER_END, AGENTS_MARKER_START } from 'src/commands/init/agent-files'
 import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
+import {
+  caFingerprintMatches,
+  defaultIsListening,
+  defaultIsProxyServing,
+  formatPortlessCommand,
+  handshakeChainsToCa,
+  listRoutes,
+  readCaPath,
+  resolvePortlessBin,
+} from 'src/dev/proxy/portless-driver'
+import type { HandshakeResult, PortlessRoute } from 'src/dev/proxy/portless-driver'
 import { getDopplerProject, listDopplerProjects } from 'src/integrations/doppler'
+import { describeOverrides, readOverrideSummary } from 'src/lib/config-overrides'
 import { DEFAULT_WARM_TTL_SECONDS, ENV_LOAD_FILE, getProjectWarmCacheDir } from 'src/lib/constants'
 import { getProjectRoot } from 'src/lib/git-utils/git-utils'
 import {
+  DEFAULT_DEV_PROXY_PORT,
   getInfraKitConfig,
   getInfraKitConfigPaths,
   resetInfraKitConfigCache,
@@ -209,32 +222,41 @@ export const checkDopplerProjectExists = async (): Promise<CheckResult> => {
 }
 
 /**
- * Surface where this developer's user-scope override file would live and
- * whether it has been created. Always passes — informational only — so the
- * user knows the resolved project name and target path at a glance.
+ * Surface where this developer's user-scope override file lives and what it CONTAINS. Always passes
+ * (informational) inside a git repo; fails only when the config paths can't be resolved at all.
+ *
+ * Three-way on purpose. Every non-excluded command now seeds layer 3 in its preAction hook — and
+ * `doctor` is one of them, so by the time this check runs the file should already exist. An ABSENT
+ * file therefore no longer means "not yet created", it means the seed FAILED (read-only `$HOME`, a
+ * sandbox, a locked-down CI image). That failure path is `logger.debug` only, so this line is the
+ * ONLY place a permanently-failing seed becomes visible — it must not be confusable with a healthy
+ * empty file. Content reporting is shared with `config path` via `readOverrideSummary` /
+ * `describeOverrides` (one JSON-tolerance policy: raw keys, malformed degrades, never throws).
  *
  * @example
  * await checkUserOverridePath()
  * // {
  * //   name: 'user override path',
  * //   status: 'pass',
- * //   message: '~/.infra-kit/projects/api/infra-kit.json (not yet created) — project: api',
+ * //   message: '~/.infra-kit/projects/api/infra-kit.json (2 override(s): ide, dev) — project: api',
  * // }
+ * // absent  -> '… (not created — seed failed?) — project: api'
+ * // empty   -> '… (empty — no overrides) — project: api'
+ * // corrupt -> '… (unreadable — invalid JSON) — project: api'
  */
-const checkUserOverridePath = async (): Promise<CheckResult> => {
+export const checkUserOverridePath = async (): Promise<CheckResult> => {
   const name = 'user override path'
 
   try {
     const paths = await getInfraKitConfigPaths()
-    const home = os.homedir()
-    const display = paths.userProject.startsWith(home) ? `~${paths.userProject.slice(home.length)}` : paths.userProject
     const exists = fs.existsSync(paths.userProject)
-    const suffix = exists ? '(exists)' : '(not yet created)'
+    const summary = await readOverrideSummary(paths.userProject, exists)
+    const suffix = exists ? describeOverrides(summary) : '(not created — seed failed?)'
 
     return {
       name,
       status: 'pass',
-      message: `${display} ${suffix} — project: ${paths.projectName}`,
+      message: `${tildify(paths.userProject)} ${suffix} — project: ${paths.projectName}`,
     }
   } catch (err) {
     return { name, status: 'fail', message: (err as Error).message }
@@ -460,6 +482,252 @@ export const checkAgentFiles = async (): Promise<CheckResult[]> => {
 }
 
 /**
+ * The one-time, out-of-band, ROOT command that installs the `:443` daemon. infra-kit never runs it — it
+ * only ever prints it (principle 3: infra-kit probes and prints, it never elevates).
+ *
+ * Rendered from the resolved `dist/cli.js`, never as a bare `portless`: portless is an npm dependency in
+ * `node_modules`, not a global bin, and `sudo` swaps `PATH` for `secure_path` — so the bare form cannot
+ * resolve under sudo even in a shell where it otherwise would. See {@link formatPortlessCommand}.
+ */
+const installDaemonCmd = (bin: string): string => {
+  return formatPortlessCommand(['service', 'install'], { sudo: true, bin })
+}
+
+/** The sudo-free "trust the local CA" command, rendered from the same resolved bin. */
+const trustCmd = (bin: string): string => {
+  return formatPortlessCommand(['trust'], { bin })
+}
+
+/** TLS chain failures that mean "the daemon's cert does not chain to the `ca.pem` we hold". */
+const CA_MISMATCH_CODES = new Set(['SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'])
+
+/**
+ * A validating probe of an IP literal sends no SNI and lands on portless's default cert, which has no IP
+ * SAN — so this code means OUR probe forgot a `servername`, never that the user's CA went bad. It must
+ * never reach a `portless trust` remediation: doing so would tell every correctly-configured user to
+ * repair a trust store that is fine.
+ */
+const PROBE_BUG_CODE = 'ERR_TLS_CERT_ALTNAME_INVALID'
+
+/** Every process/fs seam the portless checks touch, injected so tests never reach the real daemon. */
+export interface PortlessCheckDeps {
+  resolveBin?: () => string | null
+  isProxyServing?: (port: number, tls: boolean) => Promise<boolean>
+  handshake?: (port: number, servername: string) => Promise<HandshakeResult>
+  caTrusted?: () => boolean
+  routes?: () => PortlessRoute[]
+  isListening?: (port: number) => Promise<boolean>
+  caPath?: () => string
+}
+
+/** Is the daemon serving portless-over-TLS on the dev proxy port? Proven on the wire; reads no state file. */
+const checkPortlessServing = async (
+  isProxyServing: NonNullable<PortlessCheckDeps['isProxyServing']>,
+  bin: string,
+): Promise<CheckResult> => {
+  const name = `portless serving TLS on :${DEFAULT_DEV_PROXY_PORT}`
+  const serving = await isProxyServing(DEFAULT_DEV_PROXY_PORT, true)
+
+  if (!serving) {
+    return {
+      name,
+      status: 'fail',
+      message: `No portless daemon is serving HTTPS on :${DEFAULT_DEV_PROXY_PORT}. Install it once (needs root): \`${installDaemonCmd(bin)}\`.`,
+    }
+  }
+
+  return { name, status: 'pass', message: `portless is serving HTTPS on :${DEFAULT_DEV_PROXY_PORT}` }
+}
+
+/**
+ * Does the daemon serve a certificate that chains to the `ca.pem` on disk? The only check that VALIDATES
+ * the chain — the serving probe above deliberately does not, so that a down daemon and an untrusted CA stay
+ * two distinguishable failures with two different fixes.
+ *
+ * Probes `localhost` (always in the default cert's SANs, so it works on a fresh machine with zero aliases)
+ * and, when one is registered, a real alias — which validates the exact path the browser takes.
+ */
+const checkPortlessCaChain = async (
+  handshake: NonNullable<PortlessCheckDeps['handshake']>,
+  routes: PortlessRoute[],
+  caPath: string,
+  bin: string,
+): Promise<CheckResult> => {
+  const name = 'portless CA chain valid'
+  const servernames = [
+    'localhost',
+    ...routes.slice(0, 1).map((route) => {
+      return route.name
+    }),
+  ]
+  const results = await Promise.all(
+    servernames.map(async (servername) => {
+      return { servername, result: await handshake(DEFAULT_DEV_PROXY_PORT, servername) }
+    }),
+  )
+  const failed = results.filter((entry) => {
+    return !entry.result.ok
+  })
+
+  if (failed.length === 0) {
+    return {
+      name,
+      status: 'pass',
+      message: `Served certificate chains to ${tildify(caPath)} (${servernames.join(', ')})`,
+    }
+  }
+
+  const codes = failed.map((entry) => {
+    return entry.result.ok ? '' : entry.result.code
+  })
+
+  if (codes.includes(PROBE_BUG_CODE)) {
+    return {
+      name,
+      status: 'fail',
+      message: `Internal check error: the TLS probe got ${PROBE_BUG_CODE} for servername(s) ${failed
+        .map((entry) => {
+          return entry.servername
+        })
+        .join(', ')} — doctor's probe is wrong, your trust store is not implicated. Please report this.`,
+    }
+  }
+
+  if (
+    codes.some((code) => {
+      return CA_MISMATCH_CODES.has(code)
+    })
+  ) {
+    return {
+      name,
+      status: 'fail',
+      message: `The daemon is serving a certificate that does not chain to ${tildify(caPath)}. Its CA was regenerated — run \`${trustCmd(bin)}\`, or reinstall: \`${installDaemonCmd(bin)}\`.`,
+    }
+  }
+
+  return { name, status: 'fail', message: `TLS handshake failed (${codes.join(', ')})` }
+}
+
+/**
+ * Was `portless trust` run for the CA now on disk? Fingerprint marker only — it proves the marker was
+ * written for THIS `ca.pem` and the CA has not been regenerated since. It does NOT prove the keychain still
+ * trusts it: a user who deletes the certificate by hand in Keychain Access leaves the marker behind and
+ * passes here. Accepted residual (see `caFingerprintMatches`); the chain check above is what proves what the
+ * daemon actually serves.
+ */
+const checkPortlessCaTrusted = (trusted: boolean, caPath: string, bin: string): CheckResult => {
+  const name = 'portless CA trusted'
+
+  if (!trusted) {
+    return {
+      name,
+      status: 'fail',
+      message: `The portless CA is not trusted (or was regenerated). Run: \`${trustCmd(bin)}\` (no sudo needed).`,
+    }
+  }
+
+  return { name, status: 'pass', message: `${tildify(caPath)} matches the recorded ca.trusted fingerprint` }
+}
+
+/**
+ * Routes whose target port has nothing listening — a worktree whose runner was SIGKILLed. Newly worth
+ * surfacing under HTTPS: a dead target is now an opaque 502 from the proxy rather than a connection refusal.
+ */
+const checkPortlessStaleRoutes = async (
+  routes: PortlessRoute[],
+  isListening: NonNullable<PortlessCheckDeps['isListening']>,
+  bin: string,
+): Promise<CheckResult> => {
+  const name = 'portless routes'
+
+  if (routes.length === 0) return { name, status: 'pass', message: 'No portless routes registered' }
+
+  const probed = await Promise.all(
+    routes.map(async (route) => {
+      return { route, live: await isListening(route.port) }
+    }),
+  )
+  const stale = probed
+    .filter((entry) => {
+      return !entry.live
+    })
+    .map((entry) => {
+      return entry.route.name
+    })
+
+  if (stale.length === 0) {
+    return { name, status: 'pass', message: `${routes.length} portless route(s), all live` }
+  }
+
+  return {
+    name,
+    status: 'fail',
+    message: `${stale.length} stale portless route(s): ${stale.join(', ')}. Remove with \`${formatPortlessCommand(['alias', '--remove', '<name>'], { bin })}\`.`,
+  }
+}
+
+/**
+ * The portless block of doctor: is the HTTPS dev proxy installed, serving, trusted, and free of dead routes?
+ * This is the diagnostic surface for the port-free HTTPS dev URLs — it is what tells a developer to run
+ * `trust` (sudo-free) or the one-time `service install` (root), and it never conflates the two. Both are
+ * printed via {@link formatPortlessCommand} — as `<node> <cli.js> …`, the only form that runs.
+ *
+ * Every check observes the daemon **on the wire or on our own disk** — never through portless's `proxy.port`
+ * / `proxy.pid` / `proxy.tls` markers, which are process-global singletons that ANY daemon start rewrites and
+ * ANY daemon stop deletes. Gating on them made doctor report a perfectly healthy `:443` daemon as dead.
+ *
+ * Reports only: nothing here is auto-run, and nothing requiring sudo ever could be.
+ *
+ * @example
+ * await checkPortless()
+ * // [{ name: 'portless installed', status: 'pass', message: '…' }, … 5 checks]
+ */
+export const checkPortless = async (deps: PortlessCheckDeps = {}): Promise<CheckResult[]> => {
+  const resolveBin = deps.resolveBin ?? resolvePortlessBin
+  const isProxyServing = deps.isProxyServing ?? defaultIsProxyServing
+  const handshake = deps.handshake ?? handshakeChainsToCa
+  const caTrusted = deps.caTrusted ?? caFingerprintMatches
+  const readRoutes = deps.routes ?? listRoutes
+  const isListening = deps.isListening ?? defaultIsListening
+  const caPath = (deps.caPath ?? readCaPath)()
+  // Resolved ONCE, then threaded into every remediation below: each one is rendered as `<node> <bin> …`, so a
+  // check that could not name the binary could not print a runnable fix either.
+  const bin = resolveBin()
+
+  if (bin === null) {
+    return [
+      {
+        name: 'portless installed',
+        status: 'fail',
+        message: 'portless is not resolvable from node_modules — run `pnpm install`.',
+      },
+    ]
+  }
+
+  const installed: CheckResult = {
+    name: 'portless installed',
+    status: 'pass',
+    message: 'portless is resolvable from node_modules',
+  }
+  const routes = readRoutes()
+  const serving = await checkPortlessServing(isProxyServing, bin)
+  // Nothing is answering on :443 — there is no certificate to validate, so the chain check would only add a
+  // second, derivative failure to the one the user must fix first.
+  const chain: CheckResult =
+    serving.status === 'fail'
+      ? { name: 'portless CA chain valid', status: 'pass', message: 'Skipped — no daemon to handshake with' }
+      : await checkPortlessCaChain(handshake, routes, caPath, bin)
+
+  return [
+    installed,
+    serving,
+    chain,
+    checkPortlessCaTrusted(caTrusted(), caPath, bin),
+    await checkPortlessStaleRoutes(routes, isListening, bin),
+  ]
+}
+
+/**
  * Check installation and authentication status of gh, doppler, aws, and rtk CLIs
  */
 export const doctor = async () => {
@@ -494,13 +762,6 @@ export const doctor = async () => {
       'AWS CLI is installed',
       'AWS CLI is not installed. Install from: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html',
     ),
-    // INFO: no need now, util the user does not load the env variables, the aws cli is not authenticated
-    // checkCommand(
-    //   'aws authenticated',
-    //   ['aws', 'sts', 'get-caller-identity'],
-    //   'AWS CLI is authenticated',
-    //   'AWS CLI is not authenticated. Run: aws configure (or aws sso login)',
-    // ),
     checkCommand(
       'rtk installed',
       ['rtk', '--version'],
@@ -530,7 +791,7 @@ export const doctor = async () => {
     checkIdeInstalled(),
   ])
 
-  const checks: CheckResult[] = [...baseChecks, ...(await checkAgentFiles())]
+  const checks: CheckResult[] = [...baseChecks, ...(await checkPortless()), ...(await checkAgentFiles())]
 
   logger.info('Doctor check results:\n')
 

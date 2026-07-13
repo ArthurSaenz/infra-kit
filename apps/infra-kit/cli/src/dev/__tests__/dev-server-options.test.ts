@@ -44,7 +44,15 @@ describe('toDevServerOptions — CLI flag parsing', () => {
   it('parses a combined flag set (--app --watch) in one pass', () => {
     const opts = toDevServerOptions({ app: 'a,b', watch: true } satisfies DevCliOptions)
 
-    expect(opts).toEqual({ watch: true, include: ['a', 'b'], preset: undefined, cmux: false, self: false })
+    expect(opts).toEqual({
+      watch: true,
+      include: ['a', 'b'],
+      preset: undefined,
+      cmux: false,
+      self: false,
+      verbose: false,
+      routes: false,
+    })
   })
 
   it('passes the preset positional through', () => {
@@ -69,5 +77,27 @@ describe('toDevServerOptions — CLI flag parsing', () => {
 
   it('passes --self through as true', () => {
     expect(toDevServerOptions({ self: true } satisfies DevCliOptions).self).toBe(true)
+  })
+
+  it('leaves presetDef undefined when --target is absent, so preset/`*` resolution is untouched', () => {
+    expect(toDevServerOptions({} satisfies DevCliOptions).presetDef).toBeUndefined()
+  })
+
+  it('turns --target into an in-memory preset keyed by the exact target keys', () => {
+    const options = toDevServerOptions({ target: 'client/api, client/ui' } satisfies DevCliOptions)
+
+    expect(options.presetDef).toEqual({ apps: { 'client/api': {}, 'client/ui': {} } })
+  })
+
+  it('rejects a bare app name, which names a folder rather than a package', () => {
+    expect(() => {
+      return toDevServerOptions({ target: 'client' } satisfies DevCliOptions)
+    }).toThrow(/invalid --target "client"/)
+  })
+
+  it('rejects an unknown part', () => {
+    expect(() => {
+      return toDevServerOptions({ target: 'client/worker' } satisfies DevCliOptions)
+    }).toThrow(/invalid --target "client\/worker"/)
   })
 })

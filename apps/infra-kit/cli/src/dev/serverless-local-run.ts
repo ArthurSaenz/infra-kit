@@ -22,6 +22,12 @@ export interface IServerConfig {
   port?: number
   /** App folder name, surfaced by the `/__health` endpoint. Optional. */
   appName?: string
+  /**
+   * Structured per-request sink. When provided, every response emits `{ method, path, status, ms }`
+   * (path already trimmed of any query string) so the caller can tag + timestamp it — the dev-server
+   * routes this into its renderer's live tail. Independent of the env-gated raw stdout line below.
+   */
+  onRequestLog?: (event: { method: string; path: string; status: number; ms: number }) => void
 }
 
 /** True when a listen error is a port-already-in-use (`EADDRINUSE`) failure. */
@@ -91,15 +97,23 @@ export class ServerlessLocalRun {
       },
     )
 
-    // Opt-in per-request log line (raw stdout, not the Powertools JSON logger) so live
-    // traffic is visible in the dev terminal. Off unless DEV_SERVER_REQUEST_LOG=1.
-    if (isRequestLogEnabled()) {
+    // Per-request visibility for live dev traffic. Two independent sinks: a structured
+    // `onRequestLog` callback (the dev-server tags + timestamps it in its tail) and/or the
+    // legacy env-gated raw stdout line (standalone use). Registered only when at least one is on.
+    const onRequestLog = this.serverConfig.onRequestLog
+
+    if (isRequestLogEnabled() || onRequestLog) {
       this.server.addHook(
         'onResponse',
         async (request: { method: string; url: string }, reply: { statusCode: number; elapsedTime: number }) => {
           const ms = Math.round(reply.elapsedTime)
+          // Trim the query string so the tail shows a clean route, not `?a=b` noise.
+          const requestPath = request.url.split('?')[0] ?? request.url
 
-          process.stdout.write(`${request.method} ${request.url} → ${reply.statusCode} ${ms}ms\n`)
+          onRequestLog?.({ method: request.method, path: requestPath, status: reply.statusCode, ms })
+          if (isRequestLogEnabled()) {
+            process.stdout.write(`${request.method} ${request.url} → ${reply.statusCode} ${ms}ms\n`)
+          }
         },
       )
     }
@@ -212,13 +226,12 @@ export class ServerlessLocalRun {
 
     if (!data?.functions) return p
 
-    for (const [funcName, funcDef] of Object.entries(data.functions)) {
+    for (const funcDef of Object.values(data.functions)) {
       if (!funcDef?.events?.length) continue
       for (const element of funcDef.events) {
         const http = element?.http
 
         if (!http) continue
-        this.logger.debug(`Registering route: ${http.method} /${http.path} -> ${funcName}`)
         p.push(this.defineRoute(http, funcDef))
       }
     }
@@ -271,8 +284,6 @@ export class ServerlessLocalRun {
 
     const traceLogger = this.logger.createChild({ serviceName: 'RequestLogger' })
 
-    this.logger.debug(`Adding fastify route: ${method} ${urlAction}`)
-
     this.server.route({
       method: method as 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS',
       url: urlAction,
@@ -301,8 +312,6 @@ export class ServerlessLocalRun {
         return reply.code(retVal?.statusCode ?? 500).send(responseBody)
       },
     })
-
-    this.logger.debug(`Route added successfully: ${method} ${urlAction}`)
   }
 
   private getEventObj(

@@ -7,7 +7,9 @@ import { realpathSync } from 'node:fs'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
-import { commandCatalog, getMenuGroupCommands } from 'src/lib/command-catalog'
+import { MENU_GROUPS, commandCatalog, getMenuGroupCommands } from 'src/lib/command-catalog'
+import { buildPaletteItems as buildPaletteItemsFromCommands } from 'src/lib/command-catalog/palette'
+import type { PaletteItem } from 'src/lib/command-catalog/palette'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { isLocalNodeModulesInstall, safeRealpath } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
@@ -101,29 +103,11 @@ const commandMapByName = (): Map<string, (typeof program.commands)[number]> => {
  * the session shell. Membership and order live in the command catalog; descriptions come from
  * Commander (single source).
  */
-const buildPaletteItems = (): { name: string; description: string; group: string }[] => {
-  const commandMap = commandMapByName()
-  const groups = [
-    { label: 'Release Management', names: getMenuGroupCommands('release') },
-    { label: 'Worktrees', names: getMenuGroupCommands('worktrees') },
-    { label: 'Environment', names: getMenuGroupCommands('environment') },
-  ]
-
-  return groups.flatMap(({ label, names }) => {
-    return names
-      .filter((name) => {
-        return commandMap.has(name)
-      })
-      .map((name) => {
-        return { name, description: commandMap.get(name)!.description(), group: label }
-      })
-  })
+const buildPaletteItems = (): PaletteItem[] => {
+  return buildPaletteItemsFromCommands(program.commands)
 }
 
 const runInteractiveMenu = async (): Promise<string | null> => {
-  const releaseCommands = getMenuGroupCommands('release')
-  const worktreeCommands = getMenuGroupCommands('worktrees')
-  const envCommands = getMenuGroupCommands('environment')
   const commandMap = commandMapByName()
   const paletteItems = buildPaletteItems()
 
@@ -163,17 +147,13 @@ const runInteractiveMenu = async (): Promise<string | null> => {
       selected = await select(
         {
           message: 'Select a command to run',
-          choices: [
-            new Separator(' '),
-            new Separator('— Release Management —'),
-            ...toChoices(releaseCommands),
-            new Separator(' '),
-            new Separator('— Worktrees —'),
-            ...toChoices(worktreeCommands),
-            new Separator(' '),
-            new Separator('— Environment —'),
-            ...toChoices(envCommands),
-          ],
+          choices: MENU_GROUPS.flatMap(({ key, label }) => {
+            const choices = toChoices(getMenuGroupCommands(key))
+
+            // Skip a group with nothing in it, or the header would hang over an empty section. The Ink
+            // palette omits it (`buildPaletteItems` emits no rows), so this keeps the two surfaces the same.
+            return choices.length === 0 ? [] : [new Separator(' '), new Separator(`— ${label} —`), ...choices]
+          }),
         },
         { output: process.stderr },
       )
@@ -212,6 +192,7 @@ const runSessionShell = async (): Promise<void> => {
             groupPath: entry.groupPath,
             entersAltScreen: entry.entersAltScreen,
             sessionEnvNotice: entry.sessionEnvNotice,
+            longRunning: entry.longRunning,
           }
         : undefined
     },

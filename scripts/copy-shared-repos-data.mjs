@@ -39,12 +39,6 @@ const COPY_CONFIG = [
     type: 'directory',
   },
   {
-    name: 'Make scripts',
-    source: 'Makefile',
-    target: 'Makefile',
-    type: 'file',
-  },
-  {
     name: 'Web-toolkit',
     source: 'packages/web-toolkit',
     target: 'packages/web-toolkit',

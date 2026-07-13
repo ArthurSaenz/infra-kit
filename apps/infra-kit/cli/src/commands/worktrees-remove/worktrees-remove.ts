@@ -1,19 +1,22 @@
-import checkbox from '@inquirer/checkbox'
-import confirm from '@inquirer/confirm'
-import process from 'node:process'
 import { z } from 'zod'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { removeIdeWorktreeFolders } from 'src/integrations/ide'
-import { commandEcho } from 'src/lib/command-echo'
+import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
+import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 import { formatBranchName, parseReleaseRef } from 'src/lib/release-id'
-import { detectReleaseType, formatBranchChoices, getJiraDescriptions, releaseBranchLabels } from 'src/lib/release-utils'
+import {
+  detectReleaseType,
+  formatBranchPickerItems,
+  getJiraDescriptions,
+  releaseBranchLabels,
+} from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 import { removeWorktrees } from 'src/lib/worktrees'
 import { defineMcpTool, textContent } from 'src/types'
@@ -73,11 +76,10 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
         }),
       )
 
-      selectedReleaseBranches = await checkbox({
-        required: true,
-        message: '🌿 Select release branches',
-        choices: formatBranchChoices({ branches: currentWorktrees, descriptions, types: releaseTypes }),
-      })
+      selectedReleaseBranches = await pickReleaseBranches(
+        formatBranchPickerItems({ branches: currentWorktrees, descriptions, types: releaseTypes }),
+        { required: true },
+      )
     }
 
     // Track --all flag if all branches were selected (either via flag or interactively)
@@ -90,20 +92,7 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
     }
 
     // Ask for confirmation
-    const answer = confirmedCommand
-      ? true
-      : await confirm({
-          message: 'Are you sure you want to proceed with these worktree changes?',
-        })
-
-    if (!confirmedCommand) {
-      commandEcho.setInteractive()
-    }
-
-    if (!answer) {
-      logger.info('Operation cancelled. Exiting...')
-      process.exit(0)
-    }
+    await confirmOrExit(confirmedCommand, 'Are you sure you want to proceed with these worktree changes?')
 
     // Track --yes flag if confirmation was interactive (user confirmed)
     if (!confirmedCommand) {

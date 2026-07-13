@@ -1,10 +1,12 @@
 /**
- * Names of the `@inquirer/core` error classes thrown when an interactive prompt
- * ends without a value: `ExitPromptError` (user pressed Ctrl-C / Esc) and
- * `AbortPromptError` (the prompt was aborted via an `AbortSignal`). Both are
+ * Names of the error classes thrown when an interactive prompt ends without a
+ * value. From `@inquirer/core`: `ExitPromptError` (user pressed Ctrl-C / Esc) and
+ * `AbortPromptError` (the prompt was aborted via an `AbortSignal`). From our own
+ * Ink pickers: `PromptCancelledError` (see ./prompt-cancelled-error), which is
+ * registered here rather than impersonating an inquirer class name. All are
  * intentional cancellations, not failures.
  */
-const CANCELLATION_ERROR_NAMES = new Set(['ExitPromptError', 'AbortPromptError'])
+const CANCELLATION_ERROR_NAMES = new Set(['ExitPromptError', 'AbortPromptError', 'PromptCancelledError'])
 
 const hasCancellationName = (value: unknown): boolean => {
   return value instanceof Error && CANCELLATION_ERROR_NAMES.has(value.name)

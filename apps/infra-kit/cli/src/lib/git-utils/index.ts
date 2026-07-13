@@ -3,6 +3,7 @@ export {
   deleteRemoteBranch,
   getCurrentBranch,
   getCurrentWorktrees,
+  getMainRepoRoot,
   getProjectRoot,
   getRepoName,
   isInsideLinkedWorktree,

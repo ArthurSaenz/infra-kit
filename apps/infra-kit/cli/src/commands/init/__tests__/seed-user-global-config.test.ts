@@ -3,6 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { infraKitConfigObject } from 'src/lib/infra-kit-config'
+
 import { seedUserGlobalConfig } from '../init'
 
 let home: string
@@ -27,9 +29,10 @@ describe('seedUserGlobalConfig', () => {
 
     const infraExample = fs.readFileSync(path.join(dir, 'infra-kit.example.jsonc'), 'utf-8')
 
-    // Every recognized infra-kit property is documented.
-    for (const key of ['environments', 'envManagement', 'ide', 'taskManager', 'worktrees']) {
-      expect(infraExample).toContain(key)
+    // Every recognized infra-kit property is documented — derived from the live schema, so
+    // adding a top-level key without documenting it fails here.
+    for (const key of Object.keys(infraKitConfigObject.shape)) {
+      expect(infraExample).toContain(`"${key}"`)
     }
 
     const vendorExample = fs.readFileSync(path.join(dir, 'vendor.example.jsonc'), 'utf-8')

@@ -1,16 +1,16 @@
 /**
- * Root-audit check for `devPresets` proxy locality.
+ * Root-audit checks for `devServersPresets`: target-key grammar, then proxy locality.
  *
  * Bridges the impure world (project config + discovery + each frontend's loaded
- * `infra-kit.config.ts`) to the pure {@link validatePresetProxy} rule, then shapes
- * the result as a {@link PackageValidationResult} so it slots into the existing
- * `infra-kit audit --root` output. Skipped (returns null) when the project declares
- * no `devPresets`.
+ * `infra-kit.config.ts`) to the pure {@link validatePresetKeys} / {@link validatePresetProxy}
+ * rules, then shapes the result as a {@link PackageValidationResult} so it slots into the
+ * existing `infra-kit audit --root` output. Skipped (returns null) when the project declares
+ * no `devServersPresets`.
  */
 import path from 'node:path'
 
 import { discoverApiApps, discoverUiApps } from 'src/dev/discovery'
-import { resolvePreset, validatePresetProxy } from 'src/dev/presets'
+import { resolvePreset, validatePresetKeys, validatePresetProxy } from 'src/dev/presets'
 import type { DiscoveredParts, PresetProxyContext } from 'src/dev/presets'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import type { DevPresets } from 'src/lib/infra-kit-config'
@@ -31,7 +31,7 @@ interface RoutePkgLookup {
 /**
  * The set of frontend app folders any preset's proxy override actually references —
  * the only configs the audit needs to load. Scoping to these keeps an unrelated
- * broken frontend config from failing (or crashing) the devPresets audit.
+ * broken frontend config from failing (or crashing) the devServersPresets audit.
  */
 const collectReferencedApps = (presets: DevPresets, discovered: DiscoveredParts): string[] => {
   const apps = new Set<string>()
@@ -87,32 +87,45 @@ const toFailChecks = (issues: ReturnType<typeof validatePresetProxy>, loadErrors
   return [
     ...loadErrors.map((error): PackageCheck => {
       return {
-        name: `devPresets:config:${error.app}`,
+        name: `devServersPresets:config:${error.app}`,
         status: 'fail',
         message: `could not load apps/${error.app}/ui/infra-kit.config.ts (referenced by a preset proxy override): ${error.message}`,
       }
     }),
     ...issues.map((issue): PackageCheck => {
-      return { name: `devPresets:${issue.preset}`, status: 'fail', message: issue.message }
+      return { name: `devServersPresets:${issue.preset}`, status: 'fail', message: issue.message }
     }),
   ]
 }
 
 /**
- * Run the `devPresets` proxy-locality audit for the monorepo root. Returns a
- * synthetic `devPresets` validation result (one pass line, or one fail line per
- * violation / unloadable referenced config), or null when there are no presets to
- * check.
+ * Run the `devServersPresets` audit for the monorepo root: first the target-key grammar
+ * (every key must name an `<app>/api` or `<app>/ui` package), then proxy locality. Returns
+ * a synthetic `devServersPresets` validation result (one pass line, or one fail line per
+ * bad key / violation / unloadable referenced config), or null when there are no presets
+ * to check.
  *
  * @example
  * const result = await checkDevPresets('/repo')
- * // result?.checks[0] => { name: 'devPresets:proxy-locality', status: 'pass', message: '…' }
+ * // result?.checks[0] => { name: 'devServersPresets:proxy-locality', status: 'pass', message: '…' }
  */
 export const checkDevPresets = async (root: string): Promise<PackageValidationResult | null> => {
-  const presets = (await getInfraKitConfig()).devPresets
+  const presets = (await getInfraKitConfig()).devServersPresets
 
   if (!presets || Object.keys(presets).length === 0) {
     return null
+  }
+
+  // Grammar first: an unparseable target key makes `resolvePreset` throw, so it has to
+  // surface as an audit line here rather than crash every check below it.
+  const keyIssues = validatePresetKeys(presets)
+
+  if (keyIssues.length > 0) {
+    const checks = keyIssues.map((issue): PackageCheck => {
+      return { name: `devServersPresets:${issue.preset}`, status: 'fail', message: issue.message }
+    })
+
+    return { packageDir: root, packageName: 'devServersPresets', checks, passed: false }
   }
 
   const apiApps = discoverApiApps(root)
@@ -144,12 +157,12 @@ export const checkDevPresets = async (root: string): Promise<PackageValidationRe
     failChecks.length === 0
       ? [
           {
-            name: 'devPresets:proxy-locality',
+            name: 'devServersPresets:proxy-locality',
             status: 'pass',
             message: 'every local proxy override resolves to a backend the preset launches',
           },
         ]
       : failChecks
 
-  return { packageDir: root, packageName: 'devPresets', checks, passed: failChecks.length === 0 }
+  return { packageDir: root, packageName: 'devServersPresets', checks, passed: failChecks.length === 0 }
 }

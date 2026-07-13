@@ -1,7 +1,7 @@
 /**
- * Long-running CLI entry for the local dev-server. Owns flag parsing, OS signal
- * handling, and process exit — the orchestrator (`src/dev/dev-server`) is signal-
- * and exit-agnostic. Kept off the eager cli.js graph: entry/cli.ts reaches this
+ * Long-running CLI entry for the local dev-server. Owns flag parsing and wires signal
+ * handling to `src/dev/signal-shutdown` — the orchestrator (`src/dev/dev-server`) stays
+ * signal- and exit-agnostic. Kept off the eager cli.js graph: entry/cli.ts reaches this
  * module (and the fastify/chokidar it pulls in) only via `await import(...)`, so
  * those heavy deps never load on the machine command paths.
  */
@@ -10,19 +10,58 @@ import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
 import { runCmuxDevServer } from 'src/dev/cmux-dev'
+import { registerCrashBarrier } from 'src/dev/crash-barrier'
 import { run } from 'src/dev/dev-server'
 import type { DevServerOptions } from 'src/dev/dev-server'
+import type { WizardResult } from 'src/dev/dev-wizard-run'
 import { resolveSelfAppName } from 'src/dev/discovery'
+import { explainTargetKey } from 'src/dev/presets'
+import { registerSignalShutdown } from 'src/dev/signal-shutdown'
 import { isCmuxAvailable } from 'src/integrations/cmux'
+import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
+import type { DevPreset } from 'src/lib/infra-kit-config'
 
 /** Raw option object as produced by Commander (comma-joined strings). */
 export interface DevCliOptions {
   watch?: boolean
   app?: string
-  /** Named preset positional (`infra-kit dev <preset>`); selects launch targets from `devPresets`. */
+  /**
+   * Comma-separated `<app>/<part>` target keys (`--target=client/api,client/ui`). The part-level
+   * selector `--app` cannot express: `--app=client` expands to every part `client` has. Same grammar as
+   * a `devServersPresets` key, so a wizard selection round-trips into a command you can paste.
+   */
+  target?: string
+  /** Named preset positional (`infra-kit dev <preset>`); selects launch targets from `devServersPresets`. */
   preset?: string
   cmux?: boolean
   self?: boolean
+  verbose?: boolean
+  /** Print each app's registered routes at startup (opt-in; off keeps the calm default screen). */
+  routes?: boolean
+}
+
+/**
+ * Turn `--target=<app>/<part>,…` into the in-memory preset the runner already understands, or
+ * `undefined` when the flag is absent (leaving `preset`/`*` resolution untouched). Validated against the
+ * same grammar as a `devServersPresets` key, but with a message that names the FLAG — a user typing
+ * `--target=client` must not be told about `devServersPresets`.
+ */
+const toPresetDef = (targets: string[] | null): DevPreset | undefined => {
+  if (targets == null) return undefined
+
+  for (const key of targets) {
+    if (explainTargetKey(key) !== null) {
+      throw new Error(`infra-kit dev: invalid --target "${key}" (expected "<app>/api" or "<app>/ui").`)
+    }
+  }
+
+  return {
+    apps: Object.fromEntries(
+      targets.map((key) => {
+        return [key, {}]
+      }),
+    ),
+  }
 }
 
 /** Split a comma-separated flag value into a trimmed, non-empty list (`null` when unset/empty). */
@@ -50,8 +89,11 @@ export const toDevServerOptions = (raw: DevCliOptions): DevServerOptions => {
     watch: raw.watch ?? false,
     include: splitList(raw.app),
     preset: raw.preset,
+    presetDef: toPresetDef(splitList(raw.target)),
     cmux: raw.cmux ?? false,
     self: raw.self ?? false,
+    verbose: raw.verbose ?? false,
+    routes: raw.routes ?? false,
   }
 }
 
@@ -72,8 +114,9 @@ const resolveSelfOptions = (options: DevServerOptions): DevServerOptions => {
 
 /**
  * Start the dev-server, then wait for an OS signal and shut every server down
- * cleanly before exiting. This is the ONLY place SIGINT/SIGTERM handlers and
- * `process.exit` live for the dev-server feature.
+ * cleanly before exiting. Signal handling and exit are delegated to
+ * {@link registerSignalShutdown}: a second signal force-quits, a rejected teardown
+ * is logged, and the process exits `128 + signo` rather than a dishonest `0`.
  */
 export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> => {
   const options = resolveSelfOptions(rawOptions)
@@ -93,28 +136,76 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
 
   const runner = await run(options)
 
-  let shuttingDown = false
+  // In-process backends share this event loop; a handler's escaped async path would otherwise terminate
+  // the whole session. Installed only on the single-process path (the cmux path returned above, each pane
+  // being its own process) and only after `run()` succeeds, so a boot failure still exits honestly.
+  registerCrashBarrier()
 
-  const shutdown = (signal: NodeJS.Signals): void => {
-    if (shuttingDown) return
-    shuttingDown = true
+  registerSignalShutdown({
+    onSignal: async (signal) => {
+      process.stdout.write(`\nReceived ${signal}, shutting down dev-server...\n`)
+      await runner.shutdown()
+    },
+  })
+}
 
-    void (async () => {
-      try {
-        process.stdout.write(`\nReceived ${signal}, shutting down dev-server...\n`)
-        await runner.shutdown()
-      } finally {
-        process.exit(0)
-      }
-    })()
+/**
+ * True when `infra-kit dev` was invoked BARE — no preset and no selection/mode flag — in an interactive
+ * TTY (both stdin and stdout) and not `--json`. This is the ONLY condition that launches the wizard;
+ * every flagged, piped, non-TTY, `--json`, or MCP invocation runs directly from the parsed flags, so no
+ * existing script path changes behaviour.
+ */
+export const shouldRunWizard = (raw: DevCliOptions, tty: boolean, json: boolean): boolean => {
+  const bare = !raw.preset && !raw.app && !raw.self && !raw.cmux && !raw.watch && !raw.verbose && !raw.routes
+
+  return bare && tty && !json
+}
+
+/** Map a wizard result to runner options: the cmux path uses `include`; otherwise the in-memory `presetDef`. */
+const wizardToOptions = (result: WizardResult): DevServerOptions => {
+  return {
+    watch: result.watch,
+    cmux: result.cmux,
+    include: result.include ?? null,
+    preset: result.preset,
+    presetDef: result.presetDef,
+    self: false,
+    verbose: false,
+    routes: false,
+  }
+}
+
+/**
+ * Entry for the `infra-kit dev` subcommand. On a bare TTY invocation it launches the interactive wizard
+ * (lazily imported so its inquirer/config graph stays off every other path), then starts the server with
+ * the assembled options; otherwise it runs directly from the parsed flags. A cancelled prompt (Ctrl-C /
+ * Esc) or an empty selection exits cleanly without starting a server.
+ */
+export const runDevServerCli = async (raw: DevCliOptions, tty: boolean, json: boolean): Promise<void> => {
+  if (shouldRunWizard(raw, tty, json)) {
+    const { runDevWizard } = await import('src/dev/dev-wizard-run')
+
+    let result: WizardResult | null
+
+    try {
+      result = await runDevWizard()
+    } catch (error) {
+      if (isPromptCancellation(error)) return
+
+      throw error
+    }
+
+    if (result == null) return
+
+    // The wizard only runs on a bare interactive TTY, so tty=true, json=false — thread them so `run()`
+    // selects the Ink boot UI.
+    await runDevServer({ ...wizardToOptions(result), tty, json })
+
+    return
   }
 
-  process.on('SIGINT', () => {
-    return shutdown('SIGINT')
-  })
-  process.on('SIGTERM', () => {
-    return shutdown('SIGTERM')
-  })
+  // Thread the TTY / json signal so `run()` can pick the Ink boot UI (TTY, non-json) vs the plain renderer.
+  await runDevServer({ ...toDevServerOptions(raw), tty, json })
 }
 
 /** Parse `node dist/dev-server.js ...` flags and start the server. */
@@ -123,8 +214,8 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
 
   program
     .name('infra-kit-dev-server')
-    .description('Run local dev servers for the apps in a named devPresets preset (or all apps)')
-    .argument('[preset]', 'Named preset from devPresets (omit to run every app)')
+    .description('Run local dev servers for the apps in a named devServersPresets preset (or all apps)')
+    .argument('[preset]', 'Named preset from devServersPresets (omit to run every app)')
     .option('-w, --watch', 'Rebuild and restart on file save')
     .option('--app <names>', 'Further narrow to these app folder names (comma-separated)')
     .option(
@@ -132,6 +223,8 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
       'Run each app in its own cmux pane (one workspace, N panes; falls back to single terminal if cmux is unavailable)',
     )
     .option('--self', 'Run only the app of the current directory (infer from cwd; use inside apps/<app>/…)')
+    .option('-V, --verbose', 'Print full boot narration (default: quiet; full detail always in the session log)')
+    .option('--routes', 'Print each app’s registered METHOD /path routes at startup (default: off)')
 
   program.parse(argv)
 
@@ -142,7 +235,9 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
 // `infra-kit dev` subcommand imports this module for its exported helpers.
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   parseAndRun(process.argv).catch((error: unknown) => {
-    console.error(error)
+    // Message only, matching the `infra-kit dev` path: a bad preset name or target key is a
+    // config mistake, and its stack frames are noise.
+    console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)
   })
 }

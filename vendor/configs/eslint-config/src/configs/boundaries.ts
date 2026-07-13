@@ -19,17 +19,18 @@ export const boundaries = (severity: 'warn' | 'error' = 'warn'): TypedFlatConfig
     'import/resolver': {
       node: { extensions: ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'] },
     },
+    // Do not re-add `mode: 'folder'` — it is the v7 default and passing it explicitly is deprecated.
     'boundaries/elements': [
-      { type: 'shared', pattern: '**/shared', mode: 'folder' },
-      // Feature-nested services must be matched before the generic feature pattern.
+      { type: 'shared', pattern: '**/shared' },
+      // Feature-nested services must be matched before the generic feature pattern: with
+      // `boundaries/elements-single-type` (v7 default), the first matching descriptor wins.
       {
         type: 'service',
         pattern: '**/features/*/services/*',
-        mode: 'folder',
         capture: ['feature', 'service'],
       },
-      { type: 'feature', pattern: '**/features/*', mode: 'folder', capture: ['feature'] },
-      { type: 'service', pattern: '**/services/*', mode: 'folder', capture: ['service'] },
+      { type: 'feature', pattern: '**/features/*', capture: ['feature'] },
+      { type: 'service', pattern: '**/services/*', capture: ['service'] },
     ],
   },
   rules: {
@@ -37,11 +38,11 @@ export const boundaries = (severity: 'warn' | 'error' = 'warn'): TypedFlatConfig
       severity,
       {
         default: 'disallow',
-        rules: [
+        policies: [
           // VALUE exception: feature/service -> shared at runtime, barrel only.
           {
             from: { type: ['feature', 'service'] },
-            allow: { to: { type: 'shared', internalPath: 'index.{ts,tsx,js,jsx}' } },
+            allow: { to: { type: 'shared', fileInternalPath: 'index.{ts,tsx,js,jsx}' } },
           },
           // TYPE-ONLY cross-element imports (erased at runtime). shared is absent here: it depends on nothing.
           {

@@ -1,12 +1,9 @@
-import confirm from '@inquirer/confirm'
-import select from '@inquirer/select'
-import process from 'node:process'
 import { z } from 'zod'
 import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { deliverJiraRelease, loadJiraConfigOptional } from 'src/integrations/jira'
-import { commandEcho } from 'src/lib/command-echo'
+import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { formatZxError } from 'src/lib/errors/format-zx-error'
 import { OperationError } from 'src/lib/errors/operation-error'
@@ -19,11 +16,12 @@ import {
   getRepoName,
 } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
+import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import { displayLabel, formatJiraName, formatRcTitle, parseBranchName } from 'src/lib/release-id'
 import type { ReleaseId } from 'src/lib/release-id'
 import {
   detectReleaseType,
-  formatBranchChoices,
+  formatBranchPickerItems,
   getJiraDescriptions,
   resolveReleaseBranch,
 } from 'src/lib/release-utils'
@@ -137,10 +135,9 @@ const resolveTargetInteractively = async (): Promise<ResolvedTarget> => {
 
   const descriptions = await getJiraDescriptions()
 
-  const selectedReleaseBranch = await select({
-    message: '🌿 Select release branch',
-    choices: formatBranchChoices({ branches, descriptions, types: releaseTypes }),
-  })
+  const selectedReleaseBranch = await pickReleaseBranch(
+    formatBranchPickerItems({ branches, descriptions, types: releaseTypes }),
+  )
 
   const prInfo = releasePRsInfo.find((pr) => {
     return pr.branch === selectedReleaseBranch
@@ -396,20 +393,10 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
 
   const releaseType: ReleaseType = detectReleaseType(releasePrTitle)
 
-  const answer = confirmedCommand
-    ? true
-    : await confirm({
-        message: `Are you sure you want to deliver version ${selectedReleaseBranch} to production?`,
-      })
-
-  if (!confirmedCommand) {
-    commandEcho.setInteractive()
-  }
-
-  if (!answer) {
-    logger.info('Operation cancelled. Exiting...')
-    process.exit(0)
-  }
+  await confirmOrExit(
+    confirmedCommand,
+    `Are you sure you want to deliver version ${selectedReleaseBranch} to production?`,
+  )
 
   // Track --yes flag if confirmation was interactive (user confirmed)
   commandEcho.addOption('--yes', true)
