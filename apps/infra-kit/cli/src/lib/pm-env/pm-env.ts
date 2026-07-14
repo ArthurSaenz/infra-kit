@@ -29,3 +29,44 @@ export const withoutPackageManagerEnv = (env: NodeJS.ProcessEnv): NodeJS.Process
     }),
   )
 }
+
+/**
+ * npm's own configuration — as opposed to the npx/dlx *markers* above. Case-insensitive because npm reads
+ * `npm_config_*` case-insensitively (its parser matches `/^npm_config_/i`) and real environments export
+ * both forms: shells write the lowercase name, Dockerfiles and CI images overwhelmingly write the
+ * uppercase one.
+ */
+const NPM_CONFIG_TO_PRESERVE = /^npm_config_(?:prefix|registry)$/i
+
+/**
+ * The env for spawning a package-manager INSTALL: npx/dlx markers stripped, but npm's own config kept.
+ *
+ * {@link withoutPackageManagerEnv} is deliberately a blunt `npm_*` prefix filter, and it is the right tool
+ * for the portless driver — but it is the WRONG tool for spawning an install, because it also drops the two
+ * variables that tell the package manager *where* and *from where* to install:
+ *
+ *   - `npm_config_prefix` is the npm matcher's ONLY signal (see `install-manager.ts`). Strip it and we
+ *     detect a global install rooted at prefix P, then run the install with P erased — so it lands in the
+ *     DEFAULT prefix instead. That is either a permanent EACCES, or a second global copy that is not the
+ *     one on PATH. Nothing notices: the install exits 0, we report `installed`, the version on PATH never
+ *     moves, and the whole cycle repeats every 24h forever. `export npm_config_prefix=~/.npm-global` is
+ *     npm's own documented EACCES workaround, so this is a mainstream layout, not an exotic one.
+ *   - `npm_config_registry` is what the update CHECK already used to pick a registry. Dropping it here
+ *     means we decide against a corporate mirror and then install from somewhere else.
+ *
+ * Preserving these cannot re-arm the dlx guard: that guard reads `npm_command`, `npm_lifecycle_event`, and
+ * `PNPM_SCRIPT_SRC_DIR` — none of which are npm *config*, and all of which remain stripped.
+ *
+ * @example
+ * packageManagerInstallEnv({ npm_command: 'exec', npm_config_prefix: '/p', PATH: '/bin' })
+ * // => { npm_config_prefix: '/p', PATH: '/bin' }
+ */
+export const packageManagerInstallEnv = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+  const sanitised = withoutPackageManagerEnv(env)
+
+  for (const [key, value] of Object.entries(env)) {
+    if (NPM_CONFIG_TO_PRESERVE.test(key)) sanitised[key] = value
+  }
+
+  return sanitised
+}

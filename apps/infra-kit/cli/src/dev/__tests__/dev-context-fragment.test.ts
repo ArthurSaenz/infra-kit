@@ -1,3 +1,4 @@
+import { readLocalContext, readLocalSet } from '@slip-stream-kit/config/internal'
 import { execFileSync, spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -6,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { DevServerRunner } from 'src/dev/dev-server'
 import { DEFAULT_PORT } from 'src/dev/ports'
-import { readLocalContext, readLocalSet } from 'src/lib/vite/vite'
 
 import {
   createTempTracker,

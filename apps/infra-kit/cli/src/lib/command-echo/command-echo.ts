@@ -6,16 +6,23 @@ interface CommandOption {
 }
 
 const createCommandEcho = () => {
-  let commandName = ''
+  let cliPath = ''
   let options: CommandOption[] = []
   let isInteractive = false
 
   return {
     /**
-     * Initialize command echo for a new command
+     * Bind the echo to the command about to run, and clear the previous one's recording.
+     *
+     * `cliPath` must be the argv Commander actually parsed (`release create`), which is why the ONLY
+     * caller is program.ts's `preAction` hook, feeding it `commandPath(actionCommand)`. Commands used to
+     * name themselves here, and that is precisely how the printed line rotted: they passed the flat
+     * `release-create`, which stopped being a command the day the flat aliases were dropped, so the
+     * "equivalent command" we told the user to retype no longer parsed. Commander is the only thing that
+     * knows the real path, so it is the only thing allowed to say it.
      */
-    start(name: string): void {
-      commandName = name
+    start(path: string): void {
+      cliPath = path
       options = []
       isInteractive = false
     },
@@ -71,21 +78,25 @@ const createCommandEcho = () => {
     },
 
     /**
-     * Print the equivalent CLI command if there was interactive input
+     * Print the equivalent CLI command if there was interactive input.
+     *
+     * Silent without a bound `cliPath`: the only caller that binds one is Commander's `preAction`, so an
+     * unbound echo means the command ran off the CLI (an MCP tool), where a `pnpm exec` line would be
+     * nonsense. Printing a path-less `pnpm exec infra-kit --yes` would be worse than printing nothing.
      */
     print(): void {
-      if (!isInteractive || options.length === 0) {
+      if (!isInteractive || options.length === 0 || !cliPath) {
         return
       }
 
-      logger.info(`📟 Equivalent command: \npnpm exec infra-kit ${commandName} ${this.formatOptions()}\n`)
+      logger.info(`📟 Equivalent command: \npnpm exec infra-kit ${cliPath} ${this.formatOptions()}\n`)
     },
 
     /**
      * Reset state (useful for testing)
      */
     reset(): void {
-      commandName = ''
+      cliPath = ''
       options = []
       isInteractive = false
     },

@@ -35,8 +35,6 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
 export const worktreesRemove = async (options: WorktreeManagementArgs) => {
   const { confirmedCommand, all, versions } = options
 
-  commandEcho.start('worktrees-remove')
-
   await assertManagementContext({ operation: 'remove worktrees', requiredBranch: 'dev' })
 
   try {

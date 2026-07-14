@@ -1,4 +1,4 @@
-import { defineConfig } from 'infra-kit'
+import { defineConfig } from '@slip-stream-kit/config'
 
 export default defineConfig(() => {
   return {}

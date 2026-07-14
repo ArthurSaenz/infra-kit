@@ -1,12 +1,12 @@
 import type { z } from 'zod'
 
-// TEMP: `audit` is disabled — restore this import together with the catalog entry below.
-// import { auditMcpTool } from 'src/commands/audit'
+import { auditMcpTool } from 'src/commands/audit'
 import { doctorMcpTool } from 'src/commands/doctor'
 import { envClearMcpTool } from 'src/commands/env-clear'
 import { envListMcpTool } from 'src/commands/env-list'
 import { envLoadMcpTool } from 'src/commands/env-load'
 import { envStatusMcpTool } from 'src/commands/env-status'
+import { envTokenListMcpTool } from 'src/commands/env-token-list'
 import { ghMergeDevMcpTool } from 'src/commands/gh-merge-dev'
 import { ghReleaseDeliverMcpTool } from 'src/commands/gh-release-deliver'
 import { ghReleaseDeployAllMcpTool } from 'src/commands/gh-release-deploy-all'
@@ -77,7 +77,13 @@ export const MENU_GROUPS = [
 export type MenuGroup = (typeof MENU_GROUPS)[number]['key']
 
 export interface CommandCatalogEntry {
-  /** CLI command name as registered in Commander (flat form, e.g. `merge-dev`). */
+  /**
+   * Stable flat id for the command (`release-create`), and the name its MCP tool registers under — MCP
+   * tool names cannot contain a space, so the grouped path cannot serve as one.
+   *
+   * NOT a CLI surface: the CLI registers only the grouped form ({@link groupPath}). Flat Commander
+   * commands were removed once every menu surface learned to address a command by its group path.
+   */
   cliName: string
   /** Menu group, or null for subcommands not shown at the top level. */
   menuGroup: MenuGroup | null
@@ -91,9 +97,10 @@ export interface CommandCatalogEntry {
    */
   mcpExposed: boolean
   /**
-   * Canonical Commander argv for this command (grouped form, e.g. `['vendor','check']`). The session
-   * shell spawns `infra-kit <...groupPath>` so a menu pick runs the preferred grouped surface (not the
-   * deprecated/hidden flat alias) and shows that as the replayable equivalent line.
+   * Canonical Commander argv for this command (grouped form, e.g. `['vendor','check']`) — the ONLY form
+   * the CLI registers. Every menu surface renders `groupPath.join(' ')` and spawns/parses
+   * `infra-kit <...groupPath>`, so what the palette shows is exactly what it runs and what the user can
+   * retype.
    */
   groupPath: string[]
   /**
@@ -278,6 +285,14 @@ export const commandCatalog: CommandCatalogEntry[] = [
     groupPath: ['env-clear'],
     sessionEnvNotice: true,
   },
+  // The only env-token command that is agent-callable. It READS, and only ever emits redacted values.
+  {
+    cliName: 'env-token-list',
+    menuGroup: 'environment',
+    mcpTool: envTokenListMcpTool,
+    mcpExposed: true,
+    groupPath: ['env-token-list'],
+  },
 
   // --- Configuration (menu group) ---
   {
@@ -324,8 +339,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
   // Both answer "is this in a good state?", which is why they sit together.
   { cliName: 'init', menuGroup: 'setup', mcpTool: null, mcpExposed: false, groupPath: ['init'] },
   { cliName: 'doctor', menuGroup: 'setup', mcpTool: doctorMcpTool, mcpExposed: false, groupPath: ['doctor'] },
-  // TEMP: `audit` removed from the catalog (CLI + MCP + menu). Restore with the import at the top.
-  // { cliName: 'audit', menuGroup: 'setup', mcpTool: auditMcpTool, mcpExposed: true, groupPath: ['audit'] },
+  { cliName: 'audit', menuGroup: 'setup', mcpTool: auditMcpTool, mcpExposed: true, groupPath: ['audit'] },
   { cliName: 'version', menuGroup: 'setup', mcpTool: versionMcpTool, mcpExposed: true, groupPath: ['version'] },
 
   // --- Not menu items (groups, long-running, or internal) ---
@@ -335,6 +349,13 @@ export const commandCatalog: CommandCatalogEntry[] = [
   // Internal shell-startup trigger; hidden from the menu and never an MCP tool
   // (it can't apply env to a shell — only the zsh integration sources the file).
   { cliName: 'env-autoload', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['env-autoload'] },
+  // env-token-set / env-token-remove carry NO MCP tool at all — not merely `mcpExposed: false`, so
+  // there is nothing to accidentally flip on. `lib/tool-handler` injects `confirmedCommand: true` into
+  // EVERY tool call, so the MCP boundary auto-confirms by construction: an agent must never be one call
+  // away from WRITING a credential or DESTROYING one. Same argument that keeps `doctor --fix` CLI-only.
+  // menuGroup is null because both take a required `<env>` argument the no-arg menu cannot supply.
+  { cliName: 'env-token-set', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['env-token-set'] },
+  { cliName: 'env-token-remove', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['env-token-remove'] },
   // The MCP boundary auto-confirms every tool, so an agent-triggered unattended global package install
   // must never be reachable there. menuGroup null keeps it off the no-arg picker too — updating the CLI
   // is a deliberate act, not something to land on by arrowing through a menu.
@@ -367,10 +388,19 @@ export const getExposedMcpTools = (): CatalogMcpTool[] => {
   })
 }
 
-/** CLI command names for a menu group, in catalog (display) order. */
-export const getMenuGroupCommands = (group: MenuGroup): string[] => {
-  return commandCatalog.flatMap((entry) => {
-    return entry.menuGroup === group ? [entry.cliName] : []
+/**
+ * Catalog entries for a menu group, in catalog (display) order.
+ *
+ * Yields ENTRIES, not names: every menu surface addresses a command by its {@link
+ * CommandCatalogEntry.groupPath} (`['release','create']`), which is both what it renders and what it
+ * spawns. `cliName` is an id — the MCP tool name, which cannot hold a space — and is not a CLI surface.
+ *
+ * @example
+ * getMenuGroupEntries('vendor').map((entry) => entry.groupPath.join(' ')) // => ['vendor check', …]
+ */
+export const getMenuGroupEntries = (group: MenuGroup): CommandCatalogEntry[] => {
+  return commandCatalog.filter((entry) => {
+    return entry.menuGroup === group
   })
 }
 

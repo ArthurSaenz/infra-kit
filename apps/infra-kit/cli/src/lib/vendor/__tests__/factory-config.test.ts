@@ -63,8 +63,11 @@ describe('loadFactoryConfig', () => {
     expect(config.targets).toEqual(['travelist-monorepo'])
   })
 
+  // The remediation must name a command the CLI still accepts. This assertion used to pin the FLAT
+  // `vendor-config --init`, so it kept guarding the dead string long after the flat aliases were dropped —
+  // a green test sitting on a first-run dead end.
   it('throws an actionable error when the file is absent', async () => {
-    await expect(loadFactoryConfig()).rejects.toThrow(/vendor-config --init/)
+    await expect(loadFactoryConfig()).rejects.toThrow(/vendor config --init/)
   })
 
   it('throws a descriptive error on malformed JSON', async () => {

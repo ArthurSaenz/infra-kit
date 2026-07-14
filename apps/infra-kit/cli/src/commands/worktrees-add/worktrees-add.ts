@@ -55,8 +55,6 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
   // `cursor` is the deprecated alias for `ide`; `ide` wins when both are present.
   const ide = options.ide ?? options.cursor
 
-  commandEcho.start('worktrees-add')
-
   await assertManagementContext({ operation: 'create worktrees', requiredBranch: 'dev' })
 
   try {

@@ -103,7 +103,7 @@ export interface DiscoveredUiApp {
   managedPort: boolean
 }
 
-/** Vite config filenames checked for the `infra-kit/vite` import, in vite's own resolution order. */
+/** Vite config filenames checked for the helper import, in vite's own resolution order. */
 const VITE_CONFIG_FILES = [
   'vite.config.ts',
   'vite.config.mts',
@@ -114,7 +114,33 @@ const VITE_CONFIG_FILES = [
 ]
 
 /**
- * True when `<dir>`'s vite config references the `infra-kit/vite` helper module. A text match, not a
+ * Every module specifier that binds a UI to infra-kit's dev wiring — whether through the raw
+ * `infraKitDev` helper or through the `@slip-stream-kit/vite` plugin that wraps it.
+ *
+ * A LIST, not a single literal, because the wiring moved packages twice: it used to ship from the
+ * `infra-kit` CLI itself, then from `@slip-stream-kit/config` (the split that let the CLI become a
+ * global install — a local `node_modules/.bin/infra-kit` would otherwise shadow the global bin, see
+ * that package's readme), and the plugin form now ships from `@slip-stream-kit/vite`. Consumers migrate
+ * one repo at a time, so all three specifiers are live.
+ *
+ * This is what makes `managedPort` true, so a MISSING entry is not cosmetic: the runner would stop
+ * claiming the port for every UI on that specifier, and with it the hero URL.
+ *
+ * Note this is a SUBSTRING match, which is why the config package could not be called `@infra-kit/vite`:
+ * that name *contains* `infra-kit/vite`, so the legacy entry would have matched it by accident and
+ * hidden the very coupling the split makes explicit. Neither `@slip-stream-kit/config/vite` nor
+ * `@slip-stream-kit/vite` contains any other entry, so no entry here shadows another.
+ *
+ * Drop the legacy entry once every consumer repo is migrated.
+ */
+export const INFRA_KIT_VITE_SPECIFIERS = [
+  '@slip-stream-kit/vite',
+  '@slip-stream-kit/config/vite',
+  'infra-kit/vite',
+] as const
+
+/**
+ * True when `<dir>`'s vite config references the `infraKitDev` helper module. A text match, not a
  * module load: the config is TypeScript the runner must not execute, and importing it would run the
  * consumer's own side effects. False negatives (a config that re-exports the helper from a shared
  * preset) cost only the reference line, never a wrong URL — the safe direction to be wrong in.
@@ -126,7 +152,11 @@ export function usesInfraKitVite(dir: string): boolean {
     if (!fs.existsSync(configPath)) continue
 
     try {
-      return fs.readFileSync(configPath, 'utf-8').includes('infra-kit/vite')
+      const source = fs.readFileSync(configPath, 'utf-8')
+
+      return INFRA_KIT_VITE_SPECIFIERS.some((specifier) => {
+        return source.includes(specifier)
+      })
     } catch {
       return false
     }

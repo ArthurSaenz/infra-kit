@@ -1,4 +1,5 @@
 import type { spawnSync } from 'node:child_process'
+import { homedir } from 'node:os'
 import process from 'node:process'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -72,13 +73,31 @@ describe('runSelfUpdate', () => {
 
     const env = options.env as NodeJS.ProcessEnv
 
-    expect(
-      Object.keys(env).some((key) => {
-        return key.startsWith('npm_')
-      }),
-    ).toBe(false)
+    // The npx/dlx markers go — they make pnpm/portless-style tools self-abort as a throwaway install.
+    expect(env.npm_command).toBeUndefined()
+    expect(env.npm_lifecycle_event).toBeUndefined()
     expect(env.PNPM_SCRIPT_SRC_DIR).toBeUndefined()
     expect(env.PATH).toBe('/bin')
+    // ...but npm's own config STAYS: npm_config_prefix is the npm matcher's only signal, so dropping it
+    // would install into the default prefix instead of the one we just detected.
+    expect(env.npm_config_prefix).toBe(NPM_ENV.npm_config_prefix)
+  })
+
+  it('pins cwd to the home directory so a repo-local .npmrc cannot redirect the install', () => {
+    // The background worker pins cwd for exactly this reason and says so at length; `self-update` did not.
+    // npm resolves `registry=` from an `.npmrc` relative to the cwd, so running `ik self-update` while
+    // standing in a hostile repo would install THAT repo's choice of `infra-kit@latest` globally and run
+    // its lifecycle scripts. Being user-initiated is no defence: npm does not print the registry it used.
+    const { spawnSyncFake, deps } = harness()
+
+    expectExit(() => {
+      return runSelfUpdate({ dryRun: false }, { ...deps, selfRealPath: NPM_PATH, env: NPM_ENV })
+    })
+
+    const [, , options] = spawnSyncFake.mock.calls[0] as unknown as [string, string[], { cwd: string }]
+
+    expect(options.cwd).toBe(homedir())
+    expect(options.cwd).not.toBe(process.cwd())
   })
 
   it('never spawns for a homebrew install and prints the suggestion', () => {

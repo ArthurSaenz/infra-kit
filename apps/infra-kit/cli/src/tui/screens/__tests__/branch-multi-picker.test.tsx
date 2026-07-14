@@ -109,4 +109,19 @@ describe('branchMultiPicker', () => {
     expect(onCancel).toHaveBeenCalled()
     expect(onSubmit).not.toHaveBeenCalled()
   })
+
+  // Blast-radius guard for boot.tsx's `exitOnCtrlC: false`. Ink used to swallow 0x03 in its own App
+  // and unmount before the byte reached `useInput`, so this screen's ctrl+c branch never ran. Now that
+  // the key is handed to the screens, THIS is what keeps Ctrl-C working here.
+  it('ctrl-c cancels without submitting', async () => {
+    const onSubmit = vi.fn()
+    const onCancel = vi.fn()
+    const { stdin } = render(<BranchMultiPicker items={items} onSubmit={onSubmit} onCancel={onCancel} />)
+
+    stdin.write('\x03') // ctrl-c
+    await settle()
+
+    expect(onCancel).toHaveBeenCalled()
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
 })

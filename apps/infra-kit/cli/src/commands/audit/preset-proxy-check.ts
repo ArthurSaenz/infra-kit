@@ -7,6 +7,7 @@
  * existing `infra-kit audit --root` output. Skipped (returns null) when the project declares
  * no `devServersPresets`.
  */
+import { loadDev } from '@slip-stream-kit/config/internal'
 import path from 'node:path'
 
 import { discoverApiApps, discoverUiApps } from 'src/dev/discovery'
@@ -15,7 +16,6 @@ import type { DiscoveredParts, PresetProxyContext } from 'src/dev/presets'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import type { DevPresets } from 'src/lib/infra-kit-config'
 import type { PackageCheck, PackageValidationResult } from 'src/lib/package-validator'
-import { loadDev } from 'src/lib/vite/vite'
 
 /** A frontend config that a preset references but that failed to load (bad/invalid config). */
 interface LoadError {

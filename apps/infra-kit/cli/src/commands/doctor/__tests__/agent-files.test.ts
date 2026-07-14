@@ -33,7 +33,7 @@ const withTmpRepo = async (fn: (tmp: string) => Promise<void>, opts: { repo?: bo
   vi.mocked(getRepoName).mockResolvedValue(path.basename(tmp))
 
   if (opts.repo !== false) {
-    writeFile(path.join(tmp, 'infra-kit.json'), '{"environments":["dev"]}\n')
+    writeFile(path.join(tmp, 'infra-kit.json'), '{}\n')
   }
 
   // getInfraKitConfigPaths memoizes on `cwd + homedir`, neither of which changes between

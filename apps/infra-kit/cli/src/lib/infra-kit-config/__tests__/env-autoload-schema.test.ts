@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import { infraKitConfigSchema, infraKitOverrideConfigSchema } from '../infra-kit-config'
 
 const baseConfig = {
-  environments: ['dev', 'prod'],
   envManagement: { provider: 'doppler', config: { name: 'my-project' } },
 }
 
@@ -52,9 +51,9 @@ describe('envAutoLoad schema', () => {
     expect(result.success).toBe(false)
   })
 
-  // Important: an env name not in `environments` must NOT fail the schema — it is
+  // Important: an env name with no matching token must NOT fail the schema — it is
   // validated (and disabled) at resolve time so a typo never bricks every command.
-  it('does NOT reject a config name absent from environments (resolve-time concern)', () => {
+  it('does NOT reject a config name with no matching token (resolve-time concern)', () => {
     const result = infraKitConfigSchema.safeParse({
       ...baseConfig,
       envAutoLoad: { trigger: 'shell-startup', config: 'not-listed' },

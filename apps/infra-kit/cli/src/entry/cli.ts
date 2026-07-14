@@ -7,19 +7,25 @@ import { realpathSync } from 'node:fs'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
-import { MENU_GROUPS, commandCatalog, getMenuGroupCommands } from 'src/lib/command-catalog'
+import { commandCatalog } from 'src/lib/command-catalog'
 import { buildPaletteItems as buildPaletteItemsFromCommands } from 'src/lib/command-catalog/palette'
 import type { PaletteItem } from 'src/lib/command-catalog/palette'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { isLocalNodeModulesInstall, safeRealpath } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
-import { buildProgram, invokedViaMenu } from 'src/lib/program'
+import { suppressTypelessPackageJsonWarning } from 'src/lib/node-warnings'
+import { buildProgram } from 'src/lib/program'
 import { formatAlignedRows } from 'src/lib/render'
 import { captureSessionReportPath } from 'src/lib/session/report'
 import { runSession, sessionGateEnabled } from 'src/lib/session/run-session'
 import { maybeAutoUpdate } from 'src/lib/update-check'
 
 import packageJson from '../../package.json' with { type: 'json' }
+
+// Install BEFORE any command imports a consumer's `infra-kit.config.ts` (dev, audit, vendor-config
+// all do), otherwise Node prints a MODULE_TYPELESS_PACKAGE_JSON banner naming an app package.json
+// the user cannot safely add `"type": "module"` to.
+suppressTypelessPackageJsonWarning()
 
 // Capture (and delete from the env) the session-shell report path BEFORE any command runs, so the
 // running command can write its report while no descendant (gh / git / a hook / $EDITOR) inherits the
@@ -90,25 +96,16 @@ maybeAutoUpdate(packageJson.version)
  * the MCP / `--json` / non-TTY code paths. Otherwise falls back to the Inquirer menu (scripts, pipes,
  * CI). Ctrl-C / Esc at the menu backs out cleanly (returns null).
  */
-const commandMapByName = (): Map<string, (typeof program.commands)[number]> => {
-  return new Map(
-    program.commands.map((cmd) => {
-      return [cmd.name(), cmd]
-    }),
-  )
-}
-
 /**
  * Flat {name, description, group} palette list shared by the Ink palette, the Inquirer fallback, and
  * the session shell. Membership and order live in the command catalog; descriptions come from
- * Commander (single source).
+ * Commander (single source). Each `name` is the canonical grouped path (`release create`).
  */
 const buildPaletteItems = (): PaletteItem[] => {
   return buildPaletteItemsFromCommands(program.commands)
 }
 
 const runInteractiveMenu = async (): Promise<string | null> => {
-  const commandMap = commandMapByName()
   const paletteItems = buildPaletteItems()
 
   let selected: string | null = null
@@ -125,38 +122,18 @@ const runInteractiveMenu = async (): Promise<string | null> => {
           return [item.name, item.description] as const
         }),
       )
-      const labelByName = new Map<string, string>()
 
-      paletteItems.forEach((item, index) => {
-        labelByName.set(item.name, alignedLabels[index] ?? item.name)
+      // Headers come from the palette's own group column, which is already in MENU_GROUPS order and
+      // already omits empty groups — so this cannot render a `— Label —` header over nothing, and the
+      // two menu surfaces cannot list different commands.
+      const choices = paletteItems.flatMap((item, index) => {
+        const header =
+          paletteItems[index - 1]?.group === item.group ? [] : [new Separator(' '), new Separator(`— ${item.group} —`)]
+
+        return [...header, { name: alignedLabels[index] ?? item.name, value: item.name }]
       })
 
-      const toChoices = (names: string[]) => {
-        return names
-          .filter((name) => {
-            return commandMap.has(name)
-          })
-          .map((name) => {
-            return {
-              name: labelByName.get(name) ?? name,
-              value: name,
-            }
-          })
-      }
-
-      selected = await select(
-        {
-          message: 'Select a command to run',
-          choices: MENU_GROUPS.flatMap(({ key, label }) => {
-            const choices = toChoices(getMenuGroupCommands(key))
-
-            // Skip a group with nothing in it, or the header would hang over an empty section. The Ink
-            // palette omits it (`buildPaletteItems` emits no rows), so this keeps the two surfaces the same.
-            return choices.length === 0 ? [] : [new Separator(' '), new Separator(`— ${label} —`), ...choices]
-          }),
-        },
-        { output: process.stderr },
-      )
+      selected = await select({ message: 'Select a command to run', choices }, { output: process.stderr })
     }
   } catch (error) {
     // Ctrl-C / Esc at the menu is a clean back-out; leave `selected` as null.
@@ -176,9 +153,11 @@ const runInteractiveMenu = async (): Promise<string | null> => {
 const runSessionShell = async (): Promise<void> => {
   const { runCommandPalette } = await import('src/tui/boot')
   const cliPath = fileURLToPath(import.meta.url)
+  // Keyed by the SAME string the palette rows carry — the space-joined group path — so a pick resolves
+  // by what it displays. Keying by `cliName` worked only while every command had a flat alias to name it.
   const catalogByName = new Map(
     commandCatalog.map((entry) => {
-      return [entry.cliName, entry]
+      return [entry.groupPath.join(' '), entry]
     }),
   )
 
@@ -215,11 +194,10 @@ if (process.argv.length <= 2) {
     // Pipes / CI / non-TTY / opt-out → today's one-shot behaviour and exit codes.
     const selected = await runInteractiveMenu()
 
-    // The menu is a guided surface; don't nag about deprecated flat names here.
+    // `selected` is the grouped path (`release create`), so it must be split back into argv tokens —
+    // passed whole, Commander would look for a single command literally named "release create".
     if (selected) {
-      invokedViaMenu.value = true
-
-      await runProgram(['node', 'infra-kit', selected])
+      await runProgram(['node', 'infra-kit', ...selected.split(' ')])
     }
   }
 } else {

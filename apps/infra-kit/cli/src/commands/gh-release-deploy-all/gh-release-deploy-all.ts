@@ -1,13 +1,12 @@
 import confirm from '@inquirer/confirm'
-import select from '@inquirer/select'
 import { z } from 'zod'
 import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
-import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
+import { pickEnv } from 'src/lib/prompts/env-picker'
 import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import {
   detectReleaseType,
@@ -17,7 +16,12 @@ import {
   resolveReleaseBranch,
 } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
+import { readWorkflowEnvOptions } from 'src/lib/workflow-envs'
+import { assertDeployable, deployableEnvs } from 'src/lib/workflow-envs/protected-envs'
 import { defineMcpTool, textContent } from 'src/types'
+
+/** The workflow this command dispatches. Its own `environment` choices are the env list. */
+const DEPLOY_ALL_WORKFLOW = 'deploy-all.yml'
 
 interface GhReleaseDeployAllArgs {
   version: string
@@ -57,8 +61,6 @@ const confirmDeploy = async (args: ConfirmDeployArgs): Promise<boolean> => {
 export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs) => {
   const { version, env, skipTerraform, confirmedCommand } = args
 
-  commandEcho.start('release-deploy-all')
-
   let selectedReleaseBranch = '' // "release/v1.8.0" | "release/checkout-redesign" | "dev"
 
   if (version) {
@@ -90,7 +92,12 @@ export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs) => {
 
   commandEcho.addOption('--version', selectedVersion)
 
-  const { environments } = await getInfraKitConfig()
+  // The workflow's own `environment` choices, minus the ones reserved for the delivery flow. This is
+  // what `infra-kit.json → environments` used to hand-maintain in five copies: the same list, minus
+  // `prod`, written out by hand and drifted (travelist's copy offered `roman` and `eliran`, whom its own
+  // deploy-all.yml does not accept). Derived here from the two things that actually decide it — what the
+  // workflow declares, and what policy forbids.
+  const envOptions = deployableEnvs(await readWorkflowEnvOptions(DEPLOY_ALL_WORKFLOW))
 
   let selectedEnv = ''
 
@@ -99,26 +106,16 @@ export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs) => {
   } else {
     commandEcho.setInteractive()
 
-    selectedEnv = await select({
-      message: '🧪 Select environment',
-      choices: environments.map((env) => {
-        return {
-          name: env,
-          value: env,
-        }
-      }),
-    })
+    selectedEnv = await pickEnv(envOptions, 'launch deploy-all workflow')
   }
 
   commandEcho.addOption('--env', selectedEnv)
 
-  if (!environments.includes(selectedEnv)) {
-    throw new OperationError(undefined, {
-      operation: 'launch deploy-all workflow',
-      remediation: `pass one of: ${environments.join(', ')}`,
-      stderrExcerpt: `invalid environment: ${selectedEnv}`,
-    })
-  }
+  // The ONLY client-side veto: `prod` is delivered, never deployed ad-hoc. GitHub cannot enforce this —
+  // from its side `-f environment=prod` is a valid choice — so it has to be ours. Note what is NOT
+  // vetoed: an env absent from the local YAML still dispatches, because this read is of the working tree
+  // while the run targets `--ref <branch>`, and GitHub validates the choice itself.
+  assertDeployable(selectedEnv, 'launch deploy-all workflow')
 
   const shouldSkipTerraform = skipTerraform ?? false
 

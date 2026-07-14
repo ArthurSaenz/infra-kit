@@ -365,8 +365,6 @@ const deliverJiraReleaseSafely = async (id: ReleaseId): Promise<void> => {
 export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
   const { version, confirmedCommand } = args
 
-  commandEcho.start('release-deliver')
-
   // Branch-agnostic (operates on release/RC PRs via gh and self-switches), so
   // only the worktree + clean-tree legs apply.
   await assertManagementContext({ operation: 'deliver release' })

@@ -1,12 +1,20 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+import { logger } from 'src/lib/logger'
 
 import {
   DOPPLER_MAX_OUTPUT_BYTES,
   assertDopplerOutputSize,
+  assertTokenScope,
+  buildDopplerChildEnv,
   buildEnvLoadFileLines,
   parseDopplerSecretsJson,
   shellSingleQuote,
 } from '../env-load'
+
+vi.mock('src/lib/logger', () => {
+  return { logger: { warn: vi.fn(), debug: vi.fn() } }
+})
 
 describe('shellSingleQuote', () => {
   it('wraps plain values in single quotes', () => {
@@ -164,6 +172,116 @@ describe('buildEnvLoadFileLines — injection neutralization (single-quoting)', 
       expect(value.endsWith("'")).toBe(true)
       expect(value).not.toMatch(/^"/)
     }
+  })
+})
+
+describe('buildEnvLoadFileLines — credential filtering', () => {
+  const baseArgs = {
+    config: 'dev',
+    project: 'proj',
+    projectRoot: '/repo',
+    loadedAt: '2026-01-01T00:00:00.000Z',
+    autoLoaded: false as const,
+  }
+
+  const TOKEN_LITERAL = 'dp.st.dev.NEVER_IN_A_SOURCED_FILE'
+
+  // The ONLY test in this file that feeds credential-bearing pairs, so the module-scoped
+  // "warned once" flag is untouched by everything else and the count below is meaningful.
+  it('drops DOPPLER_TOKEN / INFRA_KIT_ENV_TOKEN, keeps the scope evidence, and warns exactly once', () => {
+    const pairs: Array<[string, string]> = [
+      ['DOPPLER_TOKEN', TOKEN_LITERAL],
+      ['INFRA_KIT_ENV_TOKEN', TOKEN_LITERAL],
+      ['DOPPLER_CONFIG', 'dev'],
+      ['DOPPLER_PROJECT', 'proj'],
+      ['DOPPLER_ENVIRONMENT', 'dev'],
+      ['API_URL', 'https://api.example.com'],
+    ]
+
+    const first = buildEnvLoadFileLines({ ...baseArgs, pairs })
+    const second = buildEnvLoadFileLines({ ...baseArgs, pairs })
+
+    for (const lines of [first, second]) {
+      const file = lines.join('\n')
+
+      expect(file).not.toContain(TOKEN_LITERAL)
+      expect(file).not.toContain('DOPPLER_TOKEN=')
+      expect(file).not.toContain('INFRA_KIT_ENV_TOKEN=')
+
+      // The scope evidence assertTokenScope and doctor read back — not credentials.
+      expect(lines).toContain("DOPPLER_CONFIG='dev'")
+      expect(lines).toContain("DOPPLER_PROJECT='proj'")
+      expect(lines).toContain("API_URL='https://api.example.com'")
+    }
+
+    expect(logger.warn).toHaveBeenCalledOnce()
+
+    const warning = vi.mocked(logger.warn).mock.calls[0]![0] as string
+
+    expect(warning).toContain('DOPPLER_TOKEN')
+    expect(warning).not.toContain(TOKEN_LITERAL)
+  })
+})
+
+describe('assertTokenScope', () => {
+  it('accepts a payload whose DOPPLER_CONFIG matches the requested config', () => {
+    expect(() => {
+      return assertTokenScope(
+        [
+          ['DOPPLER_CONFIG', 'dev'],
+          ['API_URL', 'x'],
+        ],
+        'dev',
+      )
+    }).not.toThrow()
+  })
+
+  it('throws on a mis-scoped token, naming BOTH configs', () => {
+    expect(() => {
+      return assertTokenScope([['DOPPLER_CONFIG', 'prod']], 'dev')
+    }).toThrow(/"prod".*"dev"|"dev".*"prod"/su)
+  })
+
+  it('proceeds when DOPPLER_CONFIG is ABSENT — the CLI already refused a real mismatch', () => {
+    expect(() => {
+      return assertTokenScope([['API_URL', 'x']], 'dev')
+    }).not.toThrow()
+  })
+
+  it('compares DOPPLER_CONFIG, never DOPPLER_ENVIRONMENT (config dev_personal lives in env dev)', () => {
+    expect(() => {
+      return assertTokenScope(
+        [
+          ['DOPPLER_CONFIG', 'dev_personal'],
+          ['DOPPLER_ENVIRONMENT', 'dev'],
+        ],
+        'dev_personal',
+      )
+    }).not.toThrow()
+  })
+})
+
+describe('buildDopplerChildEnv', () => {
+  it('sets our token and scrubs every inherited Doppler var', () => {
+    const childEnv = buildDopplerChildEnv('dp.st.dev.OURS', {
+      PATH: '/usr/bin',
+      DOPPLER_TOKEN: 'dp.st.INHERITED',
+      DOPPLER_PROJECT: 'other-proj',
+      DOPPLER_CONFIG: 'prod',
+    })
+
+    expect(childEnv.DOPPLER_TOKEN).toBe('dp.st.dev.OURS')
+    expect(childEnv).not.toHaveProperty('DOPPLER_PROJECT')
+    expect(childEnv).not.toHaveProperty('DOPPLER_CONFIG')
+    expect(childEnv.PATH).toBe('/usr/bin')
+  })
+
+  it('does not mutate the base env it was given', () => {
+    const base = { DOPPLER_CONFIG: 'prod' }
+
+    buildDopplerChildEnv('dp.st.dev.OURS', base)
+
+    expect(base.DOPPLER_CONFIG).toBe('prod')
   })
 })
 

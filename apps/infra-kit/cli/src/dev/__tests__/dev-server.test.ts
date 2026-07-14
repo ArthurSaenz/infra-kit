@@ -1,3 +1,4 @@
+import { DEV_CONTEXT_WIRE_VERSION } from '@slip-stream-kit/config/internal'
 import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -8,6 +9,7 @@ import { DevServerRunner } from 'src/dev/dev-server'
 import type { DevUi } from 'src/dev/dev-ui'
 import type { ReadySummary } from 'src/dev/render'
 import { stripAnsi } from 'src/dev/render'
+import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config'
 
 import {
@@ -152,6 +154,448 @@ describe('devServerRunner — an app that fails to start', () => {
     // Nothing is left to serve, watch, or proxy. Resident-but-empty would exit 0 when interrupted,
     // so a script or CI step would read this catastrophe as a success.
     await expect(runner.start()).rejects.toThrow(/no app started/)
+
+    await runner.shutdown()
+  })
+})
+
+/**
+ * The silent-cloud bug, end to end.
+ *
+ * A `*Local` preset launches `<app>/api` + `<app>/ui` and the frontend's `/api` route names that
+ * backend. When the backend dies on boot it writes no dev-context fragment, so the vite helper's
+ * `pickSource` finds an empty local set and falls through to the route's `default: 'cloud'`. The
+ * frontend then comes up healthy, proxying every `/api` request at the shared cloud backend — and
+ * nothing on screen says so. The `● failed` row is about the BACKEND; it cannot report that the
+ * frontend beside it is now misrouted.
+ */
+describe('devServerRunner — a local-pinned route whose backend failed', () => {
+  /**
+   * hulyo's `clientLocal`, verbatim, handed in as an in-memory `presetDef` (the same seam the wizard
+   * uses) rather than written to an `infra-kit.json` — the layered config resolves a named preset
+   * against the real repo root, not the temp fixture, so a named lookup here would never find it.
+   * `preset` still rides along, because it is what labels the run in the refusal message.
+   */
+  const CLIENT_LOCAL = {
+    preset: 'clientLocal',
+    presetDef: { apps: { 'client/ui': { proxy: { '/api': 'local' as const } }, 'client/api': {} } },
+  }
+
+  /** `client/api` + `client/ui`, the UI's `/api` pinned to the api's package, and the api throwing on boot. */
+  const brokenPairing = async (): Promise<{ root: string; fakeRunBuild: () => Promise<void> }> => {
+    const root = temp.register(
+      makeMonorepo([
+        {
+          name: 'client',
+          packageName: 'backend-api',
+          withHandler: true,
+          ui: {
+            packageName: 'website-ui',
+            proxy: {
+              cloud: 'https://<env>.hulyo.co.il',
+              routes: {
+                // `default: 'cloud'` is REQUIRED by the schema for a multi-source route — and it is
+                // exactly the fallback that makes the failure silent.
+                '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },
+                // Cloud-only by design — it must never be reported as degraded.
+                '/media': { packageName: 'backend-api', from: ['cloud'] },
+              },
+            },
+          },
+        },
+      ]),
+    )
+
+    process.env.CLIENT_PORT = String(await getFreePort())
+    process.env[INFRA_KIT_ENV_VAR] = 'dev'
+
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(
+        path.join(root, 'apps', 'client', 'api', 'dist', 'handler.js'),
+        'throw new Error("config is missing field: \'connectionURL\'")\n',
+      )
+    }
+
+    return { root, fakeRunBuild }
+  }
+
+  it('refuses to start, naming the route, the cloud origin, and the backend error', async () => {
+    const { root, fakeRunBuild } = await brokenPairing()
+
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    // A spy in the uiDevFactory slot: a refusal that still spawned vite would leave a frontend running
+    // against cloud — the exact outcome being refused.
+    const uiSpawns: string[][] = []
+    const runner = new DevServerRunner(
+      CLIENT_LOCAL,
+      fakeRunBuild,
+      undefined,
+      ({ packageNames }) => {
+        uiSpawns.push(packageNames)
+
+        return { kill: async () => {} }
+      },
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    const error = await runner.start().then(
+      () => {
+        return null
+      },
+      (e: unknown) => {
+        return e as Error
+      },
+    )
+
+    expect(error?.message).toContain('clientLocal')
+    expect(error?.message).toContain('client/ui /api')
+    expect(error?.message).toContain('https://dev.hulyo.co.il')
+    expect(error?.message).toContain("config is missing field: 'connectionURL'")
+
+    // The cloud-only route was always going to cloud — flagging it would cry wolf on every run.
+    expect(error?.message).not.toContain('/media')
+
+    // And no frontend was ever spawned.
+    expect(uiSpawns).toEqual([])
+
+    await runner.shutdown()
+  })
+
+  it('stays resident under --watch instead, painting a degraded row that names the cloud origin', async () => {
+    const { root, fakeRunBuild } = await brokenPairing()
+    const stdout: string[] = []
+
+    spyStdoutWrite(stdout)
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { ...CLIENT_LOCAL, watch: true },
+      fakeRunBuild,
+      () => {
+        return { kill: async () => {} }
+      },
+      () => {
+        return { kill: async () => {} }
+      },
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    // `--watch` earns the exception because it can actually fix this: the boot-failed api is a restart
+    // target, so the next save can bring it up and take the degraded row down with it.
+    await runner.start()
+
+    const painted = stripAnsi(stdout.join(''))
+
+    expect(painted).toContain('● cloud (local backend down)')
+    expect(painted).toContain('client/ui /api')
+    expect(painted).toContain('https://dev.hulyo.co.il')
+
+    await runner.shutdown()
+  })
+
+  /**
+   * The second bug, and the one that made the `--watch` carve-out above worth having at all.
+   *
+   * `resolveRestartTargets` used to look a target up in `appServers` and drop it when the index came back
+   * `-1`. A boot-failed app is never IN `appServers` — `startAllApps` only pushes the ones that booted —
+   * so it could never be a restart target: watch would rebuild its dist on every save and restart nothing.
+   * The backend stayed dead for the whole session no matter how many times you fixed the file that broke
+   * it, and its frontend spent that whole session proxying to cloud.
+   */
+  it('brings a boot-failed backend back on the next save, and the degraded row clears with it', async () => {
+    const { root, fakeRunBuild } = await brokenPairing()
+
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    // A renderer that captures every repaint: `refresh` is the ONLY seam that can show the degraded row
+    // going away, since the header is committed once and never revised.
+    const painted: ReadySummary[] = []
+    const capturing: DevUi = {
+      narrate: () => {},
+      log: () => {},
+      logFn: () => {},
+      bootStep: () => {},
+      stopSpinner: () => {},
+      ready: (summary) => {
+        painted.push(summary)
+      },
+      event: () => {},
+      refresh: (summary) => {
+        painted.push(summary)
+      },
+      dispose: () => {},
+    }
+    const latestDegraded = (): ReadySummary['degraded'] => {
+      return painted.at(-1)?.degraded
+    }
+
+    const runner = new DevServerRunner(
+      { ...CLIENT_LOCAL, watch: true },
+      fakeRunBuild,
+      () => {
+        return { kill: async () => {} }
+      },
+      () => {
+        return { kill: async () => {} }
+      },
+      undefined,
+      capturing,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    // The boot paint carries the warning.
+    expect(latestDegraded()).toEqual([
+      { route: '/api', tag: 'client/ui', fallback: 'cloud', target: 'https://dev.hulyo.co.il' },
+    ])
+
+    // The runner's OWN record of the app being up. Deliberately not `process.env.CLIENT_PORT`: that is
+    // only a preferred-port HINT, and a busy machine can hand the hint to someone else and leave the app
+    // on an ephemeral port — a probe pinned to the hint then fails for a backend that is serving fine.
+    // The fragment carries the port actually bound, and writing it is the very act that flips the vite
+    // helper's route back to `local`, so it is also the thing under test.
+    const fragment = path.join(root, '.infra-kit', 'dev-context', 'client.json')
+    const boundPort = (): number | null => {
+      try {
+        return (JSON.parse(fs.readFileSync(fragment, 'utf-8')) as { port: number }).port
+      } catch {
+        return null
+      }
+    }
+
+    // It really is dead to begin with: a backend that never started writes no fragment.
+    expect(boundPort()).toBeNull()
+
+    const waitUntil = async (done: () => boolean, onTick?: () => void): Promise<void> => {
+      const deadline = Date.now() + 20_000
+
+      while (Date.now() < deadline && !done()) {
+        onTick?.()
+        await new Promise((resolve) => {
+          return setTimeout(resolve, 250)
+        })
+      }
+    }
+
+    // The fix lands in dist — exactly what `turbo watch build` does on a save. Real chokidar picks it up
+    // (400ms debounce + a 200ms write-finish settle), so this exercises the real restart path, not a stub.
+    //
+    // Re-saved on every tick rather than written once, because the watcher is armed ASYNCHRONOUSLY and
+    // runs with `ignoreInitial: true`: a write that lands before its initial scan completes is taken for
+    // part of that scan and dropped. Writing once made this test pass alone and fail under a loaded
+    // machine, where the watcher takes longer to become ready — a false red on a real fix. Saving again
+    // is also exactly what a developer does, so nothing is being papered over.
+    const save = (): void => {
+      fs.writeFileSync(path.join(root, 'apps', 'client', 'api', 'dist', 'handler.js'), handlerSource(1))
+    }
+
+    await waitUntil(() => {
+      return boundPort() != null
+    }, save)
+
+    // The backend that could never come back, came back — and is really serving on the port it recorded.
+    const port = boundPort()
+
+    expect(port, 'watch never restarted the boot-failed backend').not.toBeNull()
+    expect((await fetch(`http://127.0.0.1:${port}/__health`)).ok).toBe(true)
+
+    // And the warning goes with it. The liveness tick drives the repaint, so wait for one that reflects
+    // the recovered app: a row that outlived its cause is a warning nobody reads.
+    await waitUntil(() => {
+      return (latestDegraded()?.length ?? 0) === 0
+    })
+
+    expect(latestDegraded(), 'the degraded row survived its own backend recovering').toEqual([])
+
+    await runner.shutdown()
+  }, 60_000)
+
+  it('does not refuse when the frontend route can only ever be cloud', async () => {
+    const root = temp.register(
+      makeMonorepo([
+        {
+          name: 'client',
+          packageName: 'backend-api',
+          withHandler: true,
+          ui: {
+            packageName: 'website-ui',
+            // Every route is cloud-only: a dead backend demotes nothing, so there is nothing to refuse.
+            proxy: { routes: { '/media': { packageName: 'backend-api', from: ['cloud'] } } },
+          },
+        },
+      ]),
+    )
+
+    process.env.CLIENT_PORT = String(await getFreePort())
+    process.env[INFRA_KIT_ENV_VAR] = 'dev'
+
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(path.join(root, 'apps', 'client', 'api', 'dist', 'handler.js'), 'throw new Error("boom")\n')
+    }
+
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { preset: 'clientUICloud', presetDef: { apps: { 'client/ui': {}, 'client/api': {} } } },
+      fakeRunBuild,
+      undefined,
+      () => {
+        return { kill: async () => {} }
+      },
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    await expect(runner.start()).resolves.toBeUndefined()
+
+    await runner.shutdown()
+  })
+
+  /**
+   * The `--app` / `--self` hole, which a crash-keyed rule cannot see.
+   *
+   * `resolveRunPlan` applies the include filter AFTER preset resolution, and it filters apis and UIs
+   * independently. So `--app client` on a preset that pairs `client/ui` with `backoffice/api` drops the
+   * backend entirely: it is never attempted, so it never lands in `failedApps`, so there is no crash to
+   * key off — and `client/ui` comes up proxying `/api` at the shared cloud backend in total silence. The
+   * rule keys on INTENT (`wanted`, captured pre-narrowing) precisely so this is caught.
+   */
+  it('refuses when a narrowing flag dropped the backend a launched frontend needs — no crash to key off', async () => {
+    const root = temp.register(
+      makeMonorepo([
+        { name: 'backoffice', packageName: 'backoffice-api', withHandler: true },
+        {
+          name: 'client',
+          packageName: 'backend-api',
+          withHandler: true,
+          ui: {
+            packageName: 'website-ui',
+            proxy: {
+              cloud: 'https://<env>.hulyo.co.il',
+              // Cross-app: client's frontend is served by BACKOFFICE's backend.
+              routes: {
+                '/api': { packageName: 'backoffice-api', from: ['local', 'cloud'], default: 'cloud' },
+              },
+            },
+          },
+        },
+      ]),
+    )
+
+    process.env.CLIENT_PORT = String(await getFreePort())
+    process.env.BACKOFFICE_PORT = String(await getFreePort())
+    process.env[INFRA_KIT_ENV_VAR] = 'dev'
+
+    const fakeRunBuild = async (): Promise<void> => {}
+
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    const uiSpawns: string[][] = []
+    const runner = new DevServerRunner(
+      {
+        preset: 'crossApp',
+        presetDef: { apps: { 'client/ui': {}, 'backoffice/api': {} } },
+        // `--app client` keeps client/ui and silently drops backoffice/api.
+        include: ['client'],
+      },
+      fakeRunBuild,
+      undefined,
+      ({ packageNames }) => {
+        uiSpawns.push(packageNames)
+
+        return { kill: async () => {} }
+      },
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    const error = await runner.start().then(
+      () => {
+        return null
+      },
+      (e: unknown) => {
+        return e as Error
+      },
+    )
+
+    expect(error?.message, 'a backend dropped by --app must not silently become a cloud proxy').toContain(
+      'backoffice-api',
+    )
+    expect(error?.message).toContain('never launched')
+    expect(error?.message).toContain('https://dev.hulyo.co.il')
+    // …and it must NOT send them off to wait on a --watch retry that can never fire: `runRestart` only
+    // ever sees the post-narrowing app list, so this backend is not a restart target and never becomes one.
+    expect(error?.message).not.toContain('--watch')
+    expect(uiSpawns).toEqual([])
+
+    await runner.shutdown()
+  })
+
+  /**
+   * The false-positive direction, which the intent rule must not trip on.
+   *
+   * A UI-only preset is how you deliberately develop a frontend against cloud. Its routes still declare
+   * `from: ['local','cloud']` — they are LOCAL-CAPABLE — but the preset names no api target and pins
+   * nothing, so nothing about this run intended a local backend. Refusing it would break the single most
+   * common frontend workflow there is.
+   */
+  it('starts a deliberate UI-only run against cloud — local-capable is not the same as intended-local', async () => {
+    const root = temp.register(
+      makeMonorepo([
+        {
+          name: 'client',
+          packageName: 'backend-api',
+          withHandler: true,
+          ui: {
+            packageName: 'website-ui',
+            proxy: {
+              cloud: 'https://<env>.hulyo.co.il',
+              routes: { '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' } },
+            },
+          },
+        },
+      ]),
+    )
+
+    process.env[INFRA_KIT_ENV_VAR] = 'dev'
+
+    const fakeRunBuild = async (): Promise<void> => {}
+
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      // No api target, no `local` pin: the backend is simply not part of this run.
+      { preset: 'clientUICloud', presetDef: { apps: { 'client/ui': {} } } },
+      fakeRunBuild,
+      undefined,
+      () => {
+        return { kill: async () => {} }
+      },
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    await expect(runner.start()).resolves.toBeUndefined()
 
     await runner.shutdown()
   })
@@ -418,7 +862,10 @@ describe('devServerRunner — startup ready header', () => {
       expect(out).toContain('● ok')
       // The redundant scheme legend is gone; the log link + separator rule close the calm header.
       expect(out).not.toContain('scheme')
-      expect(out).toMatch(/logs → .*logs\.txt/)
+      // The header points at the log DIRECTORY, not a file: there is one log per service now, so a
+      // single path would have to pick a favourite. The `<pid>` leaf is what keeps concurrent cmux
+      // panes — which all inherit one INFRA_KIT_SESSION — out of each other's files.
+      expect(out).toMatch(/logs → .*[/\\]dev[/\\]\d+/)
       expect(out).toContain('─'.repeat(60))
       // No box-drawn table lines survive the redesign.
       expect(
@@ -707,12 +1154,25 @@ describe('devServerRunner — Layer B portless aliases', () => {
 
     try {
       const raw = fs.readFileSync(path.join(root, '.infra-kit', 'dev-context', 'client.json'), 'utf-8')
-      const fragment = JSON.parse(raw) as { release?: string; alias?: string; origin?: string; port: number }
+      const fragment = JSON.parse(raw) as {
+        v?: number
+        release?: string
+        alias?: string
+        origin?: string
+        port: number
+      }
 
       expect(fragment.release).toBe('feat-x')
       expect(fragment.alias).toBe('feat-x.client-api.localhost')
       expect(fragment.origin).toBe('https://feat-x.client-api.localhost')
       expect(fragment.port).toBeGreaterThan(0)
+      // The wire version is what lets the helper tell "an old CLI wrote this, legacy mode is correct" apart
+      // from "a current CLI wrote a broken fragment, legacy mode proxies plain HTTP into a TLS listener".
+      // Drop it and the helper silently falls back to guessing — so assert the writer really stamps it.
+      expect(
+        fragment.v,
+        'a fragment with no `v` reads as a pre-v2 writer, sending the helper down the legacy template path',
+      ).toBe(DEV_CONTEXT_WIRE_VERSION)
     } finally {
       await runner.shutdown()
     }

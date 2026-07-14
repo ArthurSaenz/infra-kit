@@ -93,6 +93,10 @@ describe('sessionGateEnabled', () => {
  * real output — which now lands on the primary screen, in the scrollback — arrives under a heading),
  * and the status footer after. `written[0]` is the header; `written[1]` is the footer.
  */
+/** Chalk's level-1 SGR codes, spelled with an explicit escape so no raw control byte lands in source. */
+const SGR_BOLD = '\u001B[1m'
+const SGR_GREEN = '\u001B[32m'
+
 describe('runSession loop', () => {
   const baseDeps = (written: string[], spawn: unknown, resets: { entersAltScreen?: boolean }[] = []) => {
     return {
@@ -136,6 +140,91 @@ describe('runSession loop', () => {
     expect(written).toHaveLength(4) // two picks × (header + footer)
     expect(header(written)).toContain('$ infra-kit vendor check')
     expect(footer(written)).toContain('[ok]')
+  })
+
+  /**
+   * The framing is what separates one run from the next in the scrollback, and the loop is the only
+   * party that knows the terminal's width and colour support — the formatter is deliberately pure. So
+   * the plumbing itself needs a test: drop either `width` or `color` on the floor here and every block
+   * silently goes back to being an undifferentiated wall of text, with no other test noticing.
+   */
+  it('threads the terminal width and colour through to the framing it commits', async () => {
+    const log: string[] = []
+    const written: string[] = []
+    const spawn = fakeSpawnFor([{ code: 0, writeReport: true }], log)
+
+    await runSession(items, {
+      renderPalette: pickThenQuit(['vendor-check', null], log),
+      ...baseDeps(written, spawn),
+      ascii: true,
+      color: true,
+      columns: () => {
+        return 40
+      },
+    })
+
+    // `[ok] ok · 0ms` is 13 columns, so the rule must be exactly 40 - 2 - 13 = 25 — no more (it would
+    // wrap off the edge) and no fewer (it would stop short of the margin). The exact run catches both.
+    // (Asserted on the rule alone, not the whole line: under colour the status is not one contiguous
+    // substring — chalk interleaves an SGR code between the verdict and the duration.)
+    expect(footer(written)).toContain('-'.repeat(25))
+    expect(footer(written)).not.toContain('-'.repeat(26))
+    // Colour is on, so both blocks carry SGR codes: the header bolded, the footer coloured by outcome.
+    expect(header(written)).toContain(SGR_BOLD)
+    expect(footer(written)).toContain(SGR_GREEN)
+  })
+
+  it('draws no rule and no colour when the transcript is not going to a terminal', async () => {
+    const log: string[] = []
+    const written: string[] = []
+    const spawn = fakeSpawnFor([{ code: 0, writeReport: true }], log)
+
+    await runSession(items, {
+      renderPalette: pickThenQuit(['vendor-check', null], log),
+      ...baseDeps(written, spawn),
+      ascii: true,
+      color: false,
+      // A redirected stderr has no width at all. Injected, NOT left to default: a `columns` that falls
+      // through to the real `process.stderr` would make this assert on the test runner's own tty, and it
+      // would flip to a rule the day the runner is given one.
+      columns: () => {
+        return undefined
+      },
+    })
+
+    expect(footer(written).trim()).toBe('[ok] ok · 0ms')
+    expect(header(written).trim()).toBe('$ infra-kit vendor check')
+  })
+
+  /**
+   * The session shell runs for hours, so the width it framed the LAST command with says nothing about
+   * the window the next one lands in. Re-read per run, a resize just changes the next rule's length;
+   * snapshotted at boot, a shrunk window would have every later rule overrun the margin and wrap.
+   */
+  it('re-reads the terminal width for every run, so a mid-session resize is honoured', async () => {
+    const log: string[] = []
+    const written: string[] = []
+    const spawn = fakeSpawnFor(
+      [
+        { code: 0, writeReport: true },
+        { code: 0, writeReport: true },
+      ],
+      log,
+    )
+    const widths = [40, 30]
+
+    await runSession(items, {
+      renderPalette: pickThenQuit(['vendor-check', 'vendor-check', null], log),
+      ...baseDeps(written, spawn),
+      ascii: true,
+      columns: () => {
+        return widths.shift()
+      },
+    })
+
+    // Same command, same status (`[ok] ok · 0ms`, 13 cols) — only the window shrank between the two.
+    expect(footer(written, 0)).toContain(`[ok] ok · 0ms ${'-'.repeat(25)}`) // 40 - 2 - 13
+    expect(footer(written, 1)).toContain(`[ok] ok · 0ms ${'-'.repeat(15)}`) // 30 - 2 - 13
   })
 
   it('does not repeat the command line in the footer when it matches the echoed header', async () => {

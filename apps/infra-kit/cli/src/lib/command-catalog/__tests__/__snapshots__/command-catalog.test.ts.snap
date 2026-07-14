@@ -3,6 +3,17 @@
 exports[`command catalog — MCP exposure policy > matches the golden MCP tools/list surface (names + schema shape) 1`] = `
 [
   {
+    "input": [
+      "all",
+      "root",
+    ],
+    "name": "audit",
+    "output": [
+      "allPassed",
+      "packages",
+    ],
+  },
+  {
     "input": [],
     "name": "env-clear",
     "output": [
@@ -18,6 +29,7 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     "output": [
       "configs",
       "project",
+      "tokens",
     ],
   },
   {
@@ -44,6 +56,15 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
       "sessionLoadedCount",
       "sessionProject",
       "sessionTotalCount",
+    ],
+  },
+  {
+    "input": [
+      "check",
+    ],
+    "name": "env-token-list",
+    "output": [
+      "tokens",
     ],
   },
   {

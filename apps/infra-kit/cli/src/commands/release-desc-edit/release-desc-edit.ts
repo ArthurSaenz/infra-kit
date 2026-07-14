@@ -81,8 +81,6 @@ const promptDescription = async (current: string): Promise<string> => {
 export const releaseDescEdit = async (args: ReleaseDescEditArgs) => {
   const { version: versionArg, description: descriptionArg, confirmedCommand } = args
 
-  commandEcho.start('release-desc-edit')
-
   const jiraConfig = await loadJiraConfig()
 
   let selectedBranch: string

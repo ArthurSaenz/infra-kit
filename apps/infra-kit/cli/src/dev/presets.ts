@@ -46,7 +46,18 @@ export interface ResolvedPreset {
   targets: ResolvedTarget[]
   /** Run each target in its own cmux pane. */
   cmux: boolean
-  /** app → (route path → source) overrides, threaded to the proxy resolver. */
+  /**
+   * app → (route path → source) overrides, as DECLARED by the preset.
+   *
+   * Not an input to proxy resolution, and never has been: the vite helper derives a route's source from
+   * the dev-context fragments the runner writes, so a route is local iff its backend is actually up. This
+   * map is the declared INTENT, and it has two readers:
+   *  - `validatePresetProxy` — the STATIC check, run by `infra-kit audit` and the bare-invocation wizard.
+   *    Note it does NOT run on the `infra-kit dev <preset>` path, so it cannot be relied on to have
+   *    caught anything by the time a run starts;
+   *  - `local-pairing.ts` — the RUNTIME check, which folds a `local` pin into the set of packages the run
+   *    intended to serve locally, and refuses when one of them is not actually up.
+   */
   proxy: Record<string, Record<string, ProxySource>>
   /** Apps whose `api` part is launched — their backends are local (derived). */
   localApps: string[]

@@ -10,12 +10,13 @@
  */
 import { spawnSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 import { defaultLazyNpmRoot, detectInstallManager, safeRealpath } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
-import { withoutPackageManagerEnv } from 'src/lib/pm-env'
+import { packageManagerInstallEnv } from 'src/lib/pm-env'
 
 export interface SelfUpdateDeps {
   spawnSync?: typeof spawnSync
@@ -105,10 +106,21 @@ export const runSelfUpdate = ({ dryRun }: { dryRun: boolean }, deps: SelfUpdateD
   }
 
   // `shell` on win32 so the `.cmd` shims npm/pnpm/yarn ship as their global bins resolve.
+  //
+  // `cwd` is pinned to the home directory for the SAME reason the background worker pins it, and it is a
+  // security control rather than tidiness: npm resolves `registry=` from an `.npmrc` on disk relative to
+  // the cwd. Inheriting the caller's cwd lets any repo you happen to be standing in redirect this
+  // `install -g` to a registry of its choosing and run that package's lifecycle scripts. Being
+  // user-initiated is NOT a defence — npm does not print the registry it resolved, so nothing about the
+  // output would give it away. Stripping env vars cannot close this; the redirect lives in a file.
+  //
+  // `packageManagerInstallEnv` (not the blunt `withoutPackageManagerEnv`) keeps `npm_config_prefix`, so we
+  // install into the same prefix `detectInstallManager` just matched on rather than the default one.
   const result = spawn(updateCommand[0]!, updateCommand.slice(1), {
     stdio: 'inherit',
     shell: process.platform === 'win32',
-    env: withoutPackageManagerEnv(env),
+    cwd: homedir(),
+    env: packageManagerInstallEnv(env),
   })
 
   exitFromResult(result, manager, print, exit)

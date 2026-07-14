@@ -7,12 +7,13 @@ import { z } from 'zod'
 import { $ } from 'zx'
 
 import {
+  DopplerAuthError,
+  INFRA_KIT_ENV_TOKEN_VAR,
   buildDopplerNotFoundMessage,
-  classifyDopplerDownloadError,
+  classifyDopplerAuthFailure,
+  classifyDopplerFailure,
   getDopplerProject,
-  listDopplerConfigs,
-  listDopplerProjects,
-  validateDopplerCliAndAuth,
+  resolveEnvToken,
 } from 'src/integrations/doppler'
 import { commandEcho } from 'src/lib/command-echo'
 import {
@@ -29,7 +30,8 @@ import {
 } from 'src/lib/constants'
 import { extractStderr } from 'src/lib/errors/operation-error'
 import { getProjectRoot } from 'src/lib/git-utils'
-import { getInfraKitConfig } from 'src/lib/infra-kit-config'
+import { logger } from 'src/lib/logger'
+import { listProjectEnvNames } from 'src/lib/project-envs'
 import { canonicalizeProjectRoot, evictStaleWarmCaches, shouldWriteWarm, writeWarmCache } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
 
@@ -95,9 +97,41 @@ const buildAutoLoadMarkerLines = (autoLoaded: boolean): string[] => {
   return [`unset ${INFRA_KIT_ENV_AUTOLOADED_VAR}`, `unset ${INFRA_KIT_ENV_CLEARED_VAR}`]
 }
 
+/** The payload key that carries the token's scope — the one {@link assertTokenScope} compares. */
+const DOPPLER_CONFIG_KEY = 'DOPPLER_CONFIG'
+
 /**
- * Build the dotenv-format shell lines for env-load.sh. Pure (no I/O) so callers
- * can assert the exact marker behavior. `set -a`/`set +a` auto-export every
+ * Secret names that must NEVER be written into the sourced file. A Doppler project can hold a secret
+ * called `DOPPLER_TOKEN` (or `INFRA_KIT_ENV_TOKEN`), and `env-load.sh` is sourced into EVERY shell —
+ * exporting one would hand a live credential to every child process forever, and (per SPIKE-0 Q5) an
+ * exported `DOPPLER_TOKEN` would then hijack the next download's auth.
+ *
+ * `DOPPLER_CONFIG` / `DOPPLER_PROJECT` are deliberately NOT filtered: they are not credentials, they
+ * are the scope evidence {@link assertTokenScope} and `doctor` read back.
+ */
+const CREDENTIAL_SECRET_KEYS = new Set<string>(['DOPPLER_TOKEN', INFRA_KIT_ENV_TOKEN_VAR])
+
+/** Warn at most once per process: a project carrying a token secret would otherwise warn on every load. */
+let credentialFilterWarned = false
+
+/**
+ * Tell the user we dropped a credential-bearing secret from their shell env — silently swallowing a
+ * key they can see in the Doppler dashboard would read as a bug. Names the KEY only, never the value.
+ */
+const warnFilteredCredentialKeys = (keys: string[]): void => {
+  if (keys.length === 0 || credentialFilterWarned) return
+
+  credentialFilterWarned = true
+
+  logger.warn(
+    `infra-kit: not exporting ${keys.join(', ')} from Doppler into your shell — ` +
+      'a service token must not be sourced into every process.',
+  )
+}
+
+/**
+ * Build the dotenv-format shell lines for env-load.sh. Pure apart from the one-shot credential
+ * warning, so callers can assert the exact marker behavior. `set -a`/`set +a` auto-export every
  * assignment when the file is sourced.
  */
 export const buildEnvLoadFileLines = ({
@@ -108,9 +142,23 @@ export const buildEnvLoadFileLines = ({
   loadedAt,
   autoLoaded,
 }: EnvLoadFileLinesArgs): string[] => {
+  const emitted = pairs.filter(([key]) => {
+    return !CREDENTIAL_SECRET_KEYS.has(key)
+  })
+
+  warnFilteredCredentialKeys(
+    pairs
+      .filter(([key]) => {
+        return CREDENTIAL_SECRET_KEYS.has(key)
+      })
+      .map(([key]) => {
+        return key
+      }),
+  )
+
   return [
     'set -a',
-    ...pairs.map(([key, value]) => {
+    ...emitted.map(([key, value]) => {
       return `${key}=${shellSingleQuote(value)}`
     }),
     // Purpose-named env-name handle for non-shell tooling (e.g. infra-kit/vite's
@@ -151,8 +199,6 @@ export const writeEnvLoadFile = async ({
   beforeWrite,
   projectDir,
 }: WriteEnvLoadFileArgs): Promise<EnvLoadFileResult | null> => {
-  await validateDopplerCliAndAuth()
-
   const project = await getDopplerProject()
   const projectRoot = await resolveProjectRootSafe()
 
@@ -198,25 +244,26 @@ export const writeEnvLoadFile = async ({
 export const envLoad = async (args: EnvLoadArgs) => {
   const { config } = args
 
-  commandEcho.start('env-load')
-
   let selectedConfig = ''
 
   if (config) {
     selectedConfig = config
   } else {
-    // Validate auth before the interactive picker so an unauthenticated user fails
-    // fast instead of choosing an env first. writeEnvLoadFile re-checks (cheap) for
-    // the non-interactive path where this branch is skipped.
-    await validateDopplerCliAndAuth()
-
-    const { environments } = await getInfraKitConfig()
+    // No auth pre-probe before the picker: under token-only auth there is no account
+    // to validate, and the per-env token is only knowable AFTER a config is chosen.
+    // A missing/rejected token surfaces from the download with an actionable message.
+    //
+    // The choices are every env this project has — workflow-declared and token-only alike (see
+    // `lib/project-envs`). Deliberately NOT filtered to the envs we hold a token for: an env you cannot
+    // yet load is exactly the one you need to SEE, so that picking it tells you to run
+    // `infra-kit env-token-set <env>` rather than leaving you to wonder where it went.
+    const envs = await listProjectEnvNames()
 
     commandEcho.setInteractive()
     selectedConfig = await select(
       {
         message: 'Select environment config',
-        choices: environments.map((env) => {
+        choices: envs.map((env) => {
           return { name: env, value: env }
         }),
       },
@@ -269,7 +316,45 @@ export const DOPPLER_MAX_OUTPUT_BYTES = 1024 * 1024
  */
 const DOPPLER_DOWNLOAD_TIMEOUT_MS = 30_000
 
+/**
+ * Doppler env vars we refuse to inherit into the download child. SPIKE-0 Q5: an inherited
+ * `DOPPLER_TOKEN` OVERRIDES everything else the CLI would use — and `env-load` itself exports a whole
+ * Doppler project into the shell, so a project that happens to hold a secret named `DOPPLER_TOKEN`
+ * would silently hijack the NEXT download. `DOPPLER_PROJECT` / `DOPPLER_CONFIG` are scrubbed for the
+ * same reason: they are the payload's own scope evidence, and an inherited copy could shadow the
+ * `--project` / `--config` we pass in argv.
+ */
+const INHERITED_DOPPLER_VARS = ['DOPPLER_TOKEN', 'DOPPLER_PROJECT', 'DOPPLER_CONFIG'] as const
+
+/**
+ * The child environment for `doppler secrets download`: the caller's env with the inherited Doppler
+ * vars scrubbed and OUR resolved token set explicitly.
+ *
+ * The token travels by ENV, never by argv: `ps` shows argv to every user on the box, and
+ * `commandEcho` prints option values back to the terminal. Pure (takes the base env) so the scrub is
+ * unit-testable without touching `process.env`.
+ *
+ * @example
+ * buildDopplerChildEnv('dp.st.x', { PATH: '/bin', DOPPLER_CONFIG: 'prod' })
+ * // => { PATH: '/bin', DOPPLER_TOKEN: 'dp.st.x' }   (DOPPLER_CONFIG dropped)
+ */
+export const buildDopplerChildEnv = (token: string, baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => {
+  const childEnv: NodeJS.ProcessEnv = { ...baseEnv }
+
+  for (const name of INHERITED_DOPPLER_VARS) {
+    delete childEnv[name]
+  }
+
+  childEnv.DOPPLER_TOKEN = token
+
+  return childEnv
+}
+
 const downloadDopplerSecrets = async (project: string, config: string): Promise<Array<[string, string]>> => {
+  const { token } = await resolveEnvToken(config)
+
+  const childEnv = buildDopplerChildEnv(token)
+
   const prevQuiet = $.quiet
 
   $.quiet = true
@@ -277,40 +362,95 @@ const downloadDopplerSecrets = async (project: string, config: string): Promise<
     let result
 
     try {
-      result =
-        await $`doppler secrets download --no-file --format json --project ${project} --config ${config}`.timeout(
-          DOPPLER_DOWNLOAD_TIMEOUT_MS,
-        )
+      result = await $({
+        env: childEnv,
+      })`doppler secrets download --no-file --format json --project ${project} --config ${config}`.timeout(
+        DOPPLER_DOWNLOAD_TIMEOUT_MS,
+      )
     } catch (error: unknown) {
-      throw await translateDopplerDownloadError(error, project, config)
+      throw translateDopplerDownloadError(error, project, config)
     }
 
     assertDopplerOutputSize(result.stdout)
 
-    return parseDopplerSecretsJson(result.stdout)
+    const pairs = parseDopplerSecretsJson(result.stdout)
+
+    assertTokenScope(pairs, config)
+
+    return pairs
   } finally {
     $.quiet = prevQuiet
   }
 }
 
 /**
- * Turn a raw `doppler secrets download` failure into an actionable error. A
- * recognized project/config not-found is enriched (on this error path only) with
- * the list of available names and rethrown as a clean `Error` pointing at the
- * exact infra-kit.json field. Anything else — auth, network, timeout — is
- * rethrown untouched so it degrades to the existing behavior, never worse.
+ * Defense in depth against a MIS-SCOPED token: the payload always carries `DOPPLER_CONFIG` as an
+ * ordinary secret, and it echoes the `--config` we asked for (SPIKE-0 Q2 — it is the CONFIG, not
+ * `DOPPLER_ENVIRONMENT`, which can differ: config `dev_personal` lives in environment `dev`).
+ *
+ * ABSENT ⇒ PROCEED, deliberately. The Doppler CLI already refuses a real mismatch on the wire
+ * (SPIKE-0 Q1: exit 1, "does not have access to requested config"), so it — not this — is the
+ * load-bearing guard. An absent `DOPPLER_CONFIG` therefore means Doppler changed what it injects,
+ * and failing closed here would blank every developer's shell at once on the SILENT autoload path.
+ *
+ * @example
+ * assertTokenScope([['DOPPLER_CONFIG', 'dev']], 'dev')   // ok
+ * assertTokenScope([['FOO', 'bar']], 'dev')              // ok (absent ⇒ proceed)
+ * assertTokenScope([['DOPPLER_CONFIG', 'prod']], 'dev')  // throws: token is scoped to "prod"
  */
-const translateDopplerDownloadError = async (error: unknown, project: string, config: string): Promise<Error> => {
+export const assertTokenScope = (pairs: Array<[string, string]>, config: string): void => {
+  const actual = pairs.find(([key]) => {
+    return key === DOPPLER_CONFIG_KEY
+  })?.[1]
+
+  if (actual === undefined || actual === config) return
+
+  // A DopplerAuthError, not a plain Error: this IS an auth failure, and only the auth CLASS reaches the
+  // sticky marker that a shell-startup user ever sees. A plain Error here would be classified transient,
+  // expire in 30s, and leave them silently loading another environment's secrets — the exact failure this
+  // assert exists to catch. The message stays richer than the generic one: we know the token's real config.
+  throw new DopplerAuthError(
+    config,
+    null,
+    `Doppler returned secrets for config "${actual}" but "${config}" was requested — the service token for ` +
+      `env "${config}" is scoped to the wrong config. Refusing to load another environment's secrets.\n` +
+      `Fix: run \`infra-kit env-token-set ${config}\` with a token scoped to "${config}".`,
+  )
+}
+
+/**
+ * Turn a raw `doppler secrets download` failure into an actionable error. An AUTH-class failure (the
+ * token is invalid, revoked, or mis-scoped) becomes a {@link DopplerAuthError} carrying the
+ * env-token-set message; a recognized project/config not-found points at the exact infra-kit.json
+ * field. Anything else — network, timeout — is rethrown untouched so it degrades to the existing
+ * behavior, never worse.
+ *
+ * This is THE boundary where Doppler's raw stderr is read: the markers exist only here, and the
+ * classification leaves this function as a TYPE (`DopplerAuthError`), never as prose for a downstream
+ * module to re-parse. `lib/env-autoload` used to text-match the raw markers on the error this
+ * function had already rewritten — they were long gone, so the sticky auth marker was never written
+ * and a revoked token went silent. Exported so a seam test can drive the REAL error a caller sees.
+ *
+ * The not-found message no longer lists the AVAILABLE names: `listDopplerProjects` /
+ * `listDopplerConfigs` require an ACCOUNT login, which token-only auth deleted, so that probe could
+ * only ever return `null` now. `buildDopplerNotFoundMessage` already treats `null` as "couldn't
+ * tell" and omits the suggestion line rather than misreporting "none exist".
+ *
+ * @example
+ * translateDopplerDownloadError({ stderr: 'Doppler Error: Invalid Auth token' }, 'p', 'dev')
+ * // => DopplerAuthError { authKind: 'revoked', message: '… `infra-kit env-token-set <env>` …' }
+ * translateDopplerDownloadError(new Error('connect ETIMEDOUT'), 'p', 'dev')
+ * // => the same Error, untouched
+ */
+export const translateDopplerDownloadError = (error: unknown, project: string, config: string): Error => {
   const stderr = extractStderr(error) ?? (error instanceof Error ? error.message : String(error))
-  const kind = classifyDopplerDownloadError(stderr)
+  const kind = classifyDopplerFailure(stderr)
 
-  if (kind === 'unknown') {
-    return error instanceof Error ? error : new Error(String(error))
-  }
+  if (kind === 'auth') return new DopplerAuthError(config, classifyDopplerAuthFailure(stderr))
 
-  const available = kind === 'project' ? await listDopplerProjects() : await listDopplerConfigs(project)
+  if (kind === 'unknown') return error instanceof Error ? error : new Error(String(error))
 
-  return new Error(buildDopplerNotFoundMessage({ kind, project, config, available }))
+  return new Error(buildDopplerNotFoundMessage({ kind, project, config, available: null }))
 }
 
 export const assertDopplerOutputSize = (stdout: string): void => {

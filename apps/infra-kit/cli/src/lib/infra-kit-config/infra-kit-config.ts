@@ -178,9 +178,19 @@ const envAutoLoadSchema = z
 // (missing `s`) or `dev-proxy` would parse clean and turn the feature off with no message. The `dev` and
 // `devServersPresets` values stay open `z.record`s — app and preset NAMES are user-chosen — so strictness
 // applies to the key set, not the contents.
+// GONE: `environments`. It answered three questions at once and was therefore wrong for two of them.
+// Where can I deploy? → each workflow's own `workflow_dispatch` `environment.options`, which GitHub
+// validates server-side (`lib/workflow-envs`). What can I authenticate to? → the token store
+// (`lib/env-tokens`). Being a third, hand-maintained copy of both, it drifted from both: hulyo declared
+// 6 envs while every hulyo workflow declared 8, and the client-side check turned that drift into a
+// REFUSAL to deploy to `stage` and `prod`.
+//
+// Deleted outright rather than accepted-and-ignored: the key is removed from every repo in the same
+// change, so nothing that is checked out on a current branch still carries it. Because this schema is
+// `.strict()`, a config that DOES still carry it (an old release branch, an unmigrated worktree) is
+// refused with `Unrecognized key: "environments"` — delete the key there too.
 export const infraKitConfigObject = z
   .object({
-    environments: z.array(z.string().min(1)).min(1),
     envManagement: envManagementSchema,
     ide: idesSchema.optional(),
     taskManager: taskManagerSchema.optional(),
@@ -602,6 +612,15 @@ const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | 
     throw new Error(`Invalid JSON in ${layer.label} at ${layer.path}: ${(err as Error).message}`)
   }
 
+  // `envTokens` is ALREADY rejected below — the override schema keeps `.strict()`, so it lands as a
+  // generic `unrecognized_keys` issue. That generic message is wrong for this one key: the user has
+  // pasted a live Doppler service token into a file that may be committed, backed up by their editor,
+  // or opened by `config edit`. The first instruction has to be REVOKE, not "fix your config". Narrow
+  // by construction — every other unknown key keeps the generic error.
+  if (isRecord(parsedRaw) && 'envTokens' in parsedRaw) {
+    throw new Error(buildEnvTokensRejectionMessage(layer))
+  }
+
   const result = infraKitOverrideConfigSchema.safeParse(parsedRaw)
 
   if (!result.success) {
@@ -609,4 +628,37 @@ const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | 
   }
 
   return result.data as Record<string, unknown>
+}
+
+/**
+ * Narrow parsed JSON to a plain object so a key probe is safe (JSON's top level may be an array, a
+ * string, or `null`).
+ *
+ * @example
+ * isRecord({ envTokens: {} }) // => true
+ * isRecord(['envTokens'])     // => false
+ * isRecord(null)              // => false
+ */
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * The REVOKE-first refusal for a service token found in an `infra-kit.json`. Ordered by urgency: the
+ * credential is already exposed, so revoking it beats editing the file. Tokens live in a SIBLING
+ * `tokens.json` (0600) that this loader never reads — see `lib/env-tokens`.
+ *
+ * @example
+ * buildEnvTokensRejectionMessage({ label: 'infra-kit.json', path: '/r/infra-kit.json', required: true })
+ * // => 'Refusing to load infra-kit.json — `envTokens` is not a config key. …'
+ */
+const buildEnvTokensRejectionMessage = (layer: ConfigLayer): string => {
+  return [
+    `Refusing to load ${layer.label} — \`envTokens\` is not a config key.`,
+    'A service token in a config file can be committed, backed up by your editor, or shared.',
+    '  1. REVOKE the token in Doppler now — treat it as compromised.',
+    `  2. Remove the \`envTokens\` key from ${layer.path}.`,
+    '  3. Re-add it privately: `infra-kit env-token-set <env>`',
+    '     (it is written to ~/.infra-kit/projects/<repo>/tokens.json, mode 0600, never to the repo).',
+  ].join('\n')
 }

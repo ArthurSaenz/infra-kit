@@ -25,8 +25,6 @@ interface WorktreeSyncArgs extends RequiredConfirmedOptionArg {}
 export const worktreesSync = async (options: WorktreeSyncArgs) => {
   const { confirmedCommand } = options
 
-  commandEcho.start('worktrees-sync')
-
   await assertManagementContext({ operation: 'sync worktrees', requiredBranch: 'dev' })
 
   try {

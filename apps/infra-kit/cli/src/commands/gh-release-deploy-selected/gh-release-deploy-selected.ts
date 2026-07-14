@@ -1,6 +1,5 @@
 import checkbox from '@inquirer/checkbox'
 import confirm from '@inquirer/confirm'
-import select from '@inquirer/select'
 import fs from 'node:fs/promises'
 import { resolve } from 'node:path'
 import yaml from 'yaml'
@@ -11,8 +10,8 @@ import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { getProjectRoot } from 'src/lib/git-utils'
-import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
+import { pickEnv } from 'src/lib/prompts/env-picker'
 import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import {
   detectReleaseType,
@@ -22,7 +21,15 @@ import {
   resolveReleaseBranch,
 } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
+import { readWorkflowEnvOptions } from 'src/lib/workflow-envs'
+import { assertDeployable, deployableEnvs } from 'src/lib/workflow-envs/protected-envs'
 import { defineMcpTool, textContent } from 'src/types'
+
+/** The workflow this command dispatches. Its own inputs are both the env list and the service list. */
+const DEPLOY_SELECTED_WORKFLOW = 'deploy-selected-services.yml'
+
+/** A `workflow_dispatch` boolean that is a flag, not a service — the one exclusion from the service list. */
+const SKIP_TERRAFORM_INPUT = 'skip_terraform_deploy'
 
 interface GhReleaseDeploySelectedArgs {
   version: string
@@ -64,8 +71,6 @@ const confirmDeploy = async (args: ConfirmDeployArgs): Promise<boolean> => {
 export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs) => {
   const { version, env, services, skipTerraform, confirmedCommand } = args
 
-  commandEcho.start('release-deploy-selected')
-
   let selectedReleaseBranch = ''
 
   if (version) {
@@ -97,7 +102,11 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
 
   commandEcho.addOption('--version', selectedVersion)
 
-  const { environments } = await getInfraKitConfig()
+  // This workflow's own `environment` choices, minus the delivery-only ones. Read PER WORKFLOW, not once
+  // per repo: travelist's `deploy-all.yml` and `deploy-selected-services.yml` genuinely declare different
+  // environments, so a single repo-level list could only ever be wrong for one of them — as the old
+  // `environments` array was.
+  const envOptions = deployableEnvs(await readWorkflowEnvOptions(DEPLOY_SELECTED_WORKFLOW))
 
   let selectedEnv = ''
 
@@ -106,35 +115,29 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
   } else {
     commandEcho.setInteractive()
 
-    selectedEnv = await select({
-      message: '🧪 Select environment',
-      choices: environments.map((env) => {
-        return {
-          name: env,
-          value: env,
-        }
-      }),
-    })
+    selectedEnv = await pickEnv(envOptions, 'launch deploy-selected workflow')
   }
 
   commandEcho.addOption('--env', selectedEnv)
 
-  if (!environments.includes(selectedEnv)) {
-    throw new OperationError(undefined, {
-      operation: 'launch deploy-selected workflow',
-      remediation: `pass one of: ${environments.join(', ')}`,
-      stderrExcerpt: `invalid environment: ${selectedEnv}`,
-    })
-  }
+  // `prod` is delivered, never deployed ad-hoc — see gh-release-deliver. The one rule GitHub cannot
+  // enforce for us.
+  assertDeployable(selectedEnv, 'launch deploy-selected workflow')
 
-  // Parse available services from workflow file
+  // Available services, from the same workflow's boolean inputs. Unlike the env list this one is still
+  // enforced below — a `choice` value is validated by GitHub, but an undeclared `-f <service>=true` is
+  // NOT known to be rejected, and a typo that GitHub shrugs at would dispatch a run that deploys
+  // nothing and reports success. Until that is proven otherwise, the local check stays.
   const availableServices = await parseServicesFromWorkflow()
 
+  // Genuinely fatal for THIS command — there is nothing to pick from. (The failure it replaces was an
+  // uncaught ENOENT from `fs.readFile`, which is how a repo with no such workflow, like bridge, used to
+  // die here with a raw stack trace instead of a sentence.)
   if (availableServices.length === 0) {
     throw new OperationError(undefined, {
       operation: 'launch deploy-selected workflow',
-      remediation: 'check .github/workflows/deploy-selected-services.yml for boolean service inputs',
-      stderrExcerpt: 'no services found in workflow file',
+      remediation: `declare boolean service inputs in .github/workflows/${DEPLOY_SELECTED_WORKFLOW}`,
+      stderrExcerpt: `no services found in .github/workflows/${DEPLOY_SELECTED_WORKFLOW}`,
     })
   }
 
@@ -237,28 +240,43 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
 }
 
 /**
- * Parse available services from the workflow file
- * Services are defined as boolean inputs (excluding skip_terraform_deploy)
+ * The services this workflow can deploy: its `workflow_dispatch` boolean inputs, minus the flags that
+ * are not services.
+ *
+ * Returns `[]` rather than throwing when the workflow is missing or unreadable — the caller turns that
+ * into a sentence. Previously an absent file (bridge has no `deploy-selected-services.yml`) escaped as
+ * a raw `ENOENT` from `fs.readFile`, and a workflow with no `workflow_dispatch` as a `TypeError` on
+ * `parsed.on.workflow_dispatch`.
+ *
+ * @example
+ * await parseServicesFromWorkflow() // => ['client-be', 'client-fe']
+ * // no such workflow => []
  */
 const parseServicesFromWorkflow = async (): Promise<string[]> => {
   const projectRoot = await getProjectRoot()
 
-  const workflowPath = resolve(projectRoot, '.github/workflows/deploy-selected-services.yml')
+  const workflowPath = resolve(projectRoot, '.github/workflows', DEPLOY_SELECTED_WORKFLOW)
 
-  const content = await fs.readFile(workflowPath, 'utf-8')
-  const parsed = yaml.parse(content)
+  let parsed: unknown
 
-  const inputs = parsed.on.workflow_dispatch.inputs
-  const services: string[] = []
-
-  for (const [key, value] of Object.entries(inputs)) {
-    // Filter for boolean type inputs, excluding non-service flags
-    if ((value as { type: string }).type === 'boolean' && key !== 'skip_terraform_deploy') {
-      services.push(key)
-    }
+  try {
+    parsed = yaml.parse(await fs.readFile(workflowPath, 'utf-8'))
+  } catch {
+    return []
   }
 
-  return services
+  const on = (parsed as { on?: unknown } | null)?.on
+  const inputs = (on as { workflow_dispatch?: { inputs?: unknown } } | undefined)?.workflow_dispatch?.inputs
+
+  if (typeof inputs !== 'object' || inputs === null) return []
+
+  return Object.entries(inputs)
+    .filter(([key, value]) => {
+      return (value as { type?: string } | null)?.type === 'boolean' && key !== SKIP_TERRAFORM_INPUT
+    })
+    .map(([key]) => {
+      return key
+    })
 }
 
 // MCP Tool Registration

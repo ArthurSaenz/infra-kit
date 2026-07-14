@@ -19,14 +19,12 @@ export const CONFIG_STUB = '{}\n'
 
 // The documented key set, shared verbatim by the layer-2 (user-global) and layer-3
 // (user-project) examples so the two can never disagree about what the schema is.
-// Covers ALL nine top-level keys of `infraKitConfigObject` — `config-templates.test.ts`
-// fails the build if a tenth is added to the schema and not documented here.
+// Covers ALL eight top-level keys of `infraKitConfigObject` — `config-templates.test.ts`
+// fails the build if a ninth is added to the schema and not documented here.
 //
 // Every line is a `//` comment: the surrounding braces are the only live JSON, so the
 // file always parses to `{}` once the comments are stripped.
-const CONFIG_KEY_DOCS = `  // "environments": ["dev", "staging", "prod"],   // string[] (>=1) — required in layer 1
-  //
-  // "envManagement": {                            // required in layer 1; provider-tagged
+const CONFIG_KEY_DOCS = `  // "envManagement": {                            // required in layer 1; provider-tagged
   //   "provider": "doppler",
   //   "config": { "name": "my-doppler-project" }
   // },
@@ -59,9 +57,9 @@ const CONFIG_KEY_DOCS = `  // "environments": ["dev", "staging", "prod"],   // s
   // // Auto-load Doppler env when working inside this project/worktree. Omit to
   // // disable. "trigger" (pick one): "shell-startup" (new shells) | "cli-invocation"
   // // (before each infra-kit command, primes subsequent commands). "config" is the
-  // // environment to load (must be one of "environments"). Requires the committed
-  // // infra-kit.json at the git repo root, and the zsh shell integration
-  // // (infra-kit init + a new shell). zsh only.
+  // // environment to load — must have a service token (infra-kit env-token-set) or
+  // // auto-load quietly disables. Requires the committed infra-kit.json at the git
+  // // repo root, and the zsh shell integration (infra-kit init + a new shell). zsh only.
   // "envAutoLoad": { "trigger": "shell-startup", "config": "dev" },
   //
   // // Per-app local-dev overrides, keyed by APP FOLDER name (the directory under
@@ -100,7 +98,15 @@ const CONFIG_KEY_DOCS = `  // "environments": ["dev", "staging", "prod"],   // s
   // // prints each fix as a command you can paste, with the paths filled in for your
   // // machine. Do not type a bare \`portless\` — it lives in node_modules, not on PATH.
   // // infra-kit itself never elevates.
-  // "devProxy": { "port": 443 }`
+  // "devProxy": { "port": 443 }
+  //
+  // // Doppler SERVICE TOKENS are not a config key and never belong in this file. They live in
+  // // tokens.json — a SIBLING of this file, at ~/.infra-kit/projects/<repo>/tokens.json (mode 0600) —
+  // // shaped { "envs": { "<env>": "dp.st…" } }. Write it with \`infra-kit env-token-set <env>\` (which
+  // // also fixes its modes), or by hand: both are supported, which is why the store carries no
+  // // repo-identity field and no mandatory version. Pasting a token into an
+  // // infra-kit.json (any layer) is REJECTED: the loader refuses to parse it and tells you to revoke
+  // // the token first, because a config file can be committed, backed up by your editor, or shared.`
 
 /**
  * Annotated JSONC reference for the user-global (layer 2) config, written next to the
@@ -109,7 +115,7 @@ const CONFIG_KEY_DOCS = `  // "environments": ["dev", "staging", "prod"],   // s
  *
  * @example
  * buildUserGlobalExample()
- * // => '// infra-kit user-global config — ~/.infra-kit/infra-kit.json\n…\n{\n  // "environments": …\n}\n'
+ * // => '// infra-kit user-global config — ~/.infra-kit/infra-kit.json\n…\n{\n  // "envManagement": …\n}\n'
  */
 export const buildUserGlobalExample = (): string => {
   return `// infra-kit user-global config — ~/.infra-kit/infra-kit.json
@@ -121,7 +127,7 @@ export const buildUserGlobalExample = (): string => {
 //
 // Merge is shallow: setting a top-level key replaces that whole section from
 // layer 1. Arrays do not concatenate. Top-level keys recognized:
-// environments, envManagement, ide, taskManager, worktrees, envAutoLoad, dev,
+// envManagement, ide, taskManager, worktrees, envAutoLoad, dev,
 // devServersPresets, devProxy. The schema is strict — an unrecognized top-level
 // key is a parse error, not a silently ignored one.
 //
@@ -129,10 +135,9 @@ export const buildUserGlobalExample = (): string => {
 // overrides in the sibling infra-kit.json (strict JSON: no comments, double-quoted
 // keys). Per-project tweaks belong in layer 3 — run \`infra-kit config edit\`.
 //
-// Every recognized key is documented below. NOTE: \`environments\` and
-// \`envManagement\` are REQUIRED in the committed project infra-kit.json (layer 1)
-// and are usually NOT set in this user-global layer — they are shown here only to
-// document the full, valid config shape.
+// Every recognized key is documented below. NOTE: \`envManagement\` is REQUIRED in
+// the committed project infra-kit.json (layer 1) and is usually NOT set in this
+// user-global layer — it is shown here only to document the full, valid config shape.
 {
 ${CONFIG_KEY_DOCS}
 }
@@ -155,7 +160,7 @@ export const buildUserProjectExample = (projectName: string): string => {
 // Layer 3 (highest precedence) of the config merge chain. Shallow-merged on top of
 // <repo>/infra-kit.json (layer 1) and ~/.infra-kit/infra-kit.json (layer 2) — a
 // top-level key set here replaces that whole section wholesale; arrays do not
-// concatenate. Top-level keys recognized: environments, envManagement, ide,
+// concatenate. Top-level keys recognized: envManagement, ide,
 // taskManager, worktrees, envAutoLoad, dev, devServersPresets, devProxy. The schema
 // is strict — an unrecognized top-level key is a parse error, not a silently ignored
 // one.
@@ -163,10 +168,9 @@ export const buildUserProjectExample = (projectName: string): string => {
 // This .example.jsonc is reference only — it is NOT loaded. Put real overrides
 // in the sibling infra-kit.json (strict JSON: no comments, double-quoted keys).
 //
-// Every recognized key is documented below. NOTE: \`environments\` and
-// \`envManagement\` are REQUIRED in the committed project infra-kit.json (layer 1)
-// and are usually NOT set in this override layer — they are shown here only to
-// document the full, valid config shape.
+// Every recognized key is documented below. NOTE: \`envManagement\` is REQUIRED in
+// the committed project infra-kit.json (layer 1) and is usually NOT set in this
+// override layer — it is shown here only to document the full, valid config shape.
 {
 ${CONFIG_KEY_DOCS}
 }

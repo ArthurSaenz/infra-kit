@@ -103,10 +103,100 @@ export interface AppSpec {
   /**
    * Also scaffold `apps/<name>/ui/package.json`. `dev` (default true) controls whether it declares a
    * `scripts.dev` — a UI without one must be ignored by {@link discoverUiApps}. `viteConfig` (default
-   * true) writes a `vite.config.ts` wiring `infra-kit/vite`, which is what marks the UI's port as
-   * runner-managed; set it false to model a framework that picks its own port.
+   * true) writes a `vite.config.ts` wiring the `infraKitDev` helper, which is what marks the UI's port
+   * as runner-managed; set it false to model a framework that picks its own port.
+   *
+   * `viteSpecifier` picks WHICH module specifier that config imports the helper from, and defaults to
+   * the current one. It is a parameter rather than a hard-coded literal on purpose: discovery decides
+   * "is this UI managed?" by text-matching the specifier, so a fixture pinned to one literal would keep
+   * every `managedPort` test green while the other specifier silently stopped being recognised in the
+   * real world. Tests must exercise both.
    */
-  ui?: { packageName?: string; dev?: boolean; viteConfig?: boolean }
+  ui?: {
+    packageName?: string
+    dev?: boolean
+    viteConfig?: boolean
+    viteSpecifier?: string
+    /**
+     * Also write the UI's `infra-kit.config.ts` with a `dev.proxy` block declaring these routes. This is
+     * the file the vite helper resolves the real proxy from, and the same file the broken-local-pairing
+     * check reads — so a fixture without it declares no routes and can never degrade.
+     */
+    proxy?: {
+      routes: Record<string, { packageName: string; from: ('local' | 'cloud')[]; default?: 'local' | 'cloud' }>
+      cloud?: string
+    }
+  }
+}
+
+/** Scaffold `apps/<app>/api`: serverless.yml, package.json, and (optionally) a compiled dist handler. */
+function writeApi(root: string, app: AppSpec): void {
+  const apiDir = path.join(root, 'apps', app.name, 'api')
+
+  fs.mkdirSync(apiDir, { recursive: true })
+  if (app.api !== false) {
+    fs.writeFileSync(path.join(apiDir, 'serverless.yml'), MONOREPO_SERVERLESS_YML)
+  }
+  if (app.packageName != null || app.withHandler) {
+    fs.writeFileSync(
+      path.join(apiDir, 'package.json'),
+      JSON.stringify({ name: app.packageName ?? `${app.name}-api`, type: 'module' }),
+    )
+  }
+  if (app.withHandler) {
+    fs.mkdirSync(path.join(apiDir, 'dist'), { recursive: true })
+    fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
+  }
+}
+
+/** Scaffold `apps/<app>/ui`: package.json, an optional vite config, and an optional `dev.proxy`. */
+function writeUi(root: string, app: AppSpec & { ui: NonNullable<AppSpec['ui']> }): void {
+  const { ui } = app
+  const uiDir = path.join(root, 'apps', app.name, 'ui')
+
+  fs.mkdirSync(uiDir, { recursive: true })
+
+  const pkg: { name: string; type: string; scripts?: Record<string, string> } = {
+    name: ui.packageName ?? `${app.name}-ui`,
+    // `type: module` keeps Node from re-parsing the `.ts` config and printing MODULE_TYPELESS_PACKAGE_JSON
+    // all over the test output — consumer UI packages declare it too, so this matches them.
+    type: 'module',
+  }
+
+  if (ui.dev !== false) pkg.scripts = { dev: 'vite' }
+  fs.writeFileSync(path.join(uiDir, 'package.json'), JSON.stringify(pkg))
+
+  if (ui.viteConfig !== false) {
+    const specifier = ui.viteSpecifier ?? '@slip-stream-kit/config/vite'
+
+    fs.writeFileSync(
+      path.join(uiDir, 'vite.config.ts'),
+      [
+        `import { infraKitDev } from '${specifier}'`,
+        "import { defineConfig } from 'vite'",
+        '',
+        'export default defineConfig(async ({ command }) => ({ server: await infraKitDev({ command }) }))',
+        '',
+      ].join('\n'),
+    )
+  }
+
+  if (!ui.proxy) return
+
+  const proxy = {
+    templates: {
+      local: 'https://<release>.<packageName>.localhost',
+      cloud: ui.proxy.cloud ?? 'https://<env>.example.com',
+    },
+    routes: ui.proxy.routes,
+  }
+
+  // A plain object export (not a function): `loadDev` accepts either, and this keeps the fixture free of
+  // an import of `@slip-stream-kit/config`, which the temp dir cannot resolve.
+  fs.writeFileSync(
+    path.join(uiDir, 'infra-kit.config.ts'),
+    `export default ${JSON.stringify({ requiredScripts: [], requiredFiles: [], dev: { proxy } }, null, 2)}\n`,
+  )
 }
 
 /** Build a hermetic monorepo: pnpm-workspace.yaml + `apps/<app>/api/serverless.yml` per spec. */
@@ -117,45 +207,8 @@ export function makeMonorepo(apps: AppSpec[]): string {
   fs.mkdirSync(path.join(root, 'apps'), { recursive: true })
 
   for (const app of apps) {
-    const apiDir = path.join(root, 'apps', app.name, 'api')
-
-    fs.mkdirSync(apiDir, { recursive: true })
-    if (app.api !== false) {
-      fs.writeFileSync(path.join(apiDir, 'serverless.yml'), MONOREPO_SERVERLESS_YML)
-    }
-    if (app.packageName != null || app.withHandler) {
-      fs.writeFileSync(
-        path.join(apiDir, 'package.json'),
-        JSON.stringify({ name: app.packageName ?? `${app.name}-api`, type: 'module' }),
-      )
-    }
-    if (app.withHandler) {
-      fs.mkdirSync(path.join(apiDir, 'dist'), { recursive: true })
-      fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
-    }
-    if (app.ui) {
-      const uiDir = path.join(root, 'apps', app.name, 'ui')
-
-      fs.mkdirSync(uiDir, { recursive: true })
-      const pkg: { name: string; scripts?: Record<string, string> } = {
-        name: app.ui.packageName ?? `${app.name}-ui`,
-      }
-
-      if (app.ui.dev !== false) pkg.scripts = { dev: 'vite' }
-      fs.writeFileSync(path.join(uiDir, 'package.json'), JSON.stringify(pkg))
-      if (app.ui.viteConfig !== false) {
-        fs.writeFileSync(
-          path.join(uiDir, 'vite.config.ts'),
-          [
-            "import { infraKitDev } from 'infra-kit/vite'",
-            "import { defineConfig } from 'vite'",
-            '',
-            'export default defineConfig(async ({ command }) => ({ server: await infraKitDev({ command }) }))',
-            '',
-          ].join('\n'),
-        )
-      }
-    }
+    writeApi(root, app)
+    if (app.ui) writeUi(root, { ...app, ui: app.ui })
   }
 
   return root

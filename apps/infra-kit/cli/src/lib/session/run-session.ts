@@ -1,3 +1,4 @@
+import { chalkStderr } from 'chalk'
 import { spawn as nodeSpawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import process from 'node:process'
@@ -67,6 +68,18 @@ export interface RunSessionDeps {
   env?: NodeJS.ProcessEnv
   /** ASCII glyphs for the transcript (default: derived from stdout TTY / TERM). */
   ascii?: boolean
+  /** Colour the header and footer (default: chalk's own TTY / `NO_COLOR` / `FORCE_COLOR` verdict). */
+  color?: boolean
+  /**
+   * Terminal width for the footer's closing rule, or `undefined` for none (default: stderr's columns —
+   * the stream the transcript is written to).
+   *
+   * A FUNCTION, not a number, because the session shell is long-lived: it loops until the user quits, so
+   * a width snapshotted at boot goes stale the moment they resize the window. Re-read per run, a shrink
+   * just makes the next rule shorter; snapshotted, it would overrun the new margin and wrap across
+   * rows — the exact wall-of-text this framing exists to prevent.
+   */
+  columns?: () => number | undefined
   /** Terminal hygiene after each child (default: the real escapes; tests inject a spy). */
   resetTerminal?: (opts: { entersAltScreen?: boolean }) => void
   /** Install the real signal handlers (default true; tests pass false to stay signal-free). */
@@ -78,6 +91,19 @@ export interface RunSessionDeps {
 /** The replayable command line for a pick — echoed as the header, and the default equivalent line. */
 const commandLine = (command: SessionCommand): string => {
   return `infra-kit ${command.groupPath.join(' ')}`
+}
+
+/**
+ * The width of the stream the transcript is written to, or `undefined` when it has none.
+ *
+ * Node types `columns` as a `number`, but a non-TTY stderr has no such property at all. Passing the
+ * resulting `undefined` (or a `0`) through as a width would read to the formatter as a *very narrow*
+ * terminal; `undefined` is the value that means "draw no rule", so normalise to it explicitly.
+ */
+const stderrColumns = (): number | undefined => {
+  const columns: number | undefined = process.stderr.columns
+
+  return columns != null && columns > 0 ? columns : undefined
 }
 
 const waitForExit = (child: ChildProcess): Promise<{ code: number | null; signal: NodeJS.Signals | null }> => {
@@ -92,13 +118,18 @@ const waitForExit = (child: ChildProcess): Promise<{ code: number | null; signal
   })
 }
 
+/** Every dep `runOne` needs, with the defaults already applied. */
+type ResolvedDeps = Required<
+  Pick<RunSessionDeps, 'spawn' | 'now' | 'env' | 'cliPath' | 'ascii' | 'color' | 'columns' | 'resetTerminal'>
+>
+
 /**
  * Run one picked command as a child on THIS terminal and format the footer that closes it out. The
  * header is echoed by the caller before we spawn, so the child's output arrives under a heading.
  */
 const runOne = async (
   command: SessionCommand,
-  deps: Required<Pick<RunSessionDeps, 'spawn' | 'now' | 'env' | 'cliPath' | 'ascii' | 'resetTerminal'>>,
+  deps: ResolvedDeps,
   markChildOwnsSigint: () => void,
 ): Promise<string> => {
   const reportPath = newReportPath()
@@ -149,6 +180,9 @@ const runOne = async (
     summary: record?.summary,
     envNotice: command.sessionEnvNotice,
     ascii: deps.ascii,
+    color: deps.color,
+    // Read HERE, not at session boot: the user may have resized the window since the last run.
+    width: deps.columns(),
     // We already echoed this line before the spawn. Repeat it only when the child reported back a
     // DIFFERENT one — an interactive command folding its resolved flags into a replayable `≈` line.
     showEquivalent: !(equivalent.reproducible && equivalent.line === headerLine),
@@ -319,6 +353,12 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
     env: deps.env ?? process.env,
     cliPath: deps.cliPath,
     ascii: deps.ascii ?? !(process.stdout.isTTY && process.env.TERM !== 'dumb'),
+    // `chalkStderr`, not `chalk`: the default instance sniffs STDOUT, and every byte of the transcript
+    // goes to stderr (see `write` below). It already folds in TTY detection, `NO_COLOR` and
+    // `FORCE_COLOR`. The formatter itself is colour-pure, so this is the only place the call is made —
+    // and it is made against the same stream `columns` is read from.
+    color: deps.color ?? chalkStderr.level > 0,
+    columns: deps.columns ?? stderrColumns,
     resetTerminal:
       deps.resetTerminal ??
       ((opts: { entersAltScreen?: boolean }) => {
@@ -404,7 +444,7 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
 
       // Echo first, exactly like a shell: the header must be on screen BEFORE the child starts
       // drawing, or a slow command (a 30s `audit --all`) prints its output under no heading at all.
-      const header = formatRunHeader(commandLine(command))
+      const header = formatRunHeader(commandLine(command), { color: resolved.color })
 
       write(`\n${header}\n`)
       sessionSignals.childStarted()

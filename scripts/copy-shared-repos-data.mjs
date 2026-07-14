@@ -141,12 +141,6 @@ const COPY_CONFIG = [
     type: 'directory',
   },
   {
-    name: 'Lib BE Dev',
-    source: 'packages/lib-be-dev',
-    target: 'packages/lib-be-dev',
-    type: 'directory',
-  },
-  {
     name: 'GH Workflow: Cache Node Modules',
     source: '.github/workflows/_cache-nodemodules-jobs.yml',
     target: '.github/workflows/_cache-nodemodules-jobs.yml',

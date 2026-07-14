@@ -26,8 +26,6 @@ interface GhMergeDevArgs extends RequiredConfirmedOptionArg {
 export const ghMergeDev = async (args: GhMergeDevArgs) => {
   const { all, confirmedCommand } = args
 
-  commandEcho.start('merge-dev')
-
   await assertManagementContext({ operation: 'merge dev into release branches', requiredBranch: 'dev' })
 
   // Only merge dev into regular releases (not hotfixes, which target main)

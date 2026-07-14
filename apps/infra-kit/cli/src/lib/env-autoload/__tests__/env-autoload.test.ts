@@ -5,16 +5,20 @@ import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { writeEnvLoadFile } from 'src/commands/env-load'
+import { DopplerAuthError, isDopplerAuthError } from 'src/integrations/doppler'
+import { envTokenExists } from 'src/integrations/doppler/token-resolver'
 import {
   INFRA_KIT_ENV_AUTOLOADED_VAR,
   INFRA_KIT_ENV_CLEARED_VAR,
   INFRA_KIT_ENV_CONFIG_VAR,
   INFRA_KIT_ENV_PROJECT_VAR,
   INFRA_KIT_SESSION_VAR,
+  getSessionCacheDir,
 } from 'src/lib/constants'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 
+import { buildAuthFailureWarning, parseAuthFailureMarker } from '../auth-failure'
 import { decideAutoLoad, resolveEnvAutoLoad, runEnvAutoLoad } from '../env-autoload'
 import type { AutoLoadDecisionInput, AutoLoadEnvSnapshot } from '../env-autoload'
 
@@ -30,8 +34,22 @@ vi.mock('src/lib/logger', () => {
   return { logger: { warn: vi.fn(), debug: vi.fn() } }
 })
 
+// The "is this env usable?" gate `resolveEnvAutoLoad` reads — a local token-store check, never
+// Doppler. Preserve every other export of the module (resolveEnvToken, INFRA_KIT_ENV_TOKEN_VAR) so
+// only this one seam is faked.
+vi.mock('src/integrations/doppler/token-resolver', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('src/integrations/doppler/token-resolver')>()
+
+  return { ...actual, envTokenExists: vi.fn() }
+})
+
+// Default: a token exists for whatever env is configured, so every test that does not care about
+// this gate keeps behaving as if auto-load's token check passed. Tests of the gate itself override it.
+beforeEach(() => {
+  vi.mocked(envTokenExists).mockReset().mockResolvedValue(true)
+})
+
 const baseConfig = {
-  environments: ['dev', 'prod'],
   envManagement: { provider: 'doppler', config: { name: 'my-project' } },
 }
 
@@ -180,15 +198,23 @@ describe('resolveEnvAutoLoad', () => {
     expect(await resolveEnvAutoLoad()).toEqual({ trigger: 'cli-invocation', config: 'dev', project: 'my-project' })
   })
 
-  it('warns and disables when config is not one of environments', async () => {
+  // The authority for "is this env usable?" is the token store (`envTokenExists`), not a
+  // hand-maintained `environments` list — that key is gone from the schema entirely.
+  it('warns and disables when no token exists for envAutoLoad.config', async () => {
     vi.mocked(getInfraKitConfig).mockResolvedValue({
       ...baseConfig,
       envAutoLoad: { trigger: 'shell-startup', config: 'nope' },
     } as never)
+    vi.mocked(envTokenExists).mockResolvedValue(false)
 
     expect(await resolveEnvAutoLoad()).toBeNull()
+    expect(envTokenExists).toHaveBeenCalledWith('nope')
     expect(logger.warn).toHaveBeenCalledOnce()
     expect(vi.mocked(logger.warn).mock.calls[0]![0]).toContain('nope')
+    expect(vi.mocked(logger.warn).mock.calls[0]![0]).toContain('infra-kit env-token-set nope')
+    // The gate is a local file read (the token store), never a Doppler network call — nothing here
+    // reaches the download path.
+    expect(writeEnvLoadFile).not.toHaveBeenCalled()
   })
 
   // Gap 1 regression: the shell-startup callsite discards stderr, so it must NOT
@@ -198,8 +224,24 @@ describe('resolveEnvAutoLoad', () => {
       ...baseConfig,
       envAutoLoad: { trigger: 'shell-startup', config: 'nope' },
     } as never)
+    vi.mocked(envTokenExists).mockResolvedValue(false)
 
     expect(await resolveEnvAutoLoad(false)).toBeNull()
+    expect(logger.warn).not.toHaveBeenCalled()
+  })
+
+  // The store itself is broken — a durable failure a 30s retry cannot heal, and a completely
+  // different case from "no token yet". Disabling quietly here would hide it forever on the
+  // backgrounded shell-startup channel; proceeding lets the downstream EnvAuthError's sticky
+  // marker surface it instead.
+  it('returns the resolved config (does NOT silently disable) when the token store is corrupt', async () => {
+    vi.mocked(getInfraKitConfig).mockResolvedValue({
+      ...baseConfig,
+      envAutoLoad: { trigger: 'cli-invocation', config: 'dev' },
+    } as never)
+    vi.mocked(envTokenExists).mockRejectedValue(new Error('Invalid JSON in the token store'))
+
+    expect(await resolveEnvAutoLoad()).toEqual({ trigger: 'cli-invocation', config: 'dev', project: 'my-project' })
     expect(logger.warn).not.toHaveBeenCalled()
   })
 })
@@ -323,5 +365,222 @@ describe('runEnvAutoLoad', () => {
     expect(await runEnvAutoLoad({ expectedTrigger: 'cli-invocation' })).toBeNull()
 
     expect(writeEnvLoadFile).toHaveBeenCalledOnce()
+  })
+})
+
+describe('auth-class classification (pure)', () => {
+  // The default classifier is now a TYPE GUARD over the error env-load actually throws.
+  // It used to text-match Doppler's RAW stderr markers — which env-load had already
+  // replaced with its friendly message by the time this code saw the error, so the
+  // auth branch never fired. See `env-autoload-doppler-seam.test.ts`.
+  it('classifies the typed auth error env-load throws', () => {
+    expect(isDopplerAuthError(new DopplerAuthError('dev', 'revoked'))).toBe(true)
+    expect(isDopplerAuthError(new DopplerAuthError('dev', 'mis-scoped'))).toBe(true)
+  })
+
+  it('does NOT classify a transient failure as auth-class', () => {
+    expect(isDopplerAuthError(new Error('network unreachable'))).toBe(false)
+    expect(isDopplerAuthError(new Error("Doppler Error: Could not find requested config 'dev'"))).toBe(false)
+  })
+
+  it('rejects a corrupt marker payload instead of throwing', () => {
+    expect(parseAuthFailureMarker({ config: 'dev', reason: 'Invalid Auth token', at: 1 })).toEqual({
+      config: 'dev',
+      reason: 'Invalid Auth token',
+      at: 1,
+    })
+    expect(parseAuthFailureMarker({ config: 'dev' })).toBeNull()
+    expect(parseAuthFailureMarker(null)).toBeNull()
+    expect(parseAuthFailureMarker('nonsense')).toBeNull()
+  })
+
+  it('builds a one-line actionable warning naming the env and the fix command', () => {
+    const message = buildAuthFailureWarning('dev')
+
+    expect(message).not.toContain('\n')
+    expect(message).toContain('"dev"')
+    expect(message).toContain('infra-kit env-token-set dev')
+  })
+})
+
+const AUTH_FAIL_MARKER_FILE = 'autoload-auth-fail.json'
+
+/**
+ * The error `env-load` ACTUALLY throws for a revoked/mis-scoped token: a typed
+ * `DopplerAuthError` whose message is the friendly, translated one — NOT Doppler's raw
+ * stderr. These tests used to hand-roll `new Error('Doppler Error: Invalid Auth token')`,
+ * a shape the production path never produces, and passed while the real path was silent.
+ * `env-autoload-doppler-seam.test.ts` builds this error via the real translator.
+ */
+const authError = (): DopplerAuthError => {
+  return new DopplerAuthError('dev', 'revoked')
+}
+
+describe('runEnvAutoLoad — sticky auth-failure marker (US-005)', () => {
+  const ORIGINAL_ENV = { ...process.env }
+  let cacheRoot: string
+
+  const markerPath = (): string => {
+    return path.join(getSessionCacheDir(), AUTH_FAIL_MARKER_FILE)
+  }
+
+  beforeEach(() => {
+    vi.mocked(getInfraKitConfig).mockReset()
+    vi.mocked(writeEnvLoadFile).mockReset()
+    vi.mocked(logger.warn).mockClear()
+    vi.mocked(logger.debug).mockClear()
+    cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ik-autoload-auth-'))
+
+    // Scrub EVERY INFRA_KIT_* var: a leaked INFRA_KIT_SESSION from the dev's real
+    // shell silently repoints the session cache dir and makes every assertion below
+    // vacuous (the marker would be written/read somewhere we never look).
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('INFRA_KIT_')) {
+        delete process.env[key]
+      }
+    }
+
+    process.env.XDG_CACHE_HOME = cacheRoot
+    process.env[INFRA_KIT_SESSION_VAR] = 'sess-auth'
+  })
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV }
+    fs.rmSync(cacheRoot, { recursive: true, force: true })
+  })
+
+  // THE load-bearing regression. The user's configured trigger is shell-startup (the
+  // default), so decideAutoLoad skips this cli-invocation callsite outright — and the
+  // shell-startup spawn that actually failed runs backgrounded with stderr discarded
+  // (canWarn === false there). Before US-005 this combination warned NOTHING, ever.
+  it('warns on trigger:shell-startup x expectedTrigger:cli-invocation — the combination that was silent', async () => {
+    vi.mocked(getInfraKitConfig).mockResolvedValue({
+      ...baseConfig,
+      envAutoLoad: { trigger: 'shell-startup', config: 'dev' },
+    } as never)
+
+    // The backgrounded shell-startup run hits an auth failure and stays silent.
+    vi.mocked(writeEnvLoadFile).mockRejectedValue(authError())
+
+    expect(await runEnvAutoLoad({ expectedTrigger: 'shell-startup' })).toBeNull()
+    expect(logger.warn).not.toHaveBeenCalled()
+    expect(fs.existsSync(markerPath())).toBe(true)
+
+    // The next interactive command replays it, even though decideAutoLoad would skip.
+    vi.mocked(writeEnvLoadFile).mockClear()
+
+    expect(await runEnvAutoLoad({ expectedTrigger: 'cli-invocation' })).toBeNull()
+
+    expect(writeEnvLoadFile).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledOnce()
+    expect(vi.mocked(logger.warn).mock.calls[0]![0]).toContain('infra-kit env-token-set dev')
+  })
+
+  // The end-to-end version of this — a token-bearing RAW stderr fed through the real
+  // translator — lives in `env-autoload-doppler-seam.test.ts`.
+  it('never prints a token value in the warning', async () => {
+    vi.mocked(getInfraKitConfig).mockResolvedValue({
+      ...baseConfig,
+      envAutoLoad: { trigger: 'shell-startup', config: 'dev' },
+    } as never)
+    vi.mocked(writeEnvLoadFile).mockRejectedValue(authError())
+
+    await runEnvAutoLoad({ expectedTrigger: 'shell-startup' })
+    await runEnvAutoLoad({ expectedTrigger: 'cli-invocation' })
+
+    expect(vi.mocked(logger.warn).mock.calls[0]![0]).not.toContain('dp.st.')
+  })
+
+  // Unlike the transient FAIL_BACKOFF_MS flag, the auth marker has no timer: a bad
+  // token does not heal in 30s, and the human who can fix it may not run an
+  // interactive command for hours.
+  it('is NOT expired by the 30s transient backoff window', async () => {
+    vi.mocked(getInfraKitConfig).mockResolvedValue({
+      ...baseConfig,
+      envAutoLoad: { trigger: 'shell-startup', config: 'dev' },
+    } as never)
+    vi.mocked(writeEnvLoadFile).mockRejectedValue(authError())
+
+    await runEnvAutoLoad({ expectedTrigger: 'shell-startup' })
+
+    // Age both markers well past FAIL_BACKOFF_MS (30s).
+    const longAgo = new Date(Date.now() - 10 * 60 * 1000)
+
+    fs.utimesSync(markerPath(), longAgo, longAgo)
+
+    expect(await runEnvAutoLoad({ expectedTrigger: 'cli-invocation' })).toBeNull()
+
+    expect(fs.existsSync(markerPath())).toBe(true)
+    expect(logger.warn).toHaveBeenCalledOnce()
+    expect(vi.mocked(logger.warn).mock.calls[0]![0]).toContain('infra-kit env-token-set dev')
+  })
+
+  it('a successful load clears the sticky marker', async () => {
+    vi.mocked(getInfraKitConfig).mockResolvedValue({
+      ...baseConfig,
+      envAutoLoad: { trigger: 'cli-invocation', config: 'dev' },
+    } as never)
+    vi.mocked(writeEnvLoadFile).mockRejectedValueOnce(authError()).mockResolvedValue({
+      filePath: '/cache/env-load.sh',
+      variableCount: 3,
+      project: 'my-project',
+      config: 'dev',
+    })
+
+    expect(await runEnvAutoLoad({ expectedTrigger: 'cli-invocation' })).toBeNull()
+    expect(fs.existsSync(markerPath())).toBe(true)
+
+    // The 30s transient backoff would suppress the retry — expire it, not the marker.
+    fs.rmSync(path.join(getSessionCacheDir(), 'autoload-fail.flag'), { force: true })
+
+    expect(await runEnvAutoLoad({ expectedTrigger: 'cli-invocation' })).toBe('/cache/env-load.sh')
+    expect(fs.existsSync(markerPath())).toBe(false)
+  })
+
+  it('never throws (and stays silent) when the marker file is corrupt', async () => {
+    vi.mocked(getInfraKitConfig).mockResolvedValue({
+      ...baseConfig,
+      envAutoLoad: { trigger: 'shell-startup', config: 'dev' },
+    } as never)
+
+    fs.mkdirSync(getSessionCacheDir(), { recursive: true, mode: 0o700 })
+    fs.writeFileSync(markerPath(), '{ not json at all')
+
+    await expect(runEnvAutoLoad({ expectedTrigger: 'cli-invocation' })).resolves.toBeNull()
+
+    expect(logger.warn).not.toHaveBeenCalled()
+  })
+
+  // The classifier is injected, so US-002 can hand env-autoload the doppler-errors
+  // implementation without env-autoload importing it.
+  it('accepts an injected auth classifier (the US-002 seam)', async () => {
+    vi.mocked(getInfraKitConfig).mockResolvedValue({
+      ...baseConfig,
+      envAutoLoad: { trigger: 'cli-invocation', config: 'dev' },
+    } as never)
+    vi.mocked(writeEnvLoadFile).mockRejectedValue(new Error('some future auth wording'))
+
+    await runEnvAutoLoad({
+      expectedTrigger: 'cli-invocation',
+      isAuthFailure: () => {
+        return true
+      },
+    })
+
+    expect(fs.existsSync(markerPath())).toBe(true)
+    expect(vi.mocked(logger.warn).mock.calls[0]![0]).toContain('infra-kit env-token-set dev')
+  })
+
+  it('a transient failure does NOT write the sticky marker', async () => {
+    vi.mocked(getInfraKitConfig).mockResolvedValue({
+      ...baseConfig,
+      envAutoLoad: { trigger: 'cli-invocation', config: 'dev' },
+    } as never)
+    vi.mocked(writeEnvLoadFile).mockRejectedValue(new Error('network unreachable'))
+
+    await runEnvAutoLoad({ expectedTrigger: 'cli-invocation' })
+
+    expect(fs.existsSync(markerPath())).toBe(false)
+    expect(vi.mocked(logger.warn).mock.calls[0]![0]).toContain('will retry later')
   })
 })

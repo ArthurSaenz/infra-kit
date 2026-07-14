@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
+import packageJson from '../../../package.json' with { type: 'json' }
 import { buildOptions } from '../../../scripts/build.js'
 
 /**
@@ -38,10 +39,10 @@ describe('dist hashbang', () => {
     ).toBe(SHEBANG)
   })
 
-  it.each(['index.js', 'vite.js'])('keeps the hashbang off the library entry %s', (fileName) => {
+  it.each(['dev-server.js', 'mcp.js'])('keeps the hashbang off the spawned entry %s', (fileName) => {
     expect(
       read(fileName).startsWith('#!'),
-      `a hashbang on dist/${fileName} would break consumers' \`import { defineConfig } from 'infra-kit'\``,
+      `dist/${fileName} is spawned as \`node dist/${fileName}\`, never exec’d; a hashbang would imply it is a bin`,
     ).toBe(false)
   })
 
@@ -50,6 +51,32 @@ describe('dist hashbang', () => {
       read('update-check.js').startsWith('#!'),
       'dist/update-check.js is spawned as `node dist/update-check.js`, never exec’d; a hashbang would be dead weight and imply it is a bin',
     ).toBe(false)
+  })
+})
+
+/**
+ * `infra-kit` is a CLI and NOTHING ELSE. This is the invariant the whole global-install story rests on:
+ * npm cannot install a package's `exports` without also installing its `bin`, and a local
+ * `node_modules/.bin/infra-kit` shadows the global one. So the moment this package re-grows an importable
+ * surface, some consumer's config imports it, that consumer must install it locally, and the global CLI
+ * silently goes back to being dead weight — with nothing failing to say so.
+ *
+ * The importable surface lives in `@slip-stream-kit/config`. Keep it there.
+ */
+describe('infra-kit is bin-only', () => {
+  it('publishes no importable entry point', () => {
+    const manifest = packageJson as Record<string, unknown>
+
+    for (const field of ['main', 'module', 'types', 'exports']) {
+      expect(
+        manifest[field],
+        `package.json "${field}" makes infra-kit importable again — which forces consumers back to a local devDependency, whose node_modules/.bin/infra-kit then shadows the global install. Put the export in @slip-stream-kit/config instead.`,
+      ).toBeUndefined()
+    }
+  })
+
+  it('still declares the bin', () => {
+    expect((packageJson as { bin?: Record<string, string> }).bin).toMatchObject({ 'infra-kit': 'dist/cli.js' })
   })
 })
 

@@ -48,7 +48,7 @@ export const expandTilde = (p: string): string => {
  * `import()`, `JSON.parse` always sees the current bytes), so an absent → present
  * transition works within one process: a `--init` scaffold followed by a load
  * succeeds, and a long-running MCP server picks up edits without a restart.
- * Throws an actionable error pointing at `infra-kit vendor-config --init` when the
+ * Throws an actionable error pointing at `infra-kit vendor config --init` when the
  * file is absent.
  *
  * @example
@@ -65,7 +65,7 @@ export const loadFactoryConfig = async (): Promise<FactoryConfig> => {
     throw new Error(
       `Factory config not found at ${configPath}. infra-kit needs a machine-local factory ` +
         `registry to know where your project repos live and which to stamp. Run ` +
-        `\`infra-kit vendor-config --init\` to scaffold it, or create it manually as JSON:\n\n` +
+        `\`infra-kit vendor config --init\` to scaffold it, or create it manually as JSON:\n\n` +
         `  {\n` +
         `    "workspaceDir": "~/projects",\n` +
         `    "targets": ["my-repo"]\n` +

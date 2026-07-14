@@ -19,10 +19,20 @@ export const LOCK_FILE_NAME = 'update-check.lock'
 
 /**
  * A lock older than this is assumed to belong to a worker that was killed before it could clean up.
- * Must exceed the worker's own worst case (a 5-minute parent wait plus a 2.5s fetch), or a long-lived
- * `infra-kit dev` session would let a healthy lock be stolen out from under its worker.
+ *
+ * Must exceed the worker's ENTIRE critical section, and the install is part of it: the lock is held across
+ * `fetch` (≤2.5s) + the parent wait (≤5min) + `npm install -g`, which has no bound at all — a cold cache on
+ * a slow link can run for many minutes. The previous 10 minutes was budgeted from the wait and the fetch
+ * alone, silently omitting the very operation the lock exists to serialise. A slow enough install therefore
+ * had its own LIVE lock reaped as stale by the next worker, which then ran a second concurrent
+ * `npm install -g` over the same global directory — precisely the pile-up described above.
+ *
+ * The throttle, not this timeout, is now the primary guard: `runUpdateCheck` stamps `lastCheckMs` BEFORE
+ * the wait and the install, so concurrent shells stop spawning workers at all. This value only has to
+ * outlive a plausible install, and is deliberately generous — the cost of being too large is that a worker
+ * killed mid-install delays the next attempt, which the 24h throttle would delay anyway.
  */
-export const LOCK_STALE_MS = 10 * 60 * 1000
+export const LOCK_STALE_MS = 30 * 60 * 1000
 
 export const lockFilePath = (): string => {
   return path.join(getCacheRoot(), LOCK_FILE_NAME)

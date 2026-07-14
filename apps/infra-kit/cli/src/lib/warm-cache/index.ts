@@ -1,3 +1,4 @@
+export { parseWorktreePaths, purgeRepoWarmCaches } from './purge-repo'
 export {
   canonicalizeProjectRoot,
   evictStaleWarmCaches,

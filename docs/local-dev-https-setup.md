@@ -96,7 +96,7 @@ loopback targets, so cert validation is relaxed exactly where the target is prov
 | Browser warns the certificate is not trusted                 | CA not in your keychain, or it was regenerated                                                     | The `trust` line printed by `infra-kit doctor` (no sudo)                                                 |
 | A node/e2e client fails with `SELF_SIGNED_CERT_IN_CHAIN`     | Node doesn't read the keychain                                                                     | `NODE_EXTRA_CA_CERTS=~/.portless/ca.pem`                                                                 |
 | A hero URL returns **502**                                   | The proxy is up but the app behind it is gone (a stale alias from a killed run)                    | `infra-kit doctor` lists the stale routes and prints the `alias --remove <name>` command to run per name |
-| `dev` refuses: _this repo pins infra-kit `<old>`_            | The consumer's pinned `infra-kit/vite` predates HTTPS and would proxy plain HTTP at a TLS listener | `pnpm add -D infra-kit@^0.1.132`                                                                         |
+| `dev` refuses: _this repo pins `<pkg>` `<old>`_              | The consumer's pinned `infraKitDev` helper predates HTTPS and would proxy plain HTTP at a TLS listener | Bump the package the error names — `pnpm add -D @slip-stream-kit/config@^<floor>` (or, before migrating, `infra-kit@^<floor>`) |
 
 A **502 is not a connection refusal** — it means the proxy answered but the upstream did not. It usually
 means a stale alias outlived the process that registered it, not that the proxy is broken.

@@ -304,16 +304,56 @@ describe('runUpdateCheck', () => {
     expect(options.cwd).not.toBe(process.cwd())
   })
 
-  it('writes the cache exactly once per run', async () => {
-    const { deps, writes } = harness({ parentPid: 4242 })
+  it('burns the throttle BEFORE the install, so a slow install cannot let other shells pile up', async () => {
+    // The install has no time bound. Until `lastCheckMs` is on disk the cache still reads STALE, so every
+    // new shell spawns its own worker and the single-flight lock — which is reaped by mtime — becomes the
+    // only guard. Stamping the throttle up-front is what stops the pile-up at its source.
+    const spawnMock = vi.fn(() => {
+      // Whatever the cache looks like at install time is what a concurrent shell would read.
+      expect(writes.at(-1)).toEqual({ lastCheckMs: NOW, latestVersion: '0.1.131', updateCommand: null })
 
-    await runUpdateCheck('0.1.130', deps)
+      return okSpawn()
+    })
+    const { deps, writes } = harness({ parentPid: 4242, spawnSync: spawnMock as unknown as typeof spawnSync })
+
+    await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('installed')
+
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+    // Checkpoint, then the real outcome. The install path is the one path that writes twice, by design.
+    expect(writes).toHaveLength(2)
+    expect(writes.at(-1)).toEqual({ lastCheckMs: NOW, latestVersion: null, updateCommand: null })
+  })
+
+  it('writes the cache exactly once when it does not reach the install', async () => {
+    const { deps, writes } = harness({ selfRealPath: HOMEBREW_CLI, env: {} })
+
+    await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('cannot-self-spawn')
 
     expect(writes).toHaveLength(1)
   })
 
-  it('strips inherited npm_* vars from the install child env', async () => {
+  it('strips the npx/dlx markers from the install child env', async () => {
     // `pnpm exec` sets npm_command; pnpm then self-aborts believing it was invoked via npx/dlx.
+    const { deps, spawnMock } = harness({
+      env: { npm_config_prefix: '/usr/local', npm_command: 'exec', PNPM_SCRIPT_SRC_DIR: '/repo', PATH: '/bin' },
+    })
+
+    await runUpdateCheck('0.1.130', deps)
+
+    const [, , options] = spawnMock.mock.calls[0] as unknown as [string, string[], { env: NodeJS.ProcessEnv }]
+
+    expect(options.env.npm_command).toBeUndefined()
+    expect(options.env.PNPM_SCRIPT_SRC_DIR).toBeUndefined()
+    expect(options.env.PATH).toBe('/bin')
+  })
+
+  it('kEEPS npm_config_prefix, so the install lands in the prefix detection just matched on', async () => {
+    // The regression this guards: stripping every `npm_*` key also erased `npm_config_prefix` — the npm
+    // matcher's ONLY signal. We detected a global install at /usr/local and then installed into npm's
+    // DEFAULT prefix instead, silently: exit 0, `installed` reported, the version on PATH never moves, and
+    // the whole cycle repeats every 24h forever. Verified against the real npm:
+    //   npm_config_prefix=/tmp/gp npm root -g  ->  /tmp/gp/lib/node_modules
+    //   ( cd $HOME && npm root -g )            ->  /opt/homebrew/lib/node_modules
     const { deps, spawnMock } = harness({
       env: { npm_config_prefix: '/usr/local', npm_command: 'exec', PATH: '/bin' },
     })
@@ -322,7 +362,21 @@ describe('runUpdateCheck', () => {
 
     const [, , options] = spawnMock.mock.calls[0] as unknown as [string, string[], { env: NodeJS.ProcessEnv }]
 
-    expect(options.env.npm_command).toBeUndefined()
-    expect(options.env.PATH).toBe('/bin')
+    expect(options.env.npm_config_prefix).toBe('/usr/local')
+  })
+
+  it('kEEPS npm_config_registry in either case, so the install uses the registry the check queried', async () => {
+    // `startsWith('npm_')` is case-sensitive, but npm matches /^npm_config_/i. The uppercase form — what
+    // Dockerfiles and CI images actually export — survived the strip while the lowercase form was dropped,
+    // so the check and the install pointed at OPPOSITE registries.
+    const { deps, spawnMock } = harness({
+      env: { npm_config_prefix: '/usr/local', NPM_CONFIG_REGISTRY: 'https://nexus.corp/npm' },
+    })
+
+    await runUpdateCheck('0.1.130', deps)
+
+    const [, , options] = spawnMock.mock.calls[0] as unknown as [string, string[], { env: NodeJS.ProcessEnv }]
+
+    expect(options.env.NPM_CONFIG_REGISTRY).toBe('https://nexus.corp/npm')
   })
 })

@@ -10,11 +10,12 @@ import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
 import { runCmuxDevServer } from 'src/dev/cmux-dev'
-import { registerCrashBarrier } from 'src/dev/crash-barrier'
+import { formatFault, registerCrashBarrier } from 'src/dev/crash-barrier'
 import { run } from 'src/dev/dev-server'
 import type { DevServerOptions } from 'src/dev/dev-server'
 import type { WizardResult } from 'src/dev/dev-wizard-run'
 import { resolveSelfAppName } from 'src/dev/discovery'
+import { rawStdoutWrite } from 'src/dev/log-sink'
 import { explainTargetKey } from 'src/dev/presets'
 import { registerSignalShutdown } from 'src/dev/signal-shutdown'
 import { isCmuxAvailable } from 'src/integrations/cmux'
@@ -139,11 +140,23 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
   // In-process backends share this event loop; a handler's escaped async path would otherwise terminate
   // the whole session. Installed only on the single-process path (the cmux path returned above, each pane
   // being its own process) and only after `run()` succeeds, so a boot failure still exits honestly.
-  registerCrashBarrier()
+  //
+  // `onFault` is not optional decoration. The dev-server owns `process.stderr` for the life of a TTY
+  // session (every log line goes to a per-service file, nothing prints), and the barrier's default
+  // reporter is a plain stderr write — so a crash would be silently FILED while the panel kept showing
+  // `● ok` and `⚠ 0`. Routing it through the runner both counts it (the row turns red) and punches it
+  // onto the terminal through the panel's bypass.
+  registerCrashBarrier({
+    onFault: (event, error) => {
+      runner.reportFault(formatFault(event, error))
+    },
+  })
 
   registerSignalShutdown({
     onSignal: async (signal) => {
-      process.stdout.write(`\nReceived ${signal}, shutting down dev-server...\n`)
+      // Bypass, not `process.stdout.write`: the interceptor is still installed and suppressing at this
+      // point, so a plain write would file this into a log and the user would see nothing after Ctrl-C.
+      rawStdoutWrite(`\nReceived ${signal}, shutting down dev-server...\n`)
       await runner.shutdown()
     },
   })
@@ -185,6 +198,26 @@ export const runDevServerCli = async (raw: DevCliOptions, tty: boolean, json: bo
   if (shouldRunWizard(raw, tty, json)) {
     const { runDevWizard } = await import('src/dev/dev-wizard-run')
 
+    // Warm the Ink dev-UI chunks BEFORE the wizard blocks on human input.
+    //
+    // `splitting: true` emits these as CONTENT-HASHED sibling chunks, and `selectDevUi` imports them only
+    // AFTER the wizard returns (src/dev/dev-server.ts). That leaves a window as long as the user takes to
+    // answer — minutes, realistically — in which those files are still un-imported. If the background
+    // auto-updater installs a new version during it, npm UNLINKS the old hashes (measured: 7 chunk files
+    // vanished across a real 0.1.133 → 0.1.134 install), and the deferred import dies on
+    // ERR_MODULE_NOT_FOUND the instant the user presses enter.
+    //
+    // Importing them up-front collapses that window to nothing: ESM caches by URL, so `selectDevUi`'s
+    // later import resolves from memory even if the file is gone by then. This is a warm, not a use —
+    // failure is ignored, because `selectDevUi` will import them again and surface any real error there.
+    // Costs nothing on any other path: it runs only on the bare interactive TTY that is about to load
+    // this exact UI anyway.
+    const warmed = Promise.all([import('src/tui/dev-ui/persistent-ink-dev-ui'), import('src/tui/safe-stderr')]).catch(
+      () => {
+        return undefined
+      },
+    )
+
     let result: WizardResult | null
 
     try {
@@ -196,6 +229,10 @@ export const runDevServerCli = async (raw: DevCliOptions, tty: boolean, json: bo
     }
 
     if (result == null) return
+
+    // Settle the warm before starting: from here on the chunks are resident, so a `dist/` swap mid-session
+    // can no longer strand the deferred import in `selectDevUi`.
+    await warmed
 
     // The wizard only runs on a bare interactive TTY, so tty=true, json=false — thread them so `run()`
     // selects the Ink boot UI.

@@ -3,6 +3,7 @@ import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  INFRA_KIT_VITE_SPECIFIERS,
   classifyDistChange,
   discoverApiApps,
   discoverUiApps,
@@ -206,10 +207,32 @@ describe('discoverUiApps — frontends with a `dev` script', () => {
     ])
   })
 
-  it('marks a UI whose vite config does not reference `infra-kit/vite` as unmanaged', () => {
+  it('marks a UI whose vite config references no helper specifier at all as unmanaged', () => {
     // The runner may only advertise (and alias) a port the UI will actually bind — which is exactly the
     // set of UIs that call `infraKitDev()`. Everything else prints its own URL.
     const root = temp.register(makeMonorepo([{ name: 'client', ui: { packageName: 'website-ui', viteConfig: false } }]))
+
+    expect(discoverUiApps(root)[0]?.managedPort).toBe(false)
+  })
+
+  // The helper moved from `infra-kit/vite` to `@slip-stream-kit/config/vite`, and consumers migrate one
+  // repo at a time — so BOTH must be recognised. Table-driven over the exported specifier list rather
+  // than a hand-written pair, so adding (or dropping) a specifier cannot leave an untested one behind.
+  it.each([...INFRA_KIT_VITE_SPECIFIERS])('marks a UI importing the helper from %s as managed', (specifier) => {
+    const root = temp.register(
+      makeMonorepo([{ name: 'client', ui: { packageName: 'website-ui', viteSpecifier: specifier } }]),
+    )
+
+    expect(discoverUiApps(root)[0]?.managedPort).toBe(true)
+  })
+
+  it('does not mark a UI importing some other package as managed', () => {
+    // Guards the substring match: a specifier that merely LOOKS similar must not count. This is why the
+    // new package is not named `@infra-kit/vite` — that string contains `infra-kit/vite` and would have
+    // matched the legacy entry by accident.
+    const root = temp.register(
+      makeMonorepo([{ name: 'client', ui: { packageName: 'website-ui', viteSpecifier: 'some-other-kit/vite' } }]),
+    )
 
     expect(discoverUiApps(root)[0]?.managedPort).toBe(false)
   })

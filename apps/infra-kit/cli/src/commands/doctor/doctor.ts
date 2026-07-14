@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { $ } from 'zx'
 
 import { decidePrune, isDevSessionRunning } from 'src/commands/doctor/prune-routes'
+import { buildDopplerChildEnv } from 'src/commands/env-load/env-load'
 import { AGENTS_MARKER_END, AGENTS_MARKER_START } from 'src/commands/init/agent-files'
 import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
 import {
@@ -19,9 +20,12 @@ import {
   resolvePortlessBin,
 } from 'src/dev/proxy/portless-driver'
 import type { HandshakeResult, PortlessRoute } from 'src/dev/proxy/portless-driver'
-import { getDopplerProject, listDopplerProjects } from 'src/integrations/doppler'
+import { probeEnvToken, resolveEnvToken } from 'src/integrations/doppler'
+import type { EnvTokenProbe, EnvTokenSource, ResolvedEnvToken } from 'src/integrations/doppler'
 import { describeOverrides, readOverrideSummary } from 'src/lib/config-overrides'
 import { DEFAULT_WARM_TTL_SECONDS, ENV_LOAD_FILE, getProjectWarmCacheDir } from 'src/lib/constants'
+import { getTokenStorePath, readTokenStore } from 'src/lib/env-tokens'
+import type { TokenStore } from 'src/lib/env-tokens'
 import { getProjectRoot } from 'src/lib/git-utils/git-utils'
 import {
   DEFAULT_DEV_PROXY_PORT,
@@ -30,9 +34,11 @@ import {
   resetInfraKitConfigCache,
   resolveConfiguredIdes,
 } from 'src/lib/infra-kit-config'
+import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { hasManagedBlock } from 'src/lib/managed-block'
 import { tildify } from 'src/lib/path-display'
+import { listProjectEnvNames } from 'src/lib/project-envs'
 import { canonicalizeProjectRoot } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
 
@@ -168,58 +174,336 @@ const checkPnpmWorkspaceVirtualStore = async (): Promise<CheckResult> => {
   }
 }
 
-const checkInfraKitConfigValid = async (): Promise<CheckResult> => {
-  const name = 'infra-kit config valid'
-
-  try {
-    resetInfraKitConfigCache()
-    await getInfraKitConfig()
-
-    return {
-      name,
-      status: 'pass',
-      message: 'infra-kit.json is valid (user overrides applied if present)',
-    }
-  } catch (err) {
-    return { name, status: 'fail', message: (err as Error).message }
-  }
+/**
+ * The merged infra-kit config, read ONCE per `doctor()` run and threaded into every check that needs
+ * it. Either half is populated, never both.
+ *
+ * Reading it once is not an optimization, it is the fix for a real race: `checkInfraKitConfigValid`
+ * and `checkIdeInstalled` each called `resetInfraKitConfigCache()` and were dispatched together
+ * inside one `Promise.all`, so they clobbered the same module-level cache slot — whichever reset
+ * landed second could blow away a config the other had just populated. One read, no shared slot.
+ */
+export interface DoctorConfig {
+  config: InfraKitConfig | null
+  error: Error | null
 }
 
 /**
- * Verify the Doppler project configured in infra-kit.json (`envManagement.config.name`)
- * actually exists in the authenticated account — the proactive catch for the
- * mismatch that otherwise only surfaces as a cryptic `env-load` failure. Skips
- * (informational pass) when the config can't be read or the project list can't be
- * fetched (auth/network), so a logged-out user isn't misdiagnosed as
- * missing-project — the adjacent `doppler authenticated` check owns that failure.
+ * Read the merged config once for the whole run, resetting the module cache exactly once so `doctor`
+ * always reports what is on disk NOW (it is the command a user runs right after editing the file).
+ * Never throws: a broken config is the thing `doctor` exists to explain, so it is captured and
+ * threaded rather than allowed to abort the run.
+ *
+ * @example
+ * await readDoctorConfig() // => { config: { environments: ['dev'], … }, error: null }
+ * //                       // broken file => { config: null, error: Error('…unrecognized key…') }
  */
-export const checkDopplerProjectExists = async (): Promise<CheckResult> => {
-  const name = 'doppler project exists'
-
-  let project: string
-
+export const readDoctorConfig = async (): Promise<DoctorConfig> => {
   try {
-    project = await getDopplerProject()
-  } catch {
+    resetInfraKitConfigCache()
+
+    return { config: await getInfraKitConfig(), error: null }
+  } catch (err) {
+    return { config: null, error: err as Error }
+  }
+}
+
+const checkInfraKitConfigValid = (read: DoctorConfig): CheckResult => {
+  const name = 'infra-kit config valid'
+
+  if (read.error) return { name, status: 'fail', message: read.error.message }
+
+  return {
+    name,
+    status: 'pass',
+    message: 'infra-kit.json is valid (user overrides applied if present)',
+  }
+}
+
+/** Every seam the three token checks touch — the store, the resolver, Doppler, and the file modes. */
+export interface EnvTokenCheckDeps {
+  /** Reads `tokens.json`. THROWS on a corrupt store (bad JSON / bad shape) — that throw is the diagnosis. */
+  readStore?: () => Promise<TokenStore | null>
+  /** Resolves one env's token (`INFRA_KIT_ENV_TOKEN` → store → throw). */
+  resolveToken?: (env: string) => Promise<ResolvedEnvToken>
+  /** Asks Doppler what a token actually is. Never throws; see {@link probeEnvToken}. */
+  probe?: (args: { childEnv: NodeJS.ProcessEnv; project: string; config: string }) => Promise<EnvTokenProbe>
+  storePath?: () => Promise<string>
+  /** `null` = the path does not exist. */
+  statPath?: (target: string) => fs.Stats | null
+  chmodPath?: (target: string, mode: number) => void
+}
+
+/** `tokens.json` holds live credentials: owner-only, and owner-only traversal to reach it. */
+const TOKEN_FILE_MODE = 0o600
+const TOKEN_DIR_MODE = 0o700
+
+/** One env's token as doctor sees it: WHERE it came from, never WHAT it is. */
+interface EnvTokenEntry {
+  env: string
+  /** `null` = no token resolves for this env. */
+  source: EnvTokenSource | null
+}
+
+/**
+ * `env <name>: token (store)` / `env <name>: no token`, for every configured environment. The source
+ * ONLY — a doctor line is printed to a terminal, pasted into a bug report, and returned over MCP, so
+ * the one thing it can never carry is the token itself.
+ *
+ * @example
+ * describeEntries([{ env: 'dev', source: 'store' }, { env: 'prod', source: null }])
+ * // => 'dev: token (store), prod: no token'
+ */
+const describeEntries = (entries: EnvTokenEntry[]): string => {
+  return entries
+    .map((entry) => {
+      const held = entry.source === null ? 'no token' : `token (${entry.source})`
+
+      return `${entry.env}: ${held}`
+    })
+    .join(', ')
+}
+
+/** Resolve each env's token to a SOURCE, collapsing "no token" (a throw) into `source: null`. */
+const resolveEntries = async (
+  environments: string[],
+  resolveToken: NonNullable<EnvTokenCheckDeps['resolveToken']>,
+): Promise<EnvTokenEntry[]> => {
+  return Promise.all(
+    environments.map(async (env): Promise<EnvTokenEntry> => {
+      try {
+        const { source } = await resolveToken(env)
+
+        return { env, source }
+      } catch {
+        return { env, source: null }
+      }
+    }),
+  )
+}
+
+/**
+ * Which envs have a service token, and is the one that MATTERS among them?
+ *
+ * Under token-only auth the `envAutoLoad.config` env is load-bearing: no token there means the
+ * developer's shell silently stops getting its environment, so that one is a FAIL. Every other env is
+ * a listing line, not a verdict — a developer legitimately holds a `dev` token and no `prod` one, and
+ * a doctor that failed on that would train everyone to ignore it.
+ *
+ * @example
+ * await checkEnvTokensConfigured({ config, error: null })
+ * // => { name: 'env tokens configured', status: 'pass', message: 'auto-load env "dev": token (store). dev: token (store), prod: no token' }
+ */
+export const checkEnvTokensConfigured = async (
+  read: DoctorConfig,
+  deps: EnvTokenCheckDeps = {},
+): Promise<CheckResult> => {
+  const name = 'env tokens configured'
+  const readStore = deps.readStore ?? readTokenStore
+  const resolveToken = deps.resolveToken ?? resolveEnvToken
+
+  if (!read.config) {
     return { name, status: 'pass', message: 'Skipped — infra-kit config could not be read (see config check)' }
   }
 
-  const projects = await listDopplerProjects()
-
-  if (projects === null) {
-    return { name, status: 'pass', message: 'Skipped — could not list Doppler projects (see doppler auth check)' }
+  // A corrupt store throws for EVERY env, which would otherwise render as "no token anywhere" — the
+  // same symptom as a fresh machine, with a completely different fix. Surface the store's own
+  // (actionable) error instead, and let the remaining checks still run.
+  //
+  // There is no longer a "store belongs to another repo" case to report here: the store carries no
+  // `repoRoot` (see `lib/env-tokens`), so a hand-written store loads and a basename collision between
+  // two checkouts is an accepted risk, not a diagnosis. Do not add a branch back for it.
+  try {
+    await readStore()
+  } catch (err) {
+    return { name, status: 'fail', message: `Token store unreadable — ${(err as Error).message}` }
   }
 
-  if (projects.includes(project)) {
-    return { name, status: 'pass', message: `Doppler project "${project}" exists` }
+  // The env universe is the union of what the workflows declare and what we hold tokens for — see
+  // `lib/project-envs`. It replaces `config.environments`, which was a hand-maintained third copy.
+  const envs = await listProjectEnvNames()
+  const autoLoadEnv = read.config.envAutoLoad?.config
+
+  // The auto-load env is load-bearing whether or not anything declares it: it is what the shell tries
+  // to load. Probe it even when no workflow names it, so "no token for it" beats "we never looked".
+  const universe = autoLoadEnv && !envs.includes(autoLoadEnv) ? [...envs, autoLoadEnv] : envs
+
+  const entries = await resolveEntries(universe, resolveToken)
+  const listing = describeEntries(entries)
+
+  if (autoLoadEnv === undefined) {
+    return { name, status: 'pass', message: `No envAutoLoad configured — no env is load-bearing. ${listing}` }
+  }
+
+  const autoLoadEntry = entries.find((entry) => {
+    return entry.env === autoLoadEnv
+  })
+
+  if (!autoLoadEntry || autoLoadEntry.source === null) {
+    return {
+      name,
+      status: 'fail',
+      message:
+        `No Doppler service token for the auto-load env "${autoLoadEnv}" — your shell env will not load. ` +
+        `Fix: run \`infra-kit env-token-set ${autoLoadEnv}\`. ${listing}`,
+    }
   }
 
   return {
     name,
-    status: 'fail',
-    message: `Doppler project "${project}" not found (set in infra-kit.json → envManagement.config.name). Available: ${
-      projects.length > 0 ? projects.join(', ') : 'none'
-    }`,
+    status: 'pass',
+    message: `auto-load env "${autoLoadEnv}": token (${autoLoadEntry.source}). ${listing}`,
+  }
+}
+
+/** The verdict for each probe outcome. `unreachable` is a PASS — see {@link checkEnvTokenValid}. */
+const PROBE_VERDICT: Record<EnvTokenProbe['outcome'], { status: CheckResult['status']; describe: string }> = {
+  valid: { status: 'pass', describe: 'live and correctly scoped' },
+  revoked: { status: 'fail', describe: 'REJECTED by Doppler (revoked or invalid)' },
+  'mis-scoped': { status: 'fail', describe: 'live but scoped to a DIFFERENT config' },
+  unreachable: { status: 'pass', describe: 'could not be checked (Doppler unreachable)' },
+}
+
+/**
+ * Is the auto-load env's token actually LIVE and correctly SCOPED? The only check here that leaves the
+ * machine, and the only one that can tell a developer why their shell went quiet.
+ *
+ * An UNREACHABLE probe passes, deliberately: a network failure proves nothing about a token, and a
+ * doctor that reported "your token is revoked" to a developer on a plane would be worse than one that
+ * said nothing. The same `null`-means-couldn't-tell contract the Doppler listings always carried.
+ *
+ * @example
+ * await checkEnvTokenValid({ config, error: null })
+ * // => { name: 'env token valid', status: 'fail', message: 'The token for env "dev" is live but scoped to a DIFFERENT config …' }
+ */
+export const checkEnvTokenValid = async (read: DoctorConfig, deps: EnvTokenCheckDeps = {}): Promise<CheckResult> => {
+  const name = 'env token valid'
+  const resolveToken = deps.resolveToken ?? resolveEnvToken
+  const probe = deps.probe ?? probeEnvToken
+
+  if (!read.config) {
+    return { name, status: 'pass', message: 'Skipped — infra-kit config could not be read (see config check)' }
+  }
+
+  const env = read.config.envAutoLoad?.config
+
+  if (env === undefined) {
+    return { name, status: 'pass', message: 'Skipped — no envAutoLoad env to probe' }
+  }
+
+  let token: string
+
+  try {
+    token = (await resolveToken(env)).token
+  } catch {
+    // Already the FAIL of `env tokens configured`; repeating it here would double-count one problem.
+    return { name, status: 'pass', message: `Skipped — no token for env "${env}" (see env tokens configured)` }
+  }
+
+  const project = read.config.envManagement.config.name
+  const result = await probe({ childEnv: buildDopplerChildEnv(token), project, config: env })
+  const verdict = PROBE_VERDICT[result.outcome]
+  const suffix =
+    result.outcome === 'revoked' || result.outcome === 'mis-scoped'
+      ? ` Fix: run \`infra-kit env-token-set ${env}\` with a token scoped to "${env}".`
+      : ''
+
+  return {
+    name,
+    status: verdict.status,
+    message: `The token for env "${env}" (project "${project}") is ${verdict.describe}.${suffix}`,
+  }
+}
+
+/** `-rw-------` / `drwx------` — the permission bits of a path, or `null` when it does not exist. */
+const modeOf = (target: string, statPath: NonNullable<EnvTokenCheckDeps['statPath']>): number | null => {
+  const stats = statPath(target)
+
+  return stats === null ? null : stats.mode & 0o777
+}
+
+/**
+ * The token store is a credential file, so it must be 0600, reachable only through 0700 directories.
+ * `writeTokenStore` sets all four every time it writes — so a violation here means something ELSE
+ * touched them (an editor's save-and-rename, a `cp -r`, a synced dotfiles dir), which is exactly the
+ * case a self-healing writer cannot fix on its own.
+ *
+ * Skipped when the store does not exist: a machine with no tokens has nothing to protect, and CI
+ * (`INFRA_KIT_ENV_TOKEN`) never writes one.
+ *
+ * @example
+ * await checkTokenStorePerms(false)
+ * // => { name: 'tokens.json perms', status: 'fail', message: '~/.infra-kit/projects/api/tokens.json is 0644, expected 0600 …' }
+ */
+export const checkTokenStorePerms = async (fix: boolean, deps: EnvTokenCheckDeps = {}): Promise<CheckResult> => {
+  const name = 'tokens.json perms'
+  const storePath = deps.storePath ?? getTokenStorePath
+  const statPath = deps.statPath ?? defaultStatPath
+  const chmodPath = deps.chmodPath ?? fs.chmodSync
+
+  let target: string
+
+  try {
+    target = await storePath()
+  } catch {
+    return { name, status: 'pass', message: 'Skipped — the token store path could not be resolved' }
+  }
+
+  if (modeOf(target, statPath) === null) {
+    return { name, status: 'pass', message: `No token store yet at ${tildify(target)}` }
+  }
+
+  // Every directory on the way to the file, plus the file: a 0600 file inside a world-readable
+  // directory chain is still a credential a `find` away.
+  const projectDir = path.dirname(target)
+  const projectsDir = path.dirname(projectDir)
+  const userConfigDir = path.dirname(projectsDir)
+  const audited: Array<{ target: string; expected: number; actual: number | null }> = [
+    { target: userConfigDir, expected: TOKEN_DIR_MODE, actual: modeOf(userConfigDir, statPath) },
+    { target: projectsDir, expected: TOKEN_DIR_MODE, actual: modeOf(projectsDir, statPath) },
+    { target: projectDir, expected: TOKEN_DIR_MODE, actual: modeOf(projectDir, statPath) },
+    { target, expected: TOKEN_FILE_MODE, actual: modeOf(target, statPath) },
+  ]
+  const loose = audited.filter((entry) => {
+    return entry.actual !== null && entry.actual !== entry.expected
+  })
+
+  if (loose.length === 0) {
+    return { name, status: 'pass', message: `${tildify(target)} is 0600 (0700 dirs)` }
+  }
+
+  const describe = loose
+    .map((entry) => {
+      return `${tildify(entry.target)} is ${formatMode(entry.actual!)}, expected ${formatMode(entry.expected)}`
+    })
+    .join('; ')
+
+  if (!fix) {
+    return {
+      name,
+      status: 'fail',
+      message: `${describe}. Fix: run \`infra-kit doctor --fix\`, or chmod them by hand.`,
+    }
+  }
+
+  for (const entry of loose) {
+    chmodPath(entry.target, entry.expected)
+  }
+
+  return { name, status: 'pass', message: `Tightened ${loose.length} path(s): ${describe}` }
+}
+
+/** `0600`, `0755` — a mode's permission bits in the form a user types at `chmod`. */
+const formatMode = (mode: number): string => {
+  return `0${mode.toString(8).padStart(3, '0')}`
+}
+
+/** `fs.statSync` with "does not exist" as a value rather than a throw. */
+const defaultStatPath = (target: string): fs.Stats | null => {
+  try {
+    return fs.statSync(target)
+  } catch {
+    return null
   }
 }
 
@@ -345,28 +629,26 @@ const probeIde = async (provider: 'cursor' | 'zed'): Promise<IdeProbe> => {
 }
 
 /**
- * Check that every editor configured under `ide` is installed. Reads the merged
- * infra-kit config and probes each matching binary (`cursor`/`zed`). Passes only
- * if all configured editors are present; fails listing any that are missing.
- * Informational pass when no IDE is configured or the config can't be read — an
- * unconfigured editor is a valid setup, and config validity is reported
- * separately by `checkInfraKitConfigValid`.
+ * Check that every editor configured under `ide` is installed. Probes each binary (`cursor`/`zed`)
+ * named by the ALREADY-READ config ({@link readDoctorConfig}). Passes only if all configured editors
+ * are present; fails listing any that are missing. Informational pass when no IDE is configured or
+ * the config can't be read — an unconfigured editor is a valid setup, and config validity is
+ * reported separately by `checkInfraKitConfigValid`.
+ *
+ * @example
+ * await checkIdeInstalled({ config: { ide: [{ provider: 'cursor' }] }, error: null })
+ * // => { name: 'ide installed', status: 'pass', message: 'Installed: Cursor' }
  */
-export const checkIdeInstalled = async (): Promise<CheckResult> => {
+export const checkIdeInstalled = async (read: DoctorConfig): Promise<CheckResult> => {
   const name = 'ide installed'
 
-  let providers: ('cursor' | 'zed')[]
-
-  try {
-    resetInfraKitConfigCache()
-    const config = await getInfraKitConfig()
-
-    providers = resolveConfiguredIdes(config).map((ide) => {
-      return ide.provider
-    })
-  } catch {
+  if (!read.config) {
     return { name, status: 'pass', message: 'Skipped — infra-kit config could not be read (see config check)' }
   }
+
+  const providers = resolveConfiguredIdes(read.config).map((ide) => {
+    return ide.provider
+  })
 
   if (providers.length === 0) {
     return { name, status: 'pass', message: 'No IDE configured (ide unset)' }
@@ -797,6 +1079,10 @@ export const pruneStalePortlessRoutes = async (deps: PruneRoutesDeps = {}): Prom
  * Check installation and authentication status of gh, doppler, aws, and rtk CLIs
  */
 export const doctor = async (options: { fix?: boolean } = {}) => {
+  // ONE read, before anything is dispatched: the checks below used to reset the shared config cache
+  // concurrently from inside the `Promise.all`. See {@link readDoctorConfig}.
+  const read = await readDoctorConfig()
+
   const baseChecks: CheckResult[] = await Promise.all([
     checkCommand(
       'gh installed',
@@ -815,12 +1101,6 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
       ['doppler', '--version'],
       'Doppler CLI is installed',
       'Doppler CLI is not installed. Install from: https://docs.doppler.com/docs/install-cli',
-    ),
-    checkCommand(
-      'doppler authenticated',
-      ['doppler', 'me'],
-      'Doppler CLI is authenticated',
-      'Doppler CLI is not authenticated. Run: doppler login',
     ),
     checkCommand(
       'aws installed',
@@ -850,11 +1130,13 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
     Promise.resolve(checkZshrcInitialized()),
     checkWarmCache(),
     checkPnpmWorkspaceVirtualStore(),
-    checkInfraKitConfigValid(),
-    checkDopplerProjectExists(),
+    Promise.resolve(checkInfraKitConfigValid(read)),
+    checkEnvTokensConfigured(read),
+    checkEnvTokenValid(read),
+    checkTokenStorePerms(options.fix ?? false),
     checkUserOverridePath(),
     checkLegacyUserGlobalConfig(),
-    checkIdeInstalled(),
+    checkIdeInstalled(read),
   ])
 
   const portlessChecks = await checkPortless()

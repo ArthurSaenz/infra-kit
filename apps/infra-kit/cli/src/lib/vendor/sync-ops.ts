@@ -1,10 +1,10 @@
+import type { VendorConfig } from '@slip-stream-kit/config/internal'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { $ } from 'zx'
 
 import { OperationError } from 'src/lib/errors/operation-error'
 
-import type { VendorConfig } from './config-schema'
 import { expandTilde } from './factory-config'
 import { writeManifest } from './manifest'
 import { VENDOR_DIR } from './skip-sets'

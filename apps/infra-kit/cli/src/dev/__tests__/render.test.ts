@@ -39,7 +39,7 @@ const baseSummary = (over: Partial<ReadySummary> = {}): ReadySummary => {
   return {
     target: 'client',
     watch: true,
-    hasUiChild: false,
+
     release: 'feat-x',
     elapsedMs: 2400,
     endpoints: [{ tag: 'client/api', url: 'https://feat-x.client-api.localhost/api/v1', healthy: true }],
@@ -93,7 +93,7 @@ describe('render — ready header (non-TTY, deterministic)', () => {
     expect(screen).toContain('ready in 2.4s')
     expect(screen).toContain('client/api  https://feat-x.client-api.localhost/api/v1  ● ok')
     // The UI is referenced, never given a fabricated URL (tag is space-padded to the widest tag).
-    expect(screen).toMatch(/client\/ui\s+→ starting below \(vite prints its URL\)/)
+    expect(screen).toMatch(/client\/ui\s+no managed port \(vite prints its own URL\)/)
     expect(screen).not.toMatch(/client\/ui\s+http/)
     // The redundant scheme legend is gone — the endpoint rows already show the concrete URLs.
     expect(screen).not.toContain('scheme')
@@ -108,7 +108,9 @@ describe('render — ready header (non-TTY, deterministic)', () => {
   it('renders a ● down dot for an unhealthy endpoint (URL still shown — provenance is honest)', () => {
     const { r, out } = makeRenderer()
 
-    r.ready(baseSummary({ endpoints: [{ tag: 'api', url: 'https://feat-x.client-api.localhost/api/v1', healthy: false }] }))
+    r.ready(
+      baseSummary({ endpoints: [{ tag: 'api', url: 'https://feat-x.client-api.localhost/api/v1', healthy: false }] }),
+    )
     const screen = out.join('')
 
     expect(screen).toContain('● down')
@@ -121,7 +123,7 @@ describe('render — ready header (non-TTY, deterministic)', () => {
     r.ready(baseSummary({ endpoints: [], uiRefs: [{ tag: 'client/ui' }] }))
     const screen = out.join('')
 
-    expect(screen).toContain('client/ui  → starting below (vite prints its URL)')
+    expect(screen).toContain('client/ui  no managed port (vite prints its own URL)')
     expect(screen).toContain('logs → ~/.cache/infra-kit/ab12cd34/logs.txt')
   })
 
@@ -210,8 +212,8 @@ describe('render — formatter byte-equality guard', () => {
         client/api        https://feat-x.client-api.localhost/api/v1
         admin/api         https://feat-x.admin-api.localhost/api/v1
         worker/api        https://feat-x.worker-api.localhost/api/v1
-        client/ui         → starting below (vite prints its URL)
-        admin-console/ui  → starting below (vite prints its URL)
+        client/ui         no managed port (vite prints its own URL)
+        admin-console/ui  no managed port (vite prints its own URL)
 
         watching 1 app · 5 packages          logs → ~/.cache/infra-kit/ab12cd34/logs.txt
         ────────────────────────────────────────────────────────────"
@@ -228,8 +230,8 @@ describe('render — formatter byte-equality guard', () => {
         client/api        https://feat-x.client-api.localhost/api/v1  ● ok
         admin/api         https://feat-x.admin-api.localhost/api/v1  ● down
         worker/api        https://feat-x.worker-api.localhost/api/v1
-        client/ui         → starting below (vite prints its URL)
-        admin-console/ui  → starting below (vite prints its URL)
+        client/ui         no managed port (vite prints its own URL)
+        admin-console/ui  no managed port (vite prints its own URL)
 
         watching 1 app · 5 packages          logs → ~/.cache/infra-kit/ab12cd34/logs.txt
         ────────────────────────────────────────────────────────────"
@@ -348,5 +350,194 @@ describe('render — spinner (TTY vs piped) + warn interleave', () => {
     expect(screen).toContain('⚠️  heads up')
     // The warning is not swallowed by the spinner and a spinner frame char is present.
     expect(screen).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/)
+  })
+})
+
+/**
+ * The live fields must live in the FOOTER, and this is the test that would have caught it when they
+ * didn't.
+ *
+ * They were added to the shared endpoint line first. `formatHeaderLines` picked them up and looked
+ * right in every unit test — but the header is committed once through Ink's `<Static>`, so it is a
+ * photograph: anything painted there is frozen at its boot value forever. The footer, the only region
+ * that repaints, kept printing a bare health dot. A real `infra-kit dev` run showed a panel with no
+ * uptime, no req/min and no error count at all, while 1,400 tests stayed green.
+ *
+ * So: assert the live fields on the function that actually repaints.
+ */
+describe('render — the panel is the FOOTER (the live region), not the header', () => {
+  const liveSummary = (): ReadySummary => {
+    return {
+      target: 'client',
+      watch: false,
+      elapsedMs: 2400,
+      endpoints: [
+        {
+          tag: 'client/api',
+          url: 'https://x.localhost/api/v1',
+          healthy: true,
+          uptimeMs: 252_000,
+          rpm: 18,
+          restarts: 2,
+          errors: 3,
+        },
+      ],
+      uiRefs: [{ tag: 'client/ui', errors: 5 }],
+      logPath: '~/.cache/infra-kit/s/dev/1',
+      logHref: '/home/u/.cache/infra-kit/s/dev/1',
+    }
+  }
+
+  it('renders uptime, req/min, restarts and the error count in the repainting region', () => {
+    const footer = new DevRenderer({ isTTY: false }).formatFooterLines(liveSummary()).join('\n')
+
+    expect(footer).toContain('up 4m12s')
+    expect(footer).toContain('18/min')
+    expect(footer).toContain('↺2')
+    expect(footer).toContain('⚠ 3')
+  })
+
+  it('gives a UI with no managed port an error count too — it has no endpoint row to carry one', () => {
+    // This row belongs to the app whose vite config never wired `infraKitDev()`: the one most likely to
+    // be misconfigured, and the one whose breakage the panel would otherwise be unable to report.
+    const footer = new DevRenderer({ isTTY: false }).formatFooterLines(liveSummary()).join('\n')
+
+    expect(footer).toMatch(/client\/ui\s+⚠ 5/)
+  })
+
+  it('keeps a probed endpoint on the panel even at zero errors — silence is a claim, so it is stated', () => {
+    const summary = liveSummary()
+
+    summary.endpoints[0]!.errors = 0
+
+    expect(new DevRenderer({ isTTY: false }).formatFooterLines(summary).join('\n')).toContain('⚠ 0')
+  })
+})
+
+/**
+ * The degraded-route row: the ONLY thing on screen that can say "the frontend came up healthy and is
+ * talking to cloud". Its absence is the whole bug — a `● failed` backend row reads as "that half is
+ * broken", never as "the other half is now silently pointed at the shared cloud backend".
+ */
+describe('degraded-route row', () => {
+  const degradedSummary = (): ReadySummary => {
+    return {
+      target: 'clientLocal',
+      watch: true,
+      elapsedMs: 2400,
+      endpoints: [],
+      uiRefs: [],
+      failed: [{ tag: 'client/api', reason: "config is missing field: 'connectionURL'" }],
+      degraded: [{ route: '/api', tag: 'client/ui', fallback: 'cloud', target: 'https://dev.hulyo.co.il' }],
+      logPath: '~/.cache/infra-kit/s/dev/1',
+      logHref: '/home/u/.cache/infra-kit/s/dev/1',
+    }
+  }
+
+  it('names the route, the demotion, and the cloud origin it fell back to', () => {
+    const ready = new DevRenderer({ isTTY: false }).formatReadyLines(degradedSummary()).join('\n')
+
+    expect(ready).toContain('client/ui /api')
+    expect(ready).toContain('● cloud (local backend down)')
+    expect(ready).toContain('https://dev.hulyo.co.il')
+  })
+
+  it('repaints on the live panel, not only in the committed header — so it can clear on recovery', () => {
+    const footer = new DevRenderer({ isTTY: false }).formatFooterLines(degradedSummary()).join('\n')
+
+    expect(footer).toContain('● cloud (local backend down)')
+  })
+
+  it('calls a local fallback a dead alias — saying "cloud" would name a destination traffic never reaches', () => {
+    const summary: ReadySummary = {
+      ...degradedSummary(),
+      degraded: [{ route: '/api', tag: 'client/ui', fallback: 'local' }],
+    }
+    const footer = new DevRenderer({ isTTY: false }).formatFooterLines(summary).join('\n')
+
+    expect(footer).toContain('● dead alias (local backend down)')
+    expect(footer).not.toContain('cloud')
+  })
+
+  it('renders nothing when no route is degraded', () => {
+    const summary = { ...degradedSummary(), degraded: [] }
+    const renderer = new DevRenderer({ isTTY: false })
+
+    expect(renderer.formatFooterLines(summary).join('\n')).not.toContain('local backend down')
+    expect(renderer.formatReadyLines(summary).join('\n')).not.toContain('local backend down')
+  })
+})
+
+/**
+ * A UI-only session's panel must be ALIVE.
+ *
+ * The panel's only repaint rides `livenessTick`, and that timer used to be armed only when a BACKEND was
+ * running (`if (this.appServers.length > 0)`). So a UI-only session — an FE-only repo, `--app=<x>/ui`, a
+ * UI-only wizard pick — painted once at boot and froze: a `⚠ 0` row held forever while vite piped compile
+ * errors into its log and the counter behind the row climbed unread. A green row over a UI that does not
+ * compile is the exact lie this design exists to prevent, and it is worse than the tail it replaced —
+ * there is nothing else on screen left to contradict it.
+ *
+ * The runner-side fix is to arm the tick unconditionally. This pins the render half: a UI row must be
+ * able to REPORT, not just exist.
+ */
+describe('render — a UI-only session still has a live panel', () => {
+  const uiOnly = (errors: number): ReadySummary => {
+    return {
+      target: 'client/ui',
+      watch: false,
+      elapsedMs: 900,
+      endpoints: [],
+      uiRefs: [{ tag: 'client/ui', errors }],
+      logPath: '~/.cache/infra-kit/s/dev/1',
+      logHref: '/home/u/.cache/infra-kit/s/dev/1',
+    }
+  }
+
+  it('renders a UI row on the panel even with no backend endpoint at all', () => {
+    const footer = new DevRenderer({ isTTY: false }).formatFooterLines(uiOnly(0))
+
+    expect(footer.join('\n')).toMatch(/client\/ui\s+⚠ 0/)
+  })
+
+  it('moves that row when the UI starts failing — the panel is the only signal there is', () => {
+    const renderer = new DevRenderer({ isTTY: false })
+
+    expect(renderer.formatFooterLines(uiOnly(0)).join('\n')).toContain('⚠ 0')
+    expect(renderer.formatFooterLines(uiOnly(7)).join('\n')).toContain('⚠ 7')
+  })
+})
+
+/**
+ * The heartbeat: a UI-only panel must MOVE.
+ *
+ * Arming the tick was only half the fix. Ink does not repaint an identical frame — and a UI-only session
+ * has no backend, so its rows carry no uptime, no req/min, no restart count. With zero errors, every tick
+ * produced a byte-identical frame and the screen sat perfectly still: the panel was verifiably alive and
+ * looked exactly like a hung process. A real UI-only run showed precisely that.
+ */
+describe('render — the panel has a heartbeat for every session shape', () => {
+  const uiOnlyAt = (uptimeMs: number): ReadySummary => {
+    return {
+      target: 'client/ui',
+      watch: false,
+      elapsedMs: 900,
+      endpoints: [],
+      uiRefs: [{ tag: 'client/ui', errors: 0 }],
+      logPath: '~/.cache/infra-kit/s/dev/1',
+      logHref: '/home/u/.cache/infra-kit/s/dev/1',
+      sessionUptimeMs: uptimeMs,
+    }
+  }
+
+  it('renders a session uptime even when nothing else on the panel can change', () => {
+    const renderer = new DevRenderer({ isTTY: false })
+    const first = renderer.formatFooterLines(uiOnlyAt(5_000)).join('\n')
+    const later = renderer.formatFooterLines(uiOnlyAt(65_000)).join('\n')
+
+    expect(first).toContain('up 5s')
+    expect(later).toContain('up 1m05s')
+    // The whole point: consecutive frames must DIFFER, or Ink paints nothing and the screen freezes.
+    expect(first).not.toBe(later)
   })
 })

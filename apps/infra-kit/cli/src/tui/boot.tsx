@@ -8,6 +8,7 @@ import { safeStderr } from './safe-stderr'
 import { BranchMultiPicker } from './screens/branch-multi-picker'
 import { BranchPicker } from './screens/branch-picker'
 import { CommandPalette } from './screens/command-palette'
+import { suspendForeground } from './suspend'
 import type { PaletteItem } from './types'
 
 /**
@@ -37,8 +38,23 @@ import type { PaletteItem } from './types'
  * skipped.
  */
 const renderToStderr = async (element: ReactElement): Promise<void> => {
+  const stdout = safeStderr()
   const { waitUntilExit } = render(element, {
-    stdout: safeStderr(),
+    stdout,
+    // Ink's default is `exitOnCtrlC: true`, which intercepts the 0x03 byte in its own App and calls
+    // `handleExit()` BEFORE it ever reaches `useInput`. That makes every screen's own ctrl+c branch
+    // dead code, and — worse — it tears down on the CURRENT frame, so `log.done()` freezes the drawn
+    // command list into the scrollback instead of erasing it (Esc, which goes through the screens'
+    // own quit path, erases correctly; Ctrl-C left a corpse). Every screen rendered here already
+    // handles ctrl+c itself, so hand them the key.
+    exitOnCtrlC: false,
+    // Ink's default is `!isInCi && stdout.isTTY`. We drop the isInCi term: a developer with CI
+    // exported in their shell would otherwise get a NON-interactive Ink on a real terminal, and Ink
+    // skips ALL terminal management in that mode — `beginSuspend` returns before it can drop raw mode
+    // or erase the frame, and `endSuspend` never redraws. Ctrl-Z would hand the shell a raw-mode tty
+    // with a stranded frame and a hidden cursor, and `fg` would come back to nothing. Whether we own
+    // the terminal is a question about the tty, and only about the tty.
+    interactive: Boolean(stdout.isTTY),
   })
 
   try {
@@ -53,7 +69,8 @@ const renderToStderr = async (element: ReactElement): Promise<void> => {
 
 /**
  * Render the command palette and resolve to the chosen command name, or `null`
- * if the user cancels.
+ * if the user cancels. A Ctrl-Z suspends the job and resolves nothing — the same
+ * palette redraws, filter and all, when the user brings it back with `fg`.
  */
 export const runCommandPalette = async (items: PaletteItem[]): Promise<string | null> => {
   let selected: string | null = null
@@ -67,6 +84,16 @@ export const runCommandPalette = async (items: PaletteItem[]): Promise<string | 
       onCancel={() => {
         selected = null
       }}
+      // This module is the platform authority: `undefined` tells the palette that suspending is
+      // impossible here, so it neither binds Ctrl-Z nor advertises it in the footer. (`suspendForeground`
+      // guards win32 again on its own — the palette itself must stay free of `process`.)
+      onSuspend={
+        process.platform === 'win32'
+          ? undefined
+          : () => {
+              suspendForeground()
+            }
+      }
     />,
   )
 

@@ -50,7 +50,7 @@ describe('seedUserGlobalConfig', () => {
 
   it('refreshes the example files on a re-run while leaving an existing infra-kit.json byte-unchanged', () => {
     fs.mkdirSync(dir, { recursive: true })
-    const realConfig = '{ "environments": ["dev"] }\n'
+    const realConfig = '{ "worktrees": { "openInCmux": true } }\n'
 
     fs.writeFileSync(path.join(dir, 'infra-kit.json'), realConfig)
     // Stale example a previous version might have written.

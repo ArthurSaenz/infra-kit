@@ -1,3 +1,4 @@
+import { commandEcho } from 'src/lib/command-echo'
 import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
 import { logger } from 'src/lib/logger'
 import type { ToolsExecutionResult } from 'src/types'
@@ -24,6 +25,12 @@ export const createToolHandler = ({
       // contractually never-throw, but if that contract ever broke, an unhandled rejection here would
       // take down the long-lived server. Inside the try it degrades to an ordinary tool error.
       await ensureUserProjectConfig()
+
+      // The command handlers record their resolved flags into the `commandEcho` singleton. On the CLI,
+      // Commander's `preAction` clears it before every command; this long-lived server never runs that
+      // hook, so without a reset here one tool call's flags would leak into the next one's snapshot and
+      // the options array would grow for the life of the process.
+      commandEcho.reset()
 
       const payload = await handler({ ...(params as object), confirmedCommand: true })
 

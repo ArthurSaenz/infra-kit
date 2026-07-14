@@ -295,8 +295,6 @@ const logFinalSummary = (total: number, successCount: number, failureCount: numb
 export const releaseCreate = async (args: ReleaseCreateArgs) => {
   const { releases: inputReleases, confirmedCommand } = args
 
-  commandEcho.start('release-create')
-
   const jiraConfig = await loadJiraConfig()
 
   let known: SemVer[] | null = null

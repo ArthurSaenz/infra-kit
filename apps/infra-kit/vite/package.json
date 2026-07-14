@@ -1,0 +1,67 @@
+{
+  "name": "@slip-stream-kit/vite",
+  "type": "module",
+  "version": "0.3.1",
+  "description": "The infra-kit Vite plugin: per-worktree dev port, portless HTTPS alias HMR, and the config-driven dev proxy — wired from one plugin entry, and re-resolved live when a backend comes up.",
+  "author": "Arthur Saenko <arthur.saenz7@gmail.com> (https://github.com/ArthurSaenz)",
+  "license": "MIT",
+  "keywords": [
+    "infra-kit",
+    "vite",
+    "vite-plugin",
+    "proxy",
+    "monorepo"
+  ],
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/entry/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/entry/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=24.x"
+  },
+  "scripts": {
+    "build": "pnpm run clean-artifacts && node ./scripts/build.js",
+    "prepack": "pnpm run build",
+    "prepublishOnly": "pnpm run build",
+    "clean-artifacts": "rm -rf dist",
+    "clean-cache": "rm -rf node_modules/.cache .eslintcache tsconfig.tsbuildinfo .turbo",
+    "prettier-fix": "pnpm exec prettier **/* --write --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
+    "prettier-check": "pnpm exec prettier **/* --check --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
+    "eslint-check": "pnpm exec eslint --cache --quiet --report-unused-disable-directives ./src",
+    "eslint-fix": "pnpm exec eslint --cache --quiet --report-unused-disable-directives ./src --fix",
+    "ts-check": "tsc --noEmit",
+    "test": "pnpm exec vitest run --reporter=minimal",
+    "test-watch": "pnpm exec vitest --watch --silent passed-only",
+    "test-report": "pnpm exec vitest run --coverage --silent passed-only",
+    "infra-kit-check": "pnpm exec infra-kit audit",
+    "qa": "pnpm run prettier-check && pnpm run eslint-check && pnpm run ts-check && pnpm run test && echo ✅ Success",
+    "fix": "pnpm run prettier-fix && pnpm run eslint-fix && pnpm run qa"
+  },
+  "dependencies": {
+    "@slip-stream-kit/config": "^0.3.0"
+  },
+  "peerDependencies": {
+    "vite": ">=6"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "@wl/eslint-config": "workspace:*",
+    "@wl/vitest-config": "workspace:*",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3",
+    "vite": "catalog:",
+    "vitest": "^4.1.9"
+  }
+}

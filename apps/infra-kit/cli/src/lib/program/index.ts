@@ -1,1 +1,1 @@
-export { buildProgram, commandPath, invokedViaMenu } from './program'
+export { buildProgram, commandPath } from './program'

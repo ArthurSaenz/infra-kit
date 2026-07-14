@@ -10,16 +10,17 @@
 import inquirerCheckbox from '@inquirer/checkbox'
 import inquirerConfirm from '@inquirer/confirm'
 import inquirerSelect, { Separator } from '@inquirer/select'
+import { loadDev } from '@slip-stream-kit/config/internal'
 import path from 'node:path'
 import process from 'node:process'
 
 import { discoverApiApps, discoverUiApps, findMonorepoRoot } from 'src/dev/discovery'
 import { commandEcho } from 'src/lib/command-echo'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
+import { readTokenStore } from 'src/lib/env-tokens'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import type { DevPreset } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
-import { loadDev } from 'src/lib/vite/vite'
 
 import { deriveManualPlan, equivalentCommand } from './dev-wizard.js'
 import type { DerivedPlan, ManualSelection, ProxyBackend, WizardApp, WizardModel } from './dev-wizard.js'
@@ -155,7 +156,19 @@ export const gatherWizardModel = async (root: string): Promise<WizardModel> => {
     }),
   )
 
-  return { apps, presets: Object.keys(config.devServersPresets ?? {}), environments: config.environments }
+  // The cloud-env choices are the envs we hold a token for — the same authority as `env-load`, because
+  // it is the same question. This picker writes INFRA_KIT_ENV, which `@slip-stream-kit/config/vite`
+  // reads to build the cloud backend's URL, and whose only other writer is `env-load` (which cannot run
+  // without a Doppler token). Sourcing it from the workflow options instead would put `prod` in the list
+  // for everyone — including a developer holding no prod credential — and point a local UI at
+  // production. No token, no entry.
+  const store = await readTokenStore()
+
+  return {
+    apps,
+    presets: Object.keys(config.devServersPresets ?? {}),
+    environments: Object.keys(store?.envs ?? {}).sort(),
+  }
 }
 
 /**
@@ -311,7 +324,6 @@ const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Prom
 
 /** Print the equivalent flag command (and, for a part-level selection, the save-as-preset hint). */
 const echoManual = (plan: DerivedPlan, selection: ManualSelection, model: WizardModel): void => {
-  commandEcho.start('dev')
   commandEcho.setInteractive()
 
   const eq = equivalentCommand(plan, selection, model)
@@ -328,7 +340,6 @@ const echoManual = (plan: DerivedPlan, selection: ManualSelection, model: Wizard
 const runPresetBranch = async (prompts: WizardPrompts, preset: string): Promise<WizardResult> => {
   const watch = await prompts.confirm({ message: '👀 Rebuild & restart on save (watch)?', default: false })
 
-  commandEcho.start('dev')
   commandEcho.setInteractive()
   commandEcho.addOption(preset, true)
   if (watch) commandEcho.addOption('--watch', true)

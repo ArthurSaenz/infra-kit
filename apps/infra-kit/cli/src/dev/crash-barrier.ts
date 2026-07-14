@@ -46,14 +46,26 @@ const writeStderr = (message: string): void => {
   }
 }
 
-/** Default fault reporter: message AND stack to stderr, plus a note that the session was kept alive. */
-const defaultOnFault = (event: FaultEvent, error: unknown): void => {
+/**
+ * The fault report, as one string: message AND stack, plus a note that the session was kept alive.
+ *
+ * Exported because the dev-server must route this into the panel's error counter and onto the terminal
+ * through the interceptor's bypass. `infra-kit dev` no longer prints logs, and the interceptor owns
+ * `process.stderr` — so the default stderr write below would file a crash into a log file and leave the
+ * panel showing a healthy, silent session. A fault is the one thing that may never be quiet.
+ */
+export const formatFault = (event: FaultEvent, error: unknown): string => {
   const detail = error instanceof Error ? `${error.message}\n${error.stack ?? '(no stack)'}` : String(error)
 
-  writeStderr(
+  return (
     `\n⚠️  ${event}: ${detail}\n` +
-      `   dev-server kept alive (likely a bug in a handler's async path); restart if it misbehaves.\n`,
+    `   dev-server kept alive (likely a bug in a handler's async path); restart if it misbehaves.\n`
   )
+}
+
+/** Default fault reporter: straight to stderr. Replaced by the dev entry, which also files + counts it. */
+const defaultOnFault = (event: FaultEvent, error: unknown): void => {
+  writeStderr(formatFault(event, error))
 }
 
 const defaultRegister = (event: FaultEvent, handler: (error: unknown) => void): void => {

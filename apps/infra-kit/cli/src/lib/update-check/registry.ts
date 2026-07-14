@@ -17,8 +17,24 @@ export const FETCH_TIMEOUT_MS = 2_500
  * @example
  * registryUrl({ npm_config_registry: 'https://nexus.corp/repo/npm/' }) // => 'https://nexus.corp/repo/npm'
  */
+/**
+ * `npm_config_registry` in WHICHEVER case the environment spells it.
+ *
+ * A bare `env.npm_config_registry` reads only the lowercase form, but npm itself matches `/^npm_config_/i`,
+ * and POSIX `process.env` is case-SENSITIVE — so a `NPM_CONFIG_REGISTRY` (the form Dockerfiles and CI
+ * images export) was invisible here while npm honoured it. The check then queried the public registry that
+ * the install would never touch: the two halves of this feature were exactly inverted.
+ */
+const configuredRegistry = (env: NodeJS.ProcessEnv): string | undefined => {
+  const hit = Object.entries(env).find(([key, value]) => {
+    return /^npm_config_registry$/i.test(key) && value != null && value !== ''
+  })
+
+  return hit?.[1]
+}
+
 export const registryUrl = (env: NodeJS.ProcessEnv): string => {
-  const configured = env.npm_config_registry
+  const configured = configuredRegistry(env)
 
   let base = configured != null && configured !== '' ? configured : DEFAULT_REGISTRY
 

@@ -24,12 +24,10 @@ vi.mock('src/lib/git-utils', () => {
 })
 
 const VALID_JSON = JSON.stringify({
-  environments: ['dev', 'staging'],
   envManagement: { provider: 'doppler', config: { name: 'my-project' } },
 })
 
 const ALTERNATE_JSON = JSON.stringify({
-  environments: ['dev'],
   envManagement: { provider: 'doppler', config: { name: 'other-project' } },
 })
 
@@ -73,9 +71,22 @@ describe('getInfraKitConfig', () => {
       const cfg = await getInfraKitConfig()
 
       expect(cfg.envManagement.config.name).toBe('my-project')
-      expect(cfg.environments).toEqual(['dev', 'staging'])
       expect(cfg.taskManager).toBeUndefined()
       expect(cfg.ide).toBeUndefined()
+    })
+  })
+
+  it('rejects a config that still carries the removed `environments` key', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({
+          environments: ['dev', 'staging'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+        }),
+      )
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/Unrecognized key: "environments"/)
     })
   })
 
@@ -84,7 +95,6 @@ describe('getInfraKitConfig', () => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
-          environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } },
           taskManager: { provider: 'jira', config: { baseUrl: 'https://example.atlassian.net', projectId: 123 } },
@@ -114,7 +124,6 @@ describe('getInfraKitConfig', () => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
-          environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           ide: { provider: 'zed', config: {} },
         }),
@@ -131,7 +140,6 @@ describe('getInfraKitConfig', () => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
-          environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           ide: { provider: 'zed', config: { mode: 'windows' } },
         }),
@@ -156,7 +164,6 @@ describe('getInfraKitConfig', () => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
-          environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           ide: [
             { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } },
@@ -180,7 +187,6 @@ describe('getInfraKitConfig', () => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
-          environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           ide: [
             { provider: 'cursor', config: { workspaceConfigPath: './a.code-workspace' } },
@@ -198,7 +204,6 @@ describe('getInfraKitConfig', () => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
-          environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           ide: [],
         }),
@@ -213,7 +218,6 @@ describe('getInfraKitConfig', () => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
-          environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           ide: { provider: 'vscode', config: {} },
         }),
@@ -228,7 +232,6 @@ describe('getInfraKitConfig', () => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
-          environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           worktrees: { openInGithubDesktop: false, openInCmux: true },
         }),
@@ -288,7 +291,6 @@ describe('getInfraKitConfig', () => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
-          environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           ide: { provider: 'cursor', config: {} },
         }),
@@ -324,7 +326,6 @@ describe('getInfraKitConfig', () => {
 
       const cfg = await getInfraKitConfig()
 
-      expect(cfg.environments).toEqual(['dev', 'staging'])
       expect(cfg.envManagement.config.name).toBe('my-project')
     })
   })
@@ -344,7 +345,6 @@ describe('getInfraKitConfig', () => {
 
       const cfg = await getInfraKitConfig()
 
-      expect(cfg.environments).toEqual(['dev', 'staging'])
       expect(cfg.envManagement.config.name).toBe('my-project')
     })
   })
@@ -359,7 +359,7 @@ describe('getInfraKitConfig', () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
-        JSON.stringify({ environments: [], envManagement: { provider: 'doppler', config: { name: '' } } }),
+        JSON.stringify({ envManagement: { provider: 'doppler', config: { name: '' } } }),
       )
 
       await expect(getInfraKitConfig()).rejects.toThrow(/Invalid infra-kit\.json/)
@@ -385,7 +385,6 @@ describe('getInfraKitConfig', () => {
       const second = await getInfraKitConfig()
 
       expect(second.envManagement.config.name).toBe('other-project')
-      expect(second.environments).toEqual(['dev'])
     })
   })
 
@@ -590,7 +589,6 @@ describe('getInfraKitConfigPaths memoization', () => {
 
 describe('resolveConfiguredIdes', () => {
   const base = {
-    environments: ['dev'],
     envManagement: { provider: 'doppler', config: { name: 'p' } },
   } as InfraKitConfig
 
@@ -630,7 +628,6 @@ describe('resolveConfiguredIdes', () => {
 
 describe('resolveCmuxLayout', () => {
   const base = {
-    environments: ['dev'],
     envManagement: { provider: 'doppler', config: { name: 'p' } },
   } as InfraKitConfig
 
@@ -663,7 +660,6 @@ describe('worktrees.cmux schema validation', () => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
-          environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           worktrees: { openInCmux: true, cmux: { layout: 'three-pane' } },
         }),
@@ -680,7 +676,6 @@ describe('worktrees.cmux schema validation', () => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
-          environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           worktrees: { cmux: { layout: 'four-pane' } },
         }),

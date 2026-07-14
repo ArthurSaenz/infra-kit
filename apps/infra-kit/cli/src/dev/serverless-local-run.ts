@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url'
 import { parse as parseYaml } from 'yaml'
 
 import type { ILogger } from './interfaces.js'
+import { enterAttribution, runAttributed } from './log-attribution.js'
 
 export interface IServerConfig {
   controllersPath: string
@@ -28,6 +29,13 @@ export interface IServerConfig {
    * routes this into its renderer's live tail. Independent of the env-gated raw stdout line below.
    */
   onRequestLog?: (event: { method: string; path: string; status: number; ms: number }) => void
+  /**
+   * The service tag (`<app>/api`) every line this app emits is filed under — a handler's `console.log`,
+   * a Powertools line, a dependency's banner. The backend is IN-PROCESS and multi-app, so nothing in a
+   * raw stdout write says which app wrote it; entering an `AsyncLocalStorage` context per request is
+   * what makes the attribution possible at all. Omit → those lines land in the runner's fallback bucket.
+   */
+  serviceTag?: string
 }
 
 /** True when a listen error is a port-already-in-use (`EADDRINUSE`) failure. */
@@ -86,6 +94,14 @@ export class ServerlessLocalRun {
         request: { method: string },
         reply: { header: (k: string, v: string) => unknown; status: (n: number) => { send: () => void } },
       ) => {
+        // Claim every line the rest of this request emits for this app. `enterWith` (not `run`) because
+        // fastify owns the call into the handler — we cannot wrap it. Entering here makes the WHOLE
+        // remaining hook chain a continuation of this context: the handler, `onResponse` (where the raw
+        // request line is written), and the error handler all attribute to the same app.
+        const serviceTag = this.serverConfig.serviceTag
+
+        if (serviceTag != null) enterAttribution(serviceTag)
+
         reply.header('Access-Control-Allow-Origin', '*')
         reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS')
         reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
@@ -275,10 +291,22 @@ export class ServerlessLocalRun {
 
     // Search params bust Node's ESM import cache so watch rebuilds load new `dist` output.
     fileUrl.searchParams.set('v', this.importCacheBust)
-    const action = (await import(fileUrl.href)) as Record<
-      string,
-      (event: APIGatewayProxyEvent, ctx: Context, log: ILogger) => HandlerResult
-    >
+
+    // Attribute the handler module's IMPORT-TIME output — a banner from one of its deps, a top-level
+    // log — to this app rather than the runner's fallback bucket. Honest limit: a library shared by two
+    // apps is ONE module instance, so anything it registers at import keeps whichever app loaded it
+    // first. That is inference, not declaration; the fallback bucket is named precisely so the wrong
+    // guess is never made silently.
+    const serviceTag = this.serverConfig.serviceTag
+    const importHandler = async (): Promise<
+      Record<string, (event: APIGatewayProxyEvent, ctx: Context, log: ILogger) => HandlerResult>
+    > => {
+      return (await import(fileUrl.href)) as Record<
+        string,
+        (event: APIGatewayProxyEvent, ctx: Context, log: ILogger) => HandlerResult
+      >
+    }
+    const action = serviceTag == null ? await importHandler() : await runAttributed(serviceTag, importHandler)
 
     this.controllers[routeKey] = { action, handler }
 

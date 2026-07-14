@@ -1,3 +1,4 @@
+import { VENDOR_CONFIG_FILE } from '@slip-stream-kit/config/internal'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
@@ -6,7 +7,6 @@ import { pathToFileURL } from 'node:url'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { fileExists, tildify } from 'src/lib/path-display'
-import { VENDOR_CONFIG_FILE } from 'src/lib/vendor/config-schema'
 import { expandTilde, getFactoryConfigPath, loadFactoryConfig } from 'src/lib/vendor/factory-config'
 
 interface VendorConfigOptions {
@@ -50,7 +50,7 @@ const printFactoryConfig = async (): Promise<void> => {
   logger.info(`Factory config: ${tildify(factoryPath)}   ${exists ? '[✓]' : '[ ]'}`)
 
   if (!exists) {
-    logger.info('\nNot found — run `infra-kit vendor-config --init` to scaffold it.')
+    logger.info('\nNot found — run `infra-kit vendor config --init` to scaffold it.')
     process.exitCode = 1
 
     return

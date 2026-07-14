@@ -1,4 +1,6 @@
-export { decideAutoLoad, resolveEnvAutoLoad, runEnvAutoLoad } from './env-autoload'
+export { buildAuthFailureWarning, parseAuthFailureMarker } from './auth-failure'
+export type { AuthFailureClassifier, AuthFailureMarker } from './auth-failure'
+export { decideAutoLoad, resolveEnvAutoLoad, runEnvAutoLoad, surfaceStickyAuthFailure } from './env-autoload'
 export type {
   AutoLoadDecision,
   AutoLoadDecisionInput,

@@ -1,5 +1,4 @@
 {
-  "environments": ["dev", "arthur"],
   "envManagement": {
     "provider": "doppler",
     "config": {

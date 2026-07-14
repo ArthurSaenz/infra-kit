@@ -10,6 +10,11 @@ interface CommandPaletteProps {
   onSelect: (name: string) => void
   /** Called when the user cancels (Esc / Ctrl-C); the app then exits. */
   onCancel: () => void
+  /**
+   * Stop the foreground job (Ctrl-Z). ABSENT means suspend is impossible on this platform — the
+   * palette stays pure presentation and never inspects `process`; boot.tsx is the platform authority.
+   */
+  onSuspend?: () => void
 }
 
 /**
@@ -17,12 +22,16 @@ interface CommandPaletteProps {
  * flat list of commands (already grouped/ordered by the catalog) and returns the
  * selected name. It never executes anything — the caller runs the command via
  * the existing Commander path.
+ *
+ * NOTE: this component sits at exactly the sonarjs cognitive-complexity ceiling (15). Any `if` or
+ * `?:` added to its BODY breaks `pnpm run qa` — which is why the hint is picked by the module-scope
+ * `hintFor` below and the control keys by `handleCtrlKey`, rather than inline.
  */
 export const CommandPalette = (props: CommandPaletteProps) => {
-  const { items, onSelect, onCancel } = props
+  const { items, onSelect, onCancel, onSuspend } = props
 
   const T = {
-    hint: 'Select a command — type to filter, ↑↓ to move, Enter to run, Esc to cancel',
+    hint: hintFor(Boolean(onSuspend)),
     prompt: '❯ ',
     empty: 'No matching commands',
     tiny: 'terminal too short — resize to pick a command',
@@ -30,7 +39,7 @@ export const CommandPalette = (props: CommandPaletteProps) => {
   }
   const nameWidth = 24
 
-  const { exit } = useApp()
+  const { exit, suspendTerminal } = useApp()
   const { rows } = useWindowSize()
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
@@ -90,6 +99,58 @@ export const CommandPalette = (props: CommandPaletteProps) => {
     setSubmitted(true)
   }
 
+  // Hand the terminal back to the user's shell until they `fg`.
+  //
+  // Ink does all the terminal work for us, in the right order and synchronously: `beginSuspend`
+  // settles pending frames, erases the list, restores the cursor and drops raw mode BEFORE our
+  // callback runs, and on resume `endSuspend` re-arms raw mode and force-redraws THIS SAME LIVE
+  // COMPONENT — so the typed filter survives the suspend. That is why we must NOT set `submitted`
+  // here: unmounting would throw the query away and give us a blank palette on return.
+  //
+  // The `.catch` is the PRIMARY guard, not a backstop — never simplify it to `void`. Two 0x1a bytes
+  // in one read chunk (a double-tap) are both already queued in Ink's input loop, and `pauseInput`
+  // only detaches the stdin listener, so the second one still fires — into a `beginSuspend` that is
+  // already suspended, which throws. Harmless (it throws before flipping its own state, and the first
+  // suspension still unwinds), but the rejection must be caught: `void` would make it an unhandled
+  // rejection that kills the process mid terminal-restore.
+  const suspend = () => {
+    if (!onSuspend) {
+      return
+    }
+
+    suspendTerminal(onSuspend).catch(() => {
+      // See above: a double Ctrl-Z is a no-op, not a crash.
+    })
+  }
+
+  /**
+   * Ctrl-C / Ctrl-Z, hoisted OUT of the `useInput` body. Mandatory, not tidiness: that handler sits at
+   * cognitive complexity 14, and an inline `if (key.ctrl && input === 'z' && onSuspend)` costs +2 —
+   * 16, over the sonarjs ceiling of 15, and `pnpm run qa` goes red.
+   *
+   * The palette's Ctrl-Z is a BYTE (0x1a), not a signal: Ink holds stdin in raw mode, which clears
+   * termios ISIG, so the tty never generates SIGTSTP here at all. We therefore stop the process GROUP
+   * ourselves (kill(0), see ../suspend.ts). The session shell's SIGTSTP handler does the opposite —
+   * it self-stops with raise('SIGSTOP') (lib/session/run-session.ts) — and that is CORRECT there,
+   * because while a child command holds the foreground the tty is cooked and has already TSTP'd the
+   * whole group, leaving only us to follow. DO NOT UNIFY THE TWO.
+   */
+  const handleCtrlKey = (input: string): boolean => {
+    if (input === 'c') {
+      quit()
+
+      return true
+    }
+
+    if (input === 'z') {
+      suspend()
+
+      return true
+    }
+
+    return false
+  }
+
   // Move the active row by `delta`, wrapping. The `+ n` sidesteps JS negative modulo
   // (e.g. -1 % 5 === -1, not 4). No-op on an empty list.
   const step = (delta: number) => {
@@ -105,11 +166,10 @@ export const CommandPalette = (props: CommandPaletteProps) => {
       return
     }
 
-    // Ctrl-C always quits; Esc clears a non-empty filter first, and only quits on an empty filter —
-    // the standard REPL/palette split, so the session shell keeps running while the user narrows.
-    if (key.ctrl && input === 'c') {
-      quit()
-
+    // Ctrl-C quits, Ctrl-Z suspends (see handleCtrlKey). Esc clears a non-empty filter first, and
+    // only quits on an empty filter — the standard REPL/palette split, so the session shell keeps
+    // running while the user narrows.
+    if (key.ctrl && handleCtrlKey(input)) {
       return
     }
 
@@ -225,4 +285,29 @@ export const CommandPalette = (props: CommandPaletteProps) => {
       </Box>
     </Box>
   )
+}
+
+/** Footer copy. Kept out of the component's `T` because picking between the two is a conditional. */
+const HINTS = {
+  suspend: 'type to filter · ↑↓ move · Enter run · Ctrl-Z suspend · Esc cancel',
+  plain: 'type to filter · ↑↓ move · Enter run · Esc cancel',
+}
+
+/**
+ * The footer hint, which advertises Ctrl-Z only where suspending is possible.
+ *
+ * Module scope for two reasons, both load-bearing. It cannot live in the component: a `?:` in
+ * `CommandPalette`'s body pushes it from 15 to 16, over the sonarjs cognitive-complexity ceiling. And
+ * it cannot sit above the component either: `@wl/component-file-order` pins this file to
+ * imports → props interface → component with nothing in between. Below is the only legal home.
+ *
+ * Both strings are SHORTER than the hint they replace, on purpose — the footer renders with
+ * `wrap="truncate"`, so anything longer silently loses its tail on a narrow terminal, and the tail is
+ * exactly where a newly-added key would land.
+ *
+ * @example
+ * hintFor(true).includes('Ctrl-Z') // => true
+ */
+const hintFor = (canSuspend: boolean): string => {
+  return canSuspend ? HINTS.suspend : HINTS.plain
 }

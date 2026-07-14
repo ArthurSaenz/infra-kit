@@ -1,8 +1,7 @@
 import { Command } from 'commander'
 import process from 'node:process'
 
-// TEMP: `audit` is disabled — restore this import together with the command registration below.
-// import { audit } from 'src/commands/audit'
+import { audit } from 'src/commands/audit'
 import { configEdit, configPath } from 'src/commands/config'
 import { doctor } from 'src/commands/doctor'
 import { envAutoload } from 'src/commands/env-autoload'
@@ -10,6 +9,9 @@ import { envClear } from 'src/commands/env-clear'
 import { envList } from 'src/commands/env-list'
 import { envLoad } from 'src/commands/env-load'
 import { envStatus } from 'src/commands/env-status'
+import { envTokenList } from 'src/commands/env-token-list'
+import { envTokenRemove } from 'src/commands/env-token-remove'
+import { envTokenSet } from 'src/commands/env-token-set'
 import { ghMergeDev } from 'src/commands/gh-merge-dev'
 import { ghReleaseDeliver } from 'src/commands/gh-release-deliver'
 import { ghReleaseDeployAll } from 'src/commands/gh-release-deploy-all'
@@ -36,7 +38,7 @@ import type { IdeMode } from 'src/integrations/ide'
 import { isLongRunningCommand } from 'src/lib/command-catalog'
 import { commandEcho } from 'src/lib/command-echo'
 import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
-import { runEnvAutoLoad } from 'src/lib/env-autoload'
+import { runEnvAutoLoad, surfaceStickyAuthFailure } from 'src/lib/env-autoload'
 import { addJsonOption, emit, jsonOutput } from 'src/lib/json-output'
 import { logger } from 'src/lib/logger'
 import { equivalentLine } from 'src/lib/session/equivalent'
@@ -80,24 +82,11 @@ const normalizeIdeMode = (value: unknown, flagName: '--ide' | '--cursor'): IdeMo
   throw new Error(`Invalid ${flagName} value "${String(value)}". Expected one of: ${IDE_MODES.join(', ')}.`)
 }
 
-// --- Deprecation support for flat command aliases (Phase 3 grouping) ---
-// Flat names (`release-create`, `worktrees-add`, `vendor-config`, ...) are kept
-// as working aliases of the grouped forms (`release create`, ...) for one
-// release cycle. They warn once when invoked directly, but stay silent when the
-// interactive no-arg menu drives them (the menu is a guided surface). The flag is
-// a shared singleton so `cli.ts`'s menu path can silence the warning.
-export const invokedViaMenu = { value: false }
-
-const deprecatedAlias = (cmd: Command, preferred: string): Command => {
-  return cmd.hook('preAction', () => {
-    if (!invokedViaMenu.value) {
-      logger.warn(`"${cmd.name()}" is a deprecated alias; use "${preferred}" instead.`)
-    }
-  })
-}
-
-// --- Command configurators (one source of options + action, shared by the
-// grouped form and its flat alias so the two can never diverge) ---
+// --- Command configurators (one source of options + action per command) ---
+//
+// These were factored out when each command had TWO registrations — a grouped form and a flat alias —
+// that had to be kept from diverging. The flat aliases are gone; the configurators stay because they
+// keep `buildProgram` readable, and a command still gets exactly one definition.
 const configureMergeDev = (cmd: Command): Command => {
   return cmd
     .description('Merge dev branch into every release branch')
@@ -370,9 +359,9 @@ export const commandPath = (leaf: Command): string => {
 }
 
 /**
- * Build the full Commander program (grouped surface, deprecated flat aliases, hidden menu-leaf
- * aliases, `--json` on every command, and the pre-action auto-load hook). Pure: no I/O, no top-level
- * await, no process mutation — safe to import from a test to introspect the command tree.
+ * Build the full Commander program: ONE surface per command (the grouped form — `release create`, never
+ * `release-create`), plus `--json` on every command and the pre-action auto-load hook. Pure: no I/O, no
+ * top-level await, no process mutation — safe to import from a test to introspect the command tree.
  *
  * @example
  * const program = buildProgram()
@@ -400,47 +389,25 @@ export const buildProgram = (): Command => {
   configureWorktreesSync(worktreesGroup.command('sync'))
   configureWorktreesReload(worktreesGroup.command('reload'))
 
-  // --- Deprecated flat aliases (kept one release cycle; warn when used directly) ---
-  deprecatedAlias(configureMergeDev(program.command('merge-dev')), 'release merge-dev')
-  deprecatedAlias(configureReleaseList(program.command('release-list')), 'release list')
-  deprecatedAlias(configureReleaseCreate(program.command('release-create')), 'release create')
-  deprecatedAlias(configureReleaseDescEdit(program.command('release-desc-edit')), 'release desc-edit')
-  deprecatedAlias(configureReleaseDeployAll(program.command('release-deploy-all')), 'release deploy-all')
-  deprecatedAlias(configureReleaseDeploySelected(program.command('release-deploy-selected')), 'release deploy-selected')
-  deprecatedAlias(configureReleaseDeliver(program.command('release-deliver')), 'release deliver')
-  deprecatedAlias(configureWorktreesAdd(program.command('worktrees-add')), 'worktrees add')
-  deprecatedAlias(configureWorktreesList(program.command('worktrees-list')), 'worktrees list')
-  deprecatedAlias(configureWorktreesRemove(program.command('worktrees-remove')), 'worktrees remove')
-  deprecatedAlias(configureWorktreesSync(program.command('worktrees-sync')), 'worktrees sync')
-  deprecatedAlias(configureWorktreesReload(program.command('worktrees-reload')), 'worktrees reload')
-
   const configCmd = program.command('config').description('Manage infra-kit configuration files')
 
   configureConfigPath(configCmd.command('path'))
   configureConfigEdit(configCmd.command('edit'))
 
-  // Hidden flat menu-leaf aliases: the no-arg palette invokes leaves by a single top-level token, so
-  // the group subcommands (`config path`, `vendor check`) get a flat sibling the menu can dispatch and
-  // introspect for its description. Hidden keeps them out of `--help`; they are NOT deprecated aliases,
-  // so they do not warn.
-  configureConfigPath(program.command('config-path', { hidden: true }))
-  configureConfigEdit(program.command('config-edit', { hidden: true }))
+  program
+    .command('audit')
+    .description('Audit against infra-kit.config.ts rules (--all for every package, --root for the monorepo root)')
+    .option('-a, --all', 'Audit every non-vendor workspace package')
+    .option('-r, --root', 'Audit the monorepo root (turbo pipeline + root commands)')
+    .action(async (options) => {
+      const result = await audit({ all: options.all, root: options.root })
 
-  // TEMP: `audit` command registration removed. Restore with the import at the top.
-  // program
-  //   .command('audit')
-  //   .description('Audit against infra-kit.config.ts rules (--all for every package, --root for the monorepo root)')
-  //   .option('-a, --all', 'Audit every non-vendor workspace package')
-  //   .option('-r, --root', 'Audit the monorepo root (turbo pipeline + root commands)')
-  //   .action(async (options) => {
-  //     const result = await audit({ all: options.all, root: options.root })
-  //
-  //     emit(result)
-  //
-  //     if (!result.structuredContent.allPassed) {
-  //       process.exitCode = 1
-  //     }
-  //   })
+      emit(result)
+
+      if (!result.structuredContent.allPassed) {
+        process.exitCode = 1
+      }
+    })
 
   const vendorCmd = program.command('vendor').description('Verify and sync the mirrored vendor/ tree')
 
@@ -464,15 +431,7 @@ export const buildProgram = (): Command => {
     })
 
   configureVendorDiff(vendorCmd.command('diff'))
-
-  // Grouped form (preferred); the flat `vendor-config` below is a deprecated alias.
   configureVendorConfig(vendorCmd.command('config'))
-
-  deprecatedAlias(configureVendorConfig(program.command('vendor-config')), 'vendor config')
-
-  // Hidden flat menu-leaf aliases for the vendor subcommands the palette offers.
-  configureVendorCheck(program.command('vendor-check', { hidden: true }))
-  configureVendorDiff(program.command('vendor-diff', { hidden: true }))
 
   program
     .command('doctor')
@@ -546,7 +505,9 @@ export const buildProgram = (): Command => {
 
   program
     .command('env-list')
-    .description('List available Doppler configs for the detected project')
+    .description(
+      'List available Doppler configs for the detected project, and whether a service token resolves for each',
+    )
     .action(async () => {
       emit(await envList())
     })
@@ -574,6 +535,45 @@ export const buildProgram = (): Command => {
       emit(await envClear({ purge: Boolean(options.purge) }))
     })
 
+  // --- Doppler service tokens (flat, related names — not a nested `env token <sub>` group) ---
+  //
+  // There is deliberately NO `--token <value>` flag on `env-token-set`, and there must never be one:
+  // argv is world-visible in `ps`, lands in shell history, and `commandEcho` prints option VALUES back
+  // to the terminal. The three input channels below all keep the token out of argv.
+  program
+    .command('env-token-set')
+    .description('Store the Doppler service token for an env (masked prompt; validated against Doppler before writing)')
+    .argument('<env>', 'Environment / Doppler config the token is scoped to (e.g. dev)')
+    .option('--stdin', 'Read the token from stdin instead of prompting (e.g. from a password manager)')
+    .option('--from-env <var>', 'Read the token from the named environment variable (the NAME, never the value)')
+    .option('--force', 'Store even when the token’s scope could not be verified. Never overrides a real mismatch.')
+    .action(async (env, options) => {
+      emit(
+        await envTokenSet({
+          env,
+          stdin: options.stdin,
+          fromEnv: options.fromEnv,
+          force: options.force,
+        }),
+      )
+    })
+
+  program
+    .command('env-token-list')
+    .description('Show which envs have a Doppler service token (redacted), and where it came from')
+    .option('--check', 'Also ask Doppler whether each token is valid and correctly scoped')
+    .action(async (options) => {
+      emit(await envTokenList({ check: Boolean(options.check) }))
+    })
+
+  program
+    .command('env-token-remove')
+    .description('Delete an env’s Doppler service token from the local store (does NOT revoke it in Doppler)')
+    .argument('<env>', 'Environment / Doppler config whose token to remove')
+    .action(async (env) => {
+      emit(await envTokenRemove({ env }))
+    })
+
   // Internal: driven by the init shell-startup integration (backgrounded). Writes
   // env-load.sh when envAutoLoad is configured + eligible; the precmd hook sources
   // it. Hidden + no stdout output so it never pollutes the shell or the menu.
@@ -594,6 +594,13 @@ export const buildProgram = (): Command => {
   program.commands.forEach(addJsonOption)
 
   program.hook('preAction', async (_thisCommand, actionCommand) => {
+    // Bind the "📟 Equivalent command" line to the argv Commander just parsed. This is the only place
+    // that knows it, so it is the only place that says it: when the commands named themselves, they
+    // printed the flat `release-create`, which the grouped-only surface no longer parses — a replay line
+    // that errors out. `commandPath()` is the same string the menu spawns, so what we print is runnable
+    // by construction, and stays runnable through any future regrouping.
+    commandEcho.start(commandPath(actionCommand))
+
     // `optsWithGlobals` (not `opts`) so `--json` is seen on grouped subcommands:
     // for `release list --json` Commander binds the post-subcommand flag to the
     // parent `release` group, so the leaf's own `opts()` would not carry it.
@@ -620,6 +627,15 @@ export const buildProgram = (): Command => {
     if (!SEED_EXCLUDED.has(commandPath(actionCommand))) {
       await ensureUserProjectConfig()
     }
+
+    // Replay a sticky Doppler auth failure (revoked / mis-scoped service token) recorded
+    // by the BACKGROUNDED shell-startup auto-load, which runs with stderr discarded and
+    // so has no channel of its own. Deliberately OUTSIDE the auto-load exclusion below:
+    // warning is not loading. `version`, `doctor` and `dev` never auto-load, but they are
+    // exactly what a user whose shell env went quiet runs next — gating the warning on the
+    // same set would leave them warned by nothing. Warns at most once per session, never
+    // throws, and writes nothing to stdout.
+    surfaceStickyAuthFailure()
 
     // cli-invocation auto-load: primes the shell env for SUBSEQUENT commands. The
     // current command does NOT see these vars — a child process can't mutate its

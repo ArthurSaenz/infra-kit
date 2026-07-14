@@ -1,7 +1,7 @@
 export {
   commandCatalog,
   getExposedMcpTools,
-  getMenuGroupCommands,
+  getMenuGroupEntries,
   isLongRunningCommand,
   MENU_GROUPS,
 } from './command-catalog'

@@ -24,6 +24,13 @@ describe('registryUrl', () => {
   it('ignores an empty override', () => {
     expect(registryUrl({ npm_config_registry: '' })).toBe(DEFAULT_REGISTRY)
   })
+
+  it('honours the UPPERCASE NPM_CONFIG_REGISTRY that npm itself honours', () => {
+    // npm's config parser matches /^npm_config_/i, but POSIX process.env is case-SENSITIVE — so reading
+    // only `env.npm_config_registry` missed the form Dockerfiles and CI images actually export. The check
+    // then queried the public registry while the install went to the mirror: exactly inverted.
+    expect(registryUrl({ NPM_CONFIG_REGISTRY: 'https://nexus.corp/npm/' })).toBe('https://nexus.corp/npm')
+  })
 })
 
 describe('fetchLatestVersion', () => {

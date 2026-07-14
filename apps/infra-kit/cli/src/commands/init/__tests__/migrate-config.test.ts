@@ -20,10 +20,7 @@ vi.mock('src/lib/git-utils', () => {
   }
 })
 
-const MAIN_YML = `environments:
-  - dev
-  - staging
-envManagement:
+const MAIN_YML = `envManagement:
   provider: doppler
   config:
     name: my-project
@@ -70,7 +67,6 @@ describe('migrateLegacyConfig', () => {
       expect(fs.existsSync(ymlPath)).toBe(false)
       expect(fs.existsSync(jsonPath)).toBe(true)
       expect(JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))).toEqual({
-        environments: ['dev', 'staging'],
         envManagement: { provider: 'doppler', config: { name: 'my-project' } },
       })
     })
@@ -116,7 +112,7 @@ describe('migrateLegacyConfig', () => {
       const userGlobalJson = path.join(tmp, '.infra-kit', 'infra-kit.json')
 
       writeFile(mainYml, MAIN_YML)
-      // Invalid override: environments present but empty (min(1) fails).
+      // Invalid override: `environments` is no longer a recognized key at all (strict schema).
       writeFile(userGlobalYml, 'environments: []\n')
 
       await expect(migrateLegacyConfig()).resolves.toBeUndefined()

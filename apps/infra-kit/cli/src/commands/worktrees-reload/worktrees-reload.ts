@@ -36,8 +36,6 @@ interface WorktreesReloadResult {
  * (non-destructive to git — only cmux/editor view state is touched).
  */
 export const worktreesReload = async () => {
-  commandEcho.start('worktrees-reload')
-
   try {
     const projectRoot = await getProjectRoot()
     const worktreeDir = `${projectRoot}${WORKTREES_DIR_SUFFIX}`
@@ -88,7 +86,7 @@ export const worktreesReload = async () => {
     logger.error({ error }, '❌ Error reloading worktrees')
     throw new OperationError(error, {
       operation: 'reload worktrees',
-      remediation: "run 'worktrees-list' to confirm the branches exist",
+      remediation: 'run `infra-kit worktrees list` to confirm the branches exist',
     })
   }
 }

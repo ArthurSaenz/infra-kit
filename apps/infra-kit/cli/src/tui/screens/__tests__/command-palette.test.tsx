@@ -160,4 +160,62 @@ describe('commandPalette', () => {
 
     expect(onCancel).toHaveBeenCalled()
   })
+
+  /**
+   * WIRING ONLY. These prove the keystroke reaches the callback and that the hint tracks the prop —
+   * nothing more. They say NOTHING about whether the terminal is actually handed back correctly:
+   * ink-testing-library renders into a fake stdout, so raw mode, the cursor and the frame-erase are
+   * all fiction here. Terminal state is verified in scripts/qa/suspend-pty.sh, on a real pty.
+   */
+  describe('ctrl-z (wiring only — terminal state is proven in scripts/qa/suspend-pty.sh)', () => {
+    it('calls onSuspend once', async () => {
+      const onSuspend = vi.fn()
+      const { stdin } = render(
+        <CommandPalette items={items} onSelect={vi.fn()} onCancel={vi.fn()} onSuspend={onSuspend} />,
+      )
+
+      stdin.write('\x1A') // ctrl-z — a BYTE, not a signal: Ink's raw mode clears termios ISIG
+      await settle()
+
+      expect(onSuspend).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not cancel or select — the palette stays mounted so the filter survives the suspend', async () => {
+      const onCancel = vi.fn()
+      const onSelect = vi.fn()
+      const { lastFrame, stdin } = render(
+        <CommandPalette items={items} onSelect={onSelect} onCancel={onCancel} onSuspend={vi.fn()} />,
+      )
+
+      stdin.write('env')
+      await settle()
+      stdin.write('\x1A')
+      await settle()
+
+      expect(onCancel).not.toHaveBeenCalled()
+      expect(onSelect).not.toHaveBeenCalled()
+      expect(lastFrame() ?? '').toContain('env-status')
+    })
+
+    it('is an inert no-op when suspend is unavailable — and never types a "z" into the filter', async () => {
+      const { lastFrame, stdin } = render(<CommandPalette items={items} onSelect={vi.fn()} onCancel={vi.fn()} />)
+
+      stdin.write('\x1A')
+      await settle()
+
+      // The filter is untouched, so every command still shows.
+      expect(lastFrame() ?? '').toContain('release-list')
+      expect(lastFrame() ?? '').toContain('env-status')
+    })
+
+    it('advertises ctrl-z in the hint only where suspending is possible', () => {
+      const withSuspend = render(
+        <CommandPalette items={items} onSelect={vi.fn()} onCancel={vi.fn()} onSuspend={vi.fn()} />,
+      )
+      const without = render(<CommandPalette items={items} onSelect={vi.fn()} onCancel={vi.fn()} />)
+
+      expect(withSuspend.lastFrame() ?? '').toContain('Ctrl-Z')
+      expect(without.lastFrame() ?? '').not.toContain('Ctrl-Z')
+    })
+  })
 })

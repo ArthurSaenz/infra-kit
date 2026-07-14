@@ -1,15 +1,14 @@
+import { VENDOR_CONFIG_FILE, vendorConfigSchema } from '@slip-stream-kit/config/internal'
+import type { VendorConfig } from '@slip-stream-kit/config/internal'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 
-import { VENDOR_CONFIG_FILE, vendorConfigSchema } from './config-schema'
-import type { VendorConfig } from './config-schema'
-
 // Convenience re-export so importers of the loader can also grab the authoring
 // helper from one module. The node-free definitions live in `./config-schema`
 // (the public `.d.ts` emit imports from there to stay node-type-free).
-export { defineVendorConfig } from './config-schema'
+export { defineVendorConfig } from '@slip-stream-kit/config/internal'
 
 /**
  * Load, resolve, and validate a source repo's `vendor.config.ts`.

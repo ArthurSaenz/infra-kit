@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import { buildProgram } from 'src/lib/program'
 
-import { MENU_GROUPS, getMenuGroupCommands } from '../command-catalog'
-import { buildPaletteItems } from '../palette'
+import { MENU_GROUPS, getMenuGroupEntries } from '../command-catalog'
+import { buildPaletteItems, resolveLeaf } from '../palette'
 
 /**
  * The palette as the user actually sees it, built from the real Commander program. This is the assertion
@@ -33,28 +33,42 @@ const groupedNames = (): [string, string[]][] => {
 }
 
 describe('command palette', () => {
-  it('renders seven honest groups, with the dev server leading', () => {
+  // Every row is labelled with the command's GROUPED path — the exact argv the pick dispatches. The
+  // palette used to label these `release-create` / `vendor-check` while running `release create`, i.e. it
+  // taught a name the CLI now does not accept. A regression to the flat labels fails right here.
+  it('renders seven honest groups, labelled with the grouped path it actually runs', () => {
     expect(groupedNames()).toEqual([
       ['Develop', ['dev']],
       [
         'Release Management',
         [
-          'merge-dev',
-          'release-list',
-          'release-create',
-          'release-desc-edit',
-          'release-deploy-all',
-          'release-deploy-selected',
-          'release-deliver',
+          'release merge-dev',
+          'release list',
+          'release create',
+          'release desc-edit',
+          'release deploy-all',
+          'release deploy-selected',
+          'release deliver',
         ],
       ],
-      ['Worktrees', ['worktrees-add', 'worktrees-list', 'worktrees-reload', 'worktrees-remove', 'worktrees-sync']],
-      ['Environment', ['env-status', 'env-list', 'env-load', 'env-clear']],
-      ['Configuration', ['config-path', 'config-edit']],
-      ['Vendor', ['vendor-check', 'vendor-diff', 'vendor-config']],
-      // TEMP: `audit` is disabled in the catalog — restore it between `doctor` and `version`.
-      ['Setup & Diagnostics', ['init', 'doctor', 'version']],
+      ['Worktrees', ['worktrees add', 'worktrees list', 'worktrees reload', 'worktrees remove', 'worktrees sync']],
+      ['Environment', ['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list']],
+      ['Configuration', ['config path', 'config edit']],
+      ['Vendor', ['vendor check', 'vendor diff', 'vendor config']],
+      ['Setup & Diagnostics', ['init', 'doctor', 'audit', 'version']],
     ])
+  })
+
+  // The row label must be argv, verbatim: `entry/cli.ts` splits it on spaces and hands the tokens to
+  // Commander. A label carrying anything Commander would not parse (a flat `release-create`, a stray
+  // separator) makes the pick fail at dispatch, which no snapshot of the label alone would catch.
+  it('labels every row with tokens Commander can parse back into a command', () => {
+    for (const item of palette()) {
+      const leaf = resolveLeaf(buildProgram().commands, item.name.split(' '))
+
+      expect(leaf, `"${item.name}" does not resolve back to a Commander leaf`).toBeDefined()
+      expect(leaf!.commands, `"${item.name}" is a group, not a runnable leaf`).toHaveLength(0)
+    }
   })
 
   // `dev` was previously the ONLY command missing from the menu, hidden behind a rationale that described
@@ -94,7 +108,9 @@ describe('command palette', () => {
     )
 
     for (const { key, label } of MENU_GROUPS) {
-      for (const name of getMenuGroupCommands(key)) {
+      for (const entry of getMenuGroupEntries(key)) {
+        const name = entry.groupPath.join(' ')
+
         expect(emitted.has(name), `"${name}" (${label}) was dropped from the palette`).toBe(true)
       }
     }

@@ -1,16 +1,17 @@
 /**
- * Terminal renderer for `infra-kit dev` — a calm-print layer (never a full-screen TUI) that owns
- * every line the dev-server writes to the terminal, plus the tee to the session log (`logs.txt`).
+ * Terminal renderer for `infra-kit dev` — a calm-print layer (never a full-screen TUI).
  *
- * Design (see `.omc/plans/dev-log-redesign.md`): the boot collapses into a single transient spinner;
- * the final screen leads with per-server endpoints + health; the live tail is tagged + timestamped.
- * Full detail always reaches the log file regardless of `--verbose`.
+ * The boot collapses into a single transient spinner; the final screen is a STATUS PANEL, one row per
+ * server, carrying health, uptime, requests/min, restarts and an error count. There is no log tail:
+ * every line — framework output, request logs, a handler's own `console.log` — is written to that
+ * service's file under `<cacheRoot>/<session>/dev/<pid>/` and never printed. What still appears above
+ * the panel is only what the RUNNER says: a restart, an unhealthy app, a dead engine.
  *
- * All I/O is injected (`write` / `appendLog` / `isTTY` / `now`) so every frame is snapshot-testable
- * and the spinner is deterministically disabled in tests (`isTTY: false`). The renderer coexists with
- * a child that owns its own TTY (vite via `turbo run dev`), because that child starts only AFTER
- * {@link DevRenderer.ready} has cleared the spinner — the spinner is never live concurrently with
- * inherited child output.
+ * The panel's live fields are the reason it is a status surface and not a screenshot. With nothing
+ * scrolling beside it, a panel whose numbers never move cannot be told apart from a hung process.
+ *
+ * All I/O is injected (`write` / `appendLog` / `isTTY` / `now`) so every frame is snapshot-testable and
+ * the spinner is deterministically disabled in tests (`isTTY: false`).
  */
 import process from 'node:process'
 
@@ -32,7 +33,13 @@ export interface DevRendererDeps {
   verbose: boolean
 }
 
-/** One resolved backend endpoint row in the ready header. */
+/**
+ * One server's row on the status panel.
+ *
+ * The live fields below are what make the panel a STATUS surface rather than a screenshot. The terminal
+ * no longer carries a log tail, so a static row would leave "quiet" indistinguishable from "hung" — the
+ * moving numbers are the liveness tell, and they are not decoration.
+ */
 export interface EndpointRow {
   /** Stream tag, e.g. `client/api`. */
   tag: string
@@ -40,6 +47,19 @@ export interface EndpointRow {
   url: string
   /** Liveness: `true` → `● ok`, `false` → `● down`, `null` → no dot (not probed). */
   healthy: boolean | null
+  /** Milliseconds since this server last (re)started. Omitted on the boot frame. */
+  uptimeMs?: number
+  /** Watch-triggered restarts so far this session. */
+  restarts?: number
+  /** Requests served in the last 60s. */
+  rpm?: number
+  /**
+   * Errors this service has declared since boot — a 5xx, a `console.error`, a framework failure line.
+   * This is the ONLY error signal the user gets now that nothing prints, so a row that cannot count is
+   * a row that lies. A COUNT, never a classification: it is incremented from the level the emitter
+   * declared, never from anything read out of the line's text.
+   */
+  errors?: number
 }
 
 /**
@@ -50,6 +70,12 @@ export interface EndpointRow {
 export interface UiRef {
   /** Stream tag, e.g. `client/ui`. */
   tag: string
+  /**
+   * Errors this UI has declared since boot. Present for the same reason an {@link EndpointRow} has one:
+   * with nothing printing, a row that cannot count is a row that lies — and this row belongs to the app
+   * whose vite config never wired `infraKitDev()`, i.e. the one most likely to be misconfigured.
+   */
+  errors?: number
 }
 
 /**
@@ -64,19 +90,39 @@ export interface FailedRow {
   reason: string
 }
 
+/**
+ * A route that wanted a local backend and is falling back to cloud because that backend failed to start.
+ *
+ * It gets a row of its own — not a footnote on the failed backend's row — because the two facts land on
+ * different people. `client/api ● failed` says a server is down, which reads as "that half is broken".
+ * It does NOT say the frontend beside it came up healthy and is now sending every `/api` request to the
+ * shared cloud backend. That second fact is the one that gets you writing to the cloud dev database
+ * while you believe you are on localhost, and it is invisible everywhere else on the screen: the vite
+ * proxy resolved cleanly, so nothing else has anything to complain about.
+ *
+ * Only rendered under `--watch` — without it the run is refused outright (see `local-pairing.ts`).
+ */
+export interface DegradedRow {
+  /** Route path (e.g. `/api`). */
+  route: string
+  /** Stream tag of the frontend serving it, e.g. `client/ui`. */
+  tag: string
+  /**
+   * Where the route ACTUALLY resolves now. Not always `cloud`: the helper falls back to
+   * `route.default ?? route.from[0]`, so a single-source `from: ['local']` route with no `default` falls
+   * back to `local` — at an alias nothing registered, i.e. a 502 on every request. The row must name the
+   * real destination, or it is doing the same lying-by-omission it exists to prevent.
+   */
+  fallback: 'local' | 'cloud'
+  /** The cloud origin it now resolves to. Only ever set when `fallback` is `cloud` and it is knowable. */
+  target?: string
+}
+
 /** Everything {@link DevRenderer.ready} needs to paint the final header in one shot. */
 export interface ReadySummary {
   /** Resolved preset / target label (e.g. `client`, `*`). */
   target: string
   watch: boolean
-  /**
-   * True when this session launches a `turbo run dev` UI child that inherits the TTY. It is the
-   * authoritative "is this a UI session?" signal — NOT `uiRefs.length > 0`. A UI whose port the runner
-   * pre-assigned becomes an {@link EndpointRow}, not a {@link UiRef}, so `uiRefs` is normally empty even
-   * for a UI session; any live region painted then would scribble into vite's inherited output. The
-   * scroll-region footer (which tolerates the child) is chosen on this flag instead.
-   */
-  hasUiChild: boolean
   /** Slugified release for the header meta; omitted outside a git repo. */
   release?: string
   /** Backend readiness time in ms (UI is fire-and-forget, so this is BE-only — labeled honestly). */
@@ -90,12 +136,32 @@ export interface ReadySummary {
    * empty list; a non-empty one downgrades the title from a green `ready` to an honest `N failed`.
    */
   failed?: FailedRow[]
+  /**
+   * Routes silently demoted from local to cloud by a backend that failed to start. Recomputed on every
+   * repaint, so a route CLEARS from the panel the moment `--watch` gets its backend up (see
+   * {@link DegradedRow}).
+   */
+  degraded?: DegradedRow[]
   /** Human watch summary, e.g. `1 app · 5 packages`; omitted when not watching. */
   watchSummary?: string
-  /** Compact, human-readable log path shown as the `logs → …` label (e.g. `~/.cache/infra-kit/<session>/logs.txt`). */
+  /**
+   * Compact, human-readable log path shown as the `logs → …` label. A DIRECTORY, not a file
+   * (e.g. `~/.cache/infra-kit/<session>/dev/<pid>`): there is one log per service, so a single path
+   * would have to pick a favourite.
+   */
   logPath: string
   /** Absolute log path backing the clickable OSC-8 hyperlink (wrapped as `file://<logHref>`). */
   logHref: string
+  /**
+   * Milliseconds since the session became ready — the panel's HEARTBEAT.
+   *
+   * Every other live field belongs to a backend: uptime, req/min, restarts. A UI-only session has no
+   * backend, so its rows have nothing that moves — and Ink does not repaint an identical frame, so the
+   * screen would sit perfectly still while the session ran. With no log tail left to prove otherwise,
+   * a motionless panel is indistinguishable from a hung process. This is the one field that ticks for
+   * EVERY session shape. Omitted on the boot frame, where nothing has elapsed yet.
+   */
+  sessionUptimeMs?: number
 }
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -143,6 +209,25 @@ export const formatClock = (d: Date): string => {
 /** `2.4s` for the `ready in …` header. */
 export const formatElapsed = (ms: number): string => {
   return `${(ms / 1000).toFixed(1)}s`
+}
+
+/**
+ * `47s` / `4m12s` / `2h03m` — the panel's liveness tell.
+ *
+ * With no log tail on screen, a panel whose numbers never move is indistinguishable from a hung
+ * process. This is the field that proves the session is alive even when nothing is happening, so it is
+ * always rendered and always advancing.
+ */
+export const formatUptime = (ms: number): string => {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = total % 60
+
+  if (hours > 0) return `${hours}h${pad2(minutes)}m`
+  if (minutes > 0) return `${minutes}m${pad2(seconds)}s`
+
+  return `${seconds}s`
 }
 
 /**
@@ -310,6 +395,18 @@ export class DevRenderer implements DevUi {
 
   // ---- the ready header ---------------------------------------------------
 
+  /**
+   * The error counter, shared by endpoint rows and UI reference rows.
+   *
+   * Zero is rendered, not omitted: with nothing else printing, this is the only failure signal on the
+   * screen, so a dim `⚠ 0` is a claim worth making. It turns red the moment it stops being zero.
+   */
+  private errorCount(errors: number): string {
+    const text = `⚠ ${errors}`
+
+    return errors > 0 ? this.color(ANSI.red, text) : this.color(ANSI.dim, text)
+  }
+
   /** Format the health dot for an endpoint row (`● ok` / `● down` / '' when unprobed). */
   private healthDot(healthy: boolean | null): string {
     if (healthy === null) return ''
@@ -345,6 +442,11 @@ export class DevRenderer implements DevUi {
       }),
       ...(summary.failed ?? []).map((f) => {
         return f.tag
+      }),
+      // A degraded row's gutter is `<tag> <route>`, which is wider than any bare tag — measure the label
+      // it actually prints or its `● cloud …` cell would sit out of column with every row above it.
+      ...(summary.degraded ?? []).map((d) => {
+        return `${d.tag} ${d.route}`
       }),
     ]
 
@@ -388,20 +490,52 @@ export class DevRenderer implements DevUi {
     return [`  ${this.color(ANSI.dim, watchLine)}`, `  ${this.color(ANSI.dim, rule)}`]
   }
 
-  /** A UI reference row (`client/ui   → starting below …`) — used only when infra-kit could not claim its port. */
-  private uiRefLine(tag: string, tagWidth: number): string {
-    return `  ${this.color(ANSI.teal, tag.padEnd(tagWidth))}  ${this.color(
+  /**
+   * A UI reference row — used when infra-kit could not claim the UI's port, so it has no URL to print.
+   *
+   * It STILL carries an error count. That is the whole point: this row is exactly the misconfigured app
+   * (its vite config never wired `infraKitDev()`), which is the app most likely to be broken — and with
+   * no log tail on screen, a row with no error field is a row that cannot report the breakage. It used
+   * to be a bare reference line, so its errors were counted into a file nobody had a reason to open.
+   */
+  private uiRefLine(ref: UiRef, tagWidth: number, errors: number | undefined): string {
+    const errText = errors == null ? '' : `  ${this.errorCount(errors)}`
+
+    return `  ${this.color(ANSI.teal, ref.tag.padEnd(tagWidth))}  ${this.color(
       ANSI.dim,
-      '→ starting below (vite prints its URL)',
-    )}`
+      'no managed port (vite prints its own URL)',
+    )}${errText}`
   }
 
-  /** One endpoint row (`client/api  http://…`); appends a health dot only when `withHealthDot` and the endpoint is probed. */
+  /**
+   * The live half of an endpoint row: `up 4m12s   18/min   ↺2   ⚠ 3`.
+   *
+   * Empty on the boot frame (no field is set yet). Each field is omitted individually when absent — a
+   * server with no restarts should not have to say so.
+   */
+  private statusFields(endpoint: ReadySummary['endpoints'][number]): string {
+    const parts: string[] = []
+
+    if (endpoint.uptimeMs != null) parts.push(this.color(ANSI.dim, `up ${formatUptime(endpoint.uptimeMs)}`))
+    if (endpoint.rpm != null && endpoint.rpm > 0) parts.push(this.color(ANSI.dim, `${endpoint.rpm}/min`))
+    if (endpoint.restarts != null && endpoint.restarts > 0) parts.push(this.color(ANSI.dim, `↺${endpoint.restarts}`))
+    // Errors are the exception to "omit when zero" — see {@link errorCount}.
+    if (endpoint.errors != null) {
+      parts.push(this.errorCount(endpoint.errors))
+    }
+
+    return parts.join('   ')
+  }
+
+  /** One endpoint row (`client/api  https://…  ● ok  up 4m12s  18/min  ⚠ 0`). */
   private endpointLine(endpoint: ReadySummary['endpoints'][number], tagWidth: number, withHealthDot: boolean): string {
     const dot = withHealthDot ? this.healthDot(endpoint.healthy) : ''
-    const dotSuffix = dot ? `  ${dot}` : ''
+    const status = this.statusFields(endpoint)
+    const suffix = [dot, status].filter(Boolean).join('  ')
 
-    return `  ${this.color(ANSI.teal, endpoint.tag.padEnd(tagWidth))}  ${this.color(ANSI.blue, endpoint.url)}${dotSuffix}`
+    return `  ${this.color(ANSI.teal, endpoint.tag.padEnd(tagWidth))}  ${this.color(ANSI.blue, endpoint.url)}${
+      suffix ? `  ${suffix}` : ''
+    }`
   }
 
   /** One failed row (`client/api  ● failed  <reason>`) — no URL, because there is nothing listening. */
@@ -410,6 +544,26 @@ export class DevRenderer implements DevUi {
       ANSI.red,
       '● failed',
     )}  ${this.color(ANSI.dim, failed.reason)}`
+  }
+
+  /**
+   * One degraded-route row (`⚠ /api  ● cloud (local backend failed)  https://dev.hulyo.co.il`).
+   *
+   * Tagged by ROUTE, not by app, and deliberately so: the app rows above already say what is up and what
+   * is down, and neither of them can say "the frontend that came up healthy is talking to cloud". The
+   * route is the thing that got redirected, so the route is what the row is about.
+   */
+  private degradedLine(row: DegradedRow, tagWidth: number): string {
+    const label = `${row.tag} ${row.route}`
+    // A `local` fallback is not a cloud proxy — it is a dead alias that 502s. Saying "cloud" there would
+    // name a destination the traffic never reaches.
+    const state = row.fallback === 'cloud' ? '● cloud (local backend down)' : '● dead alias (local backend down)'
+    const target = row.target ? `  ${this.color(ANSI.dim, row.target)}` : ''
+
+    return `  ${this.color(ANSI.red, '⚠')} ${this.color(ANSI.teal, label.padEnd(tagWidth))}  ${this.color(
+      ANSI.red,
+      state,
+    )}${target}`
   }
 
   /**
@@ -430,7 +584,12 @@ export class DevRenderer implements DevUi {
       lines.push(this.failedLine(f, tagWidth))
     }
     for (const u of summary.uiRefs) {
-      lines.push(this.uiRefLine(u.tag, tagWidth))
+      lines.push(this.uiRefLine(u, tagWidth, u.errors))
+    }
+    // Below the app rows, because it is a consequence of one of them — a `● failed` backend is WHY a
+    // route went to cloud, and the two read as cause and effect only in that order.
+    for (const d of summary.degraded ?? []) {
+      lines.push(this.degradedLine(d, tagWidth))
     }
 
     lines.push('', ...this.legendLines(summary))
@@ -448,20 +607,56 @@ export class DevRenderer implements DevUi {
   }
 
   /**
-   * Live status lines for the persistent Ink footer, re-rendered in place as health flips (never
-   * committed to `<Static>`): one health row per PROBED backend endpoint (`client/api  ● ok`).
-   * Unprobed endpoints (`healthy === null`) are omitted. Pure; colors follow `isTTY`.
+   * The live status rows — THE PANEL. Re-rendered in place on every tick; never committed to `<Static>`.
+   *
+   * This is the only part of the screen that can change after `ready`, and that makes it the only place
+   * live fields can live. The header is committed once through `<Static>`, so anything painted there is
+   * a photograph: an uptime or an error count rendered into the header would be frozen at its boot value
+   * for the whole session, looking live and being a lie. (It was: the live fields went into the shared
+   * endpoint line first, the header picked them up, the footer kept printing a bare health dot, and a
+   * real run showed a panel with no uptime, no req/min and no error count at all. No unit test saw it —
+   * only the rendered terminal did.)
+   *
+   * Every row is rendered, including an endpoint that was never probed and a UI with no backend at all:
+   * with no log tail on screen this panel is the entire signal, and a row that is absent cannot report
+   * that its service is broken.
    */
   formatFooterLines(summary: ReadySummary): string[] {
     const tagWidth = this.tagWidth(summary)
+    const rows = summary.endpoints.map((e) => {
+      const dot = this.healthDot(e.healthy)
+      const status = this.statusFields(e)
+      const cells = [dot, status].filter(Boolean).join('  ')
 
-    return summary.endpoints
-      .filter((e) => {
-        return e.healthy !== null
-      })
-      .map((e) => {
-        return `  ${this.color(ANSI.teal, e.tag.padEnd(tagWidth))}  ${this.healthDot(e.healthy)}`
-      })
+      return `  ${this.color(ANSI.teal, e.tag.padEnd(tagWidth))}  ${cells}`
+    })
+
+    // A UI whose port infra-kit could not claim has no endpoint row — but its errors still have to land
+    // somewhere the user can see, and it is precisely the app most likely to be misconfigured.
+    for (const ref of summary.uiRefs) {
+      if (ref.errors == null) continue
+      rows.push(`  ${this.color(ANSI.teal, ref.tag.padEnd(tagWidth))}  ${this.errorCount(ref.errors)}`)
+    }
+
+    // Degraded routes live in the PANEL, not only in the header. The header is committed once through
+    // `<Static>` — a photograph — so a degraded row painted only there would still be on screen after
+    // `--watch` brought the backend back and the route went local again: a permanent warning about a
+    // condition that has been fixed, which trains the user to ignore it. The caller re-derives this list
+    // from the running set on every tick, so the row survives exactly as long as the problem does.
+    for (const d of summary.degraded ?? []) {
+      rows.push(this.degradedLine(d, tagWidth))
+    }
+
+    // The heartbeat. Without it a UI-only session — whose rows carry no backend uptime and no req/min —
+    // would render an identical frame every tick, and Ink does not repaint an identical frame. The panel
+    // would be genuinely, verifiably alive and look exactly like a hung process.
+    if (summary.sessionUptimeMs != null) {
+      const beat = `up ${formatUptime(summary.sessionUptimeMs)}`
+
+      rows.push(`  ${this.color(ANSI.dim, beat)}`)
+    }
+
+    return rows
   }
 
   /**

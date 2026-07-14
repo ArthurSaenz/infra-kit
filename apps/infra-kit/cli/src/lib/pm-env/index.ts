@@ -1,1 +1,1 @@
-export { withoutPackageManagerEnv } from './pm-env'
+export { packageManagerInstallEnv, withoutPackageManagerEnv } from './pm-env'

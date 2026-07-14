@@ -69,8 +69,10 @@ export const worktreesList = async () => {
     return label
   })
 
-  logger.info('🌿 Active worktrees:')
-  logger.info(`\n${formattedLines.join('\n')}\n`)
+  // One record, no trailing newline. Two calls made pino-pretty emit a bare `INFO:` line for the
+  // leading `\n`, and the trailing one stacked a second blank line under the list — which, in the
+  // session shell, collided with the blank line the transcript footer already writes above itself.
+  logger.info(`🌿 Active worktrees:\n\n${formattedLines.join('\n')}`)
 
   const structuredContent = {
     worktrees,

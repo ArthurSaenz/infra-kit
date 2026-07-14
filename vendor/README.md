@@ -1,12 +1,11 @@
-# vendor/ — mirrored from starter-workspace
+# vendor/ — mirrored from the source repo
 
 **DO NOT EDIT files in this folder here.**
 
-Everything under `vendor/` is the single source of truth maintained in
-`starter-workspace` and copied into this repo by
-`starter-workspace/scripts/copy-shared-repos-data.mjs`. Local edits are
-overwritten on the next sync and will fail `pnpm vendor:check` in CI.
+Everything under `vendor/` is the single source of truth maintained in the source
+repo and copied into this repo by `infra-kit vendor sync`. Local edits are
+overwritten on the next sync and will fail `infra-kit vendor check` in CI.
 
-To change a vendored package, edit it in `starter-workspace` and re-run the sync.
+To change a vendored package, edit it in the source repo and re-run the sync.
 
 See `.sync-manifest.json` for the source commit and per-file checksums.

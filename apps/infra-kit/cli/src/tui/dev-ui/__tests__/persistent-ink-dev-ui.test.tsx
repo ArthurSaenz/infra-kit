@@ -11,11 +11,15 @@ import { PersistentInkDevUi } from '../persistent-ink-dev-ui'
 import type { PersistentInkDevUiDeps } from '../persistent-ink-dev-ui'
 
 /**
- * PersistentInkDevUi keeps a live footer after `ready` on a backend-only session, and degrades to the
- * `InkDevUi` boot→ready behavior for a UI session. Tests inject `ink-testing-library`'s `render` (so
- * frames are captured) and a fake `stdout` (so degraded post-ready plain writes are captured). As with
- * `InkDevUi`, the committed `<Static>` content lives in the frame history; the last frame is the live
- * region below it (the footer, plus any freshly-appended static logs).
+ * PersistentInkDevUi mounts a live status panel at `ready` and stays mounted — for EVERY session shape,
+ * since the UI-session handoff to a scroll-region UI was deleted along with the log tail that justified
+ * it. Tests inject `ink-testing-library`'s `render` (so frames are captured) and a fake `stdout`.
+ * Committed `<Static>` content lives in the frame history; the last frame is the live region below it.
+ *
+ * These frames prove REACT TREE shape, never terminal behavior: `ink-testing-library` renders into a
+ * string buffer and knows nothing about the cursor, or about the `ESC[3J` that an overflowing Ink frame
+ * emits to wipe a user's scrollback. Anything about what the terminal actually does has to be proven
+ * against a real pty.
  */
 const frozen = new Date('2026-07-08T14:02:11.000Z')
 
@@ -29,7 +33,7 @@ const baseSummary = (over: Partial<ReadySummary> = {}): ReadySummary => {
   return {
     target: 'client',
     watch: true,
-    hasUiChild: false,
+
     release: 'feat-x',
     elapsedMs: 2400,
     endpoints: [{ tag: 'client/api', url: 'http://localhost:57076/api/v1', healthy: true }],
@@ -142,29 +146,32 @@ describe('persistentInkDevUi — backend-only persistent mode', () => {
   })
 })
 
-describe('persistentInkDevUi — UI session hands off to ScrollRegionDevUi', () => {
-  it('hands the ready header + post-ready seams to the scroll-region UI (plain writes on the fake stdout)', async () => {
+describe('persistentInkDevUi — one session shape, no handoff', () => {
+  /**
+   * `ready` used to branch on `hasUiChild` and, for a UI session, unmount Ink and hand off to a DECSTBM
+   * scroll-region UI. That existed for exactly one reason: the `turbo run dev` child's piped output
+   * produced an unbounded tail, and a pinned footer can only survive a scrolling stream if the TERMINAL
+   * is told to confine it.
+   *
+   * That tail is gone — framework and request lines go to their per-service log files and are never
+   * printed. So the branch, the handoff, and the whole scroll-region machinery went with it. This pins
+   * that a UI session now takes the SAME persistent-panel path as a backend-only one; a regression that
+   * quietly reintroduced a second code path would show up here.
+   */
+  it('gives a UI session the same persistent panel as a backend-only one', async () => {
     const t = makeUi()
 
     t.ui.bootStep('starting servers')
     await settle()
-    // hasUiChild → hand off. The fake stdout is not a TTY, so the scroll-region UI prints the header
-    // once plainly (no region) and every post-ready line goes to the same stream.
-    t.ui.ready(baseSummary({ hasUiChild: true, uiRefs: [{ tag: 'client/ui' }] }))
+    t.ui.ready(baseSummary({ uiRefs: [{ tag: 'client/ui' }] }))
 
-    const written = t.stdoutWrites.join('')
+    // Rendered by Ink into frames — NOT written straight to stdout, which is what the handoff used to do.
+    expect(t.frames()).toContain('client/ui')
+    expect(t.frames()).toContain('http://localhost:57076/api/v1')
 
-    expect(written).toContain('client/ui')
-    expect(written).toContain('→ starting below (vite prints its URL)')
-    expect(written).toContain('http://localhost:57076/api/v1')
-
-    // Post-ready seams route through the handoff onto the same plain stdout.
-    t.ui.log('after ready', 'warn')
-    t.ui.event({ tag: 'client/api', text: 'GET /api/v1/ping 200 12ms' })
-    expect(t.stdoutWrites.join('')).toContain('after ready')
-    expect(t.stdoutWrites.join('')).toContain('GET /api/v1/ping 200 12ms')
-
-    // dispose is safe even though no region was ever installed (non-TTY).
+    // And `refresh` repaints in place, on this path too: the panel's heartbeat is what tells the user a
+    // silent session is alive rather than hung.
+    t.ui.refresh(baseSummary({ uiRefs: [{ tag: 'client/ui' }] }))
     expect(() => {
       t.ui.dispose()
     }).not.toThrow()

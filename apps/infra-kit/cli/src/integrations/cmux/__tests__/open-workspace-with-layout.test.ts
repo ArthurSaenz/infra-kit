@@ -58,7 +58,6 @@ const splitCommands = (): string[] => {
 
 const mockLayout = (layout: CmuxLayout): void => {
   vi.mocked(getInfraKitConfig).mockResolvedValue({
-    environments: ['dev'],
     envManagement: { provider: 'doppler', config: { name: 'p' } },
     worktrees: { cmux: { layout } },
   } as Awaited<ReturnType<typeof getInfraKitConfig>>)

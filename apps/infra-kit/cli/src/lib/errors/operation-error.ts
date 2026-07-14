@@ -46,7 +46,7 @@ const buildMessage = (cause: unknown, ctx: OperationErrorContext): string => {
  * agent tool-result text stay scannable.
  *
  * Pattern modeled on the exemplary Doppler errors in
- * `src/integrations/doppler/doppler-cli-auth.ts`.
+ * `src/integrations/doppler/doppler-errors.ts`.
  *
  * @example
  * // wrap a zx subprocess failure

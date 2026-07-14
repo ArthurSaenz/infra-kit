@@ -14,7 +14,7 @@ import { homedir } from 'node:os'
 import process from 'node:process'
 
 import { defaultLazyNpmRoot, detectInstallManager, safeRealpath } from 'src/lib/install-manager'
-import { withoutPackageManagerEnv } from 'src/lib/pm-env'
+import { packageManagerInstallEnv } from 'src/lib/pm-env'
 
 import { acquireUpdateLock } from './lock'
 import { fetchLatestVersion } from './registry'
@@ -171,14 +171,31 @@ const runUpdateCheckLocked = async (currentVersion: string, deps: RunUpdateCheck
   // blind. The real spawn always passes `--parent-pid`; only a hand-run worker lands here.
   if (deps.parentPid == null) return finish('parent-unknown', { latestVersion, updateCommand: null })
 
+  // Burn the throttle NOW, before the two unbounded-ish operations below (a 5-minute parent wait, then an
+  // install of no fixed duration). Everything after this point can take many minutes, and until the cache
+  // is written it still reads as STALE — so every new shell in that window spawns its own worker, and the
+  // single-flight lock becomes the only thing standing between them and concurrent `npm install -g` runs
+  // over one global directory. The lock is reaped by mtime (LOCK_STALE_MS), so a slow enough install has
+  // its live lock stolen and we get exactly the pile-up the lock exists to prevent.
+  //
+  // Writing the stamp here makes the throttle — not the lock — the primary guard, which is what the cache
+  // was always for. `finish()` overwrites this with the real outcome; this is the only path that writes
+  // the cache twice, and deliberately so.
+  writeCache({ lastCheckMs: nowMs, latestVersion, updateCommand: null })
+
   const parentGone = await waitForParentExit(deps.parentPid, { isProcessAlive, sleep, clock })
 
   // A long-lived parent (`infra-kit dev`) outlasted the wait. Stay silent and retry next window.
   if (!parentGone) return finish('parent-still-running', { latestVersion, updateCommand: null })
 
   // `shell` on win32 so the `.cmd` shims npm/pnpm/yarn ship as global bins resolve.
-  // `withoutPackageManagerEnv` strips inherited `npm_*` vars, which otherwise make pnpm/portless-style
-  // tools believe they were invoked via `npx`/`dlx` and refuse to run.
+  //
+  // `packageManagerInstallEnv` strips the inherited npx/dlx markers — which otherwise make
+  // pnpm/portless-style tools believe they were invoked via `npx`/`dlx` and refuse to run — while KEEPING
+  // `npm_config_prefix` and `npm_config_registry`. Using the blunt `withoutPackageManagerEnv` here was a
+  // bug: it also erased the prefix that `detectInstallManager` had just matched on, so we would detect a
+  // global install at prefix P and then install into the default prefix instead — silently, forever. See
+  // the module doc on `packageManagerInstallEnv`.
   //
   // `cwd` is pinned to the home directory, and this is a SECURITY control, not tidiness: npm resolves
   // `registry=` from an `.npmrc` on disk relative to the cwd. Inheriting the caller's cwd would let any
@@ -189,7 +206,7 @@ const runUpdateCheckLocked = async (currentVersion: string, deps: RunUpdateCheck
     stdio: 'ignore',
     shell: process.platform === 'win32',
     cwd: homedir(),
-    env: withoutPackageManagerEnv(env),
+    env: packageManagerInstallEnv(env),
     windowsHide: true,
   })
 

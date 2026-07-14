@@ -233,7 +233,6 @@ describe('seedUserProjectConfig', () => {
     fs.writeFileSync(
       path.join(repo, 'infra-kit.json'),
       JSON.stringify({
-        environments: ['dev'],
         envManagement: { provider: 'doppler', config: { name: 'seed-test' } },
       }),
     )
@@ -260,8 +259,13 @@ describe('seedUserProjectConfig', () => {
 
     // …and the merged config is NOT served stale: layer 3 is a real merge layer, so what now lives in
     // the freshly created file wins over layer 1.
-    fs.writeFileSync(configPath, JSON.stringify({ environments: ['prod'] }))
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ envManagement: { provider: 'doppler', config: { name: 'override' } } }),
+    )
 
-    await expect(getInfraKitConfig()).resolves.toMatchObject({ environments: ['prod'] })
+    await expect(getInfraKitConfig()).resolves.toMatchObject({
+      envManagement: { provider: 'doppler', config: { name: 'override' } },
+    })
   })
 })

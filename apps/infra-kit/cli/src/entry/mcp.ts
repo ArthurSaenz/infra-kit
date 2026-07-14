@@ -3,8 +3,14 @@ import process from 'node:process'
 
 import { setupErrorHandlers } from 'src/lib/error-handlers'
 import { initLoggerMcp } from 'src/lib/logger'
+import { suppressTypelessPackageJsonWarning } from 'src/lib/node-warnings'
 
 import { createMcpServer } from '../mcp/server'
+
+// The MCP tools run the same commands as the CLI, so they hit the same consumer `.ts` configs.
+// This keeps the client's log pane clean; it cannot affect protocol framing either way, since
+// the stdio transport frames JSON-RPC on stdout and `emitWarning` only ever writes to stderr.
+suppressTypelessPackageJsonWarning()
 
 const logger = initLoggerMcp()
 
