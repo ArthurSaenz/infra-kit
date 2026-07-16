@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   CACHE_FILE_NAME,
   CHECK_INTERVAL_MS,
-  RETRY_INTERVAL_MS,
   cacheFilePath,
   isStale,
   readUpdateCache,
@@ -92,57 +91,32 @@ describe('isStale', () => {
     expect(isStale({ lastCheckMs: NOW + 1_000, latestVersion: null, updateCommand: null }, NOW)).toBe(true)
   })
 
-  it('re-checks a transient outcome after the SHORT retry window, not the full 24h', () => {
-    // The bug this fixes: a single `fetch-failed` burned the whole 24h window, so one blip disabled
-    // auto-update for a day — exactly what a publisher hits pushing a release mid-window.
-    const cache = { lastCheckMs: NOW, latestVersion: null, updateCommand: null, outcome: 'fetch-failed' }
+  // Pins the ONE window against a re-introduced outcome-aware branch. A shorter window for transient
+  // outcomes is not a free "recover faster" win: anything below a full worker cycle (a
+  // PARENT_WAIT_TIMEOUT_MS parent wait, then an install) re-checks while the first worker still holds
+  // the single-flight lock, and the loser returns without writing — so the cache stays stale and every
+  // command spawns a doomed worker until LOCK_STALE_MS reaps it. See CHECK_INTERVAL_MS.
+  it.each([
+    'fetch-failed',
+    'install-failed',
+    'parent-still-running',
+    'parent-unknown',
+    'installing',
+    'up-to-date',
+    'installed',
+    'cannot-self-spawn',
+  ])('gives the outcome %s the same window as every other outcome', (outcome) => {
+    const cache = { lastCheckMs: NOW, latestVersion: null, updateCommand: null, outcome }
 
-    expect(isStale(cache, NOW + RETRY_INTERVAL_MS - 1)).toBe(false)
-    expect(isStale(cache, NOW + RETRY_INTERVAL_MS)).toBe(true)
+    expect(isStale(cache, NOW + CHECK_INTERVAL_MS - 1)).toBe(false)
+    expect(isStale(cache, NOW + CHECK_INTERVAL_MS)).toBe(true)
   })
 
-  it('applies the short window to a transient outcome but the 24h window to a settled one at the same age', () => {
-    // Two hours old: past the 1h retry, well inside the 24h throttle. A `fetch-failed` must re-check;
-    // an `up-to-date` must not (that would re-fetch every couple of hours forever).
-    const twoHoursOn = NOW + 2 * RETRY_INTERVAL_MS
-    const base = { lastCheckMs: NOW, latestVersion: null, updateCommand: null }
-
-    expect(isStale({ ...base, outcome: 'fetch-failed' }, twoHoursOn)).toBe(true)
-    expect(isStale({ ...base, outcome: 'installing' }, twoHoursOn)).toBe(true)
-    expect(isStale({ ...base, outcome: 'up-to-date' }, twoHoursOn)).toBe(false)
-    expect(isStale({ ...base, outcome: 'installed' }, twoHoursOn)).toBe(false)
-  })
-
-  it('falls back to the 24h window for a cache with no outcome (pre-outcome format)', () => {
-    // Back-compat: an on-disk cache written before `outcome` existed must not suddenly re-check hourly.
+  it('gives a cache with no outcome the same window too (pre-outcome format)', () => {
+    // Back-compat: an on-disk cache written before `outcome` existed reads as a normal throttled entry.
     const legacy = { lastCheckMs: NOW, latestVersion: null, updateCommand: null }
 
-    expect(isStale(legacy, NOW + 2 * RETRY_INTERVAL_MS)).toBe(false)
+    expect(isStale(legacy, NOW + CHECK_INTERVAL_MS - 1)).toBe(false)
     expect(isStale(legacy, NOW + CHECK_INTERVAL_MS)).toBe(true)
   })
-})
-
-// Locks the retryable/settled classification against drift. RETRYABLE_OUTCOMES has no compile-time tie to
-// the `UpdateCheckOutcome` union (an import would cycle), so if a written outcome string is renamed on one
-// side and not the other, nothing fails to compile — it just silently reverts to the wrong window, the
-// exact class of bug this whole change fixes. Two hours on: past the 1h retry, inside the 24h throttle, so
-// the two buckets give opposite verdicts and each string is pinned to its intended side.
-describe('isStale outcome classification', () => {
-  const staleAtTwoHours = (outcome: string): boolean => {
-    return isStale({ lastCheckMs: NOW, latestVersion: null, updateCommand: null, outcome }, NOW + 2 * RETRY_INTERVAL_MS)
-  }
-
-  it.each(['fetch-failed', 'install-failed', 'parent-still-running', 'parent-unknown', 'installing'])(
-    'treats the transient outcome %s as retryable within the hour',
-    (outcome) => {
-      expect(staleAtTwoHours(outcome)).toBe(true)
-    },
-  )
-
-  it.each(['up-to-date', 'installed', 'cannot-self-spawn'])(
-    'treats the settled outcome %s as fresh until the 24h window',
-    (outcome) => {
-      expect(staleAtTwoHours(outcome)).toBe(false)
-    },
-  )
 })

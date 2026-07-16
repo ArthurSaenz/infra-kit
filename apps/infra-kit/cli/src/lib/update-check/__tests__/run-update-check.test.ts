@@ -359,7 +359,7 @@ describe('runUpdateCheck', () => {
     // The regression this guards: stripping every `npm_*` key also erased `npm_config_prefix` — the npm
     // matcher's ONLY signal. We detected a global install at /usr/local and then installed into npm's
     // DEFAULT prefix instead, silently: exit 0, `installed` reported, the version on PATH never moves, and
-    // the whole cycle repeats every 24h forever. Verified against the real npm:
+    // the whole cycle repeats every window forever. Verified against the real npm:
     //   npm_config_prefix=/tmp/gp npm root -g  ->  /tmp/gp/lib/node_modules
     //   ( cd $HOME && npm root -g )            ->  /opt/homebrew/lib/node_modules
     const { deps, spawnMock } = harness({

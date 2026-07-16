@@ -10,7 +10,7 @@ export const DEFAULT_REGISTRY = 'https://registry.npmjs.org'
  * Bounded so a hanging registry can never keep a detached child alive indefinitely. 5s, not a tighter
  * bound: the abbreviated `/pkg/latest` endpoint is usually ~20-900ms, but a cold TLS/DNS handshake in a
  * freshly-spawned worker can spike past a 2.5s cap — and a single trip used to cost a `fetch-failed` that
- * pushed the next check a full day out. A detached child that lingers a few extra seconds harms nothing.
+ * pushed the next check a full window out. A detached child that lingers a few extra seconds harms nothing.
  */
 export const FETCH_TIMEOUT_MS = 5_000
 

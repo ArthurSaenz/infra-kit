@@ -30,7 +30,7 @@ export const LOCK_FILE_NAME = 'update-check.lock'
  * The throttle, not this timeout, is now the primary guard: `runUpdateCheck` stamps `lastCheckMs` BEFORE
  * the wait and the install, so concurrent shells stop spawning workers at all. This value only has to
  * outlive a plausible install, and is deliberately generous — the cost of being too large is that a worker
- * killed mid-install delays the next attempt, which the 24h throttle would delay anyway.
+ * killed mid-install delays the next attempt, which the throttle would delay anyway.
  */
 export const LOCK_STALE_MS = 30 * 60 * 1000
 

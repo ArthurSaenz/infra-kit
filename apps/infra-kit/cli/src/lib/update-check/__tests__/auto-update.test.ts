@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { maybeAutoUpdate } from '../auto-update'
 import type { AutoUpdateDeps } from '../auto-update'
-import { CHECK_INTERVAL_MS, RETRY_INTERVAL_MS } from '../update-cache'
+import { CHECK_INTERVAL_MS } from '../update-cache'
 import type { UpdateCache } from '../update-cache'
 
 const NOW = 1_770_000_000_000
@@ -72,30 +72,31 @@ describe('maybeAutoUpdate', () => {
     expect(spawnChild).toHaveBeenCalledTimes(1)
   })
 
-  it('re-spawns an hour after a transient fetch-failure instead of waiting the full day', () => {
-    // The lived bug: a `fetch-failed` cache is one hour old. Under the old single 24h window this stayed
-    // fresh and auto-update sat dead for 23 more hours; now the transient outcome re-checks within the hour.
+  it('throttles a transient fetch-failure exactly like a settled check — no shorter retry window', () => {
+    // A `fetch-failed` gets no head start: it waits the same window as everything else. Re-checking it
+    // sooner would fire while a live worker still holds the single-flight lock, and the loser exits
+    // without writing the cache — so every command spawns a doomed worker. See CHECK_INTERVAL_MS.
     const { deps, spawnChild } = harness({
       readCache: () => {
-        return cache({ lastCheckMs: NOW - RETRY_INTERVAL_MS, outcome: 'fetch-failed' })
-      },
-    })
-
-    maybeAutoUpdate('0.1.130', deps)
-
-    expect(spawnChild).toHaveBeenCalledTimes(1)
-  })
-
-  it('does NOT re-spawn an hour after a settled up-to-date check (that would re-fetch all day)', () => {
-    const { deps, spawnChild } = harness({
-      readCache: () => {
-        return cache({ lastCheckMs: NOW - RETRY_INTERVAL_MS, outcome: 'up-to-date' })
+        return cache({ lastCheckMs: NOW - (CHECK_INTERVAL_MS - 1), outcome: 'fetch-failed' })
       },
     })
 
     maybeAutoUpdate('0.1.130', deps)
 
     expect(spawnChild).not.toHaveBeenCalled()
+  })
+
+  it('re-spawns after a transient fetch-failure once the window has elapsed', () => {
+    const { deps, spawnChild } = harness({
+      readCache: () => {
+        return cache({ lastCheckMs: NOW - CHECK_INTERVAL_MS, outcome: 'fetch-failed' })
+      },
+    })
+
+    maybeAutoUpdate('0.1.130', deps)
+
+    expect(spawnChild).toHaveBeenCalledTimes(1)
   })
 
   it.each([

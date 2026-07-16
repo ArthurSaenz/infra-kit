@@ -6,7 +6,7 @@ describe('packageManagerInstallEnv', () => {
   it('keeps npm_config_prefix — the npm matcher’s only signal — while still stripping the dlx markers', () => {
     // The regression: the blunt `npm_*` filter erased the very prefix `detectInstallManager` matched on, so
     // the CLI detected a global install at /usr/local and then installed into npm's DEFAULT prefix. Silent:
-    // exit 0, `installed` reported, the version on PATH never moves, cycle repeats every 24h forever.
+    // exit 0, `installed` reported, the version on PATH never moves, cycle repeats every window forever.
     const env = packageManagerInstallEnv({
       npm_config_prefix: '/usr/local',
       npm_command: 'exec',

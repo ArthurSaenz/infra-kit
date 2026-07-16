@@ -12,40 +12,24 @@ import { atomicWriteFileSync, getCacheRoot } from 'src/lib/constants'
 
 export const CACHE_FILE_NAME = 'update-check.json'
 
-/** Refresh at most once a day after a SETTLED check. A background check is cheap, but not once per shell command. */
-export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
-
 /**
- * The shorter re-check window after a TRANSIENT outcome (see {@link RETRYABLE_OUTCOMES}). A single
- * failed fetch used to burn the full 24h {@link CHECK_INTERVAL_MS}, so one network blip locked
- * auto-update out for a whole day — exactly the failure a publisher hits pushing a release mid-window.
- * An hour still stops the per-command spawn storm the throttle exists to prevent.
- */
-export const RETRY_INTERVAL_MS = 60 * 60 * 1000
-
-/**
- * Outcomes that did NOT reach a settled "checked, nothing left to do" state — a transient failure, or
- * an install we could not complete this cycle. They get the short {@link RETRY_INTERVAL_MS}; every
- * settled outcome (`up-to-date`, `installed`, `cannot-self-spawn`) keeps the 24h window.
+ * The ONE re-check window, whatever the last outcome was. A background check is cheap — one detached
+ * child and a single registry fetch bounded by `FETCH_TIMEOUT_MS` — but not once per shell command,
+ * which is the storm this throttle exists to stop.
  *
- * Most members mirror `UpdateCheckOutcome` in `run-update-check.ts` — keep the two in step — with two
- * deliberate mismatches: `installing` is a cache-ONLY mid-install checkpoint (not a union member), and
- * the union's `already-running` never reaches the cache (it returns before any write). This set has no
- * compile-time tie to the union (that would import-cycle), so a rename there fails silently HERE — the
- * membership guard test in `__tests__/update-cache.test.ts` is what catches that drift.
+ * There is deliberately no shorter "retry after a transient failure" window. One used to exist because
+ * this interval was 24h, and burning a whole day on a single network blip locked out exactly the
+ * publisher pushing a release mid-window. At 20 minutes that gap is gone: a blip costs one window, so
+ * a second window buys nothing and cannot pay for what it costs (below).
  *
- * ACCEPTED tradeoff: `install-failed` covers both a transient blip and a permanently broken setup (EACCES
- * on a root-owned global dir), so a broken install now retries hourly rather than daily. It is bounded —
- * single-flight lock, silent `stdio: 'ignore'`, and the manual command still surfaced via the notice — and
- * favouring fast recovery of the transient case is the point of this change.
+ * MUST stay above a full worker cycle: `runUpdateCheck` stamps `lastCheckMs` BEFORE waiting up to
+ * `PARENT_WAIT_TIMEOUT_MS` (5min) for the parent to exit and THEN installing. Go below that and the
+ * cache reads stale while the first worker is still legitimately working, so the next shell spawns a
+ * worker that dies on the live single-flight lock and returns WITHOUT writing — leaving the cache stale
+ * for every command until `LOCK_STALE_MS` (30min) reaps the lock. That is the per-command spawn storm
+ * this throttle exists to prevent, and it is why a 5-minute retry window is not an option.
  */
-const RETRYABLE_OUTCOMES = new Set([
-  'fetch-failed',
-  'install-failed',
-  'parent-still-running',
-  'parent-unknown',
-  'installing',
-])
+export const CHECK_INTERVAL_MS = 20 * 60 * 1000
 
 export interface UpdateCache {
   /**
@@ -66,10 +50,12 @@ export interface UpdateCache {
   updateCommand: string[] | null
   /**
    * The last check's terminal outcome (`installed`, `fetch-failed`, `up-to-date`, …), or absent on a
-   * cache written before this field existed. Two jobs: (1) it is the signal {@link isStale} uses to
-   * pick the short retry window after a transient failure; (2) it is the ONLY thing that makes the file
-   * legible — a successful `installed` and a failed `fetch-failed` both write a byte-identical
-   * `{latestVersion:null, updateCommand:null}`, so without this the cache cannot say which happened.
+   * cache written before this field existed.
+   *
+   * Diagnostic ONLY — nothing branches on it, {@link isStale} included. It earns its keep by being the
+   * one thing that makes this file legible: a successful `installed` and a failed `fetch-failed` both
+   * write a byte-identical `{latestVersion:null, updateCommand:null}`, so without this the cache cannot
+   * say which happened, and a silent auto-update leaves no other trace of what it did.
    */
   outcome?: string | null
 }
@@ -144,10 +130,9 @@ export const writeUpdateCache = (cache: UpdateCache): void => {
  * A `lastCheckMs` in the future (clock skew, or a restored backup) also reads as stale rather than
  * locking the user out of updates until their clock catches up.
  *
- * The window is outcome-aware: a transient last outcome (see {@link RETRYABLE_OUTCOMES}) is re-checked
- * after {@link RETRY_INTERVAL_MS}, every settled outcome after {@link CHECK_INTERVAL_MS}. A cache with
- * no `outcome` (pre-`outcome` format, or a hand-written file) falls through to the 24h bucket — the
- * safe default that cannot turn into an every-hour spawn storm.
+ * The window does NOT depend on `outcome`: every last outcome, transient or settled, is re-checked
+ * after {@link CHECK_INTERVAL_MS}. See that constant for why a shorter transient-failure window is not
+ * worth its cost here.
  *
  * @example
  * isStale(null, 1_000) // => true
@@ -160,8 +145,5 @@ export const isStale = (cache: UpdateCache | null, nowMs: number): boolean => {
 
   if (elapsed < 0) return true
 
-  const interval =
-    cache.outcome != null && RETRYABLE_OUTCOMES.has(cache.outcome) ? RETRY_INTERVAL_MS : CHECK_INTERVAL_MS
-
-  return elapsed >= interval
+  return elapsed >= CHECK_INTERVAL_MS
 }

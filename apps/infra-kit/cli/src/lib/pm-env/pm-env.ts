@@ -49,7 +49,7 @@ const NPM_CONFIG_TO_PRESERVE = /^npm_config_(?:prefix|registry)$/i
  *     detect a global install rooted at prefix P, then run the install with P erased — so it lands in the
  *     DEFAULT prefix instead. That is either a permanent EACCES, or a second global copy that is not the
  *     one on PATH. Nothing notices: the install exits 0, we report `installed`, the version on PATH never
- *     moves, and the whole cycle repeats every 24h forever. `export npm_config_prefix=~/.npm-global` is
+ *     moves, and the whole cycle repeats every window forever. `export npm_config_prefix=~/.npm-global` is
  *     npm's own documented EACCES workaround, so this is a mainstream layout, not an exotic one.
  *   - `npm_config_registry` is what the update CHECK already used to pick a registry. Dropping it here
  *     means we decide against a corporate mirror and then install from somewhere else.

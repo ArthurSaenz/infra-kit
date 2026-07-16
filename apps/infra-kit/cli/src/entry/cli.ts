@@ -85,7 +85,7 @@ const warnIfLocalInstall = (): void => {
 
 warnIfLocalInstall()
 
-// Fire-and-forget: reads a cached timestamp, and at most once a day hands off to a detached
+// Fire-and-forget: reads a cached timestamp, and at most once per throttle window hands off to a detached
 // `dist/update-check.js` that fetches, and silently installs, AFTER this process exits. Adds no
 // startup latency, never throws, never changes the exit code. Opt out with INFRA_KIT_NO_AUTO_UPDATE.
 maybeAutoUpdate(packageJson.version)

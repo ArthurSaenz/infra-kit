@@ -136,7 +136,7 @@ const runOne = async (
   const childEnv: NodeJS.ProcessEnv = {
     ...deps.env,
     [SESSION_REPORT_ENV]: reportPath,
-    // Every child would otherwise re-run the daily auto-update check and spawn its own detached
+    // Every child would otherwise re-run the throttled auto-update check and spawn its own detached
     // worker; opt them all out. The parent's own startup check (before the palette) still runs.
     INFRA_KIT_NO_AUTO_UPDATE: '1',
   }

@@ -28,7 +28,7 @@ export const PARENT_POLL_INTERVAL_MS = 200
 /**
  * Give up waiting after this long. A long-lived parent (`infra-kit dev` runs for hours) must not leave
  * an immortal child pinned to a stale version: we simply skip this cycle. `lastCheckMs` is already
- * persisted by then, so the next short-lived command re-checks after the normal 24h window.
+ * persisted by then, so the next short-lived command re-checks after the normal throttle window.
  */
 export const PARENT_WAIT_TIMEOUT_MS = 5 * 60 * 1000
 
@@ -188,9 +188,9 @@ const runUpdateCheckLocked = async (currentVersion: string, deps: RunUpdateCheck
   // was always for. `finish()` overwrites this with the real outcome; this is the only path that writes
   // the cache twice, and deliberately so.
   //
-  // `outcome: 'installing'` is a RETRYABLE checkpoint (see `RETRYABLE_OUTCOMES`): if the worker is killed
-  // mid-install (machine sleeps, SIGKILL) and never reaches `finish()`, this stamp is what the next run
-  // reads — and the short retry window lets it try again in an hour rather than a full day.
+  // `outcome: 'installing'` marks a mid-install checkpoint: if the worker is killed here (machine sleeps,
+  // SIGKILL) and never reaches `finish()`, this stamp is what the next run reads, and the cache says so
+  // rather than looking like a settled result. It does not shorten the next window — see CHECK_INTERVAL_MS.
   writeCache({ lastCheckMs: nowMs, latestVersion, updateCommand: null, outcome: 'installing' })
 
   const parentGone = await waitForParentExit(deps.parentPid, { isProcessAlive, sleep, clock })
