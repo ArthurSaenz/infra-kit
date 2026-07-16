@@ -19,6 +19,31 @@ import type { DevUi } from './dev-ui.js'
 
 export type LogLevel = 'info' | 'warn' | 'error' | 'debug'
 
+/**
+ * Per-call options for {@link DevRenderer.log}.
+ *
+ * `tee: false` exists for exactly one caller: `DevServerRunner.reportFault`, which files the fault into the
+ * sink ITSELF (at `error` level — that is what turns the panel row red) and then prints it. Without this
+ * opt-out the print tees a SECOND copy into the same `runner.log`, so every fault is filed twice — a
+ * literal 2× amplifier sitting at the centre of the loop that wrote 455 GB.
+ */
+export interface LogOptions {
+  /** Also append the line to the log file. Default `true`; `false` prints without filing. */
+  tee?: boolean
+}
+
+/**
+ * A row's liveness, as the runner's probe state machine resolved it.
+ *
+ * Five arms, not a boolean, because a probe has three outcomes and a row has a history. The two that
+ * are neither `ok` nor `down` are the honest ones: a UI that has never answered yet is `starting`
+ * (vite is spawned after the ready frame, so red would be a lie for the first seconds), and a port that
+ * answers something OTHER than vite's ping is `unverified` — a squatter, a shadowing proxy, or a future
+ * vite that dropped the endpoint are all consistent with that, and only one of them is broken. Red must
+ * stay a PROOF of failure, so `unverified` renders a question mark and never a red dot.
+ */
+export type HealthState = 'ok' | 'down' | 'starting' | 'unverified' | 'unknown'
+
 /** Injected I/O seams. Defaults wire to the real stdout + a caller-provided file appender. */
 export interface DevRendererDeps {
   /** Terminal sink (default: `process.stdout.write`). */
@@ -34,6 +59,24 @@ export interface DevRendererDeps {
 }
 
 /**
+ * One resolved proxy route on a frontend, painted as an indented line under that app's row: which route,
+ * where it lands, and whether it is the local backend or the shared cloud one. This is the "all proxies —
+ * which one and where" surface: unlike a {@link DegradedRow} it reports the happy path too, so a frontend
+ * that proxies `/api` local and `/media` cloud shows both, and nobody has to guess where a route points.
+ */
+export interface ProxyRouteRow {
+  /** Route path (e.g. `/api`). */
+  route: string
+  /** Where the route resolves this run — the local backend or the shared cloud origin. */
+  source: 'local' | 'cloud'
+  /**
+   * The origin the route lands on. Omitted when it is not knowable (a `local` route whose backend is not
+   * up — a dead alias the degraded row already owns — or a `cloud` route with no `<env>` sourced).
+   */
+  target?: string
+}
+
+/**
  * One server's row on the status panel.
  *
  * The live fields below are what make the panel a STATUS surface rather than a screenshot. The terminal
@@ -45,8 +88,8 @@ export interface EndpointRow {
   tag: string
   /** The app's `.localhost` alias URL — the only form, since an app that cannot be aliased never starts. */
   url: string
-  /** Liveness: `true` → `● ok`, `false` → `● down`, `null` → no dot (not probed). */
-  healthy: boolean | null
+  /** Liveness, as {@link HealthState} defines it; `unknown` renders no dot at all (nothing to probe). */
+  health: HealthState
   /** Milliseconds since this server last (re)started. Omitted on the boot frame. */
   uptimeMs?: number
   /** Watch-triggered restarts so far this session. */
@@ -60,6 +103,12 @@ export interface EndpointRow {
    * declared, never from anything read out of the line's text.
    */
   errors?: number
+  /**
+   * Resolved proxy routes for a frontend row (a `<app>/ui` endpoint), painted as an indented list under
+   * it. Absent on backend rows — a `<app>/api` endpoint proxies nothing — and on a frontend with no
+   * `dev.proxy` block.
+   */
+  proxies?: ProxyRouteRow[]
 }
 
 /**
@@ -76,6 +125,8 @@ export interface UiRef {
    * whose vite config never wired `infraKitDev()`, i.e. the one most likely to be misconfigured.
    */
   errors?: number
+  /** Resolved proxy routes for this frontend, painted as an indented list under its reference line. */
+  proxies?: ProxyRouteRow[]
 }
 
 /**
@@ -328,11 +379,13 @@ export class DevRenderer implements DevUi {
   }
 
   /** A general message routed by level (terminal + file tee). Debug is terminal-only in verbose. */
-  log(message: string, level: LogLevel = 'info'): void {
+  log(message: string, level: LogLevel = 'info', options: LogOptions = {}): void {
     if (level !== 'debug' || this.deps.verbose) {
       this.emit(message)
     }
-    this.tee(message, level)
+    if (options.tee !== false) {
+      this.tee(message, level)
+    }
   }
 
   /** A boot-narration step: terminal only when `--verbose`, but always tee'd to the log. */
@@ -399,20 +452,47 @@ export class DevRenderer implements DevUi {
    * The error counter, shared by endpoint rows and UI reference rows.
    *
    * Zero is rendered, not omitted: with nothing else printing, this is the only failure signal on the
-   * screen, so a dim `⚠ 0` is a claim worth making. It turns red the moment it stops being zero.
+   * screen, so a dim `⚠ 0` is a claim worth making.
+   *
+   * Non-zero is BOLD red, and that is not decoration. A frontend that fails to compile still serves and
+   * still answers vite's ping, so its dot stays green — the dot is liveness, and the app IS alive. This
+   * counter is the only thing on the screen that says the app is nevertheless broken, so it has to win a
+   * glance against a green dot sitting two columns away.
    */
   private errorCount(errors: number): string {
     const text = `⚠ ${errors}`
 
-    return errors > 0 ? this.color(ANSI.red, text) : this.color(ANSI.dim, text)
+    return errors > 0 ? this.color(`${ANSI.bold}${ANSI.red}`, text) : this.color(ANSI.dim, text)
   }
 
-  /** Format the health dot for an endpoint row (`● ok` / `● down` / '' when unprobed). */
-  private healthDot(healthy: boolean | null): string {
-    if (healthy === null) return ''
-    if (healthy) return this.color(ANSI.green, '● ok')
+  /**
+   * The padded tag gutter for a PANEL row — red once the row has declared an error, teal otherwise.
+   *
+   * Footer only, never {@link formatHeaderLines}. The header is committed once through Ink's `<Static>`,
+   * so a tag reddened there would be a photograph of the boot: it could never turn red later, and — far
+   * worse — could never turn back. The panel repaints, so the color tracks the fact.
+   */
+  private tagCell(tag: string, tagWidth: number, errors: number | undefined): string {
+    return this.color((errors ?? 0) > 0 ? ANSI.red : ANSI.teal, tag.padEnd(tagWidth))
+  }
 
-    return this.color(ANSI.red, '● down')
+  /** Format the health dot for an endpoint row — one arm per {@link HealthState}; `unknown` prints nothing. */
+  private healthDot(health: HealthState): string {
+    switch (health) {
+      case 'ok':
+        return this.color(ANSI.green, '● ok')
+      case 'down':
+        return this.color(ANSI.red, '● down')
+      case 'starting':
+        return this.color(ANSI.dim, '◌ starting')
+      // Answering, but not with vite's ping. Dim, never red: a non-204 is equally consistent with a
+      // broken squatter and a perfectly healthy vite behind something that shadows the ping, and a red
+      // dot on a coin-flip is how a dot stops being read at all.
+      case 'unverified':
+        return this.color(ANSI.dim, '◍ ?')
+      default:
+        return ''
+    }
   }
 
   /**
@@ -529,7 +609,7 @@ export class DevRenderer implements DevUi {
 
   /** One endpoint row (`client/api  https://…  ● ok  up 4m12s  18/min  ⚠ 0`). */
   private endpointLine(endpoint: ReadySummary['endpoints'][number], tagWidth: number, withHealthDot: boolean): string {
-    const dot = withHealthDot ? this.healthDot(endpoint.healthy) : ''
+    const dot = withHealthDot ? this.healthDot(endpoint.health) : ''
     const status = this.statusFields(endpoint)
     const suffix = [dot, status].filter(Boolean).join('  ')
 
@@ -567,6 +647,34 @@ export class DevRenderer implements DevUi {
   }
 
   /**
+   * The indented proxy lines painted under a frontend's row: `  ├ /api    ● local  https://…`. One per
+   * resolved route, so "which one and where" is answered inline instead of left to guess. A filled dot is
+   * the local backend, a hollow one the shared cloud origin — the same local=●/cloud=○ language the rest
+   * of the panel uses. The last route gets a `└` elbow so the group reads as one block belonging to the
+   * app above it. Empty when the frontend declares no routes.
+   */
+  private proxyLines(proxies: ProxyRouteRow[]): string[] {
+    if (proxies.length === 0) return []
+
+    const routeWidth = Math.max(
+      ...proxies.map((p) => {
+        return p.route.length
+      }),
+    )
+
+    return proxies.map((p, i) => {
+      const elbow = i === proxies.length - 1 ? '└' : '├'
+      const dot = p.source === 'local' ? this.color(ANSI.green, '●') : this.color(ANSI.dim, '○')
+      const where = p.target ? `  ${this.color(ANSI.blue, p.target)}` : ''
+
+      return `    ${this.color(ANSI.dim, elbow)} ${this.color(ANSI.teal, p.route.padEnd(routeWidth))}  ${dot} ${this.color(
+        ANSI.dim,
+        p.source,
+      )}${where}`
+    })
+  }
+
+  /**
    * Shared header layout: blank, title line, blank, one endpoint row per backend, a reference row per
    * UI app, then the watch/log legend. `withHealthDot` is the ONLY difference between the static Ink
    * header (false — health is live, the footer owns it) and the ready/boot frame (true).
@@ -577,6 +685,9 @@ export class DevRenderer implements DevUi {
 
     for (const e of summary.endpoints) {
       lines.push(this.endpointLine(e, tagWidth, withHealthDot))
+      // A frontend's proxy routes hang directly off its own row, so "where does /api go" reads as a
+      // property of the app rather than a footnote somewhere below it.
+      if (e.proxies) lines.push(...this.proxyLines(e.proxies))
     }
     // Failures sit with the live rows, not in the scrollback above: the log line announcing the crash
     // is metres up the terminal by now, and the header is the only thing the user actually reads.
@@ -585,6 +696,7 @@ export class DevRenderer implements DevUi {
     }
     for (const u of summary.uiRefs) {
       lines.push(this.uiRefLine(u, tagWidth, u.errors))
+      if (u.proxies) lines.push(...this.proxyLines(u.proxies))
     }
     // Below the app rows, because it is a consequence of one of them — a `● failed` backend is WHY a
     // route went to cloud, and the two read as cause and effect only in that order.
@@ -624,18 +736,18 @@ export class DevRenderer implements DevUi {
   formatFooterLines(summary: ReadySummary): string[] {
     const tagWidth = this.tagWidth(summary)
     const rows = summary.endpoints.map((e) => {
-      const dot = this.healthDot(e.healthy)
+      const dot = this.healthDot(e.health)
       const status = this.statusFields(e)
       const cells = [dot, status].filter(Boolean).join('  ')
 
-      return `  ${this.color(ANSI.teal, e.tag.padEnd(tagWidth))}  ${cells}`
+      return `  ${this.tagCell(e.tag, tagWidth, e.errors)}  ${cells}`
     })
 
     // A UI whose port infra-kit could not claim has no endpoint row — but its errors still have to land
     // somewhere the user can see, and it is precisely the app most likely to be misconfigured.
     for (const ref of summary.uiRefs) {
       if (ref.errors == null) continue
-      rows.push(`  ${this.color(ANSI.teal, ref.tag.padEnd(tagWidth))}  ${this.errorCount(ref.errors)}`)
+      rows.push(`  ${this.tagCell(ref.tag, tagWidth, ref.errors)}  ${this.errorCount(ref.errors)}`)
     }
 
     // Degraded routes live in the PANEL, not only in the header. The header is committed once through

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { DevRenderer, formatClock, formatElapsed, resolveEndpointUrl, stripAnsi } from 'src/dev/render'
-import type { ReadySummary } from 'src/dev/render'
+import type { HealthState, ReadySummary } from 'src/dev/render'
 
 /**
  * The renderer is pure I/O over injected seams: `write` (terminal), `appendLog` (file tee), `isTTY`
@@ -42,7 +42,7 @@ const baseSummary = (over: Partial<ReadySummary> = {}): ReadySummary => {
 
     release: 'feat-x',
     elapsedMs: 2400,
-    endpoints: [{ tag: 'client/api', url: 'https://feat-x.client-api.localhost/api/v1', healthy: true }],
+    endpoints: [{ tag: 'client/api', url: 'https://feat-x.client-api.localhost/api/v1', health: 'ok' }],
     uiRefs: [{ tag: 'client/ui' }],
     watchSummary: '1 app · 5 packages',
     logPath: '~/.cache/infra-kit/ab12cd34/logs.txt',
@@ -109,7 +109,7 @@ describe('render — ready header (non-TTY, deterministic)', () => {
     const { r, out } = makeRenderer()
 
     r.ready(
-      baseSummary({ endpoints: [{ tag: 'api', url: 'https://feat-x.client-api.localhost/api/v1', healthy: false }] }),
+      baseSummary({ endpoints: [{ tag: 'api', url: 'https://feat-x.client-api.localhost/api/v1', health: 'down' }] }),
     )
     const screen = out.join('')
 
@@ -146,6 +146,67 @@ describe('render — ready header (non-TTY, deterministic)', () => {
 
     piped.r.ready(baseSummary())
     expect(piped.out.join('')).not.toContain('\x1B]8')
+  })
+})
+
+describe('render — nested per-app proxy list', () => {
+  it('paints each frontend proxy as an indented route → source → target line under the app row', () => {
+    const { r, out } = makeRenderer()
+
+    r.ready(
+      baseSummary({
+        endpoints: [
+          { tag: 'client/api', url: 'https://feat-x.client-api.localhost/api/v1', health: 'ok' },
+          {
+            tag: 'client/ui',
+            url: 'https://feat-x.client-ui.localhost',
+            health: 'ok',
+            proxies: [
+              { route: '/api', source: 'local', target: 'https://feat-x.client-api.localhost/api/v1' },
+              { route: '/media', source: 'cloud', target: 'https://dev.hulyo.co.il/media' },
+            ],
+          },
+        ],
+        uiRefs: [],
+      }),
+    )
+    const screen = out.join('')
+
+    // Filled dot = local, hollow = cloud; the last route gets the └ elbow, the rest ├.
+    expect(screen).toMatch(/├ \/api\s+● local\s+https:\/\/feat-x\.client-api\.localhost\/api\/v1/)
+    expect(screen).toMatch(/└ \/media\s+○ cloud\s+https:\/\/dev\.hulyo\.co\.il\/media/)
+  })
+
+  it('attaches the list to a UI reference line too, and prints no URL for a route with no knowable target', () => {
+    const { r, out } = makeRenderer()
+
+    r.ready(
+      baseSummary({
+        endpoints: [],
+        uiRefs: [{ tag: 'client/ui', proxies: [{ route: '/api', source: 'local' }] }],
+      }),
+    )
+    const screen = out.join('')
+
+    expect(screen).toContain('client/ui  no managed port')
+    expect(screen).toMatch(/└ \/api\s+● local/)
+    // No target on the route and no endpoint URL in this frame → the header carries no https origin at all.
+    expect(screen).not.toContain('https://')
+  })
+
+  it('adds no proxy lines to a backend row or a frontend that declares none', () => {
+    const { r, out } = makeRenderer()
+
+    r.ready(
+      baseSummary({
+        endpoints: [{ tag: 'client/api', url: 'https://feat-x.client-api.localhost/api/v1', health: 'ok' }],
+        uiRefs: [{ tag: 'client/ui' }],
+      }),
+    )
+    const screen = out.join('')
+
+    expect(screen).not.toContain('├')
+    expect(screen).not.toContain('└')
   })
 })
 
@@ -195,9 +256,9 @@ describe('render — formatter byte-equality guard', () => {
   // a down, and an unprobed endpoint plus two UI refs (widest-tag padding + dot branches).
   const guardSummary = baseSummary({
     endpoints: [
-      { tag: 'client/api', url: 'https://feat-x.client-api.localhost/api/v1', healthy: true },
-      { tag: 'admin/api', url: 'https://feat-x.admin-api.localhost/api/v1', healthy: false },
-      { tag: 'worker/api', url: 'https://feat-x.worker-api.localhost/api/v1', healthy: null },
+      { tag: 'client/api', url: 'https://feat-x.client-api.localhost/api/v1', health: 'ok' },
+      { tag: 'admin/api', url: 'https://feat-x.admin-api.localhost/api/v1', health: 'down' },
+      { tag: 'worker/api', url: 'https://feat-x.worker-api.localhost/api/v1', health: 'unknown' },
     ],
     uiRefs: [{ tag: 'client/ui' }, { tag: 'admin-console/ui' }],
   })
@@ -375,7 +436,7 @@ describe('render — the panel is the FOOTER (the live region), not the header',
         {
           tag: 'client/api',
           url: 'https://x.localhost/api/v1',
-          healthy: true,
+          health: 'ok',
           uptimeMs: 252_000,
           rpm: 18,
           restarts: 2,
@@ -516,6 +577,114 @@ describe('render — a UI-only session still has a live panel', () => {
  * produced a byte-identical frame and the screen sat perfectly still: the panel was verifiably alive and
  * looked exactly like a hung process. A real UI-only run showed precisely that.
  */
+/**
+ * The five health arms, and WHERE each one may be painted.
+ *
+ * A dot is a live fact, so it belongs to the region that repaints. The header is committed once through
+ * Ink's `<Static>`: anything painted there is a photograph, and a health dot in a photograph is a claim
+ * frozen at boot that can never turn red — nor, worse, turn back.
+ */
+describe('render — the health dot (all five arms)', () => {
+  const withHealth = (health: HealthState): ReadySummary => {
+    return baseSummary({
+      endpoints: [{ tag: 'client/api', url: 'https://feat-x.client-api.localhost/api/v1', health }],
+      uiRefs: [],
+    })
+  }
+
+  const footerFor = (health: HealthState): string => {
+    return new DevRenderer({ isTTY: false }).formatFooterLines(withHealth(health)).join('\n')
+  }
+
+  it('renders ● ok green, ● down red, ◌ starting and ◍ ? dim — and NOTHING at all for unknown', () => {
+    const tty = new DevRenderer({ isTTY: true })
+
+    expect(footerFor('ok')).toContain('● ok')
+    expect(footerFor('down')).toContain('● down')
+    expect(footerFor('starting')).toContain('◌ starting')
+    // Answering, but not with vite's ping. Dim, never red: a non-204 is equally consistent with a broken
+    // squatter and a healthy vite behind something that shadows the ping, and a red dot on a coin-flip is
+    // how a dot stops being read at all.
+    expect(footerFor('unverified')).toContain('◍ ?')
+
+    // Nothing to probe (a UiRef, or `--no-ui-health`) → no dot at all, in any shape.
+    const unknown = footerFor('unknown')
+
+    expect(unknown).not.toContain('●')
+    expect(unknown).not.toContain('◌')
+    expect(unknown).not.toContain('◍')
+
+    // The colours are part of the claim: only a PROOF of failure is allowed to be red.
+    expect(tty.formatFooterLines(withHealth('ok')).join('\n')).toContain('\x1B[32m● ok\x1B[0m')
+    expect(tty.formatFooterLines(withHealth('down')).join('\n')).toContain('\x1B[31m● down\x1B[0m')
+    expect(tty.formatFooterLines(withHealth('starting')).join('\n')).toContain('\x1B[2m◌ starting\x1B[0m')
+    expect(tty.formatFooterLines(withHealth('unverified')).join('\n')).toContain('\x1B[2m◍ ?\x1B[0m')
+  })
+
+  it('the FOOTER carries a dot for every arm but unknown — it is the only region that can', () => {
+    for (const health of ['ok', 'down', 'starting', 'unverified'] as const) {
+      expect(footerFor(health)).toMatch(/[●◌◍]/)
+    }
+    expect(footerFor('unknown')).not.toMatch(/[●◌◍]/)
+  })
+
+  it('the HEADER carries no dot for ANY arm — a live state committed to <Static> would freeze there', () => {
+    const header = new DevRenderer({ isTTY: false })
+
+    for (const health of ['ok', 'down', 'starting', 'unverified', 'unknown'] as const) {
+      expect(header.formatHeaderLines(withHealth(health)).join('\n')).not.toMatch(/[●◌◍]/)
+    }
+  })
+
+  it('the HEADER never reddens a tag either — it could never turn red later, nor turn back', () => {
+    // The tag gutter goes red on a row that has declared an error. In the header that would be a permanent
+    // red tag for an error the app has since stopped making, so `tagCell` is footer-only by construction.
+    const broken = baseSummary({
+      endpoints: [{ tag: 'client/api', url: 'https://x.localhost/api/v1', health: 'ok', errors: 3 }],
+      uiRefs: [],
+    })
+    const tty = new DevRenderer({ isTTY: true })
+
+    expect(tty.formatHeaderLines(broken).join('\n')).not.toContain('\x1B[31mclient/api')
+    // The footer, which repaints, DOES redden it — otherwise this would pass vacuously.
+    expect(tty.formatFooterLines(broken).join('\n')).toContain('\x1B[31mclient/api')
+  })
+})
+
+/**
+ * `⚠ N` has to win a glance against a green dot two columns away.
+ *
+ * That is the honest cost of a LIVENESS dot: a frontend that fails to compile still serves and still
+ * answers vite's ping, so its row is `● ok  ⚠ 3` — a green dot beside an app that will not load. The
+ * counter is the only thing on the screen that says so, so at N > 0 it is bold red and its tag turns red
+ * with it. Neither is decoration.
+ */
+describe('render — the error counter is LOUD (a green dot can sit right next to it)', () => {
+  const withErrors = (errors: number): ReadySummary => {
+    return baseSummary({
+      endpoints: [{ tag: 'client/api', url: 'https://x.localhost/api/v1', health: 'ok', errors }],
+      uiRefs: [],
+    })
+  }
+
+  it('renders a bold-red ⚠ N and a red tag once a row has declared an error', () => {
+    const footer = new DevRenderer({ isTTY: true }).formatFooterLines(withErrors(3)).join('\n')
+
+    expect(footer).toContain('\x1B[1m\x1B[31m⚠ 3\x1B[0m')
+    expect(footer).toContain('\x1B[31mclient/api')
+    // The dot stays honestly green: the app IS alive. The counter is what says it is nevertheless broken.
+    expect(footer).toContain('\x1B[32m● ok\x1B[0m')
+  })
+
+  it('keeps ⚠ 0 dim and the tag teal — zero is stated, not shouted (and not omitted)', () => {
+    const footer = new DevRenderer({ isTTY: true }).formatFooterLines(withErrors(0)).join('\n')
+
+    expect(footer).toContain('\x1B[2m⚠ 0\x1B[0m')
+    expect(footer).toContain('\x1B[36mclient/api')
+    expect(footer).not.toContain('\x1B[1m\x1B[31m')
+  })
+})
+
 describe('render — the panel has a heartbeat for every session shape', () => {
   const uiOnlyAt = (uptimeMs: number): ReadySummary => {
     return {

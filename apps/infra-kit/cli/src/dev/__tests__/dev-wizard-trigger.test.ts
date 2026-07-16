@@ -27,4 +27,13 @@ describe('shouldRunWizard', () => {
   ])('never fires when %s is present (runs directly from flags)', (_label, raw) => {
     expect(shouldRunWizard(raw, true, false)).toBe(false)
   })
+
+  it('sTILL fires with --no-ui-health — that flag picks a diagnostic, not a run plan', () => {
+    // The trap this guards: folding `--no-ui-health` into the "bare" predicate turns `infra-kit dev
+    // --no-ui-health` from "open the picker, and skip the frontend probe" into "silently run EVERY app in
+    // the repo". A flag that quietly swaps the interactive picker for a whole-monorepo boot is a far bigger
+    // surprise than the one that reasoning was trying to avoid. The wizard carries the flag through instead
+    // (see `wizardToOptions`), so the user gets the picker AND the probe stays off.
+    expect(shouldRunWizard({ uiHealth: false }, true, false)).toBe(true)
+  })
 })

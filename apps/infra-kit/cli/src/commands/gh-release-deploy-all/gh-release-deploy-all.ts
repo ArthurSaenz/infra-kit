@@ -7,6 +7,7 @@ import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { pickEnv } from 'src/lib/prompts/env-picker'
+import { withEscape } from 'src/lib/prompts/escapable-context'
 import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import {
   detectReleaseType,
@@ -48,7 +49,9 @@ const confirmDeploy = async (args: ConfirmDeployArgs): Promise<boolean> => {
 
   commandEcho.setInteractive()
 
-  const answer = await confirm({ message: `Deploy ${branch} → ${env}?`, default: false })
+  const answer = await withEscape((context) => {
+    return confirm({ message: `Deploy ${branch} → ${env}?`, default: false }, context)
+  })
 
   if (answer) commandEcho.addOption('--yes', true)
 

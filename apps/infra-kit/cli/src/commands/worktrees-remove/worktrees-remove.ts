@@ -9,6 +9,7 @@ import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
+import { isMcpMode } from 'src/lib/mcp-mode'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 import { formatBranchName, parseReleaseRef } from 'src/lib/release-id'
 import {
@@ -29,13 +30,64 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
 }
 
 /**
+ * MCP has no TTY (JSON-RPC owns stdin) and the boundary auto-confirms, so the branch picker is
+ * unreachable and a bulk removal would run without any human gate. `all` is intentionally absent from
+ * this tool's MCP inputSchema; guard the shared handler too so a direct/agent call can never fan out to
+ * every worktree. Require MCP callers to name targets explicitly via `versions`. No-op on the CLI path.
+ */
+const assertMcpRemovalInput = (input: { all?: boolean; versions?: string }): void => {
+  if (!isMcpMode()) return
+
+  if (input.all) {
+    throw new OperationError(undefined, {
+      operation: 'remove worktrees',
+      remediation: 'name targets explicitly via "versions"; bulk all=true removal is disabled over MCP',
+      stderrExcerpt: 'all=true is not permitted for worktrees-remove over MCP',
+    })
+  }
+
+  if (!input.versions) {
+    throw new OperationError(undefined, {
+      operation: 'remove worktrees',
+      remediation: 'pass "versions" (comma-separated release versions/names); the interactive picker needs a TTY',
+      stderrExcerpt: 'worktrees-remove over MCP requires "versions"',
+    })
+  }
+}
+
+/**
+ * Every named target must be an active release worktree. Without this an unmatched version builds a
+ * path that does not exist; `removeWorktrees` (Promise.allSettled) swallows the failure and reports a
+ * no-op as success. Validate all-or-nothing BEFORE removing anything so a typo or a feature-worktree
+ * name fails loudly on both the CLI `--versions` and the MCP path. The `all` and interactive-picker
+ * paths select from `currentWorktrees`, so this is a no-op for them.
+ */
+const assertTargetsExist = (selected: string[], currentWorktrees: string[]): void => {
+  const unmatched = selected.filter((branch) => {
+    return !currentWorktrees.includes(branch)
+  })
+
+  if (unmatched.length > 0) {
+    throw new OperationError(undefined, {
+      operation: 'remove worktrees',
+      remediation: `no active worktree for: ${unmatched.join(', ')}. Run 'infra-kit worktrees list' to see current worktrees`,
+      stderrExcerpt: `unmatched worktree target(s): ${unmatched.join(', ')}`,
+    })
+  }
+}
+
+/**
  * Manage git worktrees for release branches
  * Creates worktrees for active release branches and removes unused ones
  */
 export const worktreesRemove = async (options: WorktreeManagementArgs) => {
   const { confirmedCommand, all, versions } = options
 
-  await assertManagementContext({ operation: 'remove worktrees', requiredBranch: 'dev' })
+  // Branch-agnostic: `git worktree remove` addresses worktrees by path and never
+  // reads HEAD, so only the worktree + clean-tree legs apply.
+  await assertManagementContext({ operation: 'remove worktrees' })
+
+  assertMcpRemovalInput({ all, versions })
 
   try {
     const currentWorktrees = await getCurrentWorktrees('release')
@@ -79,6 +131,8 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
         { required: true },
       )
     }
+
+    assertTargetsExist(selectedReleaseBranches, currentWorktrees)
 
     // Track --all flag if all branches were selected (either via flag or interactively)
     const allSelected = selectedReleaseBranches.length === currentWorktrees.length
@@ -136,6 +190,10 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
     // logged as an error with a misleading remediation.
     if (isPromptCancellation(error)) throw error
 
+    // Our own guard failures (unmatched target, MCP misuse) already carry an actionable remediation;
+    // surface them as-is instead of re-wrapping them with the generic message below.
+    if (error instanceof OperationError) throw error
+
     logger.error({ error }, '❌ Error managing worktrees')
     throw new OperationError(error, {
       operation: 'remove worktrees',
@@ -163,19 +221,12 @@ const logResults = (removed: string[]): void => {
 export const worktreesRemoveMcpTool = defineMcpTool({
   name: 'worktrees-remove',
   description:
-    'Remove local git worktrees for release branches. When everything is removed, also runs "git worktree prune" to clear stale metadata; the worktrees directory and its release/feature subfolders are left in place. When invoked via MCP, pass either "versions" (comma-separated) or all=true — the branch picker is unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls, so the caller is responsible for gating.',
+    'Remove local git worktrees for the named release branches. Over MCP you MUST pass "versions" (comma-separated); bulk all=true removal is disabled here (it is a one-shot, unconfirmed wipe of every worktree) — the branch picker and confirmation are unavailable without a TTY. Every named version must be an active worktree, or the call errors without removing anything. What survives: the release branches/commits themselves are never deleted, and the worktrees directory plus its release/feature subfolders are left in place (recreate a worktree with worktrees-add). What is lost: git refuses to remove a worktree with modified tracked files or untracked files, BUT it DOES delete the worktree directory including gitignored contents — a hydrated .env of Doppler secrets (re-fetch with env-load) and build output such as node_modules/dist (needs reinstall/rebuild). When every worktree is removed it also runs "git worktree prune".',
   inputSchema: {
-    all: z
-      .boolean()
-      .optional()
-      .describe(
-        'Remove every existing worktree. Either "all" or "versions" must be provided for MCP calls (the interactive picker is unavailable without a TTY). Ignored if "versions" is provided.',
-      ),
     versions: z
       .string()
-      .optional()
       .describe(
-        'Comma-separated release versions or names to target (e.g. "1.2.5, 1.2.6" or "checkout-redesign, 1.2.5"). Either "versions" or all=true must be provided for MCP calls. Overrides "all" when set.',
+        'Comma-separated release versions or names to remove (e.g. "1.2.5, 1.2.6" or "checkout-redesign, 1.2.5"). Required: each must name an active worktree, or the call errors before removing anything.',
       ),
   },
   outputSchema: {

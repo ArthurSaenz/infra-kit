@@ -456,6 +456,10 @@ describe('runSession loop', () => {
           raise: () => {
             return undefined
           },
+          resetTerminal: () => {
+            // Signal-free test: the palette's terminal is nobody's here.
+            return undefined
+          },
         },
         resetTerminal: () => {
           // The trailing Ctrl-C of a user still hammering the key at the child they just killed.

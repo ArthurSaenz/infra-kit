@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { maybeAutoUpdate } from '../auto-update'
 import type { AutoUpdateDeps } from '../auto-update'
-import { CHECK_INTERVAL_MS } from '../update-cache'
+import { CHECK_INTERVAL_MS, RETRY_INTERVAL_MS } from '../update-cache'
 import type { UpdateCache } from '../update-cache'
 
 const NOW = 1_770_000_000_000
@@ -70,6 +70,32 @@ describe('maybeAutoUpdate', () => {
     maybeAutoUpdate('0.1.130', deps)
 
     expect(spawnChild).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-spawns an hour after a transient fetch-failure instead of waiting the full day', () => {
+    // The lived bug: a `fetch-failed` cache is one hour old. Under the old single 24h window this stayed
+    // fresh and auto-update sat dead for 23 more hours; now the transient outcome re-checks within the hour.
+    const { deps, spawnChild } = harness({
+      readCache: () => {
+        return cache({ lastCheckMs: NOW - RETRY_INTERVAL_MS, outcome: 'fetch-failed' })
+      },
+    })
+
+    maybeAutoUpdate('0.1.130', deps)
+
+    expect(spawnChild).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT re-spawn an hour after a settled up-to-date check (that would re-fetch all day)', () => {
+    const { deps, spawnChild } = harness({
+      readCache: () => {
+        return cache({ lastCheckMs: NOW - RETRY_INTERVAL_MS, outcome: 'up-to-date' })
+      },
+    })
+
+    maybeAutoUpdate('0.1.130', deps)
+
+    expect(spawnChild).not.toHaveBeenCalled()
   })
 
   it.each([

@@ -26,7 +26,9 @@ interface GhMergeDevArgs extends RequiredConfirmedOptionArg {
 export const ghMergeDev = async (args: GhMergeDevArgs) => {
   const { all, confirmedCommand } = args
 
-  await assertManagementContext({ operation: 'merge dev into release branches', requiredBranch: 'dev' })
+  // Branch-agnostic: this self-switches onto a freshly fetched dev below, after
+  // the confirmation prompt, so only the worktree + clean-tree legs apply.
+  await assertManagementContext({ operation: 'merge dev into release branches' })
 
   // Only merge dev into regular releases (not hotfixes, which target main)
   const allPRs = await getReleasePRsWithInfo()
@@ -87,9 +89,22 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
 
   $.quiet = true
 
-  await $`git fetch origin`
-  await $`git switch dev`
-  await $`git pull origin dev`
+  // The guard no longer requires dev, so this switch is a real operation rather
+  // than the no-op it used to be — most plausibly failing when dev is checked
+  // out in a linked worktree. Fails closed: nothing has been merged or pushed
+  // yet.
+  try {
+    await $`git fetch origin`
+    await $`git switch dev`
+    await $`git pull origin dev`
+  } catch (error) {
+    $.quiet = false
+
+    throw new OperationError(error, {
+      operation: 'switch to dev before merging',
+      remediation: 'dev may be checked out in another worktree — check `git worktree list`',
+    })
+  }
 
   const failedBranches: string[] = []
 

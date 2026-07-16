@@ -212,6 +212,16 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     ],
   },
   {
+    "input": [
+      "versions",
+    ],
+    "name": "worktrees-remove",
+    "output": [
+      "count",
+      "removedWorktrees",
+    ],
+  },
+  {
     "input": [],
     "name": "worktrees-sync",
     "output": [

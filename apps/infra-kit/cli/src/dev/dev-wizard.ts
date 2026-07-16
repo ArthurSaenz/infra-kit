@@ -1,29 +1,48 @@
 /**
  * Pure core of the interactive `infra-kit dev` wizard (the no-args, TTY path).
  *
- * The wizard is FRONTEND-CENTRIC: you pick apps to run, and for each frontend you choose, per backend
- * it proxies to, whether that backend runs LOCALLY (its `/api` is launched → the route resolves local)
- * or stays CLOUD (not launched → the route proxies to the `<env>` cloud target). A backend runs iff a
- * frontend points at it locally, or its app is selected and not demoted to cloud. This module turns
- * those answers into an in-memory {@link DevPreset} the runner consumes verbatim (part-level targets
- * that the app-name-only `--app` include cannot express) — and is side-effect-free so the mapping is
- * fully unit-testable. The impure I/O (discovery, inquirer prompts, audit, launch) lives in
- * {@link file://./dev-wizard-run.ts}.
+ * The wizard is FRONTEND-CENTRIC: you pick which frontends to run, and for each frontend you choose,
+ * every proxy route that has TWO real options (its `from` lists both `local` and `cloud`) is decided
+ * EXPLICITLY — local (its backend is launched → the route resolves local) or cloud (the route proxies
+ * to the `<env>` cloud target). Single-option routes are auto-picked. Because a backend runs local OR
+ * cloud as a whole, routes that share one backend package RECONCILE: if any of them resolved local, the
+ * backend runs local and all its local-capable routes follow. This module turns those answers into an
+ * in-memory {@link DevPreset} the runner consumes verbatim (part-level targets the app-name-only `--app`
+ * include cannot express) — and is side-effect-free so the mapping is fully unit-testable. The impure
+ * I/O (discovery, inquirer prompts, audit, launch) lives in {@link file://./dev-wizard-run.ts}.
  */
 import type { DevPreset, ProxySource } from 'src/lib/infra-kit-config'
 
 /**
+ * One proxy route's per-route capability, carried through grouping so the wizard can decide whether it
+ * even needs to ask about the route (only a `local`+`cloud` route is a real choice).
+ */
+export interface RouteCap {
+  /** Route path (e.g. `/api`). */
+  path: string
+  /** `from` includes `local` — the route can resolve to a locally-launched backend. */
+  localCapable: boolean
+  /** `from` includes `cloud` — the route can resolve to the cloud target. */
+  cloudCapable: boolean
+  /** The route's declared `default` source when it has one (present iff `from` lists >1 source) — seeds the prompt's default. */
+  default?: ProxySource
+}
+
+/**
  * One backend a frontend's proxy routes can be pointed at, grouped by the backend package. A frontend
  * that maps `/api` and `/media` to the same package yields ONE {@link ProxyBackend} with both routes —
- * launching the package flips every one of its `local`-capable routes together (see `pickSource`).
+ * launching the package flips every one of its `local`-capable routes together (the reconcile in
+ * {@link deriveManualPlan}).
  */
 export interface ProxyBackend {
   /** Backend package name (a route's `packageName`). */
   packageName: string
-  /** Route paths that resolve to this package (for display + the audit's per-route overrides). */
-  routes: string[]
-  /** True when at least one of `routes` lists `local` in its `from` capabilities — i.e. it is toggleable. A `false` backend is fixed-cloud, shown as info. */
+  /** The routes that resolve to this package, each with its own local/cloud capability. */
+  routes: RouteCap[]
+  /** True when at least one of `routes` lists `local` in its `from` capabilities — i.e. it is launchable-local. */
   localCapable: boolean
+  /** True when at least one of `routes` lists `cloud` — i.e. it can stay on the cloud target. */
+  cloudCapable: boolean
   /** App folder whose `api` package is {@link packageName}, or undefined when no discovered app owns it (a `local` choice then has nothing to launch — the audit flags it). */
   ownerApp?: string
 }
@@ -59,11 +78,17 @@ export interface WizardModel {
 /** The manual-branch answers collected from the prompts, fed to {@link deriveManualPlan}. */
 export interface ManualSelection {
   /**
-   * The `<app>/<part>` target keys the user ticked directly (e.g. `client/ui`, `client/api`). A frontend's
-   * proxy route resolves LOCAL iff the backend's owner-api part is in this set — otherwise CLOUD — so the
-   * part checkbox IS the local/cloud decision; there is no separate per-backend question.
+   * The target keys the user ticked directly: every selected `<app>/ui` frontend, plus any api-only
+   * `<app>/api` backend (apps with an api but no ui). A full-stack backend is NOT ticked here — it is
+   * launched by choosing `local` for one of its frontend's routes (recorded in {@link sources}).
    */
   targets: string[]
+  /**
+   * Explicit per-route choice for every TWO-OPTION route, keyed `${app}/ui ${routePath}` (e.g.
+   * `client/ui /api`). Single-option routes are absent (auto-picked). Missing two-option answers fall
+   * back to the route's cloud/local capability in {@link deriveManualPlan}.
+   */
+  sources: Record<string, ProxySource>
   /** Chosen cloud env for cloud routes (undefined when nothing resolves cloud). */
   env?: string
   /** Rebuild + restart on save. */
@@ -96,24 +121,70 @@ const byName = (model: WizardModel): Map<string, WizardApp> => {
   )
 }
 
+/** Is this route a real choice (both local and cloud reachable)? */
+const isTwoOption = (route: RouteCap): boolean => {
+  return route.localCapable && route.cloudCapable
+}
+
 /**
- * Resolve ONE selected frontend's proxy routes against the set of api parts the user ticked: a route is
- * `local` iff its backend is `localCapable` AND that backend's owner-api part was selected — otherwise
- * `cloud`. Kept separate from {@link deriveManualPlan} so the per-app override loop stays flat.
+ * The source a single route resolves to BEFORE per-backend reconciliation:
+ *  - two-option: the user's recorded answer, else 'cloud' when cloud-capable else 'local';
+ *  - single local-only: always 'local';
+ *  - single cloud-only: always 'cloud'.
  */
-const resolveUiProxy = (
-  app: WizardApp,
-  selectedApiApps: ReadonlySet<string>,
+const rawSource = (uiKey: string, route: RouteCap, sources: Record<string, ProxySource>): ProxySource => {
+  if (isTwoOption(route)) {
+    return sources[`${uiKey} ${route.path}`] ?? (route.cloudCapable ? 'cloud' : 'local')
+  }
+
+  return route.localCapable ? 'local' : 'cloud'
+}
+
+/**
+ * Pass 1: which backend packages resolve local (any of their routes did), plus each package's owner app.
+ * A package's local verdict is shared across every frontend that proxies to it — that is the reconcile.
+ */
+const collectLocalPackages = (
+  uiKeys: string[],
+  apps: Map<string, WizardApp>,
+  sources: Record<string, ProxySource>,
+): { localPkgs: Set<string>; ownerByPkg: Map<string, string | undefined> } => {
+  const localPkgs = new Set<string>()
+  const ownerByPkg = new Map<string, string | undefined>()
+
+  for (const key of uiKeys) {
+    const app = apps.get(appOf(key))
+
+    for (const backend of app?.backends ?? []) {
+      ownerByPkg.set(backend.packageName, backend.ownerApp)
+      for (const route of backend.routes) {
+        if (rawSource(key, route, sources) === 'local') localPkgs.add(backend.packageName)
+      }
+    }
+  }
+
+  return { localPkgs, ownerByPkg }
+}
+
+/**
+ * Pass 2 for ONE frontend: its per-route overrides after the per-package verdict, and whether any route
+ * went cloud. A local-capable route on a local package is `local` (reconciled up); everything else `cloud`.
+ */
+const frontendOverrides = (
+  app: WizardApp | undefined,
+  localPkgs: ReadonlySet<string>,
 ): { overrides: Record<string, ProxySource>; anyCloud: boolean } => {
   const overrides: Record<string, ProxySource> = {}
   let anyCloud = false
 
-  for (const backend of app.backends) {
-    const isLocal = backend.localCapable && backend.ownerApp != null && selectedApiApps.has(backend.ownerApp)
+  for (const backend of app?.backends ?? []) {
+    const backendLocal = localPkgs.has(backend.packageName)
 
-    if (!isLocal) anyCloud = true
     for (const route of backend.routes) {
-      overrides[route] = isLocal ? 'local' : 'cloud'
+      const source: ProxySource = route.localCapable && backendLocal ? 'local' : 'cloud'
+
+      overrides[route.path] = source
+      if (source === 'cloud') anyCloud = true
     }
   }
 
@@ -121,47 +192,61 @@ const resolveUiProxy = (
 }
 
 /**
- * Turn a part-level {@link ManualSelection} into an in-memory {@link DevPreset}. Because the user picks
- * `<app>/<part>` targets directly, the mapping is straightforward:
- *  - every selected `<app>/ui` runs that frontend;
- *  - every selected `<app>/api` runs that backend locally;
- *  - each frontend's proxy route resolves `local` iff the backend's owner-api part was also selected
- *    (even cross-app), else `cloud` — i.e. ticking the api part IS the local choice.
+ * Turn the manual {@link ManualSelection} into an in-memory {@link DevPreset}. The frontend checkbox picks
+ * which UIs (and standalone api-only backends) to run; the per-route answers in {@link ManualSelection.sources}
+ * decide each two-option route. Resolution is two passes so same-backend routes stay coherent:
+ *
+ *  1. Resolve every route of every selected frontend to its raw source; a package is LOCAL iff any of its
+ *     routes resolved local.
+ *  2. Re-resolve each route against that per-package verdict: a local-capable route on a local package is
+ *     `local` (reconciled up even if it was individually answered cloud); a cloud-only route stays `cloud`.
+ *
+ * Launched backends are the ticked api-only parts ∪ every package that resolved local (added as
+ * `${ownerApp}/api` when the owner is discoverable — a local override on an owner-less package is still
+ * emitted, and the audit flags it).
  *
  * @example
- * // client frontend only (its /api left unticked → its proxy route resolves to cloud):
+ * // client frontend, its /api answered local → launches client/api + client/ui, /api resolves local:
  * deriveManualPlan(
- *   { targets: ['client/ui'], watch: false, cmux: false },
+ *   { targets: ['client/ui'], sources: { 'client/ui /api': 'local' }, watch: false, cmux: false },
  *   { apps: [{ name: 'client', hasApi: true, hasUi: true,
- *              backends: [{ packageName: 'client-api', routes: ['/api'], localCapable: true, ownerApp: 'client' }] }],
+ *              backends: [{ packageName: 'client-api', cloudCapable: true, localCapable: true,
+ *                           routes: [{ path: '/api', localCapable: true, cloudCapable: true }],
+ *                           ownerApp: 'client' }] }],
  *     presets: [], environments: ['dev'] },
- * ).targetKeys // => ['client/ui']
+ * ).targetKeys // => ['client/api', 'client/ui']
  */
 export const deriveManualPlan = (selection: ManualSelection, model: WizardModel): DerivedPlan => {
   const apps = byName(model)
   const uiKeys = selection.targets.filter((t) => {
     return t.endsWith('/ui')
   })
-  const apiApps = new Set(
-    selection.targets
-      .filter((t) => {
-        return t.endsWith('/api')
-      })
-      .map(appOf),
-  )
+  const apiOnlyKeys = selection.targets.filter((t) => {
+    return t.endsWith('/api')
+  })
 
+  // Pass 1: a package is local iff any of its routes (across every selected frontend) resolved local.
+  const { localPkgs, ownerByPkg } = collectLocalPackages(uiKeys, apps, selection.sources)
+
+  // Pass 2: re-resolve each route against the per-package verdict + build per-frontend overrides.
   const presetApps: Record<string, { proxy?: Record<string, ProxySource> }> = {}
   let anyCloud = false
 
   for (const key of uiKeys) {
-    const app = apps.get(appOf(key))
-    const { overrides, anyCloud: cloud } = app ? resolveUiProxy(app, apiApps) : { overrides: {}, anyCloud: false }
+    const { overrides, anyCloud: cloud } = frontendOverrides(apps.get(appOf(key)), localPkgs)
 
     if (cloud) anyCloud = true
     presetApps[key] = Object.keys(overrides).length > 0 ? { proxy: overrides } : {}
   }
-  for (const name of apiApps) {
-    presetApps[`${name}/api`] ??= {}
+
+  // Launch: the ticked api-only backends, plus every package that resolved local (via its owner app).
+  for (const key of apiOnlyKeys) {
+    presetApps[key] ??= {}
+  }
+  for (const pkg of localPkgs) {
+    const owner = ownerByPkg.get(pkg)
+
+    if (owner != null) presetApps[`${owner}/api`] ??= {}
   }
 
   return {
@@ -171,47 +256,24 @@ export const deriveManualPlan = (selection: ManualSelection, model: WizardModel)
   }
 }
 
-/** The equivalent non-interactive command, plus whether it reproduces the selection exactly. */
+/** The equivalent non-interactive command for a derived plan. */
 export interface EquivalentCommand {
-  /** The `--app=…`-form flag string (no leading `infra-kit dev`). */
+  /** The `--target=<app>/<part>,…`-form flag string (no leading `infra-kit dev`). */
   flags: string
-  /**
-   * True when `--app` reproduces the plan exactly — i.e. every involved app runs ALL the parts it has.
-   * False for a part-level selection (e.g. frontend-only), which `--app` (app-name granularity) cannot
-   * express; the caller then hints "save as a preset" for exact reproduction.
-   */
-  exact: boolean
 }
 
 /**
- * Build the equivalent `infra-kit dev --app=… [--watch] [--cmux]` flag string for a derived plan.
- * `exact` is true only when the target set covers every part each involved app HAS (a whole-app
- * selection), since `--app` filters by app name, not part.
+ * Build the equivalent `infra-kit dev --target=… [--watch] [--cmux]` flag string for a derived plan.
+ * Always exact: `--target` names packages at `<app>/<part>` granularity — the same grammar the plan's
+ * `targetKeys` already use — so every wizard selection, whole-app or part-level, round-trips into a
+ * pasteable command. (`--app` is deliberately NOT used here: its app-name granularity over-launches a
+ * part-level pick — `--app=client` starts `client/api` even when only `client/ui` was ticked.)
  */
-export const equivalentCommand = (
-  plan: DerivedPlan,
-  selection: ManualSelection,
-  model: WizardModel,
-): EquivalentCommand => {
-  const apps = byName(model)
-  const involved = [...new Set(plan.targetKeys.map(appOf))].sort()
-  const present = new Set(plan.targetKeys)
-
-  const exact = involved.every((name) => {
-    const app = apps.get(name)
-
-    if (!app) return false
-
-    const uiOk = !app.hasUi || present.has(`${name}/ui`)
-    const apiOk = !app.hasApi || present.has(`${name}/api`)
-
-    return uiOk && apiOk
-  })
-
-  const parts = [`--app=${involved.join(',')}`]
+export const equivalentCommand = (plan: DerivedPlan, selection: ManualSelection): EquivalentCommand => {
+  const parts = [`--target=${plan.targetKeys.join(',')}`]
 
   if (selection.watch) parts.push('--watch')
   if (selection.cmux) parts.push('--cmux')
 
-  return { flags: parts.join(' '), exact }
+  return { flags: parts.join(' ') }
 }

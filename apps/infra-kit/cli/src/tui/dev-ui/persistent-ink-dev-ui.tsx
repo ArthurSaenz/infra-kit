@@ -2,7 +2,7 @@ import { render as inkRender } from 'ink'
 import process from 'node:process'
 import type { ReactElement } from 'react'
 
-import type { DevUi, LogLevel, ReadySummary } from 'src/dev/dev-ui'
+import type { DevUi, LogLevel, LogOptions, ReadySummary } from 'src/dev/dev-ui'
 import { DevRenderer, formatClock } from 'src/dev/render'
 import { createSafeStream } from 'src/tui/safe-stderr'
 
@@ -150,12 +150,16 @@ export class PersistentInkDevUi implements DevUi {
     }
   }
 
-  log(message: string, level: LogLevel = 'info'): void {
+  log(message: string, level: LogLevel = 'info', options: LogOptions = {}): void {
     const willWrite = level !== 'debug' || this.verbose
 
     if (this.persistent) {
       // Never the embedded renderer's direct stdout write here — append to the live region instead.
-      this.renderer.teeOnly(message, level)
+      // `tee: false` means the caller has ALREADY filed this line (see `DevServerRunner.reportFault`);
+      // teeing it again would put a second copy of every fault into `runner.log`.
+      if (options.tee !== false) {
+        this.renderer.teeOnly(message, level)
+      }
       if (willWrite) {
         this.logLines.push(message)
         this.rerenderPersistent()
@@ -166,7 +170,7 @@ export class PersistentInkDevUi implements DevUi {
     if (willWrite) {
       this.unmount()
     }
-    this.renderer.log(message, level)
+    this.renderer.log(message, level, options)
   }
 
   bootStep(phase: string): void {

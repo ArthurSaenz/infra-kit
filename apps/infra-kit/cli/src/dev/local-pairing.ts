@@ -121,6 +121,15 @@ const resolveFallback = (route: PairingRoute): PairingSource => {
   return route.default ?? route.from[0] ?? 'cloud'
 }
 
+/** The cloud origin a route lands on, or undefined when there is no template (or no `<env>` for one). */
+const cloudTargetOf = (
+  cloudTemplate: string | undefined,
+  packageName: string,
+  env: string | undefined,
+): string | undefined => {
+  return cloudTemplate == null ? undefined : interpolateCloud(cloudTemplate, packageName, env)
+}
+
 /**
  * Every route across the launched frontends that this run meant to serve locally and cannot.
  *
@@ -179,6 +188,71 @@ const judgeRoute = (
     reason: failure?.reason ?? NOT_LAUNCHED,
     cloudTarget,
   }
+}
+
+/** One route's resolved proxy destination, for the per-app listing the ready header paints under each UI. */
+export interface ResolvedProxyRoute {
+  /** Frontend app folder the route belongs to (e.g. `client`). */
+  uiApp: string
+  /** Route path (e.g. `/api`). */
+  route: string
+  /** The backend package this route proxies to. */
+  packageName: string
+  /** Where the route actually resolves — what the vite helper's `pickSource` will return for this run. */
+  source: PairingSource
+  /**
+   * The origin the route resolves to: the running backend's local origin (`local`) or the interpolated
+   * cloud origin (`cloud`). Omitted when it is not knowable — a `local` route whose backend is not up (a
+   * dead alias, already surfaced as a degraded row) or a `cloud` route with no `<env>` sourced.
+   */
+  target?: string
+}
+
+/** Everything {@link resolveProxyRoutes} needs; every input is passed in, so the mapping stays testable. */
+export interface ProxyResolutionInputs {
+  /** The frontends this run launched, with their declared `dev.proxy` routes. */
+  uis: readonly LaunchedUi[]
+  /**
+   * Backend packages up FROM THIS RUN. Mirrors — but is not identical to — the vite helper's on-disk
+   * `localSet`: this is only what this process launched, so a backend started by another terminal or
+   * worktree is invisible here (the same approximation {@link findDegradedRoutes} already makes). Kept in
+   * lockstep with the degraded check on purpose, so the two never disagree with each other.
+   */
+  running: ReadonlySet<string>
+  /** A running backend package → its local origin URL, for a `local` route's `target`. */
+  localOrigin: (packageName: string) => string | undefined
+  /** `INFRA_KIT_ENV`, for the `<env>` placeholder in a cloud template. */
+  env?: string
+}
+
+/**
+ * Resolve EVERY route across the launched frontends to where it actually lands this run — the data the
+ * ready header paints as a nested list under each UI app.
+ *
+ * Deliberately mirrors the vite helper's `pickSource` (a route is `local` iff it lists `local` AND its
+ * package is in the running set, else it falls back to `route.default ?? route.from[0]`), so the listing
+ * can never disagree with the proxy the frontend actually serves. Unlike {@link findDegradedRoutes} this
+ * reports the happy path too: a healthy `local` route and an intentional `cloud` route both get a row.
+ *
+ * Routes are emitted sorted by path within each UI, so the listing is stable regardless of config order.
+ */
+export const resolveProxyRoutes = (input: ProxyResolutionInputs): ResolvedProxyRoute[] => {
+  const { uis, running, localOrigin, env } = input
+
+  return uis.flatMap((ui) => {
+    return Object.entries(ui.routes)
+      .sort(([a], [b]) => {
+        return a.localeCompare(b)
+      })
+      .map(([route, spec]): ResolvedProxyRoute => {
+        const source: PairingSource =
+          spec.from.includes('local') && running.has(spec.packageName) ? 'local' : resolveFallback(spec)
+        const target =
+          source === 'local' ? localOrigin(spec.packageName) : cloudTargetOf(ui.cloudTemplate, spec.packageName, env)
+
+        return { uiApp: ui.app, route, packageName: spec.packageName, source, target }
+      })
+  })
 }
 
 /** Where this route's traffic is really about to go — the half of the message that must never lie. */

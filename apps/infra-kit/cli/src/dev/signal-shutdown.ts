@@ -89,7 +89,43 @@ export interface SignalShutdownDeps {
    * deferred to a later tick would never run. Defaults to {@link killDescendantGroupsNow}.
    */
   forceReap?: () => void
+  /** How long a teardown may run before it is force-quit. See {@link TEARDOWN_DEADLINE_MS}. */
+  teardownDeadlineMs?: number
+  /**
+   * Timer seam, returning its own cancel. Defaults to `setTimeout`/`clearTimeout`; a test injects a fake
+   * so the deadline is fired deliberately rather than waited out.
+   */
+  setTimer?: (handler: () => void, ms: number) => () => void
+  /**
+   * Name the teardown step still in flight when the deadline trips — the CLI entry wires this to
+   * `runner.shutdownStage`.
+   *
+   * This module holds NO reference to the runner and so cannot read a stage on its own. Without the seam
+   * the deadline degrades into a plain force-quit and the incident's central question ("`shutdown()`
+   * demonstrably ran — so where did it wedge?") survives the fix meant to answer it.
+   */
+  describeStall?: () => string
+  /**
+   * File the deadline report where it can still be read. The entry routes it into the per-service log sink:
+   * on the path this deadline exists for, the terminal is exactly what is gone, so stderr is not a channel.
+   * Defaults to a no-op — library code has no sink to file into.
+   */
+  fileReport?: (text: string) => void
 }
+
+/**
+ * How long a teardown may run before the process force-quits: 20 s, well past a healthy reap (a turbo tree
+ * escalates SIGTERM→SIGKILL per child, seconds at worst) and far short of "forever".
+ *
+ * This module used to argue that NO deadline should be armed: *"any value safe enough not to preempt a
+ * legitimate teardown would fire later than a user's second Ctrl-C, and a supervisor sends its own SIGKILL
+ * on its own grace."* That reasoning quietly ASSUMES A HUMAN IS PRESENT to press Ctrl-C twice — and the
+ * incident that put this here is precisely the case where there is none: the terminal is gone, the operator
+ * is not watching, and no supervisor sits above an interactive `ik dev`. Five processes took SIGHUP, ran
+ * `shutdown()`, wedged, and spun for five hours writing 455 GB. The escape hatch the old design leaned on
+ * cannot be pressed by anyone who has already walked away.
+ */
+const TEARDOWN_DEADLINE_MS = 20_000
 
 const defaultExit = (code: number): void => {
   process.exit(code)
@@ -97,6 +133,19 @@ const defaultExit = (code: number): void => {
 
 const defaultRegister = (signal: NodeJS.Signals, handler: () => void): void => {
   process.on(signal, handler)
+}
+
+const defaultSetTimer = (handler: () => void, ms: number): (() => void) => {
+  const timer = setTimeout(handler, ms)
+
+  // `unref` so the deadline itself never HOLDS the process open: if the loop empties, the teardown is done
+  // and Node exits on its own. A wedged teardown always has live handles (children, listening servers), so
+  // the timer phase is still reached — the probe proved the fault storm does not starve it either.
+  timer.unref()
+
+  return (): void => {
+    clearTimeout(timer)
+  }
 }
 
 /**
@@ -131,8 +180,13 @@ const writeTeardownFailure = (signal: NodeJS.Signals, error: unknown): void => {
  * real escape hatch: it force-quits without touching `onSignal` again, SIGKILLing the descendant
  * groups on the way out so nothing is left holding a port.
  *
- * No force-deadline is armed. Any value safe enough not to preempt a legitimate teardown would
- * fire later than a user's second Ctrl-C, and a supervisor sends its own SIGKILL on its own grace.
+ * A {@link TEARDOWN_DEADLINE_MS} deadline IS armed — read its doc block before removing it, because this
+ * module used to explain at length why one should not be. That explanation assumed a human at the keyboard
+ * to press Ctrl-C a second time; the incident it now guards against is the case where nobody is there.
+ *
+ * Mechanically the deadline depends on `terminal-liveness`: with a fault storm live, teardown competes with
+ * ~100k blocking `writeSync` calls per second, and a deadline shipped into a machine that cannot honour it
+ * is decoration. The storm is cut at its source first; this is what stops the wedge that follows.
  *
  * @example
  * registerSignalShutdown({
@@ -140,6 +194,7 @@ const writeTeardownFailure = (signal: NodeJS.Signals, error: unknown): void => {
  *     process.stdout.write(`Received ${signal}, shutting down...`)
  *     await runner.shutdown()
  *   },
+ *   describeStall: () => runner.shutdownStage,
  * })
  */
 export const registerSignalShutdown = ({
@@ -147,9 +202,17 @@ export const registerSignalShutdown = ({
   exit = defaultExit,
   register = defaultRegister,
   forceReap = killDescendantGroupsNow,
+  teardownDeadlineMs = TEARDOWN_DEADLINE_MS,
+  setTimer = defaultSetTimer,
+  describeStall = () => {
+    return 'unknown'
+  },
+  fileReport = () => {},
 }: SignalShutdownDeps): void => {
   /** The signal that opened the teardown — `null` until the first one lands. */
   let firstSignal: NodeJS.Signals | null = null
+  /** Cancels the armed deadline — on a completed teardown, and on the second-signal escape. */
+  let cancelDeadline: (() => void) | null = null
 
   const handle = (signal: NodeJS.Signals): void => {
     if (firstSignal !== null) {
@@ -160,6 +223,7 @@ export const registerSignalShutdown = ({
       if (signal !== firstSignal) return
 
       writeStderr(`\n⚠  Received ${signal} again — force-quitting.\n`)
+      cancelDeadline?.()
       // Abandoning the teardown must still not abandon the children: they hold the dev ports, and
       // the next start would 502 against their stale portless aliases.
       forceReap()
@@ -170,6 +234,18 @@ export const registerSignalShutdown = ({
 
     firstSignal = signal
 
+    // The human's escape hatch, armed for the case where there is no human. Same destination as a second
+    // Ctrl-C — reap the descendant groups, exit `128 + signo` — but it also NAMES the step that wedged, and
+    // files that name where it can still be read once the terminal is gone.
+    cancelDeadline = setTimer(() => {
+      const report = `\n⚠  Teardown deadline exceeded at stage=${describeStall()} after ${teardownDeadlineMs}ms — force-quitting.\n`
+
+      writeStderr(report)
+      fileReport(report)
+      forceReap()
+      exit(exitCodeForSignal(signal))
+    }, teardownDeadlineMs)
+
     void (async (): Promise<void> => {
       try {
         await onSignal(signal)
@@ -179,6 +255,7 @@ export const registerSignalShutdown = ({
         // `finally`, so the exit survives anything the catch body might later throw: a process must
         // never outlive its own signal. Not the old `finally { process.exit(0) }` bug — that one
         // exited zero without logging; this logs first, then exits the honest code.
+        cancelDeadline?.()
         exit(exitCodeForSignal(signal))
       }
     })()

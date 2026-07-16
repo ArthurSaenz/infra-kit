@@ -13,6 +13,9 @@ const harness = () => {
   const handlers = new Map<NodeJS.Signals, () => void>()
   const exits: number[] = []
   const raised: NodeJS.Signals[] = []
+  // Ordered against `exits`: a reset AFTER the exit would never run, so both the count and the
+  // sequence matter.
+  const events: string[] = []
   let childRunning = false
 
   const deps: SessionSignalDeps = {
@@ -24,9 +27,13 @@ const harness = () => {
     },
     exit: (code) => {
       exits.push(code)
+      events.push(`exit:${code}`)
     },
     raise: (signal) => {
       raised.push(signal)
+    },
+    resetTerminal: () => {
+      events.push('reset')
     },
   }
 
@@ -37,6 +44,7 @@ const harness = () => {
   return {
     exits,
     raised,
+    events,
     signals,
     handlers,
     setChildRunning: (running: boolean) => {
@@ -134,22 +142,26 @@ describe('session signals — while a child runs', () => {
 })
 
 describe('session signals — between iterations (the palette is up)', () => {
-  it('sIGINT ends the session cleanly', () => {
+  it('sIGINT ends the session cleanly, restoring the terminal BEFORE it exits', () => {
     const t = harness()
 
     t.setChildRunning(false)
     t.fire('SIGINT')
 
     expect(t.exits).toEqual([0])
+    // Ordering is the assertion. This exit skips Ink's teardown, so if the reset does not precede it
+    // the shell returns to a hidden cursor, a stranded frame, and a tty still in raw mode.
+    expect(t.events).toEqual(['reset', 'exit:0'])
   })
 
-  it('sIGTERM ends the session cleanly', () => {
+  it('sIGTERM ends the session cleanly, restoring the terminal BEFORE it exits', () => {
     const t = harness()
 
     t.setChildRunning(false)
     t.fire('SIGTERM')
 
     expect(t.exits).toEqual([0])
+    expect(t.events).toEqual(['reset', 'exit:0'])
   })
 
   it('sIGTSTP is ignored — suspending mid-palette would strand a half-drawn Ink frame', () => {

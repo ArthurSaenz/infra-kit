@@ -2,7 +2,7 @@ import { readTokenStore } from 'src/lib/env-tokens'
 import { listWorkflowEnvs } from 'src/lib/workflow-envs'
 
 /** Where the knowledge that an environment EXISTS came from. Never says anything about credentials. */
-export type ProjectEnvSource = 'workflow' | 'token-only'
+export type ProjectEnvSource = 'gh-workflow' | 'token-only'
 
 export interface ProjectEnv {
   env: string
@@ -12,7 +12,7 @@ export interface ProjectEnv {
 /**
  * Every environment this project has, from the two authorities that actually own the answer.
  *
- * `workflow` — declared in a `workflow_dispatch` `environment.options` list. This is what a repo says
+ * `gh-workflow` — declared in a `workflow_dispatch` `environment.options` list. This is what a repo says
  * about itself, in git, reviewed, and enforced by GitHub on dispatch. It is the ONLY source that works
  * on a fresh clone with zero credentials, which is exactly when a new developer needs to be told the
  * env names they have to run `infra-kit env-token-set <env>` for.
@@ -27,14 +27,14 @@ export interface ProjectEnv {
  *
  * @example
  * await listProjectEnvs()
- * // => [{ env: 'dev', source: 'workflow' }, …, { env: 'prod_observability', source: 'token-only' }]
+ * // => [{ env: 'dev', source: 'gh-workflow' }, …, { env: 'prod_observability', source: 'token-only' }]
  */
 export const listProjectEnvs = async (): Promise<ProjectEnv[]> => {
   const workflowEnvs = await listWorkflowEnvs()
   const store = await readTokenStore()
 
   const declared: ProjectEnv[] = workflowEnvs.map((env) => {
-    return { env, source: 'workflow' }
+    return { env, source: 'gh-workflow' }
   })
 
   const known = new Set(workflowEnvs)

@@ -6,6 +6,7 @@ import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { DevServerRunner } from 'src/dev/dev-server'
+import type { ProbeOutcome } from 'src/dev/dev-server'
 import type { DevUi } from 'src/dev/dev-ui'
 import type { ReadySummary } from 'src/dev/render'
 import { stripAnsi } from 'src/dev/render'
@@ -599,6 +600,89 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
 
     await runner.shutdown()
   })
+})
+
+describe('devServerRunner — the ready header lists each frontend’s resolved proxies', () => {
+  it('attaches /api as local (its running backend’s origin) and a cloud-only /media as cloud to the UI row', async () => {
+    const root = temp.register(
+      makeMonorepo([
+        {
+          name: 'client',
+          packageName: 'backend-api',
+          withHandler: true,
+          ui: {
+            packageName: 'website-ui',
+            viteConfig: true,
+            proxy: {
+              cloud: 'https://<env>.hulyo.co.il',
+              routes: {
+                '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },
+                '/media': { packageName: 'backend-api', from: ['cloud'] },
+              },
+            },
+          },
+        },
+      ]),
+    )
+
+    gitInitOnBranch(root, 'feat-x')
+    process.env.CLIENT_PORT = String(await getFreePort())
+    process.env[INFRA_KIT_ENV_VAR] = 'dev'
+    process.chdir(root)
+
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(path.join(root, 'apps', 'client', 'api', 'dist', 'handler.js'), handlerSource(1))
+    }
+    const { renderer, summary } = makeCapturingRenderer()
+    const runner = new DevServerRunner(
+      { presetDef: { apps: { 'client/ui': { proxy: { '/api': 'local' as const } }, 'client/api': {} } } },
+      fakeRunBuild,
+      noopTurboChild,
+      noopTurboChild,
+      undefined,
+      renderer,
+      (): Promise<ProbeOutcome> => {
+        return Promise.resolve('ok')
+      },
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    try {
+      const s = summary()
+      const ui =
+        s.endpoints.find((e) => {
+          return e.tag === 'client/ui'
+        }) ??
+        s.uiRefs.find((u) => {
+          return u.tag === 'client/ui'
+        })
+
+      // Which one: /api resolves local (its backend is up), /media is cloud-only — sorted by route path.
+      expect(
+        ui?.proxies?.map((p) => {
+          return { route: p.route, source: p.source }
+        }),
+      ).toEqual([
+        { route: '/api', source: 'local' },
+        { route: '/media', source: 'cloud' },
+      ])
+      // Where: the local route points at the running backend's own origin, the cloud route at the env origin.
+      expect(
+        ui?.proxies?.find((p) => {
+          return p.route === '/api'
+        })?.target,
+      ).toContain('backend-api')
+      expect(
+        ui?.proxies?.find((p) => {
+          return p.route === '/media'
+        })?.target,
+      ).toBe('https://dev.hulyo.co.il')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
 })
 
 describe('devServerRunner — start/shutdown lifecycle (fake build, real spawn)', () => {
@@ -1341,8 +1425,8 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
       },
       renderer,
       // Probe always reports down — the restart physically succeeds, so this isolates the REPORT.
-      () => {
-        return Promise.resolve(false)
+      (): Promise<ProbeOutcome> => {
+        return Promise.resolve('refused')
       },
       workingProxy(),
     )
@@ -1490,10 +1574,10 @@ describe('devServerRunner — liveness monitor', () => {
     // Scripted verdicts consumed in call order: boot probe (printReady) = healthy, then two failures
     // (unhealthy edge fires on the SECOND), then a success (recovery edge). Steady healthy afterwards, so
     // no further transitions — proving both edges fire exactly once.
-    const verdicts = [true, false, false, true]
+    const verdicts: ProbeOutcome[] = ['ok', 'refused', 'refused', 'ok']
     let i = 0
-    const scriptedProbe = (): Promise<boolean> => {
-      const v = verdicts[i] ?? true
+    const scriptedProbe = (): Promise<ProbeOutcome> => {
+      const v = verdicts[i] ?? 'ok'
 
       if (i < verdicts.length) i += 1
 
@@ -1769,8 +1853,8 @@ const bootWithUi = async (
     fakeUiDev,
     undefined,
     renderer,
-    () => {
-      return Promise.resolve(true)
+    (): Promise<ProbeOutcome> => {
+      return Promise.resolve('ok')
     },
     driver,
   )
@@ -1804,8 +1888,8 @@ describe('devServerRunner — the UI gets the same port-free HTTPS URL as a back
       expect(ui?.url).toBe('https://feat-x.shop-ui.localhost')
       // It is an endpoint row, not a reference line.
       expect(summary().uiRefs).toHaveLength(0)
-      // vite owns its own readiness — no health dot on a UI row.
-      expect(ui?.healthy).toBeNull()
+      // Seeded, never probed yet: vite is spawned after the ready frame, so the row opens on `starting`.
+      expect(ui?.health).toBe('starting')
     } finally {
       await runner.shutdown()
     }

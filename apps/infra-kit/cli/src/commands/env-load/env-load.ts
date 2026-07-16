@@ -32,6 +32,7 @@ import { extractStderr } from 'src/lib/errors/operation-error'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { listProjectEnvNames } from 'src/lib/project-envs'
+import { withEscape } from 'src/lib/prompts/escapable-context'
 import { canonicalizeProjectRoot, evictStaleWarmCaches, shouldWriteWarm, writeWarmCache } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
 
@@ -260,12 +261,17 @@ export const envLoad = async (args: EnvLoadArgs) => {
     const envs = await listProjectEnvNames()
 
     commandEcho.setInteractive()
-    selectedConfig = await select(
-      {
-        message: 'Select environment config',
-        choices: envs.map((env) => {
-          return { name: env, value: env }
-        }),
+    selectedConfig = await withEscape(
+      (context) => {
+        return select(
+          {
+            message: 'Select environment config',
+            choices: envs.map((env) => {
+              return { name: env, value: env }
+            }),
+          },
+          context,
+        )
       },
       // Render to stderr so the prompt is visible when stdout is captured via $() in the shell function.
       // Only env-load and env-clear use the $() stdout-capture shell pattern.

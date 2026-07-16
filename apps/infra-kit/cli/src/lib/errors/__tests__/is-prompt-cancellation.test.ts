@@ -14,11 +14,16 @@ const makeNamedError = (name: string): Error => {
 }
 
 describe('isPromptCancellation', () => {
-  it('detects a Ctrl-C / Esc ExitPromptError', () => {
+  // Ctrl-C ONLY. Inquirer binds no escape key, so it never raises this for Esc —
+  // the old name for this test ('a Ctrl-C / Esc ExitPromptError') asserted an
+  // attribution the library cannot produce.
+  it('detects a Ctrl-C ExitPromptError', () => {
     expect(isPromptCancellation(makeNamedError('ExitPromptError'))).toBe(true)
   })
 
-  it('detects a signal-driven AbortPromptError', () => {
+  // How Esc reaches an @inquirer prompt: withEscape aborts the context's signal
+  // (see lib/prompts/escapable-context), and inquirer rejects with this.
+  it('detects an AbortPromptError — the shape Esc arrives in', () => {
     expect(isPromptCancellation(makeNamedError('AbortPromptError'))).toBe(true)
   })
 

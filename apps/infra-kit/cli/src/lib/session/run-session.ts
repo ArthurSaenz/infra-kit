@@ -196,6 +196,16 @@ export interface SessionSignalDeps {
   exit: (code: number) => void
   /** Deliver a signal to THIS process (used to take SIGTSTP's default action: stop). */
   raise: (signal: NodeJS.Signals) => void
+  /**
+   * Terminal hygiene on the way out of a between-iterations exit, where the PALETTE — not a child —
+   * owns the screen. Ink is mid-render there: raw mode armed, cursor hidden, a frame on screen. An
+   * `exit()` from a signal handler runs none of Ink's teardown, so without this the user's shell comes
+   * back to a hidden cursor, a stranded frame and a tty that eats their keystrokes.
+   *
+   * Required, not optional: a silent default would hand a fake `signals` the real escapes and spray
+   * them through the test reporter, which is precisely the accident this seam exists to prevent.
+   */
+  resetTerminal: () => void
 }
 
 /** The session's live signal owner: handler teardown, plus the state the loop must consult. */
@@ -255,10 +265,15 @@ export const installSessionSignals = (isChildRunning: () => boolean, deps: Sessi
       return
     }
 
+    // The palette owns the screen here, and this exit skips Ink's teardown entirely — see
+    // `resetTerminal` on SessionSignalDeps.
+    deps.resetTerminal()
     deps.exit(0)
   }
   const onSigterm = (): void => {
     if (!isChildRunning()) {
+      // Same window, same reason as SIGINT above: an external `kill` can land mid-palette.
+      deps.resetTerminal()
       deps.exit(0)
 
       return
@@ -383,6 +398,13 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
     },
     raise: (signal) => {
       process.kill(process.pid, signal)
+    },
+    // Routed through `resolved` rather than the bare import so a test injecting
+    // `deps.resetTerminal` still sees the signal path's resets.
+    resetTerminal: () => {
+      // Never the alternate screen: this fires while the PALETTE holds the terminal, and the palette
+      // does not enter it. `?1049l` here would leave a buffer the session never entered.
+      resolved.resetTerminal({ entersAltScreen: false })
     },
   }
 

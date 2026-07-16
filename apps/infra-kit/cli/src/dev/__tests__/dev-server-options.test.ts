@@ -52,6 +52,7 @@ describe('toDevServerOptions — CLI flag parsing', () => {
       self: false,
       verbose: false,
       routes: false,
+      uiHealth: true,
     })
   })
 

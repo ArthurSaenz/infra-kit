@@ -3,6 +3,7 @@ import process from 'node:process'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { PromptCancelledError } from 'src/lib/errors/prompt-cancelled-error'
 import { jsonOutput } from 'src/lib/json-output'
+import { isMcpMode } from 'src/lib/mcp-mode'
 
 import type { BranchPickerItem } from './types'
 
@@ -20,14 +21,21 @@ import type { BranchPickerItem } from './types'
  * requiring `stdout.isTTY` would regress that. Input-side interactivity is what
  * the picker actually needs.
  *
- * The `!process.stdin.isTTY` clause is LOAD-BEARING, not defensive:
- * `worktrees-add` and `gh-merge-dev` are `mcpExposed: true` with ALL of their
- * branch inputs `.optional()`, so an MCP call with those args omitted DOES enter
- * the interactive branch — only the absent TTY on the MCP server stops the
- * prompt (and stops React from being loaded there). Do not remove it.
+ * The MCP clause is LOAD-BEARING, not defensive: `worktrees-add` and `gh-merge-dev`
+ * are `mcpExposed: true` with ALL of their branch inputs `.optional()`, so an MCP
+ * call with those args omitted DOES enter the interactive branch. Without a guard it
+ * would render an Ink picker into the JSON-RPC stream (and load React there).
+ *
+ * That guard keys on `isMcpMode()`, NOT on `!process.stdin.isTTY`. The TTY check
+ * alone does not hold: `commands/mcp/mcp.ts` spawns the server with `stdio: 'inherit'`,
+ * so a terminal-launched `infra-kit mcp` hands the child a real TTY stdin and an
+ * isTTY-keyed guard does NOT fire. It only looks sufficient because Claude Code
+ * happens to spawn the server with piped stdio — a property of one client, not a
+ * guarantee. The `!isTTY` clause stays as well, for genuinely non-interactive runs
+ * (pipes, CI).
  */
 const assertInteractive = () => {
-  if (!process.stdin.isTTY || jsonOutput.enabled) {
+  if (isMcpMode() || !process.stdin.isTTY || jsonOutput.enabled) {
     throw new OperationError(undefined, {
       operation: 'interactive branch selection',
       remediation:

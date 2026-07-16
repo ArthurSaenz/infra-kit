@@ -245,6 +245,130 @@ describe('registerSignalShutdown', () => {
     expect(exits).not.toContain(0)
   })
 
+  /**
+   * The orphan half of the incident: five processes took SIGHUP, ran `shutdown()` (the `🛑` line is in the
+   * log), wedged, and spun for five hours. This module used to argue AGAINST a deadline — on the grounds
+   * that a user's second Ctrl-C is a better escape hatch. That reasoning assumes a human is present, and
+   * the whole point of a closed terminal is that nobody is.
+   */
+  it('force-quits a wedged teardown on the deadline, NAMING the stage that stalled', () => {
+    const stderr: string[] = []
+
+    spyStderr(stderr)
+
+    const h = harness()
+    const filed: string[] = []
+    let fireDeadline = (): void => {}
+
+    registerSignalShutdown({
+      onSignal: vi.fn().mockReturnValue(new Promise<void>(() => {})),
+      ...h.seams,
+      // The stage seam is why the deadline is an INSTRUMENT and not just a force-quit: without it we
+      // force-exit and still cannot say where teardown wedged.
+      describeStall: () => {
+        return 'turboWatch.kill'
+      },
+      fileReport: (text) => {
+        filed.push(text)
+      },
+      setTimer: (handler) => {
+        fireDeadline = handler
+
+        return (): void => {
+          fireDeadline = (): void => {}
+        }
+      },
+    })
+
+    h.fire('SIGHUP')
+    expect(h.exits).toEqual([])
+
+    fireDeadline()
+
+    // 128 + SIGHUP(1) — the same honest code the force-quit path already uses.
+    expect(h.exits).toEqual([129])
+    expect(h.reaps).toBe(1)
+    expect(stderr.join('')).toContain('stage=turboWatch.kill')
+    // Filed too: on the path this exists for, the terminal is exactly what is gone, so stderr is not a
+    // channel. The sink is the only surface that answers "why did it never exit?".
+    expect(filed.join('')).toContain('stage=turboWatch.kill')
+  })
+
+  it('cancels the deadline when the teardown completes, so a healthy shutdown is never force-quit', async () => {
+    const h = harness()
+    let fireDeadline: (() => void) | null = null
+    let cancelled = false
+
+    registerSignalShutdown({
+      onSignal: vi.fn().mockResolvedValue(undefined),
+      ...h.seams,
+      setTimer: (handler) => {
+        fireDeadline = handler
+
+        return (): void => {
+          cancelled = true
+        }
+      },
+    })
+
+    h.fire('SIGINT')
+
+    await vi.waitFor(() => {
+      expect(h.exits).toEqual([130])
+    })
+
+    expect(cancelled).toBe(true)
+    expect(fireDeadline).not.toBeNull()
+    expect(h.reaps).toBe(0)
+  })
+
+  it('cancels the deadline on the second-signal escape, so it cannot exit twice', () => {
+    spyStderr([])
+
+    const h = harness()
+    let cancelled = false
+
+    registerSignalShutdown({
+      onSignal: vi.fn().mockReturnValue(new Promise<void>(() => {})),
+      ...h.seams,
+      setTimer: () => {
+        return (): void => {
+          cancelled = true
+        }
+      },
+    })
+
+    h.fire('SIGINT')
+    h.fire('SIGINT')
+
+    expect(h.exits).toEqual([130])
+    expect(cancelled).toBe(true)
+  })
+
+  it('reports stage=unknown rather than guessing when no describeStall seam is wired', () => {
+    const stderr: string[] = []
+
+    spyStderr(stderr)
+
+    const h = harness()
+    let fireDeadline = (): void => {}
+
+    registerSignalShutdown({
+      onSignal: vi.fn().mockReturnValue(new Promise<void>(() => {})),
+      ...h.seams,
+      setTimer: (handler) => {
+        fireDeadline = handler
+
+        return (): void => {}
+      },
+    })
+
+    h.fire('SIGINT')
+    fireDeadline()
+
+    expect(stderr.join('')).toContain('stage=unknown')
+  })
+
   it('still exits when the teardown rejects AND stderr is a broken pipe', async () => {
     // Both failures at once: the rejection handler writes to a stderr that throws (EPIPE). If the exit
     // were a trailing statement after the catch rather than a `finally`, the throw would skip it and the

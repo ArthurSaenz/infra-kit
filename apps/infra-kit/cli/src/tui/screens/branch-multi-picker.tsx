@@ -30,21 +30,14 @@ interface BranchMultiPickerProps {
 export const BranchMultiPicker = (props: BranchMultiPickerProps) => {
   const { items, onSubmit, onCancel, required = true, allowSelectAll = true } = props
 
-  const T = {
-    hint: 'Select branches — type to filter, ↑↓ to move, Space to toggle, Ctrl-A all, Enter to submit, Esc to cancel',
-    prompt: '❯ ',
-    empty: 'No matching branches',
-    tiny: 'terminal too short — resize to pick branches',
-    requiredHint: 'select at least one',
-    more: '…',
-  }
+  const T = BRANCH_MULTI_PICKER_TEXT
   const labelWidth = items.reduce((max, item) => {
     return Math.max(max, item.label.length)
   }, 0)
 
   const { exit } = useApp()
   const { rows } = useWindowSize()
-  const { filtered, activeIndex, query, handleNavigation } = useListFilter(items, filterText)
+  const { filtered, activeIndex, query, handleNavigation, clearQuery } = useListFilter(items, filterText)
   // Selection keyed by value so it persists across filter changes.
   const [selected, setSelected] = useState<Set<string>>(() => {
     return new Set()
@@ -109,6 +102,11 @@ export const BranchMultiPicker = (props: BranchMultiPickerProps) => {
     })
   }
 
+  const cancel = () => {
+    onCancel()
+    setSubmitted(true)
+  }
+
   const submit = () => {
     if (required && selected.size === 0) {
       setShowRequiredHint(true)
@@ -125,9 +123,19 @@ export const BranchMultiPicker = (props: BranchMultiPickerProps) => {
       return
     }
 
-    if (key.escape || (key.ctrl && input === 'c')) {
-      onCancel()
-      setSubmitted(true)
+    if (key.ctrl && input === 'c') {
+      cancel()
+
+      return
+    }
+
+    // Esc pops the innermost stateful thing: the typed filter first, the picker only once
+    // there is no filter left to clear. It never touches `selected` — a filter keystroke is
+    // not a selection, so clearing one must not discard the other. Stage 2 discards it, as before.
+    if (key.escape) {
+      if (!clearQuery()) {
+        cancel()
+      }
 
       return
     }
@@ -219,4 +227,18 @@ export const BranchMultiPicker = (props: BranchMultiPickerProps) => {
 
 function filterText(item: BranchPickerItem): string {
   return `${item.label} ${item.description ?? ''}`
+}
+
+/**
+ * Static screen copy. Module-scoped and exported so the hint-width guard can measure it:
+ * these strings render under `wrap="truncate"`, so a hint of ≥80 columns silently loses
+ * its tail at the common terminal width — and the tail is where the Esc hint lives.
+ */
+export const BRANCH_MULTI_PICKER_TEXT = {
+  hint: 'filter · ↑↓ move · Space toggle · Ctrl-A all · Enter submit · Esc clear/cancel',
+  prompt: '❯ ',
+  empty: 'No matching branches',
+  tiny: 'terminal too short — resize to pick branches',
+  requiredHint: 'select at least one',
+  more: '…',
 }

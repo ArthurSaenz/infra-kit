@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { OperationError } from 'src/lib/errors/operation-error'
 import { jsonOutput } from 'src/lib/json-output'
+import { mcpMode } from 'src/lib/mcp-mode'
 
 import type { BranchPickerItem } from '../types'
 
@@ -24,6 +25,7 @@ const originalIsTTY = process.stdin.isTTY
 afterEach(() => {
   process.stdin.isTTY = originalIsTTY
   jsonOutput.enabled = false
+  mcpMode.enabled = false
   runBranchPicker.mockReset()
   runBranchMultiPicker.mockReset()
 })
@@ -31,6 +33,22 @@ afterEach(() => {
 describe('release-picker interactive guard', () => {
   it('throws OperationError and never imports the TUI when stdin is not a TTY', async () => {
     process.stdin.isTTY = false
+
+    await expect(pickReleaseBranch(items)).rejects.toBeInstanceOf(OperationError)
+    await expect(pickReleaseBranches(items)).rejects.toBeInstanceOf(OperationError)
+
+    expect(runBranchPicker).not.toHaveBeenCalled()
+    expect(runBranchMultiPicker).not.toHaveBeenCalled()
+  })
+
+  it('throws OperationError and never imports the TUI when serving MCP, even though stdin IS a TTY', async () => {
+    // `commands/mcp/mcp.ts` spawns the server with `stdio: 'inherit'`, so a
+    // terminal-launched `infra-kit mcp` really does have a TTY stdin. The old
+    // `!isTTY`-only guard does not fire here and would render an Ink picker into the
+    // JSON-RPC stream — `worktrees-add` and `gh-merge-dev` are mcpExposed with all
+    // branch inputs optional, so that path is reachable.
+    process.stdin.isTTY = true
+    mcpMode.enabled = true
 
     await expect(pickReleaseBranch(items)).rejects.toBeInstanceOf(OperationError)
     await expect(pickReleaseBranches(items)).rejects.toBeInstanceOf(OperationError)

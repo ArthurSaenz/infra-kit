@@ -6,15 +6,16 @@
       "outputs": ["dist/**"],
       "env": ["VITE_*", "ROBOTS_FILE"]
     },
+    "build-mobile": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"],
+      "env": ["VITE_*"]
+    },
     "build-mobile-host": {
       "dependsOn": [],
       "cache": false,
       "persistent": true,
       "env": ["VITE_*"]
-    },
-    "build-dev": {
-      "dependsOn": ["^build-dev"],
-      "outputs": ["dist/**"]
     },
     "build-watch": {
       "cache": false,

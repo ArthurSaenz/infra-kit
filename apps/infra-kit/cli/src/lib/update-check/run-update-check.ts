@@ -141,8 +141,14 @@ const runUpdateCheckLocked = async (currentVersion: string, deps: RunUpdateCheck
   // Every path below writes the cache EXACTLY once, and always with `lastCheckMs: nowMs` — the throttle
   // burns on the ATTEMPT, never on success. If it burned only on success, an offline user would respawn
   // a doomed child on every command.
-  const finish = (outcome: UpdateCheckOutcome, cache: Omit<UpdateCache, 'lastCheckMs'>): UpdateCheckOutcome => {
-    writeCache({ lastCheckMs: nowMs, ...cache })
+  const finish = (
+    outcome: UpdateCheckOutcome,
+    cache: Omit<UpdateCache, 'lastCheckMs' | 'outcome'>,
+  ): UpdateCheckOutcome => {
+    // `outcome` is recorded on EVERY write: it is what lets a reader (human or `isStale`) tell a settled
+    // `installed`/`up-to-date` from a transient `fetch-failed`, all of which otherwise write an identical
+    // `{latestVersion:null}`. See `UpdateCache.outcome`.
+    writeCache({ lastCheckMs: nowMs, ...cache, outcome })
 
     return outcome
   }
@@ -181,7 +187,11 @@ const runUpdateCheckLocked = async (currentVersion: string, deps: RunUpdateCheck
   // Writing the stamp here makes the throttle — not the lock — the primary guard, which is what the cache
   // was always for. `finish()` overwrites this with the real outcome; this is the only path that writes
   // the cache twice, and deliberately so.
-  writeCache({ lastCheckMs: nowMs, latestVersion, updateCommand: null })
+  //
+  // `outcome: 'installing'` is a RETRYABLE checkpoint (see `RETRYABLE_OUTCOMES`): if the worker is killed
+  // mid-install (machine sleeps, SIGKILL) and never reaches `finish()`, this stamp is what the next run
+  // reads — and the short retry window lets it try again in an hour rather than a full day.
+  writeCache({ lastCheckMs: nowMs, latestVersion, updateCommand: null, outcome: 'installing' })
 
   const parentGone = await waitForParentExit(deps.parentPid, { isProcessAlive, sleep, clock })
 

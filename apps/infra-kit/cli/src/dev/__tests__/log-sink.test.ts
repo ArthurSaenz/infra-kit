@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -6,7 +7,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { getCacheRoot } from 'src/lib/constants'
 
-import { DevLogSink, hasForeignStdoutPatch, logFileName, rawStdoutWrite, resolveLogDir } from '../log-sink.js'
+import {
+  DevLogSink,
+  hasForeignStdoutPatch,
+  logFileName,
+  rawStderrWrite,
+  rawStdoutWrite,
+  resolveLogDir,
+  resolveMaxLogBytes,
+} from '../log-sink.js'
+import { installTerminalLiveness } from '../terminal-liveness.js'
 
 const tmpDir = (): string => {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'log-sink-'))
@@ -172,6 +182,151 @@ describe('rawStdoutWrite', () => {
     }
 
     expect(hasForeignStdoutPatch()).toBe(false)
+  })
+})
+
+/**
+ * The gate that stops the loop from feeding itself.
+ *
+ * Once a stdio stream has emitted `'error'`, every raw write to it is DROPPED. The return value is the
+ * subtle half: it must be `true`, never `false`. `panelStream`'s Proxy propagates it into Ink, and `false`
+ * reads as BACKPRESSURE — Ink would stall or buffer, hanging the very teardown the fatal path is trying to
+ * reach. It must never throw either: the callers are all on the fault path.
+ */
+describe('rawStdoutWrite / rawStderrWrite — the terminal-liveness gate', () => {
+  it('drops the chunk once the stream has died, returning true (never false: false reads as backpressure)', async () => {
+    const proto = Object.getPrototypeOf(process.stdout) as { write: NodeJS.WriteStream['write'] }
+    const real = vi.spyOn(proto, 'write').mockImplementation((() => {
+      return true
+    }) as never)
+
+    const liveness = installTerminalLiveness({ streams: [process.stdout] })
+
+    try {
+      // Alive: the write reaches the real stream.
+      expect(rawStdoutWrite('before')).toBe(true)
+      expect(real).toHaveBeenCalledTimes(1)
+
+      const error: NodeJS.ErrnoException = Object.assign(new Error('write EIO'), { code: 'EIO' })
+
+      process.stdout.emit('error', error)
+      await Promise.resolve()
+
+      // Dead: dropped, and still `true`.
+      expect(rawStdoutWrite('after')).toBe(true)
+      expect(rawStderrWrite('after')).toBe(true)
+      expect(real).toHaveBeenCalledTimes(1)
+    } finally {
+      liveness.uninstall()
+      real.mockRestore()
+    }
+  })
+})
+
+/**
+ * The net under ANY future logging loop, whatever its cause. The one this was written for wrote 455 GB of
+ * `runner.log` at up to 127k lines/sec and filled a 926 GB disk.
+ */
+describe('devLogSink — the hard byte cap', () => {
+  it('stops writing a service once it crosses the cap, and says so in the file', () => {
+    const sink = new DevLogSink(path.join(tmpDir(), 'run'), 1024)
+
+    sinks.push(sink)
+
+    // 10 MB of storm into a 1 KB budget.
+    Array.from({ length: 10_000 }, () => {
+      return sink.write('runner', 'x'.repeat(1000))
+    })
+
+    const written = fs.readFileSync(sink.pathFor('runner'), 'utf-8')
+
+    // One line under the cap, then the cap line — and nothing else, ever.
+    expect(written).toContain('[capped]')
+    expect(written).toContain('likely a logging loop')
+    expect(Buffer.byteLength(written)).toBeLessThan(1024 * 3)
+  })
+
+  it('keeps counting errors while capped — a cap that freezes the panel counter hides the storm', () => {
+    // The latch lives AFTER the counter bump for exactly this reason. A top-of-function early return (the
+    // obvious implementation) would leave the panel's red error count frozen for the whole incident, which
+    // is the objection to a byte cap in the first place: it must not make the storm silent.
+    const sink = new DevLogSink(path.join(tmpDir(), 'run'), 64)
+
+    sinks.push(sink)
+
+    Array.from({ length: 50 }, () => {
+      return sink.write('client/api', 'boom'.repeat(100), { level: 'error' })
+    })
+
+    expect(sink.statsFor('client/api').errors).toBe(50)
+  })
+
+  it('caps per service: a storming runner.log cannot silence a quiet client-api.log', () => {
+    const sink = new DevLogSink(path.join(tmpDir(), 'run'), 512)
+
+    sinks.push(sink)
+
+    Array.from({ length: 100 }, () => {
+      return sink.write('runner', 'x'.repeat(200))
+    })
+    sink.write('client/api', 'a perfectly ordinary line')
+
+    expect(fs.readFileSync(sink.pathFor('runner'), 'utf-8')).toContain('[capped]')
+    expect(fs.readFileSync(sink.pathFor('client/api'), 'utf-8')).toBe('a perfectly ordinary line\n')
+  })
+
+  it('never throws when capped, and never re-writes the cap line', () => {
+    const sink = new DevLogSink(path.join(tmpDir(), 'run'), 32)
+
+    sinks.push(sink)
+
+    expect(() => {
+      Array.from({ length: 20 }, () => {
+        return sink.write('runner', 'x'.repeat(64))
+      })
+    }).not.toThrow()
+
+    const capLines = fs
+      .readFileSync(sink.pathFor('runner'), 'utf-8')
+      .split('\n')
+      .filter((line) => {
+        return line.includes('[capped]')
+      })
+
+    expect(capLines).toHaveLength(1)
+  })
+
+  it('reads the cap from INFRA_KIT_DEV_LOG_MAX_BYTES, and falls back to 256 MB on garbage', () => {
+    const saved = process.env.INFRA_KIT_DEV_LOG_MAX_BYTES
+
+    try {
+      process.env.INFRA_KIT_DEV_LOG_MAX_BYTES = '4096'
+      expect(resolveMaxLogBytes()).toBe(4096)
+
+      process.env.INFRA_KIT_DEV_LOG_MAX_BYTES = 'not-a-number'
+      expect(resolveMaxLogBytes()).toBe(256 * 1024 * 1024)
+
+      delete process.env.INFRA_KIT_DEV_LOG_MAX_BYTES
+      expect(resolveMaxLogBytes()).toBe(256 * 1024 * 1024)
+    } finally {
+      if (saved === undefined) delete process.env.INFRA_KIT_DEV_LOG_MAX_BYTES
+      else process.env.INFRA_KIT_DEV_LOG_MAX_BYTES = saved
+    }
+  })
+
+  it('seeds the byte count from the file already on disk, so an append cannot spend a fresh budget', () => {
+    const dir = path.join(tmpDir(), 'run')
+
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'runner.log'), 'x'.repeat(900))
+
+    const sink = new DevLogSink(dir, 1024)
+
+    sinks.push(sink)
+    sink.write('runner', 'y'.repeat(500))
+
+    // 900 + 501 > 1024 → the very first write caps, rather than starting the budget from zero.
+    expect(fs.readFileSync(sink.pathFor('runner'), 'utf-8')).toContain('[capped]')
   })
 })
 

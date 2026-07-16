@@ -8,7 +8,7 @@ interface CommandPaletteProps {
   items: PaletteItem[]
   /** Called with the chosen command name; the app then exits. */
   onSelect: (name: string) => void
-  /** Called when the user cancels (Esc / Ctrl-C); the app then exits. */
+  /** Called when the user cancels (Ctrl-C / Ctrl-D); the app then exits. Esc never reaches this. */
   onCancel: () => void
   /**
    * Stop the foreground job (Ctrl-Z). ABSENT means suspend is impossible on this platform — the
@@ -93,7 +93,7 @@ export const CommandPalette = (props: CommandPaletteProps) => {
     }
   }, [view.start, windowStart])
 
-  // Back out with nothing picked (Ctrl-C, or Esc on an empty filter).
+  // Back out with nothing picked (Ctrl-C / Ctrl-D). Esc is NOT a caller: it pops the filter only.
   const quit = () => {
     onCancel()
     setSubmitted(true)
@@ -142,6 +142,16 @@ export const CommandPalette = (props: CommandPaletteProps) => {
       return true
     }
 
+    // Ctrl-D is the REPL/shell convention for "end of input", and it quits exactly like Ctrl-C above.
+    // UNCONDITIONAL, unlike anything Esc does: it ends the session with a filter typed as readily as
+    // without one. It is no longer the key the footer names — Ctrl-C is, because that is the one a
+    // hand reaches for to abandon a picker — but a shell user's fingers know this one, so it stays.
+    if (input === 'd') {
+      quit()
+
+      return true
+    }
+
     if (input === 'z') {
       suspend()
 
@@ -166,22 +176,18 @@ export const CommandPalette = (props: CommandPaletteProps) => {
       return
     }
 
-    // Ctrl-C quits, Ctrl-Z suspends (see handleCtrlKey). Esc clears a non-empty filter first, and
-    // only quits on an empty filter — the standard REPL/palette split, so the session shell keeps
-    // running while the user narrows.
+    // Ctrl-C quits, Ctrl-Z suspends (see handleCtrlKey). Esc pops one level and this palette has
+    // exactly one — the filter — so an empty filter makes it a no-op, NOT a quit. Popping the root
+    // would leave nowhere to land: the session shell has no screen behind the palette, so an Esc that
+    // quit would be a quit wearing a back-out's clothes. Quitting is Ctrl-C / Ctrl-D, and only those.
+    // No emptiness check: clearing an already-empty query is a React no-op.
     if (key.ctrl && handleCtrlKey(input)) {
       return
     }
 
-    if (key.escape && query) {
+    if (key.escape) {
       setQuery('')
       setIndex(0)
-
-      return
-    }
-
-    if (key.escape) {
-      quit()
 
       return
     }
@@ -287,10 +293,24 @@ export const CommandPalette = (props: CommandPaletteProps) => {
   )
 }
 
-/** Footer copy. Kept out of the component's `T` because picking between the two is a conditional. */
-const HINTS = {
-  suspend: 'type to filter · ↑↓ move · Enter run · Ctrl-Z suspend · Esc cancel',
-  plain: 'type to filter · ↑↓ move · Enter run · Esc cancel',
+/**
+ * Footer copy. Kept out of the component's `T` because picking between the two is a conditional.
+ *
+ * Exported so the hint-width guard can measure these strings: they render under `wrap="truncate"`,
+ * so a hint of ≥80 columns silently loses its TAIL — and the tail is where the newest keybinding
+ * always lands. `Esc clear` is the whole truth, not an abbreviation of one: Esc pops the filter and
+ * never quits, so the `quit` beside it is the only advertised way out.
+ *
+ * That advertised key is Ctrl-C, though Ctrl-D quits identically (see `handleCtrlKey`). Naming only
+ * one is a width decision, and Ctrl-C wins it: it is what a hand reaches for to abandon a picker, and
+ * it went UNADVERTISED here for as long as the palette existed.
+ *
+ * The slack this leaves is NOT spendable: restoring `type to filter` to the suspend variant would
+ * measure 79 against the guard's `toBeLessThan(80)`, i.e. one column from silently truncating again.
+ */
+export const HINTS = {
+  suspend: 'filter · ↑↓ move · Enter run · Esc clear · Ctrl-C quit · Ctrl-Z suspend',
+  plain: 'type to filter · ↑↓ move · Enter run · Esc clear · Ctrl-C quit',
 }
 
 /**

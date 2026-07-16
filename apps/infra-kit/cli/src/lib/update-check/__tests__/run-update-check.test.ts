@@ -124,7 +124,7 @@ describe('runUpdateCheck', () => {
 
     await runUpdateCheck('0.1.130', deps)
 
-    expect(writes.at(-1)).toEqual({ lastCheckMs: NOW, latestVersion: null, updateCommand: null })
+    expect(writes.at(-1)).toEqual({ lastCheckMs: NOW, latestVersion: null, updateCommand: null, outcome: 'installed' })
   })
 
   it('self-spawns for a plain `npm i -g` install, whose shell has no npm_config_prefix', async () => {
@@ -152,7 +152,7 @@ describe('runUpdateCheck', () => {
 
     await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('fetch-failed')
 
-    expect(writes).toEqual([{ lastCheckMs: NOW, latestVersion: null, updateCommand: null }])
+    expect(writes).toEqual([{ lastCheckMs: NOW, latestVersion: null, updateCommand: null, outcome: 'fetch-failed' }])
     expect(spawnMock).not.toHaveBeenCalled()
   })
 
@@ -189,6 +189,7 @@ describe('runUpdateCheck', () => {
       lastCheckMs: NOW,
       latestVersion: '0.1.131',
       updateCommand: ['brew', 'upgrade', 'infra-kit'],
+      outcome: 'cannot-self-spawn',
     })
   })
 
@@ -288,6 +289,7 @@ describe('runUpdateCheck', () => {
       lastCheckMs: NOW,
       latestVersion: '0.1.131',
       updateCommand: ['npm', 'install', '-g', 'infra-kit@latest'],
+      outcome: 'install-failed',
     })
   })
 
@@ -309,8 +311,14 @@ describe('runUpdateCheck', () => {
     // new shell spawns its own worker and the single-flight lock — which is reaped by mtime — becomes the
     // only guard. Stamping the throttle up-front is what stops the pile-up at its source.
     const spawnMock = vi.fn(() => {
-      // Whatever the cache looks like at install time is what a concurrent shell would read.
-      expect(writes.at(-1)).toEqual({ lastCheckMs: NOW, latestVersion: '0.1.131', updateCommand: null })
+      // Whatever the cache looks like at install time is what a concurrent shell would read. The
+      // 'installing' checkpoint is retryable, so a worker killed here re-checks within the hour.
+      expect(writes.at(-1)).toEqual({
+        lastCheckMs: NOW,
+        latestVersion: '0.1.131',
+        updateCommand: null,
+        outcome: 'installing',
+      })
 
       return okSpawn()
     })
@@ -321,7 +329,7 @@ describe('runUpdateCheck', () => {
     expect(spawnMock).toHaveBeenCalledTimes(1)
     // Checkpoint, then the real outcome. The install path is the one path that writes twice, by design.
     expect(writes).toHaveLength(2)
-    expect(writes.at(-1)).toEqual({ lastCheckMs: NOW, latestVersion: null, updateCommand: null })
+    expect(writes.at(-1)).toEqual({ lastCheckMs: NOW, latestVersion: null, updateCommand: null, outcome: 'installed' })
   })
 
   it('writes the cache exactly once when it does not reach the install', async () => {

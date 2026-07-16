@@ -18,7 +18,7 @@ catalog:
   '@inquirer/select': ^5.2.1
   '@modelcontextprotocol/sdk': ^1.29.0
   '@playwright/test': ^1.59.1
-  '@slip-stream-kit/config': ^0.3.0
+  '@slip-stream-kit/config': ^0.3.3
   '@tailwindcss/vite': ^4.2.2
 
   '@tanstack/react-router': ^1.168.10

@@ -56,8 +56,8 @@ beforeEach(async () => {
   // Default: two workflow-declared envs, matching what the old `environments: ['dev', 'staging']`
   // fixture used to declare. Individual tests override this.
   vi.mocked(listProjectEnvs).mockResolvedValue([
-    { env: 'dev', source: 'workflow' },
-    { env: 'staging', source: 'workflow' },
+    { env: 'dev', source: 'gh-workflow' },
+    { env: 'staging', source: 'gh-workflow' },
   ])
 
   resetInfraKitConfigCache()
@@ -72,19 +72,19 @@ afterEach(() => {
 })
 
 describe('buildEnvTokenStatus', () => {
-  it('reports hasToken from the store, and a fix hint when absent', () => {
+  it('reports hasToken from the store, present or absent, without any fix hint', () => {
     expect(
       buildEnvTokenStatus(
         [
-          { env: 'dev', source: 'workflow' },
-          { env: 'prod', source: 'workflow' },
+          { env: 'dev', source: 'gh-workflow' },
+          { env: 'prod', source: 'gh-workflow' },
         ],
         { dev: 'dp.st.dev.xxxx' },
         undefined,
       ),
     ).toEqual([
-      { env: 'dev', source: 'workflow', hasToken: true },
-      { env: 'prod', source: 'workflow', hasToken: false, hint: 'infra-kit env-token-set prod' },
+      { env: 'dev', source: 'gh-workflow', hasToken: true },
+      { env: 'prod', source: 'gh-workflow', hasToken: false },
     ])
   })
 
@@ -92,25 +92,24 @@ describe('buildEnvTokenStatus', () => {
     expect(
       buildEnvTokenStatus(
         [
-          { env: 'dev', source: 'workflow' },
+          { env: 'dev', source: 'gh-workflow' },
           { env: 'prod', source: 'token-only' },
         ],
         {},
         'dp.st.from-env.xxxx',
       ),
     ).toEqual([
-      { env: 'dev', source: 'workflow', hasToken: true },
+      { env: 'dev', source: 'gh-workflow', hasToken: true },
       { env: 'prod', source: 'token-only', hasToken: true },
     ])
   })
 
-  it('carries the source through unchanged (workflow vs token-only)', () => {
+  it('carries the source through unchanged (gh-workflow vs token-only)', () => {
     expect(buildEnvTokenStatus([{ env: 'prod_observability', source: 'token-only' }], {}, undefined)).toEqual([
       {
         env: 'prod_observability',
         source: 'token-only',
         hasToken: false,
-        hint: 'infra-kit env-token-set prod_observability',
       },
     ])
   })
@@ -123,23 +122,29 @@ describe('envList — token column', () => {
     const result = await envList()
 
     expect(result.structuredContent.tokens).toEqual([
-      { env: 'dev', source: 'workflow', hasToken: true },
-      { env: 'staging', source: 'workflow', hasToken: false, hint: 'infra-kit env-token-set staging' },
+      { env: 'dev', source: 'gh-workflow', hasToken: true },
+      { env: 'staging', source: 'gh-workflow', hasToken: false },
     ])
 
     const output = printed()
 
     expect(output).not.toContain(DEV_TOKEN)
-    expect(output).toContain('dev (token set)')
-    expect(output).toContain('staging (no token — run `infra-kit env-token-set staging`)')
+    // Aligned, `|`-separated columns (env | source | token) — the releases-style table.
+    expect(output).toContain('Environment')
+    expect(output).toContain('Source')
+    expect(output).toContain('Token')
+    expect(output).toMatch(/dev\s+\|\s+gh-workflow\s+\|\s+set/)
+    expect(output).toMatch(/staging\s+\|\s+gh-workflow\s+\|\s+not set/)
+    // The env-token-set fix command is no longer spelled out — setting a token is a manual step.
+    expect(output).not.toContain('env-token-set')
   })
 
   it('still lists every env with no network call when no token exists anywhere', async () => {
     const result = await envList()
 
     expect(result.structuredContent.tokens).toEqual([
-      { env: 'dev', source: 'workflow', hasToken: false, hint: 'infra-kit env-token-set dev' },
-      { env: 'staging', source: 'workflow', hasToken: false, hint: 'infra-kit env-token-set staging' },
+      { env: 'dev', source: 'gh-workflow', hasToken: false },
+      { env: 'staging', source: 'gh-workflow', hasToken: false },
     ])
   })
 
@@ -149,8 +154,8 @@ describe('envList — token column', () => {
     const result = await envList()
 
     expect(result.structuredContent.tokens).toEqual([
-      { env: 'dev', source: 'workflow', hasToken: true },
-      { env: 'staging', source: 'workflow', hasToken: true },
+      { env: 'dev', source: 'gh-workflow', hasToken: true },
+      { env: 'staging', source: 'gh-workflow', hasToken: true },
     ])
     expect(printed()).not.toContain('9999zzzz')
   })
@@ -164,7 +169,42 @@ describe('envList — token column', () => {
     expect(result.structuredContent.tokens).toEqual([
       { env: 'prod_observability', source: 'token-only', hasToken: true },
     ])
-    expect(printed()).toContain('prod_observability (token set, not in any workflow)')
+    // The token-only provenance shows as its own column value, not an inline parenthetical.
+    expect(printed()).toMatch(/prod_observability\s+\|\s+token-only\s+\|\s+set/)
+  })
+
+  it('aligns every column rule — the `|` separators sit at identical offsets even when one env is far longer', async () => {
+    // `prod_observability` (18 chars) forces the first column wider than the `Environment` header, the
+    // exact case that drifts if the width is computed from the header or a short row instead of the max
+    // over every cell. A plain `\s+` regex would pass on misaligned output; this asserts real alignment.
+    vi.mocked(listProjectEnvs).mockResolvedValue([
+      { env: 'dev', source: 'gh-workflow' },
+      { env: 'prod_observability', source: 'token-only' },
+    ])
+    await setToken('dev', DEV_TOKEN)
+
+    await envList()
+
+    // Only the header + data rows carry the ASCII `|` rule; the `─┼─` separator and prose lines do not.
+    const barLines = printed()
+      .split('\n')
+      .filter((line) => {
+        return line.includes('|')
+      })
+
+    expect(barLines).toHaveLength(3)
+
+    const barOffsets = (line: string): number[] => {
+      return [...line].flatMap((char, index) => {
+        return char === '|' ? [index] : []
+      })
+    }
+
+    const [header, ...dataRows] = barLines
+
+    for (const line of dataRows) {
+      expect(barOffsets(line)).toEqual(barOffsets(header ?? ''))
+    }
   })
 })
 
@@ -180,7 +220,9 @@ describe('envList — empty state', () => {
 
     expect(output).toContain('No environments found.')
     expect(output).toContain('workflow_dispatch')
-    expect(output).toContain('infra-kit env-token-set <env>')
+    expect(output).toContain('add a token for one manually')
+    // The fix command is no longer spelled out anywhere — setting a token is a manual step.
+    expect(output).not.toContain('env-token-set')
     // The populated-list header must never appear alongside the empty-state guidance.
     expect(output).not.toContain('Environments:')
   })

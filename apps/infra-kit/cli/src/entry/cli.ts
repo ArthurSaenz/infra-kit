@@ -15,6 +15,7 @@ import { isLocalNodeModulesInstall, safeRealpath } from 'src/lib/install-manager
 import { logger } from 'src/lib/logger'
 import { suppressTypelessPackageJsonWarning } from 'src/lib/node-warnings'
 import { buildProgram } from 'src/lib/program'
+import { withEscape } from 'src/lib/prompts/escapable-context'
 import { formatAlignedRows } from 'src/lib/render'
 import { captureSessionReportPath } from 'src/lib/session/report'
 import { runSession, sessionGateEnabled } from 'src/lib/session/run-session'
@@ -110,7 +111,15 @@ const runInteractiveMenu = async (): Promise<string | null> => {
 
   let selected: string | null = null
 
-  // Ctrl-C / Esc at the menu throws from the Inquirer fallback; treat it as a clean exit.
+  // Ctrl-C / Esc at the menu throws — from the Ink palette as a PromptCancelledError, from the
+  // inquirer fallback as an AbortPromptError (see lib/prompts/escapable-context). Either is a clean exit.
+  //
+  // NAME THE STREAM, always: the fallback below is taken when EITHER stream is not a tty, and the two
+  // are not interchangeable. With STDOUT redirected but STDIN still a tty (`infra-kit > log.txt`) the
+  // fallback runs interactively and Esc GENUINELY CANCELS it — `withEscape` keys on stdin, so its guard
+  // does not fire. Only a non-tty STDIN (a pipe, CI) makes Esc inert here, and correctly so: there is no
+  // keypress to receive. Saying "non-TTY" unqualified is what makes this spot read as dead code when it
+  // is not.
   try {
     if (process.stdout.isTTY && process.stdin.isTTY) {
       const { runCommandPalette } = await import('src/tui/boot')
@@ -133,7 +142,12 @@ const runInteractiveMenu = async (): Promise<string | null> => {
         return [...header, { name: alignedLabels[index] ?? item.name, value: item.name }]
       })
 
-      selected = await select({ message: 'Select a command to run', choices }, { output: process.stderr })
+      selected = await withEscape(
+        (context) => {
+          return select({ message: 'Select a command to run', choices }, context)
+        },
+        { output: process.stderr },
+      )
     }
   } catch (error) {
     // Ctrl-C / Esc at the menu is a clean back-out; leave `selected` as null.

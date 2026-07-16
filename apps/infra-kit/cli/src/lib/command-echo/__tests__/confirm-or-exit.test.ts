@@ -59,7 +59,14 @@ describe('confirmOrExit', () => {
     await confirmOrExit(false, 'Are you sure you want to proceed?')
 
     expect(confirmMock).toHaveBeenCalledTimes(1)
-    expect(confirmMock).toHaveBeenCalledWith({ message: 'Are you sure you want to proceed?' })
+    // The second argument is the prompt context `withEscape` threads in. Asserting the
+    // AbortSignal is present is what proves Esc is actually WIRED here: without it the
+    // prompt would still work, still be tested, and silently ignore Esc — which is the
+    // half-wired state the all-or-none contract exists to prevent.
+    expect(confirmMock).toHaveBeenCalledWith(
+      { message: 'Are you sure you want to proceed?' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
     expect(setInteractiveSpy).toHaveBeenCalledTimes(1)
     expect(exitSpy).not.toHaveBeenCalled()
   })

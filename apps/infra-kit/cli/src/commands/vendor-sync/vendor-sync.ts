@@ -5,6 +5,7 @@ import { z } from 'zod'
 
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
+import { withEscape } from 'src/lib/prompts/escapable-context'
 import { loadVendorConfig } from 'src/lib/vendor/config'
 import { loadFactoryConfig } from 'src/lib/vendor/factory-config'
 import { getSourceCommit, runSync, selectTargets } from 'src/lib/vendor/sync-ops'
@@ -36,8 +37,13 @@ export const vendorSync = async (options: VendorSyncOptions) => {
   const targets = selectTargets(factory.targets, options.repos)
 
   if (!options.confirmedCommand) {
-    const proceed = await confirm(
-      { message: `Sync vendor files from ${path.basename(sourceRoot)} into ${targets.length} repo(s)?` },
+    const proceed = await withEscape(
+      (context) => {
+        return confirm(
+          { message: `Sync vendor files from ${path.basename(sourceRoot)} into ${targets.length} repo(s)?` },
+          context,
+        )
+      },
       { output: process.stderr },
     )
 

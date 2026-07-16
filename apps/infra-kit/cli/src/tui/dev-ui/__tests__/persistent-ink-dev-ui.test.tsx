@@ -36,7 +36,7 @@ const baseSummary = (over: Partial<ReadySummary> = {}): ReadySummary => {
 
     release: 'feat-x',
     elapsedMs: 2400,
-    endpoints: [{ tag: 'client/api', url: 'http://localhost:57076/api/v1', healthy: true }],
+    endpoints: [{ tag: 'client/api', url: 'http://localhost:57076/api/v1', health: 'ok' }],
     uiRefs: [],
     watchSummary: '1 app · 5 packages',
     logPath: '~/.cache/infra-kit/ab12cd34/logs.txt',
@@ -112,7 +112,7 @@ describe('persistentInkDevUi — backend-only persistent mode', () => {
 
     t.ui.ready(baseSummary())
     t.ui.refresh(
-      baseSummary({ endpoints: [{ tag: 'client/api', url: 'http://localhost:57076/api/v1', healthy: false }] }),
+      baseSummary({ endpoints: [{ tag: 'client/api', url: 'http://localhost:57076/api/v1', health: 'down' }] }),
     )
 
     // The footer now shows down…

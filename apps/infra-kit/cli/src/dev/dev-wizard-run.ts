@@ -19,11 +19,12 @@ import { commandEcho } from 'src/lib/command-echo'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import { readTokenStore } from 'src/lib/env-tokens'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
-import type { DevPreset } from 'src/lib/infra-kit-config'
+import type { DevPreset, ProxySource } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
+import { withEscape } from 'src/lib/prompts/escapable-context'
 
 import { deriveManualPlan, equivalentCommand } from './dev-wizard.js'
-import type { DerivedPlan, ManualSelection, ProxyBackend, WizardApp, WizardModel } from './dev-wizard.js'
+import type { DerivedPlan, ManualSelection, ProxyBackend, RouteCap, WizardApp, WizardModel } from './dev-wizard.js'
 import { validatePresetProxy } from './presets.js'
 import type { DiscoveredParts, PresetProxyContext } from './presets.js'
 
@@ -57,16 +58,32 @@ export interface WizardPrompts {
  */
 const promptContext = { output: process.stderr, clearPromptOnDone: true }
 
-/** Real `@inquirer/*` prompts, rendered to stderr and erased once answered. */
+/**
+ * Real `@inquirer/*` prompts, rendered to stderr and erased once answered.
+ *
+ * Every one goes through {@link withEscape}, which binds Esc to cancellation. The wrap is here rather
+ * than around the {@link WizardPrompts} seam so the scripted prompts the tests inject stay untouched:
+ * the seam is the test boundary, `defaultPrompts` is the only implementation that talks to a terminal.
+ *
+ * Esc rejects with an `AbortPromptError`, which `entry/cli.ts` catches as a cancellation → exit 0. The
+ * wizard therefore needs no cancel branch of its own: a cancelled prompt never returns here at all, so
+ * no server is started.
+ */
 export const defaultPrompts: WizardPrompts = {
   select: (cfg) => {
-    return inquirerSelect({ message: cfg.message, choices: cfg.choices, default: cfg.default }, promptContext)
+    return withEscape((context) => {
+      return inquirerSelect({ message: cfg.message, choices: cfg.choices, default: cfg.default }, context)
+    }, promptContext)
   },
   checkbox: (cfg) => {
-    return inquirerCheckbox({ message: cfg.message, choices: cfg.choices }, promptContext)
+    return withEscape((context) => {
+      return inquirerCheckbox({ message: cfg.message, choices: cfg.choices }, context)
+    }, promptContext)
   },
   confirm: (cfg) => {
-    return inquirerConfirm({ message: cfg.message, default: cfg.default }, promptContext)
+    return withEscape((context) => {
+      return inquirerConfirm({ message: cfg.message, default: cfg.default }, context)
+    }, promptContext)
   },
 }
 
@@ -88,23 +105,30 @@ export interface WizardResult {
 
 /** Group one frontend's `dev.proxy.routes` into {@link ProxyBackend}s keyed by backend package. */
 const groupBackends = (
-  routes: Record<string, { packageName: string; from: readonly string[] }>,
+  routes: Record<string, { packageName: string; from: readonly string[]; default?: 'local' | 'cloud' }>,
   ownerByPkg: Map<string, string>,
 ): ProxyBackend[] => {
   const byPkg = new Map<string, ProxyBackend>()
 
   for (const [route, def] of Object.entries(routes)) {
+    const cap: RouteCap = {
+      path: route,
+      localCapable: def.from.includes('local'),
+      cloudCapable: def.from.includes('cloud'),
+      default: def.default,
+    }
     const existing = byPkg.get(def.packageName)
-    const localCapable = def.from.includes('local')
 
     if (existing) {
-      existing.routes.push(route)
-      existing.localCapable = existing.localCapable || localCapable
+      existing.routes.push(cap)
+      existing.localCapable = existing.localCapable || cap.localCapable
+      existing.cloudCapable = existing.cloudCapable || cap.cloudCapable
     } else {
       byPkg.set(def.packageName, {
         packageName: def.packageName,
-        routes: [route],
-        localCapable,
+        routes: [cap],
+        localCapable: cap.localCapable,
+        cloudCapable: cap.cloudCapable,
         ownerApp: ownerByPkg.get(def.packageName),
       })
     }
@@ -172,9 +196,10 @@ export const gatherWizardModel = async (root: string): Promise<WizardModel> => {
 }
 
 /**
- * Build the flat `<app>/<part>` checkbox choices, grouped per app as `ui` then `api`. A frontend choice
- * carries a description of the routes it proxies, so ticking the matching api part reads as "run that
- * route locally". This is the checkbox the user directly picks their targets from.
+ * Build the checkbox choices: one `<app>/ui` per frontend, plus `<app>/api` ONLY for api-only apps
+ * (an api with no ui). A full-stack `<app>/api` is deliberately NOT offered — a full-stack backend is
+ * launched by choosing `local` for one of its frontend's routes (asked per-route afterwards), so the
+ * checkbox stays a pick of frontends + standalone backends.
  *
  * Nothing starts checked: the manual branch is opt-in, so a run only ever launches what was explicitly
  * ticked. Pre-checking every part would make the fast path (accept the defaults) boot the whole monorepo
@@ -185,14 +210,16 @@ const buildPartChoices = (model: WizardModel): WizardChoice[] => {
 
   for (const app of model.apps) {
     if (app.hasUi) {
-      const routes = app.backends.flatMap((b) => {
-        return b.routes
+      const paths = app.backends.flatMap((b) => {
+        return b.routes.map((r) => {
+          return r.path
+        })
       })
-      const description = routes.length > 0 ? `frontend — proxies ${[...routes].sort().join(', ')}` : 'frontend'
+      const description = paths.length > 0 ? `frontend — proxies ${[...paths].sort().join(', ')}` : 'frontend'
 
       choices.push({ name: `${app.name}/ui`, value: `${app.name}/ui`, description })
     }
-    if (app.hasApi) {
+    if (app.hasApi && !app.hasUi) {
       choices.push({ name: `${app.name}/api`, value: `${app.name}/api`, description: 'backend' })
     }
   }
@@ -228,7 +255,7 @@ const buildAuditContext = (model: WizardModel): PresetProxyContext => {
     if (app.apiPackage != null) apiPkgByApp[app.name] = app.apiPackage
     for (const b of app.backends) {
       for (const route of b.routes) {
-        routeToPkg.set(`${app.name} ${route}`, b.packageName)
+        routeToPkg.set(`${app.name} ${route.path}`, b.packageName)
       }
     }
   }
@@ -253,7 +280,102 @@ export const auditManualPlan = (presetDef: DevPreset, model: WizardModel): strin
   })
 }
 
-/** The manual-branch flow: app + per-app proxy + env + watch + cmux → audited plan → echo. */
+/**
+ * Opt back into the cmux question: set to exactly `'1'`. The prompt is temporarily off — the manual
+ * branch always runs in-process — but the derivation below is kept whole for when it returns. `--cmux`
+ * on the command line is a separate path and stays live either way.
+ */
+export const WIZARD_CMUX_VAR = 'INFRA_KIT_DEV_WIZARD_CMUX'
+
+const asksCmux = (): boolean => {
+  return process.env[WIZARD_CMUX_VAR] === '1'
+}
+
+/**
+ * Ask, per selected frontend, an EXPLICIT local/cloud choice for every TWO-OPTION route (its `from`
+ * lists both). Single-option routes are auto-picked in the pure mapping, so they are never prompted.
+ * The answers are keyed `${app}/ui ${routePath}` to match {@link ManualSelection.sources}; the select's
+ * default seeds from the route's declared `default` when it has one.
+ */
+const promptRouteSources = async (
+  prompts: WizardPrompts,
+  model: WizardModel,
+  uiKeys: string[],
+): Promise<Record<string, ProxySource>> => {
+  const apps = new Map(
+    model.apps.map((a) => {
+      return [a.name, a] as const
+    }),
+  )
+  const sources: Record<string, ProxySource> = {}
+
+  for (const key of uiKeys) {
+    const app = apps.get(key.split('/')[0]!)
+
+    for (const backend of app?.backends ?? []) {
+      for (const route of backend.routes) {
+        if (!route.localCapable || !route.cloudCapable) continue
+
+        const answer = await prompts.select({
+          message: `🔀 ${key} ${route.path} → local or cloud?`,
+          choices: [
+            { name: 'local (this machine)', value: 'local' },
+            { name: 'cloud', value: 'cloud' },
+          ],
+          default: route.default ?? 'local',
+        })
+
+        sources[`${key} ${route.path}`] = answer as ProxySource
+      }
+    }
+  }
+
+  return sources
+}
+
+/** Look up a frontend route's capability in the model (for the recap's "only option" annotation). */
+const findRouteCap = (model: WizardModel, app: string, routePath: string): RouteCap | undefined => {
+  return model.apps
+    .find((a) => {
+      return a.name === app
+    })
+    ?.backends.flatMap((b) => {
+      return b.routes
+    })
+    .find((r) => {
+      return r.path === routePath
+    })
+}
+
+/**
+ * Print a one-line-per-route recap of what each frontend route resolved to, so the chosen sources are
+ * visible before launch. A single-option route is annotated `(only option)` — it was auto-picked, not
+ * asked. This is in addition to {@link echoManual}'s pasteable `--target` command.
+ */
+const recapSources = (plan: DerivedPlan, model: WizardModel): void => {
+  const lines: string[] = []
+
+  for (const [key, cfg] of Object.entries(plan.presetDef.apps ?? {})) {
+    if (!key.endsWith('/ui') || !cfg.proxy) continue
+
+    const app = key.split('/')[0]!
+
+    for (const [routePath, source] of Object.entries(cfg.proxy)) {
+      const cap = findRouteCap(model, app, routePath)
+      const suffix = cap && cap.localCapable && cap.cloudCapable ? '' : ' (only option)'
+
+      lines.push(`  ${key} ${routePath} → ${source}${suffix}`)
+    }
+  }
+
+  if (lines.length === 0) return
+  logger.info('Resolved routes:')
+  for (const line of [...lines].sort()) {
+    logger.info(line)
+  }
+}
+
+/** The manual-branch flow: frontends + per-route source + env + watch + cmux → audited plan → recap → echo. */
 const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Promise<WizardResult | null> => {
   if (model.apps.length === 0) {
     logger.warn('No apps discovered to run.')
@@ -269,10 +391,17 @@ const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Prom
     return null
   }
 
-  const watch = await prompts.confirm({ message: '👀 Rebuild & restart on save (watch)?', default: false })
-  const cmux = await prompts.confirm({ message: '🧩 Run each app in its own cmux pane?', default: false })
+  const uiKeys = selectedTargets.filter((t) => {
+    return t.endsWith('/ui')
+  })
+  const sources = await promptRouteSources(prompts, model, uiKeys)
 
-  const selection: ManualSelection = { targets: selectedTargets, watch, cmux }
+  const watch = await prompts.confirm({ message: '👀 Rebuild & restart on save (watch)?', default: false })
+  const cmux = asksCmux()
+    ? await prompts.confirm({ message: '🧩 Run each app in its own cmux pane?', default: false })
+    : false
+
+  const selection: ManualSelection = { targets: selectedTargets, sources, watch, cmux }
   const plan = deriveManualPlan(selection, model)
 
   if (plan.anyCloudRoute) {
@@ -296,7 +425,8 @@ const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Prom
     return null
   }
 
-  echoManual(plan, selection, model)
+  recapSources(plan, model)
+  echoManual(plan, selection)
 
   // cmux opens one pane per selected API app. `include` picks WHICH apps get a pane; `presetDef` tells
   // each pane exactly which of its parts to run. Without the latter a pane runs `--app=<name>`, which
@@ -322,18 +452,18 @@ const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Prom
   return { presetDef: plan.presetDef, watch, cmux: false }
 }
 
-/** Print the equivalent flag command (and, for a part-level selection, the save-as-preset hint). */
-const echoManual = (plan: DerivedPlan, selection: ManualSelection, model: WizardModel): void => {
+/** Print the equivalent (`--target=…`) flag command, plus a save-as-preset ergonomics hint. */
+const echoManual = (plan: DerivedPlan, selection: ManualSelection): void => {
   commandEcho.setInteractive()
 
-  const eq = equivalentCommand(plan, selection, model)
+  const eq = equivalentCommand(plan, selection)
 
   commandEcho.addOption(eq.flags, true)
   commandEcho.print()
 
-  if (!eq.exact) {
-    logger.info('ℹ️  This part-level selection has no exact single-flag form — save it as a devPreset to reproduce it.')
-  }
+  // The `--target=…` line reproduces the selection exactly; the preset is pure convenience — a short,
+  // memorable name instead of retyping the target keys.
+  logger.info('ℹ️  Prefer a short name? Save this selection as a devPreset and run `infra-kit dev <name>`.')
 }
 
 /** The preset-branch flow: run a named preset, asking only whether to watch (presets can't encode it). */

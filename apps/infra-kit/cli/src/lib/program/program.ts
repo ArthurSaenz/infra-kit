@@ -477,6 +477,10 @@ export const buildProgram = (): Command => {
     .option('--self', 'Run only the app of the current directory (infer from cwd; use inside apps/<app>/…)')
     .option('-V, --verbose', 'Print full boot narration (default: quiet; full detail always in the session log)')
     .option('--routes', 'Print each app’s registered METHOD /path routes at startup (default: off)')
+    .option(
+      '--no-ui-health',
+      'Do not probe the frontends’ liveness (vite’s HMR ping); their rows carry no health dot (also: INFRA_KIT_NO_UI_HEALTH=1)',
+    )
     .action(async (preset, options) => {
       // Lazy import so fastify/chokidar (and the whole dev stack, plus the wizard's inquirer/config
       // graph) never load on the eager cli graph — they land in a split chunk reached only for `dev`.

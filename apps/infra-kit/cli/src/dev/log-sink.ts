@@ -12,6 +12,7 @@
  * the tail of the log — precisely the lines anyone reads a crash log for. A held fd + `writeSync` is
  * durable by construction, so there is no flush to forget and no second handle to race.
  */
+import { Buffer } from 'node:buffer'
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
@@ -19,6 +20,7 @@ import process from 'node:process'
 import { INFRA_KIT_SESSION_VAR, getCacheRoot } from 'src/lib/constants'
 
 import type { LogLevel } from './render.js'
+import { isTerminalDead } from './terminal-liveness.js'
 
 /**
  * The un-patched `process.stdout.write`, reached through the PROTOTYPE rather than captured off the
@@ -28,20 +30,47 @@ import type { LogLevel } from './render.js'
  * an assumption no import graph can guarantee. A monkeypatch installs an OWN property on the stream
  * instance, so resolving `write` from the prototype chain steps over it regardless of import order.
  * This is the panel's bypass: it must reach the terminal even while the interceptor owns `process.stdout`.
+ *
+ * Resolved at CALL time (like {@link rawStderrWrite}'s), not captured into a const: identical semantics —
+ * the prototype is what it is — and it keeps the real terminal write observable to a test, which is the
+ * only way to prove the liveness gate below actually drops a chunk instead of merely claiming to.
  */
-const protoWrite = (Object.getPrototypeOf(process.stdout) as { write: NodeJS.WriteStream['write'] }).write
-
-/** Write straight to the real stdout, bypassing any patch installed on the stream instance. */
-export const rawStdoutWrite = (chunk: string): boolean => {
-  return protoWrite.call(process.stdout, chunk)
+const protoWrite = (): NodeJS.WriteStream['write'] => {
+  return (Object.getPrototypeOf(process.stdout) as { write: NodeJS.WriteStream['write'] }).write
 }
 
 /**
- * The same bypass for stderr. Separate from {@link rawStdoutWrite} because they are different fds:
- * echoing stderr through stdout would send it to the terminal under `dev 2>boot.log` and leave the
- * redirect empty — the caller asked for stderr on a file, and we would have quietly moved it.
+ * Write straight to the real stdout, bypassing any patch installed on the stream instance.
+ *
+ * Gated on {@link isTerminalDead}: once a stdio stream has emitted `'error'`, every further write to it is
+ * DROPPED. This is the choke point every terminal-bound line already funnels through — Ink via
+ * `createSafeStream(panelStream())`, the embedded `DevRenderer`, and the entry's own shutdown line — so
+ * gating it here is what stops `reportFault` from feeding the write that produced the fault it is reporting.
+ *
+ * It returns `true` (a lie the caller can act on) and never `false`: the return value propagates through
+ * `panelStream`'s Proxy into Ink, and `false` reads as BACKPRESSURE — Ink would stall or buffer, hanging the
+ * very teardown this exists to reach. It never throws, for the same reason.
+ *
+ * Gate-completeness here is hygiene, not correctness: a handful of writes stay ungated
+ * (`output-intercept.ts`'s non-string passthrough, the direct `process.stderr.write` in `crash-barrier` and
+ * `signal-shutdown`). That is survivable — with `terminal-liveness` owning the `'error'` event, an ungated
+ * write costs one extra tick, not a loop. The correctness rests entirely on owning that event.
+ */
+export const rawStdoutWrite = (chunk: string): boolean => {
+  if (isTerminalDead()) return true
+
+  return protoWrite().call(process.stdout, chunk)
+}
+
+/**
+ * The same bypass — and the same liveness gate — for stderr. Separate from {@link rawStdoutWrite} because
+ * they are different fds: echoing stderr through stdout would send it to the terminal under
+ * `dev 2>boot.log` and leave the redirect empty — the caller asked for stderr on a file, and we would have
+ * quietly moved it.
  */
 export const rawStderrWrite = (chunk: string): boolean => {
+  if (isTerminalDead()) return true
+
   return (Object.getPrototypeOf(process.stderr) as { write: NodeJS.WriteStream['write'] }).write.call(
     process.stderr,
     chunk,
@@ -196,6 +225,30 @@ const gcOldLogDirs = (devRoot: string, now: number): void => {
 }
 
 /**
+ * Hard per-service byte cap. A logging LOOP — the crash barrier reporting a fault whose report is itself
+ * the fault — wrote 455 GB of `runner.log` at 50k–127k lines/sec and filled a 926 GB disk. The loop itself
+ * is fixed at its source (`terminal-liveness.ts`); this is the net under ANY future one, whatever its cause.
+ *
+ * A byte cap and not dedupe: this sink's stated principle is that it reads DECLARED provenance and never
+ * inspects the bytes, and a "same line N times" filter would violate it. Not rotation either — rotating a
+ * fault storm yields two enormous files and still fills the disk.
+ *
+ * Worst case on disk is `services × MAX_LOG_BYTES × retained_dirs`; in practice one file storms at a time,
+ * so the incident's own shape (5 orphaned processes) caps at ≈1.3 GB against the 455 GB that happened.
+ */
+const DEFAULT_MAX_LOG_BYTES = 256 * 1024 * 1024
+
+/** Escape hatch for a session that legitimately needs a bigger (or smaller) budget. */
+const MAX_LOG_BYTES_VAR = 'INFRA_KIT_DEV_LOG_MAX_BYTES'
+
+/** `INFRA_KIT_DEV_LOG_MAX_BYTES` when it parses to a positive integer, else {@link DEFAULT_MAX_LOG_BYTES}. */
+export const resolveMaxLogBytes = (): number => {
+  const raw = Number(process.env[MAX_LOG_BYTES_VAR])
+
+  return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_MAX_LOG_BYTES
+}
+
+/**
  * The per-service log sink. One held fd per service, opened lazily on first write.
  *
  * Every routing and counting decision here reads DECLARED provenance — the service the caller named and
@@ -205,10 +258,16 @@ export class DevLogSink {
   readonly dir: string
   private readonly fds = new Map<string, number>()
   private readonly counters = new Map<string, ServiceStats>()
+  /** Bytes this process has written per service, SEEDED from the file's existing size on lazy open. */
+  private readonly bytes = new Map<string, number>()
+  /** Services whose cap has been hit; every further line is dropped for them, and only for them. */
+  private readonly capped = new Set<string>()
+  private readonly maxBytes: number
   private closed = false
 
-  constructor(dir: string = resolveLogDir()) {
+  constructor(dir: string = resolveLogDir(), maxBytes: number = resolveMaxLogBytes()) {
     this.dir = dir
+    this.maxBytes = maxBytes
     fs.mkdirSync(this.dir, { recursive: true })
     gcOldLogDirs(path.dirname(this.dir), Date.now())
     this.linkLatest()
@@ -235,7 +294,7 @@ export class DevLogSink {
     return path.join(this.dir, logFileName(service))
   }
 
-  /** Lazily open (and cache) the append fd for a service. */
+  /** Lazily open (and cache) the append fd for a service, seeding its byte count from the file on disk. */
   private fdFor(service: string): number | null {
     const cached = this.fds.get(service)
 
@@ -245,6 +304,14 @@ export class DevLogSink {
       const fd = fs.openSync(this.pathFor(service), 'a')
 
       this.fds.set(service, fd)
+      // Seed from the file's CURRENT size, not zero: the fd is opened `'a'`, so a re-attached (or
+      // pre-existing) file's bytes are real bytes on the disk we are trying to bound. Counting only our own
+      // appends would let an already-huge file grow by another whole cap.
+      try {
+        this.bytes.set(service, fs.fstatSync(fd).size)
+      } catch {
+        this.bytes.set(service, 0)
+      }
 
       return fd
     } catch {
@@ -273,12 +340,41 @@ export class DevLogSink {
     }
     this.counters.set(service, stats)
 
+    // The cap latch lives HERE — after the counter bump, before the fd. A top-of-function early return (the
+    // obvious implementation) would freeze the panel's red error counter for the whole storm, and a cap that
+    // silences the only remaining signal is worse than no cap: it makes the next incident harder to diagnose,
+    // which is precisely the objection to capping alone.
+    if (this.capped.has(service)) return
+
     const fd = this.fdFor(service)
 
     if (fd == null) return
 
+    const line = text.endsWith('\n') ? text : `${text}\n`
+    const size = Buffer.byteLength(line)
+    const written = this.bytes.get(service) ?? 0
+
+    if (written + size > this.maxBytes) {
+      this.capped.add(service)
+      // One loud final line, naming the likely cause, into the service's OWN file (and counted against its
+      // own budget). Per-service, so a chatty `client-ui.log` can never silence `runner.log`.
+      this.writeRaw(
+        fd,
+        service,
+        `[capped] ${logFileName(service)} hit ${this.maxBytes} bytes; further lines dropped (likely a logging loop)\n`,
+      )
+
+      return
+    }
+
+    this.writeRaw(fd, service, line)
+  }
+
+  /** The one place bytes reach the disk: write, count what landed, and never throw. */
+  private writeRaw(fd: number, service: string, line: string): void {
     try {
-      fs.writeSync(fd, text.endsWith('\n') ? text : `${text}\n`)
+      fs.writeSync(fd, line)
+      this.bytes.set(service, (this.bytes.get(service) ?? 0) + Buffer.byteLength(line))
     } catch {
       // A failed write is a dropped line, never a crashed dev server.
     }

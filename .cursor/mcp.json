@@ -17,8 +17,8 @@
     },
     "infra-kit": {
       "type": "stdio",
-      "command": "infra-kit",
-      "args": ["mcp"]
+      "command": "npx",
+      "args": ["--no-install", "infra-kit", "mcp"]
     }
   }
 }

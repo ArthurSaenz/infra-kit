@@ -12,6 +12,7 @@ import { OperationError } from 'src/lib/errors/operation-error'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { pickEnv } from 'src/lib/prompts/env-picker'
+import { withEscape } from 'src/lib/prompts/escapable-context'
 import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import {
   detectReleaseType,
@@ -57,7 +58,9 @@ const confirmDeploy = async (args: ConfirmDeployArgs): Promise<boolean> => {
 
   commandEcho.setInteractive()
 
-  const answer = await confirm({ message: `Deploy ${branch} → ${env}?`, default: false })
+  const answer = await withEscape((context) => {
+    return confirm({ message: `Deploy ${branch} → ${env}?`, default: false }, context)
+  })
 
   if (answer) commandEcho.addOption('--yes', true)
 
@@ -148,14 +151,19 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
   } else {
     commandEcho.setInteractive()
 
-    selectedServices = await checkbox({
-      message: '🚀 Select services to deploy (space to select, enter to confirm)',
-      choices: availableServices.map((svc) => {
-        return {
-          name: svc,
-          value: svc,
-        }
-      }),
+    selectedServices = await withEscape((context) => {
+      return checkbox(
+        {
+          message: '🚀 Select services to deploy (space to select, enter to confirm)',
+          choices: availableServices.map((svc) => {
+            return {
+              name: svc,
+              value: svc,
+            }
+          }),
+        },
+        context,
+      )
     })
   }
 

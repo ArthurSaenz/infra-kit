@@ -25,7 +25,11 @@ interface WorktreeSyncArgs extends RequiredConfirmedOptionArg {}
 export const worktreesSync = async (options: WorktreeSyncArgs) => {
   const { confirmedCommand } = options
 
-  await assertManagementContext({ operation: 'sync worktrees', requiredBranch: 'dev' })
+  // Branch-agnostic: reconciles worktrees by name/path and never reads HEAD, so
+  // only the worktree + clean-tree legs apply. Load-bearing on the MCP path,
+  // which runs this unattended — a branch requirement there would refuse a
+  // cleanup that has no quarrel with the caller's checkout.
+  await assertManagementContext({ operation: 'sync worktrees' })
 
   try {
     const currentWorktrees = await getCurrentWorktrees('release')

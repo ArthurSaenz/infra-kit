@@ -9,8 +9,9 @@ import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { logger } from 'src/lib/logger'
+import { withEscape } from 'src/lib/prompts/escapable-context'
 import { InvalidReleaseNameError, displayLabel, validateName } from 'src/lib/release-id'
-import { createSingleRelease, getBaseBranch, prepareGitForRelease } from 'src/lib/release-utils'
+import { createSingleRelease, prepareGitForRelease } from 'src/lib/release-utils'
 import type { ReleaseCreationResult, ReleaseType } from 'src/lib/release-utils'
 import {
   NoPriorVersionsError,
@@ -117,22 +118,32 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
 
   while (addAnother) {
     const ordinal = entries.length + 1
-    const kind = await select<'version' | 'name'>({
-      message: `Release #${ordinal} — version or name?`,
-      choices: [
-        { name: 'version (semver / next)', value: 'version' },
-        { name: 'name (free-form)', value: 'name' },
-      ],
-      default: 'version',
+    const kind = await withEscape((context) => {
+      return select<'version' | 'name'>(
+        {
+          message: `Release #${ordinal} — version or name?`,
+          choices: [
+            { name: 'version (semver / next)', value: 'version' },
+            { name: 'name (free-form)', value: 'name' },
+          ],
+          default: 'version',
+        },
+        context,
+      )
     })
 
-    const type = await select<ReleaseType>({
-      message: `Release #${ordinal} — select type:`,
-      choices: [
-        { name: 'regular', value: 'regular' },
-        { name: 'hotfix', value: 'hotfix' },
-      ],
-      default: 'regular',
+    const type = await withEscape((context) => {
+      return select<ReleaseType>(
+        {
+          message: `Release #${ordinal} — select type:`,
+          choices: [
+            { name: 'regular', value: 'regular' },
+            { name: 'hotfix', value: 'hotfix' },
+          ],
+          default: 'regular',
+        },
+        context,
+      )
     })
 
     let resolved: ReleaseEntry
@@ -156,7 +167,9 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
 
     entries.push({ ...resolved, ...(description !== '' ? { description } : {}) })
 
-    addAnother = await confirm({ message: 'Add another release?', default: false })
+    addAnother = await withEscape((context) => {
+      return confirm({ message: 'Add another release?', default: false }, context)
+    })
   }
 
   return entries
@@ -206,9 +219,14 @@ const collectEntries = async (
 }
 
 /**
- * Reject a batch that mixes regular and hotfix releases. They branch off
- * different bases (dev vs main), so the batch has no single required branch for
- * the management guard — they must be created in separate invocations.
+ * Reject a batch that mixes regular and hotfix releases.
+ *
+ * No longer a technical limit: `prepareGitForRelease` runs per entry, so a mixed
+ * batch would switch to each release's own base and work. It is kept because the
+ * confirmation prompt summarises the batch as one thing — an operator approving
+ * "these releases" should not be silently agreeing to cut some off `dev` and
+ * others off `main`. Splitting the invocation makes that choice explicit.
+ *
  * Exported for unit testing without running the side-effecting handler.
  */
 export const assertHomogeneousReleaseType = (entries: ReleaseEntry[]): void => {
@@ -316,10 +334,10 @@ export const releaseCreate = async (args: ReleaseCreateArgs) => {
 
   assertHomogeneousReleaseType(entries)
 
-  await assertManagementContext({
-    operation: 'create release',
-    requiredBranch: getBaseBranch(entries[0]!.type),
-  })
+  // Branch-agnostic: `prepareGitForRelease` self-switches onto a freshly fetched
+  // base branch below, after the confirmation prompt, so only the worktree +
+  // clean-tree legs apply.
+  await assertManagementContext({ operation: 'create release' })
 
   await confirmReleases(entries, Boolean(confirmedCommand))
 

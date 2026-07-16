@@ -9,6 +9,7 @@ import { getTokenStorePath, setToken } from 'src/lib/env-tokens'
 import { extractStderr } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { tildify } from 'src/lib/path-display'
+import { withEscape } from 'src/lib/prompts/escapable-context'
 import { redactToken } from 'src/lib/redact'
 import { purgeRepoWarmCaches } from 'src/lib/warm-cache'
 import { textContent } from 'src/types'
@@ -54,8 +55,14 @@ const readCandidateToken = async ({
 
   commandEcho.setInteractive()
 
-  const token = await password(
-    { message: 'Paste the Doppler service token (input is hidden)', mask: true },
+  // Esc abandons a half-typed credential (withEscape → AbortPromptError → exit 0, nothing written).
+  // The typed value never reaches the output either way: `mask: true` renders one `*` per keystroke, so
+  // the transcript holds asterisks, not the token. (The masked line itself SURVIVES the abort — this
+  // context sets no `clearPromptOnDone` — but it carries no secret.)
+  const token = await withEscape(
+    (context) => {
+      return password({ message: 'Paste the Doppler service token (input is hidden)', mask: true }, context)
+    },
     // stderr, like env-load's picker: some env commands are invoked inside `$(…)` by the shell
     // wrapper, which captures stdout. A prompt rendered to stdout would be swallowed there — the user
     // would face a blank, silent terminal and type a credential into the void.

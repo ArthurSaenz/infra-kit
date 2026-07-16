@@ -26,20 +26,14 @@ interface BranchPickerProps {
 export const BranchPicker = (props: BranchPickerProps) => {
   const { items, onSelect, onCancel } = props
 
-  const T = {
-    hint: 'Select a branch — type to filter, ↑↓ to move, Enter to select, Esc to cancel',
-    prompt: '❯ ',
-    empty: 'No matching branches',
-    tiny: 'terminal too short — resize to pick a branch',
-    more: '…',
-  }
+  const T = BRANCH_PICKER_TEXT
   const labelWidth = items.reduce((max, item) => {
     return Math.max(max, item.label.length)
   }, 0)
 
   const { exit } = useApp()
   const { rows } = useWindowSize()
-  const { filtered, activeIndex, query, handleNavigation } = useListFilter(items, filterText)
+  const { filtered, activeIndex, query, handleNavigation, clearQuery } = useListFilter(items, filterText)
   // First branch in the visible window; kept in state so the list scrolls by the minimum needed.
   const [windowStart, setWindowStart] = useState(0)
   // When set, the component renders `null` for one frame so Ink erases the list
@@ -64,14 +58,28 @@ export const BranchPicker = (props: BranchPickerProps) => {
     }
   }, [view.start, windowStart])
 
+  const cancel = () => {
+    onCancel()
+    setSubmitted(true)
+  }
+
   useInput((input, key) => {
     if (submitted) {
       return
     }
 
-    if (key.escape || (key.ctrl && input === 'c')) {
-      onCancel()
-      setSubmitted(true)
+    if (key.ctrl && input === 'c') {
+      cancel()
+
+      return
+    }
+
+    // Esc pops the innermost stateful thing: a typed filter first, the picker only once
+    // there is no filter left to clear. `clearQuery` returning false IS that ladder.
+    if (key.escape) {
+      if (!clearQuery()) {
+        cancel()
+      }
 
       return
     }
@@ -156,4 +164,17 @@ function labelColor(type: string | undefined, isActive: boolean): string | undef
 
 function filterText(item: BranchPickerItem): string {
   return `${item.label} ${item.description ?? ''}`
+}
+
+/**
+ * Static screen copy. Module-scoped and exported so the hint-width guard can measure it:
+ * these strings render under `wrap="truncate"`, so a hint of ≥80 columns silently loses
+ * its tail at the common terminal width — and the tail is where the Esc hint lives.
+ */
+export const BRANCH_PICKER_TEXT = {
+  hint: 'type to filter · ↑↓ move · Enter select · Esc clear/cancel',
+  prompt: '❯ ',
+  empty: 'No matching branches',
+  tiny: 'terminal too short — resize to pick a branch',
+  more: '…',
 }

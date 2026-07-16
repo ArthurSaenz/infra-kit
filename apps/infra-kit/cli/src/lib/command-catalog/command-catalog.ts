@@ -236,14 +236,19 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mcpExposed: true,
     groupPath: ['worktrees', 'reload'],
   },
-  // worktrees-remove runs `git worktree remove` on each leaf worktree —
-  // genuinely irreversible (uncommitted work is lost), so it is CLI-only by
-  // design (mirrors the vendor-sync/manifest rationale).
+  // worktrees-remove runs `git worktree remove` (no --force) on the named leaf worktrees. It is NOT
+  // irreversible in the way release-deliver/vendor-sync are: the release branches/commits survive, the
+  // worktrees scaffold is left in place, and worktrees-add recreates a removed worktree. git also
+  // refuses to remove a worktree with modified-tracked or untracked files. The residual risk —
+  // deletion of gitignored local state (a hydrated `.env` of Doppler secrets, node_modules/dist) — is
+  // contained by the tool's own invariants rather than by withholding it: over MCP it rejects
+  // all=true (no one-shot wipe) and errors on any unmatched target before removing anything. So it is
+  // exposed, unlike the genuinely-irreversible release-deliver / vendor-sync / vendor-manifest.
   {
     cliName: 'worktrees-remove',
     menuGroup: 'worktrees',
     mcpTool: worktreesRemoveMcpTool,
-    mcpExposed: false,
+    mcpExposed: true,
     groupPath: ['worktrees', 'remove'],
   },
   {

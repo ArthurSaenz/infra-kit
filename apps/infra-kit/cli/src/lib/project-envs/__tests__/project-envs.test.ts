@@ -32,9 +32,9 @@ describe('listProjectEnvs', () => {
     vi.mocked(readTokenStore).mockResolvedValue(store({ dev: 'dp.st.dev.x', prod_observability: 'dp.st.obs.y' }))
 
     await expect(listProjectEnvs()).resolves.toEqual([
-      { env: 'dev', source: 'workflow' },
-      { env: 'stage', source: 'workflow' },
-      { env: 'prod', source: 'workflow' },
+      { env: 'dev', source: 'gh-workflow' },
+      { env: 'stage', source: 'gh-workflow' },
+      { env: 'prod', source: 'gh-workflow' },
       { env: 'prod_observability', source: 'token-only' },
     ])
   })
@@ -58,8 +58,8 @@ describe('listProjectEnvs', () => {
     const result = await listProjectEnvs()
 
     expect(result).toEqual([
-      { env: 'dev', source: 'workflow' },
-      { env: 'prod', source: 'workflow' },
+      { env: 'dev', source: 'gh-workflow' },
+      { env: 'prod', source: 'gh-workflow' },
     ])
     expect(result).toHaveLength(2)
   })
@@ -76,7 +76,7 @@ describe('listProjectEnvs', () => {
     vi.mocked(readTokenStore).mockResolvedValue(store({ zeta: 'dp.st.zeta.x', alpha: 'dp.st.alpha.y' }))
 
     await expect(listProjectEnvs()).resolves.toEqual([
-      { env: 'dev', source: 'workflow' },
+      { env: 'dev', source: 'gh-workflow' },
       { env: 'alpha', source: 'token-only' },
       { env: 'zeta', source: 'token-only' },
     ])
@@ -87,8 +87,8 @@ describe('listProjectEnvs', () => {
     vi.mocked(readTokenStore).mockResolvedValue(null)
 
     await expect(listProjectEnvs()).resolves.toEqual([
-      { env: 'dev', source: 'workflow' },
-      { env: 'stage', source: 'workflow' },
+      { env: 'dev', source: 'gh-workflow' },
+      { env: 'stage', source: 'gh-workflow' },
     ])
   })
 })

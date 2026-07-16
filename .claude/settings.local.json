@@ -2,20 +2,20 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|NotebookEdit",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/auto-format.sh"
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/auto-format.mjs"
           }
         ]
       },
       {
-        "matcher": "Edit|Write|NotebookEdit",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/typecheck.sh",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/typecheck.mjs",
             "timeout": 30
           }
         ]
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/run-tests-async.sh",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/run-tests-async.mjs",
             "async": true,
             "timeout": 300
           }
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-files.sh"
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-files.mjs"
           }
         ]
       },
@@ -47,36 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-destructive.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/suggest-commands.py"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/cmux-check.sh"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "permission_prompt",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/notify.sh"
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/bash-guard.mjs"
           }
         ]
       }
@@ -86,7 +57,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/quality-gate.sh",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/quality-gate.mjs",
             "timeout": 120
           }
         ]
@@ -97,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/setup-env.sh"
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/setup-env.mjs"
           }
         ]
       },

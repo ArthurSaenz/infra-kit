@@ -1,7 +1,7 @@
 {
   "name": "infra-kit",
   "type": "module",
-  "version": "0.3.0",
+  "version": "0.3.6",
   "files": [
     "dist"
   ],
@@ -40,7 +40,7 @@
     "@inquirer/password": "^5.0.2",
     "@inquirer/select": "^5.2.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@slip-stream-kit/config": "^0.3.0",
+    "@slip-stream-kit/config": "^0.3.3",
     "chalk": "^5.6.2",
     "chokidar": "^5.0.0",
     "commander": "^15.0.0",

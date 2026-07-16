@@ -52,19 +52,15 @@ const EXPECTED_EXPOSED_TOOLS = [
   'worktrees-add',
   'worktrees-list',
   'worktrees-reload',
+  'worktrees-remove',
   'worktrees-sync',
 ]
 
 // Deliberately NOT exposed as MCP tools (mutating / host-inspecting / irreversible).
-// release-deliver (prod delivery + admin-merge) and worktrees-remove (rm -rf) are
-// CLI-only by design.
-const EXPECTED_UNEXPOSED_WITH_TOOL = [
-  'doctor',
-  'vendor-sync',
-  'vendor-manifest',
-  'gh-release-deliver',
-  'worktrees-remove',
-]
+// release-deliver (prod delivery + admin-merge) is CLI-only by design; vendor-sync/manifest mutate
+// consumer repos; doctor is host-inspecting. worktrees-remove IS exposed — git protects tracked work
+// and its own invariants (no MCP all=true, error on unmatched target) contain the residual risk.
+const EXPECTED_UNEXPOSED_WITH_TOOL = ['doctor', 'vendor-sync', 'vendor-manifest', 'gh-release-deliver']
 
 /**
  * Credential commands that must carry NO MCP tool at all — not merely `mcpExposed: false`. The MCP
@@ -74,7 +70,7 @@ const EXPECTED_UNEXPOSED_WITH_TOOL = [
 const CREDENTIAL_WRITE_COMMANDS = ['env-token-set', 'env-token-remove']
 
 describe('command catalog — MCP exposure policy', () => {
-  it('exposes exactly the expected 19 MCP tools (set-equal, order-independent)', () => {
+  it('exposes exactly the expected 20 MCP tools (set-equal, order-independent)', () => {
     const exposedNames = getExposedMcpTools()
       .map((tool) => {
         return tool.name
@@ -82,7 +78,7 @@ describe('command catalog — MCP exposure policy', () => {
       .sort()
 
     expect(exposedNames).toEqual([...EXPECTED_EXPOSED_TOOLS].sort())
-    expect(exposedNames).toHaveLength(19)
+    expect(exposedNames).toHaveLength(20)
   })
 
   it('keeps env-token-set / env-token-remove off MCP entirely (no tool object to flip on)', () => {
@@ -104,15 +100,18 @@ describe('command catalog — MCP exposure policy', () => {
     }
   })
 
-  it('never exposes the irreversible release-deliver / worktrees-remove tools', () => {
+  it('never exposes the irreversible release-deliver tool, but does expose worktrees-remove', () => {
     const exposedNames = new Set(
       getExposedMcpTools().map((tool) => {
         return tool.name
       }),
     )
 
+    // release-deliver is genuinely irreversible (prod deploy + admin-merge) — stays CLI-only.
     expect(exposedNames.has('gh-release-deliver')).toBe(false)
-    expect(exposedNames.has('worktrees-remove')).toBe(false)
+    // worktrees-remove is exposed: git protects tracked work and the tool's own invariants (no MCP
+    // all=true, error on unmatched target) contain the residual gitignored-deletion risk.
+    expect(exposedNames.has('worktrees-remove')).toBe(true)
   })
 
   it('keeps doctor, vendor-sync and vendor-manifest UNEXPOSED even though they have tools', () => {

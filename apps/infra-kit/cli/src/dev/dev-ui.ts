@@ -6,16 +6,16 @@
  * The seams mirror {@link DevRenderer} exactly, plus one extra: `dispose()`. Ink needs it to unmount
  * and release the terminal; the plain renderer implements it as an idempotent no-op.
  */
-import type { LogLevel, ReadySummary } from './render.js'
+import type { LogLevel, LogOptions, ReadySummary } from './render.js'
 
-export type { EndpointRow, LogLevel, ReadySummary, UiRef } from './render.js'
+export type { EndpointRow, LogLevel, LogOptions, ReadySummary, UiRef } from './render.js'
 
 /** A renderer the {@link DevServerRunner} can drive: the calm-print {@link DevRenderer} or the Ink boot UI. */
 export interface DevUi {
   /** Boot narration: file-tee always; terminal only when the renderer's own policy allows (verbose / live region). */
   narrate: (message: string) => void
-  /** A general message routed by level (terminal + file tee). */
-  log: (message: string, level?: LogLevel) => void
+  /** A general message routed by level (terminal + file tee, unless `options.tee === false`). */
+  log: (message: string, level?: LogLevel, options?: LogOptions) => void
   /** `LogFn`-shaped adapter for the build runner seam (which passes `(msg, level)`). */
   readonly logFn: (message: string, level?: LogLevel) => void
   /** Advance the boot phase (drives a spinner / live region). */

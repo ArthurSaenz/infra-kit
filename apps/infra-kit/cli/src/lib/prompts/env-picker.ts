@@ -2,6 +2,8 @@ import select from '@inquirer/select'
 
 import { OperationError } from 'src/lib/errors/operation-error'
 
+import { withEscape } from './escapable-context'
+
 /**
  * Ask which environment to deploy to, given the options the target workflow declares.
  *
@@ -28,13 +30,18 @@ export const pickEnv = async (options: string[], operation: string): Promise<str
     })
   }
 
-  return select({
-    message: '🧪 Select environment',
-    choices: options.map((option) => {
-      return {
-        name: option,
-        value: option,
-      }
-    }),
+  return withEscape((context) => {
+    return select(
+      {
+        message: '🧪 Select environment',
+        choices: options.map((option) => {
+          return {
+            name: option,
+            value: option,
+          }
+        }),
+      },
+      context,
+    )
   })
 }

@@ -1,4 +1,28 @@
 {
+  "permissions": {
+    "deny": [
+      "Bash(gh workflow run:*)",
+      "Bash(gh run rerun:*)",
+      "Bash(pnpm exec infra-kit release-deliver:*)",
+      "Bash(pnpm exec infra-kit release deliver:*)",
+      "Bash(pnpm exec ik release-deliver:*)",
+      "Bash(pnpm run dx-release-deliver:*)",
+      "Bash(pnpm dx-release-deliver:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-deploy.mjs"
+          }
+        ]
+      }
+    ]
+  },
   "enabledPlugins": {
     "playwright@claude-plugins-official": true,
     "context7@claude-plugins-official": true,

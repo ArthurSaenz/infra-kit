@@ -12,15 +12,31 @@ import { pathToFileURL } from 'node:url'
 import { runCmuxDevServer } from 'src/dev/cmux-dev'
 import { formatFault, registerCrashBarrier } from 'src/dev/crash-barrier'
 import { run } from 'src/dev/dev-server'
-import type { DevServerOptions } from 'src/dev/dev-server'
+import type { DevServerOptions, DevServerRunner } from 'src/dev/dev-server'
 import type { WizardResult } from 'src/dev/dev-wizard-run'
 import { resolveSelfAppName } from 'src/dev/discovery'
 import { rawStdoutWrite } from 'src/dev/log-sink'
+import { killDescendantGroupsNow } from 'src/dev/managed-child'
 import { explainTargetKey } from 'src/dev/presets'
 import { registerSignalShutdown } from 'src/dev/signal-shutdown'
+import { installTerminalLiveness } from 'src/dev/terminal-liveness'
 import { isCmuxAvailable } from 'src/integrations/cmux'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import type { DevPreset } from 'src/lib/infra-kit-config'
+
+/**
+ * Exit code when the session dies because its own stdio is unwritable. Not 0 — the process did not stop
+ * voluntarily — and not `128 + signo`, because no signal was necessarily involved: a full disk under
+ * `nohup ik dev > out.log` reaches this path with `ENOSPC` and nobody sent anything.
+ */
+const FATAL_EXIT_CODE = 1
+
+/**
+ * How long the fatal path waits for a graceful teardown before SIGKILLing the descendant groups and
+ * leaving. Mirrors `signal-shutdown`'s deadline, and for the same reason: on this path there is by
+ * definition no operator watching, so "wait forever" means "spin forever".
+ */
+const FATAL_TEARDOWN_DEADLINE_MS = 20_000
 
 /** Raw option object as produced by Commander (comma-joined strings). */
 export interface DevCliOptions {
@@ -39,6 +55,11 @@ export interface DevCliOptions {
   verbose?: boolean
   /** Print each app's registered routes at startup (opt-in; off keeps the calm default screen). */
   routes?: boolean
+  /**
+   * Commander's negated flag: `true` by default, `false` only when `--no-ui-health` was passed. Off means
+   * the frontends are never probed and their rows carry no health dot.
+   */
+  uiHealth?: boolean
 }
 
 /**
@@ -95,6 +116,7 @@ export const toDevServerOptions = (raw: DevCliOptions): DevServerOptions => {
     self: raw.self ?? false,
     verbose: raw.verbose ?? false,
     routes: raw.routes ?? false,
+    uiHealth: raw.uiHealth ?? true,
   }
 }
 
@@ -111,6 +133,98 @@ const resolveSelfOptions = (options: DevServerOptions): DevServerOptions => {
   }
 
   return { ...options, include: [resolveSelfAppName(process.cwd())] }
+}
+
+/**
+ * Seams for {@link createFatalHandler}. `exit` and `forceReap` mirror `signal-shutdown`'s, and for the same
+ * reason: the real ones kill the test runner and SIGKILL its children.
+ */
+export interface FatalHandlerDeps {
+  /**
+   * The runner — read LATE, on every call, never captured. It is `null` for the whole of boot (all of it
+   * happens inside `run()`), and that is the branch the handler exists to get right.
+   */
+  getRunner: () => { shutdown: () => Promise<void>; fileFault: (detail: string) => void } | null
+  /** SIGKILL the descendant process groups. Synchronous by contract — the process exits on the next line. */
+  forceReap?: () => void
+  exit?: (code: number) => void
+  /** Timer seam returning its cancel; defaults to an `unref`'d `setTimeout`. */
+  setTimer?: (handler: () => void, ms: number) => () => void
+  deadlineMs?: number
+}
+
+const defaultFatalTimer = (handler: () => void, ms: number): (() => void) => {
+  const timer = setTimeout(handler, ms)
+
+  timer.unref()
+
+  return (): void => {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * The one handler for "our own stdio is unwritable" — from the liveness listener (with the errno) and, as a
+ * backstop, from the crash barrier.
+ *
+ * Once-only. Terminal death is ONE event arriving through as many as three channels (the stdio `'error'`
+ * event, the kernel's SIGHUP, a fault raised while the streams are already dead). `shutdown()` is memoized
+ * so they may all call it; the reap-and-exit here must still happen exactly once.
+ *
+ * It never PRINTS: printing onto a dead stream is what produced the fault, so the report is FILED into the
+ * sink — the only channel a post-mortem can still read.
+ *
+ * The `runner == null` branch is not a corner case, it is a REGRESSION GUARD. Today an EIO during boot
+ * correctly kills the process (the barrier is not installed yet). A liveness listener that merely swallowed
+ * the `'error'` would make boot silently survive a dead terminal — strictly worse. So boot reaps and exits,
+ * synchronously: anything deferred to a later tick does not survive `process.exit`.
+ */
+export const createFatalHandler = ({
+  getRunner,
+  forceReap = killDescendantGroupsNow,
+  exit = (code: number): void => {
+    process.exit(code)
+  },
+  setTimer = defaultFatalTimer,
+  deadlineMs = FATAL_TEARDOWN_DEADLINE_MS,
+}: FatalHandlerDeps): ((reason: string) => void) => {
+  let fired = false
+
+  return (reason: string): void => {
+    if (fired) return
+    fired = true
+
+    const runner = getRunner()
+
+    if (runner == null) {
+      forceReap()
+      exit(FATAL_EXIT_CODE)
+
+      return
+    }
+
+    runner.fileFault(`\n✗ dev-server exiting: ${reason}\n`)
+
+    // Bounded, for the same reason `signal-shutdown` is: on this path nobody is watching, so a teardown
+    // that wedges spins forever.
+    const cancel = setTimer(() => {
+      forceReap()
+      exit(FATAL_EXIT_CODE)
+    }, deadlineMs)
+
+    // The trailing `.catch` is NOT redundant with `shutdown()`'s own. `shutdown()` attaches its handler to
+    // the memoized `this.teardown`; `.finally()` returns a NEW, derived promise, and a derived promise
+    // carries its own rejection state. `doShutdown()` can reject (`watcher.close`, `turboWatch.kill` and
+    // `uiDev.kill` are unguarded), so without this the derived promise rejects unhandled — on the one path
+    // where an `unhandledRejection` feeds straight back into the barrier that called us.
+    runner
+      .shutdown()
+      .finally(() => {
+        cancel()
+        exit(FATAL_EXIT_CODE)
+      })
+      .catch(() => {})
+  }
 }
 
 /**
@@ -135,7 +249,32 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
     process.stdout.write('cmux not available; falling back to single-terminal dev\n')
   }
 
-  const runner = await run(options)
+  // A settable target, not a `const`: liveness must be armed BEFORE `run()`, because all of boot happens
+  // inside it (apps built, turbo and vite spawned, Ink mounted) — minutes of build during which a developer
+  // walks away and closes the window. But `onDeath` can then fire with no runner to tear down, so the fatal
+  // handler branches on it (and reads it LATE, through the getter).
+  //
+  // Installed HERE — below the `--cmux` early return above, alongside `registerCrashBarrier`, which is
+  // deliberately on the same side of it (each pane is its own process). At the top of `runDevServer` the
+  // cmux PARENT would get a listener whose `runner` stays `null` forever, and its `onFatal` would take the
+  // boot branch: `killDescendantGroupsNow()` + exit, reaping the entire workspace.
+  let runner: DevServerRunner | null = null
+
+  const onFatal = createFatalHandler({
+    getRunner: () => {
+      return runner
+    },
+  })
+
+  const liveness = installTerminalLiveness({
+    // The errno, never a story. A file-backed stdout emits `'error'` on `ENOSPC` too, so "the terminal is
+    // gone" would be a lie in the exact scenario (a disk-fill) this exists to fix.
+    onDeath: (stream, error) => {
+      onFatal(`stdio unwritable: ${stream} ${error.code}`)
+    },
+  })
+
+  runner = await run(options)
 
   // In-process backends share this event loop; a handler's escaped async path would otherwise terminate
   // the whole session. Installed only on the single-process path (the cmux path returned above, each pane
@@ -146,18 +285,39 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
   // reporter is a plain stderr write — so a crash would be silently FILED while the panel kept showing
   // `● ok` and `⚠ 0`. Routing it through the runner both counts it (the row turns red) and punches it
   // onto the terminal through the panel's bypass.
+  //
+  // `isTerminalDead` is the one thing that may turn a fault fatal, and it is a STREAM-IDENTITY question,
+  // never an error-code one: a handler writing to a client socket that hung up throws `EPIPE` too, and
+  // sniffing for that would let one closed browser tab kill the whole session.
+  const boundRunner = runner
+
   registerCrashBarrier({
     onFault: (event, error) => {
-      runner.reportFault(formatFault(event, error))
+      boundRunner.reportFault(formatFault(event, error))
     },
+    isTerminalDead: liveness.isDead,
+    fileFault: (event, error) => {
+      boundRunner.fileFault(formatFault(event, error, false))
+    },
+    onFatal,
   })
 
   registerSignalShutdown({
     onSignal: async (signal) => {
       // Bypass, not `process.stdout.write`: the interceptor is still installed and suppressing at this
       // point, so a plain write would file this into a log and the user would see nothing after Ctrl-C.
+      // Gated on the liveness latch, so a SIGHUP from a terminal that is already gone does not re-arm the
+      // very write that killed it.
       rawStdoutWrite(`\nReceived ${signal}, shutting down dev-server...\n`)
-      await runner.shutdown()
+      await boundRunner.shutdown()
+    },
+    // The seam that turns the deadline from a blunt force-quit into the instrument that says WHERE the
+    // teardown wedged — the question the incident leaves open.
+    describeStall: () => {
+      return boundRunner.shutdownStage
+    },
+    fileReport: (text) => {
+      boundRunner.fileFault(text)
     },
   })
 }
@@ -169,13 +329,16 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
  * existing script path changes behaviour.
  */
 export const shouldRunWizard = (raw: DevCliOptions, tty: boolean, json: boolean): boolean => {
+  // `--no-ui-health` is deliberately NOT in this list. It selects a diagnostic, not a run plan, and a flag
+  // that quietly turns the picker into "run the entire repo" is a far bigger surprise than the one it would
+  // avoid. The wizard carries it through instead (see `wizardToOptions`), so the user gets both.
   const bare = !raw.preset && !raw.app && !raw.self && !raw.cmux && !raw.watch && !raw.verbose && !raw.routes
 
   return bare && tty && !json
 }
 
 /** Map a wizard result to runner options: the cmux path uses `include`; otherwise the in-memory `presetDef`. */
-const wizardToOptions = (result: WizardResult): DevServerOptions => {
+const wizardToOptions = (result: WizardResult, raw: DevCliOptions): DevServerOptions => {
   return {
     watch: result.watch,
     cmux: result.cmux,
@@ -185,6 +348,10 @@ const wizardToOptions = (result: WizardResult): DevServerOptions => {
     self: false,
     verbose: false,
     routes: false,
+    // The wizard asks about the run plan, never about health — so this rides through from the command line.
+    // Dropping it here is what would make `--no-ui-health` silently probe anyway on the one path that
+    // reaches the wizard.
+    uiHealth: raw.uiHealth ?? true,
   }
 }
 
@@ -236,7 +403,7 @@ export const runDevServerCli = async (raw: DevCliOptions, tty: boolean, json: bo
 
     // The wizard only runs on a bare interactive TTY, so tty=true, json=false — thread them so `run()`
     // selects the Ink boot UI.
-    await runDevServer({ ...wizardToOptions(result), tty, json })
+    await runDevServer({ ...wizardToOptions(result, raw), tty, json })
 
     return
   }

@@ -13,6 +13,7 @@ export {
   CHECK_INTERVAL_MS,
   isStale,
   readUpdateCache,
+  RETRY_INTERVAL_MS,
   writeUpdateCache,
 } from './update-cache'
 export type { UpdateCache } from './update-cache'

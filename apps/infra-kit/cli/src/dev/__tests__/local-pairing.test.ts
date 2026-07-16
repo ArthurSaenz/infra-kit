@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { findDegradedRoutes, formatPairingRefusal } from 'src/dev/local-pairing'
+import { findDegradedRoutes, formatPairingRefusal, resolveProxyRoutes } from 'src/dev/local-pairing'
 import type { LaunchedUi, PairingInputs } from 'src/dev/local-pairing'
 
 /** hulyo's real shape: `/api` can be local, `/dynamic` + `/media` are cloud-only by design. */
@@ -166,5 +166,109 @@ describe('formatPairingRefusal', () => {
     const message = formatPairingRefusal(findDegradedRoutes(crashed({ uis: [ui] })), 'clientLocal')
 
     expect(message).toContain('to the cloud backend')
+  })
+})
+
+describe('resolveProxyRoutes', () => {
+  const localOrigin = (pkg: string): string | undefined => {
+    return pkg === 'backend-api' ? 'https://feat-x.backend-api.localhost/api/v1' : undefined
+  }
+
+  it('reports EVERY route sorted by path — a local one with its origin, cloud-only ones with the cloud target', () => {
+    expect(
+      resolveProxyRoutes({
+        uis: [clientUi()],
+        running: new Set(['backend-api']),
+        localOrigin,
+        env: 'dev',
+      }),
+    ).toEqual([
+      {
+        uiApp: 'client',
+        route: '/api',
+        packageName: 'backend-api',
+        source: 'local',
+        target: 'https://feat-x.backend-api.localhost/api/v1',
+      },
+      {
+        uiApp: 'client',
+        route: '/dynamic',
+        packageName: 'backend-api',
+        source: 'cloud',
+        target: 'https://dev.hulyo.co.il',
+      },
+      {
+        uiApp: 'client',
+        route: '/media',
+        packageName: 'backend-api',
+        source: 'cloud',
+        target: 'https://dev.hulyo.co.il',
+      },
+    ])
+  })
+
+  it('resolves a local-capable route to cloud when its backend is not in the running set (the vite pickSource fallback)', () => {
+    const [api] = resolveProxyRoutes({
+      uis: [clientUi()],
+      running: new Set(),
+      localOrigin,
+      env: 'dev',
+    })
+
+    expect(api).toMatchObject({ route: '/api', source: 'cloud', target: 'https://dev.hulyo.co.il' })
+  })
+
+  it('resolves a single-source local route to local with no default, and omits the target when nothing is serving it', () => {
+    const ui: LaunchedUi = { app: 'client', routes: { '/api': { packageName: 'backend-api', from: ['local'] } } }
+
+    expect(
+      resolveProxyRoutes({
+        uis: [ui],
+        running: new Set(),
+        localOrigin: () => {
+          return undefined
+        },
+      }),
+    ).toEqual([{ uiApp: 'client', route: '/api', packageName: 'backend-api', source: 'local', target: undefined }])
+  })
+
+  it('keeps two routes that share ONE running backend both local, each pointing at that backend origin', () => {
+    const ui: LaunchedUi = {
+      app: 'client',
+      routes: {
+        '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },
+        '/auth': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },
+      },
+      cloudTemplate: 'https://<env>.hulyo.co.il',
+    }
+
+    const rows = resolveProxyRoutes({ uis: [ui], running: new Set(['backend-api']), localOrigin, env: 'dev' })
+
+    expect(
+      rows.every((r) => {
+        return r.source === 'local'
+      }),
+    ).toBe(true)
+    expect(
+      rows.map((r) => {
+        return r.target
+      }),
+    ).toEqual(['https://feat-x.backend-api.localhost/api/v1', 'https://feat-x.backend-api.localhost/api/v1'])
+  })
+
+  it('omits a cloud target when the template needs an <env> and none is sourced', () => {
+    const [media] = resolveProxyRoutes({
+      uis: [
+        {
+          app: 'client',
+          routes: { '/media': { packageName: 'backend-api', from: ['cloud'] } },
+          cloudTemplate: 'https://<env>.hulyo.co.il',
+        },
+      ],
+      running: new Set(),
+      localOrigin,
+    })
+
+    expect(media).toMatchObject({ route: '/media', source: 'cloud', target: undefined })
   })
 })

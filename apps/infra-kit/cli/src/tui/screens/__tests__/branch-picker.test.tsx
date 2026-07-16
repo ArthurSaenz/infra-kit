@@ -108,6 +108,42 @@ describe('branchPicker', () => {
     expect(onSelect).toHaveBeenCalledWith('release/1.0.0')
   })
 
+  it('esc clears a non-empty filter instead of cancelling', async () => {
+    const onSelect = vi.fn()
+    const onCancel = vi.fn()
+    const { lastFrame, stdin } = render(<BranchPicker items={items} onSelect={onSelect} onCancel={onCancel} />)
+
+    stdin.write('hotfix')
+    await settle()
+    expect(lastFrame() ?? '').not.toContain('release-1.0.0')
+
+    stdin.write('\x1B') // escape
+    await settle()
+
+    // Stage 1: the filter is gone and every branch is back, but the picker is still open.
+    expect(onCancel).not.toHaveBeenCalled()
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(lastFrame() ?? '').toContain('release-1.0.0')
+  })
+
+  it('a second esc, on the now-empty filter, cancels', async () => {
+    const onSelect = vi.fn()
+    const onCancel = vi.fn()
+    const { stdin } = render(<BranchPicker items={items} onSelect={onSelect} onCancel={onCancel} />)
+
+    stdin.write('hotfix')
+    await settle()
+    stdin.write('\x1B') // clears the filter
+    await settle()
+    expect(onCancel).not.toHaveBeenCalled()
+
+    stdin.write('\x1B') // nothing left to clear -> cancels the screen
+    await settle()
+
+    expect(onCancel).toHaveBeenCalled()
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
   it('esc cancels without selecting', async () => {
     const onSelect = vi.fn()
     const onCancel = vi.fn()

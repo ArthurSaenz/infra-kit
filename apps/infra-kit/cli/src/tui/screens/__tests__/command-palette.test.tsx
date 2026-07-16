@@ -122,7 +122,7 @@ describe('commandPalette', () => {
     expect(lastFrame() ?? '').not.toContain('release-list')
   })
 
-  it('esc cancels without selecting when the filter is empty', async () => {
+  it('esc does nothing when the filter is empty — the palette is the root', async () => {
     const onSelect = vi.fn()
     const onCancel = vi.fn()
     const { stdin } = render(<CommandPalette items={items} onSelect={onSelect} onCancel={onCancel} />)
@@ -130,13 +130,32 @@ describe('commandPalette', () => {
     stdin.write('\u001B') // escape
     await settle()
 
-    expect(onCancel).toHaveBeenCalled()
+    expect(onCancel).not.toHaveBeenCalled()
     expect(onSelect).not.toHaveBeenCalled()
   })
 
-  it('esc clears a non-empty filter instead of cancelling', async () => {
+  // The one that separates "Esc is a no-op" from "Esc killed the component": an unmounted palette also
+  // never calls onCancel, so the test above cannot tell those apart on its own. Esc used to set
+  // `submitted`, after which useInput early-returns and swallows every later key — including this Enter.
+  it('esc on an empty filter leaves the palette live', async () => {
+    const onSelect = vi.fn()
+    const { stdin } = render(<CommandPalette items={items} onSelect={onSelect} onCancel={vi.fn()} />)
+
+    stdin.write(String.fromCharCode(27)) // escape
+    await settle()
+    stdin.write('\r')
+    await settle()
+
+    expect(onSelect).toHaveBeenCalledWith('release-list')
+  })
+
+  // The filter state is asserted through `onSelect`, not `lastFrame()` alone: a frame assertion would
+  // otherwise be the only thing separating "Esc cleared the filter" from "Esc did nothing at all", and
+  // ink-testing-library frames are not trustworthy enough to carry that distinction by themselves.
+  it('esc clears a non-empty filter', async () => {
     const onCancel = vi.fn()
-    const { lastFrame, stdin } = render(<CommandPalette items={items} onSelect={vi.fn()} onCancel={onCancel} />)
+    const onSelect = vi.fn()
+    const { lastFrame, stdin } = render(<CommandPalette items={items} onSelect={onSelect} onCancel={onCancel} />)
 
     stdin.write('env')
     await settle()
@@ -144,9 +163,34 @@ describe('commandPalette', () => {
 
     stdin.write(String.fromCharCode(27)) // escape — clears the filter, does not quit
     await settle()
+    stdin.write('\r')
+    await settle()
 
+    // The FIRST unfiltered command, not the one `env` had narrowed the list to.
+    expect(onSelect).toHaveBeenCalledWith('release-list')
     expect(onCancel).not.toHaveBeenCalled()
-    expect(lastFrame() ?? '').toContain('release-list')
+  })
+
+  it('ctrl-d quits with an empty filter', async () => {
+    const onCancel = vi.fn()
+    const { stdin } = render(<CommandPalette items={items} onSelect={vi.fn()} onCancel={onCancel} />)
+
+    stdin.write(String.fromCharCode(4)) // ctrl-d
+    await settle()
+
+    expect(onCancel).toHaveBeenCalled()
+  })
+
+  it('ctrl-d quits even with a non-empty filter — it is not part of the esc ladder', async () => {
+    const onCancel = vi.fn()
+    const { stdin } = render(<CommandPalette items={items} onSelect={vi.fn()} onCancel={onCancel} />)
+
+    stdin.write('env')
+    await settle()
+    stdin.write(String.fromCharCode(4)) // ctrl-d — unconditional, unlike esc
+    await settle()
+
+    expect(onCancel).toHaveBeenCalled()
   })
 
   it('ctrl-c cancels even with a non-empty filter', async () => {

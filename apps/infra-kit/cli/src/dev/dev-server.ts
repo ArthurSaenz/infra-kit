@@ -48,8 +48,8 @@ import {
   normalizeAppInclude as normalizeAppIncludePure,
 } from './discovery.js'
 import type { DiscoveredUiApp } from './discovery.js'
-import { findDegradedRoutes, formatPairingRefusal } from './local-pairing.js'
-import type { DegradedRoute, LaunchedUi } from './local-pairing.js'
+import { findDegradedRoutes, formatPairingRefusal, resolveProxyRoutes } from './local-pairing.js'
+import type { DegradedRoute, LaunchedUi, ResolvedProxyRoute } from './local-pairing.js'
 import { currentService } from './log-attribution.js'
 import { DevLogSink, panelStream } from './log-sink.js'
 import { installOutputIntercept } from './output-intercept.js'
@@ -63,7 +63,7 @@ import { deriveTargetLabel, resolvePreset } from './presets.js'
 import { createPortlessDriver, formatPortlessCommand, readCaPath } from './proxy/portless-driver.js'
 import type { PortlessDriver } from './proxy/portless-driver.js'
 import { DevRenderer, resolveEndpointUrl } from './render.js'
-import type { DegradedRow, EndpointRow, ReadySummary, UiRef } from './render.js'
+import type { DegradedRow, EndpointRow, HealthState, ProxyRouteRow, ReadySummary, UiRef } from './render.js'
 import { ServerlessLocalRun } from './serverless-local-run.js'
 import { defaultTurboWatchFactory } from './turbo-watch.js'
 import type { TurboWatchFactory, TurboWatchHandle } from './turbo-watch.js'
@@ -262,20 +262,183 @@ export interface DevServerOptions {
    * A test seam only — lets a test drive the monitor loop fast; production never sets it.
    */
   livenessIntervalMs?: number
+  /**
+   * Probe the frontends' liveness (vite's HMR ping) and give their rows a health dot. Default `true`;
+   * `--no-ui-health` / `INFRA_KIT_NO_UI_HEALTH=1` turns it off, which drops every UI row back to no dot
+   * at all and issues zero UI probes. The escape hatch exists because the ping is an undocumented vite
+   * internal: if a future vite drops it, the dot has to be switchable off without a CLI downgrade.
+   */
+  uiHealth?: boolean
 }
 
-/** Health-probe seam: resolve an endpoint's liveness. Injectable so `ready()` stays deterministic in tests. */
-export type HealthProbe = (url: string) => Promise<boolean>
+/** What a probe is aimed at. `kind` picks the endpoint AND the verdict rules — the two are not separable. */
+export interface ProbeTarget {
+  /** Stream tag (`<app>/api`, `<app>/ui`) — the key the health map and every log line agree on. */
+  tag: string
+  /** The port to probe: a backend's ACTUAL bound port, or a UI's runner-assigned vite port. */
+  port: number
+  kind: 'api' | 'ui'
+}
 
-/** Default probe: a bounded GET against the `/__health` URL; any non-2xx / network error → down. */
-const defaultHealthProbe: HealthProbe = async (url: string): Promise<boolean> => {
+/**
+ * Something answered, but not the thing we asked for — and WHAT it answered is the whole diagnostic.
+ *
+ * A UI's `foreign` never paints red (see {@link ProbeOutcome}), so this line is the only thing the user
+ * gets, and "not vite's ping" alone cannot separate the three causes it exists to tell apart: a
+ * `200 text/html` means vite dropped the ping and infra-kit must ship a fix; a `502` means portless or a
+ * proxy is shadowing the port; a `404` means a squatter won the free-port race. One glance, three very
+ * different next moves — so the status and content-type travel with the verdict.
+ */
+export interface ForeignAnswer {
+  kind: 'foreign'
+  status: number
+  contentType: string | null
+}
+
+/**
+ * Three outcomes, not a boolean:
+ * - `ok` — the endpoint PROVED it is serving (a 2xx on `/__health`; a 204 on vite's ping).
+ * - `refused` — nothing answered (ECONNREFUSED, timeout, transport error).
+ * - {@link ForeignAnswer} — something answered, but not the thing we asked for. For a backend that is a
+ *   failure (our own fastify returning non-2xx). For a UI it is NOT: a non-204 is equally consistent with a
+ *   squatter, with a proxy that shadows the ping, and with a future vite that dropped it — so it can never
+ *   be allowed to paint red, and it is the reason this is not a boolean.
+ */
+export type ProbeOutcome = 'ok' | 'refused' | ForeignAnswer
+
+/** Narrow a {@link ProbeOutcome} to the one arm that carries data. */
+export const isForeign = (outcome: ProbeOutcome): outcome is ForeignAnswer => {
+  return typeof outcome === 'object'
+}
+
+/** Build the `foreign` verdict from the response that earned it, draining its body so the socket returns. */
+const foreignFrom = async (res: Response): Promise<ForeignAnswer> => {
+  await res.body?.cancel()
+
+  return { kind: 'foreign', status: res.status, contentType: res.headers.get('content-type') }
+}
+
+/**
+ * The `◍ ?` warn. Names what answered instead of vite, because that is the whole actionable content: an
+ * `html` body means vite dropped the ping (ours to fix), a 5xx means something is shadowing the port, a 404
+ * means a squatter took it. The content-type is trimmed of its `; charset=…` tail — it is a hint, not a
+ * header dump.
+ */
+const describeForeign = (port: number, answer: ForeignAnswer): string => {
+  const type = answer.contentType?.split(';')[0]?.trim()
+  const what = type == null || type === '' ? `${answer.status}` : `${answer.status} ${type}`
+
+  return `port ${port} answered ${what}, not vite's ping — liveness cannot be verified`
+}
+
+/** Health-probe seam: resolve one target's liveness. Injectable so the panel stays deterministic in tests. */
+export type HealthProbe = (target: ProbeTarget) => Promise<ProbeOutcome>
+
+/** One budget for the whole probe — BOTH hops of a UI redirect share it (see {@link probeUi}). */
+const PROBE_TIMEOUT_MS = 1500
+
+/**
+ * Vite's HMR ping. It is installed unconditionally on every dev server (no plugin, no config) and it sits
+ * AHEAD of vite's `htmlFallback` middleware — which is the whole point: `htmlFallback` answers a plain
+ * `GET /` with `200 index.html` even for a vite whose entry module throws, so a naive GET would report a
+ * broken app as healthy. The ping cannot be forged that way; a 204 means a vite dev server is listening.
+ */
+const VITE_PING_HEADERS = { accept: 'text/x-vite-ping' } as const
+
+/**
+ * Where a target is probed. Always `http://127.0.0.1:<port>`, never the `https://<alias>` the panel prints:
+ * the alias adds TLS, a private CA and the portless daemon to the path, so a probe through it would report
+ * the PROXY's health, not the app's. And never `localhost` — ServerlessLocalRun binds v4 loopback only,
+ * while `localhost` resolves `[::1]` first on modern Node, which renders a healthy backend `● down`.
+ */
+const probeUrl = (target: ProbeTarget): string => {
+  return target.kind === 'api' ? `http://127.0.0.1:${target.port}/__health` : `http://127.0.0.1:${target.port}/`
+}
+
+/** `new URL(loc, base)`, or `null` when the header is unparseable even relative to the probe URL. */
+const resolveHop = (location: string, base: string): URL | null => {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(1500) })
-
-    return res.ok
+    return new URL(location, base)
   } catch {
-    return false
+    return null
   }
+}
+
+/** A backend: `/__health` must answer 2xx. Anything else IS our own fastify failing, so it is not `ok`. */
+const probeApi = async (url: string, signal: AbortSignal): Promise<ProbeOutcome> => {
+  const res = await fetch(url, { signal })
+
+  if (!res.ok) return foreignFrom(res)
+  // Drain: undici keeps the socket checked out until an unread body is GC'd, and this runs every 5s per app
+  // for the life of the session.
+  await res.body?.cancel()
+
+  return 'ok'
+}
+
+/**
+ * A frontend: vite's ping must answer 204.
+ *
+ * The redirect hop is the delicate part. Vite serves the ping from its `base`, so a UI configured with
+ * `base: '/app/'` answers `/` with a 3xx whose `Location` is RELATIVE (`/app/`) — which is why the hop is
+ * resolved against the probe URL rather than parsed on its own (`new URL('/app/')` throws outright). The
+ * accept header is RE-SENT on the second hop: without it the redirected request falls through to vite's
+ * html fallback and comes back `200 text/html` — the exact false green this probe exists to refuse.
+ *
+ * Exactly one hop, same-origin only. A cross-origin redirect is somebody else's server, and a second hop
+ * is a loop we have no budget for; both report `foreign` — never followed, and never called alive.
+ */
+const probeUi = async (url: string, signal: AbortSignal): Promise<ProbeOutcome> => {
+  const res = await fetch(url, { headers: VITE_PING_HEADERS, redirect: 'manual', signal })
+
+  if (res.status === 204) return 'ok'
+  if (res.status < 300 || res.status >= 400) return foreignFrom(res)
+
+  const location = res.headers.get('location')
+  const next = location == null ? null : resolveHop(location, url)
+
+  if (next == null || next.origin !== new URL(url).origin) return foreignFrom(res)
+
+  await res.body?.cancel()
+
+  const hop = await fetch(next, { headers: VITE_PING_HEADERS, redirect: 'manual', signal })
+
+  if (hop.status !== 204) return foreignFrom(hop)
+  await hop.body?.cancel()
+
+  return 'ok'
+}
+
+/** Default probe: per-kind, bounded, and loopback-only. A transport error or a timeout is `refused`. */
+const defaultHealthProbe: HealthProbe = async (target: ProbeTarget): Promise<ProbeOutcome> => {
+  const url = probeUrl(target)
+  // ONE signal, shared across both hops: a redirect must not double the budget a wedged server can spend.
+  const signal = AbortSignal.timeout(PROBE_TIMEOUT_MS)
+
+  try {
+    return target.kind === 'api' ? await probeApi(url, signal) : await probeUi(url, signal)
+  } catch {
+    return 'refused'
+  }
+}
+
+/**
+ * One row's probe history — the state the 5-arm {@link HealthState} is derived from, keyed by TAG (never
+ * by app name: `foo/api` and `foo/ui` are different rows on the same app, and a name-keyed counter
+ * collides them).
+ */
+interface HealthEntry {
+  kind: ProbeTarget['kind']
+  /** Consecutive `refused` probes. `>= LIVENESS_FAILURE_THRESHOLD` is what "down" MEANS. */
+  failures: number
+  /** Consecutive `foreign` probes — a separate counter, because a foreign answer must never go red. */
+  foreignStreak: number
+  /** Has this row EVER proved it was serving? Until it has, a UI is `starting`, not `down`. */
+  everUp: boolean
+  /** A CERTAINTY of death from outside the probe loop: a thrown restart, a dead UI engine. */
+  dead: boolean
+  /** The port answers, but not with what we asked for — liveness cannot be established either way. */
+  unverified: boolean
 }
 
 /** What a successful {@link DevServerRunner.startOneApp} hands back: a bound server and the alias it took. */
@@ -621,12 +784,28 @@ export class DevServerRunner {
   private static readonly PORT_RELEASE_DELAY_MS = 200
   /** Self-rescheduling backend liveness probe; cleared on {@link shutdown}. Null when unarmed (UI-only). */
   private livenessTimer: ReturnType<typeof setTimeout> | null = null
-  /** Consecutive `/__health` failures per app NAME (survives an ephemeral-port rebind on restart). */
-  private readonly livenessFailures = new Map<string, number>()
+  /**
+   * Probe history per row, keyed by TAG (`<app>/api`, `<app>/ui`) — never by app name, which would
+   * collide an app's two halves into one counter the moment the frontends joined the tick. It survives an
+   * ephemeral-port rebind on restart, because the tag does.
+   */
+  private readonly health = new Map<string, HealthEntry>()
+  /** Tags whose first error has already been announced — the 0 → >0 edge fires once per row, not per tick. */
+  private readonly firstErrorLogged = new Set<string>()
+  /** `<ui-package>` → `<app>/ui` tag, so {@link uiTargets} can name the rows {@link uiPortMap} keys by package. */
+  private readonly uiTagByPackage = new Map<string, string>()
   /** Liveness re-probe cadence. A wedged-but-not-crashed backend is caught within THRESHOLD ticks. */
   private static readonly LIVENESS_INTERVAL_MS = 5000
-  /** Consecutive failures before a backend is declared unhealthy — the anti-flap / restart-window filter. */
+  /** Consecutive failures before a row is declared down — the anti-flap / restart-window filter. */
   private static readonly LIVENESS_FAILURE_THRESHOLD = 2
+  /**
+   * Refused probes a UI that has NEVER been up may take before its `◌ starting` turns `● down` (~30s at
+   * the 5s cadence). Far above the backend threshold on purpose: a cold vite on a big frontend genuinely
+   * takes tens of seconds to bind, and a red dot over a UI that is merely still booting is the one false
+   * red this whole design refuses to ship. A UI that has been up once is not covered by it — its death is
+   * probe-established at the ordinary threshold.
+   */
+  private static readonly NEVER_UP_DOWN_THRESHOLD = 6
   private readonly options: DevServerOptions
   /** Build runner seam — real turbo shell-out by default, injectable for tests. */
   private readonly runBuild: BuildRunner
@@ -660,6 +839,22 @@ export class DevServerRunner {
    * of them are STILL degraded on every repaint from the running set.
    */
   private degradedRoutes: DegradedRoute[] = []
+  /**
+   * The launched frontends and their declared `dev.proxy` routes, built once alongside {@link degradedRoutes}
+   * from the SAME `loadDev` read the vite helper uses. Shared so both the degraded check and the ready
+   * header's per-app proxy listing resolve off one source of truth.
+   */
+  private launchedUis: LaunchedUi[] = []
+  /**
+   * Every launched frontend route resolved to where it actually lands this run ({@link resolveProxyRoutes}),
+   * for the nested "all proxies — which one and where" list under each UI row.
+   *
+   * A BOOT-TIME SNAPSHOT: computed once in {@link printReady} and only ever filtered (never re-derived) by
+   * {@link proxiesFor}. It is committed into the static header, so under `--watch` a backend that boot-fails
+   * then recovers keeps its `cloud` line here even after vite has flipped the live proxy back to `local`.
+   * That live surface is deliberately owned by the self-clearing {@link degradedRows}, not this list.
+   */
+  private proxyRoutes: ResolvedProxyRoute[] = []
   /**
    * The terminal UI — owns every stdout line + the log-file tee. Either the plain {@link DevRenderer}
    * or the Ink boot UI, selected by {@link run} and injected here; the runner drives it through {@link DevUi}.
@@ -704,6 +899,23 @@ export class DevServerRunner {
   private closureMap: ClosureMap | null = null
   /** In-flight {@link closureMap} build, awaited by {@link shutdown} so no turbo child outlives the runner. */
   private closureBuild: Promise<void> = Promise.resolve()
+  /**
+   * The single in-flight teardown, memoized by {@link shutdown} — `null` until the first caller arrives.
+   *
+   * Terminal death is ONE event observed through TWO channels: the kernel SIGHUPs the foreground process
+   * group (`signal-shutdown.ts` handles it) and the next write trips the stdio `'error'` listener
+   * (`terminal-liveness.ts`). Both fire, in either order. Without this memo the two callers would
+   * `turboWatch.kill()`, `uiDev.kill()` and `server.close()` TWICE — a second SIGTERM→grace→SIGKILL cycle
+   * aimed at a child group that is already mid-reap, which is the one way this fix could strand children
+   * worse than the bug it repairs.
+   */
+  private teardown: Promise<void> | null = null
+  /**
+   * The teardown step currently in flight, for {@link shutdownStage}. Assigned before EVERY `await` in
+   * {@link doShutdown}, because the whole value of the deadline in `signal-shutdown` is that it can NAME
+   * the step that wedged — that is the instrument that answers why five orphaned processes never exited.
+   */
+  private stage = 'idle'
 
   constructor(
     options: DevServerOptions = {},
@@ -714,6 +926,7 @@ export class DevServerRunner {
     renderer?: DevUi,
     healthProbe: HealthProbe = defaultHealthProbe,
     proxy: PortlessDriver = createPortlessDriver(),
+    sink?: DevLogSink,
   ) {
     this.options = options
     this.runBuild = runBuild
@@ -721,7 +934,10 @@ export class DevServerRunner {
     this.uiDevFactory = uiDevFactory
     this.dryRunner = dryRunner
     this.proxy = proxy
-    this.sink = new DevLogSink()
+    // Injectable so a test can drive the REAL `reportFault` against a temp-dir sink and assert on the bytes
+    // it actually files. Without the seam the fault-loop regression test can only hand-model the loop it is
+    // supposed to be proving — and a hand-modelled loop goes green against the unfixed code.
+    this.sink = sink ?? new DevLogSink()
     logSink = this.sink
 
     // Install EARLY and FILE-ONLY: an app's log line never reaches the terminal, at any point. Early,
@@ -1097,6 +1313,10 @@ export class DevServerRunner {
       uis.push({ app: ui.name, routes, cloudTemplate: dev.proxy.templates.cloud })
     }
 
+    // Stashed so the ready header's per-app proxy listing resolves off the exact same loaded routes the
+    // degraded check does — one read, one source of truth, no chance of the two disagreeing.
+    this.launchedUis = uis
+
     return findDegradedRoutes({
       uis,
       wanted,
@@ -1114,6 +1334,22 @@ export class DevServerRunner {
       ),
       env: process.env[INFRA_KIT_ENV_VAR],
     })
+  }
+
+  /**
+   * The resolved proxy rows for one frontend, for its nested "which proxy, and where" list — or undefined
+   * when it declares none, so a frontend with no `dev.proxy` block adds no empty group to the header.
+   */
+  private proxiesFor(app: string): ProxyRouteRow[] | undefined {
+    const rows = this.proxyRoutes
+      .filter((p) => {
+        return p.uiApp === app
+      })
+      .map((p): ProxyRouteRow => {
+        return { route: p.route, source: p.source, target: p.target }
+      })
+
+    return rows.length > 0 ? rows : undefined
   }
 
   /**
@@ -1268,6 +1504,7 @@ export class DevServerRunner {
       // Surface a silently-dead frontend engine: once `turbo run dev` exits, every UI's live reload
       // stops and no framework line ever reaches the tail again.
       onUnexpectedExit: (detail) => {
+        this.markUiEngineDead()
         this.reportEngineDeath('UI dev engine (`turbo run dev`)', 'frontends stopped reloading', detail)
       },
     })
@@ -1622,13 +1859,13 @@ export class DevServerRunner {
    */
   private promoteRecoveredApp(app: IApiAppConfig, started: StartedApp): IAppServer {
     const entry: IAppServer = { app, ...started, startedAt: Date.now(), restarts: 0 }
+    const tag = `${app.name}/api`
 
-    // Seed the liveness counter BEFORE the app is visible in `appServers`, not after the probe the caller
-    // takes a few lines later. `refreshStatus` derives the health dot from this map and treats an ABSENT
-    // entry as zero failures — i.e. green. The liveness tick can fire in the window between the push below
-    // and that probe, and it would paint a green dot for a server nothing has yet asked a single question.
-    // One notional failure is the honest prior: not yet proven up. The probe overwrites it either way.
-    this.livenessFailures.set(app.name, 1)
+    // Seed the health entry BEFORE the app is visible in `appServers`, not after the probe the caller takes
+    // a few lines later. The liveness tick can fire in that window, and {@link healthOf} treats an ABSENT
+    // entry as `unknown` — a row with no dot at all for a server that is already serving. A fresh entry is
+    // the honest prior instead: never-up, which for a backend reads `● down` until a probe says otherwise.
+    this.healthEntry(tag, 'api')
     this.appServers.push(entry)
 
     const failedIdx = this.failedApps.findIndex((f) => {
@@ -1636,8 +1873,6 @@ export class DevServerRunner {
     })
 
     if (failedIdx >= 0) this.failedApps.splice(failedIdx, 1)
-
-    const tag = `${app.name}/api`
 
     if (this.lastSummary) {
       this.lastSummary = {
@@ -1647,11 +1882,11 @@ export class DevServerRunner {
           {
             tag,
             url: resolveEndpointUrl({ prefixUrl: app.prefixUrl, alias: started.alias }),
-            // NOT `true`. This app has bound a port; nothing has probed it. A server that binds and then
-            // 500s on `/__health` would be painted green here on the strength of having started — the same
-            // unearned claim the `● failed` row exists to prevent. `null` = no dot; the caller probes right
-            // after and {@link refreshStatus} paints the answer.
-            healthy: null,
+            // NOT `ok`. This app has bound a port; nothing has probed it. A server that binds and then 500s
+            // on `/__health` would be painted green here on the strength of having started — the same
+            // unearned claim the `● failed` row exists to prevent. The caller probes right after and
+            // {@link refreshStatus} paints the answer.
+            health: this.healthOf(tag),
           },
         ],
         failed: (this.lastSummary.failed ?? []).filter((f) => {
@@ -1746,18 +1981,29 @@ export class DevServerRunner {
     // the leading ✅ to ⚠️ so the line reads consistently.
     const probed = await Promise.all(
       outcomes.map(async ({ app, entry }) => {
-        const healthy = entry ? await this.healthProbe(DevServerRunner.healthUrl(entry.boundPort)) : false
+        const tag = `${app.name}/api`
 
-        // Seed the liveness counter from the probe we just took, instead of leaving it at its absent-is-0
-        // default. `refreshStatus` derives the panel's health dot from THIS map, so a restarted server
-        // that binds its port but 500s on `/__health` would otherwise be painted green for a full
-        // LIVENESS_INTERVAL_MS while this very function logs it as `● down` — the panel and the log
-        // disagreeing about the same probe.
-        this.livenessFailures.set(app.name, healthy ? 0 : 1)
+        // A restart that THREW never bound a port — there is nothing to probe, and nothing to be flap-shy
+        // about. Routed through {@link markDown}, not the probe path, because the soft path would leave the
+        // row one failure short of the threshold, i.e. GREEN, for a server that does not exist.
+        if (entry == null) {
+          this.markDown(tag, 'api')
+          this.refreshStatus()
 
-        const label = entry ? `${app.name}:${entry.boundPort}` : app.name
+          return { label: `${app.name} ● down`, healthy: false }
+        }
 
-        return { label: `${label} ${healthy ? '● up' : '● down'}`, healthy }
+        // Through the SAME state machine as every tick, so the panel's dot and this line report the same
+        // probe. They used to be two verdicts computed from one result, and they could disagree.
+        const target: ProbeTarget = { tag, port: entry.boundPort, kind: 'api' }
+        const outcome = await this.healthProbe(target)
+
+        this.recordProbe(target, outcome)
+        this.refreshStatus()
+
+        const healthy = outcome === 'ok'
+
+        return { label: `${app.name}:${entry.boundPort} ${healthy ? '● up' : '● down'}`, healthy }
       }),
     )
 
@@ -1811,6 +2057,23 @@ export class DevServerRunner {
   private reportEngineDeath(engine: string, consequence: string, detail: string): void {
     if (this.shuttingDown) return
     this.renderer.log(`⚠️  ${engine} ${detail} — ${consequence}. Restart \`infra-kit dev\`.`, 'warn')
+  }
+
+  /**
+   * The `turbo run dev` engine died on its own, so a UI that was NEVER up is never coming up — its vite
+   * either never bound or went down with the engine, and no further probe is going to tell us anything the
+   * engine's corpse has not already said. Recorded as `dead`, which {@link neverUpState} reads ONLY in the
+   * never-up branch: a UI that HAS been up keeps its ordinary probe-established death, because turbo does
+   * not kill its task process groups and our reap is best-effort — an orphaned vite may well still be
+   * serving, and it would be a live, hot-reloading UI we had just painted red.
+   */
+  private markUiEngineDead(): void {
+    if (this.shuttingDown) return
+
+    for (const { tag, kind } of this.uiTargets()) {
+      this.healthEntry(tag, kind).dead = true
+    }
+    this.refreshStatus()
   }
 
   private setupWatch(apps: IApiAppConfig[], uiApps: DiscoveredUiApp[]): void {
@@ -1950,15 +2213,133 @@ export class DevServerRunner {
     this.watchDebounceTimers.set(key, timer)
   }
 
+  /** Is the frontend health probe on? `--no-ui-health` / `INFRA_KIT_NO_UI_HEALTH=1` turn it off. */
+  private uiHealthEnabled(): boolean {
+    return (this.options.uiHealth ?? true) && process.env.INFRA_KIT_NO_UI_HEALTH !== '1'
+  }
+
+  /** Every running backend, as probe targets. The CURRENT `boundPort` is read fresh — a restart rebinds it. */
+  private apiTargets(): ProbeTarget[] {
+    return this.appServers.map(({ app, boundPort }) => {
+      return { tag: `${app.name}/api`, port: boundPort, kind: 'api' as const }
+    })
+  }
+
   /**
-   * The `/__health` probe URL for a backend on `port`. Always `127.0.0.1`, never `localhost`:
-   * ServerlessLocalRun binds v4 loopback only, while `localhost` resolves `[::1]` first on modern Node —
-   * the same trap `infra-kit/vite` pins its own host around. Probing by name renders a healthy backend as
-   * `● down`. One home for the string shared by boot ({@link printReady}), restart ({@link runRestart}),
-   * and the liveness monitor ({@link livenessTick}).
+   * Every MANAGED frontend, as probe targets — derived from {@link uiPortMap}, which is exactly the set of
+   * UIs whose port this runner assigned. A UI that fell back to a reference line has no port we own, so
+   * there is nothing to probe and its row stays `unknown` (no dot), which is the honest answer. Empty when
+   * UI health is off, which is the whole implementation of `--no-ui-health`: no targets, no probes, no dots.
    */
-  private static healthUrl(port: number): string {
-    return `http://127.0.0.1:${port}/__health`
+  private uiTargets(): ProbeTarget[] {
+    if (!this.uiHealthEnabled()) return []
+
+    return Object.entries(this.uiPortMap).map(([pkg, { port }]) => {
+      return { tag: this.uiTagByPackage.get(pkg) ?? `${pkg}/ui`, port, kind: 'ui' as const }
+    })
+  }
+
+  /** This tag's entry, created on first sight. */
+  private healthEntry(tag: string, kind: ProbeTarget['kind']): HealthEntry {
+    const existing = this.health.get(tag)
+
+    if (existing) return existing
+
+    const fresh: HealthEntry = { kind, failures: 0, foreignStreak: 0, everUp: false, dead: false, unverified: false }
+
+    this.health.set(tag, fresh)
+
+    return fresh
+  }
+
+  /**
+   * Fold one probe outcome into a row's history and fire the edge logs — each exactly once, so a steady
+   * state (healthy OR wedged) says nothing.
+   *
+   * The `foreign` arms are where the two kinds part company. A backend answering non-2xx is OUR fastify
+   * failing, so it counts as a failure like any other. A UI answering something that is not vite's ping is
+   * unverifiable — a squatter, a proxy shadowing the ping, a future vite that dropped it — so it counts
+   * toward nothing and only raises `unverified`, which renders `◍ ?` and never red.
+   */
+  private recordProbe(target: ProbeTarget, outcome: ProbeOutcome): void {
+    const entry = this.healthEntry(target.tag, target.kind)
+    const threshold = DevServerRunner.LIVENESS_FAILURE_THRESHOLD
+
+    if (outcome === 'ok') {
+      const wasDown = entry.failures >= threshold
+
+      entry.everUp = true
+      entry.failures = 0
+      entry.foreignStreak = 0
+      entry.unverified = false
+      if (wasDown) this.renderer.log(`✅ ${target.tag} recovered`)
+
+      return
+    }
+
+    if (isForeign(outcome) && target.kind === 'ui') {
+      entry.foreignStreak += 1
+      entry.unverified = entry.foreignStreak >= threshold
+      if (entry.foreignStreak === threshold) {
+        this.renderer.log(`⚠️  ${target.tag}: ${describeForeign(target.port, outcome)}`, 'warn')
+      }
+
+      return
+    }
+
+    entry.foreignStreak = 0
+    entry.failures += 1
+    // A port that answers SOMETHING is not provably dead — so a UI drops `unverified` only once its refusals
+    // have earned a real `down`, and never on the way there.
+    if (target.kind === 'ui' && entry.failures >= threshold) entry.unverified = false
+    if (entry.failures === threshold) {
+      const why = target.kind === 'api' ? '/__health not responding' : "not answering vite's ping"
+
+      this.renderer.log(`⚠️  ${target.tag} unhealthy (${why})`, 'warn')
+    }
+  }
+
+  /**
+   * Declare a row down WITHOUT a probe — for the two facts the probe loop cannot establish: a restart whose
+   * `startOneApp` threw (there is no server left to probe), and a UI whose engine died before it was ever
+   * up. Routing those through the soft probe path would leave the row one failure short of the threshold,
+   * i.e. GREEN, for something that demonstrably does not exist.
+   */
+  private markDown(tag: string, kind: ProbeTarget['kind']): void {
+    const entry = this.healthEntry(tag, kind)
+
+    entry.dead = true
+    entry.failures = DevServerRunner.LIVENESS_FAILURE_THRESHOLD
+    entry.foreignStreak = 0
+    entry.unverified = false
+  }
+
+  /** The 5-arm row state for a tag. No entry at all → `unknown` (a `UiRef`, or `--no-ui-health`). */
+  private healthOf(tag: string): HealthState {
+    const entry = this.health.get(tag)
+
+    if (entry == null) return 'unknown'
+    if (entry.unverified) return 'unverified'
+    if (!entry.everUp) return this.neverUpState(entry)
+
+    return entry.failures >= DevServerRunner.LIVENESS_FAILURE_THRESHOLD ? 'down' : 'ok'
+  }
+
+  /**
+   * A row that has never proved it was serving. A backend is `down` on sight — it is started in-process and
+   * probed the moment it binds, so "up but never answered" is already a failure. A UI is `starting` until it
+   * has burned the whole never-up budget: vite is spawned AFTER the ready frame and takes real seconds to
+   * bind, and a red dot over a UI that is merely still booting is the one false red this design refuses.
+   *
+   * `dead` is read HERE and nowhere else, and the narrowness is the point: an `everUp` UI's death must stay
+   * probe-established. Turbo puts each task in its OWN process group and reaps none of them on death
+   * (`managed-child.ts`), and our own reap is best-effort — so "the engine exited ⇒ every vite is dead" is
+   * simply false, and believing it would red-dot a live, hot-reloading UI.
+   */
+  private neverUpState(entry: HealthEntry): HealthState {
+    if (entry.kind === 'api' || entry.dead) return 'down'
+
+    return entry.failures >= DevServerRunner.NEVER_UP_DOWN_THRESHOLD ? 'down' : 'starting'
   }
 
   /**
@@ -1993,18 +2374,16 @@ export class DevServerRunner {
   }
 
   /**
-   * One liveness sweep over every running backend. Edge-triggered per app, keyed by app NAME (so the
-   * counter survives an ephemeral-port rebind on restart) with the CURRENT boundPort read fresh each tick:
-   *
-   * - a probe FAILURE increments a per-app counter; crossing {@link LIVENESS_FAILURE_THRESHOLD} consecutive
-   *   failures logs ONE `⚠️ unhealthy` line. The threshold is what makes a normal watch-restart (server down
-   *   <1s, a single interval) invisible — only a genuinely wedged backend stays down across two sweeps.
-   * - a probe SUCCESS after the app had crossed the threshold logs ONE `✅ recovered` line; the counter
-   *   always resets on success. Both edges fire once, so a steady state (healthy OR wedged) emits nothing.
+   * One liveness sweep over every running backend AND every managed frontend. Edge-triggered per ROW,
+   * keyed by tag (so the counter survives an ephemeral-port rebind on restart) with the CURRENT port read
+   * fresh each tick. The verdict rules live in {@link recordProbe}; the threshold is what makes a normal
+   * watch-restart (server down <1s, a single interval) invisible — only a genuinely wedged app stays down
+   * across two sweeps.
    *
    * `/__health` probes are already filtered out of the live request tail ({@link startOneApp}'s
-   * `onRequestLog`), so this never spams. Bails once teardown has latched so a closing server is not
-   * misread as down (the timer is also cleared in {@link shutdown} before the servers close).
+   * `onRequestLog`), and vite's ping is not a line vite logs, so this never spams. Bails once teardown has
+   * latched so a closing server is not misread as down (the timer is also cleared in {@link shutdown}
+   * before the servers close).
    */
   /**
    * Repaint the status panel with fresh live fields (health, uptime, req/min, restarts, errors).
@@ -2042,23 +2421,46 @@ export class DevServerRunner {
       // A UI with no managed port has no endpoint row — only a reference line. It still gets its error
       // count, or its breakage would be counted into a file with nothing on screen pointing at it.
       uiRefs: summary.uiRefs.map((ref) => {
-        return { ...ref, errors: this.sink.statsFor(ref.tag).errors }
+        return { ...ref, errors: this.announceFirstError(ref.tag) }
       }),
       endpoints: summary.endpoints.map((endpoint) => {
         const server = byTag.get(endpoint.tag)
 
         return {
           ...endpoint,
-          // A UI row has no backend server, so it has no health probe and no uptime — but it DOES have
-          // an error count, which is the whole reason the panel can report a broken frontend at all.
-          healthy: server ? (this.livenessFailures.get(server.app.name) ?? 0) === 0 : endpoint.healthy,
+          // Every row's health comes from the ONE probe state machine now — a UI row's included. A row
+          // nothing probes (a `UiRef`, or `--no-ui-health`) has no entry and resolves to `unknown`, which
+          // renders no dot at all: exactly what it used to hardcode.
+          health: this.healthOf(endpoint.tag),
+          // A UI row has no backend server, so it has no uptime, no restarts and no request rate — but it
+          // DOES have an error count, which is the whole reason the panel can report a broken frontend.
           uptimeMs: server ? now - server.startedAt : undefined,
           restarts: server?.restarts,
           rpm: (this.reqTimes.get(endpoint.tag) ?? []).length,
-          errors: this.sink.statsFor(endpoint.tag).errors,
+          errors: this.announceFirstError(endpoint.tag),
         }
       }),
     })
+  }
+
+  /**
+   * This row's error count, announcing the 0 → >0 EDGE once with a terminal line.
+   *
+   * The counter alone is not enough, and the reason is the honest cost of a liveness dot: a frontend that
+   * fails to compile still serves and still answers vite's ping, so its dot stays a truthful green while
+   * the app is unusable. `⚠ N` is then the only thing on screen that disagrees — and a number quietly
+   * ticking up in a panel corner is not a thing anyone notices. The edge log is; it also reaches a non-TTY
+   * run, which has no panel at all.
+   */
+  private announceFirstError(tag: string): number {
+    const { errors } = this.sink.statsFor(tag)
+
+    if (errors > 0 && !this.firstErrorLogged.has(tag)) {
+      this.firstErrorLogged.add(tag)
+      this.renderer.log(`⚠️  ${tag} reported its first error → ${homeShorten(this.sink.pathFor(tag))}`, 'warn')
+    }
+
+    return errors
   }
 
   /**
@@ -2112,37 +2514,26 @@ export class DevServerRunner {
     if (this.shuttingDown) return
 
     await Promise.all(
-      this.appServers.map(async ({ app, boundPort }) => {
-        const ok = await this.healthProbe(DevServerRunner.healthUrl(boundPort))
-
-        // Re-check AFTER the await: shutdown() may have latched and begun closing servers while this probe
-        // was in flight, resolving it `false` against a closing socket. Without this a tick that passed the
-        // top-of-method bail could log a false `unhealthy` during teardown.
-        if (this.shuttingDown) return
-
-        const fails = this.livenessFailures.get(app.name) ?? 0
-
-        if (ok) {
-          if (fails >= DevServerRunner.LIVENESS_FAILURE_THRESHOLD) {
-            this.renderer.log(`✅ ${app.name}/api recovered`)
-          }
-          this.livenessFailures.set(app.name, 0)
-
-          return
-        }
-
-        const next = fails + 1
-
-        this.livenessFailures.set(app.name, next)
-        if (next === DevServerRunner.LIVENESS_FAILURE_THRESHOLD) {
-          this.renderer.log(`⚠️  ${app.name}/api unhealthy (/__health not responding)`, 'warn')
-        }
+      [...this.apiTargets(), ...this.uiTargets()].map((target) => {
+        return this.probeOne(target)
       }),
     )
 
     // The panel's heartbeat. It rides the probe tick that already exists rather than adding a timer of
     // its own, so the numbers on screen are exactly as fresh as the health behind them.
     this.refreshStatus()
+  }
+
+  /** Probe one target and fold the outcome in. Split out of {@link livenessTick} to keep both simple. */
+  private async probeOne(target: ProbeTarget): Promise<void> {
+    const outcome = await this.healthProbe(target)
+
+    // Re-check AFTER the await: shutdown() may have latched and begun closing servers while this probe was
+    // in flight, resolving it `refused` against a closing socket. Without this a tick that passed the
+    // top-of-method bail could log a false `unhealthy` during teardown.
+    if (this.shuttingDown) return
+
+    this.recordProbe(target, outcome)
   }
 
   /**
@@ -2161,38 +2552,69 @@ export class DevServerRunner {
     // Snapshot BE readiness BEFORE probing — a `● down` server's probe timeout must not inflate
     // `ready in Xs` (nor is the boot time itself the probe latency).
     const elapsedMs = Date.now() - bootStart
-    const health = await Promise.all(
-      this.appServers.map(({ boundPort }) => {
-        return this.healthProbe(DevServerRunner.healthUrl(boundPort))
+
+    // The boot probe goes through the SAME state machine as every tick — it is not a separate verdict that
+    // the panel then forgets. It used to be: `printReady` probed, painted the dot from the local result,
+    // and left the failure counter empty — so the `refreshStatus()` at the bottom of this method, reading
+    // that empty map, painted a backend probed DOWN one line ago a confident green, and kept it green until
+    // the first tick. The boot frame and the panel under it disagreed about a probe taken once.
+    await Promise.all(
+      this.apiTargets().map((target) => {
+        return this.probeOne(target)
       }),
     )
-    const endpoints: EndpointRow[] = this.appServers.map(({ app, alias }, i) => {
+
+    const endpoints: EndpointRow[] = this.appServers.map(({ app, alias }) => {
       return {
         tag: `${app.name}/api`,
         url: resolveEndpointUrl({ prefixUrl: app.prefixUrl, alias }),
-        healthy: health[i] ?? null,
+        health: this.healthOf(`${app.name}/api`),
       }
     })
 
     // Pre-assign each UI a free port + its portless alias and stash the map for startUiDev's env. Owning
     // the port is what makes the UI's URL knowable before vite prints it, so every UI gets a real endpoint
-    // row. No health probe: vite owns its own readiness. Only a UI whose port could not be assigned falls
-    // back to a reference line ("vite prints its URL below").
+    // row. Only a UI whose port could not be assigned falls back to a reference line ("vite prints its URL
+    // below") — and, having no port we own, no health dot either.
+    // Resolve every launched frontend's routes to where they actually land, so each UI row can carry its
+    // own "which proxy, and where" list. Built from the SAME loaded routes the degraded check used plus the
+    // live running set + backend origins here, so the listing matches the proxy vite really serves.
+    const originByPkg = new Map(
+      this.appServers.map(({ app, alias }) => {
+        return [app.packageName, resolveEndpointUrl({ prefixUrl: app.prefixUrl, alias })] as const
+      }),
+    )
+
+    this.proxyRoutes = resolveProxyRoutes({
+      uis: this.launchedUis,
+      running: new Set(
+        this.appServers.map(({ app }) => {
+          return app.packageName
+        }),
+      ),
+      localOrigin: (pkg) => {
+        return originByPkg.get(pkg)
+      },
+      env: process.env[INFRA_KIT_ENV_VAR],
+    })
+
     this.uiPortMap = {}
     const uiEndpoints: EndpointRow[] = []
     const uiRefs: UiRef[] = []
 
     for (const ui of uiApps) {
       const assigned = await this.assignUiPort(ui)
+      const tag = `${ui.name}/ui`
 
       if (assigned != null) {
         uiEndpoints.push({
-          tag: `${ui.name}/ui`,
+          tag,
           url: resolveEndpointUrl({ prefixUrl: '', alias: assigned.alias }),
-          healthy: null,
+          health: this.seedUiHealth(tag),
+          proxies: this.proxiesFor(ui.name),
         })
       } else {
-        uiRefs.push({ tag: `${ui.name}/ui` })
+        uiRefs.push({ tag, proxies: this.proxiesFor(ui.name) })
       }
     }
     const watch = this.options.watch ?? false
@@ -2248,8 +2670,27 @@ export class DevServerRunner {
     const alias = await this.registerAppAlias(ui.packageName, ui.path, port)
 
     this.uiPortMap[ui.packageName] = { port, alias }
+    // `uiPortMap` is keyed by PACKAGE because that is the key the vite child reads it back by
+    // (`INFRA_KIT_UI_PORTS`) — the rows are keyed by app. Record the mapping rather than widening the
+    // fragment: it is a published wire contract with a separately-versioned helper.
+    this.uiTagByPackage.set(ui.packageName, `${ui.name}/ui`)
 
     return { port, alias }
+  }
+
+  /**
+   * Seed a managed UI's row so it reads `◌ starting` from the boot frame onward.
+   *
+   * Vite is spawned AFTER `printReady` — the first probe is a whole tick away — so an unseeded row would
+   * carry no dot at all until then, and a row that is `● down` at boot would be a lie about a server that
+   * has not been asked a single question yet. `unknown` when UI health is off: no entry, no dot, ever.
+   */
+  private seedUiHealth(tag: string): HealthState {
+    if (!this.uiHealthEnabled()) return 'unknown'
+
+    this.healthEntry(tag, 'ui')
+
+    return this.healthOf(tag)
   }
 
   /**
@@ -2299,13 +2740,62 @@ export class DevServerRunner {
     //
     // `renderer.log` commits through Ink's `<Static>` region, which survives every repaint — and falls
     // through to a plain stdout write on the non-TTY renderer, where there is no region to respect.
-    this.renderer.log(detail, 'error')
+    //
+    // `tee: false` because the line above ALREADY filed it. Left teeing, the renderer files a second copy
+    // through `appendRunnerLog` — every fault landing twice in `runner.log`, a literal 2× on the 185 GB the
+    // storm wrote. The direct `sink.write` is the copy that must survive: it is the one that carries the
+    // `error` level, and the level is what turns the panel row red.
+    this.renderer.log(detail, 'error', { tee: false })
   }
 
-  public async shutdown(): Promise<void> {
+  /**
+   * File a fault into the log WITHOUT touching the terminal.
+   *
+   * The channel of last resort: when stdio is unwritable, printing is what produces the fault, so the sink
+   * is the only surface a post-mortem can still read. Used by the entry's fatal path.
+   */
+  public fileFault(detail: string): void {
+    this.sink.write(currentService() ?? RUNNER_SERVICE, detail, { level: 'error' })
+  }
+
+  /**
+   * The teardown step currently in flight (`'idle'` before {@link shutdown}, `'done'` after it completes).
+   *
+   * Read by the entry's `describeStall` seam when the teardown deadline trips, so the force-quit line names
+   * WHICH step wedged rather than shrugging. Without it the deadline is just a force-quit, and the question
+   * the incident actually poses — why five processes that demonstrably ran `shutdown()` never exited — stays
+   * open after shipping the thing meant to answer it.
+   */
+  public get shutdownStage(): string {
+    return this.stage
+  }
+
+  /**
+   * Stop watching, cancel any pending debounced restart, and close all running servers. Idempotent: every
+   * caller after the first gets the SAME in-flight promise, never a second teardown.
+   *
+   * The `.catch` is attached HERE, at assignment, in the same tick — not by the caller. `doShutdown` can
+   * reject (`watcher.close()`, `turboWatch.kill()`, `uiDev.kill()` are unguarded), and the fatal path calls
+   * this fire-and-forget while a deadline races it. A rejection with no handler attached in the assigning
+   * tick fires `unhandledRejection` → the crash barrier → and, since stdio is dead on that path, straight
+   * back into the fatal handler: the exact loop this whole change exists to remove, re-created inside its
+   * own fix. Callers that DO await still see the rejection — this handler only disarms the process-level
+   * channel.
+   */
+  public shutdown(): Promise<void> {
+    if (this.teardown != null) return this.teardown
+
+    this.teardown = this.doShutdown()
+    this.teardown.catch(() => {})
+
+    return this.teardown
+  }
+
+  private async doShutdown(): Promise<void> {
     // Latch BEFORE anything else. Everything below assumes no new alias can be registered once
     // teardown begins; `scheduleDebounced` and `restart` read this flag to honour that.
     this.shuttingDown = true
+    this.stage = 'starting'
 
     // Release the terminal FIRST: if the Ink boot UI is still mounted (e.g. SIGINT mid-boot), unmount it
     // before any plain write below, so the shutdown lines never clobber a live region. No-op for the
@@ -2340,6 +2830,7 @@ export class DevServerRunner {
     }
 
     if (this.watcher) {
+      this.stage = 'watcher.close'
       await this.watcher.close()
       this.watcher = null
     }
@@ -2347,9 +2838,11 @@ export class DevServerRunner {
     // Drain a restart already in flight. The latch makes every QUEUED job a no-op, but a job that
     // began before the latch is mid `close() → listen() → registerAlias()` and must finish, or its
     // alias lands after the removal below. Never rejects (the chain self-catches).
+    this.stage = 'restartWorkChain'
     await this.restartWorkChain
 
     // And the background closure build, so its `turbo --dry` child never outlives the runner.
+    this.stage = 'closureBuild'
     await this.closureBuild
 
     // Layer B: deregister every portless alias BEFORE the child reap below. The reap can take
@@ -2362,6 +2855,7 @@ export class DevServerRunner {
     // only because `availability` is already warm here: an alias can exist only after `registerAlias`,
     // which awaits `isAvailable()`, and `ensureProxy` awaits it during `start()`. Register an alias
     // without a prior availability check and this silently becomes two subprocesses per alias.
+    this.stage = 'removeAlias'
     await Promise.all(
       [...this.registeredAliases].map((name) => {
         return this.proxy.removeAlias(name)
@@ -2374,16 +2868,19 @@ export class DevServerRunner {
     // and any non-signal caller invoke shutdown() directly. Awaited so the SIGKILL escalation
     // completes before the entry point's `process.exit`.
     if (this.turboWatch) {
+      this.stage = 'turboWatch.kill'
       await this.turboWatch.kill()
       this.turboWatch = null
     }
 
     if (this.uiDev) {
+      this.stage = 'uiDev.kill'
       await this.uiDev.kill()
       this.uiDev = null
     }
 
     for (const { app, server } of this.appServers) {
+      this.stage = `server.close(${app.name})`
       try {
         await server.close()
       } catch {
@@ -2412,6 +2909,7 @@ export class DevServerRunner {
     // Strictly last: every line above still has to reach a file. Closing holds no buffered data (the
     // sink writes through a held fd), so this only releases the fds.
     this.sink.close()
+    this.stage = 'done'
   }
 }
 

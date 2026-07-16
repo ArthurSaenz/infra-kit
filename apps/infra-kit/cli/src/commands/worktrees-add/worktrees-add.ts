@@ -20,6 +20,7 @@ import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { getInfraKitConfig, resolveConfiguredIdes } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
+import { withEscape } from 'src/lib/prompts/escapable-context'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 import { formatBranchName, isReleaseBranch, parseReleaseRef } from 'src/lib/release-id'
 import {
@@ -55,7 +56,9 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
   // `cursor` is the deprecated alias for `ide`; `ide` wins when both are present.
   const ide = options.ide ?? options.cursor
 
-  await assertManagementContext({ operation: 'create worktrees', requiredBranch: 'dev' })
+  // Branch-agnostic: `git worktree add` addresses branches by name and never
+  // reads HEAD, so only the worktree + clean-tree legs apply.
+  await assertManagementContext({ operation: 'create worktrees' })
 
   try {
     const currentWorktrees = await getCurrentWorktrees('release')
@@ -137,7 +140,9 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     const openInGithubDesktop =
       githubDesktop ??
       config.worktrees?.openInGithubDesktop ??
-      (await confirm({ message: 'Open created worktrees in GitHub Desktop?' }))
+      (await withEscape((context) => {
+        return confirm({ message: 'Open created worktrees in GitHub Desktop?' }, context)
+      }))
 
     if (typeof githubDesktop === 'undefined' && config.worktrees?.openInGithubDesktop === undefined) {
       commandEcho.setInteractive()
@@ -150,7 +155,11 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     }
 
     const openInCmux =
-      cmux ?? config.worktrees?.openInCmux ?? (await confirm({ message: 'Open created worktrees in cmux?' }))
+      cmux ??
+      config.worktrees?.openInCmux ??
+      (await withEscape((context) => {
+        return confirm({ message: 'Open created worktrees in cmux?' }, context)
+      }))
 
     if (typeof cmux === 'undefined' && config.worktrees?.openInCmux === undefined) {
       commandEcho.setInteractive()

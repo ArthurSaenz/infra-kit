@@ -1,10 +1,12 @@
 /**
  * Names of the error classes thrown when an interactive prompt ends without a
- * value. From `@inquirer/core`: `ExitPromptError` (user pressed Ctrl-C / Esc) and
- * `AbortPromptError` (the prompt was aborted via an `AbortSignal`). From our own
- * Ink pickers: `PromptCancelledError` (see ./prompt-cancelled-error), which is
- * registered here rather than impersonating an inquirer class name. All are
- * intentional cancellations, not failures.
+ * value. From `@inquirer/core`: `ExitPromptError` (Ctrl-C — and ONLY Ctrl-C:
+ * inquirer binds no escape key, so it raises this from readline's SIGINT) and
+ * `AbortPromptError` (the prompt was aborted via an `AbortSignal`, which is how
+ * Esc arrives — see lib/prompts/escapable-context). From our own Ink pickers:
+ * `PromptCancelledError` (see ./prompt-cancelled-error), which is registered here
+ * rather than impersonating an inquirer class name. All are intentional
+ * cancellations, not failures.
  */
 const CANCELLATION_ERROR_NAMES = new Set(['ExitPromptError', 'AbortPromptError', 'PromptCancelledError'])
 
@@ -13,9 +15,10 @@ const hasCancellationName = (value: unknown): boolean => {
 }
 
 /**
- * True when `error` represents a user (or signal) cancellation of an
- * `@inquirer/*` prompt — i.e. pressing Ctrl-C / Esc in the branch picker or a
- * confirm step. Matched by `name` rather than `instanceof` so it stays correct
+ * True when `error` represents a user (or signal) cancellation of an interactive
+ * prompt — Ctrl-C anywhere, or Esc, which reaches an `@inquirer` prompt as an
+ * abort and an Ink picker as a `PromptCancelledError`. Matched by `name` rather
+ * than `instanceof` so it stays correct
  * even when pnpm dedupes more than one copy of `@inquirer/core` into the tree
  * (an `instanceof` check fails across realms/duplicate classes).
  *

@@ -98,6 +98,68 @@ describe('branchMultiPicker', () => {
     expect(onSubmit).toHaveBeenCalledWith(['release/1.0.0', 'release/1.1.0', 'hotfix/1.0.1'])
   })
 
+  it('esc clears a non-empty filter instead of cancelling', async () => {
+    const onSubmit = vi.fn()
+    const onCancel = vi.fn()
+    const { lastFrame, stdin } = render(<BranchMultiPicker items={items} onSubmit={onSubmit} onCancel={onCancel} />)
+
+    stdin.write('hotfix')
+    await settle()
+    expect(lastFrame() ?? '').not.toContain('release-1.0.0')
+
+    stdin.write('\x1B') // escape
+    await settle()
+
+    // Stage 1: the filter is gone and every branch is back, but the picker is still open.
+    expect(onCancel).not.toHaveBeenCalled()
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(lastFrame() ?? '').toContain('release-1.0.0')
+  })
+
+  // Esc is a FILTER key here, never a selection key: clearing the query must not discard
+  // what the user already ticked. Only stage 2 (Esc on an empty filter) throws the selection away.
+  it('esc with a filter typed preserves the selection', async () => {
+    const onSubmit = vi.fn()
+    const onCancel = vi.fn()
+    const { lastFrame, stdin } = render(<BranchMultiPicker items={items} onSubmit={onSubmit} onCancel={onCancel} />)
+
+    stdin.write(' ') // tick release/1.0.0
+    await settle()
+    stdin.write('hotfix') // filter it out of view
+    await settle()
+
+    stdin.write('\x1B') // clears the filter only
+    await settle()
+
+    expect(onCancel).not.toHaveBeenCalled()
+    expect(lastFrame() ?? '').toContain('[x] release-1.0.0')
+
+    stdin.write('\r')
+    await settle()
+
+    expect(onSubmit).toHaveBeenCalledWith(['release/1.0.0'])
+  })
+
+  it('a second esc, on the now-empty filter, cancels and discards the selection', async () => {
+    const onSubmit = vi.fn()
+    const onCancel = vi.fn()
+    const { stdin } = render(<BranchMultiPicker items={items} onSubmit={onSubmit} onCancel={onCancel} />)
+
+    stdin.write(' ') // tick release/1.0.0
+    await settle()
+    stdin.write('hotfix')
+    await settle()
+    stdin.write('\x1B') // clears the filter
+    await settle()
+    expect(onCancel).not.toHaveBeenCalled()
+
+    stdin.write('\x1B') // nothing left to clear -> cancels, selection discarded as before
+    await settle()
+
+    expect(onCancel).toHaveBeenCalled()
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
   it('esc cancels without submitting', async () => {
     const onSubmit = vi.fn()
     const onCancel = vi.fn()
