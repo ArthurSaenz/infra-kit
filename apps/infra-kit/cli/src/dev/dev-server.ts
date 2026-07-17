@@ -121,9 +121,12 @@ type LogFn = (msg: string, level?: 'info' | 'warn' | 'error' | 'debug') => void
  */
 export type BuildRunner = (cmd: string, logFn?: LogFn) => Promise<void>
 
-const launchScript = async (script: string, logFn?: LogFn): Promise<void> => {
+export const launchScript = async (script: string, logFn?: LogFn): Promise<void> => {
   try {
-    const { stderr } = await execFn(script)
+    // 32 MB (parity with the dep-closure dry-runner) instead of exec's 1 MB default: a failing `turbo run
+    // build` easily emits >1 MB of tsc diagnostics, which would reject with ERR_CHILD_PROCESS_STDIO_MAXBUFFER
+    // and MASK the real compile errors — surfacing a bogus "maxBuffer exceeded" instead of the actual failure.
+    const { stderr } = await execFn(script, { maxBuffer: 32 * 1024 * 1024 })
 
     if (stderr && logFn) logFn(`   (build) ${stderr.trim()}`, 'debug')
     if (stderr && !logFn) console.error('stderr:', stderr)

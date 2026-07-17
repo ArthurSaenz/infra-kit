@@ -137,6 +137,31 @@ const groupBackends = (
   return [...byPkg.values()]
 }
 
+/**
+ * Load one frontend's proxy routes and group them into backends. A config that throws — schema-invalid
+ * or an import-time error — degrades THAT app to zero backends with a named warning instead of rejecting.
+ * Without this, a single broken `apps/<x>/ui/infra-kit.config.ts` fails the whole `Promise.all` in
+ * {@link gatherWizardModel} and takes the entire wizard down, so `infra-kit dev` becomes unusable for every
+ * other app in the monorepo. Mirrors the audit path's per-app guard ({@link file://../commands/audit/preset-proxy-check.ts}).
+ */
+export const loadBackends = async (
+  uiDir: string,
+  name: string,
+  ownerByPkg: Map<string, string>,
+): Promise<ProxyBackend[]> => {
+  try {
+    const routes = (await loadDev(uiDir))?.proxy?.routes
+
+    return routes ? groupBackends(routes, ownerByPkg) : []
+  } catch (error) {
+    logger.warn(
+      `⚠️  Skipping ${name}: its dev config failed to load — ${error instanceof Error ? error.message : String(error)}`,
+    )
+
+    return []
+  }
+}
+
 /** Discover apps + configs and assemble the {@link WizardModel} (backends resolved per frontend). */
 export const gatherWizardModel = async (root: string): Promise<WizardModel> => {
   const apiApps = discoverApiApps(root)
@@ -168,14 +193,13 @@ export const gatherWizardModel = async (root: string): Promise<WizardModel> => {
   const apps: WizardApp[] = await Promise.all(
     allNames.map(async (name): Promise<WizardApp> => {
       const hasUi = uiNames.has(name)
-      const routes = hasUi ? (await loadDev(path.join(root, 'apps', name, 'ui')))?.proxy?.routes : undefined
 
       return {
         name,
         hasApi: apiNames.has(name),
         hasUi,
         apiPackage: apiPkgByName.get(name),
-        backends: routes ? groupBackends(routes, ownerByPkg) : [],
+        backends: hasUi ? await loadBackends(path.join(root, 'apps', name, 'ui'), name, ownerByPkg) : [],
       }
     }),
   )
@@ -405,6 +429,17 @@ const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Prom
   const plan = deriveManualPlan(selection, model)
 
   if (plan.anyCloudRoute) {
+    // A cloud route needs an environment to point at, and the only environments we can offer are those we
+    // hold a token for. With none loaded, the `select` below would be handed zero choices and `@inquirer/select`
+    // throws `No selectable choices` — a raw stack on a realistic first-run path (fresh clone, no `env-load`).
+    // Back out cleanly with guidance instead, and BEFORE mutating `process.env`, so a refused run leaks nothing.
+    if (model.environments.length === 0) {
+      logger.warn('☁️  This selection routes to a cloud environment, but no environment token is loaded.')
+      logger.warn('   Run `infra-kit env-load` to add one, then re-run the wizard.')
+
+      return null
+    }
+
     selection.env = await prompts.select({
       message: '☁️  Point cloud routes at which environment?',
       choices: model.environments.map((e) => {

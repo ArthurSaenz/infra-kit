@@ -1,6 +1,11 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { MANUAL_CHOICE, WIZARD_CMUX_VAR, auditManualPlan, runWizardFlow } from '../dev-wizard-run.js'
+import { logger } from 'src/lib/logger'
+
+import { MANUAL_CHOICE, WIZARD_CMUX_VAR, auditManualPlan, loadBackends, runWizardFlow } from '../dev-wizard-run.js'
 import type { WizardChoice, WizardPrompts } from '../dev-wizard-run.js'
 import type { WizardModel } from '../dev-wizard.js'
 
@@ -205,6 +210,28 @@ describe('runWizardFlow — manual branch', () => {
     expect(result).toBeNull()
   })
 
+  it('cloud route with no env token loaded backs out cleanly instead of crashing on an empty select', async () => {
+    // Regression (B1): with `environments: []`, the real `@inquirer/select` would be handed zero choices and
+    // throw `No selectable choices` — a raw stack on first run. The guard must return null BEFORE the env
+    // prompt: this script deliberately omits an 'environment' answer, so if the select were reached the
+    // scripted seam would throw `unscripted prompt`. A clean null therefore proves the guard fired first.
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const noEnvModel: WizardModel = { ...model(), environments: [] }
+
+    const result = await runWizardFlow(
+      scripted({
+        checkbox: [['Which packages', ['client/ui']]],
+        select: [['local or cloud', 'cloud']],
+        confirm: [['watch', false]],
+      }),
+      noEnvModel,
+    )
+
+    expect(result).toBeNull()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('env-load'))
+    warn.mockRestore()
+  })
+
   it('offers only the frontend (full-stack api is launched via a route, not the checkbox), unchecked', async () => {
     // Manual is opt-in: pre-checking meant the fast path (hit enter) booted the whole monorepo — the
     // opposite of why someone picks "Manual" over a preset. A full-stack `client/api` is NOT a checkbox
@@ -268,6 +295,60 @@ describe('runWizardFlow — step-0 + preset branch', () => {
     )
 
     expect(result?.presetDef?.apps?.['client/api']).toEqual({})
+  })
+})
+
+describe('loadBackends', () => {
+  const tmpDirs: string[] = []
+
+  const makeUiDir = (config: string): string => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wizard-loadbackends-'))
+
+    tmpDirs.push(dir)
+    fs.writeFileSync(path.join(dir, 'infra-kit.config.ts'), config)
+
+    return dir
+  }
+
+  afterEach(() => {
+    while (tmpDirs.length > 0) {
+      const dir = tmpDirs.pop()
+
+      if (dir) fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('degrades a throwing config to zero backends with a named warning, rather than rejecting', async () => {
+    // Regression (B2): a real `infra-kit.config.ts` whose default throws at load time (an import-time error,
+    // the same class as a schema-invalid config). A NON-mocked fixture — loadDev really imports it — so this
+    // is not a false-green spy. The wizard's gather must catch this per-app; without the guard the whole
+    // `Promise.all` rejects and every OTHER app in the monorepo becomes unreachable.
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const dir = makeUiDir('export default () => { throw new Error("boom-config") }')
+
+    const backends = await loadBackends(dir, 'broken', new Map())
+
+    expect(backends).toEqual([])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('broken'))
+    warn.mockRestore()
+  })
+
+  it('returns backends for a valid config (guard does not swallow the happy path)', async () => {
+    const dir = makeUiDir(
+      'export default { dev: { proxy: { templates: { local: "http://{package}.localhost", cloud: "https://{env}.acme.dev" }, routes: { "/api": { packageName: "acme-api", from: ["local"] } } } } }',
+    )
+
+    const backends = await loadBackends(dir, 'acme', new Map([['acme-api', 'acme']]))
+
+    expect(backends).toEqual([
+      {
+        packageName: 'acme-api',
+        routes: [{ path: '/api', localCapable: true, cloudCapable: false, default: undefined }],
+        localCapable: true,
+        cloudCapable: false,
+        ownerApp: 'acme',
+      },
+    ])
   })
 })
 
