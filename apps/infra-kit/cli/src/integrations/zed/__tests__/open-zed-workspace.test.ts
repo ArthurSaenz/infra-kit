@@ -32,24 +32,18 @@ describe('openZedWorkspace', () => {
     zx.shouldThrow = false
   })
 
-  it('opens a single workspace with the project root plus every worktree path', async () => {
+  it('opens a single workspace from the given folder paths', async () => {
     const outcome = await openZedWorkspace({
-      projectRoot: '/repo',
-      worktreeDir: '/repo.worktrees',
-      currentBranches: ['release/v1.0.0', 'release/v1.1.0'],
+      worktreePaths: ['/repo', '/repo.worktrees/release/v1.0.0', '/repo.worktrees/release/v1.1.0'],
     })
 
     expect(zx.calls).toHaveLength(1)
     expect(zx.calls[0]?.[0]).toEqual(['/repo', '/repo.worktrees/release/v1.0.0', '/repo.worktrees/release/v1.1.0'])
-    expect(outcome).toEqual({ ran: true, added: 2, removed: 0 })
+    expect(outcome).toEqual({ ran: true, added: 3, removed: 0 })
   })
 
-  it('skips launching when there are no worktrees', async () => {
-    const outcome = await openZedWorkspace({
-      projectRoot: '/repo',
-      worktreeDir: '/repo.worktrees',
-      currentBranches: [],
-    })
+  it('skips launching when the folder set is empty', async () => {
+    const outcome = await openZedWorkspace({ worktreePaths: [] })
 
     expect(zx.calls).toHaveLength(0)
     expect(outcome).toEqual({ ran: false, added: 0, removed: 0 })
@@ -58,11 +52,7 @@ describe('openZedWorkspace', () => {
   it('swallows a launch failure into a best-effort warning', async () => {
     zx.shouldThrow = true
 
-    const outcome = await openZedWorkspace({
-      projectRoot: '/repo',
-      worktreeDir: '/repo.worktrees',
-      currentBranches: ['release/v1.0.0'],
-    })
+    const outcome = await openZedWorkspace({ worktreePaths: ['/repo', '/repo.worktrees/release/v1.0.0'] })
 
     expect(outcome).toEqual({ ran: false, added: 0, removed: 0 })
   })

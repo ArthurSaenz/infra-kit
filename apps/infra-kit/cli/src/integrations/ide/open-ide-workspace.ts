@@ -8,6 +8,16 @@ import type { OpenIdeWorkspaceOutcome } from './types'
 interface OpenIdeWorkspaceArgs {
   projectRoot: string
   worktreeDir: string
+  /**
+   * The exact absolute folder set to open (root-first). Consumed by Zed, which
+   * launches paths directly — this is what lets detached-HEAD and
+   * out-of-convention worktrees open.
+   */
+  worktreePaths: string[]
+  /**
+   * Release branches, for Cursor's `.code-workspace` reconcile (its folder model
+   * is release-branch-shaped, so it stays branch-based rather than path-carrying).
+   */
   currentBranches: string[]
 }
 
@@ -15,9 +25,9 @@ interface OpenIdeWorkspaceArgs {
  * Provider-agnostic entry point for the reload open: for every configured
  * editor, reconciles (or, for Zed, simply assembles) the workspace against the
  * release worktrees on disk and launches it — skipping the launch when there are
- * no worktrees, so `worktrees-reload` never pops a bare editor window. Returns
+ * no worktrees, so `reopen` never pops a bare editor window. Returns
  * one outcome per configured provider (empty array when no IDE is configured).
- * Iterates sequentially — `worktrees-reload` already wraps this call in an outer
+ * Iterates sequentially — `reopen` already wraps this call in an outer
  * `Promise.all` with cmux, so a `Promise.all` here would compound editor-spawn
  * concurrency. Best-effort — every provider swallows failures into a warning.
  */
@@ -25,18 +35,27 @@ export const openIdeWorkspace = async (args: OpenIdeWorkspaceArgs): Promise<Open
   const config = await getInfraKitConfig()
   const ides = resolveConfiguredIdes(config)
 
+  const { projectRoot, worktreeDir, worktreePaths, currentBranches } = args
+
   const outcomes: OpenIdeWorkspaceOutcome[] = []
 
   for (const ide of ides) {
     switch (ide.provider) {
       case 'cursor': {
-        const outcome = await openCursorWorkspace({ ...args, cursorConfig: ide.config })
+        // Cursor reconciles a release-branch-shaped `.code-workspace` file, so it
+        // stays branch-based rather than consuming the harvested paths.
+        const outcome = await openCursorWorkspace({
+          projectRoot,
+          worktreeDir,
+          currentBranches,
+          cursorConfig: ide.config,
+        })
 
         outcomes.push({ ...outcome, provider: 'cursor' })
         break
       }
       case 'zed': {
-        const outcome = await openZedWorkspace(args)
+        const outcome = await openZedWorkspace({ worktreePaths })
 
         outcomes.push({ ...outcome, provider: 'zed' })
         break

@@ -1,87 +1,107 @@
 import path from 'node:path'
+import process from 'node:process'
 import { $ } from 'zx'
 
 import { isReleaseBranch } from 'src/lib/release-id'
 
 /**
+ * A single record from `git worktree list --porcelain`. The porcelain format is
+ * the source of truth for worktrees: it carries the absolute `path` (which the
+ * human format's `[branch]` scrape discards), and it distinguishes detached /
+ * bare / prunable / locked states that the scrape collapses to `null`.
+ *
+ * `branch` is the short name (`release/v1.2.3`, `feature/x`) with `refs/heads/`
+ * stripped, or `null` for a detached, bare, or otherwise branch-less checkout.
+ */
+export interface WorktreeEntry {
+  path: string
+  branch: string | null
+  detached: boolean
+  bare: boolean
+  prunable: boolean
+  locked: boolean
+}
+
+/**
+ * List every git worktree of the repo containing `cwd`, parsed from
+ * `git worktree list --porcelain`.
+ *
+ * Porcelain is a stable, documented, line-oriented format: one record per
+ * worktree, records separated by a blank line, each opening with a
+ * `worktree <abs-path>` line. Attribute lines (`branch`, `detached`, `bare`,
+ * `locked`, `prunable`) follow. This replaces the legacy `endsWith(']')` scrape
+ * of the human format, which lost the path and returned `null` for detached
+ * worktrees.
+ *
+ * The main checkout is included in the output (as its own record), exactly as
+ * git reports it.
+ */
+export const listWorktrees = async (cwd: string): Promise<WorktreeEntry[]> => {
+  const output = await $({ cwd })`git worktree list --porcelain`
+
+  const entries: WorktreeEntry[] = []
+  let current: WorktreeEntry | null = null
+
+  for (const line of output.stdout.split('\n')) {
+    if (line.startsWith('worktree ')) {
+      // A new record opens; flush the previous one.
+      if (current) entries.push(current)
+
+      current = {
+        path: line.slice('worktree '.length),
+        branch: null,
+        detached: false,
+        bare: false,
+        prunable: false,
+        locked: false,
+      }
+
+      continue
+    }
+
+    if (!current) continue
+
+    if (line.startsWith('branch ')) {
+      current.branch = line.slice('branch '.length).replace(/^refs\/heads\//, '')
+    } else if (line === 'detached') {
+      current.detached = true
+    } else if (line === 'bare') {
+      current.bare = true
+    } else if (line === 'locked' || line.startsWith('locked ')) {
+      current.locked = true
+    } else if (line === 'prunable' || line.startsWith('prunable ')) {
+      current.prunable = true
+    }
+  }
+
+  if (current) entries.push(current)
+
+  return entries
+}
+
+/**
  * Get current git worktrees
+ *
+ * Thin wrapper over {@link listWorktrees}: harvests branch names from the
+ * porcelain records and filters by release / feature shape. Detached, bare, and
+ * branch-less records drop out naturally (their `branch` is `null`).
  *
  * @returns [release/v1.18.22, release/v1.18.23, release/v1.18.24] or [feature/mobile-app, feature/explore-page, feature/login-page]
  */
 export const getCurrentWorktrees = async (type: 'release' | 'feature'): Promise<string[]> => {
-  const worktreesOutput = await $`git worktree list`
+  const entries = await listWorktrees(process.cwd())
 
-  const worktreeLines = worktreesOutput.stdout.split('\n').filter(Boolean)
-
-  const worktreePredicateMap = {
-    release: releaseWorktreePredicate,
-    feature: featureWorktreePredicate,
+  const matches = (branch: string): boolean => {
+    return type === 'release' ? isReleaseBranch(branch) : branch.startsWith('feature/')
   }
 
-  return worktreeLines.map(worktreePredicateMap[type]).filter((branch) => {
-    return branch !== null
-  })
-}
-
-/**
- * Extract the branch name from a `git worktree list` output line.
- *
- * `git worktree list` formats each line as:
- *   <path>  <hash> [<branch>]
- *
- * Reads the branch from the trailing `[branch]` token so it works for the
- * main checkout too (whose path does not encode the branch name).
- */
-const parseWorktreeBranch = (line: string): string | null => {
-  const trimmed = line.trimEnd()
-
-  if (!trimmed.endsWith(']')) return null
-
-  const open = trimmed.lastIndexOf('[')
-
-  if (open === -1) return null
-
-  const branch = trimmed.slice(open + 1, -1)
-
-  return branch.length > 0 ? branch : null
-}
-
-/**
- * Extract a release branch name from a `git worktree list` output line.
- *
- * Returns `null` for lines that are not release worktrees.
- *
- * @example
- * releaseWorktreePredicate('/path/to/release/v1.18.22  abc1234 [release/v1.18.22]')
- * // => 'release/v1.18.22'
- *
- * @example
- * releaseWorktreePredicate('/path/to/feature/login  abc1234 [feature/login]')
- * // => null
- */
-const releaseWorktreePredicate = (line: string): string | null => {
-  const branch = parseWorktreeBranch(line)
-
-  return isReleaseBranch(branch) ? branch : null
-}
-
-/**
- * Extract a feature branch name from a `git worktree list` output line.
- *
- * Returns `null` for lines that are not feature worktrees.
- *
- * @example
- * featureWorktreePredicate('/path/to/feature/login-page  abc1234 [feature/login-page]')
- * // => 'feature/login-page'
- *
- * @example
- * featureWorktreePredicate('/path/to/release/v1.18.22  abc1234 [release/v1.18.22]')
- * // => null
- */
-const featureWorktreePredicate = (line: string): string | null => {
-  const branch = parseWorktreeBranch(line)
-
-  return branch?.startsWith('feature/') ? branch : null
+  return entries
+    .map((entry) => {
+      return entry.branch
+    })
+    .filter((branch): branch is string => {
+      return branch !== null && matches(branch)
+    })
 }
 
 /**

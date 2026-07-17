@@ -73,6 +73,14 @@ const unconfigured = { ide: undefined }
 const baseOpenArgs = {
   projectRoot: '/repo',
   worktreeDir: '/repo.worktrees',
+  worktreePaths: ['/repo', '/repo.worktrees/release/v1.0.0'],
+  currentBranches: ['release/v1.0.0'],
+}
+
+// Cursor stays branch-based; the facade hands it everything EXCEPT worktreePaths.
+const cursorArgs = {
+  projectRoot: '/repo',
+  worktreeDir: '/repo.worktrees',
   currentBranches: ['release/v1.0.0'],
 }
 
@@ -91,7 +99,7 @@ describe('openIdeWorkspace', () => {
     const outcomes = await openIdeWorkspace(baseOpenArgs)
 
     expect(cursor.openCursorWorkspace).toHaveBeenCalledWith({
-      ...baseOpenArgs,
+      ...cursorArgs,
       cursorConfig: { workspaceConfigPath: 'ws' },
     })
     expect(zed.openZedWorkspace).not.toHaveBeenCalled()
@@ -104,7 +112,7 @@ describe('openIdeWorkspace', () => {
 
     const outcomes = await openIdeWorkspace(baseOpenArgs)
 
-    expect(zed.openZedWorkspace).toHaveBeenCalledWith(baseOpenArgs)
+    expect(zed.openZedWorkspace).toHaveBeenCalledWith({ worktreePaths: baseOpenArgs.worktreePaths })
     expect(cursor.openCursorWorkspace).not.toHaveBeenCalled()
     expect(outcomes).toEqual([{ ran: true, added: 2, removed: 0, provider: 'zed' }])
   })

@@ -27,8 +27,8 @@ interface OpenCursorWorkspaceOutcome {
  * Reconciles the configured Cursor `.code-workspace` `folders` array against the
  * set of release worktrees on disk, then launches Cursor against it (the folder
  * reconcile still runs when there are no worktrees, but the relaunch is skipped
- * so `worktrees-reload` never pops an empty Cursor window). Used by
- * `worktrees-reload`.
+ * so `reopen` never pops an empty Cursor window). Used by
+ * `reopen`.
  *
  * No-ops (returns `ran: false`) when the Cursor entry has no `workspaceConfigPath`.
  * All failures are swallowed into a warning — opening Cursor is best-effort.
