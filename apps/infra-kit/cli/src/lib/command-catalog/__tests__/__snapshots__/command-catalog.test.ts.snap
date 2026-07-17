@@ -148,6 +148,24 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     ],
   },
   {
+    "input": [
+      "dryRun",
+      "force",
+      "releaseOnly",
+    ],
+    "name": "reopen",
+    "output": [
+      "cmuxClosed",
+      "cmuxOpened",
+      "cmuxSkipped",
+      "dryRun",
+      "ideProviders",
+      "releaseOnly",
+      "repo",
+      "worktreePaths",
+    ],
+  },
+  {
     "input": [],
     "name": "vendor-check",
     "output": [
@@ -198,17 +216,6 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     "output": [
       "count",
       "worktrees",
-    ],
-  },
-  {
-    "input": [],
-    "name": "worktrees-reload",
-    "output": [
-      "closedCmux",
-      "ideFoldersAdded",
-      "ideFoldersRemoved",
-      "ideProviders",
-      "openedCmux",
     ],
   },
   {

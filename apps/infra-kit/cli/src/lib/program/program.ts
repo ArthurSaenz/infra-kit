@@ -21,6 +21,7 @@ import { init } from 'src/commands/init'
 import { runMcp } from 'src/commands/mcp'
 import { releaseCreate } from 'src/commands/release-create'
 import { releaseDescEdit } from 'src/commands/release-desc-edit'
+import { reopen } from 'src/commands/reopen'
 import { runSelfUpdate } from 'src/commands/self-update'
 import { vendorCheck } from 'src/commands/vendor-check'
 import { vendorConfig } from 'src/commands/vendor-config'
@@ -30,7 +31,6 @@ import { vendorSync } from 'src/commands/vendor-sync'
 import { version } from 'src/commands/version'
 import { worktreesAdd } from 'src/commands/worktrees-add'
 import { worktreesList } from 'src/commands/worktrees-list'
-import { worktreesReload } from 'src/commands/worktrees-reload'
 import { worktreesRemove } from 'src/commands/worktrees-remove'
 import { worktreesSync } from 'src/commands/worktrees-sync'
 import { IDE_MODES } from 'src/integrations/ide'
@@ -257,13 +257,26 @@ const configureWorktreesRemove = (cmd: Command): Command => {
     })
 }
 
-const configureWorktreesReload = (cmd: Command): Command => {
+const configureReopen = (cmd: Command): Command => {
   return cmd
-    .description(
-      'Close all cmux/editor worktree windows, then reopen the current release worktrees (also cold-start restore)',
-    )
-    .action(async () => {
-      emit(await worktreesReload())
+    .description('Reopen editor + cmux windows for every active worktree in the current project (additive, idempotent)')
+    .option('--all', 'Reopen across every discovered infra-kit project (Stage 3 — not yet implemented)')
+    .option('--project <names...>', 'Restrict --all to these project names')
+    .option('--root <paths...>', 'Discovery roots for --all (repeatable)')
+    .option('--release-only', 'Restrict to release worktrees (reproduces the legacy worktrees-reload scope)')
+    .option('--force', 'Close each cmux workspace first, then reopen (the legacy worktrees-reload behaviour)')
+    .option('--dry-run', 'Print the plan (paths + cmux titles) and spawn nothing')
+    .action(async (options) => {
+      emit(
+        await reopen({
+          all: options.all,
+          project: options.project,
+          root: options.root,
+          releaseOnly: options.releaseOnly,
+          force: options.force,
+          dryRun: options.dryRun,
+        }),
+      )
     })
 }
 
@@ -387,7 +400,11 @@ export const buildProgram = (): Command => {
   configureWorktreesList(worktreesGroup.command('list'))
   configureWorktreesRemove(worktreesGroup.command('remove'))
   configureWorktreesSync(worktreesGroup.command('sync'))
-  configureWorktreesReload(worktreesGroup.command('reload'))
+
+  // Top-level (`infra-kit reopen`), not under the worktrees group — house rule: new commands go
+  // top-level with related names, not nested under a group. It still renders in the Worktrees palette
+  // group via its catalog menuGroup.
+  configureReopen(program.command('reopen'))
 
   const configCmd = program.command('config').description('Manage infra-kit configuration files')
 

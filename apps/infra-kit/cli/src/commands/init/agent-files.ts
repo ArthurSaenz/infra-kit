@@ -61,7 +61,7 @@ const buildAgentsBody = (version: string): string => {
     '## Commands (`ik` = `pnpm exec infra-kit`)',
     '',
     '- `ik env-load -c <config>` / `ik env-clear` / `ik env-status` — load, clear, or inspect Doppler env vars for a config (e.g. `dev`). Source the returned file to apply.',
-    '- `ik worktrees add` / `worktrees list` / `worktrees reload` / `worktrees remove` / `worktrees sync` — manage release and feature git worktrees.',
+    '- `ik worktrees add` / `worktrees list` / `reopen` / `worktrees remove` / `worktrees sync` — manage release and feature git worktrees.',
     '- `ik release create` / `release list` / `release deploy-all` / `release deploy-selected` / `release deliver` / `release desc-edit` — release-branch and deploy flow.',
     '- `ik release merge-dev` — merge the dev branch into every release branch.',
     '- `ik audit` — audit packages against `infra-kit.config.ts` rules.',

@@ -14,6 +14,7 @@ import { ghReleaseDeploySelectedMcpTool } from 'src/commands/gh-release-deploy-s
 import { ghReleaseListMcpTool } from 'src/commands/gh-release-list'
 import { releaseCreateMcpTool } from 'src/commands/release-create'
 import { releaseDescEditMcpTool } from 'src/commands/release-desc-edit'
+import { reopenMcpTool } from 'src/commands/reopen'
 import { vendorCheckMcpTool } from 'src/commands/vendor-check'
 import { vendorDiffMcpTool } from 'src/commands/vendor-diff'
 import { vendorManifestMcpTool } from 'src/commands/vendor-manifest'
@@ -21,7 +22,6 @@ import { vendorSyncMcpTool } from 'src/commands/vendor-sync'
 import { versionMcpTool } from 'src/commands/version'
 import { worktreesAddMcpTool } from 'src/commands/worktrees-add'
 import { worktreesListMcpTool } from 'src/commands/worktrees-list'
-import { worktreesReloadMcpTool } from 'src/commands/worktrees-reload'
 import { worktreesRemoveMcpTool } from 'src/commands/worktrees-remove'
 import { worktreesSyncMcpTool } from 'src/commands/worktrees-sync'
 import type { ToolsExecutionResult } from 'src/types'
@@ -229,12 +229,15 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mcpExposed: true,
     groupPath: ['worktrees', 'list'],
   },
+  // `reopen` is a top-level command (`infra-kit reopen`, groupPath ['reopen']) but carries
+  // menuGroup 'worktrees' so it renders alongside its kin in the palette — the same single-segment
+  // top-level + non-matching-menuGroup shape as env-status/env-load (['env-status'] + 'environment').
   {
-    cliName: 'worktrees-reload',
+    cliName: 'reopen',
     menuGroup: 'worktrees',
-    mcpTool: worktreesReloadMcpTool,
+    mcpTool: reopenMcpTool,
     mcpExposed: true,
-    groupPath: ['worktrees', 'reload'],
+    groupPath: ['reopen'],
   },
   // worktrees-remove runs `git worktree remove` (no --force) on the named leaf worktrees. It is NOT
   // irreversible in the way release-deliver/vendor-sync are: the release branches/commits survive, the

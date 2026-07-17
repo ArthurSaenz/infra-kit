@@ -145,8 +145,8 @@ const paletteItems = (): PaletteItem[] => {
     ['worktrees-add', 'Add git worktrees for release branches', 'Worktrees'],
     ['worktrees-list', 'List all git worktrees with detailed information', 'Worktrees'],
     [
-      'worktrees-reload',
-      'Close all cmux/editor worktree windows, then reopen the current release worktrees (also cold-start restore)',
+      'reopen',
+      'Reopen editor + cmux windows for every active worktree in the current project (additive, idempotent)',
       'Worktrees',
     ],
     ['worktrees-remove', 'Remove git worktrees for release branches', 'Worktrees'],

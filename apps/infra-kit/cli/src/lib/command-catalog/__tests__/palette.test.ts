@@ -51,7 +51,7 @@ describe('command palette', () => {
           'release deliver',
         ],
       ],
-      ['Worktrees', ['worktrees add', 'worktrees list', 'worktrees reload', 'worktrees remove', 'worktrees sync']],
+      ['Worktrees', ['worktrees add', 'worktrees list', 'reopen', 'worktrees remove', 'worktrees sync']],
       ['Environment', ['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list']],
       ['Configuration', ['config path', 'config edit']],
       ['Vendor', ['vendor check', 'vendor diff', 'vendor config']],

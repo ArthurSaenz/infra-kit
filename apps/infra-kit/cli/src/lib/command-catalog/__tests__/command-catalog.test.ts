@@ -51,7 +51,7 @@ const EXPECTED_EXPOSED_TOOLS = [
   'version',
   'worktrees-add',
   'worktrees-list',
-  'worktrees-reload',
+  'reopen',
   'worktrees-remove',
   'worktrees-sync',
 ]
@@ -206,7 +206,7 @@ describe('command catalog — CLI/MCP name parity', () => {
     'release-deliver': 'gh-release-deliver',
     'worktrees-add': 'worktrees-add',
     'worktrees-list': 'worktrees-list',
-    'worktrees-reload': 'worktrees-reload',
+    reopen: 'reopen',
     'worktrees-remove': 'worktrees-remove',
     'worktrees-sync': 'worktrees-sync',
     audit: 'audit',
@@ -256,10 +256,12 @@ describe('command catalog — menu grouping', () => {
       'release deliver',
     ])
 
+    // `reopen` is top-level (groupPath ['reopen']) but carries menuGroup 'worktrees', so it renders in
+    // this group between list and remove — exactly like env-status sits in the environment group.
     expect(groupPaths('worktrees')).toEqual([
       'worktrees add',
       'worktrees list',
-      'worktrees reload',
+      'reopen',
       'worktrees remove',
       'worktrees sync',
     ])
