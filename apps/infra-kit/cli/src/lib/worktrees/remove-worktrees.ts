@@ -1,13 +1,12 @@
 import { $ } from 'zx'
 
-import { buildCmuxWorkspaceTitle, closeCmuxWorkspaceByTitle } from 'src/integrations/cmux'
+import { closeCmuxWorkspaceByCwd } from 'src/integrations/cmux'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 
 interface RemoveWorktreesArgs {
   branches: string[]
   worktreeDir: string
-  repoName: string
   pruneFolder?: boolean
 }
 
@@ -22,15 +21,16 @@ interface RemoveWorktreesArgs {
  * left in place so the per-repo worktree scaffold persists even when empty.
  */
 export const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string[]> => {
-  const { branches, worktreeDir, repoName, pruneFolder = false } = args
+  const { branches, worktreeDir, pruneFolder = false } = args
 
   const results = await Promise.allSettled(
     branches.map(async (branch) => {
       const worktreePath = `${worktreeDir}/${branch}`
 
-      const title = buildCmuxWorkspaceTitle({ repoName, branch })
-
-      await closeCmuxWorkspaceByTitle(title)
+      // Close the cmux workspace by its cwd (the worktree path still exists here —
+      // close runs before `git worktree remove`). Anchors are excluded, so a group
+      // header is never closed.
+      await closeCmuxWorkspaceByCwd(worktreePath)
 
       await $`git worktree remove ${worktreePath}`
 

@@ -44,7 +44,7 @@ export const openCmuxDevWorkspace = async (args: OpenCmuxDevWorkspaceArgs): Prom
 /**
  * Best-effort close of the cmux workspace `ref`, tearing down the workspace and
  * every pane process. Silently no-ops (debug-logged) if cmux isn't running or the
- * close fails, mirroring {@link file://./close-workspace-by-title.ts}.
+ * close fails, mirroring {@link file://./close-workspace-by-cwd.ts}.
  */
 export const closeCmuxDevWorkspace = async (ref: string): Promise<void> => {
   try {

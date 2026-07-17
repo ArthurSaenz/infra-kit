@@ -8,13 +8,7 @@ import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { formatZxError } from 'src/lib/errors/format-zx-error'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
-import {
-  deleteLocalBranch,
-  deleteRemoteBranch,
-  getCurrentWorktrees,
-  getProjectRoot,
-  getRepoName,
-} from 'src/lib/git-utils'
+import { deleteLocalBranch, deleteRemoteBranch, getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import { displayLabel, formatJiraName, formatRcTitle, parseBranchName } from 'src/lib/release-id'
@@ -165,10 +159,10 @@ const removeReleaseWorktreeIfPresent = async (releaseBranch: string): Promise<vo
 
   if (!worktreeBranches.includes(releaseBranch)) return
 
-  const [projectRoot, repoName] = await Promise.all([getProjectRoot(), getRepoName()])
+  const projectRoot = await getProjectRoot()
   const worktreeDir = `${projectRoot}${WORKTREES_DIR_SUFFIX}`
 
-  const removed = await removeWorktrees({ branches: [releaseBranch], worktreeDir, repoName })
+  const removed = await removeWorktrees({ branches: [releaseBranch], worktreeDir })
 
   if (removed.length === 0) {
     throw new OperationError(undefined, {

@@ -5,10 +5,12 @@ import { z } from 'zod'
 
 import {
   buildCmuxWorkspaceTitle,
-  canonicalizeCmuxTitle,
-  closeCmuxWorkspaceByTitle,
-  listCmuxWorkspaceTitles,
+  closeCmuxWorkspaceByCwd,
+  createCmuxGroupFrom,
+  findCmuxGroupRefByName,
+  listCmuxWorkspacesByCwd,
   openCmuxWorkspaceWithLayout,
+  realpathForCmuxCwd,
 } from 'src/integrations/cmux'
 import { ideProviderLabel, openIdeWorkspace } from 'src/integrations/ide'
 import { commandEcho } from 'src/lib/command-echo'
@@ -135,7 +137,7 @@ export const reopenCurrentProject = async (options: ReopenArgs = {}): Promise<To
       return {
         // Detached / branch-less worktrees have no branch to title from; fall back
         // to the leaf directory so the title is still stable and meaningful.
-        title: buildCmuxWorkspaceTitle({ repoName, branch: entry.branch ?? path.basename(entry.path) }),
+        title: buildCmuxWorkspaceTitle({ branch: entry.branch ?? path.basename(entry.path) }),
         cwd: entry.path,
       }
     })
@@ -151,7 +153,7 @@ export const reopenCurrentProject = async (options: ReopenArgs = {}): Promise<To
 
     const [ideOutcomes, cmux] = await Promise.all([
       openIdeWorkspace({ projectRoot, worktreeDir, worktreePaths, currentBranches }),
-      runCmux({ targets, force }),
+      runCmux({ targets, force, repoName }),
     ])
 
     const result: ReopenResult = {
@@ -208,6 +210,8 @@ const selectActive = (entries: WorktreeEntry[], releaseOnly: boolean): WorktreeE
 interface RunCmuxArgs {
   targets: CmuxTarget[]
   force: boolean
+  /** Stable repo name (basename of the main-repo root) → the sidebar group name. */
+  repoName: string
 }
 
 interface RunCmuxOutcome {
@@ -217,55 +221,57 @@ interface RunCmuxOutcome {
 }
 
 /**
- * Open a cmux workspace for every target. Default is ADDITIVE + DEDUPED: a target
- * whose canonical title is already open is skipped, which is what makes `reopen`
- * idempotent (running twice opens nothing new). `--force` closes each target
- * first, then force-opens with no dedup — the escape hatch that recovers the
- * legacy close-then-reopen reload behaviour.
+ * Open a cmux workspace for every target, each inside the repo's sidebar group.
+ * Default is ADDITIVE + DEDUPED by workspace cwd: a target whose worktree cwd is
+ * already open is skipped, which makes `reopen` idempotent (running twice opens
+ * nothing new — including the main checkout, whose cwd the group anchor shares but
+ * which the cwd map excludes). `--force` closes each target first, then force-opens
+ * with no dedup — the escape hatch that recovers the legacy reload behaviour and
+ * doubles as the migration for pre-group ungrouped windows.
  */
 const runCmux = async (args: RunCmuxArgs): Promise<RunCmuxOutcome> => {
-  const { targets, force } = args
+  const { targets, force, repoName } = args
 
-  const titles = targets.map((target) => {
-    return target.title
-  })
+  // Resolve the group ONCE, before the close loop — closing the last member of a
+  // group leaves it empty-but-pinned, and a later lookup must not race that.
+  const groupRef = await findCmuxGroupRefByName(repoName)
 
-  const closed = force ? await closeCmux({ titles }) : []
+  const closed = force ? await closeCmux({ targets }) : []
 
-  const { opened, skipped } = await reopenCmux({ targets, force })
+  const { opened, skipped } = await reopenCmux({ targets, force, repoName, groupRef })
 
   return { opened, skipped, closed }
 }
 
 interface CloseCmuxArgs {
-  titles: string[]
+  targets: CmuxTarget[]
 }
 
 /**
- * Close the cmux workspace for each title that is currently open. Snapshots
- * `listCmuxWorkspaceTitles()` (canonical keys) up front so the returned list
- * reflects which were actually open; the close itself is best-effort per title.
+ * Close the cmux workspace for each target that is currently open, matched BY CWD
+ * (never by title — titles are no longer unique across repos, and a cwd match
+ * excludes group anchors so a group header can never be closed). Snapshots the
+ * open set up front so the returned list reflects which were actually open; the
+ * close itself is best-effort per target.
  */
 export const closeCmux = async (args: CloseCmuxArgs): Promise<string[]> => {
-  const { titles } = args
+  const { targets } = args
 
-  if (titles.length === 0) {
+  if (targets.length === 0) {
     return []
   }
 
-  const openBefore = await listCmuxWorkspaceTitles()
+  const openByCwd = await listCmuxWorkspacesByCwd()
 
   const closed: string[] = []
 
-  for (const title of titles) {
-    // openBefore holds canonical keys; canonicalize the built title the same way
-    // so a workspace stored under a drifted title still resolves.
-    if (!openBefore.has(canonicalizeCmuxTitle(title))) {
+  for (const target of targets) {
+    if (!openByCwd.has(await realpathForCmuxCwd(target.cwd))) {
       continue
     }
 
-    await closeCmuxWorkspaceByTitle(title)
-    closed.push(title)
+    await closeCmuxWorkspaceByCwd(target.cwd)
+    closed.push(target.title)
   }
 
   return closed
@@ -274,6 +280,9 @@ export const closeCmux = async (args: CloseCmuxArgs): Promise<string[]> => {
 interface ReopenCmuxArgs {
   targets: CmuxTarget[]
   force: boolean
+  repoName: string
+  /** Existing group ref, or null/undefined to bootstrap one from the first opened workspace. */
+  groupRef?: string | null
 }
 
 interface ReopenCmuxOutcome {
@@ -282,21 +291,21 @@ interface ReopenCmuxOutcome {
 }
 
 /**
- * Partition targets into those that need opening vs. those already open (dedup
- * skip), against a live `listCmuxWorkspaceTitles()` snapshot. `force` bypasses
- * dedup entirely — every target lands in `toOpen`. Shared by {@link reopenCmux}
- * (which actually opens `toOpen`) and {@link planReopen} (which only reports it).
+ * Partition targets into those that need opening vs. those already open, against a
+ * set of open workspace cwds (realpath'd, anchors excluded). `force` bypasses dedup
+ * entirely — every target lands in `toOpen`. Shared by {@link reopenCmux} and
+ * {@link planReopen}.
  */
-const partitionCmuxTargets = (
+const partitionCmuxTargets = async (
   targets: CmuxTarget[],
-  openTitles: Set<string>,
+  openCwds: Set<string>,
   force: boolean,
-): { toOpen: CmuxTarget[]; skipped: string[] } => {
+): Promise<{ toOpen: CmuxTarget[]; skipped: string[] }> => {
   const toOpen: CmuxTarget[] = []
   const skipped: string[] = []
 
   for (const target of targets) {
-    if (!force && openTitles.has(canonicalizeCmuxTitle(target.title))) {
+    if (!force && openCwds.has(await realpathForCmuxCwd(target.cwd))) {
       skipped.push(target.title)
     } else {
       toOpen.push(target)
@@ -307,25 +316,41 @@ const partitionCmuxTargets = (
 }
 
 /**
- * (Re)open a cmux workspace per target. Additive by default — skips any target
- * whose canonical title is already present in `listCmuxWorkspaceTitles()`, so a
- * second run opens 0 new workspaces. Under `force`, dedup is bypassed and every
- * target is force-opened (callers close first).
+ * (Re)open a cmux workspace per target, inside the repo's sidebar group. Additive
+ * by default — skips any target whose worktree cwd is already open, so a second run
+ * opens 0 new workspaces. If no group exists yet, the FIRST opened workspace seeds
+ * it via `--from` (capture-free); the rest open straight into it. Under `force`,
+ * dedup is bypassed and every target is force-opened (callers close first).
  */
 export const reopenCmux = async (args: ReopenCmuxArgs): Promise<ReopenCmuxOutcome> => {
-  const { targets, force } = args
+  const { targets, force, repoName, groupRef = null } = args
 
-  // `listCmuxWorkspaceTitles` returns `∅` when cmux is down or unreadable; its
+  // `listCmuxWorkspacesByCwd` returns `∅` when cmux is down or unreadable; its
   // contract says treat empty as "unknown, proceed as if nothing is open", which
   // is exactly force-open behaviour — acceptable here.
-  const openTitles = force ? new Set<string>() : await listCmuxWorkspaceTitles()
-  const { toOpen, skipped } = partitionCmuxTargets(targets, openTitles, force)
+  const openCwds = force ? new Set<string>() : new Set((await listCmuxWorkspacesByCwd()).keys())
+  const { toOpen, skipped } = await partitionCmuxTargets(targets, openCwds, force)
 
   const opened: string[] = []
+  let group = groupRef
+  let bootstrapAttempted = false
 
   for (const target of toOpen) {
     try {
-      await openCmuxWorkspaceWithLayout({ cwd: target.cwd, title: target.title })
+      if (group) {
+        await openCmuxWorkspaceWithLayout({ cwd: target.cwd, title: target.title, group })
+      } else {
+        const workspaceRef = await openCmuxWorkspaceWithLayout({ cwd: target.cwd, title: target.title })
+
+        // Seed the group from the first workspace we open, once. `--from` makes
+        // creation capture-free; if it fails, remaining targets open ungrouped
+        // rather than spawning a second group per iteration.
+        if (!bootstrapAttempted) {
+          group = await createCmuxGroupFrom(repoName, [workspaceRef])
+          bootstrapAttempted = true
+        }
+      }
+
       opened.push(target.title)
     } catch (error) {
       logger.warn({ error, title: target.title }, `⚠️ Failed to reopen cmux workspace ${target.title}`)
@@ -351,8 +376,8 @@ interface PlanReopenArgs {
 const planReopen = async (args: PlanReopenArgs): Promise<ReopenResult> => {
   const { repo, releaseOnly, force, worktreePaths, targets } = args
 
-  const openTitles = force ? new Set<string>() : await listCmuxWorkspaceTitles()
-  const { toOpen, skipped } = partitionCmuxTargets(targets, openTitles, force)
+  const openCwds = force ? new Set<string>() : new Set((await listCmuxWorkspacesByCwd()).keys())
+  const { toOpen, skipped } = await partitionCmuxTargets(targets, openCwds, force)
 
   return {
     repo,

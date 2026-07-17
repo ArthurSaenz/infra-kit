@@ -5,6 +5,13 @@ import { getInfraKitConfig, resolveCmuxLayout } from 'src/lib/infra-kit-config'
 interface OpenCmuxWorkspaceArgs {
   cwd: string
   title?: string
+  /**
+   * When set, the workspace is created directly inside this sidebar group
+   * (`workspace_group:N` ref) via `--group`, appended at the end so existing
+   * members aren't reordered. Omit to create an ungrouped workspace (e.g. the
+   * first worktree of a repo, which then seeds a new group).
+   */
+  group?: string
 }
 
 /**
@@ -13,14 +20,17 @@ interface OpenCmuxWorkspaceArgs {
  * default `two-columns`):
  *   two-columns — left | right, both full-height (two panes)
  *   three-pane  — left-top / left-bottom | full-height right (three panes)
- * All panes inherit `cwd` from the workspace.
+ * All panes inherit `cwd` from the workspace. Returns the created
+ * `workspace:N` ref so callers can seed a group from it.
  */
-export const openCmuxWorkspaceWithLayout = async (args: OpenCmuxWorkspaceArgs): Promise<void> => {
-  const { cwd, title } = args
+export const openCmuxWorkspaceWithLayout = async (args: OpenCmuxWorkspaceArgs): Promise<string> => {
+  const { cwd, title, group } = args
 
   const layout = resolveCmuxLayout(await getInfraKitConfig())
 
-  const newWorkspaceOutput = (await $`cmux workspace create --cwd ${cwd}`).stdout
+  const newWorkspaceOutput = group
+    ? (await $`cmux workspace create --cwd ${cwd} --group ${group} --group-placement end`).stdout
+    : (await $`cmux workspace create --cwd ${cwd}`).stdout
 
   const workspaceRef = parseWorkspaceRef(newWorkspaceOutput)
 
@@ -39,6 +49,8 @@ export const openCmuxWorkspaceWithLayout = async (args: OpenCmuxWorkspaceArgs): 
   if (title) {
     await $`cmux workspace rename --workspace ${workspaceRef} --title ${title}`
   }
+
+  return workspaceRef
 }
 
 /**

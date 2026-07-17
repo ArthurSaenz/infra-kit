@@ -1,13 +1,16 @@
 /* eslint-disable sonarjs/cognitive-complexity */
 import confirm from '@inquirer/confirm'
+import path from 'node:path'
 import { z } from 'zod'
 import { $ } from 'zx'
 
 import {
   buildCmuxWorkspaceTitle,
-  canonicalizeCmuxTitle,
-  listCmuxWorkspaceTitles,
+  createCmuxGroupFrom,
+  findCmuxGroupRefByName,
+  listCmuxWorkspacesByCwd,
   openCmuxWorkspaceWithLayout,
+  realpathForCmuxCwd,
 } from 'src/integrations/cmux'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { IDE_MODES, addIdeWorktreeFolders } from 'src/integrations/ide'
@@ -17,7 +20,7 @@ import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
-import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
+import { getCurrentWorktrees, getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig, resolveConfiguredIdes } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { withEscape } from 'src/lib/prompts/escapable-context'
@@ -192,22 +195,43 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     }
 
     if (openInCmux) {
-      const repoName = await getRepoName()
-      const existingTitles = await listCmuxWorkspaceTitles()
+      // Group name keys on the STABLE main-repo basename (not the worktree-local
+      // `getRepoName()`), so every worktree of a repo lands in the same sidebar
+      // group regardless of which checkout this runs from.
+      const repoName = path.basename(await getMainRepoRoot(projectRoot))
+      const openByCwd = await listCmuxWorkspacesByCwd()
+
+      let groupRef = await findCmuxGroupRefByName(repoName)
+      let bootstrapAttempted = false
 
       for (const branch of createdWorktrees) {
-        const title = buildCmuxWorkspaceTitle({ repoName, branch })
+        const cwd = `${worktreeDir}/${branch}`
 
-        // Skip branches whose cmux workspace is already open (canonical match),
-        // so re-running worktrees-add never duplicates an existing workspace.
-        if (existingTitles.has(canonicalizeCmuxTitle(title))) {
+        // Skip branches whose cmux workspace is already open (matched by cwd, not
+        // title), so re-running worktrees-add never duplicates an existing workspace.
+        if (openByCwd.has(await realpathForCmuxCwd(cwd))) {
           continue
         }
 
-        await openCmuxWorkspaceWithLayout({
-          cwd: `${worktreeDir}/${branch}`,
-          title,
-        })
+        const title = buildCmuxWorkspaceTitle({ branch })
+
+        try {
+          if (groupRef) {
+            await openCmuxWorkspaceWithLayout({ cwd, title, group: groupRef })
+          } else {
+            // No group yet: open ungrouped, then seed the group from this first
+            // workspace via `--from` (capture-free). Attempt the seed once, so a
+            // failed create doesn't spawn a group per iteration.
+            const workspaceRef = await openCmuxWorkspaceWithLayout({ cwd, title })
+
+            if (!bootstrapAttempted) {
+              groupRef = await createCmuxGroupFrom(repoName, [workspaceRef])
+              bootstrapAttempted = true
+            }
+          }
+        } catch (error) {
+          logger.warn({ error, branch }, `⚠️ Failed to open cmux workspace for ${branch}`)
+        }
       }
     }
 

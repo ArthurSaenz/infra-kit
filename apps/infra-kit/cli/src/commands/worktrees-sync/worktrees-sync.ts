@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { $ } from 'zx'
 
-import { buildCmuxWorkspaceTitle, closeCmuxWorkspaceByTitle } from 'src/integrations/cmux'
+import { closeCmuxWorkspaceByCwd } from 'src/integrations/cmux'
 import { getReleasePRs } from 'src/integrations/gh'
 import { removeIdeWorktreeFolders } from 'src/integrations/ide'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
@@ -9,7 +9,7 @@ import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
-import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
+import { getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { isReleaseBranch } from 'src/lib/release-id'
 import { defineMcpTool, textContent } from 'src/types'
@@ -52,12 +52,9 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
       currentWorktrees,
     })
 
-    const repoName = await getRepoName()
-
     const removedWorktrees = await removeWorktrees({
       branches: branchesToRemove,
       worktreeDir,
-      repoName,
     })
 
     // Hard `false`: sync is background/stale-cleanup (predominantly the MCP path) — it must never
@@ -122,14 +119,13 @@ const categorizeWorktrees = (args: CategorizeWorktreesArgs): { branchesToRemove:
 interface RemoveWorktreesArgs {
   branches: string[]
   worktreeDir: string
-  repoName: string
 }
 
 /**
  * Remove worktrees for the specified branches and close their cmux workspaces
  */
 const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string[]> => {
-  const { branches, worktreeDir, repoName } = args
+  const { branches, worktreeDir } = args
 
   const removed: string[] = []
 
@@ -137,9 +133,9 @@ const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string[]> => 
     try {
       const worktreePath = `${worktreeDir}/${branch}`
 
-      const title = buildCmuxWorkspaceTitle({ repoName, branch })
-
-      await closeCmuxWorkspaceByTitle(title)
+      // Close the cmux workspace by cwd (before `git worktree remove`, so the path
+      // still exists); anchors are excluded so a group header is never closed.
+      await closeCmuxWorkspaceByCwd(worktreePath)
 
       await $`git worktree remove ${worktreePath}`
       removed.push(branch)

@@ -7,7 +7,7 @@ import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
-import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
+import { getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { isMcpMode } from 'src/lib/mcp-mode'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
@@ -151,12 +151,9 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       commandEcho.addOption('--yes', true)
     }
 
-    const repoName = await getRepoName()
-
     const removedWorktrees = await removeWorktrees({
       branches: selectedReleaseBranches,
       worktreeDir,
-      repoName,
       pruneFolder: allSelected,
     })
 

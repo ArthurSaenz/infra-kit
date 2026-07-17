@@ -16,10 +16,7 @@ vi.mock('zx', () => {
 
 vi.mock('src/integrations/cmux', () => {
   return {
-    buildCmuxWorkspaceTitle: vi.fn(({ repoName, branch }: { repoName: string; branch: string }) => {
-      return `${repoName}:${branch}`
-    }),
-    closeCmuxWorkspaceByTitle: vi.fn(() => {
+    closeCmuxWorkspaceByCwd: vi.fn(() => {
       return Promise.resolve()
     }),
   }
@@ -56,7 +53,6 @@ const recordedCalls = (): DollarCall[] => {
 }
 
 const WORKTREE_DIR = '/repos/hulyo-monorepo-worktrees'
-const REPO_NAME = 'hulyo-monorepo'
 
 describe('removeWorktrees', () => {
   beforeEach(() => {
@@ -66,7 +62,7 @@ describe('removeWorktrees', () => {
   it('removes each leaf worktree and returns the removed branches', async () => {
     const branches = ['release/1.2.5', 'feature/foo']
 
-    const removed = await removeWorktrees({ branches, worktreeDir: WORKTREE_DIR, repoName: REPO_NAME })
+    const removed = await removeWorktrees({ branches, worktreeDir: WORKTREE_DIR })
 
     expect(removed).toEqual(branches)
 
@@ -83,7 +79,7 @@ describe('removeWorktrees', () => {
   it('never deletes the worktrees container or its group subdirs (regression)', async () => {
     const branches = ['release/1.2.5', 'release/1.2.6']
 
-    await removeWorktrees({ branches, worktreeDir: WORKTREE_DIR, repoName: REPO_NAME, pruneFolder: true })
+    await removeWorktrees({ branches, worktreeDir: WORKTREE_DIR, pruneFolder: true })
 
     const calls = recordedCalls()
     const commands = calls.map(commandOf)
@@ -112,7 +108,7 @@ describe('removeWorktrees', () => {
   it('runs `git worktree prune` when pruneFolder is set and every branch was removed', async () => {
     const branches = ['release/1.2.5']
 
-    await removeWorktrees({ branches, worktreeDir: WORKTREE_DIR, repoName: REPO_NAME, pruneFolder: true })
+    await removeWorktrees({ branches, worktreeDir: WORKTREE_DIR, pruneFolder: true })
 
     const prunedCalls = recordedCalls()
       .map(commandOf)
@@ -126,7 +122,7 @@ describe('removeWorktrees', () => {
   it('does not run `git worktree prune` when pruneFolder is false', async () => {
     const branches = ['release/1.2.5']
 
-    await removeWorktrees({ branches, worktreeDir: WORKTREE_DIR, repoName: REPO_NAME, pruneFolder: false })
+    await removeWorktrees({ branches, worktreeDir: WORKTREE_DIR, pruneFolder: false })
 
     const pruned = recordedCalls().map(commandOf).includes('git worktree prune')
 
@@ -154,7 +150,6 @@ describe('removeWorktrees', () => {
     const removed = await removeWorktrees({
       branches,
       worktreeDir: WORKTREE_DIR,
-      repoName: REPO_NAME,
       pruneFolder: true,
     })
 
