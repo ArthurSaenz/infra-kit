@@ -35,14 +35,17 @@ import {
   resolveConfiguredIdes,
 } from 'src/lib/infra-kit-config'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
-import { logger } from 'src/lib/logger'
 import { hasManagedBlock } from 'src/lib/managed-block'
 import { tildify } from 'src/lib/path-display'
 import { listProjectEnvNames } from 'src/lib/project-envs'
 import { canonicalizeProjectRoot } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
 
-interface CheckResult {
+/**
+ * One diagnosis. `name` is a stable public identifier — it is returned over MCP, keyed by the report's
+ * section map (`report.ts`), and pasted into bug reports — so renaming one is a breaking change.
+ */
+export interface CheckResult {
   name: string
   status: 'pass' | 'fail'
   message: string
@@ -63,7 +66,7 @@ const checkCommand = async (
   }
 }
 
-const checkZshrcInitialized = (): CheckResult => {
+export const checkZshrcInitialized = (): CheckResult => {
   const name = 'zshrc init block'
   const zshrcPath = path.join(os.homedir(), '.zshrc')
 
@@ -1155,14 +1158,9 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
 
   const checks: CheckResult[] = [...baseChecks, ...portlessChecks, ...(await checkAgentFiles())]
 
-  logger.info('Doctor check results:\n')
-
-  for (const check of checks) {
-    const icon = check.status === 'pass' ? '[PASS]' : '[FAIL]'
-
-    logger.info(`  ${icon} ${check.name}: ${check.message}`)
-  }
-
+  // NO rendering here, deliberately. `doctor()` has two callers — the CLI action and the MCP tool —
+  // and only one of them has a terminal. Printing from inside would emit a human report into an MCP
+  // server's stderr on every agent call; the CLI action owns presentation instead (see `report.ts`).
   const structuredContent = {
     checks: checks.map((c) => {
       return { name: c.name, status: c.status, message: c.message }
