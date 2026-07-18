@@ -200,7 +200,7 @@ const isBlockLine = (line: string): boolean => {
   )
 }
 
-const removeExistingBlock = (content: string): string => {
+export const removeExistingBlock = (content: string): string => {
   // 1. Current markers
   const result = removeManagedBlock(content, MARKER_START, MARKER_END)
 

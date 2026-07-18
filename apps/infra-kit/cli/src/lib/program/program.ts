@@ -3,7 +3,7 @@ import process from 'node:process'
 
 import { audit } from 'src/commands/audit'
 import { configEdit, configPath } from 'src/commands/config'
-import { doctor } from 'src/commands/doctor'
+import { doctor, printDoctorReport } from 'src/commands/doctor'
 import { envAutoload } from 'src/commands/env-autoload'
 import { envClear } from 'src/commands/env-clear'
 import { envList } from 'src/commands/env-list'
@@ -457,8 +457,17 @@ export const buildProgram = (): Command => {
       '--fix',
       'Remove portless routes left behind by a dev-server that was killed (kill -9, OOM, force-quit). Refuses while a dev session is running, when a booting UI is indistinguishable from a dead route.',
     )
+    .option('--ascii', 'Render the report with ASCII markers instead of unicode glyphs (check messages are unchanged)')
     .action(async (options) => {
-      emit(await doctor({ fix: Boolean(options.fix) }))
+      const result = await doctor({ fix: Boolean(options.fix) })
+
+      // Presentation lives here, not in `doctor()`: the MCP tool shares that function and has no
+      // terminal. Skipped entirely under `--json` so stdout carries the payload and nothing else.
+      if (!jsonOutput.enabled) {
+        printDoctorReport(result.structuredContent.checks, { ascii: Boolean(options.ascii) })
+      }
+
+      emit(result)
     })
 
   // No `update` alias: the `update` verb is reserved.
