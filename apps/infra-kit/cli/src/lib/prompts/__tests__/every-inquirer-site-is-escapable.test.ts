@@ -155,4 +155,60 @@ describe('every @inquirer call site routes through withEscape', () => {
 
     expect(unwrapped).toEqual([])
   })
+
+  it('covers the release prompts that used to read stdin raw', () => {
+    // These four were zx `question` calls, which acquire no stdin ref. After the last
+    // `withEscape` released the final reader — unref'ing stdin — the event loop drained
+    // MID-PROMPT and node exited with the question still on screen. Converting them to
+    // `@inquirer/input` is what pulls them into this sweep; asserting they are HERE stops a
+    // future refactor from quietly moving them back out of its reach.
+    const files = new Set(
+      sites.map((site) => {
+        return site.where.split(':')[0]
+      }),
+    )
+
+    expect(files).toContain('commands/release-create/release-create.ts')
+    expect(files).toContain('commands/release-desc-edit/release-desc-edit.ts')
+  })
+})
+
+/**
+ * The catch-all for the reader nobody has invented yet.
+ *
+ * The sweep above keys on imported prompt IDENTIFIERS, so it can only see readers whose API it
+ * already knows. Raw `readline` is the shape any future stdin reader is most likely to take, and it
+ * would be invisible to that rule — exactly as zx's `question` was, right up until it shipped a bug.
+ * This does not need to know the API; it only needs to know that raw readline reads stdin.
+ *
+ * Scoped to OUTSIDE `src/lib/prompts/` because that directory is where a legitimate reader would
+ * live: it owns the stdin refcount and is the one place allowed to build on readline directly.
+ *
+ * Currently zero hits — every `readline` occurrence in the tree is prose in a docstring. That makes
+ * this a pure forward fence with no exemptions to carve out, which is the cheapest moment to add it.
+ */
+describe('no raw readline outside the prompts module', () => {
+  const READLINE = new Set(['node:readline', 'node:readline/promises', 'readline', 'readline/promises'])
+
+  it('has no node:readline import outside src/lib/prompts/', () => {
+    const offenders = walk(SRC).flatMap((file) => {
+      const relative = path.relative(SRC, file)
+
+      if (relative.startsWith(`lib${path.sep}prompts${path.sep}`)) return []
+
+      const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, false)
+
+      return source.statements.flatMap((statement) => {
+        if (!ts.isImportDeclaration(statement)) return []
+        if (!ts.isStringLiteral(statement.moduleSpecifier)) return []
+        if (!READLINE.has(statement.moduleSpecifier.text)) return []
+
+        const line = source.getLineAndCharacterOfPosition(statement.getStart(source)).line + 1
+
+        return [`${relative}:${line}`]
+      })
+    })
+
+    expect(offenders).toEqual([])
+  })
 })

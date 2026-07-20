@@ -1,5 +1,5 @@
+import input from '@inquirer/input'
 import { z } from 'zod'
-import { question } from 'zx'
 
 import { getReleasePRsWithInfo, updateReleasePRBody } from 'src/integrations/gh'
 import { findVersionByName, loadJiraConfig, updateJiraVersion } from 'src/integrations/jira'
@@ -7,6 +7,7 @@ import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
+import { withEscape } from 'src/lib/prompts/escapable-context'
 import { pickReleaseBranch as pickReleaseBranchPrompt } from 'src/lib/prompts/release-picker'
 import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
 import {
@@ -65,10 +66,23 @@ const verifyReleasePRExists = async (selectedBranch: string): Promise<ReleaseTyp
   return detectReleaseType(prInfo.title)
 }
 
-const promptDescription = async (current: string): Promise<string> => {
+/**
+ * Exported for test only. The keep-current semantics below turn on exactly how the answer is
+ * whitespace-normalised, which is the detail that changed when this stopped being a zx `question`.
+ */
+export const promptDescription = async (current: string): Promise<string> => {
   const hint = current === '' ? '(no current description)' : `current: "${current}"`
-  const answer = await question(`  New description ${hint}\n  (press Enter to keep current): `)
-  const trimmed = answer.replace(/\n$/, '')
+  // SINGLE-LINE message on purpose. The hint used to sit on its own line via an embedded `\n`,
+  // which zx wrote raw and inquirer cannot: inquirer re-renders on every keystroke and derives
+  // its ANSI erase-line count from the rendered message, so a manual newline miscounts and
+  // leaves orphaned prompt fragments on screen. Inlining the hint removes the hazard outright
+  // rather than testing around it.
+  const answer = await withEscape((context) => {
+    return input({ message: `  New description ${hint} (press Enter to keep current): ` }, context)
+  })
+  // `.trim()`, where the zx version only stripped a trailing newline. Whitespace-only input now
+  // means keep-current instead of overwriting the description with blanks.
+  const trimmed = answer.trim()
 
   return trimmed === '' ? current : trimmed
 }

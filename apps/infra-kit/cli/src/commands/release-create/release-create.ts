@@ -1,8 +1,8 @@
 import confirm from '@inquirer/confirm'
+import input from '@inquirer/input'
 import select from '@inquirer/select'
 import process from 'node:process'
 import { z } from 'zod'
-import { question } from 'zx'
 
 import { loadJiraConfig } from 'src/integrations/jira'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
@@ -65,10 +65,18 @@ const resolveOrExit = (entries: ReleaseInput[], known: SemVer[]): ReleaseEntry[]
   }
 }
 
-const promptForVersionInput = async (running: SemVer[], type: ReleaseType): Promise<string> => {
+/** Exported for test only — the empty-answer fallback below is observable no other way. */
+export const promptForVersionInput = async (running: SemVer[], type: ReleaseType): Promise<string> => {
   const suggestion = trySuggestNext(running, type)
   const defaultHint = suggestion ? ` [${suggestion}]` : ''
-  const versionAnswer = (await question(`  Version (e.g. ${VERSION_PROMPT_HINT})${defaultHint}: `)).trim()
+  // The suggestion stays in the MESSAGE and is applied by the empty-answer fallback below —
+  // deliberately not inquirer's `default:`, which prefills the editable buffer and would change
+  // both what the user sees and what an empty submit returns.
+  const versionAnswer = (
+    await withEscape((context) => {
+      return input({ message: `  Version (e.g. ${VERSION_PROMPT_HINT})${defaultHint}: ` }, context)
+    })
+  ).trim()
   const versionInput = versionAnswer === '' ? (suggestion ?? '') : versionAnswer
 
   if (versionInput === '') {
@@ -80,7 +88,11 @@ const promptForVersionInput = async (running: SemVer[], type: ReleaseType): Prom
 }
 
 const promptForNameInput = async (): Promise<string> => {
-  const name = (await question('  Name (kebab-case, e.g. "checkout-redesign"): ')).trim()
+  const name = (
+    await withEscape((context) => {
+      return input({ message: '  Name (kebab-case, e.g. "checkout-redesign"): ' }, context)
+    })
+  ).trim()
 
   if (name === '') {
     logger.error('No name provided. Exiting...')
@@ -163,7 +175,11 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
       }
     }
 
-    const description = (await question('  Description (optional, press Enter to skip): ')).trim()
+    const description = (
+      await withEscape((context) => {
+        return input({ message: '  Description (optional, press Enter to skip): ' }, context)
+      })
+    ).trim()
 
     entries.push({ ...resolved, ...(description !== '' ? { description } : {}) })
 
