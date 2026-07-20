@@ -175,7 +175,7 @@ type Glyphs = (typeof GLYPHS)[keyof typeof GLYPHS]
  * Never wrap a message into a column narrower than this, however small the terminal claims to be.
  *
  * This is a readability floor, NOT a fit guarantee: the message column starts after the widest check
- * name in its section (`typescript-language-server installed` alone is 36 chars), so on a genuinely
+ * name in the WHOLE report (`typescript-language-server installed` alone is 36 chars), so on a genuinely
  * narrow terminal a row can still exceed `width`. Wrapping messages into a 4-column ribbon would be
  * worse than overflowing, and the alternative — truncating — is ruled out because these messages carry
  * the commands the user has to copy.
@@ -373,13 +373,16 @@ export const formatDoctorReport = (checks: readonly CheckResult[], options: Doct
 
   if (checks.length === 0) return [palette.bold('infra-kit doctor'), '', `${INDENT}${palette.dim('No checks ran.')}`]
 
-  const sections = groupChecks(checks).flatMap((section): string[] => {
-    const nameWidth = Math.max(
-      ...section.checks.map((check) => {
-        return check.name.length
-      }),
-    )
+  // ONE name column for the whole report, not one per section: the message column is the eye's
+  // vertical guide down the page, and re-measuring it per section made it jump at every heading.
+  // Costs a few spaces of padding in the sections whose names are short — worth it.
+  const nameWidth = Math.max(
+    ...checks.map((check) => {
+      return check.name.length
+    }),
+  )
 
+  const sections = groupChecks(checks).flatMap((section): string[] => {
     return [
       formatSectionHeader(section, palette, glyphs, width),
       ...section.checks.flatMap((check) => {
