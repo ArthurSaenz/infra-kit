@@ -5,6 +5,7 @@ import process from 'node:process'
 import { z } from 'zod'
 
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
+import { isMcpMode } from 'src/lib/mcp-mode'
 
 const INFRA_KIT_CONFIG_FILE = 'infra-kit.json'
 
@@ -316,6 +317,10 @@ export interface InfraKitConfigPaths {
 }
 
 interface CacheEntry {
+  /** `cwd + homedir` — see {@link pathsCacheKey}. Required alongside `mtimes`: mtimes alone can
+   * collide across two different repo roots (or two homedirs), which would serve one repo's config
+   * to a request for another inside a long-lived process (the MCP server). */
+  key: string
   mtimes: Record<keyof Omit<InfraKitConfigPaths, 'projectName'>, number | null>
   value: InfraKitConfig
 }
@@ -420,6 +425,7 @@ export const getInfraKitConfigPaths = async (): Promise<InfraKitConfigPaths> => 
  * // => { environments: ['dev'], envManagement: {...}, ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } } }
  */
 export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
+  const key = pathsCacheKey()
   const paths = await getInfraKitConfigPaths()
 
   let mainStat: Awaited<ReturnType<typeof fs.stat>>
@@ -439,7 +445,11 @@ export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
       )
     }
 
-    throw new Error(`infra-kit.json not found at ${paths.main}`)
+    throw new Error(
+      isMcpMode()
+        ? `infra-kit.json not found at ${paths.main} — the directory the infra-kit MCP server was launched in is not an infra-kit project. The operator must relaunch the server with its working directory set to an infra-kit project repo.`
+        : `infra-kit.json not found at ${paths.main} — this git repo is not an infra-kit project. Run \`infra-kit init\` here to create it, cd into an infra-kit project repo, or check out a branch that has infra-kit.json.`,
+    )
   }
 
   const [userGlobalStat, userProjectStat] = await Promise.all([
@@ -453,7 +463,7 @@ export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
     userProject: userProjectStat ? Number(userProjectStat.mtimeMs) : null,
   }
 
-  if (cached && shallowEqual(cached.mtimes, mtimes)) {
+  if (cached && cached.key === key && shallowEqual(cached.mtimes, mtimes)) {
     return cached.value
   }
 
@@ -483,7 +493,7 @@ export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
     throw new Error(`Invalid merged infra-kit config: ${z.prettifyError(finalResult.error)}`)
   }
 
-  cached = { mtimes, value: finalResult.data }
+  cached = { key, mtimes, value: finalResult.data }
 
   return finalResult.data
 }

@@ -11,13 +11,11 @@ export {
 export type { ManifestDiff, VendorManifest } from './manifest'
 /**
  * Read-path barrel for the vendor integrity primitives. This is the SINGLE
- * source of truth for walk/hash/manifest logic, consumed by `vendor check` and
- * (via the same functions) the write-path commands.
+ * source of truth for walk/hash/manifest logic, consumed by `vendor check`.
  *
- * IMPORTANT: this barrel intentionally re-exports ONLY the read path. The config
- * loader (`./config`) and rsync/`zx` (`./sync-ops`) live with the write commands;
- * `vendor check` never imports them, so its runtime path stays free of them. The
- * skip-set constants are an internal detail (`./skip-sets`) used by `walk`.
+ * IMPORTANT: this barrel intentionally re-exports ONLY the read path, so
+ * `vendor check`'s runtime path stays free of any config loader or subprocess.
+ * The skip-set constants are an internal detail (`./skip-sets`) used by `walk`.
  */
 export { VENDOR_DIR } from './skip-sets'
 export { walkVendorTree } from './walk'

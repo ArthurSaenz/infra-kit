@@ -13,7 +13,7 @@ import * as path from 'node:path'
 import process from 'node:process'
 import { vi } from 'vitest'
 
-import type { PortlessDriver } from 'src/dev/proxy/portless-driver'
+import type { PortlessDriver, ProxyProbeOutcome, ServiceInstalled } from 'src/dev/proxy/portless-driver'
 import { ServerlessLocalRun } from 'src/dev/serverless-local-run'
 
 /** Default URL prefix the fixtures serve routes under (matches the runner default). */
@@ -118,6 +118,13 @@ export interface AppSpec {
     viteConfig?: boolean
     viteSpecifier?: string
     /**
+     * Write the config wiring the `infraKit()` vite PLUGIN instead of the raw `infraKitDev()` helper
+     * (default false — every other fixture models today's real consumers, which all wire the bare
+     * helper). Set true to model the plugin-wired shape `usesInfraKitVitePlugin` must recognise as
+     * NOT missing the plugin.
+     */
+    vitePlugin?: boolean
+    /**
      * Also write the UI's `infra-kit.config.ts` with a `dev.proxy` block declaring these routes. This is
      * the file the vite helper resolves the real proxy from, and the same file the broken-local-pairing
      * check reads — so a fixture without it declares no routes and can never degrade.
@@ -167,17 +174,23 @@ function writeUi(root: string, app: AppSpec & { ui: NonNullable<AppSpec['ui']> }
   fs.writeFileSync(path.join(uiDir, 'package.json'), JSON.stringify(pkg))
 
   if (ui.viteConfig !== false) {
-    const specifier = ui.viteSpecifier ?? '@slip-stream-kit/config/vite'
-
     fs.writeFileSync(
       path.join(uiDir, 'vite.config.ts'),
-      [
-        `import { infraKitDev } from '${specifier}'`,
-        "import { defineConfig } from 'vite'",
-        '',
-        'export default defineConfig(async ({ command }) => ({ server: await infraKitDev({ command }) }))',
-        '',
-      ].join('\n'),
+      ui.vitePlugin
+        ? [
+            "import { infraKit } from '@slip-stream-kit/vite'",
+            "import { defineConfig } from 'vite'",
+            '',
+            'export default defineConfig({ plugins: [infraKit()] })',
+            '',
+          ].join('\n')
+        : [
+            `import { infraKitDev } from '${ui.viteSpecifier ?? '@slip-stream-kit/config/vite'}'`,
+            "import { defineConfig } from 'vite'",
+            '',
+            'export default defineConfig(async ({ command }) => ({ server: await infraKitDev({ command }) }))',
+            '',
+          ].join('\n'),
     )
   }
 
@@ -355,16 +368,38 @@ export const daemonNeverStarts = (): boolean => {
  */
 export const FAKE_PORTLESS_BIN = '/Users/dev/My Projects/repo/node_modules/portless/dist/cli.js'
 
+/**
+ * Extra classification knobs for {@link makeFakeProxy}, layered on at the end so every positional call site
+ * (there are many, across dev-server.test.ts) keeps compiling unchanged.
+ */
+export interface FakeProxyOptions {
+  /**
+   * What {@link PortlessDriver.isServiceInstalled} reports when `daemonOk` says the daemon is down. Defaults
+   * to `'no'` — the historical fake behaved as "never installed", and ensureProxy's tests that pre-date the
+   * W5 classification assert exactly that message shape.
+   */
+  serviceInstalled?: ServiceInstalled
+  /**
+   * When `daemonOk` says the daemon is down, should {@link PortlessDriver.probeProxy} report `'not-portless'`
+   * (something else is squatting on the port) instead of `'daemon-down'` (nothing is listening at all)? Only
+   * meaningful when `available` is `true` — an absent binary is caught earlier and never reaches this probe.
+   */
+  notPortless?: boolean
+}
+
 export const makeFakeProxy = (
   available: boolean,
   daemonOk: (port: number) => boolean = () => {
     return available
   },
   events?: string[],
+  options?: FakeProxyOptions,
 ): FakeProxy => {
   const registered: Array<[string, number]> = []
   const removed: string[] = []
   const ensuredPorts: number[] = []
+  const serviceInstalled = options?.serviceInstalled ?? 'no'
+  const notPortless = options?.notPortless ?? false
   const driver: PortlessDriver = {
     binPath: () => {
       return available ? FAKE_PORTLESS_BIN : null
@@ -376,6 +411,22 @@ export const makeFakeProxy = (
       ensuredPorts.push(port)
 
       return Promise.resolve(available && daemonOk(port))
+    },
+    probeProxy: (port) => {
+      ensuredPorts.push(port)
+
+      let outcome: ProxyProbeOutcome = 'daemon-down'
+
+      if (available && daemonOk(port)) {
+        outcome = 'serving'
+      } else if (notPortless) {
+        outcome = 'not-portless'
+      }
+
+      return Promise.resolve(outcome)
+    },
+    isServiceInstalled: () => {
+      return serviceInstalled
     },
     registerAlias: (name, port) => {
       registered.push([name, port])

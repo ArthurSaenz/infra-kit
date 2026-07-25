@@ -18,6 +18,14 @@ export interface McpTool<TIn extends z.ZodRawShape = z.ZodRawShape, TOut extends
   description: string
   inputSchema: TIn
   outputSchema: TOut
+  /**
+   * When true, this tool is gated by the MCP destructive-op confirm gate (see `lib/tool-handler`):
+   * a first call WITHOUT `confirm:true` returns a resolved-args gate response instead of running,
+   * and only a second call carrying `confirm:true` executes. This is ORTHOGONAL to the
+   * `confirmedCommand:true` the boundary always injects (a prompt-skip discriminator, not a gate).
+   * Set only on genuinely destructive tools; the default-deny catalog test enforces coverage.
+   */
+  requiresHumanConfirm?: boolean
   handler: (
     params: z.infer<z.ZodObject<TIn>> & RequiredConfirmedOptionArg,
   ) => Promise<ToolsExecutionResult<z.infer<z.ZodObject<TOut>>>>

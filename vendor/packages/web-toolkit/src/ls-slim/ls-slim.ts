@@ -24,7 +24,7 @@ const supportsLS = (): boolean => {
     if (!localStorage || typeof localStorage.getItem !== 'function') {
       hasLS = false
     }
-    // eslint-disable-next-line sonarjs/no-ignored-exceptions, unused-imports/no-unused-vars
+    // eslint-disable-next-line unused-imports/no-unused-vars
   } catch (error) {
     // some browsers throw an error if you try to access local storage (e.g. brave browser)
     // and some like Safari do not allow access to LS in incognito mode
@@ -135,7 +135,7 @@ export const flush = (force = false): false | void => {
 
     try {
       item = JSON.parse(string)
-      // eslint-disable-next-line sonarjs/no-ignored-exceptions, unused-imports/no-unused-vars
+      // eslint-disable-next-line unused-imports/no-unused-vars
     } catch (error) {
       // Some packages write strings to localStorage that are not converted by JSON.stringify(), so we need to ignore it
       return

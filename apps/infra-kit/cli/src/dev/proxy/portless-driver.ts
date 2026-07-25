@@ -176,6 +176,64 @@ const LOOPBACK = '127.0.0.1'
  */
 const PROBE_SERVERNAME = 'localhost'
 
+/**
+ * Whether portless's OS-level service (the thing `service install` registers) is present on disk.
+ * `'unknown'` on a platform this check does not cover (currently anything but macOS/Linux) — a caller must
+ * never read `'unknown'` as `'no'`, since doing so would tell an already-provisioned Windows machine to
+ * reinstall.
+ */
+export type ServiceInstalled = 'yes' | 'no' | 'unknown'
+
+/**
+ * portless's launchd service label (`sh.portless.proxy`, hard-coded in portless's own CLI) and the two
+ * fixed paths its `service install`/`uninstall` write to on macOS and Linux. These are read-only constants
+ * of portless's OWN implementation, not ours — see `dist/cli.js`'s `SERVICE_LABEL`/`buildServiceSpec`. There
+ * is no per-user or per-project variant: `service install` always targets exactly one of these two paths.
+ * Exported so a test can assert against the exact path this check reads, without hard-coding a second copy.
+ */
+export const DARWIN_SERVICE_PLIST_PATH = '/Library/LaunchDaemons/sh.portless.proxy.plist'
+export const LINUX_SERVICE_UNIT_PATH = '/etc/systemd/system/portless.service'
+
+/** The `existsSync` seam {@link defaultIsServiceInstalled} takes, injected so tests never touch real root paths. */
+export type ExistsCheck = (path: string) => boolean
+
+/**
+ * Cheap, synchronous, never-throwing check for whether portless's OS service is registered — a plain
+ * `existsSync` on the fixed path `service install` writes to, never a `launchctl`/`systemctl` shell-out. This
+ * is what lets {@link createPortlessDriver}'s daemon-down classification tell "never installed" apart from
+ * "installed, but not currently answering" without adding a second process spawn to every failed probe.
+ *
+ * Deliberately does not attempt Windows detection (a Task Scheduler task, which needs `schtasks` to query) —
+ * `'unknown'` there is honest; a guessed `'no'` would send an already-provisioned machine back through
+ * `service install` for no reason.
+ *
+ * `exists` defaults to the real `existsSync` but is a normal parameter (not a named-import spy target) so a
+ * test can assert both branches without touching `/Library/LaunchDaemons` — a root-owned path a dev machine
+ * may genuinely have populated, which would make an un-injected assertion true or false depending on the
+ * author's own machine state rather than the code under test.
+ */
+export const defaultIsServiceInstalled = (exists: ExistsCheck = existsSync): ServiceInstalled => {
+  try {
+    if (process.platform === 'darwin') return exists(DARWIN_SERVICE_PLIST_PATH) ? 'yes' : 'no'
+    if (process.platform === 'linux') return exists(LINUX_SERVICE_UNIT_PATH) ? 'yes' : 'no'
+
+    return 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+/**
+ * Fine-grained outcome of probing the proxy port, distinguishing the two ways "not serving" happens so
+ * {@link createPortlessDriver}'s caller can print a distinct, actionable fix for each:
+ *  - `'serving'` — portless answered on the wire (the old boolean `true`).
+ *  - `'daemon-down'` — nothing is even accepting TCP on the port (refused). Combined with
+ *    {@link ServiceInstalled} this splits into "never installed" vs "installed but crashed/stopped".
+ *  - `'not-portless'` — something IS listening, but it did not answer with `X-Portless: 1` — a squatter has
+ *    the port, and installing/trusting portless will not free it.
+ */
+export type ProxyProbeOutcome = 'serving' | 'daemon-down' | 'not-portless'
+
 export const defaultIsListening: IsListening = (port) => {
   return new Promise((resolve) => {
     const socket = net.connect({ host: LOOPBACK, port })
@@ -410,6 +468,18 @@ export interface PortlessDriver {
    */
   isProxyServing: (port: number, tls: boolean) => Promise<boolean>
   /**
+   * Same probe as {@link PortlessDriver.isProxyServing}, but reporting WHICH way it failed instead of
+   * collapsing every non-serving case into `false`. `ensureProxy` uses this to print a distinct, actionable
+   * message for "nothing there", "something else is there", and (combined with {@link isServiceInstalled})
+   * "installed but not running" vs "never installed". Never starts anything — probe only, same as above.
+   */
+  probeProxy: (port: number, tls: boolean) => Promise<ProxyProbeOutcome>
+  /**
+   * Is portless's OS-level service (what `service install` registers) present on disk? Cheap, synchronous,
+   * never throws. `'unknown'` on a platform this cannot check — a caller must not read that as `'no'`.
+   */
+  isServiceInstalled: () => ServiceInstalled
+  /**
    * Register `<name> → 127.0.0.1:<port>` (`name` = `<release>.<package>`). Returns `true` on success so
    * the caller shows the hero URL only for an alias that actually resolves (best-effort otherwise).
    */
@@ -426,6 +496,8 @@ export interface PortlessDriverDeps {
   isListening?: IsListening
   /** Wire-probe identity check (default: real `HEAD /` + `X-Portless`). Injected in tests. */
   isProxyServing?: IsProxyServing
+  /** OS-service-on-disk check (default: real `existsSync` on the plist/unit path). Injected in tests. */
+  isServiceInstalled?: () => ServiceInstalled
   timeoutMs?: number
 }
 
@@ -438,6 +510,7 @@ export const createPortlessDriver = (deps: PortlessDriverDeps = {}): PortlessDri
   const run = deps.run ?? defaultRun
   const isListening = deps.isListening ?? defaultIsListening
   const isProxyServing = deps.isProxyServing ?? defaultIsProxyServing
+  const isServiceInstalled = deps.isServiceInstalled ?? defaultIsServiceInstalled
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
   let availability: boolean | null = null
 
@@ -466,6 +539,18 @@ export const createPortlessDriver = (deps: PortlessDriverDeps = {}): PortlessDri
     return isProxyServing(port, tls)
   }
 
+  /**
+   * The classifying counterpart of {@link serving}. Deliberately does NOT gate on `isAvailable()` first (unlike
+   * `serving`): a broken/missing CLI binary says nothing about whether a daemon a PRIOR install started is
+   * still up on the wire, so the two are independent facts and the caller (which already checked availability
+   * before ever calling this) must not have that distinction collapsed here.
+   */
+  const probeProxy = async (port: number, tls: boolean): Promise<ProxyProbeOutcome> => {
+    if (!(await isListening(port))) return 'daemon-down'
+
+    return (await isProxyServing(port, tls)) ? 'serving' : 'not-portless'
+  }
+
   const registerAlias = async (name: string, port: number): Promise<boolean> => {
     if (!(await isAvailable())) return false
 
@@ -483,6 +568,8 @@ export const createPortlessDriver = (deps: PortlessDriverDeps = {}): PortlessDri
     },
     isAvailable,
     isProxyServing: serving,
+    probeProxy,
+    isServiceInstalled,
     registerAlias,
     removeAlias,
   }

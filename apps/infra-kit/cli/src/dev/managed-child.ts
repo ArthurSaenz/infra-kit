@@ -21,6 +21,13 @@
  * child's whole life, and each group is stamped with its leader's `lstart`: a pgid is a bare integer the
  * kernel will happily recycle, and the leader's start time is the only proof that the group we are about
  * to SIGKILL is still the one we saw.
+ *
+ * That rolling snapshot lives in a per-child closure, which is exactly what the SECOND-SIGNAL force path
+ * (`killDescendantGroupsNow`, used by both `signal-shutdown`'s force-quit and `crash-barrier`'s fatal
+ * path) cannot reach on its own — it only ever does a live `ppid` walk from `process.pid`, the same walk
+ * that goes blind the moment a child dies. So every supervised child's snapshot is also published to a
+ * module-level `registry` (see below), letting that force path find a descendant which reparented to init
+ * before ITS parent's `exit` even fired — the one case a live walk structurally cannot cover.
  */
 import { execFile, execFileSync } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -146,6 +153,21 @@ export const snapshotGroups = (rootPid: number, rows: ProcRow[], excludePgid?: n
 }
 
 /**
+ * pgids in `snapshot` whose leader's start time still matches `rows` — the reuse guard shared by every
+ * path that reaps from a snapshot instead of a live walk: {@link reapSnapshot} (the per-child crash/kill
+ * reap) and {@link collectForceReapTargets} (the force-reap path, reaping every REGISTERED child's
+ * snapshot). Extracted so the two can never drift apart — a registry-sourced pgid must clear the exact
+ * same check a per-child reap does before either signals it.
+ */
+const validSnapshotPgids = (snapshot: readonly GroupSnapshot[], rows: ProcRow[]): number[] => {
+  const starts = leaderStarts(rows)
+
+  return snapshot.flatMap(({ pgid, leaderStart }) => {
+    return starts.get(pgid) === leaderStart ? [pgid] : []
+  })
+}
+
+/**
  * SIGKILL every snapshotted group whose leader is STILL the same process, and return the pgids killed.
  *
  * A group whose leader has since exited is skipped (nothing to kill, and no way to prove ownership of
@@ -154,11 +176,7 @@ export const snapshotGroups = (rootPid: number, rows: ProcRow[], excludePgid?: n
  * from a stale snapshot safe, and it is why the snapshot records `lstart` at all.
  */
 export const reapSnapshot = (snapshot: readonly GroupSnapshot[], rows: ProcRow[]): number[] => {
-  const starts = leaderStarts(rows)
-
-  return snapshot.flatMap(({ pgid, leaderStart }) => {
-    if (starts.get(pgid) !== leaderStart) return []
-
+  return validSnapshotPgids(snapshot, rows).flatMap((pgid) => {
     try {
       process.kill(-pgid, 'SIGKILL')
     } catch {
@@ -276,7 +294,53 @@ const signalGroups = (pgids: number[], signal: NodeJS.Signals): void => {
 }
 
 /**
- * SIGKILL every process group descended from this process, right now.
+ * Live accessors into every currently-supervised child's rolling {@link GroupSnapshot} list — populated by
+ * {@link superviseChild} on spawn, removed only once that child's own groups are CONFIRMED gone (see
+ * `deregisterAfter` inside it, not the child's bare `exit` event). This is what lets
+ * {@link killDescendantGroupsNow} — the second-signal force path and the crash-barrier's fatal path —
+ * reach a descendant that reparented to init before ITS parent's `exit` fired: a live `ppid` walk from
+ * `process.pid` cannot see such a descendant (see the module doc block for why), but a snapshot recorded
+ * while the parent was still alive can.
+ *
+ * INVARIANT — never regress this: a registry-sourced pgid is signalled ONLY after
+ * {@link validSnapshotPgids} confirms its leader's start time still matches a FRESH `ps` snapshot. An
+ * ungated union would SIGKILL a recycled pgid — a hazard the live walk cannot have, since it only ever
+ * names processes that are alive right now.
+ */
+const registry = new Set<() => readonly GroupSnapshot[]>()
+
+/**
+ * The pgids {@link killDescendantGroupsNow} should signal: every group in the live `ppid` walk from
+ * `rootPid` (unchanged semantics — see {@link doomedGroupsOf}), UNIONED with every registry-sourced
+ * snapshot that survives {@link validSnapshotPgids} against the same `rows`. Live-walk pgids are not
+ * lstart-gated — they carry no snapshot to validate against, and are live by construction; only the
+ * registry-sourced half needs the reuse guard.
+ *
+ * Pulled out of `killDescendantGroupsNow` as a pure function so the union/dedupe logic can be tested
+ * against a fake process table and fake registry snapshots, without spawning real processes or waiting on
+ * a real `ps`.
+ *
+ * @example
+ * // pgid 20 is unreachable from rootPid (reparented to init) but was recorded before its parent died.
+ * collectForceReapTargets(1000, freshRows, [[{ pgid: 20, leaderStart: '…' }]]) // => [20]
+ */
+export const collectForceReapTargets = (
+  rootPid: number,
+  rows: ProcRow[],
+  registrySnapshots: readonly (readonly GroupSnapshot[])[],
+): number[] => {
+  const live = doomedGroupsOf(rootPid, rows)
+  const fromRegistry = registrySnapshots.flatMap((snapshot) => {
+    return validSnapshotPgids(snapshot, rows)
+  })
+
+  return [...new Set([...live, ...fromRegistry])]
+}
+
+/**
+ * SIGKILL every process group descended from this process, right now — plus every REGISTERED
+ * supervised-child snapshot that still validates, so a group that reparented to init before its parent's
+ * `exit` fired is not left behind just because the live `ppid` walk can no longer see it.
  *
  * The force-quit path (a second Ctrl-C) abandons the graceful teardown, but it must not abandon the
  * CHILDREN: they hold the dev ports, and the next start would 502 against their stale portless
@@ -288,7 +352,12 @@ const signalGroups = (pgids: number[], signal: NodeJS.Signals): void => {
  * whole latency budget a user who just hit Ctrl-C twice is willing to spend.
  */
 export const killDescendantGroupsNow = (): void => {
-  signalGroups(doomedGroupsOf(process.pid, snapshotProcRows()), 'SIGKILL')
+  const rows = snapshotProcRows()
+  const registrySnapshots = [...registry].map((getGroups) => {
+    return getGroups()
+  })
+
+  signalGroups(collectForceReapTargets(process.pid, rows, registrySnapshots), 'SIGKILL')
 }
 
 /** Resolve after `ms`, used to pace the teardown polling loop. */
@@ -345,6 +414,13 @@ export function superviseChild(
   child: ChildProcess,
   graceMs: number = DEFAULT_GRACE_MS,
   onUnexpectedExit?: UnexpectedExitHandler,
+  /**
+   * Test-only seam: overrides the `ps` snapshot used by this child's own reap ATTEMPTS (the crash-time
+   * reap in the `exit` handler, and `kill()`'s reaps) — never the rolling sampler, which always uses the
+   * real one. Defaults to the real synchronous `ps` call for every production caller. Lets a test simulate
+   * a transient `ps` failure (an empty read) without needing to race the real one.
+   */
+  snapshotRowsOverride: () => ProcRow[] = snapshotProcRows,
 ): ManagedChild {
   // Don't keep the parent event loop alive on the child; the runner owns lifecycle via kill().
   child.unref()
@@ -357,9 +433,53 @@ export function superviseChild(
   let groups: GroupSnapshot[] = []
   let sampler: NodeJS.Timeout | null = null
 
+  /** Live accessor registered in {@link registry} for the whole life of this child — see `deregisterAfter`. */
+  const getGroups = (): readonly GroupSnapshot[] => {
+    return groups
+  }
+
+  registry.add(getGroups)
+
   const stopSampling = (): void => {
     if (sampler) clearInterval(sampler)
     sampler = null
+  }
+
+  /**
+   * Drop this child's accessor from {@link registry} once every group it ever recorded is CONFIRMED gone
+   * — never merely because `exit` fired or a reap attempt ran. A reap attempt can fail to kill anything
+   * for a legitimate reason (a stale/empty `ps` read) while the descendant is still very much alive, and
+   * removing the entry THEN would strand it: nothing else remembers those pgids once this closure is gone.
+   * Bounded by `REAP_TIMEOUT_MS` so a group this genuinely cannot reap (a foreign process now holding a
+   * recycled pgid) does not pin a dead entry in the registry forever.
+   */
+  const deregisterAfter = async (): Promise<void> => {
+    await waitForExit(
+      groups.map((g) => {
+        return g.pgid
+      }),
+      REAP_TIMEOUT_MS,
+    )
+    registry.delete(getGroups)
+  }
+
+  /**
+   * Turn a fresh `ps` read into an updated {@link groups}. An empty result is discarded rather than
+   * stored: `ps` failing, or racing the child's own death, must degrade to the previous snapshot, never
+   * erase it. Shared by the synchronous first sample below and the async rolling {@link sample}, so the
+   * two can never compute the group set differently.
+   */
+  const applySample = (rows: ProcRow[]): void => {
+    const pid = child.pid
+
+    if (pid == null || exited || killing || rows.length === 0) return
+
+    const ownPgid = rows.find((row) => {
+      return row.pid === process.pid
+    })?.pgid
+    const next = snapshotGroups(pid, rows, ownPgid)
+
+    if (next.length > 0) groups = next
   }
 
   /**
@@ -372,27 +492,24 @@ export function superviseChild(
    * running, still holding its port) is unreachable forever. There is no window to race — the only way
    * to know vite's group after turbo dies is to have written it down BEFORE turbo died.
    *
-   * An empty result is discarded rather than stored: `ps` failing, or racing the child's own death,
-   * must degrade to the previous snapshot, never erase it.
+   * Async (`snapshotProcRowsAsync`) so the rolling tick never blocks the event loop the in-process
+   * backends share — see the FIRST sample below for why that leaves a narrow window this function alone
+   * cannot close.
    */
   const sample = async (): Promise<void> => {
-    const pid = child.pid
+    if (child.pid == null || exited || killing) return
 
-    if (pid == null || exited || killing) return
-
-    const rows = await snapshotProcRowsAsync()
-
-    if (rows.length === 0 || exited || killing) return
-
-    const ownPgid = rows.find((row) => {
-      return row.pid === process.pid
-    })?.pgid
-    const next = snapshotGroups(pid, rows, ownPgid)
-
-    if (next.length > 0) groups = next
+    applySample(await snapshotProcRowsAsync())
   }
 
-  void sample()
+  // Synchronous, not `void sample()`: a child that crashes within `sample()`'s first async `ps` round
+  // trip (tens of ms) would otherwise have no snapshot recorded at all, and the `exit` handler's
+  // `reapSnapshot(groups, …)` would run against an empty `groups` and reap nothing — the exact
+  // spawn→first-snapshot window W11 closes. One small `ps` exec, before this function ever returns,
+  // costs the same one-time block on the shared event loop that `killDescendantGroupsNow`'s synchronous
+  // `ps` call already spends on every force-quit — paid once per spawn instead of once per Ctrl-C.
+  applySample(snapshotProcRows())
+
   sampler = setInterval(() => {
     void sample()
   }, SAMPLE_INTERVAL_MS)
@@ -413,7 +530,14 @@ export function superviseChild(
     // `vite`/`tsc` survive holding their ports. Nothing can find them by walking (see `sample`), and
     // the `kill()` below would bail on an already-exited child. Reaping from the snapshot here is the
     // only thing standing between a crashed engine and a permanently orphaned dev server.
-    if (!killing) reapSnapshot(groups, snapshotProcRows())
+    //
+    // `deregisterAfter` (not a bare delete) — this reap attempt reading a stale/empty `ps` snapshot must
+    // not be mistaken for the descendants actually being gone; the registry entry is the only remaining
+    // record of them until a later confirmation (or force-reap) proves they are.
+    if (!killing) {
+      reapSnapshot(groups, snapshotRowsOverride())
+      void deregisterAfter()
+    }
 
     reportUnexpected(`exited unexpectedly (code=${code ?? 'null'}, signal=${signal ?? 'null'})`)
   })
@@ -429,7 +553,12 @@ export function superviseChild(
 
       const pid = child.pid
 
-      if (pid == null) return
+      if (pid == null) {
+        // Never spawned a real pid — nothing was ever tracked, so nothing to confirm.
+        registry.delete(getGroups)
+
+        return
+      }
 
       // Once the child is reaped the OS may recycle `pid` onto an unrelated process, and `kill(-pid, …)`
       // would then destroy a stranger's group — so an exited child is never walked. It is not simply
@@ -437,16 +566,20 @@ export function superviseChild(
       // has to clear them. The snapshot is the only surviving handle on those groups, and `reapSnapshot`
       // re-validates each one against its leader's start time, so a recycled pgid is refused.
       if (child.exitCode !== null || child.signalCode !== null) {
-        reapSnapshot(groups, snapshotProcRows())
+        reapSnapshot(groups, snapshotRowsOverride())
+        await deregisterAfter()
 
         return
       }
 
-      const rows = snapshotProcRows()
+      const rows = snapshotRowsOverride()
 
       // The cheap check above misses a child reaped just now, so confirm `pid` is still ours: a
       // detached child keeps us as its parent, so a foreign `ppid` means the pid was recycled.
-      // Skipped when `ps` failed (empty `rows`) — then only the guard above stands.
+      // Skipped when `ps` failed (empty `rows`) — then only the guard above stands. The registry entry is
+      // deliberately left alone here: this state is genuinely ambiguous (did the pid really get
+      // recycled, or did `ps` just fail?), and the safe default is to let a later reap re-decide with a
+      // fresh read, not to guess by dropping the one record we have.
       if (rows.length > 0 && !isChildOf(pid, process.pid, rows)) return
 
       const doomed = doomedGroupsOf(pid, rows)
@@ -457,12 +590,18 @@ export function superviseChild(
 
       const stragglers = await waitForExit(doomed, graceMs)
 
-      if (stragglers.length === 0) return
+      if (stragglers.length === 0) {
+        // Every doomed group (this child's own, plus every task group the live walk found) exited
+        // within grace — confirmed by the `waitForExit` above, so no further wait is needed here.
+        registry.delete(getGroups)
+
+        return
+      }
 
       // Re-snapshot before forcing: turbo is still alive (that's why we're here), so its tree is
       // still walkable, and `turbo watch build` may have started a task AFTER the first snapshot.
       // Union with the known stragglers, whose groups may already have left turbo's subtree.
-      const late = doomedGroupsOf(pid, snapshotProcRows())
+      const late = doomedGroupsOf(pid, snapshotRowsOverride())
       const forced = [...new Set([...stragglers, ...late])].filter(groupAlive)
 
       // Killing turbo's group alone would orphan exactly these, so they are killed as a set.
@@ -472,6 +611,7 @@ export function superviseChild(
       // succeeds against it. Wait for the kernel to finish so callers that exit the process
       // immediately after `kill()` resolves aren't racing the teardown they just awaited.
       await waitForExit(forced, REAP_TIMEOUT_MS)
+      registry.delete(getGroups)
     },
   }
 }

@@ -43,11 +43,12 @@ const items: PaletteItem[] = [{ name: 'worktrees-remove', description: 'remove',
 
 const branchItems = [{ value: 'release/1.2.3', label: 'release/1.2.3' }]
 
-/** Spy on the ref/unref pair without letting either touch the real stdin handle. */
+/** Spy on the ref/unref/pause trio without letting any of them touch the real stdin handle. */
 const spyOnStdin = () => {
   return {
     ref: vi.spyOn(process.stdin, 'ref').mockReturnValue(process.stdin),
     unref: vi.spyOn(process.stdin, 'unref').mockReturnValue(process.stdin),
+    pause: vi.spyOn(process.stdin, 'pause').mockReturnValue(process.stdin),
   }
 }
 
@@ -128,6 +129,72 @@ describe('renderToStderr stdin ownership — a reader is live', () => {
     waitUntilExit.mockRejectedValue(new Error('forced close'))
 
     expect(await runCommandPalette(items)).toBeNull()
+    expect(ref).toHaveBeenCalledTimes(1)
+
+    releaseStdin()
+  })
+})
+
+/**
+ * `unref()` answers "may node exit?", NOT "is anyone still reading this fd?". Ink's teardown drops its
+ * `readable` listener and unrefs (App.js:136-137) but never pauses, so libuv keeps reading the tty into
+ * the stream's buffer. The session shell then spawns the picked command with `stdio: 'inherit'` — parent
+ * and child on the SAME tty — and the kernel gives each keystroke to exactly one of them. Measured on a
+ * pty before the fix: a lone Esc at a child's prompt cancelled 1 run in 5 under the session shell versus
+ * 5 in 5 without it, and a wedged run swallowed every following Ctrl-C, because the parent ate the byte.
+ *
+ * WHAT THESE TESTS ARE, HONESTLY — `pause` is spied and MOCKED, so they assert only that the branch
+ * CALLS it. **They would all stay green if `process.stdin.pause()` were replaced with a no-op**, so do
+ * not read them as evidence that the fix works. Two other files carry that:
+ *   - `stdin-pause-semantics.test.ts` — the node contract that makes `pause()` reach libuv at all
+ *     (cross-platform, runs on CI);
+ *   - `stdin-pause-pty.test.ts` — the consequence, that a spawned child owns the tty, plus the
+ *     call-site invariant (darwin-only; verified 5/5 with the fix, 0/5 without).
+ *
+ * What these three DO cover is the part neither of those can reach: that pausing is conditional on the
+ * reader counter, because pausing while an outer inquirer prompt is live would starve it. Mocking is
+ * correct here — a real pause is precisely what must not happen in the third case.
+ *
+ * The pty test in entry/__tests__ is unrelated: it proves a quit key AT THE PALETTE kills the process,
+ * and here the palette is already gone.
+ */
+describe('renderToStderr stops reading stdin so a spawned child can own the tty', () => {
+  it('pauses stdin after the palette exits, so the next child is the only reader', async () => {
+    const { pause } = spyOnStdin()
+
+    waitUntilExit.mockResolvedValue(undefined)
+
+    const pending = runCommandPalette(items)
+
+    ;(rendered?.props as { onSelect: (name: string) => void }).onSelect('worktrees-remove')
+
+    expect(await pending).toBe('worktrees-remove')
+    expect(pause).toHaveBeenCalledTimes(1)
+  })
+
+  it('pauses on the teardown-rejects path too', async () => {
+    const { pause } = spyOnStdin()
+
+    waitUntilExit.mockRejectedValue(new Error('forced close'))
+
+    expect(await runCommandPalette(items)).toBeNull()
+    expect(pause).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT pause while an outer inquirer prompt is still reading', async () => {
+    acquireStdin()
+
+    const { pause, ref } = spyOnStdin()
+
+    waitUntilExit.mockResolvedValue(undefined)
+
+    const pending = runCommandPalette(items)
+
+    ;(rendered?.props as { onSelect: (name: string) => void }).onSelect('worktrees-remove')
+
+    expect(await pending).toBe('worktrees-remove')
+    // Pausing here would starve the prompt the counter says is live — the ref is re-asserted instead.
+    expect(pause).not.toHaveBeenCalled()
     expect(ref).toHaveBeenCalledTimes(1)
 
     releaseStdin()

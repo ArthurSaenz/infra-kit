@@ -30,6 +30,7 @@
     "test-watch": "pnpm exec vitest --watch --silent passed-only",
     "test-ui": "pnpm exec vitest --ui --silent passed-only",
     "test-report": "pnpm exec vitest run --coverage --silent passed-only",
+    "qa:pty": "INFRA_KIT_REQUIRE_PTY=1 pnpm exec vitest run --reporter=minimal src/tui/__tests__/stdin-pause-pty.test.ts src/entry/__tests__/quit-keys-pty.test.ts",
     "qa": "pnpm run prettier-check && pnpm run eslint-check && pnpm run ts-check && pnpm run test && echo ✅ Success",
     "fix": "pnpm run prettier-fix && pnpm run eslint-fix && pnpm run qa"
   },

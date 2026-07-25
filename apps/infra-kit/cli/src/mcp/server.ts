@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 
 import { mcpMode } from 'src/lib/mcp-mode'
 
+import packageJson from '../../package.json' with { type: 'json' }
 import { initializePrompts } from './prompts'
 import { initializeResources } from './resources'
 import { initializeTools } from './tools'
@@ -17,11 +18,13 @@ export async function createMcpServer() {
   const server = new McpServer(
     {
       name: 'infra-kit',
-      version: '1.0.0',
+      version: packageJson.version,
     },
     {
       capabilities: {
-        resources: {},
+        // `initializeResources` registers read-only resources below; the SDK's
+        // `registerResource` also declares `resources.listChanged` on top of this.
+        resources: { listChanged: true },
         tools: {},
         prompts: {},
       },

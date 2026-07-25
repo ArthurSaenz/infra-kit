@@ -67,7 +67,13 @@ const SENTINEL = '__CLI_EXIT__:'
 let outDir = ''
 let runnerPath = ''
 
-const SUPPORTED = process.platform === 'darwin'
+/**
+ * `INFRA_KIT_REQUIRE_PTY=1` turns the skip below into a real run, so "skipped" cannot quietly become
+ * "always skipped". Set by the `qa:pty` script — the documented gate for the two pty suites, since
+ * `pnpm run qa` cannot reach them. See also tui/__tests__/stdin-pause-pty.test.ts.
+ */
+const REQUIRE_PTY = process.env.INFRA_KIT_REQUIRE_PTY === '1'
+const SUPPORTED = process.platform === 'darwin' || REQUIRE_PTY
 
 beforeAll(async () => {
   // A top-level `beforeAll` runs even when every test below is skipped, and this one costs a full

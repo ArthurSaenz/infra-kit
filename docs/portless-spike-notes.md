@@ -2,6 +2,11 @@
 
 > Status: **non-privileged half CONFIRMED (WRAP ratified so far)** · Owner: infra-kit · Date: 2026-07-07
 >
+> ⚠️ **Historical record.** The `:80 --no-tls` mode explored below was superseded: the shipped
+> setup serves **TLS on :443** (`DEFAULT_DEV_PROXY_PORT = 443`) and the one-time root step is
+> `sudo <node> <…/portless/dist/cli.js> service install` (no `--no-tls`). Current contract:
+> `docs/dev-server-wiring.md` and `docs/local-dev-https-setup.md`.
+>
 > Companion to `.omc/plans/local-dev-worktrees-layer-a-b.md` (Phase 0 confirmation spike; Phase 3 WRAP,
 > D2). Layer A (Phase 1) shipped in `ecd7dd2`. This note records what the live portless CLI actually
 > does versus the plan's assumptions, so the Phase-3 daemon-driver code is written against verified

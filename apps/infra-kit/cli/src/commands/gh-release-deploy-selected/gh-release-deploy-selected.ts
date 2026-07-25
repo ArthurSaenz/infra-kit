@@ -290,6 +290,7 @@ const parseServicesFromWorkflow = async (): Promise<string[]> => {
 // MCP Tool Registration
 export const ghReleaseDeploySelectedMcpTool = defineMcpTool({
   name: 'gh-release-deploy-selected',
+  requiresHumanConfirm: true,
   description:
     'Dispatch the deploy-selected-services.yml GitHub Actions workflow to deploy a chosen subset of services from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Service names are validated against the boolean inputs declared in the workflow. Use gh-release-deploy-all for every service. "version", "env", and "services" are all required when invoked via MCP (interactive pickers are unavailable without a TTY).',
   inputSchema: {
@@ -309,6 +310,10 @@ export const ghReleaseDeploySelectedMcpTool = defineMcpTool({
         'Service names to deploy. Each must match a boolean input declared in .github/workflows/deploy-selected-services.yml (e.g. "client-be", "client-fe"). Required for MCP calls.',
       ),
     skipTerraform: z.boolean().optional().describe('Skip the terraform deployment stage.'),
+    confirm: z
+      .boolean()
+      .optional()
+      .describe('Set true to execute; omit for a dry-run gate that echoes the resolved action.'),
   },
   outputSchema: {
     releaseBranch: z.string().describe('The release branch that was deployed'),

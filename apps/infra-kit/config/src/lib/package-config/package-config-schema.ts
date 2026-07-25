@@ -21,6 +21,10 @@ export const packageConfigSchema = z.strictObject({
       proxy: z
         .strictObject({
           templates: z.strictObject({
+            // Accepted-but-warned this release regardless of scheme (the portless daemon this template
+            // targets serves TLS only, so a non-`https://` value is almost certainly a mistake — see the
+            // warning emitted from `loadDev` in `../vite/vite.ts`). Make `https://` a hard schema
+            // requirement next release, once both consumer repos have had a release to pick up the warning.
             local: z.string().min(1),
             cloud: z.string().min(1),
           }),

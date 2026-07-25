@@ -16,6 +16,10 @@ const settle = () => {
   })
 }
 
+/** CSI arrow-key sequences as Ink's stdin sees them. */
+const UP = '\u001B[A'
+const DOWN = '\u001B[B'
+
 describe('commandPalette', () => {
   it('renders every command under its group header', () => {
     const { lastFrame } = render(<CommandPalette items={items} onSelect={vi.fn()} onCancel={vi.fn()} />)
@@ -59,42 +63,23 @@ describe('commandPalette', () => {
     expect(onSelect).toHaveBeenCalledWith('release-list')
   })
 
-  it('arrow-down then Enter selects the second command', async () => {
+  it.each([
+    { keys: [DOWN], expected: 'worktrees-list', what: 'arrow-down then Enter selects the second command' },
+    { keys: [UP], expected: 'env-status', what: 'arrow-up from the first command wraps to the last' },
+    { keys: [UP, DOWN], expected: 'release-list', what: 'arrow-down from the last command wraps to the first' },
+  ])('$what', async ({ keys, expected }) => {
     const onSelect = vi.fn()
     const { stdin } = render(<CommandPalette items={items} onSelect={onSelect} onCancel={vi.fn()} />)
 
-    stdin.write('\u001B[B') // arrow down
-    await settle()
+    for (const key of keys) {
+      stdin.write(key)
+      await settle()
+    }
+
     stdin.write('\r')
     await settle()
 
-    expect(onSelect).toHaveBeenCalledWith('worktrees-list')
-  })
-
-  it('arrow-up from the first command wraps to the last', async () => {
-    const onSelect = vi.fn()
-    const { stdin } = render(<CommandPalette items={items} onSelect={onSelect} onCancel={vi.fn()} />)
-
-    stdin.write('[A') // arrow up from first
-    await settle()
-    stdin.write('\r')
-    await settle()
-
-    expect(onSelect).toHaveBeenCalledWith('env-status')
-  })
-
-  it('arrow-down from the last command wraps to the first', async () => {
-    const onSelect = vi.fn()
-    const { stdin } = render(<CommandPalette items={items} onSelect={onSelect} onCancel={vi.fn()} />)
-
-    stdin.write('[A') // arrow up from first -> wraps to last (env-status)
-    await settle()
-    stdin.write('[B') // arrow down from last -> wraps to first (release-list)
-    await settle()
-    stdin.write('\r')
-    await settle()
-
-    expect(onSelect).toHaveBeenCalledWith('release-list')
+    expect(onSelect).toHaveBeenCalledWith(expected)
   })
 
   it('typing then Enter selects the filtered command', async () => {

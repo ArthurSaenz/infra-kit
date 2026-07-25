@@ -18,7 +18,7 @@ import { resolveSelfAppName } from 'src/dev/discovery'
 import { rawStdoutWrite } from 'src/dev/log-sink'
 import { killDescendantGroupsNow } from 'src/dev/managed-child'
 import { explainTargetKey } from 'src/dev/presets'
-import { registerSignalShutdown } from 'src/dev/signal-shutdown'
+import { exitCodeForSignal, registerSignalShutdown } from 'src/dev/signal-shutdown'
 import { installTerminalLiveness } from 'src/dev/terminal-liveness'
 import { isCmuxAvailable } from 'src/integrations/cmux'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
@@ -164,6 +164,54 @@ const defaultFatalTimer = (handler: () => void, ms: number): (() => void) => {
 }
 
 /**
+ * A `setTimer` seam SHARED by two independent watchdogs racing the same `boundRunner.shutdown()` call:
+ * `signal-shutdown`'s teardown deadline and {@link createFatalHandler}'s fatal deadline. Both exist for
+ * the identical reason — force-exit a wedged teardown when nobody is watching — and a closed terminal can
+ * arm BOTH of them for the SAME shutdown: the kernel delivers SIGHUP first, `registerSignalShutdown`'s
+ * `onSignal` writes through `rawStdoutWrite` as its very first act, and THAT write is what produces the
+ * stdio `'error'` `terminal-liveness` reports through `onFatal` a tick later. `shutdown()` is memoized
+ * (see `src/dev/dev-server.ts`), so both deadlines would otherwise count down against the exact same
+ * in-flight promise — and a wedge would then exit with whichever code's 20s timer happened to fire first
+ * (129 vs the fatal path's fixed `1`), a coin-flip instead of the honest signal code.
+ *
+ * Whichever caller arms first OWNS the timer; a second `setTimer` call while one is still pending is a
+ * no-op — its returned canceller does nothing, because there is nothing THIS call armed to cancel.
+ * Releasing ownership (teardown completed, or the second-signal escape fired) lets a later, genuinely
+ * independent event arm its own timer again.
+ */
+export const createSharedDeadlineTimer = (
+  setTimer: (handler: () => void, ms: number) => () => void = defaultFatalTimer,
+): ((handler: () => void, ms: number) => () => void) => {
+  let armed = false
+
+  return (handler, ms) => {
+    if (armed) {
+      return (): void => {}
+    }
+
+    armed = true
+
+    const cancel = setTimer(handler, ms)
+
+    return (): void => {
+      armed = false
+      cancel()
+    }
+  }
+}
+
+/**
+ * Reap the descendant process groups and exit with `code`, synchronously — the shared shape of
+ * every "there is no runner to hand a graceful teardown to" exit: {@link createFatalHandler}'s
+ * `runner == null` branch, and {@link installBootSignalGuard} below. Pulled out so the two stay
+ * identical on purpose, rather than two hand-copies that can quietly drift apart.
+ */
+const reapAndExit = (forceReap: () => void, exit: (code: number) => void, code: number): void => {
+  forceReap()
+  exit(code)
+}
+
+/**
  * The one handler for "our own stdio is unwritable" — from the liveness listener (with the errno) and, as a
  * backstop, from the crash barrier.
  *
@@ -197,8 +245,7 @@ export const createFatalHandler = ({
     const runner = getRunner()
 
     if (runner == null) {
-      forceReap()
-      exit(FATAL_EXIT_CODE)
+      reapAndExit(forceReap, exit, FATAL_EXIT_CODE)
 
       return
     }
@@ -224,6 +271,81 @@ export const createFatalHandler = ({
         exit(FATAL_EXIT_CODE)
       })
       .catch(() => {})
+  }
+}
+
+/** The signals guarded during boot. Matches `signal-shutdown`'s SIGINT/SIGTERM, minus SIGHUP: this guard
+ * exists only for the window before a runner exists, and is gone (see {@link installBootSignalGuard}'s
+ * doc block) by the time `registerSignalShutdown` — which does own SIGHUP — takes over. */
+const BOOT_SIGNALS: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM']
+
+/**
+ * Seams for {@link installBootSignalGuard}. `register`/`unregister` default to `process.on`/`process.off`;
+ * a test either fakes them (to exercise the guard without touching real process listeners) or leaves them
+ * real (to assert `remove()` actually drops the listener count it added).
+ */
+export interface BootSignalGuardDeps {
+  forceReap?: () => void
+  exit?: (code: number) => void
+  register?: (signal: NodeJS.Signals, handler: () => void) => void
+  unregister?: (signal: NodeJS.Signals, handler: () => void) => void
+}
+
+/** Live handle returned by {@link installBootSignalGuard}. */
+export interface BootSignalGuard {
+  /** Detach both listeners. The caller invokes this exactly once, from a `finally` around `run()`. */
+  remove: () => void
+}
+
+/**
+ * Arm a minimal SIGINT/SIGTERM handler for the boot window — the stretch from process start until
+ * `runner = await run(options)` resolves, during which a cold `turbo` build can run for minutes. There is,
+ * by construction, no runner yet to hand a graceful teardown to (that is exactly the `runner == null`
+ * branch {@link createFatalHandler} exists for) — but Node's default SIGINT/SIGTERM action is an
+ * unconditional terminate, which skips `killDescendantGroupsNow` entirely and orphans whatever
+ * turbo/vite process groups boot has already spawned. Precedent for arming protection this early already
+ * exists: `installTerminalLiveness` and the fatal handler's boot branch both guard the same window.
+ *
+ * Reap-and-exit only, via the same {@link reapAndExit} shape the fatal handler's boot branch uses — there
+ * is no teardown to await, because there is no runner. The exit code, though, is the conventional
+ * `128 + signo` ({@link exitCodeForSignal}), matching `signal-shutdown`'s contract for a genuine
+ * SIGINT/SIGTERM — not the fatal path's fixed `FATAL_EXIT_CODE`, which names a different failure (our own
+ * stdio died), not "the user hit Ctrl-C during a slow build".
+ *
+ * The caller MUST call `remove()` once `run()` settles, in both directions: on success,
+ * `registerSignalShutdown` takes over SIGINT/SIGTERM (plus SIGHUP) for the rest of the session, and
+ * leaving this guard attached too would fire BOTH handlers on every subsequent signal; on a boot failure
+ * there is no runner and nothing left for this guard to protect.
+ */
+export const installBootSignalGuard = ({
+  forceReap = killDescendantGroupsNow,
+  exit = (code: number): void => {
+    process.exit(code)
+  },
+  register = (signal, handler): void => {
+    process.on(signal, handler)
+  },
+  unregister = (signal, handler): void => {
+    process.off(signal, handler)
+  },
+}: BootSignalGuardDeps = {}): BootSignalGuard => {
+  const handlers = new Map<NodeJS.Signals, () => void>()
+
+  for (const signal of BOOT_SIGNALS) {
+    const handler = (): void => {
+      reapAndExit(forceReap, exit, exitCodeForSignal(signal))
+    }
+
+    handlers.set(signal, handler)
+    register(signal, handler)
+  }
+
+  return {
+    remove: (): void => {
+      for (const [signal, handler] of handlers) {
+        unregister(signal, handler)
+      }
+    },
   }
 }
 
@@ -260,10 +382,15 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
   // boot branch: `killDescendantGroupsNow()` + exit, reaping the entire workspace.
   let runner: DevServerRunner | null = null
 
+  // Shared with `registerSignalShutdown` below — see {@link createSharedDeadlineTimer}'s doc block for why
+  // one instance must back BOTH watchdogs' deadlines rather than each arming its own.
+  const sharedDeadlineTimer = createSharedDeadlineTimer()
+
   const onFatal = createFatalHandler({
     getRunner: () => {
       return runner
     },
+    setTimer: sharedDeadlineTimer,
   })
 
   const liveness = installTerminalLiveness({
@@ -274,7 +401,18 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
     },
   })
 
-  runner = await run(options)
+  // Same boot window as `liveness` above, same reason: `run()` can spend minutes in a cold `turbo`
+  // build, and Node's default SIGINT/SIGTERM action would terminate immediately without reaping the
+  // turbo/vite groups already spawned mid-boot. Always removed once `run()` settles — on success,
+  // `registerSignalShutdown` below takes over SIGINT/SIGTERM (plus SIGHUP) for the rest of the session; on
+  // a boot failure there is no runner left for this guard to protect either.
+  const bootSignalGuard = installBootSignalGuard()
+
+  try {
+    runner = await run(options)
+  } finally {
+    bootSignalGuard.remove()
+  }
 
   // In-process backends share this event loop; a handler's escaped async path would otherwise terminate
   // the whole session. Installed only on the single-process path (the cmux path returned above, each pane
@@ -319,6 +457,7 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
     fileReport: (text) => {
       boundRunner.fileFault(text)
     },
+    setTimer: sharedDeadlineTimer,
   })
 }
 

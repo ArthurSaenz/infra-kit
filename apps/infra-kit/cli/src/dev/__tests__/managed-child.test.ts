@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   collectDoomedGroups,
+  collectForceReapTargets,
   isChildOf,
+  killDescendantGroupsNow,
   parseProcRows,
   reapSnapshot,
   snapshotGroups,
@@ -90,6 +92,71 @@ describe('collectDoomedGroups', () => {
 })
 
 /**
+ * The pure decision behind `killDescendantGroupsNow`'s force-reap union — tested against a fake process
+ * table and fake registry snapshots so the reparented-survivor / recycled-pgid / dedupe behavior can be
+ * asserted without spawning real processes or waiting on a real `ps`. Uses the REAL `process.pid` as the
+ * root, matching how `killDescendantGroupsNow` actually calls it (`doomedGroupsOf` reads `process.pid`
+ * internally to exclude our own group, regardless of the `rootPid` passed in).
+ */
+describe('collectForceReapTargets', () => {
+  const self = process.pid
+
+  it('reaps a registry-sourced group unreachable from process.pid — a reparented survivor', () => {
+    const rows = [
+      { pid: self, ppid: 1, pgid: self, lstart: 'Mon Jul 13 13:00:00 2026' },
+      // Not a descendant of `self` in this table (its parent, the crashed engine, is gone) — a live
+      // `ppid` walk from `self` can never reach it.
+      { pid: 20, ppid: 1, pgid: 20, lstart: 'Mon Jul 13 13:00:01 2026' },
+    ]
+    const registrySnapshot = [{ pgid: 20, leaderStart: 'Mon Jul 13 13:00:01 2026' }]
+
+    expect(collectForceReapTargets(self, rows, [registrySnapshot])).toEqual([20])
+  })
+
+  it('refuses a registry-sourced pgid whose leader lstart no longer matches — a recycled pgid', () => {
+    const rows = [
+      { pid: self, ppid: 1, pgid: self, lstart: 'Mon Jul 13 13:00:00 2026' },
+      // Same pgid as the snapshot, but a NEWER leader — a stranger now owns it.
+      { pid: 20, ppid: 1, pgid: 20, lstart: 'Mon Jul 13 19:45:00 2026' },
+    ]
+    const registrySnapshot = [{ pgid: 20, leaderStart: 'Mon Jul 13 13:00:01 2026' }]
+
+    expect(collectForceReapTargets(self, rows, [registrySnapshot])).toEqual([])
+  })
+
+  it('keeps the live-walk behavior unchanged when the registry is empty', () => {
+    const rows = [
+      { pid: self, ppid: 1, pgid: self, lstart: '' },
+      { pid: 10, ppid: self, pgid: 10, lstart: '' },
+      { pid: 20, ppid: 10, pgid: 20, lstart: '' },
+    ]
+
+    expect(collectForceReapTargets(self, rows, []).sort()).toEqual([10, 20])
+  })
+
+  it('unions and dedupes a pgid found by both the live walk and the registry', () => {
+    const rows = [
+      { pid: self, ppid: 1, pgid: self, lstart: 'x' },
+      { pid: 10, ppid: self, pgid: 10, lstart: 'y' },
+    ]
+    const registrySnapshot = [{ pgid: 10, leaderStart: 'y' }]
+
+    expect(collectForceReapTargets(self, rows, [registrySnapshot])).toEqual([10])
+  })
+
+  it('does NOT lstart-gate live-walk pgids — they carry no snapshot to validate', () => {
+    // No usable `lstart` (ps failed to report one); a registry-sourced entry would be refused (nothing
+    // to match), but the live walk must still find it — it is live by construction, not by snapshot.
+    const rows = [
+      { pid: self, ppid: 1, pgid: self, lstart: '' },
+      { pid: 10, ppid: self, pgid: 10, lstart: '' },
+    ]
+
+    expect(collectForceReapTargets(self, rows, [])).toEqual([10])
+  })
+})
+
+/**
  * Is `pid` a real, running process? Deliberately NOT `process.kill(pid, 0)` — that succeeds
  * against a SIGKILLed-but-unreaped zombie, so it would report a corpse as alive.
  */
@@ -123,6 +190,46 @@ const alive = (pid: number): boolean => {
   } catch {
     return false
   }
+}
+
+/**
+ * Spawn the turbo topology: a detached engine whose task sits in a process group of its OWN. Shared by
+ * every test below that needs a real, reparentable descendant — hoisted out of the crash `describe` block
+ * it originated in so the registry/force-reap tests can reuse it without duplicating the spawn dance.
+ */
+const spawnEngineWithTask = async (): Promise<{ child: ReturnType<typeof spawn>; taskPid: number }> => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'managed-child-crash-'))
+  const taskPidFile = path.join(dir, 'task.pid')
+
+  const engineSrc = `
+    const { spawn } = require('node:child_process')
+    const fs = require('node:fs')
+    const task = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' })
+    task.unref()
+    fs.writeFileSync(${JSON.stringify(taskPidFile)}, String(task.pid))
+    setInterval(() => {}, 1000)
+  `
+  const child = spawn(process.execPath, ['-e', engineSrc], { detached: true, stdio: 'ignore' })
+  const deadline = Date.now() + 10_000
+
+  while (Date.now() < deadline && !fs.existsSync(taskPidFile)) {
+    await new Promise((r) => {
+      setTimeout(r, 25)
+    })
+  }
+
+  const taskPid = Number(fs.readFileSync(taskPidFile, 'utf8'))
+
+  expect(alive(taskPid)).toBe(true)
+
+  return { child, taskPid }
+}
+
+/** Let the rolling sampler observe the task at least once — it is the only record that survives the crash. */
+const letSamplerObserve = async (): Promise<void> => {
+  await new Promise((r) => {
+    setTimeout(r, 1400)
+  })
 }
 
 describe('superviseChild', () => {
@@ -213,42 +320,6 @@ describe('superviseChild — a CRASHED engine must not strand its task groups', 
     }
   })
 
-  /** Spawn the turbo topology: a detached engine whose task sits in a process group of its OWN. */
-  const spawnEngineWithTask = async (): Promise<{ child: ReturnType<typeof spawn>; taskPid: number }> => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'managed-child-crash-'))
-    const taskPidFile = path.join(dir, 'task.pid')
-
-    const engineSrc = `
-      const { spawn } = require('node:child_process')
-      const fs = require('node:fs')
-      const task = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' })
-      task.unref()
-      fs.writeFileSync(${JSON.stringify(taskPidFile)}, String(task.pid))
-      setInterval(() => {}, 1000)
-    `
-    const child = spawn(process.execPath, ['-e', engineSrc], { detached: true, stdio: 'ignore' })
-    const deadline = Date.now() + 10_000
-
-    while (Date.now() < deadline && !fs.existsSync(taskPidFile)) {
-      await new Promise((r) => {
-        setTimeout(r, 25)
-      })
-    }
-
-    const taskPid = Number(fs.readFileSync(taskPidFile, 'utf8'))
-
-    expect(alive(taskPid)).toBe(true)
-
-    return { child, taskPid }
-  }
-
-  /** Let the rolling sampler observe the task at least once — it is the only record that survives the crash. */
-  const letSamplerObserve = async (): Promise<void> => {
-    await new Promise((r) => {
-      setTimeout(r, 1400)
-    })
-  }
-
   it('reaps the orphaned task group when the engine is SIGKILLed (a crash / OOM kill)', async () => {
     const { child, taskPid } = await spawnEngineWithTask()
 
@@ -257,6 +328,31 @@ describe('superviseChild — a CRASHED engine must not strand its task groups', 
     await letSamplerObserve()
 
     // Crash the engine. It reaps nothing — exactly what a turbo OOM kill does to its vite tasks.
+    process.kill(child.pid as number, 'SIGKILL')
+
+    const deadline = Date.now() + 10_000
+
+    while (Date.now() < deadline && alive(taskPid)) {
+      await new Promise((r) => {
+        setTimeout(r, 50)
+      })
+    }
+
+    expect(alive(taskPid)).toBe(false)
+    grandchildPid = 0
+  }, 30_000)
+
+  it('reaps the task group even when the engine crashes BEFORE the async sampler ever ticks — the spawn→first-snapshot window', async () => {
+    const { child, taskPid } = await spawnEngineWithTask()
+
+    grandchildPid = taskPid
+
+    // Deliberately no `letSamplerObserve()` — crash the instant supervision starts, racing the async
+    // rolling sampler's first tick (a `snapshotProcRowsAsync` round trip). Only the SYNCHRONOUS first
+    // sample taken before `superviseChild` returns (see its call site in managed-child.ts) can have
+    // recorded this group in time; before that fix this crash raced an empty `groups` and the task
+    // survived forever.
+    superviseChild(child, 500)
     process.kill(child.pid as number, 'SIGKILL')
 
     const deadline = Date.now() + 10_000
@@ -288,6 +384,82 @@ describe('superviseChild — a CRASHED engine must not strand its task groups', 
     })
 
     await managed.kill()
+
+    expect(alive(taskPid)).toBe(false)
+    grandchildPid = 0
+  }, 30_000)
+})
+
+/**
+ * `killDescendantGroupsNow` — the second-signal/fatal force path — reaping a reparented descendant
+ * through the registry, in a scenario where the per-child crash-reap CANNOT have already done it: its own
+ * `ps` read is deliberately blinded (simulating a transient failure) on the one attempt the exit handler
+ * gets. The task is therefore still alive when the force path runs, and a live `ppid` walk from our own
+ * pid cannot reach it (it reparented to init) — so a successful reap here proves it came from the
+ * registry, and that the registry entry was NOT already dropped merely because `exit` had fired.
+ */
+describe('killDescendantGroupsNow — registry-sourced reap of a reparented descendant', () => {
+  let grandchildPid = 0
+
+  afterEach(() => {
+    if (grandchildPid > 0) {
+      try {
+        process.kill(-grandchildPid, 'SIGKILL')
+      } catch {
+        // already reaped
+      }
+      grandchildPid = 0
+    }
+  })
+
+  it('reaps the task via the registry when the crash-time reap sees a blinded ps snapshot', async () => {
+    const { child, taskPid } = await spawnEngineWithTask()
+
+    grandchildPid = taskPid
+
+    // First call (the exit handler's own crash-reap attempt) returns nothing, as a stale/failed `ps`
+    // read would; every later call (the rolling sampler keeps using the REAL async ps, unaffected by
+    // this override) sees the real table.
+    // Held in a ref so the poll below reads a value the exit handler mutates from outside the loop.
+    const ps = { calls: 0 }
+    const blindOnce = (): ReturnType<typeof parseProcRows> => {
+      ps.calls += 1
+
+      return ps.calls === 1
+        ? []
+        : parseProcRows(execFileSync('/bin/ps', ['-eo', 'pid=,ppid=,pgid=,lstart=']).toString())
+    }
+
+    superviseChild(child, 500, undefined, blindOnce)
+    await letSamplerObserve()
+
+    // Crash the engine. The exit handler's `reapSnapshot(groups, blindOnce())` fires with `calls === 1`
+    // → an empty snapshot → nothing killed, and per `deregisterAfter` the registry entry must survive
+    // that (a reap attempt finding nothing is not proof of death).
+    process.kill(child.pid as number, 'SIGKILL')
+
+    const exitDeadline = Date.now() + 10_000
+
+    while (Date.now() < exitDeadline && ps.calls === 0) {
+      await new Promise((r) => {
+        setTimeout(r, 25)
+      })
+    }
+
+    // The blinded reap attempt ran and killed nothing — the task must still be alive.
+    expect(alive(taskPid)).toBe(true)
+
+    // The force path: a live walk from our own pid can't reach a reparented descendant, so only the
+    // registry-sourced, lstart-validated reap can still be holding it.
+    killDescendantGroupsNow()
+
+    const deadline = Date.now() + 10_000
+
+    while (Date.now() < deadline && alive(taskPid)) {
+      await new Promise((r) => {
+        setTimeout(r, 50)
+      })
+    }
 
     expect(alive(taskPid)).toBe(false)
     grandchildPid = 0

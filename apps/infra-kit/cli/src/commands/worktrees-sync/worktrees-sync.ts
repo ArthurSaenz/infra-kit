@@ -10,6 +10,7 @@ import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
+import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { isReleaseBranch } from 'src/lib/release-id'
 import { defineMcpTool, textContent } from 'src/types'
@@ -30,6 +31,11 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
   // which runs this unattended — a branch requirement there would refuse a
   // cleanup that has no quarrel with the caller's checkout.
   await assertManagementContext({ operation: 'sync worktrees' })
+
+  // GUARD (placement is load-bearing): must stay ABOVE the `try` block below — its catch rewraps, and
+  // getInfraKitConfig's missing-config throw is a PLAIN Error whose text buildMessage would drop.
+  // Must stay BELOW assertManagementContext so a linked-worktree caller still gets the worktree advice.
+  await getInfraKitConfig()
 
   try {
     const currentWorktrees = await getCurrentWorktrees('release')

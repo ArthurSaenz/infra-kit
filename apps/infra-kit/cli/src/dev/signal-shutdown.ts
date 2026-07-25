@@ -84,6 +84,13 @@ export interface SignalShutdownDeps {
   /** Subscribe `handler` to `signal`. Defaults to `process.on`. */
   register?: (signal: NodeJS.Signals, handler: () => void) => void
   /**
+   * Unsubscribe `handler` from `signal`. Defaults to `process.off`. Called once the teardown this module
+   * owns is over — graceful completion, the force-quit escape, or the deadline — so a process whose
+   * `exit` seam does not actually terminate (a test, or a caller with its own reasons to keep running)
+   * is not left with a dangling SIGINT/SIGTERM/SIGHUP handler from a session that already ended.
+   */
+  unregister?: (signal: NodeJS.Signals, handler: () => void) => void
+  /**
    * Reap surviving descendant process groups on the force-quit path, where the normal teardown is
    * abandoned mid-flight. Synchronous by contract: the process exits on the next line, so anything
    * deferred to a later tick would never run. Defaults to {@link killDescendantGroupsNow}.
@@ -133,6 +140,10 @@ const defaultExit = (code: number): void => {
 
 const defaultRegister = (signal: NodeJS.Signals, handler: () => void): void => {
   process.on(signal, handler)
+}
+
+const defaultUnregister = (signal: NodeJS.Signals, handler: () => void): void => {
+  process.off(signal, handler)
 }
 
 const defaultSetTimer = (handler: () => void, ms: number): (() => void) => {
@@ -188,6 +199,12 @@ const writeTeardownFailure = (signal: NodeJS.Signals, error: unknown): void => {
  * ~100k blocking `writeSync` calls per second, and a deadline shipped into a machine that cannot honour it
  * is decoration. The storm is cut at its source first; this is what stops the wedge that follows.
  *
+ * Returns a `detach` function that drops the SIGINT/SIGTERM/SIGHUP listeners this call installed. Every
+ * exit path (graceful completion, the second-signal escape, and the deadline) already calls it before
+ * exiting, so a real process never needs it — `exit` terminates first. It exists for a caller whose `exit`
+ * seam does NOT terminate the process (every test in this suite), so a session that already ended does not
+ * leave dangling handlers behind for the next one in the same process.
+ *
  * @example
  * registerSignalShutdown({
  *   onSignal: async (signal) => {
@@ -201,6 +218,7 @@ export const registerSignalShutdown = ({
   onSignal,
   exit = defaultExit,
   register = defaultRegister,
+  unregister = defaultUnregister,
   forceReap = killDescendantGroupsNow,
   teardownDeadlineMs = TEARDOWN_DEADLINE_MS,
   setTimer = defaultSetTimer,
@@ -208,11 +226,27 @@ export const registerSignalShutdown = ({
     return 'unknown'
   },
   fileReport = () => {},
-}: SignalShutdownDeps): void => {
+}: SignalShutdownDeps): (() => void) => {
   /** The signal that opened the teardown — `null` until the first one lands. */
   let firstSignal: NodeJS.Signals | null = null
   /** Cancels the armed deadline — on a completed teardown, and on the second-signal escape. */
   let cancelDeadline: (() => void) | null = null
+  /** Every handler this call installed, so `detach` can drop exactly those and nothing else. */
+  const handlers = new Map<NodeJS.Signals, () => void>()
+
+  /**
+   * Drop every listener this call installed. Runs at the end of EVERY exit path below (graceful
+   * completion, the second-signal escape, and the deadline) — not just the happy one — so a caller whose
+   * `exit` seam does not actually terminate the process (a test, or a future non-terminating consumer)
+   * is never left holding SIGINT/SIGTERM/SIGHUP handlers from a session that already ended. Idempotent:
+   * a second call finds an empty map and does nothing.
+   */
+  const detach = (): void => {
+    for (const [signal, handler] of handlers) {
+      unregister(signal, handler)
+    }
+    handlers.clear()
+  }
 
   const handle = (signal: NodeJS.Signals): void => {
     if (firstSignal !== null) {
@@ -227,6 +261,7 @@ export const registerSignalShutdown = ({
       // Abandoning the teardown must still not abandon the children: they hold the dev ports, and
       // the next start would 502 against their stale portless aliases.
       forceReap()
+      detach()
       exit(exitCodeForSignal(signal))
 
       return
@@ -243,6 +278,7 @@ export const registerSignalShutdown = ({
       writeStderr(report)
       fileReport(report)
       forceReap()
+      detach()
       exit(exitCodeForSignal(signal))
     }, teardownDeadlineMs)
 
@@ -256,14 +292,20 @@ export const registerSignalShutdown = ({
         // never outlive its own signal. Not the old `finally { process.exit(0) }` bug — that one
         // exited zero without logging; this logs first, then exits the honest code.
         cancelDeadline?.()
+        detach()
         exit(exitCodeForSignal(signal))
       }
     })()
   }
 
   for (const signal of HANDLED_SIGNALS) {
-    register(signal, () => {
+    const handler = (): void => {
       return handle(signal)
-    })
+    }
+
+    handlers.set(signal, handler)
+    register(signal, handler)
   }
+
+  return detach
 }

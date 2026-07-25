@@ -139,3 +139,65 @@ describe('createToolHandler', () => {
     expect(handler).not.toHaveBeenCalled()
   })
 })
+
+describe('createToolHandler — destructive-op confirm gate', () => {
+  it('returns a gate response and does NOT run the handler when a flagged tool is called without confirm', async () => {
+    const handler = vi.fn(async () => {
+      return payload
+    })
+    const tool = createToolHandler({ toolName: 'env-clear', handler, requiresHumanConfirm: true })
+
+    const result = await tool({ version: '1.2.5' })
+
+    // The handler must never have run — nothing was mutated.
+    expect(handler).not.toHaveBeenCalled()
+    // The gate response names the tool, echoes the resolved args (minus confirm), and is marked
+    // isError so the MCP SDK does not validate it against the tool's outputSchema.
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toMatchObject({
+      status: 'confirmation_required',
+      tool: 'env-clear',
+      resolvedArgs: { version: '1.2.5' },
+    })
+    expect(result.content[0]?.text).toContain('confirm')
+  })
+
+  it('runs the handler with confirmedCommand:true when a flagged tool is called WITH confirm:true', async () => {
+    const handler = vi.fn(async () => {
+      return payload
+    })
+    const tool = createToolHandler({ toolName: 'env-clear', handler, requiresHumanConfirm: true })
+
+    const result = await tool({ confirm: true, version: '1.2.5' })
+
+    expect(result).toBe(payload)
+    // The gate is orthogonal to confirmedCommand: the real call STILL injects confirmedCommand:true
+    // (the prompt-skip / behavior discriminator), and passes confirm through untouched.
+    expect(handler).toHaveBeenCalledWith({ confirm: true, version: '1.2.5', confirmedCommand: true })
+  })
+
+  it('leaves a non-flagged tool completely unaffected (runs on the first call, no gate)', async () => {
+    const handler = vi.fn(async () => {
+      return payload
+    })
+    const tool = createToolHandler({ toolName: 'worktrees-list', handler })
+
+    const result = await tool({ branch: 'main' })
+
+    expect(result).toBe(payload)
+    expect(handler).toHaveBeenCalledWith({ branch: 'main', confirmedCommand: true })
+  })
+
+  it('does not gate a flagged tool merely because confirm is falsy-but-present (confirm:false gates)', async () => {
+    const handler = vi.fn(async () => {
+      return payload
+    })
+    const tool = createToolHandler({ toolName: 'gh-merge-dev', handler, requiresHumanConfirm: true })
+
+    const result = await tool({ all: true, confirm: false })
+
+    // confirm must be strictly true to execute; false still returns the gate (fail-closed).
+    expect(handler).not.toHaveBeenCalled()
+    expect(result.isError).toBe(true)
+  })
+})

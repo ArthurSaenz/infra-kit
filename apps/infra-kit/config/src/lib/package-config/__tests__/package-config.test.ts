@@ -78,6 +78,21 @@ describe('packageConfigSchema', () => {
     expect(packageConfigSchema.safeParse(config).success).toBe(true)
   })
 
+  it('accepts a non-https dev.proxy.templates.local (warn-first this release, see vite.ts)', () => {
+    // The schema itself never rejects the scheme — `loadDev` in `../vite/vite.ts` is what warns.
+    // Kept passing deliberately: making this a hard requirement is a future release, not this one.
+    const result = packageConfigSchema.safeParse({
+      dev: {
+        proxy: {
+          templates: { local: 'http://<release>.<packageName>.localhost', cloud: 'https://<env>.example.com' },
+          routes: { '/api': { packageName: '@app/backend', from: ['local'] } },
+        },
+      },
+    })
+
+    expect(result.success).toBe(true)
+  })
+
   it('rejects an empty `from` array in a proxy route', () => {
     const result = packageConfigSchema.safeParse({
       dev: {

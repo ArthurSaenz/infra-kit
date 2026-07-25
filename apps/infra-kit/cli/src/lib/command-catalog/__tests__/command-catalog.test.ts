@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { buildProgram, commandPath } from 'src/lib/program'
 
 import {
+  LOW_RISK_MUTATING_ALLOWLIST,
   MENU_GROUPS,
   commandCatalog,
   getExposedMcpTools,
@@ -47,20 +48,21 @@ const EXPECTED_EXPOSED_TOOLS = [
   'gh-release-list',
   'audit',
   'vendor-check',
-  'vendor-diff',
   'version',
   'worktrees-add',
   'worktrees-list',
   'reopen',
   'worktrees-remove',
   'worktrees-sync',
+  'config-get',
+  'dev-status',
 ]
 
 // Deliberately NOT exposed as MCP tools (mutating / host-inspecting / irreversible).
-// release-deliver (prod delivery + admin-merge) is CLI-only by design; vendor-sync/manifest mutate
-// consumer repos; doctor is host-inspecting. worktrees-remove IS exposed — git protects tracked work
-// and its own invariants (no MCP all=true, error on unmatched target) contain the residual risk.
-const EXPECTED_UNEXPOSED_WITH_TOOL = ['doctor', 'vendor-sync', 'vendor-manifest', 'gh-release-deliver']
+// release-deliver (prod delivery + admin-merge) is CLI-only by design; doctor is host-inspecting.
+// worktrees-remove IS exposed — git protects tracked work and its own invariants (no MCP all=true,
+// error on unmatched target) contain the residual risk.
+const EXPECTED_UNEXPOSED_WITH_TOOL = ['doctor', 'gh-release-deliver']
 
 /**
  * Credential commands that must carry NO MCP tool at all — not merely `mcpExposed: false`. The MCP
@@ -70,7 +72,7 @@ const EXPECTED_UNEXPOSED_WITH_TOOL = ['doctor', 'vendor-sync', 'vendor-manifest'
 const CREDENTIAL_WRITE_COMMANDS = ['env-token-set', 'env-token-remove']
 
 describe('command catalog — MCP exposure policy', () => {
-  it('exposes exactly the expected 20 MCP tools (set-equal, order-independent)', () => {
+  it('exposes exactly the expected 21 MCP tools (set-equal, order-independent)', () => {
     const exposedNames = getExposedMcpTools()
       .map((tool) => {
         return tool.name
@@ -78,7 +80,7 @@ describe('command catalog — MCP exposure policy', () => {
       .sort()
 
     expect(exposedNames).toEqual([...EXPECTED_EXPOSED_TOOLS].sort())
-    expect(exposedNames).toHaveLength(20)
+    expect(exposedNames).toHaveLength(21)
   })
 
   it('keeps env-token-set / env-token-remove off MCP entirely (no tool object to flip on)', () => {
@@ -114,7 +116,7 @@ describe('command catalog — MCP exposure policy', () => {
     expect(exposedNames.has('worktrees-remove')).toBe(true)
   })
 
-  it('keeps doctor, vendor-sync and vendor-manifest UNEXPOSED even though they have tools', () => {
+  it('keeps doctor UNEXPOSED even though it has a tool', () => {
     const exposedNames = new Set(
       getExposedMcpTools().map((tool) => {
         return tool.name
@@ -192,6 +194,70 @@ describe('command catalog — MCP exposure policy', () => {
   })
 })
 
+describe('command catalog — destructive-op confirm gate (default-deny)', () => {
+  // The exact set of MCP tools that MUST be gated behind the two-call confirm flow. Pinning it here
+  // (not just deriving it) makes a future mis-flag to `requiresHumanConfirm: undefined` red this test,
+  // not merely the default-deny invariant below.
+  const EXPECTED_GATED_TOOLS = [
+    'gh-merge-dev',
+    'release-create',
+    'gh-release-deploy-all',
+    'gh-release-deploy-selected',
+    'env-clear',
+    'worktrees-remove',
+  ]
+
+  it('gates exactly the expected high-risk destructive tools with requiresHumanConfirm', () => {
+    const gated = commandCatalog
+      .flatMap((entry) => {
+        return entry.mcpExposed && entry.mcpTool?.requiresHumanConfirm === true ? [entry.mcpTool.name] : []
+      })
+      .sort()
+
+    expect(gated).toEqual([...EXPECTED_GATED_TOOLS].sort())
+  })
+
+  /**
+   * The P1 invariant, fail-closed. Every mutating, MCP-exposed tool must EITHER carry
+   * `requiresHumanConfirm` OR be an explicit, one-line-justified member of LOW_RISK_MUTATING_ALLOWLIST.
+   * A future `mcpExposed: true` on a new mutating tool that sets neither reds CI — opting out of the
+   * gate becomes a deliberate, greppable allowlist edit, never a silently-typed `false`.
+   */
+  it('leaves no mutating, exposed tool ungated unless it is on the low-risk allowlist', () => {
+    const offenders = commandCatalog
+      .filter((entry) => {
+        return entry.mutating && entry.mcpExposed && entry.mcpTool?.requiresHumanConfirm !== true
+      })
+      .map((entry) => {
+        return entry.cliName
+      })
+      .filter((cliName) => {
+        return !LOW_RISK_MUTATING_ALLOWLIST.includes(cliName)
+      })
+
+    expect(offenders, `ungated mutating+exposed tools not on the allowlist: ${offenders.join(', ')}`).toEqual([])
+  })
+
+  // The allowlist is a safety escape hatch, not a dumping ground: every member must actually be a
+  // mutating, MCP-exposed catalog entry that is NOT gated. A stale name (e.g. a tool that was later
+  // gated or removed) would silently widen the escape hatch, so pin it.
+  it('keeps every allowlist member a real, ungated, mutating, exposed entry', () => {
+    for (const cliName of LOW_RISK_MUTATING_ALLOWLIST) {
+      const entry = commandCatalog.find((candidate) => {
+        return candidate.cliName === cliName
+      })
+
+      expect(entry, `${cliName} on the allowlist must exist in the catalog`).toBeDefined()
+      expect(entry?.mutating, `${cliName} must be mutating to warrant allowlisting`).toBe(true)
+      expect(entry?.mcpExposed, `${cliName} must be MCP-exposed to warrant allowlisting`).toBe(true)
+      expect(
+        entry?.mcpTool?.requiresHumanConfirm ?? false,
+        `${cliName} is gated, so it should not be allowlisted`,
+      ).toBe(false)
+    }
+  })
+})
+
 describe('command catalog — CLI/MCP name parity', () => {
   // The authoritative (cliName -> mcpName) map. Divergences are INTENTIONAL and
   // grandfathered here (the `gh-` prefix on release tools). Any new accidental
@@ -218,9 +284,8 @@ describe('command catalog — CLI/MCP name parity', () => {
     'env-clear': 'env-clear',
     'env-token-list': 'env-token-list',
     'vendor-check': 'vendor-check',
-    'vendor-diff': 'vendor-diff',
-    'vendor-manifest': 'vendor-manifest',
-    'vendor-sync': 'vendor-sync',
+    'config-get': 'config-get',
+    'dev-status': 'dev-status',
   }
 
   it('every catalog entry with a tool matches its expected (cliName, mcpName) pair', () => {
@@ -244,7 +309,7 @@ describe('command catalog — menu grouping', () => {
   }
 
   it('preserves each menu group in display order, as grouped paths', () => {
-    expect(groupPaths('develop')).toEqual(['dev'])
+    expect(groupPaths('develop')).toEqual(['dev', 'dev-status'])
 
     expect(groupPaths('release')).toEqual([
       'release merge-dev',
@@ -269,8 +334,8 @@ describe('command catalog — menu grouping', () => {
     // `Environment` is the Doppler env commands and nothing else. It used to be a 13-entry drawer that
     // also held config, vendor, and setup commands — the four groups below are what came out of it.
     expect(groupPaths('environment')).toEqual(['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list'])
-    expect(groupPaths('configuration')).toEqual(['config path', 'config edit'])
-    expect(groupPaths('vendor')).toEqual(['vendor check', 'vendor diff', 'vendor config'])
+    expect(groupPaths('configuration')).toEqual(['config-get', 'config path', 'config edit'])
+    expect(groupPaths('vendor')).toEqual(['vendor check', 'vendor config'])
     expect(groupPaths('setup')).toEqual(['init', 'doctor', 'audit', 'version'])
   })
 

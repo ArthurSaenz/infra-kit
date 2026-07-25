@@ -15,6 +15,25 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
   },
   {
     "input": [],
+    "name": "config-get",
+    "output": [
+      "config",
+      "configPath",
+      "projectName",
+    ],
+  },
+  {
+    "input": [],
+    "name": "dev-status",
+    "output": [
+      "active",
+      "apps",
+    ],
+  },
+  {
+    "input": [
+      "confirm",
+    ],
     "name": "env-clear",
     "output": [
       "filePath",
@@ -70,6 +89,7 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
   {
     "input": [
       "all",
+      "confirm",
     ],
     "name": "gh-merge-dev",
     "output": [
@@ -81,6 +101,7 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
   },
   {
     "input": [
+      "confirm",
       "env",
       "skipTerraform",
       "version",
@@ -96,6 +117,7 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
   },
   {
     "input": [
+      "confirm",
       "env",
       "services",
       "skipTerraform",
@@ -121,6 +143,7 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
   },
   {
     "input": [
+      "confirm",
       "releases",
     ],
     "name": "release-create",
@@ -178,17 +201,6 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     ],
   },
   {
-    "input": [
-      "repos",
-    ],
-    "name": "vendor-diff",
-    "output": [
-      "drifted",
-      "entries",
-      "ok",
-    ],
-  },
-  {
     "input": [],
     "name": "version",
     "output": [
@@ -220,6 +232,7 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
   },
   {
     "input": [
+      "confirm",
       "versions",
     ],
     "name": "worktrees-remove",

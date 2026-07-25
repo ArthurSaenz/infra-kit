@@ -17,6 +17,9 @@ const harness = () => {
   // sequence matter.
   const events: string[] = []
   let childRunning = false
+  // A hand-cranked clock: the pnpm-relay exemption is defined by ELAPSED TIME, so the difference between
+  // "the relay of the Ctrl-C just pressed" and "a deliberate kill later on" is only expressible here.
+  let clock = 0
 
   const deps: SessionSignalDeps = {
     register: (signal, handler) => {
@@ -35,6 +38,9 @@ const harness = () => {
     resetTerminal: () => {
       events.push('reset')
     },
+    now: () => {
+      return clock
+    },
   }
 
   const signals = installSessionSignals(() => {
@@ -49,6 +55,9 @@ const harness = () => {
     handlers,
     setChildRunning: (running: boolean) => {
       childRunning = running
+    },
+    advance: (ms: number) => {
+      clock += ms
     },
     /** Deliver a signal to the installed handler (throws if the session never claimed it). */
     fire: (signal: NodeJS.Signals) => {
@@ -181,6 +190,71 @@ describe('session signals — between iterations (the palette is up)', () => {
     t.fire('SIGHUP')
 
     expect(t.exits).toEqual([129])
+  })
+})
+
+/**
+ * The relay exemption used to be a boolean, set on the first Ctrl-C and cleared only by the NEXT child.
+ * So a command that stopped responding took the session's escape routes with it: every later SIGTERM
+ * read as pnpm's relay, and `kill` was dead until that child was — SIGKILL the only way out.
+ *
+ * It is now a TIME WINDOW. A counter was the first attempt and was also wrong: it licensed one swallow
+ * per Ctrl-C, but only a relay ever spends a licence, so running from the direct bin (no relay at all)
+ * left unspent licences behind and still swallowed real kills — the same bug, narrowed to N.
+ */
+describe('session signals — the pnpm relay exemption is a window, not a latch', () => {
+  // The three structural mutations (drop the condition, drop the reset, never record) leave the VALUE
+  // free to drift — 100ms or 10s would pass them all. The boundary rows below pin it, and pin `<=`
+  // against `<`. At 30s there is no keypress the SIGTERM could be a relay of: it is a deliberate kill.
+  it.each([
+    { gapMs: 5, quits: false, what: 'swallows the relay that lands immediately behind a Ctrl-C' },
+    { gapMs: 1_000, quits: false, what: 'swallows a relay landing exactly on the window boundary' },
+    { gapMs: 1_001, quits: true, what: 'honours a kill one millisecond past the boundary' },
+    { gapMs: 30_000, quits: true, what: 'honours a kill that arrives well after the Ctrl-C it cannot belong to' },
+  ])('$what (SIGTERM +$gapMs ms)', ({ gapMs, quits }) => {
+    const t = harness()
+
+    t.setChildRunning(true)
+    t.signals.childStarted()
+
+    t.fire('SIGINT')
+    t.advance(gapMs)
+    t.fire('SIGTERM')
+
+    expect(t.signals.quitRequested()).toBe(quits)
+  })
+
+  it('keeps swallowing relays through a sustained mash, because each Ctrl-C reopens the window', () => {
+    const t = harness()
+
+    t.setChildRunning(true)
+    t.signals.childStarted()
+
+    // A user leaning on Ctrl-C for ten seconds: every keypress is paired with its own relay, and none
+    // of them is a request to end the SESSION.
+    for (let i = 0; i < 10; i += 1) {
+      t.fire('SIGINT')
+      t.advance(20)
+      t.fire('SIGTERM')
+      t.advance(980)
+    }
+
+    expect(t.signals.quitRequested()).toBe(false)
+  })
+
+  it('does not let a Ctrl-C from a PREVIOUS child license a relay for this one', () => {
+    const t = harness()
+
+    t.setChildRunning(true)
+    t.signals.childStarted()
+    t.fire('SIGINT')
+
+    // Next command starts inside the window: without the per-child reset, its first SIGTERM would be
+    // mistaken for a relay of the last command's keypress.
+    t.signals.childStarted()
+    t.fire('SIGTERM')
+
+    expect(t.signals.quitRequested()).toBe(true)
   })
 })
 

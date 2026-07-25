@@ -444,6 +444,18 @@ describe('runSession loop', () => {
         env: { PATH: '/usr/bin' } as NodeJS.ProcessEnv,
         ascii: true,
         signals: {
+          // Monotonic, NOT frozen: this seam gates the pnpm-relay window, and a frozen clock reads as
+          // "no time has passed", holding the window open so every SIGTERM is swallowed. A loop test
+          // that fired SIGTERM against a frozen clock would pass while asserting the original bug.
+          now: (() => {
+            let t = 0
+
+            return () => {
+              t += 1_000_000
+
+              return t
+            }
+          })(),
           register: (signal, handler) => {
             handlers.set(signal, handler)
           },

@@ -22,6 +22,12 @@ vi.mock('src/lib/git-utils', () => {
   }
 })
 
+// reopenCurrentProject now reads project config before its work (fail-honestly guard). Mock it so
+// these behaviour tests exercise the reopen logic against a resolvable project, not config resolution.
+vi.mock('src/lib/infra-kit-config', () => {
+  return { getInfraKitConfig: vi.fn() }
+})
+
 vi.mock('src/integrations/ide', async (importActual) => {
   const actual = await importActual<typeof import('src/integrations/ide')>()
 

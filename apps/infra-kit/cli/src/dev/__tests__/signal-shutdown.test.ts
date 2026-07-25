@@ -369,6 +369,68 @@ describe('registerSignalShutdown', () => {
     expect(stderr.join('')).toContain('stage=unknown')
   })
 
+  /**
+   * `registerSignalShutdown` used to register its SIGINT/SIGTERM/SIGHUP handlers with no removal
+   * path at all. Harmless in the one real process (the handler's own `exit` terminates it before another
+   * signal could ever reach a stale listener), but a leaked handler is exactly what a non-terminating
+   * `exit` seam — every test in this file, and any future caller with its own reason to keep running —
+   * would accumulate across repeated calls. Driven against the REAL `process.on`/`process.off` (not the
+   * fake `harness()` bus) so the assertion is about actual listener counts, not a test double's bookkeeping.
+   */
+  it('detaches its real process listeners once a graceful teardown completes — no leak across restarts', async () => {
+    const before = {
+      SIGINT: process.listenerCount('SIGINT'),
+      SIGTERM: process.listenerCount('SIGTERM'),
+      SIGHUP: process.listenerCount('SIGHUP'),
+    }
+    const exits: number[] = []
+
+    registerSignalShutdown({
+      onSignal: vi.fn().mockResolvedValue(undefined),
+      exit: (code) => {
+        exits.push(code)
+      },
+      forceReap: () => {},
+    })
+
+    expect(process.listenerCount('SIGINT')).toBe(before.SIGINT + 1)
+    expect(process.listenerCount('SIGTERM')).toBe(before.SIGTERM + 1)
+    expect(process.listenerCount('SIGHUP')).toBe(before.SIGHUP + 1)
+
+    // A real signal handler registered via `process.on` responds to `process.emit` the same as a genuine
+    // POSIX delivery — no need to signal the vitest worker itself.
+    process.emit('SIGINT')
+
+    await vi.waitFor(() => {
+      expect(exits).toEqual([130])
+    })
+
+    expect(process.listenerCount('SIGINT')).toBe(before.SIGINT)
+    expect(process.listenerCount('SIGTERM')).toBe(before.SIGTERM)
+    expect(process.listenerCount('SIGHUP')).toBe(before.SIGHUP)
+  })
+
+  it('detaches its real process listeners on the force-quit path too, restoring the baseline', () => {
+    spyStderr([])
+
+    const before = { SIGINT: process.listenerCount('SIGINT') }
+    const exits: number[] = []
+
+    registerSignalShutdown({
+      onSignal: vi.fn().mockReturnValue(new Promise<void>(() => {})),
+      exit: (code) => {
+        exits.push(code)
+      },
+      forceReap: () => {},
+    })
+
+    process.emit('SIGINT')
+    process.emit('SIGINT')
+
+    expect(exits).toEqual([130])
+    expect(process.listenerCount('SIGINT')).toBe(before.SIGINT)
+  })
+
   it('still exits when the teardown rejects AND stderr is a broken pipe', async () => {
     // Both failures at once: the rejection handler writes to a stderr that throws (EPIPE). If the exit
     // were a trailing statement after the catch rather than a `finally`, the throw would skip it and the

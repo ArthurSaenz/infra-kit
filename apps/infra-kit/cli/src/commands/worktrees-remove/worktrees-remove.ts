@@ -8,6 +8,7 @@ import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
+import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { isMcpMode } from 'src/lib/mcp-mode'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
@@ -86,6 +87,12 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
   // Branch-agnostic: `git worktree remove` addresses worktrees by path and never
   // reads HEAD, so only the worktree + clean-tree legs apply.
   await assertManagementContext({ operation: 'remove worktrees' })
+
+  // GUARD (placement is load-bearing): must stay ABOVE the `try` block below — its catch rewraps, and
+  // getInfraKitConfig's missing-config throw is a PLAIN Error whose text buildMessage would drop.
+  // Must stay BELOW assertManagementContext so a linked-worktree caller still gets the worktree advice.
+  // Kept ABOVE assertMcpRemovalInput: "not an infra-kit project" is the more fundamental failure.
+  await getInfraKitConfig()
 
   assertMcpRemovalInput({ all, versions })
 
@@ -219,12 +226,17 @@ export const worktreesRemoveMcpTool = defineMcpTool({
   name: 'worktrees-remove',
   description:
     'Remove local git worktrees for the named release branches. Over MCP you MUST pass "versions" (comma-separated); bulk all=true removal is disabled here (it is a one-shot, unconfirmed wipe of every worktree) — the branch picker and confirmation are unavailable without a TTY. Every named version must be an active worktree, or the call errors without removing anything. What survives: the release branches/commits themselves are never deleted, and the worktrees directory plus its release/feature subfolders are left in place (recreate a worktree with worktrees-add). What is lost: git refuses to remove a worktree with modified tracked files or untracked files, BUT it DOES delete the worktree directory including gitignored contents — a hydrated .env of Doppler secrets (re-fetch with env-load) and build output such as node_modules/dist (needs reinstall/rebuild). When every worktree is removed it also runs "git worktree prune".',
+  requiresHumanConfirm: true,
   inputSchema: {
     versions: z
       .string()
       .describe(
         'Comma-separated release versions or names to remove (e.g. "1.2.5, 1.2.6" or "checkout-redesign, 1.2.5"). Required: each must name an active worktree, or the call errors before removing anything.',
       ),
+    confirm: z
+      .boolean()
+      .optional()
+      .describe('Set true to execute; omit for a dry-run gate that echoes the resolved action.'),
   },
   outputSchema: {
     removedWorktrees: z.array(z.string()).describe('List of removed git worktree branches'),

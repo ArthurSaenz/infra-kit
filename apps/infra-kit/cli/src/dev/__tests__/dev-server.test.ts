@@ -3,15 +3,17 @@ import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import process from 'node:process'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DevServerRunner } from 'src/dev/dev-server'
 import type { ProbeOutcome } from 'src/dev/dev-server'
 import type { DevUi } from 'src/dev/dev-ui'
+import type { DevLogSink } from 'src/dev/log-sink'
 import type { ReadySummary } from 'src/dev/render'
 import { stripAnsi } from 'src/dev/render'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config'
+import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 
 import {
   FAKE_PORTLESS_BIN,
@@ -29,7 +31,29 @@ import {
   spyStdoutWrite,
   workingProxy,
 } from './fixtures'
-import type { FakeProxy } from './fixtures'
+import type { FakeProxy, FakeProxyOptions } from './fixtures'
+
+/**
+ * Seeds `getInfraKitConfig` for the NAMED-preset static-locality tests only: every other test in this
+ * file relies on it rejecting (this suite runs from a temp fixture, never the real repo root) and
+ * falling back to `{}`, which is why every other preset here is threaded in-memory (`presetDef`). Reset
+ * to `null` before each test so that fallback stays the default; `importOriginal` keeps every other
+ * export (notably `DEFAULT_DEV_PROXY_PORT`, imported for real above) untouched.
+ */
+const presetConfigSeed = vi.hoisted(() => {
+  return { config: null as InfraKitConfig | null }
+})
+
+vi.mock('src/lib/infra-kit-config', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('src/lib/infra-kit-config')>()
+
+  return {
+    ...actual,
+    getInfraKitConfig: vi.fn(() => {
+      return presetConfigSeed.config ? Promise.resolve(presetConfigSeed.config) : actual.getInfraKitConfig()
+    }),
+  }
+})
 
 /**
  * Deterministic orchestration tier: a real monorepo fixture + the REAL ServerlessLocalRun
@@ -44,6 +68,7 @@ let cwdSnapshot: string
 beforeEach(() => {
   envSnapshot = snapshotEnv()
   cwdSnapshot = snapshotCwd()
+  presetConfigSeed.config = null
 })
 
 afterEach(() => {
@@ -155,6 +180,175 @@ describe('devServerRunner — an app that fails to start', () => {
     // Nothing is left to serve, watch, or proxy. Resident-but-empty would exit 0 when interrupted,
     // so a script or CI step would read this catastrophe as a success.
     await expect(runner.start()).rejects.toThrow(/no app started/)
+
+    await runner.shutdown()
+  })
+})
+
+/**
+ * A preset whose target key is not an `<app>/api`|`<app>/ui` package identity (e.g. a bare
+ * `backoffice`) used to reach `resolvePreset`'s `parseTargetKey`, which throws a raw error — an
+ * uncaught stack trace with no naming of the run or remediation. The `dev` path now validates the
+ * chosen preset's keys BEFORE resolution, so the run refuses with a human-readable, named message.
+ */
+describe('devServerRunner — a preset with an invalid target key', () => {
+  it('refuses with a named, human-readable error instead of an uncaught parseTargetKey throw', async () => {
+    const root = temp.register(makeMonorepo([{ name: 'client', packageName: 'client-api', withHandler: true }]))
+
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    // `backoffice` is a bare app name, not a package — resolvePreset would throw raw on it. The
+    // in-memory presetDef is the same seam the wizard uses; `preset` names the run in the message.
+    const runner = new DevServerRunner(
+      { preset: 'broken', presetDef: { apps: { backoffice: {} } } },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    const error = await runner.start().then(
+      () => {
+        return null
+      },
+      (e: unknown) => {
+        return e as Error
+      },
+    )
+
+    // The guard's controlled refusal, naming the bad key and the expected `<app>/api|ui` form —
+    // not the raw `devServersPresets: invalid target` throw that escaped parseTargetKey before.
+    expect(error?.message).toContain('infra-kit dev: cannot run this preset')
+    expect(error?.message).toContain('backoffice')
+    expect(error?.message).toContain('<app>/api')
+
+    await runner.shutdown()
+  })
+})
+
+/**
+ * `validatePresetProxy` (the STATIC locality rule) used to run only under `infra-kit audit` and the
+ * bare-invocation wizard — never on `infra-kit dev <preset>`, so a preset whose `local` pin has no
+ * backing backend sailed straight through to the RUNTIME pairing check, which can only catch it after
+ * the backend has already failed to start (or not at all, if the backend was never even attempted).
+ * This suite pins it to a genuinely NAMED preset (`getInfraKitConfig` seeded via `presetConfigSeed`,
+ * not the in-memory `presetDef` seam every other preset test here uses) — the one path the static
+ * check is actually scoped to.
+ */
+describe('devServerRunner — a named preset with a static proxy-locality violation', () => {
+  /** `client/ui` proxies `/api` to `client-api`; whether the preset also launches `client/api` varies per test. */
+  const withClientFixture = (): string => {
+    return temp.register(
+      makeMonorepo([
+        {
+          name: 'client',
+          packageName: 'client-api',
+          withHandler: true,
+          ui: {
+            packageName: 'client-ui',
+            proxy: {
+              cloud: 'https://dev.example.com',
+              routes: { '/api': { packageName: 'client-api', from: ['local', 'cloud'], default: 'cloud' } },
+            },
+          },
+        },
+      ]),
+    )
+  }
+
+  it('refuses BEFORE any server spawns when the pinned route has no local backend in the preset', async () => {
+    const root = withClientFixture()
+
+    presetConfigSeed.config = {
+      envManagement: { provider: 'doppler', config: { name: 'test' } },
+      devServersPresets: { uiOnly: { apps: { 'client/ui': { proxy: { '/api': 'local' } } } } },
+    }
+
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    const uiSpawns: string[][] = []
+    const runner = new DevServerRunner(
+      { preset: 'uiOnly' },
+      undefined,
+      undefined,
+      ({ packageNames }) => {
+        uiSpawns.push(packageNames)
+
+        return { kill: async () => {} }
+      },
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    const error = await runner.start().then(
+      () => {
+        return null
+      },
+      (e: unknown) => {
+        return e as Error
+      },
+    )
+
+    // Named, actionable, and naming the preset, the route, and the backend that would satisfy it —
+    // BEFORE anything runs, unlike the runtime check this complements.
+    expect(error?.message).toContain('infra-kit dev: cannot run this preset')
+    expect(error?.message).toContain('uiOnly')
+    expect(error?.message).toContain('/api')
+    expect(error?.message).toContain('client-api')
+
+    // No server (backend or frontend) was ever spawned — the refusal happens inside `resolveRunPlan`,
+    // before `bringUpProxy`/`buildAll`/`startAllApps` are reached.
+    expect(uiSpawns).toEqual([])
+
+    await runner.shutdown()
+  })
+
+  it('passes the static check (and boots) when the preset also launches the pinned route’s backend', async () => {
+    const root = withClientFixture()
+    const apiPort = await getFreePort()
+
+    process.env.CLIENT_PORT = String(apiPort)
+    presetConfigSeed.config = {
+      envManagement: { provider: 'doppler', config: { name: 'test' } },
+      devServersPresets: {
+        clientLocal: { apps: { 'client/ui': { proxy: { '/api': 'local' } }, 'client/api': {} } },
+      },
+    }
+
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(path.join(root, 'apps', 'client', 'api', 'dist', 'handler.js'), handlerSource(1))
+    }
+
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { preset: 'clientLocal' },
+      fakeRunBuild,
+      noopTurboChild,
+      () => {
+        return { kill: async () => {} }
+      },
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    // The static check must not refuse a preset that DOES launch the backend its pin needs — proving
+    // this is a real locality check, not a blanket refusal of every `local` pin under a named preset.
+    await expect(runner.start()).resolves.toBeUndefined()
+
+    const health = (await (await fetch(`http://127.0.0.1:${apiPort}/__health`)).json()) as { app: string }
+
+    expect(health).toMatchObject({ app: 'client' })
 
     await runner.shutdown()
   })
@@ -1082,6 +1276,7 @@ const setupProxyRunner = async (
   available: boolean,
   packageName = `${appName}-api`,
   daemonOk?: (port: number) => boolean,
+  proxyOptions?: FakeProxyOptions,
 ): Promise<{ runner: DevServerRunner; root: string } & FakeProxy> => {
   const root = temp.register(makeMonorepo([{ name: appName, packageName, withHandler: true }]))
 
@@ -1095,7 +1290,7 @@ const setupProxyRunner = async (
   }
 
   process.chdir(root)
-  const fake = makeFakeProxy(available, daemonOk)
+  const fake = makeFakeProxy(available, daemonOk, undefined, proxyOptions)
   const { driver } = fake
   // ctor positions: options, runBuild, turboWatchFactory, uiDevFactory, dryRunner, renderer, healthProbe, proxy
   const runner = new DevServerRunner({}, fakeRunBuild, undefined, undefined, undefined, undefined, undefined, driver)
@@ -1171,10 +1366,11 @@ describe('devServerRunner — Layer B portless aliases', () => {
     }
   }, 15000)
 
-  it('rejects the boot when no daemon serves :443, naming BOTH fixes as commands that actually RUN', async () => {
+  it('rejects the boot when the OS service was never installed, naming BOTH fixes as commands that actually RUN', async () => {
     // There is no fallback to degrade into, so this refusal is the entire user experience of an
     // un-provisioned machine. It has to name the two commands that fix it — and distinguish them: the
-    // install needs root, `trust` explicitly does not.
+    // install needs root, `trust` explicitly does not. `daemonNeverStarts` + the fake's default
+    // `serviceInstalled: 'no'` is the SERVICE_NOT_INSTALLED classification.
     //
     // Both must be printed as `<node> <abs>/portless/dist/cli.js …`, never as a bare `portless …`: portless
     // lives in node_modules and is not on PATH, and sudo swaps PATH for secure_path — so the bare form dies
@@ -1207,6 +1403,71 @@ describe('devServerRunner — Layer B portless aliases', () => {
     expect(error.message).not.toContain('sudo portless service install')
     expect(error.message).not.toMatch(/^ *portless trust$/m)
     // Probed :443 and stopped. A probe of an unprivileged port would mean a fallback still exists.
+    expect(ensuredPorts).toEqual([DEFAULT_DEV_PROXY_PORT])
+  }, 15000)
+
+  it('rejects with a DIFFERENT message when the service IS installed but the daemon is not responding', async () => {
+    // Same TCP-refused symptom as the un-provisioned case above, but the OS-service check now says `'yes'`
+    // — a daemon that was installed once and has since crashed or been stopped. The fix is a restart, not a
+    // fresh root install, so the message must not repeat the "never installed" text and must not tell the
+    // user to `trust` a CA they already trusted.
+    const { runner, ensuredPorts } = await setupProxyRunner(
+      temp,
+      'client',
+      'feat-x',
+      true,
+      undefined,
+      daemonNeverStarts,
+      { serviceInstalled: 'yes' },
+    )
+
+    const error = await runner.start().then(
+      () => {
+        return new Error('start() resolved, but a dead daemon must refuse to boot')
+      },
+      (err: unknown) => {
+        return err as Error
+      },
+    )
+
+    expect(error.message).toContain('OS service is installed')
+    expect(error.message).toContain(`${process.execPath} '${FAKE_PORTLESS_BIN}' service status`)
+    expect(error.message).toContain(`sudo ${process.execPath} '${FAKE_PORTLESS_BIN}' service install`)
+    // This is a restart story, not a fresh-install story — the "not installed yet" text and the runnable
+    // `trust` command belong to the sibling test above and must not leak into this one.
+    expect(error.message).not.toContain('is not installed yet')
+    expect(error.message).not.toContain(`${process.execPath} '${FAKE_PORTLESS_BIN}' trust`)
+    expect(ensuredPorts).toEqual([DEFAULT_DEV_PROXY_PORT])
+  }, 15000)
+
+  it('rejects with a THIRD message when something else (not portless) is squatting on the port', async () => {
+    // TCP accepts the connection, but the wire probe never returns the `X-Portless` header — a different
+    // process already holds :443. Neither `service install` nor `trust` would free the port, so this message
+    // must point at finding/stopping the squatter instead of repeating either portless-provisioning fix.
+    const { runner, ensuredPorts } = await setupProxyRunner(
+      temp,
+      'client',
+      'feat-x',
+      true,
+      undefined,
+      daemonNeverStarts,
+      { notPortless: true },
+    )
+
+    const error = await runner.start().then(
+      () => {
+        return new Error('start() resolved, but a squatted port must refuse to boot')
+      },
+      (err: unknown) => {
+        return err as Error
+      },
+    )
+
+    expect(error.message).toContain('not portless')
+    expect(error.message).toContain(`:${DEFAULT_DEV_PROXY_PORT}`)
+    // Neither remediation applies here — no fix is a runnable portless command at all.
+    expect(error.message).not.toContain(`${FAKE_PORTLESS_BIN}' service install`)
+    expect(error.message).not.toContain(`${FAKE_PORTLESS_BIN}' trust`)
     expect(ensuredPorts).toEqual([DEFAULT_DEV_PROXY_PORT])
   }, 15000)
 
@@ -1540,6 +1801,102 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
       expect(restartedX).toBe(true)
       // …and the unrelated backend, which does not depend on `shared`, was left untouched.
       expect(writtenAt('appy')).toBe(beforeY)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('collapses a shared-lib edit into ONE restart of the dependent app, not two', async () => {
+    /**
+     * The regression: `turbo watch build`'s dep-inclusive rebuild cascades a shared-lib edit into TWO
+     * chokidar `change` events for the same dependent app — the package's own dist (this branch used to
+     * key its debounce by package DIR) and, moments later, the app's own dist (keyed by APP NAME). Two
+     * different `watchDebounceTimers` entries meant both timers survived the burst and each called
+     * `restart()`, double-restarting the one app that actually changed. Reproduced here by writing BOTH
+     * files within the same debounce window, exactly as the real cascade does.
+     */
+    const root = temp.register(makeMonorepo([{ name: 'appx', packageName: 'appx-api', withHandler: true }]))
+    const realRoot = fs.realpathSync(root)
+    const appxDistHandler = path.join(realRoot, 'apps', 'appx', 'api', 'dist', 'handler.js')
+    const sharedDist = path.join(realRoot, 'packages', 'shared', 'dist')
+
+    fs.mkdirSync(sharedDist, { recursive: true })
+    fs.writeFileSync(path.join(realRoot, 'packages', 'shared', 'package.json'), JSON.stringify({ name: 'shared' }))
+    fs.writeFileSync(path.join(sharedDist, 'index.js'), 'export const v = 1\n')
+
+    process.env.DEV_SERVER_CHOKIDAR_POLL = '1'
+
+    const bootBuild = async (): Promise<void> => {
+      fs.writeFileSync(appxDistHandler, handlerSource(1))
+    }
+    // appx depends on `shared`, per the injected closure — the same shape as the scoping test above.
+    const dryRunner = (): Promise<string[]> => {
+      return Promise.resolve(['appx-api', 'shared'])
+    }
+
+    const logs: string[] = []
+    const noop = (): void => {}
+    const renderer: DevUi = {
+      narrate: noop,
+      log: (message) => {
+        logs.push(message)
+      },
+      logFn: noop,
+      bootStep: noop,
+      stopSpinner: noop,
+      ready: noop,
+      event: noop,
+      dispose: noop,
+    }
+
+    process.chdir(root)
+    const runner = new DevServerRunner(
+      { watch: true },
+      bootBuild,
+      noopTurboChild,
+      undefined,
+      dryRunner,
+      renderer,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    try {
+      // Let chokidar finish its initial scan before the burst.
+      await new Promise((r) => {
+        return setTimeout(r, 1200)
+      })
+
+      // The cascade a real shared-lib save produces: the package's own dist AND the dependent app's own
+      // dist change within the same debounce window — two distinct chokidar events, one save.
+      fs.writeFileSync(path.join(sharedDist, 'index.js'), 'export const v = 2\n')
+      fs.writeFileSync(appxDistHandler, handlerSource(2))
+
+      const restartLines = (): string[] => {
+        return logs.filter((l) => {
+          return l.includes('🔄 Restarting')
+        })
+      }
+
+      const deadline = Date.now() + 8000
+
+      while (Date.now() < deadline && restartLines().length === 0) {
+        await new Promise((r) => {
+          return setTimeout(r, 100)
+        })
+      }
+
+      expect(restartLines().length, 'the burst never triggered a restart at all').toBeGreaterThan(0)
+
+      // Give a wrongly-surviving second timer its full debounce window to also fire.
+      await new Promise((r) => {
+        return setTimeout(r, 700)
+      })
+
+      expect(restartLines(), 'the same app restarted twice from one edit burst').toHaveLength(1)
+      expect(restartLines()[0]).toContain('appx')
     } finally {
       await runner.shutdown()
     }
@@ -1974,6 +2331,74 @@ describe('devServerRunner — the UI gets the same port-free HTTPS URL as a back
   }, 15000)
 })
 
+/**
+ * Only the `infraKit()` vite PLUGIN watches `.infra-kit/dev-context` and restarts vite when the
+ * resolved proxy changes; a UI wired with the raw `infraKitDev()` helper bakes its proxy at config
+ * load and will not react to a backend recovering mid-session. Discovery treats both as `managedPort`
+ * (see the accepted-residual comment in `dev-server.ts`), so this is a boot-time guard against future
+ * wiring drift rather than a fix for a live bug — no consumer is wired the risky way today.
+ */
+describe('devServerRunner — boot warning for a managed UI missing the infraKit() vite plugin', () => {
+  /** The substring naming line — distinctive enough to count occurrences by, cheap to change if the wording moves. */
+  const WARNING_ANCHOR = 'client/ui is wired with the infra-kit vite helper directly'
+
+  const bootUi = async (vitePlugin?: boolean): Promise<string[]> => {
+    const root = temp.register(
+      makeMonorepo([
+        {
+          name: 'client',
+          packageName: 'client-api',
+          withHandler: true,
+          ui: { packageName: 'client-ui', vitePlugin },
+        },
+      ]),
+    )
+
+    process.env.CLIENT_PORT = String(await getFreePort())
+
+    const fakeRunBuild = async (): Promise<void> => {
+      fs.writeFileSync(path.join(root, 'apps', 'client', 'api', 'dist', 'handler.js'), handlerSource(1))
+    }
+
+    const stdout: string[] = []
+
+    spyStdoutWrite(stdout)
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      {},
+      fakeRunBuild,
+      noopTurboChild,
+      () => {
+        return { kill: async () => {} }
+      },
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+    await runner.shutdown()
+
+    return stdout
+  }
+
+  it('warns exactly once for a managed UI wired with the helper but not the plugin', async () => {
+    const stdout = await bootUi()
+    const painted = stripAnsi(stdout.join(''))
+
+    expect(painted.split(WARNING_ANCHOR).length - 1).toBe(1)
+  })
+
+  it('does not warn for a UI wired with the infraKit() plugin', async () => {
+    const stdout = await bootUi(true)
+    const painted = stripAnsi(stdout.join(''))
+
+    expect(painted).not.toContain(WARNING_ANCHOR)
+  })
+})
+
 describe('devServerRunner — boot narration stays terse', () => {
   it('covers the api build and the ui dep warm with ONE boot step naming both packages', async () => {
     const { runner, bootSteps } = await bootWithUi('feat-x', true)
@@ -2233,4 +2658,83 @@ describe('devServerRunner — teardown re-entry (a restart must never resurrect 
     expect(priv.registeredAliases.size).toBe(0)
     expect(registered).toHaveLength(removed.length)
   }, 15000)
+})
+
+describe('devServerRunner — reportFault must never touch a disposed renderer', () => {
+  it('renders a fault before shutdown, but only files (never renders) one reported after shutdown began', async () => {
+    // `doShutdown` latches `shuttingDown` and disposes the renderer BEFORE its first `await` — a fault
+    // reported anywhere from that point on (a rejection out of `watcher.close()`, `turboWatch.kill()`,
+    // `uiDev.kill()`, all unguarded) must never call back into the now-disposed panel. Filing it — the
+    // OTHER half of `reportFault` — must still happen, so a post-mortem can read it.
+    const root = temp.register(makeMonorepo([]))
+
+    process.chdir(root)
+
+    const logCalls: string[] = []
+    const noop = (): void => {}
+    const renderer: DevUi = {
+      narrate: noop,
+      log: (message) => {
+        logCalls.push(message)
+      },
+      logFn: noop,
+      bootStep: noop,
+      stopSpinner: noop,
+      ready: noop,
+      event: noop,
+      dispose: noop,
+    }
+
+    const sinkWrites: Array<{ service: string; detail: string }> = []
+    const fakeSink = {
+      dir: '/fake/log/dir',
+      write: (service: string, detail: string) => {
+        sinkWrites.push({ service, detail })
+      },
+      close: noop,
+    } as unknown as DevLogSink
+
+    const runner = new DevServerRunner(
+      {},
+      noopBuild,
+      undefined,
+      undefined,
+      undefined,
+      renderer,
+      undefined,
+      workingProxy(),
+      fakeSink,
+    )
+
+    // Before shutdown: a fault takes BOTH channels — filed and rendered — exactly as it always has.
+    runner.reportFault('early fault, before shutdown')
+
+    expect(sinkWrites).toHaveLength(1)
+    expect(logCalls).toHaveLength(1)
+    expect(logCalls[0]).toContain('early fault, before shutdown')
+
+    // `shutdown()` runs `doShutdown` synchronously up to its first `await`, so by the time this call
+    // RETURNS, `shuttingDown` is already latched and the renderer already disposed — a fault reported
+    // from here on is "late" without needing to race a real timer.
+    const teardown = runner.shutdown()
+
+    expect(() => {
+      runner.reportFault('late fault, after shutdown began')
+    }).not.toThrow()
+
+    // The late fault was filed for a post-mortem…
+    expect(sinkWrites).toHaveLength(2)
+    expect(sinkWrites[1]?.detail).toContain('late fault, after shutdown began')
+    // …but never reached the renderer. `doShutdown` itself still logs its own "shutting down" / "dev
+    // stopped" lines through this same renderer — this asserts the FAULT text specifically never joined
+    // them, not that the renderer went silent.
+    expect(
+      logCalls.some((l) => {
+        return l.includes('late fault')
+      }),
+    ).toBe(false)
+
+    // And shutdown still completes cleanly — the guard must never hang teardown.
+    await teardown
+  })
 })

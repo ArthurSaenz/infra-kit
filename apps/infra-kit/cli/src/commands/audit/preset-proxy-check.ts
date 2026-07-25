@@ -7,80 +7,13 @@
  * existing `infra-kit audit --root` output. Skipped (returns null) when the project declares
  * no `devServersPresets`.
  */
-import { loadDev } from '@slip-stream-kit/config/internal'
-import path from 'node:path'
-
 import { discoverApiApps, discoverUiApps } from 'src/dev/discovery'
-import { resolvePreset, validatePresetKeys, validatePresetProxy } from 'src/dev/presets'
-import type { DiscoveredParts, PresetProxyContext } from 'src/dev/presets'
+import { buildPresetProxyContext } from 'src/dev/preset-proxy-context'
+import type { LoadError } from 'src/dev/preset-proxy-context'
+import { validatePresetKeys, validatePresetProxy } from 'src/dev/presets'
+import type { DiscoveredParts } from 'src/dev/presets'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
-import type { DevPresets } from 'src/lib/infra-kit-config'
 import type { PackageCheck, PackageValidationResult } from 'src/lib/package-validator'
-
-/** A frontend config that a preset references but that failed to load (bad/invalid config). */
-interface LoadError {
-  app: string
-  message: string
-}
-
-interface RoutePkgLookup {
-  routePkg: PresetProxyContext['routePkg']
-  loadErrors: LoadError[]
-}
-
-/**
- * The set of frontend app folders any preset's proxy override actually references —
- * the only configs the audit needs to load. Scoping to these keeps an unrelated
- * broken frontend config from failing (or crashing) the devServersPresets audit.
- */
-const collectReferencedApps = (presets: DevPresets, discovered: DiscoveredParts): string[] => {
-  const apps = new Set<string>()
-
-  for (const preset of Object.values(presets)) {
-    for (const app of Object.keys(resolvePreset(preset, discovered).proxy)) {
-      apps.add(app)
-    }
-  }
-
-  return [...apps]
-}
-
-/**
- * Load each referenced frontend's `dev.proxy.routes` into a sync `(app, route) → pkg`
- * lookup. A config that throws (schema-invalid, import error) is captured as a
- * {@link LoadError} instead of rejecting, so one bad config yields an actionable
- * audit line rather than crashing the whole `audit --root`.
- */
-const buildRoutePkgLookup = async (root: string, apps: string[]): Promise<RoutePkgLookup> => {
-  const routesByApp: Record<string, Record<string, string>> = {}
-  const loadErrors: LoadError[] = []
-
-  await Promise.all(
-    apps.map(async (app) => {
-      try {
-        const dev = await loadDev(path.join(root, 'apps', app, 'ui'))
-        const routes = dev?.proxy?.routes
-
-        if (!routes) return
-
-        routesByApp[app] = Object.fromEntries(
-          Object.entries(routes).map(([route, route_]) => {
-            return [route, route_.packageName]
-          }),
-        )
-      } catch (error) {
-        loadErrors.push({ app, message: error instanceof Error ? error.message : String(error) })
-      }
-    }),
-  )
-
-  return {
-    routePkg: (app, route) => {
-      return routesByApp[app]?.[route]
-    },
-    loadErrors,
-  }
-}
 
 /** Shape validator issues + config load errors into audit check lines (fail-only; caller adds the pass line). */
 const toFailChecks = (issues: ReturnType<typeof validatePresetProxy>, loadErrors: LoadError[]): PackageCheck[] => {
@@ -139,17 +72,7 @@ export const checkDevPresets = async (root: string): Promise<PackageValidationRe
     }),
   }
 
-  const { routePkg, loadErrors } = await buildRoutePkgLookup(root, collectReferencedApps(presets, discovered))
-
-  const ctx: PresetProxyContext = {
-    discovered,
-    apiPkgByApp: Object.fromEntries(
-      apiApps.map((a) => {
-        return [a.name, a.packageName]
-      }),
-    ),
-    routePkg,
-  }
+  const { ctx, loadErrors } = await buildPresetProxyContext(root, presets, discovered, apiApps)
 
   const failChecks = toFailChecks(validatePresetProxy(presets, ctx), loadErrors)
 

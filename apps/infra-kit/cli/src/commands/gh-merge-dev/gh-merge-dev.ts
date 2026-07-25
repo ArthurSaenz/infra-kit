@@ -172,7 +172,7 @@ const mergeDev = async (branch: string): Promise<boolean> => {
 
     logger.error({ error, branch, msg: err.message })
 
-    await $`git reset --merge HEAD~1`
+    await $`git merge --abort`
 
     return false
   }
@@ -183,6 +183,7 @@ export const ghMergeDevMcpTool = defineMcpTool({
   name: 'gh-merge-dev',
   description:
     'Merge origin/dev into every open regular (non-hotfix) release branch and push the result. Mutates local git state and the remote release branches. When invoked via MCP, pass all=true — the branch picker is unreachable without a TTY, and the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. Irreversible once pushed.',
+  requiresHumanConfirm: true,
   inputSchema: {
     all: z
       .boolean()
@@ -190,6 +191,10 @@ export const ghMergeDevMcpTool = defineMcpTool({
       .describe(
         'Target every open regular release branch. Must be true for MCP calls (the interactive picker is unavailable without a TTY).',
       ),
+    confirm: z
+      .boolean()
+      .optional()
+      .describe('Set true to execute; omit for a dry-run gate that echoes the resolved action.'),
   },
   outputSchema: {
     successfulMerges: z.number().describe('Number of successful merges'),

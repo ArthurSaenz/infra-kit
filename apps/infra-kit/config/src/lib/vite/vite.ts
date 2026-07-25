@@ -429,6 +429,26 @@ export const resolveProxyConfig = ({
   return result
 }
 
+/**
+ * Warn (never throw) when `dev.proxy.templates.local` is not `https://`. The portless daemon that
+ * serves the local template is TLS-only, and {@link resolveLegacyTarget} only ever downgrades
+ * https -> http for a legacy self-spawned port — it never upgrades — so an `http://` template
+ * silently proxies into nothing reachable. Warn-first this release (schema still accepts any
+ * non-empty string, see `packageConfigSchema`) so an unknown legit `http://` consumer isn't bricked;
+ * make this a hard schema requirement next release.
+ */
+const warnIfNonHttpsLocalTemplate = (dev: InfraKitDev | undefined, configPath: string): void => {
+  const local = dev?.proxy?.templates.local
+
+  if (local !== undefined && !local.startsWith('https://')) {
+    console.warn(
+      `@slip-stream-kit/config: dev.proxy.templates.local in ${configPath} is "${local}", which is not an ` +
+        `https:// URL. The local dev proxy target must be https:// (the portless daemon it points at serves ` +
+        `TLS only) — https:// will become a REQUIRED value in a future release.`,
+    )
+  }
+}
+
 /** Memoize a zero-arg thunk so `<release>` git resolution runs at most once. */
 const once = <T>(fn: () => T): (() => T) => {
   let cached: { value: T } | undefined
@@ -478,6 +498,8 @@ export const loadDev = async (cwd: string): Promise<InfraKitDev | undefined> => 
       `@slip-stream-kit/config/vite: invalid ${PACKAGE_CONFIG_FILE} at ${configPath}: ${z.prettifyError(parsed.error)}`,
     )
   }
+
+  warnIfNonHttpsLocalTemplate(parsed.data.dev, configPath)
 
   return parsed.data.dev
 }

@@ -2,6 +2,10 @@
 
 > Status: **largely implemented** · Owner: infra-kit · Last updated: 2026-07-10
 >
+> ⚠️ **Superseded detail:** the plain-HTTP **:80** proxy decided in R5/Q2 below shipped differently —
+> the daemon serves **TLS on :443** and templates must be `https://`. See `docs/dev-server-wiring.md`
+> and `docs/local-dev-https-setup.md` for the current contract; the :80 references below are historical.
+>
 > This document captures the requirements and architecture for local-development tooling
 > in `infra-kit`, focused on **running the backend across multiple git worktrees
 > simultaneously** without port collisions, with stable URLs that also work from

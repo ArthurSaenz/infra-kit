@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { getCurrentWorktrees } from 'src/lib/git-utils'
+import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
 import { detectReleaseType, formatVersionLabel, getJiraDescriptions } from 'src/lib/release-utils'
@@ -18,6 +19,11 @@ interface WorktreeInfo {
  * List all release git worktrees with version, type, and Jira description
  */
 export const worktreesList = async () => {
+  // GUARD (placement is load-bearing): `git worktree list` answers in ANY repo, so without this the
+  // release-branch filter renders a generic-git empty set as the infra-kit fact "No active worktrees
+  // found" — a false statement in a stranger's repo. Must stay ABOVE `getCurrentWorktrees`.
+  await getInfraKitConfig()
+
   const currentWorktrees = await getCurrentWorktrees('release')
 
   if (currentWorktrees.length === 0) {

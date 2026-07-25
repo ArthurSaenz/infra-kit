@@ -53,7 +53,9 @@ const findPackageRoot = async (start: string): Promise<string> => {
     return current
   }
 
-  throw new Error(`No package.json found in or above ${start}`)
+  throw new Error(
+    `No package.json found in or above ${start} — cd into a package directory, or pass --root to audit a monorepo root`,
+  )
 }
 
 /**

@@ -184,6 +184,7 @@ export const ghReleaseDeployAllMcpTool = defineMcpTool({
   name: 'gh-release-deploy-all',
   description:
     'Dispatch the deploy-all.yml GitHub Actions workflow to deploy every service from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Use gh-release-deploy-selected for a subset of services. Pass version="dev" to deploy from the dev branch instead of a release branch. Both "version" and "env" are required when invoked via MCP (interactive pickers are unavailable without a TTY).',
+  requiresHumanConfirm: true,
   inputSchema: {
     version: z
       .string()
@@ -196,6 +197,10 @@ export const ghReleaseDeployAllMcpTool = defineMcpTool({
         'Target environment name — must match an env configured for the project (e.g. "dev", "renana", "oriana"). Required for MCP calls.',
       ),
     skipTerraform: z.boolean().optional().describe('Skip the terraform deployment stage.'),
+    confirm: z
+      .boolean()
+      .optional()
+      .describe('Set true to execute; omit for a dry-run gate that echoes the resolved action.'),
   },
   outputSchema: {
     releaseBranch: z.string().describe('The release branch that was deployed'),

@@ -165,6 +165,36 @@ export function usesInfraKitVite(dir: string): boolean {
   return false
 }
 
+/**
+ * True when `<dir>`'s vite config wires the `infraKit()` PLUGIN specifically — not just the raw
+ * `infraKitDev()` helper it wraps (see {@link usesInfraKitVite}, which matches either). Only the
+ * plugin watches `.infra-kit/dev-context` and restarts vite when the resolved proxy changes; a
+ * config that calls the helper directly bakes its proxy at config load and will not react to a
+ * backend recovering mid-session (see `dev-server.ts`'s boot warning for this).
+ *
+ * No structural signal exists to check instead: the plugin writes nothing to disk at config load,
+ * so this is the same conservative text match as {@link usesInfraKitVite} — a config source read,
+ * not a module load. The substring is the plugin's call syntax, `infraKit(`; it cannot false-match
+ * `infraKitDev(`, whose next character after `infraKit` is `D`, not `(`. A false negative (e.g. the
+ * plugin re-exported from a shared preset under a different call shape) only costs a spurious
+ * warning — never a missed one — which is the safe direction here.
+ */
+export function usesInfraKitVitePlugin(dir: string): boolean {
+  for (const file of VITE_CONFIG_FILES) {
+    const configPath = path.join(dir, file)
+
+    if (!fs.existsSync(configPath)) continue
+
+    try {
+      return fs.readFileSync(configPath, 'utf-8').includes('infraKit(')
+    } catch {
+      return false
+    }
+  }
+
+  return false
+}
+
 /** True when `<dir>/package.json` declares a non-empty `scripts.dev`. */
 function hasDevScript(dir: string): boolean {
   const pkgPath = path.join(dir, 'package.json')

@@ -3,6 +3,8 @@ import process from 'node:process'
 
 import { audit } from 'src/commands/audit'
 import { configEdit, configPath } from 'src/commands/config'
+import { configGet } from 'src/commands/config-get'
+import { devStatus } from 'src/commands/dev-status'
 import { doctor, printDoctorReport } from 'src/commands/doctor'
 import { envAutoload } from 'src/commands/env-autoload'
 import { envClear } from 'src/commands/env-clear'
@@ -25,9 +27,6 @@ import { reopen } from 'src/commands/reopen'
 import { runSelfUpdate } from 'src/commands/self-update'
 import { vendorCheck } from 'src/commands/vendor-check'
 import { vendorConfig } from 'src/commands/vendor-config'
-import { vendorDiff } from 'src/commands/vendor-diff'
-import { vendorManifest } from 'src/commands/vendor-manifest'
-import { vendorSync } from 'src/commands/vendor-sync'
 import { version } from 'src/commands/version'
 import { worktreesAdd } from 'src/commands/worktrees-add'
 import { worktreesList } from 'src/commands/worktrees-list'
@@ -55,11 +54,6 @@ import type { ReleaseInput } from 'src/lib/version-utils'
 
 const collectReleaseSpec = (value: string, prev: string[]): string[] => {
   return [...prev, value]
-}
-
-/** Parse a `--repos a,b,c` option into a target-name list (undefined = all). */
-const parseRepos = (value: unknown): string[] | undefined => {
-  return typeof value === 'string' ? value.split(',').filter(Boolean) : undefined
 }
 
 const normalizeIdeMode = (value: unknown, flagName: '--ide' | '--cursor'): IdeMode | undefined => {
@@ -303,21 +297,6 @@ const configureVendorCheck = (cmd: Command): Command => {
     })
 }
 
-const configureVendorDiff = (cmd: Command): Command => {
-  return cmd
-    .description('Source-aware drift check (rsync dry-run) of each target vendored subtree vs the source')
-    .option('-r, --repos <repos>', 'Restrict to comma-separated target repo names')
-    .action(async (options) => {
-      const result = await vendorDiff({ repos: parseRepos(options.repos) })
-
-      emit(result)
-
-      if (!result.structuredContent.ok) {
-        process.exitCode = 1
-      }
-    })
-}
-
 const configureConfigPath = (cmd: Command): Command => {
   return cmd.description('Show the resolved config merge chain and file paths').action(async () => {
     emit(await configPath())
@@ -411,6 +390,15 @@ export const buildProgram = (): Command => {
   configureConfigPath(configCmd.command('path'))
   configureConfigEdit(configCmd.command('edit'))
 
+  // Top-level (`infra-kit config-get`), not under the config group — house rule: new commands go
+  // top-level with related names. Read-only: prints the fully merged config.
+  program
+    .command('config-get')
+    .description('Print the fully merged infra-kit config (project + user-global + per-project override layers)')
+    .action(async () => {
+      emit(await configGet())
+    })
+
   program
     .command('audit')
     .description('Audit against infra-kit.config.ts rules (--all for every package, --root for the monorepo root)')
@@ -426,28 +414,9 @@ export const buildProgram = (): Command => {
       }
     })
 
-  const vendorCmd = program.command('vendor').description('Verify and sync the mirrored vendor/ tree')
+  const vendorCmd = program.command('vendor').description('Verify the mirrored vendor/ tree')
 
   configureVendorCheck(vendorCmd.command('check'))
-
-  vendorCmd
-    .command('sync')
-    .description('Copy vendored files from the source repo into each target and regenerate manifests')
-    .option('-y, --yes', 'Skip confirmation prompt')
-    .option('-r, --repos <repos>', 'Restrict to comma-separated target repo names')
-    .action(async (options) => {
-      emit(await vendorSync({ confirmedCommand: options.yes, repos: parseRepos(options.repos) }))
-    })
-
-  vendorCmd
-    .command('manifest')
-    .description('Regenerate each target vendor/.sync-manifest.json + README from current content (no copy)')
-    .option('-r, --repos <repos>', 'Restrict to comma-separated target repo names')
-    .action(async (options) => {
-      emit(await vendorManifest({ confirmedCommand: true, repos: parseRepos(options.repos) }))
-    })
-
-  configureVendorDiff(vendorCmd.command('diff'))
   configureVendorConfig(vendorCmd.command('config'))
 
   program
@@ -517,6 +486,15 @@ export const buildProgram = (): Command => {
       const tty = Boolean(process.stdout.isTTY && process.stdin.isTTY)
 
       await runDevServerCli({ ...options, preset }, tty, jsonOutput.enabled)
+    })
+
+  // Read-only companion to `dev`: reports what dev currently has running from the on-disk dev-context
+  // fragments (never starts a server). Top-level per the house rule.
+  program
+    .command('dev-status')
+    .description('Show what `infra-kit dev` currently has running (reads dev-context fragments; starts nothing)')
+    .action(async () => {
+      emit(await devStatus())
     })
 
   program

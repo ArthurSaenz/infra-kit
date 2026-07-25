@@ -1,6 +1,8 @@
 import type { z } from 'zod'
 
 import { auditMcpTool } from 'src/commands/audit'
+import { configGetMcpTool } from 'src/commands/config-get'
+import { devStatusMcpTool } from 'src/commands/dev-status'
 import { doctorMcpTool } from 'src/commands/doctor'
 import { envClearMcpTool } from 'src/commands/env-clear'
 import { envListMcpTool } from 'src/commands/env-list'
@@ -16,9 +18,6 @@ import { releaseCreateMcpTool } from 'src/commands/release-create'
 import { releaseDescEditMcpTool } from 'src/commands/release-desc-edit'
 import { reopenMcpTool } from 'src/commands/reopen'
 import { vendorCheckMcpTool } from 'src/commands/vendor-check'
-import { vendorDiffMcpTool } from 'src/commands/vendor-diff'
-import { vendorManifestMcpTool } from 'src/commands/vendor-manifest'
-import { vendorSyncMcpTool } from 'src/commands/vendor-sync'
 import { versionMcpTool } from 'src/commands/version'
 import { worktreesAddMcpTool } from 'src/commands/worktrees-add'
 import { worktreesListMcpTool } from 'src/commands/worktrees-list'
@@ -38,6 +37,12 @@ export interface CatalogMcpTool {
   description: string
   inputSchema: z.ZodRawShape
   outputSchema: z.ZodRawShape
+  /**
+   * Marks a destructive tool for the orthogonal MCP confirm gate in `lib/tool-handler`. Widened,
+   * non-generic mirror of {@link McpTool.requiresHumanConfirm} so registration (`mcp/tools/index.ts`)
+   * can forward it to `createToolHandler` without reaching into the concrete generic tool type.
+   */
+  requiresHumanConfirm?: boolean
   // Heterogeneous tool params; loose `any` mirrors the existing tool-handler typing.
   handler: (params: any) => Promise<ToolsExecutionResult>
 }
@@ -91,11 +96,15 @@ export interface CommandCatalogEntry {
   mcpTool: CatalogMcpTool | null
   /**
    * Whether the command is registered as an MCP tool. Explicit allowlist:
-   * `doctor`, `vendor-sync`, and `vendor-manifest` are deliberately UNEXPOSED
-   * (vendor-sync/manifest mutate consumer repos; doctor is host-inspecting), so
-   * they must never become agent-callable by accident.
+   * `doctor` is deliberately UNEXPOSED (host-inspecting), so it must never become
+   * agent-callable by accident.
    */
   mcpExposed: boolean
+  /**
+   * Whether running this command writes git/remote/consumer-repo/Doppler-env/fs-outside-cache state.
+   * Drives the MCP destructive-op gate (Phase 4).
+   */
+  mutating: boolean
   /**
    * Canonical Commander argv for this command (grouped form, e.g. `['vendor','check']`) — the ONLY form
    * the CLI registers. Every menu surface renders `groupPath.join(' ')` and spawns/parses
@@ -157,8 +166,21 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'develop',
     mcpTool: null,
     mcpExposed: false,
+    mutating: true,
     groupPath: ['dev'],
     longRunning: true,
+  },
+  // Read-only companion to `dev`: reports what `infra-kit dev` currently has running by reading the
+  // on-disk dev-context fragments (never starts a server). Top-level (`infra-kit dev-status`) per the
+  // house rule — new commands go top-level with related names, not nested under a group — but carries
+  // menuGroup 'develop' so it renders beside `dev` in the palette (same shape as reopen/env-status).
+  {
+    cliName: 'dev-status',
+    menuGroup: 'develop',
+    mcpTool: devStatusMcpTool,
+    mcpExposed: true,
+    mutating: false,
+    groupPath: ['dev-status'],
   },
 
   // --- Release Management (menu group) ---
@@ -167,6 +189,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'release',
     mcpTool: ghMergeDevMcpTool,
     mcpExposed: true,
+    mutating: true,
     groupPath: ['release', 'merge-dev'],
   },
   {
@@ -174,6 +197,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'release',
     mcpTool: ghReleaseListMcpTool,
     mcpExposed: true,
+    mutating: false,
     groupPath: ['release', 'list'],
   },
   {
@@ -181,6 +205,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'release',
     mcpTool: releaseCreateMcpTool,
     mcpExposed: true,
+    mutating: true,
     groupPath: ['release', 'create'],
   },
   {
@@ -188,6 +213,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'release',
     mcpTool: releaseDescEditMcpTool,
     mcpExposed: true,
+    mutating: true,
     groupPath: ['release', 'desc-edit'],
   },
   {
@@ -195,6 +221,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'release',
     mcpTool: ghReleaseDeployAllMcpTool,
     mcpExposed: true,
+    mutating: true,
     groupPath: ['release', 'deploy-all'],
   },
   {
@@ -202,15 +229,17 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'release',
     mcpTool: ghReleaseDeploySelectedMcpTool,
     mcpExposed: true,
+    mutating: true,
     groupPath: ['release', 'deploy-selected'],
   },
   // release-deliver does prod delivery + admin-merge — genuinely irreversible,
-  // so it is CLI-only by design (mirrors the vendor-sync/manifest rationale).
+  // so it is CLI-only by design.
   {
     cliName: 'release-deliver',
     menuGroup: 'release',
     mcpTool: ghReleaseDeliverMcpTool,
     mcpExposed: false,
+    mutating: true,
     groupPath: ['release', 'deliver'],
   },
 
@@ -220,6 +249,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'worktrees',
     mcpTool: worktreesAddMcpTool,
     mcpExposed: true,
+    mutating: true,
     groupPath: ['worktrees', 'add'],
   },
   {
@@ -227,6 +257,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'worktrees',
     mcpTool: worktreesListMcpTool,
     mcpExposed: true,
+    mutating: false,
     groupPath: ['worktrees', 'list'],
   },
   // `reopen` is a top-level command (`infra-kit reopen`, groupPath ['reopen']) but carries
@@ -237,21 +268,23 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'worktrees',
     mcpTool: reopenMcpTool,
     mcpExposed: true,
+    mutating: false,
     groupPath: ['reopen'],
   },
   // worktrees-remove runs `git worktree remove` (no --force) on the named leaf worktrees. It is NOT
-  // irreversible in the way release-deliver/vendor-sync are: the release branches/commits survive, the
+  // irreversible in the way release-deliver is: the release branches/commits survive, the
   // worktrees scaffold is left in place, and worktrees-add recreates a removed worktree. git also
   // refuses to remove a worktree with modified-tracked or untracked files. The residual risk —
   // deletion of gitignored local state (a hydrated `.env` of Doppler secrets, node_modules/dist) — is
   // contained by the tool's own invariants rather than by withholding it: over MCP it rejects
   // all=true (no one-shot wipe) and errors on any unmatched target before removing anything. So it is
-  // exposed, unlike the genuinely-irreversible release-deliver / vendor-sync / vendor-manifest.
+  // exposed, unlike the genuinely-irreversible release-deliver.
   {
     cliName: 'worktrees-remove',
     menuGroup: 'worktrees',
     mcpTool: worktreesRemoveMcpTool,
     mcpExposed: true,
+    mutating: true,
     groupPath: ['worktrees', 'remove'],
   },
   {
@@ -259,6 +292,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'worktrees',
     mcpTool: worktreesSyncMcpTool,
     mcpExposed: true,
+    mutating: true,
     groupPath: ['worktrees', 'sync'],
   },
 
@@ -274,14 +308,23 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'environment',
     mcpTool: envStatusMcpTool,
     mcpExposed: true,
+    mutating: false,
     groupPath: ['env-status'],
   },
-  { cliName: 'env-list', menuGroup: 'environment', mcpTool: envListMcpTool, mcpExposed: true, groupPath: ['env-list'] },
+  {
+    cliName: 'env-list',
+    menuGroup: 'environment',
+    mcpTool: envListMcpTool,
+    mcpExposed: true,
+    mutating: false,
+    groupPath: ['env-list'],
+  },
   {
     cliName: 'env-load',
     menuGroup: 'environment',
     mcpTool: envLoadMcpTool,
     mcpExposed: true,
+    mutating: true,
     groupPath: ['env-load'],
     sessionEnvNotice: true,
   },
@@ -290,6 +333,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'environment',
     mcpTool: envClearMcpTool,
     mcpExposed: true,
+    mutating: true,
     groupPath: ['env-clear'],
     sessionEnvNotice: true,
   },
@@ -299,15 +343,28 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'environment',
     mcpTool: envTokenListMcpTool,
     mcpExposed: true,
+    mutating: false,
     groupPath: ['env-token-list'],
   },
 
   // --- Configuration (menu group) ---
+  // Read-only merged-config introspection. Top-level (`infra-kit config-get`) per the house rule — new
+  // commands go top-level with related names — but menuGroup 'configuration' renders it beside
+  // `config path`/`config edit`. Exposed to agents (mutating:false); `config edit` stays CLI-only for writes.
+  {
+    cliName: 'config-get',
+    menuGroup: 'configuration',
+    mcpTool: configGetMcpTool,
+    mcpExposed: true,
+    mutating: false,
+    groupPath: ['config-get'],
+  },
   {
     cliName: 'config-path',
     menuGroup: 'configuration',
     mcpTool: null,
     mcpExposed: false,
+    mutating: false,
     groupPath: ['config', 'path'],
   },
   {
@@ -315,6 +372,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'configuration',
     mcpTool: null,
     mcpExposed: false,
+    mutating: true,
     groupPath: ['config', 'edit'],
     entersAltScreen: true,
   },
@@ -325,68 +383,114 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'vendor',
     mcpTool: vendorCheckMcpTool,
     mcpExposed: true,
+    mutating: false,
     groupPath: ['vendor', 'check'],
-  },
-  {
-    cliName: 'vendor-diff',
-    menuGroup: 'vendor',
-    mcpTool: vendorDiffMcpTool,
-    mcpExposed: true,
-    groupPath: ['vendor', 'diff'],
   },
   {
     cliName: 'vendor-config',
     menuGroup: 'vendor',
     mcpTool: null,
     mcpExposed: false,
+    mutating: true,
     groupPath: ['vendor', 'config'],
   },
 
   // --- Setup & Diagnostics (menu group) ---
   // `init`/`doctor` set the machine up and check it; `audit` checks the REPO against its config rules.
   // Both answer "is this in a good state?", which is why they sit together.
-  { cliName: 'init', menuGroup: 'setup', mcpTool: null, mcpExposed: false, groupPath: ['init'] },
-  { cliName: 'doctor', menuGroup: 'setup', mcpTool: doctorMcpTool, mcpExposed: false, groupPath: ['doctor'] },
-  { cliName: 'audit', menuGroup: 'setup', mcpTool: auditMcpTool, mcpExposed: true, groupPath: ['audit'] },
-  { cliName: 'version', menuGroup: 'setup', mcpTool: versionMcpTool, mcpExposed: true, groupPath: ['version'] },
+  { cliName: 'init', menuGroup: 'setup', mcpTool: null, mcpExposed: false, mutating: true, groupPath: ['init'] },
+  {
+    cliName: 'doctor',
+    menuGroup: 'setup',
+    mcpTool: doctorMcpTool,
+    mcpExposed: false,
+    mutating: true,
+    groupPath: ['doctor'],
+  },
+  {
+    cliName: 'audit',
+    menuGroup: 'setup',
+    mcpTool: auditMcpTool,
+    mcpExposed: true,
+    mutating: false,
+    groupPath: ['audit'],
+  },
+  {
+    cliName: 'version',
+    menuGroup: 'setup',
+    mcpTool: versionMcpTool,
+    mcpExposed: true,
+    mutating: false,
+    groupPath: ['version'],
+  },
 
   // --- Not menu items (groups, long-running, or internal) ---
   // Bare groups: help + non-zero exit, so they never belong in the leaf-only menu.
-  { cliName: 'vendor', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['vendor'] },
-  { cliName: 'config', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['config'] },
+  { cliName: 'vendor', menuGroup: null, mcpTool: null, mcpExposed: false, mutating: false, groupPath: ['vendor'] },
+  { cliName: 'config', menuGroup: null, mcpTool: null, mcpExposed: false, mutating: false, groupPath: ['config'] },
   // Internal shell-startup trigger; hidden from the menu and never an MCP tool
   // (it can't apply env to a shell — only the zsh integration sources the file).
-  { cliName: 'env-autoload', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['env-autoload'] },
+  {
+    cliName: 'env-autoload',
+    menuGroup: null,
+    mcpTool: null,
+    mcpExposed: false,
+    mutating: true,
+    groupPath: ['env-autoload'],
+  },
   // env-token-set / env-token-remove carry NO MCP tool at all — not merely `mcpExposed: false`, so
   // there is nothing to accidentally flip on. `lib/tool-handler` injects `confirmedCommand: true` into
   // EVERY tool call, so the MCP boundary auto-confirms by construction: an agent must never be one call
   // away from WRITING a credential or DESTROYING one. Same argument that keeps `doctor --fix` CLI-only.
   // menuGroup is null because both take a required `<env>` argument the no-arg menu cannot supply.
-  { cliName: 'env-token-set', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['env-token-set'] },
-  { cliName: 'env-token-remove', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['env-token-remove'] },
+  {
+    cliName: 'env-token-set',
+    menuGroup: null,
+    mcpTool: null,
+    mcpExposed: false,
+    mutating: true,
+    groupPath: ['env-token-set'],
+  },
+  {
+    cliName: 'env-token-remove',
+    menuGroup: null,
+    mcpTool: null,
+    mcpExposed: false,
+    mutating: true,
+    groupPath: ['env-token-remove'],
+  },
   // The MCP boundary auto-confirms every tool, so an agent-triggered unattended global package install
   // must never be reachable there. menuGroup null keeps it off the no-arg picker too — updating the CLI
   // is a deliberate act, not something to land on by arrowing through a menu.
-  { cliName: 'self-update', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['self-update'] },
+  {
+    cliName: 'self-update',
+    menuGroup: null,
+    mcpTool: null,
+    mcpExposed: false,
+    mutating: true,
+    groupPath: ['self-update'],
+  },
   // Launcher for the MCP server itself; it blocks on a stdio transport, so it is neither a one-shot menu
   // command nor expressible as a request/response tool.
-  { cliName: 'mcp', menuGroup: null, mcpTool: null, mcpExposed: false, groupPath: ['mcp'] },
+  { cliName: 'mcp', menuGroup: null, mcpTool: null, mcpExposed: false, mutating: false, groupPath: ['mcp'] },
+]
 
-  // --- vendor subcommands (not top-level menu items; MCP tools where applicable) ---
-  {
-    cliName: 'vendor-manifest',
-    menuGroup: null,
-    mcpTool: vendorManifestMcpTool,
-    mcpExposed: false,
-    groupPath: ['vendor', 'manifest'],
-  },
-  {
-    cliName: 'vendor-sync',
-    menuGroup: null,
-    mcpTool: vendorSyncMcpTool,
-    mcpExposed: false,
-    groupPath: ['vendor', 'sync'],
-  },
+/**
+ * Mutating, MCP-exposed tools that are DELIBERATELY exempt from the destructive-op confirm gate
+ * (`mcpTool.requiresHumanConfirm`) because each is low-risk / reversible. Hand-maintained: adding a
+ * name here is the ONLY sanctioned way to opt a mutating exposed tool out of the gate, and the
+ * default-deny test (`command-catalog.test.ts`) reds CI for any mutating+exposed tool that is neither
+ * gated nor listed here. Every member carries a one-line justification so an audit reads at a glance.
+ */
+export const LOW_RISK_MUTATING_ALLOWLIST: readonly string[] = [
+  // Edits a GitHub release body only — reversible by re-editing; no git/branch/deploy side effect.
+  'release-desc-edit',
+  // Purely additive: creates worktrees for existing release branches; removing them is a separate op.
+  'worktrees-add',
+  // Reconciles the worktree set to the live release branches; recreatable via worktrees-add.
+  'worktrees-sync',
+  // Writes a load file under the infra-kit cache dir; cleared by env-clear, no remote/git effect.
+  'env-load',
 ]
 
 /** The MCP tools to register: catalog entries that are exposed and carry a tool. */

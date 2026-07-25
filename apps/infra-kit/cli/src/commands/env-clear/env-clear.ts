@@ -125,7 +125,13 @@ export const envClearMcpTool = defineMcpTool({
   name: 'env-clear',
   description:
     'Generate a shell script that unsets every env var previously loaded by env-load for this session, plus the infra-kit session metadata vars. Does NOT mutate the calling process. When `infra-kit init` has installed the zsh shell integration, the user\'s terminal auto-sources the unset script on its next prompt (precmd hook) — so calling this via MCP will clear the vars in the shell that launched Claude Code automatically. Other callers must source "<filePath>" themselves or surface it to the user. Errors if no env is currently loaded.',
-  inputSchema: {},
+  requiresHumanConfirm: true,
+  inputSchema: {
+    confirm: z
+      .boolean()
+      .optional()
+      .describe('Set true to execute; omit for a dry-run gate that echoes the resolved action.'),
+  },
   outputSchema: {
     filePath: z.string().describe('Path to the file that must be sourced to apply'),
     variableCount: z.number().describe('Number of variables cleared'),

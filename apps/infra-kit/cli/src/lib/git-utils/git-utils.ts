@@ -2,6 +2,8 @@ import path from 'node:path'
 import process from 'node:process'
 import { $ } from 'zx'
 
+import { OperationError, extractStderr } from 'src/lib/errors/operation-error'
+import { isMcpMode } from 'src/lib/mcp-mode'
 import { isReleaseBranch } from 'src/lib/release-id'
 
 /**
@@ -105,12 +107,53 @@ export const getCurrentWorktrees = async (type: 'release' | 'feature'): Promise<
 }
 
 /**
+ * Trim git's `not a git repository (or any of the parent directories): .git` tail — and ONLY that.
+ * Returns undefined for every other failure so `OperationError` falls through to the real stderr:
+ * dubious ownership, EACCES, a corrupt repo, and a missing `git` binary must each report themselves.
+ */
+const normalizeGitRootStderr = (error: unknown): string | undefined => {
+  const raw = extractStderr(error)
+
+  return raw && /not a git repository/i.test(raw) ? 'not a git repository' : undefined
+}
+
+/**
+ * Remediation text for a failed project-root resolution.
+ *
+ * Channel-aware: an MCP server's cwd is fixed at spawn and the CLI has no
+ * `--project`/`--cwd`/`-C`, so an agent told to "cd" has NO available action —
+ * the only actor who can act is the human operator.
+ *
+ * `hasStderr` gates the stderr-referencing clause: with no stderr (missing `git`
+ * binary, ENOENT) the message must not point at evidence it does not carry.
+ */
+const projectRootRemediation = ({ hasStderr }: { hasStderr: boolean }): string => {
+  if (isMcpMode()) {
+    return 'the infra-kit MCP server resolves its project from the working directory it was launched in; the operator must relaunch the server with its working directory set to an infra-kit project repo'
+  }
+
+  const base = 'run infra-kit from inside an infra-kit project repo (or one of its git worktrees)'
+
+  return hasStderr ? `${base}; if you are already in one, the stderr in this message is the real cause` : base
+}
+
+/**
  * Get the current project root directory
  */
 export const getProjectRoot = async (): Promise<string> => {
-  const result = await $`git rev-parse --show-toplevel`
+  try {
+    const result = await $({ quiet: true })`git rev-parse --show-toplevel`
 
-  return result.stdout.trim()
+    return result.stdout.trim()
+  } catch (error) {
+    const stderrExcerpt = normalizeGitRootStderr(error) ?? extractStderr(error)
+
+    throw new OperationError(error, {
+      operation: `resolve the project root from ${process.cwd()}`,
+      stderrExcerpt,
+      remediation: projectRootRemediation({ hasStderr: stderrExcerpt !== undefined }),
+    })
+  }
 }
 
 /**
@@ -135,7 +178,7 @@ export const getProjectRoot = async (): Promise<string> => {
  */
 export const getMainRepoRoot = async (cwd?: string): Promise<string> => {
   const root = cwd ?? (await getProjectRoot())
-  const commonDir = (await $({ cwd: root })`git rev-parse --git-common-dir`).stdout.trim()
+  const commonDir = (await $({ cwd: root, quiet: true })`git rev-parse --git-common-dir`).stdout.trim()
   const resolved = path.resolve(root, commonDir)
 
   // Submodule: common dir sits under `<super>/.git/modules/<name>` — no stable

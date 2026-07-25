@@ -8,6 +8,10 @@
         "infra-kit",
         "mcp"
       ]
+    },
+    "linear-server": {
+      "type": "http",
+      "url": "https://mcp.linear.app/mcp"
     }
   }
 }

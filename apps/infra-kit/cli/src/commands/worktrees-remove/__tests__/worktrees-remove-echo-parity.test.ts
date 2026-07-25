@@ -30,6 +30,12 @@ vi.mock('src/lib/git-utils', () => {
   return { getCurrentWorktrees: vi.fn(), getProjectRoot: vi.fn(), getRepoName: vi.fn() }
 })
 
+// worktreesRemove now reads project config before its work (fail-honestly guard). Mock it so these
+// echo-parity tests exercise the derivation, not config resolution.
+vi.mock('src/lib/infra-kit-config', () => {
+  return { getInfraKitConfig: vi.fn() }
+})
+
 vi.mock('src/lib/prompts/release-picker', () => {
   return { pickReleaseBranch: vi.fn(), pickReleaseBranches: vi.fn() }
 })

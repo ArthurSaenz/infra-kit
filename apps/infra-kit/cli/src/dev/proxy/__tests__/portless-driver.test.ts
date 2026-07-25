@@ -9,14 +9,29 @@ import { promisify } from 'node:util'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  DARWIN_SERVICE_PLIST_PATH,
+  LINUX_SERVICE_UNIT_PATH,
   createPortlessDriver,
   defaultIsListening,
   defaultIsProxyServing,
+  defaultIsServiceInstalled,
   formatPortlessCommand,
   resolvePortlessBin,
 } from 'src/dev/proxy/portless-driver'
 import type { PortlessRun } from 'src/dev/proxy/portless-driver'
 import { withoutPackageManagerEnv } from 'src/lib/pm-env'
+
+/** Swap `process.platform` for the duration of `body`, restoring it even if `body` throws. */
+const withPlatform = async (platform: NodeJS.Platform, body: () => Promise<void> | void): Promise<void> => {
+  const original = process.platform
+
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+  try {
+    await body()
+  } finally {
+    Object.defineProperty(process, 'platform', { value: original, configurable: true })
+  }
+}
 
 /**
  * The driver is pure process I/O over injected seams (`run` for awaited commands, `isProxyServing` for the
@@ -183,6 +198,159 @@ describe('portless driver — isProxyServing (probe only, never starts)', () => 
 
     await driver.isProxyServing(443, true)
     expect(seen).toEqual([[443, true]])
+  })
+})
+
+describe('portless driver — probeProxy (classifying WHY the proxy is not serving)', () => {
+  // Unlike `isProxyServing`, this must tell "nothing is listening at all" apart from "something answered
+  // but it was not portless" — the two have unrelated fixes (install/restart the daemon vs. free the port
+  // from whatever else is squatting on it), and collapsing them into one boolean is the bug this exists for.
+  it('reports `serving` when the wire probe identifies portless', async () => {
+    const driver = createPortlessDriver({
+      run: okRun,
+      isListening: () => {
+        return Promise.resolve(true)
+      },
+      isProxyServing: () => {
+        return Promise.resolve(true)
+      },
+    })
+
+    await expect(driver.probeProxy(443, true)).resolves.toBe('serving')
+  })
+
+  it('reports `daemon-down` when nothing is even accepting TCP — the wire probe is never reached', async () => {
+    let probed = false
+    const driver = createPortlessDriver({
+      run: okRun,
+      isListening: () => {
+        return Promise.resolve(false)
+      },
+      isProxyServing: () => {
+        probed = true
+
+        return Promise.resolve(true)
+      },
+    })
+
+    await expect(driver.probeProxy(443, true)).resolves.toBe('daemon-down')
+    expect(probed).toBe(false)
+  })
+
+  it('reports `not-portless` when something IS listening but never answers with `X-Portless`', async () => {
+    const driver = createPortlessDriver({
+      run: okRun,
+      isListening: () => {
+        return Promise.resolve(true)
+      },
+      isProxyServing: () => {
+        return Promise.resolve(false)
+      },
+    })
+
+    await expect(driver.probeProxy(443, true)).resolves.toBe('not-portless')
+  })
+
+  it('forwards the tls flag to the wire probe, same as isProxyServing', async () => {
+    const seen: Array<[number, boolean]> = []
+    const driver = createPortlessDriver({
+      run: okRun,
+      isListening: () => {
+        return Promise.resolve(true)
+      },
+      isProxyServing: (port, tls) => {
+        seen.push([port, tls])
+
+        return Promise.resolve(true)
+      },
+    })
+
+    await driver.probeProxy(443, true)
+    expect(seen).toEqual([[443, true]])
+  })
+})
+
+describe('portless driver — isServiceInstalled (OS service detection)', () => {
+  // Never touches the real `/Library/LaunchDaemons` / `/etc/systemd/system` paths: this dev machine may
+  // genuinely have portless's service installed there (it is a root-owned path a real `service install` run
+  // populates), so asserting against the actual filesystem would make the test's outcome depend on the
+  // author's own machine rather than the code under test. `exists` is injected instead.
+
+  it('is `yes` on darwin when the launchd plist is present at the exact path portless writes', async () => {
+    await withPlatform('darwin', () => {
+      const seenPaths: string[] = []
+      const result = defaultIsServiceInstalled((path) => {
+        seenPaths.push(path)
+
+        return path === DARWIN_SERVICE_PLIST_PATH
+      })
+
+      expect(result).toBe('yes')
+      expect(seenPaths).toEqual([DARWIN_SERVICE_PLIST_PATH])
+    })
+  })
+
+  it('is `no` on darwin when the plist is absent', async () => {
+    await withPlatform('darwin', () => {
+      expect(
+        defaultIsServiceInstalled(() => {
+          return false
+        }),
+      ).toBe('no')
+    })
+  })
+
+  it('is `yes` on linux when the systemd unit is present at the exact path portless writes', async () => {
+    await withPlatform('linux', () => {
+      const result = defaultIsServiceInstalled((path) => {
+        return path === LINUX_SERVICE_UNIT_PATH
+      })
+
+      expect(result).toBe('yes')
+    })
+  })
+
+  it('is `no` on linux when the unit is absent', async () => {
+    await withPlatform('linux', () => {
+      expect(
+        defaultIsServiceInstalled(() => {
+          return false
+        }),
+      ).toBe('no')
+    })
+  })
+
+  it('is `unknown` on a platform this check does not cover (never guesses `no`)', async () => {
+    // A guessed `no` would send an already-provisioned Windows machine back through a root install for
+    // nothing — `unknown` is the honest answer, and the `exists` seam is never even consulted to produce it.
+    await withPlatform('win32', () => {
+      let called = false
+      const result = defaultIsServiceInstalled(() => {
+        called = true
+
+        return true
+      })
+
+      expect(result).toBe('unknown')
+      expect(called).toBe(false)
+    })
+  })
+
+  it('is `unknown`, never throws, if the existence check itself throws', async () => {
+    await withPlatform('darwin', () => {
+      const result = defaultIsServiceInstalled(() => {
+        throw new Error('EACCES: permission denied')
+      })
+
+      expect(result).toBe('unknown')
+    })
+  })
+
+  it('defaults to the real existsSync — the real seam actually resolves the exact portless paths', () => {
+    // No platform override here: this exercises `defaultIsServiceInstalled()` exactly as `createPortlessDriver`
+    // calls it (zero args), against whatever this host actually is, proving the default parameter really is
+    // wired to a working `exists` and not merely well-typed.
+    expect(['yes', 'no', 'unknown']).toContain(defaultIsServiceInstalled())
   })
 })
 

@@ -82,6 +82,15 @@ export const withEscape = async <T>(run: (context: PromptContext) => Promise<T>,
     // failure this module exists to prevent.
     const pending = run(context)
 
+    // Explicit, because `on('data')` alone is NOT enough to start the flow: `Readable` resumes on a
+    // new `data` listener only when `flowing !== false`, and the palette's teardown now pauses stdin
+    // (tui/boot.tsx) so a prompt opened after an Ink screen inherits `flowing === false`. Esc would be
+    // silently dead. It happens to work anyway today — `run()` above builds inquirer's readline, whose
+    // constructor resumes the stream — but that is an undocumented side effect of a TRANSITIVE
+    // dependency, and the ordering it relies on is the very thing the comment below reserves the right
+    // to change. One idempotent call is cheaper than that coupling.
+    if (input.isPaused()) input.resume()
+
     input.on('data', onData)
 
     return await pending

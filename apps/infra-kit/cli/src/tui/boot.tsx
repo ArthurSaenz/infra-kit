@@ -69,7 +69,44 @@ const renderToStderr = async (element: ReactElement): Promise<void> => {
     // Swallow a teardown rejection: the caller reports cancellation via its own
     // captured sentinel (which stays at its initial value), not via a throw.
   } finally {
-    if (stdinReaderCount() > 0) process.stdin.ref()
+    if (stdinReaderCount() > 0) {
+      process.stdin.ref()
+    } else {
+      // STOP READING, not just "stop holding the loop open". `unref()` answers "may node exit?", not
+      // "is anyone still consuming this fd?" — and Ink's teardown only drops its `readable` listener
+      // and unrefs (App.js:136-137). The session shell then spawns the next command with
+      // `stdio: 'inherit'`, so parent and child hold the SAME tty and each keystroke goes to exactly
+      // one of them. Left unpaused, the parent wins often enough to eat the user's Esc; the child then
+      // never cancels, `waitForExit` never resolves, and `childOwnsSigint` (lib/session/run-session)
+      // swallows every Ctrl-C that follows. That is the "Esc worked, then nothing does" wedge.
+      //
+      // WHY `pause()` REACHES libuv AT ALL — it looks inert, and on a generic stream it is. The chain:
+      //   1. `Readable.prototype.pause()` (node internal/streams/readable.js) emits `'pause'` ONLY IF
+      //      `readableFlowing !== false`.
+      //   2. `process.stdin` — and ONLY `process.stdin`, ONLY on the main thread — carries a `'pause'`
+      //      listener installed by node's bootstrap (internal/bootstrap/switches/is_main_thread.js:263).
+      //   3. That listener defers to `onpause` (:267), which calls `stdin._handle.readStop()` (:273).
+      // `net.Socket.prototype.pause` never calls `readStop` itself (it does so only under `kBuffer`,
+      // which is unset here), so a harness built on a CONSTRUCTED `tty.ReadStream`, or run in a worker
+      // thread, measures a stream with ZERO `'pause'` listeners and correctly reports no effect. That
+      // is a false negative about a different object, not evidence against this line.
+      //
+      // THE PRECONDITION, AND WHY THIS CALL SITE MEETS IT — Ink reads via a `readable` listener
+      // (App.js:206, removed at :126), where `readableFlowing === false`, which would fail step 1 and
+      // make this a silent no-op. It does not, because `removeListener('readable')` schedules
+      // `updateReadableListening` on the NEXTTICK queue (clearing flowing to `null`), while this
+      // `finally` runs in the PROMISE MICROTASK behind `await waitUntilExit()` above — and node drains
+      // nextTick before microtasks. Ink resolves no earlier than it detaches (App.js:126 <- unmount
+      // ink.js:300 <- resolveExitPromise ink.js:580). Measured on a pty: synchronous call => 0 `'pause'`
+      // events, 0 readStops; behind the await => 1 and 1, flowing `null`, 3/3.
+      //
+      // SO: KEEP THIS BEHIND THE `await`. Making it synchronous silently disarms it with every test
+      // still green — which is what src/tui/__tests__/stdin-pause-semantics.test.ts exists to catch.
+      // Deferring it by a tick is NOT a hardening: `readStop` already lands after the `spawn` in
+      // run-session.ts (pause -> spawn -> readStop) and deferring only widens that window. Verified
+      // against ink 7.1.0; if Ink ever resolves before detaching, this reverts to a no-op.
+      process.stdin.pause()
+    }
   }
 }
 

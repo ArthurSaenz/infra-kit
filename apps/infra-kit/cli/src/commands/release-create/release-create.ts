@@ -390,6 +390,7 @@ export const releaseCreate = async (args: ReleaseCreateArgs) => {
 // MCP Tool Registration
 export const releaseCreateMcpTool = defineMcpTool({
   name: 'release-create',
+  requiresHumanConfirm: true,
   description:
     'Create one or more releases in a single call. Each entry in "releases" carries EITHER a "version" (semver or the literal token "next") OR a "name" (free-form kebab-case identifier) — exactly one is required and they are mutually exclusive. Each entry also has its own type (regular|hotfix, default regular) and optional description; all entries in one call must share the same type — mixed regular+hotfix batches are rejected (create them in separate invocations). For each release this tool switches to the appropriate base branch (dev for regular, main for hotfix), cuts the release branch (release/v<semver> for versions, release/<name> for names), opens a GitHub release PR, and creates the matching Jira fix version (v<semver> for versions, <name> for names). The literal token "next" auto-increments from the union of remote release branches and Jira fix versions (regular bumps minor + resets patch; hotfix bumps patch on the highest minor); multiple "next" tokens advance sequentially. Named releases never auto-bump and "next" is version-only. Must be run from the main repository checkout (not a linked worktree) on the matching base branch with a clean working tree. Confirmation is auto-skipped for MCP calls, so the caller is responsible for gating. Continues on per-release failure and reports successes/failures.',
   inputSchema: {
@@ -438,6 +439,10 @@ export const releaseCreateMcpTool = defineMcpTool({
       .describe(
         'One or more releases to create. Each entry has exactly one of "version" or "name", plus its own type and optional description.',
       ),
+    confirm: z
+      .boolean()
+      .optional()
+      .describe('Set true to execute; omit for a dry-run gate that echoes the resolved action.'),
   },
   outputSchema: {
     createdBranches: z.array(z.string()).describe('List of created release branch names'),

@@ -35,7 +35,7 @@ import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import type { DevConfig, DevPreset, DevPresets, ProxySource } from 'src/lib/infra-kit-config'
 import { DEFAULT_DEV_PROXY_PORT, getInfraKitConfig } from 'src/lib/infra-kit-config'
 
-import { buildClosureMap, packageDebounceKey, selectPackageRestartTargets } from './dep-closure.js'
+import { buildClosureMap, selectPackageRestartTargets } from './dep-closure.js'
 import type { ClosureMap, DryRunner } from './dep-closure.js'
 import type { DevUi } from './dev-ui.js'
 import {
@@ -46,6 +46,7 @@ import {
   getAppDistDirs,
   getPackageDistDirs,
   normalizeAppInclude as normalizeAppIncludePure,
+  usesInfraKitVitePlugin,
 } from './discovery.js'
 import type { DiscoveredUiApp } from './discovery.js'
 import { findDegradedRoutes, formatPairingRefusal, resolveProxyRoutes } from './local-pairing.js'
@@ -59,7 +60,9 @@ import {
   resolvePreferredPort as resolvePreferredPortPure,
   resolvePrefixUrl as resolvePrefixUrlPure,
 } from './ports.js'
-import { deriveTargetLabel, resolvePreset } from './presets.js'
+import { buildPresetProxyContext } from './preset-proxy-context.js'
+import { deriveTargetLabel, resolvePreset, validatePresetKeys, validatePresetProxy } from './presets.js'
+import type { DiscoveredParts } from './presets.js'
 import { createPortlessDriver, formatPortlessCommand, readCaPath } from './proxy/portless-driver.js'
 import type { PortlessDriver } from './proxy/portless-driver.js'
 import { DevRenderer, resolveEndpointUrl } from './render.js'
@@ -1054,6 +1057,67 @@ export class DevServerRunner {
     return def
   }
 
+  /**
+   * Refuse a preset whose target keys are not `<app>/api`|`<app>/ui` package identities BEFORE
+   * {@link resolvePreset} runs — its {@link parseTargetKey} throws a raw error on a bare key (e.g.
+   * `backoffice`), which would surface as an uncaught stack trace. {@link validatePresetKeys}
+   * collects the same issues without throwing, so the run can refuse with a named, actionable message.
+   */
+  private assertPresetKeysValid(def: DevPreset): void {
+    const name = this.options.preset ?? 'dev'
+    const issues = validatePresetKeys({ [name]: def })
+
+    if (issues.length === 0) {
+      return
+    }
+
+    throw new Error(
+      `infra-kit dev: cannot run this preset — ${issues
+        .map((issue) => {
+          return issue.message
+        })
+        .join('; ')}`,
+    )
+  }
+
+  /**
+   * Static locality pre-flight for a NAMED preset (`infra-kit dev <preset>`): refuse BEFORE any
+   * server spawns when one of its `local` proxy pins names a backend the preset itself does not
+   * launch. Shares the audit's context assembly ({@link buildPresetProxyContext}) so `infra-kit dev`
+   * and `infra-kit audit` can never disagree about what "satisfiable" means.
+   *
+   * A config that fails to load is not refused here — the frontend is about to load the very same
+   * file itself and will report it far better than this check can (mirrors the same call in
+   * {@link collectDegradedRoutes}).
+   */
+  private async assertPresetProxyLocalityValid(
+    name: string,
+    def: DevPreset,
+    discovered: DiscoveredParts,
+    apiAppsAll: IApiAppConfig[],
+  ): Promise<void> {
+    const presets: DevPresets = { [name]: def }
+    const { ctx, loadErrors } = await buildPresetProxyContext(this.monorepoRoot, presets, discovered, apiAppsAll)
+
+    if (loadErrors.length > 0) {
+      return
+    }
+
+    const issues = validatePresetProxy(presets, ctx)
+
+    if (issues.length === 0) {
+      return
+    }
+
+    throw new Error(
+      `infra-kit dev: cannot run this preset — ${issues
+        .map((issue) => {
+          return issue.message
+        })
+        .join('; ')}`,
+    )
+  }
+
   public async start(): Promise<void> {
     // Backend readiness clock (UI is fire-and-forget, so `ready in Xs` is BE-only — labeled honestly).
     const bootStart = Date.now()
@@ -1080,6 +1144,10 @@ export class DevServerRunner {
 
       return
     }
+
+    // Once per app, per run: `start()` runs exactly once per `DevServerRunner` instance, and `uiApps`
+    // never has two entries for the same app, so a plain pass over it already satisfies "one-time".
+    this.warnUiMissingVitePlugin(uiApps)
 
     await this.bringUpProxy(apps)
     await this.buildAll(apps, uiApps, watch)
@@ -1209,14 +1277,35 @@ export class DevServerRunner {
     // parts (api/ui). No preset → run everything (`*`). `--app`/`--self` (`include`) further narrow it.
     const apiAppsAll = this.discoverApiApps(devConfig)
     const uiAppsAll = discoverUiAppsBare(this.monorepoRoot)
-    const resolved = resolvePreset(this.resolvePresetDef(await this.loadDevPresets()), {
+    const devPresets = await this.loadDevPresets()
+    const presetDef = this.resolvePresetDef(devPresets)
+
+    // Guard BEFORE resolvePreset: its parseTargetKey throws a raw error on a key that isn't an
+    // `<app>/api`|`<app>/ui` package (e.g. a bare `backoffice`), which surfaces as an uncaught stack
+    // trace. Collect the same issues gracefully here and refuse with a human-readable, named message.
+    this.assertPresetKeysValid(presetDef)
+
+    const discovered: DiscoveredParts = {
       api: apiAppsAll.map((a) => {
         return a.name
       }),
       ui: uiAppsAll.map((a) => {
         return a.name
       }),
-    })
+    }
+
+    // Static proxy-locality pre-flight, scoped to the NAMED preset only (`infra-kit dev <preset>`):
+    // a `presetDef` built in-memory (the wizard, or `--target`) is either already audited before
+    // reaching here (wizard's `auditManualPlan`) or proxy-override-free (`--target` has no `.proxy`
+    // field to pin), so re-checking it here would either double-refuse or check nothing. Complements,
+    // never replaces, the RUNTIME pairing check below (`collectDegradedRoutes`): this one only sees
+    // the preset's static declaration, before anything runs — it cannot catch a backend that WAS
+    // launched but crashed, which is exactly what the runtime check is for.
+    if (this.options.presetDef == null && this.options.preset != null) {
+      await this.assertPresetProxyLocalityValid(this.options.preset, presetDef, discovered, apiAppsAll)
+    }
+
+    const resolved = resolvePreset(presetDef, discovered)
 
     if (resolved.unmatched.length > 0) {
       this.renderer.log(`⚠️  Preset targets not found (skipped): ${resolved.unmatched.join(', ')}`, 'warn')
@@ -1337,6 +1426,31 @@ export class DevServerRunner {
       ),
       env: process.env[INFRA_KIT_ENV_VAR],
     })
+  }
+
+  /**
+   * Boot-time guard for a managed UI (see `DiscoveredUiApp.managedPort`) wired with the raw
+   * `infraKitDev()` helper but not the `infraKit()` vite PLUGIN: only the plugin watches
+   * `.infra-kit/dev-context` and restarts vite when the resolved proxy changes (see the
+   * accepted-residual comment above this method's caller in {@link start}). A helper-only UI bakes
+   * its proxy at config load, so a backend that recovers mid-session will not flip that UI's route
+   * back to `local` until it is restarted by hand.
+   *
+   * No consumer is wired this way today — this is a guard against future wiring drift, not a fix for
+   * a live bug. Logged through the same `warn`-level path every other boot warning uses (e.g. the
+   * unmatched-preset-targets line in {@link resolveRunPlan}), so it is MCP/JSON-safe for free.
+   */
+  private warnUiMissingVitePlugin(uiApps: DiscoveredUiApp[]): void {
+    for (const ui of uiApps) {
+      if (!ui.managedPort || usesInfraKitVitePlugin(ui.path)) continue
+
+      this.renderer.log(
+        `⚠️  ${ui.name}/ui is wired with the infra-kit vite helper directly, not the infraKit() plugin — ` +
+          `its proxy is baked at config load and won't react to backend routing changes. Wire the ` +
+          `infraKit() vite plugin (from @slip-stream-kit/vite) instead.`,
+        'warn',
+      )
+    }
   }
 
   /**
@@ -1618,6 +1732,12 @@ export class DevServerRunner {
    * process-global singletons that any other daemon's start rewrites and any stop deletes, which would make
    * a perfectly healthy `:443` daemon look dead. See {@link defaultIsProxyServing}.
    *
+   * The failure is classified rather than reported with one generic message, because "not serving" has three
+   * unrelated causes with three different fixes: portless was never installed as a dependency at all, its
+   * one-time OS service was never registered, its OS service IS registered but the daemon it starts is
+   * currently down (crashed/stopped), or something ELSE is squatting on the port and installing/trusting
+   * portless would not free it.
+   *
    * @throws When portless is missing, or no portless daemon is serving TLS on the proxy port.
    */
   private async ensureProxy(): Promise<void> {
@@ -1632,15 +1752,41 @@ export class DevServerRunner {
       )
     }
 
-    if (await this.proxy.isProxyServing(this.proxyPort, true)) return
+    const outcome = await this.proxy.probeProxy(this.proxyPort, true)
+
+    if (outcome === 'serving') return
+
+    if (outcome === 'not-portless') {
+      throw new Error(
+        `infra-kit dev: something else is already listening on :${this.proxyPort}, and it is not portless ` +
+          `(no \`X-Portless\` header on the wire). Find and stop it, e.g. \`sudo lsof -iTCP:${this.proxyPort} -sTCP:LISTEN\`. ` +
+          'Installing or trusting portless will not help while another process holds the port.',
+      )
+    }
+
+    // outcome === 'daemon-down': nothing is even accepting TCP. Whether that means "never installed" or
+    // "installed, but currently not running" changes the fix, so it is split on the OS-service check —
+    // `'unknown'` (an uncovered platform) falls through to the "installed but down" branch rather than
+    // guessing `'no'`, since a wrong guess there would send an already-provisioned machine back through a
+    // root install for nothing.
+    if (this.proxy.isServiceInstalled() === 'no') {
+      throw new Error(
+        `infra-kit dev: no portless daemon is serving HTTPS on :${this.proxyPort}, and its OS service is not ` +
+          'installed yet, so no dev URL can resolve. Install it once (this is the only step that needs root):\n' +
+          `    ${formatPortlessCommand(['service', 'install'], { sudo: true, bin })}\n` +
+          'Then trust its local CA (no sudo needed):\n' +
+          `    ${formatPortlessCommand(['trust'], { bin })}\n` +
+          '`infra-kit doctor` checks both.',
+      )
+    }
 
     throw new Error(
-      `infra-kit dev: no portless daemon is serving HTTPS on :${this.proxyPort}, so no dev URL can resolve. ` +
-        'Install it once (this is the only step that needs root):\n' +
+      `infra-kit dev: portless's OS service is installed, but no daemon is currently serving HTTPS on ` +
+        `:${this.proxyPort} — it may have crashed or been stopped, so no dev URL can resolve. Check its state:\n` +
+        `    ${formatPortlessCommand(['service', 'status'], { bin })}\n` +
+        'Reinstalling restarts it (still the only step that needs root):\n' +
         `    ${formatPortlessCommand(['service', 'install'], { sudo: true, bin })}\n` +
-        'Then trust its local CA (no sudo needed):\n' +
-        `    ${formatPortlessCommand(['trust'], { bin })}\n` +
-        '`infra-kit doctor` checks both.',
+        '`infra-kit doctor` checks the daemon and CA trust state.',
     )
   }
 
@@ -2043,15 +2189,6 @@ export class DevServerRunner {
   }
 
   /**
-   * Start the long-lived `turbo watch build` engine, then watch compiled `dist/` output to
-   * trigger restarts. A change under an app's `dist` restarts that app; a change under a
-   * `packages/<pkg>/dist` restarts only the participating backends whose dependency closure
-   * includes that package ({@link selectPackageRestartTargets}), keyed per package dir so unrelated
-   * packages don't collapse into one debounce bucket. When the closure map is unavailable
-   * (`null`) it falls back to restarting every launched app (fail-safe superset). Restarts are
-   * build-less — the engine already rebuilt `dist/`.
-   */
-  /**
    * Report a persistent engine (`turbo watch build` / `turbo run dev`) that died on its OWN as a single
    * warn line, unless teardown is already underway. Centralises the `shuttingDown` guard and the message
    * shape shared by both engine callbacks — `superviseChild`'s `killing` latch already suppresses the
@@ -2171,11 +2308,17 @@ export class DevServerRunner {
       }
 
       // Empty target set = the package is UI-only or every dependent opted out → no restart.
-      // The `packageDir !== undefined` check narrows it to `string` for `packageDebounceKey`;
-      // it is always defined here (a non-null `targets` implies a matched package identity).
-      if (targets.length > 0 && change.packageDir !== undefined) {
-        this.scheduleDebounced(packageDebounceKey(change.packageDir), () => {
-          return this.restart(targets)
+      //
+      // Keyed per TARGET APP, not per package dir. `turbo watch build`'s dep-inclusive rebuild cascades a
+      // shared-lib edit into the package's own dist AND, moments later, its dependent app's dist — two
+      // chokidar `change` events for one save, this branch for the first and the app-dist branch below
+      // for the second. A package-dir key and an app-name key are two different `watchDebounceTimers`
+      // entries, so both timers used to elapse independently and fire `restart()` twice for the same app.
+      // Scheduling by app name here collapses both events onto the SAME entry — `scheduleDebounced`
+      // already cancels a pending timer for a key it sees again — so the app restarts once per burst.
+      for (const target of targets) {
+        this.scheduleDebounced(target.name, () => {
+          return this.restart([target])
         })
       }
 
@@ -2734,6 +2877,14 @@ export class DevServerRunner {
   public reportFault(detail: string): void {
     // File it against the app whose async context faulted — that is what turns its row's counter red.
     this.sink.write(currentService() ?? RUNNER_SERVICE, detail, { level: 'error' })
+
+    // `shuttingDown` latches at the very TOP of `doShutdown`, before the renderer is disposed a few lines
+    // later — so a fault landing anywhere from that point on (a rejection out of `watcher.close()`,
+    // `turboWatch.kill()`, `uiDev.kill()`, all unguarded) must never reach `renderer.log` below and call
+    // back into a torn-down panel. Orderly shutdown already owns the process's fate at that point; the
+    // file write above is enough, and disarming the crash barrier itself (see `crash-barrier.ts`'s
+    // `disarm()`) is what keeps a fault from reaching this method at all on the fatal-exit path.
+    if (this.shuttingDown) return
 
     // Print it through the UI, NOT through the bypass. `rawStdoutWrite` would push N raw lines onto a
     // terminal whose live region Ink believes it owns: Ink erases by counting rows back from where it

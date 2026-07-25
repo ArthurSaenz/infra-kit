@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { InfraKitDevProxy } from '../../package-config/package-config'
 import type { InfraKitViteProxyEntry, LocalPackageInfo } from '../vite'
@@ -965,6 +965,65 @@ describe('infraKitDev (config loading)', () => {
       })
     } finally {
       fs.rmSync(pkg, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('loadDev (warn-first https requirement on dev.proxy.templates.local)', () => {
+  /** A single-source `local` route, so resolution never needs a sourced `INFRA_KIT_ENV`. */
+  const writeLocalOnlyConfig = (dir: string, local: string): void => {
+    fs.writeFileSync(
+      path.join(dir, 'infra-kit.config.ts'),
+      [
+        'export default {',
+        '  dev: {',
+        '    proxy: {',
+        '      templates: {',
+        `        local: '${local}',`,
+        "        cloud: 'https://<env>.hulyo.co.il',",
+        '      },',
+        '      routes: {',
+        "        '/api': { packageName: 'backend-api', from: ['local'] },",
+        '      },',
+        '    },',
+        '  },',
+        '}',
+        '',
+      ].join('\n'),
+    )
+  }
+
+  it('warns, naming the offending value, when the local template is not https://', async () => {
+    const dir = makeTempRoot()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      writeLocalOnlyConfig(dir, 'http://<release>.<packageName>.localhost')
+      await infraKitDev({ cwd: dir })
+
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      const [message] = warnSpy.mock.calls[0] ?? []
+
+      expect(message).toContain('http://<release>.<packageName>.localhost')
+      expect(message).toMatch(/https/)
+    } finally {
+      warnSpy.mockRestore()
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('emits no warning when the local template is already https://', async () => {
+    const dir = makeTempRoot()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      writeLocalOnlyConfig(dir, 'https://<release>.<packageName>.localhost')
+      await infraKitDev({ cwd: dir })
+
+      expect(warnSpy).not.toHaveBeenCalled()
+    } finally {
+      warnSpy.mockRestore()
+      fs.rmSync(dir, { recursive: true, force: true })
     }
   })
 })

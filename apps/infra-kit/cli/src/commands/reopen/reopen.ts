@@ -18,6 +18,7 @@ import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { getMainRepoRoot, getProjectRoot, listWorktrees } from 'src/lib/git-utils'
 import type { WorktreeEntry } from 'src/lib/git-utils'
+import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { discoverInfraKitProjects } from 'src/lib/project-discovery'
 import type { DiscoveredProject } from 'src/lib/project-discovery'
@@ -105,6 +106,11 @@ export const reopen = async (
 export const reopenCurrentProject = async (options: ReopenArgs = {}): Promise<ToolsExecutionResult<ReopenResult>> => {
   const { releaseOnly = false, force = false, dryRun = false } = options
 
+  // GUARD (placement is load-bearing): must stay ABOVE the `try` block below. Its catch rethrows only
+  // OperationError; getInfraKitConfig's missing-config throw is a PLAIN Error, so a read inside the try
+  // is rewrapped and its text is silently dropped by buildMessage — AC3b would fail green.
+  await getInfraKitConfig()
+
   try {
     const projectRoot = await getProjectRoot()
     const worktreeDir = `${projectRoot}${WORKTREES_DIR_SUFFIX}`
@@ -188,7 +194,7 @@ export const reopenCurrentProject = async (options: ReopenArgs = {}): Promise<To
     logger.error({ error }, '❌ Error reopening worktree windows')
     throw new OperationError(error, {
       operation: 'reopen worktrees',
-      remediation: 'run `infra-kit worktrees list` to confirm the worktrees exist',
+      remediation: "run `infra-kit doctor` to check this project's setup",
     })
   }
 }

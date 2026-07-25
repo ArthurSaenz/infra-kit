@@ -5,8 +5,15 @@ import { commandEcho } from 'src/lib/command-echo'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { isMcpMode } from 'src/lib/mcp-mode'
+import { createToolHandler } from 'src/lib/tool-handler'
 
 import { worktreesRemove, worktreesRemoveMcpTool } from '../worktrees-remove'
+
+// createToolHandler seeds user-project config on its first call; stub it so the regression test below
+// never touches the developer's real $HOME (the direct-call tests above never reach this path).
+vi.mock('src/lib/config-bootstrap', () => {
+  return { ensureUserProjectConfig: vi.fn(async () => {}), seedUserProjectConfig: vi.fn() }
+})
 
 /**
  * Guards that make `worktrees-remove` safe to expose as an MCP tool:
@@ -27,6 +34,12 @@ vi.mock('src/lib/git-guard', () => {
 
 vi.mock('src/lib/git-utils', () => {
   return { getCurrentWorktrees: vi.fn(), getProjectRoot: vi.fn(), getRepoName: vi.fn() }
+})
+
+// worktreesRemove now reads project config before its work (fail-honestly guard). Mock it so these
+// guard tests exercise the MCP/validation logic, not config resolution.
+vi.mock('src/lib/infra-kit-config', () => {
+  return { getInfraKitConfig: vi.fn() }
 })
 
 vi.mock('src/lib/mcp-mode', () => {
@@ -140,8 +153,14 @@ describe('worktrees-remove target validation (all-or-nothing)', () => {
 })
 
 describe('worktrees-remove MCP tool surface', () => {
-  it('does not advertise all in its MCP input schema', () => {
-    expect(Object.keys(worktreesRemoveMcpTool.inputSchema)).toEqual(['versions'])
+  it('does not advertise all in its MCP input schema, but does advertise confirm for the gate', () => {
+    expect(Object.keys(worktreesRemoveMcpTool.inputSchema)).toEqual(['versions', 'confirm'])
+  })
+
+  // The destructive-op confirm gate is wired at the catalog level, but the tool itself must declare it
+  // so `mcp/tools/index.ts` can forward it to `createToolHandler`.
+  it('is flagged requiresHumanConfirm for the MCP destructive-op gate', () => {
+    expect(worktreesRemoveMcpTool.requiresHumanConfirm).toBe(true)
   })
 
   it('warns in its description that gitignored local state (incl. .env) is deleted', () => {
@@ -150,5 +169,54 @@ describe('worktrees-remove MCP tool surface', () => {
     expect(description).toMatch(/gitignored/i)
     expect(description).toMatch(/\.env/)
     expect(description).toMatch(/all=true/)
+  })
+})
+
+/**
+ * Regression guard for the destructive-op confirm gate (Phase 4). The gate sits BEFORE the handler and
+ * is orthogonal to `confirmedCommand`: on the confirmed (call-2) path, createToolHandler MUST still
+ * inject `confirmedCommand: true`. worktrees-remove keys `allowEditorRelaunch` off `!confirmedCommand`
+ * (worktrees-remove.ts:168), so if the gate ever dropped the injection, the destructive Zed `--reuse`
+ * relaunch would silently re-enable over MCP. This proves it stays suppressed.
+ */
+describe('worktrees-remove confirm gate — allowEditorRelaunch stays suppressed over MCP', () => {
+  it('injects confirmedCommand:true on the confirmed call, keeping allowEditorRelaunch false', async () => {
+    vi.mocked(isMcpMode).mockReturnValue(true)
+
+    const tool = createToolHandler({
+      toolName: worktreesRemoveMcpTool.name,
+      handler: worktreesRemoveMcpTool.handler,
+      requiresHumanConfirm: worktreesRemoveMcpTool.requiresHumanConfirm,
+    })
+
+    // Call-2: confirm:true falls through the gate to the real handler.
+    await tool({ confirm: true, versions: '1.2.5' })
+
+    const { removeWorktrees } = await import('src/lib/worktrees')
+    const { removeIdeWorktreeFolders } = await import('src/integrations/ide')
+
+    expect(removeWorktrees).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(removeIdeWorktreeFolders)).toHaveBeenCalledTimes(1)
+    // allowEditorRelaunch === !confirmedCommand — must be false because the gate still injected true.
+    expect(vi.mocked(removeIdeWorktreeFolders).mock.calls[0]?.[0].allowEditorRelaunch).toBe(false)
+  })
+
+  it('gates the FIRST call (no confirm): removes nothing and relaunches no editor', async () => {
+    vi.mocked(isMcpMode).mockReturnValue(true)
+
+    const tool = createToolHandler({
+      toolName: worktreesRemoveMcpTool.name,
+      handler: worktreesRemoveMcpTool.handler,
+      requiresHumanConfirm: worktreesRemoveMcpTool.requiresHumanConfirm,
+    })
+
+    const result = await tool({ versions: '1.2.5' })
+
+    const { removeWorktrees } = await import('src/lib/worktrees')
+    const { removeIdeWorktreeFolders } = await import('src/integrations/ide')
+
+    expect(result.isError).toBe(true)
+    expect(removeWorktrees).not.toHaveBeenCalled()
+    expect(removeIdeWorktreeFolders).not.toHaveBeenCalled()
   })
 })

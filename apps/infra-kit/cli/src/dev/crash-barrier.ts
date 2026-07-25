@@ -121,6 +121,27 @@ const defaultRegister = (event: FaultEvent, handler: (error: unknown) => void): 
 }
 
 /**
+ * Handle returned by {@link registerCrashBarrier} so a caller can retire it once something else already
+ * owns the process's fate.
+ */
+export interface CrashBarrierHandle {
+  /**
+   * Stop routing faults through `onFault`/`onFatal`: every fault from this point on is FILED via
+   * `fileFault` only, and neither reported nor turned fatal.
+   *
+   * Exists for `infra-kit dev`'s orderly shutdown: `doShutdown` disposes the renderer as one of its first
+   * acts, and the entry point's `onFault` calls back into that renderer. A rejection landing mid-teardown
+   * (`watcher.close()`, `turboWatch.kill()`, `uiDev.kill()` are all unguarded) would otherwise reach a
+   * disposed panel. Calling `disarm()` once shutdown has latched closes that window without opening a new
+   * one: a fault before `disarm()` still gets the full survive-or-fatal treatment, exactly as today.
+   *
+   * One-way and idempotent — there is no re-arm, because the only caller is a teardown that never resumes
+   * normal operation. Calling it more than once is a no-op.
+   */
+  disarm: () => void
+}
+
+/**
  * Install the crash barrier: wire `uncaughtException` and `unhandledRejection` to `onFault` and DO NOT
  * exit, so a single escaped async path in an in-process backend handler no longer tears the whole dev
  * session down. The handler never rethrows — rethrowing would re-arm the very termination this prevents.
@@ -131,6 +152,9 @@ const defaultRegister = (event: FaultEvent, handler: (error: unknown) => void): 
  * the session exits. This is a backstop, not the fix: `terminal-liveness` already initiates the same
  * bounded teardown from the stream's own `'error'` event, and this covers a fault arriving from a stream
  * that listener does not own.
+ *
+ * Returns a {@link CrashBarrierHandle} whose `disarm()` retires the barrier for a caller (like orderly
+ * shutdown) that needs to stop faults reaching `onFault` without needing them to become fatal either.
  *
  * @example
  * registerCrashBarrier() // resident dev process survives a handler's stray rejection, logs it loudly
@@ -143,9 +167,20 @@ export const registerCrashBarrier = ({
   },
   fileFault = defaultFileFault,
   onFatal = defaultOnFatal,
-}: CrashBarrierDeps = {}): void => {
+}: CrashBarrierDeps = {}): CrashBarrierHandle => {
+  let armed = true
+
   const handle = (event: FaultEvent) => {
     return (error: unknown): void => {
+      if (!armed) {
+        // Disarmed: something else (orderly shutdown) already owns the process's fate. File it for a
+        // post-mortem and stop — never `onFault` (which may point at a torn-down renderer) and never
+        // `onFatal` (which would fight the teardown already in flight).
+        fileFault(event, error)
+
+        return
+      }
+
       if (isTerminalDead()) {
         fileFault(event, error)
         // The reason names the CHANNEL, not a story: the errno-bearing reason comes from the liveness
@@ -161,4 +196,10 @@ export const registerCrashBarrier = ({
 
   register('uncaughtException', handle('uncaughtException'))
   register('unhandledRejection', handle('unhandledRejection'))
+
+  return {
+    disarm: () => {
+      armed = false
+    },
+  }
 }

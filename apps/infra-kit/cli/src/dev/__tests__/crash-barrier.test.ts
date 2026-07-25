@@ -217,6 +217,125 @@ describe('crashBarrier — terminal death is fatal, and nothing else is', () => 
   })
 })
 
+/**
+ * `disarm()` exists for `doShutdown`: the renderer is disposed at the top of teardown, and `onFault` (the
+ * entry point's wiring) calls back into it. Without a way to retire the barrier, a rejection landing
+ * mid-teardown would route straight into a torn-down panel. These pin the handle in isolation, since
+ * `dev-server.ts`'s own test only has the runner-level symptom (a disposed renderer) to assert on.
+ */
+describe('crashBarrier — disarm() retires the barrier for a caller that already owns the process fate', () => {
+  it('files a disarmed fault instead of reporting or fataling it, and never throws', () => {
+    const handlers = new Map<string, (error: unknown) => void>()
+    const filed: Array<{ event: string; error: unknown }> = []
+    const onFault = vi.fn()
+    const onFatal = vi.fn()
+
+    const { disarm } = registerCrashBarrier({
+      register: (event, handler) => {
+        handlers.set(event, handler)
+      },
+      onFault,
+      onFatal,
+      isTerminalDead: () => {
+        return false
+      },
+      fileFault: (event, error) => {
+        filed.push({ event, error })
+      },
+    })
+
+    disarm()
+
+    expect(() => {
+      handlers.get('uncaughtException')?.(new Error('late fault, after disarm'))
+    }).not.toThrow()
+
+    expect(onFault).not.toHaveBeenCalled()
+    expect(onFatal).not.toHaveBeenCalled()
+    expect(filed).toHaveLength(1)
+    expect(filed[0]?.error).toBeInstanceOf(Error)
+  })
+
+  it('is idempotent — calling it again changes nothing', () => {
+    const handlers = new Map<string, (error: unknown) => void>()
+    const filed: unknown[] = []
+    const onFault = vi.fn()
+
+    const { disarm } = registerCrashBarrier({
+      register: (event, handler) => {
+        handlers.set(event, handler)
+      },
+      onFault,
+      fileFault: (_event, error) => {
+        filed.push(error)
+      },
+    })
+
+    disarm()
+    disarm()
+
+    handlers.get('unhandledRejection')?.('a bare rejection after two disarms')
+
+    expect(onFault).not.toHaveBeenCalled()
+    expect(filed).toHaveLength(1)
+  })
+
+  it('does not affect a fault that arrives BEFORE disarm() is called', () => {
+    const handlers = new Map<string, (error: unknown) => void>()
+    const faults: unknown[] = []
+    const filed: unknown[] = []
+
+    const { disarm } = registerCrashBarrier({
+      register: (event, handler) => {
+        handlers.set(event, handler)
+      },
+      onFault: (_event, error) => {
+        faults.push(error)
+      },
+      fileFault: (_event, error) => {
+        filed.push(error)
+      },
+    })
+
+    handlers.get('uncaughtException')?.(new Error('early fault, before disarm'))
+
+    expect(faults).toHaveLength(1)
+    expect(filed).toHaveLength(0)
+
+    // Disarming afterwards does not retroactively touch the fault already delivered above.
+    disarm()
+    expect(faults).toHaveLength(1)
+  })
+
+  it('never re-fatals a disarmed fault even when stdio would otherwise be reported dead', () => {
+    // Once orderly shutdown owns the process's fate, a disarmed fault must never fight it by taking the
+    // `isTerminalDead` branch into a second `onFatal` — that branch is for a fault ARRIVING while nothing
+    // else is tearing the process down.
+    const handlers = new Map<string, (error: unknown) => void>()
+    const onFatal = vi.fn()
+    const filed: unknown[] = []
+
+    const { disarm } = registerCrashBarrier({
+      register: (event, handler) => {
+        handlers.set(event, handler)
+      },
+      isTerminalDead: () => {
+        return true
+      },
+      onFatal,
+      fileFault: (_event, error) => {
+        filed.push(error)
+      },
+    })
+
+    disarm()
+    handlers.get('uncaughtException')?.(new Error('late fault, stdio also dead'))
+
+    expect(onFatal).not.toHaveBeenCalled()
+    expect(filed).toHaveLength(1)
+  })
+})
+
 describe('formatFault — the fatal variant may not lie', () => {
   it('says "kept alive" on the survive path and NOT on the fatal one', () => {
     expect(formatFault('uncaughtException', new Error('x'))).toContain('kept alive')

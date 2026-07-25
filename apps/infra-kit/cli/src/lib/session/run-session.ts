@@ -197,6 +197,17 @@ export interface SessionSignalDeps {
   /** Deliver a signal to THIS process (used to take SIGTSTP's default action: stop). */
   raise: (signal: NodeJS.Signals) => void
   /**
+   * Clock for the pnpm-relay window. A seam, not a convenience: the window is defined by elapsed time,
+   * so a test that cannot move the clock could only assert it by sleeping.
+   *
+   * DELIBERATELY SEPARATE from the loop's `now` (which stamps transcript durations), even though both
+   * default to `Date.now`. They want opposite things: a duration fake wants a FROZEN clock for a
+   * deterministic footer, while this one reads a frozen clock as "no time has passed", which holds the
+   * relay window permanently open and swallows every SIGTERM — the exact bug the window exists to fix.
+   * Aliasing them made the seam fail OPEN. Keep them apart.
+   */
+  now: () => number
+  /**
    * Terminal hygiene on the way out of a between-iterations exit, where the PALETTE — not a child —
    * owns the screen. Ink is mid-render there: raw mode armed, cursor hidden, a frame on screen. An
    * `exit()` from a signal handler runs none of Ink's teardown, so without this the user's shell comes
@@ -217,6 +228,27 @@ export interface SessionSignals {
   /** True when an external SIGTERM asked us to stop; the loop must exit after the current child. */
   quitRequested: () => boolean
 }
+
+/**
+ * How long after a Ctrl-C a SIGTERM may still be pnpm's relay of it.
+ *
+ * MEASURED, so the number is not a guess: driving a real `pnpm exec node` on a pty and pressing Ctrl-C,
+ * the relayed SIGTERM landed **6ms and 16ms** after the SIGINT. A second is ~60x that — wide enough that
+ * load will not push a relay outside it, narrow enough that a human's deliberate `kill` never lands
+ * inside it. Beyond the window a SIGTERM has no keypress to belong to and is treated as the external
+ * `kill` it is.
+ *
+ * That same measurement also showed the relay is NOT guaranteed: 2 of 4 runs produced no SIGTERM at all.
+ * Which is exactly why this is a WINDOW and not a counter. The first cut licensed one swallow per Ctrl-C,
+ * but only a relay ever spends a licence — so on every run without one (and on the direct bin, which
+ * never relays) the licence was left unspent and a genuine `kill` seconds later was still swallowed.
+ * That narrowed the original bug from unbounded to N rather than fixing it.
+ *
+ * If the window is ever wrong, the failure is a session that quits after the current child instead of
+ * redrawing the palette — recoverable by rerunning `infra-kit`. It is deliberately the mild direction:
+ * the opposite error is a shell that cannot be killed.
+ */
+const PNPM_RELAY_WINDOW_MS = 1_000
 
 /**
  * Install the session's state-aware signal owners. The child is spawned WITHOUT `detached`, so it shares
@@ -252,15 +284,17 @@ export interface SessionSignals {
  *   mid-palette would strand a half-drawn Ink frame on the screen.
  */
 export const installSessionSignals = (isChildRunning: () => boolean, deps: SessionSignalDeps): SessionSignals => {
-  // Per-child signal history: a SIGTERM is pnpm's relay only if a SIGINT preceded it for THIS child.
-  let sigintSeenDuringChild = false
+  // Per-child signal history: a SIGTERM is pnpm's relay only if a SIGINT preceded it RECENTLY, for THIS
+  // child. Proximity is the whole rule — see PNPM_RELAY_WINDOW_MS for why it is a timestamp and not the
+  // flag (or the counter) this started as.
+  let lastSigintAt: number | null = null
   let quitRequested = false
 
   const onSigint = (): void => {
     if (isChildRunning()) {
-      // The child got its own copy from the tty; ours only records that the Ctrl-C happened, so a
-      // SIGTERM arriving next can be recognised as pnpm's relay rather than an external kill.
-      sigintSeenDuringChild = true
+      // The child got its own copy from the tty; ours only records WHEN the Ctrl-C happened, so a
+      // SIGTERM arriving right behind it can be recognised as pnpm's relay rather than an external kill.
+      lastSigintAt = deps.now()
 
       return
     }
@@ -279,7 +313,7 @@ export const installSessionSignals = (isChildRunning: () => boolean, deps: Sessi
       return
     }
 
-    if (sigintSeenDuringChild) {
+    if (lastSigintAt != null && deps.now() - lastSigintAt <= PNPM_RELAY_WINDOW_MS) {
       // pnpm's relay of the Ctrl-C the user aimed at the child. Not a request to end the session.
       return
     }
@@ -314,7 +348,7 @@ export const installSessionSignals = (isChildRunning: () => boolean, deps: Sessi
       deps.unregister('SIGTSTP', onSigtstp)
     },
     childStarted: () => {
-      sigintSeenDuringChild = false
+      lastSigintAt = null
     },
     quitRequested: () => {
       return quitRequested
@@ -398,6 +432,12 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
     },
     raise: (signal) => {
       process.kill(process.pid, signal)
+    },
+    // Its OWN clock, NOT `resolved.now` — see the field's doc on SessionSignalDeps. Sharing the loop's
+    // seam meant a test freezing `now` for deterministic transcript durations silently pinned the relay
+    // window open, so the seam failed open instead of closed.
+    now: () => {
+      return Date.now()
     },
     // Routed through `resolved` rather than the bare import so a test injecting
     // `deps.resetTerminal` still sees the signal path's resets.

@@ -306,7 +306,9 @@ describe('getInfraKitConfig', () => {
   it('throws a plain not-found error when neither infra-kit.json nor a legacy .yml exists', async () => {
     await withTmpRepo(async () => {
       await expect(getInfraKitConfig()).rejects.toThrow(/not found/)
-      await expect(getInfraKitConfig()).rejects.not.toThrow(/infra-kit init/)
+      // The plain branch (Step 4) — NOT the legacy-yml migration branch. Both now mention
+      // `infra-kit init`, so the legacy-yml phrasing is the discriminator.
+      await expect(getInfraKitConfig()).rejects.not.toThrow(/legacy infra-kit\.yml/)
     })
   })
 
@@ -583,6 +585,65 @@ describe('getInfraKitConfigPaths memoization', () => {
     } finally {
       homedirSpy.mockRestore()
       resetInfraKitConfigCache()
+    }
+  })
+})
+
+describe('merged-config cache key (cwd/homedir collision safety)', () => {
+  afterEach(() => {
+    resetInfraKitConfigCache()
+    vi.clearAllMocks()
+  })
+
+  it('does not serve one repo config to another when their infra-kit.json mtimes collide', async () => {
+    // Two distinct "repos" a long-lived process (the MCP server) might resolve configs for without a
+    // restart. The mtime-only cache used to hit-test purely on mtimes, so an mtime collision between
+    // two DIFFERENT repos would serve repo A's config back for repo B. Forcing the collision here
+    // (rather than hoping for one) makes the bug reproducible on demand.
+    const rootA = fs.mkdtempSync(path.join(os.tmpdir(), 'infra-kit-config-cache-key-a-'))
+    const rootB = fs.mkdtempSync(path.join(os.tmpdir(), 'infra-kit-config-cache-key-b-'))
+    const homeA = path.join(os.tmpdir(), 'infra-kit-config-cache-key-home-a')
+    const homeB = path.join(os.tmpdir(), 'infra-kit-config-cache-key-home-b')
+
+    const jsonA = path.join(rootA, 'infra-kit.json')
+    const jsonB = path.join(rootB, 'infra-kit.json')
+
+    fs.writeFileSync(jsonA, JSON.stringify({ envManagement: { provider: 'doppler', config: { name: 'repo-a' } } }))
+    fs.writeFileSync(jsonB, JSON.stringify({ envManagement: { provider: 'doppler', config: { name: 'repo-b' } } }))
+
+    // Force an mtime collision on both main config files — the exact condition the bug depends on.
+    const collidingMtime = new Date('2024-01-01T00:00:00Z')
+
+    fs.utimesSync(jsonA, collidingMtime, collidingMtime)
+    fs.utimesSync(jsonB, collidingMtime, collidingMtime)
+
+    const homedirSpy = vi.spyOn(os, 'homedir')
+
+    resetInfraKitConfigCache()
+
+    try {
+      vi.mocked(getProjectRoot).mockResolvedValue(rootA)
+      vi.mocked(getMainRepoRoot).mockResolvedValue(rootA)
+      homedirSpy.mockReturnValue(homeA)
+
+      const a = await getInfraKitConfig()
+
+      expect(a.envManagement.config.name).toBe('repo-a')
+
+      // Switch to repo B WITHOUT resetting the cache — this is the long-lived-process scenario.
+      // mtimes are identical to repo A's; only cwd/homedir differ.
+      vi.mocked(getProjectRoot).mockResolvedValue(rootB)
+      vi.mocked(getMainRepoRoot).mockResolvedValue(rootB)
+      homedirSpy.mockReturnValue(homeB)
+
+      const b = await getInfraKitConfig()
+
+      expect(b.envManagement.config.name).toBe('repo-b')
+    } finally {
+      homedirSpy.mockRestore()
+      resetInfraKitConfigCache()
+      fs.rmSync(rootA, { recursive: true, force: true })
+      fs.rmSync(rootB, { recursive: true, force: true })
     }
   })
 })
