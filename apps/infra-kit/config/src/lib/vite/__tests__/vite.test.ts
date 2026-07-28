@@ -82,13 +82,13 @@ describe('resolveProxyConfig', () => {
         target: 'https://arthur.hulyo.co.il',
         changeOrigin: true,
         secure: false,
-        cookieDomainRewrite: 'localhost',
+        cookieDomainRewrite: '',
       },
       '/media': {
         target: 'https://arthur.hulyo.co.il',
         changeOrigin: true,
         secure: false,
-        cookieDomainRewrite: 'localhost',
+        cookieDomainRewrite: '',
       },
     })
   })
@@ -116,7 +116,7 @@ describe('resolveProxyConfig', () => {
       target: 'https://arthur.hulyo.co.il',
       changeOrigin: true,
       secure: false,
-      cookieDomainRewrite: 'localhost',
+      cookieDomainRewrite: '',
     })
   })
 
@@ -649,7 +649,7 @@ describe('infraKitDev (config loading)', () => {
 
     // Exactly the shape the runner writes (`dev-server.ts` → `uiPortMap`), no more: if this record grows a
     // key the runner does not emit, the test starts describing a contract that does not exist — which is
-    // how `hmr` came to be tested against a value no runner ever produced, while being wired to nothing.
+    // how the HMR override came to be tested against a value no runner ever produced, while being wired to nothing.
     process.env.INFRA_KIT_UI_PORTS = JSON.stringify({
       'my-ui': { port: 5200, alias: '2-4.my-ui.localhost' },
     })
@@ -657,10 +657,10 @@ describe('infraKitDev (config loading)', () => {
 
     expect(result.port).toBe(5200)
     expect(result.strictPort).toBe(true)
-    expect(result.hmr).toEqual({ protocol: 'wss', host: '2-4.my-ui.localhost', clientPort: 443 })
+    expect(result.ws).toEqual({ protocol: 'wss', host: '2-4.my-ui.localhost', clientPort: 443 })
   })
 
-  it('emits NO hmr for a bare vite dev (no runner, so no registered alias)', async () => {
+  it('emits NO ws for a bare vite dev (no runner, so no registered alias)', async () => {
     // Computability is not registration: this UI's alias would be derivable, but nothing registered it, so
     // pointing HMR there would break hot reload on a path that works today.
     const dir = makePkgDir('my-ui')
@@ -668,10 +668,10 @@ describe('infraKitDev (config loading)', () => {
     delete process.env.INFRA_KIT_UI_PORTS
     const result = await infraKitDev({ cwd: dir })
 
-    expect(result.hmr).toBeUndefined()
+    expect(result.ws).toBeUndefined()
   })
 
-  it('emits NO hmr for the legacy bare-number record (an old runner registered no alias)', async () => {
+  it('emits NO ws for the legacy bare-number record (an old runner registered no alias)', async () => {
     const dir = makePkgDir('my-ui')
 
     process.env.INFRA_KIT_UI_PORTS = JSON.stringify({ 'my-ui': 5200 })
@@ -680,17 +680,17 @@ describe('infraKitDev (config loading)', () => {
     // Back-compat: the port is still bound with strictPort — only the alias-dependent HMR override is off.
     expect(result.port).toBe(5200)
     expect(result.strictPort).toBe(true)
-    expect(result.hmr).toBeUndefined()
+    expect(result.ws).toBeUndefined()
   })
 
-  it('emits NO hmr when a widened record carries a port but no alias (assigned, never registered)', async () => {
+  it('emits NO ws when a widened record carries a port but no alias (assigned, never registered)', async () => {
     const dir = makePkgDir('my-ui')
 
     process.env.INFRA_KIT_UI_PORTS = JSON.stringify({ 'my-ui': { port: 5200 } })
     const result = await infraKitDev({ cwd: dir })
 
     expect(result.port).toBe(5200)
-    expect(result.hmr).toBeUndefined()
+    expect(result.ws).toBeUndefined()
   })
 
   it('ignores a malformed widened record (no numeric port) and falls back to a free port', async () => {
@@ -700,7 +700,7 @@ describe('infraKitDev (config loading)', () => {
     const result = await infraKitDev({ cwd: dir })
 
     expect(result.strictPort).toBeUndefined()
-    expect(result.hmr).toBeUndefined()
+    expect(result.ws).toBeUndefined()
     expect(result.port).toBeGreaterThan(0)
   })
 
@@ -803,7 +803,7 @@ describe('infraKitDev (config loading)', () => {
       target: 'https://arthur.hulyo.co.il',
       changeOrigin: true,
       secure: false,
-      cookieDomainRewrite: 'localhost',
+      cookieDomainRewrite: '',
     })
 
     // Neither cred set → no `headers` key on any route.
@@ -825,7 +825,7 @@ describe('infraKitDev (config loading)', () => {
       target: 'https://arthur.hulyo.co.il',
       changeOrigin: true,
       secure: false,
-      cookieDomainRewrite: 'localhost',
+      cookieDomainRewrite: '',
       headers: { Authorization: expectedHeader },
     })
 

@@ -9,6 +9,14 @@ export interface ResolvedDevServer {
   port?: number
   host?: string | boolean
   strictPort?: boolean
+  /**
+   * The alias websocket override. `@slip-stream-kit/config` <= 0.3.3 spells it `hmr`; later versions
+   * spell it `ws`. This package depends on `^0.3.3`, which permits BOTH, so both are declared and
+   * {@link mergeServerConfig} accepts either — reading only `ws` would silently wire HMR to nothing
+   * for anyone resolving the older config, with no error to explain it.
+   */
+  ws?: { protocol: 'wss'; host: string; clientPort: number }
+  /** Legacy spelling of {@link ws}, emitted by `@slip-stream-kit/config` <= 0.3.3. */
   hmr?: { protocol: 'wss'; host: string; clientPort: number }
   proxy: InfraKitViteProxy
 }
@@ -21,7 +29,9 @@ export interface UserServerConfig {
   port?: number
   host?: string | boolean
   strictPort?: boolean
+  /** Legacy alias of {@link ws}. Still declared because a consumer setting it must still win — see {@link mergeServerConfig}. */
   hmr?: unknown
+  ws?: unknown
   proxy?: Record<string, unknown>
 }
 
@@ -30,7 +40,7 @@ export interface InfraKitServerConfig {
   port?: number
   host?: string | boolean
   strictPort?: boolean
-  hmr?: ResolvedDevServer['hmr']
+  ws?: ResolvedDevServer['ws']
   proxy?: InfraKitViteProxy
 }
 
@@ -78,7 +88,17 @@ export const mergeServerConfig = (
   }
 
   if (user?.host == null && resolved.host != null) server.host = resolved.host
-  if (user?.hmr == null && resolved.hmr != null) server.hmr = resolved.hmr
+  // Guard on BOTH keys, not just `ws`. Vite 8 back-fills a legacy `server.hmr` onto `server.ws` with
+  // `??=`, so ours would already be set by the time the compat shim ran: a consumer who hand-wrote
+  // `server.hmr` would silently lose to us, which is the exact failure this whole module exists to
+  // prevent. Their explicit setting outranks ours whichever spelling they used.
+  // Always CONTRIBUTE as `ws` (vite 8 deprecated `server.hmr.*`), but ACCEPT either spelling from the
+  // config package — see {@link ResolvedDevServer.ws}. Translating here means a consumer still on
+  // config <= 0.3.3 stops getting the deprecation warning as soon as this package is published, with
+  // no lockstep upgrade required.
+  const resolvedWs = resolved.ws ?? resolved.hmr
+
+  if (user?.ws == null && user?.hmr == null && resolvedWs != null) server.ws = resolvedWs
 
   const proxy = withoutUserRoutes(resolved.proxy, user?.proxy)
 

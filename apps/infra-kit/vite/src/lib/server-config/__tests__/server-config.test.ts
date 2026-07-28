@@ -8,7 +8,7 @@ const MANAGED: ResolvedDevServer = {
   port: 5301,
   host: '127.0.0.1',
   strictPort: true,
-  hmr: { protocol: 'wss', host: 'main.client-ui.localhost', clientPort: 443 },
+  ws: { protocol: 'wss', host: 'main.client-ui.localhost', clientPort: 443 },
   proxy: {
     '/api': { target: 'https://main.client-api.localhost', changeOrigin: true, secure: false },
     '/ws': { target: 'https://main.client-api.localhost', changeOrigin: true, secure: false },
@@ -24,7 +24,7 @@ describe('mergeServerConfig', () => {
       port: 5301,
       host: '127.0.0.1',
       strictPort: true,
-      hmr: { protocol: 'wss', host: 'main.client-ui.localhost', clientPort: 443 },
+      ws: { protocol: 'wss', host: 'main.client-ui.localhost', clientPort: 443 },
       proxy: MANAGED.proxy,
     })
   })
@@ -46,11 +46,46 @@ describe('mergeServerConfig', () => {
     expect(merged.strictPort).toBeUndefined()
   })
 
-  it('leaves an explicit host and hmr alone', () => {
-    const merged = mergeServerConfig(MANAGED, { host: '0.0.0.0', hmr: { protocol: 'ws' } })
+  it('leaves an explicit host and ws alone', () => {
+    const merged = mergeServerConfig(MANAGED, { host: '0.0.0.0', ws: { protocol: 'ws' } })
 
     expect(merged.host).toBeUndefined()
-    expect(merged.hmr).toBeUndefined()
+    expect(merged.ws).toBeUndefined()
+    expect(merged.port).toBe(5301)
+  })
+
+  it('accepts the LEGACY `hmr` spelling from an older config package and still contributes `ws`', () => {
+    // This package depends on `@slip-stream-kit/config: ^0.3.3`, and 0.3.3 emits `hmr`, not `ws`.
+    // Reading only `ws` would leave HMR wired to nothing for anyone on that version — silently, since
+    // an absent override is indistinguishable from "no runner placed this UI". Translating instead
+    // also means the vite-8 deprecation dies for those consumers without a lockstep config upgrade.
+    const legacy: ResolvedDevServer = {
+      port: 5301,
+      hmr: { protocol: 'wss', host: 'main.client-ui.localhost', clientPort: 443 },
+      proxy: {},
+    }
+    const merged = mergeServerConfig(legacy, undefined)
+
+    expect(merged.ws).toEqual({ protocol: 'wss', host: 'main.client-ui.localhost', clientPort: 443 })
+  })
+
+  it('prefers `ws` over `hmr` when a config package somehow emits both', () => {
+    const both: ResolvedDevServer = {
+      ws: { protocol: 'wss', host: 'new.localhost', clientPort: 443 },
+      hmr: { protocol: 'wss', host: 'old.localhost', clientPort: 443 },
+      proxy: {},
+    }
+
+    expect(mergeServerConfig(both, undefined).ws?.host).toBe('new.localhost')
+  })
+
+  it('yields to a consumer who spelled it the LEGACY `hmr` way', () => {
+    // Vite 8 back-fills a legacy `server.hmr` onto `server.ws` with `??=`. If this guard checked only
+    // `ws`, ours would already occupy `ws` by the time that ran, and the consumer's explicit `hmr`
+    // would lose silently — the exact override-the-consumer failure this module exists to prevent.
+    const merged = mergeServerConfig(MANAGED, { hmr: { protocol: 'ws' } })
+
+    expect(merged.ws).toBeUndefined()
     expect(merged.port).toBe(5301)
   })
 

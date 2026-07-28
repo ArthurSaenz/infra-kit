@@ -93,7 +93,12 @@ export const DEV_CONTEXT_WIRE_VERSION = 2
 
 /**
  * A single Vite `server.proxy` entry. `changeOrigin` is always set. `cookieDomainRewrite` is cloud-only
- * (it keeps an HTTPS cloud BE's cookies usable from a local FE). `secure: false` appears on BOTH sources
+ * (it keeps an HTTPS cloud BE's cookies usable from a local FE) and is always the EMPTY string, which
+ * makes vite delete the whole `; Domain=…` segment rather than rewrite it (`rewriteCookieProperty`
+ * returns `''` for a falsy replacement). A host-only cookie is then scoped to whatever host the browser
+ * actually used, so it works from `127.0.0.1`, `localhost` and a `*.localhost` portless alias alike —
+ * whereas a literal `Domain=localhost` is rejected outright by an IP host, and by a multi-label
+ * `*.localhost` origin under the RFC 6265 §5.3 public-suffix rule. `secure: false` appears on BOTH sources
  * but for different reasons: a cloud target may serve a cert the local store rejects, and a local target
  * is served by portless from its own private CA — set there only for a loopback host (see
  * {@link isLoopbackTarget}). `headers` is present only when HTTP Basic Auth is injected (see
@@ -105,7 +110,7 @@ export interface InfraKitViteProxyEntry {
   target: string
   changeOrigin: true
   secure?: false
-  cookieDomainRewrite?: 'localhost'
+  cookieDomainRewrite?: ''
   headers?: Record<string, string>
 }
 
@@ -389,7 +394,7 @@ const resolveRoute = ({
 
   const target = interpolate(templates.cloud, { release: '', packageName: route.packageName, env })
 
-  return { target, changeOrigin: true, secure: false, cookieDomainRewrite: 'localhost' }
+  return { target, changeOrigin: true, secure: false, cookieDomainRewrite: '' }
 }
 
 interface ResolveProxyArgs {
@@ -777,11 +782,22 @@ const resolveManagedUi = (cwd: string): ManagedUi | null => {
 const HTTPS_PORT = 443
 
 /**
- * Vite's `server.hmr` override, pointing the HMR client at the alias instead of at the raw dev-server port.
+ * Vite's `server.ws` override, pointing the HMR client at the alias instead of at the raw dev-server port.
  * The page is loaded over `https://<alias>`, so its websocket must be `wss://` on the same origin or the
  * browser blocks it as mixed content; `clientPort` is the proxy's implicit `:443`, not vite's bound port.
+ *
+ * This is `server.ws`, NOT the older `server.hmr`: vite 8 deprecated `server.hmr.{protocol,host,port,
+ * path,clientPort,timeout,server}` in favour of `server.ws.*` and warns on every dev boot that sets them
+ * — a warning consumers were seeing in the wild, emitted by us. The field names are unchanged (vite's
+ * `WsOptions` is `HmrOptions` minus `overlay`), so this is a key rename, not a behaviour change.
+ *
+ * **Requires vite >= 8.** `server.ws` does not exist before it; vite 8 ships `setupHmrWsOptionCompat` to
+ * copy a legacy `hmr` onto `ws`, which is what makes `ws` the forward direction and `hmr` the legacy one.
+ * Neither this package (zod-only) nor `@slip-stream-kit/vite` (which imports vite as `import type`, erased
+ * at runtime) can detect the version, so the floor is a documented requirement rather than a runtime check.
+ * Emitting both keys is NOT an option — it would re-trigger the very deprecation warning being removed.
  */
-export interface InfraKitViteHmr {
+export interface InfraKitViteWs {
   protocol: 'wss'
   host: string
   clientPort: number
@@ -796,7 +812,7 @@ export interface InfraKitViteHmr {
  *
  * `port` defaults to a fresh OS-assigned free port so simultaneous git worktrees never collide on
  * Vite's `5173` (override via `options.port`). `host` defaults to {@link LOOPBACK_V4} so the portless
- * alias can actually reach it (override via `options.host` for containers/LAN). `hmr` is emitted only
+ * alias can actually reach it (override via `options.host` for containers/LAN). `ws` is emitted only
  * when `infra-kit dev` registered an alias for this UI, so a bare `vite dev` keeps vite's own HMR
  * defaults. Pass `command` so `build` is a no-op (empty proxy, no port) — a build ignores `server` and
  * proxy resolution would otherwise fail-fast on a cloud route with no sourced env.
@@ -812,7 +828,7 @@ export const infraKitDev = async (
   port?: number
   host?: string | boolean
   strictPort?: boolean
-  hmr?: InfraKitViteHmr
+  ws?: InfraKitViteWs
   proxy: InfraKitViteProxy
 }> => {
   const cwd = options.cwd ?? process.cwd()
@@ -828,12 +844,12 @@ export const infraKitDev = async (
   const strictPort = managed != null
   const host = options.host ?? LOOPBACK_V4
 
-  // Override HMR ONLY when the runner handed us the alias it registered. A bare `vite dev` (no runner)
-  // has no alias, and a computable hostname is not a registered one — pointing the HMR client at a
-  // hostname nothing resolves would break hot reload on a path that works today.
-  const hmr: InfraKitViteHmr | undefined =
+  // Override the HMR websocket ONLY when the runner handed us the alias it registered. A bare `vite dev`
+  // (no runner) has no alias, and a computable hostname is not a registered one — pointing the HMR client
+  // at a hostname nothing resolves would break hot reload on a path that works today.
+  const ws: InfraKitViteWs | undefined =
     managed?.alias == null ? undefined : { protocol: 'wss', host: managed.alias, clientPort: HTTPS_PORT }
-  const server = { port, host, ...(strictPort ? { strictPort } : {}), ...(hmr ? { hmr } : {}) }
+  const server = { port, host, ...(strictPort ? { strictPort } : {}), ...(ws ? { ws } : {}) }
   const dev = await loadDev(cwd)
 
   if (!dev?.proxy) return { ...server, proxy: {} }

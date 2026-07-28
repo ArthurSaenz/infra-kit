@@ -2262,10 +2262,10 @@ describe('devServerRunner — the UI gets the same port-free HTTPS URL as a back
       // port the runner advertised (and aliased) is exactly the one vite binds.
       expect(map['shop-ui']?.port).toBeGreaterThan(0)
 
-      // The alias must round-trip. It is what the helper turns into `hmr: { protocol: 'wss', host: <alias> }`
+      // The alias must round-trip. It is what the helper turns into `ws: { protocol: 'wss', host: <alias> }`
       // — the page is served over https://<alias>, so an HMR socket derived from vite's own bound port is
       // blocked as mixed content and hot reload dies silently. Publishing only the port (the old shape)
-      // left the helper with no alias and it emitted no `hmr` at all: HMR was wired to nothing.
+      // left the helper with no alias and it emitted no `ws` at all: HMR was wired to nothing.
       expect(map['shop-ui']?.alias).toBe('feat-x.shop-ui.localhost')
     } finally {
       await runner.shutdown()

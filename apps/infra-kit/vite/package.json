@@ -53,7 +53,7 @@
     "@slip-stream-kit/config": "^0.3.3"
   },
   "peerDependencies": {
-    "vite": ">=6"
+    "vite": ">=8"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",

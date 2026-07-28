@@ -96,7 +96,7 @@ describe('infraKit', () => {
 
       expect(config.server?.port).toBe(5399)
       expect(config.server?.strictPort).toBe(true)
-      expect(config.server?.hmr).toEqual({ protocol: 'wss', host: 'main.client-ui.localhost', clientPort: 443 })
+      expect(config.server?.ws).toEqual({ protocol: 'wss', host: 'main.client-ui.localhost', clientPort: 443 })
     } finally {
       delete process.env.INFRA_KIT_UI_PORTS
     }
