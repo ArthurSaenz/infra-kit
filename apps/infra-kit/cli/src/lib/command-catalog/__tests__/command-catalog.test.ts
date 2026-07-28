@@ -56,6 +56,8 @@ const EXPECTED_EXPOSED_TOOLS = [
   'worktrees-sync',
   'config-get',
   'dev-status',
+  'local-deploy-all',
+  'local-deploy-selected',
 ]
 
 // Deliberately NOT exposed as MCP tools (mutating / host-inspecting / irreversible).
@@ -72,7 +74,7 @@ const EXPECTED_UNEXPOSED_WITH_TOOL = ['doctor', 'gh-release-deliver']
 const CREDENTIAL_WRITE_COMMANDS = ['env-token-set', 'env-token-remove']
 
 describe('command catalog — MCP exposure policy', () => {
-  it('exposes exactly the expected 21 MCP tools (set-equal, order-independent)', () => {
+  it('exposes exactly the expected 23 MCP tools (set-equal, order-independent)', () => {
     const exposedNames = getExposedMcpTools()
       .map((tool) => {
         return tool.name
@@ -80,7 +82,7 @@ describe('command catalog — MCP exposure policy', () => {
       .sort()
 
     expect(exposedNames).toEqual([...EXPECTED_EXPOSED_TOOLS].sort())
-    expect(exposedNames).toHaveLength(21)
+    expect(exposedNames).toHaveLength(23)
   })
 
   it('keeps env-token-set / env-token-remove off MCP entirely (no tool object to flip on)', () => {
@@ -205,6 +207,11 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
     'gh-release-deploy-selected',
     'env-clear',
     'worktrees-remove',
+    // Writes to real cloud infrastructure from the developer's own machine, with no CI run to
+    // inspect afterwards — the two-phase gate is the only thing standing between an agent and a
+    // deploy it decided on by itself.
+    'local-deploy-all',
+    'local-deploy-selected',
   ]
 
   it('gates exactly the expected high-risk destructive tools with requiresHumanConfirm', () => {
@@ -263,6 +270,8 @@ describe('command catalog — CLI/MCP name parity', () => {
   // grandfathered here (the `gh-` prefix on release tools). Any new accidental
   // divergence — or a typo that renames an MCP tool — fails this test.
   const EXPECTED_PARITY: Record<string, string> = {
+    'local-deploy-all': 'local-deploy-all',
+    'local-deploy-selected': 'local-deploy-selected',
     'merge-dev': 'gh-merge-dev',
     'release-list': 'gh-release-list',
     'release-create': 'release-create',
@@ -317,8 +326,12 @@ describe('command catalog — menu grouping', () => {
       'release create',
       'release desc-edit',
       'release deploy-all',
+      // Top-level `deploy` (groupPath ['deploy']) carries menuGroup 'release', so it renders beside
+      // the workflow-dispatching deploy commands it is the local counterpart to.
       'release deploy-selected',
       'release deliver',
+      'local deploy-all',
+      'local deploy-selected',
     ])
 
     // `reopen` is top-level (groupPath ['reopen']) but carries menuGroup 'worktrees', so it renders in

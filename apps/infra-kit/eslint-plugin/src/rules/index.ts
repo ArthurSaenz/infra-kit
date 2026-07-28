@@ -5,6 +5,7 @@ import type { Rule } from 'eslint'
 import { componentArrowFunction } from './component-arrow-function'
 import { componentFileOrder } from './component-file-order'
 import { maxComponentsPerFile } from './max-components-per-file'
+import { maxJsdocLines } from './max-jsdoc-lines'
 import { maxJsxReturnSize } from './max-jsx-return-size'
 import { propsDestructuringBlankLine } from './props-destructuring-blank-line'
 import { propsDestructuringNewline } from './props-destructuring-newline'
@@ -22,6 +23,7 @@ export const rules: Record<string, Rule.RuleModule> = {
   'component-arrow-function': componentArrowFunction,
   'max-components-per-file': maxComponentsPerFile,
   'max-jsx-return-size': maxJsxReturnSize,
+  'max-jsdoc-lines': maxJsdocLines,
   'require-component-stories': requireComponentStories,
   'require-jsdoc-example': requireJsdocExample,
 }

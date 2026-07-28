@@ -525,3 +525,116 @@ story is satisfied when any candidate (`.tsx`, `.jsx`, `.ts`, `.js`) exists on d
   case-insensitive filesystem (macOS) and fail on a case-sensitive one (Linux CI).
 - **Unanchored globs.** `paths`/`ignore` patterns match anywhere in the path, so anchor them
   (e.g. start with `**/`) when you need precision.
+
+### `max-jsdoc-lines`
+
+Cap the height of a JSDoc block. The block's **prose** and its **`@example` bodies**
+get **two independent budgets**, so a long worked example never makes the
+description look bloated — and never eats the room a description needs.
+
+```ts
+// ❌ Incorrect — 8 lines of contract wrapped around a 35-line `@example`
+/**
+ * Extracts the first argument type from a WritableAtom's write function.
+ *
+ * @example
+ * … 33 more lines walking through a whole feature …
+ */
+export type ExtractAtomActionArgs<T> = …
+
+// ✅ Correct — the smallest call that teaches usage; the walkthrough moves to a test
+/**
+ * Extracts the first argument type from a WritableAtom's write function.
+ *
+ * @example
+ * type Action = ExtractAtomActionArgs<typeof counterAtom>
+ * // → { type: 'increment' } | { type: 'set'; value: number }
+ */
+export type ExtractAtomActionArgs<T> = …
+```
+
+**Every JSDoc-shaped block comment is measured**, not just the ones attached to a
+function. The rule iterates the file's comments and treats
+`comment.type === 'Block' && comment.value.startsWith('*')` as JSDoc — so blocks
+above a `type`, an `interface`, a bare `const`, or a statement inside a function
+body are all covered. That is deliberate: a rule driven by node types needs an
+anchor allowlist, which is exactly how `jsdoc/match-description` ends up not
+covering `type` and `interface` declarations. `/* eslint-disable … */` is not a
+JSDoc block (its text starts with a space, not `*`) and is never measured.
+
+Counting rules:
+
+- **Total** is `end.line - start.line + 1` — the `/**` and closing lines included.
+- **`@example` bodies** run from each `@example` line (inclusive) to the next line
+  that opens a tag; an `@example` that is the block's last tag therefore runs
+  through the closing line. Multiple `@example` bodies **sum**.
+- **Prose is the remainder** (`total - example`), so the two budgets partition the
+  block exactly. `@param`/`@returns`/`@throws` lines charge the prose budget.
+- **Both budgets can report on the same block** — they are checked independently.
+
+**Why two budgets.** `@wl/require-jsdoc-example` *mandates* an `@example` on
+functions at cognitive complexity ≥ 12. If a rule-mandated example were charged
+against the prose budget, those functions could be pushed into a state with no
+compliant answer. Charging examples to their own budget is the contract that
+keeps the two rules from deadlocking; it is pinned by an integration test.
+
+#### Options
+
+| Option            | Default                                            | Description                                                                 |
+| ----------------- | -------------------------------------------------- | --------------------------------------------------------------------------- |
+| `maxLines`        | `15`                                               | Prose ceiling — total lines minus the `@example` bodies.                    |
+| `maxExampleLines` | `10`                                               | Combined ceiling for the block's `@example` bodies.                         |
+| `exemptTags`      | `['fileoverview', 'module', 'packageDocumentation']` | Tags that exempt a block entirely.                                          |
+
+Only counts strictly greater than a ceiling report (`lines === max` is allowed).
+
+```js
+{
+  rules: {
+    '@wl/max-jsdoc-lines': ['warn', { maxLines: 20, maxExampleLines: 12 }],
+  },
+}
+```
+
+#### The `@fileoverview` escape hatch
+
+File-level architectural rationale is the documentation most worth keeping, and
+it is naturally long. Tag such a block with `@fileoverview` (or `@module` /
+`@packageDocumentation`) and the rule skips it entirely — **any** tag in
+`exemptTags` exempts the **whole** block, both budgets.
+
+```ts
+/**
+ * @fileoverview Why this module exists, and the three constraints it balances.
+ *
+ * … 50 more lines of rationale, deliberately kept …
+ */
+```
+
+There is **no positional exemption** — being the first block in the file exempts
+nothing. Position exempts by luck: a file-level block whose next statement is
+`let readers = 0` rather than an `import` would be missed by any "precedes the
+first import" spelling, while a 30-line block documenting the first exported
+class would be exempted for no reason at all. A declared tag is greppable,
+reviewable, and cannot silently widen. The `tooManyLines` message names the tag
+inline so the fix is visible at the point of failure.
+
+A trailing block at the end of a file, with no token after it, is skipped as
+degenerate input (an EOF guard — the rule never resolves the symbol a block
+documents).
+
+#### Not fixable, deliberately
+
+There is no autofix, and there will not be one: shortening a block means
+deleting sentences, and the longest blocks in a codebase are usually its most
+valuable documentation. The part of this problem that *is* mechanically fixable —
+blank-line padding and `{type}` annotations — is already handled by
+`jsdoc/tag-lines` and `jsdoc/no-types`, which do have fixers. Run those first;
+what remains is a judgement call for a human.
+
+#### Caveat
+
+The `@example` scan ends a body at any line starting with `@`, so a decorator
+(`@Injectable`) written inside an `@example` would truncate the body early and
+under-count it. A scan of every `@example` in the codebase found no such line, so
+this is correct today — but it is a measured constraint, not a guarantee.

@@ -3,6 +3,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { logger } from 'src/lib/logger'
+// Imported through the MCP resource's OWN specifier, not from `src/lib/dev-context` directly. That is
+// the path `mcp/resources/index.ts` uses, so if the shim is ever replaced by a fresh implementation the
+// agreement test below breaks — which is the whole point of it.
+import { readDevContext } from 'src/mcp/resources/dev-context'
+
 import { devStatus } from '../dev-status'
 
 /**
@@ -124,8 +130,194 @@ describe('devStatus', () => {
 
     expect(result.structuredContent.active).toBe(false)
     expect(result.structuredContent.apps).toEqual([])
+    expect(result.structuredContent.contextDirExists).toBe(false)
     // With nothing on disk, nothing is probed.
     expect(isListening).not.toHaveBeenCalled()
+  })
+
+  /**
+   * THE REGRESSION. The fragment directory is found by searching UPWARD, so a cwd deep inside the repo
+   * reports the same session as the repo root. Before this, `dev-status` did a plain
+   * `path.join(cwd, '.infra-kit', 'dev-context')` and reported `{ active: false }` from any subdirectory,
+   * while the MCP `infra-kit://dev-context` resource and the vite helper — which both search upward —
+   * reported the session. One server, one question, two answers.
+   */
+  it('finds fragments from a NESTED cwd by searching upward (the tool/resource disagreement)', async () => {
+    writeFragment('web', { package: '@acme/web', port: 5173 })
+
+    const nested = path.join(tmpRoot, 'apps', 'client', 'src')
+
+    fs.mkdirSync(nested, { recursive: true })
+
+    const result = await devStatus({
+      cwd: nested,
+      isListening: async () => {
+        return true
+      },
+      now: () => {
+        return FRAGMENT_BASE.writtenAt
+      },
+    })
+
+    expect(result.structuredContent.active).toBe(true)
+    expect(
+      result.structuredContent.apps.map((a) => {
+        return a.app
+      }),
+    ).toEqual(['web'])
+    expect(result.structuredContent.contextDir).toBe(devContextDir())
+    expect(result.structuredContent.contextDirExists).toBe(true)
+  })
+
+  /**
+   * Pins the resolver's fallback, which is easy to mistake for an edge case and is not: when no
+   * `.infra-kit/dev-context` exists up-tree, the resolver DERIVES one from the nearest `.infra-kit`. The
+   * returned path is then a directory nothing ever wrote to and that the read never opened — the ordinary
+   * state in any repo where `infra-kit dev` has not run. `contextDir` alone would be actively misleading
+   * here; `contextDirExists` is what makes it interpretable.
+   */
+  it('reports a DERIVED contextDir as not existing when only a bare .infra-kit anchor is up-tree', async () => {
+    fs.mkdirSync(path.join(tmpRoot, '.infra-kit'), { recursive: true })
+
+    const nested = path.join(tmpRoot, 'apps', 'client')
+
+    fs.mkdirSync(nested, { recursive: true })
+
+    const isListening = vi.fn(async () => {
+      return true
+    })
+
+    const result = await devStatus({ cwd: nested, isListening })
+
+    expect(result.structuredContent.active).toBe(false)
+    expect(result.structuredContent.contextDir).toBe(devContextDir())
+    // Resolved, never opened — the discriminator that keeps the path from being read as evidence.
+    expect(result.structuredContent.contextDirExists).toBe(false)
+    expect(isListening).not.toHaveBeenCalled()
+  })
+
+  /**
+   * `contextDirExists` must mean "a directory that can be listed", not "something is at this path". A
+   * plain FILE at the fragment path also satisfies `existsSync`, but the reader's `readdirSync` then
+   * throws ENOTDIR and swallows it into an empty result — so a bare existence check would report
+   * `true` for a path that could not be read at all, and the log would assert an empty directory that
+   * was never opened. That is the exact inversion this field exists to prevent.
+   */
+  it('reports contextDirExists FALSE when the path is a file, not a listable directory', async () => {
+    fs.mkdirSync(path.join(tmpRoot, '.infra-kit'), { recursive: true })
+    fs.writeFileSync(devContextDir(), 'not a directory')
+
+    const result = await devStatus({
+      cwd: tmpRoot,
+      isListening: async () => {
+        return true
+      },
+    })
+
+    expect(result.structuredContent.active).toBe(false)
+    expect(result.structuredContent.contextDir).toBe(devContextDir())
+    expect(result.structuredContent.contextDirExists).toBe(false)
+  })
+
+  it('names the searched directory on BOTH the empty and the populated log paths', async () => {
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => {
+      return undefined
+    })
+
+    fs.mkdirSync(path.join(tmpRoot, '.infra-kit'), { recursive: true })
+    await devStatus({
+      cwd: tmpRoot,
+      isListening: async () => {
+        return false
+      },
+    })
+
+    expect(
+      info.mock.calls.some(([line]) => {
+        return typeof line === 'string' && line.includes(devContextDir())
+      }),
+    ).toBe(true)
+
+    info.mockClear()
+    writeFragment('web')
+    await devStatus({
+      cwd: tmpRoot,
+      isListening: async () => {
+        return true
+      },
+      now: () => {
+        return FRAGMENT_BASE.writtenAt
+      },
+    })
+
+    expect(
+      info.mock.calls.some(([line]) => {
+        return typeof line === 'string' && line.includes(devContextDir())
+      }),
+    ).toBe(true)
+  })
+
+  /**
+   * Guards the clock seam across the reader swap. The shared reader stamps its OWN `Date.now()` into
+   * `readAt`/`ageMs`; both are deliberately ignored so freshness stays governed by the injected clock.
+   * If a future edit takes `ageMs` from the reader instead, this fails instead of going quietly wrong.
+   */
+  it('derives ageSeconds from the INJECTED clock, not the reader own wall-clock stamp', async () => {
+    const file = writeFragment('web')
+    const mtimeSec = Math.floor(Date.now() / 1000) - 120
+
+    fs.utimesSync(file, mtimeSec, mtimeSec)
+
+    const result = await devStatus({
+      cwd: tmpRoot,
+      isListening: async () => {
+        return true
+      },
+      // 3600s after the fragment mtime — wall-clock would say ~120s.
+      now: () => {
+        return mtimeSec * 1000 + 3_600_000
+      },
+    })
+
+    expect(result.structuredContent.apps[0]!.ageSeconds).toBe(3600)
+  })
+
+  /**
+   * The invariant the whole change exists to establish: the `dev-status` TOOL and the
+   * `infra-kit://dev-context` RESOURCE — both served by the same MCP server — must answer the same
+   * question the same way. They now share one reader, so this is close to tautological; it is kept as a
+   * tripwire, because the previous state of the world was exactly two readers that had drifted apart.
+   */
+  it('agrees with the MCP resource reader on directory AND app set, from the same nested cwd', async () => {
+    writeFragment('web', { package: '@acme/web', port: 5173 })
+    writeFragment('api', { package: '@acme/api', port: 8080 })
+
+    const nested = path.join(tmpRoot, 'apps', 'client')
+
+    fs.mkdirSync(nested, { recursive: true })
+
+    const tool = await devStatus({
+      cwd: nested,
+      isListening: async () => {
+        return false
+      },
+      now: () => {
+        return FRAGMENT_BASE.writtenAt
+      },
+    })
+    const resource = readDevContext(nested)
+
+    expect(tool.structuredContent.contextDir).toBe(resource.fragmentDir)
+    expect(
+      tool.structuredContent.apps.map((a) => {
+        return a.app
+      }),
+    ).toEqual(
+      resource.apps.map((a) => {
+        return a.app
+      }),
+    )
+    expect(tool.structuredContent.active).toBe(resource.session === 'active')
   })
 
   it('surfaces freshness from the fragment file mtime (ageSeconds + ISO mtime)', async () => {

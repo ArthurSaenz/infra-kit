@@ -14,6 +14,7 @@ catalog:
   '@aws-lambda-powertools/logger': ^2.33.1
   '@inquirer/checkbox': ^5.2.1
   '@inquirer/confirm': ^6.1.1
+  '@inquirer/input': ^5.1.2
   '@inquirer/password': ^5.0.2
   '@inquirer/select': ^5.2.1
   '@modelcontextprotocol/sdk': ^1.29.0
@@ -131,3 +132,5 @@ catalogs:
     zod: ^4.4.3
   conflicts_esbuild_h0_28_1:
     esbuild: ^0.28.1
+  conflicts_portless_h0_15_2:
+    portless: ^0.15.2

@@ -14,6 +14,7 @@ import { ghReleaseDeliverMcpTool } from 'src/commands/gh-release-deliver'
 import { ghReleaseDeployAllMcpTool } from 'src/commands/gh-release-deploy-all'
 import { ghReleaseDeploySelectedMcpTool } from 'src/commands/gh-release-deploy-selected'
 import { ghReleaseListMcpTool } from 'src/commands/gh-release-list'
+import { localDeployAllMcpTool, localDeploySelectedMcpTool } from 'src/commands/local-deploy'
 import { releaseCreateMcpTool } from 'src/commands/release-create'
 import { releaseDescEditMcpTool } from 'src/commands/release-desc-edit'
 import { reopenMcpTool } from 'src/commands/reopen'
@@ -241,6 +242,24 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mcpExposed: false,
     mutating: true,
     groupPath: ['release', 'deliver'],
+  },
+  {
+    cliName: 'local-deploy-all',
+    menuGroup: 'release',
+    mcpTool: localDeployAllMcpTool,
+    mcpExposed: true,
+    // Writes to real cloud infrastructure. Both carry `requiresHumanConfirm`, so an agent gets the
+    // two-phase gate — unlike the release-deploy-* pair these leave no CI run to inspect afterwards.
+    mutating: true,
+    groupPath: ['local', 'deploy-all'],
+  },
+  {
+    cliName: 'local-deploy-selected',
+    menuGroup: 'release',
+    mcpTool: localDeploySelectedMcpTool,
+    mcpExposed: true,
+    mutating: true,
+    groupPath: ['local', 'deploy-selected'],
   },
 
   // --- Worktrees (menu group) ---

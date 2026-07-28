@@ -80,18 +80,45 @@ const resolveTargets = async (options: AuditOptions): Promise<AuditTarget[]> => 
 }
 
 /**
- * Print a package's audit result as doctor-style `[PASS]`/`[FAIL]` lines.
+ * Print the audit outcome. Passing checks collapse into the summary line — only
+ * failures print detail — so a green audit costs one line instead of one per
+ * check (this output is read by CI logs and agent loops, where every line is
+ * tokens). Returns whether every check passed.
+ *
+ * @example
+ * // green:  ✅ audit passed — 8 checks, 2 targets
+ * // red:    [FAIL] travelist-monorepo turbo:test: not defined in turbo.json
+ * //         ❌ audit failed — 1/8 checks, 2 targets
  */
-const logResult = (result: PackageValidationResult): void => {
-  const header = result.passed ? 'PASS' : 'FAIL'
+const logResults = (results: PackageValidationResult[]): boolean => {
+  let total = 0
+  let failed = 0
 
-  logger.info(`\n${result.packageName} — ${header}`)
+  for (const result of results) {
+    for (const check of result.checks) {
+      total += 1
 
-  for (const check of result.checks) {
-    const icon = check.status === 'pass' ? '[PASS]' : '[FAIL]'
+      if (check.status !== 'pass') {
+        failed += 1
 
-    logger.info(`  ${icon} ${check.name}: ${check.message}`)
+        logger.info(`[FAIL] ${result.packageName} ${check.name}: ${check.message}`)
+      }
+    }
   }
+
+  const allPassed = results.every((result) => {
+    return result.passed
+  })
+
+  const plural = (count: number, noun: string): string => {
+    return `${count} ${noun}${count === 1 ? '' : 's'}`
+  }
+
+  const scope = `${plural(total, 'check')}, ${plural(results.length, 'target')}`
+
+  logger.info(allPassed ? `✅ audit passed — ${scope}` : `❌ audit failed — ${failed}/${scope}`)
+
+  return allPassed
 }
 
 /**
@@ -129,15 +156,7 @@ export const audit = async (options: AuditOptions = {}) => {
     }
   }
 
-  for (const result of results) {
-    logResult(result)
-  }
-
-  const allPassed = results.every((result) => {
-    return result.passed
-  })
-
-  logger.info(`\n${allPassed ? '✅ All valid' : '❌ Audit failed'} (${results.length} checked)`)
+  const allPassed = logResults(results)
 
   const structuredContent = {
     allPassed,

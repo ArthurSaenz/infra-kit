@@ -28,6 +28,8 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     "output": [
       "active",
       "apps",
+      "contextDir",
+      "contextDirExists",
     ],
   },
   {
@@ -139,6 +141,47 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     "output": [
       "count",
       "releases",
+    ],
+  },
+  {
+    "input": [
+      "confirm",
+      "dryRun",
+      "env",
+      "skipPreflight",
+    ],
+    "name": "local-deploy-all",
+    "output": [
+      "accountId",
+      "contract",
+      "deployed",
+      "dryRun",
+      "environment",
+      "failed",
+      "services",
+      "strippedVars",
+      "success",
+    ],
+  },
+  {
+    "input": [
+      "confirm",
+      "dryRun",
+      "env",
+      "service",
+      "skipPreflight",
+    ],
+    "name": "local-deploy-selected",
+    "output": [
+      "accountId",
+      "contract",
+      "deployed",
+      "dryRun",
+      "environment",
+      "failed",
+      "services",
+      "strippedVars",
+      "success",
     ],
   },
   {

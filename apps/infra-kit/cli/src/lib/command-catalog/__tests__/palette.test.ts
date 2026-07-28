@@ -49,6 +49,8 @@ describe('command palette', () => {
           'release deploy-all',
           'release deploy-selected',
           'release deliver',
+          'local deploy-all',
+          'local deploy-selected',
         ],
       ],
       ['Worktrees', ['worktrees add', 'worktrees list', 'reopen', 'worktrees remove', 'worktrees sync']],

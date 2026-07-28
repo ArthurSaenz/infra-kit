@@ -20,6 +20,7 @@ import { ghReleaseDeployAll } from 'src/commands/gh-release-deploy-all'
 import { ghReleaseDeploySelected } from 'src/commands/gh-release-deploy-selected'
 import { ghReleaseList } from 'src/commands/gh-release-list'
 import { init } from 'src/commands/init'
+import { localDeployAll, localDeploySelected } from 'src/commands/local-deploy'
 import { runMcp } from 'src/commands/mcp'
 import { releaseCreate } from 'src/commands/release-create'
 import { releaseDescEdit } from 'src/commands/release-desc-edit'
@@ -397,6 +398,50 @@ export const buildProgram = (): Command => {
     .description('Print the fully merged infra-kit config (project + user-global + per-project override layers)')
     .action(async () => {
       emit(await configGet())
+    })
+
+  // Deliberately mirrors the `release deploy-all` / `release deploy-selected` pair, so the only thing
+  // the name changes is WHERE it runs: `local` executes the repo's own devops/scripts/deploy-*.sh on
+  // this machine, `release` dispatches the GitHub workflow that runs the very same scripts.
+  const localCmd = program.command('local').description('Run deploys on this machine instead of dispatching CI')
+
+  const withLocalDeployOptions = (cmd: Command): Command => {
+    return cmd
+      .option('-e, --env <name>', 'Target environment (prompts when omitted)')
+      .option('-y, --yes', 'Skip the confirmation prompt')
+      .option('--dry-run', 'Resolve target, contract and commands without deploying')
+      .option('--print-env', 'Print the resolved build contract')
+      .option('--skip-preflight <check...>', 'Waive a named check (clean-tree, toolchain) — never env/account or prod')
+  }
+
+  withLocalDeployOptions(localCmd.command('deploy-all'))
+    .description('Deploy every service enabled for the environment, from this machine')
+    .action(async (options) => {
+      emit(
+        await localDeployAll({
+          env: options.env,
+          yes: options.yes,
+          dryRun: options.dryRun,
+          printEnv: options.printEnv,
+          skipPreflight: options.skipPreflight,
+        }),
+      )
+    })
+
+  withLocalDeployOptions(localCmd.command('deploy-selected'))
+    .description('Deploy chosen services from this machine (prompts when --service is omitted)')
+    .option('-s, --service <name...>', 'Service name(s), as in deploy-<name>.sh')
+    .action(async (options) => {
+      emit(
+        await localDeploySelected({
+          env: options.env,
+          service: options.service,
+          yes: options.yes,
+          dryRun: options.dryRun,
+          printEnv: options.printEnv,
+          skipPreflight: options.skipPreflight,
+        }),
+      )
     })
 
   program
