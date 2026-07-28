@@ -414,6 +414,51 @@ interface ResolveProxyArgs {
  * resolution shape is fully unit-testable. When `authHeader` is set, every route
  * entry gets a matching `headers.Authorization`; otherwise no `headers` key.
  */
+/**
+ * Order the emitted routes so a more specific prefix always beats a more general one.
+ *
+ * Vite matches `server.proxy` **first-hit-wins over insertion order** — `doesProxyContextMatchUrl` is
+ * `context[0] === '^' && new RegExp(context).test(url) || url.startsWith(context)` — so a config that
+ * happens to list `/api` before `/api/v1/cronjob` silently routes every cronjob call to whatever `/api`
+ * resolves to. Emitting longest-first makes the consumer's key order irrelevant for literal prefixes.
+ *
+ * **Length is the correct key, and provably so:** if key `B` captures a URL that key `A` also captures,
+ * then both are prefixes of that URL, so one is a prefix of the other — `A.startsWith(B)` — and hence
+ * `A.length >= B.length`. Sorting by descending length therefore always places the more specific of any
+ * overlapping pair first. Segment counting would be *worse*, because `startsWith` is not segment-aware:
+ * `/api` captures `/api-docs` too, yet both are "one segment".
+ *
+ * **Regex keys bail out entirely.** A `^`-anchored key is schema-legal (`routes` is
+ * `z.record(z.string().min(1), …)`), and its capture set is unknowable to a sorter — length says nothing
+ * about breadth, and there is no position, ahead or behind, that is right in general: a broad
+ * `'^/(api|dynamic)'` must lose to `/api/v1/cronjob`, while a narrow one must not. So if ANY key is a
+ * regex, the map is returned in the consumer's own order, which is at least the order they can reason
+ * about. No consumer uses a regex key today; this exists so the sort can never invert one's intent.
+ *
+ * Note this only governs the routes INFRA-KIT emits. A consumer who writes their own `server.proxy`
+ * keeps priority regardless: vite merges a plugin's config over the user's, placing user keys first.
+ */
+const orderBySpecificity = (routes: InfraKitViteProxy): InfraKitViteProxy => {
+  const keys = Object.keys(routes)
+
+  if (
+    keys.some((key) => {
+      return key.startsWith('^')
+    })
+  )
+    return routes
+
+  const ordered: InfraKitViteProxy = {}
+
+  // `toSorted` is stable, so equal-length keys keep the consumer's relative order.
+  for (const key of keys.toSorted((a, b) => {
+    return b.length - a.length
+  }))
+    ordered[key] = routes[key]!
+
+  return ordered
+}
+
 export const resolveProxyConfig = ({
   proxy,
   localSet,
@@ -431,7 +476,7 @@ export const resolveProxyConfig = ({
     result[routePath] = headers ? { ...entry, headers } : entry
   }
 
-  return result
+  return orderBySpecificity(result)
 }
 
 /**

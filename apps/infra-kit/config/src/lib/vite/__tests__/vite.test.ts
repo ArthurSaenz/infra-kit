@@ -320,6 +320,68 @@ describe('resolveProxyConfig', () => {
   })
 })
 
+describe('resolveProxyConfig (route ordering)', () => {
+  /** Build a proxy whose routes are declared in exactly the given order. */
+  const proxyWithRoutes = (routes: InfraKitDevProxy['routes']): InfraKitDevProxy => {
+    return { templates: FIXTURE_PROXY.templates, routes }
+  }
+
+  const resolve = (routes: InfraKitDevProxy['routes']): string[] => {
+    return Object.keys(
+      resolveProxyConfig({
+        proxy: proxyWithRoutes(routes),
+        localSet: new Set(),
+        env: 'dev',
+        getRelease: unusedRelease,
+      }),
+    )
+  }
+
+  it('emits a more specific prefix BEFORE the general one that would swallow it', () => {
+    // The bug this exists for: vite matches `server.proxy` first-hit-wins over insertion order, so a
+    // config listing `/api` first sends every `/api/v1/cronjob/*` call to whatever `/api` resolves to —
+    // in hulyo's case the LOCAL backoffice-api, which has no cronjob handlers. Declared general-first
+    // here on purpose; the consumer's order must not decide correctness.
+    const keys = resolve({
+      '/api': { packageName: 'backend-api', from: ['cloud'] },
+      '/api/v1/cronjob': { packageName: 'cronjobs-api', from: ['cloud'] },
+    })
+
+    expect(keys).toEqual(['/api/v1/cronjob', '/api'])
+  })
+
+  it('keeps equal-length keys in the consumer’s own order (stable)', () => {
+    expect(
+      resolve({
+        '/bbb': { packageName: 'backend-api', from: ['cloud'] },
+        '/aaa': { packageName: 'backend-api', from: ['cloud'] },
+      }),
+    ).toEqual(['/bbb', '/aaa'])
+  })
+
+  it('returns a regex-containing map UNTOUCHED, in the consumer’s order', () => {
+    // A `^` key is schema-legal and its capture set is unknowable to a sorter: length says nothing about
+    // breadth, and neither "ahead" nor "behind" is right in general — a broad regex must lose to a
+    // specific literal, a narrow one must not. So ordering is left entirely to the author.
+    //
+    // The fixture is built to make this test DISCRIMINATE rather than pass by luck: the regex is the
+    // SHORTEST key here, so a naive longest-first sort would demote it to last, and a naive "regex keys
+    // go first" rule would leave it first only by coincidence. Only a genuine bail-out reproduces the
+    // input order exactly.
+    const routes: InfraKitDevProxy['routes'] = {
+      '^/api': { packageName: 'backend-api', from: ['cloud'] },
+      '/api/v1/cronjob': { packageName: 'cronjobs-api', from: ['cloud'] },
+      '/media': { packageName: 'backend-api', from: ['cloud'] },
+    }
+
+    expect(resolve(routes)).toEqual(['^/api', '/api/v1/cronjob', '/media'])
+  })
+
+  it('leaves a single-route map alone', () => {
+    expect(resolve({ '/api': { packageName: 'backend-api', from: ['cloud'] } })).toEqual(['/api'])
+  })
+})
+
 describe('resolveProxyConfig (origin is authoritative)', () => {
   it('uses the fragment origin VERBATIM, ignoring a template that disagrees on scheme and host', () => {
     // The runner is the only party that knows what it actually registered. This template disagrees with the
