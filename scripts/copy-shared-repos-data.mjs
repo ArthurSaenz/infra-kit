@@ -147,12 +147,6 @@ const COPY_CONFIG = [
     type: 'file',
   },
   {
-    name: 'GH Workflow: Code Quality Jobs',
-    source: '.github/workflows/_code-quality-jobs.yml',
-    target: '.github/workflows/_code-quality-jobs.yml',
-    type: 'file',
-  },
-  {
     name: 'GH Workflow: Deploy Media Jobs',
     source: '.github/workflows/_deploy-media-jobs.yml',
     target: '.github/workflows/_deploy-media-jobs.yml',
@@ -165,21 +159,9 @@ const COPY_CONFIG = [
     type: 'file',
   },
   {
-    name: 'GH Workflow: Playwright Jobs',
-    source: '.github/workflows/_playwright-jobs.yml',
-    target: '.github/workflows/_playwright-jobs.yml',
-    type: 'file',
-  },
-  {
     name: 'GH Workflow: Terraform Apply Infrastructure',
     source: '.github/workflows/_terraform-apply-infrastructure-jobs.yml',
     target: '.github/workflows/_terraform-apply-infrastructure-jobs.yml',
-    type: 'file',
-  },
-  {
-    name: 'GH Workflow: Code Quality',
-    source: '.github/workflows/code-quality.yml',
-    target: '.github/workflows/code-quality.yml',
     type: 'file',
   },
 ]
