@@ -7,7 +7,7 @@ export const isKnownMode = (mode: string): boolean => {
 }
 
 /**
- * Normalize user options to a fully-resolved shape (defaults: react, boundaries 'warn', every layer on).
+ * Normalize user options to a fully-resolved shape (defaults: react, boundaries 'error', every layer on).
  *
  * @example
  * resolveOptions({ boundaries: false }) // boundaries layer dropped, everything else default
@@ -18,7 +18,7 @@ export const resolveOptions = (userOptions: ConfigOptions = {}): ResolvedOptions
   return {
     mode: mode ?? 'react',
     ignores: ignores ?? [],
-    boundaries: boundaries === undefined ? 'warn' : boundaries === true ? 'warn' : boundaries,
+    boundaries: boundaries === undefined ? 'error' : boundaries === true ? 'error' : boundaries,
     jsdoc: jsdoc ?? true,
     markdown: markdown ?? true,
     components: components ?? true,

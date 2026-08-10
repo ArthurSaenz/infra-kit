@@ -2,12 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runHook, bash } from './helpers.mjs';
 
-import * as doppler from '../guards/doppler.mjs';
-import * as destructive from '../guards/destructive.mjs';
-import * as packageManager from '../guards/package-manager.mjs';
-import * as style from '../guards/style.mjs';
-import * as cmux from '../guards/cmux.mjs';
-import * as worktree from '../guards/worktree.mjs';
+// Guards were six files under guards/ until they were inlined into bash-guard.mjs. They are still
+// named exports, so these unit tests reach each one directly; the file's dispatcher sits behind an
+// `import.meta.main` guard, so importing it here does not read fd 0.
+import { doppler, destructive, packageManager, style, cmux, worktree } from '../bash-guard.mjs';
 
 const action = (decision) => decision?.action ?? null;
 
@@ -178,6 +176,27 @@ test('cmux: blocks bare dev server, allows cmux-wrapped', () => {
   assert.equal(action(cmux.check('pnpm run dev')), 'block');
   assert.equal(action(cmux.check('cmux new-session -d -s dev "pnpm dev"')), null);
   assert.equal(action(cmux.check('pnpm build')), null);
+  // Still the command being RUN, once segmenting moved inside the guard.
+  assert.equal(action(cmux.check('cd apps/client && pnpm dev')), 'block');
+});
+
+// Why cmux segments internally rather than exporting scope='segment': the splitter is quote-blind,
+// so this payload splits and the half holding `pnpm dev` cannot see the `cmux` authorising it.
+test('cmux: a compound payload inside a cmux session is still allowed', () => {
+  assert.equal(action(cmux.check('cmux new-session -d -s dev "cd apps/client && pnpm dev"')), null);
+  assert.equal(action(cmux.check('cmux new-session -d -s api "pnpm --filter api dev"')), null);
+});
+
+// The guard BLOCKS, so a false positive is a hard stop on ordinary work.
+test('cmux: does not fire on commands that merely mention the dev script', () => {
+  for (const command of [
+    'rg "pnpm dev" docs/',
+    'echo "run pnpm dev in cmux"',
+    'git commit -m "docs: explain pnpm dev"',
+    'cat notes-pnpm-dev.md',
+  ]) {
+    assert.equal(action(cmux.check(command)), null, command);
+  }
 });
 
 test('worktree: blocks add/remove at any path (incl. -C / env prefixes), advises list', () => {

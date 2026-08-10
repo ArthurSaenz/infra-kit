@@ -5,6 +5,7 @@ import { LOG_FILE_PATH } from '../logger/index'
 
 /**
  * Setup error handlers for the application
+ *
  * @param logger - The logger instance
  *
  * ONLY FOR SERVER!

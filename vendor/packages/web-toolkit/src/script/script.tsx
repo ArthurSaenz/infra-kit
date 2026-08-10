@@ -18,7 +18,6 @@ type ScriptProps = React.ScriptHTMLAttributes<HTMLScriptElement> & {
  *
  * @example
  *     <Script src="https://cdn.example.com/lib.js" strategy="lazyOnload" onReady={() => initLib()} />
- *
  */
 export const Script = (props: ScriptProps): React.ReactElement | null => {
   const { id, src = '', onReady = null, strategy = 'afterInteractive', shouldUnMountScript, onUnMount } = props
@@ -113,7 +112,6 @@ const ignoreProps = [
  *
  * @example
  *     loadScript({ src: 'https://cdn.example.com/lib.js', id: 'my-lib', onLoad: () => console.log('loaded') })
- *
  */
 const loadScript = (props: ScriptProps): void => {
   const { src, id, onLoad = () => {}, onReady = null, dangerouslySetInnerHTML, children = '', onError } = props
@@ -140,7 +138,6 @@ const loadScript = (props: ScriptProps): void => {
    *
    * @example
    *     afterLoad()
-   *
    */
   const afterLoad = () => {
     // Run onReady for the first time after load event

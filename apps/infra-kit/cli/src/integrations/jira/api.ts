@@ -16,6 +16,7 @@ import type {
 /**
  * Throws a normalized error when a Jira API response is not OK, logging the
  * status, statusText, and response body under the given context message.
+ *
  * @param response - The fetch Response to check
  * @param context - Log message describing the failed operation
  */
@@ -40,6 +41,7 @@ const assertJiraOk = async (response: Response, context: string): Promise<void> 
 
 /**
  * Creates a new version in Jira using the REST API
+ *
  * @param params - Version creation parameters
  * @param config - Jira configuration (baseUrl, token, projectId)
  * @returns Result containing created version or error
@@ -91,6 +93,7 @@ export const createJiraVersion = async (
 
 /**
  * Gets all versions for a project from Jira
+ *
  * @param config - Jira configuration
  * @returns Array of JiraVersion objects
  */
@@ -123,6 +126,7 @@ export const getProjectVersions = async (config: JiraConfig): Promise<JiraVersio
 
 /**
  * Finds a Jira version by name in the project
+ *
  * @param versionName - Name of the version to find (e.g., "v1.33.10")
  * @param config - Jira configuration
  * @returns JiraVersion if found, null otherwise
@@ -144,6 +148,7 @@ export const findVersionByName = async (versionName: string, config: JiraConfig)
 
 /**
  * Updates an existing Jira version
+ *
  * @param params - Update parameters
  * @param config - Jira configuration
  * @returns Result containing updated version or error
@@ -193,6 +198,7 @@ export const updateJiraVersion = async (
 
 /**
  * Delivers a Jira release by marking it as released with the current date
+ *
  * @param params - Parameters containing the version name
  * @param config - Jira configuration
  * @returns Result containing updated version
@@ -232,6 +238,7 @@ export const deliverJiraRelease = async (
 
 /**
  * Loads Jira configuration from environment variables
+ *
  * @throws Error with detailed message if configuration is missing or invalid
  * @returns Promise<JiraConfig>
  */
@@ -279,6 +286,7 @@ export const loadJiraConfig = async (): Promise<JiraConfig> => {
 /**
  * Attempts to load Jira configuration from environment variables
  * Returns null if configuration is missing or invalid (for optional Jira integration)
+ *
  * @returns Promise<JiraConfig | null>
  */
 export const loadJiraConfigOptional = async (): Promise<JiraConfig | null> => {

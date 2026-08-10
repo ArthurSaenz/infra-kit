@@ -6,7 +6,6 @@ import type { Atom, WritableAtom } from 'jotai'
  * Returns `never` if the type is not an Atom.
  *
  * @template T - The Atom type to extract the value from
- *
  * @example
  * ```typescript
  * import { atom } from 'jotai'
@@ -32,7 +31,6 @@ export type ExtractedAtomType<T> = T extends Atom<infer U> ? U : never
  * Returns `never` if the type is not a WritableAtom.
  *
  * @template T - The WritableAtom type to extract the action argument from
- *
  * @example
  * ```typescript
  * import { atom } from 'jotai'
@@ -77,7 +75,6 @@ export type ExtractAtomActionArgs<T> = T extends WritableAtom<any, [infer Args, 
  * Returns `never` if the type is not a WritableAtom.
  *
  * @template T - The WritableAtom type to extract the updater function from
- *
  * @example
  * ```typescript
  * import { atom, useSetAtom } from 'jotai'

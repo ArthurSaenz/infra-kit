@@ -8,6 +8,21 @@ Patterns for API integration using Fetch-based HTTP client, error handling, and 
 import { httpClient } from '#root/lib/http-client'
 ```
 
+`httpClient` is an **app-level singleton**, not a package export. The app creates it once from
+`HttpClient` in `@wl/web-toolkit` and re-exports it under its own `#root/lib/` alias:
+
+```typescript
+// #root/lib/http-client — app owns this file
+import { HttpClient } from '@wl/web-toolkit'
+
+export const httpClient = new HttpClient(import.meta.env.VITE_API_BASE_URL, fetch)
+```
+
+`ServerError` needs no wrapping — import it straight from `@wl/web-toolkit`.
+
+**`fetch` is the only method.** There is no `.get` / `.post` / `.put` shorthand; the verb goes in
+`options.method`.
+
 **Response structure:** `{ body: T, status: number, headers?: Record<string, string>, ok: boolean }`
 
 Always access `response.body` for data — never use the response object directly.

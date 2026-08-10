@@ -75,7 +75,6 @@ export type InfraKitPackageConfigInput =
  *
  * @example
  * export default defineConfig(() => ({}))
- *
  * @example
  * export default defineConfig(() => ({ requiredScripts: [] }))
  */

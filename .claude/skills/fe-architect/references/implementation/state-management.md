@@ -47,7 +47,7 @@ export const getDataFx = atom(
       const response = await httpClient.fetch(`/api/data/${args.dataId}`, { method: 'GET' })
       set($data, response.body)
     } catch (error) {
-      set($error, error.message)
+      set($error, error as Error)
     } finally {
       set($isLoading, false)
     }

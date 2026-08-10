@@ -4,9 +4,9 @@ import { isSSR } from '../ssr'
 
 /**
  * Custom hook that sets the document meta description.
- * @param {string} metaDescription - The meta description to set.
- * @param {boolean} prevailOnUnmount - Whether to keep the meta description after unmounting the component (enabled by default).
  *
+ * @param metaDescription - The meta description to set.
+ * @param prevailOnUnmount - Whether to keep the meta description after unmounting the component (enabled by default).
  * @example
  * ```tsx
  * useDocumentTitle('My new title');

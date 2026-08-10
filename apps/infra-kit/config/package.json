@@ -1,7 +1,7 @@
 {
   "name": "@slip-stream-kit/config",
   "type": "module",
-  "version": "0.3.12",
+  "version": "0.3.14",
   "description": "Config-authoring surface for infra-kit: defineConfig, defineVendorConfig, and the infraKitDev vite helper. Depends only on zod, so a consumer repo can keep this locally while the infra-kit CLI is installed globally.",
   "author": "Arthur Saenko <arthur.saenz7@gmail.com> (https://github.com/ArthurSaenz)",
   "license": "MIT",
@@ -68,10 +68,10 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
+    "@types/node": "catalog:",
     "@wl/eslint-config": "workspace:*",
     "@wl/vitest-config": "workspace:*",
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"
   }

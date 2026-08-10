@@ -58,7 +58,6 @@ const buildMessage = (cause: unknown, ctx: OperationErrorContext): string => {
  *     remediation: 'check the branch name and that the parent dir is writable',
  *   })
  * }
- *
  * @example
  * // validation failure with no underlying cause
  * throw new OperationError(undefined, {

@@ -689,54 +689,6 @@ export const checkIdeInstalled = async (read: DoctorConfig): Promise<CheckResult
   }
 }
 
-const RTK_REQUIRED_INDEXES = [1, 2, 3, 5, 7] as const
-
-const checkRtkConfigured = async (): Promise<CheckResult> => {
-  const name = 'rtk configured'
-
-  try {
-    const result = await $`rtk init --show`
-    const statusLines = result.stdout
-      .split('\n')
-      .map((l) => {
-        return l.trim()
-      })
-      .filter((l) => {
-        return l.startsWith('[ok]') || l.startsWith('[--]')
-      })
-
-    const failed: number[] = []
-
-    for (const idx of RTK_REQUIRED_INDEXES) {
-      const line = statusLines[idx - 1]
-
-      if (!line || !line.startsWith('[ok]')) {
-        failed.push(idx)
-      }
-    }
-
-    if (failed.length > 0) {
-      return {
-        name,
-        status: 'fail',
-        message: `rtk setup incomplete (items ${failed.join(', ')} not [ok]). Run: rtk init -g --auto-patch`,
-      }
-    }
-
-    return {
-      name,
-      status: 'pass',
-      message: 'rtk hook, RTK.md, global CLAUDE.md, settings.json, and Cursor hook are configured',
-    }
-  } catch (err) {
-    return {
-      name,
-      status: 'fail',
-      message: `Failed to run 'rtk init --show': ${(err as Error).message}`,
-    }
-  }
-}
-
 /**
  * Check that the repo agent-instruction guidance managed by `infra-kit init` exists:
  * the guidance block in `CLAUDE.md`. Presence only. Repo-gated: returns no checks
@@ -1079,7 +1031,7 @@ export const pruneStalePortlessRoutes = async (deps: PruneRoutesDeps = {}): Prom
 }
 
 /**
- * Check installation and authentication status of gh, doppler, aws, and rtk CLIs
+ * Check installation and authentication status of gh, doppler, and aws CLIs
  */
 export const doctor = async (options: { fix?: boolean } = {}) => {
   // ONE read, before anything is dispatched: the checks below used to reset the shared config cache
@@ -1112,12 +1064,6 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
       'AWS CLI is not installed. Install from: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html',
     ),
     checkCommand(
-      'rtk installed',
-      ['rtk', '--version'],
-      'RTK is installed',
-      'RTK is not installed. Install from: https://github.com/rtk-ai/rtk',
-    ),
-    checkCommand(
       'typescript-language-server installed',
       ['typescript-language-server', '--version'],
       'typescript-language-server is installed',
@@ -1129,7 +1075,6 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
       'cmux is installed',
       'cmux is not installed. Install from: https://cmux.com/',
     ),
-    checkRtkConfigured(),
     Promise.resolve(checkZshrcInitialized()),
     checkWarmCache(),
     checkPnpmWorkspaceVirtualStore(),
@@ -1179,7 +1124,7 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
 // MCP Tool Registration
 export const doctorMcpTool = defineMcpTool({
   name: 'doctor',
-  description: 'Check installation and authentication status of gh, doppler, aws, and rtk CLIs',
+  description: 'Check installation and authentication status of gh, doppler, and aws CLIs',
   inputSchema: {},
   outputSchema: {
     checks: z

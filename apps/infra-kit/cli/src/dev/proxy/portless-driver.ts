@@ -318,7 +318,7 @@ const defaultRun: PortlessRun = async (args, { timeoutMs }) => {
  *
  * The default is deliberately **unchanged** (`~/.portless`): portless's `service install` bakes
  * `PORTLESS_STATE_DIR`, resolved from `SUDO_USER`, into the launchd plist — so the root daemon reads the
- * *invoking user's* home. Pointing this anywhere else by default would manufacture the very split it looks
+ * invoking user's* home. Pointing this anywhere else by default would manufacture the very split it looks
  * like it prevents.
  */
 export const portlessStateDir = (): string => {

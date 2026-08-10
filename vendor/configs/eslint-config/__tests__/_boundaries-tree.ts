@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -24,10 +24,18 @@ const SCAFFOLD: Record<string, string> = {
     "export const client = 'email-client'\nexport type EmailClient = { id: string }\n",
   'src/shared/index.ts': "export { sharedUtil } from './util'\nexport type { SharedThing } from './util'\n",
   'src/shared/util.ts': "export const sharedUtil = 'shared-util'\nexport type SharedThing = { id: string }\n",
+  // The `#root/*` resolver anchors on the nearest package.json, so the fixture needs one to be
+  // a package at all. No tsconfig: the alias is a convention the resolver implements directly,
+  // not a `paths` map it reads back at lint time.
+  'package.json': '{ "name": "boundaries-fixture", "private": true }\n',
 }
 
 export const makeTree = () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'wl-boundaries-'))
+  // realpath, not the mkdtemp result: on macOS `os.tmpdir()` is `/var/...`, a symlink to
+  // `/private/var/...`. The TypeScript resolver returns canonical paths, so an uncanonicalized
+  // root makes the importer (`/var/...`) and its resolved dependency (`/private/var/...`) look
+  // like different elements — a same-feature import would then be reported as cross-feature.
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'wl-boundaries-')))
 
   for (const [rel, body] of Object.entries(SCAFFOLD)) {
     const abs = path.join(root, rel)

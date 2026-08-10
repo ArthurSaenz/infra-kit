@@ -74,6 +74,13 @@ describe('walkVendorTree', () => {
     expect(walkVendorTree(tmp)).toEqual(['keep.ts'])
   })
 
+  it('skips generated routeTree.gen.ts wherever it sits in the tree', () => {
+    write('keep.ts', 'keep')
+    write('packages/docs-ui/src/routeTree.gen.ts', 'generated')
+
+    expect(walkVendorTree(tmp)).toEqual(['keep.ts'])
+  })
+
   it('follows a symlink and hashes its target content (legacy semantics)', () => {
     write('real.txt', 'payload')
     fs.symlinkSync(path.join(tmp, 'real.txt'), path.join(tmp, 'link.txt'))
@@ -123,6 +130,33 @@ describe('manifest read/write/compare', () => {
     expect(diff.modified).toEqual(['a.js'])
     expect(diff.added).toEqual(['c.js'])
     expect(diff.removed).toEqual(['b.js'])
+  })
+
+  /**
+   * The regression this whole skip exists for: a consumer opens the docs app,
+   * TanStack rewrites `routeTree.gen.ts` into an equivalent-but-reordered form,
+   * and `vendor check` fails on a file nobody edited.
+   */
+  it('ignores a regenerated routeTree.gen.ts', () => {
+    write('a.js', 'a')
+    write('packages/docs-ui/src/routeTree.gen.ts', 'original order')
+    const manifest = writeManifest(tmp, { source: 's', commit: 'c' })
+
+    write('packages/docs-ui/src/routeTree.gen.ts', 'regenerated in another order')
+
+    expect(compareToManifest(tmp, manifest)).toEqual({ modified: [], added: [], removed: [] })
+  })
+
+  it('ignores skipped paths still recorded by a manifest written before the skip rule', () => {
+    write('a.js', 'a')
+    const manifest = writeManifest(tmp, { source: 's', commit: 'c' })
+    // A pre-rule manifest carried a checksum for the generated file; the walk no longer emits it.
+    const stale = {
+      ...manifest,
+      files: { ...manifest.files, 'packages/docs-ui/src/routeTree.gen.ts': 'stale-checksum' },
+    }
+
+    expect(compareToManifest(tmp, stale).removed).toEqual([])
   })
 
   it('reads a legacy manifest with no schemaVersion as compatible', () => {

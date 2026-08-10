@@ -12,7 +12,6 @@ interface SemanticVersionProps {
  *
  * @example
  *     <SemanticVersion version="1.0.0" env="production" release="v1.0.0" commitHash="abc123" />
- *
  */
 export const SemanticVersion = (props: SemanticVersionProps) => {
   const { version, env, release, commitHash } = props

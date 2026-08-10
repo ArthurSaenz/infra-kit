@@ -9,7 +9,6 @@ interface DevToolLabelProps {
  *
  * @example
  *     <DevToolLabel release="feature/my-branch" />
- *
  */
 export const DevToolLabel = (props: DevToolLabelProps) => {
   const { release = '' } = props

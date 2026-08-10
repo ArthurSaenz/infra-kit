@@ -6,14 +6,14 @@ import { resolveOptions } from '../src/options.js'
 
 // AC8 — the defaults invariant. resolveOptions is the single source of defaults; if any default here
 // changes, the zero-drift baseline for the existing consumers changes too. These assertions pin the
-// historical behavior: react mode, no extra ignores, boundaries at 'warn', every layer on, and empty
+// historical behavior: react mode, no extra ignores, boundaries at 'error', every layer on, and empty
 // rules/userConfigs (so the factory adds no trailing args to the antfu call).
 describe('options: defaults invariant', () => {
   it('resolveOptions({}) applies the historical defaults exactly', () => {
     expect(resolveOptions({})).toEqual({
       mode: 'react',
       ignores: [],
-      boundaries: 'warn',
+      boundaries: 'error',
       jsdoc: true,
       markdown: true,
       components: true,
@@ -23,12 +23,13 @@ describe('options: defaults invariant', () => {
   })
 
   it('resolveOptions({ ignores }) keeps defaults and applies the ignores', () => {
-    expect(resolveOptions({ ignores: ['x'] })).toMatchObject({ mode: 'react', boundaries: 'warn', ignores: ['x'] })
+    expect(resolveOptions({ ignores: ['x'] })).toMatchObject({ mode: 'react', boundaries: 'error', ignores: ['x'] })
   })
 
-  it('normalizes boundaries: undefined/true -> warn, false stays false, error stays error', () => {
-    expect(resolveOptions({}).boundaries).toBe('warn')
-    expect(resolveOptions({ boundaries: true }).boundaries).toBe('warn')
+  it('normalizes boundaries: undefined/true -> error, false stays false, warn stays warn', () => {
+    expect(resolveOptions({}).boundaries).toBe('error')
+    expect(resolveOptions({ boundaries: true }).boundaries).toBe('error')
+    expect(resolveOptions({ boundaries: 'warn' }).boundaries).toBe('warn')
     expect(resolveOptions({ boundaries: false }).boundaries).toBe(false)
     expect(resolveOptions({ boundaries: 'error' }).boundaries).toBe('error')
   })

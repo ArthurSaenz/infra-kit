@@ -1,0 +1,422 @@
+[
+  {
+    "command": "doppler secrets get API_KEY",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:doppler"
+  },
+  {
+    "command": "doppler secrets download --no-file",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:doppler"
+  },
+  {
+    "command": "cd apps/api && doppler secrets download --no-file",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:doppler"
+  },
+  {
+    "command": "doppler secrets",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:doppler"
+  },
+  {
+    "command": "sudo doppler secrets get X",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:doppler"
+  },
+  {
+    "command": "doppler run -- pnpm build",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "doppler setup",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "doppler secrets:download",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "rm -rf /tmp/x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "rm -fr /tmp/x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "rm -Rf x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "rm -r -f x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "rm -f -r x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "rm --recursive --force x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "env FOO=1 rm -rf x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "sudo rm -rf /tmp/x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "git push origin main --force",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "git push -f origin main",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "drop table users",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "truncate foo",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "rm -r some/dir",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "rm -f file",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "git push --force-with-lease origin main",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "git push --force-if-includes origin main",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "git status",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "echo \"rm -rf /\"",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "npm install",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:package-manager"
+  },
+  {
+    "command": "npm i",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:package-manager"
+  },
+  {
+    "command": "npm ci",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:package-manager"
+  },
+  {
+    "command": "yarn add x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:package-manager"
+  },
+  {
+    "command": "npx tsc",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:package-manager"
+  },
+  {
+    "command": "cd apps/client && npm install",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:package-manager"
+  },
+  {
+    "command": "echo hi; yarn install",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:package-manager"
+  },
+  {
+    "command": "pnpm install",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "pnpm exec npm-run-all",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "pnpm dlx x",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "rg npm docs/",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "pnpx foo",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "pnpm dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:cmux"
+  },
+  {
+    "command": "pnpm run dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:cmux"
+  },
+  {
+    "command": "pnpm dev:client",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:cmux"
+  },
+  {
+    "command": "cd apps/client && pnpm dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:cmux"
+  },
+  {
+    "command": "cmux new-session -d -s dev \"pnpm dev\"",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "rg \"pnpm dev\" docs/",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "pnpm build",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "git worktree add ../repo-worktrees/feat",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:worktree"
+  },
+  {
+    "command": "git worktree remove ../repo-worktrees/feat",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:worktree"
+  },
+  {
+    "command": "git -C /repo worktree add ../repo-worktrees/x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:worktree"
+  },
+  {
+    "command": "FOO=1 git worktree add ../repo-worktrees/x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:worktree"
+  },
+  {
+    "command": "git worktree add /tmp/adhoc",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:worktree"
+  },
+  {
+    "command": "cd /repo && git worktree add ../repo-worktrees/x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:worktree"
+  },
+  {
+    "command": "echo hi; git worktree add ../adhoc",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:worktree"
+  },
+  {
+    "command": "git worktree list",
+    "blocked": false,
+    "advised": true,
+    "signal": "advise:worktree"
+  },
+  {
+    "command": "git worktree prune",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "git commit -m \"worktree add note\"",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "grep foo file",
+    "blocked": false,
+    "advised": true,
+    "signal": "advise:style"
+  },
+  {
+    "command": "find . -name \"*.ts\"",
+    "blocked": false,
+    "advised": true,
+    "signal": "advise:style"
+  },
+  {
+    "command": "grep foo file | wc -l",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "rg foo | grep bar",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "rm -rf /tmp/x && npm install",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  },
+  {
+    "command": "doppler secrets get X && rm -rf /tmp/y",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:doppler"
+  },
+  {
+    "command": "ls -la",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "git log --oneline -5",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "pnpm run test:claude",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "git --git-dir=/repo/.git worktree add ../x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:worktree"
+  },
+  {
+    "command": "git -C /repo -C /other worktree add ../x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:worktree"
+  },
+  {
+    "command": "VAR=1 OTHER=2 git worktree add ../x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:worktree"
+  },
+  {
+    "command": "git  worktree  add  ../x",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:worktree"
+  },
+  {
+    "command": "git --git-dir=/repo/.git worktree list",
+    "blocked": false,
+    "advised": true,
+    "signal": "advise:worktree"
+  },
+  {
+    "command": "env FOO=1 sudo rm -rf /tmp/z",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:destructive"
+  }
+]

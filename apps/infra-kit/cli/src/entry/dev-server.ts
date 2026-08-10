@@ -409,7 +409,16 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
   const bootSignalGuard = installBootSignalGuard()
 
   try {
-    runner = await run(options)
+    runner = await run({
+      ...options,
+      // The runner tears itself down but cannot END the process: `doShutdown` has no `process.exit`, and
+      // the reload-budget stop reaches neither the signal handler nor the fatal one. Left unwired it
+      // would hand the user a live terminal with every server already dead. Same destination as every
+      // other exit here — `process.exit` — so a budget stop and a Ctrl-C finish the same way.
+      onExitRequest: (code: number): void => {
+        process.exit(code)
+      },
+    })
   } finally {
     bootSignalGuard.remove()
   }

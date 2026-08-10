@@ -23,7 +23,6 @@
  * @example
  * // no token minted for this env (integrations/doppler/token-resolver.ts)
  * throw new EnvAuthError(buildMissingTokenMessage('dev', storePath), 'dev')
- *
  * @example
  * // the token store itself is unusable — no single env is at fault, so `env` stays null
  * throw new EnvAuthError(`Invalid JSON in the token store at ${storePath} …`)

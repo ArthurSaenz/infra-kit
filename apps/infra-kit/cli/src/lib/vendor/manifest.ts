@@ -3,6 +3,7 @@ import path from 'node:path'
 import { z } from 'zod'
 
 import { sha256 } from './hash'
+import { isSkippedPath } from './skip-sets'
 import { walkVendorTree } from './walk'
 
 /** Filename of the integrity manifest inside a `vendor/` tree. */
@@ -123,9 +124,18 @@ export const writeManifest = (vendorRoot: string, meta: { source: string; commit
  * Compare the live `vendorRoot` tree against a manifest's recorded checksums.
  * Returns the modified / added (present, not in manifest) / removed (in
  * manifest, now missing) relative paths.
+ *
+ * Entries the current skip rules exclude are dropped from the manifest side
+ * first: a manifest issued before a skip rule existed still records those
+ * paths, and comparing them against a walk that no longer emits them would
+ * report drift on files the rule says to ignore.
  */
 export const compareToManifest = (vendorRoot: string, manifest: VendorManifest): ManifestDiff => {
-  const expected = manifest.files
+  const expected = Object.fromEntries(
+    Object.entries(manifest.files).filter(([rel]) => {
+      return !isSkippedPath(rel)
+    }),
+  )
   const actualFiles = walkVendorTree(vendorRoot)
 
   const modified: string[] = []

@@ -65,7 +65,7 @@ const buildAgentsBody = (version: string): string => {
     '- `ik release create` / `release list` / `release deploy-all` / `release deploy-selected` / `release deliver` / `release desc-edit` — release-branch and deploy flow.',
     '- `ik release merge-dev` — merge the dev branch into every release branch.',
     '- `ik audit` — audit packages against `infra-kit.config.ts` rules.',
-    '- `ik doctor` — check gh / doppler / aws / rtk install + auth and repo setup.',
+    '- `ik doctor` — check gh / doppler / aws install + auth and repo setup.',
     '- `ik init` — (re)install shell integration and regenerate these agent-instruction files.',
     '',
     '## Conventions',

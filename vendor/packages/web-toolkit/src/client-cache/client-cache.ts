@@ -13,7 +13,6 @@ const namespace = 'v1'
  *
  * @example
  *     getKey('user') // => 'v1.user'
- *
  * @deprecated
  */
 const getKey = (name: string) => {
@@ -24,7 +23,6 @@ const getKey = (name: string) => {
  *
  * @example
  *     updatedAtKey('user') // => 'v1.user.updatedAt'
- *
  * @deprecated
  */
 const updatedAtKey = (name: string) => {
@@ -36,7 +34,6 @@ const updatedAtKey = (name: string) => {
  *
  * @example
  *     save('user', { id: 1 })
- *
  * @deprecated
  */
 export const save = (name: string, value: unknown, updatedAt?: string) => {
@@ -49,7 +46,6 @@ export const save = (name: string, value: unknown, updatedAt?: string) => {
  *
  * @example
  *     saveSync('user', { id: 1 })
- *
  * @deprecated
  */
 export const saveSync = (name: string, value: unknown, updatedAt?: string | undefined) => {
@@ -66,7 +62,6 @@ export const saveSync = (name: string, value: unknown, updatedAt?: string | unde
  *
  * @example
  *     const user = load<User>('user')
- *
  * @deprecated
  */
 export const load = <T>(name: string): T | undefined => {
@@ -92,7 +87,6 @@ export const load = <T>(name: string): T | undefined => {
  *
  * @example
  *     const ts = getUpdatedAt('user')
- *
  * @deprecated
  */
 const getUpdatedAt = (name: string): string | undefined => {
@@ -106,7 +100,6 @@ const getUpdatedAt = (name: string): string | undefined => {
  *
  * @example
  *     const exists = isExist('user')
- *
  * @deprecated
  */
 export const isExist = (name: string): boolean => {
@@ -117,7 +110,6 @@ export const isExist = (name: string): boolean => {
  *
  * @example
  *     const fresh = isExistAndFresh('user', 300)
- *
  * @deprecated
  */
 export const isExistAndFresh = (name: string, notOlderThan: number): boolean => {

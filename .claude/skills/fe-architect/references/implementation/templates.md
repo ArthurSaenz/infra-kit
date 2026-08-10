@@ -45,7 +45,7 @@ export interface UpdateFeatureNameFxArgs {
 
 ```tsx
 // features/[feature-name]/components/[name]-component.tsx
-import { cn } from '#root/lib/utils'
+import { cn } from '@wl/web-toolkit'
 import type { FeatureNameComponentProps } from '../types'
 
 export const FeatureNameComponent = (props: FeatureNameComponentProps) => {
@@ -94,8 +94,9 @@ export const FeatureNameContainer = (props: FeatureNameContainerProps) => {
     getData({ dataId })
   }, [dataId, getData])
 
-  // REQUIRED: Handle all states
-  if (isLoading) return <LoadingSpinner className={className} />
+  // REQUIRED: Handle all states. Loading guards on `!data` so a refetch
+  // does not replace visible content with a spinner.
+  if (isLoading && !data) return <LoadingSpinner className={className} />
   if (error) return <ErrorMessage error={error} className={className} />
   if (!data) return <EmptyState message="No data found" className={className} />
 

@@ -37,6 +37,7 @@ const createCommandEcho = () => {
 
     /**
      * Track an option selection
+     *
      * @param flag The CLI flag (e.g., "--versions")
      * @param value The selected value
      */

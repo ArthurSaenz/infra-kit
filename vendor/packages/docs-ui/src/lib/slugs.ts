@@ -11,7 +11,6 @@
  *
  * @example
  *     const posix = toPosix('packages\\lib\\docs\\index.md')
- *
  */
 export const toPosix = (p: string): string => {
   return p.split('\\').join('/')
@@ -44,7 +43,6 @@ export const titleCase = (value: string): string => {
  * @example
  *     const pathToSlugs = makePathToSlugs({ appContentRel: 'spec/docs' })
  *     pathToSlugs('apps/ai/agent/docs/draft.md') // => ['ai-agent', 'draft']
- *
  */
 export const makePathToSlugs = (params: { appContentRel: string }) => {
   const { appContentRel } = params
@@ -102,7 +100,6 @@ export const makePathToSlugs = (params: { appContentRel: string }) => {
  * @example
  *     const deriveTitle = makeDeriveTitle({ appContentRel: 'spec/docs' })
  *     deriveTitle('apps/ai/agent/docs/use-hook.md') // => 'Use Hook'
- *
  */
 export const makeDeriveTitle = (params: { appContentRel: string }) => {
   const pathToSlugs = makePathToSlugs(params)

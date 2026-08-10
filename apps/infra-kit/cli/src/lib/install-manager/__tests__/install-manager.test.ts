@@ -1,9 +1,22 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { detectInstallManager, isLocalNodeModulesInstall } from 'src/lib/install-manager'
+import { detectInstallManager, formatUpdateCommand, isLocalNodeModulesInstall } from 'src/lib/install-manager'
 import type { DetectInstallManagerInput, InstallManagerInfo, RealpathFn } from 'src/lib/install-manager'
 
 const NPM_LATEST = ['npm', 'install', '-g', 'infra-kit@latest']
+
+/** What an npm global install now resolves to: the prefix comes from our own path, so npm cannot miss it. */
+const npmAtPrefix = (prefix: string): string[] => {
+  return ['npm', 'install', '-g', '--prefix', prefix, 'infra-kit@latest']
+}
+
+/**
+ * An npm global root WITHOUT the posix `lib` segment (this is the Windows `%APPDATA%\npm` shape). It is
+ * the only npm layout the self-path derivation cannot read, so every test that means to exercise the
+ * `npm root -g` fallback must use it — a `lib/node_modules` path is settled before the probe is reached.
+ */
+const NPM_ROOT_NO_LIB = '/Users/x/AppData/Roaming/npm/node_modules'
+const SELF_UNDER_NPM_ROOT_NO_LIB = `${NPM_ROOT_NO_LIB}/infra-kit/dist/cli.js`
 
 /** Roots in these cases are already canonical, so canonicalising them is a no-op. */
 const identity: RealpathFn = (dir) => {
@@ -37,10 +50,22 @@ const cases: Case[] = [
   {
     // brew's `std_npm_args` layout for a node-CLI formula. It carries a `node_modules` segment INSIDE the
     // keg, so the keg test must not try to exclude one.
+    //
+    // This is also what pins the matcher ORDER: the keg ends in `lib/node_modules/infra-kit`, so deriving
+    // an npm prefix from the path would claim a brew-owned install and run `npm i -g` into the keg. The
+    // wrapper matchers must stay ahead of the derivation.
     name: 'homebrew, via our keg in the node-CLI libexec layout',
     selfRealPath: '/opt/homebrew/Cellar/infra-kit/1.2.3/libexec/lib/node_modules/infra-kit/dist/cli.js',
     env: {},
     expected: { manager: 'homebrew', updateCommand: ['brew', 'upgrade', 'infra-kit'], canSelfSpawn: false },
+  },
+  {
+    // Same ordering point for the other wrapper: volta ships node as `image/node/<v>/lib/node_modules`,
+    // so `volta install` must win over a derived `npm i -g --prefix`.
+    name: 'volta, in the node image layout — the wrapper wins over a derived npm prefix',
+    selfRealPath: '/Users/x/.volta/tools/image/node/22.0.0/lib/node_modules/infra-kit/dist/cli.js',
+    env: {},
+    expected: { manager: 'volta', updateCommand: ['volta', 'install', 'infra-kit'], canSelfSpawn: true },
   },
   {
     // Regression: an npm prefix pointed at a NODE keg (`npm config set prefix "$(brew --prefix node)"`,
@@ -49,10 +74,11 @@ const cases: Case[] = [
     name: 'npm-global inside the node keg is npm, NOT homebrew — the Cellar segment is not ours',
     selfRealPath: '/opt/homebrew/Cellar/node/26.0.0/lib/node_modules/infra-kit/dist/cli.js',
     env: { HOMEBREW_PREFIX: '/opt/homebrew' },
-    lazyNpmRoot: () => {
-      return '/opt/homebrew/Cellar/node/26.0.0/lib/node_modules'
+    expected: {
+      manager: 'npm',
+      updateCommand: npmAtPrefix('/opt/homebrew/Cellar/node/26.0.0'),
+      canSelfSpawn: true,
     },
-    expected: { manager: 'npm', updateCommand: NPM_LATEST, canSelfSpawn: true },
   },
   {
     // Regression: brew-installed node makes $HOMEBREW_PREFIX npm's global prefix, so an `npm i -g`
@@ -61,21 +87,59 @@ const cases: Case[] = [
     name: 'npm-global under HOMEBREW_PREFIX (brew-installed node) is npm, NOT homebrew',
     selfRealPath: '/opt/homebrew/lib/node_modules/infra-kit/dist/cli.js',
     env: { HOMEBREW_PREFIX: '/opt/homebrew' },
-    lazyNpmRoot: () => {
-      return '/opt/homebrew/lib/node_modules'
-    },
-    expected: { manager: 'npm', updateCommand: NPM_LATEST, canSelfSpawn: true },
+    expected: { manager: 'npm', updateCommand: npmAtPrefix('/opt/homebrew'), canSelfSpawn: true },
   },
   {
-    // Same layout under linuxbrew — and with no `npm root -g` to fall back on it must degrade to
-    // `unknown` (a printed suggestion), never to a brew formula that does not exist.
-    name: 'linuxbrew prefix with no npm root -g falls back to unknown, not homebrew',
+    // THE reported bug, reproduced: `ik` lives in a prefix whose node is long gone, and the `npm` now
+    // first on PATH belongs to a different node manager, so `npm root -g` answers for a tree that does
+    // not contain us. Every matcher missed, detection said `unknown`, and the user got the same notice
+    // on every command for as long as the install lived. The prefix is right there in our own path.
+    name: 'npm-global whose owning npm is no longer on PATH — derived from the path, not from npm root -g',
+    selfRealPath: '/opt/homebrew/lib/node_modules/infra-kit/dist/cli.js',
+    env: {},
+    lazyNpmRoot: () => {
+      return '/Users/x/Library/pnpm/nodejs/24.18.0/lib/node_modules'
+    },
+    expected: { manager: 'npm', updateCommand: npmAtPrefix('/opt/homebrew'), canSelfSpawn: true },
+  },
+  {
+    // Worse than a missed update, and the reason the derivation outranks containment: PNPM_HOME CONTAINS
+    // this path, but `pnpm add -g` writes to `<PNPM_HOME>/global/<v>/node_modules` instead. The install
+    // reports success, the binary on PATH stays old, and nothing is ever printed.
+    name: 'plain npm install under a pnpm-managed node is npm-at-that-prefix, NOT `pnpm add -g`',
+    selfRealPath: '/Users/x/Library/pnpm/nodejs/24.18.0/lib/node_modules/infra-kit/dist/cli.js',
+    env: { PNPM_HOME: '/Users/x/Library/pnpm' },
+    expected: {
+      manager: 'npm',
+      updateCommand: npmAtPrefix('/Users/x/Library/pnpm/nodejs/24.18.0'),
+      canSelfSpawn: true,
+    },
+  },
+  {
+    // Same layout under linuxbrew, with no `npm root -g` to fall back on. It used to degrade to `unknown`;
+    // the path alone is now enough, and what must NOT happen is a brew formula that does not exist.
+    name: 'linuxbrew prefix with no npm root -g is npm-at-that-prefix, not homebrew and not unknown',
     selfRealPath: '/home/linuxbrew/.linuxbrew/lib/node_modules/infra-kit/dist/cli.js',
     env: { HOMEBREW_PREFIX: '/home/linuxbrew/.linuxbrew' },
     lazyNpmRoot: () => {
       return undefined
     },
-    expected: { manager: 'unknown', updateCommand: NPM_LATEST, canSelfSpawn: false },
+    expected: { manager: 'npm', updateCommand: npmAtPrefix('/home/linuxbrew/.linuxbrew'), canSelfSpawn: true },
+  },
+  {
+    // nvm/fnm/asdf all install node per version. `npm root -g` answers for the ACTIVE version, so the
+    // moment the user switches, the running CLI is outside it and detection used to give up.
+    name: 'nvm-style per-version prefix, with npm root -g pointing at a different node version',
+    selfRealPath: '/Users/x/.nvm/versions/node/v22.0.0/lib/node_modules/infra-kit/dist/cli.js',
+    env: {},
+    lazyNpmRoot: () => {
+      return '/Users/x/.nvm/versions/node/v24.0.0/lib/node_modules'
+    },
+    expected: {
+      manager: 'npm',
+      updateCommand: npmAtPrefix('/Users/x/.nvm/versions/node/v22.0.0'),
+      canSelfSpawn: true,
+    },
   },
   {
     name: 'pnpm, via PNPM_HOME',
@@ -108,19 +172,61 @@ const cases: Case[] = [
     expected: { manager: 'yarn', updateCommand: ['yarn', 'global', 'add', 'infra-kit@latest'], canSelfSpawn: true },
   },
   {
-    name: 'npm, via npm_config_prefix',
+    // `npm_config_prefix` agrees with the path here, so the answer is the same either way — but it is
+    // pinned to the prefix rather than left ambient, which is what protects the install when the env var
+    // is absent from the detached update worker.
+    name: 'npm, with npm_config_prefix agreeing with the derived prefix',
     selfRealPath: '/usr/local/lib/node_modules/infra-kit/dist/cli.js',
     env: { npm_config_prefix: '/usr/local' },
+    expected: { manager: 'npm', updateCommand: npmAtPrefix('/usr/local'), canSelfSpawn: true },
+  },
+  {
+    // The `npm root -g` probe still earns its place for the layout with no `lib` segment.
+    name: 'npm, via the lazy `npm root -g` fallback, for a global root with no lib segment',
+    selfRealPath: SELF_UNDER_NPM_ROOT_NO_LIB,
+    env: {},
+    lazyNpmRoot: () => {
+      return NPM_ROOT_NO_LIB
+    },
     expected: { manager: 'npm', updateCommand: NPM_LATEST, canSelfSpawn: true },
   },
   {
-    name: 'npm, via the lazy `npm root -g` fallback',
-    selfRealPath: '/usr/local/lib/node_modules/infra-kit/dist/cli.js',
+    // A project-local install has a `node_modules` segment but no `lib` parent, so no prefix is derived —
+    // a repo's `devDependencies` copy must never be mistaken for a global one to install over.
+    name: 'a project-local node_modules install derives no prefix',
+    selfRealPath: '/repo/node_modules/infra-kit/dist/cli.js',
     env: {},
     lazyNpmRoot: () => {
-      return '/usr/local/lib/node_modules'
+      return undefined
     },
-    expected: { manager: 'npm', updateCommand: NPM_LATEST, canSelfSpawn: true },
+    expected: { manager: 'unknown', updateCommand: NPM_LATEST, canSelfSpawn: false },
+  },
+  {
+    // Nesting cannot spoof the layout: the segment before `node_modules` is the parent package, not `lib`.
+    name: 'a transitively nested copy derives no prefix',
+    selfRealPath: '/usr/local/lib/node_modules/some-tool/node_modules/infra-kit/dist/cli.js',
+    env: {},
+    lazyNpmRoot: () => {
+      return undefined
+    },
+    expected: { manager: 'unknown', updateCommand: NPM_LATEST, canSelfSpawn: false },
+  },
+  {
+    // A `lib/node_modules` holding a DIFFERENT package tells us nothing about where ours lives.
+    name: 'the derivation requires our own package as the immediate child of node_modules',
+    selfRealPath: '/usr/local/lib/node_modules/other-tool/bin/infra-kit',
+    env: {},
+    lazyNpmRoot: () => {
+      return undefined
+    },
+    expected: { manager: 'unknown', updateCommand: NPM_LATEST, canSelfSpawn: false },
+  },
+  {
+    // Degenerate but reachable in a container: the prefix is the filesystem root, not the empty string.
+    name: 'a root-level prefix derives `/`, not an empty argument',
+    selfRealPath: '/lib/node_modules/infra-kit/dist/cli.js',
+    env: {},
+    expected: { manager: 'npm', updateCommand: npmAtPrefix('/'), canSelfSpawn: true },
   },
   {
     name: 'unknown when nothing matches and npm root -g is unavailable — suggest, never guess-spawn',
@@ -176,7 +282,23 @@ describe('detectInstallManager', () => {
 
   it('invokes lazyNpmRoot exactly once, only on the fallback path', () => {
     const lazyNpmRoot = vi.fn(() => {
-      return '/usr/local/lib/node_modules'
+      return NPM_ROOT_NO_LIB
+    })
+
+    const info = detectInstallManager({
+      selfRealPath: SELF_UNDER_NPM_ROOT_NO_LIB,
+      env: {},
+      realpath: identity,
+      lazyNpmRoot,
+    })
+
+    expect(lazyNpmRoot).toHaveBeenCalledTimes(1)
+    expect(info.manager).toBe('npm')
+  })
+
+  it('never invokes lazyNpmRoot for the standard npm global layout — the path already settles it', () => {
+    const lazyNpmRoot = vi.fn(() => {
+      return '/somewhere/else/lib/node_modules'
     })
 
     const info = detectInstallManager({
@@ -186,8 +308,8 @@ describe('detectInstallManager', () => {
       lazyNpmRoot,
     })
 
-    expect(lazyNpmRoot).toHaveBeenCalledTimes(1)
-    expect(info.manager).toBe('npm')
+    expect(lazyNpmRoot).not.toHaveBeenCalled()
+    expect(info.updateCommand).toStrictEqual(npmAtPrefix('/usr/local'))
   })
 
   it('tolerates an absent lazyNpmRoot', () => {
@@ -209,7 +331,8 @@ describe('root canonicalisation (symlinked prefixes)', () => {
     return dir.startsWith('/link/') ? dir.replace('/link/', '/real/') : dir
   }
 
-  const selfUnderRealRoot = '/real/pfx/lib/node_modules/infra-kit/dist/cli.js'
+  /** No `lib` segment, so the derivation stays out and the root comparison is what decides. */
+  const selfUnderRealRoot = '/real/pfx/npm/node_modules/infra-kit/dist/cli.js'
 
   it('matches a PNPM_HOME that is a symlink to the real root', () => {
     const info = detectInstallManager({
@@ -237,11 +360,29 @@ describe('root canonicalisation (symlinked prefixes)', () => {
       env: {},
       realpath: resolveLink,
       lazyNpmRoot: () => {
-        return '/link/pfx/lib/node_modules'
+        return '/link/pfx/npm/node_modules'
       },
     })
 
     expect(info.manager).toBe('npm')
+  })
+
+  /**
+   * The derivation needs no canonicalisation at all — it reads the already-resolved `selfRealPath` and
+   * never compares it to a candidate root, which is the whole class of mismatch that used to produce
+   * `unknown`. Asserting it here keeps that property from being quietly traded away.
+   */
+  it('derives the prefix from an already-resolved self path without consulting realpath', () => {
+    const realpath = vi.fn(identity)
+
+    const info = detectInstallManager({
+      selfRealPath: '/real/pfx/lib/node_modules/infra-kit/dist/cli.js',
+      env: { npm_config_prefix: '/link/elsewhere' },
+      realpath,
+    })
+
+    expect(info.updateCommand).toStrictEqual(npmAtPrefix('/real/pfx'))
+    expect(realpath).not.toHaveBeenCalled()
   })
 
   it('still reports unknown when the resolved root genuinely does not contain self', () => {
@@ -252,6 +393,19 @@ describe('root canonicalisation (symlinked prefixes)', () => {
     })
 
     expect(info).toStrictEqual({ manager: 'unknown', updateCommand: NPM_LATEST, canSelfSpawn: false })
+  })
+})
+
+describe('formatUpdateCommand', () => {
+  it('leaves an ordinary command untouched', () => {
+    expect(formatUpdateCommand(NPM_LATEST)).toBe('npm install -g infra-kit@latest')
+  })
+
+  /** A prefix path with a space is two arguments once pasted, which silently installs to the wrong place. */
+  it('quotes a prefix containing a space so the printed line is runnable as-is', () => {
+    expect(formatUpdateCommand(npmAtPrefix('/Users/Ada Lovelace/.nvm/versions/node/v22.0.0'))).toBe(
+      "npm install -g --prefix '/Users/Ada Lovelace/.nvm/versions/node/v22.0.0' infra-kit@latest",
+    )
   })
 })
 

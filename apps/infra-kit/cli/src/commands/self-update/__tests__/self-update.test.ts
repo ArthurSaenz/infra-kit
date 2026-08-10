@@ -67,7 +67,9 @@ describe('runSelfUpdate', () => {
 
     const [cmd, args, options] = spawnSyncFake.mock.calls[0] as unknown as [string, string[], Record<string, unknown>]
 
-    expect([cmd, ...args]).toEqual(['npm', 'install', '-g', 'infra-kit@latest'])
+    // The prefix is derived from NPM_PATH itself, so this installs over the copy the user is running
+    // rather than wherever the `npm` on PATH would default to.
+    expect([cmd, ...args]).toEqual(['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@latest'])
     expect(options.shell).toBe(process.platform === 'win32')
     expect(options.stdio).toBe('inherit')
 
@@ -125,7 +127,7 @@ describe('runSelfUpdate', () => {
     runSelfUpdate({ dryRun: true }, { ...deps, selfRealPath: NPM_PATH, env: NPM_ENV })
 
     expect(spawnSyncFake).not.toHaveBeenCalled()
-    expect(lines.join('\n')).toContain('npm install -g infra-kit@latest')
+    expect(lines.join('\n')).toContain('npm install -g --prefix /usr/local infra-kit@latest')
     expect(lines.join('\n')).toContain('npm')
   })
 

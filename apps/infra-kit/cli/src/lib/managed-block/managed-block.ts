@@ -109,7 +109,6 @@ export const buildManagedBlock = (startMarker: string, body: string, endMarker: 
  * // fresh file
  * upsertManagedBlock({ content: '', body: 'hi', startMarker: '<!--s-->', endMarker: '<!--e-->' })
  * // => '<!--s-->\nhi\n<!--e-->\n'
- *
  * @example
  * // existing block replaced in place, surrounding text kept
  * upsertManagedBlock({

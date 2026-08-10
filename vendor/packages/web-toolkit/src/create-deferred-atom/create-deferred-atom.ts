@@ -23,7 +23,6 @@ export interface DeferredAtom<Value, Args> {
  *     const modal = createDeferredAtom<string, { title: string }>()
  *     // Open: const result = await store.set(modal.openFx, { title: 'Confirm?' })
  *     // Resolve: store.set(modal.resolveFx, 'confirmed')
- *
  */
 export const createDeferredAtom = <Value, Args>(): DeferredAtom<Value, Args> => {
   const $data = atom<Args | null>(null)

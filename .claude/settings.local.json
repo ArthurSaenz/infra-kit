@@ -11,7 +11,6 @@
       "Bash(grep:*)",
       "Bash(done)",
       "Bash(for:*)",
-      "Bash(rm:*)",
       "Bash(cp:*)",
       "Bash(tree:*)",
       "Bash(curl:*)",

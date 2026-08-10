@@ -13,7 +13,6 @@ export const Route = createFileRoute('/')({
  *
  * @example
  *     createFileRoute('/')({ component: Home })
- *
  */
 function Home() {
   return (

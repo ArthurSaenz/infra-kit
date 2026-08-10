@@ -51,11 +51,20 @@ export function resolvePort(appName: string, env: NodeJS.ProcessEnv, devConfig: 
  * port (a preferred bind target) from an unconfigured app (which binds ephemeral straight
  * away under dynamic allocation). Used by the dev-server to (a) pick the preferred bind
  * port and (b) relax the conflict gate to explicit ports only.
+ *
+ * `allowBarePort` gates ONLY the second tier. A bare `PORT` is not app-scoped, so in a
+ * multi-app run it hands every app the same preferred port and the caller's conflict gate then
+ * throws on duplicates it manufactured itself — a shell or Doppler `PORT` refusing to start a
+ * run it has nothing to do with. The caller passes `false` once it knows more than one app is
+ * being launched; the per-app `{APP}_PORT` and `dev.<app>.port` tiers are unaffected either way.
+ *
+ * Defaults to `true`, so {@link resolvePort} and every standalone caller keep today's precedence.
  */
 export function resolvePreferredPort(
   appName: string,
   env: NodeJS.ProcessEnv,
   devConfig: DevConfig,
+  allowBarePort = true,
 ): number | undefined {
   const prefix = appName.replace(/-/g, '_').toUpperCase()
   const prefixedKey = `${prefix}_PORT`
@@ -66,10 +75,12 @@ export function resolvePreferredPort(
     return fromPrefixed
   }
 
-  const fromPort = parsePortString(env.PORT)
+  if (allowBarePort) {
+    const fromPort = parsePortString(env.PORT)
 
-  if (fromPort != null) {
-    return fromPort
+    if (fromPort != null) {
+      return fromPort
+    }
   }
 
   return devConfig[appName]?.port ?? undefined

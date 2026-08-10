@@ -7,10 +7,8 @@ import qs from 'qs'
  *
  * @param searchObject - The search object to stringify.
  * @returns The stringified search object.
- *
  * @example
  *     customStringified({ key: ['value1', 'value2'] })
- *
  */
 export const customStringified = (searchObject: Record<string, any> | undefined | null) => {
   return Object.keys(searchObject || {}).length > 0 ? `?${qs.stringify(searchObject, { arrayFormat: 'indices' })}` : ''
@@ -21,10 +19,8 @@ export const customStringified = (searchObject: Record<string, any> | undefined 
  *
  * @param searchString - The search string to parse.
  * @returns The parsed search object: { key: ['value1', 'value2'] }
- *
  * @example
  *     customParser('?key[0]=value1&key[1]=value2')
- *
  */
 export const customParser = (searchString: string) => {
   return qs.parse(searchString, { ignoreQueryPrefix: true })
@@ -37,10 +33,8 @@ export const customParser = (searchString: string) => {
  *
  * @param searchObject - The search object to stringify.
  * @returns The stringified search object with URL encoding.
- *
  * @example
  *     customStringifiedEncoded({ key: ['value1', 'value2'] })
- *
  */
 export const customStringifiedEncoded = (searchObject: Record<string, any> | undefined | null) => {
   return Object.keys(searchObject || {}).length > 0
@@ -54,10 +48,8 @@ export const customStringifiedEncoded = (searchObject: Record<string, any> | und
  *
  * @param searchObject - The search object to stringify.
  * @returns The stringified search object without leading question mark.
- *
  * @example
  *     customStringifiedRaw({ key: ['value1', 'value2'] })
- *
  */
 export const customStringifiedRaw = (searchObject: Record<string, any> | undefined | null) => {
   return Object.keys(searchObject || {}).length > 0 ? qs.stringify(searchObject, { arrayFormat: 'indices' }) : ''

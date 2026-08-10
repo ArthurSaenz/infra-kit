@@ -50,6 +50,15 @@ export interface TurboWatchOptions {
    * the runner surfaces it. Optional so the injected test factory can ignore it.
    */
   onUnexpectedExit?: UnexpectedExitHandler
+  /**
+   * Test seam: open `logFile` and return its descriptor. Defaults to `fs.openSync(path, 'a')`.
+   *
+   * It exists so a test can HOLD the descriptor the factory is about to close and prove it was closed
+   * (`fstatSync` throws `EBADF`). The alternative — opening a probe fd and asserting the next
+   * allocation reuses its number — silently depends on nothing else in the worker opening a file at
+   * the same moment, which is not a property a test can own.
+   */
+  openLog?: (path: string) => number
 }
 
 /**
@@ -86,14 +95,22 @@ export const defaultTurboWatchFactory: TurboWatchFactory = ({
   cwd,
   logFile,
   onUnexpectedExit,
+  openLog,
 }) => {
   const filters = buildTurboWatchFilters(depInclusive, depClosure)
-  const out = fs.openSync(logFile, 'a')
+  const out = openLog ? openLog(logFile) : fs.openSync(logFile, 'a')
   const child = spawn(
     'pnpm',
     ['exec', 'turbo', 'watch', 'build', ...filters, '--continue=dependencies-successful', '--env-mode=loose'],
     { cwd, detached: true, stdio: ['ignore', out, out] },
   )
+
+  // `spawn` has already duplicated the descriptor into the child by the time it returns, so the
+  // parent's copy is dead weight — nothing here ever writes through it. It was never closed: neither
+  // `kill()` nor `shutdown()` could, because {@link ManagedChild} exposes no cleanup hook to hang it
+  // on, which is exactly why the close belongs here rather than there. Holding it pinned the log
+  // file's inode for the whole session even after the file was unlinked.
+  fs.closeSync(out)
 
   return superviseChild(child, undefined, onUnexpectedExit)
 }

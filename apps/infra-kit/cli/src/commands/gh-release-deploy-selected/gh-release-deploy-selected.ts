@@ -22,8 +22,13 @@ import {
   resolveReleaseBranch,
 } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import { readWorkflowEnvOptions } from 'src/lib/workflow-envs'
-import { assertDeployable, deployableEnvs } from 'src/lib/workflow-envs/protected-envs'
+import {
+  assertDeployable,
+  deployableEnvs,
+  readWorkflowEnvOptions,
+  resolveProtectedEnvAccess,
+  warnProtectedEnvDispatch,
+} from 'src/lib/workflow-envs'
 import { defineMcpTool, textContent } from 'src/types'
 
 /** The workflow this command dispatches. Its own inputs are both the env list and the service list. */
@@ -109,7 +114,8 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
   // per repo: travelist's `deploy-all.yml` and `deploy-selected-services.yml` genuinely declare different
   // environments, so a single repo-level list could only ever be wrong for one of them — as the old
   // `environments` array was.
-  const envOptions = deployableEnvs(await readWorkflowEnvOptions(DEPLOY_SELECTED_WORKFLOW))
+  const protectedEnvAccess = await resolveProtectedEnvAccess()
+  const envOptions = deployableEnvs(await readWorkflowEnvOptions(DEPLOY_SELECTED_WORKFLOW), protectedEnvAccess)
 
   let selectedEnv = ''
 
@@ -123,9 +129,13 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
 
   commandEcho.addOption('--env', selectedEnv)
 
-  // `prod` is delivered, never deployed ad-hoc — see gh-release-deliver. The one rule GitHub cannot
-  // enforce for us.
-  assertDeployable(selectedEnv, 'launch deploy-selected workflow')
+  // `prod` is delivered, not deployed ad-hoc — see gh-release-deliver — unless this project's
+  // `protectedEnvs` says otherwise. The one rule GitHub cannot enforce for us.
+  assertDeployable(selectedEnv, 'launch deploy-selected workflow', protectedEnvAccess)
+
+  // Allowed, but nothing downstream re-checks it on this path: GitHub holds the credentials and no job
+  // declares `environment:`. The guidance the refusal used to carry is emitted here instead.
+  warnProtectedEnvDispatch({ env: selectedEnv, branch: selectedReleaseBranch })
 
   // Available services, from the same workflow's boolean inputs. Unlike the env list this one is still
   // enforced below — a `choice` value is validated by GitHub, but an undeclared `-f <service>=true` is

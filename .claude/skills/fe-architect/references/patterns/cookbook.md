@@ -49,7 +49,7 @@ export const createTaskFx = atom(null, async (get, set, args: CreateTaskFxArgs) 
   set($isLoading, true)
   set($error, null)
   try {
-    const response = await httpClient.fetch<Task>('/api/tasks', { method: 'POST', body: JSON.stringify(args) })
+    const response = await httpClient.fetch<Task>('/api/tasks', { method: 'POST', body: args })
     set($tasks, [...get($tasks), response.body])
   } catch (err) {
     set($error, err as Error)
@@ -62,7 +62,7 @@ export const updateTaskFx = atom(null, async (get, set, args: UpdateTaskFxArgs) 
   set($isLoading, true)
   set($error, null)
   try {
-    const response = await httpClient.fetch<Task>(`/api/tasks/${args.taskId}`, { method: 'PATCH', body: JSON.stringify(args.updates) })
+    const response = await httpClient.fetch<Task>(`/api/tasks/${args.taskId}`, { method: 'PATCH', body: args.updates })
     set($tasks, get($tasks).map((t) => (t.id === args.taskId ? response.body : t)))
   } catch (err) {
     set($error, err as Error)
@@ -277,6 +277,10 @@ export const likePostFx = atom(null, async (get, set, args: LikePostFxArgs) => {
 ### Cursor-Based Pagination
 
 ```typescript
+import queryString from 'query-string'
+
+const PAGE_SIZE = 20
+
 export const $allItems = atom<FeedItem[]>([])
 export const $nextCursor = atom<string | null>(null)
 export const $hasMore = atom(true)
@@ -286,7 +290,8 @@ export const $isLoadingMore = atom(false)
 export const loadInitialFx = atom(null, async (get, set) => {
   set($isLoadingInitial, true)
   try {
-    const response = await httpClient.fetch<PageData>('/api/feed?limit=20', { method: 'GET' })
+    const queryParams = `?${queryString.stringify({ limit: PAGE_SIZE })}`
+    const response = await httpClient.fetch<PageData>(`/api/feed${queryParams}`, { method: 'GET' })
     set($allItems, response.body.items)
     set($nextCursor, response.body.nextCursor)
     set($hasMore, response.body.hasMore)
@@ -303,7 +308,8 @@ export const loadMoreFx = atom(null, async (get, set, args: LoadMoreFxArgs) => {
   if (get($isLoadingMore) || !get($hasMore)) return
   set($isLoadingMore, true)
   try {
-    const response = await httpClient.fetch<PageData>(`/api/feed?cursor=${args.cursor}&limit=20`, { method: 'GET' })
+    const queryParams = `?${queryString.stringify({ cursor: args.cursor, limit: PAGE_SIZE })}`
+    const response = await httpClient.fetch<PageData>(`/api/feed${queryParams}`, { method: 'GET' })
     set($allItems, [...get($allItems), ...response.body.items])
     set($nextCursor, response.body.nextCursor)
     set($hasMore, response.body.hasMore)
@@ -400,7 +406,7 @@ export const loginFx = atom(null, async (get, set, args: LoginFxArgs) => {
   try {
     const response = await httpClient.fetch<{ user: User; token: AuthToken }>('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify(args.credentials),
+      body: args.credentials,
     })
     set($authToken, response.body.token)
     set($currentUser, response.body.user)

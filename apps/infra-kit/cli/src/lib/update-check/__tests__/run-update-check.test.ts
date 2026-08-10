@@ -23,7 +23,7 @@ const harness = (overrides: Partial<RunUpdateCheckDeps> = {}) => {
 
   const deps: RunUpdateCheckDeps = {
     selfRealPath: GLOBAL_NPM_CLI,
-    // `npm_config_prefix` is what makes detectInstallManager report a self-spawnable npm global.
+    // Agrees with the `/usr/local` prefix detectInstallManager derives from GLOBAL_NPM_CLI's own path.
     env: { npm_config_prefix: '/usr/local' },
     // A parent that has already exited: the install may proceed. Omitting it is the fail-safe path.
     parentPid: 4242,
@@ -114,7 +114,9 @@ describe('runUpdateCheck', () => {
     expect(spawnMock).toHaveBeenCalledTimes(1)
     const [bin, args, options] = spawnMock.mock.calls[0] as unknown as [string, string[], { stdio: string }]
 
-    expect([bin, ...args]).toEqual(['npm', 'install', '-g', 'infra-kit@latest'])
+    // `--prefix` is derived from GLOBAL_NPM_CLI's own path, so the install lands in the tree we run from
+    // rather than wherever the `npm` on PATH happens to default to.
+    expect([bin, ...args]).toEqual(['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@latest'])
     // Silent: a detached child has nowhere to write, and stdout must never carry chatter.
     expect(options.stdio).toBe('ignore')
   })
@@ -128,17 +130,33 @@ describe('runUpdateCheck', () => {
   })
 
   it('self-spawns for a plain `npm i -g` install, whose shell has no npm_config_prefix', async () => {
-    // REGRESSION: without the `npm root -g` fallback every matcher misses for the most common install
-    // method, detection reports `unknown`, and the silent auto-install degrades to a mere notice.
+    // REGRESSION: every matcher used to miss for the most common install method — the shell of a user who
+    // ran `npm i -g` months ago carries no npm_config_prefix — and detection reported `unknown`, degrading
+    // the silent auto-install to a mere notice.
+    const { deps, spawnMock } = harness({ env: {} })
+
+    await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('installed')
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('installs into OUR prefix when the npm on PATH belongs to a different node', async () => {
+    // REGRESSION (the reported one): `npm root -g` answers for whichever npm is first on PATH. When that
+    // is a pnpm/nvm-managed node — or when the node that installed us is simply gone — the root it names
+    // does not contain us, so detection said `unknown` and the user got the same notice on every command.
+    // Worse, the printed `npm install -g` would have installed into that OTHER root, leaving the binary on
+    // PATH untouched. The prefix must come from our own path.
     const { deps, spawnMock } = harness({
       env: {},
       lazyNpmRoot: () => {
-        return '/usr/local/lib/node_modules'
+        return '/Users/x/Library/pnpm/nodejs/24.18.0/lib/node_modules'
       },
     })
 
     await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('installed')
-    expect(spawnMock).toHaveBeenCalledTimes(1)
+
+    const [bin, args] = spawnMock.mock.calls[0] as unknown as [string, string[]]
+
+    expect([bin, ...args]).toEqual(['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@latest'])
   })
 
   it('persists lastCheckMs even when the fetch FAILS, so an offline user is not a fetch-storm', async () => {
@@ -288,7 +306,7 @@ describe('runUpdateCheck', () => {
     expect(writes.at(-1)).toEqual({
       lastCheckMs: NOW,
       latestVersion: '0.1.131',
-      updateCommand: ['npm', 'install', '-g', 'infra-kit@latest'],
+      updateCommand: ['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@latest'],
       outcome: 'install-failed',
     })
   })

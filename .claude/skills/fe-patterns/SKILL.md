@@ -1,79 +1,64 @@
 ---
 name: fe-patterns
-description: Analyze cross-feature communication patterns, enforce architectural rules with expanded rationale, and navigate component/state decision trees. Activate when reviewing feature boundaries, debugging cross-feature data flow, resolving rule violations with deeper WHY context, deciding between dumb vs smart components, choosing state scope, or auditing architecture. Complements fe-architect (creation workflows) with analysis and review depth.
-version: 1.0.0
-tags: [react, typescript, jotai, architecture, patterns, review, enforcement, decisions]
+version: 2.0.0
+description: Analyze how features talk to each other — feature boundaries, the three component injection patterns, cross-feature type extraction, page-level orchestration, and where a component should live once a second feature wants it. Activate when reviewing feature boundaries, debugging cross-feature data flow, resolving a cross-feature import violation, deciding between element/component/render-function injection, or judging whether a component should be promoted to shared. For everything inside a single feature — naming rules, dumb vs smart, state scope, container guards — use fe-architect.
+tags: [react, typescript, jotai, architecture, cross-feature, boundaries, injection, review]
 author: Feature Architecture Team
 license: MIT
 ---
 
-# Frontend Patterns & Decisions
+# Cross-Feature Patterns
 
 ## Overview
 
-Detailed patterns, enforcement rationale, and architectural decision trees for the feature-based frontend architecture. Use this skill for cross-feature analysis, rule enforcement review, and architectural decision-making. For creating or modifying features, use `fe-architect` instead.
+Everything about the seams between features: what may cross them, what must not, and the three
+ways one feature hands work to another. Composition happens at the page level and nowhere else.
+
+**Scope boundary.** This skill covers Rule 1 (no cross-feature imports) and the patterns that make
+it livable. Rules 2–7 govern the inside of a feature and live in `fe-architect`:
+
+| You are asking about | Skill |
+|---|---|
+| Can feature A import from feature B? How do they share data? | **this skill** |
+| Which injection pattern — element, component, or render function? | **this skill** |
+| Extracting a type across a feature boundary | **this skill** |
+| Should this component be promoted to `shared`? | **this skill** |
+| Atom naming, `Fx` suffix, service export names | `fe-architect` → [rules.md](../fe-architect/references/core/rules.md) |
+| Dumb vs smart, container loading/error/empty guards | `fe-architect` → [enforcement.md](../fe-architect/references/core/enforcement.md) |
+| State scope, splitting, error strategy, optimistic updates | `fe-architect` → [decisions.md](../fe-architect/references/patterns/decisions.md) |
+| Creating or scaffolding a feature | `fe-architect` |
 
 ## When to Activate
 
-- Cross-feature data flow analysis or debugging injection patterns
-- Rule violation review requiring deeper WHY rationale (not just fix recipes)
-- Deciding dumb vs smart component boundaries
-- Choosing state scope (local vs feature atom vs page-level)
-- Type extraction across feature boundaries (`ExtractedAtomType`, `ExtractAtomActionArgs`, `ExtractAtomSetter`)
-- Service architecture decisions (single file vs folder, splitting thresholds)
-- Architecture audits or code review of feature structure
-- Evaluating error handling or optimistic update strategies
+- Cross-feature data flow analysis, or debugging an injection pattern
+- A Rule 1 violation — a feature importing another feature at runtime
+- Choosing between element / component / render-function injection
+- Extracting a type across a boundary (`ExtractedAtomType`, `ExtractAtomActionArgs`, `ExtractAtomSetter`)
+- Deciding whether a component belongs to a feature or to `shared`
+- Auditing feature boundaries across an app
 
-## Cross-Feature Patterns Quick Reference
+## The 5 Golden Rules
+
+1. **No runtime imports between features** — `import type` is fine; everything else is forbidden
+2. **Page orchestrates, features execute** — pages are the only place two features meet
+3. **Props are the only interface** — never shared atoms, never direct service calls
+4. **Type-only coupling is acceptable** — `import type` keeps features structurally independent
+5. **Composition over configuration** — pass components/elements/render functions, not feature flags
+
+## Injection Patterns Quick Reference
 
 | Pattern | When to Use | Prop Type |
 |---------|-------------|-----------|
 | Element | Simple slots, no customization (icons, badges) | `React.ReactElement` |
-| Component | Parent controls what props to pass | `React.ComponentType<Props>` |
-| Render Function | Full control over rendering logic and context | `(props) => ReactElement` |
+| Component | The receiving feature controls what props to pass | `React.ComponentType<Props>` |
+| Render Function | The consumer needs the feature's own data, or closures | `(props) => ReactElement` |
 
-> Decision: Start with Element. Escalate to Component if the consumer needs to pass props. Escalate to Render Function if the consumer needs conditional rendering or access to local scope.
-
-See [cross-feature.md](./references/cross-feature.md) for full examples, pros/cons, type extraction utilities (`ExtractedAtomType`, `ExtractAtomActionArgs`, `ExtractAtomSetter`), and the pattern selection matrix.
-
-## Enforcement Tiers
-
-### Blocking (STOP immediately)
-
-All 7 rules from [fe-architect rules.md](../fe-architect/references/core/rules.md) are blocking. The two rules most often requiring expanded context:
-
-| Rule | Summary | Common Trigger |
-|------|---------|----------------|
-| Rule 5 | Dumb component purity — no atoms, services, API calls | Importing `useAtomValue` in a `-component.tsx` file |
-| Rule 7 | Container state handling — loading/error/empty guards | Missing guard clauses, using loading for refetch |
-
-### Warning (flag but don't block)
-
-- Component exceeding 150 lines (split candidate)
-- `services.ts` exceeding 250 lines or 3+ endpoints (folder candidate)
-- Props interface with 8+ properties (composition candidate)
-- Inline types instead of named interfaces for public APIs
-
-See [enforcement.md](./references/enforcement.md) for expanded Rule 5, Rule 7, WHY rationale for all rules, and the 6-step enforcement workflow.
-
-## Decision Trees
-
-8 decision trees are available in [decisions.md](./references/decisions.md) covering:
-
-| # | Decision | Quick Rule of Thumb |
-|---|----------|---------------------|
-| 1 | Dumb vs Smart component | Imports atoms/services? → Smart. Otherwise → Dumb |
-| 2 | `services.ts` vs `services/` folder | >3 endpoints OR >250 lines → folder |
-| 3 | State scope | UI-only → `useState`; shared in feature → atom; cross-feature → page props |
-| 4 | Props interface vs inline type | Exported component → always named interface |
-| 5 | Shared vs feature component | Used by 3+ features with zero business logic → shared |
-| 6 | Component splitting | >150 lines → split |
-| 7 | Error handling strategy | Network → `$error` atom; Validation → field-level; ServerError → show message |
-| 8 | Optimistic updates | User-initiated + >95% success + visible change → optimistic |
-
-Search hints for `decisions.md`: `## 1. Dumb vs Smart`, `## 2. services.ts`, `## 3. State Scope`, `## 7. Error Handling`, `## 8. Optimistic`.
+> Start with Element. Escalate to Component when the receiver must pass props. Escalate to Render
+> Function when the consumer needs conditional rendering or page-level scope.
 
 ## Type Extraction Quick Reference
+
+All three come from `@wl/web-toolkit` and carry no runtime dependency.
 
 | Utility | Use Case | Input |
 |---------|----------|-------|
@@ -81,12 +66,31 @@ Search hints for `decisions.md`: `## 1. Dumb vs Smart`, `## 2. services.ts`, `##
 | `ExtractAtomActionArgs<T>` | Write-only: extract action argument type | Write-only atom (`Fx`/`Atom`) |
 | `ExtractAtomSetter<T>` | Read-write: extract setter function signature | Writable atom |
 
-See [cross-feature.md](./references/cross-feature.md) for code examples and the "When to Use Which" guide.
+For plain domain types a feature exports, use `import type` directly.
+
+## What tooling catches, and what it misses
+
+Rule 1 is the one rule with real lint coverage. Check what is in force for the file in front of you
+— `pnpm exec eslint --print-config <file>` — rather than trusting a severity written down in a
+skill; those go stale.
+
+The gap lint leaves: only code under a `features/` directory is classified at all. Anything outside
+one is unpoliced. `fe-architect/scripts/analyze_imports.mjs` covers that — but nothing runs it for
+you:
+
+```bash
+node .claude/skills/fe-architect/scripts/analyze_imports.mjs [features-path]
+```
 
 ## Reference Index
 
-| Reference | Content | When to Read | Search Hints |
-|-----------|---------|--------------|--------------|
-| [cross-feature.md](./references/cross-feature.md) | 5 golden rules, 3 injection patterns with code, type extraction variants, service access pattern, common mistakes | Cross-feature communication analysis | `## 5 Golden Rules`, `## 3 Component Injection`, `## Type Extraction`, `## Common Mistakes`, `## Service Access` |
-| [enforcement.md](./references/enforcement.md) | 6-step enforcement workflow, expanded Rule 5 + Rule 7, blocking vs warning, WHY rationale | Rule violation review, understanding enforcement depth | `## 6-Step Enforcement`, `## Rule 5 Expanded`, `## Rule 7 Expanded`, `## Rules 1–4, 6` |
-| [decisions.md](./references/decisions.md) | 8 decision trees: dumb vs smart, state scope, services split, props interface, shared components, splitting, error handling, optimistic updates | Architectural decision-making | `## 1. Dumb vs Smart`, `## 3. State Scope`, `## 7. Error Handling`, `## 8. Optimistic` |
+| Reference | Content | Search Hints |
+|-----------|---------|--------------|
+| [cross-feature.md](./references/cross-feature.md) | 5 golden rules and why they exist, lint coverage and its gaps, 3 injection patterns with code, pattern selection matrix, service access, type extraction variants, page-level state sharing, shared-vs-feature promotion, common mistakes | `## 5 Golden Rules`, `## How much of this does tooling catch`, `## 3 Component Injection`, `## Service Access`, `## Type Extraction`, `## Shared vs Feature`, `## Common Mistakes` |
+
+Cross-skill: [rules.md](../fe-architect/references/core/rules.md) (canonical 7 rules) ·
+[enforcement.md](../fe-architect/references/core/enforcement.md) (rule → enforcement mapping,
+Rules 6–7 expanded) · [decisions.md](../fe-architect/references/patterns/decisions.md) (7
+intra-feature decision trees) ·
+[example-style.md](../fe-architect/references/example-style.md) (how long a code example in these
+docs may be)

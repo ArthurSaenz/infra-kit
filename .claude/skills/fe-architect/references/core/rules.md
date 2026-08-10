@@ -96,13 +96,13 @@ export const FeatureAContainer = (props: FeatureAContainerProps) => {
 Use `@wl/web-toolkit` utilities for type-safe cross-feature props:
 
 ```typescript
-import type { ExtractedAtomType, ExtractWriteOnlyAtomArgs, ExtractAtomSetter } from '@wl/web-toolkit'
+import type { ExtractedAtomType, ExtractAtomActionArgs, ExtractAtomSetter } from '@wl/web-toolkit'
 
 interface FeatureAContainerProps {
   // Read-only atom value
   userData: ExtractedAtomType<typeof import('#root/features/feature-b').featureBService.$userData>
   // Write-only atom args
-  onUpdate: (args: ExtractWriteOnlyAtomArgs<typeof import('#root/features/feature-b').featureBService.updateUserFx>) => void
+  onUpdate: (args: ExtractAtomActionArgs<typeof import('#root/features/feature-b').featureBService.updateUserFx>) => void
   // Read-write atom setter
   onFilterChange: ExtractAtomSetter<typeof import('#root/features/feature-c').featureCService.$filterAtom>
 }
@@ -192,7 +192,7 @@ export const UserCard = (props: { user: User }) => {
 }
 
 // ✅ className prop + cn() utility
-import { cn } from '#root/lib/utils'
+import { cn } from '@wl/web-toolkit'
 
 interface UserCardComponentProps {
   user: User
@@ -210,6 +210,9 @@ export const UserCardComponent = (props: UserCardComponentProps) => {
 - ❌ NO Jotai atoms, services, API calls, or business logic imports
 - ✅ Props in, JSX out only
 - ✅ MUST have tests in feature-root `__tests__/` and stories in feature-root `__stories__/`
+  - Tests are checked by `validate_feature.mjs`. Stories are **not** — lint enforces them on every
+    pass, using the same
+    `__stories__/` + `.stories` + `-component` defaults. Do not add a second check for them.
 
 ---
 
@@ -231,13 +234,18 @@ export const UserContainer = () => {
   const isLoading = useAtomValue(service.$isLoading)
   const error = useAtomValue(service.$error)
 
-  if (isLoading) return <LoadingSpinner />
+  if (isLoading && !data) return <LoadingSpinner />
   if (error) return <ErrorMessage error={error} />
   if (!data) return <EmptyState message="No data" />
 
   return <UserComponent data={data} />
 }
 ```
+
+**The loading guard is `isLoading && !data`, never a bare `isLoading`.** A bare check replaces
+visible content with a spinner on every refetch (polling, pull-to-refresh, re-navigation). Guard
+ordering and the refresh-indicator pattern are expanded in the `fe-patterns` skill's
+[enforcement.md](./enforcement.md) → "Rule 7 Expanded".
 
 ---
 

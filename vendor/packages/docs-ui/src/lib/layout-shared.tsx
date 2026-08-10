@@ -6,7 +6,6 @@ import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared'
  *
  * @example
  *     const opts = baseOptions('My App')
- *
  */
 export const baseOptions = (appName: string): BaseLayoutProps => {
   return {

@@ -19,8 +19,8 @@ export const CONFIG_STUB = '{}\n'
 
 // The documented key set, shared verbatim by the layer-2 (user-global) and layer-3
 // (user-project) examples so the two can never disagree about what the schema is.
-// Covers ALL eight top-level keys of `infraKitConfigObject` — `config-templates.test.ts`
-// fails the build if a ninth is added to the schema and not documented here.
+// Covers ALL nine top-level keys of `infraKitConfigObject` — `config-templates.test.ts`
+// fails the build if a tenth is added to the schema and not documented here.
 //
 // Every line is a `//` comment: the surrounding braces are the only live JSON, so the
 // file always parses to `{}` once the comments are stripped.
@@ -98,7 +98,25 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   // // prints each fix as a command you can paste, with the paths filled in for your
   // // machine. Do not type a bare \`portless\` — it lives in node_modules, not on PATH.
   // // infra-kit itself never elevates.
-  // "devProxy": { "port": 443 }
+  // "devProxy": { "port": 443 },
+  //
+  // // May this project deploy to the delivery-shaped environments ("prod")? The LIST lives in code
+  // // (lib/workflow-envs/protected-envs); this decides only whether THIS project may reach it.
+  // //   "disallow"  — the DEFAULT when the key is absent. Filtered out of every deploy picker and
+  // //                 refused, on both \`local deploy-*\` and \`release deploy-*\`. Use
+  // //                 \`infra-kit release deliver\`, which also does the RC PR and the Jira version.
+  // //   "allow"     — reachable from the CLI and from an MCP agent alike.
+  // //   "cli-only"  — reachable from a terminal, but NOT over MCP: an agent's tool call carries no
+  // //                 human keystroke, so agents keep the refusal.
+  // // Allowing it does not remove the other gates: a local deploy still requires the AWS account to
+  // // report that environment, still refuses a dirty tree, and still refuses \`--skip-preflight
+  // // clean-tree\`. A \`release deploy-*\` dispatch has no such second gate and prints a warning
+  // // naming what it skips.
+  // //
+  // // It IS honoured from this layer — the merge treats it like any other key — but it belongs in the
+  // // committed project infra-kit.json, where a reviewer and \`git blame\` can see it. Setting it here
+  // // grants yourself production access with no trace in the repo.
+  // "protectedEnvs": "disallow"
   //
   // // Doppler SERVICE TOKENS are not a config key and never belong in this file. They live in
   // // tokens.json — a SIBLING of this file, at ~/.infra-kit/projects/<repo>/tokens.json (mode 0600) —
@@ -128,8 +146,8 @@ export const buildUserGlobalExample = (): string => {
 // Merge is shallow: setting a top-level key replaces that whole section from
 // layer 1. Arrays do not concatenate. Top-level keys recognized:
 // envManagement, ide, taskManager, worktrees, envAutoLoad, dev,
-// devServersPresets, devProxy. The schema is strict — an unrecognized top-level
-// key is a parse error, not a silently ignored one.
+// devServersPresets, devProxy, protectedEnvs. The schema is strict — an
+// unrecognized top-level key is a parse error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real global
 // overrides in the sibling infra-kit.json (strict JSON: no comments, double-quoted
@@ -161,9 +179,9 @@ export const buildUserProjectExample = (projectName: string): string => {
 // <repo>/infra-kit.json (layer 1) and ~/.infra-kit/infra-kit.json (layer 2) — a
 // top-level key set here replaces that whole section wholesale; arrays do not
 // concatenate. Top-level keys recognized: envManagement, ide,
-// taskManager, worktrees, envAutoLoad, dev, devServersPresets, devProxy. The schema
-// is strict — an unrecognized top-level key is a parse error, not a silently ignored
-// one.
+// taskManager, worktrees, envAutoLoad, dev, devServersPresets, devProxy,
+// protectedEnvs. The schema is strict — an unrecognized top-level key is a parse
+// error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real overrides
 // in the sibling infra-kit.json (strict JSON: no comments, double-quoted keys).

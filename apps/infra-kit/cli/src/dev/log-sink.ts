@@ -385,11 +385,6 @@ export class DevLogSink {
     return this.counters.get(service) ?? emptyStats()
   }
 
-  /** Every service that has written at least one line. */
-  services(): string[] {
-    return [...this.fds.keys()]
-  }
-
   /**
    * Close every fd. Idempotent, and synchronous by design so it is safe from a `process.on('exit')`
    * handler — there is no buffered data to flush, because there was never a buffer.

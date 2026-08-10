@@ -97,8 +97,7 @@ pages/dashboard.tsx         # Composes features at page level
 services/
 ├── main.ts    # Atoms + orchestration, re-exports all
 ├── api.ts     # Pure API functions (httpClient calls)
-├── libs.ts    # Pure business logic (validation, formatting)
-└── index.ts   # export * from './main'
+└── libs.ts    # Pure business logic (validation, formatting)
 ```
 
 **api.ts** — pure functions, no atoms:
@@ -114,7 +113,7 @@ export async function fetchBookings(): Promise<Booking[]> {
 export const getBookingsFx = atom(null, async (get, set) => {
   set($isLoading, true)
   try {
-    const data = await api.getBookings()
+    const data = await api.fetchBookings()
     set($bookings, data)
   } catch (err) {
     set($error, err as Error)

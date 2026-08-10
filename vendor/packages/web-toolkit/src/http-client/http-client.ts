@@ -35,7 +35,6 @@ export class HttpClient<R extends string = string> {
    *
    * @example
    *     const { body, status } = await client.fetch<User>('/users/1', { method: 'GET', token: authToken })
-   *
    */
   async fetch<T = unknown>(
     uri: string,
@@ -132,7 +131,6 @@ export class HttpClient<R extends string = string> {
  *
  * @example
  *     const isJson = contentTypeIs(response.headers, 'application/json')
- *
  */
 function contentTypeIs(headers: Headers, type: string): boolean {
   return headers.get('content-type')?.includes(type) || false
@@ -168,7 +166,6 @@ export interface FetchWrapArgs {
  *
  * @example
  *     const response = await fetchWrap({ url: '/api/data', options: { method: 'GET' }, config: { retries: 3, delay: 200 }, fetchInstance: fetch })
- *
  */
 const fetchWrap = async (args: FetchWrapArgs) => {
   const { url, options, config, fetchInstance } = args

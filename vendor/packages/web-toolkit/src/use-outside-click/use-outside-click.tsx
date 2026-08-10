@@ -6,7 +6,6 @@ import { useEffect } from 'react'
  * @example
  *     const ref = useRef<HTMLElement>(null)
  *     useOutsideClick(ref, () => { setOpen(false) })
- *
  */
 export const useOutsideClick = (ref: React.RefObject<HTMLElement>, callback: () => void) => {
   useEffect(() => {

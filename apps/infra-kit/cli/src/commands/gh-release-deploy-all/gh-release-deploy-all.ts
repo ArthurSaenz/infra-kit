@@ -17,8 +17,13 @@ import {
   resolveReleaseBranch,
 } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import { readWorkflowEnvOptions } from 'src/lib/workflow-envs'
-import { assertDeployable, deployableEnvs } from 'src/lib/workflow-envs/protected-envs'
+import {
+  assertDeployable,
+  deployableEnvs,
+  readWorkflowEnvOptions,
+  resolveProtectedEnvAccess,
+  warnProtectedEnvDispatch,
+} from 'src/lib/workflow-envs'
 import { defineMcpTool, textContent } from 'src/types'
 
 /** The workflow this command dispatches. Its own `environment` choices are the env list. */
@@ -95,12 +100,13 @@ export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs) => {
 
   commandEcho.addOption('--version', selectedVersion)
 
-  // The workflow's own `environment` choices, minus the ones reserved for the delivery flow. This is
+  // The workflow's own `environment` choices, minus the ones this project may not reach. This is
   // what `infra-kit.json → environments` used to hand-maintain in five copies: the same list, minus
   // `prod`, written out by hand and drifted (travelist's copy offered `roman` and `eliran`, whom its own
-  // deploy-all.yml does not accept). Derived here from the two things that actually decide it — what the
-  // workflow declares, and what policy forbids.
-  const envOptions = deployableEnvs(await readWorkflowEnvOptions(DEPLOY_ALL_WORKFLOW))
+  // deploy-all.yml does not accept). Derived here from the three things that actually decide it — what
+  // the workflow declares, what is delivery-shaped, and what this project's `protectedEnvs` says.
+  const protectedEnvAccess = await resolveProtectedEnvAccess()
+  const envOptions = deployableEnvs(await readWorkflowEnvOptions(DEPLOY_ALL_WORKFLOW), protectedEnvAccess)
 
   let selectedEnv = ''
 
@@ -114,11 +120,17 @@ export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs) => {
 
   commandEcho.addOption('--env', selectedEnv)
 
-  // The ONLY client-side veto: `prod` is delivered, never deployed ad-hoc. GitHub cannot enforce this —
-  // from its side `-f environment=prod` is a valid choice — so it has to be ours. Note what is NOT
-  // vetoed: an env absent from the local YAML still dispatches, because this read is of the working tree
-  // while the run targets `--ref <branch>`, and GitHub validates the choice itself.
-  assertDeployable(selectedEnv, 'launch deploy-all workflow')
+  // The one client-side veto: `prod` is delivered, not deployed ad-hoc — unless this project's
+  // `protectedEnvs` says otherwise. GitHub cannot enforce either rule for us (from its side
+  // `-f environment=prod` is a valid choice), so both are ours. Note what is NOT vetoed: an env absent
+  // from the local YAML still dispatches, because this read is of the working tree while the run targets
+  // `--ref <branch>`, and GitHub validates the choice itself.
+  assertDeployable(selectedEnv, 'launch deploy-all workflow', protectedEnvAccess)
+
+  // Allowed, but the reason it was ever blocked does not stop being true — and unlike the local path,
+  // nothing downstream re-checks this one: GitHub holds the credentials and no job declares
+  // `environment:`. So the guidance the refusal used to carry is emitted here instead.
+  warnProtectedEnvDispatch({ env: selectedEnv, branch: selectedReleaseBranch })
 
   const shouldSkipTerraform = skipTerraform ?? false
 

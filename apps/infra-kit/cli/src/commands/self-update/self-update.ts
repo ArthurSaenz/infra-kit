@@ -14,7 +14,7 @@ import { homedir } from 'node:os'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
-import { defaultLazyNpmRoot, detectInstallManager, safeRealpath } from 'src/lib/install-manager'
+import { defaultLazyNpmRoot, detectInstallManager, formatUpdateCommand, safeRealpath } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
 import { packageManagerInstallEnv } from 'src/lib/pm-env'
 
@@ -84,7 +84,7 @@ export const runSelfUpdate = ({ dryRun }: { dryRun: boolean }, deps: SelfUpdateD
     realpath: safeRealpath,
     lazyNpmRoot,
   })
-  const printable = updateCommand.join(' ')
+  const printable = formatUpdateCommand(updateCommand)
 
   if (dryRun) {
     print(`Detected install manager: ${manager}`)

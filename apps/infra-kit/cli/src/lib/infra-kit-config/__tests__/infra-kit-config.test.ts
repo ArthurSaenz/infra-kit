@@ -745,4 +745,69 @@ describe('worktrees.cmux schema validation', () => {
       await expect(getInfraKitConfig()).rejects.toThrow(/Invalid.*infra-kit/i)
     })
   })
+
+  describe('protectedEnvs', () => {
+    const writeLayerThree = (tmp: string, contents: string): void => {
+      const dir = path.join(tmp, '.infra-kit', 'projects', path.basename(tmp))
+
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, 'infra-kit.json'), contents)
+    }
+
+    // THE regression test for the reason this field has no `.default()`.
+    //
+    // `infraKitOverrideConfigSchema` is `.partial()` of the object schema, and `.partial()` makes a key
+    // optional WITHOUT stripping a `ZodDefault` — so a default here would still be injected when the key
+    // is absent. Every layer is parsed through that schema and the results are shallow-merged, and layer
+    // 3 always exists (auto-seeded `{}` on every command). A default would therefore parse this empty
+    // layer into `{ protectedEnvs: 'disallow' }` and land it OVER layer 1, silently reverting a
+    // committed "allow" on every machine with no error anywhere.
+    //
+    // If someone adds `.default()` to the field, THIS test is what fails.
+    it('keeps a layer-1 value when the always-present layer 3 is empty', async () => {
+      await withTmpRepo(async (tmp) => {
+        fs.writeFileSync(
+          path.join(tmp, 'infra-kit.json'),
+          JSON.stringify({
+            envManagement: { provider: 'doppler', config: { name: 'p' } },
+            protectedEnvs: 'allow',
+          }),
+        )
+        writeLayerThree(tmp, '{}\n')
+
+        expect((await getInfraKitConfig()).protectedEnvs).toBe('allow')
+      })
+    })
+
+    it('is absent rather than defaulted when no layer sets it — the fallback lives at the read site', async () => {
+      await withTmpRepo(async (tmp) => {
+        fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
+
+        expect((await getInfraKitConfig()).protectedEnvs).toBeUndefined()
+      })
+    })
+
+    it('is honoured from layer 3, which is why the template warns against setting it there', async () => {
+      await withTmpRepo(async (tmp) => {
+        fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
+        writeLayerThree(tmp, JSON.stringify({ protectedEnvs: 'cli-only' }))
+
+        expect((await getInfraKitConfig()).protectedEnvs).toBe('cli-only')
+      })
+    })
+
+    it('rejects a value outside the enum', async () => {
+      await withTmpRepo(async (tmp) => {
+        fs.writeFileSync(
+          path.join(tmp, 'infra-kit.json'),
+          JSON.stringify({
+            envManagement: { provider: 'doppler', config: { name: 'p' } },
+            protectedEnvs: 'allowed',
+          }),
+        )
+
+        await expect(getInfraKitConfig()).rejects.toThrow(/Invalid.*infra-kit/i)
+      })
+    })
+  })
 })

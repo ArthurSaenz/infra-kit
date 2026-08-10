@@ -190,6 +190,29 @@ const envAutoLoadSchema = z
 // change, so nothing that is checked out on a current branch still carries it. Because this schema is
 // `.strict()`, a config that DOES still carry it (an old release branch, an unmigrated worktree) is
 // refused with `Unrecognized key: "environments"` — delete the key there too.
+// protectedEnvs — may THIS project reach the delivery-shaped environments listed in
+// `DEFAULT_PROTECTED_ENVS` (lib/workflow-envs/protected-envs)? The list stays in code; only the
+// decision is per-project. "disallow" (the default) is today's behaviour: filtered from every deploy
+// picker and refused. "allow" reaches them from the CLI and over MCP alike. "cli-only" reaches them
+// from a terminal but not from an agent — over MCP it behaves exactly as "disallow", because
+// `createToolHandler` injects `confirmedCommand: true`, which is the very flag that skips every
+// interactive confirmation, so there is no human keystroke on that path.
+//
+// An ENUM rather than a boolean because the VALUE extends without touching the KEY, and a key rename
+// here is expensive: `.strict()` turns the old name into a parse error that bricks every command,
+// which is why `devProxy` below is still parsed and ignored rather than deleted. "cli-only" is that
+// extension already spent.
+//
+// NEVER give this field a `.default()`. `infraKitOverrideConfigSchema` is `.partial()` of this object,
+// and `.partial()` makes a key optional WITHOUT stripping a `ZodDefault` — so the default is still
+// injected on absence. `loadLayer` parses EVERY layer through that schema and merges the results, and
+// layer 3 always exists (auto-seeded `{}` on each command), so a default here would parse to
+// `{ protectedEnvs: 'disallow' }` and shallow-merge OVER a layer-1 "allow", silently reverting the
+// setting on every machine with no error anywhere. Verified on zod 4.4.3. The fallback is applied at
+// the single read site instead — see `resolveProtectedEnvAccess`. No other field in this schema has a
+// default, so nothing here demonstrates the trap: this comment is the only warning.
+const protectedEnvsSchema = z.enum(['disallow', 'allow', 'cli-only'])
+
 export const infraKitConfigObject = z
   .object({
     envManagement: envManagementSchema,
@@ -200,6 +223,7 @@ export const infraKitConfigObject = z
     dev: devConfigSchema.optional(),
     devServersPresets: devPresetsSchema.optional(),
     devProxy: devProxyConfigSchema.optional(),
+    protectedEnvs: protectedEnvsSchema.optional(),
   })
   .strict()
 
@@ -246,6 +270,9 @@ export const infraKitConfigSchema = infraKitConfigObject.superRefine((cfg, ctx) 
 export const infraKitOverrideConfigSchema = infraKitConfigObject.partial()
 
 export type InfraKitConfig = z.infer<typeof infraKitConfigSchema>
+
+/** This project's access to the delivery-shaped environments. Absent in config means `'disallow'`. */
+export type ProtectedEnvsSetting = z.infer<typeof protectedEnvsSchema>
 
 /** Resolved env auto-load config (`{ trigger, config }`), or `undefined` when off. */
 export type EnvAutoLoadConfig = z.infer<typeof envAutoLoadSchema>
@@ -597,7 +624,6 @@ interface ConfigLayer {
  * @example
  * await loadLayer({ label: '~/.infra-kit/infra-kit.json', path: '/missing.json', required: false })
  * // => null
- *
  * @example
  * // /home/me/.infra-kit/infra-kit.json: '{ "ide": { "provider": "cursor", "config": { "workspaceConfigPath": "./ws.code-workspace" } } }'
  * await loadLayer({ label: '~/.infra-kit/infra-kit.json', path: '/home/me/.infra-kit/infra-kit.json', required: false })

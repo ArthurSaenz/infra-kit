@@ -6,10 +6,8 @@ import { isSSR } from '../ssr'
  * Wraps a component to render it only on the client side, suppressing SSR output and hydration mismatches.
  *
  * @see https://vike.dev/ClientOnly
- *
  * @example
  *     const ClientMap = clientOnly(() => import('./Map'))
- *
  */
 export const clientOnly = <T extends React.ComponentType<any>>(
   load: () => Promise<{ default: T } | T>,

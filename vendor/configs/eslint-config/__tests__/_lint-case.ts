@@ -25,6 +25,18 @@ const getEslint = async () => {
   return eslintPromise
 }
 
+// Fix-enabled sibling of getEslint(): ESLint's `fix` option is fixed at construction time, so a
+// second lazy singleton is needed for cases that assert on the FIXED text rather than just the
+// reported messages (e.g. jsdoc/tag-lines preserving the description separator while stripping
+// inter-tag blanks).
+let eslintFixPromise: Promise<ESLint> | undefined
+const getEslintFix = async () => {
+  eslintFixPromise ??= (async () =>
+    new ESLint({ cwd, overrideConfigFile: true, overrideConfig: await config(), fix: true }))()
+
+  return eslintFixPromise
+}
+
 export interface LintCase {
   /** Source under test, usually a `code\`...\`` template. */
   source: string
@@ -74,6 +86,26 @@ export const lintCase = async ({ source, fileName }: LintCase): Promise<Linter.L
   }
 
   return messages
+}
+
+/**
+ * Lint-and-fix inline `code` under a virtual `fileName`, returning the fixed text (or the original
+ * `source` unchanged when nothing was fixable). Sibling of `lintCase`, same silent-false-pass guard.
+ */
+export const lintCaseFixed = async ({ source, fileName }: LintCase): Promise<string> => {
+  const eslint = await getEslintFix()
+  const filePath = path.resolve(cwd, fileName)
+
+  expect(await eslint.isPathIgnored(filePath)).toBe(false)
+
+  const [result] = await eslint.lintText(source, { filePath })
+  const messages = result?.messages ?? []
+
+  if (messages.length === 1 && messages[0]?.ruleId === null) {
+    throw new Error(`lintCaseFixed: "${fileName}" was not linted (ruleId=null: ${messages[0]?.message})`)
+  }
+
+  return result?.output ?? source
 }
 
 // Keep only messages for a given ruleId (or ruleId prefix, e.g. 'boundaries/'). Inline snippets that

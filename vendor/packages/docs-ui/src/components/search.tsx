@@ -20,7 +20,6 @@ type StaticSearchDialogProps = SharedProps
  * @example
  *     import SearchDialog from '@/components/search'
  *     <RootProvider search={{ SearchDialog }}><Outlet /></RootProvider>
- *
  */
 const StaticSearchDialog = (props: StaticSearchDialogProps) => {
   const { search, setSearch, query } = useDocsSearch({ type: 'static' })

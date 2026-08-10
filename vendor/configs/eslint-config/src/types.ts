@@ -8,7 +8,7 @@ export interface ConfigOptions {
   mode?: 'react' | 'svelte' | (string & {})
   /** Extra ignore globs appended to the built-in ignores. */
   ignores?: string[]
-  /** Import boundaries. Default 'warn'; `false` drops the layer, `true` === 'warn', 'error' enforces. */
+  /** Import boundaries. Default 'error'; `false` drops the layer, `true` === 'error', 'warn' downgrades. */
   boundaries?: boolean | 'warn' | 'error'
   /** Size-gated JSDoc layer. Default true. */
   jsdoc?: boolean

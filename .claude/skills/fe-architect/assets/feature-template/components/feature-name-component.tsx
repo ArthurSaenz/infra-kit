@@ -8,7 +8,7 @@
  * - NO Jotai atoms, NO API calls, NO services
  */
 
-import { cn } from '#root/lib/utils'
+import { cn } from '@wl/web-toolkit'
 import type { FeatureNameComponentProps } from '../types'
 
 export const FeatureNameComponent = (props: FeatureNameComponentProps) => {

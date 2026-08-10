@@ -7,7 +7,6 @@ import { useEffect, useRef } from 'react'
  * @returns The value from the previous render, or undefined on the initial render.
  * @example
  *     const previousCount = usePrevious(count)
- *
  */
 export function usePrevious<T>(value: T): T | undefined {
   const ref = useRef<T | undefined>(undefined)

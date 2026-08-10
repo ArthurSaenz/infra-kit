@@ -1,9 +1,16 @@
 import { $ } from 'zx'
 
 import { OperationError } from 'src/lib/errors/operation-error'
-import { assertDeployable } from 'src/lib/workflow-envs/protected-envs'
+import { assertDeployable, isProtectedEnv } from 'src/lib/workflow-envs'
+import type { ProtectedEnvAccess } from 'src/lib/workflow-envs'
 
-/** Checks a caller may waive by name. `env-account` and `protected-env` are deliberately absent. */
+/**
+ * Checks a caller may waive by name. `env-account` and `protected-env` are deliberately absent.
+ *
+ * `clean-tree` is listed but is NOT waivable for a delivery-shaped env — see `runPreflight`. The
+ * waiver exists for personal environments, and a project that allows prod must not be able to combine
+ * it with `--yes` into an unattended production deploy of a dirty tree.
+ */
 export const SKIPPABLE_CHECKS = ['clean-tree', 'toolchain'] as const
 
 export type SkippableCheck = (typeof SKIPPABLE_CHECKS)[number]
@@ -118,6 +125,8 @@ export interface PreflightArgs {
   isClean: boolean
   runningEnvs: string[]
   skip: SkippableCheck[]
+  /** This project's resolved access to delivery-shaped envs. Omitted means denied — see protected-envs. */
+  protectedEnvAccess?: ProtectedEnvAccess
 }
 
 export interface PreflightResult {
@@ -133,13 +142,26 @@ export interface PreflightResult {
  * child process exists.
  */
 export const runPreflight = async (args: PreflightArgs): Promise<PreflightResult> => {
-  const { env, project, isShared, isClean, runningEnvs, skip } = args
+  const { env, project, isShared, isClean, runningEnvs, skip, protectedEnvAccess } = args
 
-  // `prod` is delivered, never deployed ad-hoc — the one client-side veto, shared with the
-  // workflow-dispatch commands so both paths refuse it identically.
-  assertDeployable(env, `deploy to "${env}"`)
+  // `prod` is delivered, not deployed ad-hoc — the one client-side veto, shared with the
+  // workflow-dispatch commands so both paths refuse it identically — unless this project's
+  // `protectedEnvs` says otherwise.
+  assertDeployable(env, `deploy to "${env}"`, protectedEnvAccess)
 
   assertNoCiDeployInFlight(env, runningEnvs)
+
+  // A delivery-shaped env may not have its dirty-tree check waived, even by a caller that is otherwise
+  // entitled to waive it. `--skip-preflight clean-tree` exists for personal environments, where
+  // deploying uncommitted work is the point; combined with `--yes` on a project that allows prod it
+  // would be a fully unattended production deploy of whatever happens to be in the working tree.
+  if (skip.includes('clean-tree') && isProtectedEnv(env)) {
+    throw new OperationError(undefined, {
+      operation: `deploy to "${env}"`,
+      remediation: 'commit or stash your changes — this check is not waivable for a delivery target',
+      stderrExcerpt: `refusing to skip the clean-tree check for "${env}"`,
+    })
+  }
 
   if (!skip.includes('clean-tree')) {
     assertCleanTreeForSharedEnv({ env, isShared, isClean })

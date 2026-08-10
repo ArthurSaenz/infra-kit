@@ -9,7 +9,6 @@ export interface ScriptExperimentsInitProps {
  *
  * @example
  *     <ScriptExperimentsInit accountId={1234} />
- *
  */
 export const ScriptExperimentsInit = (props: ScriptExperimentsInitProps) => {
   const { accountId } = props

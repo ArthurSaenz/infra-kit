@@ -55,10 +55,9 @@ type NamesOf<T extends ExperimentsConfig> = { [K in keyof T]: T[K]['vwoId'] }
  * required for safe indexed access under `noUncheckedIndexedAccess`.
  *
  * @param config - Map of `experimentKey → { vwoId, initial? }`. `vwoId` must
- *   match the experiment ID returned by VWO (`window._vwo_exp[id].combination_chosen`).
- *   `initial` defaults to `'default'`; use `'pending'` to render the `_pending`
- *   variant until VWO resolves.
- *
+ * match the experiment ID returned by VWO (`window._vwo_exp[id].combination_chosen`).
+ * `initial` defaults to `'default'`; use `'pending'` to render the `_pending`
+ * variant until VWO resolves.
  * @example
  * // apps/client/ui/src/lib/experiments/index.ts
  * import { defineExperiments } from '@wl/web-toolkit'
@@ -99,7 +98,6 @@ export const defineExperiments = <const T extends ExperimentsConfig>(config: T) 
    *
    * @example
    *     const values = getDevDebugExperimentsValues()
-   *
    */
   const getDevDebugExperimentsValues = (): Record<IdValue, ExperimentNameValue> => {
     const experimentsLS = ls.get(DEBUG_EXPERIMENTS_KEY) as Record<string, string> | null
@@ -133,7 +131,6 @@ export const defineExperiments = <const T extends ExperimentsConfig>(config: T) 
    * @example
    *     attachImplementedExperiments()
    *     // window._app.experiments.setVariant('12', 'variation-1')
-   *
    */
   const attachImplementedExperiments = () => {
     window._app = window._app || {}
@@ -174,7 +171,6 @@ export const defineExperiments = <const T extends ExperimentsConfig>(config: T) 
    *
    * @example
    *     experimentsModel.useExperimentsInit({ isEnabledDebug: false })
-   *
    */
   const useExperimentsInit = (args: { isEnabledDebug: boolean }) => {
     const { isEnabledDebug } = args

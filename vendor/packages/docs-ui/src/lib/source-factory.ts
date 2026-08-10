@@ -15,7 +15,6 @@ type LoaderSource = Parameters<typeof loader>[0]['source']
  *         baseUrl: '/docs',
  *         pathToSlugs: makePathToSlugs({ appContentRel: 'spec/docs' }),
  *     })
- *
  */
 export const createDocsSource = (params: {
   source: LoaderSource

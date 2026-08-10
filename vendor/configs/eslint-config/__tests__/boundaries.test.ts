@@ -20,6 +20,9 @@ let eslint: ESLint
 
 beforeAll(async () => {
   tree = makeTree()
+
+  // No resolver wiring needed: the `#root/*` resolver is keyed by absolute path and anchors on
+  // the fixture's own package.json, so it behaves here exactly as it does in a consumer.
   eslint = new ESLint({ cwd: tree.root, overrideConfigFile: true, overrideConfig: await config() })
 })
 
@@ -128,6 +131,50 @@ describe('boundaries: sibling cross-imports are type-only', () => {
   })
 })
 
+// Without a resolver that understands `#root/`, these imports resolve to nothing and the rule
+// reports nothing — exit 0 on a real violation. This is the form the convention actually writes,
+// so it is the form most worth pinning.
+describe('boundaries: aliased imports (#root)', () => {
+  it('flags an aliased runtime cross-feature import', async () => {
+    expectFlagged(
+      await lintAt(
+        'src/features/beta/x.ts',
+        code`
+          import { thing } from '#root/features/alpha'
+
+          export const a = thing
+        `,
+      ),
+    )
+  })
+
+  it('allows an aliased type-only cross-feature import', async () => {
+    expectClean(
+      await lintAt(
+        'src/features/beta/x.ts',
+        code`
+          import type { Thing } from '#root/features/alpha'
+
+          export type A = Thing
+        `,
+      ),
+    )
+  })
+
+  it('allows an aliased runtime import of shared through its barrel', async () => {
+    expectClean(
+      await lintAt(
+        'src/features/beta/x.ts',
+        code`
+          import { sharedUtil } from '#root/shared'
+
+          export const a = sharedUtil
+        `,
+      ),
+    )
+  })
+})
+
 describe('boundaries: shared layer', () => {
   it('allows a feature to import shared at runtime through its barrel', async () => {
     expectClean(
@@ -175,6 +222,6 @@ describe('boundaries: config integrity', () => {
     const withBoundaries = flat.find((c) => c?.plugins?.boundaries)
 
     expect(withBoundaries).toBeDefined()
-    expect(withBoundaries?.rules?.['boundaries/dependencies']?.[0]).toBe('warn')
+    expect(withBoundaries?.rules?.['boundaries/dependencies']?.[0]).toBe('error')
   })
 })

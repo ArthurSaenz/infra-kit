@@ -2,13 +2,11 @@
   "permissions": {
     "deny": [
       "Bash(doppler secrets:*)",
-      "Bash(gh workflow run:*)",
-      "Bash(gh run rerun:*)",
       "Bash(pnpm exec infra-kit release-deliver:*)",
       "Bash(pnpm exec infra-kit release deliver:*)",
       "Bash(pnpm exec ik release-deliver:*)",
-      "Bash(pnpm run dx-release-deliver:*)",
-      "Bash(pnpm dx-release-deliver:*)"
+      "Bash(pnpm exec ik release deliver:*)",
+      "Bash(ik release deliver:*)"
     ]
   },
   "hooks": {
@@ -18,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-deploy.mjs"
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/bash-launcher.mjs"
           },
           {
             "type": "command",
@@ -65,15 +63,6 @@
           {
             "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/setup-env.mjs"
-          }
-        ]
-      },
-      {
-        "matcher": "compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c 'echo \"Reminder: Use pnpm (not npm/yarn). Run pnpm qa before committing. Current branch: $(git branch --show-current 2>/dev/null || echo unknown). Last commit: $(git log --oneline -1 2>/dev/null || echo none)\"'"
           }
         ]
       }

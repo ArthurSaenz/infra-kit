@@ -38,11 +38,11 @@ describe('options: group toggles drop exactly their contribution', () => {
 
   it("boundaries:'error' flips only the severity, keeping the item count", async () => {
     const base = await config()
-    const err = await config({ boundaries: 'error' })
+    const downgraded = await config({ boundaries: 'warn' })
 
-    expect(err.length).toBe(base.length)
-    expect((ourBoundaries(base)?.rules?.['boundaries/dependencies'] as Linter.RuleEntry)?.[0]).toBe('warn')
-    expect((ourBoundaries(err)?.rules?.['boundaries/dependencies'] as Linter.RuleEntry)?.[0]).toBe('error')
+    expect(downgraded.length).toBe(base.length)
+    expect((ourBoundaries(base)?.rules?.['boundaries/dependencies'] as Linter.RuleEntry)?.[0]).toBe('error')
+    expect((ourBoundaries(downgraded)?.rules?.['boundaries/dependencies'] as Linter.RuleEntry)?.[0]).toBe('warn')
   })
 
   it('jsdoc:false removes the jsdoc item only', async () => {

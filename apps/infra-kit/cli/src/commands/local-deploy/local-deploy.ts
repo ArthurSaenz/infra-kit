@@ -12,8 +12,12 @@ import { getCurrentBranch, getProjectRoot, getRepoName, isWorkingTreeClean } fro
 import { logger } from 'src/lib/logger'
 import { pickEnv } from 'src/lib/prompts/env-picker'
 import { withEscape } from 'src/lib/prompts/escapable-context'
-import { readWorkflowEnvOptions } from 'src/lib/workflow-envs'
-import { deployableEnvs } from 'src/lib/workflow-envs/protected-envs'
+import {
+  deployableEnvs,
+  isProtectedEnv,
+  readWorkflowEnvOptions,
+  resolveProtectedEnvAccess,
+} from 'src/lib/workflow-envs'
 import { defineMcpTool, textContent } from 'src/types'
 
 import { buildDeployEnv, contractRecord, formatContract } from './deploy-env'
@@ -31,6 +35,29 @@ const DEPLOY_ALL_WORKFLOW = 'deploy-all.yml'
  * (`arthur`, `renana`, …), where a dirty tree is the normal case rather than a hazard.
  */
 const SHARED_ENVS = ['dev', 'stage']
+
+/**
+ * Whether this environment belongs to other people — the input to both the confirmation prompt and, via
+ * `runPreflight`, the dirty-tree refusal.
+ *
+ * A delivery-shaped env is shared by definition, more so than `dev`, yet it is deliberately NOT in
+ * {@link SHARED_ENVS}: until a project could reach `prod` at all the question never arose, because
+ * `assertDeployable` refused first. Now that a project can allow it, resolving from the list alone
+ * would hand production the WEAKER treatment of a personal environment — a y/N prompt and no clean-tree
+ * check, i.e. shipping an uncommitted working tree to prod.
+ *
+ * Extracted rather than inlined so this resolution is testable. Asserting
+ * `assertCleanTreeForSharedEnv({ isShared: true, … })` proves nothing about it: that hand-passes the
+ * value under test and passes whether or not the bug exists.
+ *
+ * @example
+ * isSharedEnv('dev')    // => true
+ * isSharedEnv('prod')   // => true  — protected, therefore shared
+ * isSharedEnv('arthur') // => false
+ */
+export const isSharedEnv = (env: string): boolean => {
+  return SHARED_ENVS.includes(env) || isProtectedEnv(env)
+}
 
 /** Absolute, so the shell we run cannot be resolved from a caller-controlled PATH. */
 const SHELL = '/bin/sh'
@@ -300,7 +327,8 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
 
   // Advisory only: `workflow-envs` reads the working tree while a dispatch targets a ref, and vetoing
   // against it once caused a real refuse-to-deploy bug. It seeds the picker; `--env` always wins.
-  const envOptions = deployableEnvs(await readWorkflowEnvOptions(DEPLOY_ALL_WORKFLOW))
+  const protectedEnvAccess = await resolveProtectedEnvAccess()
+  const envOptions = deployableEnvs(await readWorkflowEnvOptions(DEPLOY_ALL_WORKFLOW), protectedEnvAccess)
 
   let selectedEnv = env ?? ''
 
@@ -330,7 +358,7 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
     }
   }
 
-  const isShared = SHARED_ENVS.includes(selectedEnv)
+  const isShared = isSharedEnv(selectedEnv)
   const branch = await getCurrentBranch()
   const sha = (await $`git rev-parse HEAD`.quiet()).stdout.trim()
   const built = buildDeployEnv({ env: selectedEnv, branch, sha })
@@ -350,6 +378,7 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
     isClean: await isWorkingTreeClean(),
     runningEnvs: await runningCiEnvs(),
     skip,
+    protectedEnvAccess,
   })
 
   const accountId = preflight.identity.accountId
@@ -446,7 +475,7 @@ export const localDeploySelected = async (args: LocalDeployArgs) => {
 
 /** Shared by both tools — the local counterpart of what `deploy-all.yml` sets in its `env:` block. */
 const SHARED_TOOL_NOTE =
-  'Runs the repo\'s own devops/scripts/deploy-*.sh on THIS machine instead of dispatching CI. Supplies the build contract (VITE_DOMAIN_ENV/BRANCH/COMMIT) that the workflow YAML normally provides and that the scripts do not set themselves, and refuses unless the requested environment matches the AWS account the shell is authenticated to. "prod" is always refused — it is delivered, not deployed. Services the environment forbids are refused, matching the workflow\'s own per-service gates. Use dryRun first.'
+  'Runs the repo\'s own devops/scripts/deploy-*.sh on THIS machine instead of dispatching CI. Supplies the build contract (VITE_DOMAIN_ENV/BRANCH/COMMIT) that the workflow YAML normally provides and that the scripts do not set themselves, and refuses unless the requested environment matches the AWS account the shell is authenticated to. "prod" is refused by default — it is delivered, not deployed — and is reachable only if this project sets `protectedEnvs` in infra-kit.json; "cli-only" allows it in a terminal but still refuses it here. Services the environment forbids are refused, matching the workflow\'s own per-service gates. Use dryRun first.'
 
 const sharedInput = {
   env: z.string().describe('Target environment, e.g. "dev" or a personal env like "arthur". Required for MCP.'),
@@ -454,7 +483,9 @@ const sharedInput = {
   skipPreflight: z
     .array(z.enum(['clean-tree', 'toolchain']))
     .optional()
-    .describe('Waive a named non-critical check. The env/account and prod checks can never be waived.'),
+    .describe(
+      'Waive a named non-critical check. The env/account and protected-env checks can never be waived, and clean-tree cannot be waived for a protected env.',
+    ),
   confirm: z.boolean().optional().describe('Set true to execute; omit for a dry-run gate.'),
 }
 

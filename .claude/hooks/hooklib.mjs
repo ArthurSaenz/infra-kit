@@ -20,10 +20,8 @@ export function readInput() {
   };
 }
 
-// Split a command line on shell operators, so a guard anchored at ^ still sees `git worktree add`
-// in `cd /repo && git worktree add ...`. Two-char operators before their single-char prefixes.
-// Naive: quoted operators split too, which over-splits rather than under-splits — a guard sees more
-// candidate segments, never fewer.
+// So a ^-anchored guard still sees `git worktree add` in `cd /repo && git worktree add ...`.
+// Two-char operators first. Naive: quoted operators split too, which over-splits, never under.
 export function splitIntoSegments(command) {
   return command
     .replaceAll('&&', '\n')
@@ -36,18 +34,11 @@ export function splitIntoSegments(command) {
     .filter(Boolean);
 }
 
-// Leading tokens that sit in front of the real command without being it: `VAR=val` assignments and
-// the arity-less wrapper words. Shared by the segment-scoped guards so a prefix added to this list
-// is covered everywhere at once — it lived in three copies before, and `env FOO=1 npm i` slipped
-// past guards that handled the bare `FOO=1 npm i` spelling, purely because one copy was stale.
-//
-// `worktree` deliberately keeps its own variant: it also has to swallow git's `-C <path>` and
-// `--git-dir=<path>`, which are git-specific and have no business here.
+// Tokens sitting in front of the real command. A prefix with its own args (`nice -n 10 npm i`)
+// still slips through; advisory-only, so not worth block-deploy's PREFIX_SPECS table here.
 export const HEAD_PREFIX = String.raw`^([A-Za-z_][A-Za-z0-9_]*=\S+\s+|(sudo|doas|env|command|builtin|exec|eval|time|nice|nohup|stdbuf|xargs)\s+)*`;
 
-// Tokens of `segment` with any HEAD_PREFIX stripped, so argv[0] is the command that will actually
-// run. Case-insensitive on the prefix words for the same reason the guards are: see the note on
-// case in guards/destructive.mjs.
+// HEAD_PREFIX stripped, so argv[0] is the command that will actually run.
 export function argvAfterPrefix(segment) {
   return segment
     .trim()

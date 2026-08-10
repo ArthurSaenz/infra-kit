@@ -411,7 +411,10 @@ export const buildProgram = (): Command => {
       .option('-y, --yes', 'Skip the confirmation prompt')
       .option('--dry-run', 'Resolve target, contract and commands without deploying')
       .option('--print-env', 'Print the resolved build contract')
-      .option('--skip-preflight <check...>', 'Waive a named check (clean-tree, toolchain) — never env/account or prod')
+      .option(
+        '--skip-preflight <check...>',
+        'Waive a named check (clean-tree, toolchain) — never env/account, and never clean-tree for a protected env',
+      )
   }
 
   withLocalDeployOptions(localCmd.command('deploy-all'))

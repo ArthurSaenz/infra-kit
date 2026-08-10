@@ -66,6 +66,28 @@ describe('resolvePreferredPort — explicit-only (no DEFAULT_PORT fallback)', ()
   })
 })
 
+/**
+ * The bare `PORT` tier is the only one that is not app-scoped, so in a multi-app run it hands every
+ * app the same value and the caller's conflict gate then refuses to start over duplicates the
+ * environment manufactured. `allowBarePort` is how the caller declines that tier once it knows more
+ * than one app is launching; nothing else about the precedence changes.
+ */
+describe('resolvePreferredPort — allowBarePort gates ONLY the bare PORT tier', () => {
+  it('drops a bare PORT when denied, and keeps it when allowed or omitted', () => {
+    expect(resolvePreferredPort('client', { PORT: '3300' }, {}, false)).toBeUndefined()
+    expect(resolvePreferredPort('client', { PORT: '3300' }, {}, true)).toBe(3300)
+    expect(resolvePreferredPort('client', { PORT: '3300' }, {})).toBe(3300)
+  })
+
+  it('leaves the per-app {APP}_PORT tier untouched when the bare tier is denied', () => {
+    expect(resolvePreferredPort('client', { PORT: '3300', CLIENT_PORT: '3400' }, {}, false)).toBe(3400)
+  })
+
+  it('reaches the config tier when the bare tier is denied, rather than skipping to undefined', () => {
+    expect(resolvePreferredPort('client', { PORT: '3300' }, { client: { port: 3200 } }, false)).toBe(3200)
+  })
+})
+
 describe('resolvePrefixUrl — config over default', () => {
   it('defaults to /api/v1 when nothing is configured', () => {
     expect(resolvePrefixUrl('client', {})).toBe(DEFAULT_PREFIX_URL)

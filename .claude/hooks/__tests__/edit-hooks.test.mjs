@@ -7,8 +7,7 @@ import { findPackageDir } from '../hooklib.mjs';
 
 const REPO_ROOT = resolve(HOOKS_DIR, '..', '..');
 
-// Build a throwaway package (standalone tsconfig + one .ts) UNDER the repo — gitignored `.omc/` —
-// so `pnpm exec tsc` resolves the workspace tsc. Returns the pkg dir + the .ts path + a cleanup.
+// Under the repo, so the workspace tsc resolves.
 function makeTempPackage(tsSource) {
   const pkgDir = join(REPO_ROOT, '.omc', '.tmp-typecheck-test');
   rmSync(pkgDir, { recursive: true, force: true });
@@ -35,20 +34,14 @@ test('protect-files blocks the lockfile and .git/, allows everything else', () =
 
 // -------------------------------------------------------------- edit-pipeline gating
 
-// The pipeline shells out to per-package tooling only for matching files inside a package. For a
-// non-matching path it must exit 0 with NO output and never spawn anything.
+// A non-matching path must exit 0 with no output and never spawn anything.
 test('edit-pipeline no-ops on a non-matching file (exit 0, no output)', () => {
   const res = runHook('edit-pipeline.mjs', edit('README.md'));
   assert.equal(res.status, 0, 'exit');
   assert.equal(res.stdout, '', 'stdout');
 });
 
-// RETIRED BY DECISION, NOT BROKEN BY ACCIDENT: the assertion that used to sit here was
-// "auto-format emits no JSON (best-effort, never a systemMessage)". It pinned auto-format.mjs's
-// silence — and that silence was the defect, not the feature: eslint ran with `stdio: 'ignore'` so
-// no finding ever reached Claude. edit-pipeline.mjs replaces that hook precisely in order to speak
-// up, so keeping the assertion would have pinned the bug. What survives is the part still true and
-// still worth guarding — a path outside the repo produces nothing at all.
+// Only for a path outside the repo: silence in general was the old defect, not a feature.
 test('edit-pipeline is silent for a path outside the repo (exit 0, no output)', () => {
   const res = runHook('edit-pipeline.mjs', edit('/nonexistent/deep/x.ts'));
   assert.equal(res.status, 0, 'exit');
@@ -75,32 +68,27 @@ test('CLAUDE_HOOK_PIPELINE_OFF=1 exits 0 immediately', () => {
 
 // -------------------------------------------------------------- settings wiring
 
-// AC4. The three parallel Edit|Write entries are the defect this pipeline replaced: Claude Code
-// runs matching PostToolUse hooks in PARALLEL with no documented ordering, so auto-format rewrote
-// the file while typecheck was reading it. Collapsing them to ONE entry is the fix, and this test
-// is what stops a fourth entry being added later and quietly reintroducing the race.
+// Matching PostToolUse hooks run in PARALLEL, so separate entries race by construction. This stops
+// a second being added later and quietly reintroducing it.
 test('settings declares one non-async Edit|Write PostToolUse entry', () => {
   const settings = JSON.parse(readFileSync(join(REPO_ROOT, '.claude', 'settings.json'), 'utf8'));
   const entries = settings.hooks.PostToolUse.filter((entry) => entry.matcher === 'Edit|Write');
 
   assert.equal(entries.length, 1, 'exactly one Edit|Write entry — parallel entries cannot be ordered');
   for (const hook of entries[0].hooks) {
-    // An async hook reaches Claude only via additionalContext and lands a turn late, describing
-    // bytes that may no longer be on disk.
+    // An async hook lands a turn late, describing bytes that may no longer be on disk.
     assert.ok(!('async' in hook), 'the pipeline must be synchronous');
   }
 });
 
-// The matcher is a substring regex, so `Edit|Write` also catches `MultiEdit` — which is the whole
-// reason no separate MultiEdit entry exists. Nothing pinned that until now, and a future change to
-// anchored matching would silently stop covering multi-edits.
+// A substring regex, so `Edit|Write` also catches `MultiEdit` — hence no separate entry.
 test('the Edit|Write matcher still catches MultiEdit', () => {
   const settings = JSON.parse(readFileSync(join(REPO_ROOT, '.claude', 'settings.json'), 'utf8'));
   const entry = settings.hooks.PostToolUse.find((e) => e.matcher === 'Edit|Write');
   assert.match('MultiEdit', new RegExp(entry.matcher));
 });
 
-// quality-gate's own cases moved to quality-gate.test.mjs when that hook grew a lock and a parser.
+// quality-gate's own cases live in quality-gate.test.mjs.
 
 // -------------------------------------------------------------- findPackageDir
 
@@ -114,9 +102,7 @@ test('findPackageDir returns null for a path outside any package', () => {
   assert.equal(findPackageDir('/nonexistent/deep/x.ts'), null);
 });
 
-// Locks F-A (type errors reach Claude via exit-2+stderr) AND F2 (incremental writes a tsbuildinfo).
-// Carried over from the retired typecheck.mjs — the tsc stage inherits its behavior and its cache
-// path unchanged, so these assertions still hold and still guard the same regressions.
+// Two properties: type errors reach Claude via exit-2 + stderr, and the run is incremental.
 test('edit-pipeline surfaces type errors to Claude (exit 2 + stderr) and is incremental', () => {
   // A real TS2322 error.
   const bad = makeTempPackage('export const x: number = "not a number";\n');
@@ -144,10 +130,8 @@ test('edit-pipeline surfaces type errors to Claude (exit 2 + stderr) and is incr
   }
 });
 
-// AC14. tsc checks the WHOLE package program, so an edit to one file can legitimately introduce an
-// error in another. This is the assertion that the withdrawn "report only the edited file's
-// diagnostics" design would have failed: the agent edits the importer, and the error it just caused
-// lives in the imported file.
+// tsc checks the WHOLE program, so filtering diagnostics to the edited file would drop the error
+// the agent just caused elsewhere.
 test('a diagnostic in a non-edited file is reported', () => {
   const pkg = makeTempPackage('export const value: number = 1;\n');
   try {
@@ -162,21 +146,8 @@ test('a diagnostic in a non-edited file is reported', () => {
   }
 });
 
-// AC19 / verification step 4. A repo-root file has neither an eslint flat config nor a tsconfig
-// above it, so both stages must skip SILENTLY rather than emit a blank diagnostic from a tool that
-// had nothing to check.
-//
-// THE AC'S NAME IS "runs prettier only" AND THAT NAME IS OPTIMISTIC. `.prettierignore` opens with
-// `*.*`, which matches the `.claude` and `.omc` directory names themselves; gitignore semantics do
-// not let a later `!*.mjs` re-include anything under an excluded directory. Confirmed by
-// experiment: an identically malformed file reports `[warn]` and exit 1 at the repo root, but
-// "All matched files use Prettier code style!" and BYTES UNCHANGED inside `.claude/hooks/`. So for
-// hook files and anything under `.omc/` the pipeline runs ZERO effective stages, not "prettier
-// only" — the plan's described outcome is right by accident rather than by mechanism.
-//
-// The observable contract asserted here (exit 0, no output, edit stands) holds either way, which is
-// why this is documented rather than fixed: `.prettierignore` is pre-existing config with its own
-// reasons and is not this work's to change.
+// No config above a repo-root file, so both stages skip silently. Not even prettier runs:
+// `.prettierignore` opens with `*.*`, matching `.claude` and `.omc` themselves.
 test('a file at the repo root emits nothing (prettier at most, and it is ignored here)', () => {
   const rootFile = join(REPO_ROOT, '.omc', 'tmp-root-file.mjs');
   mkdirSync(join(REPO_ROOT, '.omc'), { recursive: true });

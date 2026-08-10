@@ -62,16 +62,12 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
       'gh authenticated',
       'doppler installed',
       'aws installed',
-      'rtk installed',
       'typescript-language-server installed',
       'cmux installed',
       'ide installed',
     ],
   ],
-  [
-    SECTION_SHELL,
-    ['rtk configured', 'zshrc init block', 'warm cache', 'pnpm enableGlobalVirtualStore', 'CLAUDE.md block'],
-  ],
+  [SECTION_SHELL, ['zshrc init block', 'warm cache', 'pnpm enableGlobalVirtualStore', 'CLAUDE.md block']],
   [SECTION_CONFIG, ['infra-kit config valid', 'user override path', 'legacy user-global config']],
   [SECTION_TOKENS, ['env tokens configured', 'env token valid', 'tokens.json perms']],
   [

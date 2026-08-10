@@ -1,6 +1,6 @@
-import { describe, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import { code, expectClean, lintCase } from './_lint-case.js'
+import { code, expectClean, lintCase, lintCaseFixed, only } from './_lint-case.js'
 
 // Function-level JSDoc enforcement was handed off from the off-the-shelf `jsdoc/*` rules to the custom
 // `@wl/require-jsdoc-example` rule (graduated cognitive-complexity gate). The three off-the-shelf rules
@@ -141,5 +141,113 @@ describe('jsdoc: off-the-shelf rules are disabled (handed off to @wl/require-jsd
     })
 
     expectNoJsdoc(messages)
+  })
+})
+
+// Layer 1 of the JSDoc size-limits work: the off-the-shelf `jsdoc/*` rules added to docs.ts
+// (tag-lines, no-types + the require-*-type pair, check-line-alignment), plus the GLOB_TS_DOC_EXCLUDE
+// pin. These fixtures are deliberately shaped like the real corpus (ls-slim.ts's set()/get()) rather
+// than minimal reproductions, so a passing suite says something about the house-style shape and not
+// just the rule engine.
+describe('jsdoc: Layer 1 size-limit rules (docs.ts)', () => {
+  it('tag-lines preserves the description separator but strips a blank line between tags', async () => {
+    const source = code`
+      /**
+       * Stores a value with options.
+       *
+       * @param key - A key to identify the value.
+       *
+       * @param value - A value associated with the key.
+       * @param ttl - Time to live in seconds.
+       *
+       * @example
+       *     set('session', { token: 'abc' }, 3600)
+       *
+       */
+      export const set = (key: string, value: unknown, ttl: number) => {
+        return key + ttl + String(value)
+      }
+    `
+
+    const messages = await lintCase({ fileName: 'src/lib/set.ts', source })
+
+    expect(only(messages, 'jsdoc/tag-lines').length).toBeGreaterThanOrEqual(1)
+
+    const fixed = await lintCaseFixed({ fileName: 'src/lib/set.ts', source })
+
+    // The description -> first-tag separator (startLines: 1) survives the fix.
+    expect(fixed).toContain('Stores a value with options.\n *\n * @param key')
+    // The blank line BETWEEN @param key and @param value is gone.
+    expect(fixed).toContain('@param key - A key to identify the value.\n * @param value')
+    expect(fixed).not.toContain('@param key - A key to identify the value.\n *\n * @param value')
+  })
+
+  it('no-types fires on a typed @param and a typed @returns', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/length.ts',
+      source: code`
+        /**
+         * Returns the length of a key.
+         *
+         * @param {string} key - A key.
+         * @returns {number} The key's length.
+         */
+        export const length = (key: string): number => key.length
+      `,
+    })
+
+    expect(only(messages, 'jsdoc/no-types').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('require-param-type and require-returns-type stay silent on untyped tags (they contradict no-types)', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/length.ts',
+      source: code`
+        /**
+         * Returns the length of a key.
+         *
+         * @param key - A key.
+         * @returns The key's length.
+         */
+        export const length = (key: string): number => key.length
+      `,
+    })
+
+    expectClean(messages, 'jsdoc/require-param-type')
+    expectClean(messages, 'jsdoc/require-returns-type')
+  })
+
+  it('check-line-alignment fires on a column-aligned @param table', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/combine.ts',
+      source: code`
+        /**
+         * Combines a key and a value.
+         *
+         * @param key   - A key.
+         * @param value - A value.
+         */
+        export const combine = (key: string, value: string) => key + value
+      `,
+    })
+
+    expect(only(messages, 'jsdoc/check-line-alignment').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('the new rules stay silent on a GLOB_TS_DOC_EXCLUDE path — non-vacuous against the no-types fixture above', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/length.test.ts',
+      source: code`
+        /**
+         * Returns the length of a key.
+         *
+         * @param {string} key - A key.
+         * @returns {number} The key's length.
+         */
+        export const length = (key: string): number => key.length
+      `,
+    })
+
+    expectClean(messages, 'jsdoc/no-types')
   })
 })

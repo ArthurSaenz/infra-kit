@@ -11,7 +11,6 @@ interface UseStickyProps {
  *
  * @example
  *     useScrollKeyboard({ scrollRef: scrollRef })
- *
  */
 export const useScrollKeyboard = ({ scrollRef }: UseStickyProps) => {
   useEffect(() => {

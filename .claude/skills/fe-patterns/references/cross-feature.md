@@ -13,8 +13,32 @@
 Feature independence enables:
 - **Parallel development** — Teams work on features without merge conflicts or coordination overhead
 - **Safe deletion** — Remove a feature by deleting its folder and updating the page; no cascading breakage
-- **Isolated testing** — Test each feature with mock props; no need to spin up other features
+- **Isolated testing** — A feature that imports another feature's service drags that service's entire dependency tree into its tests; props are mockable, imports are not
 - **Predictable refactoring** — Changes inside a feature cannot break other features
+- **A traceable dependency graph** — Cross-feature imports create hidden chains that grow exponentially and quickly become impossible to hold in your head
+
+### How much of this does tooling catch?
+
+Rule 1 is the one rule with real lint coverage: the ESLint config models features, services and
+`shared` as elements and rejects runtime imports between them — type-only imports allowed, the
+`shared` barrel as the single runtime exception.
+
+**Check what is actually in force rather than trusting a note here.** Severities and rule names live
+in the lint config, they change there, and a copy written into a skill goes stale silently:
+
+```bash
+pnpm exec eslint --print-config path/to/feature/file.tsx
+```
+
+One gap the lint layer cannot close on its own:
+
+- **Only `features/` is classified.** The element patterns key off `**/features/*`, so code living
+  outside a `features/` directory is unclassified and therefore unpoliced.
+  `fe-architect/scripts/analyze_imports.mjs` matches on the path string instead and does not care
+  where the file sits — but nothing runs it for you.
+
+Layer ownership for all 7 rules is in
+[fe-architect enforcement.md](../../fe-architect/references/core/enforcement.md).
 
 ---
 
@@ -25,35 +49,14 @@ Feature independence enables:
 Pass a fully rendered `ReactElement` as a prop. The receiving feature places it without modification.
 
 ```tsx
-// page.tsx — page renders both features, connects them via element prop
-import { DashboardContainer } from '#root/features/dashboard'
-import { NotificationBadge, notificationsService } from '#root/features/notifications'
-
-export const DashboardPage = () => {
-  const count = useAtomValue(notificationsService.$unreadCount)
-
-  return (
-    <DashboardContainer
-      headerBadge={<NotificationBadge count={count} />}
-    />
-  )
-}
+// app/pages/dashboard-page.tsx — the page renders both features and connects them
+<DashboardContainer headerBadge={<NotificationBadge count={count} />} />
 
 // features/dashboard/containers/dashboard-container.tsx
 interface DashboardContainerProps {
-  headerBadge?: React.ReactElement
+  headerBadge?: React.ReactElement   // pre-rendered — the feature only places it
 }
-
-export const DashboardContainer = (props: DashboardContainerProps) => {
-  const { headerBadge } = props
-
-  return (
-    <header>
-      <h1>Dashboard</h1>
-      {headerBadge}
-    </header>
-  )
-}
+// … <header><h1>Dashboard</h1>{headerBadge}</header>
 ```
 
 **When to use:**
@@ -76,41 +79,15 @@ export const DashboardContainer = (props: DashboardContainerProps) => {
 Pass a component type. The receiving feature instantiates it and controls props.
 
 ```tsx
-// page.tsx
-import { ProjectListContainer } from '#root/features/project-list'
-import { UserAvatarComponent } from '#root/features/user-profile'
-
-export const ProjectsPage = () => {
-  return (
-    <ProjectListContainer
-      AvatarComponent={UserAvatarComponent}
-    />
-  )
-}
+// app/pages/projects-page.tsx — passes the type, not an instance
+<ProjectListContainer AvatarComponent={UserAvatarComponent} />
 
 // features/project-list/containers/project-list-container.tsx
 interface ProjectListContainerProps {
   AvatarComponent?: React.ComponentType<{ userId: string; size?: 'sm' | 'md' }>
 }
-
-export const ProjectListContainer = (props: ProjectListContainerProps) => {
-  const { AvatarComponent } = props
-
-  const projects = useAtomValue(projectListService.$projects)
-
-  return (
-    <ul>
-      {projects.map((project) => (
-        <li key={project.id}>
-          {AvatarComponent && (
-            <AvatarComponent userId={project.ownerId} size="sm" />
-          )}
-          <span>{project.name}</span>
-        </li>
-      ))}
-    </ul>
-  )
-}
+// … the receiving feature decides the props and when to render, once per row:
+{AvatarComponent && <AvatarComponent userId={project.ownerId} size="sm" />}
 ```
 
 **When to use:**
@@ -134,42 +111,17 @@ export const ProjectListContainer = (props: ProjectListContainerProps) => {
 Pass a function that receives data and returns JSX. Maximum flexibility.
 
 ```tsx
-// page.tsx
-import { TaskBoardContainer } from '#root/features/task-board'
-import { TaskCommentsContainer } from '#root/features/task-comments'
-
-export const TaskBoardPage = () => {
-  return (
-    <TaskBoardContainer
-      renderTaskDetail={(task) => (
-        <div>
-          <h2>{task.title}</h2>
-          <TaskCommentsContainer taskId={task.id} />
-        </div>
-      )}
-    />
-  )
-}
+// app/pages/task-board-page.tsx — consumer composes another feature into the slot
+<TaskBoardContainer
+  renderTaskDetail={(task) => <TaskCommentsContainer taskId={task.id} />}
+/>
 
 // features/task-board/containers/task-board-container.tsx
-import type { Task } from '../types'
-
 interface TaskBoardContainerProps {
-  renderTaskDetail?: (task: Task) => React.ReactElement
+  renderTaskDetail?: (task: Task) => React.ReactElement   // Task from '../types'
 }
-
-export const TaskBoardContainer = (props: TaskBoardContainerProps) => {
-  const { renderTaskDetail } = props
-
-  const selectedTask = useAtomValue(taskBoardService.$selectedTask)
-
-  return (
-    <div className="board">
-      <TaskListComponent tasks={tasks} />
-      {selectedTask && renderTaskDetail?.(selectedTask)}
-    </div>
-  )
-}
+// … the feature hands its own data to the consumer's function:
+{selectedTask && renderTaskDetail?.(selectedTask)}
 ```
 
 **When to use:**
@@ -225,46 +177,19 @@ Features access their own services internally but NEVER access another feature's
 ### Full Example: Two Features Sharing Data
 
 ```tsx
-// Page orchestrates both features
-// app/pages/analytics-page.tsx
-import { ChartContainer } from '#root/features/chart'
-import { FilterContainer } from '#root/features/filter'
-import { filterService } from '#root/features/filter'
-
-export const AnalyticsPage = () => {
-  const activeFilters = useAtomValue(filterService.$activeFilters)
-  const setFilters = useSetAtom(filterService.$activeFilters)
-
-  return (
-    <div>
-      <FilterContainer />
-      <ChartContainer
-        filters={activeFilters}
-        onFilterReset={() => setFilters([])}
-      />
-    </div>
-  )
-}
+// app/pages/analytics-page.tsx — the only place the two features meet
+const activeFilters = useAtomValue(filterService.$activeFilters)
+// … <FilterContainer />
+//    <ChartContainer filters={activeFilters} onFilterReset={() => setFilters([])} />
 
 // features/chart/containers/chart-container.tsx
-// Does NOT import filterService — receives data via props
+// filterService is imported NOWHERE in this feature — filters arrive as a prop.
 interface ChartContainerProps {
   filters: FilterConfig[]
   onFilterReset: () => void
 }
-
-export const ChartContainer = (props: ChartContainerProps) => {
-  const { filters, onFilterReset } = props
-
-  const chartData = useAtomValue(chartService.$chartData)
-
-  useEffect(() => {
-    // Use filters from props to fetch chart data
-    chartService.fetchChartDataFx({ filters })
-  }, [filters])
-
-  return <ChartComponent data={chartData} onReset={onFilterReset} />
-}
+// … the chart still owns its own data, fetched from the filters it was given:
+useEffect(() => chartService.fetchChartDataFx({ filters }), [filters])
 ```
 
 ---
@@ -355,31 +280,56 @@ When two features need to share reactive state, coordinate at the page level.
 ### Page-Level Coordination Pattern
 
 ```tsx
-// Shared state lives in one feature (the "owner")
-// Other features receive it as props
+// app/pages/workspace-page.tsx — sidebar OWNS the state; content only receives it
+const selectedItem = useAtomValue(sidebarService.$selectedItem)
+const setSelectedItem = useSetAtom(sidebarService.selectItemAtom)
 
-// app/pages/workspace-page.tsx
-import { SidebarContainer, sidebarService } from '#root/features/sidebar'
-import { ContentContainer } from '#root/features/content'
-
-export const WorkspacePage = () => {
-  // Page reads from the owning feature's service
-  const selectedItem = useAtomValue(sidebarService.$selectedItem)
-  const setSelectedItem = useSetAtom(sidebarService.selectItemAtom)
-
-  return (
-    <div className="flex">
-      <SidebarContainer />
-      <ContentContainer
-        selectedItem={selectedItem}
-        onItemSelect={(id) => setSelectedItem({ itemId: id })}
-      />
-    </div>
-  )
-}
+// … <SidebarContainer />
+//    <ContentContainer
+//      selectedItem={selectedItem}
+//      onItemSelect={(id) => setSelectedItem({ itemId: id })}
+//    />
 ```
 
 **Key principle:** One feature owns the state. The page reads it and distributes to others via props. Never duplicate state across features.
+
+---
+
+## Shared vs Feature Component
+
+Where a component lives is a boundary question: the moment a second feature wants it, you are
+deciding whether to create a dependency or a shared asset.
+
+```
+Is the component used by 3+ features?
+├─ YES → Does it contain ZERO business logic?
+│  ├─ YES → Shared component (e.g., packages/ui or shared/components)
+│  └─ NO → Split: dumb part → shared, logic → each feature's container
+└─ NO → Is it used by exactly 2 features?
+   ├─ YES → Keep it in one feature; the other receives it via an injection pattern
+   │        Promote to shared only when a 3rd consumer appears
+   └─ NO → Feature component (stays in the feature)
+```
+
+### Promotion Checklist
+
+Before promoting a component to shared:
+- [ ] Zero imports from any feature (no atoms, services, feature types)
+- [ ] Accepts `className` prop with `cn()` (Rule 6 compliant)
+- [ ] Has comprehensive tests and stories
+- [ ] Props interface is generic enough (no feature-specific types)
+- [ ] At least 3 consumers exist or are planned
+
+### Why Wait for 3 Consumers
+
+Premature abstraction creates components that satisfy no consumer perfectly. With 3 consumers the
+common pattern becomes visible and the abstraction has a foundation. Two consumers might have
+coincidentally similar needs — and a shared component built for a coincidence is harder to remove
+than one that was never shared.
+
+Note the asymmetry with the runtime rule: `shared` is the one place features may import from at
+runtime, and only through its barrel. That exception is what makes
+promotion safe — and what makes promoting too early expensive.
 
 ---
 
@@ -398,20 +348,14 @@ export const WorkspacePage = () => {
 ### Mistake 1: Creating Components Inside Render Functions
 
 ```tsx
-// ❌ BAD — Creates a new component on every render, destroys all internal state
-<TaskBoard
-  renderDetail={(task) => {
-    const DetailView = () => <TaskComments taskId={task.id} />  // ❌ New component each render
-    return <DetailView />
-  }}
-/>
+// ❌ a new component type on every render — remounts, state lost
+renderDetail={(task) => {
+  const DetailView = () => <TaskComments taskId={task.id} />
+  return <DetailView />
+}}
 
-// ✅ GOOD — Return JSX directly, no intermediate component
-<TaskBoard
-  renderDetail={(task) => (
-    <TaskComments taskId={task.id} />
-  )}
-/>
+// ✅ return the JSX directly, no intermediate component
+renderDetail={(task) => <TaskComments taskId={task.id} />}
 ```
 
 **Why it breaks:** React sees a new component type each render → unmounts and remounts → loses all state, triggers effects, causes flicker.
@@ -419,24 +363,13 @@ export const WorkspacePage = () => {
 ### Mistake 2: Feature Importing Another Feature's Service
 
 ```tsx
-// ❌ BAD — Direct cross-feature import
-// features/dashboard/containers/dashboard-container.tsx
-import { userService } from '#root/features/user'  // ❌ BLOCKING VIOLATION
+// ❌ features/dashboard/containers/dashboard-container.tsx
+import { userService } from '#root/features/user'   // BLOCKING — hidden dependency
+const user = useAtomValue(userService.$currentUser)
 
-export const DashboardContainer = () => {
-  const user = useAtomValue(userService.$currentUser)  // ❌
-  return <DashboardComponent user={user} />
-}
-
-// ✅ GOOD — Page passes the data
-// app/pages/home-page.tsx
-import { DashboardContainer } from '#root/features/dashboard'
-import { userService } from '#root/features/user'
-
-export const HomePage = () => {
-  const user = useAtomValue(userService.$currentUser)
-  return <DashboardContainer currentUser={user} />
-}
+// ✅ app/pages/home-page.tsx — the page owns the cross-feature wiring
+const user = useAtomValue(userService.$currentUser)
+// … <DashboardContainer currentUser={user} />   ← dashboard just takes a prop
 ```
 
 **Why it breaks:** Creates a hidden dependency graph between features. Deleting the `user` feature would break `dashboard` with no compile-time warning in many cases.
@@ -444,22 +377,13 @@ export const HomePage = () => {
 ### Mistake 3: Passing Atom References as Props
 
 ```tsx
-// ❌ BAD — Passing the atom itself creates runtime coupling
+// ❌ passing the atom itself — Feature A now depends on Jotai's runtime
 <FeatureA userAtom={userService.$currentUser} />
+const user = useAtomValue(userAtom)                 // … inside Feature A
 
-// features/feature-a/containers/feature-a-container.tsx
-const FeatureAContainer = ({ userAtom }) => {
-  const user = useAtomValue(userAtom)  // ❌ Feature A now depends on Jotai atom from Feature B
-  return <FeatureAComponent user={user} />
-}
-
-// ✅ GOOD — Pass the resolved value
+// ✅ resolve at the page, pass plain data
 <FeatureA currentUser={useAtomValue(userService.$currentUser)} />
-
-// features/feature-a/containers/feature-a-container.tsx
-const FeatureAContainer = ({ currentUser }) => {
-  return <FeatureAComponent user={currentUser} />  // ✅ Plain data, no atom dependency
-}
+// … <FeatureAComponent user={currentUser} />       ← no atom dependency
 ```
 
 **Why it breaks:** The receiving feature becomes coupled to Jotai's runtime. It cannot be tested without a Jotai provider wrapping the atom's store, and it cannot be reused in a non-Jotai context.

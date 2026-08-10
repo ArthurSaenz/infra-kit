@@ -44,7 +44,7 @@
  *
  * With stdout redirected to a file, `process.stdout` is a `SyncWriteStream` and a failed `writeSync`
  * (`ENOSPC`, `EDQUOT`, `EFBIG`, `EBADF`) takes the SAME async `'error'` path. The latch is still correct —
- * *stop writing to a stream that cannot be written to* holds whatever the cause — but the REPORT must name
+ * stop writing to a stream that cannot be written to* holds whatever the cause — but the REPORT must name
  * the errno, never a story: `nohup ik dev > out.log` on a full disk is `ENOSPC`, and saying "the terminal is
  * gone" there would be a lie in the exact scenario (a disk-fill) this module exists to fix.
  */

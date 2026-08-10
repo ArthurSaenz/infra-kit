@@ -14,7 +14,6 @@ let hasLS: boolean
  *
  * @example
  *     const available = supportsLS()
- *
  */
 const supportsLS = (): boolean => {
   if (typeof hasLS !== 'undefined') return hasLS
@@ -43,13 +42,11 @@ const APX = String.fromCharCode(0)
 /**
  * Stores a value in localStorage with an optional time-to-live expiry.
  *
- * @param {string} key - A key to identify the value.
- * @param {any} value - A value associated with the key.
- * @param {number} ttl - Time to live in seconds.
- *
+ * @param key - A key to identify the value.
+ * @param value - A value associated with the key.
+ * @param ttl - Time to live in seconds.
  * @example
  *     set('session', { token: 'abc' }, 3600)
- *
  */
 export const set = <T = unknown>(key: string, value: T, ttl: number | null = null): void | boolean => {
   if (!supportsLS()) return false
@@ -70,12 +67,10 @@ export const set = <T = unknown>(key: string, value: T, ttl: number | null = nul
 /**
  * Retrieves a value from localStorage if it exists and has not expired.
  *
- * @param {string} key - A key to identify the data.
- * @returns {any|null} returns the value associated with the key if its exists and is not expired. Returns `null` otherwise
- *
+ * @param key - A key to identify the data.
+ * @returns returns the value associated with the key if its exists and is not expired. Returns `null` otherwise
  * @example
  *     const session = get<{ token: string }>('session')
- *
  */
 export const get = <T = unknown>(key: string): T | null => {
   if (!supportsLS()) return null
@@ -96,7 +91,6 @@ export const get = <T = unknown>(key: string): T | null => {
  *
  * @example
  *     const data = parseData<User>('user', rawString)
- *
  */
 export const parseData = <T>(key: string, string: string): T | null => {
   const item = JSON.parse(string)
@@ -121,7 +115,6 @@ export const parseData = <T>(key: string, string: string): T | null => {
  *
  * @example
  *     flush()
- *
  */
 export const flush = (force = false): false | void => {
   if (!supportsLS()) return false

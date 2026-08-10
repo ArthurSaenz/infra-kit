@@ -16,7 +16,6 @@ export interface PollArgs<T> {
  *         intervalMs: 2000,
  *         maxAttempts: 10,
  *     })
- *
  */
 export const poll = async <T>(args: PollArgs<T>): Promise<T> => {
   const { fn, condition, intervalMs, maxAttempts = 10, firstDelayMs = 0 } = args

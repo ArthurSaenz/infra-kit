@@ -1,146 +1,43 @@
-// The TaskCompleted gate is now the SOLE test signal, so what it SAYS when qa fails is
-// load-bearing. The old version ran qa with `stdio: 'inherit'` and emitted one generic sentence:
-// the agent learned that qa failed and never which check, which package, or why.
-//
-// The parser is imported directly rather than exercised through a real `pnpm run qa`, which would
-// take minutes and make the suite depend on the whole monorepo being green. The fixture below is
-// LITERAL captured turbo output, so the parse contract is pinned to what turbo actually prints.
+// The gate is the sole test signal, so what it SAYS when qa fails is load-bearing. The real
+// `pnpm run qa` is never invoked: each case points the hook at a scratch project instead.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { runHook, HOOKS_DIR } from './helpers.mjs';
-import { parseQaFailures } from '../quality-gate.mjs';
 import { acquireLock, releaseLock } from '../lock.mjs';
 
 const REPO_ROOT = resolve(HOOKS_DIR, '..', '..');
 
-// LITERAL capture of
-//   turbo run eslint-check ts-check --continue --output-logs=errors-only
-//        --log-prefix=task --log-order=grouped
-// with a deliberate unused variable introduced in one package. Two failing pairs, because
-// `--continue` means a failing run routinely produces several — the reason this parser must never
-// be written as "the failing pair".
-const TURBO_TWO_FAILURES = `   • Remote caching disabled
+// Async twin of `runHook`, for the one case that must observe the hook WHILE it waits: the lock has
+// to be released mid-acquire, which spawnSync cannot express.
+function runHookAsync(file, event, env) {
+  const child = spawn('node', [join(HOOKS_DIR, file)], { env: { ...process.env, ...env } });
+  let stdout = '';
+  let stderr = '';
 
-@wl/web-toolkit:ts-check: cache miss, executing aac8b847d92f0b04
-@wl/web-toolkit:ts-check: $ tsc --noEmit
-@wl/web-toolkit:ts-check: src/cn/cn.ts(18,7): error TS6133: 'unusedFixtureVar' is declared but its value is never read.
-@wl/web-toolkit:ts-check: [ELIFECYCLE] Command failed with exit code 2.
-@wl/web-toolkit#ts-check:  WARNING  command finished with error, but continuing...
-@wl/web-toolkit:eslint-check: cache miss, executing a8fa157c1e1ae77c
-@wl/web-toolkit:eslint-check: $ pnpm exec eslint --cache --quiet ./src
-@wl/web-toolkit:eslint-check: /repo/vendor/packages/web-toolkit/src/cn/cn.ts
-@wl/web-toolkit:eslint-check:   18:7  error  'unusedFixtureVar' is assigned a value but never used  unused-imports/no-unused-vars
-@wl/web-toolkit:eslint-check: ✖ 1 problem (1 error, 0 warnings)
-@wl/web-toolkit:eslint-check: [ELIFECYCLE] Command failed with exit code 1.
-@wl/web-toolkit#eslint-check:  WARNING  command finished with error, but continuing...
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
+  child.stdin.end(JSON.stringify(event));
 
- Tasks:    4 successful, 6 total
-Cached:    4 cached, 6 total
-  Time:    3.555s
-Failed:    @wl/web-toolkit#eslint-check, @wl/web-toolkit#ts-check
+  return new Promise((resolve_) => {
+    child.on('close', (status) => resolve_({ status, stdout, stderr }));
+  });
+}
 
- ERROR  run failed: command  exited (2)
-`;
+// `helpers.mjs` merges `process.env`, so under a real gate every case here would inherit the
+// descent flag and see a no-op. Blank it where the gate must do real work ('' is falsy).
+const gateEnv = (extra) => ({ CLAUDE_HOOK_QA_NESTED: '', ...extra });
 
-// AC21 / M-3c.
-test('multiple failing turbo tasks are all reported, capped at 3', () => {
-  const parsed = parseQaFailures(TURBO_TWO_FAILURES);
-
-  assert.equal(parsed.kind, 'turbo');
-  assert.equal(parsed.total, 2, 'BOTH failures, not just the first — --continue produces several');
-  assert.deepEqual(
-    parsed.failures.map((f) => f.name),
-    ['@wl/web-toolkit#eslint-check', '@wl/web-toolkit#ts-check'],
-  );
-
-  // Each pair carries its own log tail, so the agent gets the actual diagnostic and not merely a
-  // task name it would have to re-run to understand.
-  const tsCheck = parsed.failures.find((f) => f.name === '@wl/web-toolkit#ts-check');
-  assert.match(tsCheck.tail, /TS6133/, "the failing task's own output must be attached");
-  assert.match(tsCheck.reproduce, /pnpm --filter @wl\/web-toolkit run ts-check/);
-
-  const eslintCheck = parsed.failures.find((f) => f.name === '@wl/web-toolkit#eslint-check');
-  assert.match(eslintCheck.tail, /no-unused-vars/);
-  // Log lines are attributed by pair, so one task's output never bleeds into another's report.
-  assert.doesNotMatch(eslintCheck.tail, /TS6133/);
-});
-
-test('more than three failing tasks are capped and the remainder counted', () => {
-  const many = `Failed:    a#test, b#test, c#test, d#test, e#test\n`;
-  const parsed = parseQaFailures(many);
-  assert.equal(parsed.total, 5, 'the COUNT must be honest even when the list is truncated');
-  assert.equal(parsed.failures.length, 3, 'at most three are rendered, to stay inside the budget');
-});
-
-// AC22 / M-3d. `test:hooks` is chained with `&&` OUTSIDE turbo, so its failure carries no
-// `<pkg>:<task>:` prefix. Without a named branch, the safety net for this entire pipeline would be
-// the one failure the reporter could not identify.
-test('a test:hooks failure is named', () => {
-  const output = `vendor:check passed
-
- Tasks:    12 successful, 12 total
-
-> starter-workspace@1.0.0 test:hooks
-> node --test .claude/hooks/__tests__/
-
-not ok 3 - a lock older than staleMs is stolen
-  ---
-  error: 'a healthy holder is NOT stolen from'
-  ...
-# fail 1
-`;
-
-  const parsed = parseQaFailures(output);
-  assert.equal(parsed.kind, 'test:hooks');
-  assert.equal(parsed.failures[0].name, 'test:hooks failed');
-  assert.equal(parsed.failures[0].reproduce, 'pnpm run test:hooks');
-  assert.match(parsed.failures[0].tail, /not ok 3/, 'with its own tail, not an opaque "qa failed"');
-});
-
-test('a failure with no parseable check is reported as "did not run", not as findings', () => {
-  // `vendor:check` failing short-circuits the whole chain before any check reports. "Failed to run
-  // at all" and "a check reported problems" are different outcomes and must not be collapsed.
-  const parsed = parseQaFailures('ERROR: Missing vendor/.sync-manifest.json. Re-run the vendor sync.\n');
-  assert.equal(parsed.kind, 'unparsed');
-  assert.equal(parsed.failures.length, 0);
-  assert.match(parsed.tail, /sync-manifest/);
-});
-
-// -------------------------------------------------------------------------------- the qa lock
-
-// AC20. Refusing is correct for TaskCompleted — it must not pass unverified — and it is cheap. The
-// alternative is a second concurrent full-monorepo turbo run contending on the turbo cache, the
-// eslint cache and every package's tsbuildinfo.
-test('a second concurrent quality-gate is refused', () => {
-  const held = acquireLock(REPO_ROOT, { name: 'claude-qa.lock', waitMs: 0, staleMs: 900_000 });
-  assert.ok(held, 'precondition: the test holds the qa lock');
-
-  try {
-    const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: { CLAUDE_PROJECT_DIR: REPO_ROOT } });
-    assert.equal(res.status, 2, 'a busy gate must block, never pass unverified');
-    assert.match(res.stderr, /another quality gate is already running/i);
-    // The refusal must tell the agent how to recover. Two subagents finishing in lockstep can
-    // ping-pong refusals; that is not a deadlock, and the way out is the agent's own retry.
-    assert.match(res.stderr, /re-run when it completes/i);
-  } finally {
-    releaseLock(held);
-  }
-});
-
-// AC20, second half / M-1. THE REGRESSION THIS CATCHES: `findPackageDir` returns the repo root for
-// root-level files, so editing `.claude/hooks/*.mjs` makes the edit pipeline hold
-// `<repoRoot>/node_modules/.cache/claude-hook.lock`. If the gate shared that filename, a routine
-// 1-10s prettier stage would refuse a task completion with "another quality gate is already
-// running" — false, and pointing at the wrong subsystem. The earlier version of this test could not
-// have detected it: it planted an already-held lock of the only name that existed.
-// A scratch project whose `qa` fails instantly, so the gate's failure path can be exercised without
-// running the real monorepo qa. It MUST carry its own package.json: `pnpm run qa` walks upward, so
-// a bare directory would find the repo root's script and launch the very full-monorepo run these
-// tests exist to avoid.
+// MUST carry its own package.json: `pnpm run qa` walks upward, so a bare directory would find the
+// repo root's script and launch the full-monorepo run these tests exist to avoid.
 function makeScratchProject(qaScript) {
   const dir = join(REPO_ROOT, '.omc', `.tmp-qa-${randomUUID()}`);
   mkdirSync(dir, { recursive: true });
@@ -151,12 +48,153 @@ function makeScratchProject(qaScript) {
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-// AC20, second half / M-1. THE REGRESSION THIS CATCHES: `findPackageDir` returns the repo root for
-// root-level files, so editing `.claude/hooks/*.mjs` makes the edit pipeline hold
-// `<repoRoot>/node_modules/.cache/claude-hook.lock`. If the gate shared that filename, a routine
-// 1-10s prettier stage would refuse a task completion with "another quality gate is already
-// running" — false, and pointing at the wrong subsystem. The earlier version of this test could not
-// have detected it: it planted an already-held lock of the only name that existed.
+// The whole point of capturing qa's output instead of letting it stream.
+test("a failing qa reports the check's own output, not a generic sentence", () => {
+  const project = makeScratchProject('echo "src/x.ts(4,7): error TS2322: nope" && exit 1');
+  try {
+    const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir }) });
+    assert.equal(res.status, 2, 'a failing qa must block completion');
+    assert.match(res.stderr, /TS2322/, "the failing check's own output must reach the agent");
+    assert.match(res.stderr, /pnpm run qa/, 'and it must say how to re-run the whole thing');
+  } finally {
+    project.cleanup();
+  }
+});
+
+test('a qa failure with no output still produces a usable message', () => {
+  const project = makeScratchProject('exit 1');
+  try {
+    const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir }) });
+    assert.equal(res.status, 2);
+    assert.match(res.stderr, /QA failed/);
+  } finally {
+    project.cleanup();
+  }
+});
+
+// -------------------------------------------------------------------------------- the qa lock
+
+// SKIPS rather than refuses: a peer's lock used to fail a task that was itself fine, and parallel
+// subagents ping-ponged exit 2 at each other through the model. The scratch qa FAILS on purpose —
+// a passing one produces no output, so "did not run qa" would hold guard or no guard.
+// SCRATCH PROJECT, NEVER THE REPO ROOT — a live gate holds that lock while running `qa`, so a
+// root-level acquire here failed its own precondition. That was C1.
+test('a gate that cannot get the lock skips its run instead of failing the task', () => {
+  const project = makeScratchProject('echo CONTENDED_QA_MUST_NOT_RUN && exit 1');
+  const held = acquireLock(project.dir, { name: 'claude-qa.lock', waitMs: 0, staleMs: 900_000 });
+  assert.ok(held, 'precondition: the test holds the qa lock');
+
+  try {
+    const res = runHook(
+      'quality-gate.mjs',
+      { tool_name: 'Stop' },
+      { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir, CLAUDE_HOOK_LOCK_WAIT_MS: '0' }) },
+    );
+    assert.equal(res.status, 0, 'a busy gate must not fail a task that is itself fine');
+    assert.doesNotMatch(
+      `${res.stdout}${res.stderr}`,
+      /CONTENDED_QA_MUST_NOT_RUN/,
+      'and must not have run qa — the marker proves the script never ran',
+    );
+    assert.match(res.stderr, /skipping this run/i, 'the skip must be visible, not silent');
+  } finally {
+    releaseLock(held);
+    project.cleanup();
+  }
+});
+
+// The QUEUE half of the contract. Without it a regression to `waitMs: 0` still passes: skipping
+// immediately and skipping after a wait are indistinguishable from the timeout test alone.
+test('a gate waits for a busy lock and then runs, rather than skipping immediately', async () => {
+  const project = makeScratchProject('echo QUEUED_QA_RAN && exit 1');
+  const held = acquireLock(project.dir, { name: 'claude-qa.lock', waitMs: 0, staleMs: 900_000 });
+  assert.ok(held, 'precondition: the test holds the qa lock');
+
+  const pending = runHookAsync(
+    'quality-gate.mjs',
+    { tool_name: 'Stop' },
+    { CLAUDE_HOOK_QA_NESTED: '', CLAUDE_PROJECT_DIR: project.dir, CLAUDE_HOOK_LOCK_WAIT_MS: '10000' },
+  );
+
+  try {
+    // Long enough that the gate is provably inside its acquire loop, short enough to stay well
+    // under the wait budget.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    releaseLock(held);
+
+    const res = await pending;
+    assert.match(res.stderr, /QUEUED_QA_RAN/, 'the gate must have waited, then run qa');
+    assert.equal(res.status, 2, 'and reported the scratch failure it found');
+  } finally {
+    project.cleanup();
+  }
+});
+
+// lock.mjs lets CLAUDE_HOOK_LOCK_WAIT_MS override the literal, and both behaviour tests above set
+// it — so neither can see the SOURCE default, and a regression to `waitMs: 0` passes both. This
+// reads the literal instead. Window bounded by length, matching the call-site scan in
+// hook-lock.test.mjs.
+test('the gate queues on a busy lock: its waitMs literal is positive, never 0', () => {
+  const source = readFileSync(join(HOOKS_DIR, 'quality-gate.mjs'), 'utf8');
+  const call = /\bacquireLock\(/.exec(source);
+  assert.ok(call, 'precondition: the gate acquires a lock');
+
+  const waitMs = /waitMs:\s*([\d_]+)/.exec(source.slice(call.index, call.index + 400));
+  assert.ok(waitMs, 'the call site must declare a literal waitMs');
+  assert.ok(
+    Number(waitMs[1].replaceAll('_', '')) > 0,
+    `waitMs must queue rather than refuse — found ${waitMs[1]}`,
+  );
+});
+
+// The CLASS behind that instance. Scans sources rather than hardcoding a list, so a new test file
+// cannot reintroduce it unnoticed.
+test('no test contends on the gate lock at the repo root', () => {
+  const dir = import.meta.dirname;
+
+  for (const file of readdirSync(dir).filter((name) => name.endsWith('.test.mjs'))) {
+    const source = readFileSync(join(dir, file), 'utf8');
+    const offenders = [...source.matchAll(/acquireLock\(\s*REPO_ROOT[\s\S]*?\)/g)].filter((match) =>
+      match[0].includes('claude-qa.lock'),
+    );
+
+    assert.equal(
+      offenders.length,
+      0,
+      `${file} acquires the gate's lock at the repo root — use makeScratchProject() instead`,
+    );
+  }
+});
+
+// The depth guard, which would stop `gate -> qa -> .claude suite -> gate` if qa ever ran that
+// suite. It does not today, so this covers the guard's early return only — the flag is injected
+// directly rather than reached through a real descent. The scratch qa FAILS on purpose: a passing
+// one produces no gate output, so these assertions would hold guard or no guard.
+test('a nested gate returns without running qa at all', () => {
+  const project = makeScratchProject('echo NESTED_QA_MUST_NOT_RUN && exit 1');
+  try {
+    const res = runHook(
+      'quality-gate.mjs',
+      { tool_name: 'Stop' },
+      { env: { CLAUDE_PROJECT_DIR: project.dir, CLAUDE_HOOK_QA_NESTED: '1' } },
+    );
+    assert.equal(res.status, 0, 'a nested gate must not block the outer completion');
+    assert.doesNotMatch(
+      `${res.stdout}${res.stderr}`,
+      /NESTED_QA_MUST_NOT_RUN/,
+      'and must not spawn qa — the marker proves the script never ran',
+    );
+    assert.ok(
+      !existsSync(join(project.dir, 'node_modules', '.cache', 'claude-qa.lock')),
+      'a nested gate must not leave a lock behind either',
+    );
+  } finally {
+    project.cleanup();
+  }
+});
+
+// THE REGRESSION THIS CATCHES: editing `.claude/hooks/*.mjs` makes the edit pipeline hold a
+// repo-root lock, so a shared filename would let a prettier stage refuse a task completion.
 test('a quality-gate is NOT refused while the pipeline holds the repo-root lock', () => {
   const project = makeScratchProject('exit 1');
   // The lock the EDIT PIPELINE would hold, in the same directory, under its own name.
@@ -164,9 +202,8 @@ test('a quality-gate is NOT refused while the pipeline holds the repo-root lock'
   assert.ok(pipelineLock, 'precondition: the pipeline holds the lock in this directory');
 
   try {
-    const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: { CLAUDE_PROJECT_DIR: project.dir } });
-    // It is free to fail on qa itself — that is what `exit 1` is for. What it must NOT do is refuse
-    // on the lock, which would mean the two locks are the same file.
+    const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir }) });
+    // Free to fail on qa itself; what it must NOT do is refuse on the lock.
     assert.doesNotMatch(
       res.stderr,
       /another quality gate is already running/i,
@@ -179,17 +216,16 @@ test('a quality-gate is NOT refused while the pipeline holds the repo-root lock'
 });
 
 test('quality-gate fails closed when CLAUDE_PROJECT_DIR is unset (exit 2)', () => {
-  const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: { CLAUDE_PROJECT_DIR: '' } });
+  const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: '' }) });
   assert.equal(res.status, 2);
   assert.match(res.stderr, /failing closed/);
 });
 
-// The gate must not leave its lock behind for the next task completion to trip over — a leaked lock
-// would refuse every subsequent completion until staleMs (fifteen minutes) elapsed.
+// A leaked lock would refuse every subsequent completion until staleMs (fifteen minutes) elapsed.
 test('the qa lock is released even when qa fails', () => {
   const project = makeScratchProject('exit 1');
   try {
-    const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: { CLAUDE_PROJECT_DIR: project.dir } });
+    const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir }) });
     assert.equal(res.status, 2, 'a failing qa must block completion');
     assert.ok(
       !existsSync(join(project.dir, 'node_modules', '.cache', 'claude-qa.lock')),

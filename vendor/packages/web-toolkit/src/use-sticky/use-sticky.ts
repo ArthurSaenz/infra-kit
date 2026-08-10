@@ -11,7 +11,6 @@ interface UseStickyProps {
  *
  * @example
  *     const [ref, isSticky, isScrolledTop] = useSticky({ defaultSticky: false })
- *
  */
 export const useSticky = (props: UseStickyProps): [React.RefObject<HTMLDivElement | null>, boolean, boolean] => {
   const { defaultSticky, headerStickyHeightPx = 50 } = props

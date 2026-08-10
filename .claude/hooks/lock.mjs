@@ -1,25 +1,16 @@
-// Advisory file lock for hooks that must not run concurrently with themselves.
-// Node stdlib only, so a hook can never be broken by a dependency.
+// Advisory file lock for hooks that must not run concurrently with themselves. Node stdlib only.
 //
-// The resource being protected is per-package: the incremental tsbuildinfo under
-// `<pkgDir>/node_modules/.cache/`, and the source files that `prettier --write` / `eslint --fix`
-// rewrite WHOLE. Whole-file rewrites are not patches — two of them interleaving on one path can
-// revert or truncate the other, which loses the user's source. That, not untidiness, is why this
-// module exists at all. CLAUDE.md mandates subagent delegation, so several agents editing one tree
-// concurrently is the DESIGNED operating mode, not an exotic case.
+// Protects the per-package tsbuildinfo and the source files `prettier --write` / `eslint --fix`
+// rewrite WHOLE — two whole-file rewrites interleaving on one path lose the user's source.
 //
-// STALE-STEAL IS THE PRIMARY CORRECTNESS MECHANISM; `releaseLock` in a `finally` is only a latency
-// optimization. `finally` does not run on SIGKILL, and the harness killing a hook at its timeout is
-// a routine event, not a crash. The system therefore has to be correct when `releaseLock` is NEVER
-// called — every design choice below follows from that.
+// STALE-STEAL IS THE PRIMARY CORRECTNESS MECHANISM. `releaseLock` in a `finally` is only a latency
+// optimization, since `finally` does not run on the SIGKILL the harness sends at its timeout.
 
 import { randomUUID } from 'node:crypto';
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-// Dependency-free synchronous sleep. `Atomics.wait` on a SharedArrayBuffer blocks the thread
-// without burning CPU; there is no stdlib sync sleep and a spin loop would fight the very tool
-// processes we are waiting on for the same core.
+// There is no stdlib sync sleep, and a spin loop would fight the tool processes for the same core.
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -31,9 +22,7 @@ function envInt(name, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-// A record that cannot be read or cannot be understood is treated as ABSENT, not as fatal. A
-// half-written or truncated record means the writer died mid-acquire, which is exactly the state
-// the steal path exists to clear.
+// Unreadable => ABSENT, not fatal: the writer died mid-acquire, which is what steal exists to clear.
 function readRecord(path) {
   try {
     const record = JSON.parse(readFileSync(path, 'utf8'));
@@ -44,12 +33,31 @@ function readRecord(path) {
   }
 }
 
-// Stale iff the owner is provably gone OR it has held longer than the caller's budget allows.
-// `process.kill(pid, 0)` sends no signal; it only asks whether the pid is signalable. ESRCH means
-// no such process (steal). EPERM means the process exists but belongs to another user — alive, so
-// NOT stale. Treating EPERM as stale would steal from a healthy holder.
-function isStale(record, staleMs) {
-  if (!record || typeof record.pid !== 'number' || typeof record.startedAt !== 'number') return true;
+// `wx` creates the file EMPTY and writes the record a syscall later, so every healthy acquire is
+// briefly unreadable. mtime separates "died mid-acquire" (steal) from "still mid-acquire" (leave).
+const ACQUIRE_GRACE_MS = 1_000;
+
+// Wrong here means a lock nobody can acquire, so every branch fails toward NOT protecting.
+function writtenWithinGrace(lockPath) {
+  try {
+    // lstat, not stat: a symlink to any fresh file would pose as a holder, and never expire.
+    const stats = lstatSync(lockPath);
+    if (!stats.isFile()) return false; // a directory here is an fs fault — let it throw upstream
+
+    // Symmetric: `>= 0` would reject a just-created file, whose mtime can sit a fraction of a ms
+    // ahead of a truncated Date.now(); one-sided `< GRACE` lets a skewed clock hold forever.
+    return Math.abs(Date.now() - stats.mtimeMs) < ACQUIRE_GRACE_MS;
+  } catch {
+    return false; // gone: no holder left to protect
+  }
+}
+
+// `process.kill(pid, 0)` sends no signal, it only asks whether the pid is signalable. ESRCH means
+// gone (steal); EPERM means alive under another user, so NOT stale.
+function isStale(record, staleMs, lockPath) {
+  if (!record || typeof record.pid !== 'number' || typeof record.startedAt !== 'number') {
+    return !writtenWithinGrace(lockPath);
+  }
   if (Date.now() - record.startedAt > staleMs) return true;
 
   try {
@@ -61,36 +69,22 @@ function isStale(record, staleMs) {
   return false;
 }
 
-// Attempt to displace an apparently-stale holder. Returns true when the caller should RESTART the
-// acquire loop — which covers both "we cleared the path" and "we put an innocent record back and
-// must re-evaluate". Returns false when the holder is healthy and the caller should wait.
+// Displace an apparently-stale holder. True => restart the acquire loop; false => holder is healthy.
 //
-// Every one of the four rules below fixes a specific way an earlier design produced the two
-// concurrent writers it claimed to prevent.
-//
-// `onClaimed` is a TEST SEAM, and it exists because the branch below is otherwise untestable. The
-// mismatch case requires a healthy holder to acquire in the window between the staleness read and
-// the rename — genuine concurrency, at a two-syscall granularity. It cannot be reproduced by racing
-// real processes (an earlier attempt to do so produced a test that asserted nothing at all), and it
-// cannot be reproduced single-threaded, because a rename moves a directory entry and the claim
-// therefore reads back byte-identical to what was on the path. The callback fires after the rename
-// and before the read, which is exactly where the real interleaving lands. It defaults to undefined
-// and costs production nothing.
+// `onClaimed` is a TEST SEAM: the mismatch branch needs a healthy holder to acquire inside the
+// two-syscall window below, which cannot be raced reliably nor reproduced single-threaded.
 export function trySteal(lockPath, staleMs, { onClaimed } = {}) {
   const observedBefore = readRecord(lockPath);
-  if (!isStale(observedBefore, staleMs)) return false;
+  if (!isStale(observedBefore, staleMs, lockPath)) return false;
 
-  // (1) The claim path is named by the STEALER'S OWN fresh nonce, never the observed record's.
-  // With the observed nonce, two stealers that read the same stale record rename to the SAME
-  // target; POSIX rename-over-existing succeeds silently, and BOTH believe they won.
+  // Our OWN fresh nonce, never the observed one: with the observed nonce two stealers rename to the
+  // same target, and POSIX rename-over-existing succeeds silently — so both believe they won.
   const claim = `${lockPath}.steal.${randomUUID()}`;
 
   try {
     renameSync(lockPath, claim);
   } catch (err) {
-    // Another contender moved it first. Exactly one rename can succeed, so this one lost; restart
-    // and let the normal `wx` path decide the winner.
-    if (err.code === 'ENOENT') return true;
+    if (err.code === 'ENOENT') return true; // another contender moved it first; let `wx` decide
     throw err;
   }
 
@@ -100,14 +94,9 @@ export function trySteal(lockPath, staleMs, { onClaimed } = {}) {
     onClaimed?.(claim);
     const observedAfter = readRecord(claim);
 
-    // (2) RESTORE, never unlink. If a healthy holder acquired in the gap between our staleness
-    // read and our rename, the record we just moved off the path is THEIRS and they are mid-
-    // pipeline believing they hold it. Unlinking here is what opened a multi-second two-writer
-    // window in the earlier design: the innocent holder kept running while a fresh `wx` succeeded
-    // against the now-empty path.
-    //
-    // `?.nonce` on both sides is deliberate: a garbage record reads as null on both sides and
-    // compares equal, so an unparseable record is stolen rather than restored forever.
+    // RESTORE, never unlink. If a healthy holder acquired in the gap, the record we moved is THEIRS
+    // — unlinking leaves them running while a fresh `wx` succeeds against the empty path.
+    // `?.nonce` both sides: garbage equals garbage, so it is stolen rather than restored forever.
     if (observedAfter?.nonce !== observedBefore?.nonce) {
       renameSync(claim, lockPath);
       restored = true;
@@ -115,35 +104,24 @@ export function trySteal(lockPath, staleMs, { onClaimed } = {}) {
 
     return true;
   } finally {
-    // (4) Claim files are unlinked on EVERY path, success included, so `node_modules/.cache/` does
-    // not silently accumulate `.steal.*` debris. On the restore path the rename already moved it.
-    if (!restored) rmSync(claim, { force: true });
+    if (!restored) rmSync(claim, { force: true }); // no `.steal.*` debris on any path
   }
 }
 
-// The loop is bounded even though the only unbounded shape is a livelock (steal succeeds, a third
-// party wins the `wx`, repeat). "No unbounded wait" is a guardrail of this design, so the bound is
-// explicit rather than argued away.
-const MAX_ATTEMPTS = 100;
+// Bounds the one unbounded shape: steal succeeds, a third party wins the `wx`, repeat. Counts
+// STEALS, not attempts — as an attempt cap it capped the WAIT too: 60s asked, 5.4s given.
+const MAX_STEALS = 100;
+
+// Overridable so a test can pin the waitMs contract in ms rather than seconds.
+const POLL_MS = 50;
 
 /**
- * Acquire the lock at `<dir>/node_modules/.cache/<name>`.
+ * Acquire the lock at `<dir>/node_modules/.cache/<name>`; null if not taken within `waitMs`.
  *
- * `staleMs` is REQUIRED and has NO default, on purpose. Its correct value is a property of the
- * CALLER's harness timeout, not of this module: the invariant is
- *   staleMs > that call site's harness timeout > that call site's stage budget
- * so a healthy holder can never be declared stale, and the harness timeout is never the mechanism
- * doing the enforcing. A shared default is precisely how a value tuned for a 90s site got applied
- * to a 600s site, where a perfectly healthy run would be declared stale and a SECOND full-monorepo
- * turbo run launched on top of the first. A module-level default cannot be correct for two callers
- * with different budgets, so this module refuses to carry one.
- *
- * `name` is likewise explicit, because `findPackageDir` returns the repo root for root-level files
- * — so editing `.claude/hooks/*.mjs` makes the edit pipeline hold a lock at the REPO ROOT. If the
- * quality gate shared that filename, a 1-10s prettier stage would make task completion refuse with
- * "another quality gate is already running", which is both false and misleading.
- *
- * @returns a handle, or null if the lock could not be taken within `waitMs`.
+ * `staleMs` is REQUIRED with no default — the invariant is per call site,
+ * `staleMs > that site's harness timeout > its stage budget`, and a 90s value at a 600s site would
+ * declare a healthy run stale. `name` is explicit because the edit pipeline already holds a lock at
+ * the repo root whenever a root-level file is edited.
  */
 export function acquireLock(dir, { name = 'claude-hook.lock', waitMs = 2000, staleMs } = {}) {
   if (typeof staleMs !== 'number' || !Number.isFinite(staleMs)) {
@@ -154,44 +132,41 @@ export function acquireLock(dir, { name = 'claude-hook.lock', waitMs = 2000, sta
   const effectiveStaleMs = envInt('CLAUDE_HOOK_LOCK_STALE_MS', staleMs);
   const lockPath = join(dir, 'node_modules', '.cache', name);
 
-  // mkdir BEFORE the first openSync. `node_modules/.cache` does not exist at the repo root, and on
-  // a fresh clone `node_modules/` itself may be absent — so `openSync(path, 'wx')` would throw
-  // ENOENT, not EEXIST. Folding ENOENT into the EEXIST retry below would yield a permanent null:
-  // the repo-root lock could never be acquired and the quality gate would silently lose its own
-  // guard while appearing to work. ENOENT on acquire is a BUG, never a retry condition, and is
-  // deliberately left to propagate.
+  // Before the first open, because `.cache` does not exist at the repo root and `wx` would throw
+  // ENOENT rather than EEXIST. ENOENT on acquire is a BUG, never a retry condition.
   mkdirSync(dirname(lockPath), { recursive: true });
 
   const deadline = Date.now() + effectiveWaitMs;
+  // Floored at 1ms: a 0 would spin, fighting the tool processes for the same core.
+  const pollMs = Math.max(1, envInt('CLAUDE_HOOK_LOCK_POLL_MS', POLL_MS));
+  let steals = 0;
 
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+  // Deadline-bound, not attempt-bound: an attempt count is a second, invisible ceiling on the wait.
+  for (;;) {
     const nonce = randomUUID();
     let fd;
 
     try {
-      // 'wx' is create-or-fail, atomic against a concurrent creator at the syscall level. This,
-      // not the record contents, is what makes exactly one process the winner.
+      // Create-or-fail, atomic at the syscall level. This, not the record contents, picks the winner.
       fd = openSync(lockPath, 'wx');
     } catch (err) {
       if (err.code !== 'EEXIST') throw err;
 
-      // (3) After a successful steal the winner does NOT write into the claim path and does NOT
-      // rename its way in. It comes back through this same `wx`, and an EEXIST here simply
-      // restarts the loop — because a third process may have acquired cleanly in the gap, and
-      // rename-then-write would clobber it silently.
-      if (trySteal(lockPath, effectiveStaleMs)) continue;
-      // NOTE: the deadline is only consulted when the steal path declines, so `waitMs: 0` is "wait
-      // for nobody", not "attempt exactly once" — a caller that keeps finding stealable records can
-      // loop past its deadline without ever sleeping. MAX_ATTEMPTS, not this deadline, is what
-      // bounds that path, so the guarantee is termination and latency rather than a hang.
+      // A steal winner comes back through this same `wx` rather than renaming its way in: a third
+      // process may have acquired cleanly in the gap, and rename-then-write would clobber it.
+      if (trySteal(lockPath, effectiveStaleMs)) {
+        steals += 1;
+        if (steals >= MAX_STEALS) return null; // stealable records keep appearing; give up
+        continue;
+      }
+      // Only consulted when steal declines, so `waitMs: 0` means "wait for nobody", not "try once".
       if (Date.now() >= deadline) return null;
-      sleepSync(50);
+      sleepSync(pollMs);
       continue;
     }
 
     try {
-      // The NONCE is the identity, not the pid. Pids recycle, and a recycled pid would make a dead
-      // holder's record look alive to `process.kill(pid, 0)` forever.
+      // The NONCE is the identity, not the pid: a recycled pid would make a dead holder look alive.
       writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: Date.now(), nonce }));
     } finally {
       closeSync(fd);
@@ -199,30 +174,19 @@ export function acquireLock(dir, { name = 'claude-hook.lock', waitMs = 2000, sta
 
     return { lockPath, nonce };
   }
-
-  return null;
 }
 
-// True iff the record on disk is still OURS.
-//
-// This MUST be called immediately after a successful acquire, BEFORE the first stage — not merely
-// "before each write stage". There is a two-syscall window in which a stealer moves a live record
-// off the path, a third process wins `wx` against the momentarily-empty path, and the stealer then
-// restores the original record over it. After that restore the third process's record is GONE from
-// disk, so this check is what makes it abort before writing anything. Deferring the first check to
-// the first write stage leaves that process free to act on a lock it no longer owns.
-//
-// Its limits, stated exactly: it CLOSES that two-syscall restore window completely, and it only
-// NARROWS the general window, because it is an instantaneous read taken immediately before a
-// multi-second `spawnSync` and the dangerous interval is the spawn itself. It is a mitigation, not
-// a proof.
+// Call immediately after acquire, BEFORE the first stage: a stealer can move a live record off the
+// path, a third process win `wx` against the empty path, and the stealer restore the original over
+// it — leaving that third process holding a lock whose record is gone. Closes that window; only
+// narrows the general one, being an instant read before a multi-second spawn.
 export function holdsLock(handle) {
   if (!handle) return false;
   return readRecord(handle.lockPath)?.nonce === handle.nonce;
 }
 
-// Unlink only if the record is still ours, so a process that already lost the lock to a steal
-// cannot delete the current holder's record on its way out.
+// Only if the record is still ours, so a process that already lost the lock cannot delete the
+// current holder's record on its way out.
 export function releaseLock(handle) {
   if (!holdsLock(handle)) return;
   rmSync(handle.lockPath, { force: true });

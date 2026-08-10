@@ -140,11 +140,6 @@ export const buildClosureMap = async (
   return { dependentsByPackageDir, packageNameByDir }
 }
 
-/** Debounce key for a package-dist change — distinct per package dir so unrelated packages never collapse into one bucket. */
-export const packageDebounceKey = (packageDir: string): string => {
-  return `__pkg__:${packageDir}`
-}
-
 /**
  * Decide which launched apps a `packages/<pkg>/dist` change should restart. `null` means
  * "fail-safe: restart all" — the closure map is missing (a `--dry` failure) or the change carried

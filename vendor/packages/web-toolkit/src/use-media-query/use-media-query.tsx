@@ -7,7 +7,6 @@ import { isSSR } from '../ssr'
  *
  * @example
  *     const isMobile = useMediaQuery('(max-width: 768px)')
- *
  */
 export const useMediaQuery = (query: string) => {
   const [matches, setMatches] = useState(isSSR ? false : window.matchMedia(query).matches)

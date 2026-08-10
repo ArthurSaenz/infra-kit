@@ -20,7 +20,10 @@ const MANIFEST_SKIP_DIRS = new Set([
   '.nitro',
   '.tanstack',
 ])
-const MANIFEST_SKIP_FILES = new Set(['.sync-manifest.json', '.eslintcache', 'log.txt'])
+// `routeTree.gen.ts` is rewritten by the TanStack Router generator on every dev run and build, in an
+// order that is not stable across machines. Tracking its checksum reports drift on a file nobody
+// edited, so it is mirrored by the sync but left out of the manifest.
+const MANIFEST_SKIP_FILES = new Set(['.sync-manifest.json', '.eslintcache', 'log.txt', 'routeTree.gen.ts'])
 const MANIFEST_SKIP_SUFFIXES = ['.tsbuildinfo']
 
 const vendorRoot = join(process.cwd(), VENDOR_DIR)
@@ -55,8 +58,22 @@ const walkFiles = (root, base = root, acc = []) => {
 
 const sha256 = (filePath) => createHash('sha256').update(readFileSync(filePath)).digest('hex')
 
+// The same skip rules, applied to a path recorded in the manifest rather than a live entry. A
+// manifest issued before a skip rule existed still lists those paths; without this filter they would
+// be reported as "removed" the moment the walk stopped emitting them.
+const isSkippedPath = (rel) => {
+  const segments = rel.split('/')
+  const name = segments.pop() ?? ''
+
+  return (
+    segments.some((segment) => MANIFEST_SKIP_DIRS.has(segment)) ||
+    MANIFEST_SKIP_FILES.has(name) ||
+    MANIFEST_SKIP_SUFFIXES.some((suffix) => name.endsWith(suffix))
+  )
+}
+
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-const expected = manifest.files ?? {}
+const expected = Object.fromEntries(Object.entries(manifest.files ?? {}).filter(([rel]) => !isSkippedPath(rel)))
 const actualFiles = walkFiles(vendorRoot).sort()
 
 const modified = []

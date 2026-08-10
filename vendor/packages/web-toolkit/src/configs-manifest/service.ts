@@ -34,7 +34,6 @@ interface CreateConfigAtomProps {
  * @example
  *     const { $config, refetchConfigData, InitDebugManifestCache } =
  *         create<AppConfig>({ manifestFileUrl: '/config.json', httpClient, isEnabledDebug: false })
- *
  */
 export const create = <T>(args: CreateConfigAtomProps) => {
   const { manifestFileUrl, httpClient, isEnabledDebug, updateLastConfigRefetch } = args
@@ -103,7 +102,6 @@ export const create = <T>(args: CreateConfigAtomProps) => {
  *
  * @example
  *     const data = await fetchRootManifest<AppConfig>({ url: '/manifest.json', httpClient, isEnabledDebug: false })
- *
  */
 const fetchRootManifest = async <T>(args: {
   url: string
@@ -164,7 +162,6 @@ const fetchRootManifest = async <T>(args: {
  * @example
  *     const fetchFile = getManifestConfigFile({ httpClient, isEnabledDebug: false })
  *     const data = await fetchFile<FeatureFlags>('features', '/features.json')
- *
  */
 const getManifestConfigFile = ({ httpClient, isEnabledDebug }: { httpClient: HttpClient; isEnabledDebug: boolean }) => {
   return async <T>(key: string, url?: string, isAllowDebug = false): Promise<T> => {
@@ -238,7 +235,6 @@ const getManifestConfigFile = ({ httpClient, isEnabledDebug }: { httpClient: Htt
  *
  * @example
  *     attachDebugManifestCache({ refetchConfigData: () => store.set(refetchAtom, null) })
- *
  */
 const attachDebugManifestCache = (args: { refetchConfigData: () => void }) => {
   const { refetchConfigData } = args

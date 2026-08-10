@@ -80,6 +80,72 @@ const isBrewKegOf = (p: string, name: string): boolean => {
   return cellar !== -1 && segments[cellar + 1] === name
 }
 
+/**
+ * The npm global prefix that owns `selfRealPath`, derived from the path ITSELF, or null when the layout is
+ * not an npm global one.
+ *
+ * This is the one signal that cannot point at the wrong tree. Everything else in this module answers
+ * "is this file somewhere inside tool X's directory?", and containment is not ownership:
+ *   - `npm root -g` answers for whichever `npm` is first on PATH, which is routinely a DIFFERENT node than
+ *     the one that installed us (a pnpm/nvm/fnm-managed node, or a node that has since been removed). It
+ *     then reports a root that does not contain us, every matcher misses, and detection degrades to
+ *     `unknown` — a notice printed forever, on the single most common install method. That is the bug this
+ *     exists to close.
+ *   - `PNPM_HOME` containment is satisfied by `<PNPM_HOME>/nodejs/<v>/lib/node_modules/<pkg>` (a plain
+ *     `npm i -g` under a pnpm-managed node), yet `pnpm add -g` installs to `<PNPM_HOME>/global/<v>/...` —
+ *     a different directory. That one is worse than a missed update: the install "succeeds" while the
+ *     binary on PATH stays old, silently, with no notice to show for it.
+ *
+ * `<prefix>/lib/node_modules/<PACKAGE_NAME>` is npm's global layout and no other manager's, so requiring
+ * BOTH the `lib` parent and our package as the immediate child is what makes it proof rather than a hint.
+ * The `lib` requirement is also what keeps a project-local `<repo>/node_modules/<pkg>` out (it has no
+ * `lib`), and nesting cannot spoof it: `.../node_modules/foo/node_modules/<pkg>` fails the `lib` test.
+ *
+ * Windows global npm has no `lib` segment (`%APPDATA%\npm\node_modules`), so this returns null there and
+ * detection falls through to `npm root -g` — which is correct on Windows, where there is normally one npm.
+ */
+const npmPrefixFromSelfPath = (selfRealPath: string): string | null => {
+  const segments = path.resolve(selfRealPath).split(path.sep)
+  const nodeModules = segments.lastIndexOf('node_modules')
+
+  if (nodeModules < 2) return null
+  if (segments[nodeModules - 1] !== 'lib') return null
+  if (segments[nodeModules + 1] !== PACKAGE_NAME) return null
+
+  // Drop `lib/node_modules/...`; the empty result of a root-level prefix (`/lib/node_modules/...`) is `/`.
+  return segments.slice(0, nodeModules - 1).join(path.sep) || path.sep
+}
+
+/**
+ * `--prefix` is passed EXPLICITLY rather than trusting the ambient one: the whole point of deriving it is
+ * that the `npm` we are about to run may default to a different prefix than the one we are installed in.
+ * A command-line flag outranks both `npm_config_prefix` and any `.npmrc`, so this targets the tree we
+ * actually run from. With `-g`, npm writes `<prefix>/lib/node_modules` and links bins into `<prefix>/bin`.
+ */
+const npmPrefixInstallCommand = (prefix: string): string[] => {
+  return ['npm', 'install', '-g', '--prefix', prefix, LATEST]
+}
+
+/**
+ * Render argv as a line the user can paste into a shell.
+ *
+ * A plain `join(' ')` was fine while every token came from a static table; `--prefix <path>` puts a
+ * filesystem path in argv, and `/Users/Ada Lovelace/.nvm/...` pasted unquoted is two arguments and a
+ * failed install. Single quotes are sound here without escaping because the callers' validation rejects a
+ * token containing a quote — see `SAFE_COMMAND_TOKEN` in src/lib/update-check/auto-update.ts.
+ *
+ * @example
+ * formatUpdateCommand(['npm', 'install', '-g', '--prefix', '/opt/x y', 'infra-kit@latest'])
+ * // => "npm install -g --prefix '/opt/x y' infra-kit@latest"
+ */
+export const formatUpdateCommand = (command: string[]): string => {
+  return command
+    .map((token) => {
+      return token.includes(' ') ? `'${token}'` : token
+    })
+    .join(' ')
+}
+
 /** `env[key]` names a directory that contains `selfRealPath`. Absent/empty env var → no match. */
 const underEnvDir = (env: NodeJS.ProcessEnv, key: string, selfRealPath: string, realpath: RealpathFn): boolean => {
   const dir = env[key]
@@ -93,10 +159,12 @@ interface Matcher extends Omit<InstallManagerInfo, 'manager'> {
 }
 
 /**
- * Ordered, first-hit-wins. Order matters: volta and homebrew wrap an npm-shaped layout, so they must be
- * consulted before the generic npm prefix matcher would claim them.
+ * Consulted FIRST, before {@link npmPrefixFromSelfPath}. Both of these legitimately wrap an npm-shaped
+ * `lib/node_modules` tree — volta at `~/.volta/tools/image/node/<v>/lib/node_modules`, brew at
+ * `Cellar/<pkg>/<v>/libexec/lib/node_modules` — so deriving an npm prefix from the path would hijack
+ * installs that a wrapper owns and must keep owning.
  */
-const MATCHERS: Matcher[] = [
+const WRAPPER_MATCHERS: Matcher[] = [
   {
     manager: 'volta',
     // volta owns the shim; `volta install` is the correct tool, not a workaround — so we may run it.
@@ -130,6 +198,15 @@ const MATCHERS: Matcher[] = [
     updateCommand: ['brew', 'upgrade', PACKAGE_NAME],
     canSelfSpawn: false,
   },
+]
+
+/**
+ * Consulted LAST, after {@link npmPrefixFromSelfPath} has had its say. Each of these proves only that we
+ * live somewhere inside a tool's directory tree, which is weaker than knowing the layout npm itself
+ * created — see the `PNPM_HOME`/`nodejs` case in that helper's doc for a containment hit whose install
+ * command targets the wrong directory.
+ */
+const TREE_MATCHERS: Matcher[] = [
   {
     manager: 'pnpm',
     test: ({ selfRealPath, env, realpath }) => {
@@ -174,10 +251,16 @@ const NPM_UPDATE_COMMAND = ['npm', 'install', '-g', LATEST]
 /**
  * Identify the package manager that owns `selfRealPath`.
  *
- * `lazyNpmRoot` is the fallback probe and is invoked at most once, only after every env/path matcher has
- * missed — a global `npm root -g` subprocess is never paid for a pnpm or volta install. When nothing
- * matches we report `unknown` with an npm command that is a *suggestion only* (`canSelfSpawn: false`):
- * running a guessed global install is worse than printing one.
+ * Order, and why it is this one: wrappers that own an npm-shaped tree (volta, brew) first, then the npm
+ * prefix DERIVED from our own path, then the env/path containment matchers, then the `npm root -g` probe.
+ * The derived prefix sits above containment because it is the only signal that cannot name a directory we
+ * do not live in — see {@link npmPrefixFromSelfPath}.
+ *
+ * `lazyNpmRoot` is the last resort and is invoked at most once, only after every matcher has missed — a
+ * pnpm or volta install never pays for the subprocess, and neither does any npm global install in the
+ * standard layout, which the derived prefix now settles for free. When nothing matches we report `unknown`
+ * with an npm command that is a *suggestion only* (`canSelfSpawn: false`): running a guessed global
+ * install is worse than printing one.
  *
  * @example
  * detectInstallManager({ selfRealPath: '/Users/x/Library/pnpm/global/5/node_modules/infra-kit/dist/cli.js', env: {} })
@@ -185,11 +268,26 @@ const NPM_UPDATE_COMMAND = ['npm', 'install', '-g', LATEST]
  */
 export const detectInstallManager = (input: DetectInstallManagerInput): InstallManagerInfo => {
   const { selfRealPath, env, realpath, lazyNpmRoot } = input
-  const hit = MATCHERS.find(({ test }) => {
+  const toInfo = (hit: Matcher): InstallManagerInfo => {
+    return { manager: hit.manager, updateCommand: hit.updateCommand, canSelfSpawn: hit.canSelfSpawn }
+  }
+  const matches = ({ test }: Matcher): boolean => {
     return test({ selfRealPath, env, realpath })
-  })
+  }
 
-  if (hit) return { manager: hit.manager, updateCommand: hit.updateCommand, canSelfSpawn: hit.canSelfSpawn }
+  const wrapper = WRAPPER_MATCHERS.find(matches)
+
+  if (wrapper) return toInfo(wrapper)
+
+  const derivedPrefix = npmPrefixFromSelfPath(selfRealPath)
+
+  if (derivedPrefix !== null) {
+    return { manager: 'npm', updateCommand: npmPrefixInstallCommand(derivedPrefix), canSelfSpawn: true }
+  }
+
+  const tree = TREE_MATCHERS.find(matches)
+
+  if (tree) return toInfo(tree)
 
   const npmRoot = lazyNpmRoot?.()
 

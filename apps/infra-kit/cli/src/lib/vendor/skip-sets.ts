@@ -27,7 +27,20 @@ export const MANIFEST_SKIP_DIRS: ReadonlySet<string> = new Set([
   '.tanstack',
 ])
 
-export const MANIFEST_SKIP_FILES: ReadonlySet<string> = new Set(['.sync-manifest.json', '.eslintcache', 'log.txt'])
+/**
+ * `routeTree.gen.ts` is written by the TanStack Router generator on every dev
+ * run and build. Its route order is not stable across machines, so a consumer
+ * that merely opens the docs app rewrites the file into an equivalent-but-
+ * different form and trips the integrity check on a file nobody edited. It is
+ * still mirrored by the sync (a fresh consumer needs it for `tsc --noEmit`);
+ * only its checksum is untracked.
+ */
+export const MANIFEST_SKIP_FILES: ReadonlySet<string> = new Set([
+  '.sync-manifest.json',
+  '.eslintcache',
+  'log.txt',
+  'routeTree.gen.ts',
+])
 
 export const MANIFEST_SKIP_SUFFIXES: readonly string[] = ['.tsbuildinfo']
 
@@ -45,4 +58,25 @@ export const isSkippedFile = (name: string): boolean => {
   return MANIFEST_SKIP_SUFFIXES.some((suffix) => {
     return name.endsWith(suffix)
   })
+}
+
+/**
+ * Whether a POSIX-relative path inside the vendor tree is skipped — the same
+ * rules `walkVendorTree` applies, but expressed over a recorded path instead of
+ * a live directory entry.
+ *
+ * This is what lets a skip rule be ADDED without reissuing every manifest: a
+ * manifest written before the rule still lists the path, the walk no longer
+ * emits it, and without this filter the comparison would report a phantom
+ * "removed" for a file that is sitting right there.
+ */
+export const isSkippedPath = (relativePath: string): boolean => {
+  const segments = relativePath.split('/')
+  const name = segments.pop() ?? ''
+
+  const inSkippedDir = segments.some((segment) => {
+    return isSkippedDir(segment)
+  })
+
+  return inSkippedDir || isSkippedFile(name)
 }

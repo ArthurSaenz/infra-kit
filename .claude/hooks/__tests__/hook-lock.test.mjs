@@ -1,16 +1,21 @@
-// The lock is the highest-risk code in the pipeline, so it gets the densest tests — and the steal
-// path gets the most of them, because stale-steal is the PRIMARY correctness mechanism while
-// `releaseLock` in a `finally` is only a latency optimization. `finally` does not run on SIGKILL,
-// and the harness killing a hook at its timeout is routine, so the system has to be correct when
-// release is never called.
-//
-// Every case here is DETERMINISTIC. Staleness is PLANTED on disk rather than raced into existence,
-// so there is no sleeping-and-hoping: the interleaving under test is constructed, not waited for.
+// The steal path gets the most coverage, because stale-steal is the lock's PRIMARY correctness
+// mechanism. Every case is DETERMINISTIC: staleness is PLANTED on disk, never raced into existence.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -38,8 +43,7 @@ function plantRecord(dir, record, name = 'claude-hook.lock') {
 
 const readRecord = (path) => JSON.parse(readFileSync(path, 'utf8'));
 
-// Everything the lock leaves in `.cache`, so `.steal.*` debris is visible to assertions rather than
-// merely absent from the happy path.
+// So `.steal.*` debris is visible to assertions, not merely absent from the happy path.
 function lockArtifacts(dir) {
   const cacheDir = join(dir, 'node_modules', '.cache');
   if (!existsSync(cacheDir)) return [];
@@ -60,12 +64,46 @@ test('a second acquire at waitMs 0 returns null', () => {
   }
 });
 
+// The missing companion to the test above: `waitMs: 0` was pinned, every larger value was not, so
+// an attempt cap silently capped every wait (60s asked, 5.4s given, suite green, QA skipped).
+// Polling is dialled down so this costs ms — the old ceiling at 1ms polling would be ~100ms.
+test('acquireLock waits the full waitMs before giving up — no hidden attempt ceiling', () => {
+  const { dir, cleanup } = makeLockDir();
+  const previousPoll = process.env.CLAUDE_HOOK_LOCK_POLL_MS;
+  const previousWait = process.env.CLAUDE_HOOK_LOCK_WAIT_MS;
+
+  process.env.CLAUDE_HOOK_LOCK_POLL_MS = '1';
+  delete process.env.CLAUDE_HOOK_LOCK_WAIT_MS; // an inherited override would defeat the measurement
+
+  try {
+    // Live pid, fresh record, huge staleMs: the holder is never stealable, so the contender can
+    // only ever leave through the deadline.
+    const holder = acquireLock(dir, { waitMs: 0, staleMs: 900_000 });
+    assert.ok(holder, 'precondition: the holder must take the lock');
+
+    const startedAt = Date.now();
+    const contender = acquireLock(dir, { waitMs: 400, staleMs: 900_000 });
+    const waited = Date.now() - startedAt;
+
+    assert.equal(contender, null, 'a healthy holder must not be displaced');
+    assert.ok(
+      waited >= 400,
+      `asked for 400ms, gave up after ${waited}ms — something is capping the wait again`,
+    );
+
+    releaseLock(holder);
+  } finally {
+    if (previousPoll === undefined) delete process.env.CLAUDE_HOOK_LOCK_POLL_MS;
+    else process.env.CLAUDE_HOOK_LOCK_POLL_MS = previousPoll;
+    if (previousWait !== undefined) process.env.CLAUDE_HOOK_LOCK_WAIT_MS = previousWait;
+    cleanup();
+  }
+});
+
 test('staleMs is required — the module refuses to carry a default', () => {
   const { dir, cleanup } = makeLockDir();
   try {
-    // A shared default is exactly how a value tuned for a 90s call site got applied to a 600s one,
-    // where a healthy run would be declared stale and a second full-monorepo turbo run launched on
-    // top of the first. The module cannot hold a value that is only correct for one caller.
+    // A shared default lets a 90s value reach a 600s site, declaring a healthy run stale.
     assert.throws(() => acquireLock(dir, { waitMs: 0 }), /staleMs is required/);
   } finally {
     cleanup();
@@ -74,8 +112,8 @@ test('staleMs is required — the module refuses to carry a default', () => {
 
 // ------------------------------------------------------------------------------------------ staleness
 
-// AC10 — the two staleness conditions are asserted SEPARATELY on purpose. A combined test passes
-// with either check missing, which is precisely the bug it would be written to catch.
+// Asserted SEPARATELY: a combined test passes with either check missing — the bug it would exist
+// to catch.
 
 test('a lock whose owner pid is dead is stolen immediately', () => {
   const { dir, cleanup } = makeLockDir();
@@ -84,7 +122,7 @@ test('a lock whose owner pid is dead is stolen immediately', () => {
     const dead = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
     assert.equal(dead.status, 0);
 
-    // startedAt is NOW, so age cannot be what makes this stale — only the dead pid can.
+    // startedAt is NOW, so only the dead pid can make this stale.
     plantRecord(dir, { pid: 999_999, startedAt: Date.now(), nonce: randomUUID() });
 
     const handle = acquireLock(dir, { waitMs: 0, staleMs: 3_600_000 });
@@ -98,8 +136,7 @@ test('a lock whose owner pid is dead is stolen immediately', () => {
 test('a lock older than staleMs is stolen', () => {
   const { dir, cleanup } = makeLockDir();
   try {
-    // OUR OWN pid, which is certainly alive, so a liveness check cannot be what makes this stale —
-    // only the age can.
+    // Our OWN pid, certainly alive, so only the age can make this stale.
     plantRecord(dir, { pid: process.pid, startedAt: Date.now() - 10_000, nonce: randomUUID() });
 
     const handle = acquireLock(dir, { waitMs: 0, staleMs: 1_000 });
@@ -125,9 +162,15 @@ test('a healthy holder is NOT stolen from', () => {
 test('a truncated or garbage record is stolen, not fatal', () => {
   const { dir, cleanup } = makeLockDir();
   try {
-    // The state a process that died mid-acquire leaves behind. Throwing here would make the lock
-    // permanently unacquirable, which fails in the worst direction: every hook silently disabled.
-    plantRecord(dir, '{"pid":123,"star');
+    // What a process that died mid-acquire leaves. Throwing would make the lock permanently
+    // unacquirable — every hook silently disabled.
+    const path = plantRecord(dir, '{"pid":123,"star');
+
+    // AGED: unreadable only proves a DEAD writer once it is too old to be one still mid-acquire.
+    // See writtenWithinGrace in lock.mjs.
+    const longAgo = new Date(Date.now() - 60_000);
+    utimesSync(path, longAgo, longAgo);
+
     const handle = acquireLock(dir, { waitMs: 0, staleMs: 3_600_000 });
     assert.ok(handle, 'an unparseable record must be treated as absent');
     assert.ok(holdsLock(handle));
@@ -136,23 +179,95 @@ test('a truncated or garbage record is stolen, not fatal', () => {
   }
 });
 
+// The other half of the case above: `wx` leaves the file EMPTY for one syscall, so every healthy
+// acquire is briefly unreadable. That window used to be stolen from — mutual exclusion survived,
+// but the victim then skipped its work in silence.
+test('a holder caught mid-acquire, before its record is written, is NOT stolen from', () => {
+  const { dir, cleanup } = makeLockDir();
+  try {
+    mkdirSync(join(dir, 'node_modules', '.cache'), { recursive: true });
+
+    // Byte-for-byte the state acquireLock occupies between openSync(wx) and writeFileSync.
+    const lockPath = cachePath(dir);
+    const fd = openSync(lockPath, 'wx');
+
+    try {
+      assert.equal(trySteal(lockPath, 900_000), false, 'a live mid-acquire holder must survive');
+      assert.ok(existsSync(lockPath), 'and its lock file must still be at the lock path');
+    } finally {
+      closeSync(fd);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+// The grace can only make a lock HARDER to steal, so anything it gets wrong turns a transient skip
+// into a permanent one. These three pin the ways it must still let go.
+
+test('an unreadable record with a FUTURE mtime is still stolen — a clock ahead must not hold the lock', () => {
+  const { dir, cleanup } = makeLockDir();
+  try {
+    const path = plantRecord(dir, '{"pid":123,"star');
+    const future = new Date(Date.now() + 3_600_000);
+    utimesSync(path, future, future);
+
+    // A negative age also satisfies `< GRACE`, so a one-sided window protects this for the hour.
+    const handle = acquireLock(dir, { waitMs: 0, staleMs: 3_600_000 });
+    assert.ok(handle, 'a clock an hour ahead must not make the lock un-acquirable');
+    releaseLock(handle);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a symlink at the lock path is stolen, not mistaken for a holder mid-acquire', () => {
+  const { dir, cleanup } = makeLockDir();
+  try {
+    const cacheDir = join(dir, 'node_modules', '.cache');
+    mkdirSync(cacheDir, { recursive: true });
+    const target = join(cacheDir, 'target');
+    writeFileSync(target, 'fresh');
+    symlinkSync(target, cachePath(dir));
+
+    // `stat` follows the link to a fresh file whose mtime can be refreshed forever, so it never
+    // self-heals. `lstat` sees the link, fails isFile(), and lets it be stolen on first contact.
+    const handle = acquireLock(dir, { waitMs: 0, staleMs: 3_600_000 });
+    assert.ok(handle, 'a symlink must not be able to pose as a live mid-acquire holder');
+    releaseLock(handle);
+  } finally {
+    cleanup();
+  }
+});
+
+test('the grace EXPIRES: a fresh unreadable record becomes acquirable, not never', () => {
+  const { dir, cleanup } = makeLockDir();
+  try {
+    plantRecord(dir, ''); // empty — exactly what `wx` leaves before the record is written
+
+    const startedAt = Date.now();
+    const handle = acquireLock(dir, { waitMs: 5_000, staleMs: 3_600_000 });
+    const waited = Date.now() - startedAt;
+
+    assert.ok(handle, 'the grace must expire — otherwise it is a permanent lock, not a window');
+    assert.ok(waited >= 500, `expected a real wait while the grace held, got ${waited}ms`);
+    releaseLock(handle);
+  } finally {
+    cleanup();
+  }
+});
+
 // ------------------------------------------------------------------------------------- the steal path
 
-// AC6. Two contenders released against ONE pre-planted stale lock. Deterministic because the
-// staleness already exists on disk when both start — nothing is raced into being.
-//
-// The contenders MUST be launched asynchronously. An earlier version of this test used `spawnSync`
-// in a loop, which runs them one after the other — so the first won, exited, and the second
-// correctly stole from a now-dead pid. Two winners, no bug: the test had simply never created the
-// concurrency it was named for. Overlapping lifetimes are the whole point.
+// MUST be launched asynchronously: `spawnSync` in a loop runs them in sequence, so the first wins,
+// exits, and the second legitimately steals from a dead pid — two winners, and no concurrency.
 test('exactly one of two concurrent stealers acquires a stale lock', async () => {
   const { dir, cleanup } = makeLockDir();
   try {
     plantRecord(dir, { pid: 999_999, startedAt: Date.now() - 60_000, nonce: randomUUID() });
 
-    // Each child reports only whether it won, then STAYS ALIVE briefly so its pid remains live
-    // while its rival is deciding — otherwise the rival's liveness check sees a dead owner and
-    // steals legitimately, which is a different scenario from the one under test.
+    // Each child STAYS ALIVE briefly, so its rival's liveness check does not see a dead owner and
+    // steal legitimately — a different scenario from the one under test.
     const script = `
       import { acquireLock, holdsLock } from ${JSON.stringify(join(HOOKS_DIR, 'lock.mjs'))};
       const handle = acquireLock(${JSON.stringify(dir)}, { waitMs: 0, staleMs: 1000 });
@@ -181,30 +296,18 @@ test('exactly one of two concurrent stealers acquires a stale lock', async () =>
   }
 });
 
-// AC7 / M2a — the single most important case in this file. The earlier design UNLINKED on nonce
-// mismatch, which removed an innocent holder's record from disk while that holder was mid-pipeline
-// and still believed it held the lock. A fresh `wx` then succeeded against the empty path and two
-// processes ran `prettier --write` on the same file — the two concurrent writers the lock exists to
-// prevent, produced BY the lock.
+// UNLINKING on nonce mismatch would remove an innocent holder's record mid-pipeline, letting a
+// fresh `wx` succeed against the empty path — two writers, produced BY the lock.
 //
-// A NOTE ON WHY THIS USES A SEAM. Two earlier attempts failed to test anything. The first used
-// `spawnSync` in a loop, which blocks until the child has fully EXITED — so the "mid-flight" swap
-// ran with no other process alive and the assertion merely re-checked that `writeFileSync` works;
-// it passed against the retired `unlink` implementation and against a `trySteal` that did nothing.
-// The second polled for the record going absent, which is not an invariant of the CORRECT
-// implementation either: restore-on-mismatch legitimately leaves the path empty for the two
-// syscalls between the rename and the restore, so that test would have failed at random.
-//
-// The seam removes the guessing. `onClaimed` fires exactly where a healthy holder's acquire lands
-// in the real interleaving, so the mismatch branch is entered deterministically, every run.
+// It needs the seam: `spawnSync` blocks until the child EXITS, and polling for the record going
+// absent is not an invariant either, since restore legitimately empties the path for two syscalls.
 test('a steal that finds a fresh record restores it instead of unlinking', () => {
   const { dir, cleanup } = makeLockDir();
   try {
     const staleNonce = randomUUID();
     const lockPath = plantRecord(dir, { pid: 999_999, startedAt: Date.now() - 60_000, nonce: staleNonce });
 
-    // The innocent holder: healthy, live pid, and — crucially — NOT the record the stealer judged
-    // stale. In the real race it acquired between the stealer's read and the stealer's rename.
+    // The innocent holder: live pid, and NOT the record the stealer judged stale.
     const healthyNonce = randomUUID();
     const healthyRecord = JSON.stringify({ pid: process.pid, startedAt: Date.now(), nonce: healthyNonce });
 
@@ -218,10 +321,7 @@ test('a steal that finds a fresh record restores it instead of unlinking', () =>
 
     assert.ok(claimObserved, 'precondition: the steal must have reached the claim stage');
 
-    // THE ASSERTION THAT MATTERS. Under the retired `unlink`, the innocent record is gone from disk
-    // while its owner is mid-pipeline still believing it holds — a fresh `wx` then succeeds against
-    // the empty path and two processes run `prettier --write` on one file. That is the two-writer
-    // window the lock exists to prevent, produced BY the lock.
+    // Under `unlink` this record is gone while its owner is mid-pipeline.
     assert.ok(existsSync(lockPath), "the innocent holder's record must be back ON DISK");
     assert.equal(readRecord(lockPath).nonce, healthyNonce, 'and must be THEIR record, not the stale one');
 
@@ -233,17 +333,8 @@ test('a steal that finds a fresh record restores it instead of unlinking', () =>
   }
 });
 
-// AC8 / M2c. With the OBSERVED nonce, two stealers reading the same stale record rename to the same
-// target; POSIX rename-over-existing succeeds silently and BOTH believe they won. Naming the claim
-// by the stealer's own fresh nonce is what makes the two renames collide on the SOURCE instead —
-// where exactly one can succeed.
-// The discriminator is a DECOY. We plant a stale record with a known nonce and pre-create a file at
-// the claim path the buggy implementation would choose — `<lock>.steal.<OBSERVED nonce>`. If the
-// steal names its claim after the record it observed, its `renameSync` overwrites the decoy and the
-// sentinel content is destroyed. If it names the claim after its OWN fresh nonce, the decoy is
-// untouched. That is the exact difference between two stealers colliding on one target (POSIX
-// rename-over-existing succeeds silently, so BOTH win) and colliding on the source, where exactly
-// one rename can succeed.
+// With the OBSERVED nonce two stealers rename to the same target, and POSIX lets BOTH win. The
+// DECOY sits at that buggy claim path: naming the claim after the observed record destroys it.
 test('two stealers produce distinct claim paths', () => {
   const { dir, cleanup } = makeLockDir();
   try {
@@ -270,8 +361,7 @@ test('two stealers produce distinct claim paths', () => {
   }
 });
 
-// AC9. `.steal.*` claims are unlinked on EVERY path, success included, so `node_modules/.cache/`
-// does not silently accumulate debris across thousands of edits.
+// Unlinked on EVERY path, so `.cache/` does not accumulate debris across thousands of edits.
 test('no claude-hook.lock* remains after a normal run, including .steal.* debris', () => {
   const { dir, cleanup } = makeLockDir();
   try {
@@ -290,11 +380,8 @@ test('no claude-hook.lock* remains after a normal run, including .steal.* debris
   }
 });
 
-// AC11d / M-4. The residual window, stated rather than papered over: a stealer moves a live record
-// off the path (syscall 1), a third process wins `wx` against the momentarily-empty path, and the
-// stealer restores the original over it (syscall 2). The third process's record is now GONE from
-// disk — so the check immediately after acquire is what makes it abort BEFORE writing anything.
-// Deferring that check to the first write stage leaves it free to act on a lock it no longer owns.
+// The residual window: a stealer moves a live record off the path, a third process wins `wx`, and
+// the stealer restores the original over it — leaving the third process's record gone.
 test('a third acquirer in the restore window fails holdsLock before writing', () => {
   const { dir, cleanup } = makeLockDir();
   try {
@@ -315,8 +402,7 @@ test('a third acquirer in the restore window fails holdsLock before writing', ()
   }
 });
 
-// AC11c / M-2. `node_modules/.cache` does not exist at the repo root, and on a fresh clone
-// `node_modules/` itself may be absent — so `openSync(path,'wx')` throws ENOENT, not EEXIST.
+// `.cache` does not exist at the repo root, so `wx` throws ENOENT rather than EEXIST.
 test('acquire succeeds when node_modules/.cache does not exist', () => {
   const { dir, cleanup } = makeLockDir();
   try {
@@ -329,18 +415,13 @@ test('acquire succeeds when node_modules/.cache does not exist', () => {
   }
 });
 
-// The other half of M-2, and the reason it matters: folding ENOENT into the EEXIST retry loop
-// yields a PERMANENT null — the repo-root lock could never be acquired, and the quality gate would
-// silently lose its own guard while appearing to work. Only EEXIST may retry; every other fs error
-// must propagate as the bug it is.
+// Folding ENOENT into the EEXIST retry yields a PERMANENT null, and the quality gate would lose its
+// guard while appearing to work. Only EEXIST may retry.
 test('a non-EEXIST fs error propagates and is never treated as a retry condition', () => {
   const { dir, cleanup } = makeLockDir();
   try {
-    // A FILE where the `node_modules` directory belongs, so the mkdir that precedes the first open
-    // fails. Note this raises ENOTDIR, not ENOENT — the earlier version of this test claimed to
-    // exercise ENOENT and did not, because mkdirSync throws before openSync is ever reached. The
-    // property under test is the one that actually matters either way: acquire THROWS rather than
-    // quietly returning null, so a broken path can never masquerade as a busy lock.
+    // A FILE where `node_modules` belongs, so the mkdir fails first — ENOTDIR, not ENOENT. Either
+    // way acquire THROWS rather than returning null, so a broken path cannot look like a busy lock.
     writeFileSync(join(dir, 'node_modules'), 'not a directory');
     assert.throws(
       () => acquireLock(dir, { waitMs: 0, staleMs: 60_000 }),
@@ -354,10 +435,8 @@ test('a non-EEXIST fs error propagates and is never treated as a retry condition
   }
 });
 
-// And the ENOENT condition proper, at the open rather than the mkdir: the lock path itself is a
-// DIRECTORY, so `openSync(..., 'wx')` cannot create a file there. It must not be swallowed as a
-// retry, which would spin to MAX_ATTEMPTS and return a null indistinguishable from "someone else
-// holds it".
+// The same at the open: the lock path is a DIRECTORY, so `wx` cannot create a file. Swallowed as a
+// retry it would spin out the whole waitMs and return a null meaning "someone else holds it".
 test('ENOENT-class open failures are not swallowed as EEXIST', () => {
   const { dir, cleanup } = makeLockDir();
   try {
@@ -376,12 +455,12 @@ test('ENOENT-class open failures are not swallowed as EEXIST', () => {
 
 // ------------------------------------------------------------------------------ write safety
 
-// AC5. Losing the lock means skipping EVERYTHING — including prettier. Prettier is a whole-file
-// writer, and running it unlocked is the concurrent-truncation case itself: two whole-file rewrites
-// interleaving on one path can revert or truncate each other, which loses the user's source. A
-// missed format is free to recover from; a truncated source file is not. So the bytes must come
-// through a contended edit completely untouched.
-test('the pipeline skips all stages while the lock is held externally', () => {
+// Losing the lock skips EVERYTHING, prettier included: two whole-file rewrites interleaving on one
+// path can truncate each other, so the bytes must survive a contended edit untouched.
+//
+// The skip must also be AUDIBLE. This test once asserted the opposite — "degrades to silence" —
+// which was the defect written down: to the agent, silence reads as a clean check.
+test('the pipeline skips all stages while the lock is held externally, and says so', () => {
   const pkgDir = join(REPO_ROOT, '.omc', '.tmp-writesafety-test');
   rmSync(pkgDir, { recursive: true, force: true });
   mkdirSync(pkgDir, { recursive: true });
@@ -393,8 +472,7 @@ test('the pipeline skips all stages while the lock is held externally', () => {
       JSON.stringify({ compilerOptions: { strict: true, noEmit: true, skipLibCheck: true } }),
     );
 
-    // Deliberately BOTH badly formatted (so prettier would certainly rewrite it) and type-broken
-    // (so tsc would certainly report). Neither may happen while the lock is held elsewhere.
+    // Both badly formatted and type-broken, so prettier and tsc would each certainly act.
     const original = 'export const    x:number   =   "not a number"\n';
     const file = join(pkgDir, 'src.ts');
     writeFileSync(file, original);
@@ -406,12 +484,23 @@ test('the pipeline skips all stages while the lock is held externally', () => {
       const res = spawnSync('node', [join(HOOKS_DIR, 'edit-pipeline.mjs')], {
         input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: file } }),
         encoding: 'utf8',
-        // A short wait so the test does not sit through the real 2s budget.
+        // A short wait so the test does not sit through the real 8s budget.
         env: { ...process.env, CLAUDE_HOOK_LOCK_WAIT_MS: '200' },
       });
 
-      assert.equal(res.status, 0, 'a contended edit degrades to silence, it does not fail the edit');
-      assert.equal(res.stdout + res.stderr, '', 'and reports nothing it could not verify');
+      assert.equal(res.status, 0, 'a contended edit must not fail the edit, and must not block');
+      assert.match(
+        res.stdout,
+        /SKIPPED/,
+        'the skip must announce itself — silence is indistinguishable from a clean check',
+      );
+      // The CHANNEL, not just the words: stderr is dropped on exit 0, so asserting on it would
+      // pass while the agent saw nothing.
+      assert.match(
+        res.stdout,
+        /"hookEventName":\s*"PostToolUse"/,
+        'and must ride additionalContext, the exit-0 channel that actually reaches the model',
+      );
       assert.equal(readFileSync(file, 'utf8'), original, 'THE BYTES MUST BE UNTOUCHED');
     } finally {
       releaseLock(held);
@@ -423,17 +512,12 @@ test('the pipeline skips all stages while the lock is held externally', () => {
 
 // --------------------------------------------------------------------------------- call-site invariants
 
-// AC11 (C1). The invariant is PER ACQUISITION SITE, not global: for every call site,
-// staleMs > that site's harness timeout > that site's stage budget. An earlier version of this
-// check quantified over CONSTANTS and passed while the 600s quality-gate site sat on a 120s
-// staleMs — a healthy cold-cache qa run would have been declared stale at t=120s and a second
-// concurrent full-monorepo turbo run launched. This version enumerates the CALL SITES, so it fails
-// on that shape.
+// PER CALL SITE, not global. Quantifying over CONSTANTS instead passes while a 600s site sits on a
+// 120s staleMs, so this enumerates the sites.
 test('every acquireLock call site has staleMs above its own harness timeout', () => {
   const settings = JSON.parse(readFileSync(join(REPO_ROOT, '.claude', 'settings.json'), 'utf8'));
 
-  // Map each hook file to the harness timeout settings.json actually grants it, so the two can
-  // never drift apart silently.
+  // Read from settings.json, so the two can never drift apart silently.
   const timeouts = new Map();
   for (const group of Object.values(settings.hooks).flat()) {
     for (const hook of group.hooks ?? []) {
@@ -442,23 +526,11 @@ test('every acquireLock call site has staleMs above its own harness timeout', ()
     }
   }
 
-  // DISCOVERED, never hardcoded. A fixed file list reproduces the exact blindness this check was
-  // written to end: a third hook could start calling acquireLock with a wrong staleMs, never be
-  // enumerated, and the assertion would pass over it in silence — the same failure as quantifying
-  // over constants, moved up one level. `lock.mjs` itself is excluded as the definition site.
-  // Each call site is located first, then its `staleMs` is read from a bounded window after it. An
-  // earlier version used `acquireLock\([^)]*staleMs:` — which stops at the FIRST `)`, so a call
-  // like `acquireLock(findPackageDir(f), { staleMs: … })` was invisible and the check passed over
-  // it. That is the same blindness this test exists to end, one level further down; it was caught
-  // by probing with a deliberately-added third call site, not by reading the regex.
+  // DISCOVERED, never hardcoded: a fixed list lets a new hook pass over in silence. The window is
+  // bounded by length, not by `)` — `[^)]*staleMs:` would hide `acquireLock(findPackageDir(f), {…})`.
   const sites = [];
-  // Recursive: `guards/` holds hooks too, and this check has now been scoped too narrowly twice —
-  // first quantifying over constants instead of call sites, then missing a site whose first
-  // argument contained a `)`. A future guard calling acquireLock must not be the third instance.
-  //
-  // `__tests__` is excluded because it lives UNDER the hooks dir: recursing into it collects this
-  // file's own fixture calls, which deliberately omit staleMs to prove the check fails on them.
-  // Scanning them would make the suite assert against its own scaffolding.
+  // Recursive, because `guards/` holds hooks too. `__tests__` is excluded: it would collect this
+  // file's own fixture calls, which omit staleMs deliberately.
   const sources = readdirSync(HOOKS_DIR, { recursive: true }).filter(
     (name) => name.endsWith('.mjs') && !name.includes('__tests__'),
   );
@@ -491,11 +563,8 @@ test('every acquireLock call site has staleMs above its own harness timeout', ()
   }
 });
 
-// AC11b / M-1. `findPackageDir` returns the repo root for root-level files, so editing
-// `.claude/hooks/*.mjs` makes the edit pipeline hold a lock AT THE REPO ROOT. If the quality gate
-// shared that filename, its `waitMs: 0` would turn a 1-10s prettier stage into a refused task
-// completion reading "another quality gate is already running" — false, and misleading about which
-// subsystem was busy.
+// The edit pipeline holds a lock AT THE REPO ROOT when `.claude/hooks/*.mjs` is edited, so a shared
+// filename would turn a 1-10s prettier stage into a refused task completion.
 test('the pipeline lock and the qa lock are different files', () => {
   const { dir, cleanup } = makeLockDir();
   try {

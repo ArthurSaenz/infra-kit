@@ -12,7 +12,6 @@ export interface NotFoundProps {
  *
  * @example
  *     <NotFound baseOptions={{ nav: { title: 'My App' } }} />
- *
  */
 export const NotFound = (props: NotFoundProps) => {
   const { baseOptions } = props

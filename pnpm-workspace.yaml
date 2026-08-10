@@ -19,7 +19,7 @@ catalog:
   '@inquirer/select': ^5.2.1
   '@modelcontextprotocol/sdk': ^1.30.0
   '@playwright/test': ^1.59.1
-  '@slip-stream-kit/config': ^0.3.12
+  '@slip-stream-kit/config': ^0.3.13
   '@tailwindcss/vite': ^4.2.2
 
   '@tanstack/react-router': ^1.168.10
@@ -27,7 +27,7 @@ catalog:
   '@tanstack/router-plugin': ^1.167.12
   '@tanstack/router-vite-plugin': 1.166.27
   '@types/aws-lambda': ^8.10.162
-  '@types/node': ^26.1.2
+  '@types/node': ^26.2.0
   '@types/react': 19.2.17
   '@types/react-dom': 19.2.3
   '@vitejs/plugin-react': 6.0.2
@@ -37,8 +37,8 @@ catalog:
   clsx: ^2.1.1
   commander: ^15.0.0
   date-fns: ^4.1.0
-  esbuild: ^0.28.0
-  fastify: 5.10.0
+  esbuild: ^0.28.2
+  fastify: 5.11.2
   ink: ^7.1.1
   ink-testing-library: ^4.0.0
 
@@ -60,7 +60,7 @@ catalog:
   typescript: ^6.0.3
   typescript-plugin-css-modules: ^5.2.0
 
-  vite: 8.1.5
+  vite: 8.2.1
   vite-plugin-dts: ^5.0.3
   vite-tsconfig-paths: ^6.1.1
   yaml: ^2.9.0

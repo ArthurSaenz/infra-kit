@@ -30,7 +30,6 @@ const WORKSPACE_MARKER = 'pnpm-workspace.yaml'
  *
  * @example
  *     const root = resolveRepoRoot(import.meta.dirname)
- *
  */
 export const resolveRepoRoot = (startDir: string): string => {
   let dir = path.resolve(startDir)
@@ -85,14 +84,12 @@ const IGNORE_RE =
  * Build the aggregation API bound to a specific app directory.
  *
  * @param appDir the docs app's own directory (pass `import.meta.dirname`). Only used to resolve
- *   the repo root by walking up to `pnpm-workspace.yaml`.
+ * the repo root by walking up to `pnpm-workspace.yaml`.
  * @param contentRel the repo-root-relative dir holding the docs app's own landing content.
- *   Defaults to `spec/docs` — the docs app lives inside `vendor/`, so its landing content is
- *   kept per-repo under the repo-root `spec/docs/` dir (outside vendor), NOT alongside the app.
- *
+ * Defaults to `spec/docs` — the docs app lives inside `vendor/`, so its landing content is
+ * kept per-repo under the repo-root `spec/docs/` dir (outside vendor), NOT alongside the app.
  * @example
  *     const agg = createDocsAggregation({ appDir: import.meta.dirname })
- *
  */
 export const createDocsAggregation = (params: { appDir: string; contentRel?: string }): DocsAggregation => {
   const { appDir, contentRel = 'spec/docs' } = params
@@ -146,7 +143,6 @@ export const createDocsAggregation = (params: { appDir: string; contentRel?: str
    *
    * @example
    *     const rels = await getAllDocRelPaths()
-   *
    */
   const getAllDocRelPaths = async (): Promise<string[]> => {
     const out: string[] = []
@@ -167,7 +163,6 @@ export const createDocsAggregation = (params: { appDir: string; contentRel?: str
    *
    * @example
    *     const override = await readDocSlugOverride('/repo/apps/ai/docs/guide.md')
-   *
    */
   const readDocSlugOverride = async (absPath: string): Promise<string[] | null> => {
     let raw: string
@@ -200,7 +195,6 @@ export const createDocsAggregation = (params: { appDir: string; contentRel?: str
    *
    * @example
    *     const urls = await getAllDocUrls()
-   *
    */
   const getAllDocUrls = async (): Promise<string[]> => {
     const rels = await getAllDocRelPaths()

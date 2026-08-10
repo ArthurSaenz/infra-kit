@@ -53,6 +53,13 @@ import { findDegradedRoutes, formatPairingRefusal, resolveProxyRoutes } from './
 import type { DegradedRoute, LaunchedUi, ResolvedProxyRoute } from './local-pairing.js'
 import { currentService } from './log-attribution.js'
 import { DevLogSink, panelStream } from './log-sink.js'
+import {
+  installModuleGeneration as installGenerationHook,
+  isModuleGenerationSupported,
+  resolveStopBudget,
+  selfDistDir,
+} from './module-generation.js'
+import type { ModuleGenerationHandle } from './module-generation.js'
 import { installOutputIntercept } from './output-intercept.js'
 import type { OutputIntercept } from './output-intercept.js'
 import {
@@ -65,6 +72,7 @@ import { deriveTargetLabel, resolvePreset, validatePresetKeys, validatePresetPro
 import type { DiscoveredParts } from './presets.js'
 import { createPortlessDriver, formatPortlessCommand, readCaPath } from './proxy/portless-driver.js'
 import type { PortlessDriver } from './proxy/portless-driver.js'
+import { describeStaleFiles, isHotReloadableChange } from './reload-scope.js'
 import { DevRenderer, resolveEndpointUrl } from './render.js'
 import type { DegradedRow, EndpointRow, HealthState, ProxyRouteRow, ReadySummary, UiRef } from './render.js'
 import { ServerlessLocalRun } from './serverless-local-run.js'
@@ -93,6 +101,11 @@ const TURBO_SERVICE = 'turbo'
  * of its own rather than a share of any service's.
  */
 const WATCH_SERVICE = 'watch'
+
+/** Bytes as whole megabytes with a unit — the only shape process size is ever shown in. */
+const megabytes = (bytes: number): string => {
+  return `${Math.round(bytes / 1_000_000)} MB`
+}
 
 /** Replace a leading home dir with `~` for a compact, human-readable path label (the on-screen log link). */
 export function homeShorten(p: string): string {
@@ -191,6 +204,18 @@ interface IApiAppConfig {
    * ACTUAL port is the ephemeral one bound at start time (see {@link IAppServer.boundPort}).
    */
   preferredPort: number | undefined
+  /**
+   * The same resolution with the bare `PORT` tier DENIED — `{APP}_PORT` or `dev.<app>.port` only.
+   *
+   * Both are resolved together in {@link DevServerRunner.discoverApiApps} because that is where
+   * `devConfig` is in scope, but the CHOICE between them cannot be made there: it depends on how many
+   * apps this run actually launches, and narrowing to the run plan happens later
+   * ({@link DevServerRunner.resolveRunPlan}). A bare `PORT` is not app-scoped, so in a multi-app run it
+   * gives every app the same preferred port and {@link DevServerRunner.assertNoPortConflicts} then
+   * refuses to start over duplicates the environment manufactured. Carrying both values forward is what
+   * lets a single-app run keep honouring `PORT` while a multi-app run ignores it.
+   */
+  appScopedPort: number | undefined
   prefixUrl: string
   /**
    * Whether this backend participates in dependency-closure watching (plan Phase 1): in
@@ -275,6 +300,17 @@ export interface DevServerOptions {
    * internal: if a future vite drops it, the dot has to be switchable off without a CLI downgrade.
    */
   uiHealth?: boolean
+  /**
+   * Ask the entry point to terminate the process, with the code to exit on.
+   *
+   * The runner has no business calling `process.exit` itself — `shutdown()` deliberately stops at
+   * releasing resources and leaves the process's fate to whoever owns it. But the reload budget's stop
+   * has nowhere else to go: it reaches neither the signal handler nor the fatal handler, and teardown
+   * alone would leave a live terminal with every server already dead. The entry wires this to the SAME
+   * `exit` seam `registerSignalShutdown` receives, so a budget stop and a Ctrl-C end the process
+   * through one path. Absent (tests, embedded callers) the runner tears down and returns.
+   */
+  onExitRequest?: (code: number) => void
 }
 
 /** What a probe is aimed at. `kind` picks the endpoint AND the verdict rules — the two are not separable. */
@@ -782,6 +818,23 @@ export class DevServerRunner {
   /** Epoch ms at which the session went ready — the source of the panel's heartbeat. */
   private readyAt = 0
   private watchDebounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
+  /**
+   * Changed dist files a pending restart provably CANNOT pick up, keyed by the same debounce key the
+   * restart is scheduled under (see {@link markChanged}).
+   *
+   * Accumulated rather than carried in the scheduled closure because {@link scheduleDebounced} REPLACES
+   * the closure for a key it sees again, and one shared-lib save deliberately produces two events on the
+   * same key: the package's own dist, then moments later the dependent app's. The package event is the
+   * stale one and it arrives FIRST — a closure-carried flag would be overwritten by the app event and the
+   * restart would print a green line for a reload that did not happen.
+   */
+  private pendingChanges: Map<string, Set<string>> = new Map()
+  /**
+   * Whole-graph ESM invalidation, when available. `null` means restarts re-import handler entries only
+   * (the runtime lacks `module.registerHooks`, or `INFRA_KIT_DEV_NO_GENERATION=1` turned it off) — the
+   * runner then falls back to classifying changes by entry-ness and still reports honestly.
+   */
+  private moduleGeneration: ModuleGenerationHandle | null = null
   /** Active chokidar watcher in `--watch` mode; closed on {@link shutdown}. */
   private watcher: FSWatcher | null = null
   private static readonly WATCH_DEBOUNCE_MS = 400
@@ -980,6 +1033,9 @@ export class DevServerRunner {
       return {
         ...app,
         preferredPort: this.resolvePreferredPort(app.name, devConfig),
+        // Resolved alongside, never instead: which of the two wins is decided in `resolveRunPlan`,
+        // once the number of apps this run launches is known. See {@link IApiAppConfig.appScopedPort}.
+        appScopedPort: this.resolvePreferredPort(app.name, devConfig, false),
         prefixUrl: this.resolvePrefixUrl(app.name, devConfig),
         // Default participate; the resolved preset value overrides this in `run()`.
         watchDeps: true,
@@ -1009,8 +1065,8 @@ export class DevServerRunner {
   }
 
   /** Thin delegator to the pure {@link resolvePreferredPortPure}, threading env + config. */
-  private resolvePreferredPort(appName: string, devConfig: DevConfig): number | undefined {
-    return resolvePreferredPortPure(appName, process.env, devConfig)
+  private resolvePreferredPort(appName: string, devConfig: DevConfig, allowBarePort = true): number | undefined {
+    return resolvePreferredPortPure(appName, process.env, devConfig, allowBarePort)
   }
 
   /** Thin delegator to the pure {@link resolvePrefixUrlPure}. */
@@ -1148,6 +1204,9 @@ export class DevServerRunner {
     // Once per app, per run: `start()` runs exactly once per `DevServerRunner` instance, and `uiApps`
     // never has two entries for the same app, so a plain pass over it already satisfies "one-time".
     this.warnUiMissingVitePlugin(uiApps)
+
+    // Before the first backend import, so every generation (including the first) is uniform.
+    if (watch) this.installModuleGeneration()
 
     await this.bringUpProxy(apps)
     await this.buildAll(apps, uiApps, watch)
@@ -1341,13 +1400,22 @@ export class DevServerRunner {
           return [t.app, t.watchDeps] as const
         }),
     )
-    const apps = apiAppsAll
-      .filter((a) => {
-        return apiNames.has(a.name) && passesInclude(a.name)
-      })
-      .map((a) => {
-        return { ...a, watchDeps: watchDepsByApp.get(a.name) ?? a.watchDeps }
-      })
+    // Split from the map below so the SURVIVOR COUNT is known before each app's port is chosen. The
+    // choice cannot be made where the ports are resolved (`discoverApiApps`, over the full discovered
+    // set): hulyo has 7 api apps, so a count taken there is never 1 even for `--app=client`.
+    const selected = apiAppsAll.filter((a) => {
+      return apiNames.has(a.name) && passesInclude(a.name)
+    })
+    const apps = selected.map((a) => {
+      return {
+        ...a,
+        watchDeps: watchDepsByApp.get(a.name) ?? a.watchDeps,
+        // One app → today's precedence exactly, bare `PORT` included. Two or more → the shared bare
+        // `PORT` is dropped and each app falls to `dev.<app>.port` or an ephemeral bind, so a stray
+        // `PORT` in the shell can no longer manufacture the conflict that refuses the whole run.
+        preferredPort: selected.length === 1 ? a.preferredPort : a.appScopedPort,
+      }
+    })
     const uiApps = uiAppsAll.filter((a) => {
       return uiNames.has(a.name) && passesInclude(a.name)
     })
@@ -1959,7 +2027,7 @@ export class DevServerRunner {
    * dist change passes every running app. The `turbo watch` engine has already rebuilt `dist/`,
    * so the runner only bounces the fastify server(s) — no build here.
    */
-  private restart(apps: IApiAppConfig[]): Promise<void> {
+  private restart(apps: IApiAppConfig[], staleFiles: string[] = []): Promise<void> {
     if (this.shuttingDown) return Promise.resolve()
 
     return this.scheduleRestartWork(() => {
@@ -1967,7 +2035,7 @@ export class DevServerRunner {
       // running when shutdown() latched, so the flag can flip between scheduling and execution.
       if (this.shuttingDown) return Promise.resolve()
 
-      return this.runRestart(apps)
+      return this.runRestart(apps, staleFiles)
     })
   }
 
@@ -2047,12 +2115,45 @@ export class DevServerRunner {
     return entry
   }
 
-  private async runRestart(apps: IApiAppConfig[]): Promise<void> {
+  private async runRestart(apps: IApiAppConfig[], staleFiles: string[] = []): Promise<void> {
     const targets = this.resolveRestartTargets(apps)
 
     if (targets.length === 0) return
 
     const label = targets.length === 1 ? targets[0]!.app.name : `${targets.length} apps`
+
+    // Judge process size BEFORE the generation is bumped, and abort the whole restart on `'stop'`.
+    //
+    // The ORDER is the fix, not a detail. `bump()` clears `busted`, and `resolveStaleFiles` reads that
+    // set to decide whether the restart actually picked the change up. A refusal that happened after a
+    // bump would leave the previous generation's set in place, `resolveStaleFiles` would find the
+    // changed file's directory in it, and the runner would print a green `Restarted` over code that was
+    // never re-imported. Returning here means no bump, no `server.close()`, no re-import: the process
+    // keeps serving its current, correct modules right up to teardown.
+    const budget = this.moduleGeneration?.budgetState() ?? 'ok'
+
+    if (budget === 'stop') {
+      this.reportGenerationBudgetStop(resolveStopBudget(process.env.INFRA_KIT_DEV_STOP_BYTES).stopBytes)
+      // The runner cannot exit itself: `doShutdown` stops every child and unmounts Ink but contains no
+      // `process.exit`, and this path reaches neither the signal handler nor the fatal one. Without the
+      // request the user is left at a live terminal with nothing running. `.finally` so a REJECTING
+      // teardown still exits; the trailing `.catch` because `onExitRequest` runs inside it and a throw
+      // there would reject into the crash barrier on the one path meant to end the process cleanly.
+      void this.shutdown()
+        .catch(() => {})
+        .finally(() => {
+          this.options.onExitRequest?.(1)
+        })
+        .catch(() => {})
+
+      return
+    }
+
+    if (budget === 'warn') this.reportGenerationBudgetWarn()
+
+    // Start a new generation BEFORE anything re-imports: every local module the restart touches now
+    // resolves to a fresh URL, so the whole graph re-evaluates rather than just the handler entries.
+    this.moduleGeneration?.bump()
 
     this.renderer.log(`🔄 Restarting ${label}...`)
     await Promise.all(
@@ -2159,14 +2260,65 @@ export class DevServerRunner {
     const allHealthy = probed.every((p) => {
       return p.healthy
     })
+    const labels = probed
+      .map((p) => {
+        return p.label
+      })
+      .join(', ')
 
-    this.renderer.log(
-      `${allHealthy ? '✅' : '⚠️ '} Restarted ${probed
-        .map((p) => {
-          return p.label
-        })
-        .join(', ')}`,
-    )
+    // Did the restart actually load the changed code? With the generation hook installed this is a
+    // DIRECT observation — the hook records every path it re-resolved, so a changed file whose directory
+    // never appears is provably still being served from the old module. Without the hook it falls back
+    // to entry-ness, which is the narrower contract that mode really offers.
+    //
+    // A restart where nothing came back up is skipped: `❌ Failed to restart` already said the true
+    // thing, and adding "still serving the OLD" on top would describe a server that is not serving.
+    const anyRestarted = outcomes.some((o) => {
+      return o.entry !== null
+    })
+    const stale = anyRestarted ? this.resolveStaleFiles(staleFiles, targets) : []
+
+    // NOT `✅ Restarted`. The fastify server really was replaced — but the changed module was not
+    // re-evaluated, so Node's registry still holds the version first loaded and this app is serving the
+    // OLD code. Claiming success here is what sent people hunting for "where that stale copy is loaded
+    // from" instead of just re-running the server.
+    if (stale.length > 0) {
+      this.renderer.log(
+        `⚠️  Restarted ${labels} — still serving the OLD ${describeStaleFiles(stale)}. ` +
+          'Re-run `infra-kit dev` to pick this up.',
+        'warn',
+      )
+
+      return
+    }
+
+    this.renderer.log(`${allHealthy ? '✅' : '⚠️ '} Restarted ${labels}`)
+  }
+
+  /**
+   * Of the files this restart was triggered by, which is the running process still serving from its old
+   * module? Two modes, and the difference is what the runner is allowed to claim:
+   *
+   * - **Generation hook installed** — a direct observation. The hook recorded every path it re-resolved
+   *   for this generation, so a changed file whose directory is absent was genuinely not re-evaluated.
+   *   This is what catches the hook silently doing nothing (a mis-anchored root, a passed cap): the
+   *   busted set is empty, every changed file reports stale, and the runner says so instead of ✅.
+   * - **No hook** — fall back to entry-ness, the narrower contract that mode actually offers.
+   */
+  private resolveStaleFiles(changed: string[], targets: Array<{ app: IApiAppConfig }>): string[] {
+    const generation = this.moduleGeneration
+
+    if (generation) {
+      return changed.filter((file) => {
+        return !generation.bustedUnder(path.dirname(file))
+      })
+    }
+
+    return changed.filter((file) => {
+      return !targets.some((t) => {
+        return isHotReloadableChange(file, t.app.path)
+      })
+    })
   }
 
   /**
@@ -2268,12 +2420,31 @@ export class DevServerRunner {
       this.renderer.log('👀 chokidar: usePolling enabled (DEV_SERVER_CHOKIDAR_POLL=1)', 'debug')
     }
 
-    watcher.on('change', (filePath: string) => {
-      this.handleDistChange(filePath, apps, appDistDirs, packageDistDirs)
-    })
+    // `change` alone is blind to a module that is NEW or REMOVED — chokidar files those under `add`
+    // and `unlink`. So a helper added to a shared package, or a file deleted from one, produced no
+    // restart at all: the running process kept serving a graph that no longer matches the source.
+    //
+    // Subscribing to all three cannot storm. `ignoreInitial: true` above drops the startup
+    // enumeration; a rebuild that rewrites existing output still emits `change`, not `add`; and
+    // {@link scheduleDebounced} collapses a burst onto one timer per key. `unlink` is safe to route
+    // through the same classifier because {@link classifyDistChange} is pure path arithmetic — it
+    // never stats the file, so a path that has just stopped existing classifies exactly as it did.
+    for (const event of ['add', 'change', 'unlink'] as const) {
+      watcher.on(event, (filePath: string) => {
+        this.handleDistChange(filePath, apps, appDistDirs, packageDistDirs)
+      })
+    }
 
     this.renderer.narrate(
       `👀 Watching ${appDistDirs.length} app dist + ${packageDistDirs.length} package dist dir(s) for changes...`,
+    )
+    // State the reload contract up front rather than letting each restart imply one. Which contract is
+    // in force depends on whether whole-graph invalidation is installed, so the banner reports what this
+    // session can actually do — and either way a restart that misses a change says so explicitly.
+    this.renderer.narrate(
+      this.moduleGeneration
+        ? '👀 Watch reloads the whole local graph in place — shared packages and services included.'
+        : '👀 Watch reloads serverless handler entry files only; other modules need a re-run of `infra-kit dev`.',
     )
   }
 
@@ -2293,34 +2464,7 @@ export class DevServerRunner {
     const change = classifyDistChange(filePath, appDistDirs, packageDistDirs)
 
     if (change.kind === 'package') {
-      // Read late: the map may still be building (→ `null` → restart all), which is correct, just unscoped.
-      const targets = selectPackageRestartTargets(apps, this.closureMap, change.packageDir)
-
-      if (targets === null) {
-        // Fail-safe: no closure map / no package identity → restart every launched app. Note this
-        // ignores per-app `watchDeps: false` opt-outs — opt-out is best-effort and yields to the
-        // fail-safe superset, so a `turbo --dry` failure never silently drops a needed restart.
-        this.scheduleDebounced('__packages__', () => {
-          return this.restart(apps)
-        })
-
-        return
-      }
-
-      // Empty target set = the package is UI-only or every dependent opted out → no restart.
-      //
-      // Keyed per TARGET APP, not per package dir. `turbo watch build`'s dep-inclusive rebuild cascades a
-      // shared-lib edit into the package's own dist AND, moments later, its dependent app's dist — two
-      // chokidar `change` events for one save, this branch for the first and the app-dist branch below
-      // for the second. A package-dir key and an app-name key are two different `watchDebounceTimers`
-      // entries, so both timers used to elapse independently and fire `restart()` twice for the same app.
-      // Scheduling by app name here collapses both events onto the SAME entry — `scheduleDebounced`
-      // already cancels a pending timer for a key it sees again — so the app restarts once per burst.
-      for (const target of targets) {
-        this.scheduleDebounced(target.name, () => {
-          return this.restart([target])
-        })
-      }
+      this.handlePackageDistChange(filePath, apps, change.packageDir)
 
       return
     }
@@ -2331,9 +2475,139 @@ export class DevServerRunner {
 
     if (!app) return
 
+    // Every change is recorded, not just the ones a restart is expected to miss: whether it was really
+    // picked up is decided AFTER the restart, from what the generation hook actually re-resolved.
+    this.markChanged(app.name, filePath)
+
     this.scheduleDebounced(app.name, () => {
-      return this.restart([app])
+      return this.restart([app], this.takeChanged(app.name))
     })
+  }
+
+  /**
+   * Route a shared-package dist change to the backends that depend on it. A package file is NEVER a
+   * handler entry, so every restart it triggers is marked stale — the rebuilt package is not what the
+   * running process will serve.
+   */
+  private handlePackageDistChange(filePath: string, apps: IApiAppConfig[], packageDir: string | undefined): void {
+    // Read late: the map may still be building (→ `null` → restart all), which is correct, just unscoped.
+    const targets = selectPackageRestartTargets(apps, this.closureMap, packageDir)
+
+    if (targets === null) {
+      // Fail-safe: no closure map / no package identity → restart every launched app. Note this
+      // ignores per-app `watchDeps: false` opt-outs — opt-out is best-effort and yields to the
+      // fail-safe superset, so a `turbo --dry` failure never silently drops a needed restart.
+      this.markChanged('__packages__', filePath)
+      this.scheduleDebounced('__packages__', () => {
+        return this.restart(apps, this.takeChanged('__packages__'))
+      })
+
+      return
+    }
+
+    // Empty target set = the package is UI-only or every dependent opted out → no restart.
+    //
+    // Keyed per TARGET APP, not per package dir. `turbo watch build`'s dep-inclusive rebuild cascades a
+    // shared-lib edit into the package's own dist AND, moments later, its dependent app's dist — two
+    // chokidar `change` events for one save, this branch for the first and the app-dist branch above
+    // for the second. A package-dir key and an app-name key are two different `watchDebounceTimers`
+    // entries, so both timers used to elapse independently and fire `restart()` twice for the same app.
+    // Scheduling by app name here collapses both events onto the SAME entry — `scheduleDebounced`
+    // already cancels a pending timer for a key it sees again — so the app restarts once per burst.
+    for (const target of targets) {
+      this.markChanged(target.name, filePath)
+      this.scheduleDebounced(target.name, () => {
+        return this.restart([target], this.takeChanged(target.name))
+      })
+    }
+  }
+
+  /** Record a file the pending restart under `key` was triggered by. See {@link pendingChanges}. */
+  private markChanged(key: string, filePath: string): void {
+    const existing = this.pendingChanges.get(key)
+
+    if (existing) existing.add(filePath)
+    else this.pendingChanges.set(key, new Set([filePath]))
+  }
+
+  /**
+   * Install whole-graph ESM invalidation so a restart re-evaluates shared packages and service modules,
+   * not just handler entries. Best-effort by design: an unavailable runtime, or the explicit
+   * `INFRA_KIT_DEV_NO_GENERATION=1` opt-out, leaves `moduleGeneration` null and the runner reports the
+   * narrower reload contract instead of pretending to the wider one.
+   */
+  private installModuleGeneration(): void {
+    if (process.env.INFRA_KIT_DEV_NO_GENERATION === '1') {
+      this.renderer.log('👀 Module generation disabled (INFRA_KIT_DEV_NO_GENERATION=1)', 'debug')
+
+      return
+    }
+
+    if (!isModuleGenerationSupported()) {
+      this.renderer.log(
+        `⚠️  This Node (${process.version}) has no \`module.registerHooks\`, so only handler entry files reload in place.`,
+        'warn',
+      )
+
+      return
+    }
+
+    const budget = resolveStopBudget(process.env.INFRA_KIT_DEV_STOP_BYTES)
+
+    this.moduleGeneration = installGenerationHook({
+      // The runner's OWN root, realpath'd — the same value the dist watcher is anchored on. A main-repo
+      // root would collapse a linked worktree and make the hook a silent no-op for the whole session.
+      root: fs.realpathSync(this.monorepoRoot),
+      selfDist: selfDistDir(),
+      stopBytes: budget.stopBytes,
+      stopEnabled: budget.stopEnabled,
+    })
+  }
+
+  /**
+   * Notice on the way up, at half the budget and again every stride beyond it.
+   *
+   * The observed size is IN the line, which is what makes this the measurement as well as the warning:
+   * a session reports its own footprint on a real repo, current, for free — the number an offline study
+   * would have gone looking for and would have had to re-take after every dependency change.
+   */
+  private reportGenerationBudgetWarn(): void {
+    const generation = this.moduleGeneration?.generation() ?? 0
+
+    this.renderer.log(
+      `⚠️  Reload memory ${megabytes(process.memoryUsage.rss())} after ${generation} reload(s). Module ` +
+        'records cannot be freed in-process, so this only grows — re-run `infra-kit dev` when convenient.',
+      'warn',
+    )
+  }
+
+  /**
+   * The budget is spent, and this time the session really does stop.
+   *
+   * It stops rather than quietly ceasing to invalidate, because a hook that stopped busting would put
+   * the session back on stale code under a green line — the precise failure `resolveStaleFiles` exists
+   * to make impossible. The message names the observed size, the threshold, the env var that raises or
+   * disables the budget, and the command to start again.
+   */
+  private reportGenerationBudgetStop(stopBytes: number): void {
+    const generation = this.moduleGeneration?.generation() ?? 0
+
+    this.renderer.log(
+      `⛔ Reload memory ${megabytes(process.memoryUsage.rss())} exceeds the ${megabytes(stopBytes)} budget ` +
+        `after ${generation} reload(s) — stopping. Module records cannot be freed in-process. Re-run ` +
+        '`infra-kit dev` to continue, or set INFRA_KIT_DEV_STOP_BYTES to raise the budget (or `off` to ' +
+        'disable the stop).',
+      'error',
+    )
+  }
+
+  /** Drain the stale files recorded for `key` — read at FIRE time, so the whole burst is accounted for. */
+  private takeChanged(key: string): string[] {
+    const files = this.pendingChanges.get(key)
+
+    this.pendingChanges.delete(key)
+
+    return files ? [...files] : []
   }
 
   /**
@@ -3063,6 +3337,12 @@ export class DevServerRunner {
     // Strictly last: every line above still has to reach a file. Closing holds no buffered data (the
     // sink writes through a held fd), so this only releases the fds.
     this.sink.close()
+
+    // Unhook the module-scoped sink that `appendRunnerLog` writes through — but only while it is still
+    // OURS. The constructor re-points this global on every construction, and two runners can share one
+    // process (the suite builds many), so an unconditional null here would let runner A's teardown
+    // silently send runner B's narration nowhere: the same defect in the opposite direction.
+    if (logSink === this.sink) logSink = null
     this.stage = 'done'
   }
 }

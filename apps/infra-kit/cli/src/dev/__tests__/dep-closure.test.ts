@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { buildClosureMap, packageDebounceKey, selectPackageRestartTargets } from 'src/dev/dep-closure'
+import { buildClosureMap, selectPackageRestartTargets } from 'src/dev/dep-closure'
 import type { ClosureMap, DryRunner } from 'src/dev/dep-closure'
 
 import { createTempTracker, makeMonorepo } from './fixtures'
@@ -162,12 +162,5 @@ describe('selectPackageRestartTargets — scope a package change to its dependen
   it('returns null (fail-safe: restart all) when the closure map is unavailable or the change has no package identity', () => {
     expect(selectPackageRestartTargets(apps, null, '/repo/packages/pkgA/dist')).toBeNull()
     expect(selectPackageRestartTargets(apps, map, undefined)).toBeNull()
-  })
-})
-
-describe('packageDebounceKey — distinct key per package dir', () => {
-  it('namespaces the dir so unrelated packages never collapse into one debounce bucket', () => {
-    expect(packageDebounceKey('/repo/packages/pkgA/dist')).toBe('__pkg__:/repo/packages/pkgA/dist')
-    expect(packageDebounceKey('/repo/packages/pkgA/dist')).not.toBe(packageDebounceKey('/repo/packages/pkgC/dist'))
   })
 })

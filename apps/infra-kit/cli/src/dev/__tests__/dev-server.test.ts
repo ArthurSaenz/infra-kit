@@ -1,6 +1,7 @@
 import { DEV_CONTEXT_WIRE_VERSION } from '@slip-stream-kit/config/internal'
 import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
+import os from 'node:os'
 import * as path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DevServerRunner } from 'src/dev/dev-server'
 import type { ProbeOutcome } from 'src/dev/dev-server'
 import type { DevUi } from 'src/dev/dev-ui'
-import type { DevLogSink } from 'src/dev/log-sink'
+import { DevLogSink } from 'src/dev/log-sink'
 import type { ReadySummary } from 'src/dev/render'
 import { stripAnsi } from 'src/dev/render'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
@@ -1029,6 +1030,97 @@ describe('start — port-conflict pre-check', () => {
   })
 })
 
+/**
+ * A bare `PORT` is the one port tier that is not app-scoped. Applied to every discovered app it
+ * manufactures a duplicate out of thin air, and the conflict gate — which exists to catch a developer
+ * pinning two apps to one port on purpose — then refuses to start a run the developer configured
+ * correctly. One stray `PORT` in a shell or a Doppler env was enough to make multi-app dev unusable.
+ */
+/**
+ * The minimum a real boot needs from a build: a compiled handler in each app's `dist`. Stands in for
+ * the turbo shell-out the fixtures deliberately do not provide.
+ */
+/** The runner announces every restart with this prefix; counting them is how a watch burst is judged. */
+const isRestartLine = (line: string): boolean => {
+  return line.includes('🔄 Restarting')
+}
+
+const writeHandlers = (root: string, appNames: string[]): (() => Promise<void>) => {
+  return async (): Promise<void> => {
+    for (const name of appNames) {
+      fs.writeFileSync(path.join(root, 'apps', name, 'api', 'dist', 'handler.js'), handlerSource(1))
+    }
+  }
+}
+
+describe('start — a bare PORT must not manufacture a conflict across apps', () => {
+  it('does NOT throw when ≥2 apps see the same bare PORT (it is env-wide, not a per-app pin)', async () => {
+    const root = temp.register(makeMonorepo([{ name: 'client' }, { name: 'backoffice' }]))
+
+    // Only the ENV-WIDE tier is set. Before this fix both apps resolved `preferredPort = 3300`,
+    // `findPortConflicts` saw a duplicate, and `start()` rejected with `Port conflict detected: 3300`.
+    // The build then fails on the missing turbo, proving the gate itself was cleared.
+    process.env.PORT = '3300'
+    delete process.env.CLIENT_PORT
+    delete process.env.BACKOFFICE_PORT
+    process.chdir(root)
+    const runner = new DevServerRunner(
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    await expect(runner.start()).rejects.not.toThrow(/Port conflict/)
+  })
+
+  it('still honours a bare PORT when the run launches exactly ONE app', async () => {
+    const root = temp.register(
+      makeMonorepo([
+        { name: 'client', packageName: 'client-api', withHandler: true },
+        { name: 'backoffice', packageName: 'backoffice-api', withHandler: true },
+      ]),
+    )
+    const fakeRunBuild = writeHandlers(root, ['client', 'backoffice'])
+
+    // Two apps are DISCOVERED but only one is launched, which is the case the count must be taken on:
+    // taking it where the ports are resolved would see 2 here and wrongly drop the bare tier.
+    const port = await getFreePort()
+
+    process.env.PORT = String(port)
+    delete process.env.CLIENT_PORT
+    delete process.env.BACKOFFICE_PORT
+    process.chdir(root)
+    const runner = new DevServerRunner(
+      { include: ['client'] },
+      fakeRunBuild,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    try {
+      const health = (await (await fetch(`http://127.0.0.1:${port}/__health`)).json()) as {
+        app: string
+        port: number
+      }
+
+      expect(health).toMatchObject({ app: 'client', port })
+    } finally {
+      await runner.shutdown()
+    }
+  })
+})
+
 describe('start — --app selection + env-resolved port', () => {
   it('runs only the --app subset (skipping the rest) and resolves its port from {APP}_PORT', async () => {
     const root = temp.register(
@@ -1901,6 +1993,170 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
       await runner.shutdown()
     }
   }, 15000)
+
+  it('restarts once for a burst of NEW dist files, which `change` alone never saw at all', async () => {
+    /**
+     * The watcher subscribed to `change` only, so a module that had just come into existence — a helper
+     * added to a shared package, a newly compiled entry — arrived as chokidar `add` and was dropped on
+     * the floor. The process went on serving a graph the source no longer had. Five new files in one
+     * debounce window prove both halves at once: that `add` is seen (before the fix: zero restarts) and
+     * that seeing it cannot storm (five events, one restart).
+     */
+    const root = temp.register(makeMonorepo([{ name: 'appy', packageName: 'appy-api', withHandler: true }]))
+    const realRoot = fs.realpathSync(root)
+    const appyDist = path.join(realRoot, 'apps', 'appy', 'api', 'dist')
+
+    process.env.DEV_SERVER_CHOKIDAR_POLL = '1'
+
+    const bootBuild = async (): Promise<void> => {
+      fs.writeFileSync(path.join(appyDist, 'handler.js'), handlerSource(1))
+    }
+    const logs: string[] = []
+    const noop = (): void => {}
+    const renderer: DevUi = {
+      narrate: noop,
+      log: (message) => {
+        logs.push(message)
+      },
+      logFn: noop,
+      bootStep: noop,
+      stopSpinner: noop,
+      ready: noop,
+      event: noop,
+      dispose: noop,
+    }
+
+    process.chdir(root)
+    const runner = new DevServerRunner(
+      { watch: true },
+      bootBuild,
+      noopTurboChild,
+      undefined,
+      undefined,
+      renderer,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    try {
+      await new Promise((r) => {
+        return setTimeout(r, 1200)
+      })
+
+      // Five files that did not exist a moment ago — five `add` events, one save's worth of work.
+      for (let i = 0; i < 5; i += 1) {
+        fs.writeFileSync(path.join(appyDist, `probe-${i}.js`), `export const probe = ${i}\n`)
+      }
+
+      const restartLines = (): string[] => {
+        return logs.filter(isRestartLine)
+      }
+
+      const deadline = Date.now() + 8000
+
+      while (Date.now() < deadline && restartLines().length === 0) {
+        await new Promise((r) => {
+          return setTimeout(r, 100)
+        })
+      }
+
+      expect(restartLines().length, 'an `add` event never reached the restart path').toBeGreaterThan(0)
+
+      // Let any wrongly-surviving sibling timer spend its full debounce window too.
+      await new Promise((r) => {
+        return setTimeout(r, 700)
+      })
+
+      expect(restartLines(), 'five new files in one window produced more than one restart').toHaveLength(1)
+      expect(restartLines()[0]).toContain('appy')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('routes an `unlink` in a package dist through the package path without throwing', async () => {
+    const root = temp.register(makeMonorepo([{ name: 'appz', packageName: 'appz-api', withHandler: true }]))
+    const realRoot = fs.realpathSync(root)
+    const appzDistHandler = path.join(realRoot, 'apps', 'appz', 'api', 'dist', 'handler.js')
+    const sharedDist = path.join(realRoot, 'packages', 'shared', 'dist')
+    const doomed = path.join(sharedDist, 'doomed.js')
+
+    fs.mkdirSync(sharedDist, { recursive: true })
+    fs.writeFileSync(path.join(realRoot, 'packages', 'shared', 'package.json'), JSON.stringify({ name: 'shared' }))
+    fs.writeFileSync(path.join(sharedDist, 'index.js'), 'export const v = 1\n')
+    fs.writeFileSync(doomed, 'export const gone = true\n')
+
+    process.env.DEV_SERVER_CHOKIDAR_POLL = '1'
+
+    const bootBuild = async (): Promise<void> => {
+      fs.writeFileSync(appzDistHandler, handlerSource(1))
+    }
+    const dryRunner = (): Promise<string[]> => {
+      return Promise.resolve(['appz-api', 'shared'])
+    }
+    const logs: string[] = []
+    const noop = (): void => {}
+    const renderer: DevUi = {
+      narrate: noop,
+      log: (message) => {
+        logs.push(message)
+      },
+      logFn: noop,
+      bootStep: noop,
+      stopSpinner: noop,
+      ready: noop,
+      event: noop,
+      dispose: noop,
+    }
+
+    process.chdir(root)
+    const runner = new DevServerRunner(
+      { watch: true },
+      bootBuild,
+      noopTurboChild,
+      undefined,
+      dryRunner,
+      renderer,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    try {
+      await new Promise((r) => {
+        return setTimeout(r, 1200)
+      })
+
+      // `classifyDistChange` is pure path arithmetic, so a path that has just stopped existing still
+      // classifies as the package dist it used to live in — no stat, nothing to throw on.
+      fs.rmSync(doomed)
+
+      const restartLines = (): string[] => {
+        return logs.filter(isRestartLine)
+      }
+
+      const deadline = Date.now() + 8000
+
+      while (Date.now() < deadline && restartLines().length === 0) {
+        await new Promise((r) => {
+          return setTimeout(r, 100)
+        })
+      }
+
+      expect(restartLines().length, 'deleting a package dist file never reached the restart path').toBeGreaterThan(0)
+      expect(
+        logs.filter((l) => {
+          return l.includes('Restart error')
+        }),
+        'the unlink path threw',
+      ).toHaveLength(0)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
 })
 
 describe('devServerRunner — liveness monitor', () => {
@@ -2736,5 +2992,359 @@ describe('devServerRunner — reportFault must never touch a disposed renderer',
 
     // And shutdown still completes cleanly — the guard must never hang teardown.
     await teardown
+  })
+})
+
+describe('devServerRunner — watch must not claim a reload it did not perform', () => {
+  /**
+   * These exercise the NO-HOOK contract, pinned explicitly rather than left to chance.
+   *
+   * Under vitest every `import()` is rewritten to vite-node's loader, so Node's ESM resolver — the only
+   * thing `module.registerHooks` can hook — is never consulted and the generation hook would bust
+   * nothing. Left implicit, these tests would pass because the hook is inert in the harness, i.e. they
+   * would look like coverage of the reporting logic while actually proving the harness's limitation.
+   * Setting the opt-out makes the mode under test a stated fact. The hook itself is proven against a
+   * real `node` in `module-generation.test.ts`; no test covers both together in-process, and the manual
+   * repro in the plan is what closes that gap.
+   */
+  beforeEach(() => {
+    process.env.INFRA_KIT_DEV_NO_GENERATION = '1'
+  })
+
+  const temp = createTempTracker()
+  let envSnapshot: NodeJS.ProcessEnv
+  let cwdSnapshot: string
+
+  beforeEach(() => {
+    envSnapshot = snapshotEnv()
+    cwdSnapshot = snapshotCwd()
+  })
+
+  afterEach(() => {
+    restoreEnv(envSnapshot)
+    restoreCwd(cwdSnapshot)
+    temp.cleanup()
+  })
+
+  /**
+   * Build a one-app monorepo with a shared package `appx` depends on, plus a log-capturing renderer.
+   * Mirrors the cascade fixture above; returns everything a stale-reporting assertion needs.
+   */
+  const setup = (): {
+    appxDistHandler: string
+    logs: string[]
+    makeRunner: () => DevServerRunner
+    root: string
+    sharedIndex: string
+  } => {
+    const root = temp.register(makeMonorepo([{ name: 'appx', packageName: 'appx-api', withHandler: true }]))
+    const realRoot = fs.realpathSync(root)
+    const appxDistHandler = path.join(realRoot, 'apps', 'appx', 'api', 'dist', 'handler.js')
+    const sharedDist = path.join(realRoot, 'packages', 'shared', 'dist')
+
+    fs.mkdirSync(sharedDist, { recursive: true })
+    fs.writeFileSync(path.join(realRoot, 'packages', 'shared', 'package.json'), JSON.stringify({ name: 'shared' }))
+    fs.writeFileSync(path.join(sharedDist, 'index.js'), 'export const v = 1\n')
+
+    process.env.DEV_SERVER_CHOKIDAR_POLL = '1'
+
+    const logs: string[] = []
+    const noop = (): void => {}
+    const renderer: DevUi = {
+      narrate: noop,
+      log: (message) => {
+        logs.push(message)
+      },
+      logFn: noop,
+      bootStep: noop,
+      stopSpinner: noop,
+      ready: noop,
+      event: noop,
+      dispose: noop,
+    }
+
+    const makeRunner = (): DevServerRunner => {
+      process.chdir(root)
+
+      return new DevServerRunner(
+        { watch: true },
+        async (): Promise<void> => {
+          fs.writeFileSync(appxDistHandler, handlerSource(1))
+        },
+        noopTurboChild,
+        undefined,
+        (): Promise<string[]> => {
+          return Promise.resolve(['appx-api', 'shared'])
+        },
+        renderer,
+        undefined,
+        workingProxy(),
+      )
+    }
+
+    return { appxDistHandler, logs, makeRunner, root: realRoot, sharedIndex: path.join(sharedDist, 'index.js') }
+  }
+
+  /** Poll until a restart summary line (✅ or the stale ⚠️) appears, or the deadline passes. */
+  const awaitSummary = async (logs: string[]): Promise<string | undefined> => {
+    const find = (): string | undefined => {
+      return logs.find((l) => {
+        return l.includes('Restarted appx')
+      })
+    }
+    const deadline = Date.now() + 8000
+
+    while (Date.now() < deadline && !find()) {
+      await new Promise((r) => {
+        return setTimeout(r, 100)
+      })
+    }
+
+    return find()
+  }
+
+  it('reports a shared-package edit as STALE instead of printing a green restart', async () => {
+    /**
+     * The bug this exists to prevent: a shared-lib edit rebuilds the package, the runner restarts the
+     * backend, and prints `✅ Restarted appx` — but the backend is in-process and a restart only
+     * re-`import()`s handler ENTRY modules, so Node's registry still holds the OLD shared package. The
+     * green line sent people hunting for "where that stale copy is loaded from" instead of restarting.
+     */
+    const { logs, makeRunner, sharedIndex } = setup()
+    const runner = makeRunner()
+
+    await runner.start()
+
+    try {
+      await new Promise((r) => {
+        return setTimeout(r, 1200)
+      })
+      fs.writeFileSync(sharedIndex, 'export const v = 2\n')
+
+      const summary = await awaitSummary(logs)
+
+      expect(summary, 'the package edit never produced a restart summary at all').toBeDefined()
+      // The restart DID happen and is reported honestly…
+      expect(summary).toContain('still serving the OLD')
+      expect(summary).toContain('index.js')
+      expect(summary).toContain('Re-run `infra-kit dev`')
+      // …and critically, the unearned green is gone.
+      expect(summary).not.toContain('✅')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 20000)
+
+  it('still prints the green restart for a handler entry edit, which DOES reload', async () => {
+    // The honest green must survive: an entry file is the one thing a restart genuinely re-imports.
+    // Without this, "fixing" the false green by warning on everything would be its own kind of lie.
+    const { appxDistHandler, logs, makeRunner } = setup()
+    const runner = makeRunner()
+
+    await runner.start()
+
+    try {
+      await new Promise((r) => {
+        return setTimeout(r, 1200)
+      })
+      fs.writeFileSync(appxDistHandler, handlerSource(2))
+
+      const summary = await awaitSummary(logs)
+
+      expect(summary, 'the entry edit never produced a restart summary at all').toBeDefined()
+      expect(summary).toContain('✅')
+      expect(summary).not.toContain('still serving the OLD')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 20000)
+
+  it('keeps the stale verdict when the package edit cascades into an entry rebuild', async () => {
+    /**
+     * The subtle case, and the reason the stale set is accumulated on the runner rather than carried in
+     * the debounced closure. One shared-lib save produces TWO events on the same debounce key: the
+     * package's own dist FIRST, then the dependent app's rebuilt dist. `scheduleDebounced` replaces the
+     * closure for a key it sees again, so a closure-carried flag would be overwritten by the second
+     * (entry, reloadable) event — and the burst would print green even though the shared lib is stale.
+     */
+    const { appxDistHandler, logs, makeRunner, sharedIndex } = setup()
+    const runner = makeRunner()
+
+    await runner.start()
+
+    try {
+      await new Promise((r) => {
+        return setTimeout(r, 1200)
+      })
+      // Exactly the real cascade: package dist first, app dist moments later, inside one debounce window.
+      fs.writeFileSync(sharedIndex, 'export const v = 2\n')
+      fs.writeFileSync(appxDistHandler, handlerSource(2))
+
+      const summary = await awaitSummary(logs)
+
+      expect(summary, 'the cascade never produced a restart summary at all').toBeDefined()
+      expect(summary).toContain('still serving the OLD')
+      expect(summary).not.toContain('✅')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 20000)
+})
+
+describe('devServerRunner — the reload budget stops the session rather than hanging it', () => {
+  it('asks the entry to exit, once, with a non-zero code, and claims no restart it did not do', async () => {
+    /**
+     * Teardown alone is not a stop. `doShutdown` releases every resource and unmounts Ink but contains no
+     * `process.exit`, and this path reaches neither the signal handler nor the fatal one — so without an
+     * explicit exit request the user is left staring at a live terminal with every server already dead.
+     * A criterion that only checked "the engines were killed" cannot tell that apart from a stop, which is
+     * why this one watches `onExitRequest` instead.
+     *
+     * `INFRA_KIT_DEV_STOP_BYTES=1` puts every real sample over budget, and the two-sample hysteresis then
+     * makes the FIRST save a normal restart and the SECOND the stop — the driver and the guard agreeing.
+     */
+    const root = temp.register(makeMonorepo([{ name: 'budget', packageName: 'budget-api', withHandler: true }]))
+    const realRoot = fs.realpathSync(root)
+    const distHandler = path.join(realRoot, 'apps', 'budget', 'api', 'dist', 'handler.js')
+
+    process.env.DEV_SERVER_CHOKIDAR_POLL = '1'
+    process.env.INFRA_KIT_DEV_STOP_BYTES = '1'
+    process.env.BUDGET_PORT = String(await getFreePort())
+
+    const bootBuild = async (): Promise<void> => {
+      fs.writeFileSync(distHandler, handlerSource(1))
+    }
+    const logs: string[] = []
+    const noop = (): void => {}
+    const renderer: DevUi = {
+      narrate: noop,
+      log: (message) => {
+        logs.push(message)
+      },
+      logFn: noop,
+      bootStep: noop,
+      stopSpinner: noop,
+      ready: noop,
+      event: noop,
+      dispose: noop,
+    }
+    const exitCodes: number[] = []
+
+    process.chdir(root)
+    const runner = new DevServerRunner(
+      {
+        watch: true,
+        onExitRequest: (code) => {
+          exitCodes.push(code)
+        },
+      },
+      bootBuild,
+      noopTurboChild,
+      undefined,
+      undefined,
+      renderer,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    try {
+      await new Promise((r) => {
+        return setTimeout(r, 1200)
+      })
+
+      // Save one: over budget but only one sample deep, so this is a warn and a real restart.
+      fs.writeFileSync(distHandler, handlerSource(2))
+
+      const firstDeadline = Date.now() + 8000
+
+      while (Date.now() < firstDeadline && !logs.some(isRestartLine)) {
+        await new Promise((r) => {
+          return setTimeout(r, 100)
+        })
+      }
+
+      expect(logs.filter(isRestartLine), 'the first save should still restart normally').toHaveLength(1)
+
+      // Save two: the streak reaches two and the session stops instead of reloading.
+      fs.writeFileSync(distHandler, handlerSource(3))
+
+      const stopDeadline = Date.now() + 10000
+
+      while (Date.now() < stopDeadline && exitCodes.length === 0) {
+        await new Promise((r) => {
+          return setTimeout(r, 100)
+        })
+      }
+
+      expect(exitCodes, 'the budget stop tore down but never asked to exit — a hang, not a stop').toHaveLength(1)
+      expect(exitCodes[0]).not.toBe(0)
+
+      // Nothing green was claimed over a reload that never happened: the abort precedes `bump()`.
+      expect(logs.filter(isRestartLine)).toHaveLength(1)
+      expect(
+        logs.filter((line) => {
+          return /Restarted/.test(line)
+        }),
+        'a Restarted line was printed on the stop path',
+      ).toHaveLength(1)
+
+      const stopLine = logs.find((line) => {
+        return line.includes('exceeds')
+      })
+
+      expect(stopLine, 'no stop line naming the observed size').toBeDefined()
+      expect(stopLine).toMatch(/\d MB/)
+      expect(stopLine).toContain('INFRA_KIT_DEV_STOP_BYTES')
+      expect(stopLine).toContain('infra-kit dev')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 30000)
+})
+
+describe('devServerRunner — the module-scoped log sink is unhooked only by its OWNER', () => {
+  /**
+   * `appendRunnerLog` writes through a module-scoped `logSink` that every constructor re-points at
+   * itself. Teardown now clears it, which is right — but only while it is still ours. Two runners share
+   * a process routinely (this suite builds dozens), and an unconditional null would let the FIRST
+   * runner's teardown silently send the SECOND's narration nowhere: the same defect the clear exists to
+   * fix, pointed the other way.
+   */
+  it('keeps a second runner logging after the first one tears down', async () => {
+    const dirA = temp.register(fs.mkdtempSync(path.join(os.tmpdir(), 'ik-sink-a-')))
+    const dirB = temp.register(fs.mkdtempSync(path.join(os.tmpdir(), 'ik-sink-b-')))
+    const build = (sink: DevLogSink): DevServerRunner => {
+      return new DevServerRunner(
+        {},
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        workingProxy(),
+        sink,
+      )
+    }
+
+    const first = build(new DevLogSink(dirA))
+    // Constructed second, so the module-scoped sink now points HERE.
+    const second = build(new DevLogSink(dirB))
+
+    await first.shutdown()
+    await second.shutdown()
+
+    // Both teardowns narrate, and both land in B's file — the first runner's line because the global
+    // already pointed at B (pre-existing, and not what this test is about), the second runner's because
+    // the identity guard refused to unhook a sink that was never the first runner's to clear. Drop the
+    // guard and only ONE line survives: the first teardown nulls the global before the second speaks.
+    const runnerLog = fs.readFileSync(path.join(dirB, 'runner.log'), 'utf-8')
+    const shutdownLines = runnerLog.split('\n').filter((line) => {
+      return line.includes('Shutting down')
+    })
+
+    expect(shutdownLines, 'the first teardown unhooked the second runner’s logging').toHaveLength(2)
   })
 })

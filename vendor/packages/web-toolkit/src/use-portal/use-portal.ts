@@ -24,7 +24,6 @@ export const usePortal = (id: string) => {
  *
  * @example
  *     const node = getPortalNode('modal-root')
- *
  */
 const getPortalNode = (id: string): Element | null => {
   if (isBrowser) {

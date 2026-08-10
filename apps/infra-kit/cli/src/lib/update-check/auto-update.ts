@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
-import { safeRealpath } from 'src/lib/install-manager'
+import { formatUpdateCommand, safeRealpath } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
 
 import { autoUpdateSkipReason } from './guards'
@@ -66,9 +66,14 @@ const defaultSelfRealPath = (): string => {
  * The cache is never executed — only printed — but it is still attacker-shaped input if anything with
  * the user's uid can write it. An unconstrained token could carry ANSI escapes that rewrite the terminal
  * around the "Run: …" line, turning it into a convincing copy-paste trap. Package-manager argv is drawn
- * from a static table, so a conservative charset costs nothing and closes that.
+ * from a static table plus a filesystem prefix, so a conservative charset costs nothing and closes that.
+ *
+ * The space is deliberate and is NOT a hole: a prefix path may legitimately contain one
+ * (`--prefix /Users/Ada Lovelace/.nvm/...`), and dropping the whole notice over it would silence exactly
+ * the users who most need it. `formatUpdateCommand` single-quotes such a token, which is safe precisely
+ * because the quote characters themselves remain outside this charset.
  */
-const SAFE_COMMAND_TOKEN = /^[\w@./+-]+$/i
+const SAFE_COMMAND_TOKEN = /^[\w@./+ -]+$/i
 
 const isSafeCommandToken = (token: string): boolean => {
   return SAFE_COMMAND_TOKEN.test(token)
@@ -95,7 +100,7 @@ const notifyIfUninstallable = (
   if (!cache.updateCommand.every(isSafeCommandToken)) return
 
   notify(
-    `infra-kit ${cache.latestVersion} is available (you have ${currentVersion}). Run: ${cache.updateCommand.join(' ')}`,
+    `infra-kit ${cache.latestVersion} is available (you have ${currentVersion}). Run: ${formatUpdateCommand(cache.updateCommand)}`,
   )
 }
 

@@ -1,9 +1,6 @@
-// Unit tier for the report parsers, plus an integration tier that spawns the real hook.
-//
-// EVERY FIXTURE BELOW IS LITERAL CAPTURED OUTPUT, never a paraphrase. That rule is not stylistic:
-// the earlier missing-config regex shipped broken because it was written against the wording
-// someone remembered rather than the wording ESLint prints. A fixture does not care that the
-// condition which produced it has since been repaired — it is a specimen of a SHAPE.
+// Unit tier for the report parsers, plus an integration tier that spawns the real hook. EVERY
+// FIXTURE IS LITERAL CAPTURED OUTPUT: the missing-config regex once shipped broken because it was
+// written against remembered wording rather than what ESLint prints.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +9,7 @@ import { join, resolve } from 'node:path';
 import { runHook, edit, HOOKS_DIR } from './helpers.mjs';
 import {
   parseEslintJson,
-  parseTscDiagnostics,
+  splitTscBlocks,
   extractToolError,
   isMissingConfig,
   formatReport,
@@ -20,17 +17,14 @@ import {
 
 const REPO_ROOT = resolve(HOOKS_DIR, '..', '..');
 
-// `makeTempPackage` in edit-hooks.test.mjs deliberately writes NO eslint.config.*, because the
-// typecheck cases depend on eslint skipping. Lint cases need a package that has one, so they get
-// their own factory rather than an overload that would change the typecheck cases' behavior.
+// Separate from edit-hooks.test.mjs's factory, whose typecheck cases depend on eslint skipping.
 function makeLintPackage(source, { eslintConfig, prettierConfig, fileName = 'src.ts' } = {}) {
   const pkgDir = join(REPO_ROOT, '.omc', '.tmp-lint-test');
   rmSync(pkgDir, { recursive: true, force: true });
   mkdirSync(pkgDir, { recursive: true });
   writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'tmp-lint', version: '0.0.0' }));
   if (eslintConfig) writeFileSync(join(pkgDir, 'eslint.config.mjs'), eslintConfig);
-  // Pinned per-package when a case depends on prettier's behavior, so the assertion does not rest
-  // on whatever the repo-root config happens to say today.
+  // Pinned per-package, so prettier assertions do not rest on the repo-root config.
   if (prettierConfig) writeFileSync(join(pkgDir, '.prettierrc'), prettierConfig);
   writeFileSync(join(pkgDir, fileName), source);
   return {
@@ -40,8 +34,7 @@ function makeLintPackage(source, { eslintConfig, prettierConfig, fileName = 'src
   };
 }
 
-// A flat config with no TypeScript parser, so it lints plain JS syntax only — enough for
-// no-unused-vars without dragging a parser dependency into a throwaway package.
+// No TS parser, so a throwaway package needs no parser dependency.
 const FLAT_CONFIG_UNUSED_ERROR = `export default [
   { files: ['**/*.js'], rules: { 'no-unused-vars': 'error' } },
 ];
@@ -55,19 +48,14 @@ const FLAT_CONFIG_UNUSED_WARN = `export default [
 // ------------------------------------------------------------------------------ parseEslintJson
 
 test('parseEslintJson tolerates the real status-2 case and other non-JSON', () => {
-  // Verified: on status 2 ESLint writes NOTHING to stdout — captured length 0. A parser that threw
-  // here would lose the whole report, including the tsc section that had nothing to do with it.
+  // On status 2 ESLint writes NOTHING to stdout, and a throw would lose the whole report.
   assert.deepEqual(parseEslintJson(''), { errors: 0, messages: [] });
   assert.deepEqual(parseEslintJson('Oops! Something went wrong'), { errors: 0, messages: [] });
   assert.deepEqual(parseEslintJson('{"not":"an array"}'), { errors: 0, messages: [] });
 });
 
-// THE REGRESSION THIS PINS. `--format json` promises one JSON array, but in this repo pnpm's
-// catalog resolution prints to STDOUT ahead of it. A strict parse throws, the tolerant path returns
-// "no findings", and a real error reaches nobody — the pipeline's own defect, one layer down. It
-// passed every synthetic test, because a throwaway temp package has no catalog to resolve. The
-// preamble below is LITERAL captured output from `eslint --quiet --format json src/cn/cn.ts` in
-// vendor/packages/web-toolkit.
+// THE REGRESSION THIS PINS: pnpm's catalog resolution prints to STDOUT ahead of the array, so a
+// strict parse throws. Every synthetic test passed — a temp package has no catalog to resolve.
 test('parseEslintJson finds the payload behind a non-JSON stdout preamble', () => {
   const captured = `Dependency "@types/react" could not be resolved for catalog "default"
 Dependency "clsx" could not be resolved for catalog "default"
@@ -81,11 +69,7 @@ Dependency "react" could not be resolved for catalog "default"
   assert.equal(result.messages[0].line, 18);
 });
 
-// The first fix for the above sliced from the first `[` to the last `]`, which is fragile in the
-// SAME DIRECTION as the bug it replaced: it depends on pnpm's warning text staying bracket-free,
-// and pnpm's warning text is not contractual. Both shapes below returned ZERO findings under the
-// slice — failing silently, which is the one failure mode this pipeline exists to eliminate. The
-// line scan is immune because `--format json` puts the array on a single line.
+// A `[`-to-`]` slice fails the same way, depending on pnpm's warning text staying bracket-free.
 test('parseEslintJson survives brackets in the surrounding noise', () => {
   const payload =
     '[{"filePath":"/repo/a.js","messages":[{"ruleId":"no-unused-vars","severity":2,"message":"unused","line":1,"column":7}]}]';
@@ -122,13 +106,11 @@ test('parseEslintJson reads a real payload and keeps the fixable flag', () => {
   ]);
 
   const result = parseEslintJson(payload);
-  // The severity-1 message must not be counted: `--quiet` already drops warnings at the source, and
-  // counting them here would make the hook stricter than CI.
+  // The severity-1 message must not be counted — that would make the hook stricter than CI.
   assert.equal(result.errors, 2);
   assert.equal(result.messages[0].ruleId, 'no-unused-vars');
   assert.equal(result.messages[0].fixable, false);
-  // `fix` present => ESLint marks the rule auto-fixable. This is the signal that detects a
-  // prettier/eslint standoff.
+  // `fix` present => auto-fixable, the signal that detects a prettier/eslint standoff.
   assert.equal(result.messages[1].fixable, true);
 });
 
@@ -149,10 +131,7 @@ to update your configuration file to the new format:
 https://eslint.org/docs/latest/use/configure/migration-guide
 `;
 
-// LITERAL capture of the desynced-node_modules failure this pipeline was designed against: eslint
-// exited 2 because its shared config could not be resolved. The environment has since been
-// repaired, which does not make the specimen less real — this is the shape of "the tool itself
-// failed", as distinct from "the tool found problems".
+// A desynced-node_modules failure: the shape of "the tool failed", not "found problems".
 const ESLINT_MODULE_NOT_FOUND_STDERR = `
 Oops! Something went wrong! :(
 
@@ -164,9 +143,7 @@ Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@antfu/eslint-config' importe
 `;
 
 test('extractToolError skips the banner and returns the substantive line', () => {
-  // "Oops! Something went wrong! :(" names no cause and suggests no action. Emitting it as the one
-  // line we are allowed would be a wasted agent cycle, which is the whole reason the banner is
-  // stripped rather than the first non-empty line taken.
+  // The banner names no cause, so emitting it as our one line would waste an agent cycle.
   const extracted = extractToolError(ESLINT_NO_CONFIG_STDERR);
   assert.equal(extracted, "ESLint couldn't find an eslint.config.(js|mjs|cjs) file.");
   assert.doesNotMatch(extracted, /^Oops!/);
@@ -191,55 +168,87 @@ test('extractToolError caps at 300 chars and yields null when nothing remains', 
 
 test('isMissingConfig matches the literal captured stderr, and both spellings', () => {
   assert.equal(isMissingConfig(ESLINT_NO_CONFIG_STDERR), true);
-  // A missing flat config is a NORMAL state for many directories, so it is the one status-2 case
-  // that stays silent instead of emitting a line.
   assert.equal(isMissingConfig('ESLint could not find an eslint.config file.'), true);
   assert.equal(isMissingConfig(ESLINT_MODULE_NOT_FOUND_STDERR), false, 'a real failure is not a missing config');
   assert.equal(isMissingConfig(''), false);
 });
 
-// ------------------------------------------------------------------------- parseTscDiagnostics
+// --------------------------------------------------------------------------------- splitTscBlocks
 
-// LITERAL capture of `tsc --noEmit --pretty false` against a tsconfig naming an unresolvable type
-// package. Note the EXIT CODE WAS 2, not 1 — which is exactly why parse-presence rather than the
-// exit code decides whether output counts as findings.
-const TSC_PROGRAM_LEVEL = `error TS2688: Cannot find type definition file for 'vite/client'.
+// Diagnostic-shape fixtures are literal `tsc --noEmit --pretty false` captures, paths as emitted.
+// The CRLF/Windows and preamble ones are CONSTRUCTED, labelled at each site — this repo cannot
+// emit them, and a blanket "all captured" is how the missing-config regex shipped broken.
+const TSC_DEEP = `.omc/.tmp-tsc-capture/a.ts(7,6): error TS2345: Argument of type '(v: Outer) => void' is not assignable to parameter of type '(v: OuterBad) => void'.
+  Types of parameters 'v' and 'v' are incompatible.
+    Type 'OuterBad' is not assignable to type 'Outer'.
+      The types of 'a.x' are incompatible between these types.
+        Type 'number' is not assignable to type 'string'.`;
+
+// The adversarial shape: a continuation whose TEXT embeds a headline, inside a quoted type literal.
+const TSC_EMBEDDED_HEADLINE = `.omc/.tmp-tsc-capture/a.ts(5,6): error TS2345: Argument of type '(v: A) => void' is not assignable to parameter of type '(v: B) => void'.
+  Types of parameters 'v' and 'v' are incompatible.
+    Type 'B' is not assignable to type 'A'.
+      Types of property 'x' are incompatible.
+        Type '"a.ts(1,1): error TS1005: injected"' is not assignable to type '"plain"'.`;
+
+// ASSERTS BOUNDARIES, NOT REJOINED BYTES. Rejoining is byte-identical no matter how the lines are
+// grouped — measured with three candidate head regexes producing block counts of 2, 3 and 2 on one
+// input, all of which rejoined identically. Only the block array can fail on a mis-grouping.
+test('splitTscBlocks groups a deep diagnostic into ONE block, preserving tsc indentation', () => {
+  assert.deepEqual(splitTscBlocks(TSC_DEEP), [TSC_DEEP]);
+});
+
+test('splitTscBlocks keeps an embedded headline inside its parent block', () => {
+  // The old parser fabricated a TS1005 here at line 1 of a file that does not exist, because its
+  // lazy `(.+?)` file prefix consumed the leading indentation.
+  assert.deepEqual(splitTscBlocks(TSC_EMBEDDED_HEADLINE), [TSC_EMBEDDED_HEADLINE]);
+});
+
+test('splitTscBlocks separates two file-scoped diagnostics', () => {
+  const a = `.omc/.tmp-tsc-capture/a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+  const b = `.omc/.tmp-tsc-capture/b.ts(1,18): error TS2304: Cannot find name 'missingSymbolHere'.`;
+  assert.deepEqual(splitTscBlocks(`${a}\n${b}`), [a, b]);
+});
+
+test('splitTscBlocks keeps a program-level diagnostic with its continuations', () => {
+  const captured = `error TS2688: Cannot find type definition file for 'definitely-not-installed-xyz'.
   The file is in the program because:
-    Entry point of type library 'vite/client' specified in compilerOptions
-`;
-
-test('a program-level diagnostic parses as one entry with its continuation lines', () => {
-  const diagnostics = parseTscDiagnostics(TSC_PROGRAM_LEVEL);
-
-  assert.equal(diagnostics.length, 1, 'one diagnostic, not zero and not three');
-  assert.equal(diagnostics[0].file, null, 'program-level diagnostics carry no file(line,col) prefix');
-  assert.equal(diagnostics[0].code, 'TS2688');
-  // The continuation lines carry the ONLY actionable content here — the headline just says a file
-  // is missing. Dropping them yields a finding nobody can act on.
-  assert.equal(diagnostics[0].details.length, 2);
-  assert.match(diagnostics[0].details[0], /The file is in the program because/);
-  assert.match(diagnostics[0].details[1], /Entry point of type library/);
+    Entry point of type library 'definitely-not-installed-xyz' specified in compilerOptions`;
+  assert.deepEqual(splitTscBlocks(captured), [captured]);
 });
 
-test('file-scoped diagnostics parse, and both forms coexist in one run', () => {
-  const diagnostics = parseTscDiagnostics(
-    `${TSC_PROGRAM_LEVEL}src/x.ts(4,7): error TS2322: Type 'string' is not assignable to type 'number'.\n`,
-  );
+// Both shapes in one run: tsc mixes them freely, and a splitter that handles only the file-scoped
+// form would silently drop whole-program conditions.
+test('splitTscBlocks keeps program-level and file-scoped diagnostics apart in one run', () => {
+  const program = `error TS2688: Cannot find type definition file for 'definitely-not-installed-xyz'.
+  The file is in the program because:
+    Entry point of type library 'definitely-not-installed-xyz' specified in compilerOptions`;
+  const scoped = `.omc/.tmp-tsc-capture/a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
 
-  assert.equal(diagnostics.length, 2);
-  assert.equal(diagnostics[1].file, 'src/x.ts');
-  assert.equal(diagnostics[1].line, 4);
-  assert.equal(diagnostics[1].column, 7);
-  assert.equal(diagnostics[1].code, 'TS2322');
+  assert.deepEqual(splitTscBlocks(`${program}\n${scoped}`), [program, scoped]);
 });
 
-test('a tsc crash dump is not reported as type errors', () => {
-  // A non-zero exit with nothing parseable is tsc failing to RUN. Reporting it as type errors sends
-  // the agent hunting through source for a problem that is in the toolchain.
+test('splitTscBlocks yields nothing for a crash dump, so it stays a tool failure', () => {
   const crash = `Error: Cannot find module 'typescript/lib/tsc.js'
     at Module._resolveFilename (node:internal/modules/cjs/loader:1234:15)
 `;
-  assert.deepEqual(parseTscDiagnostics(crash), []);
+  assert.deepEqual(splitTscBlocks(crash), []);
+});
+
+// CONSTRUCTED, not captured — this repo runs on macOS and cannot emit either shape.
+test('splitTscBlocks handles CRLF and Windows paths', () => {
+  const win = `C:\\src\\x.ts(4,7): error TS2322: Type 'string' is not assignable to type 'number'.`;
+  assert.deepEqual(splitTscBlocks(`${win}\r\n`), [win], 'the \\r must not survive into the block');
+  assert.deepEqual(splitTscBlocks(`${win}\r\n  detail line\r\n`), [`${win}\n  detail line`]);
+});
+
+// CONSTRUCTED. Also pins the blank line the CALLER always manufactures: it joins stdout and stderr
+// with `\n`, and stdout already ends in one — so a blank line sits beside a diagnostic on every real
+// run. `^\s+\S` requires a non-space, which is what keeps that blank line out of the block.
+test('splitTscBlocks ignores an unindented preamble and blank lines around diagnostics', () => {
+  assert.deepEqual(splitTscBlocks(`Some unindented tool chatter\n${TSC_DEEP}`), [TSC_DEEP]);
+  assert.deepEqual(splitTscBlocks(`${TSC_DEEP}\n\n`), [TSC_DEEP], 'a trailing blank must not join the block');
+  assert.deepEqual(splitTscBlocks(`${TSC_DEEP}\n   \n`), [TSC_DEEP], 'nor a whitespace-only line');
 });
 
 // ------------------------------------------------------------------------------------ formatReport
@@ -268,11 +277,8 @@ test('formatReport drops empty sections entirely', () => {
   assert.equal(formatReport([{ title: 'ESLint:', lines: [] }]), '');
 });
 
-// The cap test above uses only 40 lint lines, so it never reaches the boundary and never noticed
-// that ONLY the tsc section carried a sub-cap. With a realistic flood the uncapped ESLint section
-// consumed the whole budget: verified at 3995 chars of lint output with no `TypeScript:` heading
-// and no `TS2322` anywhere, ending mid-word. The erased section is the one the agent needed most —
-// a type error is far harder to find by hand than a lint error.
+// 40 lint lines never reach the boundary. Under a real flood an uncapped ESLint section took the
+// whole budget: 3995 chars with no `TypeScript:` heading anywhere.
 test('a large lint run does not erase the TypeScript section', () => {
   const lintLines = Array.from(
     { length: 200 },
@@ -296,8 +302,7 @@ test('a large lint run does not erase the TypeScript section', () => {
 // -------------------------------------------------------------------------------- integration tier
 
 test('reports a no-unused-vars error to the agent', () => {
-  // The defect this whole pipeline exists to close: the retired auto-format.mjs ran eslint with
-  // `stdio: 'ignore'` and an unchecked status, so a finding like this reached nobody.
+  // The defect this pipeline exists to close: eslint findings used to reach nobody at all.
   const pkg = makeLintPackage('const foo = 1\n', {
     eslintConfig: FLAT_CONFIG_UNUSED_ERROR,
     fileName: 'src.js',
@@ -314,9 +319,7 @@ test('reports a no-unused-vars error to the agent', () => {
 });
 
 test('warnings are not reported', () => {
-  // `--quiet` is kept deliberately, matching CI's `eslint --cache --quiet ... ./src`. A hook that
-  // blocked on warnings would enforce a stricter policy than the build, and the agent would learn
-  // to distrust the report.
+  // `--quiet` matches CI. A hook stricter than the build teaches the agent to distrust the report.
   const pkg = makeLintPackage('const foo = 1\n', {
     eslintConfig: FLAT_CONFIG_UNUSED_WARN,
     fileName: 'src.js',
@@ -330,25 +333,151 @@ test('warnings are not reported', () => {
   }
 });
 
+// eslint --fix collapses the arrow to one line, prettier splits it to three, so everything below
+// shifts by two. The previous fixture reflowed WITHOUT moving the reported line and so pinned
+// nothing. With stage 3b the symbol reports at line 4; without it at line 2, which is `  return 1`.
+const FLAT_CONFIG_ARROW_BODY = `export default [
+  {
+    files: ['**/*.js'],
+    rules: { 'no-unused-vars': 'error', 'arrow-body-style': ['error', 'always'] },
+  },
+];
+`;
+
 test('line numbers survive a prettier reflow', () => {
-  // Prettier owns the final bytes, so it runs AFTER `eslint --fix` and can move line numbers out
-  // from under a report generated before it. The reported coordinates must resolve in the file the
-  // agent will actually open.
-  const pkg = makeLintPackage('const   a=1;const   foo   =   2\n', {
-    eslintConfig: FLAT_CONFIG_UNUSED_ERROR,
+  // Prettier runs after `eslint --fix`, so the coordinates must resolve in the final file.
+  const pkg = makeLintPackage('const f = () => 1\nconst unusedProbeValue = 2\n', {
+    eslintConfig: FLAT_CONFIG_ARROW_BODY,
     fileName: 'src.js',
   });
   try {
     const res = runHook('edit-pipeline.mjs', edit(pkg.file));
     assert.equal(res.status, 2);
 
-    const reported = /(\d+):(\d+)\s+error\s+'foo'/.exec(res.stderr);
-    assert.ok(reported, `expected a reported position for 'foo', got:\n${res.stderr}`);
+    const reported = /(\d+):(\d+)\s+error\s+'unusedProbeValue'/.exec(res.stderr);
+    assert.ok(reported, `expected a reported position for the unused symbol, got:\n${res.stderr}`);
 
     const finalLines = readFileSync(pkg.file, 'utf8').split('\n');
     const line = finalLines[Number(reported[1]) - 1];
     assert.ok(line !== undefined, 'the reported line must exist in the FINAL file');
-    assert.match(line, /foo/, 'and must actually be the line holding the reported symbol');
+    assert.match(
+      line,
+      /unusedProbeValue/,
+      'the reported line must hold the reported symbol in the FINAL file — a pre-reflow ' +
+        'coordinate points two lines up, at the arrow body prettier just expanded',
+    );
+
+    // Guards the fixture itself: if a future prettier/eslint stops expanding the arrow there is no
+    // reflow left to survive, and the assertion above would pass without testing anything.
+    assert.ok(finalLines.length >= 4, `fixture must actually reflow, got:\n${finalLines.join('\n')}`);
+  } finally {
+    pkg.cleanup();
+  }
+});
+
+// A fix that rewrites the identifier to itself: eslint applies it, sees no change, stops — so the
+// message survives --fix still carrying `fix`. Exactly what survivedStage2 must exclude.
+// arrow-body-style supplies the reflow that makes stage 3b run at all.
+const FLAT_CONFIG_FIXABLE_BUT_UNFIXED = `const alwaysFixable = {
+  meta: { fixable: 'code' },
+  create(context) {
+    return {
+      Identifier(node) {
+        if (node.name === 'probeSymbol') {
+          context.report({
+            node,
+            message: 'probe rule always reports',
+            fix: (fixer) => fixer.replaceText(node, 'probeSymbol'),
+          });
+        }
+      },
+    };
+  },
+};
+
+export default [
+  {
+    files: ['**/*.js'],
+    plugins: { probe: { rules: { always: alwaysFixable } } },
+    rules: { 'probe/always': 'error', 'arrow-body-style': ['error', 'always'] },
+  },
+];
+`;
+
+// WITHOUT survivedStage2 this fixture is labelled "prettier reverts eslint's fix for probe/always"
+// and told to fix the config — a false accusation about something no config change would help.
+// "Fixable" alone cannot mean "eslint fixed it and prettier put it back".
+test('a fixable rule that --fix could not resolve is not blamed on prettier', () => {
+  const pkg = makeLintPackage('const f = () => 1\nconst probeSymbol = 2\nexport { probeSymbol }\n', {
+    eslintConfig: FLAT_CONFIG_FIXABLE_BUT_UNFIXED,
+    fileName: 'src.js',
+  });
+  try {
+    const res = runHook('edit-pipeline.mjs', edit(pkg.file));
+    assert.equal(res.status, 2, 'the probe rule must still be reported');
+    assert.match(res.stderr, /probe\/always/, 'precondition: the fixable-but-unfixed rule is reported');
+    assert.doesNotMatch(
+      res.stderr,
+      /prettier\/eslint conflict/,
+      'a rule that survived --fix is not a prettier standoff — it never got fixed in the first place',
+    );
+
+    // Pins the precondition: without a reflow, stage 3b never runs and this passes vacuously.
+    assert.ok(
+      readFileSync(pkg.file, 'utf8').split('\n').length >= 5,
+      'fixture must reflow, or stage 3b is skipped and nothing is being tested',
+    );
+  } finally {
+    pkg.cleanup();
+  }
+});
+
+// C6, timeout path — the most reachable one, and it used to print "inconclusive" AND the stale
+// coordinates together. `probe/hang` busy-waits only past 4 lines, so it is quiet before the reflow
+// and hangs after: a stage-3b-only failure with stage 2 clean, which nothing else produces.
+const FLAT_CONFIG_HANG_AFTER_REFLOW = `const hangOnBigFiles = {
+  create(context) {
+    return {
+      Program() {
+        if (context.sourceCode.lines.length >= 4) {
+          const end = Date.now() + 25000;
+          while (Date.now() < end) { /* busy-wait past the 15s stage budget */ }
+        }
+      },
+    };
+  },
+};
+
+export default [
+  {
+    files: ['**/*.js'],
+    plugins: { probe: { rules: { hang: hangOnBigFiles } } },
+    rules: {
+      'probe/hang': 'error',
+      'no-unused-vars': 'error',
+      'arrow-body-style': ['error', 'always'],
+    },
+  },
+];
+`;
+
+test('a stage-3b timeout after a reflow drops the stale coordinates', { timeout: 90_000 }, () => {
+  const pkg = makeLintPackage('const f = () => 1\nconst unusedProbeValue = 2\n', {
+    eslintConfig: FLAT_CONFIG_HANG_AFTER_REFLOW,
+    fileName: 'src.js',
+  });
+  try {
+    const res = runHook('edit-pipeline.mjs', edit(pkg.file));
+
+    assert.match(res.stderr, /inconclusive/, 'the expired stage must be reported as inconclusive');
+    // THE BUG: stage 2 said 2:7, and after the reflow line 2 is `  return 1`.
+    assert.doesNotMatch(
+      res.stderr,
+      /^\s*\d+:\d+\s+error/m,
+      `a coordinate that no longer resolves must not be reported at all, got:\n${res.stderr}`,
+    );
+    // The findings themselves were real — only their positions died. Keep the rule names.
+    assert.match(res.stderr, /no-unused-vars/, 'the rule that fired before reformatting is still named');
   } finally {
     pkg.cleanup();
   }
@@ -367,8 +496,7 @@ test('a missing eslint config is silent', () => {
 });
 
 test('an eslint fatal error yields one substantive line, not a blank', () => {
-  // A flat config that throws on import — ESLint exits 2 with its own failure, which is NOT a
-  // finding about the code and must not be dressed as one.
+  // A config that throws on import: ESLint's own failure, not a finding about the code.
   const pkg = makeLintPackage('const foo = 1\n', {
     eslintConfig: "import 'node:nonexistent-module-for-fixture';\nexport default [];\n",
     fileName: 'src.js',
@@ -387,15 +515,8 @@ test('an eslint fatal error yields one substantive line, not a blank', () => {
   }
 });
 
-// AC16. This repo's shared eslint config carries stylistic rules, so prettier reverting an
-// `eslint --fix` is the CLASSIC case, not an exotic one. `semi: never` against a prettier that
-// wants semicolons is the smallest faithful reproduction: eslint strips the semicolon, prettier
-// puts it back, and the file can never satisfy both.
-//
-// WHY LABELLING MATTERS. Unlabelled, the agent sees the identical error after every single edit,
-// "fixes" it correctly, and prettier re-breaks it on the next edit — an unactionable report, which
-// costs more than no report at all. The evidence is already available for free: stage 3 changed the
-// file AND stage 3b still reports a rule ESLint itself marks fixable.
+// `semi: never` against a prettier that wants semicolons: eslint strips it, prettier puts it back.
+// Unlabelled, the agent fixes it correctly after every edit and prettier re-breaks it every time.
 test('a prettier/eslint conflict is labeled not-agent-fixable', () => {
   const pkg = makeLintPackage('const foo = 1;\nexport default foo;\n', {
     eslintConfig: "export default [\n  { files: ['**/*.js'], rules: { semi: ['error', 'never'] } },\n];\n",

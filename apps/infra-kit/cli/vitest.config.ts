@@ -6,8 +6,8 @@ export default defineConfig(() => {
     plugins: [],
     resolve: {
       alias: {
-        '#root': resolve(__dirname, './src'),
-        src: resolve(__dirname, './src'),
+        '#root': resolve(import.meta.dirname, './src'),
+        src: resolve(import.meta.dirname, './src'),
       },
     },
     test: {

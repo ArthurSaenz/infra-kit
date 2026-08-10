@@ -8,11 +8,10 @@ interface BranchProps {
 /**
  * This is a declarative component for conditional rendering.
  *
- * @param {object} props
- * @param {boolean} props.if - The boolean value.
+ * @param props
+ * @param props.if - The boolean value.
  * @param props.children - The two component for rendering.
- * @return {(null | object)} A correct render component
- *
+ * @return A correct render component
  * @example
  *     <Branch if={true}>
  *        <div>True component</div>

@@ -24,7 +24,6 @@ export const Route = createRootRoute({
  *
  * @example
  *     createRootRoute({ component: RootComponent })
- *
  */
 function RootComponent() {
   return (

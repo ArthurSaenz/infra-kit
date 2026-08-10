@@ -4,8 +4,6 @@ import { isSSR } from '../ssr'
 
 /**
  * Custom hook that sets the document title.
- * @param {string} title - The title to set.
- * @param {boolean} prevailOnUnmount - Whether to keep the title after unmounting the component (enabled by default).
  *
  * @example
  * ```tsx

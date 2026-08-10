@@ -290,6 +290,13 @@ export class ServerlessLocalRun {
     const fileUrl = pathToFileURL(controllerPath)
 
     // Search params bust Node's ESM import cache so watch rebuilds load new `dist` output.
+    //
+    // NOT redundant with the runner's `?ikgen=<N>` generation hook, though it looks it — both change
+    // once per restart and land on this same URL. Removing it was tried and reverted: with `?v=` gone
+    // the specifier string is byte-identical across restarts, the re-import resolves to the module
+    // already in the registry, and `resolveStaleFiles` correctly reports `still serving the OLD
+    // handler.js`. The two mechanisms are complementary — `?v=` keeps the ENTRY re-resolvable, the
+    // hook re-evaluates everything the entry imports. See `dev-server.test.ts`'s dist-change restart.
     fileUrl.searchParams.set('v', this.importCacheBust)
 
     // Attribute the handler module's IMPORT-TIME output — a banner from one of its deps, a top-level
