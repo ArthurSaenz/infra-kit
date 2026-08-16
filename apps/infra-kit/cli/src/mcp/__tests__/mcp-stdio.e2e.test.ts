@@ -277,6 +277,8 @@ describe('e1–E3, E6 — the served surface (shared v2 client)', () => {
       }),
     )
 
+    const inspected: string[] = []
+
     for (const name of readOnly) {
       let result: { isError?: boolean; content?: unknown; structuredContent?: unknown } | undefined
       let threw = false
@@ -292,6 +294,8 @@ describe('e1–E3, E6 — the served surface (shared v2 client)', () => {
 
       if (threw) continue
 
+      inspected.push(name)
+
       expect(result, `${name} returned no result`).toBeDefined()
       expect(Array.isArray(result!.content), `${name}.content must be an array`).toBe(true)
 
@@ -305,6 +309,15 @@ describe('e1–E3, E6 — the served surface (shared v2 client)', () => {
         ).toBeTypeOf('object')
       }
     }
+
+    // ANTI-VACUITY. Every assertion above sits behind `if (threw) continue`, so if every tool
+    // errored this loop would inspect nothing and still pass — the test would report success
+    // while measuring zero result payloads. Require that most of the set actually produced a
+    // result to look at.
+    expect(
+      inspected.length,
+      `only ${inspected.length}/${readOnly.length} read-only tools returned an inspectable result: ${inspected.join(', ')}`,
+    ).toBeGreaterThanOrEqual(Math.ceil(readOnly.length / 2))
   }, 120_000)
 
   it('o2: the migrated transport path is recorded in the pino log', async () => {
