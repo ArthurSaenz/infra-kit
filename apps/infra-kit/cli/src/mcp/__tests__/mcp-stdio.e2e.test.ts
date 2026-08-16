@@ -683,13 +683,15 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     // compared RAW `inputSchema` JSON, and since D2 makes `$schema` differ for EVERY tool, it
     // reported all 23 as "still differing" and could never fire. If this assertion fails, the
     // tripwire below is dead again regardless of what its comment claims.
-    const unchangedControl = (v1Tools.tools as Record<string, any>[])
-      .map((t) => {
-        return t.name
-      })
-      .find((name) => {
-        return !SOURCE_CHANGED_DURING_MIGRATION.includes(name)
-      })!
+    // Pick a control with a NON-EMPTY inputSchema. The first non-excluded tool happens to have
+    // `properties: {}`, which would exercise only `$schema` normalization and three top-level
+    // keys — leaving the self-check green if a future SDK delta were confined to populated
+    // schemas. A populated control makes the self-check representative of the real comparison.
+    const unchangedControl = (v1Tools.tools as Record<string, any>[]).find((t) => {
+      return (
+        !SOURCE_CHANGED_DURING_MIGRATION.includes(t.name) && Object.keys(t.inputSchema?.properties ?? {}).length > 0
+      )
+    })!.name
 
     expect(
       differsFromBaseline(unchangedControl),

@@ -67,7 +67,7 @@ const strays: ChildProcess[] = []
 
 let mutantMcpPath = ''
 
-const callUnconfirmed = (mcpPath: string, env: NodeJS.ProcessEnv): Promise<void> => {
+const callUnconfirmed = (mcpPath: string, env: NodeJS.ProcessEnv, settled: () => boolean): Promise<void> => {
   return new Promise((resolvePromise) => {
     const child = spawn(process.execPath, [mcpPath], { env, stdio: ['pipe', 'pipe', 'ignore'] })
 
@@ -95,10 +95,23 @@ const callUnconfirmed = (mcpPath: string, env: NodeJS.ProcessEnv): Promise<void>
       )
     }, 300)
 
-    setTimeout(() => {
+    // POLL to a deadline; do NOT settle on a fixed timer. A fixed 3500ms wait made this flaky
+    // under suite load — the neutered child might not have written the file yet, and the test
+    // would report "the gate was neutered but the tool still did not run" when the truth was
+    // "we did not wait long enough". Same anti-pattern `rawSession` was already fixed for in
+    // mcp-stdio.e2e.test.ts. It failed CLOSED (false red, never false green), but a test that
+    // cries wolf gets muted, so it still has to go.
+    const deadline = Date.now() + 25_000
+
+    const finish = (): void => {
+      clearInterval(poll)
       child.kill('SIGKILL')
       resolvePromise()
-    }, 3500)
+    }
+
+    const poll = setInterval(() => {
+      if (settled() || Date.now() > deadline) finish()
+    }, 100)
   })
 }
 
@@ -154,7 +167,9 @@ describe('the confirm gate mutation check', () => {
 
     expect(existsSync(clearFile), 'fixture must start clean').toBe(false)
 
-    await callUnconfirmed(mutantMcpPath, env)
+    await callUnconfirmed(mutantMcpPath, env, () => {
+      return existsSync(clearFile)
+    })
 
     // E4 asserts this file is ABSENT after an unconfirmed call. Here the gate is gone, so the
     // handler runs and the file appears. If this ever goes red, E4 has stopped being able to
