@@ -597,12 +597,50 @@ PM-1 cannot be mitigated by reasoning — only by measurement. Fill in this matr
   changes) is unsatisfiable and every consumer of this repo gets a machine-specific absolute path.
   This is not zero-cost; it is a tracked-file edit with a mandatory undo.
 
+**RESULT — run 2026-08-16 against the built `dist/mcp.js` at commit `d1924c0`.**
+
 | Host | Connects | `tools/list` returns the full exposed set | **Tool arguments validate / schemas accepted** | One read-only tool call succeeds | Both resources readable | Negotiated version |
 |---|---|---|---|---|---|---|
-| MCP Inspector (`pnpm run inspector`) | | | | | | |
-| Claude Code (this repo's `.mcp.json`, repointed as above) | | | | | | |
-| Cursor | | | | | | |
-| Zed | | | | | | |
+| MCP Inspector `inspector-cli` 2.2.0 | ✅ | ✅ 23, `doctor` absent | ✅ required + optional-omitted both accepted | ✅ `version` → `0.3.14` | ✅ both listed | **2025-11-25** |
+| Claude Code 2.1.233 | ✅ | ✅ 23 | ✅ required + optional-omitted both accepted | ✅ `version` → `0.3.14`, `env-token-list` ok | ✅ both listed, `dev-context` read → `session:"none"` | **2025-11-25** |
+| Cursor | **untested** | untested | untested | untested | untested | untested |
+| Zed | **untested** | untested | untested | untested | untested | untested |
+
+**How it was run — no `.mcp.json` edit was needed.** `claude -p --strict-mcp-config --mcp-config <temp>`
+drives Claude Code's real MCP client against an arbitrary server, so the tracked file was never
+touched and AC13's mandatory revert is moot (`git diff .mcp.json` → clean). The Inspector was driven
+through its non-interactive `--cli` mode. Negotiated versions were read off the wire via a
+transparent stdio tee proxy rather than inferred.
+
+**Cursor and Zed are installed but recorded as untested**: both are GUI hosts, and neither `cursor`
+nor `zed` exposes a CLI that drives an MCP server, so there is no non-interactive way to fill their
+rows. Per this phase's own rule they are **untested, not assumed working**.
+
+**Neither host probes.** `server/discover` frame count was **0** for both. Combined with the
+negotiated `2025-11-25`, this is direct wire evidence that Option E was implemented: a `2026-07-28`
+row would have meant a stray `serveStdio` call.
+
+**D1 is visible to real hosts and accepted.** Both saw
+`capabilities.prompts: {"listChanged": true}` in the `initialize` result and neither complained.
+**D2 is accepted too** — both hosts validated arguments against the `draft-2020-12` schemas, with a
+required argument (`worktrees-remove versions=…`) and an optional-omitted one (`env-token-list`).
+
+**⚠️ Host-dependent finding on the confirm gate — PRE-EXISTING, proven against a real host.**
+The Inspector's client rejects the gate payload:
+
+> `data must have required property 'removedWorktrees', data must have required property 'count',
+> data must NOT have additional properties, …`
+
+**Claude Code does NOT** — it receives the full `{status:'confirmation_required', tool, resolvedArgs,
+message}` payload and reports it correctly. So this affects Inspector-class (v1-SDK-validating)
+clients only, not this repo's primary host.
+
+It is **not** caused by the migration. Running the **identical** Inspector call against the
+**published v1 global build** (`~/Library/pnpm/global/.../infra-kit@0.3.14/dist/mcp.js`, verified
+`imports sdk v1: true`, `imports server v2: false`) produces the **byte-identical** error. The
+earlier schema-level derivation is now confirmed empirically end-to-end. It fails safe — the log
+shows `Tool execution gated (awaiting confirm)` and the tool never runs — and the required argument
+was accepted and reached the handler, which is what this column measures.
 
 Notes:
 - **The "tool arguments validate / schemas accepted" column is mandatory, not decorative.** Delta D2
