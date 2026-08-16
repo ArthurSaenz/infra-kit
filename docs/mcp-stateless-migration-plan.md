@@ -55,6 +55,16 @@ hand-wired `new StdioServerTransport()` + `server.connect()`) declaring the **sa
 | **D2** | `$schema` on every tool `inputSchema`/`outputSchema` | `http://json-schema.org/draft-07/schema#` | `https://json-schema.org/draft/2020-12/schema` | A JSON Schema **dialect URI** change across 23 tools × 2 schemas. |
 | **D3** | `tools[].execution` | `{"taskSupport":"forbidden"}` on **all 23** | **absent on all 23** | v1's `registerTool` hard-codes the block; v2 emits none. **Inert:** v1's own `ToolExecutionSchema` documents that an absent block DEFAULTS to `"forbidden"`, so the advertised semantics are unchanged. |
 
+**A fourth difference that is NOT a delta: JSON key ORDER.** v2 serializes object keys in a
+different order than v1 (e.g. a tool's `inputSchema` goes `$schema,type,properties` →
+`type,$schema,properties`, and the tool object loses `execution` from the middle). Measured across
+all 22 comparable tools: **key-order-only differences 22, real content differences 0.** Key order
+carries no meaning in JSON and no MCP client can depend on it — every payload is parsed into an
+object before anything reads it. This is why W1 compares with `toEqual` (structural, order-
+insensitive) rather than string equality, and why the claim below says the payloads are identical
+rather than literally byte-identical. Anyone re-running a raw `JSON.stringify` diff will see 22
+"differences" that are nothing of the sort — canonicalize key order first.
+
 **Non-delta (the reassuring part, also measured).** Both servers declare the same
 `capabilities: { resources: {listChanged: true}, tools: {}, prompts: … }` — `resources` and `tools`
 are **identical**. Schema **body** conventions are identical: `type: 'object'`, `properties`,

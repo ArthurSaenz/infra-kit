@@ -663,6 +663,11 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
       )
       const normalized = JSON.parse(JSON.stringify(after).split(DRAFT_2020).join(DRAFT_07)) as Record<string, unknown>
 
+      // `toEqual` is STRUCTURAL and order-insensitive, and that is deliberate. v2 serializes
+      // object keys in a different order than v1 (`$schema,type,properties` becomes
+      // `type,$schema,properties`), so a string-equality diff reports all 22 tools as "changed"
+      // when nothing about them changed. Measured: 22 key-order-only differences, 0 content
+      // differences. Key order carries no meaning in JSON and no client can depend on it.
       expect(normalized, `tool ${before.name} drifted beyond the known deltas`).toEqual(beforeRest)
     }
   })
