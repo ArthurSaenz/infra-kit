@@ -319,11 +319,17 @@ describe('e1–E3, E6 — the served surface (shared v2 client)', () => {
     // `await server.connect(transport)` returns — i.e. by the exact code path this migration
     // changed. Observing them proves both that logging survived the SDK swap and that the v2
     // transport connected. That is a stronger signal than a tool-call line would have been.
-    // NOTE: unlike E4/E5 and the mutation check, this test is NOT sandboxed — `LOG_FILE_PATH` is
-    // the shared global `/tmp/mcp-infra-kit.log` that the real server always writes to. That is
-    // deliberate (the point is to observe the REAL log destination), and it is safe here because
-    // we only length-slice what this child appended and assert with `toContain`, so concurrent
-    // writers cannot make it pass or fail spuriously.
+    // ATTRIBUTION IS MANDATORY HERE. `LOG_FILE_PATH` is the hard-coded global
+    // `/tmp/mcp-infra-kit.log` (src/lib/logger/index.ts) — it is NOT redirectable by
+    // XDG_CACHE_HOME, so unlike E4/E5 and the mutation check (which sandbox only the session
+    // CACHE) this observation shares a file with every other MCP server the suite spawns, and
+    // `pool: 'forks'` runs other test FILES in parallel. Measured: one `vitest run src/mcp`
+    // appends 11 "Server connected to transport. Ready." lines from 11 distinct pids, and up to
+    // 8 of them can land inside this test's ~2s window.
+    //
+    // So a length-slice + `toContain` would be satisfiable entirely by OTHER processes' output —
+    // a false green that cannot fail for the reason it exists. Pino stamps every line with `pid`,
+    // so we filter to this child's own lines and assert on those.
     const before = existsSync(LOG_FILE_PATH) ? readFileSync(LOG_FILE_PATH, 'utf8').length : 0
     const child = spawn(process.execPath, [mcpPath], { env: childEnv(), stdio: ['pipe', 'pipe', 'ignore'] })
 
@@ -346,9 +352,26 @@ describe('e1–E3, E6 — the served surface (shared v2 client)', () => {
     })
 
     const grew = readFileSync(LOG_FILE_PATH, 'utf8').slice(before)
+    const mine = grew
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line) as { pid?: number; msg?: string }
+        } catch {
+          return null
+        }
+      })
+      .filter((entry): entry is { pid?: number; msg?: string } => {
+        return entry !== null && entry.pid === child.pid
+      })
 
-    expect(grew, 'the MCP server wrote nothing to its log file').not.toBe('')
-    expect(grew).toContain('Server connected to transport. Ready.')
+    expect(mine, 'this child wrote nothing to the log file').not.toHaveLength(0)
+    expect(
+      mine.map((entry) => {
+        return entry.msg
+      }),
+    ).toContain('Server connected to transport. Ready.')
   }, 45_000)
 })
 
@@ -516,11 +539,18 @@ describe('e8-R1 — Release 1 serves the 2025 era ONLY (the anti-serveStdio guar
 
 describe('w1 — differential wire compatibility against the pre-migration v1 baseline', () => {
   /**
-   * The plan's central confidence artifact. It asserts the TWO known deltas POSITIVELY (rather than
-   * normalizing them away) and fails on any third difference — a normalization broad enough to
-   * swallow D1/D2 is the same hole an unnoticed third delta would slip through.
+   * The plan's central confidence artifact. It asserts the THREE known deltas POSITIVELY (rather
+   * than merely normalizing them away) and fails on any FOURTH difference — a normalization broad
+   * enough to swallow a known delta is the same hole an unnoticed one would slip through.
    *
-   * Only `serverInfo.version` is normalized, because it changes on every release bump.
+   *   D1  initialize.capabilities.prompts  {} -> { listChanged: true }
+   *   D2  tool $schema  draft-07 -> draft-2020-12
+   *   D3  tools[].execution  { taskSupport: 'forbidden' } -> absent
+   *
+   * D2 and D3 are the only things normalized away before the whole-object comparison, and each is
+   * asserted positively FIRST so the normalization can never be what makes the test pass.
+   * `serverInfo` is compared by `.name` plus key-set; its `.version` is deliberately not compared,
+   * because it moves on every release bump.
    */
   const v1Init = JSON.parse(readFileSync(join(FIXTURES, 'initialize-baseline.v1.json'), 'utf8')) as Record<string, any>
   const v1Tools = JSON.parse(readFileSync(join(FIXTURES, 'tools-list-baseline.v1.json'), 'utf8')) as Record<string, any>
@@ -599,12 +629,61 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     // Every name here is a tool W1 is NOT guarding, so it must stay short and justified.
     const SOURCE_CHANGED_DURING_MIGRATION = ['gh-merge-dev']
 
-    const excludedStillDiffer: string[] = []
+    // Recursively sort object keys so comparison is order-insensitive: v2 emits keys in a
+    // different order than v1, which is meaningless in JSON but makes raw string equality lie.
+    const canonicalize = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(canonicalize)
 
-    for (const name of SOURCE_CHANGED_DURING_MIGRATION) {
+      if (value !== null && typeof value === 'object') {
+        return Object.fromEntries(
+          Object.keys(value as Record<string, unknown>)
+            .sort()
+            .map((key) => {
+              return [key, canonicalize((value as Record<string, unknown>)[key])]
+            }),
+        )
+      }
+
+      return value
+    }
+
+    /**
+     * The AUTHORED shape of a schema: SDK-induced deltas (D2's dialect URI) normalized out and key
+     * order canonicalized, so what remains is only what a human wrote in the tool definition.
+     */
+    const authoredShape = (schema: unknown): string => {
+      return JSON.stringify(canonicalize(JSON.parse(JSON.stringify(schema).split(DRAFT_2020).join(DRAFT_07))))
+    }
+
+    const differsFromBaseline = (name: string): boolean => {
       const before = (v1Tools.tools as Record<string, any>[]).find((t) => {
         return t.name === name
       })
+      const after = (toolsResult.tools as Record<string, any>[]).find((t) => {
+        return t.name === name
+      })
+
+      return authoredShape(before?.inputSchema) !== authoredShape(after?.inputSchema)
+    }
+
+    // SELF-CHECK — the one-line proof the predicate actually discriminates. An earlier version
+    // compared RAW `inputSchema` JSON, and since D2 makes `$schema` differ for EVERY tool, it
+    // reported all 23 as "still differing" and could never fire. If this assertion fails, the
+    // tripwire below is dead again regardless of what its comment claims.
+    const unchangedControl = (v1Tools.tools as Record<string, any>[])
+      .map((t) => {
+        return t.name
+      })
+      .find((name) => {
+        return !SOURCE_CHANGED_DURING_MIGRATION.includes(name)
+      })!
+
+    expect(
+      differsFromBaseline(unchangedControl),
+      `predicate is tautological — it reports the unchanged tool "${unchangedControl}" as differing`,
+    ).toBe(false)
+
+    const excludedStillDiffer = SOURCE_CHANGED_DURING_MIGRATION.filter((name) => {
       const after = (toolsResult.tools as Record<string, any>[]).find((t) => {
         return t.name === name
       })
@@ -613,15 +692,14 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
       expect(after?.inputSchema?.$schema).toBe(DRAFT_2020)
       expect(after?.outputSchema?.$schema).toBe(DRAFT_2020)
 
-      if (JSON.stringify(before?.inputSchema) !== JSON.stringify(after?.inputSchema)) {
-        excludedStillDiffer.push(name)
-      }
-    }
+      return differsFromBaseline(name)
+    })
 
-    // TRIPWIRE, not a tautology: assert the exclusion is still EARNED. Once the concurrent work
-    // lands or is reverted the excluded tool will match again, this list empties, and the test
-    // fails — forcing the exclusion to be deleted instead of silently leaving a tool unguarded
-    // forever. (Asserting the hard-coded list's length can never detect that.)
+    // TRIPWIRE: assert the exclusion is still EARNED. Once the concurrent work lands or is
+    // reverted, the excluded tool's AUTHORED shape matches the baseline again, this list empties,
+    // and the test fails — forcing the exclusion to be deleted rather than silently leaving a tool
+    // unguarded forever. The self-check above is what keeps this from degenerating into a
+    // tautology; without it, a predicate that is always-true passes here and guards nothing.
     expect(
       excludedStillDiffer,
       'exclusion is now obsolete — re-capture the fixtures and empty SOURCE_CHANGED_DURING_MIGRATION',
