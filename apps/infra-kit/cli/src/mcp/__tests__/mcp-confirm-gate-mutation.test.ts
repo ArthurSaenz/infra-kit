@@ -1,12 +1,10 @@
-import * as esbuild from 'esbuild'
+import type * as esbuild from 'esbuild'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { buildOptions } from '../../../scripts/build.js'
+import { buildMcpBundle, makeDisposableSession } from './helpers/mcp-harness'
 
 /**
  * Mutation check for the destructive-tool confirm gate.
@@ -24,14 +22,6 @@ import { buildOptions } from '../../../scripts/build.js'
  * into a temp directory via XDG_CACHE_HOME and deleted in afterAll. Never point this at
  * `local-deploy*`, `gh-release-deploy*`, or `release-create` — those mutate real infrastructure.
  */
-
-const CLI_ROOT = resolve(__dirname, '../../..')
-
-const KILL_SWITCHES = {
-  INFRA_KIT_NO_SEED: '1',
-  INFRA_KIT_NO_AUTO_UPDATE: '1',
-  INFRA_KIT_NO_LOCATION_WARN: '1',
-} as const
 
 /** The exact predicate in `src/lib/tool-handler/tool-handler.ts` that gates a flagged tool. */
 const GATE_PREDICATE = /requiresHumanConfirm === true/g
@@ -115,40 +105,11 @@ const callUnconfirmed = (mcpPath: string, env: NodeJS.ProcessEnv, settled: () =>
   })
 }
 
-/** A disposable session cache with something for `env-clear` to actually clear. */
-const makeDisposableSession = (): { env: NodeJS.ProcessEnv; clearFile: string } => {
-  const cacheHome = mkdtempSync(join(tmpdir(), 'mcp-mutation-cache-'))
-
-  tmpDirs.push(cacheHome)
-
-  const session = 'mutation'
-  const sessionDir = join(cacheHome, 'infra-kit', session)
-
-  mkdirSync(sessionDir, { recursive: true })
-  writeFileSync(join(sessionDir, 'env-load.sh'), 'export FOO=bar\n')
-
-  return {
-    env: { ...process.env, ...KILL_SWITCHES, XDG_CACHE_HOME: cacheHome, INFRA_KIT_SESSION: session },
-    clearFile: join(sessionDir, 'env-clear.sh'),
-  }
-}
-
 beforeAll(async () => {
-  const cache = resolve(CLI_ROOT, 'node_modules', '.cache')
+  const built = await buildMcpBundle('mcp-gate-mutant-', [gateNeuteringPlugin])
 
-  mkdirSync(cache, { recursive: true })
-
-  const outDir = mkdtempSync(join(cache, 'mcp-gate-mutant-'))
-
-  tmpDirs.push(outDir)
-
-  await esbuild.build({
-    ...buildOptions,
-    outdir: outDir,
-    plugins: [...(buildOptions.plugins ?? []), gateNeuteringPlugin],
-  })
-
-  mutantMcpPath = join(outDir, 'mcp.js')
+  tmpDirs.push(built.outDir)
+  mutantMcpPath = built.mcpPath
 }, 120_000)
 
 afterAll(() => {
@@ -163,7 +124,9 @@ afterAll(() => {
 
 describe('the confirm gate mutation check', () => {
   it('m1: with the gate neutered, an UNCONFIRMED call executes — so E4 is load-bearing', async () => {
-    const { env, clearFile } = makeDisposableSession()
+    const { cacheHome, env, clearFile } = makeDisposableSession()
+
+    tmpDirs.push(cacheHome)
 
     expect(existsSync(clearFile), 'fixture must start clean').toBe(false)
 

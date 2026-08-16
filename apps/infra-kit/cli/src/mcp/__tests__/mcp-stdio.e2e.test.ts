@@ -2,18 +2,16 @@ import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { Client as ClientV1 } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport as StdioClientTransportV1 } from '@modelcontextprotocol/sdk/client/stdio.js'
-import * as esbuild from 'esbuild'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { commandCatalog, getExposedMcpTools } from 'src/lib/command-catalog'
 import { LOG_FILE_PATH } from 'src/lib/logger'
 
-import { buildOptions } from '../../../scripts/build.js'
+import { KILL_SWITCHES, buildMcpBundle, makeDisposableSession } from './helpers/mcp-harness'
 
 /**
  * Protocol-level e2e lane for the SDK v1 → v2 migration (Release 1 / Option E).
@@ -36,14 +34,7 @@ import { buildOptions } from '../../../scripts/build.js'
  *   short-lived: W1 raw ×2 (also carries O1), E8-R1 pinned ×1, O6 ×1
  */
 
-const KILL_SWITCHES = {
-  INFRA_KIT_NO_SEED: '1',
-  INFRA_KIT_NO_AUTO_UPDATE: '1',
-  INFRA_KIT_NO_LOCATION_WARN: '1',
-} as const
-
 const FIXTURES = resolve(__dirname, 'fixtures')
-const CLI_ROOT = resolve(__dirname, '../../..')
 
 let mcpPath = ''
 const tmpDirs: string[] = []
@@ -57,14 +48,6 @@ const childEnv = (overrides: Record<string, string | undefined> = {}): NodeJS.Pr
   }
 
   return env
-}
-
-const mkTmp = (prefix: string): string => {
-  const dir = mkdtempSync(join(tmpdir(), `mcp-e2e-${prefix}-`))
-
-  tmpDirs.push(dir)
-
-  return dir
 }
 
 /** Raw JSON-RPC over stdio. Used where a typed client cannot express the request (W1's era probes). */
@@ -156,17 +139,10 @@ const connectV2 = async (env: NodeJS.ProcessEnv = childEnv()): Promise<Client> =
 }
 
 beforeAll(async () => {
-  const cache = resolve(CLI_ROOT, 'node_modules', '.cache')
+  const built = await buildMcpBundle('mcp-stdio-e2e-')
 
-  mkdirSync(cache, { recursive: true })
-
-  const outDir = mkdtempSync(join(cache, 'mcp-stdio-e2e-'))
-
-  tmpDirs.push(outDir)
-
-  await esbuild.build({ ...buildOptions, outdir: outDir })
-
-  mcpPath = join(outDir, 'mcp.js')
+  tmpDirs.push(built.outDir)
+  mcpPath = built.mcpPath
 }, 120_000)
 
 afterAll(() => {
@@ -407,17 +383,12 @@ describe('e4/E5 — the destructive-tool confirm gate, proven by a FILESYSTEM si
   let clearFile = ''
 
   beforeAll(async () => {
-    const cacheHome = mkTmp('gate-cache')
-    const session = 'e2egate'
-    const sessionDir = join(cacheHome, 'infra-kit', session)
+    const session = makeDisposableSession()
 
-    mkdirSync(sessionDir, { recursive: true })
-    // env-clear errors when nothing is loaded; give it something to clear.
-    writeFileSync(join(sessionDir, 'env-load.sh'), 'export FOO=bar\n')
+    tmpDirs.push(session.cacheHome)
+    clearFile = session.clearFile
 
-    clearFile = join(sessionDir, 'env-clear.sh')
-
-    client = await connectV2(childEnv({ XDG_CACHE_HOME: cacheHome, INFRA_KIT_SESSION: session }))
+    client = await connectV2(session.env)
   }, 45_000)
 
   it('e4: call 1 without `confirm` is GATED and does NOT execute (no file written)', async () => {
