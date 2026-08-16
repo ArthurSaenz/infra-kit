@@ -1,0 +1,1664 @@
+{
+  "tools": [
+    {
+      "name": "dev-status",
+      "description": "Report what `infra-kit dev` currently has running by READING the on-disk dev-context fragments (never starts a server). Advisory + read-only: surfaces each app’s package, bound port, portless alias, local origin, fragment freshness (mtime / ageSeconds), and a live TCP liveness probe of the port. The fragment directory is found by searching UPWARD from the working directory, so this agrees with the `infra-kit://dev-context` resource and with the vite helper’s routing decision; `contextDir` / `contextDirExists` report where it looked and whether that directory is real. Returns { active: false, apps: [] } when no dev session is active.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {}
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "True when at least one dev-context fragment exists on disk (an infra-kit dev session has apps registered). False means no active dev session was found — this is a clean result, NOT an error."
+          },
+          "contextDir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The RESOLVED dev-context fragment directory — found by searching UPWARD from the working directory. This is where the read looked, NOT proof anything is there: when no fragment directory exists the resolver derives one from an up-tree `.infra-kit`, so this can name a path (even under $HOME) that was never written to. Check contextDirExists before drawing any conclusion from it. Null when no `.infra-kit` anchor exists up-tree at all."
+          },
+          "contextDirExists": {
+            "type": "boolean",
+            "description": "Whether contextDir actually exists on disk. False with a non-null contextDir means the path was DERIVED, not read — the usual state in a repo where `infra-kit dev` has never run. Distinguishes \"looked and found nothing\" from \"had nowhere to look\"."
+          },
+          "apps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "app": {
+                  "type": "string",
+                  "description": "App folder name (the fragment filename without .json)."
+                },
+                "package": {
+                  "type": "string",
+                  "description": "The app package name the vite helper reads to decide a local route."
+                },
+                "port": {
+                  "type": "number",
+                  "description": "The actual bound port the dev server is listening on."
+                },
+                "pid": {
+                  "type": "number",
+                  "description": "PID of the dev-server process that wrote the fragment (ownership / staleness metadata)."
+                },
+                "alias": {
+                  "type": "string",
+                  "description": "Registered portless hostname for the app."
+                },
+                "origin": {
+                  "type": "string",
+                  "description": "Authoritative local origin the vite helper proxies to for this app."
+                },
+                "release": {
+                  "type": "string",
+                  "description": "Release slug the runner recorded for this worktree."
+                },
+                "writtenAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "ISO 8601 time the runner self-reported writing the fragment (writer clock — may be wrong; prefer fragmentMtime). Null when the fragment did not record it."
+                },
+                "fragmentMtime": {
+                  "type": "string",
+                  "description": "ISO 8601 filesystem mtime of the fragment file — the AUTHORITATIVE freshness signal."
+                },
+                "ageSeconds": {
+                  "type": "number",
+                  "description": "Seconds since the fragment was last written on disk. A large value with live:false means a stale/abandoned fragment."
+                },
+                "live": {
+                  "type": "boolean",
+                  "description": "Whether a TCP connection to the app port succeeds RIGHT NOW (a real engine liveness probe, not an inference). A fresh fragment with live:false is a crashed or killed dev server whose fragment was not cleaned up."
+                }
+              },
+              "required": [
+                "app",
+                "package",
+                "port",
+                "pid",
+                "alias",
+                "origin",
+                "release",
+                "writtenAt",
+                "fragmentMtime",
+                "ageSeconds",
+                "live"
+              ],
+              "additionalProperties": false
+            },
+            "description": "One entry per dev-context fragment on disk, sorted by app name. Empty when no dev session is active."
+          }
+        },
+        "required": [
+          "active",
+          "contextDir",
+          "contextDirExists",
+          "apps"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "gh-merge-dev",
+      "description": "Merge origin/dev into open regular (non-hotfix) release branches and push the result. Mutates local git state and the remote release branches. When invoked via MCP, pass all=true (or an explicit versions list) — the branch picker is unreachable without a TTY, and the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. Irreversible once pushed.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "all": {
+            "description": "Target every open regular release branch. Must be true for MCP calls unless `versions` is supplied (the interactive picker is unavailable without a TTY).",
+            "type": "boolean"
+          },
+          "versions": {
+            "description": "Target a subset of the open regular release branches. Each entry may be a version label (\"1.2.5\") or a raw branch name (\"release/v1.2.5\"). A selector that is not an open regular release is an error — hotfix branches cannot be selected. Takes precedence over `all`.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "confirm": {
+            "description": "Set true to execute; omit for a dry-run gate that echoes the resolved action.",
+            "type": "boolean"
+          }
+        }
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "successfulMerges": {
+            "type": "number",
+            "description": "Number of successful merges"
+          },
+          "failedMerges": {
+            "type": "number",
+            "description": "Number of failed merges"
+          },
+          "failedBranches": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of branches that failed to merge"
+          },
+          "totalBranches": {
+            "type": "number",
+            "description": "Total number of branches processed"
+          }
+        },
+        "required": [
+          "successfulMerges",
+          "failedMerges",
+          "failedBranches",
+          "totalBranches"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "gh-release-list",
+      "description": "List every open release PR with its version, type (regular / hotfix), and associated Jira fix-version description. Read-only; sourced from GitHub and Jira.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {}
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "releases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Release version"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "regular",
+                    "hotfix"
+                  ],
+                  "description": "Release type"
+                },
+                "description": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Jira version description"
+                }
+              },
+              "required": [
+                "version",
+                "type",
+                "description"
+              ],
+              "additionalProperties": false
+            },
+            "description": "List of all release branches"
+          },
+          "count": {
+            "type": "number",
+            "description": "Number of release branches"
+          }
+        },
+        "required": [
+          "releases",
+          "count"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "release-create",
+      "description": "Create one or more releases in a single call. Each entry in \"releases\" carries EITHER a \"version\" (semver or the literal token \"next\") OR a \"name\" (free-form kebab-case identifier) — exactly one is required and they are mutually exclusive. Each entry also has its own type (regular|hotfix, default regular) and optional description; all entries in one call must share the same type — mixed regular+hotfix batches are rejected (create them in separate invocations). For each release this tool switches to the appropriate base branch (dev for regular, main for hotfix), cuts the release branch (release/v<semver> for versions, release/<name> for names), opens a GitHub release PR, and creates the matching Jira fix version (v<semver> for versions, <name> for names). The literal token \"next\" auto-increments from the union of remote release branches and Jira fix versions (regular bumps minor + resets patch; hotfix bumps patch on the highest minor); multiple \"next\" tokens advance sequentially. Named releases never auto-bump and \"next\" is version-only. Must be run from the main repository checkout (not a linked worktree) on the matching base branch with a clean working tree. Confirmation is auto-skipped for MCP calls, so the caller is responsible for gating. Continues on per-release failure and reports successes/failures.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "releases": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "description": "Version to create (e.g., \"1.2.5\") or the literal token \"next\" for auto-increment. Mutually exclusive with \"name\".",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "Free-form kebab-case release name (e.g., \"checkout-redesign\"). Mutually exclusive with \"version\". Named releases never auto-bump.",
+                  "type": "string"
+                },
+                "type": {
+                  "default": "regular",
+                  "description": "Release type: \"regular\" (branches off dev) or \"hotfix\" (branches off main).",
+                  "type": "string",
+                  "enum": [
+                    "regular",
+                    "hotfix"
+                  ]
+                },
+                "description": {
+                  "description": "Optional description for the Jira version.",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "One or more releases to create. Each entry has exactly one of \"version\" or \"name\", plus its own type and optional description."
+          },
+          "confirm": {
+            "description": "Set true to execute; omit for a dry-run gate that echoes the resolved action.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "releases"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "createdBranches": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of created release branch names"
+          },
+          "successCount": {
+            "type": "number",
+            "description": "Number of releases created successfully"
+          },
+          "failureCount": {
+            "type": "number",
+            "description": "Number of releases that failed"
+          },
+          "releases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version number"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "regular",
+                    "hotfix"
+                  ],
+                  "description": "Release type"
+                },
+                "branchName": {
+                  "type": "string",
+                  "description": "Release branch name"
+                },
+                "prUrl": {
+                  "type": "string",
+                  "description": "GitHub PR URL"
+                },
+                "jiraVersionUrl": {
+                  "type": "string",
+                  "description": "Jira version URL"
+                }
+              },
+              "required": [
+                "version",
+                "type",
+                "branchName",
+                "prUrl",
+                "jiraVersionUrl"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Detailed information for each created release with URLs"
+          },
+          "failedReleases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version number that failed"
+                },
+                "error": {
+                  "type": "string",
+                  "description": "Error message"
+                }
+              },
+              "required": [
+                "version",
+                "error"
+              ],
+              "additionalProperties": false
+            },
+            "description": "List of releases that failed with error messages"
+          }
+        },
+        "required": [
+          "createdBranches",
+          "successCount",
+          "failureCount",
+          "releases",
+          "failedReleases"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "release-desc-edit",
+      "description": "Edit a release's description in Jira and in the matching GitHub release PR body. Accepts a release version or a release name: targets the Jira fix version named `v<version>` (versioned) or `<name>` (named) and the open PR on branch `release/v<version>` or `release/<name>`. The PR body is rewritten canonically to `<jiraVersionUrl>\\n\\n<description>` — any prior manual edits to the body are overwritten. Both `version` and `description` are required for MCP calls (the picker/prompt are unreachable without a TTY). Empty `description` clears the description on both sides. Confirmation is auto-skipped for MCP, so the caller is responsible for gating.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Accepts a release version (e.g. \"1.2.5\") OR a release name (e.g. \"checkout-redesign\")."
+          },
+          "description": {
+            "type": "string",
+            "description": "New description. Empty string clears the description."
+          }
+        },
+        "required": [
+          "version",
+          "description"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Release version"
+          },
+          "branch": {
+            "type": "string",
+            "description": "Release branch name (e.g. \"release/v1.2.5\" or \"release/checkout-redesign\")"
+          },
+          "jiraVersionUrl": {
+            "type": "string",
+            "description": "Jira fix version URL"
+          },
+          "previousDescription": {
+            "type": "string",
+            "description": "The description before the update"
+          },
+          "newDescription": {
+            "type": "string",
+            "description": "The description after the update"
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "Whether the description actually changed"
+          }
+        },
+        "required": [
+          "version",
+          "branch",
+          "jiraVersionUrl",
+          "previousDescription",
+          "newDescription",
+          "changed"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "gh-release-deploy-all",
+      "description": "Dispatch the deploy-all.yml GitHub Actions workflow to deploy every service from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Use gh-release-deploy-selected for a subset of services. Pass version=\"dev\" to deploy from the dev branch instead of a release branch. Both \"version\" and \"env\" are required when invoked via MCP (interactive pickers are unavailable without a TTY).",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Accepts a release version (e.g. \"1.2.5\") OR a release name (e.g. \"checkout-redesign\") — resolves to the release/vX.Y.Z or release/<name> branch. Pass \"dev\" to deploy from the dev branch instead. Required for MCP calls."
+          },
+          "env": {
+            "type": "string",
+            "description": "Target environment name — must match an env configured for the project (e.g. \"dev\", \"renana\", \"oriana\"). Required for MCP calls."
+          },
+          "skipTerraform": {
+            "description": "Skip the terraform deployment stage.",
+            "type": "boolean"
+          },
+          "confirm": {
+            "description": "Set true to execute; omit for a dry-run gate that echoes the resolved action.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "version",
+          "env"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "releaseBranch": {
+            "type": "string",
+            "description": "The release branch that was deployed"
+          },
+          "version": {
+            "type": "string",
+            "description": "The version that was deployed"
+          },
+          "environment": {
+            "type": "string",
+            "description": "The environment deployed to"
+          },
+          "skipTerraformDeploy": {
+            "type": "boolean",
+            "description": "Whether terraform deployment was skipped"
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether the deployment was successful"
+          }
+        },
+        "required": [
+          "releaseBranch",
+          "version",
+          "environment",
+          "skipTerraformDeploy",
+          "success"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "gh-release-deploy-selected",
+      "description": "Dispatch the deploy-selected-services.yml GitHub Actions workflow to deploy a chosen subset of services from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Service names are validated against the boolean inputs declared in the workflow. Use gh-release-deploy-all for every service. \"version\", \"env\", and \"services\" are all required when invoked via MCP (interactive pickers are unavailable without a TTY).",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Accepts a release version (e.g. \"1.2.5\") OR a release name (e.g. \"checkout-redesign\") — resolves to the release/vX.Y.Z or release/<name> branch. Pass \"dev\" to deploy from the dev branch instead. Required for MCP calls."
+          },
+          "env": {
+            "type": "string",
+            "description": "Target environment name — must match an env configured for the project (e.g. \"dev\", \"renana\", \"oriana\"). Required for MCP calls."
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Service names to deploy. Each must match a boolean input declared in .github/workflows/deploy-selected-services.yml (e.g. \"client-be\", \"client-fe\"). Required for MCP calls."
+          },
+          "skipTerraform": {
+            "description": "Skip the terraform deployment stage.",
+            "type": "boolean"
+          },
+          "confirm": {
+            "description": "Set true to execute; omit for a dry-run gate that echoes the resolved action.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "version",
+          "env",
+          "services"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "releaseBranch": {
+            "type": "string",
+            "description": "The release branch that was deployed"
+          },
+          "version": {
+            "type": "string",
+            "description": "The version that was deployed"
+          },
+          "environment": {
+            "type": "string",
+            "description": "The environment deployed to"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The services that were deployed"
+          },
+          "skipTerraformDeploy": {
+            "type": "boolean",
+            "description": "Whether terraform deployment was skipped"
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether the deployment was successful"
+          }
+        },
+        "required": [
+          "releaseBranch",
+          "version",
+          "environment",
+          "services",
+          "skipTerraformDeploy",
+          "success"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "local-deploy-all",
+      "description": "Deploy EVERY service enabled for an environment, from this machine. Runs the repo's own devops/scripts/deploy-*.sh on THIS machine instead of dispatching CI. Supplies the build contract (VITE_DOMAIN_ENV/BRANCH/COMMIT) that the workflow YAML normally provides and that the scripts do not set themselves, and refuses unless the requested environment matches the AWS account the shell is authenticated to. \"prod\" is refused by default — it is delivered, not deployed — and is reachable only if this project sets `protectedEnvs` in infra-kit.json; \"cli-only\" allows it in a terminal but still refuses it here. Services the environment forbids are refused, matching the workflow's own per-service gates. Use dryRun first.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "env": {
+            "type": "string",
+            "description": "Target environment, e.g. \"dev\" or a personal env like \"arthur\". Required for MCP."
+          },
+          "dryRun": {
+            "description": "Resolve target, contract and commands without deploying.",
+            "type": "boolean"
+          },
+          "skipPreflight": {
+            "description": "Waive a named non-critical check. The env/account and protected-env checks can never be waived, and clean-tree cannot be waived for a protected env.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "clean-tree",
+                "toolchain"
+              ]
+            }
+          },
+          "confirm": {
+            "description": "Set true to execute; omit for a dry-run gate.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "env"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "string",
+            "description": "Environment deployed to"
+          },
+          "accountId": {
+            "type": "string",
+            "description": "AWS account the deploy targeted"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Services requested"
+          },
+          "deployed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Services that completed successfully"
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Services that failed"
+          },
+          "contract": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Build contract passed to the scripts"
+          },
+          "strippedVars": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ambient VITE_* names removed from the build env"
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "Whether this was a dry run"
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether every requested service deployed"
+          }
+        },
+        "required": [
+          "environment",
+          "accountId",
+          "services",
+          "deployed",
+          "failed",
+          "contract",
+          "strippedVars",
+          "dryRun",
+          "success"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "local-deploy-selected",
+      "description": "Deploy a NAMED SUBSET of services from this machine. Runs the repo's own devops/scripts/deploy-*.sh on THIS machine instead of dispatching CI. Supplies the build contract (VITE_DOMAIN_ENV/BRANCH/COMMIT) that the workflow YAML normally provides and that the scripts do not set themselves, and refuses unless the requested environment matches the AWS account the shell is authenticated to. \"prod\" is refused by default — it is delivered, not deployed — and is reachable only if this project sets `protectedEnvs` in infra-kit.json; \"cli-only\" allows it in a terminal but still refuses it here. Services the environment forbids are refused, matching the workflow's own per-service gates. Use dryRun first.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "env": {
+            "type": "string",
+            "description": "Target environment, e.g. \"dev\" or a personal env like \"arthur\". Required for MCP."
+          },
+          "dryRun": {
+            "description": "Resolve target, contract and commands without deploying.",
+            "type": "boolean"
+          },
+          "skipPreflight": {
+            "description": "Waive a named non-critical check. The env/account and protected-env checks can never be waived, and clean-tree cannot be waived for a protected env.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "clean-tree",
+                "toolchain"
+              ]
+            }
+          },
+          "confirm": {
+            "description": "Set true to execute; omit for a dry-run gate.",
+            "type": "boolean"
+          },
+          "service": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Service names as in devops/scripts/deploy-<name>.sh, e.g. [\"client-be\"]. Required for MCP."
+          }
+        },
+        "required": [
+          "env",
+          "service"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "string",
+            "description": "Environment deployed to"
+          },
+          "accountId": {
+            "type": "string",
+            "description": "AWS account the deploy targeted"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Services requested"
+          },
+          "deployed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Services that completed successfully"
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Services that failed"
+          },
+          "contract": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Build contract passed to the scripts"
+          },
+          "strippedVars": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ambient VITE_* names removed from the build env"
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "Whether this was a dry run"
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether every requested service deployed"
+          }
+        },
+        "required": [
+          "environment",
+          "accountId",
+          "services",
+          "deployed",
+          "failed",
+          "contract",
+          "strippedVars",
+          "dryRun",
+          "success"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "worktrees-add",
+      "description": "Create local git worktrees for release branches under the worktrees directory and run \"pnpm install\" in each. Mutates the local filesystem. When invoked via MCP, pass either \"versions\" (comma-separated) or all=true — the branch picker and \"open in Cursor / GitHub Desktop / cmux\" follow-up prompts are unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "all": {
+            "description": "Add worktrees for every open release branch. Either \"all\" or \"versions\" must be provided for MCP calls (the interactive picker is unavailable without a TTY). Ignored if \"versions\" is provided.",
+            "type": "boolean"
+          },
+          "versions": {
+            "description": "Comma-separated release versions or names to target (e.g. \"1.2.5, 1.2.6\" or \"checkout-redesign, 1.2.5\"). Either \"versions\" or all=true must be provided for MCP calls. Overrides \"all\" when set.",
+            "type": "string"
+          },
+          "ide": {
+            "description": "Editor open mode for created worktrees, applied to all configured editors (Cursor and/or Zed, per the \"ide\" config). \"workspace\" (the only attach style) adds each worktree to every configured editor workspace and opens it. \"none\" skips the editor. Resolution order: this flag → \"workspace\" when at least one \"ide\" is configured → \"none\" otherwise.",
+            "type": "string",
+            "enum": [
+              "workspace",
+              "none"
+            ]
+          },
+          "cursor": {
+            "description": "Deprecated alias for \"ide\". Prefer \"ide\". Ignored when \"ide\" is provided.",
+            "type": "string",
+            "enum": [
+              "workspace",
+              "none"
+            ]
+          },
+          "githubDesktop": {
+            "description": "Open each created worktree in GitHub Desktop. Resolution order: this flag → \"worktrees.openInGithubDesktop\" from infra-kit config → interactive prompt (CLI) / false (MCP, no TTY).",
+            "type": "boolean"
+          },
+          "cmux": {
+            "description": "Open each created worktree in a new cmux workspace, all rooted at the worktree directory. Pane layout follows \"worktrees.cmux.layout\" (default \"two-columns\": left | right; or \"three-pane\": left split top/bottom + full-height right). Resolution order: this flag → \"worktrees.openInCmux\" from infra-kit config → interactive prompt (CLI) / false (MCP, no TTY).",
+            "type": "boolean"
+          }
+        }
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "createdWorktrees": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of created git worktree branches"
+          },
+          "count": {
+            "type": "number",
+            "description": "Number of git worktrees created"
+          }
+        },
+        "required": [
+          "createdWorktrees",
+          "count"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "worktrees-list",
+      "description": "List existing release-branch worktrees with version, release type (regular / hotfix), and Jira fix-version description. Read-only.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {}
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "worktrees": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Release version"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "regular",
+                    "hotfix"
+                  ],
+                  "description": "Release type"
+                },
+                "description": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Jira version description"
+                }
+              },
+              "required": [
+                "version",
+                "type",
+                "description"
+              ],
+              "additionalProperties": false
+            },
+            "description": "List of all worktrees with details"
+          },
+          "count": {
+            "type": "number",
+            "description": "Number of worktrees"
+          }
+        },
+        "required": [
+          "worktrees",
+          "count"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "reopen",
+      "description": "Reopen editor + cmux windows for every active worktree in the current project — the main checkout plus every linked worktree (release, feature, detached). Additive and idempotent by default: cmux workspaces already open are skipped, so running twice does not double the windows. Zed opens the exact folder set; Cursor reconciles its release-branch-shaped workspace. Set releaseOnly to restrict to release worktrees (the legacy reload scope). Set force to close each cmux workspace first, then reopen (disruptive). Set dryRun to return the plan without spawning anything. Non-destructive to git — only cmux/editor view state is touched.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "releaseOnly": {
+            "description": "Restrict to release worktrees (reproduces the legacy worktrees-reload scope)",
+            "type": "boolean"
+          },
+          "force": {
+            "description": "Close each cmux workspace first, then reopen (disruptive)",
+            "type": "boolean"
+          },
+          "dryRun": {
+            "description": "Return the plan (paths + cmux titles) without spawning anything",
+            "type": "boolean"
+          }
+        }
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "Repository name the reopen ran for"
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "Whether this was a dry run (nothing was spawned)"
+          },
+          "releaseOnly": {
+            "type": "boolean",
+            "description": "Whether the set was restricted to release worktrees"
+          },
+          "worktreePaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Absolute folder set handed to the editor (root-first)"
+          },
+          "ideProviders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Configured IDE providers that opened (cursor | zed); empty in dry run"
+          },
+          "cmuxOpened": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Titles of cmux workspaces opened this run"
+          },
+          "cmuxSkipped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Titles of cmux workspaces skipped because already open (additive mode)"
+          },
+          "cmuxClosed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Titles of cmux workspaces closed first (force mode only)"
+          }
+        },
+        "required": [
+          "repo",
+          "dryRun",
+          "releaseOnly",
+          "worktreePaths",
+          "ideProviders",
+          "cmuxOpened",
+          "cmuxSkipped",
+          "cmuxClosed"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "worktrees-remove",
+      "description": "Remove local git worktrees for the named release branches. Over MCP you MUST pass \"versions\" (comma-separated); bulk all=true removal is disabled here (it is a one-shot, unconfirmed wipe of every worktree) — the branch picker and confirmation are unavailable without a TTY. Every named version must be an active worktree, or the call errors without removing anything. What survives: the release branches/commits themselves are never deleted, and the worktrees directory plus its release/feature subfolders are left in place (recreate a worktree with worktrees-add). What is lost: git refuses to remove a worktree with modified tracked files or untracked files, BUT it DOES delete the worktree directory including gitignored contents — a hydrated .env of Doppler secrets (re-fetch with env-load) and build output such as node_modules/dist (needs reinstall/rebuild). When every worktree is removed it also runs \"git worktree prune\".",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "versions": {
+            "type": "string",
+            "description": "Comma-separated release versions or names to remove (e.g. \"1.2.5, 1.2.6\" or \"checkout-redesign, 1.2.5\"). Required: each must name an active worktree, or the call errors before removing anything."
+          },
+          "confirm": {
+            "description": "Set true to execute; omit for a dry-run gate that echoes the resolved action.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "versions"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "removedWorktrees": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of removed git worktree branches"
+          },
+          "count": {
+            "type": "number",
+            "description": "Number of git worktrees removed"
+          }
+        },
+        "required": [
+          "removedWorktrees",
+          "count"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "worktrees-sync",
+      "description": "Remove worktrees whose release PR is no longer open (stale cleanup). Only removes — never creates; use worktrees-add to create worktrees for new releases. The CLI confirmation is auto-skipped for MCP calls, so the caller is responsible for gating.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {}
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "removedWorktrees": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of removed worktree branches"
+          },
+          "count": {
+            "type": "number",
+            "description": "Number of worktrees removed during sync"
+          }
+        },
+        "required": [
+          "removedWorktrees",
+          "count"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "env-status",
+      "description": "Report which Doppler project/config is currently loaded in the terminal session, when it was loaded, how many variables are cached, whether it was auto-loaded, and whether a clear is suppressing auto-load. Pure local introspection — makes NO Doppler call (use doctor for auth). Read-only — use env-load / env-clear to change the terminal session.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {}
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "description": "Current terminal session ID"
+          },
+          "sessionLoadedCount": {
+            "type": "number",
+            "description": "Number of cached vars active in the current session"
+          },
+          "sessionTotalCount": {
+            "type": "number",
+            "description": "Total number of cached var names"
+          },
+          "sessionConfig": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Doppler config name of the loaded session (environment name)"
+          },
+          "sessionProject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Doppler project name of the loaded session"
+          },
+          "sessionLoadedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ISO 8601 timestamp of when the env was loaded"
+          },
+          "autoLoaded": {
+            "type": "boolean",
+            "description": "True when the loaded env was applied by env auto-load (not a manual env-load)"
+          },
+          "cleared": {
+            "type": "boolean",
+            "description": "True when env-clear is currently suppressing auto-load in this shell"
+          }
+        },
+        "required": [
+          "sessionId",
+          "sessionLoadedCount",
+          "sessionTotalCount",
+          "sessionConfig",
+          "sessionProject",
+          "sessionLoadedAt",
+          "autoLoaded",
+          "cleared"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "env-list",
+      "description": "List the environments this project has. The list is the union of two local sources: every environment declared in a GitHub workflow's `workflow_dispatch` `environment.options` (source `gh-workflow`), and every environment the local token store holds a token for (source `token-only`). Not a live fetch from Doppler — a Doppler service token is config-scoped and cannot enumerate sibling configs. Also returns the Doppler project name, and reports per environment whether a service token resolves locally (from the token store or INFRA_KIT_ENV_TOKEN) — presence only, never the token value, and never a live Doppler probe. Read-only.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {}
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "Detected Doppler project name"
+          },
+          "configs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every environment name known to this project"
+          },
+          "tokens": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "env": {
+                  "type": "string",
+                  "description": "Environment / Doppler config name"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "gh-workflow",
+                    "token-only"
+                  ],
+                  "description": "Where we learned this environment exists — a workflow declaration, or a token we hold"
+                },
+                "hasToken": {
+                  "type": "boolean",
+                  "description": "Whether a service token resolves locally for this environment"
+                }
+              },
+              "required": [
+                "env",
+                "source",
+                "hasToken"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Per-environment token presence — never the token value"
+          }
+        },
+        "required": [
+          "project",
+          "configs",
+          "tokens"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "env-load",
+      "description": "Download the env vars for a Doppler config and write them to a temporary shell script. Does NOT mutate the calling process — returns the path to a script that must be sourced (\"source <filePath>\") for the vars to take effect. The infra-kit shell wrapper auto-sources; direct MCP callers must handle sourcing themselves or surface filePath to the user. \"config\" is required when invoked via MCP (the CLI interactive picker is unreachable without a TTY).",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "config": {
+            "type": "string",
+            "description": "Doppler config / environment name to load (e.g. \"dev\", \"arthur\", \"renana\"). Required for MCP calls."
+          }
+        },
+        "required": [
+          "config"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string",
+            "description": "Path to the file that must be sourced to apply variables"
+          },
+          "variableCount": {
+            "type": "number",
+            "description": "Number of variables loaded"
+          },
+          "project": {
+            "type": "string",
+            "description": "Doppler project name"
+          },
+          "config": {
+            "type": "string",
+            "description": "Doppler config name"
+          }
+        },
+        "required": [
+          "filePath",
+          "variableCount",
+          "project",
+          "config"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "env-clear",
+      "description": "Generate a shell script that unsets every env var previously loaded by env-load for this session, plus the infra-kit session metadata vars. Does NOT mutate the calling process. When `infra-kit init` has installed the zsh shell integration, the user's terminal auto-sources the unset script on its next prompt (precmd hook) — so calling this via MCP will clear the vars in the shell that launched Claude Code automatically. Other callers must source \"<filePath>\" themselves or surface it to the user. Errors if no env is currently loaded.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "description": "Set true to execute; omit for a dry-run gate that echoes the resolved action.",
+            "type": "boolean"
+          }
+        }
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string",
+            "description": "Path to the file that must be sourced to apply"
+          },
+          "variableCount": {
+            "type": "number",
+            "description": "Number of variables cleared"
+          },
+          "unsetStatements": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Unset statements generated"
+          },
+          "purged": {
+            "type": "boolean",
+            "description": "Whether the project warm cache was purged outright"
+          }
+        },
+        "required": [
+          "filePath",
+          "variableCount",
+          "unsetStatements",
+          "purged"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "env-token-list",
+      "description": "List the Doppler service tokens configured for this repo: one row per environment declared in infra-kit.json, with its source (the local token store, or the INFRA_KIT_ENV_TOKEN env var) and a REDACTED token (last 4 chars at most — the raw value is never returned). With check=true, also asks Doppler whether each token is valid and correctly scoped (valid | revoked | mis-scoped | unreachable; \"unreachable\" means the probe could not tell, NOT that the token is bad). Read-only.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "check": {
+            "description": "Probe Doppler for each token’s validity and scope (one cheap call per environment).",
+            "type": "boolean"
+          }
+        }
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "env": {
+                  "type": "string",
+                  "description": "Environment / Doppler config name"
+                },
+                "source": {
+                  "type": "string",
+                  "description": "\"store\", \"env:INFRA_KIT_ENV_TOKEN\", or \"-\" when absent"
+                },
+                "redactedToken": {
+                  "type": "string",
+                  "description": "Redacted token — last 4 chars at most, never the raw value"
+                },
+                "present": {
+                  "type": "boolean",
+                  "description": "Whether a token is configured for this environment"
+                },
+                "status": {
+                  "description": "Only with check=true: valid | revoked | mis-scoped | unreachable",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "env",
+                "source",
+                "redactedToken",
+                "present"
+              ],
+              "additionalProperties": false
+            },
+            "description": "One row per declared environment"
+          }
+        },
+        "required": [
+          "tokens"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "config-get",
+      "description": "Return the fully merged infra-kit configuration (project + user-global + per-project override layers) as it is resolved at runtime. Read-only introspection — makes no changes; use `config edit` (CLI-only) to modify the override file. Fails with the loader error when run outside a configured infra-kit repo.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {}
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "config": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "The fully resolved infra-kit configuration — the same object every command sees at runtime, after the project infra-kit.json, the user-global, and the user-scope per-project override layers are merged (later layers win). Top-level sections include envManagement, ide, worktrees, envAutoLoad, dev, devServersPresets, and devProxy."
+          },
+          "configPath": {
+            "type": "string",
+            "description": "Absolute path to the project-level infra-kit.json (the base layer / committed source of truth)."
+          },
+          "projectName": {
+            "type": "string",
+            "description": "Repository name the config is keyed to (the main-repo basename; shared across all worktrees of the repo)."
+          }
+        },
+        "required": [
+          "config",
+          "configPath",
+          "projectName"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "vendor-check",
+      "description": "Verify that files under vendor/ match the checksums in vendor/.sync-manifest.json. Self-contained (no source repo or config needed). Returns ok=false on drift, missing manifest, or an unknown future schemaVersion; ok=true when clean or when no vendor/ folder exists.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {}
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "drift",
+              "skipped",
+              "missing-manifest",
+              "unknown-schema"
+            ]
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "Whether the vendor tree matches its manifest (false → CI should fail)"
+          },
+          "fileCount": {
+            "type": "number"
+          },
+          "modified": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "added": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "status",
+          "ok",
+          "fileCount",
+          "modified",
+          "added",
+          "removed"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "audit",
+      "description": "Audit packages against infra-kit.config.ts rules (config present and valid, required scripts, required files, and turbo tasks for the root). Defaults to the current package; all=true audits every non-vendor workspace package; root=true audits the monorepo root.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "all": {
+            "description": "Audit every non-vendor workspace package",
+            "type": "boolean"
+          },
+          "root": {
+            "description": "Audit the monorepo root (turbo pipeline + root commands)",
+            "type": "boolean"
+          }
+        }
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "allPassed": {
+            "type": "boolean",
+            "description": "Whether every audited package passed all checks"
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "passed": {
+                  "type": "boolean"
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "pass",
+                          "fail"
+                        ]
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "status",
+                      "message"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "passed",
+                "checks"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Per-package check results"
+          }
+        },
+        "required": [
+          "allPassed",
+          "packages"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "version",
+      "description": "Print the installed infra-kit CLI version",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {}
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Installed infra-kit CLI version (from package.json)"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "resources": [
+    {
+      "uri": "infra-kit://config",
+      "name": "infra-kit-config",
+      "title": "infra-kit config",
+      "description": "The merged infra-kit.json configuration (all override layers applied). Read-only.",
+      "mimeType": "application/json"
+    },
+    {
+      "uri": "infra-kit://dev-context",
+      "name": "infra-kit-dev-context",
+      "title": "infra-kit dev context",
+      "description": "What `infra-kit dev` last wrote: backends currently up, their ports/origins, and fragment freshness. Read-only and advisory (no liveness probe). No active session resolves to an empty payload.",
+      "mimeType": "application/json"
+    }
+  ]
+}

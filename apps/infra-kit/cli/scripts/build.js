@@ -50,8 +50,18 @@ export const buildOptions = {
   // Automatic JSX runtime so .tsx needs no `import React`. Pairs with
   // tsconfig `"jsx": "react-jsx"`.
   jsx: 'automatic',
-  // Externalize deps + the React JSX runtime subpaths (the `react` key alone
-  // does not cover subpaths in esbuild's external matching).
+  // Externalize every runtime dependency, plus the React JSX runtime subpaths.
+  //
+  // A package key DOES cover its own subpaths: `@modelcontextprotocol/server` in this list
+  // externalizes `@modelcontextprotocol/server/stdio` too (asserted by guard B2 in
+  // src/mcp/__tests__/dependency-and-bundle-guards.test.ts). The React entries are NOT here to
+  // work around that — `react` is a dependency and is already covered. They are here because
+  // `jsx: 'automatic'` makes esbuild AUTO-INJECT `react/jsx-runtime` imports that were never
+  // written in the source, and those injected specifiers have to be named explicitly.
+  //
+  // Note this list is derived from `dependencies`: a package imported by shipped source but
+  // declared only in `devDependencies` is NOT externalized — esbuild silently INLINES it and the
+  // build still succeeds. Guards U6/U7 in the same test file exist to catch exactly that.
   external: [...Object.keys(packageJson.dependencies), 'react/jsx-runtime', 'react/jsx-dev-runtime'],
 }
 
