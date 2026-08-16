@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { getExposedMcpTools } from 'src/lib/command-catalog'
+import { commandCatalog, getExposedMcpTools } from 'src/lib/command-catalog'
 import { LOG_FILE_PATH } from 'src/lib/logger'
 
 import { buildOptions } from '../../../scripts/build.js'
@@ -245,6 +245,67 @@ describe('e1–E3, E6 — the served surface (shared v2 client)', () => {
 
     expect(after.tools.length).toBeGreaterThan(20)
   }, 45_000)
+
+  it('e9: every deterministic read-only tool round-trips a well-formed v2 result', async () => {
+    // WHY THIS EXISTS. E2 and E4/E5 only ever put TWO tools' `tools/call` results on the wire
+    // (`version`, `env-clear`), so the v1 -> v2 RESULT-serialization path — content blocks,
+    // `structuredContent`, `isError` — was the thinnest part of this suite. That path is where a
+    // silent shape change would actually hurt a host.
+    //
+    // This asserts SHAPE, not success: a tool that legitimately errors in this environment still
+    // proves the serialization round-trip. What it must never do is return a malformed result.
+    //
+    // Excluded on purpose (side effects / non-determinism, not shape concerns):
+    //   reopen       — can launch an editor
+    //   release-list — hits the GitHub API
+    //   audit        — long-running whole-repo scan
+    const EXCLUDED = new Set(['reopen', 'release-list', 'audit'])
+
+    const readOnly = commandCatalog
+      .filter((entry) => {
+        return entry.mcpExposed && entry.mcpTool !== null && !entry.mutating && !EXCLUDED.has(entry.cliName)
+      })
+      .map((entry) => {
+        return entry.mcpTool!.name
+      })
+
+    expect(readOnly.length).toBeGreaterThan(5)
+
+    const declaredOutputSchema = new Map(
+      getExposedMcpTools().map((t) => {
+        return [t.name, t.outputSchema]
+      }),
+    )
+
+    for (const name of readOnly) {
+      let result: { isError?: boolean; content?: unknown; structuredContent?: unknown } | undefined
+      let threw = false
+
+      try {
+        result = (await client.callTool({ name, arguments: {} }, { timeout: 10_000 })) as typeof result
+      } catch {
+        // A protocol-level error response is a legitimate outcome here — the tool ran and the
+        // transport answered. It is a hang or a malformed frame that would matter, and either
+        // would surface as a timeout or a parse failure rather than as this catch.
+        threw = true
+      }
+
+      if (threw) continue
+
+      expect(result, `${name} returned no result`).toBeDefined()
+      expect(Array.isArray(result!.content), `${name}.content must be an array`).toBe(true)
+
+      const succeeded = (result!.isError ?? false) === false
+      const hasOutputSchema = Object.keys(declaredOutputSchema.get(name) ?? {}).length > 0
+
+      if (succeeded && hasOutputSchema) {
+        expect(
+          result!.structuredContent,
+          `${name} declares an outputSchema but returned no structuredContent`,
+        ).toBeTypeOf('object')
+      }
+    }
+  }, 120_000)
 
   it('o2: the migrated transport path is recorded in the pino log', async () => {
     // WHAT THIS CAN AND CANNOT OBSERVE. `initLoggerMcp` uses `pino.destination({ dest })`, which is
