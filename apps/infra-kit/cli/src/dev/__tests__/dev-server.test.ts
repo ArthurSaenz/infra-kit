@@ -520,11 +520,9 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
       log: () => {},
       logFn: () => {},
       bootStep: () => {},
-      stopSpinner: () => {},
       ready: (summary) => {
         painted.push(summary)
       },
-      event: () => {},
       refresh: (summary) => {
         painted.push(summary)
       },
@@ -1761,9 +1759,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
       },
       logFn: noop,
       bootStep: noop,
-      stopSpinner: noop,
       ready: noop,
-      event: noop,
       dispose: noop,
     }
 
@@ -1935,9 +1931,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
       },
       logFn: noop,
       bootStep: noop,
-      stopSpinner: noop,
       ready: noop,
-      event: noop,
       dispose: noop,
     }
 
@@ -2020,9 +2014,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
       },
       logFn: noop,
       bootStep: noop,
-      stopSpinner: noop,
       ready: noop,
-      event: noop,
       dispose: noop,
     }
 
@@ -2105,9 +2097,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
       },
       logFn: noop,
       bootStep: noop,
-      stopSpinner: noop,
       ready: noop,
-      event: noop,
       dispose: noop,
     }
 
@@ -2178,9 +2168,7 @@ describe('devServerRunner — liveness monitor', () => {
       },
       logFn: noop,
       bootStep: noop,
-      stopSpinner: noop,
       ready: noop,
-      event: noop,
       dispose: noop,
     }
 
@@ -2395,11 +2383,9 @@ const makeCapturingRenderer = (): {
     bootStep: (phase) => {
       bootSteps.push(phase)
     },
-    stopSpinner: noop,
     ready: (s) => {
       captured = s
     },
-    event: noop,
     dispose: noop,
   }
 
@@ -2935,9 +2921,7 @@ describe('devServerRunner — reportFault must never touch a disposed renderer',
       },
       logFn: noop,
       bootStep: noop,
-      stopSpinner: noop,
       ready: noop,
-      event: noop,
       dispose: noop,
     }
 
@@ -3057,9 +3041,7 @@ describe('devServerRunner — watch must not claim a reload it did not perform',
       },
       logFn: noop,
       bootStep: noop,
-      stopSpinner: noop,
       ready: noop,
-      event: noop,
       dispose: noop,
     }
 
@@ -3223,9 +3205,7 @@ describe('devServerRunner — the reload budget stops the session rather than ha
       },
       logFn: noop,
       bootStep: noop,
-      stopSpinner: noop,
       ready: noop,
-      event: noop,
       dispose: noop,
     }
     const exitCodes: number[] = []

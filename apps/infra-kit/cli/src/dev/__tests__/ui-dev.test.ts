@@ -25,7 +25,8 @@ vi.mock('../managed-child.js', () => {
   }
 })
 
-const { defaultUiDevFactory, parseTurboDevLine, stripAnsi, turboLineLevel } = await import('../ui-dev.js')
+const { defaultUiDevFactory, parseTurboDevLine, parseTurboTaskFailure, stripAnsi, turboLineLevel } =
+  await import('../ui-dev.js')
 
 /** The one recorded `spawn(cmd, args, options)` call, or a hard test failure if turbo never spawned. */
 const spawnOnce = (): { args: string[]; options: { stdio: unknown[] } } => {
@@ -53,11 +54,13 @@ const spawnWithPipes = (): {
   stderr: PassThrough
   lines: Array<{ pkg: string; text: string }>
   raw: string[]
+  failed: string[]
 } => {
   const stdout = new PassThrough()
   const stderr = new PassThrough()
   const lines: Array<{ pkg: string; text: string }> = []
   const raw: string[] = []
+  const failed: string[] = []
 
   spawnMock.mockClear()
   spawnMock.mockReturnValue({ on: vi.fn(), pid: 123, stdout, stderr })
@@ -71,9 +74,12 @@ const spawnWithPipes = (): {
     onLine: (line) => {
       lines.push(line)
     },
+    onTaskFailure: (pkg) => {
+      failed.push(pkg)
+    },
   })
 
-  return { stdout, stderr, lines, raw }
+  return { stdout, stderr, lines, raw, failed }
 }
 
 /** Resolve after the stream's `data`/`end` handlers have run. */
@@ -105,6 +111,79 @@ describe('defaultUiDevFactory — turbo child spawn contract', () => {
 
   it('passes --only so the redundant ^build walk (pre-warmed by buildUiApps) never prints cache-hit lines', () => {
     expect(spawnArgs()).toContain('--only')
+  })
+
+  /**
+   * Turbo's `--continue` default is `never` — "cancel all tasks". Without this flag one frontend with a
+   * broken `dev` script cancels every OTHER frontend in the run. Verified against turbo 2.10.3 on a
+   * two-package workspace: without it the run ends `0 successful, 2 total`; with it the healthy package
+   * reaches `ready` and the run stays up.
+   */
+  it('passes --continue so one broken frontend cannot cancel the others', () => {
+    expect(spawnArgs()).toContain('--continue=dependencies-successful')
+  })
+})
+
+/**
+ * Every string here was captured verbatim from a real `turbo run dev` (2.10.3) against a two-package
+ * workspace where one package's `dev` script exits 1 — not hand-written from the docs. The `#` in
+ * `<pkg>#dev:` is the whole point: it is NOT the `<pkg>:dev:` prefix the framework lines carry, which
+ * is exactly why `parseTurboDevLine` drops these and a separate reader is needed.
+ */
+describe('a failed task reaches the runner through the real pump', () => {
+  it('routes turbo’s verdict to onTaskFailure and keeps it out of the framework tail', async () => {
+    const { stdout, stderr, failed, lines } = spawnWithPipes()
+
+    stdout.write('website-ui:dev: ready in 384 ms\n')
+    // On STDERR deliberately: measured against turbo 2.10.3, the verdict is emitted on fd 2 while the
+    // framework's own lines come out on fd 1. Writing it to stdout here would still pass — both pipes
+    // share the handler — but it would stop this test from pinning the pipe that actually carries the
+    // signal in production, which is the one thing that would break if the stderr pump lost its wiring.
+    stderr.write('website-ui#dev:  WARNING  command finished with error, but continuing...\n')
+    stdout.end()
+    stderr.end()
+    await flush()
+
+    expect(failed).toEqual(['website-ui'])
+    // The verdict is turbo speaking, not the framework — it must not also land as a tail line, or the
+    // panel would show it twice under two different readings of the same event.
+    expect(
+      lines.map((l) => {
+        return l.text
+      }),
+    ).toEqual(['ready in 384 ms'])
+  })
+})
+
+describe('parseTurboTaskFailure', () => {
+  it('attributes the live failure turbo emits under --continue', () => {
+    expect(parseTurboTaskFailure('bad-ui#dev:  WARNING  command finished with error, but continuing...')).toBe('bad-ui')
+  })
+
+  it('attributes the teardown failure turbo emits without --continue', () => {
+    expect(parseTurboTaskFailure('bad-ui#dev:  ERROR  command (/repo/packages/bad) pnpm run dev exited (1)')).toBe(
+      'bad-ui',
+    )
+  })
+
+  it('sees through turbo colouring the verdict', () => {
+    expect(parseTurboTaskFailure('[31mbad-ui#dev:[0m  ERROR  command exited (1)')).toBe('bad-ui')
+  })
+
+  it.each([
+    // A framework line — `:dev:`, not `#dev:`. Belongs to parseTurboDevLine, and must not be stolen.
+    'website-ui:dev: ready in 384 ms',
+    // pnpm's own teardown noise, relayed under the framework prefix. Not turbo's verdict.
+    'website-ui:dev:  ELIFECYCLE  Command failed with exit code 1.',
+    // Turbo run chrome carries no package at all.
+    'Tasks:    0 successful, 2 total',
+    '• Running dev in 2 packages',
+  ])('returns null for %j', (line) => {
+    expect(parseTurboTaskFailure(line)).toBeNull()
+  })
+
+  it('does not fire for a package that merely mentions the word command', () => {
+    expect(parseTurboTaskFailure('website-ui:dev: running command watch')).toBeNull()
   })
 })
 

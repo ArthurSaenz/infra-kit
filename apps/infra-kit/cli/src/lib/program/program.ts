@@ -15,6 +15,7 @@ import { envTokenList } from 'src/commands/env-token-list'
 import { envTokenRemove } from 'src/commands/env-token-remove'
 import { envTokenSet } from 'src/commands/env-token-set'
 import { ghMergeDev } from 'src/commands/gh-merge-dev'
+import { withRunCleanup } from 'src/commands/gh-merge-dev/run-cleanup'
 import { ghReleaseDeliver } from 'src/commands/gh-release-deliver'
 import { ghReleaseDeployAll } from 'src/commands/gh-release-deploy-all'
 import { ghReleaseDeploySelected } from 'src/commands/gh-release-deploy-selected'
@@ -86,9 +87,37 @@ const configureMergeDev = (cmd: Command): Command => {
   return cmd
     .description('Merge dev branch into every release branch')
     .option('-a, --all', 'Select all active release branches')
+    .option('-v, --versions <versions>', 'Specify versions by comma, e.g. 1.2.5, 1.2.6')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--dry-run', 'Compute and print the merge plan without pushing anything')
+    .option(
+      '--verify [command]',
+      'Check each merge before pushing it. Bare runs `pnpm install --frozen-lockfile`; pass a command to run that instead. A branch that fails is dropped from the push, never rolled back',
+    )
     .action(async (options) => {
-      emit(await ghMergeDev({ all: options.all, confirmedCommand: options.yes }))
+      // The signal guard is installed HERE, on the CLI path, and nowhere else:
+      // `ghMergeDev` is also the MCP tool handler inside a long-lived server,
+      // where a per-invocation handler calling process.exit would preempt the
+      // host's shutdown and take the server down on a stray signal.
+      const result = await withRunCleanup(() => {
+        return ghMergeDev({
+          all: options.all,
+          versions: options.versions,
+          dryRun: options.dryRun,
+          verify: options.verify,
+          confirmedCommand: options.yes,
+        })
+      })
+
+      emit(result)
+
+      // A partial run used to exit 0, so no CI step or wrapper script could tell
+      // "merged all six" from "merged two, gave up on four". Same shape as
+      // `audit` and `vendor check` below: the action owns the exit code, `emit`
+      // never touches it.
+      if (result.structuredContent.failedMerges > 0) {
+        process.exitCode = 1
+      }
     })
 }
 

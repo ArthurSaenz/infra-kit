@@ -46,7 +46,7 @@ Strict schema file that declares audit rules (`requiredScripts`, `requiredFiles`
 |-------|---------|---------|
 | **Develop** | `dev` | Start local dev server with portless proxy (interactive wizard, long-running) |
 | | `dev-status` | Report what `infra-kit dev` currently has running (read-only; finds the fragment dir by searching upward, so it works from any subdirectory) |
-| **Release** | `release merge-dev` | Merge `origin/dev` into every open release branch and push |
+| **Release** | `release merge-dev` | Merge `origin/dev` into open release branches in a scratch worktree, then push atomically (`--dry-run`, `--versions`) |
 | | `release list` | List available releases |
 | | `release create` | Create a new release |
 | | `release desc-edit` | Edit release notes |

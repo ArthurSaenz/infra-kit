@@ -1,9 +1,49 @@
+import { $ } from 'zx'
+
 import { OperationError } from 'src/lib/errors/operation-error'
 import { isInsideLinkedWorktree, isWorkingTreeClean } from 'src/lib/git-utils'
 
 export interface AssertManagementContextArgs {
   /** Operation name surfaced in the failure message, e.g. 'create release'. */
   operation: string
+}
+
+/**
+ * The preflight for a command that never touches an existing checkout: it needs a
+ * repository and a resolvable `origin`, and nothing else.
+ *
+ * Deliberately narrower than {@link assertManagementContext}, and the omissions
+ * are the point rather than an oversight:
+ *
+ * - **No linked-worktree check.** The command does its work in a scratch worktree
+ *   of its own, so where it was invoked from is irrelevant.
+ * - **No clean-tree check.** It reads `refs/remotes/*` and writes only to its own
+ *   scratch checkout, so the operator's uncommitted work is never at stake. The
+ *   old guard forced a stash before what is, in effect, a remote-refs operation.
+ *
+ * Keeping this separate leaves `assertManagementContext` untouched for the
+ * commands that genuinely do consume the operator's checkout.
+ */
+export const assertRepoWithOrigin = async (args: AssertManagementContextArgs): Promise<void> => {
+  const { operation } = args
+
+  try {
+    await $({ quiet: true })`git rev-parse --git-dir`
+  } catch (error) {
+    throw new OperationError(error, {
+      operation,
+      remediation: 'run this from inside a git repository',
+    })
+  }
+
+  try {
+    await $({ quiet: true })`git remote get-url origin`
+  } catch (error) {
+    throw new OperationError(error, {
+      operation,
+      remediation: 'this repository has no `origin` remote to fetch from or push to',
+    })
+  }
 }
 
 /**

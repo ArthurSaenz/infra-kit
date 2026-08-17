@@ -2,6 +2,8 @@ import { execFileSync } from 'node:child_process'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { quote } from 'zx'
 
+import { logger } from 'src/lib/logger'
+
 import { createReleaseBranch, getReleasePRs, getReleasePRsWithInfo } from '../gh-release-prs'
 
 interface FakePR {
@@ -47,6 +49,10 @@ vi.mock('zx', async (importOriginal) => {
       return Promise.resolve({ stdout: JSON.stringify(responses.release) })
     }),
   }
+})
+
+vi.mock('src/lib/logger', () => {
+  return { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }
 })
 
 const pr = (overrides: Partial<FakePR> & Pick<FakePR, 'headRefName' | 'createdAt'>): FakePR => {
@@ -128,6 +134,97 @@ describe('getReleasePRsWithInfo (discovery + sort)', () => {
       { branch: 'release/v3.1.0', title: 'Release v3.1.0', createdAt: '2026-02-01T00:00:00Z' },
       { branch: 'release/beta-feature', title: 'Release beta-feature', createdAt: '2026-02-02T00:00:00Z' },
     ])
+  })
+})
+
+describe('discovery page size (gh pr list --limit)', () => {
+  beforeEach(() => {
+    responses.release = []
+    responses.hotfix = []
+    responses.calls = []
+    vi.mocked(logger.warn).mockClear()
+  })
+
+  // Reconstruct what zx would hand the shell: template parts interleaved with
+  // their interpolated values, so an interpolated --limit is visible here.
+  const reconstruct = (call: { strings: string[]; values: unknown[] }): string => {
+    return call.strings
+      .map((part, i) => {
+        return i < call.values.length ? part + String(call.values[i]) : part
+      })
+      .join('')
+  }
+
+  const listCommands = (): string[] => {
+    return responses.calls.map(reconstruct).filter((command) => {
+      return command.includes('gh pr list')
+    })
+  }
+
+  const limitOf = (command: string): number => {
+    const match = /--limit\s+(\d+)/.exec(command)
+
+    if (!match) throw new Error(`no --limit in: ${command}`)
+
+    return Number(match[1])
+  }
+
+  // Regression: both discovery calls omitted --limit, so gh applied its default
+  // page size of 30 and every consumer of discovery silently lost the oldest
+  // open release PRs (travelist's release/v1.55.0 sat at position 38).
+  it('asks gh for far more than its default page size of 30 on both base branches', async () => {
+    responses.release = [pr({ headRefName: 'release/v1.0.0', createdAt: '2026-01-01T00:00:00Z' })]
+
+    await getReleasePRs()
+
+    const commands = listCommands()
+
+    expect(commands).toHaveLength(2)
+    const bases = commands.map((command) => {
+      return /--base\s+(\w+)/.exec(command)?.[1]
+    })
+
+    expect(bases).toEqual(expect.arrayContaining(['dev', 'main']))
+
+    for (const command of commands) {
+      expect(limitOf(command)).toBeGreaterThan(30)
+    }
+  })
+
+  // Discover the limit the source actually asks for, so this test never
+  // hardcodes the constant it is meant to police.
+  const discoverLimit = async (): Promise<number> => {
+    responses.release = [pr({ headRefName: 'release/v0.0.1', createdAt: '2026-01-01T00:00:00Z' })]
+
+    await getReleasePRs()
+
+    const limit = limitOf(listCommands()[0] ?? '')
+
+    responses.calls = []
+    vi.mocked(logger.warn).mockClear()
+
+    return limit
+  }
+
+  it('warns when a discovery page comes back full, because full is indistinguishable from truncated', async () => {
+    const limit = await discoverLimit()
+
+    responses.release = Array.from({ length: limit }, (_, i) => {
+      return pr({ headRefName: `release/v1.0.${i}`, createdAt: '2026-01-01T00:00:00Z' })
+    })
+
+    await getReleasePRs()
+
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(logger.warn).mock.calls[0]?.[1]).toContain('older release PRs may be missing')
+  })
+
+  it('stays quiet when the page is not full', async () => {
+    responses.release = [pr({ headRefName: 'release/v1.0.0', createdAt: '2026-01-01T00:00:00Z' })]
+
+    await getReleasePRs()
+
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalled()
   })
 })
 

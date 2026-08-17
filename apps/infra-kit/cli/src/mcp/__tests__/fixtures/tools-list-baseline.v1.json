@@ -109,12 +109,7 @@
             "description": "One entry per dev-context fragment on disk, sorted by app name. Empty when no dev session is active."
           }
         },
-        "required": [
-          "active",
-          "contextDir",
-          "contextDirExists",
-          "apps"
-        ],
+        "required": ["active", "contextDir", "contextDirExists", "apps"],
         "additionalProperties": false
       }
     },
@@ -176,12 +171,7 @@
             "description": "Total number of branches processed"
           }
         },
-        "required": [
-          "successfulMerges",
-          "failedMerges",
-          "failedBranches",
-          "totalBranches"
-        ],
+        "required": ["successfulMerges", "failedMerges", "failedBranches", "totalBranches"],
         "additionalProperties": false
       }
     },
@@ -211,10 +201,7 @@
                 },
                 "type": {
                   "type": "string",
-                  "enum": [
-                    "regular",
-                    "hotfix"
-                  ],
+                  "enum": ["regular", "hotfix"],
                   "description": "Release type"
                 },
                 "description": {
@@ -229,11 +216,7 @@
                   "description": "Jira version description"
                 }
               },
-              "required": [
-                "version",
-                "type",
-                "description"
-              ],
+              "required": ["version", "type", "description"],
               "additionalProperties": false
             },
             "description": "List of all release branches"
@@ -243,10 +226,7 @@
             "description": "Number of release branches"
           }
         },
-        "required": [
-          "releases",
-          "count"
-        ],
+        "required": ["releases", "count"],
         "additionalProperties": false
       }
     },
@@ -275,10 +255,7 @@
                   "default": "regular",
                   "description": "Release type: \"regular\" (branches off dev) or \"hotfix\" (branches off main).",
                   "type": "string",
-                  "enum": [
-                    "regular",
-                    "hotfix"
-                  ]
+                  "enum": ["regular", "hotfix"]
                 },
                 "description": {
                   "description": "Optional description for the Jira version.",
@@ -293,9 +270,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "releases"
-        ]
+        "required": ["releases"]
       },
       "execution": {
         "taskSupport": "forbidden"
@@ -330,10 +305,7 @@
                 },
                 "type": {
                   "type": "string",
-                  "enum": [
-                    "regular",
-                    "hotfix"
-                  ],
+                  "enum": ["regular", "hotfix"],
                   "description": "Release type"
                 },
                 "branchName": {
@@ -349,13 +321,7 @@
                   "description": "Jira version URL"
                 }
               },
-              "required": [
-                "version",
-                "type",
-                "branchName",
-                "prUrl",
-                "jiraVersionUrl"
-              ],
+              "required": ["version", "type", "branchName", "prUrl", "jiraVersionUrl"],
               "additionalProperties": false
             },
             "description": "Detailed information for each created release with URLs"
@@ -374,22 +340,13 @@
                   "description": "Error message"
                 }
               },
-              "required": [
-                "version",
-                "error"
-              ],
+              "required": ["version", "error"],
               "additionalProperties": false
             },
             "description": "List of releases that failed with error messages"
           }
         },
-        "required": [
-          "createdBranches",
-          "successCount",
-          "failureCount",
-          "releases",
-          "failedReleases"
-        ],
+        "required": ["createdBranches", "successCount", "failureCount", "releases", "failedReleases"],
         "additionalProperties": false
       }
     },
@@ -409,10 +366,7 @@
             "description": "New description. Empty string clears the description."
           }
         },
-        "required": [
-          "version",
-          "description"
-        ]
+        "required": ["version", "description"]
       },
       "execution": {
         "taskSupport": "forbidden"
@@ -446,14 +400,7 @@
             "description": "Whether the description actually changed"
           }
         },
-        "required": [
-          "version",
-          "branch",
-          "jiraVersionUrl",
-          "previousDescription",
-          "newDescription",
-          "changed"
-        ],
+        "required": ["version", "branch", "jiraVersionUrl", "previousDescription", "newDescription", "changed"],
         "additionalProperties": false
       }
     },
@@ -481,10 +428,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "version",
-          "env"
-        ]
+        "required": ["version", "env"]
       },
       "execution": {
         "taskSupport": "forbidden"
@@ -514,13 +458,7 @@
             "description": "Whether the deployment was successful"
           }
         },
-        "required": [
-          "releaseBranch",
-          "version",
-          "environment",
-          "skipTerraformDeploy",
-          "success"
-        ],
+        "required": ["releaseBranch", "version", "environment", "skipTerraformDeploy", "success"],
         "additionalProperties": false
       }
     },
@@ -555,11 +493,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "version",
-          "env",
-          "services"
-        ]
+        "required": ["version", "env", "services"]
       },
       "execution": {
         "taskSupport": "forbidden"
@@ -596,14 +530,7 @@
             "description": "Whether the deployment was successful"
           }
         },
-        "required": [
-          "releaseBranch",
-          "version",
-          "environment",
-          "services",
-          "skipTerraformDeploy",
-          "success"
-        ],
+        "required": ["releaseBranch", "version", "environment", "services", "skipTerraformDeploy", "success"],
         "additionalProperties": false
       }
     },
@@ -627,10 +554,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": [
-                "clean-tree",
-                "toolchain"
-              ]
+              "enum": ["clean-tree", "toolchain"]
             }
           },
           "confirm": {
@@ -638,9 +562,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "env"
-        ]
+        "required": ["env"]
       },
       "execution": {
         "taskSupport": "forbidden"
@@ -738,10 +660,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": [
-                "clean-tree",
-                "toolchain"
-              ]
+              "enum": ["clean-tree", "toolchain"]
             }
           },
           "confirm": {
@@ -757,10 +676,7 @@
             "description": "Service names as in devops/scripts/deploy-<name>.sh, e.g. [\"client-be\"]. Required for MCP."
           }
         },
-        "required": [
-          "env",
-          "service"
-        ]
+        "required": ["env", "service"]
       },
       "execution": {
         "taskSupport": "forbidden"
@@ -856,18 +772,12 @@
           "ide": {
             "description": "Editor open mode for created worktrees, applied to all configured editors (Cursor and/or Zed, per the \"ide\" config). \"workspace\" (the only attach style) adds each worktree to every configured editor workspace and opens it. \"none\" skips the editor. Resolution order: this flag → \"workspace\" when at least one \"ide\" is configured → \"none\" otherwise.",
             "type": "string",
-            "enum": [
-              "workspace",
-              "none"
-            ]
+            "enum": ["workspace", "none"]
           },
           "cursor": {
             "description": "Deprecated alias for \"ide\". Prefer \"ide\". Ignored when \"ide\" is provided.",
             "type": "string",
-            "enum": [
-              "workspace",
-              "none"
-            ]
+            "enum": ["workspace", "none"]
           },
           "githubDesktop": {
             "description": "Open each created worktree in GitHub Desktop. Resolution order: this flag → \"worktrees.openInGithubDesktop\" from infra-kit config → interactive prompt (CLI) / false (MCP, no TTY).",
@@ -898,10 +808,7 @@
             "description": "Number of git worktrees created"
           }
         },
-        "required": [
-          "createdWorktrees",
-          "count"
-        ],
+        "required": ["createdWorktrees", "count"],
         "additionalProperties": false
       }
     },
@@ -931,10 +838,7 @@
                 },
                 "type": {
                   "type": "string",
-                  "enum": [
-                    "regular",
-                    "hotfix"
-                  ],
+                  "enum": ["regular", "hotfix"],
                   "description": "Release type"
                 },
                 "description": {
@@ -949,11 +853,7 @@
                   "description": "Jira version description"
                 }
               },
-              "required": [
-                "version",
-                "type",
-                "description"
-              ],
+              "required": ["version", "type", "description"],
               "additionalProperties": false
             },
             "description": "List of all worktrees with details"
@@ -963,10 +863,7 @@
             "description": "Number of worktrees"
           }
         },
-        "required": [
-          "worktrees",
-          "count"
-        ],
+        "required": ["worktrees", "count"],
         "additionalProperties": false
       }
     },
@@ -1075,9 +972,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "versions"
-        ]
+        "required": ["versions"]
       },
       "execution": {
         "taskSupport": "forbidden"
@@ -1098,10 +993,7 @@
             "description": "Number of git worktrees removed"
           }
         },
-        "required": [
-          "removedWorktrees",
-          "count"
-        ],
+        "required": ["removedWorktrees", "count"],
         "additionalProperties": false
       }
     },
@@ -1132,10 +1024,7 @@
             "description": "Number of worktrees removed during sync"
           }
         },
-        "required": [
-          "removedWorktrees",
-          "count"
-        ],
+        "required": ["removedWorktrees", "count"],
         "additionalProperties": false
       }
     },
@@ -1258,10 +1147,7 @@
                 },
                 "source": {
                   "type": "string",
-                  "enum": [
-                    "gh-workflow",
-                    "token-only"
-                  ],
+                  "enum": ["gh-workflow", "token-only"],
                   "description": "Where we learned this environment exists — a workflow declaration, or a token we hold"
                 },
                 "hasToken": {
@@ -1269,21 +1155,13 @@
                   "description": "Whether a service token resolves locally for this environment"
                 }
               },
-              "required": [
-                "env",
-                "source",
-                "hasToken"
-              ],
+              "required": ["env", "source", "hasToken"],
               "additionalProperties": false
             },
             "description": "Per-environment token presence — never the token value"
           }
         },
-        "required": [
-          "project",
-          "configs",
-          "tokens"
-        ],
+        "required": ["project", "configs", "tokens"],
         "additionalProperties": false
       }
     },
@@ -1299,9 +1177,7 @@
             "description": "Doppler config / environment name to load (e.g. \"dev\", \"arthur\", \"renana\"). Required for MCP calls."
           }
         },
-        "required": [
-          "config"
-        ]
+        "required": ["config"]
       },
       "execution": {
         "taskSupport": "forbidden"
@@ -1327,12 +1203,7 @@
             "description": "Doppler config name"
           }
         },
-        "required": [
-          "filePath",
-          "variableCount",
-          "project",
-          "config"
-        ],
+        "required": ["filePath", "variableCount", "project", "config"],
         "additionalProperties": false
       }
     },
@@ -1376,12 +1247,7 @@
             "description": "Whether the project warm cache was purged outright"
           }
         },
-        "required": [
-          "filePath",
-          "variableCount",
-          "unsetStatements",
-          "purged"
-        ],
+        "required": ["filePath", "variableCount", "unsetStatements", "purged"],
         "additionalProperties": false
       }
     },
@@ -1431,20 +1297,13 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "env",
-                "source",
-                "redactedToken",
-                "present"
-              ],
+              "required": ["env", "source", "redactedToken", "present"],
               "additionalProperties": false
             },
             "description": "One row per declared environment"
           }
         },
-        "required": [
-          "tokens"
-        ],
+        "required": ["tokens"],
         "additionalProperties": false
       }
     },
@@ -1480,11 +1339,7 @@
             "description": "Repository name the config is keyed to (the main-repo basename; shared across all worktrees of the repo)."
           }
         },
-        "required": [
-          "config",
-          "configPath",
-          "projectName"
-        ],
+        "required": ["config", "configPath", "projectName"],
         "additionalProperties": false
       }
     },
@@ -1505,13 +1360,7 @@
         "properties": {
           "status": {
             "type": "string",
-            "enum": [
-              "clean",
-              "drift",
-              "skipped",
-              "missing-manifest",
-              "unknown-schema"
-            ]
+            "enum": ["clean", "drift", "skipped", "missing-manifest", "unknown-schema"]
           },
           "ok": {
             "type": "boolean",
@@ -1539,14 +1388,7 @@
             }
           }
         },
-        "required": [
-          "status",
-          "ok",
-          "fileCount",
-          "modified",
-          "added",
-          "removed"
-        ],
+        "required": ["status", "ok", "fileCount", "modified", "added", "removed"],
         "additionalProperties": false
       }
     },
@@ -1599,38 +1441,24 @@
                       },
                       "status": {
                         "type": "string",
-                        "enum": [
-                          "pass",
-                          "fail"
-                        ]
+                        "enum": ["pass", "fail"]
                       },
                       "message": {
                         "type": "string"
                       }
                     },
-                    "required": [
-                      "name",
-                      "status",
-                      "message"
-                    ],
+                    "required": ["name", "status", "message"],
                     "additionalProperties": false
                   }
                 }
               },
-              "required": [
-                "name",
-                "passed",
-                "checks"
-              ],
+              "required": ["name", "passed", "checks"],
               "additionalProperties": false
             },
             "description": "Per-package check results"
           }
         },
-        "required": [
-          "allPassed",
-          "packages"
-        ],
+        "required": ["allPassed", "packages"],
         "additionalProperties": false
       }
     },
@@ -1654,9 +1482,7 @@
             "description": "Installed infra-kit CLI version (from package.json)"
           }
         },
-        "required": [
-          "version"
-        ],
+        "required": ["version"],
         "additionalProperties": false
       }
     }

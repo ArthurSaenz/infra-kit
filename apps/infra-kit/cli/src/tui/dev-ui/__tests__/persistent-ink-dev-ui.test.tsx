@@ -134,16 +134,6 @@ describe('persistentInkDevUi — backend-only persistent mode', () => {
     expect(t.frame()).toContain('● ok')
     expect(countOf(t.frame(), 'http://localhost:57076/api/v1')).toBe(1)
   })
-
-  it('an event in persistent mode appends a timestamped tail line above the footer', () => {
-    const t = makeUi()
-
-    t.ui.ready(baseSummary())
-    t.ui.event({ tag: 'client/api', text: 'GET /api/v1/ping 200 12ms' })
-
-    expect(t.frames()).toContain('GET /api/v1/ping 200 12ms')
-    expect(t.appendLog.join('')).toContain('client/api GET /api/v1/ping 200 12ms')
-  })
 })
 
 describe('persistentInkDevUi — one session shape, no handoff', () => {

@@ -1,7 +1,7 @@
 {
   "name": "@slip-stream-kit/eslint-plugin",
   "type": "module",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "description": "Custom ESLint rules enforcing the white-label frontend architecture conventions",
   "author": "Arthur Saenko <arthur.saenz7@gmail.com> (https://github.com/ArthurSaenz)",
   "license": "MIT",
@@ -52,10 +52,10 @@
     "eslint": ">=9"
   },
   "devDependencies": {
-    "@types/node": "catalog:",
+    "@types/node": "^26.2.0",
     "@typescript-eslint/parser": "^8.66.0",
     "@wl/eslint-config": "workspace:*",
-    "esbuild": "catalog:",
+    "esbuild": "^0.28.2",
     "eslint": "^10.8.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"

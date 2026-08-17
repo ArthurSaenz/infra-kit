@@ -3,8 +3,9 @@
  *
  * Discovers and runs API apps under each `apps/<app>/api` folder that contains `serverless.yml`.
  *
- * Ports: `{APP}_PORT`, then `process.env.PORT`, then `dev.<app>.port` from infra-kit.json,
- * else 3010. URL prefix: `dev.<app>.prefixUrl`, else `/api/v1`.
+ * Ports: `{APP}_PORT`, then `process.env.PORT`, then `dev.<app>.port` from infra-kit.json. An app that
+ * pins none of those binds an OS-assigned ephemeral port — there is no static default.
+ * URL prefix: `dev.<app>.prefixUrl`, else `/api/v1`.
  * Env vars should be provided via secrets manager (e.g. `doppler run -- pnpm dev-server`) or shell.
  *
  * This module is side-effect free on import: call `run()` (or construct `DevServerRunner`
@@ -228,7 +229,7 @@ interface IApiAppConfig {
 /**
  * Runner options, parsed by the CLI entry point (`--watch`, `--app`) and threaded
  * through `run()`. The entry owns flag parsing; the runner never reads `process.argv`
- * itself. App selection is `--app` only; ports come from env/config (see `resolvePort`).
+ * itself. App selection is `--app` only; ports come from env/config (see `resolvePreferredPort`).
  */
 export interface DevServerOptions {
   /**
@@ -1007,11 +1008,22 @@ export class DevServerRunner {
     // No tee window, and no boot crash is lost to it: Node writes a fatal stack STRAIGHT TO FD 2 (never
     // through the patched stream), a rejected `start()` surfaces after `shutdown()` has already called
     // `uninstall()`, and a post-`ready()` fault goes through `reportFault` onto the panel.
-    this.intercept = ownsTerminal(this.options)
+    const ownsTty = ownsTerminal(this.options)
+
+    this.intercept = ownsTty
       ? installOutputIntercept({ sink: this.sink, fallbackService: RUNNER_SERVICE, currentService })
       : null
     // The renderer owns all terminal output + the log tee; construct it before the first narrate below.
-    this.renderer = renderer ?? new DevRenderer({ appendLog: appendRunnerLog, verbose: this.options.verbose ?? false })
+    //
+    // `isTTY` is passed EXPLICITLY rather than left to DevRenderer's `process.stdout.isTTY` default. The
+    // default is wrong for exactly the case that reaches this line with a real TTY: `--json`, where
+    // `selectDevUi` returns no renderer precisely BECAUSE the run does not own the terminal, so the
+    // fallback built here would start an ANSI spinner and write escape frames into a stream whose whole
+    // contract is that it parses. `ownsTerminal` is the same predicate that decides the intercept above,
+    // which keeps the two from ever disagreeing about who owns the screen.
+    this.renderer =
+      renderer ??
+      new DevRenderer({ appendLog: appendRunnerLog, verbose: this.options.verbose ?? false, isTTY: ownsTty })
     this.healthProbe = healthProbe
     this.devContextDir = path.join(process.cwd(), '.infra-kit', 'dev-context')
 
@@ -1026,7 +1038,7 @@ export class DevServerRunner {
   /**
    * Discover API apps and resolve each app's port + URL prefix. Delegates bare
    * filesystem discovery to {@link discoverApiAppsBare} and per-app resolution to
-   * the pure `resolvePort` / `resolvePrefixUrl`, preserving the original behavior.
+   * the pure `resolvePreferredPort` / `resolvePrefixUrl`, preserving the original behavior.
    */
   private discoverApiApps(devConfig: DevConfig): IApiAppConfig[] {
     return discoverApiAppsBare(this.monorepoRoot).map((app) => {
@@ -1685,6 +1697,11 @@ export class DevServerRunner {
         const tag = tagByPackage.get(pkg) ?? `${pkg}/ui`
 
         this.sink.write(tag, text, { level })
+      },
+      // ONE frontend gave up; the engine and its siblings live on. Same package→app mapping as `onLine`,
+      // so the row this marks down is the row the ready header printed.
+      onTaskFailure: (pkg) => {
+        this.markUiTaskFailed(tagByPackage.get(pkg) ?? `${pkg}/ui`)
       },
       // Surface a silently-dead frontend engine: once `turbo run dev` exits, every UI's live reload
       // stops and no framework line ever reaches the tail again.
@@ -2368,6 +2385,43 @@ export class DevServerRunner {
     this.refreshStatus()
   }
 
+  /**
+   * ONE frontend's `dev` task died while the engine — and every sibling frontend — kept running.
+   *
+   * This is the other half of `--continue=dependencies-successful`. The flag stops one broken UI from
+   * cancelling the whole run, but it also means {@link markUiEngineDead} no longer fires for that UI:
+   * the engine is alive, so nothing would contradict the row's `◌ starting` until the never-up
+   * threshold expired ~30s later. Turbo's own per-task verdict is the only live signal, so it is
+   * routed here.
+   *
+   * A hard {@link markDown} rather than the soft probe path, and unlike the engine-death case it is
+   * safe even for a UI that HAS been up: turbo reports this only because the task process itself
+   * exited, so there is no orphaned-but-serving vite to paint red by mistake.
+   *
+   * Under `--no-ui-health` the row carries no health entry by the user's own choice, so the failure is
+   * narrated but no dot is invented for it. That also means the health state cannot dedupe the narration
+   * in that mode — acceptable because turbo emits this verdict exactly once per task per run (measured;
+   * see {@link parseTurboTaskFailure}), so there is no repeat to suppress.
+   */
+  private markUiTaskFailed(tag: string): void {
+    if (this.shuttingDown) return
+
+    if (this.uiHealthEnabled()) {
+      // Already down (turbo can restate a verdict) — don't narrate the same death twice.
+      if (this.healthOf(tag) === 'down') return
+
+      this.markDown(tag, 'ui')
+    }
+
+    // Only claim the others survived when there ARE others. When the failing UI is the only one turbo is
+    // running, its exit takes the engine with it, and `markUiEngineDead` + `reportEngineDeath` fire right
+    // behind this line — "other frontends are unaffected" would be contradicted on the very next row.
+    const others = this.uiTagByPackage.size > 1 ? '; other frontends are unaffected' : ''
+
+    this.renderer.log(`⚠️  ${tag} failed to start — its \`dev\` task exited${others}`, 'error')
+    this.refreshStatus()
+  }
+
   private setupWatch(apps: IApiAppConfig[], uiApps: DiscoveredUiApp[]): void {
     this.turboWatch = this.turboWatchFactory({
       // API apps: dep-inclusive (`...<pkg>`) — rebuild the backend + its shared-lib closure and restart it.
@@ -2794,18 +2848,6 @@ export class DevServerRunner {
   }
 
   /**
-   * One liveness sweep over every running backend AND every managed frontend. Edge-triggered per ROW,
-   * keyed by tag (so the counter survives an ephemeral-port rebind on restart) with the CURRENT port read
-   * fresh each tick. The verdict rules live in {@link recordProbe}; the threshold is what makes a normal
-   * watch-restart (server down <1s, a single interval) invisible — only a genuinely wedged app stays down
-   * across two sweeps.
-   *
-   * `/__health` probes are already filtered out of the live request tail ({@link startOneApp}'s
-   * `onRequestLog`), and vite's ping is not a line vite logs, so this never spams. Bails once teardown has
-   * latched so a closing server is not misread as down (the timer is also cleared in {@link shutdown}
-   * before the servers close).
-   */
-  /**
    * Repaint the status panel with fresh live fields (health, uptime, req/min, restarts, errors).
    *
    * This is the first caller `DevUi.refresh()` has ever had: it was declared, implemented twice, and
@@ -2930,6 +2972,18 @@ export class DevServerRunner {
     }
   }
 
+  /**
+   * One liveness sweep over every running backend AND every managed frontend. Edge-triggered per ROW,
+   * keyed by tag (so the counter survives an ephemeral-port rebind on restart) with the CURRENT port read
+   * fresh each tick. The verdict rules live in {@link recordProbe}; the threshold is what makes a normal
+   * watch-restart (server down <1s, a single interval) invisible — only a genuinely wedged app stays down
+   * across two sweeps.
+   *
+   * `/__health` probes are already filtered out of the live request tail ({@link startOneApp}'s
+   * `onRequestLog`), and vite's ping is not a line vite logs, so this never spams. Bails once teardown has
+   * latched so a closing server is not misread as down (the timer is also cleared in {@link shutdown}
+   * before the servers close).
+   */
   private async livenessTick(): Promise<void> {
     if (this.shuttingDown) return
 
@@ -3129,10 +3183,6 @@ export class DevServerRunner {
     }
   }
 
-  /**
-   * Stop watching, cancel any pending debounced restart, and close all running servers.
-   * Does not exit the process — the entry point owns exit.
-   */
   /**
    * Report a process-level fault — an `uncaughtException` / `unhandledRejection` the crash barrier caught
    * and deliberately survived.

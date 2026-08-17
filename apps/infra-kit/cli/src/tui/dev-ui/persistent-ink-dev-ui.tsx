@@ -3,7 +3,7 @@ import process from 'node:process'
 import type { ReactElement } from 'react'
 
 import type { DevUi, LogLevel, LogOptions, ReadySummary } from 'src/dev/dev-ui'
-import { DevRenderer, formatClock } from 'src/dev/render'
+import { DevRenderer } from 'src/dev/render'
 import { createSafeStream } from 'src/tui/safe-stderr'
 
 import { BootRegion } from './boot-region'
@@ -111,8 +111,8 @@ export class PersistentInkDevUi implements DevUi {
   // ---- boot ---------------------------------------------------------------
 
   /** Mount the Ink boot region (or rerender it in place) with the current phase + narration. */
-  private renderBoot(readyLines?: string[]): void {
-    const tree = <BootRegion phase={this.phase} narration={this.narration} readyLines={readyLines} />
+  private renderBoot(): void {
+    const tree = <BootRegion phase={this.phase} narration={this.narration} />
 
     if (this.instance) {
       this.instance.rerender(tree)
@@ -182,12 +182,6 @@ export class PersistentInkDevUi implements DevUi {
     this.renderBoot()
   }
 
-  stopSpinner(): void {
-    if (!this.persistent) {
-      this.unmount()
-    }
-  }
-
   // ---- the persistent panel ----------------------------------------------
 
   /** Commit the header, tee it, mount the live panel, and STAY mounted for the rest of the session. */
@@ -241,25 +235,6 @@ export class PersistentInkDevUi implements DevUi {
     if (this.persistent) {
       this.rerenderPersistent()
     }
-  }
-
-  /**
-   * A tagged, timestamped line. The runner no longer emits any — framework and request lines go to their
-   * per-service files instead of the terminal — but the seam stays on the {@link DevUi} contract for the
-   * plain/non-TTY renderer, which still streams.
-   */
-  event(input: { tag: string; text: string }): void {
-    if (this.persistent) {
-      const line = `  ${formatClock(this.now())}  ${input.tag}  ${input.text}`
-
-      this.renderer.teeOnly(`${input.tag} ${input.text}`, 'info')
-      this.logLines.push(line)
-      this.rerenderPersistent()
-
-      return
-    }
-    this.unmount()
-    this.renderer.event(input)
   }
 
   /**
