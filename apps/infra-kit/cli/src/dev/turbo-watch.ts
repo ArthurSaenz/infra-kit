@@ -13,6 +13,14 @@
  * marker for `tsc -b` tasks, so the dev-server derives "a build finished" from watching
  * `dist/` output instead (see {@link file://./dev-server.ts} `setupWatch`).
  *
+ * That chokidar watch is NOT redundant with this child, and it would not become redundant if a future
+ * turbo shipped a machine-readable task stream — a completion marker would be the WRONG trigger, not
+ * merely an unavailable one. A marker fires per task EXECUTION, whereas a restart must follow OUTPUT
+ * CHANGE: `tsc -b` with `incremental`/`composite` exits 0 without emitting when nothing changed, so
+ * marker-driven restarts would bounce every backend on each no-op rebuild. A dist mtime moves only when
+ * output actually moved. The two watchers also observe disjoint sets — turbo watches git-tracked
+ * SOURCE, chokidar watches `dist/`, which is gitignored — so neither can feed the other a loop.
+ *
  * The child is a 5-deep tree (`sh → pnpm → node → turbo → native binary`); killing the
  * wrapper PID orphans the rest. So it is spawned `detached` (its own process group) and
  * torn down with a process-GROUP signal — verified to fully reap the tree.

@@ -1,6 +1,7 @@
 import confirm from '@inquirer/confirm'
 import process from 'node:process'
 
+import { CommandDeclinedError } from 'src/lib/errors/command-declined-error'
 import { logger } from 'src/lib/logger'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 
@@ -30,7 +31,27 @@ import { commandEcho } from './command-echo'
  * Callers remain responsible for their own `commandEcho.addOption('--yes', …)`
  * bookkeeping, which varies between commands.
  */
-export const confirmOrExit = async (confirmedCommand: boolean | undefined, message: string): Promise<void> => {
+export interface ConfirmOrExitOptions {
+  /**
+   * Throw {@link CommandDeclinedError} on a decline instead of `process.exit(0)`.
+   *
+   * **Defaults to false, and must stay that way.** Seven commands call this
+   * helper; flipping the default would change the exit semantics of all of them
+   * at once, inside a change whose tests cover none of them.
+   *
+   * Opt in when the command has already acquired something that needs releasing
+   * by the time it prompts — `process.exit` skips every `finally`, so for those
+   * commands the decline path is precisely where a resource leaks. The caller
+   * owns catching it and exiting 0: a decline is a successful outcome.
+   */
+  throwOnDecline?: boolean
+}
+
+export const confirmOrExit = async (
+  confirmedCommand: boolean | undefined,
+  message: string,
+  options: ConfirmOrExitOptions = {},
+): Promise<void> => {
   const answer = confirmedCommand
     ? true
     : await withEscape((context) => {
@@ -42,6 +63,10 @@ export const confirmOrExit = async (confirmedCommand: boolean | undefined, messa
   }
 
   if (!answer) {
+    if (options.throwOnDecline) {
+      throw new CommandDeclinedError()
+    }
+
     logger.info('Operation cancelled. Exiting...')
     process.exit(0)
   }

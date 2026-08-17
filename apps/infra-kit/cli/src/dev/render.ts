@@ -252,11 +252,6 @@ const pad2 = (n: number): string => {
   return String(n).padStart(2, '0')
 }
 
-/** `HH:MM:SS` for a tail timestamp. */
-export const formatClock = (d: Date): string => {
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
-}
-
 /** `2.4s` for the `ready in …` header. */
 export const formatElapsed = (ms: number): string => {
   return `${(ms / 1000).toFixed(1)}s`
@@ -778,20 +773,5 @@ export class DevRenderer implements DevUi {
    */
   formatReadyLines(summary: ReadySummary): string[] {
     return this.formatLines(summary, { withHealthDot: true })
-  }
-
-  // ---- the live tail ------------------------------------------------------
-
-  /**
-   * One tagged, timestamped tail line: `14:02:11  client/api  GET /api/v1/ping 200 12ms`. Arrives
-   * strictly after {@link ready} (a request implies a running server), so it never interleaves the
-   * header. Timestamp comes from the injected clock.
-   */
-  event(input: { tag: string; text: string }): void {
-    const ts = formatClock(this.deps.now())
-    const line = `  ${this.color(ANSI.dim, ts)}  ${this.color(ANSI.teal, input.tag)}  ${input.text}`
-
-    this.emit(line)
-    this.tee(`${input.tag} ${input.text}`, 'info')
   }
 }

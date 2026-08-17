@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { OperationError } from 'src/lib/errors/operation-error'
-import { assertManagementContext } from 'src/lib/git-guard'
+import { assertRepoWithOrigin } from 'src/lib/git-guard'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 
 import { ghMergeDev } from '../gh-merge-dev'
@@ -36,8 +36,54 @@ vi.mock('src/tui/boot', () => {
 })
 
 // Upstream gate (a): resolve so it does not throw and short-circuit the test.
+// The command swapped `assertManagementContext` for the narrower
+// `assertRepoWithOrigin` when it stopped touching the operator's checkout; a mock
+// exporting only the old name would leave the command calling `undefined`.
 vi.mock('src/lib/git-guard', () => {
-  return { assertManagementContext: vi.fn() }
+  return { assertRepoWithOrigin: vi.fn(), assertManagementContext: vi.fn() }
+})
+
+// The picker now runs AFTER the plan, so reaching it means getting through the
+// scratch worktree and the merge planner first. Both are covered against real git
+// elsewhere; here they only need to not touch the disk.
+vi.mock('src/lib/git-utils', () => {
+  return {
+    getMainRepoRoot: vi.fn().mockResolvedValue('/repo'),
+    withScratchWorktree: vi.fn(async (_args: unknown, fn: (wt: { path: string }) => Promise<unknown>) => {
+      return fn({ path: '/scratch' })
+    }),
+    pushAtomic: vi.fn(),
+  }
+})
+
+vi.mock('../merge-run', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../merge-run')>()
+
+  return {
+    ...actual,
+    planMergeRun: vi.fn(async ({ branches }: { branches: string[] }) => {
+      return branches.map((branch) => {
+        return { branch, status: 'merged' as const, mergeSha: 'sha' }
+      })
+    }),
+    reclassify: vi.fn(),
+  }
+})
+
+vi.mock('zx', () => {
+  const settled = { stdout: '', stderr: '', exitCode: 0 }
+  const tag = (): Promise<typeof settled> => {
+    return Promise.resolve(settled)
+  }
+
+  return {
+    $: Object.assign(
+      (first: unknown): unknown => {
+        return Array.isArray(first) ? tag() : tag
+      },
+      { quiet: false },
+    ),
+  }
 })
 
 // Upstream gate (b): supply ≥1 regular-release PR so the empty-list early return
@@ -70,7 +116,7 @@ beforeEach(() => {
   // Simulate the MCP server's non-interactive stdin. The REAL shim would bail on
   // this; our mock stands in for that bail while proving the `else` reached it.
   process.stdin.isTTY = false
-  vi.mocked(assertManagementContext).mockResolvedValue(undefined)
+  vi.mocked(assertRepoWithOrigin).mockResolvedValue(undefined)
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue([
     { branch: 'release/v1.2.5', title: 'Release v1.2.5', createdAt: '2024-01-01T00:00:00Z' },
   ])
@@ -100,13 +146,13 @@ describe('gh-merge-dev MCP omitted-arg guard', () => {
     // formatted picker items derived from the (real) regular-release PR.
     expect(pickReleaseBranches).toHaveBeenCalledTimes(1)
     expect(pickReleaseBranches).toHaveBeenCalledWith(
-      [{ value: 'release/v1.2.5', label: '1.2.5', description: undefined, type: undefined }],
+      [{ value: 'release/v1.2.5', label: '1.2.5', description: 'clean merge', type: undefined }],
       { required: true },
     )
 
     // The upstream gates were passed (not short-circuited), so the throw came from
-    // the shim, not from `assertManagementContext`.
-    expect(assertManagementContext).toHaveBeenCalledTimes(1)
+    // the shim, not from the preflight.
+    expect(assertRepoWithOrigin).toHaveBeenCalledTimes(1)
 
     // The TUI / React entry point was never imported or invoked on the non-TTY path.
     expect(boot.runBranchMultiPicker).not.toHaveBeenCalled()

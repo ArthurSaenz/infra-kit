@@ -107,14 +107,12 @@ const makeHealthRenderer = (): {
     },
     logFn: noop,
     bootStep: noop,
-    stopSpinner: noop,
     ready: (summary) => {
       captured = summary
     },
     refresh: (summary) => {
       frames.push({ summary, logs: [...logs], health: healthByTag(summary) })
     },
-    event: noop,
     dispose: noop,
   }
 

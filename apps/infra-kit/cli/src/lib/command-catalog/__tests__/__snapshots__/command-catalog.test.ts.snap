@@ -92,11 +92,17 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     "input": [
       "all",
       "confirm",
+      "dryRun",
+      "verify",
+      "versions",
     ],
     "name": "gh-merge-dev",
     "output": [
+      "atomicPush",
+      "dryRun",
       "failedBranches",
       "failedMerges",
+      "results",
       "successfulMerges",
       "totalBranches",
     ],

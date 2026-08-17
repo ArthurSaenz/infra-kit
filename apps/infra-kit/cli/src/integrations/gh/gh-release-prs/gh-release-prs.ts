@@ -46,18 +46,46 @@ const sortReleasePRs = (prs: ReleasePR[]): ReleasePR[] => {
 }
 
 /**
+ * Page size for release-PR discovery. `gh pr list` defaults to 30, which
+ * silently drops older open release PRs from every consumer of discovery
+ * (list, merge-dev, deploy pickers). Explicit and high enough that hitting it
+ * is a real anomaly, which `warnIfTruncated` then reports rather than hiding.
+ */
+const PR_DISCOVERY_LIMIT = 200
+
+/**
+ * Surface a discovery page that came back full: at that point the result is
+ * indistinguishable from a truncated one, and a silently short list reads as
+ * "there are no other releases".
+ */
+const warnIfTruncated = (prs: ReleasePR[], source: string): void => {
+  if (prs.length < PR_DISCOVERY_LIMIT) return
+
+  logger.warn(
+    { source, limit: PR_DISCOVERY_LIMIT },
+    `⚠️ ${source} returned ${PR_DISCOVERY_LIMIT} PRs — the page is full, so older release PRs may be missing`,
+  )
+}
+
+/**
  * Fetch all open release/hotfix PRs from GitHub.
  * Searches both dev (regular) and main (hotfix) base branches.
  * Returns deduplicated ReleasePR objects.
  */
 const fetchAllReleasePRs = async (): Promise<ReleasePR[]> => {
   const releasePRs =
-    await $`gh pr list --search "Release in:title" --base dev --json number,title,headRefName,state,baseRefName,createdAt`
+    await $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --search "Release in:title" --base dev --json number,title,headRefName,state,baseRefName,createdAt`
 
   const hotfixPRs =
-    await $`gh pr list --search "Hotfix in:title" --base main --json number,title,headRefName,state,baseRefName,createdAt`
+    await $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --search "Hotfix in:title" --base main --json number,title,headRefName,state,baseRefName,createdAt`
 
-  const all: ReleasePR[] = [...JSON.parse(releasePRs.stdout), ...JSON.parse(hotfixPRs.stdout)]
+  const releaseList: ReleasePR[] = JSON.parse(releasePRs.stdout)
+  const hotfixList: ReleasePR[] = JSON.parse(hotfixPRs.stdout)
+
+  warnIfTruncated(releaseList, 'release PR discovery (base dev)')
+  warnIfTruncated(hotfixList, 'hotfix PR discovery (base main)')
+
+  const all: ReleasePR[] = [...releaseList, ...hotfixList]
 
   // Deduplicate by headRefName
   const seen = new Set<string>()

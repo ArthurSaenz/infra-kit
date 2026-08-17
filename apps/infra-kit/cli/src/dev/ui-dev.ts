@@ -135,6 +135,15 @@ export interface UiDevOptions {
   /** One call per framework output line; turbo's own chrome is filtered out first. */
   onLine?: (line: TurboDevLine) => void
   /**
+   * One call per package whose `dev` task turbo gave up on, while the rest of the run continues.
+   *
+   * Distinct from {@link onUnexpectedExit}, which fires only when the whole engine dies. With
+   * `--continue` a single frontend can fail without taking the engine down — that is the point — so
+   * without this the runner would have no signal at all and the dead UI would sit on `◌ starting`
+   * until the never-up threshold expired.
+   */
+  onTaskFailure?: (packageName: string) => void
+  /**
    * Called if the child dies on its own (not via `kill()`): every UI's live reload silently stops, so
    * the runner surfaces it. Optional so the injected test factory can ignore it.
    */
@@ -165,6 +174,43 @@ export const stripAnsi = (text: string): string => {
 
 /** Turbo's per-task line prefix under `--ui=stream`: `<pkg>:dev:`. */
 const TASK_PREFIX = /^([^\s:]+):dev:[ \t]?/
+
+/**
+ * Turbo's OWN verdict on a task, which uses `<pkg>#dev:` — a HASH, not the colon {@link TASK_PREFIX}
+ * matches. That difference is why {@link parseTurboDevLine} drops these lines: they are turbo speaking,
+ * not the framework.
+ *
+ * Both observed forms are matched, because which one turbo emits depends on `--continue`:
+ * - `<pkg>#dev:  WARNING  command finished with error, but continuing...` — with `--continue`, emitted
+ *   LIVE at the moment the task dies while the rest of the run keeps going. This is the one that matters.
+ * - `<pkg>#dev:  ERROR  command (<dir>) <pm> run dev exited (1)` — without `--continue`, emitted as the
+ *   run tears everything down.
+ *
+ * Captured from a real `turbo run dev` (2.10.3) against a two-package workspace, not inferred: turbo
+ * prints no per-task completion marker otherwise, so this line is the only live, attributable signal
+ * that one frontend died while its siblings live on.
+ */
+const TASK_FAILURE = /^([^\s#]+)#dev:\s+(?:WARNING|ERROR)\s+command\b/
+
+/**
+ * One raw turbo line → the package whose `dev` task just failed, or `null`.
+ *
+ * Separate from {@link parseTurboDevLine} on purpose: that one answers "what did the framework say",
+ * this one answers "did turbo give up on a package". A failing framework often says nothing
+ * attributable at all (a missing `dev` script never reaches the framework), so this is the only path
+ * by which such a UI can be marked down rather than sitting on `◌ starting` until the never-up
+ * threshold expires.
+ *
+ * @example
+ * parseTurboTaskFailure('shop-ui#dev:  WARNING  command finished with error, but continuing...')
+ * // => 'shop-ui'
+ * parseTurboTaskFailure('shop-ui:dev: ready in 384 ms') // => null (framework line, not turbo's verdict)
+ */
+export const parseTurboTaskFailure = (raw: string): string | null => {
+  const match = TASK_FAILURE.exec(stripAnsi(raw).trimEnd())
+
+  return match?.[1] ?? null
+}
 
 /**
  * Per-task bookkeeping turbo emits before the framework speaks: the cache verdict
@@ -219,7 +265,10 @@ const MAX_PENDING_CHARS = 64 * 1024
  * child whose stdout is never read blocks once the OS pipe buffer fills, so draining is the contract
  * here; the sinks are merely optional consumers of what we drain.
  */
-const pumpLines = (stream: Readable | null, opts: Pick<UiDevOptions, 'appendLog' | 'onLine'>): void => {
+const pumpLines = (
+  stream: Readable | null,
+  opts: Pick<UiDevOptions, 'appendLog' | 'onLine' | 'onTaskFailure'>,
+): void => {
   if (stream == null) {
     return
   }
@@ -227,6 +276,17 @@ const pumpLines = (stream: Readable | null, opts: Pick<UiDevOptions, 'appendLog'
   let pending = ''
 
   const emit = (raw: string): void => {
+    // Turbo's own task verdict first: it uses `<pkg>#dev:`, so `parseTurboDevLine` would drop it and
+    // the death would never reach the runner. Checked before, not instead — the two prefixes are
+    // mutually exclusive, so neither line can be consumed twice.
+    const failed = parseTurboTaskFailure(raw)
+
+    if (failed != null) {
+      opts.onTaskFailure?.(failed)
+
+      return
+    }
+
     const parsed = parseTurboDevLine(raw)
 
     if (parsed != null) opts.onLine?.(parsed)
@@ -276,6 +336,7 @@ export const defaultUiDevFactory: UiDevFactory = ({
   env,
   appendLog,
   onLine,
+  onTaskFailure,
   onUnexpectedExit,
 }) => {
   const filters = packageNames.map((name) => {
@@ -292,6 +353,13 @@ export const defaultUiDevFactory: UiDevFactory = ({
       `--concurrency=${concurrency}`,
       '--env-mode=loose',
       '--only',
+      // Turbo's default is `--continue=never`, i.e. "cancel all tasks" the moment ONE fails: a single
+      // frontend with a broken `dev` script would take every OTHER frontend in the run down with it.
+      // `--only` has already stripped every dependency task, so `dependencies-successful` and `always`
+      // select the same set here; the former matches `turbo-watch.ts` rather than asserting a
+      // distinction that does not exist. The now-surviving failure is reported per-package via
+      // {@link parseTurboTaskFailure} — the flag changes the blast radius, not the visibility.
+      '--continue=dependencies-successful',
       '--output-logs=new-only',
       '--no-update-notifier',
       '--ui=stream',
@@ -299,8 +367,8 @@ export const defaultUiDevFactory: UiDevFactory = ({
     { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } },
   )
 
-  pumpLines(child.stdout, { appendLog, onLine })
-  pumpLines(child.stderr, { appendLog, onLine })
+  pumpLines(child.stdout, { appendLog, onLine, onTaskFailure })
+  pumpLines(child.stderr, { appendLog, onLine, onTaskFailure })
 
   return superviseChild(child, undefined, onUnexpectedExit)
 }

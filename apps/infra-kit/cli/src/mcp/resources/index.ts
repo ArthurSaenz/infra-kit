@@ -1,4 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server'
 
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'

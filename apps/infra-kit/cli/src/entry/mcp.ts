@@ -1,4 +1,4 @@
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
 import process from 'node:process'
 
 import { setupErrorHandlers } from 'src/lib/error-handlers'

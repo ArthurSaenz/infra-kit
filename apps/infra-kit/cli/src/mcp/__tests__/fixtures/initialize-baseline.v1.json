@@ -1,0 +1,34 @@
+{
+  "2025-06-18": {
+    "protocolVersion": "2025-06-18",
+    "capabilities": {
+      "resources": {
+        "listChanged": true
+      },
+      "tools": {
+        "listChanged": true
+      },
+      "prompts": {}
+    },
+    "serverInfo": {
+      "name": "infra-kit",
+      "version": "0.3.14"
+    }
+  },
+  "2026-07-28": {
+    "protocolVersion": "2025-11-25",
+    "capabilities": {
+      "resources": {
+        "listChanged": true
+      },
+      "tools": {
+        "listChanged": true
+      },
+      "prompts": {}
+    },
+    "serverInfo": {
+      "name": "infra-kit",
+      "version": "0.3.14"
+    }
+  }
+}

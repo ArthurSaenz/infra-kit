@@ -7,7 +7,14 @@
  */
 import type { DevConfig } from '../lib/infra-kit-config/index.js'
 
-/** Fallback port when no PORT / {APP}_PORT env var and no config port is set. */
+/**
+ * The port the dev-server used to fall back to before dynamic allocation.
+ *
+ * NOT a live fallback any more — nothing resolves to it. It is retained as the named anchor for the
+ * regression guards that assert a bound port is a REAL ephemeral port and not this static value
+ * (`serverless-local-run.test.ts`, `dev-context-fragment.test.ts`). Inlining `3010` at those call
+ * sites would turn a stated invariant into a magic number.
+ */
 export const DEFAULT_PORT = 3010
 
 /**
@@ -31,26 +38,15 @@ export function parsePortString(raw: string | undefined): number | undefined {
 }
 
 /**
- * Resolve the PORT for an API app (highest priority first):
+ * Resolve the EXPLICITLY-configured port for an API app (highest priority first): `{APP}_PORT` — e.g.
+ * `CLIENT_PORT`, `SEARCH_ENGINE_PORT` — then a bare `PORT`, then `dev.<app>.port` from infra-kit.json,
+ * or `undefined` when none is set. Per-app env keys use the app folder name in **UPPER_SNAKE_CASE**
+ * (hyphens → underscores).
  *
- * 1. **`{APP}_PORT`** — e.g. `CLIENT_PORT`, `SEARCH_ENGINE_PORT` (secrets manager or shell)
- * 2. **`PORT`** — shared fallback (multi-app: use distinct `{APP}_PORT` in env)
- * 3. **`dev.<app>.port`** from infra-kit.json
- * 4. Default {@link DEFAULT_PORT}
- *
- * Per-app env keys use the app folder name in **UPPER_SNAKE_CASE** (hyphens → underscores).
- */
-export function resolvePort(appName: string, env: NodeJS.ProcessEnv, devConfig: DevConfig): number {
-  return resolvePreferredPort(appName, env, devConfig) ?? DEFAULT_PORT
-}
-
-/**
- * Resolve the EXPLICITLY-configured port for an API app — `{APP}_PORT`, then `PORT`, then
- * `dev.<app>.port` — or `undefined` when none is set. Unlike {@link resolvePort} this does
- * NOT fall back to {@link DEFAULT_PORT}: it distinguishes an app the developer pinned to a
- * port (a preferred bind target) from an unconfigured app (which binds ephemeral straight
- * away under dynamic allocation). Used by the dev-server to (a) pick the preferred bind
- * port and (b) relax the conflict gate to explicit ports only.
+ * There is deliberately NO default-port tier. `undefined` is what distinguishes an app the developer
+ * pinned to a port (a preferred bind target) from an unconfigured app, which binds ephemeral straight
+ * away under dynamic allocation. Used by the dev-server to (a) pick the preferred bind port and (b)
+ * relax the conflict gate to explicit ports only.
  *
  * `allowBarePort` gates ONLY the second tier. A bare `PORT` is not app-scoped, so in a
  * multi-app run it hands every app the same preferred port and the caller's conflict gate then
@@ -58,7 +54,7 @@ export function resolvePort(appName: string, env: NodeJS.ProcessEnv, devConfig: 
  * run it has nothing to do with. The caller passes `false` once it knows more than one app is
  * being launched; the per-app `{APP}_PORT` and `dev.<app>.port` tiers are unaffected either way.
  *
- * Defaults to `true`, so {@link resolvePort} and every standalone caller keep today's precedence.
+ * Defaults to `true`, so every standalone caller keeps today's precedence.
  */
 export function resolvePreferredPort(
   appName: string,

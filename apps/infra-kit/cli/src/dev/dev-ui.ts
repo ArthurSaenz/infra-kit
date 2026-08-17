@@ -20,12 +20,8 @@ export interface DevUi {
   readonly logFn: (message: string, level?: LogLevel) => void
   /** Advance the boot phase (drives a spinner / live region). */
   bootStep: (phase: string) => void
-  /** Stop + clear any live boot spinner (idempotent). */
-  stopSpinner: () => void
   /** Paint the final ready header in one shot (health pre-probed by the caller). */
   ready: (summary: ReadySummary) => void
-  /** One tagged, timestamped tail line, strictly after {@link ready}. */
-  event: (input: { tag: string; text: string }) => void
   /**
    * Repaint the persistent live footer (health dots, watch) in place from a fresh {@link ReadySummary},
    * WITHOUT reprinting the committed `<Static>` header. Optional: only the persistent Ink UI implements

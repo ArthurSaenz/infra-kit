@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { DevRenderer, formatClock, formatElapsed, resolveEndpointUrl, stripAnsi } from 'src/dev/render'
+import { DevRenderer, formatElapsed, resolveEndpointUrl, stripAnsi } from 'src/dev/render'
 import type { HealthState, ReadySummary } from 'src/dev/render'
 
 /**
@@ -52,8 +52,7 @@ const baseSummary = (over: Partial<ReadySummary> = {}): ReadySummary => {
 }
 
 describe('render — pure formatters', () => {
-  it('formats a clock as HH:MM:SS and elapsed as Xs', () => {
-    expect(formatClock(new Date('2026-07-08T09:07:03.000Z'))).toMatch(/^\d\d:\d\d:\d\d$/)
+  it('formats elapsed as Xs', () => {
     expect(formatElapsed(2400)).toBe('2.4s')
     expect(formatElapsed(0)).toBe('0.0s')
   })
@@ -373,17 +372,6 @@ describe('render — DevUi seams (teeOnly, dispose)', () => {
     }).not.toThrow()
     expect(out.join('')).toBe('')
     expect(log.join('')).toBe('')
-  })
-})
-
-describe('render — tagged tail', () => {
-  it('prints a timestamped, tagged tail line and tees a plain form', () => {
-    const { r, out, log } = makeRenderer()
-
-    r.event({ tag: 'client/api', text: 'GET /api/v1/ping 200 12ms' })
-    // Clock renders in local time; assert against the same formatter rather than a hardcoded zone.
-    expect(out.join('')).toContain(`${formatClock(frozen)}  client/api  GET /api/v1/ping 200 12ms`)
-    expect(log.join('')).toContain('client/api GET /api/v1/ping 200 12ms')
   })
 })
 
