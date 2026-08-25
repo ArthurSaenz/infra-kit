@@ -1,7 +1,7 @@
 {
   "name": "infra-kit",
   "type": "module",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "files": [
     "dist"
   ],
@@ -35,18 +35,18 @@
     "fix": "pnpm run prettier-fix && pnpm run eslint-fix && pnpm run qa"
   },
   "dependencies": {
-    "@aws-lambda-powertools/logger": "^2.33.1",
-    "@inquirer/checkbox": "^5.2.1",
-    "@inquirer/confirm": "^6.1.1",
-    "@inquirer/input": "^5.1.2",
-    "@inquirer/password": "^5.0.2",
-    "@inquirer/select": "^5.2.1",
+    "@aws-lambda-powertools/logger": "catalog:",
+    "@inquirer/checkbox": "catalog:",
+    "@inquirer/confirm": "catalog:",
+    "@inquirer/input": "catalog:",
+    "@inquirer/password": "catalog:",
+    "@inquirer/select": "catalog:",
     "@modelcontextprotocol/server": "^2.0.0",
-    "@slip-stream-kit/config": "^0.3.13",
+    "@slip-stream-kit/config": "catalog:",
     "chalk": "^6.0.0",
     "chokidar": "^5.0.0",
     "commander": "^15.0.0",
-    "fastify": "5.11.2",
+    "fastify": "catalog:",
     "ink": "^7.1.1",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3",

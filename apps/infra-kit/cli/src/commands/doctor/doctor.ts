@@ -1064,15 +1064,21 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
       'AWS CLI is not installed. Install from: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html',
     ),
     checkCommand(
+      'package manager installed',
+      ['pnpm', '--version'],
+      'Installed: pnpm',
+      'pnpm is not installed. Install from: https://pnpm.io/installation',
+    ),
+    checkCommand(
       'typescript-language-server installed',
       ['typescript-language-server', '--version'],
       'typescript-language-server is installed',
       'typescript-language-server is not installed. Install from: https://github.com/typescript-language-server/typescript-language-server#installing',
     ),
     checkCommand(
-      'cmux installed',
+      'terminal installed',
       ['cmux', '--version'],
-      'cmux is installed',
+      'Installed: cmux',
       'cmux is not installed. Install from: https://cmux.com/',
     ),
     Promise.resolve(checkZshrcInitialized()),

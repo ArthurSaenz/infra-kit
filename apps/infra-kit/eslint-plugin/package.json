@@ -1,7 +1,7 @@
 {
   "name": "@slip-stream-kit/eslint-plugin",
   "type": "module",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "description": "Custom ESLint rules enforcing the white-label frontend architecture conventions",
   "author": "Arthur Saenko <arthur.saenz7@gmail.com> (https://github.com/ArthurSaenz)",
   "license": "MIT",
@@ -34,6 +34,8 @@
   },
   "scripts": {
     "build": "pnpm run clean-artifacts && node ./scripts/build.js",
+    "prepack": "pnpm run build",
+    "prepublishOnly": "pnpm run build",
     "clean-artifacts": "rm -rf dist",
     "clean-cache": "rm -rf node_modules/.cache .eslintcache tsconfig.tsbuildinfo .turbo",
     "prettier-fix": "pnpm exec prettier **/* --write --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
@@ -56,8 +58,8 @@
     "@typescript-eslint/parser": "^8.66.0",
     "@wl/eslint-config": "workspace:*",
     "esbuild": "^0.28.2",
-    "eslint": "^10.8.1",
+    "eslint": "^10.9.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.11"
   }
 }

@@ -86,9 +86,9 @@ describe('section coverage', () => {
     expect(unmapped).toEqual([])
   })
 
-  it('covers exactly 22 checks', () => {
-    expect(DOCTOR_CHECK_NAMES).toHaveLength(22)
-    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(22)
+  it('covers exactly 23 checks', () => {
+    expect(DOCTOR_CHECK_NAMES).toHaveLength(23)
+    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(23)
   })
 })
 
@@ -193,7 +193,7 @@ describe('column alignment under colour', () => {
   const checks = [
     pass('gh installed', 'MESSAGE'),
     pass('typescript-language-server installed', 'MESSAGE'),
-    fail('cmux installed', 'MESSAGE'),
+    fail('terminal installed', 'MESSAGE'),
   ]
 
   const messageOffsets = (color: boolean): number[] => {
