@@ -1,4 +1,6 @@
 /**
+ * @fileoverview
+ *
  * Pure viewport arithmetic shared by every Ink list screen (the command palette and both branch
  * pickers): which slice of the (already filtered) list fits the terminal, and how much chrome the
  * screen may spend around it.

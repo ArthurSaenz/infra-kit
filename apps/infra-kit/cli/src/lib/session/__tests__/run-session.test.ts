@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import process from 'node:process'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { PauseContext } from '../post-run-pause'
 import { SESSION_REPORT_ENV } from '../report'
 import { runSession, sessionGateEnabled } from '../run-session'
 import type { SessionCommand, SessionPaletteItem } from '../run-session'
@@ -115,6 +116,15 @@ describe('runSession loop', () => {
       env: { PATH: '/usr/bin' } as NodeJS.ProcessEnv,
       ascii: true,
       installSignals: false as const,
+      // EXPLICIT, so no test's correctness depends on whatever stdin the vitest pool hands this worker:
+      // the real default would consult `process.stdin.isTTY`, which differs between a local run and CI.
+      // It writes nothing, so the `header()` / `footer()` index helpers below stay valid. It arms even
+      // though it does not block — `armed()` is idempotent and the phase is reset at the top of the loop.
+      afterRun: async (ctx: PauseContext) => {
+        ctx.armed()
+
+        return 'palette' as const
+      },
     }
   }
 
@@ -416,6 +426,319 @@ describe('runSession loop', () => {
   })
 
   /**
+   * The pause between a finished command and the next palette draw. It exists for the scrollback: the
+   * palette frame is nearly viewport-tall, so redrawing it the instant a command finishes would scroll
+   * that command's own output away before the user has read a line of it.
+   */
+  describe('the afterRun pause', () => {
+    it('runs once per pick, after the footer write and before the palette is drawn again', async () => {
+      const log: string[] = []
+      const written: string[] = []
+      const spawn = fakeSpawnFor([{ code: 0, writeReport: true }], log)
+
+      await runSession(items, {
+        renderPalette: pickThenQuit(['vendor-check', null], log),
+        ...baseDeps(written, spawn),
+        write: (text: string) => {
+          written.push(text)
+          log.push(text.includes('$ ') ? 'header' : 'footer')
+        },
+        afterRun: async (ctx: PauseContext) => {
+          log.push('afterRun')
+          ctx.armed()
+
+          return 'palette' as const
+        },
+      })
+
+      // The whole transcript block is on screen before the user is asked to read it, and the palette
+      // waits behind the pause rather than scrolling that block away.
+      expect(log).toEqual(['render', 'header', 'spawn', 'footer', 'afterRun', 'render'])
+    })
+
+    /**
+     * The context is the loop's, not the implementation's. `armed()` moves the signal phase to `'pause'`,
+     * and `quitRequested()` is the signal owner's own flag — an `afterRun` that blocks without arming
+     * would run the whole wait under the child's policy, which is an unkillable shell.
+     */
+    it("hands afterRun a context that flips the signal phase and reports the loop's deferred quit", async () => {
+      const log: string[] = []
+      const written: string[] = []
+      const handlers = new Map<NodeJS.Signals, () => void>()
+      const exits: number[] = []
+      const raised: NodeJS.Signals[] = []
+      const quitFlags: boolean[] = []
+      const spawn = ((): EventEmitter => {
+        log.push('spawn')
+        // An external `kill` while the child owns the tty. DEFERRED in that phase, so the child finishes
+        // and its entry commits — which is what leaves a flag for the pause's context to report.
+        handlers.get('SIGTERM')?.()
+
+        const child = new EventEmitter()
+
+        queueMicrotask(() => {
+          child.emit('exit', 0, null)
+        })
+
+        return child
+      }) as never
+
+      await runSession(items, {
+        renderPalette: pickThenQuit(['vendor-check', null], log),
+        ...baseDeps(written, spawn),
+        installSignals: true,
+        signals: {
+          // Monotonic, NOT frozen: a frozen clock reads as "no time has passed", which holds the pnpm
+          // relay window permanently open and swallows the SIGTERM this test depends on.
+          now: (() => {
+            let t = 0
+
+            return () => {
+              t += 1_000_000
+
+              return t
+            }
+          })(),
+          register: (signal, handler) => {
+            handlers.set(signal, handler)
+          },
+          unregister: (signal) => {
+            handlers.delete(signal)
+          },
+          exit: (code) => {
+            exits.push(code)
+          },
+          raise: (signal) => {
+            raised.push(signal)
+          },
+          resetTerminal: () => {
+            return undefined
+          },
+        },
+        afterRun: async (ctx: PauseContext) => {
+          ctx.armed()
+          quitFlags.push(ctx.quitRequested())
+          // The phase is `'pause'` now — and both of these would do something VISIBLE in either other
+          // phase: SIGTSTP raises SIGSTOP during a child, and SIGINT ends the session at the palette.
+          // That neither happens is what proves `armed()` actually moved the phase.
+          handlers.get('SIGTSTP')?.()
+          handlers.get('SIGINT')?.()
+
+          return 'palette' as const
+        },
+      })
+
+      expect(quitFlags).toEqual([true])
+      expect(raised).toEqual([])
+      expect(exits).toEqual([])
+      // The deferred SIGTERM is honoured at the top of the next iteration, so the palette never redraws.
+      expect(log).toEqual(['render', 'spawn'])
+    })
+
+    it('ends the session when afterRun returns quit, without drawing the palette again', async () => {
+      const log: string[] = []
+      const written: string[] = []
+      const spawn = fakeSpawnFor([{ code: 0, writeReport: true }], log)
+
+      await runSession(items, {
+        // A second pick is queued and must never be consumed.
+        renderPalette: pickThenQuit(['vendor-check', 'vendor-check', null], log),
+        ...baseDeps(written, spawn),
+        afterRun: async (ctx: PauseContext) => {
+          log.push('afterRun')
+          ctx.armed()
+
+          return 'quit' as const
+        },
+      })
+
+      expect(log).toEqual(['render', 'spawn', 'afterRun'])
+      expect(written).toHaveLength(2) // the finished command's header and footer, and nothing after
+    })
+
+    it('skips the pause when the pick resolves to no command — nothing ran, so nothing needs reading', async () => {
+      const log: string[] = []
+      const written: string[] = []
+      const spawn = fakeSpawnFor([{ code: 0, writeReport: true }], log)
+
+      await runSession(items, {
+        renderPalette: pickThenQuit(['not-in-the-catalog', null], log),
+        ...baseDeps(written, spawn),
+        afterRun: async (ctx: PauseContext) => {
+          log.push('afterRun')
+          ctx.armed()
+
+          return 'palette' as const
+        },
+      })
+
+      expect(log).toEqual(['render', 'render'])
+      expect(written).toHaveLength(0)
+    })
+  })
+
+  /**
+   * The signal seam's own terminal reset emits DECSC/DECSTBM/DECRC, `\r`, SGR, cursor-show and autowrap —
+   * and NO line erase. So the post-run pause's single hint row would survive a signal exit, and the user's
+   * shell prompt would draw at column 0 with the hint's tail still to its right. The fix is one erase in
+   * the `signals.resetTerminal` closure, scoped to the pause phase.
+   *
+   * SCOPED, because `\u001B[2K` is erase-in-LINE: it clears one row, and a stranded palette frame is
+   * multi-row by construction, so an unconditional erase would blank one row of six and leave the rest —
+   * worse than the clean stranded frame that path tolerates today. And it must never reach the post-child
+   * reset, which would wipe the child's last line of output.
+   *
+   * These tests drive the REAL default `signals` object, because injecting one replaces the very closure
+   * under test. `process.on`/`off`/`exit` are spied so the handler can be captured and fired without
+   * killing the test runner; non-signal events fall through to the real emitter.
+   */
+  describe('the signal path erases the pause hint, and nothing else', () => {
+    /** Carriage return + EL (erase-in-line), spelled explicitly so no raw control byte lands in source. */
+    const ERASE = '\r\u001B[2K'
+
+    const withCapturedSignals = async (
+      body: (handlers: Map<NodeJS.Signals, () => void>, exits: number[]) => Promise<void>,
+    ): Promise<void> => {
+      const handlers = new Map<NodeJS.Signals, () => void>()
+      const exits: number[] = []
+      const realOn = process.on.bind(process)
+      const realOff = process.off.bind(process)
+      const capture = vi.spyOn(process, 'on').mockImplementation(((event: string, handler: () => void) => {
+        if (!event.startsWith('SIG')) return realOn(event as 'exit', handler)
+
+        handlers.set(event as NodeJS.Signals, handler)
+
+        return process
+      }) as never)
+      const release = vi.spyOn(process, 'off').mockImplementation(((event: string, handler: () => void) => {
+        if (!event.startsWith('SIG')) return realOff(event as 'exit', handler)
+
+        handlers.delete(event as NodeJS.Signals)
+
+        return process
+      }) as never)
+      const exit = vi.spyOn(process, 'exit').mockImplementation(((code: number) => {
+        exits.push(code)
+      }) as never)
+
+      try {
+        await body(handlers, exits)
+      } finally {
+        capture.mockRestore()
+        release.mockRestore()
+        exit.mockRestore()
+      }
+    }
+
+    it('writes no erase when a signal ends the session from the palette', async () => {
+      await withCapturedSignals(async (handlers, exits) => {
+        const log: string[] = []
+        const written: string[] = []
+        const resets: { entersAltScreen?: boolean }[] = []
+
+        await runSession(items, {
+          ...baseDeps(written, fakeSpawnFor([{ code: 0, writeReport: true }], log), resets),
+          installSignals: true,
+          renderPalette: async () => {
+            log.push('render')
+            // An external `kill` landing while the palette owns the screen. Its multi-row Ink frame is
+            // exactly what a one-row erase must not touch.
+            handlers.get('SIGTERM')?.()
+
+            return null
+          },
+        })
+
+        expect(exits).toEqual([0])
+        // The reset itself still runs — this path skips Ink's teardown entirely.
+        expect(resets).toEqual([{ entersAltScreen: false }])
+        expect(written.join('')).not.toContain(ERASE)
+      })
+    })
+
+    it("leaves the post-child reset alone, so a child's last output line survives", async () => {
+      await withCapturedSignals(async (handlers, exits) => {
+        const log: string[] = []
+        const written: string[] = []
+        const resets: { entersAltScreen?: boolean }[] = []
+        const spawn = ((): EventEmitter => {
+          log.push('spawn')
+          // An external `kill` while the child holds the tty. DEFERRED in this phase — which is what pins
+          // the phase: from `'palette'` or `'pause'` the very same signal exits immediately instead, so a
+          // wrong phase here shows up as an extra reset and an `exit(0)` below.
+          handlers.get('SIGTERM')?.()
+
+          const child = new EventEmitter()
+
+          queueMicrotask(() => {
+            child.emit('exit', 0, null)
+          })
+
+          return child
+        }) as never
+
+        await runSession(items, {
+          ...baseDeps(written, spawn, resets),
+          installSignals: true,
+          renderPalette: pickThenQuit(['vendor-check', null], log),
+        })
+
+        expect(exits).toEqual([])
+        // Exactly one reset, the post-child hygiene one — and it carries no erase, which would have
+        // wiped whatever line the child exited on.
+        expect(resets).toEqual([{ entersAltScreen: undefined }])
+        expect(written.join('')).not.toContain(ERASE)
+        // The child finished and its footer committed; then the deferred kill was honoured, so the
+        // palette is never drawn a second time.
+        expect(log).toEqual(['render', 'spawn'])
+        expect(written).toHaveLength(2)
+      })
+    })
+
+    /**
+     * The case the erase exists for. A `kill` at the pause finds a single hint row on screen with the
+     * cursor parked at its end; without the erase the user's shell prompt draws at column 0 with that
+     * hint's tail still to its right. It must land BEFORE the reset, whose escapes carry no line erase
+     * of their own.
+     */
+    it('erases the hint row before the reset when a signal ends the session from the pause', async () => {
+      await withCapturedSignals(async (handlers, exits) => {
+        const log: string[] = []
+        const written: string[] = []
+        const order: string[] = []
+
+        await runSession(items, {
+          ...baseDeps(written, fakeSpawnFor([{ code: 0, writeReport: true }], log)),
+          installSignals: true,
+          renderPalette: pickThenQuit(['vendor-check', null], log),
+          write: (text: string) => {
+            written.push(text)
+
+            if (text === ERASE) order.push('erase')
+          },
+          resetTerminal: () => {
+            order.push('reset')
+          },
+          afterRun: async (ctx: PauseContext) => {
+            ctx.armed()
+            // A genuine external `kill` at the pause, with NO preceding SIGINT — so the pnpm-relay test
+            // fails and the handler must end the session here and now, rather than defer to a keypress
+            // that a `kill` cannot supply.
+            handlers.get('SIGTERM')?.()
+
+            return 'quit' as const
+          },
+        })
+
+        expect(exits).toEqual([0])
+        // The first `reset` is the post-child hygiene one, which carries no erase. The second is the
+        // signal path's, and the erase precedes it.
+        expect(order).toEqual(['reset', 'erase', 'reset'])
+      })
+    })
+  })
+
+  /**
    * Force-quitting a child means MASHING Ctrl-C, so SIGINTs keep landing after the one that killed it —
    * during the terminal reset, the report read and the footer. The session used to hand Ctrl-C back the
    * instant the child's `exit` fired, so those trailing signals took the "no child running" branch and
@@ -443,6 +766,13 @@ describe('runSession loop', () => {
         },
         env: { PATH: '/usr/bin' } as NodeJS.ProcessEnv,
         ascii: true,
+        // This test builds its deps inline rather than from `baseDeps`, so it needs its own explicit
+        // stub for the same reason: the real default would read the worker's ambient stdin.
+        afterRun: async (ctx: PauseContext) => {
+          ctx.armed()
+
+          return 'palette' as const
+        },
         signals: {
           // Monotonic, NOT frozen: this seam gates the pnpm-relay window, and a frozen clock reads as
           // "no time has passed", holding the window open so every SIGTERM is swallowed. A loop test

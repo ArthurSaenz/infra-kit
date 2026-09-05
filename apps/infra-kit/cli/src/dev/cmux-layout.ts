@@ -63,14 +63,9 @@ const buildNode = (commands: string[], depth: number): CmuxLayoutNode => {
  *
  * @example
  * buildCmuxLayout(['a', 'b'])
- * // => {
- * //   direction: 'horizontal',
- * //   split: 0.5,
- * //   children: [
- * //     { pane: { surfaces: [{ type: 'terminal', command: 'a' }] } },
- * //     { pane: { surfaces: [{ type: 'terminal', command: 'b' }] } },
- * //   ],
- * // }
+ * // => { direction: 'horizontal', split: 0.5, children: [
+ * //        { pane: { surfaces: [{ type: 'terminal', command: 'a' }] } },
+ * //        { pane: { surfaces: [{ type: 'terminal', command: 'b' }] } }] }
  */
 export const buildCmuxLayout = (commands: string[]): CmuxLayoutNode => {
   if (commands.length === 0) {

@@ -1,4 +1,6 @@
 /**
+ * @fileoverview
+ *
  * The regression test for the 455 GB incident — and the only one that tells the real fix apart from the
  * non-fix.
  *

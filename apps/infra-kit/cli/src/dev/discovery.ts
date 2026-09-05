@@ -117,22 +117,20 @@ const VITE_CONFIG_FILES = [
  * Every module specifier that binds a UI to infra-kit's dev wiring — whether through the raw
  * `infraKitDev` helper or through the `@slip-stream-kit/vite` plugin that wraps it.
  *
- * A LIST, not a single literal, because the wiring moved packages twice: it used to ship from the
- * `infra-kit` CLI itself, then from `@slip-stream-kit/config` (the split that let the CLI become a
- * global install — a local `node_modules/.bin/infra-kit` would otherwise shadow the global bin, see
- * that package's readme), and the plugin form now ships from `@slip-stream-kit/vite`. Consumers migrate
- * one repo at a time, so all three specifiers are live.
- *
- * This is what makes `managedPort` true, so a MISSING entry is not cosmetic: the runner would stop
- * claiming the port for every UI on that specifier, and with it the hero URL.
- *
- * Note this is a SUBSTRING match, which is why the config package could not be called `@infra-kit/vite`:
- * that name *contains* `infra-kit/vite`, so the legacy entry would have matched it by accident and
- * hidden the very coupling the split makes explicit. Neither `@slip-stream-kit/config/vite` nor
- * `@slip-stream-kit/vite` contains any other entry, so no entry here shadows another.
- *
- * Drop the legacy entry once every consumer repo is migrated.
+ * Matched as a SUBSTRING of a config's import specifiers. This is what makes `managedPort` true, so a
+ * MISSING entry is not cosmetic: the runner would stop claiming the port for every UI on that specifier,
+ * and with it the hero URL. Drop the legacy entry once every consumer repo is migrated.
  */
+// A LIST, not a single literal, because the wiring moved packages twice: it used to ship from the
+// `infra-kit` CLI itself, then from `@slip-stream-kit/config` (the split that let the CLI become a global
+// install — a local `node_modules/.bin/infra-kit` would otherwise shadow the global bin, see that
+// package's readme), and the plugin form now ships from `@slip-stream-kit/vite`. Consumers migrate one
+// repo at a time, so all three specifiers are live.
+//
+// The substring match is why the config package could not be called `@infra-kit/vite`: that name
+// *contains* `infra-kit/vite`, so the legacy entry would have matched it by accident and hidden the very
+// coupling the split makes explicit. Neither `@slip-stream-kit/config/vite` nor `@slip-stream-kit/vite`
+// contains any other entry, so no entry here shadows another.
 export const INFRA_KIT_VITE_SPECIFIERS = [
   '@slip-stream-kit/vite',
   '@slip-stream-kit/config/vite',
@@ -311,14 +309,14 @@ const subdirNames = (dir: string): string[] => {
  * Two homes, because the pnpm workspace globs cover `packages/<pkg>` as well as `apps/<app>/<part>`:
  *  - `packages/<pkg>/dist` — the obvious one.
  *  - `apps/<app>/<part>/dist` where `<part>` is neither `api` nor `ui` and the dir is a real workspace
- *    member (it has a `package.json`). A shared library may legally live beside the app that owns it —
- *    hulyo's `@pkg/ai-mcp` is `apps/ai/mcp`, and two backends depend on it. Scanning only `packages`
- *    left such a package watched by nobody: turbo rebuilt its dist, the runner never saw the change, and
- *    every dependent backend kept serving stale code.
+ *    member (it has a `package.json`).
  *
  * `api`/`ui` parts are excluded deliberately: an api's dist is already covered by {@link getAppDistDirs},
  * and treating a frontend's dist as a shared package would bounce every backend on a UI rebuild.
  */
+// A shared library may legally live beside the app that owns it — hulyo's `@pkg/ai-mcp` is `apps/ai/mcp`,
+// and two backends depend on it. Scanning only `packages` left such a package watched by nobody: turbo
+// rebuilt its dist, the runner never saw the change, and every dependent backend kept serving stale code.
 export function getPackageDistDirs(root: string): string[] {
   const dirs: string[] = []
 

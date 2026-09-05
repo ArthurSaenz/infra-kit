@@ -28,21 +28,19 @@ interface RemoveIdeWorktreeFoldersArgs {
  * provider (empty array when no IDE is configured or no worktrees were removed),
  * iterating sequentially.
  *
- * Cursor surgically edits the `.code-workspace` `folders` array — it removes
- * only the named paths and leaves everything else intact.
- *
- * Zed has no surgical remove. The only mutation mechanism, `zed --reuse`,
- * REPLACES the focused window's entire folder set, so it can only re-state the
- * release worktrees we know about and silently drops any other open folder
- * (`remaining` is built from release worktrees only). Because that is
- * destructive and unrecoverable, it fires ONLY when `allowEditorRelaunch` is
- * true (interactive `worktrees-remove`). On the non-interactive/MCP path it is a
- * deliberate no-op (`supported: true`, `removed: []`) with an info message — the
- * capability exists; skipping is a policy choice, not a missing capability.
- *
- * Zed's `removed` is ALWAYS `[]`: `--reuse` performs no diff, so it confirms no
- * specific removal and we never report intended-but-unverified paths.
+ * Cursor surgically edits the `.code-workspace` `folders` array. Zed's path is DESTRUCTIVE, so it
+ * fires ONLY when `allowEditorRelaunch` is true (interactive `worktrees-remove`); on the
+ * non-interactive/MCP path it is a deliberate no-op (`supported: true`, `removed: []`) with an
+ * info message. Zed's `removed` is ALWAYS `[]`.
  */
+// Zed has no surgical remove. The only mutation mechanism, `zed --reuse`, REPLACES the focused
+// window's entire folder set, so it can only re-state the release worktrees we know about and
+// silently drops any other open folder (`remaining` is built from release worktrees only). That is
+// why the no-op on the non-interactive path reports `supported: true`: the capability exists, and
+// skipping is a policy choice rather than a missing capability.
+//
+// `removed` stays empty because `--reuse` performs no diff — it confirms no specific removal, and
+// reporting intended-but-unverified paths would be a lie.
 export const removeIdeWorktreeFolders = async (
   args: RemoveIdeWorktreeFoldersArgs,
 ): Promise<RemoveIdeWorktreeFoldersOutcome[]> => {

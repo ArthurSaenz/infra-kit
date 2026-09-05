@@ -15,6 +15,8 @@ import { formatDoctorReport } from 'src/commands/doctor/report'
 import { buildOptions } from '../../../scripts/build.js'
 
 /**
+ * @fileoverview
+ *
  * INTEGRATION tests for the "fail honestly outside an infra-kit project" plan
  * (plan-fail-honestly-v4.md, Test strategy → Integration, I1–I10). These are the
  * cases table/unit tests structurally cannot catch: they need the REAL bundled CLI

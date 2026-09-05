@@ -11,6 +11,10 @@ import { z } from 'zod'
 export const packageConfigSchema = z.strictObject({
   requiredScripts: z.array(z.string().min(1)).optional(),
   requiredFiles: z.array(z.string().min(1)).optional(),
+  // No `.default()` here: `.partial()` elsewhere in the config-loading pipeline preserves ZodDefault,
+  // so a default on an optional key would make an EMPTY override layer parse to that default and
+  // shallow-merge over a real setting from an earlier layer. Defaults belong at the read site.
+  type: z.enum(['frontend', 'backend', 'lib', 'e2e', 'mobile']).optional(),
   turbo: z
     .strictObject({
       requiredTasks: z.array(z.string().min(1)).optional(),

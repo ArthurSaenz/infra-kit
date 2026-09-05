@@ -8,32 +8,30 @@ import { isMcpMode } from 'src/lib/mcp-mode'
 import type { BranchPickerItem } from './types'
 
 /**
- * Gate the interactive Ink picker. Bails (throwing a clear `OperationError`,
- * never loading React) when there is no interactive input OR when structured
- * output is requested — `--json` is registered on every command and sets
- * `jsonOutput.enabled`, so `--json` on a TTY without an explicit arg would
- * otherwise pass a TTY-only gate and dynamically import the TUI (leaking React
- * onto the `--json` path).
- *
- * The predicate is `stdin.isTTY` only — deliberately NOT the palette's
- * `stdout && stdin`. These prompts render to stderr, so an interactive run whose
- * STDOUT is redirected (e.g. `worktrees-remove > log.txt`) must still prompt;
- * requiring `stdout.isTTY` would regress that. Input-side interactivity is what
- * the picker actually needs.
- *
- * The MCP clause is LOAD-BEARING, not defensive: `worktrees-add` and `gh-merge-dev`
- * are `mcpExposed: true` with ALL of their branch inputs `.optional()`, so an MCP
- * call with those args omitted DOES enter the interactive branch. Without a guard it
- * would render an Ink picker into the JSON-RPC stream (and load React there).
- *
- * That guard keys on `isMcpMode()`, NOT on `!process.stdin.isTTY`. The TTY check
- * alone does not hold: `commands/mcp/mcp.ts` spawns the server with `stdio: 'inherit'`,
- * so a terminal-launched `infra-kit mcp` hands the child a real TTY stdin and an
- * isTTY-keyed guard does NOT fire. It only looks sufficient because Claude Code
- * happens to spawn the server with piped stdio — a property of one client, not a
- * guarantee. The `!isTTY` clause stays as well, for genuinely non-interactive runs
- * (pipes, CI).
+ * Gate the interactive Ink picker. Throws a clear `OperationError`, without ever loading React,
+ * when there is no interactive input (`stdin.isTTY`), when running under MCP, or when structured
+ * output is requested (`jsonOutput.enabled`).
  */
+// All three clauses are load-bearing.
+//
+// `--json` is registered on every command and sets `jsonOutput.enabled`, so `--json` on a TTY
+// without an explicit arg would otherwise pass a TTY-only gate and dynamically import the TUI,
+// leaking React onto the `--json` path.
+//
+// The TTY predicate is `stdin.isTTY` only — deliberately NOT the palette's `stdout && stdin`.
+// These prompts render to stderr, so an interactive run whose STDOUT is redirected (e.g.
+// `worktrees-remove > log.txt`) must still prompt; requiring `stdout.isTTY` would regress that.
+// Input-side interactivity is what the picker actually needs.
+//
+// The MCP clause is not defensive: `worktrees-add` and `gh-merge-dev` are `mcpExposed: true` with
+// ALL of their branch inputs `.optional()`, so an MCP call with those args omitted DOES enter the
+// interactive branch, and without a guard it would render an Ink picker into the JSON-RPC stream
+// (and load React there). It keys on `isMcpMode()`, NOT on `!process.stdin.isTTY`, because the TTY
+// check alone does not hold: `commands/mcp/mcp.ts` spawns the server with `stdio: 'inherit'`, so a
+// terminal-launched `infra-kit mcp` hands the child a real TTY stdin and an isTTY-keyed guard does
+// NOT fire. It only looks sufficient because Claude Code happens to spawn the server with piped
+// stdio — a property of one client, not a guarantee. The `!isTTY` clause stays as well, for
+// genuinely non-interactive runs (pipes, CI).
 const assertInteractive = () => {
   if (isMcpMode() || !process.stdin.isTTY || jsonOutput.enabled) {
     throw new OperationError(undefined, {

@@ -25,23 +25,22 @@ let live: OutputIntercept | null = null
 let sink: DevLogSink | null = null
 
 /**
- * Every byte that reached the REAL terminal.
- *
- * The interceptor has no injectable terminal seam any more, because it has no terminal seam at all — it
- * only ever writes to a file. So "nothing was printed" has to be asserted at the one place a print could
- * still happen, and that place is the PROTOTYPE: `rawStdoutWrite` reaches the screen by stepping over
- * the interceptor's own-property patch and calling the prototype's `write`.
- *
- * `vi.hoisted` is load-bearing, not decoration. `log-sink` captures the prototype's `write` ONCE, at
- * import time (`const protoWrite = …`), so a spy installed later is simply not in the path — the bypass
- * would call the function it saved and print straight past the recorder. Every "did not print" assertion
- * below would then pass no matter what the interceptor did: a perfect false green, on the one property
- * this whole module exists to guarantee. Hoisting runs the spy BEFORE the imports are evaluated, so it is
- * the wrapper that `log-sink` captures, and the bypass becomes observable.
+ * Every byte that reached the REAL terminal, recorded off the stream PROTOTYPE's `write`.
  *
  * The spy DELEGATES, so the runner's own output still reaches the screen; assertions look for a marker
  * rather than for emptiness.
  */
+// The prototype is the only place worth asserting at: the interceptor has no terminal seam at all — it
+// only ever writes to a file — so the one place a print could still happen is `rawStdoutWrite`, which
+// reaches the screen by stepping over the interceptor's own-property patch and calling the prototype's
+// `write`.
+//
+// `vi.hoisted` is load-bearing, not decoration. `log-sink` captures the prototype's `write` ONCE, at
+// import time (`const protoWrite = …`), so a spy installed later is simply not in the path — the bypass
+// would call the function it saved and print straight past the recorder. Every "did not print" assertion
+// below would then pass no matter what the interceptor did: a perfect false green, on the one property
+// this whole module exists to guarantee. Hoisting runs the spy BEFORE the imports are evaluated, so it is
+// the wrapper that `log-sink` captures, and the bypass becomes observable.
 const terminal = vi.hoisted((): string[] => {
   const captured: string[] = []
   // stdout and stderr can share one prototype; wrapping it twice would double-record.

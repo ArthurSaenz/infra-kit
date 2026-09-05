@@ -1,4 +1,6 @@
 /**
+ * @fileoverview
+ *
  * Translate Doppler `secrets download` not-found failures into actionable,
  * point-at-the-fix guidance. Pure (no I/O) so the classification + message policy
  * is unit-testable without spawning the Doppler CLI — mirroring the pure-helper
@@ -144,30 +146,29 @@ export const buildDopplerAuthFailureMessage = (env: string): string => {
  * `env-load`'s `translateDopplerDownloadError` throws for the auth class, and it is what every
  * DOWNSTREAM consumer classifies on.
  *
- * WHY a class and not "match the message": the moment the raw Doppler stderr is translated into a
- * human-facing message the markers it was classified by are GONE. A consumer that re-derives the
- * class by re-parsing that message is coupled to prose owned by another module — and the coupling is
- * SILENT: reword the message and the auth channel simply stops firing, with every unit test on both
- * sides still green (exactly the defect this type exists to make impossible). The classification now
- * travels WITH the error.
- *
- * It is the DOPPLER-REFUSED-US subset of {@link EnvAuthError}, the durable/user-fixable env-auth class:
- * a missing token never reaches Doppler, and a corrupt token store never reaches the resolver, yet all
- * three are equally durable and equally the user's to fix. Downstream policy (the sticky auth marker)
- * therefore classifies on `isEnvAuthFailure`; `isDopplerAuthError` remains for the callers who
- * genuinely mean "the token was SENT and Doppler rejected it".
- *
- * The message is unchanged — {@link buildDopplerAuthFailureMessage} still renders it — so a human who
- * only ever sees `error.message` sees precisely what they saw before.
- *
- * (The @example names the command as `infra-kit env-token-set <env>` rather than with a literal arg
- * for `program.test.ts`'s benefit: to that scan an `<env>` placeholder ENDS the command, but a literal
- * `dev` is indistinguishable from a subcommand and would be reported as a dead one.)
+ * It is the DOPPLER-REFUSED-US subset of {@link EnvAuthError}, the durable/user-fixable env-auth
+ * class. Downstream policy (the sticky auth marker) therefore classifies on `isEnvAuthFailure`;
+ * `isDopplerAuthError` remains for the callers who genuinely mean "the token was SENT and Doppler
+ * rejected it". The message is unchanged — {@link buildDopplerAuthFailureMessage} still renders
+ * it — so a human who only ever sees `error.message` sees precisely what they saw before.
  *
  * @example
  * throw new DopplerAuthError('dev', 'revoked')
  * // message: 'Doppler rejected the service token for env "dev" … `infra-kit env-token-set <env>` …'
  */
+// WHY a class and not "match the message": the moment the raw Doppler stderr is translated into a
+// human-facing message the markers it was classified by are GONE. A consumer that re-derives the
+// class by re-parsing that message is coupled to prose owned by another module — and the coupling
+// is SILENT: reword the message and the auth channel simply stops firing, with every unit test on
+// both sides still green (exactly the defect this type exists to make impossible). The
+// classification now travels WITH the error.
+//
+// Why the subset framing: a missing token never reaches Doppler, and a corrupt token store never
+// reaches the resolver, yet all three are equally durable and equally the user's to fix.
+//
+// The @example names the command as `infra-kit env-token-set <env>` rather than with a literal arg
+// for `program.test.ts`'s benefit: to that scan an `<env>` placeholder ENDS the command, but a
+// literal `dev` is indistinguishable from a subcommand and would be reported as a dead one.
 export class DopplerAuthError extends EnvAuthError {
   /**
    * The env (= Doppler config) whose service token Doppler refused. Names the fix, carries no token.

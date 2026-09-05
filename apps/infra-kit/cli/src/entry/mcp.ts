@@ -1,5 +1,6 @@
-import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
+import { serveStdio } from '@modelcontextprotocol/server/stdio'
 import process from 'node:process'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { setupErrorHandlers } from 'src/lib/error-handlers'
 import { initLoggerMcp } from 'src/lib/logger'
@@ -14,36 +15,65 @@ suppressTypelessPackageJsonWarning()
 
 const logger = initLoggerMcp()
 
-const startServer = async () => {
-  let server
-
+/**
+ * `serveStdio` calls this LAZILY, on the first inbound message, and may call it TWICE on one
+ * connection via the probe-then-legacy discard path. The factory must therefore stay free of
+ * non-idempotent process-scope side effects.
+ */
+const buildOrDie = async () => {
   try {
-    server = await createMcpServer()
-
-    logger.info('MCP Server instance created')
+    return await createMcpServer()
   } catch (error) {
     logger.error({ err: error, msg: 'Failed to create MCP server' })
-    logger.error(`Fatal error during server creation.`)
-
-    process.exit(1)
-  }
-
-  try {
-    const transport = new StdioServerTransport()
-
-    await server.connect(transport)
-
-    logger.info({ msg: 'Server connected to transport. Ready.' })
-  } catch (error) {
-    logger.error({ err: error, msg: 'Failed to initialize server' })
-    logger.error(`Fatal error during server transport init.`)
+    logger.flush()
 
     process.exit(1)
   }
 }
 
-// Setup error handlers
 setupErrorHandlers(logger)
 
-// Start the server
-startServer()
+const handle = serveStdio(buildOrDie, {
+  onerror: (error) => {
+    logger.error({ err: error, msg: 'MCP stdio entry error' })
+    logger.flush()
+  },
+})
+
+// NOT "listening": `serveStdio` returns while the transport start is still pending, so nothing is
+// established at this point beyond the entry having been wired up. Claiming readiness here would
+// print "listening" on a transport that failed to start.
+logger.info({ msg: 'MCP stdio entry started.' })
+
+let isShuttingDown = false
+
+const shutdown = async (signal: NodeJS.Signals) => {
+  // A second signal inside the 1500 ms window must not start a second teardown.
+  if (isShuttingDown) {
+    return
+  }
+
+  isShuttingDown = true
+
+  logger.info({ msg: `Received ${signal}. Shutting down...` })
+
+  // Exit 0 is unconditional: a rejecting close() must not escape to `unhandledRejection` and turn a
+  // clean shutdown into exit 1. The SDK already routes close errors to `onerror`; this is the belt.
+  try {
+    await Promise.race([handle.close(), delay(1500)])
+  } catch (error) {
+    logger.error({ err: error, msg: 'MCP stdio close failed during shutdown' })
+  }
+
+  logger.flush()
+
+  process.exit(0)
+}
+
+process.on('SIGINT', () => {
+  void shutdown('SIGINT')
+})
+
+process.on('SIGTERM', () => {
+  void shutdown('SIGTERM')
+})

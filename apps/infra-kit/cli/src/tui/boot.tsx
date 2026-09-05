@@ -4,12 +4,12 @@ import type { ReactElement } from 'react'
 
 import { stdinReaderCount } from 'src/lib/prompts/stdin-ref'
 import type { BranchPickerItem } from 'src/lib/prompts/types'
+import { suspendForeground } from 'src/lib/session/suspend-foreground'
 
 import { safeStderr } from './safe-stderr'
 import { BranchMultiPicker } from './screens/branch-multi-picker'
 import { BranchPicker } from './screens/branch-picker'
 import { CommandPalette } from './screens/command-palette'
-import { suspendForeground } from './suspend'
 import type { PaletteItem } from './types'
 
 /**
@@ -25,24 +25,22 @@ import type { PaletteItem } from './types'
  * written to stderr so stdout stays clean for the command that runs afterwards
  * (mirrors the previous Inquirer menu).
  *
- * STDIN — Ink is self-balancing: it `ref()`s when it arms raw mode and `unref()`s when it
- * drops it on teardown (ink/build/components/App.js:225 / :137). A later Ink render refs
- * itself again on mount, and an `@inquirer/*` prompt — which refs nothing on its own — now
- * gets its ref from `withEscape` (lib/prompts/stdin-ref). So the common paths need nothing
- * from us here.
- *
- * The one thing Ink's `unref()` cannot know about is a reader that is ALREADY live: an Ink
- * screen rendered inside a `withEscape` callback would, on teardown, unref the handle the
- * outer prompt is still reading from and kill it with exit 13. Hence the re-assert below,
- * conditional on the counter. It is a net for a boundary nothing structurally enforces —
- * see lib/prompts/stdin-ref — not the mechanism that keeps prompts alive.
- *
- * It replaces an UNCONDITIONAL `process.stdin.ref()`, whose stated premise — "an idle
- * ref'd stdin does not block exit" — is simply false: a ref'd tty ReadStream holds the
- * event loop open whether or not anything is listening to it. That re-ref bought the next
- * prompt its handle and cost the session shell its exit, so every quit key in the palette
- * tore the frame down correctly and then hung forever.
+ * STDIN — Ink is self-balancing (it refs when it arms raw mode, unrefs on teardown), so the common
+ * paths need nothing from here. The re-assert below is CONDITIONAL on the reader counter and is a
+ * net for the one case Ink cannot see: an Ink screen rendered INSIDE a `withEscape` callback, whose
+ * teardown would unref the handle the outer prompt is still reading from and kill it with exit 13.
+ * See lib/prompts/stdin-ref.
  */
+// Where the balance comes from: ink/build/components/App.js:225 (`ref` on raw mode) and :137
+// (`unref` on teardown). A later Ink render refs itself again on mount, and an `@inquirer/*`
+// prompt — which refs nothing on its own — gets its ref from `withEscape`. The re-assert is a net
+// for a boundary nothing structurally enforces, not the mechanism that keeps prompts alive.
+//
+// It replaces an UNCONDITIONAL `process.stdin.ref()`, whose stated premise — "an idle ref'd stdin
+// does not block exit" — is simply false: a ref'd tty ReadStream holds the event loop open whether
+// or not anything is listening to it. That re-ref bought the next prompt its handle and cost the
+// session shell its exit, so every quit key in the palette tore the frame down correctly and then
+// hung forever.
 const renderToStderr = async (element: ReactElement): Promise<void> => {
   const stdout = safeStderr()
   const { waitUntilExit } = render(element, {

@@ -3,25 +3,26 @@ import { OperationError } from 'src/lib/errors/operation-error'
 /**
  * Environments that are NOT ordinary ad-hoc deploy targets by default.
  *
- * `prod` is not a deploy target — it is a DELIVERY target. `gh-release-deliver` is the sanctioned
- * path to it, and it is a whole flow, not a dispatch: squash-merge the release branch to `main`, open
- * and merge the RC PR, dispatch `deploy-all.yml --ref main -f environment=prod` (see
- * `gh-release-deliver.ts`), then release the matching Jira fix version. A
- * `gh-release-deploy-all --env prod` straight from a release branch skips every one of those steps
- * and ships production from an unmerged ref.
- *
- * `stage` is deliberately NOT here. The old per-repo allowlists excluded it, but nothing delivers to it
- * either — so it was simply unreachable, which was an oversight rather than a policy. It is an ad-hoc
- * deploy target like any other.
- *
  * This is the DEFAULT, not an immovable policy: a project opts out with `protectedEnvs` in its
  * `infra-kit.json` (`'disallow' | 'allow' | 'cli-only'`, absent meaning `'disallow'`), resolved by
  * `protected-env-access.ts`. The LIST stays in code because it answers "what is delivery-shaped in
- * this org", which no single repo owns; the config answers "may this repo reach it", which each repo
- * does. What is deliberately NOT rebuilt here is the deleted `environments` key — a hand-maintained
- * per-repo copy of each workflow's own `environment.options` that drifted from them and turned that
- * drift into a REFUSAL to deploy.
+ * this org", which no single repo owns; the config answers "may this repo reach it", which each
+ * repo does.
  */
+// `prod` is not a deploy target — it is a DELIVERY target. `gh-release-deliver` is the sanctioned
+// path to it, and it is a whole flow, not a dispatch: squash-merge the release branch to `main`,
+// open and merge the RC PR, dispatch `deploy-all.yml --ref main -f environment=prod` (see
+// `gh-release-deliver.ts`), then release the matching Jira fix version. A `gh-release-deploy-all
+// --env prod` straight from a release branch skips every one of those steps and ships production
+// from an unmerged ref.
+//
+// `stage` is deliberately NOT here. The old per-repo allowlists excluded it, but nothing delivers
+// to it either — so it was simply unreachable, which was an oversight rather than a policy. It is
+// an ad-hoc deploy target like any other.
+//
+// What is deliberately NOT rebuilt here is the deleted `environments` key — a hand-maintained
+// per-repo copy of each workflow's own `environment.options` that drifted from them and turned
+// that drift into a REFUSAL to deploy.
 export const DEFAULT_PROTECTED_ENVS = ['prod']
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatRunHeader, formatTranscriptEntry } from '../format-entry'
+import { formatPauseHint, formatRunHeader, formatTranscriptEntry } from '../format-entry'
 import type { TranscriptEntryInput } from '../format-entry'
 
 const base = {
@@ -225,5 +225,93 @@ describe('format-entry — colour', () => {
 
   it('keeps the coloured header exactly as copy-pasteable as the plain one', () => {
     expect(visible(formatRunHeader('infra-kit audit', { color: true }))).toBe(formatRunHeader('infra-kit audit'))
+  })
+})
+
+describe('formatPauseHint', () => {
+  it('renders the suspend variant', () => {
+    expect(formatPauseHint({ canSuspend: true })).toBe('any key commands · Esc / Ctrl-C quit · Ctrl-Z suspend')
+  })
+
+  it('renders the plain variant when suspending is not offered', () => {
+    expect(formatPauseHint({ canSuspend: false })).toBe('any key commands · Esc / Ctrl-C quit')
+  })
+
+  it('renders the suspend variant in ascii, the separator swapped for a hyphen', () => {
+    expect(formatPauseHint({ canSuspend: true, ascii: true })).toBe(
+      'any key commands - Esc / Ctrl-C quit - Ctrl-Z suspend',
+    )
+  })
+
+  it('renders the plain variant in ascii', () => {
+    expect(formatPauseHint({ canSuspend: false, ascii: true })).toBe('any key commands - Esc / Ctrl-C quit')
+  })
+})
+
+/**
+ * Mirrors the `screen hint widths` guard in `src/tui/screens/__tests__/hint-width.test.ts`: this
+ * hint renders on a real terminal row, so a variant at or past 80 columns risks a wrap an
+ * emulator never reflows back — exactly the failure that guard exists to catch one layer up.
+ */
+describe('formatPauseHint — column budget', () => {
+  const columns = (text: string): number => {
+    return [...text].length
+  }
+
+  const variants: Record<string, string> = {
+    suspend: formatPauseHint({ canSuspend: true }),
+    plain: formatPauseHint({ canSuspend: false }),
+    suspendAscii: formatPauseHint({ canSuspend: true, ascii: true }),
+    plainAscii: formatPauseHint({ canSuspend: false, ascii: true }),
+  }
+
+  for (const [name, text] of Object.entries(variants)) {
+    it(`${name} fits in 80 columns`, () => {
+      expect(columns(text)).toBeLessThan(80)
+    })
+  }
+})
+
+describe('formatPauseHint — truncation', () => {
+  it('truncates to width - 1 cells, walking the array-spread cellWidth uses rather than raw .slice', () => {
+    // The hint's only non-ASCII character is `·` (U+00B7): a single BMP code point that is ALSO a
+    // single UTF-16 unit, so cells and UTF-16 units coincide for this exact string — a bug that
+    // counted UTF-16 units instead of cells could not be caught by comparing against `.slice()`
+    // here. What this pins down instead is that truncation walks `[...text]` (the same measure
+    // `cellWidth` uses elsewhere in this file) to the cell just short of `width`, matching the
+    // spec exactly, so the day a hint folds in an astral character the arithmetic is already right.
+    const hint = formatPauseHint({ canSuspend: true })
+    const width = 10
+
+    expect(formatPauseHint({ canSuspend: true, width })).toBe([...hint].slice(0, width - 1).join(''))
+    expect(formatPauseHint({ canSuspend: true, width })).toBe('any key c')
+  })
+
+  it('leaves the hint untouched at a width it already fits inside', () => {
+    const hint = formatPauseHint({ canSuspend: false })
+
+    expect(formatPauseHint({ canSuspend: false, width: 100 })).toBe(hint)
+  })
+
+  it('leaves the hint whole when width is undefined, rather than silently no-op truncating on NaN', () => {
+    const hint = formatPauseHint({ canSuspend: true })
+
+    expect(formatPauseHint({ canSuspend: true, width: undefined })).toBe(hint)
+    expect(formatPauseHint({ canSuspend: true })).toBe(hint)
+  })
+})
+
+describe('formatPauseHint — colour', () => {
+  it('emits the dim SGR pair when color is true', () => {
+    expect(formatPauseHint({ canSuspend: true, color: true })).toBe(
+      `${SGR.dim}any key commands · Esc / Ctrl-C quit · Ctrl-Z suspend${SGR.dimOff}`,
+    )
+  })
+
+  it('emits no escape codes when color is false (the default)', () => {
+    const hint = formatPauseHint({ canSuspend: true })
+
+    expect(visible(formatPauseHint({ canSuspend: true, color: true }))).toBe(hint)
+    expect(visible(hint)).toBe(hint)
   })
 })

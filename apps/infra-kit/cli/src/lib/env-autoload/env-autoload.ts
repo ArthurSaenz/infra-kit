@@ -63,19 +63,19 @@ export interface ResolvedEnvAutoLoad {
  *  - `envAutoLoad` is absent (feature off);
  *  - no service token resolves for `envAutoLoad.config` — warns once per session, then disables.
  *
- * Validation lives here (not in the schema) so a typo only disables this optional
- * feature instead of throwing inside the merged-config parse and breaking every command.
- * Resolves the Doppler project from the SAME config read (no second getInfraKitConfig),
- * so the skip path stays cheap.
- *
- * `canWarn` gates the WARNING only, never the STICKY MARKER: the shell-startup callsite
- * runs backgrounded with stderr discarded, so warning there is invisible — but a missing
- * token is one of the three durable auth-class failures {@link buildAuthFailureWarning}
- * documents (alongside a revoked/mis-scoped token and a corrupt store), so it is recorded
- * unconditionally and replayed by {@link surfaceStickyAuthFailure} on the next interactive
- * command — the channel that actually reaches the user. Skipping the record here would
- * strand the migration case (upgraded, never minted a token) with no channel at all.
+ * `canWarn` gates the WARNING only, never the STICKY MARKER.
  */
+// Validation lives here (not in the schema) so a typo only disables this optional feature instead
+// of throwing inside the merged-config parse and breaking every command. The Doppler project is
+// resolved from the SAME config read (no second getInfraKitConfig), so the skip path stays cheap.
+//
+// Why the marker is written even when we cannot warn: the shell-startup callsite runs backgrounded
+// with stderr discarded, so warning there is invisible — but a missing token is one of the three
+// durable auth-class failures buildAuthFailureWarning documents (alongside a revoked/mis-scoped
+// token and a corrupt store), so it is recorded unconditionally and replayed by
+// surfaceStickyAuthFailure on the next interactive command, the channel that actually reaches the
+// user. Skipping the record here would strand the migration case (upgraded, never minted a token)
+// with no channel at all.
 export const resolveEnvAutoLoad = async (canWarn = true): Promise<ResolvedEnvAutoLoad | null> => {
   let config
 

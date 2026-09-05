@@ -4,7 +4,9 @@ import { buildProgram, commandPath } from 'src/lib/program'
 
 import {
   LOW_RISK_MUTATING_ALLOWLIST,
+  MCP_TOOL_PRESENTATION,
   MENU_GROUPS,
+  NOT_READ_ONLY,
   commandCatalog,
   getExposedMcpTools,
   getMenuGroupEntries,
@@ -245,6 +247,21 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
     expect(offenders, `ungated mutating+exposed tools not on the allowlist: ${offenders.join(', ')}`).toEqual([])
   })
 
+  /**
+   * `audit` gained the CLI-only `--fix` / `--design` flags, which write into the repo. The catalog
+   * entry must NOT follow them: the MCP handler forwards `params.all` / `params.root` by field and
+   * `auditInputSchema` has no `fix` key, so the exposed tool is still read-only. Flipping this to
+   * `mutating: true` (or letting the handler become a bare `handler: audit`) is the change the
+   * ungated-mutating gate above cannot see for itself.
+   */
+  it('keeps `audit` exposed and non-mutating despite the CLI-only --fix flag', () => {
+    const entry = commandCatalog.find((candidate) => {
+      return candidate.cliName === 'audit'
+    })
+
+    expect(entry).toMatchObject({ mcpExposed: true, mutating: false })
+  })
+
   // The allowlist is a safety escape hatch, not a dumping ground: every member must actually be a
   // mutating, MCP-exposed catalog entry that is NOT gated. A stale name (e.g. a tool that was later
   // gated or removed) would silently widen the escape hatch, so pin it.
@@ -453,6 +470,144 @@ describe('command catalog — menu grouping', () => {
     for (const entry of commandCatalog) {
       expect(entry.groupPath.length, `${entry.cliName} groupPath must be non-empty`).toBeGreaterThan(0)
       expect(topLevel.has(entry.groupPath[0]!), `${entry.cliName} groupPath[0] must be a top-level command`).toBe(true)
+    }
+  })
+})
+
+describe('command catalog — MCP tool annotations & titles', () => {
+  /**
+   * The catalog entry behind each exposed tool, keyed by MCP tool NAME (which is not always the
+   * `cliName` — `merge-dev` registers as `gh-merge-dev`). The annotation derivation reads
+   * `entry.mutating`, so the tests need the same join the derivation makes.
+   */
+  const entryByToolName = new Map(
+    commandCatalog.flatMap((entry) => {
+      return entry.mcpExposed && entry.mcpTool ? [[entry.mcpTool.name, entry] as const] : []
+    }),
+  )
+
+  /**
+   * T1 — REAL CONTENT. Catches a missing presentation row and an implementer setting
+   * `annotations.title`. Cannot catch a title or hint that is merely WRONG.
+   */
+  it('t1: gives every exposed tool a display title and boolean hints, and never sets annotations.title', () => {
+    for (const tool of getExposedMcpTools()) {
+      expect(tool.title, `${tool.name} must carry a title`).toBeTruthy()
+      expect(tool.title, `${tool.name}'s title must not restate its name`).not.toBe(tool.name)
+      expect(typeof tool.annotations.readOnlyHint, `${tool.name}.readOnlyHint`).toBe('boolean')
+      expect(typeof tool.annotations.openWorldHint, `${tool.name}.openWorldHint`).toBe('boolean')
+      // Top-level `title` is the modern field; some hosts prefer `annotations.title` when present, so
+      // setting both is a divergence waiting to happen.
+      expect(tool.annotations, `${tool.name} must not carry annotations.title`).not.toHaveProperty('title')
+    }
+  })
+
+  /**
+   * T2 — REFACTOR DETECTOR, not a correctness test: it asserts the very formula that produced the
+   * value. It fails when the derivation is replaced by hand-typed literals, which is the regression
+   * worth catching here. Correctness for `readOnlyHint` comes from T5's cross-artifact check.
+   */
+  it('t2: derives readOnlyHint from `mutating`, tightened by NOT_READ_ONLY', () => {
+    for (const tool of getExposedMcpTools()) {
+      const entry = entryByToolName.get(tool.name)!
+
+      expect(tool.annotations.readOnlyHint, `${tool.name}.readOnlyHint`).toBe(
+        !entry.mutating && !NOT_READ_ONLY.includes(tool.name),
+      )
+    }
+  })
+
+  /**
+   * T3 — REAL CONTENT, and the strongest unit test of the set: it fails in BOTH directions, so a new
+   * exposed tool with no row and a stale row for a tool that was renamed or unexposed are each red.
+   * It cannot judge whether an `openWorld` VALUE is right — nothing mechanical can; see the citation
+   * discipline on MCP_TOOL_PRESENTATION.
+   */
+  it('t3: keeps MCP_TOOL_PRESENTATION and the exposed tool set in exact correspondence', () => {
+    const exposed = getExposedMcpTools()
+      .map((tool) => {
+        return tool.name
+      })
+      .sort()
+
+    expect(Object.keys(MCP_TOOL_PRESENTATION).sort()).toEqual(exposed)
+  })
+
+  /**
+   * T4 — the omission halves are REAL CONTENT (they catch a meaningless hint leaking onto a read-only
+   * tool, and `idempotentHint` being reintroduced without the argument that removed it). The
+   * destructive half is a theorem given the derivation, and is asserted to pin it.
+   */
+  it('t4: omits destructiveHint on read-only tools, sets it on every write tool, and never ships idempotentHint', () => {
+    for (const tool of getExposedMcpTools()) {
+      if (tool.annotations.readOnlyHint) {
+        expect(tool.annotations, `${tool.name} is read-only, so destructiveHint is meaningless`).not.toHaveProperty(
+          'destructiveHint',
+        )
+      } else {
+        expect(tool.annotations.destructiveHint, `${tool.name} is not read-only`).toBe(true)
+      }
+
+      expect(tool.annotations, `${tool.name} must not ship idempotentHint`).not.toHaveProperty('idempotentHint')
+    }
+  })
+
+  /**
+   * T5 — REAL CONTENT, and the only unit check that crosses to independently-authored data:
+   * `requiresHumanConfirm` is written per-command under `src/commands/`, while `readOnlyHint` is
+   * derived from the catalog's `mutating`. A tool gated in one artifact but read-only in the other
+   * makes the two disagree, and this fires. Note the coverage limit: this independence holds for the
+   * gated subset only, not for all thirteen write tools.
+   */
+  it('t5: makes every gated tool destructive without collapsing the two sets', () => {
+    const tools = getExposedMcpTools()
+
+    for (const tool of tools) {
+      if (tool.requiresHumanConfirm === true) {
+        expect(tool.annotations.destructiveHint, `gated ${tool.name} must read destructive`).toBe(true)
+        expect(tool.annotations.readOnlyHint, `gated ${tool.name} must not read read-only`).toBe(false)
+      }
+    }
+
+    // The converse must NOT hold. Allowlist membership is a gate decision ("is a confirm prompt
+    // warranted?"); destructiveHint answers "does this perform destructive updates?". These two are
+    // destructive yet deliberately ungated — if a future reader collapses the sets, this reds.
+    for (const name of ['release-desc-edit', 'worktrees-sync']) {
+      const tool = tools.find((candidate) => {
+        return candidate.name === name
+      })
+
+      expect(tool?.annotations.destructiveHint, `${name} must read destructive`).toBe(true)
+      expect(tool?.requiresHumanConfirm, `${name} must stay ungated`).not.toBe(true)
+    }
+  })
+
+  /**
+   * T7 — REAL CONTENT. Catches a stale name, and catches the array being used to LOOSEN a hint: a
+   * member that is already `mutating: true` would be doing nothing, and a member that is not exposed
+   * would be unreachable. The array may only ever tighten toward the spec default of
+   * `readOnlyHint: false`.
+   */
+  it('t7: keeps every NOT_READ_ONLY member a real, exposed, non-mutating entry', () => {
+    // Pinned BY NAME, because a `for…of` over the array cannot see the array shrinking: delete
+    // 'reopen' and T7 loops zero times, T2 asserts a formula that moved with it, T4/T5 accept the
+    // now-read-only tool, and T6 derives its expectation from the same source — nothing would red
+    // while `reopen` silently started advertising `readOnlyHint: true`. `reopen` is `mutating: false`
+    // yet its MCP-reachable `force` flag closes cmux workspaces, which is the whole reason the
+    // exception exists.
+    expect(NOT_READ_ONLY, 'reopen must stay excepted — its MCP-reachable `force` closes workspaces').toContain('reopen')
+
+    const reopen = getExposedMcpTools().find((tool) => {
+      return tool.name === 'reopen'
+    })
+
+    expect(reopen?.annotations.readOnlyHint, 'reopen must never advertise itself as read-only').toBe(false)
+
+    for (const name of NOT_READ_ONLY) {
+      const entry = entryByToolName.get(name)
+
+      expect(entry, `${name} in NOT_READ_ONLY must be an exposed catalog tool`).toBeDefined()
+      expect(entry?.mutating, `${name} is already mutating, so NOT_READ_ONLY does nothing for it`).toBe(false)
     }
   })
 })

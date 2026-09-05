@@ -38,7 +38,7 @@ The agent will then have access to a curated subset of infra-kit commands as str
 Defines dev server ports, environment providers (e.g., Doppler), and preset proxy templates. Consumed by `infra-kit dev` and the MCP server.
 
 **infra-kit.config.ts** (audit)  
-Strict schema file that declares audit rules (`requiredScripts`, `requiredFiles`). Validated by `infra-kit audit`. No runtime behavior.
+Strict schema file that declares audit rules (`requiredScripts`, `requiredFiles`) and an optional `type` override (`frontend` | `backend` | `lib` | `e2e` | `mobile`) used by the `agent-guidance` check. Validated by `infra-kit audit`. No runtime behavior.
 
 ## Commands
 
@@ -69,9 +69,17 @@ Strict schema file that declares audit rules (`requiredScripts`, `requiredFiles`
 | **Vendor** | `vendor check` | Validate vendor mirrors |
 | | `vendor config` | Show vendor manifest |
 | **Setup** | `init` | Initialize infra-kit in repo |
-| | `audit` | Check repo against config rules |
+| | `audit [--fix] [--design]` | Check repo against config rules, including the per-package `agent-guidance` `CLAUDE.md` check; `--fix` writes guidance blocks (CLI-only, not in MCP), `--design` also scaffolds `DESIGN.md` |
 | | `doctor` | Diagnose machine setup (CLI-only) |
 | | `version` | Show installed version |
+
+## Agent guidance blocks (CLAUDE.md)
+
+`infra-kit audit` checks each workspace package for a managed guidance block in its `CLAUDE.md`, marked by `<!-- infra-kit:package:begin -->` / `<!-- infra-kit:package:end -->` (the root uses its own `<!-- infra-kit:begin -->` / `<!-- infra-kit:end -->` pair). Text outside the markers is never touched.
+
+Run `audit --fix` to write the block for the current package, `--fix --all` for every package, or `--fix --root` for the root file. Add `--design` (with `--fix`) to scaffold a `DESIGN.md` skeleton for `frontend`/`mobile` packages that lack one. Both flags are CLI-only — never exposed through MCP.
+
+Enforcement follows workspace adoption: until any package carries a well-formed block, a missing or broken `CLAUDE.md` only advises; once one package has adopted, every package needs one.
 
 ## infra-kit dev
 

@@ -81,19 +81,18 @@ const SUCCESS_STATUSES = new Set<ResultStatus>(['up-to-date', 'fast-forward', 'm
 /**
  * Resolve `--versions` selectors against the open **regular** release branches.
  *
- * Two properties this must not lose, both of which have already been shipped as
- * bugs elsewhere in this CLI:
- *
- * 1. It **selects from** `available` rather than parsing tokens in isolation.
- *    `worktrees-add` skips the PR lookup entirely when `versions` is given —
- *    correct there, because it *wants* hotfix worktrees. Copying that shape here
- *    would bypass the `detectReleaseType(pr.title) === 'regular'` filter, and
- *    since hotfix PRs carry ordinary `release/v…` head refs (only their *title*
- *    marks them), `--versions 1.2.5` would happily merge `dev` into a branch
- *    that targets `main`.
- * 2. It never round-trips through `releaseBranchLabels`, whose `flatMap` drops
- *    any branch that fails `parseBranchName` — a silent selector loss.
+ * Selects from `available` — the already-filtered list — rather than parsing tokens in
+ * isolation, and never round-trips through `releaseBranchLabels`.
  */
+// Both properties above have already been shipped as bugs elsewhere in this CLI:
+//
+// 1. `worktrees-add` skips the PR lookup entirely when `versions` is given — correct there,
+//    because it *wants* hotfix worktrees. Copying that shape here would bypass the
+//    `detectReleaseType(pr.title) === 'regular'` filter, and since hotfix PRs carry ordinary
+//    `release/v…` head refs (only their *title* marks them), `--versions 1.2.5` would happily
+//    merge `dev` into a branch that targets `main`.
+// 2. `releaseBranchLabels`'s `flatMap` drops any branch that fails `parseBranchName`, so routing
+//    selectors through it is a silent selector loss.
 const resolveRequestedBranches = (versions: string | string[], available: string[]): string[] => {
   const tokens = (Array.isArray(versions) ? versions : versions.split(','))
     .map((token) => {

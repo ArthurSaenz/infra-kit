@@ -6,14 +6,18 @@ import process from 'node:process'
 import { equivalentLine } from './equivalent'
 import { formatRunHeader, formatTranscriptEntry } from './format-entry'
 import { classifyOutcome } from './outcome'
+import { awaitPostRunKey } from './post-run-pause'
+import type { PauseContext } from './post-run-pause'
 import { SESSION_REPORT_ENV, newReportPath, readAndUnlinkReport } from './report'
 import { resetTerminal } from './reset-terminal'
+import { suspendForeground } from './suspend-foreground'
 
 /**
+ * @fileoverview
  * The persistent `infra-kit` session shell (React-free so it stays out of the eager Ink chunk and is
  * unit-testable with plain vitest). Each iteration: render the palette → echo the command → spawn it
  * as a fresh child that inherits this terminal → reap → read the child's report file → commit one
- * status footer → repeat, until the palette returns `null` (quit).
+ * status footer → pause until the user presses a key → repeat, until the palette returns `null` (quit).
  *
  * The child runs on the PRIMARY screen, exactly as if the user had typed the command. That is the
  * whole point: its output stays in the scrollback, framed by the echoed `$ infra-kit …` header above
@@ -86,6 +90,26 @@ export interface RunSessionDeps {
   installSignals?: boolean
   /** Process seams for those handlers (default: the real `process`). Tests inject fakes to assert policy. */
   signals?: SessionSignalDeps
+  /**
+   * What happens between a finished command and the next palette draw. Resolves `'palette'` to
+   * loop, or `'quit'` to end the session. Default: a raw single-keypress pause (see
+   * `awaitPostRunKey`) on a TTY, and a no-op that resolves `'palette'` immediately anywhere else —
+   * a non-TTY stdin arms nothing and writes nothing.
+   *
+   * OBLIGATION — an implementation that BLOCKS on input MUST call `ctx.armed()`, which flips the
+   * signal phase to `'pause'`. One that returns synchronously must not.
+   */
+  // WHY A PAUSE AT ALL — scrollback. The palette frame is nearly viewport-tall, so redrawing it the
+  // instant a command finishes scrolls that command's own output off the screen before the user has
+  // read a line of it. The framing this shell exists to provide (header above, footer below, the
+  // child's output between) is only worth having if it stays legible, so the loop stops here and
+  // waits.
+  //
+  // Blocking with the phase still `'child'` runs the whole wait under the child's signal policy:
+  // every SIGINT swallowed, and every SIGTERM deferred into a `quitRequested` flag nobody reads
+  // until after a keypress that a `kill` cannot supply — an unkillable shell. `armed()` is an
+  // assignment, so it is idempotent and a defensive second call is free.
+  afterRun?: (ctx: PauseContext) => Promise<'palette' | 'quit'>
 }
 
 /** The replayable command line for a pick — echoed as the header, and the default equivalent line. */
@@ -101,9 +125,36 @@ const commandLine = (command: SessionCommand): string => {
  * terminal; `undefined` is the value that means "draw no rule", so normalise to it explicitly.
  */
 const stderrColumns = (): number | undefined => {
+  refreshStderrSize()
+
   const columns: number | undefined = process.stderr.columns
 
   return columns != null && columns > 0 ? columns : undefined
+}
+
+/**
+ * Re-read the terminal size from the kernel before every width read, via `_refreshSize()`.
+ *
+ * That method is underscore-prefixed and therefore not covered by node's semver contract, so it is
+ * called through a `typeof` guard: on a non-tty stderr, or a node that renames it, the width simply
+ * falls back to the cached value and the hint reverts to being stale rather than throwing.
+ */
+// `process.stderr.columns` is a CACHED field. Node fills it once at startup and refreshes it from
+// SIGWINCH — and a stopped job is not in the foreground process group, so the resize that happens
+// between a Ctrl-Z and an `fg` is delivered to the user's SHELL and never to us. The cached value
+// then stays stale for the rest of the session. Measured on a pty: window 60 -> Ctrl-Z -> resize to
+// 33 -> `fg`, and both `columns` and `getWindowSize()` still report 60 (`getWindowSize` returns the
+// same cached pair, it is not an ioctl). The post-`fg` hint was therefore truncated to the OLD
+// width, wrapped across two rows at the new one, and the single-row erase left the first row behind
+// as a corpse — the exact failure the pause's fresh-read rule exists to prevent.
+//
+// `_refreshSize()` is the ioctl, and it is the only public-enough way to get one: it updates
+// `columns`/`rows` in place and emits `'resize'` on change. Measured, it reports 33 in the case
+// above.
+const refreshStderrSize = (): void => {
+  const stream = process.stderr as unknown as { _refreshSize?: () => void }
+
+  if (typeof stream._refreshSize === 'function') stream._refreshSize()
 }
 
 const waitForExit = (child: ChildProcess): Promise<{ code: number | null; signal: NodeJS.Signals | null }> => {
@@ -127,11 +178,7 @@ type ResolvedDeps = Required<
  * Run one picked command as a child on THIS terminal and format the footer that closes it out. The
  * header is echoed by the caller before we spawn, so the child's output arrives under a heading.
  */
-const runOne = async (
-  command: SessionCommand,
-  deps: ResolvedDeps,
-  markChildOwnsSigint: () => void,
-): Promise<string> => {
+const runOne = async (command: SessionCommand, deps: ResolvedDeps, enterChildPhase: () => void): Promise<string> => {
   const reportPath = newReportPath()
   const childEnv: NodeJS.ProcessEnv = {
     ...deps.env,
@@ -144,7 +191,7 @@ const runOne = async (
 
   let result: { code: number | null; signal: NodeJS.Signals | null } = { code: 1, signal: null }
 
-  markChildOwnsSigint()
+  enterChildPhase()
   try {
     // `stdio: 'inherit'` on the primary screen: the child writes straight to the user's terminal, so
     // its output lands in the scrollback and stays there. Never pipe — a piped child loses its TTY,
@@ -160,11 +207,11 @@ const runOne = async (
     // tear the session down.
     result = { code: 1, signal: null }
   } finally {
-    // NOT the place to hand SIGINT back. The child's `exit` has fired, but the terminal reset below, the
-    // report read, and the footer + palette draw are all still ahead — and a user force-quitting the child
-    // MASHES Ctrl-C, so more SIGINTs are still landing. Clearing the flag here made every one of them take
-    // the "no child running" branch and `exit(0)` the WHOLE SESSION SHELL instead of returning to the
-    // palette. The loop clears it immediately before `renderPalette`, once the palette can own Ctrl-C.
+    // NOT the place to leave the `'child'` phase. The child's `exit` has fired, but the terminal reset
+    // below, the report read, and the footer + palette draw are all still ahead — and a user force-quitting
+    // the child MASHES Ctrl-C, so more SIGINTs are still landing. Moving the phase on here made every one of
+    // them take the `'palette'` branch and `exit(0)` the WHOLE SESSION SHELL instead of returning to the
+    // palette. The loop moves it back immediately before `renderPalette`, once the palette can own Ctrl-C.
     deps.resetTerminal({ entersAltScreen: command.entersAltScreen })
   }
 
@@ -230,60 +277,135 @@ export interface SessionSignals {
 }
 
 /**
- * How long after a Ctrl-C a SIGTERM may still be pnpm's relay of it.
+ * Which part of the session owns the terminal right now. The signal owner's whole policy is keyed on it.
  *
- * MEASURED, so the number is not a guess: driving a real `pnpm exec node` on a pty and pressing Ctrl-C,
- * the relayed SIGTERM landed **6ms and 16ms** after the SIGINT. A second is ~60x that — wide enough that
- * load will not push a relay outside it, narrow enough that a human's deliberate `kill` never lands
- * inside it. Beyond the window a SIGTERM has no keypress to belong to and is treated as the external
- * `kill` it is.
+ * - `'palette'` — Ink owns stdin and the screen; the session sits between commands.
+ * - `'child'` — a spawned command owns the tty. DELIBERATELY WIDER than "the child process is alive": it
+ *   stays set through the terminal reset, the report read and the footer, and is only handed back at the
+ *   top of the next iteration (see the assignment there for the Ctrl-C-mash reasoning).
+ * - `'pause'` — the post-run keypress pause: raw stdin, a single hint row, no Ink frame on screen.
  *
- * That same measurement also showed the relay is NOT guaranteed: 2 of 4 runs produced no SIGTERM at all.
- * Which is exactly why this is a WINDOW and not a counter. The first cut licensed one swallow per Ctrl-C,
- * but only a relay ever spends a licence — so on every run without one (and on the direct bin, which
- * never relays) the licence was left unspent and a genuine `kill` seconds later was still swallowed.
- * That narrowed the original bug from unbounded to N rather than fixing it.
- *
- * If the window is ever wrong, the failure is a session that quits after the current child instead of
- * redrawing the palette — recoverable by rerunning `infra-kit`. It is deliberately the mild direction:
- * the opposite error is a shell that cannot be killed.
+ * This replaced a `childOwnsSigint` boolean, which carried TWO meanings at once — "swallow a stray SIGINT"
+ * and "the tty has already stopped the foreground group, so follow it down". Those two agree as long as
+ * only a child and a palette exist, and they come apart for the first time inside the pause, which
+ * swallows SIGINT but must NOT stop itself. `command-palette.tsx` ends its account of the same
+ * distinction with "DO NOT UNIFY THE TWO"; a phase is how that stays un-unified here.
  */
+export type SessionPhase = 'palette' | 'child' | 'pause'
+
+/**
+ * How long after a Ctrl-C a SIGTERM may still be pnpm's relay of it. Beyond the window a SIGTERM
+ * has no keypress to belong to and is treated as the external `kill` it is.
+ */
+// MEASURED, so the number is not a guess: driving a real `pnpm exec node` on a pty and pressing
+// Ctrl-C, the relayed SIGTERM landed 6ms and 16ms after the SIGINT. A second is ~60x that — wide
+// enough that load will not push a relay outside it, narrow enough that a human's deliberate `kill`
+// never lands inside it.
+//
+// That same measurement also showed the relay is NOT guaranteed: 2 of 4 runs produced no SIGTERM at
+// all. Which is exactly why this is a WINDOW and not a counter. The first cut licensed one swallow
+// per Ctrl-C, but only a relay ever spends a licence — so on every run without one (and on the
+// direct bin, which never relays) the licence was left unspent and a genuine `kill` seconds later
+// was still swallowed. That narrowed the original bug from unbounded to N rather than fixing it.
+//
+// If the window is ever wrong, the failure is a session that quits after the current child instead
+// of redrawing the palette — recoverable by rerunning `infra-kit`. It is deliberately the mild
+// direction: the opposite error is a shell that cannot be killed.
 const PNPM_RELAY_WINDOW_MS = 1_000
 
 /**
- * Install the session's state-aware signal owners. The child is spawned WITHOUT `detached`, so it shares
- * this process's group — every tty-delivered signal reaches the child directly, and the parent's job is
- * only to decide what IT does.
+ * Is this SIGTERM close enough behind a Ctrl-C to be pnpm's relay of it, rather than an external `kill`?
  *
- * - **SIGINT** — swallowed while a child runs, so the tty's Ctrl-C stops only the child and the parent
- *   survives to render `⊘ cancelled` and loop. Between iterations it ends the session (exit 0).
- * - **SIGTERM** — DEFERRED, not dropped, while a child runs: we finish the child, commit its transcript
- *   entry, and then end the session. Dropping it outright would make the session unkillable by anything
- *   short of SIGKILL for as long as a child ran — and `dev` runs for hours.
- *
- *   The exception is pnpm's RELAY. Under `pnpm exec infra-kit`, pnpm forwards a SIGTERM to us moments
- *   after the tty's Ctrl-C — that SIGTERM is an artifact of the SIGINT the user already aimed at the
- *   child, not a request to kill the session, so a SIGTERM that FOLLOWS a SIGINT within the same child
- *   is swallowed. (Causality, not a timing heuristic: the relay only exists because of the Ctrl-C.)
- *   Without a handler at all, that relay was an instant unhandled parent death — the shell prompt
- *   returned while the child still owned the tty and wrote teardown output over it.
- * - **SIGHUP** — NEVER swallowed. It means the terminal is gone, so staying alive would leave the
- *   session looping on a dead tty, drawing palette frames into a closed fd. Always exit (129). The child
- *   gets its own SIGHUP and is responsible for its own reap (see `dev/signal-shutdown.ts`).
- * - **SIGTSTP** — Ctrl-Z. While a child runs we STOP OURSELVES, because the tty already delivered
- *   SIGTSTP to the whole foreground group: the child has stopped, and if the parent merely ignored the
- *   signal (as it used to) it would sit in `waitForExit` awaiting an exit that can never come, wedging
- *   the terminal with no prompt and no way back. Stopping too suspends the FOREGROUND GROUP as a unit,
- *   so the user's shell reclaims the tty and prints a prompt; `fg` sends SIGCONT to the group and both
- *   resume. Handlers survive stop/continue, so there is nothing to re-arm.
- *
- *   CAVEAT — a child's own DETACHED descendants keep running: `dev`'s turbo/vite children sit in their
- *   own process groups, so a Ctrl-Z out of `dev` suspends `dev` itself while its servers stay up and
- *   bound to their ports. Recoverable with `fg`, and strictly better than the wedge it replaced, but
- *   "suspended" is not the whole truth for `dev`. Between iterations SIGTSTP stays IGNORED: suspending
- *   mid-palette would strand a half-drawn Ink frame on the screen.
+ * Hoisted to module scope so each handler stays one flat run of guards — the technique `CommandPalette`
+ * uses for the same reason.
  */
-export const installSessionSignals = (isChildRunning: () => boolean, deps: SessionSignalDeps): SessionSignals => {
+const isPnpmRelay = (lastSigintAt: number | null, now: number): boolean => {
+  return lastSigintAt != null && now - lastSigintAt <= PNPM_RELAY_WINDOW_MS
+}
+
+/**
+ * End the session from inside a signal handler. The reset comes FIRST and is not optional: `exit` runs
+ * none of Ink's teardown, so without it the user's shell comes back to a hidden cursor, a stranded frame
+ * and a tty that eats their keystrokes. See `resetTerminal` on `SessionSignalDeps`.
+ */
+const exitSession = (deps: SessionSignalDeps): void => {
+  deps.resetTerminal()
+  deps.exit(0)
+}
+
+/**
+ * Install the session's phase-aware signal owners. The child is spawned WITHOUT `detached`, so it
+ * shares this process's group — every tty-delivered signal reaches the child directly, and the
+ * parent's job is only to decide what IT does. That depends entirely on which phase owns the
+ * terminal (`SessionPhase`): a child on a cooked tty, the palette's Ink frame, or the post-run
+ * pause's raw hint row.
+ *
+ * - SIGINT — swallowed in BOTH `'child'` and `'pause'`, so the tty's Ctrl-C stops only the child
+ *   and the parent survives to render `⊘ cancelled` and loop. In `'palette'` it ends the session.
+ * - SIGTERM — DEFERRED while a child runs (finish it, commit its transcript, then end the session),
+ *   swallowed when it is pnpm's relay of a Ctrl-C, and an immediate exit in `'pause'` when it is not.
+ * - SIGHUP — NEVER swallowed, in any phase: exit 129 with no reset.
+ * - SIGTSTP — while a child runs we stop OURSELVES, so the whole foreground group suspends as a
+ *   unit; in `'palette'` and `'pause'` it is delivered and IGNORED.
+ */
+// SIGINT. The two swallows differ in one respect. `'child'` RECORDS the moment (`lastSigintAt`) so
+// a SIGTERM arriving right behind it can be recognised as pnpm's relay. `'pause'` records NOTHING,
+// and that is the bound on the whole relay exemption: the pause blocks indefinitely by design, so a
+// recorded SIGINT there would let a repeated `kill -INT` extend the swallow window without limit
+// and hold the session immune to SIGTERM for as long as someone kept sending them. Not recording
+// pins the window to the last Ctrl-C delivered while a CHILD ran (`lastSigintAt` is otherwise
+// cleared only by `childStarted`), which bounds the exposure at one `PNPM_RELAY_WINDOW_MS` — after
+// which the very next SIGTERM is honoured.
+//
+// The tty cannot generate a SIGINT during `'pause'` at all (raw mode clears ISIG), so the sources
+// are an external `kill -INT` and — the case that matters — a tty SIGINT generated microseconds
+// earlier while the child still held a cooked terminal, whose handler runs at the next event-loop
+// boundary and so lands after the phase has flipped. That is the mashed-Ctrl-C case in signals
+// rather than bytes.
+//
+// SIGTERM is DEFERRED, not dropped, while a child runs: dropping it outright would make the session
+// unkillable by anything short of SIGKILL for as long as a child ran — and `dev` runs for hours.
+// The exception is pnpm's RELAY. Under `pnpm exec infra-kit`, pnpm forwards a SIGTERM to us moments
+// after the tty's Ctrl-C — that SIGTERM is an artifact of the SIGINT the user already aimed at the
+// child, not a request to kill the session. (Causality, not a timing heuristic: the relay only
+// exists because of the Ctrl-C.) Without a handler at all, that relay was an instant unhandled
+// parent death — the shell prompt returned while the child still owned the tty and wrote teardown
+// output over it.
+//
+// `'pause'` KEEPS that relay test, because the relay lands there: it was measured at 6ms and 16ms
+// behind the SIGINT, and nothing suspends between the child's `exit` and the pause arming — the
+// reset, the report read, the formatter and the footer are all synchronous, and the one `await` in
+// the chain resolves as a microtask, which cannot interleave with a signal dispatched from libuv's
+// poll phase. So a fast child stopped with Ctrl-C has its relay arrive in `'pause'`, and routing
+// SIGTERM there straight to exit would kill the session on an ordinary Ctrl-C. What `'pause'`
+// changes is the OTHER half: a SIGTERM that FAILS the relay test exits IMMEDIATELY instead of
+// setting `quitRequested`, because there is no child left whose transcript needs committing and
+// nothing would read the flag until a keypress that a `kill` cannot supply.
+//
+// SIGHUP means the terminal is gone, so staying alive would leave the session looping on a dead
+// tty, drawing frames into a closed fd. There is nothing left to clean. The child gets its own
+// SIGHUP and is responsible for its own reap (see `dev/signal-shutdown.ts`).
+//
+// SIGTSTP. While a CHILD runs we STOP OURSELVES, because the tty already delivered SIGTSTP to the
+// whole foreground group: the child has stopped, and if the parent merely ignored the signal (as it
+// used to) it would sit in `waitForExit` awaiting an exit that can never come, wedging the terminal
+// with no prompt and no way back. Stopping too suspends the FOREGROUND GROUP as a unit, so the
+// user's shell reclaims the tty and prints a prompt; `fg` sends SIGCONT to the group and both
+// resume. Handlers survive stop/continue, so there is nothing to re-arm.
+//
+// CAVEAT — a child's own DETACHED descendants keep running: `dev`'s turbo/vite children sit in
+// their own process groups, so a Ctrl-Z out of `dev` suspends `dev` itself while its servers stay
+// up and bound to their ports. Recoverable with `fg`, and strictly better than the wedge it
+// replaced, but "suspended" is not the whole truth for `dev`.
+//
+// In `'palette'` AND `'pause'` SIGTSTP is ignored because raw mode stops the tty from generating
+// one there, but an external `kill -TSTP` still arrives, and self-stopping would hand the user's
+// shell a raw tty with a stranded row (the pause's hint) or a half-drawn Ink frame (the palette).
+//
+// DO NOT UNIFY THIS WITH THE SIGINT ROW. A tty SIGTSTP means the whole group has already stopped
+// and we must follow it down; a keyboard Ctrl-Z at the pause is the raw byte `0x1a` read by the
+// pause itself, which drops raw mode before suspending. They look alike and are not the same event.
+export const installSessionSignals = (getPhase: () => SessionPhase, deps: SessionSignalDeps): SessionSignals => {
   // Per-child signal history: a SIGTERM is pnpm's relay only if a SIGINT preceded it RECENTLY, for THIS
   // child. Proximity is the whole rule — see PNPM_RELAY_WINDOW_MS for why it is a timestamp and not the
   // flag (or the counter) this started as.
@@ -291,7 +413,9 @@ export const installSessionSignals = (isChildRunning: () => boolean, deps: Sessi
   let quitRequested = false
 
   const onSigint = (): void => {
-    if (isChildRunning()) {
+    const phase = getPhase()
+
+    if (phase === 'child') {
       // The child got its own copy from the tty; ours only records WHEN the Ctrl-C happened, so a
       // SIGTERM arriving right behind it can be recognised as pnpm's relay rather than an external kill.
       lastSigintAt = deps.now()
@@ -299,26 +423,39 @@ export const installSessionSignals = (isChildRunning: () => boolean, deps: Sessi
       return
     }
 
-    // The palette owns the screen here, and this exit skips Ink's teardown entirely — see
-    // `resetTerminal` on SessionSignalDeps.
-    deps.resetTerminal()
-    deps.exit(0)
+    if (phase === 'pause') {
+      // Swallowed, and deliberately NOT recorded — recording here would let a repeated `kill -INT` extend
+      // the relay-swallow window without bound. See the handler doc above.
+      return
+    }
+
+    exitSession(deps)
   }
   const onSigterm = (): void => {
-    if (!isChildRunning()) {
-      // Same window, same reason as SIGINT above: an external `kill` can land mid-palette.
-      deps.resetTerminal()
-      deps.exit(0)
+    const phase = getPhase()
+
+    if (phase === 'palette') {
+      // Same reason as SIGINT above: an external `kill` can land mid-palette, and Ink's teardown is skipped.
+      exitSession(deps)
 
       return
     }
 
-    if (lastSigintAt != null && deps.now() - lastSigintAt <= PNPM_RELAY_WINDOW_MS) {
-      // pnpm's relay of the Ctrl-C the user aimed at the child. Not a request to end the session.
+    if (isPnpmRelay(lastSigintAt, deps.now())) {
+      // pnpm's relay of the Ctrl-C the user aimed at the child. Not a request to end the session — and it
+      // frequently arrives after the child is already gone and the pause is armed.
       return
     }
 
-    // A genuine external `kill`. Let the child finish and its entry commit, then stop.
+    if (phase === 'pause') {
+      // A genuine external `kill` with no child left to finish. Deferring it would wait for a keypress the
+      // `kill` cannot supply, so end the session here.
+      exitSession(deps)
+
+      return
+    }
+
+    // A genuine external `kill` during a child. Let the child finish and its entry commit, then stop.
     quitRequested = true
   }
   const onSighup = (): void => {
@@ -326,8 +463,9 @@ export const installSessionSignals = (isChildRunning: () => boolean, deps: Sessi
     deps.exit(129)
   }
   const onSigtstp = (): void => {
-    if (!isChildRunning()) {
-      // Mid-palette: ignore, or we would suspend with a partial frame committed to the screen.
+    if (getPhase() !== 'child') {
+      // Palette or pause: ignore, or we would suspend leaving a partial Ink frame — or a raw tty and a
+      // stranded hint row — committed to the user's screen.
       return
     }
 
@@ -386,6 +524,41 @@ export const sessionGateEnabled = (
 }
 
 /**
+ * The platform authority on Ctrl-Z, decided ONCE at module scope rather than per pause.
+ *
+ * `undefined` means suspending is impossible: win32 has no SIGSTOP, so the pause drops the suspend
+ * clause from its hint and reads `0x1a` as an ordinary key. See `suspendForeground` for the caller
+ * preconditions the pause satisfies before it calls this.
+ */
+const SUSPEND_SEAM: (() => void) | undefined =
+  process.platform === 'win32'
+    ? undefined
+    : () => {
+        suspendForeground()
+      }
+
+/**
+ * The default `afterRun`: the raw single-keypress pause, wired to the same stderr seam, width function
+ * and glyph/colour verdicts the transcript is framed with — so a resize between two commands changes the
+ * hint exactly as it changes the footer's rule.
+ *
+ * Hoisted to module scope so `runSession` stays one flat run of dep resolution; `stdin` is deliberately
+ * omitted, because the pause defaults it to `process.stdin` itself and that is the only place the real
+ * stream should be named.
+ */
+const defaultAfterRun = (write: (text: string) => void, resolved: ResolvedDeps) => {
+  return (ctx: PauseContext): Promise<'palette' | 'quit'> => {
+    return awaitPostRunKey(ctx, {
+      write,
+      columns: resolved.columns,
+      ascii: resolved.ascii,
+      color: resolved.color,
+      suspend: SUSPEND_SEAM,
+    })
+  }
+}
+
+/**
  * Run the session loop until the user quits at the palette.
  *
  * @example
@@ -420,6 +593,16 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
       return process.stderr.write(text)
     })
 
+  /**
+   * Which phase owns the terminal right now — read by the signal handlers below on every delivery, and by
+   * the seam's own reset. Declared BEFORE `signals` because that object's `resetTerminal` closure reads it.
+   *
+   * See `SessionPhase` for what each value covers and why this is a phase rather than the boolean it
+   * replaced. `'child'` is set around the spawn; `'pause'` is set by the `afterRun` context below, on
+   * behalf of whichever implementation of that seam is blocking on input.
+   */
+  let phase: SessionPhase = 'palette'
+
   const signals: SessionSignalDeps = deps.signals ?? {
     register: (signal, handler) => {
       process.on(signal, handler)
@@ -442,22 +625,21 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
     // Routed through `resolved` rather than the bare import so a test injecting
     // `deps.resetTerminal` still sees the signal path's resets.
     resetTerminal: () => {
-      // Never the alternate screen: this fires while the PALETTE holds the terminal, and the palette
-      // does not enter it. `?1049l` here would leave a buffer the session never entered.
+      if (phase === 'pause') {
+        // Erase the pause's hint row before the reset, or the shell prompt draws at column 0 with the
+        // hint's tail still to its right. PHASE-SCOPED on purpose: `\u001B[2K` (EL) is erase-in-LINE, and a
+        // stranded palette frame is multi-row by construction — blanking one row of six would make that
+        // corpse worse, not better. It is also never on the post-child reset above, which must not wipe
+        // the child's last output line.
+        write('\r\u001B[2K')
+      }
+
+      // Never the alternate screen: this fires while the PALETTE (or the pause) holds the terminal, and
+      // neither enters it. `?1049l` here would leave a buffer the session never entered.
       resolved.resetTerminal({ entersAltScreen: false })
     },
   }
 
-  /**
-   * Does the CHILD own Ctrl-C right now?
-   *
-   * Deliberately WIDER than "a child process is alive". It stays true from the spawn until the palette is
-   * about to be drawn again — covering the terminal reset, the report read and the footer — because a user
-   * force-quitting a child MASHES Ctrl-C, and the trailing SIGINTs land in exactly that gap. Letting one of
-   * them reach the "no child running" branch is what used to `exit(0)` the entire session shell instead of
-   * returning to the palette.
-   */
-  let childOwnsSigint = false
   const noopSignals: SessionSignals = {
     dispose: () => {
       return undefined
@@ -473,8 +655,24 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
     deps.installSignals === false
       ? noopSignals
       : installSessionSignals(() => {
-          return childOwnsSigint
+          return phase
         }, signals)
+
+  /**
+   * Built HERE and passed on EVERY call — to the default implementation and to any injected one alike.
+   * Closing the signal window is a loop invariant, not a property of one implementation: baking these
+   * two callbacks privately into the default factory would make an injected `afterRun` silently wrong,
+   * and would divorce every unit test from the behaviour it is meant to pin.
+   */
+  const pauseContext: PauseContext = {
+    armed: () => {
+      phase = 'pause'
+    },
+    quitRequested: () => {
+      return sessionSignals.quitRequested()
+    },
+  }
+  const afterRun = deps.afterRun ?? defaultAfterRun(write, resolved)
 
   try {
     for (;;) {
@@ -486,11 +684,14 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
 
       // Hand Ctrl-C back to the palette HERE, and nowhere earlier. Everything between the child's exit
       // and this line — the terminal reset, the report read, the footer — is still fair game for the
-      // trailing SIGINTs of a user mashing Ctrl-C at the child, and one of those reaching the
-      // "no child running" branch would `exit(0)` the entire session. From this line on, the palette's
-      // Ink holds stdin in raw mode (which disables ISIG), so a Ctrl-C there arrives as a `0x03` byte it
-      // handles itself — not as a SIGINT at all.
-      childOwnsSigint = false
+      // trailing SIGINTs of a user mashing Ctrl-C at the child, and one of those reaching the `'palette'`
+      // branch would `exit(0)` the entire session. From this line on, the palette's Ink holds stdin in raw
+      // mode (which disables ISIG), so a Ctrl-C there arrives as a `0x03` byte it handles itself — not as a
+      // SIGINT at all.
+      //
+      // This is also where the loop comes back from `'pause'`: that phase drops raw mode before it
+      // resolves, so the sequence into the palette is exactly the one below.
+      phase = 'palette'
 
       const selected = await deps.renderPalette(items)
 
@@ -512,12 +713,19 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
       sessionSignals.childStarted()
 
       const entry = await runOne(command, resolved, () => {
-        childOwnsSigint = true
+        phase = 'child'
       })
 
       // Leading newline: the child may have exited mid-line, and the footer must not be welded to it.
       // Still inside the child's SIGINT window — see the top of the loop.
       write(`\n${entry}\n`)
+
+      // AFTER the footer, and on every iteration that actually ran a command: the transcript block must
+      // be complete on screen before we ask the user to read it. (The `!command` path above `continue`s
+      // past this — nothing ran, so there is nothing to hold the screen for.)
+      if ((await afterRun(pauseContext)) === 'quit') {
+        return
+      }
     }
   } finally {
     sessionSignals.dispose()

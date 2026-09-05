@@ -1,6 +1,10 @@
 /**
- * Pure formatter for one committed transcript block — the two-line summary a
- * session leaves behind in the scrollback once it finishes. Line 1 echoes the
+ * @fileoverview
+ * Pure formatters for the lines the session shell itself owns — everything
+ * that frames a run without ever touching the child's own output.
+ *
+ * The bulk of this file is the two-line transcript block a session leaves
+ * behind in the scrollback once a command finishes. Line 1 echoes the
  * replayable command (`$ ` when it reproduces exactly, `≈ ` when it would
  * re-prompt); line 2 is a status glyph + label + duration + optional summary,
  * optionally run out to a rule that closes the block off; an optional third
@@ -13,6 +17,12 @@
  * the status rule below are the only lines we own, which is why the rule hangs
  * off the footer: it is the one place we can draw a hard edge between one run
  * and the next.
+ *
+ * The other formatter here, {@link formatPauseHint}, owns a different line —
+ * the dim hint the post-run pause writes into the blank row the footer's
+ * trailing newline just opened. It shares this file for the same reason the
+ * footer's rule does: both are lines the session shell draws around a child
+ * it never touches, using the same `chromeStyler`/`cellWidth` machinery.
  */
 import { Chalk } from 'chalk'
 
@@ -38,6 +48,25 @@ const T = {
   reproPrefix: '$ ',
   nonReproPrefix: '≈ ',
   envNotice: 'Applies to your shell after you exit this session.',
+}
+
+/**
+ * Copy for the post-run pause hint — deliberately NOT part of {@link T}, whose doc scopes it to "the
+ * transcript entry" (see the block above): the pause hint is a different line, written after the
+ * footer rather than as part of it, so it gets its own module-scope const.
+ *
+ * The `suspend` variant is offered only where suspending is actually possible (win32 has no
+ * `SIGSTOP`); the `ascii` variant swaps the middle-dot separator for a hyphen, same words.
+ */
+const PAUSE_HINT: Record<'suspend' | 'plain', { unicode: string; ascii: string }> = {
+  suspend: {
+    unicode: 'any key commands · Esc / Ctrl-C quit · Ctrl-Z suspend',
+    ascii: 'any key commands - Esc / Ctrl-C quit - Ctrl-Z suspend',
+  },
+  plain: {
+    unicode: 'any key commands · Esc / Ctrl-C quit',
+    ascii: 'any key commands - Esc / Ctrl-C quit',
+  },
 }
 
 /** Status glyphs keyed by outcome, in both a unicode and an ASCII-safe variant. */
@@ -110,6 +139,55 @@ const outcomeStyler = (color: boolean, outcome: SessionOutcome): ((text: string)
  */
 const cellWidth = (text: string): number => {
   return [...text].length
+}
+
+/**
+ * Truncate `text` to `width - 1` cells, or return it untouched when `width` is `undefined`.
+ *
+ * The `undefined` case is its own branch rather than falling out of the arithmetic, mirroring
+ * {@link ruleSuffix}'s `width == null` guard at the top of this file. `columns()` is
+ * `() => number | undefined`, and callers normalise a missing or zero terminal width to
+ * `undefined` — so `undefined - 1` is `NaN`, and every comparison against `NaN` is `false`. A
+ * naive `cellWidth(text) > width - 1` would therefore silently never truncate, which reads as
+ * "it works" right up until a real narrow terminal proves it doesn't.
+ */
+const truncateToWidth = (text: string, width: number | undefined): string => {
+  if (width == null) return text
+
+  const limit = Math.max(0, width - 1)
+
+  if (cellWidth(text) <= limit) return text
+
+  return [...text].slice(0, limit).join('')
+}
+
+/** Everything {@link formatPauseHint} needs to render the post-run pause's hint line. */
+export interface PauseHintInput {
+  /** Whether `Ctrl-Z suspend` is offered (platform-dependent: no `SIGSTOP` on win32). */
+  canSuspend: boolean
+  /** Use ASCII glyphs instead of unicode (for `!isTTY` / `TERM=dumb`). */
+  ascii?: boolean
+  /** Emit ANSI colour (default `false`). The caller owns TTY/`NO_COLOR` detection. */
+  color?: boolean
+  /** Terminal width in columns; the hint truncates to one cell short of it. `undefined` leaves it whole. */
+  width?: number
+}
+
+/**
+ * The dim hint the post-run pause writes into the blank row the footer's trailing newline just
+ * opened: "any key commands", plus the ways out, plus `Ctrl-Z suspend` where suspending is
+ * possible. No I/O and no trailing newline — the caller decides where it lands and how it is
+ * erased (`\r\x1b[2K`, before anything else draws).
+ *
+ * @example
+ * formatPauseHint({ canSuspend: true }) // => 'any key commands · Esc / Ctrl-C quit · Ctrl-Z suspend'
+ */
+export const formatPauseHint = (input: PauseHintInput): string => {
+  const dim = chromeStyler(input.color === true).dim
+  const variant = PAUSE_HINT[input.canSuspend ? 'suspend' : 'plain']
+  const text = input.ascii === true ? variant.ascii : variant.unicode
+
+  return dim(truncateToWidth(text, input.width))
 }
 
 /** Everything the formatter needs to render one transcript block. */

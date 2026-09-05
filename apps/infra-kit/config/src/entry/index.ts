@@ -15,6 +15,7 @@ export type {
   InfraKitDevProxySource,
   InfraKitPackageConfig,
   InfraKitPackageConfigInput,
+  InfraKitPackageType,
 } from '../lib/package-config/package-config'
 // Vendor sync config authoring (`import { defineVendorConfig } from '@slip-stream-kit/config'`).
 export { defineVendorConfig } from '../lib/vendor/config-schema'

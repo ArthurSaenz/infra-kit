@@ -30,22 +30,23 @@ const safeRealpath = async (path: string): Promise<string> => {
 /**
  * Build a `realpath(cwd) → workspace ref` map of every currently-open cmux
  * workspace, keyed on its working directory. This is the dedup/close identity for
- * infra-kit's worktree workspaces — unique per worktree, and (unlike the title)
- * stable after the repo-name title prefix was dropped (two repos can share a
- * branch name like `fix-post-script-ci-cd`, but never a worktree path).
+ * infra-kit's worktree workspaces.
  *
- * Two entries are deliberately excluded:
- *   - workspaces with no `current_directory` (e.g. `infra-kit dev` panes) — they
- *     carry no worktree identity;
- *   - group ANCHOR workspaces — cmux reports the anchor's cwd as the main-repo
- *     root, so it collides with the real main-checkout workspace. Keying an
- *     anchor into the map would shadow the main workspace (breaking dedup) and,
- *     worse, let close-by-cwd close the group header. Anchors are dropped up front
- *     via `workspace-group list`'s `anchor_workspace_ref`.
+ * Two entries are deliberately excluded: workspaces with no `current_directory` (e.g.
+ * `infra-kit dev` panes), and group ANCHOR workspaces, which are dropped up front via
+ * `workspace-group list`'s `anchor_workspace_ref`.
  *
  * Returns an empty map if cmux isn't running or the output can't be parsed —
  * callers treat "empty" as "unknown, proceed as if nothing is open".
  */
+// Why cwd is the identity: it is unique per worktree and, unlike the title, stable after the
+// repo-name title prefix was dropped — two repos can share a branch name like
+// `fix-post-script-ci-cd`, but never a worktree path.
+//
+// Why anchors must go: cmux reports a group anchor's cwd as the main-repo root, so it collides
+// with the real main-checkout workspace. Keying an anchor into the map would shadow the main
+// workspace (breaking dedup) and, worse, let close-by-cwd close the group header. Workspaces with
+// no `current_directory` carry no worktree identity at all.
 export const listCmuxWorkspacesByCwd = async (): Promise<Map<string, string>> => {
   try {
     const [workspacesOutput, groupsOutput] = await Promise.all([

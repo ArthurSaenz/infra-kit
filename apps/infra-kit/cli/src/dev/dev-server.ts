@@ -1,4 +1,6 @@
 /**
+ * @fileoverview
+ *
  * Unified Development Server Runner
  *
  * Discovers and runs API apps under each `apps/<app>/api` folder that contains `serverless.yml`.
@@ -517,14 +519,15 @@ interface IAppServer {
  * a template in a separately-versioned repo. The runner is the only party that knows what it actually
  * registered, so it says so; the helper obeys.
  *
- * `proxyPort` is deliberately NOT written any more. The CLI self-updates while `infra-kit/vite` stays
- * pinned per consumer, so a new CLI routinely meets an OLD helper — and that helper's `withProxyPort`
- * grafts any port other than 80 onto its target. Writing `proxyPort: 443` would therefore have produced
- * `http://<alias>:443`: **plain HTTP into a TLS listener**, silently. Omitting the field leaves the old
- * helper's target ungrafted instead. (That is not by itself a loud failure — `:80` is bound by portless's
- * redirect server, so it 302s rather than refusing — which is why the CLI-side version floor, not this
- * omission, is the load-bearing skew guard.)
+ * `proxyPort` is deliberately NOT written any more.
  */
+// Why `proxyPort` is omitted: the CLI self-updates while `infra-kit/vite` stays pinned per consumer, so a
+// new CLI routinely meets an OLD helper — and that helper's `withProxyPort` grafts any port other than 80
+// onto its target. Writing `proxyPort: 443` would therefore have produced `http://<alias>:443`: plain HTTP
+// into a TLS listener, silently. Omitting the field leaves the old helper's target ungrafted instead.
+// (That is not by itself a loud failure — `:80` is bound by portless's redirect server, so it 302s rather
+// than refusing — which is why the CLI-side version floor, not this omission, is the load-bearing skew
+// guard.)
 interface DevContextFragment {
   /** Wire version. See {@link DEV_CONTEXT_WIRE_VERSION} — a promise that `origin` is present. */
   v: number
@@ -541,33 +544,34 @@ interface DevContextFragment {
  * Every package that can supply the `infraKitDev` helper, with the lowest version of THAT package whose
  * helper understands the dev-context fragment's `origin` field.
  *
- * This is the load-bearing guard against version skew, and skew here is GUARANTEED rather than
- * hypothetical: the CLI is installed globally and **self-updates silently**, while the helper is PINNED
- * in each consumer's `node_modules`. So a new CLI routinely meets an old helper. An old helper ignores
- * `origin` and rebuilds the target from the consumer's `templates.local` — which still says `http://` —
- * and then proxies plain HTTP at a TLS listener. That failure is silent (portless answers :80 with a 302
- * rather than refusing), so nothing downstream would catch it. Refuse at start instead.
- *
- * A LIST, and each floor is a point on ITS OWN package's version line. This is the whole subtlety of the
- * `infra-kit` → `@slip-stream-kit/config` split, and getting it wrong fails silently in both directions:
- * - Comparing the new package's version against the OLD package's floor (`0.1.132`) is meaningless. The
- *   two are unrelated version lines; a new package seeded low would throw for every consumer, and one
- *   seeded high would pass vacuously — a dead guard that still looks alive.
- * - Simply RE-KEYING the guard to the new package (rather than adding to it) drops the old entry, and
- *   then a not-yet-migrated consumer — the exact population still running an old helper — silently stops
- *   being checked at all.
- *
- * So: keep them all, check whichever the repo actually resolves, and only drop the `infra-kit` entry once
- * no consumer imports `infra-kit/vite` any more. The packages release in LOCKSTEP, which is what keeps
- * each floor comparable to the CLI's own version as the wire evolves.
- *
- * `@slip-stream-kit/vite` (the plugin) needs its OWN entry even though it only wraps
- * `@slip-stream-kit/config`, and the reason is pnpm's layout rather than style: a consumer on the plugin
- * declares only the plugin, so `config` is a TRANSITIVE dep living in the virtual store — it resolves
- * from neither the app dir nor the repo root, and {@link assertHelperVersionFloor} would find nothing
- * to check and skip the repo entirely. The plugin's own `dependencies` pin the config version exactly
- * (`workspace:*` publishes as the released version), so checking the plugin checks the pair.
+ * A LIST, and each floor is a point on ITS OWN package's version line — never comparable across entries.
+ * Keep them all, check whichever the repo actually resolves, and only drop the `infra-kit` entry once no
+ * consumer imports `infra-kit/vite` any more. Consumed by {@link assertHelperVersionFloor}.
  */
+// Why the guard exists at all: skew here is GUARANTEED rather than hypothetical. The CLI is installed
+// globally and self-updates silently, while the helper is PINNED in each consumer's `node_modules`, so a
+// new CLI routinely meets an old helper. An old helper ignores `origin` and rebuilds the target from the
+// consumer's `templates.local` — which still says `http://` — and then proxies plain HTTP at a TLS
+// listener. That failure is silent (portless answers :80 with a 302 rather than refusing), so nothing
+// downstream would catch it. Refuse at start instead.
+//
+// Why a list, spelled out: this is the whole subtlety of the `infra-kit` → `@slip-stream-kit/config`
+// split, and getting it wrong fails silently in both directions.
+// - Comparing the new package's version against the OLD package's floor (`0.1.132`) is meaningless. The
+//   two are unrelated version lines; a new package seeded low would throw for every consumer, and one
+//   seeded high would pass vacuously — a dead guard that still looks alive.
+// - Simply RE-KEYING the guard to the new package (rather than adding to it) drops the old entry, and
+//   then a not-yet-migrated consumer — the exact population still running an old helper — silently stops
+//   being checked at all.
+// The packages release in LOCKSTEP, which is what keeps each floor comparable to the CLI's own version as
+// the wire evolves.
+//
+// `@slip-stream-kit/vite` (the plugin) needs its OWN entry even though it only wraps
+// `@slip-stream-kit/config`, and the reason is pnpm's layout rather than style: a consumer on the plugin
+// declares only the plugin, so `config` is a TRANSITIVE dep living in the virtual store — it resolves
+// from neither the app dir nor the repo root, and `assertHelperVersionFloor` would find nothing to check
+// and skip the repo entirely. The plugin's own `dependencies` pin the config version exactly
+// (`workspace:*` publishes as the released version), so checking the plugin checks the pair.
 export const HELPER_PACKAGES = [
   { name: '@slip-stream-kit/vite', floor: '0.1.134' },
   { name: '@slip-stream-kit/config', floor: '0.1.134' },
@@ -716,22 +720,20 @@ const assertFloorAt = (repoRoot: string, name: string, floor: string, helperDir:
  * Refuse to start against a consumer-pinned `infraKitDev` helper too old to understand the dev-context
  * fragment's `origin` field — whichever package that helper comes from (see {@link HELPER_PACKAGES}).
  *
- * Every helper package is checked INDEPENDENTLY, and every place it resolves from is checked. Two
- * migration shapes make that necessary rather than fussy:
- * - A repo mid-migration has BOTH (`@slip-stream-kit/config` added, `infra-kit` not yet dropped), and its
- *   vite configs may still import from either. Stopping at the first helper that passes would hand exactly
- *   that repo a silent HTTP-into-TLS proxy from the other one.
- * - Under pnpm the helper usually resolves NOT from the repo root but from the package that declares it —
- *   `apps/client/ui/node_modules/` sits right next to the `vite.config.ts` that imports it. See
- *   {@link findHelperDir}.
- *
- * Three outcomes per package, and the reasoning for each matters:
+ * Every helper package is checked INDEPENDENTLY, and every place it resolves from is checked (see
+ * {@link findHelperDir}). Three outcomes per package:
  * - **Workspace-linked → SKIP** (that install only; every other one is still checked).
  * - **Declared but unresolvable → THROW (fail closed).** The consumer says it uses a helper and we
  *   cannot prove which version; guessing is how the silent case ships.
  * - **Neither installed nor declared → SKIP.** Nothing to be skewed against. (This is also what keeps
  *   bare test fixtures runnable.)
  */
+// Two migration shapes make the per-package, per-location sweep necessary rather than fussy:
+// - A repo mid-migration has BOTH (`@slip-stream-kit/config` added, `infra-kit` not yet dropped), and its
+//   vite configs may still import from either. Stopping at the first helper that passes would hand exactly
+//   that repo a silent HTTP-into-TLS proxy from the other one.
+// - Under pnpm the helper usually resolves NOT from the repo root but from the package that declares it —
+//   `apps/client/ui/node_modules/` sits right next to the `vite.config.ts` that imports it.
 export const assertHelperVersionFloor = (repoRoot: string): void => {
   const dirs = manifestDirs(repoRoot)
 
@@ -1046,7 +1048,7 @@ export class DevServerRunner {
         ...app,
         preferredPort: this.resolvePreferredPort(app.name, devConfig),
         // Resolved alongside, never instead: which of the two wins is decided in `resolveRunPlan`,
-        // once the number of apps this run launches is known. See {@link IApiAppConfig.appScopedPort}.
+        // once the number of apps this run launches is known. See `IApiAppConfig.appScopedPort`.
         appScopedPort: this.resolvePreferredPort(app.name, devConfig, false),
         prefixUrl: this.resolvePrefixUrl(app.name, devConfig),
         // Default participate; the resolved preset value overrides this in `run()`.
@@ -1263,7 +1265,7 @@ export class DevServerRunner {
     // the header the user still needs.
     //
     // `--watch` is the one exception, and only because it can genuinely fix this: a boot-failed app is a
-    // restart target now (see {@link resolveRestartTargets}), so the next save can bring the backend up
+    // restart target now (see `resolveRestartTargets`), so the next save can bring the backend up
     // and the route back to local. It stays resident with a loud, self-clearing `⚠ … ● cloud` row instead.
     //
     // That healing is real, and it is the `infraKit()` vite PLUGIN that makes it real: its `configureServer`
@@ -1290,7 +1292,7 @@ export class DevServerRunner {
     // to serve, watch, or proxy. Resident-but-empty is the worst of both worlds — it looks like a
     // running dev server and exits 0 when finally interrupted, so a CI step or a script would call it
     // a success. Fail loudly instead. A PARTIAL failure stays resident: the survivors are still useful,
-    // and under `--watch` a boot-failed app IS retried on the next save ({@link resolveRestartTargets}) —
+    // and under `--watch` a boot-failed app IS retried on the next save (`resolveRestartTargets`) —
     // without `--watch` it is gone for the session, which is why a broken local pairing refuses above.
     if (this.appServers.length === 0 && uiApps.length === 0 && this.failedApps.length > 0) {
       throw new Error(
@@ -1808,23 +1810,23 @@ export class DevServerRunner {
    * start error, not a degraded mode: there is no second way to reach an app, and a half-started dev loop
    * that silently routes nowhere is worse than a refusal that names the fix.
    *
-   * **Probe only — never start, never elevate.** `:443` is privileged, and portless binds it by re-execing
-   * through `sudo` with an inherited stdio, which a detached child cannot answer. The daemon is installed
-   * once, out-of-band. There is deliberately no unprivileged fallback: a fallback puts the port back in the
-   * URL, which is the whole thing this design removes.
-   *
-   * Identity is proven **on the wire** (`X-Portless`), never from portless's state files — those are
-   * process-global singletons that any other daemon's start rewrites and any stop deletes, which would make
-   * a perfectly healthy `:443` daemon look dead. See {@link defaultIsProxyServing}.
-   *
-   * The failure is classified rather than reported with one generic message, because "not serving" has three
-   * unrelated causes with three different fixes: portless was never installed as a dependency at all, its
-   * one-time OS service was never registered, its OS service IS registered but the daemon it starts is
-   * currently down (crashed/stopped), or something ELSE is squatting on the port and installing/trusting
-   * portless would not free it.
+   * **Probe only — never start, never elevate.** The daemon is installed once, out-of-band. Identity is
+   * proven **on the wire** (`X-Portless`), never from portless's state files — see
+   * {@link defaultIsProxyServing}. The failure is classified rather than reported generically.
    *
    * @throws When portless is missing, or no portless daemon is serving TLS on the proxy port.
    */
+  // Why probe-only: `:443` is privileged, and portless binds it by re-execing through `sudo` with an
+  // inherited stdio, which a detached child cannot answer. There is deliberately no unprivileged fallback
+  // either: a fallback puts the port back in the URL, which is the whole thing this design removes.
+  //
+  // Why the wire and not the state files: those are process-global singletons that any other daemon's
+  // start rewrites and any stop deletes, which would make a perfectly healthy `:443` daemon look dead.
+  //
+  // Why classify: "not serving" has four unrelated causes with different fixes — portless was never
+  // installed as a dependency at all, its one-time OS service was never registered, its OS service IS
+  // registered but the daemon it starts is currently down (crashed/stopped), or something ELSE is
+  // squatting on the port and installing/trusting portless would not free it.
   private async ensureProxy(): Promise<void> {
     // The bin comes from the driver we were handed, never from a fresh resolution behind its back: the fix we
     // print must name the binary THIS driver would run. `null` is not a command to render — it is a different
@@ -1884,7 +1886,7 @@ export class DevServerRunner {
    */
   private async registerAppAlias(packageName: string, appDir: string, port: number): Promise<string> {
     const release = readAppRelease(appDir)
-    // An npm name is not a DNS label — see {@link slugifyHostLabel}. `infra-kit/vite` slugifies its
+    // An npm name is not a DNS label — see `slugifyHostLabel`. `infra-kit/vite` slugifies its
     // own `<packageName>` template token identically, so the proxy target and this alias cannot drift.
     const label = slugifyHostLabel(packageName)
 
@@ -2096,7 +2098,7 @@ export class DevServerRunner {
     const tag = `${app.name}/api`
 
     // Seed the health entry BEFORE the app is visible in `appServers`, not after the probe the caller takes
-    // a few lines later. The liveness tick can fire in that window, and {@link healthOf} treats an ABSENT
+    // a few lines later. The liveness tick can fire in that window, and `healthOf` treats an ABSENT
     // entry as `unknown` — a row with no dot at all for a server that is already serving. A fresh entry is
     // the honest prior instead: never-up, which for a backend reads `● down` until a probe says otherwise.
     this.healthEntry(tag, 'api')
@@ -2119,7 +2121,7 @@ export class DevServerRunner {
             // NOT `ok`. This app has bound a port; nothing has probed it. A server that binds and then 500s
             // on `/__health` would be painted green here on the strength of having started — the same
             // unearned claim the `● failed` row exists to prevent. The caller probes right after and
-            // {@link refreshStatus} paints the answer.
+            // `refreshStatus` paints the answer.
             health: this.healthOf(tag),
           },
         ],
@@ -2201,7 +2203,7 @@ export class DevServerRunner {
 
           if (restarted) {
             // A boot-failed app has no slot to overwrite: it is APPENDED and cleared from `failedApps`,
-            // which is also what takes its frontend's `⚠ … ● cloud` row down (see {@link degradedRows}).
+            // which is also what takes its frontend's `⚠ … ● cloud` row down (see `degradedRows`).
             if (idx < 0) {
               const recovered = this.promoteRecoveredApp(app, restarted)
 
@@ -2251,7 +2253,7 @@ export class DevServerRunner {
         const tag = `${app.name}/api`
 
         // A restart that THREW never bound a port — there is nothing to probe, and nothing to be flap-shy
-        // about. Routed through {@link markDown}, not the probe path, because the soft path would leave the
+        // about. Routed through `markDown`, not the probe path, because the soft path would leave the
         // row one failure short of the threshold, i.e. GREEN, for a server that does not exist.
         if (entry == null) {
           this.markDown(tag, 'api')
@@ -2388,21 +2390,22 @@ export class DevServerRunner {
   /**
    * ONE frontend's `dev` task died while the engine — and every sibling frontend — kept running.
    *
-   * This is the other half of `--continue=dependencies-successful`. The flag stops one broken UI from
-   * cancelling the whole run, but it also means {@link markUiEngineDead} no longer fires for that UI:
-   * the engine is alive, so nothing would contradict the row's `◌ starting` until the never-up
-   * threshold expired ~30s later. Turbo's own per-task verdict is the only live signal, so it is
-   * routed here.
-   *
-   * A hard {@link markDown} rather than the soft probe path, and unlike the engine-death case it is
-   * safe even for a UI that HAS been up: turbo reports this only because the task process itself
-   * exited, so there is no orphaned-but-serving vite to paint red by mistake.
-   *
-   * Under `--no-ui-health` the row carries no health entry by the user's own choice, so the failure is
-   * narrated but no dot is invented for it. That also means the health state cannot dedupe the narration
-   * in that mode — acceptable because turbo emits this verdict exactly once per task per run (measured;
-   * see {@link parseTurboTaskFailure}), so there is no repeat to suppress.
+   * Marks the row down hard (via {@link markDown}), not through the soft probe path. Under
+   * `--no-ui-health` the failure is narrated but no dot is invented for it, since the row carries no
+   * health entry by the user's own choice.
    */
+  // This is the other half of `--continue=dependencies-successful`. The flag stops one broken UI from
+  // cancelling the whole run, but it also means `markUiEngineDead` no longer fires for that UI: the engine
+  // is alive, so nothing would contradict the row's `◌ starting` until the never-up threshold expired ~30s
+  // later. Turbo's own per-task verdict is the only live signal, so it is routed here.
+  //
+  // The hard mark is safe even for a UI that HAS been up, unlike the engine-death case: turbo reports this
+  // only because the task process itself exited, so there is no orphaned-but-serving vite to paint red by
+  // mistake.
+  //
+  // Under `--no-ui-health` the health state also cannot dedupe the narration — acceptable because turbo
+  // emits this verdict exactly once per task per run (measured; see `parseTurboTaskFailure`), so there is
+  // no repeat to suppress.
   private markUiTaskFailed(tag: string): void {
     if (this.shuttingDown) return
 
@@ -2480,8 +2483,8 @@ export class DevServerRunner {
     //
     // Subscribing to all three cannot storm. `ignoreInitial: true` above drops the startup
     // enumeration; a rebuild that rewrites existing output still emits `change`, not `add`; and
-    // {@link scheduleDebounced} collapses a burst onto one timer per key. `unlink` is safe to route
-    // through the same classifier because {@link classifyDistChange} is pure path arithmetic — it
+    // `scheduleDebounced` collapses a burst onto one timer per key. `unlink` is safe to route
+    // through the same classifier because `classifyDistChange` is pure path arithmetic — it
     // never stats the file, so a path that has just stopped existing classifies exactly as it did.
     for (const event of ['add', 'change', 'unlink'] as const) {
       watcher.on(event, (filePath: string) => {
@@ -2878,7 +2881,7 @@ export class DevServerRunner {
       ...summary,
       sessionUptimeMs: now - this.readyAt,
       // Re-derived, never carried over from the boot summary: a `--watch` restart that brings the backend
-      // back must take this row down with it (see {@link degradedRows}).
+      // back must take this row down with it (see `degradedRows`).
       degraded: this.degradedRows(),
       // A UI with no managed port has no endpoint row — only a reference line. It still gets its error
       // count, or its breakage would be counted into a file with nothing on screen pointing at it.

@@ -197,25 +197,26 @@ export const migrateUserGlobalConfigFilename = async (): Promise<void> => {
 
 /**
  * Convert a legacy machine-local factory config from executable TypeScript
- * (`~/.infra-kit/vendor.config.ts`) to static JSON (`~/.infra-kit/vendor.json`) as
- * part of `infra-kit init`. The factory config used to be a `.ts` module loaded via
- * dynamic `import()`; it is now strict JSON read with `JSON.parse`. This one-shot
- * migration dynamic-imports the old `.ts` (the ONLY remaining dynamic import of the
- * factory file), resolves a factory-function or object default export, validates it,
- * writes `vendor.json`, and removes the old `.ts`.
+ * (`~/.infra-kit/vendor.config.ts`) to static JSON (`~/.infra-kit/vendor.json`) as part of
+ * `infra-kit init`: dynamic-import the old `.ts`, resolve a factory-function or object default
+ * export, validate it, write `vendor.json`, remove the old `.ts`.
  *
- * Best-effort, non-fatal, idempotent (no old `.ts` → no-op), and never overwrites an
- * existing `vendor.json`. When the old export was a FUNCTION, its resolved output is
- * frozen into static JSON — so a DISTINCT warning is emitted (not a plain
- * `✓ Migrated`) because dynamic re-evaluation (env vars, directory globbing) no
- * longer happens. No `resetInfraKitConfigCache()` — the factory loader shares no
- * cache with the `infra-kit.json` layers.
+ * Best-effort, non-fatal, idempotent (no old `.ts` → no-op), and never overwrites an existing
+ * `vendor.json`. A FUNCTION export emits a DISTINCT warning rather than a plain `✓ Migrated`.
  *
  * @example
  * await migrateFactoryConfigToJson()
  * // ✓ Migrated ~/.infra-kit/vendor.config.ts → ~/.infra-kit/vendor.json
  * // (no output when there is nothing legacy to convert)
  */
+// The factory config used to be a `.ts` module loaded via dynamic `import()`; it is now strict
+// JSON read with `JSON.parse`, and this one-shot migration holds the ONLY remaining dynamic
+// import of the factory file.
+//
+// The function-export warning is not cosmetic: freezing a factory's resolved output into static
+// JSON means dynamic re-evaluation (env vars, directory globbing) no longer happens, and the user
+// has to be told. No `resetInfraKitConfigCache()` — the factory loader shares no cache with the
+// `infra-kit.json` layers.
 export const migrateFactoryConfigToJson = async (): Promise<void> => {
   const newJson = getFactoryConfigPath() // ~/.infra-kit/vendor.json
   const dir = path.dirname(newJson)

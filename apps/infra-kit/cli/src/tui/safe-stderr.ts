@@ -1,6 +1,8 @@
 import process from 'node:process'
 
 /**
+ * @fileoverview
+ *
  * The stream Ink renders into — stderr, with the one escape that can destroy the user's terminal
  * history filtered out.
  *

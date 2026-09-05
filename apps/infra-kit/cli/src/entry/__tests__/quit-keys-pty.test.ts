@@ -9,6 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { buildOptions } from '../../../scripts/build.js'
 
 /**
+ * @fileoverview
+ *
  * A quit key at the palette must END THE PROCESS. This is a regression test in the literal
  * sense: before the stdin-ownership fix, `infra-kit` on a real terminal tore the palette
  * down on Ctrl-C — correctly, frame erased, cursor restored — and then hung forever,

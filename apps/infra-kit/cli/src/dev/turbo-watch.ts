@@ -5,6 +5,8 @@
  */
 /* eslint-disable sonarjs/no-os-command-from-path */
 /**
+ * @fileoverview
+ *
  * `turbo watch build` engine for `infra-kit dev --watch`.
  *
  * Spawns ONE long-lived `turbo watch build` child that owns incremental rebuilds and
@@ -115,7 +117,7 @@ export const defaultTurboWatchFactory: TurboWatchFactory = ({
 
   // `spawn` has already duplicated the descriptor into the child by the time it returns, so the
   // parent's copy is dead weight — nothing here ever writes through it. It was never closed: neither
-  // `kill()` nor `shutdown()` could, because {@link ManagedChild} exposes no cleanup hook to hang it
+  // `kill()` nor `shutdown()` could, because `ManagedChild` exposes no cleanup hook to hang it
   // on, which is exactly why the close belongs here rather than there. Holding it pinned the log
   // file's inode for the whole session even after the file was unlinked.
   fs.closeSync(out)

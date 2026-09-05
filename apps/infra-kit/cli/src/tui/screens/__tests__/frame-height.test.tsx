@@ -11,6 +11,8 @@ import { BranchPicker } from '../branch-picker'
 import { CommandPalette } from '../command-palette'
 
 /**
+ * @fileoverview
+ *
  * The invariant that kills the welded-rows bug: for EVERY (columns, rows), an Ink frame must be
  * strictly SHORTER than the viewport.
  *

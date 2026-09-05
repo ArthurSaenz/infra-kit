@@ -209,10 +209,9 @@ const frontendOverrides = (
  * // client frontend, its /api answered local → launches client/api + client/ui, /api resolves local:
  * deriveManualPlan(
  *   { targets: ['client/ui'], sources: { 'client/ui /api': 'local' }, watch: false, cmux: false },
- *   { apps: [{ name: 'client', hasApi: true, hasUi: true,
- *              backends: [{ packageName: 'client-api', cloudCapable: true, localCapable: true,
- *                           routes: [{ path: '/api', localCapable: true, cloudCapable: true }],
- *                           ownerApp: 'client' }] }],
+ *   { apps: [{ name: 'client', hasApi: true, hasUi: true, backends: [{ packageName: 'client-api',
+ *              cloudCapable: true, localCapable: true, ownerApp: 'client',
+ *              routes: [{ path: '/api', localCapable: true, cloudCapable: true }] }] }],
  *     presets: [], environments: ['dev'] },
  * ).targetKeys // => ['client/api', 'client/ui']
  */

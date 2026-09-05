@@ -6,6 +6,8 @@ import type { DevUi } from 'src/dev/dev-ui'
 import { workingProxy } from './fixtures.js'
 
 /**
+ * @fileoverview
+ *
  * `--json` promises a machine-readable stream. This guards the one path that can break that promise
  * without any existing test noticing.
  *

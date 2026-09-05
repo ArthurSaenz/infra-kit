@@ -4,6 +4,7 @@ import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 /**
+ * @fileoverview
  * The Esc contract is ALL-OR-NONE, and this is what keeps it that way.
  *
  * Wiring only some `@inquirer` prompts is worse than wiring none: today's boundary is

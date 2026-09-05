@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
 import { installSessionSignals } from '../run-session'
-import type { SessionSignalDeps } from '../run-session'
+import type { SessionPhase, SessionSignalDeps } from '../run-session'
 
 /**
  * The session shell's signal policy. The child is spawned WITHOUT `detached`, so it shares the parent's
  * process group and the tty delivers every signal to BOTH — the parent's only job is to decide what it
  * does with its own copy. These assertions pin that policy; the terminal-level behaviour (a real Ctrl-C,
  * a real Ctrl-Z) is PTY territory and is verified separately.
+ *
+ * The policy is keyed on a PHASE, not a boolean. `childOwnsSigint` conflated "swallow a stray SIGINT"
+ * with "the tty already stopped the group, so follow it down"; the pause is the first state where those
+ * two answers differ, so the matrix below has three columns rather than two.
  */
 const harness = () => {
   const handlers = new Map<NodeJS.Signals, () => void>()
@@ -16,7 +20,7 @@ const harness = () => {
   // Ordered against `exits`: a reset AFTER the exit would never run, so both the count and the
   // sequence matter.
   const events: string[] = []
-  let childRunning = false
+  let phase: SessionPhase = 'palette'
   // A hand-cranked clock: the pnpm-relay exemption is defined by ELAPSED TIME, so the difference between
   // "the relay of the Ctrl-C just pressed" and "a deliberate kill later on" is only expressible here.
   let clock = 0
@@ -44,7 +48,7 @@ const harness = () => {
   }
 
   const signals = installSessionSignals(() => {
-    return childRunning
+    return phase
   }, deps)
 
   return {
@@ -53,8 +57,8 @@ const harness = () => {
     events,
     signals,
     handlers,
-    setChildRunning: (running: boolean) => {
-      childRunning = running
+    setPhase: (next: SessionPhase) => {
+      phase = next
     },
     advance: (ms: number) => {
       clock += ms
@@ -74,7 +78,7 @@ describe('session signals — while a child runs', () => {
   it('swallows SIGINT so Ctrl-C stops only the child and the loop survives to render the footer', () => {
     const t = harness()
 
-    t.setChildRunning(true)
+    t.setPhase('child')
     t.fire('SIGINT')
 
     expect(t.exits).toEqual([])
@@ -86,7 +90,7 @@ describe('session signals — while a child runs', () => {
   it('swallows the SIGTERM pnpm relays after a Ctrl-C (the session must survive a cancel)', () => {
     const t = harness()
 
-    t.setChildRunning(true)
+    t.setPhase('child')
     t.signals.childStarted()
     t.fire('SIGINT')
     t.fire('SIGTERM')
@@ -101,7 +105,7 @@ describe('session signals — while a child runs', () => {
   it('defers a bare external SIGTERM: finishes the child, then quits', () => {
     const t = harness()
 
-    t.setChildRunning(true)
+    t.setPhase('child')
     t.signals.childStarted()
     t.fire('SIGTERM')
 
@@ -116,7 +120,7 @@ describe('session signals — while a child runs', () => {
   it('does not carry the Ctrl-C exemption across children', () => {
     const t = harness()
 
-    t.setChildRunning(true)
+    t.setPhase('child')
     t.signals.childStarted()
     t.fire('SIGINT')
 
@@ -132,7 +136,7 @@ describe('session signals — while a child runs', () => {
   it('stops ITSELF on SIGTSTP so the job suspends as a unit (Ctrl-Z no longer wedges the terminal)', () => {
     const t = harness()
 
-    t.setChildRunning(true)
+    t.setPhase('child')
     t.fire('SIGTSTP')
 
     expect(t.raised).toEqual(['SIGSTOP'])
@@ -143,7 +147,7 @@ describe('session signals — while a child runs', () => {
   it('never swallows SIGHUP — it exits even mid-child', () => {
     const t = harness()
 
-    t.setChildRunning(true)
+    t.setPhase('child')
     t.fire('SIGHUP')
 
     expect(t.exits).toEqual([129])
@@ -154,7 +158,7 @@ describe('session signals — between iterations (the palette is up)', () => {
   it('sIGINT ends the session cleanly, restoring the terminal BEFORE it exits', () => {
     const t = harness()
 
-    t.setChildRunning(false)
+    t.setPhase('palette')
     t.fire('SIGINT')
 
     expect(t.exits).toEqual([0])
@@ -166,7 +170,7 @@ describe('session signals — between iterations (the palette is up)', () => {
   it('sIGTERM ends the session cleanly, restoring the terminal BEFORE it exits', () => {
     const t = harness()
 
-    t.setChildRunning(false)
+    t.setPhase('palette')
     t.fire('SIGTERM')
 
     expect(t.exits).toEqual([0])
@@ -176,7 +180,7 @@ describe('session signals — between iterations (the palette is up)', () => {
   it('sIGTSTP is ignored — suspending mid-palette would strand a half-drawn Ink frame', () => {
     const t = harness()
 
-    t.setChildRunning(false)
+    t.setPhase('palette')
     t.fire('SIGTSTP')
 
     expect(t.raised).toEqual([])
@@ -186,7 +190,125 @@ describe('session signals — between iterations (the palette is up)', () => {
   it('sIGHUP still exits', () => {
     const t = harness()
 
-    t.setChildRunning(false)
+    t.setPhase('palette')
+    t.fire('SIGHUP')
+
+    expect(t.exits).toEqual([129])
+  })
+})
+
+/**
+ * The post-run pause: raw stdin, a single hint row, no Ink frame, blocking until the user presses a key.
+ * Raw mode clears ISIG, so the tty cannot generate SIGINT or SIGTSTP here at all — every row below is a
+ * signal that arrived some other way: an external `kill`, or a tty signal generated microseconds earlier
+ * while the child still held a cooked terminal, whose handler only runs after the phase has flipped.
+ */
+describe('session signals — while the post-run pause holds the terminal', () => {
+  it('swallows SIGINT, so a mashed Ctrl-C whose handler lands late cannot end the session', () => {
+    const t = harness()
+
+    t.setPhase('pause')
+    t.fire('SIGINT')
+
+    expect(t.exits).toEqual([])
+    expect(t.events).toEqual([])
+  })
+
+  /**
+   * This row is the BOUND on the whole relay exemption, and the reason it cannot be simplified. The pause
+   * blocks indefinitely by design, so recording `lastSigintAt` here would let a repeated `kill -INT` hold
+   * the swallow window open for as long as someone kept sending them — a session immune to SIGTERM.
+   * Recording nothing pins the window to the last Ctrl-C delivered while a CHILD ran, which is 2500ms
+   * back by the time the SIGTERM below arrives.
+   */
+  it('records nothing, so a SIGINT at the pause cannot extend the relay window', () => {
+    const t = harness()
+
+    t.setPhase('child')
+    t.signals.childStarted()
+    t.fire('SIGINT')
+
+    t.advance(2_000)
+    t.setPhase('pause')
+    // Were this recorded, it would re-open the window at 2000 and swallow the SIGTERM 500ms later.
+    t.fire('SIGINT')
+
+    t.advance(500)
+    t.fire('SIGTERM')
+
+    expect(t.events).toEqual(['reset', 'exit:0'])
+  })
+
+  // The relay was measured at 6ms and 16ms behind the SIGINT, and nothing suspends between the child's
+  // exit and the pause arming, so a fast child stopped with Ctrl-C has its relay land HERE. Routing
+  // SIGTERM at the pause straight to exit would kill the session on an ordinary cancel.
+  it('keeps the relay test: a SIGTERM inside the window is still pnpm relaying the cancel', () => {
+    const t = harness()
+
+    t.setPhase('child')
+    t.signals.childStarted()
+    t.fire('SIGINT')
+
+    t.advance(16)
+    t.setPhase('pause')
+    t.fire('SIGTERM')
+
+    expect(t.exits).toEqual([])
+    expect(t.signals.quitRequested()).toBe(false)
+  })
+
+  // The half that DOES change from the child row: there is no child left whose transcript needs
+  // committing, and nothing reads `quitRequested` until the top of the next iteration — which a `kill`
+  // can never reach, because that iteration is gated on a keypress.
+  it('exits immediately on a SIGTERM outside the window instead of deferring it to a keypress', () => {
+    const t = harness()
+
+    t.setPhase('child')
+    t.signals.childStarted()
+    t.fire('SIGINT')
+
+    t.advance(1_001)
+    t.setPhase('pause')
+    t.fire('SIGTERM')
+
+    expect(t.events).toEqual(['reset', 'exit:0'])
+    // Deferring is what would strand it: setting the flag here means nobody would ever read it.
+    expect(t.signals.quitRequested()).toBe(false)
+  })
+
+  it('exits on a bare SIGTERM with no Ctrl-C behind it at all', () => {
+    const t = harness()
+
+    t.setPhase('pause')
+    t.fire('SIGTERM')
+
+    expect(t.events).toEqual(['reset', 'exit:0'])
+    expect(t.signals.quitRequested()).toBe(false)
+  })
+
+  /**
+   * Delivered and IGNORED, not "never delivered": raw mode stops the tty generating one, but an external
+   * `kill -TSTP` still arrives. Stopping ourselves would hand the user's shell a raw tty with a stranded
+   * hint row. This is the cell where the old boolean broke — it answered "swallow SIGINT" and "follow the
+   * group down" with the same bit, and here those two answers differ.
+   */
+  it('ignores SIGTSTP rather than stopping itself, unlike the child phase', () => {
+    const t = harness()
+
+    t.setPhase('pause')
+    t.fire('SIGTSTP')
+
+    expect(t.raised).toEqual([])
+    expect(t.exits).toEqual([])
+  })
+})
+
+describe('session signals — SIGHUP is unconditional', () => {
+  // The terminal is gone in every phase, so there is nothing to render into and nobody to render for.
+  it.each(['palette', 'child', 'pause'] as const)('exits 129 in phase %s', (phase) => {
+    const t = harness()
+
+    t.setPhase(phase)
     t.fire('SIGHUP')
 
     expect(t.exits).toEqual([129])
@@ -214,7 +336,7 @@ describe('session signals — the pnpm relay exemption is a window, not a latch'
   ])('$what (SIGTERM +$gapMs ms)', ({ gapMs, quits }) => {
     const t = harness()
 
-    t.setChildRunning(true)
+    t.setPhase('child')
     t.signals.childStarted()
 
     t.fire('SIGINT')
@@ -227,7 +349,7 @@ describe('session signals — the pnpm relay exemption is a window, not a latch'
   it('keeps swallowing relays through a sustained mash, because each Ctrl-C reopens the window', () => {
     const t = harness()
 
-    t.setChildRunning(true)
+    t.setPhase('child')
     t.signals.childStarted()
 
     // A user leaning on Ctrl-C for ten seconds: every keypress is paired with its own relay, and none
@@ -245,7 +367,7 @@ describe('session signals — the pnpm relay exemption is a window, not a latch'
   it('does not let a Ctrl-C from a PREVIOUS child license a relay for this one', () => {
     const t = harness()
 
-    t.setChildRunning(true)
+    t.setPhase('child')
     t.signals.childStarted()
     t.fire('SIGINT')
 

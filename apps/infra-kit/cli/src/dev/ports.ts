@@ -43,19 +43,18 @@ export function parsePortString(raw: string | undefined): number | undefined {
  * or `undefined` when none is set. Per-app env keys use the app folder name in **UPPER_SNAKE_CASE**
  * (hyphens → underscores).
  *
- * There is deliberately NO default-port tier. `undefined` is what distinguishes an app the developer
+ * There is deliberately NO default-port tier: `undefined` is what distinguishes an app the developer
  * pinned to a port (a preferred bind target) from an unconfigured app, which binds ephemeral straight
  * away under dynamic allocation. Used by the dev-server to (a) pick the preferred bind port and (b)
  * relax the conflict gate to explicit ports only.
  *
- * `allowBarePort` gates ONLY the second tier. A bare `PORT` is not app-scoped, so in a
- * multi-app run it hands every app the same preferred port and the caller's conflict gate then
- * throws on duplicates it manufactured itself — a shell or Doppler `PORT` refusing to start a
- * run it has nothing to do with. The caller passes `false` once it knows more than one app is
- * being launched; the per-app `{APP}_PORT` and `dev.<app>.port` tiers are unaffected either way.
- *
- * Defaults to `true`, so every standalone caller keeps today's precedence.
+ * `allowBarePort` gates ONLY the second tier, and defaults to `true` so every standalone caller keeps
+ * today's precedence. The per-app `{APP}_PORT` and `dev.<app>.port` tiers are unaffected either way.
  */
+// Why `allowBarePort` exists: a bare `PORT` is not app-scoped, so in a multi-app run it hands every app
+// the same preferred port and the caller's conflict gate then throws on duplicates it manufactured itself
+// — a shell or Doppler `PORT` refusing to start a run it has nothing to do with. The caller passes `false`
+// once it knows more than one app is being launched.
 export function resolvePreferredPort(
   appName: string,
   env: NodeJS.ProcessEnv,

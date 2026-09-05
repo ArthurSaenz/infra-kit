@@ -4,23 +4,19 @@ import type { Logger } from 'pino'
 import { LOG_FILE_PATH } from '../logger/index'
 
 /**
- * Setup error handlers for the application
+ * Setup handlers for fatal, non-signal process events.
  *
  * @param logger - The logger instance
  *
  * ONLY FOR SERVER!
+ *
+ * Signal handling deliberately does NOT live here: a bounded teardown needs the
+ * `StdioServerHandle` returned by `serveStdio`, which only the MCP entry holds, so
+ * `SIGINT`/`SIGTERM` are registered in `src/entry/mcp.ts` instead. The arms removed from
+ * here called `process.exit(0)` without flushing the logger, discarding the final log
+ * lines on every clean shutdown; the entry's `shutdown` flushes before exiting.
  */
 export const setupErrorHandlers = (logger: Logger) => {
-  process.on('SIGINT', () => {
-    logger.info({ msg: 'Received SIGINT. Shutting down...' })
-    process.exit(0)
-  })
-
-  process.on('SIGTERM', () => {
-    logger.info({ msg: 'Received SIGTERM. Shutting down...' })
-    process.exit(0)
-  })
-
   process.on('uncaughtException', (error) => {
     logger.fatal({ err: error, msg: 'Uncaught Exception' })
     logger.error(`Uncaught Exception! Check ${LOG_FILE_PATH}. Shutting down...`)

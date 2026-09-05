@@ -10,6 +10,8 @@ import { BootRegion } from './boot-region'
 import { LiveRegion } from './live-region'
 
 /**
+ * @fileoverview
+ *
  * Ink-backed {@link DevUi} for `infra-kit dev`: a boot region that collapses into a PERSISTENT status
  * panel. It is the UI on any interactive TTY.
  *

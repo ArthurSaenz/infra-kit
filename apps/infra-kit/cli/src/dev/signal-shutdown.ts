@@ -1,4 +1,6 @@
 /**
+ * @fileoverview
+ *
  * Signal-driven graceful shutdown, shared by every long-lived dev entry point.
  *
  * Three invariants:
@@ -191,19 +193,10 @@ const writeTeardownFailure = (signal: NodeJS.Signals, error: unknown): void => {
  * real escape hatch: it force-quits without touching `onSignal` again, SIGKILLing the descendant
  * groups on the way out so nothing is left holding a port.
  *
- * A {@link TEARDOWN_DEADLINE_MS} deadline IS armed — read its doc block before removing it, because this
- * module used to explain at length why one should not be. That explanation assumed a human at the keyboard
- * to press Ctrl-C a second time; the incident it now guards against is the case where nobody is there.
- *
- * Mechanically the deadline depends on `terminal-liveness`: with a fault storm live, teardown competes with
- * ~100k blocking `writeSync` calls per second, and a deadline shipped into a machine that cannot honour it
- * is decoration. The storm is cut at its source first; this is what stops the wedge that follows.
+ * A {@link TEARDOWN_DEADLINE_MS} deadline IS armed — read its doc block before removing it.
  *
  * Returns a `detach` function that drops the SIGINT/SIGTERM/SIGHUP listeners this call installed. Every
- * exit path (graceful completion, the second-signal escape, and the deadline) already calls it before
- * exiting, so a real process never needs it — `exit` terminates first. It exists for a caller whose `exit`
- * seam does NOT terminate the process (every test in this suite), so a session that already ended does not
- * leave dangling handlers behind for the next one in the same process.
+ * exit path already calls it before exiting, so a real process never needs it.
  *
  * @example
  * registerSignalShutdown({
@@ -214,6 +207,16 @@ const writeTeardownFailure = (signal: NodeJS.Signals, error: unknown): void => {
  *   describeStall: () => runner.shutdownStage,
  * })
  */
+// On the deadline: this module used to explain at length why one should NOT be armed. That explanation
+// assumed a human at the keyboard to press Ctrl-C a second time; the incident it now guards against is the
+// case where nobody is there. Mechanically it depends on `terminal-liveness`: with a fault storm live,
+// teardown competes with ~100k blocking `writeSync` calls per second, and a deadline shipped into a
+// machine that cannot honour it is decoration. The storm is cut at its source first; this is what stops
+// the wedge that follows.
+//
+// On `detach`: it exists for a caller whose `exit` seam does NOT terminate the process (every test in this
+// suite), so a session that already ended does not leave dangling handlers behind for the next one in the
+// same process. In a real process `exit` terminates first.
 export const registerSignalShutdown = ({
   onSignal,
   exit = defaultExit,

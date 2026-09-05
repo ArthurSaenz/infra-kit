@@ -5,6 +5,8 @@
  */
 /* eslint-disable sonarjs/no-os-command-from-path */
 /**
+ * @fileoverview
+ *
  * Frontend dev engine for `infra-kit dev --ui`.
  *
  * Delegates FE to ONE `turbo run dev` child (turbo owns the `dev` fan-out and concurrency) rather than
@@ -55,24 +57,22 @@ export interface TurboDevLine {
 /**
  * Vocabulary a framework uses to announce a failure on turbo's stream.
  *
- * **Why this reads the line's text, when nothing else in the design does.** Under `--ui=stream` turbo
- * relays each task's stdout AND stderr onto its OWN stdout — measured, not assumed: a task writing one
- * line to each fd yields both lines on turbo's fd 1, and fd 2 carries only turbo's chrome. So the fd
- * that would otherwise DECLARE severity does not survive the relay: `child.stderr` never sees a single
- * framework line, and a level counter built on it would be structurally, permanently zero. The panel
- * would then show a green `client/ui` row over a UI that fails to compile — the one failure mode this
- * whole design exists to prevent.
- *
- * This is not the residual-bucket guess that was rejected. That one asked "what IS this line?" of an
- * unknown channel and promoted whatever it could not identify. This asks a narrower question of a KNOWN,
- * declared format: turbo's `<pkg>:dev:` prefix contract is the same one already relied on to route the
- * line to its package. The rule: classify only within a format you know; never guess about one you
- * don't.
- *
- * Deliberately small and anchored. A miss costs an uncounted error (the line is still in the log); a
- * false positive costs a red row over a healthy app, which is worse — so patterns must be specific, and
- * every addition needs a real line that motivates it.
+ * Deliberately small and anchored, because the two errors are not symmetric: a miss costs an uncounted
+ * error (the line is still in the log), while a false positive costs a red row over a healthy app. So
+ * patterns must be specific, and every addition needs a real line that motivates it.
  */
+// Why this reads the line's TEXT, when nothing else in the design does. Under `--ui=stream` turbo relays
+// each task's stdout AND stderr onto its OWN stdout — measured, not assumed: a task writing one line to
+// each fd yields both lines on turbo's fd 1, and fd 2 carries only turbo's chrome. So the fd that would
+// otherwise DECLARE severity does not survive the relay: `child.stderr` never sees a single framework
+// line, and a level counter built on it would be structurally, permanently zero. The panel would then show
+// a green `client/ui` row over a UI that fails to compile — the one failure mode this whole design exists
+// to prevent.
+//
+// This is not the residual-bucket guess that was rejected. That one asked "what IS this line?" of an
+// unknown channel and promoted whatever it could not identify. This asks a narrower question of a KNOWN,
+// declared format: turbo's `<pkg>:dev:` prefix contract is the same one already relied on to route the
+// line to its package. The rule: classify only within a format you know; never guess about one you don't.
 const ERROR_VOCABULARY = [
   /^error\b/i,
   // The glyphs get no `\b`: they are not word characters, so there is NO word boundary between `✘` and
@@ -358,7 +358,7 @@ export const defaultUiDevFactory: UiDevFactory = ({
       // `--only` has already stripped every dependency task, so `dependencies-successful` and `always`
       // select the same set here; the former matches `turbo-watch.ts` rather than asserting a
       // distinction that does not exist. The now-surviving failure is reported per-package via
-      // {@link parseTurboTaskFailure} — the flag changes the blast radius, not the visibility.
+      // `parseTurboTaskFailure` — the flag changes the blast radius, not the visibility.
       '--continue=dependencies-successful',
       '--output-logs=new-only',
       '--no-update-notifier',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { suspendForeground } from '../suspend'
+import { suspendForeground } from '../suspend-foreground'
 
 /**
  * The process half of the palette's Ctrl-Z. These assert the SIGNAL POLICY — which pid, which signal,

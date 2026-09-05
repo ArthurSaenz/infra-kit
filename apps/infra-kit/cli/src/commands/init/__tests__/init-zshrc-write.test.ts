@@ -18,7 +18,12 @@ vi.mock('../migrate-config', () => {
 })
 
 vi.mock('../agent-files', () => {
-  return { writeAgentFiles: vi.fn(async () => {}) }
+  return {
+    writeAgentFiles: vi.fn(async () => {}),
+    syncRepoGuidance: vi.fn(async () => {
+      return { skipped: true, root: null, version: '0.0.0-test', written: [] }
+    }),
+  }
 })
 
 vi.mock('src/lib/logger', () => {

@@ -156,7 +156,7 @@ describe('validatePackage', () => {
     expect(result.checks).toContainEqual(expect.objectContaining({ name: 'file:tsconfig.json', status: 'fail' }))
   })
 
-  it('fails with only the config check when infra-kit.config.ts is missing', async () => {
+  it('skips the rule-based checks when infra-kit.config.ts is missing, keeping config and guidance', async () => {
     const dir = makeTmpDir()
 
     writePackage(dir, { packageJson: { name: '@x/no-config', type: 'module' } })
@@ -164,8 +164,98 @@ describe('validatePackage', () => {
     const result = await validatePackage(dir)
 
     expect(result.passed).toBe(false)
-    expect(result.checks).toHaveLength(1)
+    // The rules are unknown, so scripts/files/turbo are skipped — but `agent-guidance` reads
+    // CLAUDE.md rather than the rules, so it sits outside that branch and still reports.
+    expect(
+      result.checks.map((check) => {
+        return check.name
+      }),
+    ).toEqual(['infra-kit.config.ts', 'agent-guidance'])
     expect(result.checks[0]).toMatchObject({ name: 'infra-kit.config.ts', status: 'fail' })
+  })
+})
+
+describe('validatePackage — agent-guidance wiring', () => {
+  const WELL_FORMED_BLOCK = [
+    '<!-- infra-kit:package:begin -->',
+    '<!-- infra-kit:package:version 0.4.0 lib -->',
+    '# @x/pkg',
+    '<!-- infra-kit:package:end -->',
+  ].join('\n')
+
+  it('treats an absent adoption option as not adopted, so a missing CLAUDE.md still passes', async () => {
+    const dir = makeTmpDir()
+
+    writePackage(dir, { config: 'export default { requiredScripts: [], requiredFiles: [] }' })
+
+    const result = await validatePackage(dir)
+
+    expect(result.passed).toBe(true)
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: 'agent-guidance',
+        status: 'pass',
+        message: 'not yet adopted — CLAUDE.md missing — run: infra-kit audit --fix',
+      }),
+    )
+  })
+
+  it('fails a missing CLAUDE.md once the adoption state says the workspace adopted', async () => {
+    const dir = makeTmpDir()
+
+    writePackage(dir, { config: 'export default { requiredScripts: [], requiredFiles: [] }' })
+
+    const result = await validatePackage(dir, DEFAULT_RULES, {
+      adoption: { adopted: true, workspaceRoot: dir, evidencePath: path.join(dir, 'packages/lib-a/CLAUDE.md') },
+    })
+
+    expect(result.passed).toBe(false)
+    expect(result.checks).toContainEqual(expect.objectContaining({ name: 'agent-guidance', status: 'fail' }))
+  })
+
+  it('emits no agent-guidance check for the root, even in an adopted workspace', async () => {
+    const dir = makeTmpDir()
+
+    writePackage(dir, {
+      packageJson: { name: 'monorepo', type: 'module' },
+      config: 'export default { requiredScripts: [], requiredFiles: [], turbo: { requiredTasks: [] } }',
+      // The ROOT block, which the package-scoped check would classify as `foreign-block`.
+      files: { 'CLAUDE.md': '<!-- infra-kit:begin -->\nroot guidance\n<!-- infra-kit:end -->' },
+    })
+
+    const result = await validatePackage(dir, ROOT_DEFAULT_RULES, {
+      adoption: { adopted: true, workspaceRoot: dir, evidencePath: path.join(dir, 'packages/lib-a/CLAUDE.md') },
+      isRoot: true,
+    })
+
+    expect(
+      result.checks.map((check) => {
+        return check.name
+      }),
+    ).not.toContain('agent-guidance')
+    expect(result.passed).toBe(true)
+  })
+
+  it('passes a package carrying a well-formed block after adoption', async () => {
+    const dir = makeTmpDir()
+
+    writePackage(dir, {
+      config: 'export default { requiredScripts: [], requiredFiles: [] }',
+      files: { 'CLAUDE.md': WELL_FORMED_BLOCK },
+    })
+
+    const result = await validatePackage(dir, DEFAULT_RULES, {
+      adoption: { adopted: true, workspaceRoot: dir, evidencePath: path.join(dir, 'CLAUDE.md') },
+    })
+
+    expect(result.passed).toBe(true)
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: 'agent-guidance',
+        status: 'pass',
+        message: 'present (block from infra-kit 0.4.0, type lib)',
+      }),
+    )
   })
 })
 

@@ -49,6 +49,32 @@ export interface CatalogMcpTool {
 }
 
 /**
+ * Structural mirror of the SDK's `ToolAnnotations`. Deliberately NOT imported from
+ * `@modelcontextprotocol/server`: this module is on every CLI command path, and the `u6`/`u7` bundle
+ * guards depend on the catalog staying free of MCP SDK imports.
+ *
+ * These are ADVISORY hints — the MCP spec states a client must not make security decisions from them.
+ * The authority for destructive operations remains `requiresHumanConfirm` plus the confirm gate in
+ * `lib/tool-handler`; nothing in that gate reads these fields.
+ *
+ * `idempotentHint` is deliberately absent: with no tool claiming `true`, an explicit `false` is
+ * indistinguishable from omission under both host-reading conventions, and the hint licenses retry —
+ * the one place where over-claiming is dangerous rather than merely noisy.
+ */
+export interface McpToolAnnotations {
+  readOnlyHint: boolean
+  /** Present iff `readOnlyHint` is false — the spec makes it meaningless on a read-only tool. */
+  destructiveHint?: boolean
+  openWorldHint: boolean
+}
+
+/** A catalog tool plus the registration-facing metadata {@link getExposedMcpTools} derives for it. */
+export interface RegistrableMcpTool extends CatalogMcpTool {
+  title: string
+  annotations: McpToolAnnotations
+}
+
+/**
  * Single source of truth for the CLI command surface. It consolidates what used
  * to live in three hand-maintained places (the MCP `tools[]` array and the
  * three no-arg-menu name arrays) into one list, so they can no longer drift.
@@ -511,7 +537,8 @@ export const commandCatalog: CommandCatalogEntry[] = [
  * gated nor listed here. Every member carries a one-line justification so an audit reads at a glance.
  */
 export const LOW_RISK_MUTATING_ALLOWLIST: readonly string[] = [
-  // Edits a GitHub release body only — reversible by re-editing; no git/branch/deploy side effect.
+  // Overwrites the Jira fix-version description and the release PR body — reversible by re-editing;
+  // no git/branch/deploy side effect.
   'release-desc-edit',
   // Purely additive: creates worktrees for existing release branches; removing them is a separate op.
   'worktrees-add',
@@ -521,10 +548,142 @@ export const LOW_RISK_MUTATING_ALLOWLIST: readonly string[] = [
   'env-load',
 ]
 
-/** The MCP tools to register: catalog entries that are exposed and carry a tool. */
-export const getExposedMcpTools = (): CatalogMcpTool[] => {
+// `openWorld` is DECLARED rather than derived because neither candidate derivation is sound. An
+// import-graph check produces false NEGATIVES on the four deploy tools (they reach GitHub/AWS through
+// `zx` with no `src/integrations/*` import at all — an error in the dangerous direction on the most
+// dangerous tools in the catalog) and false POSITIVES on `env-list` and `worktrees-remove` (which
+// import an integration module whose MCP-reachable path never calls out). The per-row call-site
+// citation IS the control: nobody can write "never calls Doppler" next to `env-token-list.ts:115-131`.
+//
+// Allowlist membership and `destructiveHint` are independent — all four LOW_RISK_MUTATING_ALLOWLIST
+// members read destructive. The allowlist answers "is a confirm prompt warranted?"; the hint answers
+// "does this perform destructive updates?".
+/** Display title and the one annotation nothing derives (`openWorld`), per exposed tool. */
+export const MCP_TOOL_PRESENTATION: Record<string, { title: string; openWorld: boolean }> = {
+  // --- Read-only ---
+  // Reads on-disk dev-context fragments; the TCP liveness probe is loopback-only (dev-status.ts:178).
+  'dev-status': { title: 'Dev server status', openWorld: false },
+  // gh-release-list.ts:13 getReleasePRsWithInfo(); getJiraDescriptions imported :6.
+  'gh-release-list': { title: 'Open releases', openWorld: true },
+  // worktrees-list.ts:38 Promise.all([getReleasePRsWithInfo(), getJiraDescriptions()]).
+  'worktrees-list': { title: 'Release worktrees', openWorld: true },
+  // env-status.ts:94 — "Pure local introspection — makes NO Doppler call".
+  'env-status': { title: 'Loaded environment', openWorld: false },
+  // env-list.ts:147 — "never a live Doppler probe". The :4 doppler import is getDopplerProject, which
+  // reads getInfraKitConfig() and returns a name (doppler-project.ts:23-27) — no network.
+  'env-list': { title: 'Available environments', openWorld: false },
+  // env-token-list.ts:115-131 probeEnvToken per environment, and `check` is in the MCP inputSchema
+  // (:173-176), so the probe is agent-reachable.
+  'env-token-list': { title: 'Doppler service tokens', openWorld: true },
+  // config-get.ts:58 — "Read-only introspection … use `config edit` (CLI-only) to modify".
+  'config-get': { title: 'Merged infra-kit config', openWorld: false },
+  // vendor-check.ts:120 — "Self-contained (no source repo or config needed)".
+  'vendor-check': { title: 'Vendor checksum check', openWorld: false },
+  // audit.ts:242-255 reads workspace manifests; --fix/--design are unreachable through the MCP schema.
+  audit: { title: 'Package audit', openWorld: false },
+  // Reads packageJson.version; no registry check.
+  version: { title: 'CLI version', openWorld: false },
+
+  // --- Mutating, gated ---
+  // gh-merge-dev.ts:355 getReleasePRsWithInfo(); pushes to remote release branches.
+  'gh-merge-dev': { title: 'Merge dev into release branches', openWorld: true },
+  // release-create.ts:7 loadJiraConfig from src/integrations/jira; creates branches and PRs.
+  'release-create': { title: 'Create releases', openWorld: true },
+  // gh-release-deploy-all.ts:2 `import { $ } from 'zx'` — dispatches deploy-all.yml via the gh CLI.
+  // Imports NO src/integrations/*, which is why the import-graph derivation was rejected.
+  'gh-release-deploy-all': { title: 'Deploy all services (CI)', openWorld: true },
+  // gh-release-deploy-selected.ts:6 `import { $ } from 'zx'` — dispatches deploy-selected-services.yml
+  // via the gh CLI. Same import shape as deploy-all: no src/integrations/* to spot.
+  'gh-release-deploy-selected': { title: 'Deploy selected services (CI)', openWorld: true },
+  // local-deploy.ts runs devops/scripts/deploy-*.sh against AWS via zx; no src/integrations/* import.
+  'local-deploy-all': { title: 'Deploy all services from this machine', openWorld: true },
+  // local-deploy.ts:503 shares the same body as local-deploy-all (:304-321), running
+  // devops/scripts/deploy-<name>.sh against the authenticated AWS account via zx.
+  'local-deploy-selected': { title: 'Deploy selected services from this machine', openWorld: true },
+  // The only network path is worktrees-remove.ts:130, inside the picker `else` branch at :129-141.
+  // That branch is unreachable via MCP twice over: the inputSchema declares `versions` REQUIRED and
+  // omits `all` entirely, and assertMcpRemovalInput (:39-57, called at :97) throws under isMcpMode()
+  // on `all` and on missing `versions`.
+  'worktrees-remove': { title: 'Remove release worktrees', openWorld: false },
+  // Emits `unset` statements into a local shell script and returns its path; the whole output surface
+  // (filePath, unsetStatements, variableCount, purged) is local-file shaped, with no remote to contact.
+  'env-clear': { title: 'Clear environment variables', openWorld: false },
+
+  // --- Mutating, ungated (LOW_RISK_MUTATING_ALLOWLIST members — still destructive) ---
+  // release-desc-edit.ts:180 updateJiraVersion, :185 updateReleasePRBody. Overwrites existing text in
+  // two systems.
+  'release-desc-edit': { title: 'Edit release description', openWorld: true },
+  // worktrees-add.ts:82 getReleasePRsWithInfo(); :301 `pnpm install`. Additive in fact (existing
+  // worktrees are skipped, not errored) — reads destructive under the uniform derivation, the single
+  // accepted over-claim.
+  'worktrees-add': { title: 'Add release worktrees', openWorld: true },
+  // worktrees-sync.ts:45 getReleasePRs(). "Only removes — never creates".
+  'worktrees-sync': { title: 'Prune stale worktrees', openWorld: true },
+  // env-load.ts:17 imports src/integrations/doppler and downloads secrets. Destructive: :192
+  // "atomically write env-load.sh" into getSessionCacheDir() (:212) — a path deterministic per
+  // terminal session, so loading `dev` after `prod` OVERWRITES.
+  'env-load': { title: 'Load environment variables', openWorld: true },
+
+  // --- Not-read-only exception ---
+  // Spawns local editor and cmux processes on this machine; every output field (worktreePaths,
+  // ideProviders, cmuxOpened/Skipped/Closed) describes local window state and contacts no remote.
+  reopen: { title: 'Reopen project windows', openWorld: false },
+}
+
+/**
+ * Tools that modify machine state the {@link CommandCatalogEntry.mutating} predicate deliberately
+ * excludes — it covers only git/remote/consumer-repo/Doppler-env/fs-outside-cache state.
+ *
+ * This array may ONLY ever TIGHTEN a hint toward the spec default of `readOnlyHint: false`; it can
+ * never loosen one, because it is applied as a negation. `reopen` is `mutating: false` yet its
+ * MCP-reachable `force` flag closes cmux workspaces ("Close each cmux workspace first, then reopen
+ * (disruptive)") and reports them in `cmuxClosed`. Pinned by the T7 catalog test.
+ */
+export const NOT_READ_ONLY: readonly string[] = ['reopen']
+
+/**
+ * The MCP tools to register: catalog entries that are exposed and carry a tool, each widened with the
+ * display title and the protocol annotations derived from the catalog's own fields.
+ *
+ * `readOnlyHint` is DERIVED from `mutating` rather than hand-typed, so it cannot silently disagree
+ * with the field the confirm gate keys off. `destructiveHint` follows from it: present as `true` on
+ * every write tool, absent on every read tool (the spec makes it meaningless there). Only `title` and
+ * `openWorldHint` are declared, in {@link MCP_TOOL_PRESENTATION}.
+ *
+ * The returned objects are SPREAD COPIES — `{ ...entry.mcpTool, title, annotations }` — not the
+ * catalog's `mcpTool` object identities. `handler` survives as a reference, so dispatch is unaffected,
+ * but never write an identity comparison against `entry.mcpTool` on the strength of this return value.
+ */
+export const getExposedMcpTools = (): RegistrableMcpTool[] => {
   return commandCatalog.flatMap((entry) => {
-    return entry.mcpExposed && entry.mcpTool ? [entry.mcpTool] : []
+    if (!entry.mcpExposed || !entry.mcpTool) {
+      return []
+    }
+
+    const presentation = MCP_TOOL_PRESENTATION[entry.mcpTool.name]
+
+    // Scoped HERE rather than at module scope on purpose: this module is imported by every CLI command
+    // path, so a module-scope throw on a table typo would take down every command instead of only MCP
+    // registration. The T1/T3 catalog tests already red CI for a missing row.
+    if (!presentation) {
+      throw new Error(
+        `No MCP_TOOL_PRESENTATION entry for exposed tool "${entry.mcpTool.name}" — add a title and an evidence-cited openWorld value in command-catalog.ts.`,
+      )
+    }
+
+    const readOnlyHint = !entry.mutating && !NOT_READ_ONLY.includes(entry.mcpTool.name)
+
+    return [
+      {
+        ...entry.mcpTool,
+        title: presentation.title,
+        annotations: {
+          readOnlyHint,
+          ...(readOnlyHint ? {} : { destructiveHint: true }),
+          openWorldHint: presentation.openWorld,
+        },
+      },
+    ]
   })
 }
 

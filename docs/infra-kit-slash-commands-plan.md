@@ -1119,6 +1119,8 @@ them blocks another.
 
 ### 7.1 PR 1 — close the argument-substitution hole. Depends on nothing; ships first.
 
+> **Status (2026-09-05): implemented in the working tree, uncommitted.** `lib/tool-handler/confirm-token.ts` + `tool-handler.ts` (state helper, `confirmation_refused` terminal payload), `confirmToken` added to gated tools' `inputSchema` at registration in `mcp/tools/index.ts` (needed: `z.object` strips undeclared keys), `ctx` threaded through the registration wrapper. Tests: `tool-handler.test.ts` (R3 positive, canonical key order, R10 refusals: absent/mismatch/tamper/garbage/expired/bind/foreign key), `worktrees-remove-mcp-guards` and e2e `assertConfirmedCallExecutes` rewritten to a real round 1 → round 2, the w1 differential gained **D9** (authored: `confirmToken` on exactly the gated set). Deviation from the text above: the token is bound by tool name via a `{ toolName }` bind context (the SDK types `ctx` as `ServerContext`), and the mutation test's literal predicate `requiresHumanConfirm === true` is preserved inside a named state helper.
+
 **§0.12 is a live defect in shipped code.** It is not contingent on any decision in this plan — including
 all three of the user's — and it is the one PR here that fixes something already broken rather than
 adding something new.

@@ -10,20 +10,19 @@ export interface AssertManagementContextArgs {
 
 /**
  * The preflight for a command that never touches an existing checkout: it needs a
- * repository and a resolvable `origin`, and nothing else.
- *
- * Deliberately narrower than {@link assertManagementContext}, and the omissions
- * are the point rather than an oversight:
- *
- * - **No linked-worktree check.** The command does its work in a scratch worktree
- *   of its own, so where it was invoked from is irrelevant.
- * - **No clean-tree check.** It reads `refs/remotes/*` and writes only to its own
- *   scratch checkout, so the operator's uncommitted work is never at stake. The
- *   old guard forced a stash before what is, in effect, a remote-refs operation.
- *
- * Keeping this separate leaves `assertManagementContext` untouched for the
- * commands that genuinely do consume the operator's checkout.
+ * repository and a resolvable `origin`, and nothing else. Deliberately narrower than
+ * {@link assertManagementContext} — no linked-worktree check and no clean-tree check.
  */
+// The omissions are the point rather than an oversight:
+//
+// - No linked-worktree check. The command does its work in a scratch worktree of its own, so where
+//   it was invoked from is irrelevant.
+// - No clean-tree check. It reads `refs/remotes/*` and writes only to its own scratch checkout, so
+//   the operator's uncommitted work is never at stake. The old guard forced a stash before what is,
+//   in effect, a remote-refs operation.
+//
+// Keeping this separate leaves `assertManagementContext` untouched for the commands that genuinely
+// do consume the operator's checkout.
 export const assertRepoWithOrigin = async (args: AssertManagementContextArgs): Promise<void> => {
   const { operation } = args
 
@@ -47,21 +46,21 @@ export const assertRepoWithOrigin = async (args: AssertManagementContextArgs): P
 }
 
 /**
- * Guard release- and worktree-management commands so they run only from the
- * main repository checkout, with a clean working tree.
+ * Guard release- and worktree-management commands so they run only from the main repository
+ * checkout, with a clean working tree. Both refusals throw {@link OperationError}, which surfaces
+ * uniformly to CLI users and MCP-connected agents.
  *
- * Deliberately says nothing about which branch you are on. The commands that
- * need a canonical branch (`release-create`, `gh-merge-dev`) switch onto it
- * themselves, after their confirmation prompt and behind a `git fetch`, which a
- * guard running before consent could do neither of; the rest (`worktrees-*`)
- * address branches by name and never read `HEAD`. A branch assertion here would
- * only refuse work that is about to succeed anyway.
- *
- * What is left are the two states no command can recover from on the operator's
- * behalf: a linked worktree (wrong checkout entirely) and a dirty tree (their
- * uncommitted work is at stake). Both throw {@link OperationError}, which
- * surfaces uniformly to CLI users and MCP-connected agents.
+ * Deliberately says nothing about which branch you are on.
  */
+// The two states checked are the ones no command can recover from on the operator's behalf: a
+// linked worktree (the wrong checkout entirely) and a dirty tree (their uncommitted work is at
+// stake).
+//
+// No branch assertion, because the commands that need a canonical branch (`release-create`,
+// `gh-merge-dev`) switch onto it themselves, after their confirmation prompt and behind a
+// `git fetch` — neither of which a guard running before consent could do. The rest
+// (`worktrees-*`) address branches by name and never read `HEAD`. A branch assertion here would
+// only refuse work that is about to succeed anyway.
 export const assertManagementContext = async (args: AssertManagementContextArgs): Promise<void> => {
   const { operation } = args
 

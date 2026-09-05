@@ -1,4 +1,6 @@
 /**
+ * @fileoverview
+ *
  * Whole-graph ESM invalidation for `infra-kit dev --watch`, via a synchronous `module.registerHooks`
  * resolve hook.
  *

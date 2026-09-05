@@ -16,21 +16,20 @@ interface ReuseZedWorkspaceOutcome {
  * Reflects a worktree removal in the open Zed window by running
  * `zed --reuse <root> <remaining release worktrees...>`.
  *
- * IMPORTANT — this is destructive: `--reuse` REPLACES the focused window's
- * ENTIRE folder set with exactly these paths. The remaining set is built from
- * release worktrees only (`getCurrentWorktrees('release')`), so any other folder
- * open in that window — feature worktrees, scratch dirs, user-added dirs — is
- * DROPPED and is NOT recoverable by infra-kit (Zed offers no undo and we keep no
- * record of the prior set). The caller MUST therefore only invoke this on an
- * interactive path where a human is present and can re-add folders via
- * `zed --add`. We emit a disclosure log line saying as much.
- *
- * Distinct from `openZedWorkspace`, which runs `zed <paths>` WITHOUT `--reuse`
- * to realize a multi-folder workspace; that does not replace a focused window.
+ * IMPORTANT — this is destructive: `--reuse` REPLACES the focused window's ENTIRE folder set with
+ * exactly these paths, so the caller MUST only invoke it on an interactive path where a human is
+ * present and can re-add folders via `zed --add`. A disclosure log line says as much.
  *
  * Best-effort: any launch failure is swallowed into a warning, mirroring
  * `openZedWorkspace`. Root is always included so the path list is never empty.
  */
+// The remaining set is built from release worktrees only (`getCurrentWorktrees('release')`), so
+// any other folder open in that window — feature worktrees, scratch dirs, user-added dirs — is
+// DROPPED and is NOT recoverable by infra-kit: Zed offers no undo and we keep no record of the
+// prior set.
+//
+// Distinct from `openZedWorkspace`, which runs `zed <paths>` WITHOUT `--reuse` to realize a
+// multi-folder workspace; that does not replace a focused window.
 export const reuseZedWorkspace = async (args: ReuseZedWorkspaceArgs): Promise<ReuseZedWorkspaceOutcome> => {
   const { projectRoot, worktreeDir, remainingBranches } = args
 

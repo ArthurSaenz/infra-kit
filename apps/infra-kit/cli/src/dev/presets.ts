@@ -247,11 +247,9 @@ const addTarget = (
  *   { apps: { 'client/ui': {}, 'client/api': { watchDeps: false } } },
  *   { api: ['client'], ui: ['client'] },
  * )
- * // => {
- * //   targets: [{ app: 'client', part: 'ui', watchDeps: true },   // default participate
- * //             { app: 'client', part: 'api', watchDeps: false }], // explicit opt-out
- * //   cmux: false, proxy: {}, localApps: ['client'], unmatched: [],
- * // }
+ * // => { targets: [{ app: 'client', part: 'ui', watchDeps: true },    // default participate
+ * //                { app: 'client', part: 'api', watchDeps: false }], // explicit opt-out
+ * //      cmux: false, proxy: {}, localApps: ['client'], unmatched: [] }
  */
 export const resolvePreset = (preset: DevPreset, discovered: DiscoveredParts): ResolvedPreset => {
   const entries = Object.entries(preset.apps ?? ALL_TARGETS_KEYS)

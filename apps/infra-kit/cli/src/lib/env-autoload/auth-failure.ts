@@ -13,24 +13,21 @@
 /**
  * Decide whether a caught failure is an AUTH-class failure — durable and the user's to
  * fix (no token minted, a bad/revoked/mis-scoped token, an unreadable token store) —
- * rather than a transient one (network, timeout, Doppler down).
- *
- * Takes the ERROR, not its text. env-autoload catches what `env-load` THREW, and by
- * then `translateDopplerDownloadError` has already replaced Doppler's raw stderr with
- * a human-facing message — so the raw markers this used to grep for were never there.
- * That is exactly how a revoked token shipped silent with green tests on both sides.
- * The classification now rides ON the error (`EnvAuthError`).
- *
- * Injected as `isAuthFailure` into `runEnvAutoLoad` so the auto-load policy stays
+ * rather than a transient one (network, timeout, Doppler down). Takes the ERROR, not its
+ * text. Injected as `isAuthFailure` into `runEnvAutoLoad` so the auto-load policy stays
  * testable without a Doppler in the loop; the DEFAULT is `isEnvAuthFailure`, the type
  * guard from `lib/errors/env-auth-error`.
- *
- * That default is deliberately WIDER than `isDopplerAuthError`. Narrowing it back to
- * "Doppler refused us" re-opens the bug in its second form: a MISSING token (the
- * migration case — the user upgraded and never minted one) never reaches Doppler at
- * all, and a CORRUPT store never reaches the resolver, so neither would be auth-class,
- * neither would write the sticky marker, and both would go silent forever.
  */
+// Why the error and not its text: env-autoload catches what `env-load` THREW, and by then
+// `translateDopplerDownloadError` has already replaced Doppler's raw stderr with a human-facing
+// message — so the raw markers this used to grep for were never there. That is exactly how a
+// revoked token shipped silent with green tests on both sides.
+//
+// The default is deliberately WIDER than `isDopplerAuthError`. Narrowing it back to "Doppler
+// refused us" re-opens the bug in its second form: a MISSING token (the migration case — the user
+// upgraded and never minted one) never reaches Doppler at all, and a CORRUPT store never reaches
+// the resolver, so neither would be auth-class, neither would write the sticky marker, and both
+// would go silent forever.
 export type AuthFailureClassifier = (error: unknown) => boolean
 
 /** The sticky auth-failure marker's on-disk shape (`autoload-auth-fail.json`). */
@@ -71,27 +68,9 @@ export const parseAuthFailureMarker = (value: unknown): AuthFailureMarker | null
  * that the token is missing/invalid/unreadable, gives the exact fix command, and points
  * at the Doppler dashboard page a replacement token is minted on.
  *
- * "MISSING, INVALID, OR UNREADABLE" spans the whole auth class on purpose. It covers the
- * three durable failures that all land here and all share this one entry point:
- *  - missing   — no token minted for this env (the MIGRATION case: upgraded, never ran env-token-set);
- *  - invalid   — Doppler refused it (revoked, garbage, or scoped to another config);
- *  - unreadable — the token STORE is corrupt JSON, or belongs to a same-named foreign repo.
- * The last of these is neither invalid nor missing, and calling it either would misdescribe the
- * user's machine. `env-token-set` is still the right first move for all three — it is where a
- * broken store surfaces its own, more specific "fix or delete the file" refusal.
- *
  * Deliberately does NOT interpolate the marker's `reason`: the warning is the one
  * thing guaranteed to reach a human, and no token value may ever be printed. The
  * reason goes to `logger.debug` instead.
- *
- * The fix command is written in a BACKTICK code span, which is the repo convention
- * for naming a command to a human AND the anchor `program.test.ts` scans to prove
- * every command we print is a command we accept. Written without backticks it would
- * be invisible to that guard and free to rot.
- *
- * (Which is also why this @example names the command as `infra-kit env-token-set <env>`
- * rather than with a literal arg: to that scan an `<env>` placeholder ends the command,
- * but a literal `dev` is indistinguishable from a subcommand and reads as a dead one.)
  *
  * @example
  * buildAuthFailureWarning('dev')
@@ -99,6 +78,21 @@ export const parseAuthFailureMarker = (value: unknown): AuthFailureMarker | null
  * //     auto-load is not running. Fix: run `infra-kit env-token-set <env>` (mint one at
  * //     https://dashboard.doppler.com under this config's Access tab)', with <env> = dev
  */
+// "MISSING, INVALID, OR UNREADABLE" spans the whole auth class on purpose. It covers the three
+// durable failures that all land here and all share this one entry point:
+//  - missing    — no token minted for this env (the MIGRATION case: upgraded, never ran env-token-set);
+//  - invalid    — Doppler refused it (revoked, garbage, or scoped to another config);
+//  - unreadable — the token STORE is corrupt JSON, or belongs to a same-named foreign repo.
+// The last of these is neither invalid nor missing, and calling it either would misdescribe the
+// user's machine. `env-token-set` is still the right first move for all three — it is where a
+// broken store surfaces its own, more specific "fix or delete the file" refusal.
+//
+// The fix command is written in a BACKTICK code span, which is the repo convention for naming a
+// command to a human AND the anchor `program.test.ts` scans to prove every command we print is a
+// command we accept. Written without backticks it would be invisible to that guard and free to rot.
+// (Which is also why the @example names the command as `infra-kit env-token-set <env>` rather than
+// with a literal arg: to that scan an `<env>` placeholder ends the command, but a literal `dev` is
+// indistinguishable from a subcommand and reads as a dead one.)
 export const buildAuthFailureWarning = (config: string): string => {
   return (
     `infra-kit: Doppler token for env "${config}" is missing, invalid, or unreadable — env auto-load is not running. ` +

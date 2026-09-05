@@ -1,4 +1,6 @@
 /**
+ * @fileoverview
+ *
  * Process-level crash barrier for the resident single-process dev-server.
  *
  * The backends run IN-PROCESS (`ServerlessLocalRun` is an in-process fastify that `import()`s the

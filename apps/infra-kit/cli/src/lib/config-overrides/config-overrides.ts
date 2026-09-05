@@ -14,21 +14,22 @@ export interface OverrideSummary {
  * `doctor`). ONE JSON-tolerance policy, shared — the two diagnostics must never disagree about what
  * a given file on disk means.
  *
- * RAW keys, deliberately — `Object.keys(JSON.parse(raw))`, never the config loader's `loadLayer`.
- * That one throws on malformed JSON and on schema failure, and the schema object is strict, so a
- * single typo'd top-level key would invalidate the whole layer and turn these diagnostic commands
- * into throwers — precisely when the user reaches for them. Raw keys also surface the typo (a
- * misspelled `devServersPreset` shows up in the list) instead of swallowing it.
- *
  * Any read/parse failure degrades to "no overrides" plus `unreadable: true`. An empty or
- * whitespace-only file is treated as `{}` (the same tolerance `loadLayer` has). A file that parses
- * but is NOT a plain object (`[1,2,3]`, `"x"`, `null`, `7`) is also `unreadable` — it cannot be a
- * merge layer, and reporting an array's indices as `(3 override(s): 0, 1, 2)` would be a lie.
+ * whitespace-only file is treated as `{}`. A file that parses but is NOT a plain object
+ * (`[1,2,3]`, `"x"`, `null`, `7`) is also `unreadable`.
  *
  * @example
  * await readOverrideSummary('/u/.infra-kit/projects/api/infra-kit.json', true)
  * // => { hasOverrides: true, overrideKeys: ['ide', 'dev'], unreadable: false }
  */
+// RAW keys, deliberately — `Object.keys(JSON.parse(raw))`, never the config loader's `loadLayer`.
+// That one throws on malformed JSON and on schema failure, and the schema object is strict, so a
+// single typo'd top-level key would invalidate the whole layer and turn these diagnostic commands
+// into throwers — precisely when the user reaches for them. Raw keys also surface the typo (a
+// misspelled `devServersPreset` shows up in the list) instead of swallowing it.
+//
+// The empty-file tolerance mirrors `loadLayer`'s. A non-object cannot be a merge layer, and
+// reporting an array's indices as `(3 override(s): 0, 1, 2)` would be a lie.
 export const readOverrideSummary = async (filePath: string, exists: boolean): Promise<OverrideSummary> => {
   if (!exists) {
     return { hasOverrides: false, overrideKeys: [], unreadable: false }

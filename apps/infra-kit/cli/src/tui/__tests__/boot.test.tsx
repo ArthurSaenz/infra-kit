@@ -6,6 +6,8 @@ import { acquireStdin, releaseStdin } from 'src/lib/prompts/stdin-ref'
 import type { PaletteItem } from '../types'
 
 /**
+ * @fileoverview
+ *
  * `renderToStderr` used to re-ref `process.stdin` UNCONDITIONALLY after every Ink render,
  * and this file used to assert exactly that — seven tests, all named "re-refs
  * process.stdin". They were green, and they were pinning a hang: a ref'd tty ReadStream
@@ -136,28 +138,31 @@ describe('renderToStderr stdin ownership — a reader is live', () => {
 })
 
 /**
- * `unref()` answers "may node exit?", NOT "is anyone still reading this fd?". Ink's teardown drops its
- * `readable` listener and unrefs (App.js:136-137) but never pauses, so libuv keeps reading the tty into
- * the stream's buffer. The session shell then spawns the picked command with `stdio: 'inherit'` — parent
- * and child on the SAME tty — and the kernel gives each keystroke to exactly one of them. Measured on a
- * pty before the fix: a lone Esc at a child's prompt cancelled 1 run in 5 under the session shell versus
- * 5 in 5 without it, and a wedged run swallowed every following Ctrl-C, because the parent ate the byte.
+ * `unref()` answers "may node exit?", NOT "is anyone still reading this fd?" — so the parent keeps
+ * eating tty bytes a `stdio: 'inherit'` child should have received.
  *
  * WHAT THESE TESTS ARE, HONESTLY — `pause` is spied and MOCKED, so they assert only that the branch
- * CALLS it. **They would all stay green if `process.stdin.pause()` were replaced with a no-op**, so do
- * not read them as evidence that the fix works. Two other files carry that:
- *   - `stdin-pause-semantics.test.ts` — the node contract that makes `pause()` reach libuv at all
- *     (cross-platform, runs on CI);
- *   - `stdin-pause-pty.test.ts` — the consequence, that a spawned child owns the tty, plus the
- *     call-site invariant (darwin-only; verified 5/5 with the fix, 0/5 without).
- *
- * What these three DO cover is the part neither of those can reach: that pausing is conditional on the
- * reader counter, because pausing while an outer inquirer prompt is live would starve it. Mocking is
- * correct here — a real pause is precisely what must not happen in the third case.
- *
- * The pty test in entry/__tests__ is unrelated: it proves a quit key AT THE PALETTE kills the process,
- * and here the palette is already gone.
+ * CALLS it. **They would all stay green if `process.stdin.pause()` were replaced with a no-op**, so
+ * do not read them as evidence that the fix works. What they DO cover is that pausing is
+ * CONDITIONAL on the reader counter, which is the part no other file can reach.
  */
+// Mechanism: Ink's teardown drops its `readable` listener and unrefs (App.js:136-137) but never
+// pauses, so libuv keeps reading the tty into the stream's buffer. The session shell then spawns
+// the picked command with `stdio: 'inherit'` — parent and child on the SAME tty — and the kernel
+// gives each keystroke to exactly one of them. Measured on a pty before the fix: a lone Esc at a
+// child's prompt cancelled 1 run in 5 under the session shell versus 5 in 5 without it, and a
+// wedged run swallowed every following Ctrl-C, because the parent ate the byte.
+//
+// Two other files carry the evidence this one cannot:
+//   - `stdin-pause-semantics.test.ts` — the node contract that makes `pause()` reach libuv at all
+//     (cross-platform, runs on CI);
+//   - `stdin-pause-pty.test.ts` — the consequence, that a spawned child owns the tty, plus the
+//     call-site invariant (darwin-only; verified 5/5 with the fix, 0/5 without).
+//
+// Mocking is correct here: pausing while an outer inquirer prompt is live would starve it, so a
+// real pause is precisely what must not happen in the third case. The pty test in `entry/__tests__`
+// is unrelated — it proves a quit key AT THE PALETTE kills the process, and here the palette is
+// already gone.
 describe('renderToStderr stops reading stdin so a spawned child can own the tty', () => {
   it('pauses stdin after the palette exits, so the next child is the only reader', async () => {
     const { pause } = spyOnStdin()

@@ -49,22 +49,13 @@ const buildMessage = (cause: unknown, ctx: OperationErrorContext): string => {
  * `src/integrations/doppler/doppler-errors.ts`.
  *
  * @example
- * // wrap a zx subprocess failure
- * try {
- *   await $`git worktree add ${path} ${branch}`
- * } catch (err) {
- *   throw new OperationError(err, {
- *     operation: `git worktree add for ${branch}`,
- *     remediation: 'check the branch name and that the parent dir is writable',
- *   })
- * }
- * @example
- * // validation failure with no underlying cause
- * throw new OperationError(undefined, {
- *   operation: 'launch deploy-all workflow',
- *   remediation: `pass one of: ${environments.join(', ')}`,
- *   stderrExcerpt: `invalid environment: ${selectedEnv}`,
+ * throw new OperationError(err, {
+ *   operation: `git worktree add for ${branch}`,
+ *   remediation: 'check the branch name and that the parent dir is writable',
  * })
+ * @example
+ * // validation failure, with no underlying cause to wrap
+ * throw new OperationError(undefined, { operation: 'launch deploy-all workflow', remediation })
  */
 export class OperationError extends Error {
   readonly operation: string

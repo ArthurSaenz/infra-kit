@@ -8,6 +8,8 @@ import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 import { ghMergeDev } from '../gh-merge-dev'
 
 /**
+ * @fileoverview
+ *
  * Regression guard for the load-bearing `!process.stdin.isTTY` clause in
  * `src/lib/prompts/release-picker.ts`. `gh-merge-dev` is `mcpExposed: true` with
  * its sole input (`all`) `.optional()`, so an MCP call with `{}` genuinely enters

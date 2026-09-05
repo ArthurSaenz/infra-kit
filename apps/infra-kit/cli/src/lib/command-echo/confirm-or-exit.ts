@@ -1,13 +1,5 @@
-import confirm from '@inquirer/confirm'
-import process from 'node:process'
-
-import { CommandDeclinedError } from 'src/lib/errors/command-declined-error'
-import { logger } from 'src/lib/logger'
-import { withEscape } from 'src/lib/prompts/escapable-context'
-
-import { commandEcho } from './command-echo'
-
 /**
+ * @fileoverview
  * Shared interactive-confirmation gate for mutating commands.
  *
  * When `confirmedCommand` is truthy (CLI `--yes` or an MCP call, which always
@@ -31,6 +23,15 @@ import { commandEcho } from './command-echo'
  * Callers remain responsible for their own `commandEcho.addOption('--yes', …)`
  * bookkeeping, which varies between commands.
  */
+import confirm from '@inquirer/confirm'
+import process from 'node:process'
+
+import { CommandDeclinedError } from 'src/lib/errors/command-declined-error'
+import { logger } from 'src/lib/logger'
+import { withEscape } from 'src/lib/prompts/escapable-context'
+
+import { commandEcho } from './command-echo'
+
 export interface ConfirmOrExitOptions {
   /**
    * Throw {@link CommandDeclinedError} on a decline instead of `process.exit(0)`.

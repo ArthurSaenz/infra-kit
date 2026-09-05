@@ -9,6 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { buildOptions } from '../../../scripts/build.js'
 
 /**
+ * @fileoverview
+ *
  * The consequence half of the `process.stdin.pause()` fence (tui/boot.tsx). `stdin-pause-semantics`
  * pins the node CONTRACT and runs everywhere; this pins what the contract BUYS — that after the
  * palette tears down, a `stdio: 'inherit'` child is the only reader of the tty — and it needs a real

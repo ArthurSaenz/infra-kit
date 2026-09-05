@@ -58,12 +58,7 @@ export const textContent = (text: string): ToolsExecutionResult['content'] => {
  *   name: 'env-load',
  *   description: '...',
  *   inputSchema: { config: z.string() },
- *   outputSchema: {
- *     filePath: z.string(),
- *     variableCount: z.number(),
- *     project: z.string(),
- *     config: z.string(),
- *   },
+ *   outputSchema: { filePath: z.string(), variableCount: z.number() },
  *   handler: envLoad,
  * })
  */

@@ -1,3 +1,4 @@
+export { checkAgentGuidance } from './agent-guidance-check'
 export { checkConfig } from './config-check'
 export { checkFiles } from './files-check'
 export { checkScripts } from './scripts-check'

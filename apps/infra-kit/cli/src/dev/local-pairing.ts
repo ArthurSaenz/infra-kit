@@ -1,4 +1,6 @@
 /**
+ * @fileoverview
+ *
  * Detect a BROKEN LOCAL PAIRING: a frontend route this run meant to serve from a local backend, whose
  * backend is not actually up.
  *
@@ -144,10 +146,8 @@ const cloudTargetOf = (
  * findDegradedRoutes({
  *   uis: [{ app: 'client', cloudTemplate: 'https://<env>.hulyo.co.il',
  *           routes: { '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' } } }],
- *   wanted: new Set(['backend-api']),
- *   running: new Set(),
+ *   wanted: new Set(['backend-api']), running: new Set(), env: 'dev',
  *   reasons: new Map([['backend-api', { app: 'client', reason: "config is missing field: 'connectionURL'" }]]),
- *   env: 'dev',
  * })
  * // => [{ uiApp: 'client', route: '/api', packageName: 'backend-api', fallback: 'cloud', apiApp: 'client',
  * //       reason: "config is missing field: 'connectionURL'", cloudTarget: 'https://dev.hulyo.co.il' }]

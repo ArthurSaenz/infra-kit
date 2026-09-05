@@ -68,6 +68,8 @@ export const DETECTOR_IDS = [
   'error-handling-consistency',
   'no-default-export',
   'comment-staleness',
+  'comment-restates-code',
+  'comment-summary-too-long',
   // async-correctness
   'floating-promise',
   'misused-promise',

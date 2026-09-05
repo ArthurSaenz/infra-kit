@@ -486,4 +486,126 @@ function getAccount(accountId: string): Account {
     references: ['https://archlinter.github.io/archlint/detectors/'],
     tags: ['ai-agentic'],
   },
+  {
+    id: 'comment-restates-code',
+    group: DetectorGroup.aiAgentic,
+    scope: 'file',
+    title: 'Comment Restates the Code',
+    description:
+      'Flags a comment whose content only restates the identifier, call, or assignment directly beneath it, adding no information beyond what the code already says.',
+    rationale:
+      'The policy is comment the why, never the what: a comment that would only restate what the code already says (a name, a type, an obvious assignment) adds no information for a human or an agent reading it. A comment that just repeats the callee or variable name it sits above is pure noise — it costs tokens and reading time without narrowing the reader’s uncertainty about anything.',
+    defaultSeverity: Severity.warn,
+    appliesTo: 'any',
+    status: 'proposed',
+    examples: [
+      {
+        label: 'line comment restates the call it precedes',
+        bad: `// Ask for confirmation
+await confirmOrExit(confirmedCommand, 'Are you sure you want to proceed with these worktree changes?')`,
+        good: `await confirmOrExit(confirmedCommand, 'Are you sure you want to proceed with these worktree changes?')`,
+        note: 'confirmOrExit already says it asks for confirmation; the comment adds nothing. Real site: apps/infra-kit/cli/src/commands/worktrees-add/worktrees-add.ts:126.',
+      },
+      {
+        label: 'line comment restates the variable it initializes',
+        bad: `// Validate all selected services
+const invalidServices = selectedServices.filter((service) => !knownServices.includes(service))`,
+        good: `const invalidServices = selectedServices.filter((service) => !knownServices.includes(service))`,
+        note: 'invalidServices already names what the filter validates; delete the comment.',
+      },
+    ],
+    eslint: {
+      messageId: 'commentRestatesCode',
+      fixable: null,
+      recommended: false,
+    },
+    options: [
+      {
+        name: 'minOverlapRatio',
+        type: 'number',
+        description:
+          'Minimum lexical-overlap ratio between a comment and the statement it precedes for the comment to be flagged as a restatement. Threshold to be set by the Unit 3 measurement pass against the repo corpus; no default yet.',
+      },
+      {
+        name: 'checkLineComments',
+        type: 'boolean',
+        default: true,
+        description: 'Whether to inspect `//` line comments in addition to block/JSDoc comments.',
+      },
+    ],
+    existing: {
+      status: 'none',
+      plugin: 'jsdoc',
+      rule: 'informative-docs',
+      enabledInRepo: false,
+      note: 'jsdoc/informative-docs is installed and reachable (warn in the vendor eslint-config, hidden by --quiet), but yields zero findings at error over apps/infra-kit/cli/src, and it never inspects // line comments at all — every restatement in the corpus is a line comment. status: none because a rule that finds nothing covers nothing.',
+    },
+    tags: ['ai-agentic'],
+  },
+  {
+    id: 'comment-summary-too-long',
+    group: DetectorGroup.aiAgentic,
+    scope: 'file',
+    title: 'JSDoc Summary Paragraph Too Long',
+    description:
+      'Flags a JSDoc block whose summary paragraph — from the first prose line to the first blank line or first @tag — runs longer than the configured line budget.',
+    rationale:
+      'A human should be able to grasp the essence of a comment in 3 to 5 lines. A summary paragraph that runs on past that budget stops being a summary and starts being the whole explanation up front, which defeats the point of a summary/detail split for both a human skimming the block and an agent trying to bound how much of it to read before deciding whether the detail below matters.',
+    defaultSeverity: Severity.warn,
+    appliesTo: 'any',
+    status: 'stable',
+    examples: [
+      {
+        label: 'summary paragraph runs seven lines before the first blank line',
+        bad: `/**
+ * Resolves the deploy target for the given service by first checking the
+ * explicit --env flag, then falling back to the branch-derived environment,
+ * then the account's default stage, then the last-known-good stage recorded
+ * in the lock file, then finally erroring out if none of those produce a
+ * value that matches one of the configured environments in the project's
+ * infra-kit.json, because an unresolved target must never silently deploy
+ * somewhere unintended.
+ * @param service - the service to resolve a target for
+ */
+function resolveDeployTarget(service: string): DeployTarget {
+  // ...
+}`,
+        good: `/**
+ * Resolves the deploy target for a service.
+ *
+ * Falls back through --env, the branch-derived environment, the account's
+ * default stage, and the lock file's last-known-good stage, in that order.
+ * Errors if none resolve to a configured environment, rather than deploying
+ * somewhere unintended.
+ * @param service - the service to resolve a target for
+ */
+function resolveDeployTarget(service: string): DeployTarget {
+  // ...
+}`,
+        note: 'A 2-line summary states the essence; the blank line hands the rest to the detail paragraph.',
+      },
+    ],
+    eslint: {
+      messageId: 'jsdocSummaryTooLong',
+      fixable: null,
+      recommended: true,
+    },
+    options: [
+      {
+        name: 'maxSummaryLines',
+        type: 'number',
+        default: 5,
+        description:
+          'Max lines from the JSDoc summary’s first prose line to the first blank line or first @tag before it is flagged as too long.',
+      },
+    ],
+    existing: {
+      status: 'covered',
+      plugin: 'slip-stream-kit',
+      rule: 'max-jsdoc-summary-lines',
+      enabledInRepo: true,
+      note: "Covered by max-jsdoc-summary-lines in the workspace plugin @slip-stream-kit/eslint-plugin@0.4.0, with the same 5-line default and the same summary boundary (first prose line to the first blank line or first @tag). Enabled at warn for apps/infra-kit/cli/src since 2026-09-05, in that package's own eslint.config.js, under the namespace @ik. The namespace is not cosmetic: the base config @wl/eslint-config registers the PUBLISHED plugin (0.1.23, which does not ship this rule) as @wl, so the rule is only reachable through a second namespace bound to the workspace build. It reaches this package by a workspace:* devDependency link, which resolves to the plugin's dist/ — a rule edit needs a plugin rebuild to take effect here. The vendor path still cannot carry it: configs/eslint-config is checksum-pinned in vendor/.sync-manifest.json with no regeneration command, so enabling it there fails vendor check. The sibling @wl/max-jsdoc-lines caps the whole block at 15 lines and composes with this one rather than overlapping it.",
+    },
+    tags: ['ai-agentic'],
+  },
 ]

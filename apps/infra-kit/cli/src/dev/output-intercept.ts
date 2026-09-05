@@ -5,6 +5,8 @@
  */
 /* eslint-disable no-console */
 /**
+ * @fileoverview
+ *
  * Routes every line the dev process emits into the per-service log files, so the terminal can be given
  * over entirely to the status panel.
  *

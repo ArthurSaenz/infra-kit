@@ -6,6 +6,7 @@ import { componentArrowFunction } from './component-arrow-function'
 import { componentFileOrder } from './component-file-order'
 import { maxComponentsPerFile } from './max-components-per-file'
 import { maxJsdocLines } from './max-jsdoc-lines'
+import { maxJsdocSummaryLines } from './max-jsdoc-summary-lines'
 import { maxJsxReturnSize } from './max-jsx-return-size'
 import { propsDestructuringBlankLine } from './props-destructuring-blank-line'
 import { propsDestructuringNewline } from './props-destructuring-newline'
@@ -24,6 +25,7 @@ export const rules: Record<string, Rule.RuleModule> = {
   'max-components-per-file': maxComponentsPerFile,
   'max-jsx-return-size': maxJsxReturnSize,
   'max-jsdoc-lines': maxJsdocLines,
+  'max-jsdoc-summary-lines': maxJsdocSummaryLines,
   'require-component-stories': requireComponentStories,
   'require-jsdoc-example': requireJsdocExample,
 }

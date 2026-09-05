@@ -35,21 +35,21 @@ const TOKEN_DIR_MODE = 0o700
  * The store's OWN schema: `{ version?: 1, envs: { <env>: <token> } }`. Deliberately NOT derived from
  * `infraKitConfigObject`: this file is not a merge layer, so `.strict()` here is free (a typo is a
  * loud error in three readers, not a bricked CLI).
- *
- * HAND-AUTHORABILITY IS THE CONSTRAINT THIS SHAPE IS CHOSEN FOR, and two earlier fields were dropped
- * for it — do not re-add either without re-deciding that:
- *
- *  - `version` is OPTIONAL (defaulted to 1) because a store typed by a human carries no version key,
- *    and a store the CLI refuses to read is a store the human cannot write.
- *  - `repoRoot` is GONE, and with it the refusal that compared it against the current checkout. That
- *    guard was real: the store directory is keyed on `path.basename(mainRepoRoot)`, so `~/work/api`
- *    and `~/oss/api` share ONE token directory and repo B could load (and then overwrite) repo A's
- *    credentials. It was removed anyway, knowingly: it also made the CLI refuse every hand-written
- *    store, which carries no such field. Hand-authorability wins; the basename-collision risk is
- *    ACCEPTED. A weakened version of the guard (warn-and-continue, or "only check when present") is
- *    NOT the compromise here — it would re-introduce the same refusal for anyone who did write the
- *    field. If you want the guard back, key the store directory on something collision-free instead.
  */
+// HAND-AUTHORABILITY IS THE CONSTRAINT THIS SHAPE IS CHOSEN FOR, and two earlier fields were
+// dropped for it — do not re-add either without re-deciding that:
+//
+//  - `version` is OPTIONAL (defaulted to 1) because a store typed by a human carries no version
+//    key, and a store the CLI refuses to read is a store the human cannot write.
+//  - `repoRoot` is GONE, and with it the refusal that compared it against the current checkout.
+//    That guard was real: the store directory is keyed on `path.basename(mainRepoRoot)`, so
+//    `~/work/api` and `~/oss/api` share ONE token directory and repo B could load (and then
+//    overwrite) repo A's credentials. It was removed anyway, knowingly: it also made the CLI refuse
+//    every hand-written store, which carries no such field. Hand-authorability wins; the
+//    basename-collision risk is ACCEPTED. A weakened version of the guard (warn-and-continue, or
+//    "only check when present") is NOT the compromise here — it would re-introduce the same refusal
+//    for anyone who did write the field. If you want the guard back, key the store directory on
+//    something collision-free instead.
 const tokenStoreSchema = z
   .object({
     version: z.literal(TOKEN_STORE_VERSION).default(TOKEN_STORE_VERSION),

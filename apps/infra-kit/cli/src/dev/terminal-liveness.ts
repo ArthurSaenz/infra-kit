@@ -1,4 +1,6 @@
 /**
+ * @fileoverview
+ *
  * Owns the `'error'` channel of `process.stdout` / `process.stderr` — the ONLY point at which a failed
  * stdio write can be observed, and therefore the only place the fault loop can be cut.
  *

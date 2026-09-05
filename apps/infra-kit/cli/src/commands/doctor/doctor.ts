@@ -23,6 +23,7 @@ import {
 import type { HandshakeResult, PortlessRoute } from 'src/dev/proxy/portless-driver'
 import { INFRA_KIT_ENV_TOKEN_VAR, probeEnvToken, resolveEnvToken } from 'src/integrations/doppler'
 import type { EnvTokenProbe, EnvTokenSource, ResolvedEnvToken } from 'src/integrations/doppler'
+import { inspectPackageGuidance, readGuidanceFile } from 'src/lib/agent-guidance'
 import { describeOverrides, readOverrideSummary } from 'src/lib/config-overrides'
 import { DEFAULT_WARM_TTL_SECONDS, ENV_LOAD_FILE, getProjectWarmCacheDir } from 'src/lib/constants'
 import { getTokenStorePath, readTokenStore } from 'src/lib/env-tokens'
@@ -37,10 +38,14 @@ import {
 } from 'src/lib/infra-kit-config'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { hasManagedBlock } from 'src/lib/managed-block'
+import { discoverPackages } from 'src/lib/package-validator/loader'
 import { tildify } from 'src/lib/path-display'
 import { listProjectEnvNames } from 'src/lib/project-envs'
+import { sortVersions } from 'src/lib/version-utils'
 import { canonicalizeProjectRoot } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
+
+import packageJson from '../../../package.json' with { type: 'json' }
 
 /**
  * One diagnosis. `name` is a stable public identifier — it is returned over MCP, keyed by the report's
@@ -449,27 +454,28 @@ const defaultReadEnvToken = (): string | undefined => {
 /**
  * Does this project HOLD any Doppler service token at all?
  *
- * The FIRST question in this section, and the only one that is repo-shaped rather than env-shaped:
- * every project this CLI drives authenticates through `~/.infra-kit/projects/<repo>/tokens.json`, so
- * a checkout with no store is a checkout that cannot load an env, deploy, or read a secret — whatever
- * `envAutoLoad` happens to say. Before this check existed that state was reported as THREE passes
- * (`env tokens configured` passes outright when no `envAutoLoad` is configured, and the other two
- * skip), so a green report meant nothing on exactly the machine that needed the report most.
- *
- * An EMPTY store fails alongside a missing one: `env-token-set` never writes `{ envs: {} }`, so a
- * store with no envs is a hand-edit or an `env-token-remove` of the last token — functionally the same
- * as no file, and it must not read as "present, therefore fine".
- *
- * What is NOT a failure here:
- *  - `INFRA_KIT_ENV_TOKEN` set — the CI / agent channel takes precedence over the store and needs no
- *    home config at all (see {@link INFRA_KIT_ENV_TOKEN_VAR}). Failing it would redden every CI run.
- *  - a store that THROWS — the file exists and a human must fix it, which is precisely what
- *    `env tokens configured` already reports. Repeating it here would double-count one problem.
+ * The FIRST question in this section, and the only one that is repo-shaped rather than env-shaped.
+ * Fails when `~/.infra-kit/projects/<repo>/tokens.json` is missing OR holds zero envs. Two states
+ * are deliberately NOT failures: `INFRA_KIT_ENV_TOKEN` set (the CI / agent channel takes
+ * precedence over the store and needs no home config — see {@link INFRA_KIT_ENV_TOKEN_VAR}), and a
+ * store that THROWS (`env tokens configured` already reports that one).
  *
  * @example
  * await checkTokenStorePresent()
  * // => { name: 'tokens.json present', status: 'fail', message: 'No token store at ~/.infra-kit/projects/api/tokens.json …' }
  */
+// Every project this CLI drives authenticates through that store, so a checkout without one cannot
+// load an env, deploy, or read a secret — whatever `envAutoLoad` happens to say. Before this check
+// existed that state was reported as THREE passes (`env tokens configured` passes outright when no
+// `envAutoLoad` is configured, and the other two skip), so a green report meant nothing on exactly
+// the machine that needed the report most.
+//
+// An EMPTY store fails alongside a missing one: `env-token-set` never writes `{ envs: {} }`, so a
+// store with no envs is a hand-edit or an `env-token-remove` of the last token — functionally the
+// same as no file, and it must not read as "present, therefore fine".
+//
+// Failing on `INFRA_KIT_ENV_TOKEN` would redden every CI run; repeating the throwing-store failure
+// here would double-count one problem.
 export const checkTokenStorePresent = async (deps: EnvTokenCheckDeps = {}): Promise<CheckResult> => {
   const name = 'tokens.json present'
   const readStore = deps.readStore ?? readTokenStore
@@ -624,11 +630,8 @@ const defaultStatPath = (target: string): fs.Stats | null => {
  *
  * @example
  * await checkUserOverridePath()
- * // {
- * //   name: 'user override path',
- * //   status: 'pass',
- * //   message: '~/.infra-kit/projects/api/infra-kit.json (2 override(s): ide, dev) — project: api',
- * // }
+ * // { name: 'user override path', status: 'pass',
+ * //   message: '~/.infra-kit/projects/api/infra-kit.json (2 override(s): ide, dev) — project: api' }
  * // absent  -> '… (not created — seed failed?) — project: api'
  * // empty   -> '… (empty — no overrides) — project: api'
  * // corrupt -> '… (unreadable — invalid JSON) — project: api'
@@ -789,12 +792,87 @@ export const checkIdeInstalled = async (read: DoctorConfig): Promise<CheckResult
   }
 }
 
+/** A plain `major.minor.patch` version — the only shape the semver comparator below can order. */
+const PLAIN_SEMVER = /^\d+\.\d+\.\d+$/
+
+/**
+ * True when `candidate` is a strictly lower version than `current`.
+ *
+ * Ordering is delegated to {@link sortVersions}, which is `v`-prefixed and SemVer-only, so both
+ * sides are prefixed for the call and anything that is not a bare `major.minor.patch` is reported
+ * as NOT older: a block written by a prerelease or otherwise unparseable build must never be
+ * counted as stale on the strength of a `NaN` comparison.
+ */
+const isOlderVersion = (candidate: string, current: string): boolean => {
+  if (candidate === current) return false
+  if (!PLAIN_SEMVER.test(candidate) || !PLAIN_SEMVER.test(current)) return false
+
+  return sortVersions([`v${candidate}`, `v${current}`])[0] === `v${candidate}`
+}
+
+/**
+ * Versions recorded by well-formed package guidance blocks that predate the running CLI.
+ *
+ * `discoverPackages` is wrapped because it reads `pnpm-workspace.yaml` with an unguarded
+ * `readFile` + `yaml.parse`: a single-package repo (and the doctor inventory fixture, a temp
+ * directory holding only `infra-kit.json` and `CLAUDE.md`) has no such file, and an ENOENT here
+ * would propagate out of `doctor()` and crash the command. Any throw degrades to "no packages".
+ * Read-only by construction — nothing on this path writes.
+ */
+const collectStalePackageVersions = async (root: string, current: string): Promise<string[]> => {
+  let packageDirs: string[]
+
+  try {
+    packageDirs = await discoverPackages(root)
+  } catch {
+    return []
+  }
+
+  const stale: string[] = []
+
+  for (const dir of packageDirs) {
+    const inspection = inspectPackageGuidance(readGuidanceFile(path.join(dir, 'CLAUDE.md')))
+
+    if (inspection.state !== 'ok') continue
+    if (inspection.version === undefined) continue
+    if (isOlderVersion(inspection.version, current)) stale.push(inspection.version)
+  }
+
+  return stale
+}
+
+/**
+ * The staleness sentence appended to the `CLAUDE.md block` message, or `''` when nothing is behind.
+ *
+ * Deliberately a message-only dimension: `CheckResult.status` is `'pass' | 'fail'` with no warn
+ * state, and drift in per-package blocks is not a broken machine, so this never changes the
+ * check's status.
+ */
+const packageGuidanceStaleness = async (root: string, current: string): Promise<string> => {
+  const stale = await collectStalePackageVersions(root, current)
+
+  if (stale.length === 0) return ''
+
+  const oldest = sortVersions(
+    stale.map((version) => {
+      return `v${version}`
+    }),
+  )[0]!.slice(1)
+
+  return ` — ${stale.length} package guidance blocks were generated by an older infra-kit (oldest ${oldest}, current ${current}) — run: infra-kit audit --fix --all`
+}
+
 /**
  * Check that the repo agent-instruction guidance managed by `infra-kit init` exists:
  * the guidance block in `CLAUDE.md`. Presence only. Repo-gated: returns no checks
  * when run outside an infra-kit repo so doctor never crashes there. A repo that
  * predates the AGENTS.md→CLAUDE.md migration will report this check as failing until
  * `infra-kit init` is re-run.
+ *
+ * The message also carries a read-only per-package staleness report (see
+ * {@link packageGuidanceStaleness}). It rides on THIS check rather than a new one on purpose:
+ * a new check name would have to be added to `SECTION_MEMBERS` in `report.ts` and to the
+ * inventory fixture's counts, and `'CLAUDE.md block'` is already sectioned.
  */
 export const checkAgentFiles = async (): Promise<CheckResult[]> => {
   let mainConfigPath: string
@@ -807,15 +885,18 @@ export const checkAgentFiles = async (): Promise<CheckResult[]> => {
 
   if (!fs.existsSync(mainConfigPath)) return []
 
-  const claudePath = path.join(path.dirname(mainConfigPath), 'CLAUDE.md')
+  const root = path.dirname(mainConfigPath)
+  const claudePath = path.join(root, 'CLAUDE.md')
   const content = fs.existsSync(claudePath) ? fs.readFileSync(claudePath, 'utf-8') : ''
   const present = hasManagedBlock(content, AGENTS_MARKER_START, AGENTS_MARKER_END)
+  const message = present ? 'CLAUDE.md block present' : 'infra-kit block missing from CLAUDE.md. Run: infra-kit init'
+  const staleness = await packageGuidanceStaleness(root, packageJson.version)
 
   return [
     {
       name: 'CLAUDE.md block',
       status: present ? 'pass' : 'fail',
-      message: present ? 'CLAUDE.md block present' : 'infra-kit block missing from CLAUDE.md. Run: infra-kit init',
+      message: `${message}${staleness}`,
     },
   ]
 }
@@ -1135,7 +1216,7 @@ export const pruneStalePortlessRoutes = async (deps: PruneRoutesDeps = {}): Prom
  */
 export const doctor = async (options: { fix?: boolean } = {}) => {
   // ONE read, before anything is dispatched: the checks below used to reset the shared config cache
-  // concurrently from inside the `Promise.all`. See {@link readDoctorConfig}.
+  // concurrently from inside the `Promise.all`. See `readDoctorConfig`.
   const read = await readDoctorConfig()
 
   const baseChecks: CheckResult[] = await Promise.all([

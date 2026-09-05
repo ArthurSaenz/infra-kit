@@ -1,6 +1,7 @@
 import process from 'node:process'
 
 /**
+ * @fileoverview
  * Who is holding `process.stdin` open, and therefore whether node may exit.
  *
  * THE PROBLEM THIS SOLVES — Ink `unref()`s stdin when it drops raw mode on teardown

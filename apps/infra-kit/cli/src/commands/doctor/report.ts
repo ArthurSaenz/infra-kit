@@ -6,6 +6,8 @@ import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config'
 import type { CheckResult } from './doctor'
 
 /**
+ * @fileoverview
+ *
  * Presentation layer for `infra-kit doctor`. Everything here is PURE: it takes the already-computed
  * `CheckResult[]` and returns lines. It never probes, never writes, and never reorders its input.
  *

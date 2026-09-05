@@ -59,30 +59,27 @@ const conflictedPaths = async (cwd: string): Promise<string[]> => {
 }
 
 /**
- * Classify a failed `git merge`.
+ * Classify a failed `git merge` as `conflict`, `hook-failed` or `error`.
  *
- * A conflict is identified by the presence of unmerged paths rather than by the
- * exit code, because a failing `commit-msg` / `pre-merge-commit` hook also fails
- * the merge without producing any. Keeping the two apart matters in practice:
- * the scratch worktree starts cold, so a hook that shells out to something in
- * `node_modules` can fail where the operator's own merge succeeds — a false
- * failure produced *by* the fidelity of using real `git merge`. Filing that as
- * `conflict` would send the operator hunting for a conflict that does not exist.
- *
- * **Both tests are structural, so neither depends on git's language or on what a
- * hook chose to say.** Measured: when a `commit-msg` hook rejects the merge, git
- * exits 1, writes the hook's own stderr followed by `Not committing merge; use
- * 'git commit' to complete the merge.` — and the word "hook" appears nowhere in
- * git's own output. A `/hook/i` match on the message therefore only works when
- * the hook happens to mention itself; a hook that says "policy violation" would
- * be filed as a generic `error`. What that state DOES leave behind is
- * unambiguous: `MERGE_HEAD` present with zero unmerged paths — the merge
- * resolved cleanly and was then refused at commit time.
- *
- * git's stderr is still carried as `reason`, because it holds the hook's actual
- * complaint, which is the only thing that tells the operator what to fix. It is
- * reported, never branched on.
+ * Both discriminators are structural, never textual: unmerged paths mean `conflict`, and
+ * `MERGE_HEAD` with zero unmerged paths means the merge resolved and was then refused at commit
+ * time. git's stderr is carried as `reason` — reported to the operator, never branched on.
  */
+// Why not the exit code, and why not a `/hook/i` match on the message:
+//
+// A failing `commit-msg` / `pre-merge-commit` hook fails the merge without producing unmerged
+// paths, so the exit code cannot separate the two — and keeping them apart matters in practice,
+// because the scratch worktree starts cold and a hook shelling into `node_modules` can fail here
+// where the operator's own merge succeeds. That is a false failure produced *by* the fidelity of
+// using real `git merge`; filing it as `conflict` sends the operator hunting for a conflict that
+// does not exist.
+//
+// Measured: when a `commit-msg` hook rejects the merge, git exits 1 and writes the hook's own
+// stderr followed by `Not committing merge; use 'git commit' to complete the merge.` — the word
+// "hook" appears nowhere in git's own output. Matching on the text therefore only works when the
+// hook happens to mention itself, and a hook that says "policy violation" would land in `error`.
+// `reason` still carries that stderr because it holds the hook's actual complaint, which is the
+// only thing that tells the operator what to fix.
 const classifyMergeFailure = async (
   cwd: string,
   error: unknown,
@@ -212,23 +209,22 @@ export interface VerifyOutcome {
  * Check out each collected merge and run the verification command against it,
  * dropping any branch that fails.
  *
- * **Pre-push, always.** A failed verification must never lead to rolling back a
- * pushed merge, because rewinding a shared ref is the one thing this command
- * refuses to do. Verifying first makes the question moot rather than answered.
- *
- * Why the default tier is `pnpm install --frozen-lockfile` rather than a test
- * suite: the characteristic breakage of a `dev` → release merge in a pnpm
- * monorepo is `pnpm-lock.yaml` — both sides touched it, the text merge is clean,
- * and the result is semantically broken. No merge engine reports anything,
- * because it is not a conflict. That check is fast and cannot flake on timing,
- * which is what makes it a tier an operator leaves switched on.
- *
- * The command is supplied by the caller rather than read from repo config on
- * purpose: this CLI's config file is a strict schema, so a new key could not be
- * adopted by consumer repos without a schema change and a published release.
- * Configuring at the call site also keeps the plan's rule — never invoke a
- * repo's root `qa` by name — a matter of what the operator types.
+ * **Pre-push, always**, and the command comes from the caller rather than from repo config.
  */
+// Pre-push is not an ordering preference: a failed verification must never lead to rolling back a
+// PUSHED merge, because rewinding a shared ref is the one thing this command refuses to do.
+// Verifying first makes the question moot rather than answered.
+//
+// Why the default tier is `pnpm install --frozen-lockfile` rather than a test suite: the
+// characteristic breakage of a `dev` → release merge in a pnpm monorepo is `pnpm-lock.yaml` —
+// both sides touched it, the text merge is clean, and the result is semantically broken. No merge
+// engine reports anything, because it is not a conflict. That check is fast and cannot flake on
+// timing, which is what makes it a tier an operator leaves switched on.
+//
+// Caller-supplied, not config-read: this CLI's config file is a strict schema, so a new key could
+// not be adopted by consumer repos without a schema change and a published release. Configuring
+// at the call site also keeps the plan's rule — never invoke a repo's root `qa` by name — a
+// matter of what the operator types.
 export const verifyMerges = async (args: {
   worktreePath: string
   refs: { branch: string; sha: string }[]
@@ -266,20 +262,19 @@ export interface ReclassifyResult {
  * Re-check the plan against origin immediately before pushing, dropping branches
  * that no longer need it.
  *
- * Mandatory rather than defensive, for two independent reasons:
- *
- * 1. Two operators planning against the same `origin/dev` produce the same tree
- *    but different shas (the committer timestamp differs), so the second push is
- *    rejected on a branch that is in fact correctly merged. Reporting that as a
- *    failure on a daily command manufactures recurring false alarms.
- * 2. Under `--atomic` it is worse than a false alarm: one teammate's hand-merge
- *    would abort the push for *every* branch in the run. `--atomic` without this
- *    step is a downgrade, not an upgrade.
- *
- * Cheap by construction — one fetch plus one `is-ancestor` per branch, no
- * checkout — so it is also safe to run twice when a long `--verify` pass sits
- * between the plan and the push.
+ * Mandatory rather than defensive. Cheap by construction — one fetch plus one `is-ancestor` per
+ * branch, no checkout — so it is safe to run twice when a long `--verify` pass sits between the
+ * plan and the push.
  */
+// Two independent reasons it is mandatory:
+//
+// 1. Two operators planning against the same `origin/dev` produce the same tree but different
+//    shas (the committer timestamp differs), so the second push is rejected on a branch that is
+//    in fact correctly merged. Reporting that as a failure on a daily command manufactures
+//    recurring false alarms.
+// 2. Under `--atomic` it is worse than a false alarm: one teammate's hand-merge would abort the
+//    push for *every* branch in the run. `--atomic` without this step is a downgrade, not an
+//    upgrade.
 export const reclassify = async (cwd: string, refs: { branch: string; sha: string }[]): Promise<ReclassifyResult> => {
   await $({ cwd, quiet: true })`git fetch origin --prune`
 

@@ -43,19 +43,22 @@ const protoWrite = (): NodeJS.WriteStream['write'] => {
  * Write straight to the real stdout, bypassing any patch installed on the stream instance.
  *
  * Gated on {@link isTerminalDead}: once a stdio stream has emitted `'error'`, every further write to it is
- * DROPPED. This is the choke point every terminal-bound line already funnels through — Ink via
- * `createSafeStream(panelStream())`, the embedded `DevRenderer`, and the entry's own shutdown line — so
- * gating it here is what stops `reportFault` from feeding the write that produced the fault it is reporting.
- *
- * It returns `true` (a lie the caller can act on) and never `false`: the return value propagates through
- * `panelStream`'s Proxy into Ink, and `false` reads as BACKPRESSURE — Ink would stall or buffer, hanging the
- * very teardown this exists to reach. It never throws, for the same reason.
- *
- * Gate-completeness here is hygiene, not correctness: a handful of writes stay ungated
- * (`output-intercept.ts`'s non-string passthrough, the direct `process.stderr.write` in `crash-barrier` and
- * `signal-shutdown`). That is survivable — with `terminal-liveness` owning the `'error'` event, an ungated
- * write costs one extra tick, not a loop. The correctness rests entirely on owning that event.
+ * DROPPED. Always returns `true` — never `false`, never throws — so a caller can never read the drop as
+ * backpressure.
  */
+// This is the choke point every terminal-bound line already funnels through — Ink via
+// `createSafeStream(panelStream())`, the embedded `DevRenderer`, and the entry's own shutdown line — so
+// gating it here is what stops `reportFault` from feeding the write that produced the fault it is
+// reporting.
+//
+// The `true` is a lie the caller can act on: the return value propagates through `panelStream`'s Proxy
+// into Ink, and `false` reads as BACKPRESSURE — Ink would stall or buffer, hanging the very teardown this
+// exists to reach. Not throwing is the same argument.
+//
+// Gate-completeness here is hygiene, not correctness: a handful of writes stay ungated
+// (`output-intercept.ts`'s non-string passthrough, the direct `process.stderr.write` in `crash-barrier`
+// and `signal-shutdown`). That is survivable — with `terminal-liveness` owning the `'error'` event, an
+// ungated write costs one extra tick, not a loop. The correctness rests entirely on owning that event.
 export const rawStdoutWrite = (chunk: string): boolean => {
   if (isTerminalDead()) return true
 

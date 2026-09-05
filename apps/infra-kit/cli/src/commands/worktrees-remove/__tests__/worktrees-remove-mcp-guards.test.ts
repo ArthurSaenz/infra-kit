@@ -191,8 +191,11 @@ describe('worktrees-remove confirm gate — allowEditorRelaunch stays suppressed
       requiresHumanConfirm: worktreesRemoveMcpTool.requiresHumanConfirm,
     })
 
-    // Call-2: confirm:true falls through the gate to the real handler.
-    await tool({ confirm: true, versions: '1.2.5' })
+    // Call-1 mints the token the gate binds to these arguments; call-2 returns it with confirm:true.
+    const gate = await tool({ versions: '1.2.5' })
+    const { confirmToken } = gate.structuredContent as { confirmToken: string }
+
+    await tool({ confirm: true, confirmToken, versions: '1.2.5' })
 
     const { removeWorktrees } = await import('src/lib/worktrees')
     const { removeIdeWorktreeFolders } = await import('src/integrations/ide')

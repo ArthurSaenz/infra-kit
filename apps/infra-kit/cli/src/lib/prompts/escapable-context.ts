@@ -21,38 +21,36 @@ export interface PromptContext {
 const ESC_BYTE = 0x1b
 
 /**
- * Run an `@inquirer/*` prompt with Esc bound to cancellation.
+ * Run an `@inquirer/*` prompt with Esc bound to cancellation. On Esc the prompt rejects with an
+ * `AbortPromptError`, which `entry/cli.ts` already catches at the top level -> "Operation
+ * cancelled." -> exit 0.
  *
- * The cancel path is entirely pre-existing plumbing: an `AbortController`'s signal
- * goes into the prompt context, `@inquirer/core` rejects with an `AbortPromptError`
- * when it fires, that name is already in `CANCELLATION_ERROR_NAMES`
- * (lib/errors/is-prompt-cancellation), and `entry/cli.ts` catches it at the top
- * level → "Operation cancelled." → exit 0. All this adds is the thing that calls
- * `abort()`.
- *
- * DETECTION — a raw `data` listener that aborts iff the chunk is exactly one `0x1b`
- * byte. Deliberately NOT readline `keypress`: that delivers a lone Esc only after its
- * escape-sequence timeout (~523ms measured), and the `escapeCodeTimeout` dial that
- * would shorten it is process-global and first-armer-wins — a second
- * `emitKeypressEvents` call on `process.stdin` is SILENTLY IGNORED, so the dial
- * degrades to a no-op with no error and no failing test. The raw listener costs ~24ms
- * and touches no global state. Arrow keys (`\x1b[B`, 3 bytes) and Alt combos
- * (`\x1bb`, 2 bytes) are ignored because they are LONGER — no parsed key field is
- * involved. Node `data` listeners broadcast, so this one does not steal bytes from
- * readline: arrows and Enter keep working while it is attached.
- *
- * FALSE POSITIVES are a non-issue: there is no routine source of a lone-`0x1b` chunk.
- * Focus events (`\x1b[I`/`\x1b[O`), bracketed paste (`\x1b[200~`) and mouse reports
- * (`\x1b[M…`) are all multi-byte, and inquirer enables none of them.
- *
- * FALSE NEGATIVE — measured and accepted: a COALESCED Esc (`"\x1bx"` arriving in ONE
- * chunk, i.e. Esc immediately followed by another key) is silently dropped and the
- * prompt stays open. The fix would be Ink's 20ms deferred abort — hold the lone Esc,
- * cancel it if a follow-up chunk lands. That is a logged NON-GOAL; do not pre-build it.
- *
- * The listener attaches only on a real interactive terminal. `isTTY` alone is NOT a
- * sufficient guard — see lib/mcp-mode for why `stdio: 'inherit'` defeats it.
+ * The listener attaches only on a real interactive terminal. `isTTY` alone is NOT a sufficient
+ * guard — see lib/mcp-mode for why `stdio: 'inherit'` defeats it.
  */
+// The cancel path is entirely pre-existing plumbing: an `AbortController`'s signal goes into the
+// prompt context, `@inquirer/core` rejects with an `AbortPromptError` when it fires, and that name
+// is already in `CANCELLATION_ERROR_NAMES` (lib/errors/is-prompt-cancellation). All this adds is
+// the thing that calls `abort()`.
+//
+// DETECTION — a raw `data` listener that aborts iff the chunk is exactly one `0x1b` byte.
+// Deliberately NOT readline `keypress`: that delivers a lone Esc only after its escape-sequence
+// timeout (~523ms measured), and the `escapeCodeTimeout` dial that would shorten it is
+// process-global and first-armer-wins — a second `emitKeypressEvents` call on `process.stdin` is
+// SILENTLY IGNORED, so the dial degrades to a no-op with no error and no failing test. The raw
+// listener costs ~24ms and touches no global state. Arrow keys (`\x1b[B`, 3 bytes) and Alt combos
+// (`\x1bb`, 2 bytes) are ignored because they are LONGER — no parsed key field is involved. Node
+// `data` listeners broadcast, so this one does not steal bytes from readline: arrows and Enter keep
+// working while it is attached.
+//
+// FALSE POSITIVES are a non-issue: there is no routine source of a lone-`0x1b` chunk. Focus events
+// (`\x1b[I`/`\x1b[O`), bracketed paste (`\x1b[200~`) and mouse reports (`\x1b[M…`) are all
+// multi-byte, and inquirer enables none of them.
+//
+// FALSE NEGATIVE — measured and accepted: a COALESCED Esc (`"\x1bx"` arriving in ONE chunk, i.e.
+// Esc immediately followed by another key) is silently dropped and the prompt stays open. The fix
+// would be Ink's 20ms deferred abort — hold the lone Esc, cancel it if a follow-up chunk lands.
+// That is a logged NON-GOAL; do not pre-build it.
 export const withEscape = async <T>(run: (context: PromptContext) => Promise<T>, base?: PromptContext): Promise<T> => {
   const controller = new AbortController()
   const context: PromptContext = { ...base, signal: controller.signal }

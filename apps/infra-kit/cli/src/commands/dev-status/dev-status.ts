@@ -31,25 +31,28 @@ export interface DevStatusDeps {
  * writes to `.infra-kit/dev-context/`. Strictly advisory and strictly read-only: it starts no server and
  * only inspects on-disk state plus a bounded TCP probe.
  *
- * The fragment directory is located by {@link readDevContext} — the SAME reader the MCP
- * `infra-kit://dev-context` resource uses, which searches UPWARD from `cwd`. This command used to carry
- * its own reader that did a plain `path.join(cwd, …)` instead, so from any subdirectory the resource
- * reported a live session while this tool reported none: one server, one question, two answers.
+ * The fragment directory is located by {@link readDevContext}, the SAME reader the MCP
+ * `infra-kit://dev-context` resource uses, which searches UPWARD from `cwd`.
  *
- * Three facts an agent must not conflate are surfaced separately:
- *   - PRESENCE + FRESHNESS: a fragment exists and how long ago it was written (`fragmentMtime` /
- *     `ageSeconds`, from the file's mtime — the authoritative signal). A stale fragment is a strong hint a
- *     server died without cleaning up.
- *   - LIVENESS: whether the app's port answers a TCP connect RIGHT NOW. A fresh fragment with `live:false`
- *     is a crashed/killed dev server whose fragment was never removed.
- *   - WHERE THIS LOOKED: `contextDir` is the RESOLVED directory, which is not necessarily one that
- *     exists — the resolver falls back to deriving `<up-tree .infra-kit>/dev-context`, so outside a repo
- *     that has one it can name a `$HOME` path nothing ever wrote to. `contextDirExists` is the
- *     discriminator; without it `contextDir` would be actively misleading.
- *
- * When no fragments exist (no dev session, or `dev` cleaned up on exit) it returns `{ active: false,
- * apps: [] }` — a clean empty result, not an error.
+ * Three facts an agent must not conflate are surfaced separately: PRESENCE + FRESHNESS
+ * (`fragmentMtime` / `ageSeconds`, from the file's mtime), LIVENESS (`live` — does the port answer
+ * a TCP connect RIGHT NOW), and WHERE THIS LOOKED (`contextDir`, with `contextDirExists` as its
+ * discriminator). When no fragments exist (no dev session, or `dev` cleaned up on exit) it returns
+ * `{ active: false, apps: [] }` — a clean empty result, not an error.
  */
+// Sharing the reader is the fix for a shipped bug: this command used to carry its own reader that
+// did a plain `path.join(cwd, …)`, so from any subdirectory the MCP resource reported a live
+// session while this tool reported none — one server, one question, two answers.
+//
+// Why the three facts stay separate:
+//   - a STALE fragment is a strong hint a server died without cleaning up, which is why mtime is
+//     the authoritative signal rather than mere presence;
+//   - a FRESH fragment with `live:false` is a crashed or killed dev server whose fragment was
+//     never removed;
+//   - `contextDir` is the RESOLVED directory, not necessarily one that exists. The resolver falls
+//     back to deriving `<up-tree .infra-kit>/dev-context`, so outside a repo that has one it can
+//     name a `$HOME` path nothing ever wrote to. Without `contextDirExists` beside it, that path
+//     would be actively misleading.
 export const devStatus = async (deps: DevStatusDeps = {}) => {
   const now = deps.now ?? Date.now
   const isListening = deps.isListening ?? defaultIsListening

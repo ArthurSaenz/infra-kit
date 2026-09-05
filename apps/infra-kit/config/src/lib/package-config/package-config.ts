@@ -29,7 +29,26 @@ export interface InfraKitPackageConfig {
   }
   /** Local-dev configuration. Accepted-and-inert to the audit; consumed by the dev server. */
   dev?: InfraKitDev
+  /**
+   * Explicit override for infra-kit's directory/dependency-based package-type detection (used to
+   * pick the agent guidance rendered into this package's `CLAUDE.md`). Detection already covers
+   * both consumer repos untouched, so this is an escape hatch for the cases it gets wrong — leaving
+   * it unset is never an error.
+   *
+   * **Ordering precondition:** the CLI's own pinned `packageConfigSchema` — not this package's
+   * version — governs what a consumer's `infra-kit.config.ts` may contain, and it is a
+   * `z.strictObject`. Only write `type` here once the CLI in use is a version that carries this
+   * key; an older CLI rejects the key outright and skips the rest of that package's audit checks.
+   *
+   * @example
+   * // infra-kit.config.ts
+   * export default defineConfig(() => ({ type: 'frontend' }))
+   */
+  type?: InfraKitPackageType
 }
+
+/** Package kinds infra-kit's agent guidance renders type-specific rules for. */
+export type InfraKitPackageType = 'frontend' | 'backend' | 'lib' | 'e2e' | 'mobile'
 
 /** A proxy route's allowed backend source. */
 export type InfraKitDevProxySource = 'local' | 'cloud'

@@ -20,24 +20,23 @@ export interface ScratchWorktree {
 }
 
 /**
- * Where the scratch worktree lives: `<git-common-dir>/infra-kit/merge-dev-<runId>`.
+ * Where the scratch worktree lives: `<git-common-dir>/infra-kit/merge-dev-<runId>`, with `runId`
+ * taken from `INFRA_KIT_SESSION` (this repo's per-terminal id) and falling back to the pid.
  *
- * Two properties are load-bearing, and both are about NOT colliding with things
- * that already exist:
- *
- * 1. **Outside every working tree.** An untracked directory inside the main
- *    checkout would make `isWorkingTreeClean` false, and therefore
- *    `assertManagementContext` throw, for *every other* release and worktree
- *    command in this CLI — so a crashed `gh-merge-dev` would break `worktrees
- *    add` and `release create` with a message naming neither of them. Under
- *    `.git/` it is invisible to `git status` by construction.
- * 2. **Unique per run.** A colliding path is a hard `fatal: … already exists`,
- *    so two concurrent runs would fight. `INFRA_KIT_SESSION` is this repo's
- *    per-terminal id; the pid is the fallback when it is unset.
- *
- * It also deliberately avoids the team's `<projectRoot>-worktrees/` convention,
- * which `getCurrentWorktrees` scans for release branches.
+ * Two properties are load-bearing: the path is outside every working tree, and it is unique per run.
  */
+// Both are about NOT colliding with things that already exist.
+//
+// 1. Outside every working tree. An untracked directory inside the main checkout would make
+//    `isWorkingTreeClean` false, and therefore `assertManagementContext` throw, for every OTHER
+//    release and worktree command in this CLI — so a crashed `gh-merge-dev` would break
+//    `worktrees add` and `release create` with a message naming neither of them. Under `.git/`
+//    it is invisible to `git status` by construction.
+// 2. Unique per run. A colliding path is a hard `fatal: … already exists`, so two concurrent runs
+//    would fight.
+//
+// It also deliberately avoids the team's `<projectRoot>-worktrees/` convention, which
+// `getCurrentWorktrees` scans for release branches.
 export const scratchWorktreePath = async (cwd?: string): Promise<string> => {
   const root = cwd ?? process.cwd()
   const commonDir = (await $({ cwd: root, quiet: true })`git rev-parse --git-common-dir`).stdout.trim()

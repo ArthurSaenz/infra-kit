@@ -432,15 +432,8 @@ export const assertTokenScope = (pairs: Array<[string, string]>, config: string)
  * behavior, never worse.
  *
  * This is THE boundary where Doppler's raw stderr is read: the markers exist only here, and the
- * classification leaves this function as a TYPE (`DopplerAuthError`), never as prose for a downstream
- * module to re-parse. `lib/env-autoload` used to text-match the raw markers on the error this
- * function had already rewritten — they were long gone, so the sticky auth marker was never written
- * and a revoked token went silent. Exported so a seam test can drive the REAL error a caller sees.
- *
- * The not-found message no longer lists the AVAILABLE names: `listDopplerProjects` /
- * `listDopplerConfigs` require an ACCOUNT login, which token-only auth deleted, so that probe could
- * only ever return `null` now. `buildDopplerNotFoundMessage` already treats `null` as "couldn't
- * tell" and omits the suggestion line rather than misreporting "none exist".
+ * classification leaves as a TYPE (`DopplerAuthError`), never as prose for a downstream module to
+ * re-parse. Exported so a seam test can drive the REAL error a caller sees.
  *
  * @example
  * translateDopplerDownloadError({ stderr: 'Doppler Error: Invalid Auth token' }, 'p', 'dev')
@@ -448,6 +441,14 @@ export const assertTokenScope = (pairs: Array<[string, string]>, config: string)
  * translateDopplerDownloadError(new Error('connect ETIMEDOUT'), 'p', 'dev')
  * // => the same Error, untouched
  */
+// Why a type and not prose: `lib/env-autoload` used to text-match the raw Doppler markers on the
+// error this function had already rewritten — they were long gone, so the sticky auth marker was
+// never written and a revoked token went silent.
+//
+// The not-found message no longer lists the AVAILABLE names: `listDopplerProjects` /
+// `listDopplerConfigs` require an ACCOUNT login, which token-only auth deleted, so that probe
+// could only ever return `null` now. `buildDopplerNotFoundMessage` already treats `null` as
+// "couldn't tell" and omits the suggestion line rather than misreporting "none exist".
 export const translateDopplerDownloadError = (error: unknown, project: string, config: string): Error => {
   const stderr = extractStderr(error) ?? (error instanceof Error ? error.message : String(error))
   const kind = classifyDopplerFailure(stderr)

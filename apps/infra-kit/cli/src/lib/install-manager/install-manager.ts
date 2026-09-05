@@ -81,29 +81,30 @@ const isBrewKegOf = (p: string, name: string): boolean => {
 }
 
 /**
- * The npm global prefix that owns `selfRealPath`, derived from the path ITSELF, or null when the layout is
- * not an npm global one.
+ * The npm global prefix that owns `selfRealPath`, derived from the path ITSELF, or null when the
+ * layout is not an npm global one.
  *
- * This is the one signal that cannot point at the wrong tree. Everything else in this module answers
- * "is this file somewhere inside tool X's directory?", and containment is not ownership:
- *   - `npm root -g` answers for whichever `npm` is first on PATH, which is routinely a DIFFERENT node than
- *     the one that installed us (a pnpm/nvm/fnm-managed node, or a node that has since been removed). It
- *     then reports a root that does not contain us, every matcher misses, and detection degrades to
- *     `unknown` — a notice printed forever, on the single most common install method. That is the bug this
- *     exists to close.
- *   - `PNPM_HOME` containment is satisfied by `<PNPM_HOME>/nodejs/<v>/lib/node_modules/<pkg>` (a plain
- *     `npm i -g` under a pnpm-managed node), yet `pnpm add -g` installs to `<PNPM_HOME>/global/<v>/...` —
- *     a different directory. That one is worse than a missed update: the install "succeeds" while the
- *     binary on PATH stays old, silently, with no notice to show for it.
- *
- * `<prefix>/lib/node_modules/<PACKAGE_NAME>` is npm's global layout and no other manager's, so requiring
- * BOTH the `lib` parent and our package as the immediate child is what makes it proof rather than a hint.
- * The `lib` requirement is also what keeps a project-local `<repo>/node_modules/<pkg>` out (it has no
- * `lib`), and nesting cannot spoof it: `.../node_modules/foo/node_modules/<pkg>` fails the `lib` test.
- *
- * Windows global npm has no `lib` segment (`%APPDATA%\npm\node_modules`), so this returns null there and
- * detection falls through to `npm root -g` — which is correct on Windows, where there is normally one npm.
+ * Matches `<prefix>/lib/node_modules/<PACKAGE_NAME>` — npm's global layout and no other manager's
+ * — requiring BOTH the `lib` parent and our package as the immediate child. Windows global npm has
+ * no `lib` segment (`%APPDATA%\npm\node_modules`), so this returns null there and detection falls
+ * through to `npm root -g`, which is correct on Windows, where there is normally one npm.
  */
+// This is the one signal that cannot point at the wrong tree. Everything else in this module
+// answers "is this file somewhere inside tool X's directory?", and containment is not ownership:
+//   - `npm root -g` answers for whichever `npm` is first on PATH, which is routinely a DIFFERENT
+//     node than the one that installed us (a pnpm/nvm/fnm-managed node, or a node that has since
+//     been removed). It then reports a root that does not contain us, every matcher misses, and
+//     detection degrades to `unknown` — a notice printed forever, on the single most common install
+//     method. That is the bug this exists to close.
+//   - `PNPM_HOME` containment is satisfied by `<PNPM_HOME>/nodejs/<v>/lib/node_modules/<pkg>` (a
+//     plain `npm i -g` under a pnpm-managed node), yet `pnpm add -g` installs to
+//     `<PNPM_HOME>/global/<v>/...` — a different directory. That one is worse than a missed update:
+//     the install "succeeds" while the binary on PATH stays old, silently, with no notice to show
+//     for it.
+//
+// Requiring both segments is what makes the match proof rather than a hint. The `lib` requirement
+// is also what keeps a project-local `<repo>/node_modules/<pkg>` out (it has no `lib`), and nesting
+// cannot spoof it: `.../node_modules/foo/node_modules/<pkg>` fails the `lib` test.
 const npmPrefixFromSelfPath = (selfRealPath: string): string | null => {
   const segments = path.resolve(selfRealPath).split(path.sep)
   const nodeModules = segments.lastIndexOf('node_modules')
@@ -182,7 +183,7 @@ const WRAPPER_MATCHERS: Matcher[] = [
     manager: 'homebrew',
     // `brew upgrade` can touch the prefix, relink, and prompt — never ours to run unattended.
     //
-    // Our own keg is the ONLY sound signal — see {@link isBrewKegOf}. Two broader tests look plausible
+    // Our own keg is the ONLY sound signal — see `isBrewKegOf`. Two broader tests look plausible
     // and are both wrong, because each answers "did brew put something here?" when the question is "does
     // brew own THIS package?":
     //   - `HOMEBREW_PREFIX` containment: when node comes from brew, npm's global prefix IS

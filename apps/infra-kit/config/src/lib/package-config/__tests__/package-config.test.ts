@@ -182,4 +182,29 @@ describe('packageConfigSchema', () => {
 
     expect(result.success).toBe(false)
   })
+
+  it('accepts a well-formed type override', () => {
+    const result = packageConfigSchema.safeParse({ type: 'frontend' })
+
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects a type value outside the enum, naming `type` in the error', () => {
+    const result = packageConfigSchema.safeParse({ type: 'nope' })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(
+        result.error.issues.some((issue) => {
+          return issue.path.includes('type')
+        }),
+      ).toBe(true)
+    }
+  })
+
+  it('still accepts an empty config with type left unset', () => {
+    const result = packageConfigSchema.safeParse({})
+
+    expect(result.success).toBe(true)
+  })
 })

@@ -106,16 +106,12 @@ export const buildManagedBlock = (startMarker: string, body: string, endMarker: 
  * and never nests duplicates.
  *
  * @example
- * // fresh file
  * upsertManagedBlock({ content: '', body: 'hi', startMarker: '<!--s-->', endMarker: '<!--e-->' })
  * // => '<!--s-->\nhi\n<!--e-->\n'
  * @example
- * // existing block replaced in place, surrounding text kept
- * upsertManagedBlock({
- *   content: 'top\n<!--s-->\nold\n<!--e-->\nbot',
- *   body: 'new', startMarker: '<!--s-->', endMarker: '<!--e-->',
- * })
- * // => 'top\n<!--s-->\nnew\n<!--e-->\nbot'
+ * upsertManagedBlock({ content: 'top\n<!--s-->\nold\n<!--e-->\nbot', body: 'new',
+ *   startMarker: '<!--s-->', endMarker: '<!--e-->' })
+ * // => 'top\n<!--s-->\nnew\n<!--e-->\nbot'  (surrounding text kept)
  */
 export const upsertManagedBlock = ({
   content,

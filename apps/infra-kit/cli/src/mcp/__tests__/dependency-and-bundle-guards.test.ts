@@ -1,10 +1,9 @@
-import * as esbuild from 'esbuild'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import packageJson from '../../../package.json' with { type: 'json' }
-import { buildOptions } from '../../../scripts/build.js'
+import { buildMcpBundle } from './helpers/mcp-harness'
 
 /**
  * Dependency-manifest and bundle-externalization guards for the SDK v1 → v2 migration.
@@ -104,6 +103,167 @@ describe('u7 — the manifest matches what the source actually imports', () => {
   })
 })
 
+/**
+ * Frozen snapshot of the PRE-CHANGE entry, copied once at implementation time from
+ * `git show e15aec3:apps/infra-kit/cli/src/entry/mcp.ts` and trimmed to the imports plus the
+ * `startServer` create/connect block.
+ *
+ * It is a `const`, not a `git show` at test time, on purpose. A control that reads `HEAD` holds
+ * only until this work is committed: the moment it lands, `HEAD` IS the new entry, the guard
+ * accepts it, and the control goes red on the ordinary success path. Two `logger.error` lines whose
+ * argument was a backticked string were elided so this stays a plain template literal; every marker
+ * the guard reads survives the trim, and u8c asserts that before using it.
+ */
+const PRE_CHANGE_ENTRY_SNAPSHOT = `
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
+import process from 'node:process'
+
+import { setupErrorHandlers } from 'src/lib/error-handlers'
+import { initLoggerMcp } from 'src/lib/logger'
+
+import { createMcpServer } from '../mcp/server'
+
+const logger = initLoggerMcp()
+
+const startServer = async () => {
+  let server
+
+  try {
+    server = await createMcpServer()
+
+    logger.info('MCP Server instance created')
+  } catch (error) {
+    logger.error({ err: error, msg: 'Failed to create MCP server' })
+
+    process.exit(1)
+  }
+
+  try {
+    const transport = new StdioServerTransport()
+
+    await server.connect(transport)
+
+    logger.info({ msg: 'Server connected to transport. Ready.' })
+  } catch (error) {
+    logger.error({ err: error, msg: 'Failed to initialize server' })
+
+    process.exit(1)
+  }
+}
+
+setupErrorHandlers(logger)
+
+startServer()
+`
+
+/** The AC1/AC2 markers of `src/entry/mcp.ts`, read out of the file's TEXT. */
+interface EntryShape {
+  callsConnect: boolean
+  callsServeStdio: boolean
+  constructsLegacyTransport: boolean
+  onerrorFlushes: boolean
+  onerrorLogsError: boolean
+  passesOnerror: boolean
+}
+
+/**
+ * Body of the `onerror:` arrow handed to `serveStdio`, or `''` when the entry passes no such arrow.
+ *
+ * Brace-matched rather than regex-matched: a lazy `[\s\S]*?` running up to the closing brace
+ * backtracks super-linearly and this repo's lint rejects it outright.
+ */
+const onerrorBody = (source: string): string => {
+  const marker = source.indexOf('onerror:')
+  const open = marker === -1 ? -1 : source.indexOf('{', marker)
+
+  if (open === -1) return ''
+
+  let depth = 0
+
+  for (const [offset, char] of [...source.slice(open)].entries()) {
+    if (char === '{') depth += 1
+    if (char === '}') depth -= 1
+
+    if (depth === 0) return source.slice(open + 1, open + offset)
+  }
+
+  return source.slice(open + 1)
+}
+
+/**
+ * ONE text-taking predicate, three consumers: `u8a` reads the transport markers, `u8b` the
+ * `onerror` markers, and `u8c` inverts the whole verdict against the frozen snapshot. A control
+ * that exercised different code from the guard would prove nothing about the guard.
+ */
+const inspectEntry = (source: string): EntryShape => {
+  const body = onerrorBody(source)
+
+  return {
+    callsConnect: source.includes('.connect('),
+    callsServeStdio: source.includes('serveStdio('),
+    constructsLegacyTransport: source.includes('new StdioServerTransport('),
+    onerrorFlushes: body.includes('logger.flush'),
+    onerrorLogsError: body.includes('logger.error'),
+    passesOnerror: source.includes('onerror'),
+  }
+}
+
+/** The whole-shape verdict — every AC1 and AC2 marker at once. */
+const isServeStdioEntry = (source: string): boolean => {
+  const shape = inspectEntry(source)
+
+  return (
+    shape.callsServeStdio &&
+    !shape.constructsLegacyTransport &&
+    !shape.callsConnect &&
+    shape.passesOnerror &&
+    shape.onerrorLogsError &&
+    shape.onerrorFlushes
+  )
+}
+
+describe('u8 — the shipped MCP entry is on `serveStdio` (AC1/AC2)', () => {
+  const entrySource = readFileSync(resolve(SRC, 'entry/mcp.ts'), 'utf8')
+
+  it('u8a: the entry calls `serveStdio(` and neither constructs nor connects a transport itself', () => {
+    // `serveStdio` owns the transport. A surviving `new StdioServerTransport()` + `.connect()` is
+    // how the entry would silently keep serving the 2025 era from an otherwise migrated build.
+    expect(inspectEntry(entrySource)).toMatchObject({
+      callsConnect: false,
+      callsServeStdio: true,
+      constructsLegacyTransport: false,
+    })
+  })
+
+  it('u8b: `onerror` is passed and its body calls both `logger.error` and `logger.flush`', () => {
+    // `onerror` is mandatory under `serveStdio`: without it transport errors vanish entirely. The
+    // `flush` half matters just as much — pino buffers, so an unflushed error line dies with the
+    // process it was written to explain.
+    expect(inspectEntry(entrySource)).toMatchObject({
+      onerrorFlushes: true,
+      onerrorLogsError: true,
+      passesOnerror: true,
+    })
+  })
+
+  it('u8c: the shared predicate ACCEPTS the entry and REJECTS the frozen pre-change snapshot', () => {
+    // V14 — guard the snapshot against degenerating. The predicate rejects ANY string lacking
+    // `serveStdio(`, so an empty or over-trimmed constant would make the rejection below pass while
+    // proving nothing about the pre-change shape. Assert the markers are actually there FIRST.
+    expect(PRE_CHANGE_ENTRY_SNAPSHOT, 'snapshot trimmed past the marker it exists to carry').toContain(
+      'new StdioServerTransport(',
+    )
+    expect(PRE_CHANGE_ENTRY_SNAPSHOT, 'snapshot trimmed past the marker it exists to carry').toContain(
+      'await server.connect(',
+    )
+
+    expect(isServeStdioEntry(entrySource), 'the guard rejects the migrated entry — it is inverted').toBe(true)
+    expect(isServeStdioEntry(PRE_CHANGE_ENTRY_SNAPSHOT), 'the guard accepts the pre-change entry — it is vacuous').toBe(
+      false,
+    )
+  })
+})
+
 describe('b1–B3 — the v2 SDK is externalized, never inlined', () => {
   let bundle = ''
   const tmpDirs: string[] = []
@@ -116,19 +276,16 @@ describe('b1–B3 — the v2 SDK is externalized, never inlined', () => {
    * Output goes under this package's `node_modules/.cache` rather than `os.tmpdir()` because
    * `buildOptions` leaves dependencies external: the bundle only resolves them by walking up to a
    * `node_modules` directory that exists above it.
+   *
+   * Both invariants live in `buildMcpBundle`, which is why this delegates rather than re-deriving
+   * them: a second copy is how one of them silently drifts and the guards here quietly go vacuous.
    */
   beforeAll(async () => {
-    const cache = resolve(CLI_ROOT, 'node_modules', '.cache')
+    const built = await buildMcpBundle('mcp-bundle-guards-')
 
-    mkdirSync(cache, { recursive: true })
+    tmpDirs.push(built.outDir)
 
-    const outDir = mkdtempSync(join(cache, 'mcp-bundle-guards-'))
-
-    tmpDirs.push(outDir)
-
-    await esbuild.build({ ...buildOptions, outdir: outDir })
-
-    bundle = readFileSync(join(outDir, 'mcp.js'), 'utf8')
+    bundle = readFileSync(built.mcpPath, 'utf8')
   }, 120_000)
 
   afterAll(() => {

@@ -1,3 +1,5 @@
+import { Client } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import type * as esbuild from 'esbuild'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -7,6 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { buildMcpBundle, makeDisposableSession } from './helpers/mcp-harness'
 
 /**
+ * @fileoverview
+ *
  * Mutation check for the destructive-tool confirm gate.
  *
  * A gate test that stays green when the gate is removed is worthless. This file builds a MUTANT
@@ -57,52 +61,101 @@ const strays: ChildProcess[] = []
 
 let mutantMcpPath = ''
 
-const callUnconfirmed = (mcpPath: string, env: NodeJS.ProcessEnv, settled: () => boolean): Promise<void> => {
+/**
+ * Resolves as soon as `settled()` reports true, or at a 25 s deadline.
+ *
+ * POLL to a deadline; do NOT settle on a fixed timer. A fixed 3500ms wait made this flaky
+ * under suite load — the neutered child might not have written the file yet, and the test
+ * would report "the gate was neutered but the tool still did not run" when the truth was
+ * "we did not wait long enough". Same anti-pattern `rawSession` was already fixed for in
+ * mcp-stdio.e2e.test.ts. It failed CLOSED (false red, never false green), but a test that
+ * cries wolf gets muted, so it still has to go.
+ */
+const waitUntilSettled = (settled: () => boolean): Promise<void> => {
   return new Promise((resolvePromise) => {
-    const child = spawn(process.execPath, [mcpPath], { env, stdio: ['pipe', 'pipe', 'ignore'] })
+    const deadline = Date.now() + 25_000
 
-    strays.push(child)
+    const poll = setInterval(() => {
+      if (settled() || Date.now() > deadline) {
+        clearInterval(poll)
+        resolvePromise()
+      }
+    }, 100)
+  })
+}
 
+const callUnconfirmed = async (mcpPath: string, env: NodeJS.ProcessEnv, settled: () => boolean): Promise<void> => {
+  const child = spawn(process.execPath, [mcpPath], { env, stdio: ['pipe', 'pipe', 'ignore'] })
+
+  strays.push(child)
+
+  child.stdin.write(
+    `${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'mutation', version: '0.0.0' } },
+    })}\n`,
+  )
+  child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
+
+  setTimeout(() => {
+    // Deliberately NO `confirm` — this is exactly the call E4 makes.
     child.stdin.write(
       `${JSON.stringify({
         jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'mutation', version: '0.0.0' } },
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'env-clear', arguments: {} },
       })}\n`,
     )
-    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
+  }, 300)
 
-    setTimeout(() => {
-      // Deliberately NO `confirm` — this is exactly the call E4 makes.
-      child.stdin.write(
-        `${JSON.stringify({
-          jsonrpc: '2.0',
-          id: 2,
-          method: 'tools/call',
-          params: { name: 'env-clear', arguments: {} },
-        })}\n`,
-      )
-    }, 300)
+  await waitUntilSettled(settled)
 
-    // POLL to a deadline; do NOT settle on a fixed timer. A fixed 3500ms wait made this flaky
-    // under suite load — the neutered child might not have written the file yet, and the test
-    // would report "the gate was neutered but the tool still did not run" when the truth was
-    // "we did not wait long enough". Same anti-pattern `rawSession` was already fixed for in
-    // mcp-stdio.e2e.test.ts. It failed CLOSED (false red, never false green), but a test that
-    // cries wolf gets muted, so it still has to go.
-    const deadline = Date.now() + 25_000
+  child.kill('SIGKILL')
+}
 
-    const finish = (): void => {
-      clearInterval(poll)
-      child.kill('SIGKILL')
-      resolvePromise()
-    }
+/**
+ * The same unconfirmed call, over a MODERN connection.
+ *
+ * WHY A CLIENT AND NOT `callUnconfirmed`. That helper hand-writes its `initialize` frame with
+ * `protocolVersion: '2025-11-25'`, and editing that string cannot make it modern: the server
+ * classifies an opening by the two-key `_meta` envelope, not by the version field, and we
+ * deliberately do not hand-roll that envelope. A pinned v2 `Client` is the only honest way to open
+ * the modern lane, so this lane pays for a real client rather than faking one.
+ *
+ * The reply is not asserted on — only the filesystem side effect is. A decode or protocol error on
+ * the way back must not decide whether the handler ran.
+ */
+const callUnconfirmedModern = async (
+  mcpPath: string,
+  env: NodeJS.ProcessEnv,
+  settled: () => boolean,
+): Promise<void> => {
+  const client = new Client(
+    { name: 'mutation-modern', version: '0.0.0' },
+    { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+  )
 
-    const poll = setInterval(() => {
-      if (settled() || Date.now() > deadline) finish()
-    }, 100)
-  })
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [mcpPath], env: env as never }))
+
+  // `close()` in a `finally`: the transport owns a spawned server this file never sees, so an
+  // early throw here would strand a child that `afterAll`'s `strays` list cannot reach.
+  try {
+    // Deliberately NO `confirm` — exactly the call E4m makes.
+    const pending = client.callTool({ name: 'env-clear', arguments: {} }).catch(() => {
+      return undefined
+    })
+
+    // Polled rather than awaited: "the file has not appeared yet" and "the tool never ran" are
+    // different facts, and awaiting the reply conflates them under suite load.
+    await waitUntilSettled(settled)
+
+    await pending
+  } finally {
+    await client.close()
+  }
 }
 
 beforeAll(async () => {
@@ -139,4 +192,25 @@ describe('the confirm gate mutation check', () => {
     // detect a bypassed gate and the migration must not ship.
     expect(existsSync(clearFile), 'gate was neutered but the tool still did not run — E4 proves nothing').toBe(true)
   }, 45_000)
+
+  it('m1-modern: the same holds over a PINNED 2026-07-28 connection — so E4m is load-bearing too', async () => {
+    // A fresh disposable session, never m1's: sharing one would let m1's execution satisfy this
+    // assertion and the modern lane would prove nothing.
+    const { cacheHome, env, clearFile } = makeDisposableSession()
+
+    tmpDirs.push(cacheHome)
+
+    expect(existsSync(clearFile), 'fixture must start clean').toBe(false)
+
+    await callUnconfirmedModern(mutantMcpPath, env, () => {
+      return existsSync(clearFile)
+    })
+
+    // E4m asserts this file is ABSENT after an unconfirmed modern call. If this goes red, the gate
+    // is unfalsifiable on the modern path — E4m would stay green with the gate removed, which is
+    // precisely the silent degradation the era flip risks.
+    expect(existsSync(clearFile), 'gate was neutered but the modern call still did not run — E4m proves nothing').toBe(
+      true,
+    )
+  }, 60_000)
 })

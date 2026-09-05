@@ -1,4 +1,6 @@
 /**
+ * @fileoverview
+ *
  * Thin, injectable driver for the `portless` daemon (Layer B — see `.omc/plans/dev-https-portless.md`).
  *
  * `infra-kit dev` uses it to register `<release>.<package>.localhost → 127.0.0.1:<port>` routes so the
@@ -121,25 +123,25 @@ export interface FormatPortlessCommandOptions {
 /**
  * Render a portless command the user can actually paste into a shell.
  *
- * This exists because the obvious string is a lie. `portless` is a plain npm dependency living in
- * `node_modules/.bin`, which is on `PATH` only inside a pnpm/npm script — so printing `sudo portless service
- * install` hands the user a command that dies with `sudo: portless: command not found`. `sudo` makes it
- * strictly worse: it replaces `PATH` with `secure_path`, so even a shell that *could* resolve `portless`
- * loses it the moment the command is elevated.
- *
- * We therefore print what the driver itself runs (see {@link defaultRun}): the current interpreter, by
- * absolute path, invoking portless's `dist/cli.js`, by absolute path. Nothing is resolved from `PATH`, so the
- * command works under `sudo`, from any cwd, and however `infra-kit` was launched.
- *
- * This is not merely cosmetic. portless's `service install` writes **the interpreter and script path it was
- * invoked with** straight into the launchd plist's `ProgramArguments` (`nodePath: process.execPath` plus
- * `process.argv[1]`), so the command printed here is the command that gets installed as a **root system
- * daemon**. Printing a name for the shell to resolve would not just fail — it would decide what runs as root.
+ * Prints what the driver itself runs (see {@link defaultRun}): the current interpreter, by absolute path,
+ * invoking portless's `dist/cli.js`, by absolute path. Nothing is resolved from `PATH`, so the command
+ * works under `sudo`, from any cwd, and however `infra-kit` was launched.
  *
  * @example
  * formatPortlessCommand(['service', 'install'], { sudo: true, bin })
  * // 'sudo /usr/local/bin/node /repo/node_modules/portless/dist/cli.js service install'
  */
+// This exists because the obvious string is a lie. `portless` is a plain npm dependency living in
+// `node_modules/.bin`, which is on `PATH` only inside a pnpm/npm script — so printing `sudo portless
+// service install` hands the user a command that dies with `sudo: portless: command not found`. `sudo`
+// makes it strictly worse: it replaces `PATH` with `secure_path`, so even a shell that *could* resolve
+// `portless` loses it the moment the command is elevated.
+//
+// This is not merely cosmetic. portless's `service install` writes the interpreter and script path it was
+// invoked with straight into the launchd plist's `ProgramArguments` (`nodePath: process.execPath` plus
+// `process.argv[1]`), so the command printed here is the command that gets installed as a ROOT SYSTEM
+// DAEMON. Printing a name for the shell to resolve would not just fail — it would decide what runs as
+// root.
 export const formatPortlessCommand = (args: string[], options: FormatPortlessCommandOptions): string => {
   const words = [options.execPath ?? process.execPath, options.bin, ...args]
   const prefix = options.sudo === true ? 'sudo ' : ''
@@ -260,19 +262,20 @@ export const defaultIsListening: IsListening = (port) => {
  * sets `X-Portless: 1` on every response, before route lookup — so an unrouted host still answers the probe
  * (a 404 with the header is a pass). This mirrors portless's own `isProxyRunning`.
  *
- * This replaces the old state-file check (`proxy.port` + `proxy.pid`), which was **unsound**: portless's
- * `resolveStateDir(_port)` ignores its port argument, so `proxy.port` / `proxy.pid` / `proxy.tls` are
- * process-global singletons shared by every daemon on every port. Starting ANY daemon rewrites them, and
- * stopping ANY daemon DELETES them — so a second, unrelated daemon (or a stale sibling repo still on the
- * old CLI, falling back to an unprivileged port) makes a perfectly healthy `:443` daemon look dead. Both
- * were reproduced against portless 0.15.1; see `.omc/research/portless-https-spike.md`.
- *
  * `rejectUnauthorized: false` is deliberate and load-bearing: this probe answers *"is portless serving
- * here?"*, **never** *"is its CA trusted?"*. Validating the chain here would collapse two different
- * failures — a daemon that is down, and a CA that was never trusted — into one indistinguishable error,
- * with two different fixes (a root `service install` vs the sudo-free `trust`). Trust is a separate,
- * explicitly-validating probe (doctor's CA check).
+ * here?"*, **never** *"is its CA trusted?"*. Trust is a separate, explicitly-validating probe (doctor's
+ * CA check).
  */
+// This replaces the old state-file check (`proxy.port` + `proxy.pid`), which was UNSOUND: portless's
+// `resolveStateDir(_port)` ignores its port argument, so `proxy.port` / `proxy.pid` / `proxy.tls` are
+// process-global singletons shared by every daemon on every port. Starting ANY daemon rewrites them, and
+// stopping ANY daemon DELETES them — so a second, unrelated daemon (or a stale sibling repo still on the
+// old CLI, falling back to an unprivileged port) makes a perfectly healthy `:443` daemon look dead. Both
+// were reproduced against portless 0.15.1; see `.omc/research/portless-https-spike.md`.
+//
+// Validating the chain here would collapse two different failures — a daemon that is down, and a CA that
+// was never trusted — into one indistinguishable error, with two different fixes (a root `service install`
+// vs the sudo-free `trust`).
 export const defaultIsProxyServing: IsProxyServing = (port, tls) => {
   return new Promise((resolve) => {
     const request = tls ? https.request : http.request

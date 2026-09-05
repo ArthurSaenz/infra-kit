@@ -3,13 +3,14 @@ import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 
+import type { GuidanceWrite } from 'src/lib/agent-guidance'
 import { seedCreatedMessage, seedUserProjectConfig } from 'src/lib/config-bootstrap'
 import { CONFIG_STUB, buildUserGlobalExample, buildVendorExample } from 'src/lib/config-templates'
 import { getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
 
-import { writeAgentFiles } from './agent-files'
+import { syncRepoGuidance } from './agent-files'
 import {
   migrateFactoryConfigToJson,
   migrateLegacyConfig,
@@ -80,8 +81,9 @@ export const init = async (): Promise<void> => {
   seedUserGlobalConfig()
 
   // Best-effort, non-fatal, repo-gated: keep the agent-instruction files in sync
-  // with the CLI surface. A no-op outside an infra-kit repo.
-  await writeAgentFiles()
+  // with the CLI surface — root AND every workspace package. A no-op outside an
+  // infra-kit repo.
+  await syncAgentGuidance()
 
   // Close the legacy-yml migration gap so a single `dx-init` leaves EVERY example current.
   await reseedUserProjectConfig()
@@ -141,27 +143,27 @@ export const seedUserGlobalConfig = (): void => {
 /**
  * Re-run the layer-3 seed at the END of `init()`, closing the legacy-yml migration gap.
  *
- * The per-command seed lives in the program's preAction hook, which evaluates its "is this an
- * infra-kit repo?" gate (does `<repo-root>/infra-kit.json` exist?) BEFORE the action body runs. On
- * the legacy-yml migration path `init()` itself CREATES that file (`migrateLegacyConfig`), so the
- * gate had already declined and this very run would otherwise leave the layer-3 example unwritten —
- * self-healing only on the user's next command. Re-running the gate here makes one `dx-init` enough.
- *
- * The UNGATED primitive, deliberately: `ensureUserProjectConfig()` is an ENTRY-BOUNDARY primitive
- * whose once-per-process guard has ALREADY fired in preAction, so calling it here would be a silent
- * no-op. It is unusable as a re-seed hook. Anything else (no git repo, no project config, an
- * unwritable `$HOME`) degrades to a debug line — seeding a reference file must never fail `init`.
- *
- * Separate from {@link seedUserGlobalConfig}, which keeps its layer-2-only duty and stays sync.
- *
- * Honours `INFRA_KIT_NO_SEED` itself: the primitive is ungated by design, so without this check the
- * kill switch would be airtight on every path EXCEPT `init`.
+ * Re-evaluates the preAction gate itself and drives the UNGATED `seedUserProjectConfig`, so it
+ * honours `INFRA_KIT_NO_SEED` by hand. Any failure (no git repo, no project config, an unwritable
+ * `$HOME`) degrades to a debug line — seeding a reference file must never fail `init`. Separate
+ * from {@link seedUserGlobalConfig}, which keeps its layer-2-only duty and stays sync.
  *
  * @example
  * await reseedUserProjectConfig()
  * // after a legacy infra-kit.yml migration:
  * // INFO: Created ~/.infra-kit/projects/api/infra-kit.json — see …/infra-kit.example.jsonc …
  */
+// Why this exists at all: the per-command seed lives in the program's preAction hook, which
+// evaluates its "is this an infra-kit repo?" gate (does `<repo-root>/infra-kit.json` exist?)
+// BEFORE the action body runs. On the legacy-yml migration path `init()` itself CREATES that file
+// (`migrateLegacyConfig`), so the gate had already declined and this very run would otherwise
+// leave the layer-3 example unwritten — self-healing only on the user's next command. Re-running
+// the gate here makes one `dx-init` enough.
+//
+// Why the ungated primitive: `ensureUserProjectConfig()` is an ENTRY-BOUNDARY primitive whose
+// once-per-process guard has ALREADY fired in preAction, so calling it here would be a silent
+// no-op — unusable as a re-seed hook. Its ungated replacement does not read `INFRA_KIT_NO_SEED`,
+// so without the check above the kill switch would be airtight on every path EXCEPT `init`.
 const reseedUserProjectConfig = async (): Promise<void> => {
   if (process.env.INFRA_KIT_NO_SEED) return
 
@@ -179,6 +181,58 @@ const reseedUserProjectConfig = async (): Promise<void> => {
   } catch (err) {
     logger.debug({ err, msg: 'Skipped seeding the user-project config (init).' })
   }
+}
+
+/**
+ * Log one line per guidance file this run actually changed, then the step's closing line.
+ *
+ * Unchanged files are omitted: a repo-wide refresh touches every package, and a clean
+ * re-run would otherwise print one no-op line per package on top of `init`'s other output.
+ *
+ * When any file failed, a distinct summary line names the count and the fix. `init` exits 0
+ * regardless (its contract is shell setup, and the sync is a side effect that must not turn
+ * a machine-setup command red), which makes this line the only signal a partial sync
+ * happened — so it must not be a per-path line buried among the rest.
+ */
+const logGuidanceWrites = (root: string, version: string, written: GuidanceWrite[]): void => {
+  for (const file of written) {
+    if (file.action === 'unchanged') continue
+
+    const suffix = file.type === undefined ? '' : ` (${file.type})`
+
+    logger.info(`  ${file.action.padEnd(9)} ${path.relative(root, file.path)}${suffix}`)
+  }
+
+  logger.info(`Agent-instruction files synced (infra-kit ${version})`)
+
+  const failed = written.filter((file) => {
+    return file.action === 'failed'
+  })
+
+  if (failed.length === 0) return
+
+  logger.warn(`${failed.length} package guidance files could not be written — run: infra-kit audit --fix --all`)
+}
+
+/**
+ * `init`'s agent-guidance step: refresh the root block AND every workspace package's block in
+ * one pass, then report. Continue-and-report — `syncRepoGuidance` never throws, a per-file
+ * error arrives as `action: 'failed'`, and `process.exitCode` is deliberately left untouched
+ * so `init` goes on to its remaining steps. A user who wants a failure to be an error runs
+ * `infra-kit audit --fix --all`, which does exit non-zero.
+ *
+ * @example
+ * await syncAgentGuidance()
+ * // INFO:   updated   CLAUDE.md
+ * // INFO:   created   apps/client/ui/CLAUDE.md (frontend)
+ * // INFO: Agent-instruction files synced (infra-kit 0.4.0)
+ */
+const syncAgentGuidance = async (): Promise<void> => {
+  const { skipped, root, version, written } = await syncRepoGuidance()
+
+  if (skipped || root === null) return
+
+  logGuidanceWrites(root, version, written)
 }
 
 const isBlockLine = (line: string): boolean => {

@@ -36,3 +36,18 @@ describe('max-jsdoc-lines registration', () => {
     expect(presetRuleIds).not.toContain('@wl/max-jsdoc-lines')
   })
 })
+
+describe('max-jsdoc-summary-lines registration', () => {
+  it('is registered in the rule map', () => {
+    expect(rules['max-jsdoc-summary-lines']).toBeDefined()
+  })
+
+  // Same DELIBERATE OMISSION as its sibling, and for the same reason: the preset's rules sit under
+  // the components gate, which carries no `ignores`, so enabling a JSDoc rule there would re-expose
+  // the test/story/`.d.ts` files the config layer's `GLOB_TS_DOC_EXCLUDE` excludes. It ships behind
+  // the consuming repo's own config instead. Asserted as a pair with `max-jsdoc-lines` so adding
+  // one to the preset without the other cannot happen quietly.
+  it('is NOT enabled by the recommended preset', () => {
+    expect(presetRuleIds).not.toContain('@wl/max-jsdoc-summary-lines')
+  })
+})

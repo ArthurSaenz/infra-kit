@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ensureUserProjectConfig, seedUserProjectConfig } from 'src/lib/config-bootstrap'
 import type { ToolsExecutionResult } from 'src/types'
 
+import { createConfirmCodec } from '../confirm-token'
+import type { ConfirmCodec } from '../confirm-token'
 import { createToolHandler } from '../tool-handler'
 
 // The ENTIRE config-bootstrap module is faked: the real seed must never run here, because it writes
@@ -56,6 +58,19 @@ vi.mock('src/lib/config-bootstrap', () => {
 const payload: ToolsExecutionResult = {
   content: [{ type: 'text', text: 'ok' }],
   structuredContent: { ran: true },
+}
+
+/** The token a round-1 gate hands out; throws if the gate carried none, so a missing token fails loudly. */
+const gateToken = (gate: ToolsExecutionResult): string => {
+  const { confirmToken } = gate.structuredContent as { confirmToken?: unknown }
+
+  if (typeof confirmToken !== 'string') throw new Error('gate carried no confirmToken')
+
+  return confirmToken
+}
+
+const refusalOf = (result: ToolsExecutionResult): { status?: unknown; reason?: unknown } => {
+  return result.structuredContent as { status?: unknown; reason?: unknown }
 }
 
 beforeEach(() => {
@@ -162,18 +177,35 @@ describe('createToolHandler — destructive-op confirm gate', () => {
     expect(result.content[0]?.text).toContain('confirm')
   })
 
-  it('runs the handler with confirmedCommand:true when a flagged tool is called WITH confirm:true', async () => {
+  it('runs the handler exactly once, with confirmedCommand:true, on a round 2 that carries the round-1 token', async () => {
     const handler = vi.fn(async () => {
       return payload
     })
     const tool = createToolHandler({ toolName: 'env-clear', handler, requiresHumanConfirm: true })
 
-    const result = await tool({ confirm: true, version: '1.2.5' })
+    const gate = await tool({ version: '1.2.5' })
+    const confirmToken = gateToken(gate)
+
+    const result = await tool({ confirm: true, confirmToken, version: '1.2.5' })
 
     expect(result).toBe(payload)
     // The gate is orthogonal to confirmedCommand: the real call STILL injects confirmedCommand:true
-    // (the prompt-skip / behavior discriminator), and passes confirm through untouched.
-    expect(handler).toHaveBeenCalledWith({ confirm: true, version: '1.2.5', confirmedCommand: true })
+    // (the prompt-skip / behavior discriminator), and passes confirm + confirmToken through untouched.
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler).toHaveBeenCalledWith({ confirm: true, confirmToken, version: '1.2.5', confirmedCommand: true })
+  })
+
+  it('accepts a round 2 whose keys arrive in a different order (canonical, not textual, binding)', async () => {
+    const handler = vi.fn(async () => {
+      return payload
+    })
+    const tool = createToolHandler({ toolName: 'env-clear', handler, requiresHumanConfirm: true })
+
+    const gate = await tool({ a: 1, nested: { y: [1, 2], x: 'z' } })
+
+    await expect(
+      tool({ nested: { x: 'z', y: [1, 2] }, confirmToken: gateToken(gate), a: 1, confirm: true }),
+    ).resolves.toBe(payload)
   })
 
   it('leaves a non-flagged tool completely unaffected (runs on the first call, no gate)', async () => {
@@ -199,5 +231,114 @@ describe('createToolHandler — destructive-op confirm gate', () => {
     // confirm must be strictly true to execute; false still returns the gate (fail-closed).
     expect(handler).not.toHaveBeenCalled()
     expect(result.isError).toBe(true)
+  })
+})
+
+/**
+ * Round 2 is bound to round 1 by a signed token over the tool name and the canonical arguments.
+ * Every refusal below is a terminal `confirmation_refused` — never a second gate, because a
+ * token-less round 2 that received a fresh gate could re-call with substituted arguments forever.
+ */
+describe('createToolHandler — confirm token binding (round-2 refusals)', () => {
+  const gatedTool = (toolName: string, options: { confirmCodec?: ConfirmCodec } = {}) => {
+    const handler = vi.fn(async () => {
+      return payload
+    })
+    const tool = createToolHandler({ toolName, handler, requiresHumanConfirm: true, ...options })
+
+    return { tool, handler }
+  }
+
+  const expectRefusal = (result: ToolsExecutionResult, reason: string | string[]): void => {
+    expect(result.isError).toBe(true)
+    expect(refusalOf(result).status).toBe('confirmation_refused')
+    expect(Array.isArray(reason) ? reason : [reason]).toContain(refusalOf(result).reason)
+  }
+
+  it('hands out a confirmToken on round 1', async () => {
+    const { tool } = gatedTool('env-clear')
+
+    expect(gateToken(await tool({ version: '1.2.5' }))).toMatch(/^v1\./)
+  })
+
+  it('refuses a round 2 that carries no token — absence is a refusal, not a fresh gate', async () => {
+    const { tool, handler } = gatedTool('env-clear')
+
+    const result = await tool({ confirm: true, version: '1.2.5' })
+
+    expectRefusal(result, 'absent')
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('refuses a round 2 whose arguments differ from the ones round 1 was called with', async () => {
+    const { tool, handler } = gatedTool('env-load')
+
+    const confirmToken = gateToken(await tool({ config: 'dev' }))
+    const result = await tool({ config: 'prod', confirm: true, confirmToken })
+
+    expectRefusal(result, 'mismatch')
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('refuses a tampered token', async () => {
+    const { tool, handler } = gatedTool('env-clear')
+
+    const confirmToken = gateToken(await tool({ version: '1.2.5' }))
+    const flipped = confirmToken.endsWith('A') ? `${confirmToken.slice(0, -1)}B` : `${confirmToken.slice(0, -1)}A`
+    const result = await tool({ confirm: true, confirmToken: flipped, version: '1.2.5' })
+
+    expectRefusal(result, ['mac', 'malformed'])
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('refuses garbage where a token should be', async () => {
+    const { tool, handler } = gatedTool('env-clear')
+
+    const result = await tool({ confirm: true, confirmToken: 'not-a-token', version: '1.2.5' })
+
+    expectRefusal(result, 'malformed')
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('refuses an expired token', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+
+    try {
+      const { tool, handler } = gatedTool('env-clear', { confirmCodec: createConfirmCodec({ ttlSeconds: 1 }) })
+
+      const confirmToken = gateToken(await tool({ version: '1.2.5' }))
+
+      vi.setSystemTime(Date.now() + 5_000)
+
+      const result = await tool({ confirm: true, confirmToken, version: '1.2.5' })
+
+      expectRefusal(result, 'expired')
+      expect(handler).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refuses a token minted for a different tool (bound by tool name)', async () => {
+    const shared = createConfirmCodec()
+    const envClear = gatedTool('env-clear', { confirmCodec: shared })
+    const mergeDev = gatedTool('gh-merge-dev', { confirmCodec: shared })
+
+    const confirmToken = gateToken(await envClear.tool({}))
+    const result = await mergeDev.tool({ confirm: true, confirmToken })
+
+    expectRefusal(result, 'bind')
+    expect(mergeDev.handler).not.toHaveBeenCalled()
+  })
+
+  it('refuses a token minted under a different key (another server process)', async () => {
+    const minter = gatedTool('env-clear', { confirmCodec: createConfirmCodec() })
+    const verifier = gatedTool('env-clear', { confirmCodec: createConfirmCodec() })
+
+    const confirmToken = gateToken(await minter.tool({ version: '1.2.5' }))
+    const result = await verifier.tool({ confirm: true, confirmToken, version: '1.2.5' })
+
+    expectRefusal(result, 'mac')
+    expect(verifier.handler).not.toHaveBeenCalled()
   })
 })

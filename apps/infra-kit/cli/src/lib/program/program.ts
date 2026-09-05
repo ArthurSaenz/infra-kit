@@ -495,12 +495,42 @@ export const buildProgram = (): Command => {
     .description('Audit against infra-kit.config.ts rules (--all for every package, --root for the monorepo root)')
     .option('-a, --all', 'Audit every non-vendor workspace package')
     .option('-r, --root', 'Audit the monorepo root (turbo pipeline + root commands)')
+    .option(
+      '--fix',
+      'Write the infra-kit guidance block into CLAUDE.md for the audited scope before checking (CLI-only)',
+    )
+    .option('--design', 'With --fix: scaffold DESIGN.md for frontend/mobile packages that lack one')
     .action(async (options) => {
-      const result = await audit({ all: options.all, root: options.root })
+      // Commander expresses no flag dependency natively, so the combination is validated by hand.
+      // This is an ERROR rather than a warning on purpose: a user who typed `--design` asked for a
+      // file to be written, and a warning printed above a green audit reads as success.
+      if (options.design && !options.fix) {
+        logger.error('--design requires --fix (it scaffolds DESIGN.md; there is nothing to scaffold without a fix run)')
+        process.exitCode = 1
+
+        return
+      }
+
+      const result = await audit({
+        all: options.all,
+        root: options.root,
+        fix: options.fix,
+        design: options.design,
+      })
 
       emit(result)
 
-      if (!result.structuredContent.allPassed) {
+      // This action is the SOLE carrier of the fix-write-failure signal: `audit()` never touches
+      // the exit code, so the MCP tool can reuse it. The second clause is not redundant — before
+      // adoption a `missing` block PASSES, so a fix run whose only write failed would otherwise
+      // report a green audit and exit 0.
+      const { allPassed, fixed } = result.structuredContent
+
+      const anyWriteFailed = (fixed ?? []).some((entry) => {
+        return entry.action === 'failed'
+      })
+
+      if (!allPassed || anyWriteFailed) {
         process.exitCode = 1
       }
     })

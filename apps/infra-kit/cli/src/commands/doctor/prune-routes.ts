@@ -1,4 +1,6 @@
 /**
+ * @fileoverview
+ *
  * `infra-kit doctor --fix`: remove the portless routes a DEAD dev-server left behind.
  *
  * A runner deregisters its aliases in `shutdown()` — but `shutdown()` only runs when a signal handler
@@ -81,20 +83,23 @@ export const decidePrune = (probed: readonly ProbedRoute[], devSessionRunning: b
 /**
  * Command lines of a live `infra-kit dev` RUNNER. Matched against `ps -eo command=`.
  *
- * Deliberately the runner and NOTHING ELSE — not `turbo`, not `vite`. That looks too narrow, and the first
- * draft of this file did include them, reasoning that "over-matching only withholds a prune". Running it
- * disproved that: a crashed session leaves `turbo run dev` orphans alive (exactly the orphan class
- * `managed-child` exists to prevent), so matching turbo means the leftovers of a dead session permanently
- * block the cleanup of that same session's routes — `--fix` would be inert on precisely the machine that
- * needs it. Observed: three orphaned `turbo run dev` processes withholding six dead routes.
- *
- * The runner is also the CORRECT thing to gate on, not merely the workable one. It is the only process that
- * registers a portless alias, so only its presence can mean "a route may be about to become live":
- *   - a route can only appear at all while a runner is alive;
- *   - the booting-UI window (alias registered, vite has not bound the port yet) is bounded by the runner;
- *   - an orphaned turbo/vite registers no new routes, and if one still HOLDS a route's port then the wire
- *     probe already sees it as live and it is never a prune candidate in the first place.
+ * Deliberately the runner and NOTHING ELSE — not `turbo`, not `vite`.
  */
+// That looks too narrow, and the first draft of this file did include them, reasoning that
+// "over-matching only withholds a prune". Running it disproved that: a crashed session leaves
+// `turbo run dev` orphans alive (exactly the orphan class `managed-child` exists to prevent), so
+// matching turbo means the leftovers of a dead session permanently block the cleanup of that same
+// session's routes — `--fix` would be inert on precisely the machine that needs it. Observed:
+// three orphaned `turbo run dev` processes withholding six dead routes.
+//
+// The runner is also the CORRECT thing to gate on, not merely the workable one. It is the only
+// process that registers a portless alias, so only its presence can mean "a route may be about to
+// become live":
+//   - a route can only appear at all while a runner is alive;
+//   - the booting-UI window (alias registered, vite has not bound the port yet) is bounded by the
+//     runner;
+//   - an orphaned turbo/vite registers no new routes, and if one still HOLDS a route's port then
+//     the wire probe already sees it as live and it is never a prune candidate in the first place.
 const DEV_RUNNER_PATTERNS: readonly RegExp[] = [/\binfra-kit\s+dev\b/, /cli\.js\s+dev\b/, /dev-server\.(?:js|ts)\b/]
 
 /**

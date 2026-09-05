@@ -1,24 +1,11 @@
 /**
  * The DURABLE, USER-FIXABLE env-auth failure — as a TYPE rather than a string.
  *
- * WHY THIS EXISTS (and why it is deliberately NOT a Doppler type): env auto-load must tell a user
- * apart from a TRANSIENT failure (network, timeout, Doppler down — heals itself, 30s backoff, stay
- * quiet) and a DURABLE one (no token, a corrupt token store, a foreign token store — never heals, and
- * only a human can fix it). Only the durable class earns the STICKY marker that survives the
- * backgrounded shell-startup spawn and is replayed onto the next interactive command; a durable
- * failure misclassified as transient is TOTAL SILENCE, forever, on the one path the whole feature
- * exists to survive.
- *
- * That classification therefore has to travel WITH the error, not be re-derived by grepping a message
- * some other module owns — and it has to be throwable from EVERY module that can produce the class.
- * `lib/env-tokens` (the store) is a layer BELOW `integrations/doppler`, so a Doppler-owned base type
- * could not be thrown there without a layering inversion and an import cycle. Hence a neutral base
- * here in `lib/errors`, with `DopplerAuthError extends EnvAuthError` for the subset of failures that
- * are specifically "Doppler refused the token we sent".
- *
- * The defect class this closes is "a durable failure that is not type-detectable". Adding a new
- * durable failure and forgetting to type it is exactly how this shipped silent twice — so throw this
- * (or a subclass), never a plain `Error`, for anything a user must fix before env-load can work.
+ * Throw this (or a subclass) — never a plain `Error` — for anything a user must fix before
+ * env-load can work: no token minted, a corrupt token store, a foreign token store. Only this
+ * class earns the STICKY marker that survives the backgrounded shell-startup spawn and is replayed
+ * onto the next interactive command. `DopplerAuthError extends EnvAuthError` for the subset that
+ * is specifically "Doppler refused the token we sent".
  *
  * @example
  * // no token minted for this env (integrations/doppler/token-resolver.ts)
@@ -27,6 +14,19 @@
  * // the token store itself is unusable — no single env is at fault, so `env` stays null
  * throw new EnvAuthError(`Invalid JSON in the token store at ${storePath} …`)
  */
+// WHY THIS EXISTS (and why it is deliberately NOT a Doppler type): env auto-load must tell a
+// TRANSIENT failure (network, timeout, Doppler down — heals itself, 30s backoff, stay quiet) apart
+// from a DURABLE one (never heals, and only a human can fix it). A durable failure misclassified as
+// transient is TOTAL SILENCE, forever, on the one path the whole feature exists to survive.
+//
+// That classification therefore has to travel WITH the error, not be re-derived by grepping a
+// message some other module owns — and it has to be throwable from EVERY module that can produce
+// the class. `lib/env-tokens` (the store) is a layer BELOW `integrations/doppler`, so a
+// Doppler-owned base type could not be thrown there without a layering inversion and an import
+// cycle. Hence a neutral base here in `lib/errors`.
+//
+// The defect class this closes is "a durable failure that is not type-detectable". Adding a new
+// durable failure and forgetting to type it is exactly how this shipped silent twice.
 export class EnvAuthError extends Error {
   /**
    * The env (= Doppler config) whose token is at fault, or `null` when the failure is not attributable

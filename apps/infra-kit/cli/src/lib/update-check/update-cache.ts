@@ -13,22 +13,23 @@ import { atomicWriteFileSync, getCacheRoot } from 'src/lib/constants'
 export const CACHE_FILE_NAME = 'update-check.json'
 
 /**
- * The ONE re-check window, whatever the last outcome was. A background check is cheap — one detached
- * child and a single registry fetch bounded by `FETCH_TIMEOUT_MS` — but not once per shell command,
- * which is the storm this throttle exists to stop.
- *
- * There is deliberately no shorter "retry after a transient failure" window. One used to exist because
- * this interval was 24h, and burning a whole day on a single network blip locked out exactly the
- * publisher pushing a release mid-window. At 20 minutes that gap is gone: a blip costs one window, so
- * a second window buys nothing and cannot pay for what it costs (below).
+ * The ONE re-check window, whatever the last outcome was. A background check is cheap — one
+ * detached child and a single registry fetch bounded by `FETCH_TIMEOUT_MS` — but not once per
+ * shell command, which is the storm this throttle exists to stop.
  *
  * MUST stay above a full worker cycle: `runUpdateCheck` stamps `lastCheckMs` BEFORE waiting up to
- * `PARENT_WAIT_TIMEOUT_MS` (5min) for the parent to exit and THEN installing. Go below that and the
- * cache reads stale while the first worker is still legitimately working, so the next shell spawns a
- * worker that dies on the live single-flight lock and returns WITHOUT writing — leaving the cache stale
- * for every command until `LOCK_STALE_MS` (30min) reaps the lock. That is the per-command spawn storm
- * this throttle exists to prevent, and it is why a 5-minute retry window is not an option.
+ * `PARENT_WAIT_TIMEOUT_MS` (5min) for the parent to exit and THEN installing.
  */
+// There is deliberately no shorter "retry after a transient failure" window. One used to exist
+// because this interval was 24h, and burning a whole day on a single network blip locked out
+// exactly the publisher pushing a release mid-window. At 20 minutes that gap is gone: a blip costs
+// one window, so a second window buys nothing and cannot pay for what it costs.
+//
+// What it would cost: go below a full worker cycle and the cache reads stale while the first worker
+// is still legitimately working, so the next shell spawns a worker that dies on the live
+// single-flight lock and returns WITHOUT writing — leaving the cache stale for every command until
+// `LOCK_STALE_MS` (30min) reaps the lock. That is the per-command spawn storm this throttle exists
+// to prevent, and it is why a 5-minute retry window is not an option.
 export const CHECK_INTERVAL_MS = 20 * 60 * 1000
 
 export interface UpdateCache {

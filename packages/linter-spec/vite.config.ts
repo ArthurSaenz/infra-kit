@@ -9,7 +9,9 @@ export default defineConfig(() => {
       lib: {
         entry: ['src/index.ts'],
         formats: ['es'],
-        fileName: (format) => { return `index.${format}.js` },
+        fileName: (format) => {
+          return `index.${format}.js`
+        },
       },
       sourcemap: true,
     },

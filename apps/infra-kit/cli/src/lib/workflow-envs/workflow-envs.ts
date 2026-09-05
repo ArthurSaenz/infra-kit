@@ -8,18 +8,12 @@ import { getProjectRoot } from 'src/lib/git-utils'
 const WORKFLOWS_DIR = '.github/workflows'
 
 /**
- * The environment list a workflow will accept, read from its own `workflow_dispatch` `choice` input.
+ * The environment list a workflow will accept, read from its own `workflow_dispatch` `choice`
+ * input.
  *
- * This replaces `infra-kit.json → environments`, which was a THIRD copy of a fact GitHub already owns
- * and already enforces: a `choice` input is validated server-side on dispatch, so an out-of-range value
- * is rejected by GitHub whether or not we check it here. The copy had drifted — hulyo declared 6 envs
- * while every hulyo workflow declared 8, and the CLI's client-side check turned that drift into a
- * REFUSAL to deploy to `stage` and `prod`.
- *
- * So this is advisory ONLY: it sources the interactive picker, and callers must NOT veto against it.
- * The value returned here comes from the WORKING TREE, while the dispatch targets `--ref <branch>` —
- * the two can legitimately differ, and an explicit `--env` must always win. Vetoing on a local read of
- * a remote fact is what created the bug this function exists to remove.
+ * ADVISORY ONLY: it sources the interactive picker, and callers must NOT veto against it. The value
+ * comes from the WORKING TREE while the dispatch targets `--ref <branch>`, so the two can
+ * legitimately differ and an explicit `--env` must always win.
  *
  * Never throws. A repo with no such workflow (bridge has none), a `type: string` input, an absent
  * `options:` key, or malformed YAML all yield `[]` — an empty picker, never a dead command.
@@ -28,6 +22,12 @@ const WORKFLOWS_DIR = '.github/workflows'
  * await readWorkflowEnvOptions('deploy-all.yml') // => ['dev', 'arthur', 'stage', 'prod']
  * await readWorkflowEnvOptions('absent.yml')     // => []
  */
+// This replaces `infra-kit.json → environments`, which was a THIRD copy of a fact GitHub already
+// owns and already enforces: a `choice` input is validated server-side on dispatch, so an
+// out-of-range value is rejected by GitHub whether or not we check it here. The copy had drifted —
+// hulyo declared 6 envs while every hulyo workflow declared 8, and the CLI's client-side check
+// turned that drift into a REFUSAL to deploy to `stage` and `prod`. Vetoing on a local read of a
+// remote fact is what created the bug this function exists to remove.
 export const readWorkflowEnvOptions = async (workflowFile: string): Promise<string[]> => {
   const projectRoot = await getProjectRoot()
 

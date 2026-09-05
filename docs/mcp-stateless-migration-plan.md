@@ -1,7 +1,13 @@
 # MCP v1 → v2 migration & 2026-07-28 ("stateless") protocol adoption
 
-**STATUS: pending approval — no execution authorized.**
-No file in this repo may be modified on the basis of this document until the user approves it.
+**STATUS: Release 1 shipped (2026-08-16, commit `d1924c0`). Release 2 — the Appendix B era flip —
+implemented 2026-09-05.**
+The original "pending approval" status covered Release 1 and is superseded by the shipped code.
+**Appendix B is no longer unscheduled**: `serveStdio` is adopted, the server serves both eras from one
+factory, and B.4's O5 and B.5's E8 exist as tests. Appendix B's own "nothing in it is authorized"
+preamble is likewise superseded; it is now a record of what was built and what was measured. Release 2
+was planned separately in `.omc/plans/mcp-2026-era-flip.md`, whose findings F1–F8 are folded into the
+appendix below.
 
 Mode: `ralplan --consensus --deliberate` (high-risk: this ships to npm as `infra-kit`).
 Ground truth: `scratchpad/mcp-facts.md` — sections **G, H, I, J, K, L, M, N, O, P** are verified
@@ -53,7 +59,11 @@ hand-wired `new StdioServerTransport()` + `server.connect()`) declaring the **sa
 |---|---|---|---|---|
 | **D1** | `initialize.capabilities.prompts` | `{}` | `{"listChanged": true}` | v2 auto-declares `listChanged` from the same bare `prompts: {}` input. `src/mcp/prompts/index.ts` registers **zero** prompts, so we advertise a capability we never exercise. Harmless, but it is a wire change. |
 | **D2** | `$schema` on every tool `inputSchema`/`outputSchema` | `http://json-schema.org/draft-07/schema#` | `https://json-schema.org/draft/2020-12/schema` | A JSON Schema **dialect URI** change across 23 tools × 2 schemas. |
-| **D3** | `tools[].execution` | `{"taskSupport":"forbidden"}` on **all 23** | **absent on all 23** | v1's `registerTool` hard-codes the block; v2 emits none. **Inert:** v1's own `ToolExecutionSchema` documents that an absent block DEFAULTS to `"forbidden"`, so the advertised semantics are unchanged. |
+| **D3** | `tools[].execution` | `{"taskSupport":"forbidden"}` on **all 23** | **absent on all 23** | v1's `registerTool` hard-codes the block; v2 emits none. **Inert:** v1's own `ToolExecutionSchema` documents that an absent block DEFAULTS to `"forbidden"`, so the advertised semantics are unchanged. Release 2 note: the modern codec **re-applies** this strip in `enforceDeletedFields` (`src-CX2iR2pK.mjs:3991-4014`, `4001-4007`), so D3 is a property of both eras and not only a v1→v2 packaging artifact. |
+| **D5** *(Release 2 — **modern lane only**)* | `resultType` on every result | absent | `'complete'` | `stampResultType` (`src-CX2iR2pK.mjs:3750-3758`) adds it whenever the handler supplied none, which is always for us. The **legacy** codec never emits it (`2390-2394`), which is what makes it a usable server-authored era marker (see B.5). Asserted positively by `w1e` against the `w1e-pre` baseline. |
+| **D6** *(Release 2 — **modern lane only**)* | `ttlMs` + `cacheScope` on cacheable results | absent | `ttlMs: 0`, `cacheScope: 'private'` | `fillCacheFields` (`3773-3785`) fires when `resultType === 'complete'` and the method is cacheable. Because `stampResultType` runs first the precondition always holds, so the fill **always** fires. Our handlers supply no hint, so the defaults apply (`DEFAULT_CACHE_TTL_MS = 0`, `DEFAULT_CACHE_SCOPE = 'private'`, `3719-3720`). `CACHEABLE_RESULT_METHODS` (`3440-3447`) = `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`, `resources/read`, `server/discover` — **`tools/call` is not among them**, so a gated call's result never receives D6. |
+| **D7** *(Release 2 — **modern lane only**)* | `_meta['io.modelcontextprotocol/serverInfo']` | absent | present on **every** result | `stampServerInfoMeta` (`3808-3823`) stamps it irrespective of `resultType`. It fires on the shipped path because the argument is `this._outboundServerInfo()` (`6450`) and `Server._outboundServerInfo()` returns `this._serverInfo` (`mcp-DXXb3Vv3.mjs:1046-1048`); only the base `Protocol` stub returns `undefined` (`6796`). |
+| **D8** *(Release 2 — **BOTH lanes**; not an era delta)* | nullable fields in a tool's generated JSON Schema | `anyOf: [{"type":"string"},{"type":"null"}]` | `type: ["string","null"]` | Caused by the **`zod` bump `^4.4.3` → `^4.5.2`** in version 0.4.0 (commit `e15aec3`), not by the SDK and not by the era: `z.toJSONSchema` changed how it renders nullable. Observed on `dev-status`'s `outputSchema` (`writtenAt`, `contextDir`). It reproduces on the **legacy** wire too, so it is scoped to both lanes. Asserted **positively on the served side** by `w1c` (and carried through the modern lane by `w1e`'s whole-object comparison), with `w1c-pre-d8` as its baseline control — the `anyOf` form is normalized on the **baseline** side only, semantically, and the fixture on disk is not modified. |
 
 **A fourth difference that is NOT a delta: JSON key ORDER.** v2 serializes object keys in a
 different order than v1 (e.g. a tool's `inputSchema` goes `$schema,type,properties` →
@@ -89,6 +99,25 @@ omitted from `required`. **The change is confined to the dialect URI, not to sch
 > `additionalProperties` — are unchanged, and everything else in `initialize`, `tools/list` and
 > `resources/list` is byte-identical. W1 asserts all three deltas POSITIVELY, compares whole objects
 > rather than named fields, and blocks the release on any fourth difference.
+
+**The Release-2 companion sentence (added 2026-09-05; the sentence above is unchanged and still
+describes the legacy wire).**
+
+> Release 2 changes nothing on the **legacy** wire — that is the `legacy: 'serve'` guarantee, and the
+> host matrix in B.0 confirms it. On the **modern** wire it adds three more things, all measured and
+> all asserted positively by `w1e` against the `w1e-pre` baseline: (D5) every result gains
+> `resultType: 'complete'`; (D6) every result of a **cacheable** method gains `ttlMs: 0` and
+> `cacheScope: 'private'`; and (D7) every result gains
+> `_meta['io.modelcontextprotocol/serverInfo']`. D3's `execution` strip is re-applied by the modern
+> codec rather than inherited. Separately, and on **both** lanes, (D8) nullable schema fields
+> re-render from `anyOf` to a type array — a `zod` bump in 0.4.0, not a protocol change.
+
+**On D4, which this table does not have a row for.** The numbering is the test lane's, and the test lane
+carries a **D4** this document never gained a row for: `skipPreflight` removed from both `local-deploy`
+tools' schemas when `--skip-preflight` was deleted. It is an **authored** delta on both lanes — our own
+source change, not an SDK or era effect — and it is normalized on the baseline side and asserted
+positively by `w1c-pre`, exactly like D2 and D3. The canonical list of all eight lives in
+`mcp-stdio.e2e.test.ts`'s W1 header comment; §0b covers the SDK- and dependency-induced ones.
 
 **Why "positively" is load-bearing.** W1 must assert that D1's and D2's *new values are present*, not
 normalize them away. A normalization that swallows D1/D2 is the same hole a third, unnoticed delta
@@ -650,9 +679,14 @@ Notes:
   **optional-omitted** argument, and confirm the host neither rejects the call client-side nor reports
   a schema error. If a host surfaces schema-validation diagnostics, record them verbatim.
 - The exposed-tool count is **23 today**. Read it from `getExposedMcpTools()`; do not memorize it.
-- Under Release 1 the expected negotiated version is the **same one v1 negotiates** (2025-11-25 for a
-  2026-requesting client, 2025-06-18 for a 2025-06-18 client). **Any row showing 2026-07-28 means Option
-  E was not actually implemented** — stop and find the `serveStdio` call.
+- Under Release 1 the expected negotiated version was the **same one v1 negotiates** (2025-11-25 for a
+  2026-requesting client, 2025-06-18 for a 2025-06-18 client), and a `2026-07-28` row would have meant a
+  stray `serveStdio` call. **Since Release 2 that reading is inverted.** `serveStdio` now serves both
+  eras from one factory, so `2026-07-28` is the **expected** row for a host that actually opens with a
+  modern `_meta` envelope, and `2025-11-25` means only that **the host did not probe** — not that the
+  flip is missing. Neither reading proves or disproves the implementation on its own: the era flip is
+  proven by the test lane (`e8a`/`e8b`/`w1a-modern`), and the source guards `u8a`/`u8b`/`u8c` are what
+  fail if `serveStdio` is not wired. Both hosts measured on 2026-09-05 still show `2025-11-25` (B.0).
 - Hosts we cannot test are recorded as **untested**, not assumed working.
 
 **Exit criterion:** every cell of the Inspector and Claude Code rows filled and passing — **including
@@ -701,7 +735,8 @@ already performs five. Do not add build-sharing complexity for a cost that is no
 
 **Spawn ledger — the thing that actually costs.** Child processes, not builds, are the expense.
 
-*Long-lived (a `Client` connects and stays connected) — **hard cap 4**:*
+*Long-lived (a `Client` connects and stays connected) — **hard cap 4 under Release 1; raised to 7 in
+Release 2, see the Release-2 ledger below**:*
 
 | # | Spawn | Serves |
 |---|---|---|
@@ -710,7 +745,8 @@ already performs five. Do not add build-sharing complexity for a cost that is no
 | 3 | v2 client + clean build, against the **disposable worktree fixture** | E4, E5 (the fixture is mutated, so it cannot share spawn 1) |
 | 4 | v2 client + the **mutant build**, against a **fresh** disposable worktree fixture | E4's mutation check (under the mutant the gated tool really executes) |
 
-*Short-lived (spawned, probed, and exited within the same test) — **hard cap 4**:*
+*Short-lived (spawned, probed, and exited within the same test) — **hard cap 4 under Release 1; raised
+to 7 in Release 2, see the Release-2 ledger below**:*
 
 | # | Spawn | Serves |
 |---|---|---|
@@ -721,6 +757,38 @@ already performs five. Do not add build-sharing complexity for a cost that is no
 
 Reusing spawn 1 as E8-R1's negative control is deliberate: it removes a whole spawn *and* makes the
 control genuinely load-bearing rather than a formality.
+
+#### Release-2 ledger (2026-09-05) — the caps move from 4/4 to 7/7, and the lane is now three files
+
+**Why the arithmetic looks wrong at first.** Release-1 short-lived spawn **7** ("v2 client *pinned* to
+`2026-07-28`; `connect()` rejects promptly") **changes category** under the flip: it now connects and
+becomes long-lived `e8b`. So long-lived = 4 + `e8b` + `e4m`/`e5m` + `w1a-modern` = **7**, and short-lived
+= the 3 surviving Release-1 entries + O5's mutant + O5's clean control + O7's wedged mutant + O7's
+unbounded control = **7**.
+
+The ledgers now live in the test files' own headers, which are the authority; these are their current
+counts, per file.
+
+| File | Long-lived | Short-lived | Hermetic builds |
+|---|---|---|---|
+| `src/mcp/__tests__/mcp-stdio.e2e.test.ts` | **5 connections** — shared bare v2 client (E1/E2/E3/E6/E9/O2 + the `e8c` control), v1 client (E7), legacy gate fixture (E4/E5), pinned-modern client (`e8b` + `e1m`/`e2m`/`e3m`/`e6m`/`e9m`), pinned-modern gate fixture (`e4m`/`e5m`), and the pinned-modern client **through the tee proxy** (`w1a-modern` + `w1e` + O1's modern half) | **4** — W1 raw ×2 (also carrying O1's legacy half), `e8a` auto ×1, O6 ×1 | 1 shared clean bundle |
+| `src/mcp/__tests__/mcp-lifecycle.e2e.test.ts` *(new — O5, O7)* | 0 | **5** — O5: the factory-throw mutant + the clean bundle as its control; O7: the wedged-close mutant under `SIGTERM`, the same under `SIGINT`, and the unbounded control under `SIGTERM` | **4** — three mutants plus one clean bundle for the O5 control |
+| `src/mcp/__tests__/mcp-confirm-gate-mutation.test.ts` | 1 — `m1-modern`'s pinned client | 1 — `m1`'s raw call | 1 mutant bundle |
+
+*(The tee-proxy helper's own tests, `t1a`/`t1b` in `helpers/__tests__/stdio-tee.test.ts`, run over
+synthetic logs and spawn nothing and build nothing.)*
+
+**The file layout rule is amended.** "One file" was never the point; **one fork per spawning lane** was.
+O5 and O7 were split into `mcp-lifecycle.e2e.test.ts` because they build **mutant** bundles whose servers
+are deliberately broken, and a broken server has no place in a pool of connections other tests reuse.
+`pool: 'forks'` still serializes the spawns inside each file.
+
+***The real process count exceeds this ledger by 4 + 1.*** Every **negotiated** connection spawns a
+disposable probe sibling (B.5 / F8) that no ledger row names. In `mcp-stdio.e2e.test.ts` there are
+**four** — `e8a`, `e8b`, `e4m`/`e5m`, `w1a-modern`. The fifth belongs to `m1-modern`, in
+`mcp-confirm-gate-mutation.test.ts`, a different file and therefore a different fork: **4 + 1, not 5.**
+No `afterAll` change is required — the sibling is reaped before `connect()` resolves, so none outlives
+its test — but anyone reading `ps` while this lane runs should expect the higher number.
 
 ### Lane 1 — Unit
 
@@ -1464,19 +1532,98 @@ It exists so the work already verified for `serveStdio` is not re-derived — an
 **None hold today. §D proves there is no live breakage.** Release 2 is therefore forward-looking
 optionality, not remediation, and it is correct to leave it unscheduled.
 
+**Superseded 2026-09-05.** Release 2 was implemented anyway, with **no trigger holding** — the matrix
+below re-confirms T1 is still `No`. That was a deliberate choice to take the optionality early while the
+dual-era guarantee could be proven test-side, not a claim that a trigger fired. Read the rest of this
+appendix as the record of what was built, and B.6's no-kill-switch exposure as a risk now accepted
+rather than deferred.
+
 **Release 2 opens by collecting a fresh dated host-era matrix; an earlier matrix is not evidence.**
 Under Option B a host can flip its own era on *its* next update with no `infra-kit` release at all. A
 matrix dated today says something about today only. The matrix is collected from a **local, unpublished
 spike build** with `.mcp.json` repointed (same literal procedure as Phase 6, same restart requirement,
 same mandatory revert), on a throwaway branch deleted afterwards — this is also the substitute that
 invalidates Option F, and it is available on demand rather than being a phase of this plan.
+*(In the event the `.mcp.json` repoint was unnecessary: `--mcp-config` and the Inspector's `--cli` mode
+both take an arbitrary server, so the tracked file was never touched and the mandatory revert was moot.
+The build was the working tree's, not a throwaway branch's. See the RESULT block below.)*
 
-| Host | Era observed against the `serveStdio` spike | Date | Tool surface re-verified (AC13b) |
-|---|---|---|---|
-| MCP Inspector | | | |
-| Claude Code | | | |
-| Cursor | | | |
-| Zed | | | |
+**RESULT — run 2026-09-05 against the built `dist/mcp.js` from the working tree on `main` after the era
+flip.** Build verified: `grep -c serveStdio dist/mcp.js` → 1, `grep -c "StdioServerTransport()"` → 0.
+Every value below was read **off the wire** from a pid-tagged tee log, not from a host's own prose.
+`.mcp.json` was never touched (`git diff --quiet -- .mcp.json` clean before and after); Claude Code was
+driven through `claude -p --strict-mcp-config --mcp-config <temp>` and the Inspector through its
+non-interactive `--cli` mode, the same procedure as Phase 6.
+
+| Host | Host version | Date | Negotiated version | `server/discover` frames |
+|---|---|---|---|---|
+| Claude Code | 2.1.261 | 2026-09-05 | **2025-11-25** | **0** |
+| MCP Inspector `inspector-cli` | 2.5.0 | 2026-09-05 | **2025-11-25** | **0** |
+| Cursor | — | — | **untested** | untested |
+| Zed | — | — | **untested** | untested |
+
+**Neither host probes, and neither host reached the modern era.** Both opened with a plain `initialize`
+carrying `protocolVersion: "2025-11-25"` and no `_meta` envelope, so per B.5 the server classified the
+opening as `legacy` and served the 2025 era from the same factory. **This is the honest row, and per this
+plan's own rule — hosts we cannot move are recorded as measured, not as assumed — it is explicitly not a
+failure.** The era flip is proven by the test lane (`e8a`, `e8b`, `w1a-modern`), never by these rows.
+Because neither host negotiated, neither log carried a disposable `server/discover` sibling: each host
+spawned exactly **one** server process, so B.5's two-process shape was not exercised by either.
+
+**No modern encode markers appeared anywhere.** Across all seven logs, `resultType`, `ttlMs`,
+`cacheScope` and `_meta['io.modelcontextprotocol/serverInfo']` were present on **0** results. That is
+the expected **legacy-codec signature** (D5/D6/D7 are modern-lane only) and is consistent with the
+negotiated version.
+
+**Claude Code 2.1.261.** One served pid, 0 malformed lines. Inbound methods in wire order: `initialize`,
+`notifications/initialized`, `tools/list`, `prompts/list`, `resources/list`, `tools/call`,
+`resources/read`, `resources/read`, `tools/call`. `tools/list` returned **23** tools. The read-only call
+`version` returned `{"content":[{"type":"text","text":"{\n  \"version\": \"0.4.0\"\n}"}],`
+`"structuredContent":{"version":"0.4.0"}}`. Both resources were readable: `infra-kit://config` came back
+as `mimeType: application/json` with the real merged config (`envManagement.provider: "doppler"`), and
+`infra-kit://dev-context` as `{"session":"none","fragmentDir":"/Users/arthur/.infra-kit/dev-context",…}`.
+**Confirm gate — accepted and reported correctly.** `env-clear` called without `confirm` returned,
+verbatim:
+
+```json
+{"content":[{"type":"text","text":"{\n  \"status\": \"confirmation_required\",\n  \"tool\": \"env-clear\",\n  \"resolvedArgs\": {},\n  \"message\": \"env-clear mutates external state and is gated. It was NOT executed. Re-call env-clear with the same arguments plus \\\"confirm\\\": true to execute.\"\n}"}],
+ "structuredContent":{"status":"confirmation_required","tool":"env-clear","resolvedArgs":{},"message":"env-clear mutates external state and is gated. It was NOT executed. Re-call env-clear with the same arguments plus \"confirm\": true to execute."},
+ "isError":true}
+```
+
+The tool did **not** run: one `tools/call` in the log, no second one, and the server took its
+`Tool execution gated (awaiting confirm)` path. No `resultType`, no cache fields and no serverInfo
+`_meta` on any of the 8 results.
+
+> **Read the wire, not the prose.** Claude Code's own summary said "24 tools" and then listed 23. The
+> `tools/list` result on the wire carries **23**. This is why the matrix is specified as a tee-log
+> measurement rather than a host's self-report.
+
+**MCP Inspector `inspector-cli` 2.5.0.** The Inspector CLI has no persistent session, so each `--method`
+is its own spawn and its own log. All six spawns negotiated `2025-11-25` with 0 `server/discover` frames
+and 0 malformed lines. Notably it already depends on `@modelcontextprotocol/client@2.0.0` and **still**
+opens legacy — it does not negotiate by default either. `tools/list` returned **23** tools with `doctor`
+absent, and reported `Schema portability: 0 errors, 9 warnings across 6 tools`. `version` returned
+`{"version":"0.4.0"}`. Both resources were readable: `resources/list` returned both URIs,
+`infra-kit://dev-context` read as `{"session":"none","readAt":…,"apps":[]}`, and `infra-kit://config`
+read as the real merged config when run with `--cwd <repo>`. (A first attempt from the scratchpad
+correctly returned `{"error": "failed to resolve the project root from …"}` — that is cwd sensitivity in
+the config resource, not a protocol result, so it was re-run with the repo cwd.) **Confirm gate —
+pre-existing client-side rejection, unchanged.** The **server** emitted the correct gate payload on the
+wire, identical in shape to Claude Code's, and the server log lines `Tool execution started: env-clear` /
+`Tool execution gated (awaiting confirm): env-clear` confirm the tool never ran; the Inspector's own
+v1-style validator then refused to decode it and exited 1 with `data must have required property
+'filePath', … data must NOT have additional properties`. This is the already-recorded behaviour
+(§ Phase 6 above), reproduced against a different tool and a newer Inspector. It fails safe.
+
+**Cursor and Zed remain untested, not assumed working.** Both are GUI hosts with no CLI that drives an
+MCP server non-interactively, so there is no way to fill their rows under this phase's own rule.
+Unchanged from 2026-08-16.
+
+**Comparison with the 2026-08-16 baseline.** Claude Code moved 2.1.233 → 2.1.261 and the Inspector
+2.2.0 → 2.5.0; both still negotiate `2025-11-25` with 0 `server/discover` frames and 23 tools, and
+`version` moved `0.3.14` → `0.4.0`. **Nothing regressed and nothing moved to the modern era** — which is
+exactly the `legacy: 'serve'` guarantee the flip was required to preserve.
 
 ### B.1 PM-4 — The zombie server (pre-verified hazard)
 
@@ -1491,9 +1638,18 @@ return { close: async () => { await started.catch(() => {}); await closeAll(); }
 ```
 
 With `onerror` omitted, `reportError` is a no-op (`?.` on undefined) and the rethrown rejection is
-swallowed. A transport-start failure produces **no log, no exit, no crash.** Worse: because `serveStdio`
-re-invokes the factory per message, a **throwing factory** yields a live process that answers `-32603`
-to every request forever, with an **empty log file**, while the host reports the server as "connected".
+swallowed. A transport-start failure produces **no log, no exit, no crash.** Worse: a **throwing factory**
+yields a live process that answers `-32603` to every request forever, with an **empty log file**, while
+the host reports the server as "connected".
+
+**Corrected 2026-09-05 (F2) — the mechanism sentence above was wrong.** This paragraph used to read
+"because `serveStdio` re-invokes the factory per message". It does not. `serveStdio` pins **one**
+instance per connection for the connection's lifetime (`stdio.d.mts:47-48`). The zombie arises because a
+throwing factory **never reaches `phase: 'pinned'`** — the `state = { phase: 'pinned', … }` assignments
+(`stdio.mjs:469`, `493`) are never reached, `state` stays `{ phase: 'opening' }` from `263`, so every
+subsequent message re-enters the opening arm and re-calls the factory. The `pump` writes one `-32603` per
+request and reports it (`511-516`). **The hazard, the snippet and the conclusion are unchanged** — only
+the causal claim is corrected.
 
 Today `src/entry/mcp.ts` logs and `process.exit(1)`s on both failure modes. Adopting `serveStdio`
 without `onerror` is a strict, silent regression in field diagnosability — and the *only* thing that
@@ -1557,6 +1713,7 @@ AND   an env-injected factory that throws on construction
         produced by the same onLoad-plugin technique as the E4 mutation check —
         never a runtime backdoor in shipped source)
 WHEN  the process is spawned
+AND   a raw `initialize` frame is written to its stdin          # ← amended, see F1 below
 THEN  the process exits with a NON-ZERO code within a bounded timeout
 AND   the pino log file contains at least one `error`-level line naming the failure
 AND   the process does NOT stay alive answering -32603
@@ -1564,6 +1721,20 @@ AND   the process does NOT stay alive answering -32603
 
 Both assertions are required. Non-zero exit without a log line is undiagnosable; a log line without an
 exit is the zombie.
+
+**Amended 2026-09-05 (F1) — the factory is lazy, so a bare spawn proves nothing.** `serveStdio` calls
+`factory({ era })` only from `connectInstance` (`stdio.mjs:374-375`), reached only from `processMessage`
+(`441`, `464`, `488`) — that is, on the **first inbound message**, never at startup. `serveStdio`'s own
+body does `wire.start()` (`546`) and returns `{ close }` (`551-554`) and nothing else. A test that spawns
+the mutant and waits therefore constructs nothing and **passes vacuously**. The WHEN must send an
+`initialize`. The same laziness is why O2's asserted startup log line had to change: nothing can be
+emitted from the factory at process start, so the line is now `'MCP stdio entry started.'`.
+
+**Implemented.** O5 lives in **`src/mcp/__tests__/mcp-lifecycle.e2e.test.ts`**, a new file, not in
+`mcp-stdio.e2e.test.ts` — the two were split so concurrent work on the e2e file could not clobber it. It
+ships with an **`o5-control`**: the same test against the **clean** build, which must stay alive and log
+no `error` lines, so "exits non-zero" cannot be satisfied by an unrelated startup crash. O7 (bounded
+teardown under a wedged `close()`, with its own unbounded control) lives in the same file.
 
 ### B.5 E8 — the actual 2026-era proof (Release 2 gate)
 
@@ -1575,6 +1746,56 @@ expect(bare.getProtocolEra()).toBe('legacy')     // control — proves dual-era 
 
 Then **re-run E1–E6 over the pinned connection** — that is AC13b in test form. A modern connection with
 an unverified confirm gate blocks the release.
+
+**Implemented 2026-09-05.** E8 exists as three tests in `src/mcp/__tests__/mcp-stdio.e2e.test.ts`:
+`e8a` (an `auto` client lands `modern`), `e8b` (a **pinned** client connects, era `modern`, version
+`2026-07-28`) and `e8c` (a **bare** connection still negotiates `2025-11-25` — the dual-era control).
+E1–E6 and E9 are re-run over the pinned modern connection as `e1m`–`e9m`, with `e4m`/`e5m` opening a
+second connection because their worktree fixture is mutated, and a `beforeAll` era precondition that
+fails fast if the connection is not actually modern. `m1-modern`, in
+`mcp-confirm-gate-mutation.test.ts`, is the load-bearing control for the modern gate: with the gate
+neutered the file appears.
+
+**How the modern era is classified — corrected (F4).** `server/discover` is **not** required and the
+method is **never** consulted. **Any** request or notification carrying a valid two-key `_meta` envelope
+claim opens the modern era: `classifyOpeningMessage` reads `message.method` in exactly one place, the
+`initialize` guard (`stdio.mjs:210-219`), and everything after it is method-agnostic (`220-242`), pinning
+directly at `453-476`. `server/discover` only *additionally* earns the **probe** state (`436-451`), whose
+sole purpose is to let a later legacy opening discard the probe instance (`483-487`). The required keys
+are `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities`
+(`REQUIRED_ENVELOPE_KEYS`, `src-CX2iR2pK.mjs:3989`), validated by `carriesValidModernEnvelopeClaim`
+(`5083-5089`). Consequence for tests: **do not assert on the presence of a `server/discover` frame** —
+that is a property of the client's negotiation mode, not of the server's rule — and **do not hand-roll
+modern frames**. Drive the modern lane with a real pinned v2 `Client`.
+
+**A negotiated stdio connection spawns TWO server processes (F8).** For a base `StdioClientTransport` in
+`mode: 'auto'` or `mode: { pin }`, the era probe runs against a **disposable sibling child process**
+(`client/dist/index.mjs:3255-3258`, `negotiateStdioViaSibling`, constructed at `2778-2781`), which is
+reaped in a `finally` (`2804`), and only then does the real transport connect to a **second** process
+(`3289`). The two are therefore **sequential, never concurrent** — which is what makes a single shared
+tee log safe, because line interleaving between them is impossible. A **bare** client never negotiates
+and spawns exactly one (`DEFAULT_VERSION_NEGOTIATION_MODE = 'legacy'`, `2446`). No `afterAll` change is
+needed: the sibling is "reaped before this resolves" (`2764-2772`), so none outlives its test.
+
+**The consequence that matters for anyone re-deriving this: the served connection never receives an
+`initialize` or a `server/discover`** (`client/dist/index.mjs:3290-3300`). The modern era therefore
+cannot be observed on the served connection through a protocol-revision string; it must be read from a
+**server-authored marker**, and `resultType` is that marker because the legacy codec never emits it
+(`src-CX2iR2pK.mjs:2390-2394`). That is D5's second job.
+
+**Modern bytes are read with a tee proxy, and it must tag frames by pid.** The sibling is built from
+`readStdioServerParams`, i.e. the same `command`/`args`, so it runs the same tee script and appends to
+the same log; untagged, the two children are indistinguishable. The served pid is then selected by an
+**exact rule — never by frame count**: the sibling is the pid whose inbound frames carry
+`server/discover`, and the served pid is the other one. The helper (`servedConnection()` in
+`src/mcp/__tests__/helpers/stdio-tee.ts`) **throws** on zero or on more than one served candidate, and
+`t1a`/`t1b` prove that over synthetic two-pid logs with no spawn and no build. A frame-count heuristic
+would let `w1e`'s positive half pass against the sibling, which is precisely the false green this rule
+exists to prevent.
+
+**O5 and O7 stay on raw frames, and not for tidiness.** Under O5's mutant the factory throws, so the
+**sibling** dies during the probe and `connect()` rejects *before the served process is ever spawned* — a
+negotiated O5 would not merely muddle pid attribution, it would **test nothing at all**.
 
 *(In-process alternative, recorded so it is not rediscovered: `ServeStdioOptions.transport` accepts any
 `Transport`, and `StdioServerTransport`'s constructor takes `(stdin?, stdout?)`. A `PassThrough` pair
@@ -1619,7 +1840,7 @@ plan to be considered finalized. Run from the repo root against `docs/mcp-statel
 | **C5** | B3 asserts absence of the **string literals**, with a `minify: true` parenthetical. | `grep -n "SUPPORTED_MODERN_PROTOCOL_VERSIONS"` → appears only in §1's §L context and in B3's *"the earlier form was a false green"* note, **never as the assertion**. AC15's B3 line contains `'2026-07-28'` **and** `'2025-11-25'`. The parenthetical names `scripts/build.js:44` and `minify: true`. B1 and B2 unchanged in substance. |
 | **C6** | `@modelcontextprotocol/client@^2.0.0` is a **devDependency**; AC2 lists both devDeps with purposes; U7's dependencies clause scopes to non-test source and a separate clause asserts both are devDeps and neither is in `dependencies`. | `grep -n "@modelcontextprotocol/client"` → every manifest mention says `devDependencies`; AC1 explicitly excludes it from `dependencies`. AC2 lists `sdk` (2025-era fixture) and `client` (2026-era-capable fixture) with purposes. U7 clause 1 reads *"imported from a NON-TEST file under `src/`"*; clause 2 asserts both in `devDependencies` and **neither** in `dependencies`. |
 | **C7** | AC12 [R1] states the rejection shape with `SdkError` / `SdkErrorCode.EraNegotiationFailed`; the `getProtocolEra() !== 'modern'` disjunction is deleted. | `grep -n "EraNegotiationFailed"` → hits in §4's E8-R1 harness **and** AC12. `grep -n "!== 'modern'"` → **no hit** as an assertion; only the sentences explaining the branch is unreachable and deleted. `grep -n "rejects.toSatisfy"` → ≥ 2 hits. |
-| **C8** | The suite is rationed by **spawns**, not builds: timeouts stated, one e2e file, shared spawns, ≤4 long-lived + ≤4 short-lived, `afterAll` force-kill. | `grep -n "120_000"` and `grep -n "45_000"` → both in §4's harness table and AC18. `grep -n "Builds are NOT rationed"` → 1 hit. `grep -n "mcp-stdio.e2e.test.ts"` → named as the single home of E1–E7, W1, O1, O2, O6, E8-R1, mutant build. The spawn ledger enumerates 8 spawns, 4 long-lived + 4 short-lived, with hard caps stated. `grep -n "afterAll"` → names a force-kill (`SIGKILL`). `grep -n "pool: 'forks'"` → noted as pinned, not to be changed for this lane. |
+| **C8** | The suite is rationed by **spawns**, not builds: timeouts stated, one e2e file, shared spawns, ≤4 long-lived + ≤4 short-lived, `afterAll` force-kill. | `grep -n "120_000"` and `grep -n "45_000"` → both in §4's harness table and AC18. `grep -n "Builds are NOT rationed"` → 1 hit. `grep -n "mcp-stdio.e2e.test.ts"` → named as the single home of E1–E7, W1, O1, O2, O6, E8-R1, mutant build. The **Release-1** spawn ledger enumerates 8 spawns, 4 long-lived + 4 short-lived, with hard caps stated. `grep -n "afterAll"` → names a force-kill (`SIGKILL`). `grep -n "pool: 'forks'"` → noted as pinned, not to be changed for this lane. **Amended 2026-09-05:** Release 2 raises the caps to **7 long-lived + 7 short-lived** and splits O5/O7 into `mcp-lifecycle.e2e.test.ts`; the condition is now that each spawning file states its own ledger in its header and §4's Release-2 ledger matches those headers. The rationing principle — spawns, not builds; one fork per spawning lane — is unchanged. |
 
 ### Also-required gaps (Critic-flagged as surviving — verified present)
 

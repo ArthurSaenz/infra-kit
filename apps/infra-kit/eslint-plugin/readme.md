@@ -532,6 +532,13 @@ Cap the height of a JSDoc block. The block's **prose** and its **`@example` bodi
 get **two independent budgets**, so a long worked example never makes the
 description look bloated — and never eats the room a description needs.
 
+This rule caps the **whole block** at 15 lines.
+[`max-jsdoc-summary-lines`](#max-jsdoc-summary-lines) caps the **first paragraph**
+at 5. The two **compose rather than overlap** — a 40-line block whose summary is
+two lines is a well-shaped long block, and a 7-line block that is one unbroken
+paragraph is a badly-shaped short one. Do not unify them: this number is about
+height, the other is about whether a reader can skim.
+
 ```ts
 // ❌ Incorrect — 8 lines of contract wrapped around a 35-line `@example`
 /**
@@ -638,3 +645,89 @@ The `@example` scan ends a body at any line starting with `@`, so a decorator
 (`@Injectable`) written inside an `@example` would truncate the body early and
 under-count it. A scan of every `@example` in the codebase found no such line, so
 this is correct today — but it is a measured constraint, not a guarantee.
+
+### `max-jsdoc-summary-lines`
+
+Cap the height of a JSDoc block's **summary paragraph** — the first thing a reader
+sees. The requirement this encodes is that the essence of a comment should be
+graspable in **3 to 5 lines**; the default ceiling is the loose end of that range.
+
+```ts
+// ❌ Incorrect — six unbroken lines before the reader learns anything they can act on
+/**
+ * Resolves the dev proxy for a package by walking the preset table, falling back
+ * to the launched backend set, then to the cloud gateway, honouring an explicit
+ * pin where one exists, and finally writing the chosen source into the dev
+ * context fragment so the vite plugin can re-resolve it without a restart, which
+ * matters because the plugin watches that directory rather than the config file
+ * and would otherwise bake the proxy at config load.
+ */
+export const resolveProxy = () => {}
+
+// ✅ Correct — one glance, a blank line, then the detail
+/**
+ * Resolves the dev proxy for a package: preset pin, then launched backends, then
+ * the cloud gateway.
+ *
+ * The chosen source is written to the dev-context fragment rather than returned,
+ * because the vite plugin watches that directory and would otherwise bake the
+ * proxy at config load.
+ */
+export const resolveProxy = () => {}
+```
+
+**Composes with [`max-jsdoc-lines`](#max-jsdoc-lines), does not overlap it.** That
+rule caps the **whole block** at 15 lines; this one caps the **first paragraph**
+at 5. A block can satisfy either and fail the other, and both are worth having:
+one is about height, the other about whether the block can be skimmed. Do not
+unify them into a single budget.
+
+Counting rules:
+
+- **The summary** runs from the block's first prose line to the first blank line
+  or the first `@tag` line, whichever comes first.
+- **Leading gutter-only lines are skipped**, so the paragraph starts wherever the
+  prose does.
+- **Delimiter lines are not counted.** The `/**` opener and the closing line carry
+  no prose. This is the one place the count differs from `max-jsdoc-lines`, which
+  measures visual height and so counts them.
+- **A block with no blank line and no tags is one paragraph end to end**, so its
+  whole prose body is the summary.
+- **A block that opens with a tag has a zero-line summary** and can never report.
+  `@param`-only blocks are a contract, not a description.
+- Only counts strictly greater than the ceiling report (`lines === max` is
+  allowed).
+
+#### Options
+
+| Option            | Default                                              | Description                                                                             |
+| ----------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `maxSummaryLines` | `5`                                                  | Prose ceiling for the summary paragraph.                                                |
+| `exemptTags`      | `['fileoverview', 'module', 'packageDocumentation']` | Tags that exempt a block entirely. Same list as `max-jsdoc-lines`, so one tag does both. |
+
+```js
+{
+  rules: {
+    '@wl/max-jsdoc-summary-lines': ['warn', { maxSummaryLines: 3 }],
+  },
+}
+```
+
+#### Calibration
+
+51 of the 2,171 JSDoc blocks in `apps/infra-kit/cli/src` exceed 5 summary lines
+(measured 2026-09-05; `docs/comment-review-skill-plan.md` §9). That is 2.3% of
+linted blocks — the same order as `max-jsdoc-lines`'s 2.12%, which is to say a
+normal lint-rule yield rather than a codebase-wide sweep.
+
+#### Not fixable, deliberately
+
+There is no autofix. The mechanical fix — insert a blank line after line 5 —
+splits a paragraph at an arbitrary point and produces a summary that reads as
+truncated. Deciding what belongs in the first glance is judgement, and the same
+reasoning that keeps `max-jsdoc-lines` unfixable applies here.
+
+Module-level rationale is exempted the same way: tag the block `@fileoverview`
+(or `@module` / `@packageDocumentation`). There is no positional exemption, and
+the message names the tag inline so the escape hatch is visible at the point of
+failure.

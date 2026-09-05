@@ -2,6 +2,8 @@ import process from 'node:process'
 import { describe, expect, it } from 'vitest'
 
 /**
+ * @fileoverview
+ *
  * The node semantics that `renderToStderr`'s `process.stdin.pause()` (tui/boot.tsx) depends on.
  *
  * WHAT THIS FENCES, AND WHAT IT DOES NOT — this file pins the RUNTIME CONTRACT: that `pause()` on

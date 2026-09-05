@@ -1,4 +1,6 @@
 /**
+ * @fileoverview
+ *
  * Shared supervision for the dev-server's long-lived, detached child processes
  * (`turbo watch build`, `turbo run dev`). Both are deep trees
  * (`sh → pnpm → node → turbo → …`) spawned `detached` so they form their own process
@@ -397,19 +399,21 @@ export type UnexpectedExitHandler = (detail: string) => void
  * walk that finds them must run while turbo is still alive. Then SIGTERM every doomed group,
  * poll until all are gone, and SIGKILL the survivors. Resolves once nothing is left.
  *
- * That covers the ORDERLY death, where we choose the moment and can walk the tree first. It does not
- * cover turbo CRASHING, because reparenting happens at termination — strictly before Node hands us the
- * `exit` event — so by then the walk is already blind. A rolling snapshot (see `sample`) is therefore
- * kept for the child's whole life, and both the crash path and a `kill()` on an already-dead child reap
- * from it, validating each group against its leader's start time so a recycled pgid is never killed.
- *
  * `onUnexpectedExit` (optional) fires when the child dies WITHOUT `kill()` having been called —
- * the "engine died silently" case. A `killing` latch, set at the top of `kill()` before any signal
- * goes out, suppresses the callback for the exit our own teardown causes, so it reports only genuine
- * crashes. The `error` listener is load-bearing beyond reporting: a {@link ChildProcess} that emits
- * `error` (e.g. `pnpm` ENOENT) with no listener throws as an uncaught exception and would take the
- * whole dev session down.
+ * the "engine died silently" case; the exit our own teardown causes never reaches it.
  */
+// The snapshot-first order covers the ORDERLY death, where we choose the moment and can walk the tree
+// first. It does not cover turbo CRASHING, because reparenting happens at termination — strictly before
+// Node hands us the `exit` event — so by then the walk is already blind. A rolling snapshot (see `sample`)
+// is therefore kept for the child's whole life, and both the crash path and a `kill()` on an already-dead
+// child reap from it, validating each group against its leader's start time so a recycled pgid is never
+// killed.
+//
+// A `killing` latch, set at the top of `kill()` before any signal goes out, is what suppresses
+// `onUnexpectedExit` for our own teardown, so it reports only genuine crashes.
+//
+// The `error` listener is load-bearing beyond reporting: a ChildProcess that emits `error` (e.g. `pnpm`
+// ENOENT) with no listener throws as an uncaught exception and would take the whole dev session down.
 export function superviseChild(
   child: ChildProcess,
   graceMs: number = DEFAULT_GRACE_MS,
