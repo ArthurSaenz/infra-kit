@@ -14,7 +14,7 @@ const REPO_ROOT = resolve(HOOKS_DIR, '..', '..');
 
 // Async twin of `runHook`, for the one case that must observe the hook WHILE it waits: the lock has
 // to be released mid-acquire, which spawnSync cannot express.
-function runHookAsync(file, event, env) {
+const runHookAsync = (file, event, env) => {
   const child = spawn('node', [join(HOOKS_DIR, file)], { env: { ...process.env, ...env } });
   let stdout = '';
   let stderr = '';
@@ -30,7 +30,7 @@ function runHookAsync(file, event, env) {
   return new Promise((resolve_) => {
     child.on('close', (status) => resolve_({ status, stdout, stderr }));
   });
-}
+};
 
 // `helpers.mjs` merges `process.env`, so under a real gate every case here would inherit the
 // descent flag and see a no-op. Blank it where the gate must do real work ('' is falsy).
@@ -38,7 +38,7 @@ const gateEnv = (extra) => ({ CLAUDE_HOOK_QA_NESTED: '', ...extra });
 
 // MUST carry its own package.json: `pnpm run qa` walks upward, so a bare directory would find the
 // repo root's script and launch the full-monorepo run these tests exist to avoid.
-function makeScratchProject(qaScript) {
+const makeScratchProject = (qaScript) => {
   const dir = join(REPO_ROOT, '.omc', `.tmp-qa-${randomUUID()}`);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
@@ -46,7 +46,7 @@ function makeScratchProject(qaScript) {
     JSON.stringify({ name: 'tmp-qa', version: '0.0.0', scripts: { qa: qaScript } }),
   );
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
-}
+};
 
 // The whole point of capturing qa's output instead of letting it stream.
 test("a failing qa reports the check's own output, not a generic sentence", () => {

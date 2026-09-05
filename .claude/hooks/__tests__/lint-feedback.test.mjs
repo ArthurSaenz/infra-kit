@@ -18,7 +18,7 @@ import {
 const REPO_ROOT = resolve(HOOKS_DIR, '..', '..');
 
 // Separate from edit-hooks.test.mjs's factory, whose typecheck cases depend on eslint skipping.
-function makeLintPackage(source, { eslintConfig, prettierConfig, fileName = 'src.ts' } = {}) {
+const makeLintPackage = (source, { eslintConfig, prettierConfig, fileName = 'src.ts' } = {}) => {
   const pkgDir = join(REPO_ROOT, '.omc', '.tmp-lint-test');
   rmSync(pkgDir, { recursive: true, force: true });
   mkdirSync(pkgDir, { recursive: true });
@@ -32,7 +32,7 @@ function makeLintPackage(source, { eslintConfig, prettierConfig, fileName = 'src
     file: join(pkgDir, fileName),
     cleanup: () => rmSync(pkgDir, { recursive: true, force: true }),
   };
-}
+};
 
 // No TS parser, so a throwaway package needs no parser dependency.
 const FLAT_CONFIG_UNUSED_ERROR = `export default [

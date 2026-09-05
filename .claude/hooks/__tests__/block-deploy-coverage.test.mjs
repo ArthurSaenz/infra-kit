@@ -27,26 +27,26 @@ const SUITE_CODE = SUITE.split('\n')
   .map((line) => line.replace(/\s\/\/.*$/, ''))
   .join('\n');
 
-function setMembers(name) {
+const setMembers = (name) => {
   const match = GUARD.match(new RegExp(`${name}\\s*=\\s*new Set\\(\\[([\\s\\S]*?)\\]\\)`));
   assert.ok(match, `could not parse ${name} — this test is out of date with the guard, not vice versa`);
   return [...match[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-}
+};
 
-function switchCases() {
+const switchCases = () => {
   const match = GUARD.match(/switch \(head\)[\s\S]*?\n {4}\}/);
   assert.ok(match, 'could not parse the dispatch switch');
   return [...match[0].matchAll(/case '([^']+)'/g)].map((m) => m[1]);
-}
+};
 
 // `\b` would accept `builtin` inside `builtins`; the boundary class is the shell-token boundary.
 const SHELL_BOUNDARY_BEFORE = String.raw`(^|[\s"'\`/|])`;
 const SHELL_BOUNDARY_AFTER = String.raw`(\s|["'\`]|$)`;
 
-function named(token) {
+const named = (token) => {
   const literal = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`${SHELL_BOUNDARY_BEFORE}${literal}${SHELL_BOUNDARY_AFTER}`, 'm').test(SUITE_CODE);
-}
+};
 
 for (const set of ['SHELL_WRAPPERS', 'PREFIX_COMMANDS', 'BARE_PREFIX_FAILS_CLOSED', 'GUARDED_TOOLS']) {
   test(`every ${set} member is named by a test command`, () => {

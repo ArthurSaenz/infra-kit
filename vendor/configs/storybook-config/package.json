@@ -11,13 +11,12 @@
     "deps"
   ],
   "devDependencies": {
-    "@storybook/addon-docs": "^10.5.7",
-    "@storybook/addon-links": "^10.5.7",
-    "@storybook/addon-vitest": "10.5.7",
-    "@storybook/react-vite": "^10.5.7",
+    "@storybook/addon-docs": "^10.6.0",
+    "@storybook/addon-links": "^10.6.0",
+    "@storybook/react-vite": "^10.6.0",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "storybook": "^10.5.7",
+    "storybook": "^10.6.0",
     "vite": "catalog:"
   },
   "engines": {

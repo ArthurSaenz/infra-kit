@@ -46,7 +46,7 @@ const printInfo = (msg) => console.log(`${Colors.CYAN}ℹ ${msg}${Colors.RESET}`
  * Derives every casing the template uses from the kebab-case feature name.
  * `user-profile` -> { kebab, camel: userProfile, pascal: UserProfile, human: 'User Profile' }
  */
-function nameForms(kebab) {
+const nameForms = (kebab) => {
   const words = kebab.split('-')
 
   return {
@@ -61,7 +61,7 @@ function nameForms(kebab) {
  * Placeholder substitutions, longest-first so that `Feature Name` is consumed
  * before the shorter forms can match inside it.
  */
-function substitutions(names) {
+const substitutions = (names) => {
   return [
     ['Feature Name', names.human],
     ['FeatureName', names.pascal],
@@ -73,7 +73,7 @@ function substitutions(names) {
 const applySubstitutions = (text, subs) => subs.reduce((acc, [from, to]) => acc.split(from).join(to), text)
 
 /** Rewrites contents and renames files, depth-first so renames stay valid. */
-async function substituteTree(dir, subs) {
+const substituteTree = async (dir, subs) => {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name)
 
@@ -92,7 +92,7 @@ async function substituteTree(dir, subs) {
 }
 
 /** Runs one of the sibling validators and resolves to its exit code. */
-function runValidator(script, args) {
+const runValidator = (script, args) => {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [join(__dirname, script), ...args], { stdio: 'inherit' })
 
@@ -101,7 +101,7 @@ function runValidator(script, args) {
   })
 }
 
-async function main() {
+const main = async () => {
   const argv = process.argv.slice(2)
   const flags = argv.filter((arg) => arg.startsWith('--'))
   const [featuresDir, featureName] = argv.filter((arg) => !arg.startsWith('--'))

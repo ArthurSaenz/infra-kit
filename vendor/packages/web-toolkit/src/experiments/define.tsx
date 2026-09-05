@@ -34,6 +34,13 @@ export interface FeatureFlagProps<Id extends string = string> {
 
 type NamesOf<T extends ExperimentsConfig> = { [K in keyof T]: T[K]['vwoId'] }
 
+// Under the hood the factory builds an `ExperimentsNames` const map ({ key → vwoId }) for call-site
+// use, creates a Jotai atom seeded with each entry's `initial` state, wires `useExperimentsInit` to
+// VWO (`window.VWO` / `window._vwo_exp`) in production and to the `DEBUG_EXPERIMENTS` localStorage
+// override in debug, and exposes `window._app.experiments` (`data`, `setVariant`, `reset`) in debug
+// so QA can flip variants from the browser console. `<const T>` is what keeps literal `vwoId`
+// strings alive through type inference — required for safe indexed access under
+// `noUncheckedIndexedAccess`.
 /**
  * Statically injects a project's experiments map into web-toolkit and returns
  * a fully-typed module bound to those keys.
@@ -43,31 +50,16 @@ type NamesOf<T extends ExperimentsConfig> = { [K in keyof T]: T[K]['vwoId'] }
  * autocomplete and `useExperimentByName` are narrowed to the keys declared here,
  * so the toolkit itself stays data-free and can be shared across repos.
  *
- * Under the hood the factory:
- *  - Builds an `ExperimentsNames` const map ({ key → vwoId }) for call-site use.
- *  - Creates a Jotai atom seeded with each entry's `initial` state.
- *  - Wires `useExperimentsInit` to VWO (`window.VWO` / `window._vwo_exp`) in
- *    production, and to the `DEBUG_EXPERIMENTS` localStorage override in debug.
- *  - Exposes `window._app.experiments` (`data`, `setVariant`, `reset`) in debug
- *    so QA can flip variants from the browser console.
- *
- * Pass `<const T>` is used so literal `vwoId` strings survive type inference —
- * required for safe indexed access under `noUncheckedIndexedAccess`.
- *
  * @param config - Map of `experimentKey → { vwoId, initial? }`. `vwoId` must
  * match the experiment ID returned by VWO (`window._vwo_exp[id].combination_chosen`).
  * `initial` defaults to `'default'`; use `'pending'` to render the `_pending`
  * variant until VWO resolves.
  * @example
- * // apps/client/ui/src/lib/experiments/index.ts
- * import { defineExperiments } from '@wl/web-toolkit'
- *
  * export const { ExperimentsNames, experimentsModel, FeatureFlag } = defineExperiments({
- *   moreRoomImages_987:        { vwoId: '12' },
+ *   moreRoomImages_987: { vwoId: '12' },
  *   passengersConfirmation_1887: { vwoId: '59', initial: 'pending' },
  * })
  *
- * // In a component:
  * const variant = experimentsModel.useExperimentByName(ExperimentsNames.moreRoomImages_987)
  */
 export const defineExperiments = <const T extends ExperimentsConfig>(config: T) => {

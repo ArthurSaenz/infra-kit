@@ -29,23 +29,23 @@ const Colors = {
   BOLD: '\x1b[1m',
 }
 
-function printError(msg) {
+const printError = (msg) => {
   console.log(`${Colors.RED}✗ ${msg}${Colors.RESET}`)
 }
 
-function printWarning(msg) {
+const printWarning = (msg) => {
   console.log(`${Colors.YELLOW}⚠ ${msg}${Colors.RESET}`)
 }
 
-function printSuccess(msg) {
+const printSuccess = (msg) => {
   console.log(`${Colors.GREEN}✓ ${msg}${Colors.RESET}`)
 }
 
-function printInfo(msg) {
+const printInfo = (msg) => {
   console.log(`${Colors.CYAN}ℹ ${msg}${Colors.RESET}`)
 }
 
-function printHeader(msg) {
+const printHeader = (msg) => {
   console.log(`\n${Colors.BOLD}${Colors.MAGENTA}${'='.repeat(70)}${Colors.RESET}`)
   console.log(`${Colors.BOLD}${Colors.MAGENTA}${msg.padStart((70 + msg.length) / 2).padEnd(70)}${Colors.RESET}`)
   console.log(`${Colors.BOLD}${Colors.MAGENTA}${'='.repeat(70)}${Colors.RESET}\n`)
@@ -72,7 +72,7 @@ async function* walkFiles(dir, pattern) {
  * '...'`. A mixed statement such as `import { a, type B }` does bind a value at
  * runtime and is therefore not type-only.
  */
-function isTypeOnlyImport(statement) {
+const isTypeOnlyImport = (statement) => {
   if (/^import\s+type\b/.test(statement.trim())) return true
 
   const braces = statement.match(/\{([^}]*)\}/)
@@ -93,7 +93,7 @@ function isTypeOnlyImport(statement) {
  * Splits a path into segments, so callers can test for a directory named
  * `__tests__` rather than for the substring `__tests__` anywhere in the path.
  */
-function pathSegments(filePath, rootPath) {
+const pathSegments = (filePath, rootPath) => {
   const relative = filePath.startsWith(rootPath) ? filePath.slice(rootPath.length) : filePath
 
   return relative.split(sep).filter(Boolean)
@@ -339,7 +339,7 @@ class ImportAnalyzer {
   }
 }
 
-async function main() {
+const main = async () => {
   if (process.argv.length < 3) {
     console.log('Usage: node analyze_imports.mjs <features-directory> [--strict]')
     console.log('Example: node analyze_imports.mjs features/')

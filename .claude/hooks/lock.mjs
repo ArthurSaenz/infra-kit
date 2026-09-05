@@ -11,19 +11,19 @@ import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rm
 import { dirname, join } from 'node:path';
 
 // There is no stdlib sync sleep, and a spin loop would fight the tool processes for the same core.
-function sleepSync(ms) {
+const sleepSync = (ms) => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
+};
 
-function envInt(name, fallback) {
+const envInt = (name, fallback) => {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
+};
 
 // Unreadable => ABSENT, not fatal: the writer died mid-acquire, which is what steal exists to clear.
-function readRecord(path) {
+const readRecord = (path) => {
   try {
     const record = JSON.parse(readFileSync(path, 'utf8'));
     if (typeof record?.nonce !== 'string') return null;
@@ -31,14 +31,14 @@ function readRecord(path) {
   } catch {
     return null;
   }
-}
+};
 
 // `wx` creates the file EMPTY and writes the record a syscall later, so every healthy acquire is
 // briefly unreadable. mtime separates "died mid-acquire" (steal) from "still mid-acquire" (leave).
 const ACQUIRE_GRACE_MS = 1_000;
 
 // Wrong here means a lock nobody can acquire, so every branch fails toward NOT protecting.
-function writtenWithinGrace(lockPath) {
+const writtenWithinGrace = (lockPath) => {
   try {
     // lstat, not stat: a symlink to any fresh file would pose as a holder, and never expire.
     const stats = lstatSync(lockPath);
@@ -50,11 +50,11 @@ function writtenWithinGrace(lockPath) {
   } catch {
     return false; // gone: no holder left to protect
   }
-}
+};
 
 // `process.kill(pid, 0)` sends no signal, it only asks whether the pid is signalable. ESRCH means
 // gone (steal); EPERM means alive under another user, so NOT stale.
-function isStale(record, staleMs, lockPath) {
+const isStale = (record, staleMs, lockPath) => {
   if (!record || typeof record.pid !== 'number' || typeof record.startedAt !== 'number') {
     return !writtenWithinGrace(lockPath);
   }
@@ -67,13 +67,13 @@ function isStale(record, staleMs, lockPath) {
   }
 
   return false;
-}
+};
 
 // Displace an apparently-stale holder. True => restart the acquire loop; false => holder is healthy.
 //
 // `onClaimed` is a TEST SEAM: the mismatch branch needs a healthy holder to acquire inside the
 // two-syscall window below, which cannot be raced reliably nor reproduced single-threaded.
-export function trySteal(lockPath, staleMs, { onClaimed } = {}) {
+export const trySteal = (lockPath, staleMs, { onClaimed } = {}) => {
   const observedBefore = readRecord(lockPath);
   if (!isStale(observedBefore, staleMs, lockPath)) return false;
 
@@ -106,7 +106,7 @@ export function trySteal(lockPath, staleMs, { onClaimed } = {}) {
   } finally {
     if (!restored) rmSync(claim, { force: true }); // no `.steal.*` debris on any path
   }
-}
+};
 
 // Bounds the one unbounded shape: steal succeeds, a third party wins the `wx`, repeat. Counts
 // STEALS, not attempts — as an attempt cap it capped the WAIT too: 60s asked, 5.4s given.
@@ -123,7 +123,7 @@ const POLL_MS = 50;
  * declare a healthy run stale. `name` is explicit because the edit pipeline already holds a lock at
  * the repo root whenever a root-level file is edited.
  */
-export function acquireLock(dir, { name = 'claude-hook.lock', waitMs = 2000, staleMs } = {}) {
+export const acquireLock = (dir, { name = 'claude-hook.lock', waitMs = 2000, staleMs } = {}) => {
   if (typeof staleMs !== 'number' || !Number.isFinite(staleMs)) {
     throw new TypeError('acquireLock: staleMs is required — see the per-call-site invariant.');
   }
@@ -174,20 +174,20 @@ export function acquireLock(dir, { name = 'claude-hook.lock', waitMs = 2000, sta
 
     return { lockPath, nonce };
   }
-}
+};
 
 // Call immediately after acquire, BEFORE the first stage: a stealer can move a live record off the
 // path, a third process win `wx` against the empty path, and the stealer restore the original over
 // it — leaving that third process holding a lock whose record is gone. Closes that window; only
 // narrows the general one, being an instant read before a multi-second spawn.
-export function holdsLock(handle) {
+export const holdsLock = (handle) => {
   if (!handle) return false;
   return readRecord(handle.lockPath)?.nonce === handle.nonce;
-}
+};
 
 // Only if the record is still ours, so a process that already lost the lock cannot delete the
 // current holder's record on its way out.
-export function releaseLock(handle) {
+export const releaseLock = (handle) => {
   if (!holdsLock(handle)) return;
   rmSync(handle.lockPath, { force: true });
-}
+};

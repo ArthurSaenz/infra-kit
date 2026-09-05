@@ -73,19 +73,21 @@ test('a regex literal holding `//` does not invent a comment', () => {
 })
 
 test('a regex literal holding a quote does not swallow the comments after it', () => {
-  // apps/infra-kit/cli/src/dev/ports.ts:35 is exactly this shape, and it hid the 14-line block
-  // five lines below it from the previous reader.
+  // `__fixtures__/regex-hides-block.ts:10` is exactly this shape, copied from the real source that
+  // hit it, and it hid the 14-line block five lines below from the previous reader.
   const source = ["const n = raw.replace(/^[\"']|[\"']$/g, '')", '// still visible'].join('\n')
   assert.deepEqual(extractComments(source).map((c) => c.raw), ['// still visible'])
 })
 
-test('the block hidden by that regex in real source is found', () => {
-  const file = 'apps/infra-kit/cli/src/dev/ports.ts'
+test('the block hidden by that regex is found in whole-file source', () => {
+  // Read from disk rather than a string literal: the shape that broke the previous reader only
+  // arises in a file where the regex and the block are separated by real code.
+  const file = '.claude/skills/comment-verifier/__fixtures__/regex-hides-block.ts'
   const comments = extractComments(readFileSync(join(REPO_ROOT, file), 'utf8'), file)
-  const block = comments.find((comment) => comment.startLine === 40)
+  const block = comments.find((comment) => comment.startLine === 15)
 
-  assert.ok(block, 'the JSDoc block at ports.ts:40 is invisible to the reader')
-  assert.equal(block.endLine, 53)
+  assert.ok(block, 'the JSDoc block at regex-hides-block.ts:15 is invisible to the reader')
+  assert.equal(block.endLine, 28)
 })
 
 test('rendered JSX text is not a comment', () => {
@@ -142,7 +144,7 @@ test('named arguments are honoured verbatim, and the unjudgeable ones are report
   // resolves through this same function, so a drop here would un-capture the file at the other end.
   const named = [
     '.claude/skills/comment-verifier/SKILL.md',
-    'apps/infra-kit/cli/src/dev/__tests__/fault-loop.test.ts',
+    '.claude/skills/comment-verifier/__fixtures__/__tests__/scoped-out.ts',
     'does/not/exist.ts',
   ]
   const stdout = execFileSync(process.execPath, [SCRIPT, ...named], { cwd: REPO_ROOT, encoding: 'utf8' })

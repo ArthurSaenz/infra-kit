@@ -8,7 +8,7 @@ import { findPackageDir } from '../hooklib.mjs';
 const REPO_ROOT = resolve(HOOKS_DIR, '..', '..');
 
 // Under the repo, so the workspace tsc resolves.
-function makeTempPackage(tsSource) {
+const makeTempPackage = (tsSource) => {
   const pkgDir = join(REPO_ROOT, '.omc', '.tmp-typecheck-test');
   rmSync(pkgDir, { recursive: true, force: true });
   mkdirSync(pkgDir, { recursive: true });
@@ -19,7 +19,7 @@ function makeTempPackage(tsSource) {
   );
   writeFileSync(join(pkgDir, 'src.ts'), tsSource);
   return { pkgDir, file: join(pkgDir, 'src.ts'), cleanup: () => rmSync(pkgDir, { recursive: true, force: true }) };
-}
+};
 
 // -------------------------------------------------------------- protect-files
 

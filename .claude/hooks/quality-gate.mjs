@@ -9,7 +9,7 @@ import { acquireLock, releaseLock } from './lock.mjs';
 
 const TAIL_CHARS = 4000;
 
-function main() {
+const main = () => {
   // SELF-DESCENT GUARD, before anything else so there is no lock to unwind. `qa` does not run the
   // `.claude` suite today; if it ever does, that suite spawns this hook again. Lock serialises
   // peers; this stops recursion. Covered by quality-gate.test.mjs, which sets the flag directly.
@@ -69,6 +69,6 @@ function main() {
       'Re-run in full with: pnpm run qa',
     ].join('\n'),
   );
-}
+};
 
 main();

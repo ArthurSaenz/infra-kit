@@ -25,23 +25,23 @@ const Colors = {
   BOLD: '\x1b[1m',
 }
 
-function printError(msg) {
+const printError = (msg) => {
   console.log(`${Colors.RED}✗ ${msg}${Colors.RESET}`)
 }
 
-function printWarning(msg) {
+const printWarning = (msg) => {
   console.log(`${Colors.YELLOW}⚠ ${msg}${Colors.RESET}`)
 }
 
-function printSuccess(msg) {
+const printSuccess = (msg) => {
   console.log(`${Colors.GREEN}✓ ${msg}${Colors.RESET}`)
 }
 
-function printInfo(msg) {
+const printInfo = (msg) => {
   console.log(`${Colors.CYAN}ℹ ${msg}${Colors.RESET}`)
 }
 
-function printHeader(msg) {
+const printHeader = (msg) => {
   console.log(`\n${Colors.BOLD}${Colors.MAGENTA}${'='.repeat(60)}${Colors.RESET}`)
   console.log(`${Colors.BOLD}${Colors.MAGENTA}${msg}${Colors.RESET}`)
   console.log(`${Colors.BOLD}${Colors.MAGENTA}${'='.repeat(60)}${Colors.RESET}\n`)
@@ -489,7 +489,7 @@ class StructureChecker {
   }
 }
 
-async function main() {
+const main = async () => {
   if (process.argv.length < 3) {
     console.log('Usage: node check_structure.mjs <feature-path>')
     console.log('Example: node check_structure.mjs features/user-profile')

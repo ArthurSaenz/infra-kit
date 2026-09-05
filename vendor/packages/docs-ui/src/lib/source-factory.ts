@@ -32,8 +32,8 @@ export const createDocsSource = (params: {
     baseUrl,
     // Frontmatter `slug` wins; otherwise group scattered files by package into clean URLs
     // instead of raw repo paths. Keep this in sync with getAllDocUrls (prerender).
-    slugs: (file) => {
-      return slugFromFrontmatter(file) ?? pathToSlugs(file.path)
+    slugs: (file, next) => {
+      return slugFromFrontmatter(file, next) ?? pathToSlugs(file.path)
     },
     plugins: [lucideIconsPlugin()],
   })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { code, expectClean, lintCase, lintCaseFixed, only } from './_lint-case.js'
+import { code, expectClean, expectFlagged, lintCase, lintCaseFixed, only } from './_lint-case.js'
 
 // Function-level JSDoc enforcement was handed off from the off-the-shelf `jsdoc/*` rules to the custom
 // `@wl/require-jsdoc-example` rule (graduated cognitive-complexity gate). The three off-the-shelf rules
@@ -234,6 +234,111 @@ describe('jsdoc: Layer 1 size-limit rules (docs.ts)', () => {
     expect(only(messages, 'jsdoc/check-line-alignment').length).toBeGreaterThanOrEqual(1)
   })
 
+  // check-param-names is the one Layer 1 rule promoted from the preset's `warn` rather than added:
+  // the preset ships it on, but `eslint --quiet` (every package's eslint-check script) drops warnings
+  // wholesale, so it reported to nobody. The severity assertions below are therefore the point of
+  // these cases — "a message exists" was already true before the promotion; `severity === 2` is not.
+  it('fires at error on a `@param` left behind by a rename', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/add.ts',
+      source: code`
+        /**
+         * Adds two numbers.
+         *
+         * @param oldName - The first number.
+         * @param b - The second number.
+         */
+        export const add = (a: number, b: number) => a + b
+      `,
+    })
+
+    expectFlagged(messages, 'jsdoc/check-param-names', 'Expected @param names to be "a, b". Got "oldName, b"')
+    expect(only(messages, 'jsdoc/check-param-names')[0]?.severity).toBe(2)
+  })
+
+  it('stays clean when a block documents only SOME parameters — the rule adds no documentation burden', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/add.ts',
+      source: code`
+        /**
+         * Adds two numbers.
+         *
+         * @param a - The first number.
+         */
+        export const add = (a: number, b: number) => a + b
+      `,
+    })
+
+    expectClean(messages, 'jsdoc/check-param-names')
+  })
+
+  // `checkDestructured: false` is the load-bearing option: at its `true` default the rule stops being
+  // a drift check and demands a `@param props.<field>` tag per destructured field — noise on every
+  // component taking a props object. The stale positional block below shares the file precisely so
+  // this stays non-vacuous: exactly ONE message proves the rule was live and the component silent.
+  it('destructured props raise nothing, while the rule stays live in the same file', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/card.tsx',
+      source: code`
+        /**
+         * Renders a card.
+         *
+         * @param props - Everything the card needs to render itself.
+         */
+        export const Card = ({ title, subtitle }: { title: string; subtitle: string }) => title + subtitle
+
+        /**
+         * Adds two numbers.
+         *
+         * @param oldName - The first number.
+         * @param b - The second number.
+         */
+        export const add = (a: number, b: number) => a + b
+      `,
+    })
+
+    expectFlagged(messages, 'jsdoc/check-param-names', 'Got "oldName, b"')
+  })
+
+  // The accepted cost of `checkDestructured: false`, pinned so it is a decision and not a surprise:
+  // a destructured parameter has no name in the signature, so a stale ROOT tag has nothing to be
+  // checked against. Renames of the destructured FIELDS are still covered — they must match the
+  // binding names, which is the case the config actually cares about.
+  it('does not report a stale ROOT name on a destructured parameter — the documented blind spot', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/combine.ts',
+      source: code`
+        /**
+         * Combines two values.
+         *
+         * @param oldBag - The options bag.
+         */
+        export const combine = ({ a, b }: { a: string; b: string }) => a + b
+      `,
+    })
+
+    expectClean(messages, 'jsdoc/check-param-names')
+  })
+
+  it('check-param-names drops back to the preset severity on a GLOB_TS_DOC_EXCLUDE path', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/add.test.ts',
+      source: code`
+        /**
+         * Adds two numbers.
+         *
+         * @param oldName - The first number.
+         * @param b - The second number.
+         */
+        export const add = (a: number, b: number) => a + b
+      `,
+    })
+
+    // Not clean: antfu's preset enables the rule globally and this config's `ignores` only scopes the
+    // `error` promotion. Severity 1 under `eslint --quiet` is the pre-existing silence, not a gate.
+    expect(only(messages, 'jsdoc/check-param-names')[0]?.severity).toBe(1)
+  })
+
   it('the new rules stay silent on a GLOB_TS_DOC_EXCLUDE path — non-vacuous against the no-types fixture above', async () => {
     const messages = await lintCase({
       fileName: 'src/lib/length.test.ts',
@@ -249,5 +354,167 @@ describe('jsdoc: Layer 1 size-limit rules (docs.ts)', () => {
     })
 
     expectClean(messages, 'jsdoc/no-types')
+  })
+})
+
+// Layer 2 of the JSDoc size-limits work: the custom `@wl/max-jsdoc-lines` rule, wired at `error` in
+// src/configs/components.ts (the layer where the @wl plugin loads) against the JSDoc layer's globs.
+// Every fixture is line-counted against the rule's own arithmetic — total is `end.line - start.line
+// + 1`, an `@example` body runs from its tag line through the next tag (or the closing line), and
+// prose is the remainder — so a fixture that drifts by one line fails loudly instead of silently
+// landing under a ceiling. The two-budget case is the one that matters: it is what keeps this rule
+// from deadlocking with `@wl/require-jsdoc-example`, which MANDATES an `@example`.
+const MAX_JSDOC_LINES = '@wl/max-jsdoc-lines'
+
+describe('jsdoc: Layer 2 size cap (@wl/max-jsdoc-lines, components.ts)', () => {
+  it('fires at error on an 18-line prose block (max 15)', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/atom-types.ts',
+      source: code`
+        /**
+         * Extracts the first argument type from a WritableAtom's write function.
+         *
+         * Rationale line 01 — the kind of prose that belongs in a note or the file-level block.
+         * Rationale line 02.
+         * Rationale line 03.
+         * Rationale line 04.
+         * Rationale line 05.
+         * Rationale line 06.
+         * Rationale line 07.
+         * Rationale line 08.
+         * Rationale line 09.
+         * Rationale line 10.
+         * Rationale line 11.
+         * Rationale line 12.
+         * Rationale line 13.
+         * Rationale line 14.
+         */
+        export const extract = (value: string) => value
+      `,
+    })
+
+    expectFlagged(messages, MAX_JSDOC_LINES, '18 lines of prose (max 15')
+    expect(only(messages, MAX_JSDOC_LINES)[0]?.severity).toBe(2)
+  })
+
+  it('fires on a 13-line `@example` body (max 10) while the prose stays well inside its budget', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/session.ts',
+      source: code`
+        /**
+         * Stores a session token.
+         *
+         * @example
+         *     const store = createStore()
+         *     const session = { token: 'abc' }
+         *     store.set('session', session)
+         *     store.set('session', session, 3600)
+         *     store.get('session')
+         *     store.remove('session')
+         *     store.clear()
+         *     store.keys()
+         *     store.size()
+         *     store.has('session')
+         *     store.entries()
+         */
+        export const store = (key: string) => key
+      `,
+    })
+
+    expectFlagged(messages, MAX_JSDOC_LINES, 'span 13 lines (max 10)')
+  })
+
+  it('stays clean at exactly both ceilings — 15 prose lines around a 10-line `@example`', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/combine-values.ts',
+      source: code`
+        /**
+         * Combines a key and a value into a storage entry.
+         *
+         * Prose line 01.
+         * Prose line 02.
+         * Prose line 03.
+         * Prose line 04.
+         * Prose line 05.
+         * Prose line 06.
+         * Prose line 07.
+         * Prose line 08.
+         * Prose line 09.
+         * Prose line 10.
+         *
+         * @example
+         *     combine('a', 'b')
+         *     combine('a', 'c')
+         *     combine('b', 'c')
+         *     combine('c', 'd')
+         *     combine('d', 'e')
+         *     combine('e', 'f')
+         *     combine('f', 'g')
+         */
+        export const combine = (key: string, value: string) => key + value
+      `,
+    })
+
+    expectClean(messages, MAX_JSDOC_LINES)
+  })
+
+  it('`@fileoverview` exempts a block that blows past both budgets', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/why-this-module.ts',
+      source: code`
+        /**
+         * @fileoverview Why this module exists, and the three constraints it balances.
+         *
+         * Rationale line 01 — deliberately kept.
+         * Rationale line 02.
+         * Rationale line 03.
+         * Rationale line 04.
+         * Rationale line 05.
+         * Rationale line 06.
+         * Rationale line 07.
+         * Rationale line 08.
+         * Rationale line 09.
+         * Rationale line 10.
+         * Rationale line 11.
+         * Rationale line 12.
+         * Rationale line 13.
+         * Rationale line 14.
+         * Rationale line 15.
+         * Rationale line 16.
+         */
+        export const anchor = 1
+      `,
+    })
+
+    expectClean(messages, MAX_JSDOC_LINES)
+  })
+
+  it('stays silent on a GLOB_TS_DOC_EXCLUDE path — non-vacuous against the 18-line fixture above', async () => {
+    const messages = await lintCase({
+      fileName: 'src/lib/atom-types.test.ts',
+      source: code`
+        /**
+         * Extracts the first argument type from a WritableAtom's write function.
+         *
+         * Rationale line 01 — the kind of prose that belongs in a note or the file-level block.
+         * Rationale line 02.
+         * Rationale line 03.
+         * Rationale line 04.
+         * Rationale line 05.
+         * Rationale line 06.
+         * Rationale line 07.
+         * Rationale line 08.
+         * Rationale line 09.
+         * Rationale line 10.
+         * Rationale line 11.
+         * Rationale line 12.
+         * Rationale line 13.
+         * Rationale line 14.
+         */
+        export const extract = (value: string) => value
+      `,
+    })
+
+    expectClean(messages, MAX_JSDOC_LINES)
   })
 })

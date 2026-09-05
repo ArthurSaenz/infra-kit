@@ -66,9 +66,10 @@ Judge every comment in scope. **Inputs, and only these:**
 2. The scoped files.
 
 There is no mechanical shortcut into this phase, and looking for one is a mistake this skill made
-once. `@wl/max-jsdoc-lines` is already an error for `apps/infra-kit/cli/src/**`, so the package's own
-`eslint-check` fails on an over-long block before you ever get here — re-running it per file bought
-nothing but minutes. And it was never the rule that mattered: every `what`-comment in the policy's
+once. `@wl/max-jsdoc-lines` is already an error in the shared ESLint config
+(`vendor/configs/eslint-config/src/configs/components.ts`), so a package's own `eslint-check` fails
+on an over-long block before you ever get here — re-running it per file buys nothing but minutes.
+And it was never the rule that mattered: every `what`-comment in the policy's
 corpus table is a `//` line comment, and no JSDoc rule reads those. **Reading is the whole method.**
 
 **Rules for the pass:**
@@ -124,12 +125,13 @@ Run these in order, capturing each exit code directly rather than through a pipe
 
 ```
 node .claude/skills/comment-verifier/scripts/lint-comments.mjs --verify-fix <verdict.json> --baseline <scratch-dir>
-pnpm --filter infra-kit run ts-check
+pnpm --filter <package> run ts-check
 ```
 
 The second one is not ceremony: a stray `*/` inside a block closes the comment early, and `tsc`
-catches that where `esbuild` swallows it. Use the type-check of whichever package the scoped files
-belong to. It is the right size for the change — a comment edit cannot break a test, so the full
+catches that where `esbuild` swallows it. `<package>` is whichever package the scoped files belong
+to; from the repo root, `pnpm run ts-check` runs it for every package. It is the right size for the
+change — a comment edit cannot break a test, so the full
 package gate is not what this run owes. Report both exit codes.
 
 **A failing `--verify-fix` is a stop, not a warning.** Three kinds of stop, with three different
@@ -189,4 +191,11 @@ for the existing `full-cycle` skill, so it is the environment rather than these 
 the skill directory and running bare `node --test` also works.
 
 Root `vitest.config.ts` scopes projects to `apps/*/*`, `packages/*`, `vendor/packages/*` and
-`vendor/configs/*`, so skill tests are **not** part of `pnpm run qa`. This command is the whole gate.
+`vendor/configs/*`, so skill tests are **not** part of `pnpm run qa`. The repo runs them under their
+own script, which globs every skill's tests:
+
+```
+pnpm run test:claude
+```
+
+Between them these two commands are the whole gate.

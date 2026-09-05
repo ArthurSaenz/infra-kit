@@ -25,30 +25,30 @@ import { acquireLock, holdsLock, releaseLock, trySteal } from '../lock.mjs';
 const REPO_ROOT = resolve(HOOKS_DIR, '..', '..');
 
 // Throwaway lock dirs live under gitignored `.omc/` so the suite leaves the working tree clean.
-function makeLockDir() {
+const makeLockDir = () => {
   const dir = join(REPO_ROOT, '.omc', `.tmp-lock-${randomUUID()}`);
   mkdirSync(dir, { recursive: true });
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
-}
+};
 
 const cachePath = (dir, name = 'claude-hook.lock') => join(dir, 'node_modules', '.cache', name);
 
 // Write a lock record directly, so the state under test exists before any contender runs.
-function plantRecord(dir, record, name = 'claude-hook.lock') {
+const plantRecord = (dir, record, name = 'claude-hook.lock') => {
   const path = cachePath(dir, name);
   mkdirSync(join(dir, 'node_modules', '.cache'), { recursive: true });
   writeFileSync(path, typeof record === 'string' ? record : JSON.stringify(record));
   return path;
-}
+};
 
 const readRecord = (path) => JSON.parse(readFileSync(path, 'utf8'));
 
 // So `.steal.*` debris is visible to assertions, not merely absent from the happy path.
-function lockArtifacts(dir) {
+const lockArtifacts = (dir) => {
   const cacheDir = join(dir, 'node_modules', '.cache');
   if (!existsSync(cacheDir)) return [];
   return readdirSync(cacheDir).filter((entry) => entry.startsWith('claude-hook.lock'));
-}
+};
 
 // -------------------------------------------------------------------------------- basic mutual exclusion
 

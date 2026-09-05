@@ -48,7 +48,7 @@ const hasTsconfig = existsSync(join(pkgDir, 'tsconfig.json'));
 
 // Stages must not go through `pnpm exec`: spawnSync's killSignal reaches only the DIRECT child, so
 // a timeout would kill pnpm while the tool kept writing — after we released the lock.
-function resolveBin(startDir, tool) {
+const resolveBin = (startDir, tool) => {
   let dir = startDir;
 
   for (;;) {
@@ -58,9 +58,9 @@ function resolveBin(startDir, tool) {
     if (parent === dir) return null;
     dir = parent;
   }
-}
+};
 
-function runStage(tool, args, { cwd, timeout }) {
+const runStage = (tool, args, { cwd, timeout }) => {
   const bin = resolveBin(cwd, tool);
   if (!bin) return { missing: true, timedOut: false, status: null, stdout: '', stderr: '' };
 
@@ -81,15 +81,15 @@ function runStage(tool, args, { cwd, timeout }) {
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
   };
-}
+};
 
-function readBytes(path) {
+const readBytes = (path) => {
   try {
     return readFileSync(path);
   } catch {
     return null;
   }
-}
+};
 
 // --------------------------------------------------------------------------------------- the run
 
@@ -100,12 +100,12 @@ const lock = acquireLock(pkgDir, { waitMs: 8000, staleMs: 120_000 });
 // No lock => skip everything, prettier included: it is a whole-file writer, so running it unlocked
 // is the concurrent-truncation case itself. The skip must reach the MODEL — silence reads as clean.
 // Not exit 2 (the ping-pong incident, README) and not stderr (dropped on exit 0; measured).
-function skip(reason) {
+const skip = (reason) => {
   addContext(
     `Checks after editing ${abs}: SKIPPED — ${reason}. Nothing was verified — treat this file as unchecked, and re-check with: pnpm run qa`,
     'PostToolUse',
   );
-}
+};
 
 if (!lock) skip(`another hook held the lock on ${pkgDir} for the whole wait`);
 if (!holdsLock(lock)) skip('the lock was lost to a concurrent hook'); // steal-and-restore; see lock.mjs
@@ -115,7 +115,7 @@ const sections = [];
 // Prettier runs under `--log-level silent`, so an unreported timeout is a 20s stall then exit 0.
 let prettierReported = false;
 
-function runPrettier() {
+const runPrettier = () => {
   try {
     const run = runStage('prettier', ['--log-level', 'silent', '--write', abs], {
       cwd: pkgDir,
@@ -131,7 +131,7 @@ function runPrettier() {
   } catch {
     return null; // per-stage catch, so one throw cannot skip the stages after it
   }
-}
+};
 
 try {
   // --- stage 1: prettier ---------------------------------------------------------------- 10s

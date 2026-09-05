@@ -5,7 +5,7 @@ import path from 'node:path'
 import { makeDeriveTitle, makePathToSlugs, toPosix } from './slugs.ts'
 
 /**
- * In-place documentation aggregation for a monorepo (RELOCATION-SAFE).
+ * @fileoverview In-place documentation aggregation for a monorepo (RELOCATION-SAFE).
  *
  * Docs are read where they live (no copying). This module is the single source of truth
  * shared by the consuming app's:
@@ -83,9 +83,9 @@ const IGNORE_RE =
 /**
  * Build the aggregation API bound to a specific app directory.
  *
- * @param appDir the docs app's own directory (pass `import.meta.dirname`). Only used to resolve
- * the repo root by walking up to `pnpm-workspace.yaml`.
- * @param contentRel the repo-root-relative dir holding the docs app's own landing content.
+ * @param params.appDir the docs app's own directory (pass `import.meta.dirname`). Only used to
+ * resolve the repo root by walking up to `pnpm-workspace.yaml`.
+ * @param params.contentRel the repo-root-relative dir holding the docs app's own landing content.
  * Defaults to `spec/docs` — the docs app lives inside `vendor/`, so its landing content is
  * kept per-repo under the repo-root `spec/docs/` dir (outside vendor), NOT alongside the app.
  * @example

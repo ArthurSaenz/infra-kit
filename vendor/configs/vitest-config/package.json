@@ -9,17 +9,39 @@
     "config",
     "deps"
   ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm run clean-artifacts && tsc -p tsconfig.json",
+    "clean-artifacts": "rm -rf dist",
+    "clean-cache": "rm -rf node_modules/.cache tsconfig.tsbuildinfo .turbo",
+    "ts-check": "tsc --noEmit",
+    "prettier-check": "pnpm exec prettier **/* --check --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
+    "prettier-fix": "pnpm exec prettier **/* --write --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore"
+  },
   "devDependencies": {
+    "@types/node": "catalog:",
     "@vitejs/plugin-react": "catalog:",
-    "@vitest/browser": "^4.1.10",
-    "@vitest/browser-playwright": "^4.1.10",
-    "@vitest/coverage-v8": "^4.1.10",
-    "@vitest/ui": "^4.1.10",
+    "@vitest/browser": "catalog:",
+    "@vitest/browser-playwright": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "@vitest/ui": "catalog:",
     "playwright": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "vitest": "^4.1.10",
-    "vitest-browser-react": "^2.2.0"
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vitest-browser-react": "catalog:"
   },
   "engines": {
     "node": ">=24.x",

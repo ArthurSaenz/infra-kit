@@ -17,7 +17,7 @@ const REPO_ROOT = resolve(HOOKS_DIR, '..', '..');
 const EXCLUDED = [':!.claude/hooks', ':!.omc', ':!docs', ':!CLAUDE.md'];
 
 // Tracked files only, so an untracked scratch file cannot flip the verdict.
-function ordinarySourceMatches(pattern) {
+const ordinarySourceMatches = (pattern) => {
   const result = spawnSync(
     'git',
     ['grep', '--no-color', '-I', '-n', '-F', '-e', pattern, '--', '.', ...EXCLUDED],
@@ -29,7 +29,7 @@ function ordinarySourceMatches(pattern) {
   assert.equal(result.status, 0, `git grep failed for ${pattern}: ${result.stderr}`);
 
   return (result.stdout ?? '').split('\n').filter(Boolean);
-}
+};
 
 // One purpose: assembling this path has one outcome, so denying a read-only command containing it
 // costs nothing anybody wanted.

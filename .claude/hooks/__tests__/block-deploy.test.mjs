@@ -7,7 +7,7 @@ const HOOK = 'block-deploy.mjs';
 // Denies via permissionDecision JSON on stdout with exit 0, so assert on the JSON, not the code.
 // `reason` is exposed because a verdict alone cannot see message regressions: a branch that only
 // produces a MORE SPECIFIC message than the catch-all below it looks dead to a boolean assertion.
-function decision(command, opts) {
+const decision = (command, opts) => {
   const res = runHook(HOOK, command === null ? '{bad json' : bash(command), opts);
   let reason = '';
   try {
@@ -16,7 +16,7 @@ function decision(command, opts) {
     // Not a deny payload; `denied` below reports that.
   }
   return { denied: /"permissionDecision"\s*:\s*"deny"/.test(res.stdout), status: res.status, reason };
-}
+};
 
 const HOST = 'https://api.github.com';
 const PATH = 'repos/o/r/actions/workflows/w.yml/dispatches';

@@ -8,21 +8,19 @@ interface BranchProps {
 /**
  * This is a declarative component for conditional rendering.
  *
+ * The first child renders when `if` is true, the second when it is false; pass a single
+ * child and the false branch renders nothing.
+ *
  * @param props
  * @param props.if - The boolean value.
  * @param props.children - The two component for rendering.
  * @return A correct render component
  * @example
- *     <Branch if={true}>
- *        <div>True component</div>
- *        <div>False component</div>
+ *     <Branch if={value}>
+ *       <div>True component</div>
+ *       <div>False component</div>
  *     </Branch>
- *     // =>  <div>True component</div>
- * @example
- *     <Branch if={false}>
- *        <div>Primary component</div>
- *     </Branch>
- *     // =>  null
+ *     // => value ? <div>True component</div> : <div>False component</div>
  */
 export const Branch = (props: BranchProps) => {
   const { if: value, children } = props

@@ -30,6 +30,10 @@ catalog:
   '@types/react': 19.2.18
   '@types/react-dom': 19.2.5
   '@vitejs/plugin-react': 6.0.2
+  '@vitest/browser': ^5.0.0
+  '@vitest/browser-playwright': ^5.0.0
+  '@vitest/coverage-v8': ^5.0.0
+  '@vitest/ui': ^5.0.0
   chalk: ^6.0.0
   chokidar: ^5.0.0
   class-variance-authority: ^0.7.1
@@ -64,6 +68,8 @@ catalog:
 
   vite: 8.2.2
   vite-plugin-dts: ^5.0.3
+  vitest: ^5.0.0
+  vitest-browser-react: ^2.3.0
   vite-tsconfig-paths: ^6.1.1
   yaml: ^2.9.0
   zod: ^4.3.6
@@ -81,12 +87,10 @@ packageExtensions:
       '@storybook/react-vite': '*'
       '@storybook/addon-docs': '*'
       '@storybook/addon-links': '*'
-      '@storybook/addon-vitest': '*'
     peerDependenciesMeta:
       '@storybook/react-vite': { optional: true }
       '@storybook/addon-docs': { optional: true }
       '@storybook/addon-links': { optional: true }
-      '@storybook/addon-vitest': { optional: true }
 
 supportedArchitectures:
   cpu:

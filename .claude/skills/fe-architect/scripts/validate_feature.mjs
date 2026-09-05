@@ -34,27 +34,27 @@ const Colors = {
   BOLD: '\x1b[1m',
 }
 
-function printError(msg) {
+const printError = (msg) => {
   console.log(`${Colors.RED}✗ ERROR: ${msg}${Colors.RESET}`)
-}
+};
 
-function printWarning(msg) {
+const printWarning = (msg) => {
   console.log(`${Colors.YELLOW}⚠ WARNING: ${msg}${Colors.RESET}`)
-}
+};
 
-function printSuccess(msg) {
+const printSuccess = (msg) => {
   console.log(`${Colors.GREEN}✓ ${msg}${Colors.RESET}`)
-}
+};
 
-function printInfo(msg) {
+const printInfo = (msg) => {
   console.log(`${Colors.CYAN}ℹ ${msg}${Colors.RESET}`)
-}
+};
 
-function printHeader(msg) {
+const printHeader = (msg) => {
   console.log(`\n${Colors.BOLD}${Colors.MAGENTA}${'='.repeat(60)}${Colors.RESET}`)
   console.log(`${Colors.BOLD}${Colors.MAGENTA}${msg}${Colors.RESET}`)
   console.log(`${Colors.BOLD}${Colors.MAGENTA}${'='.repeat(60)}${Colors.RESET}\n`)
-}
+};
 
 // Recursive file globbing helper
 async function* walkFiles(dir, pattern) {
@@ -76,11 +76,11 @@ async function* walkFiles(dir, pattern) {
  * `__tests__` rather than for the substring `__tests__` anywhere in the path.
  * A feature living under `/repo/__tests__/fixtures/thing` is a real feature.
  */
-function pathSegments(filePath, rootPath) {
+const pathSegments = (filePath, rootPath) => {
   const relative = filePath.startsWith(rootPath) ? filePath.slice(rootPath.length) : filePath
 
   return relative.split(sep).filter(Boolean)
-}
+};
 
 /**
  * Walks forward from the end of an `atom` keyword to the `(` that opens its
@@ -89,7 +89,7 @@ function pathSegments(filePath, rootPath) {
  *
  * @returns {number} index of the opening paren, or -1
  */
-function findCallParen(content, searchFrom) {
+const findCallParen = (content, searchFrom) => {
   let i = searchFrom
 
   while (i < content.length && /\s/.test(content[i])) i++
@@ -115,7 +115,7 @@ function findCallParen(content, searchFrom) {
   }
 
   return content[i] === '(' ? i : -1
-}
+};
 
 /**
  * Returns the source text between a balanced pair of delimiters, starting at
@@ -124,7 +124,7 @@ function findCallParen(content, searchFrom) {
  *
  * @returns {string|null} inner text, or null when the pair never closes
  */
-function balancedSlice(content, openIndex) {
+const balancedSlice = (content, openIndex) => {
   let depth = 0
   let quote = null
   let lineComment = false
@@ -182,13 +182,13 @@ function balancedSlice(content, openIndex) {
   }
 
   return null
-}
+};
 
 /**
  * Splits an argument list on the commas that sit at nesting depth zero, so that
  * `null, async (get, set, args: T) => {}` yields exactly two arguments.
  */
-function splitTopLevelArgs(argText) {
+const splitTopLevelArgs = (argText) => {
   const args = []
   let depth = 0
   let quote = null
@@ -216,7 +216,7 @@ function splitTopLevelArgs(argText) {
   if (tail) args.push(tail)
 
   return args
-}
+};
 
 /**
  * Classifies a single `atom(...)` call.
@@ -229,7 +229,7 @@ function splitTopLevelArgs(argText) {
  *
  * @returns {{kind: 'state'|'write-only', isAsync: boolean, writer: string|null}|null}
  */
-function classifyAtom(content, keywordEnd) {
+const classifyAtom = (content, keywordEnd) => {
   const paren = findCallParen(content, keywordEnd)
   if (paren === -1) return null
 
@@ -244,7 +244,7 @@ function classifyAtom(content, keywordEnd) {
   const writer = args[1]
 
   return { kind: 'write-only', isAsync: /^async\b/.test(writer), writer }
-}
+};
 
 /**
  * True when an import statement introduces no runtime dependency, covering both
@@ -252,7 +252,7 @@ function classifyAtom(content, keywordEnd) {
  * '...'`. A mixed statement such as `import { a, type B }` does bind a value at
  * runtime and is therefore not type-only.
  */
-function isTypeOnlyImport(statement) {
+const isTypeOnlyImport = (statement) => {
   if (/^import\s+type\b/.test(statement.trim())) return true
 
   const braces = statement.match(/\{([^}]*)\}/)
@@ -267,20 +267,20 @@ function isTypeOnlyImport(statement) {
     .filter(Boolean)
 
   return specifiers.length > 0 && specifiers.every((specifier) => /^type\s+\S/.test(specifier))
-}
+};
 
 /**
  * Extracts the parameter list of a write-only atom's writer function.
  * `async (get, set, args: T) => {}` yields `['get', 'set', 'args: T']`.
  */
-function writerParams(writer) {
+const writerParams = (writer) => {
   const paren = writer.indexOf('(')
   if (paren === -1) return []
 
   const params = balancedSlice(writer, paren)
 
   return params === null ? [] : splitTopLevelArgs(params)
-}
+};
 
 class FeatureValidator {
   constructor(featurePath) {
@@ -732,7 +732,7 @@ class FeatureValidator {
   }
 }
 
-async function main() {
+const main = async () => {
   if (process.argv.length < 3) {
     console.log('Usage: node validate_feature.mjs <feature-path>')
     console.log('Example: node validate_feature.mjs features/user-profile')
@@ -744,6 +744,6 @@ async function main() {
   const success = await validator.validate()
 
   process.exit(success ? 0 : 1)
-}
+};
 
 main()

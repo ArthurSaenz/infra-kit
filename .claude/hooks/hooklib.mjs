@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 // Throws on malformed/empty stdin; callers choose fail-closed (block) or fail-open (allow).
-export function readInput() {
+export const readInput = () => {
   const data = JSON.parse(readFileSync(0, 'utf8'));
   const toolInput = data.tool_input ?? {};
 
@@ -18,11 +18,11 @@ export function readInput() {
     taskSubject: data.task_subject ?? '',
     raw: data,
   };
-}
+};
 
 // So a ^-anchored guard still sees `git worktree add` in `cd /repo && git worktree add ...`.
 // Two-char operators first. Naive: quoted operators split too, which over-splits, never under.
-export function splitIntoSegments(command) {
+export const splitIntoSegments = (command) => {
   return command
     .replaceAll('&&', '\n')
     .replaceAll('||', '\n')
@@ -32,43 +32,43 @@ export function splitIntoSegments(command) {
     .split('\n')
     .map((segment) => segment.trim())
     .filter(Boolean);
-}
+};
 
 // Tokens sitting in front of the real command. A prefix with its own args (`nice -n 10 npm i`)
 // still slips through; advisory-only, so not worth block-deploy's PREFIX_SPECS table here.
 export const HEAD_PREFIX = String.raw`^([A-Za-z_][A-Za-z0-9_]*=\S+\s+|(sudo|doas|env|command|builtin|exec|eval|time|nice|nohup|stdbuf|xargs)\s+)*`;
 
 // HEAD_PREFIX stripped, so argv[0] is the command that will actually run.
-export function argvAfterPrefix(segment) {
+export const argvAfterPrefix = (segment) => {
   return segment
     .trim()
     .replace(new RegExp(HEAD_PREFIX, 'i'), '')
     .split(/\s+/)
     .filter(Boolean);
-}
+};
 
-export function block(message) {
+export const block = (message) => {
   process.stderr.write(message.endsWith('\n') ? message : `${message}\n`);
   process.exit(2);
-}
+};
 
-export function allow() {
+export const allow = () => {
   process.exit(0);
-}
+};
 
-export function addContext(text, event = 'PreToolUse') {
+export const addContext = (text, event = 'PreToolUse') => {
   process.stdout.write(
     JSON.stringify({
       hookSpecificOutput: { hookEventName: event, additionalContext: text },
     }),
   );
   process.exit(0);
-}
+};
 
 // Nearest directory at or above `filePath` that holds a package.json, so per-package tooling
 // (tsc, eslint, vitest) runs where its config lives instead of at the config-less monorepo root.
 // Bounded by CLAUDE_PROJECT_DIR when set; returns null if none is found.
-export function findPackageDir(filePath) {
+export const findPackageDir = (filePath) => {
   const boundary = process.env.CLAUDE_PROJECT_DIR
     ? resolve(process.env.CLAUDE_PROJECT_DIR)
     : null;
@@ -81,4 +81,4 @@ export function findPackageDir(filePath) {
     if (parent === dir) return null;
     dir = parent;
   }
-}
+};

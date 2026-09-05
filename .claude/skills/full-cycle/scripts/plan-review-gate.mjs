@@ -15,21 +15,21 @@ import { basename, dirname, join } from 'node:path';
 
 const STATUSES_CURRENT = { approved: 0, skipped: 0, 'changes-requested': 3, pending: 4 };
 
-function fail(code, reason) {
+const fail = (code, reason) => {
   process.stderr.write(`${reason}\n`);
   process.exit(code);
-}
+};
 
-function sha256(bytes) {
+const sha256 = (bytes) => {
   return createHash('sha256').update(bytes).digest('hex');
-}
+};
 
 // Same-dir temp file + rename, so a reader never observes a half-written review.
-function writeAtomic(path, text) {
+const writeAtomic = (path, text) => {
   const tmp = join(dirname(path), `.${basename(path)}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`);
   writeFileSync(tmp, text);
   renameSync(tmp, path);
-}
+};
 
 const planArg = process.argv.find((a) => a.startsWith('--plan='));
 const planPath = planArg?.slice('--plan='.length);
@@ -45,7 +45,7 @@ try {
 const planDigest = sha256(planBytes);
 const reviewPath = `${planPath}.review.json`;
 
-function noOpReview() {
+const noOpReview = () => {
   return {
     stage: 'plan-review',
     status: 'skipped',
@@ -54,16 +54,16 @@ function noOpReview() {
     plan_digest: planDigest,
     comments: [],
   };
-}
+};
 
-function emitFresh() {
+const emitFresh = () => {
   const review = noOpReview();
   const text = JSON.stringify(review);
   writeAtomic(reviewPath, text);
   process.stderr.write('review: skipped (commented plan review not implemented)\n');
   process.stdout.write(`${text}\n`);
   process.exit(0);
-}
+};
 
 if (!existsSync(reviewPath)) emitFresh();
 

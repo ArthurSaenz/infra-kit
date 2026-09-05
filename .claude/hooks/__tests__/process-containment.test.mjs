@@ -11,18 +11,18 @@ import { HOOKS_DIR } from './helpers.mjs';
 
 const REPO_ROOT = resolve(HOOKS_DIR, '..', '..');
 
-function sleepSync(ms) {
+const sleepSync = (ms) => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
+};
 
-function isAlive(pid) {
+const isAlive = (pid) => {
   try {
     process.kill(pid, 0);
     return true;
   } catch {
     return false;
   }
-}
+};
 
 // Plants a fake `.bin/prettier` that sleeps past the 10s budget, so the stage has to kill it.
 test('no descendant survives a stage timeout', () => {

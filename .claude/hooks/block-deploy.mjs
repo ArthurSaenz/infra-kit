@@ -73,7 +73,7 @@ const BLOCK = {
 };
 
 // exit 0, because the JSON channel is only read on exit 0. `reason` is surfaced to the model.
-function denyDecision(reason) {
+const denyDecision = (reason) => {
   process.stdout.write(
     JSON.stringify({
       hookSpecificOutput: {
@@ -84,13 +84,13 @@ function denyDecision(reason) {
     }),
   );
   process.exit(0);
-}
+};
 
-function failClosed(reason) {
+const failClosed = (reason) => {
   denyDecision(`block-deploy: ${reason} — failing closed.`);
-}
+};
 
-function deny(reason) {
+const deny = (reason) => {
   denyDecision(
     [
       `BLOCKED by deploy guard: ${reason}`,
@@ -109,10 +109,10 @@ function deny(reason) {
       'Reading workflow state is allowed: gh run list / view / watch, gh workflow view.',
     ].join('\n'),
   );
-}
+};
 
 // Two-char operators before their single-char prefixes.
-function splitIntoSegments(text) {
+const splitIntoSegments = (text) => {
   return text
     .replaceAll('&&', '\n')
     .replaceAll('||', '\n')
@@ -120,18 +120,18 @@ function splitIntoSegments(text) {
     .replaceAll('|', '\n')
     .replaceAll('&', '\n')
     .split('\n');
-}
+};
 
 // Dependency-free. Quotes go first, so `bash"` and `bash` reach the same verdict.
-function basename(token) {
+const basename = (token) => {
   const unquoted = token.replace(/^["']+|["']+$/g, '');
   return unquoted.slice(unquoted.lastIndexOf('/') + 1).toLowerCase();
-}
+};
 
 // Without this, argv[0] is "GH_TOKEN=x" or "env" and every check misses. `lastPrefix` names the
 // prefix that was stripped, so an all-prefix segment can fail closed on it. Assignments do not set
 // it — `FOO=bar && pnpm test` is benign.
-function tokenise(segment) {
+const tokenise = (segment) => {
   const raw = segment.trim().split(/\s+/).filter(Boolean);
   let i = 0;
   let consumedValues = false;
@@ -177,10 +177,10 @@ function tokenise(segment) {
   }
 
   return { argv, consumedValues, lastPrefix };
-}
+};
 
 // Positional, never substring: `gh run rerun` re-runs a deploy, `gh run list` reads.
-function checkGh(argv, segment) {
+const checkGh = (argv, segment) => {
   // basename(), as argv[0] already does — a raw read lets `gh "workflow" run x` walk past.
   const verb = basename(argv[1] ?? '');
   const object = basename(argv[2] ?? '');
@@ -194,18 +194,18 @@ function checkGh(argv, segment) {
   if (BLOCK.ghApiDispatch && verb === 'api' && RE_DISPATCH.test(segment)) {
     deny('`gh api` against the workflow-dispatch endpoint (it POSTs implicitly on -f/-F).');
   }
-}
+};
 
 // The same endpoint with no `gh` in sight.
-function checkHttp(segment) {
+const checkHttp = (segment) => {
   if (BLOCK.httpDispatch && RE_GITHUB_API.test(segment) && RE_DISPATCH.test(segment)) {
     deny('direct HTTP call to the workflow-dispatch endpoint (bypasses every gh rule).');
   }
-}
+};
 
 // Two routes, and BOTH are needed: the prefixed name alone fails open on `ik release deliver`, the
 // positional sequence alone misses `pnpm dx-release-deliver`.
-function checkInfraKit(argv) {
+const checkInfraKit = (argv) => {
   const rest = argv.slice(1);
 
   const prefixed = rest.find((token) => RE_DELIVER_HEAD.test(basename(token)));
@@ -222,12 +222,12 @@ function checkInfraKit(argv) {
       "`release deliver` merges the release PR into main and deploys prod — irreversible, and a human's call.",
     );
   }
-}
+};
 
 // argv positions are meaningless once a wrapper is present, and recursing into the `-c` payload
 // fails OPEN because splitIntoSegments is quote-blind. Matching the ORIGINAL string over-blocks
 // instead: a false deny announces itself, a false allow is silent.
-function checkRawShell(command) {
+const checkRawShell = (command) => {
   if (BLOCK.ghWorkflowRun && RE_RAW_WF_RUN.test(command)) {
     deny('`gh workflow run` inside a shell wrapper — dispatches a workflow directly, bypassing infra-kit.');
   }
@@ -248,14 +248,14 @@ function checkRawShell(command) {
   if (BLOCK.httpDispatch && RE_DISPATCH.test(command)) {
     deny('the workflow-dispatch endpoint appears inside a shell wrapper — this hook is the only guard on that endpoint.');
   }
-}
+};
 
 // Segment-scoped: command-wide would match `rg deliver . && pnpm build`.
-function hasBareDeliverWithTool(command) {
+const hasBareDeliverWithTool = (command) => {
   return splitIntoSegments(command).some(
     (segment) => RE_BARE_DELIVER.test(segment) && RE_INFRA_TOOL.test(segment),
   );
-}
+};
 
 // An uncaught error exits non-zero-but-not-2, which does NOT block.
 try {

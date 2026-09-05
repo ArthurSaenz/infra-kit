@@ -25,7 +25,7 @@ const EXPECTED_KEYS = [
 ];
 
 // Replica of OMC's parser, so these assertions test what OMC will actually see.
-function parseFrontmatterLikeOmc(text) {
+const parseFrontmatterLikeOmc = (text) => {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
   if (!m) return {};
   const metadata = {};
@@ -35,7 +35,7 @@ function parseFrontmatterLikeOmc(text) {
     metadata[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
   }
   return metadata;
-}
+};
 
 test('frontmatter parses to exactly the approved key set', () => {
   assert.deepEqual(Object.keys(parseFrontmatterLikeOmc(SKILL_MD)).sort(), [...EXPECTED_KEYS].sort());

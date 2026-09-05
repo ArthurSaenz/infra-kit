@@ -27,7 +27,7 @@ const ANSI = /\x1b\[[0-9;]*m/g;
  * @param {string[]} args  argv passed to the script
  * @returns {Promise<{code: number, stdout: string}>}
  */
-export function runScript(script, args) {
+export const runScript = (script, args) => {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [join(SCRIPTS_DIR, script), ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -43,7 +43,7 @@ export function runScript(script, args) {
       resolve({ code, stdout: stdout.replace(ANSI, ''), stderr: stderr.replace(ANSI, '') });
     });
   });
-}
+};
 
 /**
  * Pulls the items of one summary section out of a script's stripped stdout.
@@ -56,7 +56,7 @@ export function runScript(script, args) {
  * @param {'errors'|'warnings'} section
  * @returns {string[]}
  */
-export function section(stdout, section) {
+export const section = (stdout, section) => {
   const marker = section === 'errors' ? '✗' : '⚠';
   const header = section === 'errors' ? 'Errors' : 'Warnings';
   const lines = stdout.split('\n');
@@ -80,7 +80,7 @@ export function section(stdout, section) {
   }
 
   return items;
-}
+};
 
 export const errors = (stdout) => section(stdout, 'errors');
 export const warnings = (stdout) => section(stdout, 'warnings');

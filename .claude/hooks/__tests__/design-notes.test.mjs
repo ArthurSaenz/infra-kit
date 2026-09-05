@@ -15,13 +15,13 @@ import { HOOKS_DIR } from './helpers.mjs';
 const README = readFileSync(join(HOOKS_DIR, 'README.md'), 'utf8');
 
 // The `## Design notes` body: from that heading to the next `## `, or to EOF.
-function designNotesBody() {
+const designNotesBody = () => {
   const start = README.indexOf('\n## Design notes');
   if (start === -1) return null;
   const rest = README.slice(start + 1);
   const next = rest.indexOf('\n## ');
   return next === -1 ? rest : rest.slice(0, next);
-}
+};
 
 // `path.mjs:123` — the path may carry directories (`__tests__/x.test.mjs`). Built per call rather
 // than shared: one `/g` regex reused across `.test()` and `.matchAll()` carries `lastIndex` between

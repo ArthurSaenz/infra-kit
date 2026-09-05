@@ -22,32 +22,30 @@ type ScriptProps = React.ScriptHTMLAttributes<HTMLScriptElement> & {
 export const Script = (props: ScriptProps): React.ReactElement | null => {
   const { id, src = '', onReady = null, strategy = 'afterInteractive', shouldUnMountScript, onUnMount } = props
 
-  /**
-   * - First mount:
-   *   1. The useEffect for onReady executes
-   *   2. hasOnReadyEffectCalled.current is false, but the script hasn't loaded yet (not in LoadCache)
-   *      onReady is skipped, set hasOnReadyEffectCalled.current to true
-   *   3. The useEffect for loadScript executes
-   *   4. hasLoadScriptEffectCalled.current is false, loadScript executes
-   *      Once the script is loaded, the onLoad and onReady will be called by then
-   *   [If strict mode is enabled / is wrapped in <OffScreen /> component]
-   *   5. The useEffect for onReady executes again
-   *   6. hasOnReadyEffectCalled.current is true, so entire effect is skipped
-   *   7. The useEffect for loadScript executes again
-   *   8. hasLoadScriptEffectCalled.current is true, so entire effect is skipped
-   *
-   * - Second mount:
-   *   1. The useEffect for onReady executes
-   *   2. hasOnReadyEffectCalled.current is false, but the script has already loaded (found in LoadCache)
-   *      onReady is called, set hasOnReadyEffectCalled.current to true
-   *   3. The useEffect for loadScript executes
-   *   4. The script is already loaded, loadScript bails out
-   *   [If strict mode is enabled / is wrapped in <OffScreen /> component]
-   *   5. The useEffect for onReady executes again
-   *   6. hasOnReadyEffectCalled.current is true, so entire effect is skipped
-   *   7. The useEffect for loadScript executes again
-   *   8. hasLoadScriptEffectCalled.current is true, so entire effect is skipped
-   */
+  // - First mount:
+  //   1. The useEffect for onReady executes
+  //   2. hasOnReadyEffectCalled.current is false, but the script hasn't loaded yet (not in LoadCache)
+  //      onReady is skipped, set hasOnReadyEffectCalled.current to true
+  //   3. The useEffect for loadScript executes
+  //   4. hasLoadScriptEffectCalled.current is false, loadScript executes
+  //      Once the script is loaded, the onLoad and onReady will be called by then
+  //   [If strict mode is enabled / is wrapped in <OffScreen /> component]
+  //   5. The useEffect for onReady executes again
+  //   6. hasOnReadyEffectCalled.current is true, so entire effect is skipped
+  //   7. The useEffect for loadScript executes again
+  //   8. hasLoadScriptEffectCalled.current is true, so entire effect is skipped
+  //
+  // - Second mount:
+  //   1. The useEffect for onReady executes
+  //   2. hasOnReadyEffectCalled.current is false, but the script has already loaded (found in LoadCache)
+  //      onReady is called, set hasOnReadyEffectCalled.current to true
+  //   3. The useEffect for loadScript executes
+  //   4. The script is already loaded, loadScript bails out
+  //   [If strict mode is enabled / is wrapped in <OffScreen /> component]
+  //   5. The useEffect for onReady executes again
+  //   6. hasOnReadyEffectCalled.current is true, so entire effect is skipped
+  //   7. The useEffect for loadScript executes again
+  //   8. hasLoadScriptEffectCalled.current is true, so entire effect is skipped
   const hasOnReadyEffectCalled = useRef(false)
 
   useEffect(() => {

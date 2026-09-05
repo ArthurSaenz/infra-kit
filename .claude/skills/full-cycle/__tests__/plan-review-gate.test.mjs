@@ -15,10 +15,10 @@ const SCRIPT = join(import.meta.dirname, '..', 'scripts', 'plan-review-gate.mjs'
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const scratchDir = () => mkdtempSync(join(tmpdir(), 'full-cycle-'));
 
-function run(planPath, args = [`--plan=${planPath}`]) {
+const run = (planPath, args = [`--plan=${planPath}`]) => {
   const r = spawnSync('node', [SCRIPT, ...args], { encoding: 'utf8' });
   return { status: r.status, stdout: (r.stdout ?? '').trim(), stderr: (r.stderr ?? '').trim() };
-}
+};
 
 test('fresh plan, no review -> exit 0, writes a skipped review with the plan digest', () => {
   const dir = scratchDir();

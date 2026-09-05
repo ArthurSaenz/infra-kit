@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { runScript, errors, warnings } from './helpers.mjs';
 
 /** Scaffolds into a throwaway features dir and hands the paths to `run`. */
-async function withScaffold(name, args, run) {
+const withScaffold = async (name, args, run) => {
   const featuresDir = await mkdtemp(join(tmpdir(), 'fe-architect-'));
 
   try {
@@ -24,7 +24,7 @@ async function withScaffold(name, args, run) {
   } finally {
     await rm(featuresDir, { recursive: true, force: true });
   }
-}
+};
 
 describe('scaffold_feature', () => {
   test('a scaffolded feature passes validate_feature cleanly', async () => {

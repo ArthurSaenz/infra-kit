@@ -11,7 +11,7 @@ export const HOOKS_DIR = join(import.meta.dirname, '..');
 // chmodStrip proves a hook blocks even without its exec bit. It runs a mode-stripped COPY in a
 // temp dir — never the tracked source — so the test suite leaves the working tree clean. Only
 // safe for self-contained hooks (block-deploy) with no relative imports to resolve.
-export function runHook(file, event, { chmodStrip = false, env = {} } = {}) {
+export const runHook = (file, event, { chmodStrip = false, env = {} } = {}) => {
   let path = join(HOOKS_DIR, file);
   const stdin = typeof event === 'string' ? event : JSON.stringify(event);
 
@@ -27,7 +27,7 @@ export function runHook(file, event, { chmodStrip = false, env = {} } = {}) {
     env: { ...process.env, ...env },
   });
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
+};
 
 export const bash = (command) => ({ tool_name: 'Bash', tool_input: { command } });
 export const edit = (file_path) => ({ tool_name: 'Write', tool_input: { file_path } });

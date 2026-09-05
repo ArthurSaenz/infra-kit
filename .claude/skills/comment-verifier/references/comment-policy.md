@@ -38,7 +38,9 @@ branch**, and **workaround**. A `keep` that names none of them is not a `keep`.
 
 ## Corpus
 
-Real sites from `apps/infra-kit/cli`, not invented examples.
+Real sites from the `apps/infra-kit/cli` corpus this policy was derived from, not invented
+examples. The paths are citations rather than files in this repo — the last row is the exception,
+and it is here under `vendor/configs`.
 
 | Site | Comment | Verdict |
 |---|---|---|
@@ -46,7 +48,7 @@ Real sites from `apps/infra-kit/cli`, not invented examples.
 | `apps/infra-kit/cli/src/commands/worktrees-list/worktrees-list.ts:61` | `// Log formatted output` | **Delete.** |
 | `apps/infra-kit/cli/src/commands/gh-release-deploy-selected/gh-release-deploy-selected.ts:131` | `// Validate all selected services` above `const invalidServices = selectedServices.filter(` | **Delete**, or fold into the variable name. |
 | `apps/infra-kit/cli/src/lib/vendor/manifest.ts:21-24` | the `schemaVersion` block explaining why the field is optional with no default | **Keep.** Records a compatibility constraint that no name can carry. |
-| `vendor/configs/eslint-config/src/configs/docs.ts:28-31` | the `informative-docs` stemming note | **Keep.** An empirical finding about an external tool, the archetype of a comment worth writing. |
+| `vendor/configs/eslint-config/src/configs/docs.ts:40-42` | the `informative-docs` stemming note | **Keep.** An empirical finding about an external tool, the archetype of a comment worth writing. |
 
 Every `what`-comment in that table is a `//` line comment, and no JSDoc rule reads those. That
 asymmetry runs through the whole skill: the mechanical layer catches over-long JSDoc, the reviewer
@@ -54,9 +56,9 @@ catches restating line comments.
 
 ## The budget
 
-The corpus is 313 files and 41,991 lines under `apps/infra-kit/cli/src` excluding tests, with 2,171
-JSDoc block openers and 2,481 `//` lines. **Many of the JSDoc one-liners are already good
-why-comments.**
+That corpus is 313 files and 41,991 lines excluding tests, with 2,171 JSDoc block openers and 2,481
+`//` lines. **Many of the JSDoc one-liners are already good why-comments**, and the same holds for
+any codebase this skill is pointed at.
 
 **The skill must not propose a JSDoc sweep.** A review that flags most of the JSDoc it reads has
 misread the policy, not found a problem. A long block is a candidate, never a verdict: the

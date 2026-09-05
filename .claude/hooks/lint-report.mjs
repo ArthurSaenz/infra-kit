@@ -4,7 +4,7 @@
 // Must never throw: status 2 gives empty stdout, a crash gives anything.
 // pnpm's catalog warnings precede the array on stdout, so a strict parse fails. Line-oriented,
 // not a `[`-to-`]` slice — the array is one line and a bracket in the noise would defeat a slice.
-function extractJsonPayload(stdout) {
+const extractJsonPayload = (stdout) => {
   const text = (stdout ?? '').trim();
   if (!text) return null;
 
@@ -25,9 +25,9 @@ function extractJsonPayload(stdout) {
   }
 
   return null;
-}
+};
 
-export function parseEslintJson(stdout) {
+export const parseEslintJson = (stdout) => {
   const payload = extractJsonPayload(stdout);
 
   if (!Array.isArray(payload)) return { errors: 0, messages: [] };
@@ -52,13 +52,13 @@ export function parseEslintJson(stdout) {
   }
 
   return { errors, messages };
-}
+};
 
 const TOOL_ERROR_MAX = 300;
 
 // Skips ESLint's banner ("Oops! Something went wrong! :(" / "ESLint: 10.7.0"), which names no cause
 // and would otherwise be the one line we emit.
-export function extractToolError(stderr) {
+export const extractToolError = (stderr) => {
   const substantive = (stderr ?? '')
     .split('\n')
     .map((line) => line.trim())
@@ -68,13 +68,13 @@ export function extractToolError(stderr) {
   return substantive.length > TOOL_ERROR_MAX
     ? `${substantive.slice(0, TOOL_ERROR_MAX)}…`
     : substantive;
-}
+};
 
 // A normal state, not a failure — the one status-2 case that stays silent. ESLint prints "couldn't";
 // the class also covers "could not" and "couldnt".
-export function isMissingConfig(stderr) {
+export const isMissingConfig = (stderr) => {
   return /could ?n[o']?t find an eslint\.config/i.test(stderr ?? '');
-}
+};
 
 // Prefix is optional: tsc omits `file(line,col):` for whole-program conditions like TS2688.
 // `^\S` and the lazy `\S.*?` both reject leading whitespace — without that an indented
@@ -83,7 +83,7 @@ const RE_TSC_HEAD = /^(?:\S.*?\(\d+,\d+\): )?error TS\d+: /;
 // Indented non-blank => continuation. For TS2688 these carry the only actionable content.
 const RE_TSC_CONTINUATION = /^\s+\S/;
 
-export function splitTscBlocks(stdout) {
+export const splitTscBlocks = (stdout) => {
   const blocks = [];
   // `\s` matches a BOM, so an unstripped one would hide the first diagnostic entirely.
   const text = (stdout ?? '').replace(/^\uFEFF/, '');
@@ -98,11 +98,11 @@ export function splitTscBlocks(stdout) {
   }
 
   return blocks;
-}
+};
 
 const TRUNCATION_HINT = 'Full list: pnpm run eslint-check / pnpm run ts-check';
 
-function capLines(lines, maxChars) {
+const capLines = (lines, maxChars) => {
   const kept = [];
   let used = 0;
 
@@ -115,14 +115,14 @@ function capLines(lines, maxChars) {
   const suppressed = lines.length - kept.length;
   if (suppressed > 0) kept.push(`  … ${suppressed} more suppressed. ${TRUNCATION_HINT}`);
   return kept;
-}
+};
 
 // Uncapped, one section eats the budget and the rest vanish: 200 lint errors rendered 3995 chars
 // with no `TypeScript:` heading at all.
 const DEFAULT_SECTION_MAX_CHARS = 2000;
 
 // Sections are capped BEFORE the report is, so each gets a share rather than the first taking all.
-export function formatReport(sections, { maxChars = 4000 } = {}) {
+export const formatReport = (sections, { maxChars = 4000 } = {}) => {
   const blocks = [];
 
   for (const section of sections) {
@@ -135,4 +135,4 @@ export function formatReport(sections, { maxChars = 4000 } = {}) {
   if (report.length <= maxChars) return report;
 
   return `${report.slice(0, maxChars - TRUNCATION_HINT.length - 8)}\n… ${TRUNCATION_HINT}`;
-}
+};

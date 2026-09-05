@@ -8,9 +8,10 @@ import { sonarjsRecommended } from './base.js'
  * These jsdoc/* function-doc rules are off because `@wl/require-jsdoc-example` covers the same ground.
  * Don't re-enable without first removing the @wl rule, or the two layers double-report.
  *
- * The block below adds Layer 1 of the JSDoc size-limits work: off-the-shelf `jsdoc/*` rules that
- * clean up formatting mechanically, ahead of the custom `@wl/max-jsdoc-lines` rule (Layer 2, wired
- * separately once published). Each rule here either autofixes or catches a shape no length cap can:
+ * The block below is Layer 1 of the JSDoc size-limits work: off-the-shelf `jsdoc/*` rules that clean
+ * up formatting mechanically, ahead of the custom `@wl/max-jsdoc-lines` rule (Layer 2, now wired at
+ * `error` in configs/components.ts — that is where the @wl plugin loads — against these same globs).
+ * Each rule here either autofixes or catches a shape no length cap can:
  *
  * - `tag-lines` (`startLines: 1`) strips blank lines *between* tags but preserves the blank line
  *   separating the block description from its first tag — that separator is house style (see
@@ -26,6 +27,16 @@ import { sonarjsRecommended } from './base.js'
  *   preset default, which may not agree.
  * - `check-line-alignment` (`'never'`) bans multi-space column alignment in `@param` tables — those
  *   reflow (and diff) on every rename to a longer identifier.
+ * - `check-param-names` is promoted from the preset's `warn` to `error`. The preset already ships it
+ *   on, but every package lints with `eslint --quiet`, which drops warnings entirely — so a `@param`
+ *   left behind by a rename was reported to nobody. It is the only rule here that catches semantic
+ *   drift rather than shape, and it demands no new docs: a block documenting one of two params stays
+ *   clean, because the rule only checks the tags already written. `checkDestructured: false` is the
+ *   load-bearing option — left at its `true` default it stops being a drift check and starts
+ *   requiring a `@param props.<field>` tag per destructured field, which is noise on every component
+ *   that takes a props object. The cost of turning it off is one blind spot: a stale ROOT name on a
+ *   destructured param (`@param oldBag` for `({ a, b })`) is unreportable, since such a parameter has
+ *   no name in the signature to check against.
  * - `informative-docs` is `'warn'`, not `'error'`: verified to have stemming misses (it flags
  *   `/** The user card. *\/` on `UserCard` but not `/** Sets the value. *\/` on `setValue`), so it's a
  *   nudge toward better prose, not a gate that can be trusted to catch every restatement.
@@ -44,6 +55,7 @@ export const jsdoc: TypedFlatConfigItem = {
     'jsdoc/require-param-type': 'off',
     'jsdoc/require-returns-type': 'off',
     'jsdoc/check-line-alignment': ['error', 'never'],
+    'jsdoc/check-param-names': ['error', { checkDestructured: false }],
     'jsdoc/informative-docs': 'warn',
   } as ConfigRules,
 }

@@ -13,7 +13,7 @@ import { runScript, fixture, FIXTURES_DIR } from './helpers.mjs';
 const analyze = (dir) => runScript('analyze_imports.mjs', [dir]);
 
 /** Copies the imports fixture set so a test can drop extra files into it. */
-async function withImportsFixture(run) {
+const withImportsFixture = async (run) => {
   const dir = await mkdtemp(join(tmpdir(), 'fe-architect-'));
 
   try {
@@ -22,7 +22,7 @@ async function withImportsFixture(run) {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
-}
+};
 
 describe('analyze_imports', () => {
   describe('P0-2: type-only imports', () => {

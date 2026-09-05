@@ -1,12 +1,9 @@
-import { defineConfig } from 'vitest/config'
+import { defineNodeConfig } from '@wl/vitest-config'
 
-// Standalone config for the eslint-config package. These are pure Node tests that run
-// ESLint programmatically against fixtures — no browser, no React. We deliberately do NOT
-// re-export @wl/vitest-config (it is a deps-only bundle with no shareable config/exports);
-// it is depended on solely to provide the `vitest` binary, mirroring the other packages.
-export default defineConfig({
+// Pure Node tests that run ESLint programmatically against fixtures — no browser, no React.
+// The narrower `include` keeps the runner off the fixture files themselves.
+export default defineNodeConfig(import.meta.dirname, {
   test: {
-    environment: 'node',
     include: ['__tests__/**/*.test.{js,ts,mjs}'],
   },
 })
