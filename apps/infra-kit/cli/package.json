@@ -42,7 +42,7 @@
     "@inquirer/password": "^5.2.0",
     "@inquirer/select": "^5.2.3",
     "@modelcontextprotocol/server": "^2.0.0",
-    "@slip-stream-kit/config": "^0.3.15",
+    "@slip-stream-kit/config": "^0.4.0",
     "chalk": "^6.0.0",
     "chokidar": "^5.0.0",
     "commander": "^15.0.0",

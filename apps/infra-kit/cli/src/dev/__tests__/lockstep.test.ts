@@ -25,11 +25,12 @@ const configFloor = HELPER_PACKAGES.find((helper) => {
 })?.floor
 
 describe('infra-kit / @slip-stream-kit/config lockstep', () => {
-  // TEMPORARILY SKIPPED: this compares the CLI SOURCE version against the PUBLISHED
-  // `@slip-stream-kit/config` resolved from the pnpm store, so any CLI bump reds it
-  // until the config package is republished at the matching version (editing
-  // config/package.json in-repo does NOT fix it). Re-enable once config is published.
-  it.skip('ships both packages on the same version', () => {
+  // Compares the CLI SOURCE version against the PUBLISHED `@slip-stream-kit/config` that the
+  // pinned range resolves to from the pnpm store. That makes it a RELEASE-TIME guard: it is
+  // legitimately red in the window between bumping the CLI and republishing config at the
+  // matching version, and editing `config/package.json` in-repo does not clear it. Re-skip
+  // for the duration of that window rather than weakening the assertion.
+  it('ships both packages on the same version', () => {
     expect(
       configPackageJson.version,
       `${CONFIG_PACKAGE} and infra-kit must release in lockstep. Independent version lines make the floor in HELPER_PACKAGES incomparable: seeded low it throws for every consumer, seeded high it passes vacuously and the guard is dead while still looking alive.`,
