@@ -326,12 +326,11 @@ describe('command catalog — menu grouping', () => {
       'release create',
       'release desc-edit',
       'release deploy-all',
-      // Top-level `deploy` (groupPath ['deploy']) carries menuGroup 'release', so it renders beside
-      // the workflow-dispatching deploy commands it is the local counterpart to.
       'release deploy-selected',
       'release deliver',
-      'local deploy-all',
-      'local deploy-selected',
+      // `local deploy-*` are absent by design: they are DEPRECATED aliases of
+      // `release deploy-* --from local`, carrying `menuGroup: null` so the palette offers only
+      // the merged commands. They remain in the catalog (and as MCP tools) and still resolve if typed.
     ])
 
     // `reopen` is top-level (groupPath ['reopen']) but carries menuGroup 'worktrees', so it renders in

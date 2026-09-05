@@ -1,19 +1,8 @@
 import { $ } from 'zx'
 
 import { OperationError } from 'src/lib/errors/operation-error'
-import { assertDeployable, isProtectedEnv } from 'src/lib/workflow-envs'
+import { assertDeployable } from 'src/lib/workflow-envs'
 import type { ProtectedEnvAccess } from 'src/lib/workflow-envs'
-
-/**
- * Checks a caller may waive by name. `env-account` and `protected-env` are deliberately absent.
- *
- * `clean-tree` is listed but is NOT waivable for a delivery-shaped env — see `runPreflight`. The
- * waiver exists for personal environments, and a project that allows prod must not be able to combine
- * it with `--yes` into an unattended production deploy of a dirty tree.
- */
-export const SKIPPABLE_CHECKS = ['clean-tree', 'toolchain'] as const
-
-export type SkippableCheck = (typeof SKIPPABLE_CHECKS)[number]
 
 export interface AccountIdentity {
   accountId: string
@@ -91,8 +80,12 @@ export const assertCleanTreeForSharedEnv = (args: { env: string; isShared: boole
 
   throw new OperationError(undefined, {
     operation: `deploy to shared environment "${env}"`,
-    remediation: 'commit or stash first, or deploy to a personal environment instead',
-    stderrExcerpt: 'the working tree has uncommitted changes and this environment is shared',
+    // `git stash` alone is NOT enough and saying it was a real bug: `isWorkingTreeClean` is
+    // `git status --porcelain`, which counts UNTRACKED files, and plain `stash` leaves those behind —
+    // so the refusal printed a fix that left the condition intact. Untracked files genuinely belong
+    // in the check: the build reads the filesystem, not git, so an untracked source file does ship.
+    remediation: 'commit, or `git stash -u` (plain stash leaves untracked files), or deploy to a personal environment',
+    stderrExcerpt: 'the working tree has uncommitted or untracked changes and this environment is shared',
   })
 }
 
@@ -124,14 +117,12 @@ export interface PreflightArgs {
   isShared: boolean
   isClean: boolean
   runningEnvs: string[]
-  skip: SkippableCheck[]
   /** This project's resolved access to delivery-shaped envs. Omitted means denied — see protected-envs. */
   protectedEnvAccess?: ProtectedEnvAccess
 }
 
 export interface PreflightResult {
   identity: AccountIdentity
-  skipped: SkippableCheck[]
 }
 
 /**
@@ -142,7 +133,7 @@ export interface PreflightResult {
  * child process exists.
  */
 export const runPreflight = async (args: PreflightArgs): Promise<PreflightResult> => {
-  const { env, project, isShared, isClean, runningEnvs, skip, protectedEnvAccess } = args
+  const { env, project, isShared, isClean, runningEnvs, protectedEnvAccess } = args
 
   // `prod` is delivered, not deployed ad-hoc — the one client-side veto, shared with the
   // workflow-dispatch commands so both paths refuse it identically — unless this project's
@@ -151,25 +142,16 @@ export const runPreflight = async (args: PreflightArgs): Promise<PreflightResult
 
   assertNoCiDeployInFlight(env, runningEnvs)
 
-  // A delivery-shaped env may not have its dirty-tree check waived, even by a caller that is otherwise
-  // entitled to waive it. `--skip-preflight clean-tree` exists for personal environments, where
-  // deploying uncommitted work is the point; combined with `--yes` on a project that allows prod it
-  // would be a fully unattended production deploy of whatever happens to be in the working tree.
-  if (skip.includes('clean-tree') && isProtectedEnv(env)) {
-    throw new OperationError(undefined, {
-      operation: `deploy to "${env}"`,
-      remediation: 'commit or stash your changes — this check is not waivable for a delivery target',
-      stderrExcerpt: `refusing to skip the clean-tree check for "${env}"`,
-    })
-  }
-
-  if (!skip.includes('clean-tree')) {
-    assertCleanTreeForSharedEnv({ env, isShared, isClean })
-  }
+  // Unconditional. `docs/local-deploy-design.md` check 5 says a shared env is NOT skippable, but the
+  // implementation used to accept `--skip-preflight clean-tree` for `dev`/`stage` while refusing only
+  // delivery-shaped envs — the one combination the design forbade, and it was reachable. With that
+  // corrected the waiver had no remaining effect anywhere (a no-op on personal envs, where the check
+  // never fires, and refused everywhere else), so the flag went with it.
+  assertCleanTreeForSharedEnv({ env, isShared, isClean })
 
   const identity = await resolveAccountIdentity(project)
 
   assertEnvMatchesAccount(env, identity)
 
-  return { identity, skipped: skip }
+  return { identity }
 }

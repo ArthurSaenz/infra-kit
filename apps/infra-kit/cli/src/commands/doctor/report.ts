@@ -70,7 +70,7 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ],
   [SECTION_SHELL, ['zshrc init block', 'warm cache', 'pnpm enableGlobalVirtualStore', 'CLAUDE.md block']],
   [SECTION_CONFIG, ['infra-kit config valid', 'user override path', 'legacy user-global config']],
-  [SECTION_TOKENS, ['env tokens configured', 'env token valid', 'tokens.json perms']],
+  [SECTION_TOKENS, ['tokens.json present', 'env tokens configured', 'env token valid', 'tokens.json perms']],
   [
     SECTION_PROXY,
     ['portless installed', PORTLESS_SERVING_NAME, 'portless CA chain valid', 'portless CA trusted', 'portless routes'],

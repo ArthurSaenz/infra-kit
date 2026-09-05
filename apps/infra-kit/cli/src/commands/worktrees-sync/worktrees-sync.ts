@@ -1,7 +1,5 @@
 import { z } from 'zod'
-import { $ } from 'zx'
 
-import { closeCmuxWorkspaceByCwd } from 'src/integrations/cmux'
 import { getReleasePRs } from 'src/integrations/gh'
 import { removeIdeWorktreeFolders } from 'src/integrations/ide'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
@@ -13,7 +11,8 @@ import { getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { isReleaseBranch } from 'src/lib/release-id'
-import { defineMcpTool, textContent } from 'src/types'
+import { logRemovalResults, removeWorktrees, toRemovalToolResult } from 'src/lib/worktrees'
+import { defineMcpTool } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
 interface WorktreeSyncArgs extends RequiredConfirmedOptionArg {}
@@ -58,9 +57,13 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
       currentWorktrees,
     })
 
-    const removedWorktrees = await removeWorktrees({
+    // Shared with worktrees-remove: same verify-then-sweep recovery for a leftover a post-exit hook
+    // re-created, same {removed, failed} reporting. Branches are removed concurrently, exactly as
+    // `worktrees remove --all` does.
+    const removal = await removeWorktrees({
       branches: branchesToRemove,
       worktreeDir,
+      projectRoot,
     })
 
     // Hard `false`: sync is background/stale-cleanup (predominantly the MCP path) — it must never
@@ -69,28 +72,26 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
       projectRoot,
       worktreeDir,
       currentWorktrees,
-      removedWorktrees,
+      removedWorktrees: removal.removed,
       allowEditorRelaunch: false,
     })
 
-    logResults(removedWorktrees)
+    logRemovalResults(removal)
 
     commandEcho.print()
 
-    const structuredContent = {
-      removedWorktrees,
-      count: removedWorktrees.length,
-    }
-
-    return {
-      content: textContent(JSON.stringify(structuredContent, null, 2)),
-      structuredContent,
-    }
+    // Ordering is load-bearing: IDE cleanup and the echo line run first; only then does a failed
+    // branch throw (CLI) or become an isError result (MCP).
+    return toRemovalToolResult({ result: removal, operation: 'sync worktrees' })
   } catch (error) {
     // A cancelled prompt (Ctrl-C / Esc) is a user back-out, not a failure: let it
     // reach the top-level boundary untouched so it exits cleanly, instead of being
     // logged as an error with a misleading remediation.
     if (isPromptCancellation(error)) throw error
+
+    // A failed-removal report already names the branch and the fix; re-wrapping it with the
+    // remote-connectivity remediation below would point the user at the wrong problem.
+    if (error instanceof OperationError) throw error
 
     logger.error({ error }, '❌ Error managing worktrees')
     throw new OperationError(error, {
@@ -122,65 +123,17 @@ const categorizeWorktrees = (args: CategorizeWorktreesArgs): { branchesToRemove:
   return { branchesToRemove }
 }
 
-interface RemoveWorktreesArgs {
-  branches: string[]
-  worktreeDir: string
-}
-
-/**
- * Remove worktrees for the specified branches and close their cmux workspaces
- */
-const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<string[]> => {
-  const { branches, worktreeDir } = args
-
-  const removed: string[] = []
-
-  for (const branch of branches) {
-    try {
-      const worktreePath = `${worktreeDir}/${branch}`
-
-      // Close the cmux workspace by cwd (before `git worktree remove`, so the path
-      // still exists); anchors are excluded so a group header is never closed.
-      await closeCmuxWorkspaceByCwd(worktreePath)
-
-      await $`git worktree remove ${worktreePath}`
-      removed.push(branch)
-    } catch (error) {
-      const err = new OperationError(error, {
-        operation: `remove stale worktree for ${branch}`,
-        remediation: 'inspect the worktree dir manually; rerun with the branch checked out elsewhere',
-      })
-
-      logger.error({ error, branch, msg: err.message })
-    }
-  }
-
-  return removed
-}
-
-/**
- * Log the results of worktree management
- */
-const logResults = (removed: string[]): void => {
-  if (removed.length > 0) {
-    logger.info('❌ Removed worktrees:')
-    for (const branch of removed) {
-      logger.info(branch)
-    }
-    logger.info('')
-  } else {
-    logger.info('ℹ️ No unused worktrees to remove')
-  }
-}
-
 // MCP Tool Registration
 export const worktreesSyncMcpTool = defineMcpTool({
   name: 'worktrees-sync',
   description:
-    'Remove worktrees whose release PR is no longer open (stale cleanup). Only removes — never creates; use worktrees-add to create worktrees for new releases. The CLI confirmation is auto-skipped for MCP calls, so the caller is responsible for gating.',
+    'Remove worktrees whose release PR is no longer open (stale cleanup). Only removes — never creates; use worktrees-add to create worktrees for new releases. The CLI confirmation is auto-skipped for MCP calls, so the caller is responsible for gating. A branch git refuses to remove is listed in failedWorktrees and the result carries isError; a leftover that git already unregistered and that holds only tool state (.omc/state, .omc/sessions, .DS_Store) is swept automatically.',
   inputSchema: {},
   outputSchema: {
     removedWorktrees: z.array(z.string()).describe('List of removed worktree branches'),
+    failedWorktrees: z
+      .array(z.string())
+      .describe('Branches whose worktree could NOT be removed (git refused, or an unsweepable leftover remained)'),
     count: z.number().describe('Number of worktrees removed during sync'),
   },
   handler: worktreesSync,

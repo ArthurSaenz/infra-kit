@@ -7,7 +7,6 @@ import {
   assertNoCiDeployInFlight,
   runPreflight,
 } from '../preflight'
-import type { SkippableCheck } from '../preflight'
 
 describe('assertEnvMatchesAccount', () => {
   it('refuses when the account is a different environment than the one asked for', () => {
@@ -36,7 +35,17 @@ describe('assertCleanTreeForSharedEnv', () => {
   it('refuses a dirty tree against a shared environment', () => {
     expect(() => {
       return assertCleanTreeForSharedEnv({ env: 'dev', isShared: true, isClean: false })
-    }).toThrow(/uncommitted changes/)
+    }).toThrow(/uncommitted or untracked changes/)
+  })
+
+  it('names a fix that actually clears the condition', () => {
+    // The wrong advice WAS the defect: `isWorkingTreeClean` is `git status --porcelain`, which counts
+    // untracked files, and plain `git stash` leaves those behind — so the old text ("commit or stash
+    // first") sent you round the same refusal. Asserted on the remediation itself because that string
+    // is the whole bug; the stderrExcerpt assertions above would stay green with the bad advice.
+    expect(() => {
+      return assertCleanTreeForSharedEnv({ env: 'dev', isShared: true, isClean: false })
+    }).toThrow(/git stash -u/)
   })
 
   it('allows a dirty tree against a personal environment', () => {
@@ -96,15 +105,17 @@ describe('isSharedEnv', () => {
   })
 })
 
-// runPreflight itself had no coverage: only its three leaf asserts did. These all refuse before
-// `resolveAccountIdentity`, so they need no AWS.
+// runPreflight itself had no coverage: only its three leaf asserts did. Most of these refuse before
+// `resolveAccountIdentity` and so need no AWS — but the personal-env case below is the exception and
+// DOES reach it, deliberately: reaching the account lookup is the only observable proof it got past
+// every gate above. It passes whether that lookup errors (no creds/binary) or succeeds and then fails
+// the env↔account comparison, since neither outcome matches the clean-tree pattern it asserts against.
 describe('runPreflight', () => {
   const baseArgs = {
     project: 'p',
     isShared: true,
     isClean: true,
     runningEnvs: [] as string[],
-    skip: [] as SkippableCheck[],
   }
 
   it('refuses a protected env when the project has not allowed it', async () => {
@@ -119,25 +130,27 @@ describe('runPreflight', () => {
 
   // The unattended-prod-deploy hole: `--env prod --yes --skip-preflight clean-tree` would otherwise
   // ship whatever is in the working tree, with no prompt and no check.
-  it('refuses to waive clean-tree for a protected env even when the project allows it', async () => {
-    await expect(
-      runPreflight({
-        ...baseArgs,
-        env: 'prod',
-        isClean: false,
-        skip: ['clean-tree'],
-        protectedEnvAccess: { allowed: true, reason: 'allowed' },
-      }),
-    ).rejects.toThrow(/refusing to skip the clean-tree check/)
+  // R1 + R3: `docs/local-deploy-design.md` check 5 says a shared env is NOT skippable, but the
+  // implementation accepted `--skip-preflight clean-tree` for `dev`/`stage` while refusing only
+  // delivery-shaped envs. Correcting that left the waiver with no effect anywhere, so the flag was
+  // removed — there is no argument these calls could add to get through.
+  it.each([['dev'], ['stage']])('refuses a dirty tree for the shared env %s, unconditionally', async (env) => {
+    await expect(runPreflight({ ...baseArgs, env, isShared: true, isClean: false })).rejects.toThrow(
+      /uncommitted or untracked changes/,
+    )
   })
 
-  it('still honours a clean-tree waiver for an ordinary env', async () => {
-    // Reaches the AWS lookup, which is the proof it got past every gate above it.
-    await expect(
-      runPreflight({ ...baseArgs, env: 'arthur', isShared: false, isClean: false, skip: ['clean-tree'] }),
-    ).rejects.not.toThrow(/clean-tree|uncommitted/)
+  it('still lets a dirty tree through on a personal env — the check never fires there', async () => {
+    // Reaches the AWS lookup, which is the proof it got past every gate above it. Guards against R1
+    // having silently made the check universal, which would break the personal-env workflow.
+    await expect(runPreflight({ ...baseArgs, env: 'arthur', isShared: false, isClean: false })).rejects.not.toThrow(
+      /clean-tree|uncommitted|untracked/,
+    )
   })
 
+  // This is what closed the unattended-prod-deploy hole. It used to need
+  // `--env prod --yes --skip-preflight clean-tree` to be refused explicitly; the waiver no longer
+  // exists, so the refusal is simply unconditional and there is nothing left to spell.
   it('refuses a dirty tree against an allowed protected env', async () => {
     await expect(
       runPreflight({
@@ -146,6 +159,6 @@ describe('runPreflight', () => {
         isClean: false,
         protectedEnvAccess: { allowed: true, reason: 'allowed' },
       }),
-    ).rejects.toThrow(/uncommitted changes/)
+    ).rejects.toThrow(/uncommitted or untracked changes/)
   })
 })

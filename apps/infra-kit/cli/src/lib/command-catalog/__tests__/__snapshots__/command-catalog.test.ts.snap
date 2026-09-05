@@ -154,7 +154,6 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
       "confirm",
       "dryRun",
       "env",
-      "skipPreflight",
     ],
     "name": "local-deploy-all",
     "output": [
@@ -175,7 +174,6 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
       "dryRun",
       "env",
       "service",
-      "skipPreflight",
     ],
     "name": "local-deploy-selected",
     "output": [
@@ -287,6 +285,7 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     "name": "worktrees-remove",
     "output": [
       "count",
+      "failedWorktrees",
       "removedWorktrees",
     ],
   },
@@ -295,6 +294,7 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     "name": "worktrees-sync",
     "output": [
       "count",
+      "failedWorktrees",
       "removedWorktrees",
     ],
   },

@@ -538,6 +538,38 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
    */
   const v1Init = JSON.parse(readFileSync(join(FIXTURES, 'initialize-baseline.v1.json'), 'utf8')) as Record<string, any>
   const v1Tools = JSON.parse(readFileSync(join(FIXTURES, 'tools-list-baseline.v1.json'), 'utf8')) as Record<string, any>
+
+  /**
+   * D4 — an AUTHORED delta, normalized like D2 and D3 rather than excluded.
+   *
+   * `skipPreflight` was removed from both local-deploy tools when `--skip-preflight` was deleted: the
+   * waiver's only reachable effect had been waiving the clean-tree check for a SHARED env, which
+   * `docs/local-deploy-design.md` check 5 forbids, so correcting that left it a no-op everywhere.
+   *
+   * Handled here, at load, for three reasons the alternatives fail on:
+   *  - Re-capturing the fixture would destroy its value — it is evidence captured BEFORE any
+   *    dependency change (see the file header) and is the reference the confirm-gate defect is proven
+   *    against.
+   *  - Adding the two tools to SOURCE_CHANGED_DURING_MIGRATION would leave the two most destructive
+   *    tools in the catalog permanently unguarded by W1, and 23 − 3 = 20 comparable also trips the
+   *    `toBeGreaterThan(20)` suite-swallowing guard below.
+   *  - Normalizing one known, named field keeps the whole-object comparison intact for everything
+   *    else about those tools, which is exactly the contract D2 and D3 already operate under.
+   *
+   * The fixture on disk is NOT modified.
+   */
+  // Names captured BEFORE the delete, so the positive assertion in `w1c-pre` below has something to
+  // check. Asserting there rather than here keeps the claim inside a test case, which is both the lint
+  // rule and the honest place for it.
+  const d4Carriers = (v1Tools.tools as Record<string, any>[])
+    .filter((tool) => {
+      return tool.inputSchema?.properties?.skipPreflight !== undefined
+    })
+    .map((tool) => {
+      delete tool.inputSchema.properties.skipPreflight
+
+      return tool.name as string
+    })
   const v1Resources = JSON.parse(readFileSync(join(FIXTURES, 'resources-list-baseline.v1.json'), 'utf8')) as Record<
     string,
     any
@@ -603,6 +635,13 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     }
   })
 
+  it('w1c-pre: D4 — the baseline really carried `skipPreflight`, on exactly the two local-deploy tools', () => {
+    // The positive half of D4, held to the same bar as D2 and D3: the normalization must never be what
+    // makes w1c pass. Without this, the delete above decays into a silent no-op the moment the fixture
+    // is re-captured, and D4's documentation becomes a lie about the file it describes.
+    expect(d4Carriers).toEqual(['local-deploy-all', 'local-deploy-selected'])
+  })
+
   it('w1c: D2 + D3 — schema dialect moves, `execution` is dropped, and NOTHING else changes', () => {
     expect(toolsResult.tools).toHaveLength(v1Tools.tools.length)
     expect(Object.keys(toolsResult).sort()).toEqual(Object.keys(v1Tools).sort())
@@ -610,8 +649,11 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     // Tools whose SOURCE definition changed after the baseline was captured cannot be compared
     // against it — that difference is authored, not SDK-induced, and W1 only speaks to the latter.
     // `gh-merge-dev` was rewritten by concurrent work in this tree DURING the migration.
+    // `worktrees-remove` / `worktrees-sync` gained `failedWorktrees` in their outputSchema (and a
+    // matching description) when failed removals stopped being reported as success — authored,
+    // post-baseline, and not what W1 guards.
     // Every name here is a tool W1 is NOT guarding, so it must stay short and justified.
-    const SOURCE_CHANGED_DURING_MIGRATION = ['gh-merge-dev']
+    const SOURCE_CHANGED_DURING_MIGRATION = ['gh-merge-dev', 'worktrees-remove', 'worktrees-sync']
 
     // Recursively sort object keys so comparison is order-insensitive: v2 emits keys in a
     // different order than v1, which is meaningless in JSON but makes raw string equality lie.
@@ -639,6 +681,17 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
       return JSON.stringify(canonicalize(JSON.parse(JSON.stringify(schema).split(DRAFT_2020).join(DRAFT_07))))
     }
 
+    // Everything a human authors on a tool: input + output schema and the description. An earlier
+    // version looked at inputSchema alone, which made an outputSchema-only change (the
+    // `failedWorktrees` field) look like an obsolete exclusion.
+    const authoredTool = (tool: Record<string, any> | undefined): string => {
+      return authoredShape({
+        description: tool?.description,
+        inputSchema: tool?.inputSchema,
+        outputSchema: tool?.outputSchema,
+      })
+    }
+
     const differsFromBaseline = (name: string): boolean => {
       const before = (v1Tools.tools as Record<string, any>[]).find((t) => {
         return t.name === name
@@ -647,7 +700,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
         return t.name === name
       })
 
-      return authoredShape(before?.inputSchema) !== authoredShape(after?.inputSchema)
+      return authoredTool(before) !== authoredTool(after)
     }
 
     // SELF-CHECK — the one-line proof the predicate actually discriminates. An earlier version
@@ -695,8 +748,8 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
       return !SOURCE_CHANGED_DURING_MIGRATION.includes(t.name)
     })
 
-    // Guard against the exclusion list quietly swallowing the whole suite.
-    expect(comparable.length).toBeGreaterThan(20)
+    // Guard against the exclusion list quietly swallowing the whole suite (23 tools, ≤ 3 excluded).
+    expect(comparable.length).toBeGreaterThanOrEqual(20)
 
     for (const before of comparable) {
       const after = (toolsResult.tools as Record<string, any>[]).find((t) => {

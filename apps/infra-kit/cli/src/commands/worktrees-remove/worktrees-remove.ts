@@ -20,7 +20,7 @@ import {
   releaseBranchLabels,
 } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import { removeWorktrees } from 'src/lib/worktrees'
+import { logRemovalResults, removeWorktrees, toRemovalToolResult } from 'src/lib/worktrees'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
@@ -104,9 +104,11 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
 
       commandEcho.print()
 
+      const empty = { removedWorktrees: [], failedWorktrees: [], count: 0 }
+
       return {
-        content: textContent(JSON.stringify({ removedWorktrees: [], count: 0 }, null, 2)),
-        structuredContent: { removedWorktrees: [], count: 0 },
+        content: textContent(JSON.stringify(empty, null, 2)),
+        structuredContent: empty,
       }
     }
 
@@ -158,9 +160,10 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       commandEcho.addOption('--yes', true)
     }
 
-    const removedWorktrees = await removeWorktrees({
+    const removal = await removeWorktrees({
       branches: selectedReleaseBranches,
       worktreeDir,
+      projectRoot,
       pruneFolder: allSelected,
     })
 
@@ -171,23 +174,17 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       projectRoot,
       worktreeDir,
       currentWorktrees,
-      removedWorktrees,
+      removedWorktrees: removal.removed,
       allowEditorRelaunch: !confirmedCommand,
     })
 
-    logResults(removedWorktrees)
+    logRemovalResults(removal)
 
     commandEcho.print()
 
-    const structuredContent = {
-      removedWorktrees,
-      count: removedWorktrees.length,
-    }
-
-    return {
-      content: textContent(JSON.stringify(structuredContent, null, 2)),
-      structuredContent,
-    }
+    // Ordering is load-bearing: the echo line and the IDE cleanup for the branches that DID succeed
+    // run first; only then does a failed branch throw (CLI) or become an isError result (MCP).
+    return toRemovalToolResult({ result: removal, operation: 'remove worktrees' })
   } catch (error) {
     // A cancelled prompt (Ctrl-C / Esc) is a user back-out, not a failure: let it
     // reach the top-level boundary untouched so it exits cleanly, instead of being
@@ -206,26 +203,11 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
   }
 }
 
-/**
- * Log the results of worktree management
- */
-const logResults = (removed: string[]): void => {
-  if (removed.length > 0) {
-    logger.info('❌ Removed worktrees:')
-    for (const branch of removed) {
-      logger.info(branch)
-    }
-    logger.info('')
-  } else {
-    logger.info('ℹ️ No unused worktrees to remove')
-  }
-}
-
 // MCP Tool Registration
 export const worktreesRemoveMcpTool = defineMcpTool({
   name: 'worktrees-remove',
   description:
-    'Remove local git worktrees for the named release branches. Over MCP you MUST pass "versions" (comma-separated); bulk all=true removal is disabled here (it is a one-shot, unconfirmed wipe of every worktree) — the branch picker and confirmation are unavailable without a TTY. Every named version must be an active worktree, or the call errors without removing anything. What survives: the release branches/commits themselves are never deleted, and the worktrees directory plus its release/feature subfolders are left in place (recreate a worktree with worktrees-add). What is lost: git refuses to remove a worktree with modified tracked files or untracked files, BUT it DOES delete the worktree directory including gitignored contents — a hydrated .env of Doppler secrets (re-fetch with env-load) and build output such as node_modules/dist (needs reinstall/rebuild). When every worktree is removed it also runs "git worktree prune".',
+    'Remove local git worktrees for the named release branches. Over MCP you MUST pass "versions" (comma-separated); bulk all=true removal is disabled here (it is a one-shot, unconfirmed wipe of every worktree) — the branch picker and confirmation are unavailable without a TTY. Every named version must be an active worktree, or the call errors without removing anything. What survives: the release branches/commits themselves are never deleted, and the worktrees directory plus its release/feature subfolders are left in place (recreate a worktree with worktrees-add). What is lost: git refuses to remove a worktree with modified tracked files or untracked files, BUT it DOES delete the worktree directory including gitignored contents — a hydrated .env of Doppler secrets (re-fetch with env-load) and build output such as node_modules/dist (needs reinstall/rebuild). When every worktree is removed it also runs "git worktree prune". A branch git refuses to remove is listed in failedWorktrees and the result carries isError; a leftover that git already unregistered and that holds only tool state (.omc/state, .omc/sessions, .DS_Store) is swept automatically.',
   requiresHumanConfirm: true,
   inputSchema: {
     versions: z
@@ -240,6 +222,9 @@ export const worktreesRemoveMcpTool = defineMcpTool({
   },
   outputSchema: {
     removedWorktrees: z.array(z.string()).describe('List of removed git worktree branches'),
+    failedWorktrees: z
+      .array(z.string())
+      .describe('Branches whose worktree could NOT be removed (git refused, or an unsweepable leftover remained)'),
     count: z.number().describe('Number of git worktrees removed'),
   },
   handler: worktreesRemove,

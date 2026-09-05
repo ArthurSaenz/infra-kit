@@ -50,13 +50,13 @@ Strict schema file that declares audit rules (`requiredScripts`, `requiredFiles`
 | | `release list` | List available releases |
 | | `release create` | Create a new release |
 | | `release desc-edit` | Edit release notes |
-| | `release deploy-all` | Deploy all releases |
-| | `release deploy-selected` | Deploy selected releases |
+| | `release deploy-all --from <ci\|local>` | Deploy every service — in CI, or from this machine |
+| | `release deploy-selected --from <ci\|local>` | Deploy chosen services — in CI, or from this machine |
 | | `release deliver` | Deliver to prod (CLI-only, irreversible) |
 | **Worktrees** | `worktrees add` | Create a new git worktree |
 | | `worktrees list` | List all worktrees |
-| | `worktrees remove` | Remove a worktree |
-| | `worktrees sync` | Sync worktree state |
+| | `worktrees remove` | Remove a worktree (no `--force`; a branch git refuses is reported and the command exits non-zero; a leftover git already unregistered that holds only `.omc/state`, `.omc/sessions` or `.DS_Store` is swept automatically) |
+| | `worktrees sync` | Sync worktree state (same removal and failure reporting as `worktrees remove`) |
 | | `reopen` | Reopen a closed worktree |
 | **Environment** | `env-status` | Show Doppler env status |
 | | `env-list` | List secrets in current env |

@@ -1,1 +1,5 @@
+export { logRemovalResults } from './log-removal-results'
+export { toRemovalToolResult } from './removal-tool-result'
+export type { RemovalStructuredContent } from './removal-tool-result'
 export { removeWorktrees } from './remove-worktrees'
+export type { RemoveWorktreesArgs, RemoveWorktreesResult, WorktreeRemovalFailure } from './remove-worktrees'

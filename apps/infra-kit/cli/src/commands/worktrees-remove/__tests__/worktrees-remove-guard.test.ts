@@ -26,8 +26,10 @@ vi.mock('src/lib/git-utils', () => {
   }
 })
 
-vi.mock('src/lib/worktrees', () => {
-  return { removeWorktrees: vi.fn() }
+vi.mock('src/lib/worktrees', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('src/lib/worktrees')>()
+
+  return { ...actual, removeWorktrees: vi.fn() }
 })
 
 vi.mock('src/lib/logger', () => {
@@ -47,7 +49,7 @@ beforeEach(async () => {
   vi.mocked(getMainRepoRoot).mockResolvedValue(tmp)
   vi.mocked(getCurrentWorktrees).mockResolvedValue([])
   vi.mocked(assertManagementContext).mockResolvedValue(undefined)
-  vi.mocked(removeWorktrees).mockResolvedValue([])
+  vi.mocked(removeWorktrees).mockResolvedValue({ removed: [], failed: [] })
   homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmp)
   mcpMode.enabled = false
   resetInfraKitConfigCache()

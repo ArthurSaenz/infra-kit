@@ -103,15 +103,15 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   // // May this project deploy to the delivery-shaped environments ("prod")? The LIST lives in code
   // // (lib/workflow-envs/protected-envs); this decides only whether THIS project may reach it.
   // //   "disallow"  — the DEFAULT when the key is absent. Filtered out of every deploy picker and
-  // //                 refused, on both \`local deploy-*\` and \`release deploy-*\`. Use
+  // //                 refused, on both \`--from local\` and \`--from ci\`. Use
   // //                 \`infra-kit release deliver\`, which also does the RC PR and the Jira version.
   // //   "allow"     — reachable from the CLI and from an MCP agent alike.
   // //   "cli-only"  — reachable from a terminal, but NOT over MCP: an agent's tool call carries no
   // //                 human keystroke, so agents keep the refusal.
   // // Allowing it does not remove the other gates: a local deploy still requires the AWS account to
-  // // report that environment, still refuses a dirty tree, and still refuses \`--skip-preflight
-  // // clean-tree\`. A \`release deploy-*\` dispatch has no such second gate and prints a warning
-  // // naming what it skips.
+  // // report that environment, and still refuses a dirty tree — unconditionally, with nothing to pass
+  // // that waives it. A \`--from ci\` dispatch has no such second gate and prints a warning naming
+  // // what it skips.
   // //
   // // It IS honoured from this layer — the merge treats it like any other key — but it belongs in the
   // // committed project infra-kit.json, where a reviewer and \`git blame\` can see it. Setting it here

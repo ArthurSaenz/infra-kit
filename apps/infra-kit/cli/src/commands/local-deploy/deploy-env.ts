@@ -21,6 +21,13 @@ export interface BuildEnvArgs {
   env: string
   branch: string
   sha: string
+  /**
+   * Whether the working tree matched HEAD when the deploy started.
+   *
+   * Required, not defaulted: an omitted value would silently produce the confident label, which is the
+   * exact defect this argument exists to remove.
+   */
+  isClean: boolean
   /** Defaults to `process.env`; injectable so tests never depend on the ambient shell. */
   ambient?: NodeJS.ProcessEnv
 }
@@ -58,12 +65,18 @@ export interface BuildEnvResult {
  * // => stripped: ['VITE_LEAK'], contract.VITE_DOMAIN_ENV: 'arthur'
  */
 export const buildDeployEnv = (args: BuildEnvArgs): BuildEnvResult => {
-  const { env, branch, sha, ambient = process.env } = args
+  const { env, branch, sha, isClean, ambient = process.env } = args
 
   const contract: DeployContract = {
     VITE_DOMAIN_ENV: env,
     VITE_BRANCH_NAME: branch,
-    VITE_COMMIT_HASH: sha,
+    // `git describe --dirty` convention. A dirty tree ships content that is NOT in `sha` — the build
+    // reads the filesystem, not git — so labelling it with the bare sha makes "what is deployed here?"
+    // permanently unanswerable. That mislabelling is worst on PERSONAL environments, where a dirty
+    // tree is normal and no check refuses it, so no amount of tightening the clean-tree gate reaches
+    // it. Only the display/diagnostic value is suffixed; `DEPLOY_SHA` below stays the raw sha, because
+    // the deploy scripts hand it to AWS.
+    VITE_COMMIT_HASH: isClean ? sha : `${sha}-dirty`,
   }
 
   const childEnv: NodeJS.ProcessEnv = {}
@@ -89,6 +102,14 @@ export const buildDeployEnv = (args: BuildEnvArgs): BuildEnvResult => {
       DEPLOY_ENV: env,
       DEPLOY_BRANCH: branch,
       DEPLOY_SHA: sha,
+      // The dirty-aware label, carried in a NON-`VITE_` variable on purpose.
+      //
+      // The Phase-0 `devops/scripts/lib/deploy-env.sh` contract strips every ambient `VITE_*` and then
+      // rebuilds `VITE_COMMIT_HASH` from `DEPLOY_SHA` — which is raw by design, because the scripts hand
+      // it to AWS. So the moment that script lands in a consumer repo it would erase the `-dirty`
+      // marker set above. This variable survives the strip, so the script's contract can prefer it and
+      // the marker outlives Phase 0. See docs/local-deploy-design.md §9.1.
+      DEPLOY_SHA_LABEL: contract.VITE_COMMIT_HASH,
       // Deploy builds are not interactive and telemetry noise obscures the failure line we surface.
       TURBO_TELEMETRY_DISABLED: '1',
     },

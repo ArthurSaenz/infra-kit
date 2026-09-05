@@ -243,9 +243,15 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mutating: true,
     groupPath: ['release', 'deliver'],
   },
+  // The CLI commands behind these two are DEPRECATED aliases of `release deploy-* --from local`,
+  // so `menuGroup: null` keeps them out of the palette while they still resolve for anyone who types
+  // them. The MCP tools are deliberately NOT folded into the release pair: the MCP boundary
+  // auto-confirms every call (`tool-handler`), and `local-deploy-selected` requires `service` with
+  // `.min(1)` — a merged tool would have to relax that, and an agent omitting it would deploy
+  // everything. Agent-reachable while human-unbrowsable is the intended end state here.
   {
     cliName: 'local-deploy-all',
-    menuGroup: 'release',
+    menuGroup: null,
     mcpTool: localDeployAllMcpTool,
     mcpExposed: true,
     // Writes to real cloud infrastructure. Both carry `requiresHumanConfirm`, so an agent gets the
@@ -255,7 +261,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
   },
   {
     cliName: 'local-deploy-selected',
-    menuGroup: 'release',
+    menuGroup: null,
     mcpTool: localDeploySelectedMcpTool,
     mcpExposed: true,
     mutating: true,
@@ -297,7 +303,10 @@ export const commandCatalog: CommandCatalogEntry[] = [
   // deletion of gitignored local state (a hydrated `.env` of Doppler secrets, node_modules/dist) — is
   // contained by the tool's own invariants rather than by withholding it: over MCP it rejects
   // all=true (no one-shot wipe) and errors on any unmatched target before removing anything. So it is
-  // exposed, unlike the genuinely-irreversible release-deliver.
+  // exposed, unlike the genuinely-irreversible release-deliver. After a refused removal it sweeps
+  // ONLY a leftover git has already unregistered and that holds nothing but `.omc/{state,sessions}`
+  // and `.DS_Store` (a post-exit hook re-creating tool state mid-deletion); everything else is
+  // reported in failedWorktrees with isError.
   {
     cliName: 'worktrees-remove',
     menuGroup: 'worktrees',

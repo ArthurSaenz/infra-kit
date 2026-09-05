@@ -22,6 +22,8 @@ vi.mock('src/lib/git-utils', () => {
     getProjectRoot: vi.fn(),
     getMainRepoRoot: vi.fn(),
     getCurrentWorktrees: vi.fn(),
+    // The shared removeWorktrees checks registration via listWorktrees after a rejected removal.
+    listWorktrees: vi.fn(),
   }
 })
 

@@ -43,7 +43,7 @@ const ensureFixture = (): string => {
 vi.mock('src/lib/env-tokens', () => {
   return {
     readTokenStore: vi.fn(() => {
-      return Promise.resolve({})
+      return Promise.resolve({ version: 1, envs: { dev: 'redacted' } })
     }),
     getTokenStorePath: vi.fn(() => {
       return Promise.resolve('/nowhere/tokens.json')

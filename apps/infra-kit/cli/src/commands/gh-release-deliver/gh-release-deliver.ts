@@ -154,7 +154,7 @@ const resolveTargetInteractively = async (): Promise<ResolvedTarget> => {
  * release PR" surface error). Pre-remove any worktree for the release branch
  * so the local delete can succeed.
  */
-const removeReleaseWorktreeIfPresent = async (releaseBranch: string): Promise<void> => {
+export const removeReleaseWorktreeIfPresent = async (releaseBranch: string): Promise<void> => {
   const worktreeBranches = await getCurrentWorktrees('release')
 
   if (!worktreeBranches.includes(releaseBranch)) return
@@ -162,12 +162,18 @@ const removeReleaseWorktreeIfPresent = async (releaseBranch: string): Promise<vo
   const projectRoot = await getProjectRoot()
   const worktreeDir = `${projectRoot}${WORKTREES_DIR_SUFFIX}`
 
-  const removed = await removeWorktrees({ branches: [releaseBranch], worktreeDir })
+  const { removed, failed } = await removeWorktrees({ branches: [releaseBranch], worktreeDir, projectRoot })
 
-  if (removed.length === 0) {
+  // Check membership, not emptiness: `removed` is one of two result lists now.
+  if (!removed.includes(releaseBranch)) {
+    const failure = failed.find((entry) => {
+      return entry.branch === releaseBranch
+    })
+
     throw new OperationError(undefined, {
       operation: `remove worktree for ${releaseBranch} before merge`,
       remediation: `run manually: git worktree remove ${worktreeDir}/${releaseBranch} (use --force if uncommitted changes)`,
+      stderrExcerpt: failure?.reason,
     })
   }
 }

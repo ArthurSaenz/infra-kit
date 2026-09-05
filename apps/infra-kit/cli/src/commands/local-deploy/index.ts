@@ -7,7 +7,7 @@ export {
   assertNoCiDeployInFlight,
   runPreflight,
 } from './preflight'
-export type { AccountIdentity, SkippableCheck } from './preflight'
+export type { AccountIdentity } from './preflight'
 export { discoverServices, eligibleServices, isEligible } from './service-discovery'
 export type { DeployService } from './service-discovery'
 export { intersectGates, readWorkflowGates } from './workflow-gates'

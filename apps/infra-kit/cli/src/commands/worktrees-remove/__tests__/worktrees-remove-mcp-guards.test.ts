@@ -50,8 +50,10 @@ vi.mock('src/lib/prompts/release-picker', () => {
   return { pickReleaseBranch: vi.fn(), pickReleaseBranches: vi.fn() }
 })
 
-vi.mock('src/lib/worktrees', () => {
-  return { removeWorktrees: vi.fn() }
+vi.mock('src/lib/worktrees', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('src/lib/worktrees')>()
+
+  return { ...actual, removeWorktrees: vi.fn() }
 })
 
 vi.mock('src/integrations/ide', () => {
@@ -89,7 +91,7 @@ beforeEach(async () => {
 
   const { removeWorktrees } = await import('src/lib/worktrees')
 
-  vi.mocked(removeWorktrees).mockResolvedValue([])
+  vi.mocked(removeWorktrees).mockResolvedValue({ removed: [], failed: [] })
 
   const { removeIdeWorktreeFolders } = await import('src/integrations/ide')
 

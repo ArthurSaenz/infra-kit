@@ -86,9 +86,9 @@ describe('section coverage', () => {
     expect(unmapped).toEqual([])
   })
 
-  it('covers exactly 23 checks', () => {
-    expect(DOCTOR_CHECK_NAMES).toHaveLength(23)
-    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(23)
+  it('covers exactly 24 checks', () => {
+    expect(DOCTOR_CHECK_NAMES).toHaveLength(24)
+    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(24)
   })
 })
 

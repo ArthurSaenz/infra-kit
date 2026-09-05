@@ -1,22 +1,12 @@
-import confirm from '@inquirer/confirm'
 import { z } from 'zod'
 import { $ } from 'zx'
 
-import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { pickEnv } from 'src/lib/prompts/env-picker'
-import { withEscape } from 'src/lib/prompts/escapable-context'
-import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
-import {
-  detectReleaseType,
-  formatBranchPickerItems,
-  getJiraDescriptions,
-  releaseLabelFromBranch,
-  resolveReleaseBranch,
-} from 'src/lib/release-utils'
-import type { ReleaseType } from 'src/lib/release-utils'
+import { confirmDeploy, resolveDeployBranch } from 'src/lib/release-deploy'
+import { releaseLabelFromBranch } from 'src/lib/release-utils'
 import {
   assertDeployable,
   deployableEnvs,
@@ -30,37 +20,12 @@ import { defineMcpTool, textContent } from 'src/types'
 const DEPLOY_ALL_WORKFLOW = 'deploy-all.yml'
 
 interface GhReleaseDeployAllArgs {
-  version: string
-  env: string
+  /** Optional on the CLI — omitted means "offer the open release PRs". The MCP schema requires it. */
+  version?: string
+  /** Optional on the CLI — omitted means "offer the workflow's own environments". The MCP schema requires it. */
+  env?: string
   skipTerraform?: boolean
   confirmedCommand?: boolean
-}
-
-interface ConfirmDeployArgs {
-  confirmedCommand?: boolean
-  branch: string
-  env: string
-}
-
-/**
- * Gate the workflow dispatch behind an interactive confirmation. Returns true to
- * proceed; `confirmedCommand` (CLI `--yes`) skips the prompt. Mirrors the
- * confirm+commandEcho pattern used by worktrees-remove.
- */
-const confirmDeploy = async (args: ConfirmDeployArgs): Promise<boolean> => {
-  const { confirmedCommand, branch, env } = args
-
-  if (confirmedCommand) return true
-
-  commandEcho.setInteractive()
-
-  const answer = await withEscape((context) => {
-    return confirm({ message: `Deploy ${branch} → ${env}?`, default: false }, context)
-  })
-
-  if (answer) commandEcho.addOption('--yes', true)
-
-  return answer
 }
 
 /**
@@ -69,32 +34,7 @@ const confirmDeploy = async (args: ConfirmDeployArgs): Promise<boolean> => {
 export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs) => {
   const { version, env, skipTerraform, confirmedCommand } = args
 
-  let selectedReleaseBranch = '' // "release/v1.8.0" | "release/checkout-redesign" | "dev"
-
-  if (version) {
-    selectedReleaseBranch = version === 'dev' ? 'dev' : resolveReleaseBranch(version)
-  } else {
-    commandEcho.setInteractive()
-
-    const releasePRsInfo = await getReleasePRsWithInfo()
-
-    const branches = releasePRsInfo.map((pr) => {
-      return pr.branch
-    })
-
-    const releaseTypes = new Map<string, ReleaseType>(
-      releasePRsInfo.map((pr) => {
-        return [pr.branch, detectReleaseType(pr.title)]
-      }),
-    )
-
-    const descriptions = await getJiraDescriptions()
-
-    selectedReleaseBranch = await pickReleaseBranch([
-      { value: 'dev', label: 'dev' },
-      ...formatBranchPickerItems({ branches, descriptions, types: releaseTypes }),
-    ])
-  }
+  const selectedReleaseBranch = await resolveDeployBranch(version)
 
   const selectedVersion = releaseLabelFromBranch(selectedReleaseBranch)
 

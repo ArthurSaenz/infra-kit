@@ -2,11 +2,12 @@ import type fs from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { EnvTokenProbe, ResolvedEnvToken } from 'src/integrations/doppler'
+import type { TokenStore } from 'src/lib/env-tokens'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { listProjectEnvNames } from 'src/lib/project-envs'
 
 import type { DoctorConfig, EnvTokenCheckDeps } from '../doctor'
-import { checkEnvTokenValid, checkEnvTokensConfigured, checkTokenStorePerms } from '../doctor'
+import { checkEnvTokenValid, checkEnvTokensConfigured, checkTokenStorePerms, checkTokenStorePresent } from '../doctor'
 
 vi.mock('src/lib/logger', () => {
   return { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }
@@ -45,9 +46,26 @@ const configured = (autoLoadEnv?: string): DoctorConfig => {
 type TokenMap = Record<string, ResolvedEnvToken['source']>
 
 const depsFor = (tokens: TokenMap, probe?: EnvTokenProbe): EnvTokenCheckDeps => {
+  // The store is DERIVED from the same map the resolver answers from, never hardcoded: since
+  // `checkEnvTokensConfigured` defers an empty store to `tokens.json present`, a fixture whose store
+  // disagreed with its resolver would describe an impossible machine — a token resolving from a
+  // `store` source with no store on disk — and would silently exercise the wrong branch.
+  const stored = Object.entries(tokens).filter(([, source]) => {
+    return source === 'store'
+  })
+
   return {
     readStore: async () => {
-      return null
+      if (stored.length === 0) return null
+
+      return {
+        version: 1,
+        envs: Object.fromEntries(
+          stored.map(([env]) => {
+            return [env, TOKEN]
+          }),
+        ),
+      }
     },
     resolveToken: async (env: string) => {
       const source = tokens[env]
@@ -139,6 +157,34 @@ describe('checkEnvTokensConfigured — which envs have a token, and is the load-
     expect(result.status).toBe('fail')
     expect(result.message).toContain('Token store unreadable')
     expect(result.message).toContain('Invalid JSON in the token store')
+  })
+
+  /**
+   * The absent store is `tokens.json present`'s failure, with the same root cause and the same fix
+   * command. Failing here too would print TWO reds for one problem on the most ordinary broken setup
+   * there is — see the pair test at the bottom of this file, which is what pins the count at one.
+   */
+  it('defers to tokens.json present when the store holds nothing at all', async () => {
+    vi.mocked(listProjectEnvNames).mockResolvedValue(['dev', 'prod'])
+
+    const result = await checkEnvTokensConfigured(configured('dev'), depsFor({}))
+
+    expect(result.status).toBe('pass')
+    expect(result.message).toContain('see tokens.json present')
+  })
+
+  it('defers the same way for a store that exists but was hand-edited empty', async () => {
+    vi.mocked(listProjectEnvNames).mockResolvedValue(['dev'])
+
+    const result = await checkEnvTokensConfigured(configured('dev'), {
+      ...depsFor({}),
+      readStore: async () => {
+        return { version: 1, envs: {} }
+      },
+    })
+
+    expect(result.status).toBe('pass')
+    expect(result.message).toContain('see tokens.json present')
   })
 
   it('skips (passes) when the infra-kit config could not be read — doctor is the escape hatch for that', async () => {
@@ -247,11 +293,12 @@ describe('checkTokenStorePerms — the credential file is 0600 behind 0700 dirs'
     expect(result.message).toContain('is 0600 (0700 dirs)')
   })
 
-  it('skips (passes) when there is no token store — a machine with no tokens has nothing to protect', async () => {
+  /** The ABSENCE itself is `tokens.json present`'s failure; this check only ever grades modes. */
+  it('skips (passes) when there is no token store — there is nothing to protect, and it is reported elsewhere', async () => {
     const result = await checkTokenStorePerms(false, permDeps({}))
 
     expect(result.status).toBe('pass')
-    expect(result.message).toContain('No token store yet')
+    expect(result.message).toContain('see tokens.json present')
   })
 
   it('fAILS a world-readable tokens.json and names the mode', async () => {
@@ -304,7 +351,130 @@ describe('checkTokenStorePerms — the credential file is 0600 behind 0700 dirs'
 })
 
 /**
- * The one rule a credential path cannot bend. Every branch of all three checks, rendered, grepped for
+ * The store as the presence check sees it: a parsed store, `null` for no file at all, or `'corrupt'`
+ * for the one state `readTokenStore` reports by THROWING. `envToken` stands in for the ambient
+ * `INFRA_KIT_ENV_TOKEN` — read through a seam precisely so a developer whose shell has already
+ * auto-loaded an env does not silently run this file against the skip branch.
+ */
+const storeDeps = (store: TokenStore | null | 'corrupt', envToken?: string): EnvTokenCheckDeps => {
+  return {
+    storePath: async () => {
+      return STORE
+    },
+    readStore: async () => {
+      if (store === 'corrupt') throw new Error('Invalid JSON in the token store')
+
+      return store
+    },
+    readEnvToken: () => {
+      return envToken
+    },
+  }
+}
+
+describe('checkTokenStorePresent — every project needs a token store', () => {
+  it('fAILS when there is no store at all, and names the path and the fix', async () => {
+    const result = await checkTokenStorePresent(storeDeps(null))
+
+    expect(result.status).toBe('fail')
+    expect(result.message).toContain('No token store at')
+    expect(result.message).toContain('infra-kit env-token-set')
+  })
+
+  it('fAILS a store that exists but holds no tokens — an empty store is the same as none', async () => {
+    const result = await checkTokenStorePresent(storeDeps({ version: 1, envs: {} }))
+
+    expect(result.status).toBe('fail')
+    expect(result.message).toContain('holds no tokens')
+  })
+
+  it('passes and names the envs held (never the tokens) when the store is populated', async () => {
+    const result = await checkTokenStorePresent(storeDeps({ version: 1, envs: { dev: TOKEN, prod: TOKEN } }))
+
+    expect(result.status).toBe('pass')
+    expect(result.message).toContain('holds 2 token(s): dev, prod')
+    expect(result.message).not.toContain(TOKEN)
+  })
+
+  /** CI and agents authenticate through the variable and never write a store — failing them is noise. */
+  it('skips when INFRA_KIT_ENV_TOKEN is set, even with no store on disk', async () => {
+    const result = await checkTokenStorePresent(storeDeps(null, TOKEN))
+
+    expect(result.status).toBe('pass')
+    expect(result.message).toContain('INFRA_KIT_ENV_TOKEN')
+    expect(result.message).not.toContain(TOKEN)
+  })
+
+  /** An EMPTY variable is a miss, not a token — the same rule `resolveEnvToken` applies. */
+  it('does not treat an empty INFRA_KIT_ENV_TOKEN as a token', async () => {
+    const result = await checkTokenStorePresent({
+      ...storeDeps(null),
+      readEnvToken: () => {
+        return ''
+      },
+    })
+
+    expect(result.status).toBe('fail')
+  })
+
+  /** A corrupt store is already the FAIL of `env tokens configured`; failing twice double-counts it. */
+  it('defers to env tokens configured when the store is unreadable', async () => {
+    const result = await checkTokenStorePresent(storeDeps('corrupt'))
+
+    expect(result.status).toBe('pass')
+    expect(result.message).toContain('see env tokens configured')
+  })
+
+  it('skips when the store path cannot be resolved (outside a git repo)', async () => {
+    const result = await checkTokenStorePresent({
+      readEnvToken: () => {
+        return undefined
+      },
+      storePath: async () => {
+        throw new Error('not a git repository')
+      },
+    })
+
+    expect(result.status).toBe('pass')
+    expect(result.message).toContain('Skipped')
+  })
+})
+
+/**
+ * ONE root cause, ONE red line. The per-function tests above are structurally blind to this: each
+ * check is correct in isolation while the SECTION double-reports. The pair below is the exact machine
+ * this change was written for — a checkout that configures `envAutoLoad` and has no token store — and
+ * the count, not the verdicts, is what is being pinned.
+ */
+describe('the token checks never print two failures for one root cause', () => {
+  it('reports an absent store exactly once across the whole section', async () => {
+    vi.mocked(listProjectEnvNames).mockResolvedValue(['dev', 'prod'])
+
+    const read = configured('dev')
+    const deps = depsFor({})
+    // Both fixtures, merged: `depsFor` carries the resolver and an (agreeing) empty store, `storeDeps`
+    // carries the store PATH and the env-var seam. Without the latter the presence check would spawn
+    // `git rev-parse` and read the real `INFRA_KIT_ENV_TOKEN` off the developer's shell.
+    const results = [
+      await checkTokenStorePresent({ ...storeDeps(null), ...deps }),
+      await checkEnvTokensConfigured(read, deps),
+      await checkEnvTokenValid(read, deps),
+      await checkTokenStorePerms(false, permDeps({})),
+    ]
+    const failed = results.filter((result) => {
+      return result.status === 'fail'
+    })
+
+    expect(
+      failed.map((result) => {
+        return result.name
+      }),
+    ).toEqual(['tokens.json present'])
+  })
+})
+
+/**
+ * The one rule a credential path cannot bend. Every branch of all four checks, rendered, grepped for
  * the token literal. It is a MATRIX rather than a spot-check because the leak that matters is the one
  * in the branch nobody thought to assert on.
  */
@@ -316,9 +486,22 @@ describe('no doctor message ever contains a token value', () => {
     { outcome: 'unreachable' },
   ]
   const tokenMaps: TokenMap[] = [{ dev: 'store' }, { dev: 'env' }, { prod: 'store' }, {}]
+  /** Every state `checkTokenStorePresent` renders — including a POPULATED store, whose values are tokens. */
+  const stores: Array<TokenStore | null | 'corrupt'> = [
+    null,
+    'corrupt',
+    { version: 1, envs: {} },
+    { version: 1, envs: { dev: TOKEN, prod: TOKEN } },
+  ]
 
   it('renders the whole check matrix and finds zero token literals', async () => {
     const messages: string[] = []
+
+    for (const store of stores) {
+      for (const envToken of [undefined, TOKEN]) {
+        messages.push((await checkTokenStorePresent(storeDeps(store, envToken))).message)
+      }
+    }
 
     for (const autoLoadEnv of ['dev', undefined]) {
       for (const tokens of tokenMaps) {
@@ -338,7 +521,7 @@ describe('no doctor message ever contains a token value', () => {
     }
 
     // The matrix must actually have rendered something, or the grep below is vacuous.
-    expect(messages).toHaveLength(2 * tokenMaps.length * outcomes.length * 3)
+    expect(messages).toHaveLength(stores.length * 2 + 2 * tokenMaps.length * outcomes.length * 3)
 
     for (const message of messages) {
       expect(message).not.toContain(TOKEN)

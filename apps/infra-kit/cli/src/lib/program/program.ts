@@ -17,13 +17,11 @@ import { envTokenSet } from 'src/commands/env-token-set'
 import { ghMergeDev } from 'src/commands/gh-merge-dev'
 import { withRunCleanup } from 'src/commands/gh-merge-dev/run-cleanup'
 import { ghReleaseDeliver } from 'src/commands/gh-release-deliver'
-import { ghReleaseDeployAll } from 'src/commands/gh-release-deploy-all'
-import { ghReleaseDeploySelected } from 'src/commands/gh-release-deploy-selected'
 import { ghReleaseList } from 'src/commands/gh-release-list'
 import { init } from 'src/commands/init'
-import { localDeployAll, localDeploySelected } from 'src/commands/local-deploy'
 import { runMcp } from 'src/commands/mcp'
 import { releaseCreate } from 'src/commands/release-create'
+import { deprecatedLocalDeploy, releaseDeployAll, releaseDeploySelected } from 'src/commands/release-deploy'
 import { releaseDescEdit } from 'src/commands/release-desc-edit'
 import { reopen } from 'src/commands/reopen'
 import { runSelfUpdate } from 'src/commands/self-update'
@@ -42,6 +40,7 @@ import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
 import { runEnvAutoLoad, surfaceStickyAuthFailure } from 'src/lib/env-autoload'
 import { addJsonOption, emit, jsonOutput } from 'src/lib/json-output'
 import { logger } from 'src/lib/logger'
+import { DEPLOY_SOURCES } from 'src/lib/release-deploy'
 import { equivalentLine } from 'src/lib/session/equivalent'
 import { writeSessionReport } from 'src/lib/session/report'
 import { parseReleaseSpec } from 'src/lib/version-utils'
@@ -168,47 +167,59 @@ const configureReleaseDescEdit = (cmd: Command): Command => {
     })
 }
 
-const configureReleaseDeployAll = (cmd: Command): Command => {
+/**
+ * The merged deploy option set. `--from` carries NO default on purpose: it decides whether a reviewed
+ * release ref or the current working tree ships, and a default would silently re-create the ambiguity
+ * the flag exists to remove. Flags belonging to the other source are refused, not ignored
+ * (`assertFlagsMatchSource`) — a silently dropped `--skip-terraform` reads as "terraform was skipped".
+ */
+const withDeploySourceOptions = (cmd: Command): Command => {
   return cmd
-    .description('Deploy any release branch to any environment')
+    .option('-f, --from <where>', `Where the deploy runs: ${DEPLOY_SOURCES.join(' | ')} (required)`)
     .option(
       '-v, --version <version>',
-      'Version (e.g. 1.2.5) or release name (e.g. checkout-redesign) to deploy; "dev" deploys from the dev branch',
+      'With --from ci: version (e.g. 1.2.5) or release name to deploy; "dev" deploys from the dev branch. Prompts when omitted',
     )
     .option('-e, --env <env>', 'Specify the environment to deploy to, e.g. dev')
-    .option('--skip-terraform', 'Skip terraform deployment step')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--skip-terraform', 'With --from ci: skip the terraform deployment step')
+    .option('--dry-run', 'With --from local: resolve target, contract and commands without deploying')
+    .option('--print-env', 'With --from local: print the resolved build contract')
+}
+
+const configureReleaseDeployAll = (cmd: Command): Command => {
+  return withDeploySourceOptions(cmd)
+    .description('Deploy every service to any environment, in CI or from this machine')
     .action(async (options) => {
       emit(
-        await ghReleaseDeployAll({
+        await releaseDeployAll({
+          from: options.from,
           version: options.version,
           env: options.env,
           skipTerraform: options.skipTerraform,
-          confirmedCommand: options.yes,
+          yes: options.yes,
+          dryRun: options.dryRun,
+          printEnv: options.printEnv,
         }),
       )
     })
 }
 
 const configureReleaseDeploySelected = (cmd: Command): Command => {
-  return cmd
-    .description('Deploy selected services from release branch to any environment')
-    .option(
-      '-v, --version <version>',
-      'Version (e.g. 1.2.5) or release name (e.g. checkout-redesign) to deploy; "dev" deploys from the dev branch',
-    )
-    .option('-e, --env <env>', 'Specify the environment to deploy to, e.g. dev')
+  return withDeploySourceOptions(cmd)
+    .description('Deploy selected services to any environment, in CI or from this machine')
     .option('-s, --services <services...>', 'Specify services to deploy, e.g. client-be client-fe')
-    .option('--skip-terraform', 'Skip terraform deployment step')
-    .option('-y, --yes', 'Skip confirmation prompt')
     .action(async (options) => {
       emit(
-        await ghReleaseDeploySelected({
+        await releaseDeploySelected({
+          from: options.from,
           version: options.version,
           env: options.env,
           services: options.services,
           skipTerraform: options.skipTerraform,
-          confirmedCommand: options.yes,
+          yes: options.yes,
+          dryRun: options.dryRun,
+          printEnv: options.printEnv,
         }),
       )
     })
@@ -429,50 +440,53 @@ export const buildProgram = (): Command => {
       emit(await configGet())
     })
 
-  // Deliberately mirrors the `release deploy-all` / `release deploy-selected` pair, so the only thing
-  // the name changes is WHERE it runs: `local` executes the repo's own devops/scripts/deploy-*.sh on
-  // this machine, `release` dispatches the GitHub workflow that runs the very same scripts.
-  const localCmd = program.command('local').description('Run deploys on this machine instead of dispatching CI')
+  // DEPRECATED. The CI/local choice moved onto `release deploy-* --from`, so it is stated on every
+  // invocation instead of being carried by which command group you typed. These stay one release so
+  // muscle memory does not simply fail, are hidden from the palette (`menuGroup: null` in the catalog),
+  // and warn on every run.
+  const localCmd = program
+    .command('local')
+    .description('Deprecated — use `release deploy-all|deploy-selected --from local`')
 
-  const withLocalDeployOptions = (cmd: Command): Command => {
+  const withDeprecatedLocalOptions = (cmd: Command): Command => {
     return cmd
       .option('-e, --env <name>', 'Target environment (prompts when omitted)')
       .option('-y, --yes', 'Skip the confirmation prompt')
       .option('--dry-run', 'Resolve target, contract and commands without deploying')
       .option('--print-env', 'Print the resolved build contract')
-      .option(
-        '--skip-preflight <check...>',
-        'Waive a named check (clean-tree, toolchain) — never env/account, and never clean-tree for a protected env',
-      )
   }
 
-  withLocalDeployOptions(localCmd.command('deploy-all'))
-    .description('Deploy every service enabled for the environment, from this machine')
+  withDeprecatedLocalOptions(localCmd.command('deploy-all'))
+    .description('Deprecated — use `release deploy-all --from local`')
     .action(async (options) => {
       emit(
-        await localDeployAll({
-          env: options.env,
-          yes: options.yes,
-          dryRun: options.dryRun,
-          printEnv: options.printEnv,
-          skipPreflight: options.skipPreflight,
-        }),
+        await deprecatedLocalDeploy(
+          {
+            env: options.env,
+            yes: options.yes,
+            dryRun: options.dryRun,
+            printEnv: options.printEnv,
+          },
+          'all',
+        ),
       )
     })
 
-  withLocalDeployOptions(localCmd.command('deploy-selected'))
-    .description('Deploy chosen services from this machine (prompts when --service is omitted)')
-    .option('-s, --service <name...>', 'Service name(s), as in deploy-<name>.sh')
+  withDeprecatedLocalOptions(localCmd.command('deploy-selected'))
+    .description('Deprecated — use `release deploy-selected --from local`')
+    .option('-s, --service <name...>', 'Service name(s), as in deploy-<name>.sh (prompts when omitted)')
     .action(async (options) => {
       emit(
-        await localDeploySelected({
-          env: options.env,
-          service: options.service,
-          yes: options.yes,
-          dryRun: options.dryRun,
-          printEnv: options.printEnv,
-          skipPreflight: options.skipPreflight,
-        }),
+        await deprecatedLocalDeploy(
+          {
+            env: options.env,
+            services: options.service,
+            yes: options.yes,
+            dryRun: options.dryRun,
+            printEnv: options.printEnv,
+          },
+          'selected',
+        ),
       )
     })
 

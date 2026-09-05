@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import process from 'node:process'
 import { z } from 'zod'
 import { $ } from 'zx'
 
@@ -20,7 +21,7 @@ import {
   resolvePortlessBin,
 } from 'src/dev/proxy/portless-driver'
 import type { HandshakeResult, PortlessRoute } from 'src/dev/proxy/portless-driver'
-import { probeEnvToken, resolveEnvToken } from 'src/integrations/doppler'
+import { INFRA_KIT_ENV_TOKEN_VAR, probeEnvToken, resolveEnvToken } from 'src/integrations/doppler'
 import type { EnvTokenProbe, EnvTokenSource, ResolvedEnvToken } from 'src/integrations/doppler'
 import { describeOverrides, readOverrideSummary } from 'src/lib/config-overrides'
 import { DEFAULT_WARM_TTL_SECONDS, ENV_LOAD_FILE, getProjectWarmCacheDir } from 'src/lib/constants'
@@ -235,6 +236,13 @@ export interface EnvTokenCheckDeps {
   /** `null` = the path does not exist. */
   statPath?: (target: string) => fs.Stats | null
   chmodPath?: (target: string, mode: number) => void
+  /**
+   * Reads `INFRA_KIT_ENV_TOKEN` — the CI / agent channel. A SEAM rather than a direct `process.env`
+   * read so the store checks are deterministic under test: a developer whose shell has already
+   * auto-loaded an env would otherwise run the suite with the variable set and silently exercise the
+   * skip branch instead of the one under assertion.
+   */
+  readEnvToken?: () => string | undefined
 }
 
 /** `tokens.json` holds live credentials: owner-only, and owner-only traversal to reach it. */
@@ -293,6 +301,9 @@ const resolveEntries = async (
  * a listing line, not a verdict — a developer legitimately holds a `dev` token and no `prod` one, and
  * a doctor that failed on that would train everyone to ignore it.
  *
+ * The gap it names is a store that holds tokens, just not the load-bearing one. A store that holds
+ * NOTHING is {@link checkTokenStorePresent}'s failure and is deferred to it — see the branch below.
+ *
  * @example
  * await checkEnvTokensConfigured({ config, error: null })
  * // => { name: 'env tokens configured', status: 'pass', message: 'auto-load env "dev": token (store). dev: token (store), prod: no token' }
@@ -316,8 +327,10 @@ export const checkEnvTokensConfigured = async (
   // There is no longer a "store belongs to another repo" case to report here: the store carries no
   // `repoRoot` (see `lib/env-tokens`), so a hand-written store loads and a basename collision between
   // two checkouts is an accepted risk, not a diagnosis. Do not add a branch back for it.
+  let store: TokenStore | null
+
   try {
-    await readStore()
+    store = await readStore()
   } catch (err) {
     return { name, status: 'fail', message: `Token store unreadable — ${(err as Error).message}` }
   }
@@ -343,6 +356,16 @@ export const checkEnvTokensConfigured = async (
   })
 
   if (!autoLoadEntry || autoLoadEntry.source === null) {
+    // A store that holds NOTHING (absent, or hand-edited down to `{ envs: {} }`) is already the FAIL
+    // of `tokens.json present`, with the same root cause and the same fix command — so this would be
+    // the SECOND red line for one problem, on the most ordinary broken setup there is (a fresh
+    // checkout that configures `envAutoLoad`). The gap this check exists to name is the narrower one:
+    // a store that holds tokens, just not for the load-bearing env. Same deferral as `tokens.json
+    // perms` below and `env token valid` above — one problem, one line.
+    if (store === null || Object.keys(store.envs).length === 0) {
+      return { name, status: 'pass', message: 'Skipped — there is no token store to read (see tokens.json present)' }
+    }
+
     return {
       name,
       status: 'fail',
@@ -418,6 +441,83 @@ export const checkEnvTokenValid = async (read: DoctorConfig, deps: EnvTokenCheck
   }
 }
 
+/** The live `INFRA_KIT_ENV_TOKEN`, or `undefined`. An EMPTY value is a MISS — the resolver's rule. */
+const defaultReadEnvToken = (): string | undefined => {
+  return process.env[INFRA_KIT_ENV_TOKEN_VAR] || undefined
+}
+
+/**
+ * Does this project HOLD any Doppler service token at all?
+ *
+ * The FIRST question in this section, and the only one that is repo-shaped rather than env-shaped:
+ * every project this CLI drives authenticates through `~/.infra-kit/projects/<repo>/tokens.json`, so
+ * a checkout with no store is a checkout that cannot load an env, deploy, or read a secret — whatever
+ * `envAutoLoad` happens to say. Before this check existed that state was reported as THREE passes
+ * (`env tokens configured` passes outright when no `envAutoLoad` is configured, and the other two
+ * skip), so a green report meant nothing on exactly the machine that needed the report most.
+ *
+ * An EMPTY store fails alongside a missing one: `env-token-set` never writes `{ envs: {} }`, so a
+ * store with no envs is a hand-edit or an `env-token-remove` of the last token — functionally the same
+ * as no file, and it must not read as "present, therefore fine".
+ *
+ * What is NOT a failure here:
+ *  - `INFRA_KIT_ENV_TOKEN` set — the CI / agent channel takes precedence over the store and needs no
+ *    home config at all (see {@link INFRA_KIT_ENV_TOKEN_VAR}). Failing it would redden every CI run.
+ *  - a store that THROWS — the file exists and a human must fix it, which is precisely what
+ *    `env tokens configured` already reports. Repeating it here would double-count one problem.
+ *
+ * @example
+ * await checkTokenStorePresent()
+ * // => { name: 'tokens.json present', status: 'fail', message: 'No token store at ~/.infra-kit/projects/api/tokens.json …' }
+ */
+export const checkTokenStorePresent = async (deps: EnvTokenCheckDeps = {}): Promise<CheckResult> => {
+  const name = 'tokens.json present'
+  const readStore = deps.readStore ?? readTokenStore
+  const storePath = deps.storePath ?? getTokenStorePath
+  const readEnvToken = deps.readEnvToken ?? defaultReadEnvToken
+
+  if (readEnvToken()) {
+    return {
+      name,
+      status: 'pass',
+      message: `Skipped — ${INFRA_KIT_ENV_TOKEN_VAR} is set; that channel takes precedence over the store`,
+    }
+  }
+
+  // Display only — every message below is read by a human, and nothing here touches the path again.
+  let displayPath: string
+
+  try {
+    displayPath = tildify(await storePath())
+  } catch {
+    return { name, status: 'pass', message: 'Skipped — the token store path could not be resolved' }
+  }
+
+  let store: TokenStore | null
+
+  try {
+    store = await readStore()
+  } catch {
+    return { name, status: 'pass', message: `The store at ${displayPath} is unreadable (see env tokens configured)` }
+  }
+
+  const envs = store === null ? [] : Object.keys(store.envs)
+
+  if (envs.length === 0) {
+    const state = store === null ? `No token store at ${displayPath}` : `${displayPath} holds no tokens`
+
+    return {
+      name,
+      status: 'fail',
+      message:
+        `${state} — every project needs one to authenticate. ` +
+        `Fix: run \`infra-kit env-token-set <env>\`. CI / agents: set ${INFRA_KIT_ENV_TOKEN_VAR} instead.`,
+    }
+  }
+
+  return { name, status: 'pass', message: `${displayPath} holds ${envs.length} token(s): ${envs.join(', ')}` }
+}
+
 /** `-rw-------` / `drwx------` — the permission bits of a path, or `null` when it does not exist. */
 const modeOf = (target: string, statPath: NonNullable<EnvTokenCheckDeps['statPath']>): number | null => {
   const stats = statPath(target)
@@ -453,7 +553,7 @@ export const checkTokenStorePerms = async (fix: boolean, deps: EnvTokenCheckDeps
   }
 
   if (modeOf(target, statPath) === null) {
-    return { name, status: 'pass', message: `No token store yet at ${tildify(target)}` }
+    return { name, status: 'pass', message: `No store to protect at ${tildify(target)} (see tokens.json present)` }
   }
 
   // Every directory on the way to the file, plus the file: a 0600 file inside a world-readable
@@ -1085,6 +1185,7 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
     checkWarmCache(),
     checkPnpmWorkspaceVirtualStore(),
     Promise.resolve(checkInfraKitConfigValid(read)),
+    checkTokenStorePresent(),
     checkEnvTokensConfigured(read),
     checkEnvTokenValid(read),
     checkTokenStorePerms(options.fix ?? false),

@@ -6,7 +6,7 @@ describe('buildDeployEnv', () => {
   it('sets the three vars the deploy scripts never set themselves', () => {
     // The whole reason this command exists: `_deploy-serverless-jobs.yml` sets these in YAML and no
     // script sets them, so a bare local run builds with them unset.
-    const result = buildDeployEnv({ env: 'arthur', branch: 'dev', sha: 'abc123', ambient: {} })
+    const result = buildDeployEnv({ env: 'arthur', branch: 'dev', sha: 'abc123', isClean: true, ambient: {} })
 
     expect(result.contract).toStrictEqual({
       VITE_DOMAIN_ENV: 'arthur',
@@ -22,6 +22,7 @@ describe('buildDeployEnv', () => {
       env: 'arthur',
       branch: 'dev',
       sha: 'abc123',
+      isClean: true,
       ambient: { VITE_API_KEY: 'from-doppler', VITE_DOMAIN_ENV: 'stale', PATH: '/usr/bin' },
     })
 
@@ -38,6 +39,7 @@ describe('buildDeployEnv', () => {
       env: 'arthur',
       branch: 'dev',
       sha: 'abc123',
+      isClean: true,
       ambient: { VITE_DOMAIN_ENV: 'prod' },
     })
 
@@ -45,7 +47,7 @@ describe('buildDeployEnv', () => {
   })
 
   it('passes DEPLOY_* through for scripts that later grow their own deploy-env.sh', () => {
-    const result = buildDeployEnv({ env: 'dev', branch: 'main', sha: 'deadbeef', ambient: {} })
+    const result = buildDeployEnv({ env: 'dev', branch: 'main', sha: 'deadbeef', isClean: true, ambient: {} })
 
     expect(result.childEnv.DEPLOY_ENV).toBe('dev')
     expect(result.childEnv.DEPLOY_BRANCH).toBe('main')
@@ -60,6 +62,7 @@ describe('formatContract', () => {
       env: 'arthur',
       branch: 'dev',
       sha: 'abc123',
+      isClean: true,
       ambient: { AWS_SECRET_ACCESS_KEY: 'super-secret', VITE_LEAK: 'also-secret' },
     })
 
@@ -70,5 +73,27 @@ describe('formatContract', () => {
     // Stripped vars are named so a surprising build is explainable — but never valued.
     expect(printed).toContain('VITE_LEAK')
     expect(printed).not.toContain('also-secret')
+  })
+})
+
+describe('dirty-tree labelling', () => {
+  const base = { env: 'arthur', branch: 'dev', sha: 'abc123', ambient: {} }
+
+  it('labels a clean tree with the bare sha', () => {
+    expect(buildDeployEnv({ ...base, isClean: true }).contract.VITE_COMMIT_HASH).toBe('abc123')
+  })
+
+  it('marks a dirty tree so the artifact is not mislabelled', () => {
+    // The build reads the filesystem, not git, so a dirty tree ships content absent from `sha`.
+    // Personal environments are where this matters most: a dirty tree is normal there and no gate
+    // refuses it, so tightening the clean-tree check cannot reach the mislabelling.
+    expect(buildDeployEnv({ ...base, isClean: false }).contract.VITE_COMMIT_HASH).toBe('abc123-dirty')
+  })
+
+  it('keeps DEPLOY_SHA raw — the scripts hand it to AWS', () => {
+    const built = buildDeployEnv({ ...base, isClean: false })
+
+    expect(built.childEnv.DEPLOY_SHA).toBe('abc123')
+    expect(built.childEnv.VITE_COMMIT_HASH).toBe('abc123-dirty')
   })
 })

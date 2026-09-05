@@ -23,7 +23,6 @@ import { defineMcpTool, textContent } from 'src/types'
 import { buildDeployEnv, contractRecord, formatContract } from './deploy-env'
 import type { BuildEnvResult } from './deploy-env'
 import { runPreflight } from './preflight'
-import type { SkippableCheck } from './preflight'
 import { discoverServices, eligibleServices, isEligible } from './service-discovery'
 import type { DeployService } from './service-discovery'
 
@@ -68,7 +67,6 @@ interface LocalDeployArgs {
   yes?: boolean
   dryRun?: boolean
   printEnv?: boolean
-  skipPreflight?: string[]
 }
 
 /** Environments with a CI deploy currently in flight, or `[]` when `gh` cannot answer. */
@@ -311,7 +309,7 @@ const resolveNames = async (args: {
  * services they end up with; every gate applies identically.
  */
 const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
-  const { env, service, yes, dryRun, printEnv, skipPreflight = [] } = args
+  const { env, service, yes, dryRun, printEnv } = args
 
   const projectRoot = await getProjectRoot()
   const project = await getRepoName()
@@ -361,23 +359,21 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
   const isShared = isSharedEnv(selectedEnv)
   const branch = await getCurrentBranch()
   const sha = (await $`git rev-parse HEAD`.quiet()).stdout.trim()
-  const built = buildDeployEnv({ env: selectedEnv, branch, sha })
+  // Resolved once and used twice — the contract label and the preflight gate must agree about the
+  // tree, or a deploy could be refused as dirty while shipping a bundle labelled clean.
+  const isClean = await isWorkingTreeClean()
+  const built = buildDeployEnv({ env: selectedEnv, branch, sha, isClean })
 
   if (printEnv) {
     logger.info(`Deploy contract for ${selectedEnv}:\n${formatContract(built)}`)
   }
 
-  const skip = skipPreflight.filter((name): name is SkippableCheck => {
-    return name === 'clean-tree' || name === 'toolchain'
-  })
-
   const preflight = await runPreflight({
     env: selectedEnv,
     project,
     isShared,
-    isClean: await isWorkingTreeClean(),
+    isClean,
     runningEnvs: await runningCiEnvs(),
-    skip,
     protectedEnvAccess,
   })
 
@@ -480,12 +476,6 @@ const SHARED_TOOL_NOTE =
 const sharedInput = {
   env: z.string().describe('Target environment, e.g. "dev" or a personal env like "arthur". Required for MCP.'),
   dryRun: z.boolean().optional().describe('Resolve target, contract and commands without deploying.'),
-  skipPreflight: z
-    .array(z.enum(['clean-tree', 'toolchain']))
-    .optional()
-    .describe(
-      'Waive a named non-critical check. The env/account and protected-env checks can never be waived, and clean-tree cannot be waived for a protected env.',
-    ),
   confirm: z.boolean().optional().describe('Set true to execute; omit for a dry-run gate.'),
 }
 
