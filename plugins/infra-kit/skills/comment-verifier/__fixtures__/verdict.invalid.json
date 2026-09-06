@@ -1,0 +1,31 @@
+[
+  {
+    "file": "plugins/infra-kit/skills/comment-verifier/__fixtures__/restating-fix.ts",
+    "line": 21,
+    "textHash": "4d530b7772c6",
+    "action": "shorten",
+    "reason": "missing replacement: shorten adds bytes, so an entry without the exact text is unverifiable"
+  },
+  {
+    "file": "plugins/infra-kit/skills/comment-verifier/__fixtures__/restating-fix.ts",
+    "line": 27,
+    "textHash": "ac777f2c4d30",
+    "action": "delete",
+    "reason": "replacement present on delete, which adds nothing",
+    "replacement": "// something"
+  },
+  {
+    "file": "plugins/infra-kit/skills/comment-verifier/__fixtures__/restating-fix.ts",
+    "line": 24,
+    "textHash": "3da5654cbfac",
+    "action": "tidy",
+    "reason": "unknown action, outside the five the contract allows"
+  },
+  {
+    "file": "plugins/infra-kit/skills/comment-verifier/__fixtures__/restating-fix.ts",
+    "line": 13,
+    "textHash": "",
+    "action": "keep",
+    "reason": "empty textHash, so the fix pass could never resolve the target"
+  }
+]

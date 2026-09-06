@@ -1,0 +1,12 @@
+{
+  "_why": "U5 and T5 scan every file under plugins/, the scanner included. Plan U5 says __tests__ is never exempt, so the needles cannot sit inline in manifest.test.mjs. They live here, in the one directory the scan exempts, split into fragments the test joins. Splitting them keeps an external grep over plugins/ clean too: neither a whole denied name nor a whole project-relative prefix appears as a literal in any file the plugin ships, so a grep-based check sees no self-hit either. Do not spell any needle out in this file.",
+  "projectRelative": [
+    [".claude/", "skills/"],
+    [".claude/", "hooks/"]
+  ],
+  "denylist": [
+    ["hul", "yo"],
+    ["trave", "list"],
+    ["gulli", "ver"]
+  ]
+}

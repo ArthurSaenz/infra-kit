@@ -1,0 +1,9 @@
+{
+  "name": "infra-kit",
+  "version": "0.1.0",
+  "description": "Engineering skills and the code-quality agent for the infra-kit family of monorepos. Complements the infra-kit MCP server; bundles no server and no hooks.",
+  "author": { "name": "Arthur Saenko" },
+  "repository": "https://github.com/ArthurSaenz/infra-kit",
+  "license": "MIT",
+  "keywords": ["claude-code", "plugin", "monorepo", "code-quality", "infra-kit"]
+}
