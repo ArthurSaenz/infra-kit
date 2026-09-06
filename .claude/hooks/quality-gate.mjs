@@ -10,9 +10,10 @@ import { acquireLock, releaseLock } from './lock.mjs';
 const TAIL_CHARS = 4000;
 
 const main = () => {
-  // SELF-DESCENT GUARD, before anything else so there is no lock to unwind. `qa` does not run the
-  // `.claude` suite today; if it ever does, that suite spawns this hook again. Lock serialises
-  // peers; this stops recursion. Covered by quality-gate.test.mjs, which sets the flag directly.
+  // SELF-DESCENT GUARD, before anything else so there is no lock to unwind. `qa` ends with
+  // `test:claude`, which runs the `.claude/hooks` suite, and that suite spawns this hook again.
+  // Lock serialises peers; this stops recursion. Covered by quality-gate.test.mjs, which sets the
+  // flag directly.
   if (process.env.CLAUDE_HOOK_QA_NESTED) allow();
 
   let input;
