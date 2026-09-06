@@ -9,8 +9,15 @@ import { CONFIG_STUB, buildUserGlobalExample, buildVendorExample } from 'src/lib
 import { getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
-import { PLUGIN_INSTALL_COMMAND, ensurePluginPointer, resolvePluginInstall } from 'src/lib/plugin-pointer'
-import type { PluginPointerResult } from 'src/lib/plugin-pointer'
+import {
+  MARKETPLACE_ADD_COMMAND,
+  PLUGIN_INSTALL_COMMAND,
+  PLUGIN_KEY,
+  ensurePluginPointer,
+  installPluginForProject,
+  resolvePluginInstall,
+} from 'src/lib/plugin-pointer'
+import type { PluginInstallOutcome, PluginPointerResult } from 'src/lib/plugin-pointer'
 
 import { syncRepoGuidance } from './agent-files'
 import {
@@ -22,6 +29,17 @@ import {
 
 export const MARKER_START = '# -- infra-kit:begin --'
 export const MARKER_END = '# -- infra-kit:end --'
+
+export interface InitOptions {
+  /**
+   * Write the two `.claude/settings.json` pointer keys but do NOT drive `claude plugin install`.
+   *
+   * The escape hatch for anywhere a subprocess is unwelcome: a container image build, a machine with
+   * no Claude Code, or a person who would rather run the install themselves. Every other `init` step
+   * is unaffected.
+   */
+  skipPlugin?: boolean
+}
 
 const LEGACY_PAIRED: [start: string, end: string][] = [['# region infra-kit', '# endregion infra-kit']]
 const LEGACY_SINGLE = '# infra-kit shell functions'
@@ -42,7 +60,7 @@ const LEGACY_SINGLE = '# infra-kit shell functions'
  * // INFO: Wrote user-global config to /Users/me/.infra-kit/infra-kit.json (see …/infra-kit.example.jsonc …)
  * // INFO: Run `source ~/.zshrc` or open a new terminal to activate.
  */
-export const init = async (): Promise<void> => {
+export const init = async (options: InitOptions = {}): Promise<void> => {
   const zshrcPath = path.join(os.homedir(), '.zshrc')
 
   // Strip any prior block (current or legacy markers) anywhere in the file, then
@@ -88,8 +106,8 @@ export const init = async (): Promise<void> => {
   const repoRoot = await syncAgentGuidance()
 
   // Same gate, same repo root: point this project's Claude Code at the infra-kit plugin
-  // marketplace and report whether the plugin itself is installed on this machine.
-  syncPluginPointer(repoRoot)
+  // marketplace, then install the plugin for that root unless `--skip-plugin` says otherwise.
+  syncPluginPointer(repoRoot, options.skipPlugin ?? false)
 
   // Close the legacy-yml migration gap so a single `dx-init` leaves EVERY example current.
   await reseedUserProjectConfig()
@@ -251,33 +269,83 @@ const logPointerResult = (root: string, result: PluginPointerResult): void => {
   else if (result.status === 'added') logger.info(`  updated   ${relative} — added ${result.added.join(', ')}`)
 }
 
+/** The two commands, in order, that a person runs by hand when `init` could not run them. */
+const logManualInstallCommands = (): void => {
+  logger.info(MARKETPLACE_ADD_COMMAND)
+  logger.info(PLUGIN_INSTALL_COMMAND)
+}
+
 /**
- * Point this repo's Claude Code at the infra-kit plugin marketplace, then say — once — whether the
- * plugin is actually installed on this machine.
+ * One line per install outcome.
+ *
+ * `already-installed` is DEBUG on purpose: it is the steady state of every configured machine, and a
+ * setup command that reports its no-ops is a setup command people stop reading. The two failure
+ * outcomes are WARN and carry the step, the tool's own first line, and the command to run instead —
+ * a warning a reader cannot act on is noise.
+ */
+const logInstallOutcome = (outcome: PluginInstallOutcome): void => {
+  if (outcome.status === 'already-installed' || outcome.status === 'skipped') {
+    logger.debug({ msg: `Claude Code plugin install: ${outcome.status} (${PLUGIN_KEY}).` })
+
+    return
+  }
+
+  if (outcome.status === 'installed') {
+    logger.info(`installed Claude Code plugin ${PLUGIN_KEY} (project scope)`)
+
+    return
+  }
+
+  if (outcome.status === 'claude-missing') {
+    logger.info('No `claude` on PATH, so the Claude Code plugin was not installed. Install Claude Code, then run:')
+    logManualInstallCommands()
+
+    return
+  }
+
+  const reason =
+    outcome.status === 'unverified'
+      ? 'the install reported success but Claude Code recorded no installation'
+      : `the ${outcome.step} step failed: ${outcome.error}`
+
+  logger.warn(`Could not install the Claude Code plugin — ${reason}. Run by hand: ${PLUGIN_INSTALL_COMMAND}`)
+}
+
+/**
+ * Point this repo's Claude Code at the infra-kit plugin marketplace, then INSTALL the plugin so a
+ * teammate's whole setup is one command.
  *
  * Repo-gated on the SAME root the guidance sync resolved, so both steps agree about what "this
  * project" is; outside an infra-kit repo it does nothing rather than writing a `.claude/` directory
- * into whatever the cwd happens to be.
+ * into whatever the cwd happens to be. The install is driven for that same root, which is what
+ * `--scope project` records — the pointer keys and the installation therefore name one project.
  *
- * `init` INSTALLS NOTHING. The pointer is config; the install is a `claude` command each teammate
- * runs once, printed only when the plugin is missing FOR THIS PROJECT — a user-scope install, or a
- * project-scope one recorded against this very root, counts as present. Printing it on every run of
- * an already-correct machine is how a setup command teaches people to stop reading its output.
+ * `--skip-plugin` reverts to the older contract (write the keys, print the command) for anyone who
+ * wants the config without a `claude` invocation. Under that flag the command is printed only when
+ * the plugin is missing FOR THIS PROJECT: printing it on every run of an already-correct machine is
+ * how a setup command teaches people to stop reading its output.
  */
-const syncPluginPointer = (root: string | null): void => {
+const syncPluginPointer = (root: string | null, skipPlugin: boolean): void => {
   if (root === null) return
 
   try {
     logPointerResult(root, ensurePluginPointer(path.join(root, '.claude', 'settings.json')))
 
+    if (!skipPlugin) {
+      logInstallOutcome(installPluginForProject({ projectRoot: root }))
+
+      return
+    }
+
     if (resolvePluginInstall({ projectPath: root }).kind === 'installed') return
 
     logger.info('The infra-kit Claude Code plugin is not installed on this machine. Install it with:')
-    logger.info(PLUGIN_INSTALL_COMMAND)
+    logManualInstallCommands()
   } catch (err) {
-    // Best-effort: neither an unwritable `.claude/settings.json` nor a hand-broken
-    // `~/.claude/plugins/installed_plugins.json` may turn a machine-setup command red.
-    logger.debug({ err, msg: 'Skipped the Claude Code plugin pointer (init).' })
+    // Best-effort: neither an unwritable `.claude/settings.json`, a hand-broken
+    // `~/.claude/plugins/installed_plugins.json`, nor a `claude` binary that throws on spawn may turn
+    // a machine-setup command red.
+    logger.debug({ err, msg: 'Skipped the Claude Code plugin step (init).' })
   }
 }
 

@@ -975,6 +975,26 @@ const claudePluginInstalledCheck = (state: PluginInstallState): CheckResult => {
 }
 
 /**
+ * Is the `claude` binary on PATH? The PREREQUISITE row for everything below it: `infra-kit init`
+ * installs the plugin by driving `claude plugin install`, so on a machine without that binary the
+ * three rows that follow are failing for a reason none of their own messages names.
+ *
+ * Deliberately NOT wired into the exit code — only `plugin installed` is. A machine that has chosen
+ * not to install Claude Code is reporting a fact, not a broken setup.
+ *
+ * @example
+ * await checkClaudeCli() // => { name: 'claude CLI', status: 'pass', message: 'Installed: claude' }
+ */
+export const checkClaudeCli = (): Promise<CheckResult> => {
+  return checkCommand(
+    'claude CLI',
+    ['claude', '--version'],
+    'Installed: claude',
+    'claude CLI not found on PATH — `infra-kit init` cannot install the plugin; install Claude Code first',
+  )
+}
+
+/**
  * The four host-state rows about the `infra-kit` Claude Code plugin: is its marketplace registered
  * on this machine, is the plugin installed, which version, and which CLI is reporting it.
  *
@@ -1436,7 +1456,13 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
   // The Claude Code plugin rows read `~/.claude/` and answer from anywhere; the `.mcp.json` row is
   // about a PROJECT and is omitted outside an infra-kit repo, the same way the guidance check is.
   const repoRoot = await resolveCheckedRepoRoot()
-  const pluginChecks = [...checkClaudePlugin(repoRoot), ...(repoRoot === null ? [] : [checkMcpServerKey(repoRoot)])]
+  const pluginChecks = [
+    // First in the section: the binary the install step drives. Read the prerequisite before the
+    // three rows whose failure it explains.
+    await checkClaudeCli(),
+    ...checkClaudePlugin(repoRoot),
+    ...(repoRoot === null ? [] : [checkMcpServerKey(repoRoot)]),
+  ]
 
   const checks: CheckResult[] = [...baseChecks, ...portlessChecks, ...(await checkAgentFiles()), ...pluginChecks]
 

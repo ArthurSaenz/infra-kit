@@ -2,8 +2,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { $ } from 'zx'
 
-import { checkClaudePlugin, checkMcpServerKey } from '../doctor'
+import { checkClaudeCli, checkClaudePlugin, checkMcpServerKey } from '../doctor'
 import { DOCTOR_CHECK_NAMES, groupChecks } from '../report'
 
 /**
@@ -13,6 +14,11 @@ import { DOCTOR_CHECK_NAMES, groupChecks } from '../report'
  * from whether the author happens to have the plugin installed. `os.homedir()` reads `HOME` on
  * POSIX, which is what makes the stub reach the readers without threading a seam through the checks.
  */
+
+/** `checkClaudeCli` is the one row here that SPAWNS. Mocked so the verdict is the fixture's, not the machine's. */
+vi.mock('zx', () => {
+  return { $: vi.fn() }
+})
 
 let home: string
 let repo: string
@@ -208,17 +214,41 @@ describe('checkMcpServerKey (T4b)', () => {
   })
 })
 
+describe('checkClaudeCli', () => {
+  it('passes when the binary answers --version', async () => {
+    vi.mocked($).mockResolvedValue({ stdout: '2.0.0 (Claude Code)' } as never)
+
+    const check = await checkClaudeCli()
+
+    expect(check.name).toBe('claude CLI')
+    expect(check.status).toBe('pass')
+  })
+
+  it('fails, naming the consequence, when the binary is not on PATH', async () => {
+    vi.mocked($).mockRejectedValue(new Error('command not found: claude'))
+
+    const check = await checkClaudeCli()
+
+    expect(check.status).toBe('fail')
+    expect(check.message).toContain('claude CLI not found on PATH')
+    expect(check.message).toContain('cannot install the plugin')
+  })
+})
+
 describe('report placement', () => {
-  it('puts every new row in the Claude Code plugin section, never Other', () => {
-    const sections = groupChecks([...checkClaudePlugin(repo), checkMcpServerKey(repo)])
+  it('puts every new row in the Claude Code plugin section, never Other', async () => {
+    vi.mocked($).mockResolvedValue({ stdout: '' } as never)
+
+    const sections = groupChecks([await checkClaudeCli(), ...checkClaudePlugin(repo), checkMcpServerKey(repo)])
 
     expect(sections).toHaveLength(1)
     expect(sections[0]?.label).toBe('Claude Code plugin')
-    expect(sections[0]?.checks).toHaveLength(5)
+    expect(sections[0]?.checks).toHaveLength(6)
   })
 
-  it('lists the five names in the canonical inventory', () => {
+  it('lists the six names in the canonical inventory', () => {
     for (const name of [
+      'claude CLI',
       'marketplace registered',
       'plugin installed',
       'plugin version',
@@ -226,5 +256,12 @@ describe('report placement', () => {
       'MCP server key',
     ])
       expect(DOCTOR_CHECK_NAMES).toContain(name)
+  })
+
+  /** `claude CLI` is a report, not a verdict: only `plugin installed` drives doctor's exit code. */
+  it('places claude CLI first, ahead of the rows its absence explains', () => {
+    const plugin = DOCTOR_CHECK_NAMES.slice(-6)
+
+    expect(plugin[0]).toBe('claude CLI')
   })
 })

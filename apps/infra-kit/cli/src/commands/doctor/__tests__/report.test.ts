@@ -86,15 +86,16 @@ describe('section coverage', () => {
     expect(unmapped).toEqual([])
   })
 
-  it('covers exactly 29 checks', () => {
-    expect(DOCTOR_CHECK_NAMES).toHaveLength(29)
-    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(29)
+  it('covers exactly 30 checks', () => {
+    expect(DOCTOR_CHECK_NAMES).toHaveLength(30)
+    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(30)
   })
 
-  it('keeps the four Claude Code plugin rows adjacent, in order, followed by the MCP key row (O3)', () => {
-    const plugin = DOCTOR_CHECK_NAMES.slice(-5)
+  it('keeps the Claude Code plugin rows adjacent, in order, followed by the MCP key row (O3)', () => {
+    const plugin = DOCTOR_CHECK_NAMES.slice(-6)
 
     expect(plugin).toEqual([
+      'claude CLI',
       'marketplace registered',
       'plugin installed',
       'plugin version',

@@ -78,7 +78,10 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
     SECTION_PROXY,
     ['portless installed', PORTLESS_SERVING_NAME, 'portless CA chain valid', 'portless CA trusted', 'portless routes'],
   ],
-  [SECTION_PLUGIN, ['marketplace registered', 'plugin installed', 'plugin version', 'CLI version', 'MCP server key']],
+  [
+    SECTION_PLUGIN,
+    ['claude CLI', 'marketplace registered', 'plugin installed', 'plugin version', 'CLI version', 'MCP server key'],
+  ],
 ]
 
 /** The bucket for any check name not in {@link SECTION_MEMBERS} — a safety net, never a destination. */

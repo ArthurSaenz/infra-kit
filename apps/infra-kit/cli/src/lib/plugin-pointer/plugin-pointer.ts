@@ -38,6 +38,13 @@ export const MARKETPLACE_REPO = 'ArthurSaenz/infra-kit'
  */
 export const PLUGIN_INSTALL_COMMAND = `claude plugin install ${PLUGIN_KEY} --scope project`
 
+/**
+ * The command that makes the marketplace known to this machine, and the prerequisite of the one
+ * above. Rendered from the same constants the automated install passes as argv, so the line a user
+ * copies and the command `init` runs can never drift apart.
+ */
+export const MARKETPLACE_ADD_COMMAND = `claude plugin marketplace add ${MARKETPLACE_REPO}`
+
 /** Indentation used for a file we create ourselves, and the fallback when detection finds none. */
 const DEFAULT_INDENT = '  '
 

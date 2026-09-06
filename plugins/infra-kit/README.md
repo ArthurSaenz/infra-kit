@@ -32,14 +32,27 @@ executes without a permission prompt.
 From the consumer repo root:
 
 ```
+infra-kit init
+```
+
+That is the whole install. `init` writes the two pointer keys into `.claude/settings.json`
+(`extraKnownMarketplaces` and `enabledPlugins`, nothing else), registers the marketplace when this
+machine does not already know it, and runs the project-scope install. Every step reads host state
+first, so re-running `init` on a configured machine spawns nothing.
+
+The commands `init` runs, for anyone who wants to run them by hand:
+
+```
 claude plugin marketplace add ArthurSaenz/infra-kit
 claude plugin install infra-kit@infra-kit --scope project
 ```
 
-`infra-kit init` registers the marketplace and enables the plugin in `.claude/settings.json`
-(two keys, nothing else) and prints the install command when the plugin is missing on this
-machine. Installation itself is per person: Claude Code never installs a plugin on someone
-else's behalf.
+These are the fallback, not the normal path. `init` prints them when `claude` is not on PATH — it
+cannot install a plugin without Claude Code — and warns with them when a step fails. `infra-kit
+doctor` reports the same prerequisite as its `claude CLI` row.
+
+Pass `--skip-plugin` to write the settings keys and skip the install entirely, for a container
+image build or anywhere a subprocess is unwelcome.
 
 **Always `--scope project`.** The CLI default is `user`, which would activate this plugin in
 every repository you open. Its skills are written against this family's conventions and every
