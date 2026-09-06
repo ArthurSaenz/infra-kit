@@ -1,0 +1,8 @@
+{
+  "name": "unknown-frontmatter-probe",
+  "version": "0.0.0",
+  "description": "CI-only fixture for the plan's U13 check. Not a real plugin; not listed in any marketplace.",
+  "author": {
+    "name": "infra-kit CI"
+  }
+}

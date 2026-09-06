@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "infra-kit",
+  "description": "Claude Code plugins for the infra-kit family of monorepos",
+  "owner": { "name": "Arthur Saenko", "email": "arthur.saenz7@gmail.com" },
+  "plugins": [
+    {
+      "name": "infra-kit",
+      "description": "Engineering skills and the code-quality agent used across the infra-kit monorepos.",
+      "source": "./plugins/infra-kit",
+      "category": "development",
+      "homepage": "https://github.com/ArthurSaenz/infra-kit",
+      "tags": ["monorepo", "code-quality", "skills"]
+    }
+  ]
+}

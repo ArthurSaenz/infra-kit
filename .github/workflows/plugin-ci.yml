@@ -1,0 +1,45 @@
+name: plugin-ci
+
+# Gates for the Claude Code plugin at plugins/infra-kit (plan §8.1 U1, U9; §8.1 U13 reported only).
+on:
+  pull_request:
+    paths:
+      - 'plugins/**'
+      - '.claude-plugin/**'
+      - '.github/workflows/plugin-ci.yml'
+      - '.github/fixtures/unknown-frontmatter-plugin/**'
+      - 'scripts/check-plugin-version-bump.mjs'
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/**'
+      - '.claude-plugin/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+      - name: U1 — plugin manifest and skills validate under --strict
+        run: claude plugin validate ./plugins/infra-kit --strict --json
+      - name: Marketplace catalog validates under --strict
+        run: claude plugin validate . --strict --json
+      - name: Manifest guard suite (U2–U8, U12, T1, T5)
+        run: node --test 'plugins/infra-kit/__tests__/*.test.mjs'
+      - name: Relocated skill tests (U11)
+        run: node --test --test-concurrency=1 'plugins/infra-kit/skills/*/__tests__/*.test.mjs'
+      - name: U9 — a plugin change must bump plugin.json version
+        if: github.event_name == 'pull_request'
+        run: node scripts/check-plugin-version-bump.mjs "origin/${{ github.base_ref }}"
+      - name: U13 — does --strict object to unknown frontmatter? (reported, never gating)
+        continue-on-error: true
+        run: |
+          echo "U13 probe: OMC-runtime frontmatter (pipeline/next-skill/aliases) under --strict"
+          claude plugin validate ./.github/fixtures/unknown-frontmatter-plugin --strict --json || echo "U13: strict mode objected (see above)"
