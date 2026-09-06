@@ -1,4 +1,5 @@
 // Vitest setup file for node environment
+import path from 'node:path'
 import process from 'node:process'
 
 // Tripwire — applies to EVERY test file (wired at vitest.config.ts `setupFiles`).
@@ -14,14 +15,20 @@ import process from 'node:process'
 // directly — or `configEdit`, which uses it — MUST stub `os.homedir()` to a temp dir itself.
 process.env.INFRA_KIT_NO_SEED = '1'
 
-// Second tripwire, same shape, different blast radius.
+// Second tripwire, same purpose, different mechanism.
 //
-// `infra-kit init` now DRIVES `claude plugin install` (src/lib/plugin-pointer/install-plugin). Three
-// suites call the real `init()`, and without this every one of them would install this plugin into
-// the developer's own Claude Code — recorded against a temp directory that is deleted seconds later.
-// Armed globally so a NEW test that calls `init()` cannot reintroduce that side effect by omission.
+// `infra-kit init` DRIVES `claude plugin install` (src/lib/plugin-pointer/install-plugin), and three
+// suites call the real `init()`. Unguarded, every run of those suites would install this plugin into
+// the developer's own Claude Code — recorded against a temp directory deleted seconds later — and
+// each install would take tens of seconds against the network.
 //
-// A test that wants to prove the install path injects a `run` seam instead
-// (`installPluginForProject({ run })`); the switch guards the DEFAULT runner only, so an injected
-// fake still drives every step. That is what keeps the installer's own suite runnable under it.
-process.env.INFRA_KIT_NO_PLUGIN_INSTALL = '1'
+// A PATH SHIM, not an env kill switch. There is deliberately no product-facing way to turn the
+// install off, so the guard must live entirely in the test environment: `src/__fixtures__/bin/claude`
+// answers `--version`, exits 0 for the two plugin subcommands, and writes nothing. PREPENDED, so it
+// wins over a real `claude` when the developer has one. Global, so a NEW test that calls `init()`
+// cannot reintroduce the side effect by omission.
+//
+// The shim writes no `installed_plugins.json` record on purpose: the installer verifies against that
+// file, so `init` correctly reports `unverified` and warns. Forging the record would hollow out the
+// one check that exists to catch a silent install failure.
+process.env.PATH = `${path.join(import.meta.dirname, 'src', '__fixtures__', 'bin')}${path.delimiter}${process.env.PATH ?? ''}`

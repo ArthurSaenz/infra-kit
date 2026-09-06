@@ -216,8 +216,8 @@ describe('init — plugin pointer', () => {
 /**
  * The install step's WIRING. What the installer itself does is proved against an injected runner in
  * `lib/plugin-pointer/__tests__/install-plugin.test.ts`; what only `init` can prove is that the step
- * runs at all, that it is aimed at the resolved repo root rather than the cwd, that `--skip-plugin`
- * suppresses it without touching the keys, and that each outcome reaches the user as one readable line.
+ * runs at all, that it is aimed at the resolved repo root rather than the cwd, and that each outcome
+ * reaches the user as one readable line.
  */
 describe('init — plugin install', () => {
   const installMock = vi.mocked(installPluginForProject)
@@ -233,23 +233,6 @@ describe('init — plugin install', () => {
 
     expect(installMock).toHaveBeenCalledTimes(1)
     expect(installMock).toHaveBeenCalledWith({ projectRoot: repo })
-  })
-
-  it('--skip-plugin writes both keys and runs no install', async () => {
-    await init({ skipPlugin: true })
-
-    const settings = readSettings()
-
-    expect(settings.enabledPlugins?.[PLUGIN_KEY]).toBe(true)
-    expect(settings.extraKnownMarketplaces?.['infra-kit']).toBeDefined()
-    expect(installMock).not.toHaveBeenCalled()
-  })
-
-  it('--skip-plugin still prints the manual commands when the plugin is missing', async () => {
-    await init({ skipPlugin: true })
-
-    expect(infoLines()).toContain(MARKETPLACE_ADD_COMMAND)
-    expect(infoLines()).toContain(PLUGIN_INSTALL_COMMAND)
   })
 
   it('reports a successful install on one INFO line', async () => {

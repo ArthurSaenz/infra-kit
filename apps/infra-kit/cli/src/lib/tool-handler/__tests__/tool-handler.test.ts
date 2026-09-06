@@ -284,7 +284,12 @@ describe('createToolHandler — confirm token binding (round-2 refusals)', () =>
     const { tool, handler } = gatedTool('env-clear')
 
     const confirmToken = gateToken(await tool({ version: '1.2.5' }))
-    const flipped = confirmToken.endsWith('A') ? `${confirmToken.slice(0, -1)}B` : `${confirmToken.slice(0, -1)}A`
+    // Flip a character in the MIDDLE of the token. The last base64url character of a 32-byte MAC
+    // carries two padding bits that decode to nothing, so `A` and `B` there yield identical bytes
+    // and the "tampered" token verified about one run in sixteen.
+    const at = Math.floor(confirmToken.length / 2)
+    const replacement = confirmToken[at] === 'A' ? 'B' : 'A'
+    const flipped = `${confirmToken.slice(0, at)}${replacement}${confirmToken.slice(at + 1)}`
     const result = await tool({ confirm: true, confirmToken: flipped, version: '1.2.5' })
 
     expectRefusal(result, ['mac', 'malformed'])

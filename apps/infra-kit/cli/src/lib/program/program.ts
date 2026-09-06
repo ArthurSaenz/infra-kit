@@ -657,9 +657,8 @@ export const buildProgram = (): Command => {
     .description(
       'Inject shell integration into .zshrc, sync repo agent-instruction files, and install the Claude Code plugin',
     )
-    .option('--skip-plugin', 'do not install the Claude Code plugin; only write the settings keys')
-    .action(async (options) => {
-      emit(await init({ skipPlugin: Boolean(options.skipPlugin) }))
+    .action(async () => {
+      emit(await init())
     })
 
   program

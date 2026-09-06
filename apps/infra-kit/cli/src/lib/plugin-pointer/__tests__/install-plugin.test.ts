@@ -1,13 +1,13 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   CLAUDE_VERSION_ARGV,
   MARKETPLACE_ADD_ARGV,
   PLUGIN_INSTALL_ARGV,
+  defaultClaudeRunner,
   installPluginForProject,
 } from '../install-plugin'
 import type { ClaudeCommand, ClaudeCommandResult, ClaudeRunner } from '../install-plugin'
@@ -240,24 +240,33 @@ describe('installPluginForProject — success', () => {
   })
 })
 
-describe('installPluginForProject — kill switch', () => {
+describe('the PATH shim that protects every suite', () => {
   /**
-   * `vitest.setup.ts` arms `INFRA_KIT_NO_PLUGIN_INSTALL` for every test file, which is what stops the
-   * three suites that call the real `init()` from installing this plugin onto the machine running
-   * them. Asserted here so removing that line fails a test instead of silently spawning `claude`.
+   * `vitest.setup.ts` prepends `src/__fixtures__/bin` to `PATH` so the three suites that call the real
+   * `init()` reach a fake `claude` instead of the developer's own. There is no product-facing kill
+   * switch, so this shim is the ONLY thing standing between a test run and a real plugin install —
+   * asserted here, through the real runner, so removing that setup line fails a test.
    */
-  it('spawns nothing and reports skipped when the switch is armed and no runner is injected', () => {
-    expect(process.env.INFRA_KIT_NO_PLUGIN_INSTALL).toBeTruthy()
-    expect(installPluginForProject({ projectRoot: repo, home })).toEqual({ status: 'skipped' })
+  it('is what defaultClaudeRunner reaches for `claude --version`', () => {
+    const result = defaultClaudeRunner({ args: [...CLAUDE_VERSION_ARGV] })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain('0.0.0-fake')
   })
 
-  it('ignores the switch for an injected runner, which cannot spawn anything', () => {
+  it('exits 0 for both plugin subcommands while writing no installed_plugins.json', () => {
+    expect(defaultClaudeRunner({ args: [...MARKETPLACE_ADD_ARGV] }).ok).toBe(true)
+    expect(defaultClaudeRunner({ args: [...PLUGIN_INSTALL_ARGV], cwd: repo }).ok).toBe(true)
+    expect(fs.existsSync(path.join(pluginsDir(), 'installed_plugins.json'))).toBe(false)
+  })
+
+  /**
+   * Consequently a full uninjected run reports `unverified`, never `installed` — the honest verdict
+   * for a command that exited 0 and left no record behind.
+   */
+  it('drives an uninjected install to unverified, so init warns instead of claiming success', () => {
     registerMarketplace()
 
-    const { runner, calls } = recordingRunner()
-
-    installPluginForProject({ projectRoot: repo, home, run: runner })
-
-    expect(argvOf(calls)).toEqual([[...CLAUDE_VERSION_ARGV], [...PLUGIN_INSTALL_ARGV]])
+    expect(installPluginForProject({ projectRoot: repo, home })).toEqual({ status: 'unverified' })
   })
 })

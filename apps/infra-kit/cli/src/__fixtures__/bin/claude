@@ -1,0 +1,30 @@
+#!/bin/sh
+# A fake `claude`, prepended to PATH for every test file by `vitest.setup.ts`.
+#
+# WHY THIS EXISTS. `infra-kit init` drives `claude plugin install`, and three suites call the real
+# `init()`. Without a shim ahead of it on PATH, every run of those suites would install this plugin
+# into the developer's own Claude Code — recorded against a temp directory deleted seconds later —
+# and each install would take tens of seconds against the network.
+#
+# WHAT IT PROMISES. Answer `--version`, exit 0 for the two plugin subcommands, and WRITE NOTHING.
+# The last part is the load-bearing one: the installer verifies against
+# `~/.claude/plugins/installed_plugins.json`, so a shim that wrote a record would be forging the very
+# state the verification step exists to read. Writing nothing makes `init` report `unverified` and
+# warn, which is the correct outcome for a machine where no install actually happened.
+#
+# Anything else exits non-zero on purpose: a test that reaches an unmodelled `claude` subcommand
+# should fail loudly rather than receive a fabricated success.
+case "$1" in
+  --version)
+    echo '0.0.0-fake (infra-kit test shim)'
+    exit 0
+    ;;
+  plugin)
+    case "$2" in
+      marketplace | install) exit 0 ;;
+    esac
+    ;;
+esac
+
+echo "infra-kit test shim: unmodelled command: claude $*" >&2
+exit 127

@@ -1,5 +1,4 @@
 import { spawnSync } from 'node:child_process'
-import process from 'node:process'
 
 import { logger } from 'src/lib/logger'
 
@@ -33,18 +32,6 @@ import { MARKETPLACE_REPO, PLUGIN_KEY } from './plugin-pointer'
 
 /** Trust the `claude` binary resolved from `PATH`; there is no configured path and none is wanted. */
 const CLAUDE_BIN = 'claude'
-
-/**
- * Kill switch: set to anything non-empty and this function spawns nothing and reports `skipped`.
- *
- * It exists because this is the first thing in the CLI that MUTATES the developer's machine outside
- * `~/.infra-kit/` — it installs a plugin into Claude Code's own state. `vitest.setup.ts` arms it for
- * every test file, the same way `INFRA_KIT_NO_SEED` is armed there: without it, any suite that calls
- * the real `init()` would install this plugin onto whatever machine ran the tests, keyed to a temp
- * directory that no longer exists. It is a real switch, not a test affordance — a container image
- * build or a locked-down CI runner wants the same thing, and so does `--skip-plugin`.
- */
-export const NO_PLUGIN_INSTALL_ENV = 'INFRA_KIT_NO_PLUGIN_INSTALL'
 
 /**
  * Ceiling for any one `claude` invocation. `plugin install` clones a marketplace repo, so it is not
@@ -108,7 +95,6 @@ export const defaultClaudeRunner: ClaudeRunner = (command) => {
 /** What `installPluginForProject` did. Every branch is a REPORTED outcome; none of them throws. */
 export type PluginInstallOutcome =
   | { status: 'already-installed' }
-  | { status: 'skipped' }
   | { status: 'claude-missing' }
   | { status: 'installed' }
   | { status: 'unverified' }
@@ -121,19 +107,6 @@ export interface InstallPluginOptions {
   run?: ClaudeRunner
   /** Override `$HOME` for the host-state reads (tests, and nothing else). */
   home?: string
-}
-
-/**
- * The runner to drive, or `null` when the kill switch forbids spawning.
- *
- * The switch guards the DEFAULT runner only — the one thing here that actually starts a process. An
- * injected runner spawns nothing by construction, so gating it too would make this module's own suite
- * unrunnable under the very setup file that arms the switch.
- */
-const resolveRunner = (injected: ClaudeRunner | undefined): ClaudeRunner | null => {
-  if (injected !== undefined) return injected
-
-  return process.env[NO_PLUGIN_INSTALL_ENV] ? null : defaultClaudeRunner
 }
 
 /** The single question that decides "already installed" and "verified installed" alike. */
@@ -181,9 +154,7 @@ const ensureMarketplace = (run: ClaudeRunner, home?: string): { step: 'marketpla
  */
 export const installPluginForProject = (options: InstallPluginOptions): PluginInstallOutcome => {
   const { projectRoot, home } = options
-  const run = resolveRunner(options.run)
-
-  if (run === null) return { status: 'skipped' }
+  const run = options.run ?? defaultClaudeRunner
 
   if (isInstalledFor(projectRoot, home)) return { status: 'already-installed' }
 

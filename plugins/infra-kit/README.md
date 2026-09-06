@@ -51,9 +51,6 @@ These are the fallback, not the normal path. `init` prints them when `claude` is
 cannot install a plugin without Claude Code — and warns with them when a step fails. `infra-kit
 doctor` reports the same prerequisite as its `claude CLI` row.
 
-Pass `--skip-plugin` to write the settings keys and skip the install entirely, for a container
-image build or anywhere a subprocess is unwelcome.
-
 **Always `--scope project`.** The CLI default is `user`, which would activate this plugin in
 every repository you open. Its skills are written against this family's conventions and every
 skill description costs context on every turn, so the correct scope is the repo that uses them.
