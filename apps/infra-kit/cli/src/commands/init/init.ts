@@ -9,6 +9,8 @@ import { CONFIG_STUB, buildUserGlobalExample, buildVendorExample } from 'src/lib
 import { getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
+import { PLUGIN_INSTALL_COMMAND, ensurePluginPointer, resolvePluginInstall } from 'src/lib/plugin-pointer'
+import type { PluginPointerResult } from 'src/lib/plugin-pointer'
 
 import { syncRepoGuidance } from './agent-files'
 import {
@@ -83,7 +85,11 @@ export const init = async (): Promise<void> => {
   // Best-effort, non-fatal, repo-gated: keep the agent-instruction files in sync
   // with the CLI surface — root AND every workspace package. A no-op outside an
   // infra-kit repo.
-  await syncAgentGuidance()
+  const repoRoot = await syncAgentGuidance()
+
+  // Same gate, same repo root: point this project's Claude Code at the infra-kit plugin
+  // marketplace and report whether the plugin itself is installed on this machine.
+  syncPluginPointer(repoRoot)
 
   // Close the legacy-yml migration gap so a single `dx-init` leaves EVERY example current.
   await reseedUserProjectConfig()
@@ -227,12 +233,55 @@ const logGuidanceWrites = (root: string, version: string, written: GuidanceWrite
  * // INFO:   created   apps/client/ui/CLAUDE.md (frontend)
  * // INFO: Agent-instruction files synced (infra-kit 0.4.0)
  */
-const syncAgentGuidance = async (): Promise<void> => {
+const syncAgentGuidance = async (): Promise<string | null> => {
   const { skipped, root, version, written } = await syncRepoGuidance()
 
-  if (skipped || root === null) return
+  if (skipped || root === null) return null
 
   logGuidanceWrites(root, version, written)
+
+  return root
+}
+
+/** One line per pointer outcome. `unparseable` already warned from inside the lib, so it says nothing here. */
+const logPointerResult = (root: string, result: PluginPointerResult): void => {
+  const relative = path.relative(root, result.path)
+
+  if (result.status === 'created') logger.info(`  created   ${relative} (Claude Code plugin pointer)`)
+  else if (result.status === 'added') logger.info(`  updated   ${relative} — added ${result.added.join(', ')}`)
+}
+
+/**
+ * Point this repo's Claude Code at the infra-kit plugin marketplace, then say — once — whether the
+ * plugin is actually installed on this machine.
+ *
+ * Repo-gated on the SAME root the guidance sync resolved, so both steps agree about what "this
+ * project" is, and a run outside an infra-kit repo does nothing at all rather than writing a
+ * `.claude/` directory into whatever the cwd happens to be.
+ */
+// `init` INSTALLS NOTHING. The pointer is config; the install is a `claude` command each teammate
+// runs once, printed here only when it is missing — printing it on every run of an already-correct
+// machine is how a setup command teaches people to stop reading its output.
+//
+// Best-effort by construction: `init`'s contract is shell setup, and neither an unwritable
+// `.claude/settings.json` nor a hand-broken `~/.claude/plugins/installed_plugins.json` may turn a
+// machine-setup command red.
+const syncPluginPointer = (root: string | null): void => {
+  if (root === null) return
+
+  try {
+    logPointerResult(root, ensurePluginPointer(path.join(root, '.claude', 'settings.json')))
+
+    // "Installed" means installed FOR THIS PROJECT: a user-scope install, or a project-scope one
+    // recorded against this very root. A copy installed for another repo does not make it active
+    // here, so the command still gets printed.
+    if (resolvePluginInstall({ projectPath: root }).kind === 'installed') return
+
+    logger.info('The infra-kit Claude Code plugin is not installed on this machine. Install it with:')
+    logger.info(PLUGIN_INSTALL_COMMAND)
+  } catch (err) {
+    logger.debug({ err, msg: 'Skipped the Claude Code plugin pointer (init).' })
+  }
 }
 
 const isBlockLine = (line: string): boolean => {

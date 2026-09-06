@@ -557,6 +557,17 @@ export const buildProgram = (): Command => {
         printDoctorReport(result.structuredContent.checks, { ascii: Boolean(options.ascii) })
       }
 
+      // Scoped to ONE check, not to `allPassed`. Doctor has always exited 0 with failing rows — an
+      // un-authenticated `gh` is a report, not a broken run — and flipping that wholesale would turn
+      // every machine missing an optional tool red. A missing Claude Code plugin is different: the
+      // consumer repos no longer carry their own copies of these skills, so an agent session there
+      // silently loses them, and a non-zero exit is what a setup script can act on.
+      const pluginMissing = result.structuredContent.checks.some((check) => {
+        return check.name === 'plugin installed' && check.status === 'fail'
+      })
+
+      if (pluginMissing) process.exitCode = 1
+
       emit(result)
     })
 

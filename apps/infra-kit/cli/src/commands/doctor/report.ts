@@ -38,6 +38,7 @@ const SECTION_SHELL = 'Shell & integration'
 const SECTION_CONFIG = 'Project config'
 const SECTION_TOKENS = 'Doppler env tokens'
 const SECTION_PROXY = 'Dev proxy (portless)'
+const SECTION_PLUGIN = 'Claude Code plugin'
 
 /**
  * The `portless serving TLS on :443` check builds its name by interpolating the proxy port, so this
@@ -77,6 +78,7 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
     SECTION_PROXY,
     ['portless installed', PORTLESS_SERVING_NAME, 'portless CA chain valid', 'portless CA trusted', 'portless routes'],
   ],
+  [SECTION_PLUGIN, ['marketplace registered', 'plugin installed', 'plugin version', 'CLI version', 'MCP server key']],
 ]
 
 /** The bucket for any check name not in {@link SECTION_MEMBERS} — a safety net, never a destination. */

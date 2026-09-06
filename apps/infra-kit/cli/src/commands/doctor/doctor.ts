@@ -40,6 +40,17 @@ import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { hasManagedBlock } from 'src/lib/managed-block'
 import { discoverPackages } from 'src/lib/package-validator/loader'
 import { tildify } from 'src/lib/path-display'
+import {
+  MARKETPLACE_NAME,
+  MARKETPLACE_REPO,
+  PLUGIN_INSTALL_COMMAND,
+  PLUGIN_KEY,
+  inspectMcpRegistration,
+  isMarketplaceRegistered,
+  readInstalledPluginVersion,
+  resolvePluginInstall,
+} from 'src/lib/plugin-pointer'
+import type { McpRegistration, PluginInstallState } from 'src/lib/plugin-pointer'
 import { listProjectEnvNames } from 'src/lib/project-envs'
 import { sortVersions } from 'src/lib/version-utils'
 import { canonicalizeProjectRoot } from 'src/lib/warm-cache'
@@ -902,6 +913,139 @@ export const checkAgentFiles = async (): Promise<CheckResult[]> => {
 }
 
 /**
+ * The repo root the host-state checks below are asked about, or `null` outside an infra-kit repo.
+ * Same gate as {@link checkAgentFiles}: the presence of `infra-kit.json` at the root.
+ */
+const resolveCheckedRepoRoot = async (): Promise<string | null> => {
+  try {
+    const mainConfigPath = (await getInfraKitConfigPaths()).main
+
+    return fs.existsSync(mainConfigPath) ? path.dirname(mainConfigPath) : null
+  } catch {
+    return null
+  }
+}
+
+/** The version row, reported only for an install that covers THIS project. */
+const claudePluginVersionCheck = (state: PluginInstallState): CheckResult => {
+  const version = state.kind === 'installed' ? readInstalledPluginVersion(state.installation) : null
+
+  return {
+    name: 'plugin version',
+    status: version === null ? 'fail' : 'pass',
+    message:
+      version === null
+        ? 'No infra-kit plugin installed for this project to read a version from'
+        : `Plugin ${PLUGIN_KEY} version ${version}`,
+  }
+}
+
+/** How many other projects the `elsewhere` message names before it summarises the rest as a count. */
+const MAX_LISTED_PROJECTS = 3
+
+/** The install row. `elsewhere` names the projects the existing records DO cover, which is the fix. */
+const claudePluginInstalledCheck = (state: PluginInstallState): CheckResult => {
+  const name = 'plugin installed'
+
+  if (state.kind === 'installed') {
+    const { scope, projectPath } = state.installation
+    const where = projectPath === null ? '' : `, ${tildify(projectPath)}`
+
+    return { name, status: 'pass', message: `Plugin ${PLUGIN_KEY} installed (${scope ?? 'unknown'} scope${where})` }
+  }
+
+  if (state.kind === 'absent') {
+    return { name, status: 'fail', message: `Plugin ${PLUGIN_KEY} is not installed. Run: ${PLUGIN_INSTALL_COMMAND}` }
+  }
+
+  // Capped at three: a machine that has rolled this out to every repo carries a dozen records, and a
+  // row naming all of them buries the one thing the reader needs — that none of them is this project.
+  const paths = state.installations.map((entry) => {
+    return entry.projectPath === null ? '(unnamed project)' : tildify(entry.projectPath)
+  })
+  const extra = paths.length - MAX_LISTED_PROJECTS
+  const suffix = extra > 0 ? ` and ${extra} more` : ''
+  const others = `${paths.slice(0, MAX_LISTED_PROJECTS).join(', ')}${suffix}`
+
+  return {
+    name,
+    status: 'fail',
+    message: `Plugin ${PLUGIN_KEY} is installed for ${others} only, not this project. Run: ${PLUGIN_INSTALL_COMMAND}`,
+  }
+}
+
+/**
+ * The four host-state rows about the `infra-kit` Claude Code plugin: is its marketplace registered
+ * on this machine, is the plugin installed, which version, and which CLI is reporting it.
+ *
+ * Deliberately UNGATED by repo: all four read `~/.claude/`, not the project, so they answer the same
+ * way from anywhere and the row set never changes shape between directories.
+ *
+ * @example
+ * checkClaudePlugin('/repo')
+ * // => [{ name: 'marketplace registered', … }, { name: 'plugin installed', … }, … ]
+ */
+export const checkClaudePlugin = (root: string | null): CheckResult[] => {
+  const state = resolvePluginInstall(root === null ? {} : { projectPath: root })
+  const registered = isMarketplaceRegistered()
+
+  return [
+    {
+      name: 'marketplace registered',
+      status: registered ? 'pass' : 'fail',
+      message: registered
+        ? `Marketplace ${MARKETPLACE_NAME} is known to Claude Code`
+        : `Marketplace ${MARKETPLACE_NAME} is not registered. Run: claude plugin marketplace add ${MARKETPLACE_REPO}`,
+    },
+    claudePluginInstalledCheck(state),
+    claudePluginVersionCheck(state),
+    { name: 'CLI version', status: 'pass', message: `infra-kit CLI ${packageJson.version}` },
+  ]
+}
+
+/** One message per `.mcp.json` verdict; `wrong-key` is built by the caller, which has the key. */
+const MCP_MESSAGES: Record<Exclude<McpRegistration['kind'], 'wrong-key'>, string> = {
+  ok: `.mcp.json registers the server as "${MARKETPLACE_NAME}" — plugin skills resolve mcp__${MARKETPLACE_NAME}__* tools`,
+  'missing-file': `Not applicable: no .mcp.json at the repo root, so there is no server key to check`,
+  unparseable: 'Could not read mcpServers from .mcp.json — fix the JSON and re-run',
+  absent: `.mcp.json has no "${MARKETPLACE_NAME}" server. Plugin skills name mcp__${MARKETPLACE_NAME}__* tools and will resolve nothing without it`,
+}
+
+/**
+ * The verdicts that do NOT fail the row: a correct registration, and a repo with no `.mcp.json` at
+ * all. The second is a deliberate carve-out — this check is about the server's KEY, and a repo that
+ * has chosen not to register any MCP server has no key to get wrong. A file that IS present and does
+ * not name the server fails, because that is a misconfiguration rather than an abstention.
+ */
+const MCP_NON_FAILING: ReadonlySet<McpRegistration['kind']> = new Set(['ok', 'missing-file'])
+
+/**
+ * T4(b) — the live half of the tool-prefix guard, run IN the consumer repo against its own
+ * `.mcp.json` rather than against a fixture copy of it committed elsewhere.
+ *
+ * @example
+ * checkMcpServerKey('/repo') // => { name: 'MCP server key', status: 'pass', … }
+ */
+export const checkMcpServerKey = (root: string): CheckResult => {
+  const name = 'MCP server key'
+  const registration = inspectMcpRegistration(root)
+
+  if (registration.kind === 'wrong-key') {
+    return {
+      name,
+      status: 'fail',
+      message: `.mcp.json registers the infra-kit server under "${registration.key}". Rename the key to "${MARKETPLACE_NAME}": tool names are mcp__<key>__<tool>, and every plugin skill expects the mcp__${MARKETPLACE_NAME}__ prefix`,
+    }
+  }
+
+  return {
+    name,
+    status: MCP_NON_FAILING.has(registration.kind) ? 'pass' : 'fail',
+    message: MCP_MESSAGES[registration.kind],
+  }
+}
+
+/**
  * The one-time, out-of-band, ROOT command that installs the `:443` daemon. infra-kit never runs it — it
  * only ever prints it (principle 3: infra-kit probes and prints, it never elevates).
  *
@@ -1289,7 +1433,12 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
     else portlessChecks.push(pruned)
   }
 
-  const checks: CheckResult[] = [...baseChecks, ...portlessChecks, ...(await checkAgentFiles())]
+  // The Claude Code plugin rows read `~/.claude/` and answer from anywhere; the `.mcp.json` row is
+  // about a PROJECT and is omitted outside an infra-kit repo, the same way the guidance check is.
+  const repoRoot = await resolveCheckedRepoRoot()
+  const pluginChecks = [...checkClaudePlugin(repoRoot), ...(repoRoot === null ? [] : [checkMcpServerKey(repoRoot)])]
+
+  const checks: CheckResult[] = [...baseChecks, ...portlessChecks, ...(await checkAgentFiles()), ...pluginChecks]
 
   // NO rendering here, deliberately. `doctor()` has two callers — the CLI action and the MCP tool —
   // and only one of them has a terminal. Printing from inside would emit a human report into an MCP
