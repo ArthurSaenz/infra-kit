@@ -51,7 +51,7 @@ const DENYLIST = SCAN_PATTERNS.denylist.map((parts) => parts.join(''))
 // ---------------------------------------------------------------------------
 
 /** Every file under `dir`, skipping this suite's fixture tree and any installed dependency tree. */
-export function walkFiles(dir) {
+function walkFiles(dir) {
   if (EXEMPT_DIRS.has(dir) || dir.endsWith(`${sep}node_modules`)) return []
   const out = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -119,7 +119,7 @@ function parseFrontmatterLines(lines) {
 }
 
 /** `null` when the file carries no `---` fenced frontmatter at all. */
-export function parseFrontmatter(text) {
+function parseFrontmatter(text) {
   const lines = text.split('\n')
   if (lines[0]?.trim() !== '---') return null
   const end = lines.indexOf('---', 1)
@@ -149,11 +149,11 @@ function firstToken(line) {
 }
 
 /** Clause 1: the corpus is fenced command lines only; prose mentions are documentation. */
-export function commandCorpus(body) {
+function commandCorpus(body) {
   return fencedLines(body).filter((line) => COMMAND_HEADS.has(firstToken(line)))
 }
 
-export function bashRules(allowedTools) {
+function bashRules(allowedTools) {
   return [...String(allowedTools ?? '').matchAll(/Bash\(([^)]*)\)/g)].map((m) => m[1].trim())
 }
 
@@ -174,7 +174,7 @@ function canonicalLine(line) {
     .join(' ')
 }
 
-export function ruleMatches(rule, line) {
+function ruleMatches(rule, line) {
   const pattern = rule.trim().split(/\s+/).map(tokenPattern).join('\\s+')
   return new RegExp(`^${pattern}$`).test(canonicalLine(line))
 }
@@ -201,7 +201,7 @@ function clause3Errors(corpus, rules) {
 }
 
 /** U6 / plan §8.1a. Pure: takes parsed frontmatter and the markdown body, returns every violation. */
-export function checkSkillTools(frontmatter, body) {
+function checkSkillTools(frontmatter, body) {
   const corpus = commandCorpus(body)
   const rules = bashRules(frontmatter['allowed-tools'])
   const errors = [...clause2Errors(corpus, rules), ...clause3Errors(corpus, rules)]
@@ -224,6 +224,9 @@ const SELF_LOCATION_ALLOWLIST = new Map([
       'const HERE = path.dirname(fileURLToPath(import.meta.url))',
       // Entry-point check: only run the CLI when invoked directly.
       'if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {',
+      // The repo-root walk starts at the cwd on purpose: run as a plugin, the script's own
+      // directory is never the consumer repo (comment-verifier/__tests__/repo-root.test.mjs).
+      'const start = process.cwd()',
     ],
   ],
   [
@@ -281,7 +284,7 @@ function selfRootedVars(lines, params) {
 }
 
 /** U12. `allowed` is the exact-text allow-list of legitimate read sites for this file. */
-export function checkSelfLocation(text, allowed = []) {
+function checkSelfLocation(text, allowed = []) {
   const allowSet = new Set(allowed)
   const lines = text.split('\n')
   const vars = selfRootedVars(lines, parameterNames(text))
@@ -346,7 +349,7 @@ function literalPathHits(file, text) {
 }
 
 /** A `scripts/` invocation inside a fence must be rooted at the plugin root, not at the repo. */
-export function unrootedScriptLines(text) {
+function unrootedScriptLines(text) {
   return fencedLines(text)
     .filter((line) => COMMAND_HEADS.has(firstToken(line)) && line.includes('scripts/'))
     .filter((line) => !line.slice(0, line.indexOf('scripts/')).includes('CLAUDE_PLUGIN_ROOT'))
@@ -451,10 +454,7 @@ const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\
 test('U8: plugin.json version is semver and the marketplace entry carries none', () => {
   assert.match(readPluginJson().version, SEMVER_RE)
   const marketplace = join(REPO_ROOT, '.claude-plugin', 'marketplace.json')
-  if (!existsSync(marketplace)) {
-    // PR C adds this file; until then there is no entry to contradict plugin.json.
-    return
-  }
+  assert.ok(existsSync(marketplace), `${rel(marketplace)} is missing`)
   const entry = JSON.parse(readText(marketplace)).plugins?.find((p) => p.name === 'infra-kit')
   assert.ok(entry, 'marketplace.json has no infra-kit entry')
   assert.ok(!('version' in entry), 'the marketplace entry must not pin a version')

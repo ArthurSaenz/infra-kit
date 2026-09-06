@@ -256,30 +256,27 @@ const logPointerResult = (root: string, result: PluginPointerResult): void => {
  * plugin is actually installed on this machine.
  *
  * Repo-gated on the SAME root the guidance sync resolved, so both steps agree about what "this
- * project" is, and a run outside an infra-kit repo does nothing at all rather than writing a
- * `.claude/` directory into whatever the cwd happens to be.
+ * project" is; outside an infra-kit repo it does nothing rather than writing a `.claude/` directory
+ * into whatever the cwd happens to be.
+ *
+ * `init` INSTALLS NOTHING. The pointer is config; the install is a `claude` command each teammate
+ * runs once, printed only when the plugin is missing FOR THIS PROJECT — a user-scope install, or a
+ * project-scope one recorded against this very root, counts as present. Printing it on every run of
+ * an already-correct machine is how a setup command teaches people to stop reading its output.
  */
-// `init` INSTALLS NOTHING. The pointer is config; the install is a `claude` command each teammate
-// runs once, printed here only when it is missing — printing it on every run of an already-correct
-// machine is how a setup command teaches people to stop reading its output.
-//
-// Best-effort by construction: `init`'s contract is shell setup, and neither an unwritable
-// `.claude/settings.json` nor a hand-broken `~/.claude/plugins/installed_plugins.json` may turn a
-// machine-setup command red.
 const syncPluginPointer = (root: string | null): void => {
   if (root === null) return
 
   try {
     logPointerResult(root, ensurePluginPointer(path.join(root, '.claude', 'settings.json')))
 
-    // "Installed" means installed FOR THIS PROJECT: a user-scope install, or a project-scope one
-    // recorded against this very root. A copy installed for another repo does not make it active
-    // here, so the command still gets printed.
     if (resolvePluginInstall({ projectPath: root }).kind === 'installed') return
 
     logger.info('The infra-kit Claude Code plugin is not installed on this machine. Install it with:')
     logger.info(PLUGIN_INSTALL_COMMAND)
   } catch (err) {
+    // Best-effort: neither an unwritable `.claude/settings.json` nor a hand-broken
+    // `~/.claude/plugins/installed_plugins.json` may turn a machine-setup command red.
     logger.debug({ err, msg: 'Skipped the Claude Code plugin pointer (init).' })
   }
 }

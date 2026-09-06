@@ -978,8 +978,8 @@ const claudePluginInstalledCheck = (state: PluginInstallState): CheckResult => {
  * The four host-state rows about the `infra-kit` Claude Code plugin: is its marketplace registered
  * on this machine, is the plugin installed, which version, and which CLI is reporting it.
  *
- * Deliberately UNGATED by repo: all four read `~/.claude/`, not the project, so they answer the same
- * way from anywhere and the row set never changes shape between directories.
+ * All four are emitted whatever `root` is, so the row set never changes shape between directories.
+ * `root` narrows the VERDICT only: it is the project a project-scope install has to name to count.
  *
  * @example
  * checkClaudePlugin('/repo')
@@ -1006,7 +1006,7 @@ export const checkClaudePlugin = (root: string | null): CheckResult[] => {
 /** One message per `.mcp.json` verdict; `wrong-key` is built by the caller, which has the key. */
 const MCP_MESSAGES: Record<Exclude<McpRegistration['kind'], 'wrong-key'>, string> = {
   ok: `.mcp.json registers the server as "${MARKETPLACE_NAME}" — plugin skills resolve mcp__${MARKETPLACE_NAME}__* tools`,
-  'missing-file': `Not applicable: no .mcp.json at the repo root, so there is no server key to check`,
+  'missing-file': 'Not applicable: no .mcp.json at the repo root, so there is no server key to check',
   unparseable: 'Could not read mcpServers from .mcp.json — fix the JSON and re-run',
   absent: `.mcp.json has no "${MARKETPLACE_NAME}" server. Plugin skills name mcp__${MARKETPLACE_NAME}__* tools and will resolve nothing without it`,
 }

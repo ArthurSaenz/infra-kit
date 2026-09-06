@@ -4,11 +4,10 @@
 //
 // A verdict entry is matched by `textHash` rather than by line number: any edit shifts every line
 // below it, and a line-keyed fix would edit the wrong comment while the diff still looked plausible.
-
-import { createHash } from 'node:crypto'
-import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -18,12 +17,17 @@ const ACTIONS = [...WRITE_ACTIONS, 'rename-or-refactor-instead', 'keep']
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
+// The repo under review is the one the command runs IN, never the one this file lives in: as a
+// plugin skill this script executes from the plugin root (a cache copy with no `.git`, or the
+// infra-kit checkout when the marketplace is a local directory), so walking up from HERE finds
+// either nothing or the wrong repository.
 const findRepoRoot = () => {
-  let dir = HERE
+  const start = process.cwd()
+  let dir = start
   while (true) {
     if (fs.existsSync(path.join(dir, '.git'))) return dir
     const parent = path.dirname(dir)
-    if (parent === dir) return HERE
+    if (parent === dir) return start
     dir = parent
   }
 }
@@ -94,7 +98,9 @@ const typescript = () => {
   try {
     cachedTypescript = requireFromRepo('typescript')
   } catch (cause) {
-    throw new Error(`comment-verifier reads comments with the repo's typescript, which failed to load: ${cause.message}`)
+    throw new Error(
+      `comment-verifier reads comments with the repo's typescript, which failed to load: ${cause.message}`,
+    )
   }
   return cachedTypescript
 }
@@ -218,8 +224,10 @@ const faultsIn = (entry) => {
   if (!/^[0-9a-f]{12}$/.test(entry.textHash ?? '')) faults.push('textHash must be 12 lowercase hex characters')
   if (!ACTIONS.includes(entry.action)) faults.push(`unknown action ${JSON.stringify(entry.action)}`)
   if (!isNonEmptyString(entry.reason)) faults.push('reason must be non-empty')
-  if (addsBytes(entry.action) && !isNonEmptyString(entry.replacement)) faults.push(`${entry.action} requires a non-empty replacement`)
-  if (!addsBytes(entry.action) && entry.replacement !== undefined) faults.push(`${entry.action} must not carry a replacement`)
+  if (addsBytes(entry.action) && !isNonEmptyString(entry.replacement))
+    faults.push(`${entry.action} requires a non-empty replacement`)
+  if (!addsBytes(entry.action) && entry.replacement !== undefined)
+    faults.push(`${entry.action} must not carry a replacement`)
   return faults
 }
 
@@ -326,7 +334,9 @@ const verifyFile = (file, rawBefore, rawAfter, entries) => {
   const outside = compareViews(beforeView, afterView)
   if (outside.ok) return []
 
-  return [{ file, line: outside.line, reason: `unsanctioned change at ${file}:${outside.line} — ${describeHunk(outside)}` }]
+  return [
+    { file, line: outside.line, reason: `unsanctioned change at ${file}:${outside.line} — ${describeHunk(outside)}` },
+  ]
 }
 
 const failureFor = (file, entry, reason) => ({ file, line: entry.line, reason, entry })
