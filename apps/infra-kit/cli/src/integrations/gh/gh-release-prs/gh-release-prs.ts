@@ -1,10 +1,11 @@
 import { $ } from 'zx'
 
 import { OperationError } from 'src/lib/errors/operation-error'
+import { assertCleanCheckout } from 'src/lib/git-guard'
 import { logger } from 'src/lib/logger'
 import { compareReleaseIds, formatBranchName, formatPrTitle, parseBranchName } from 'src/lib/release-id'
 import type { ReleaseId } from 'src/lib/release-id'
-import { getBaseBranch } from 'src/lib/release-utils'
+import { buildReleasePrBody, getBaseBranch } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 
 interface ReleasePR {
@@ -171,9 +172,7 @@ export const updateReleasePRBody = async (args: UpdateReleasePRBodyArgs): Promis
   const { branch, body } = args
 
   try {
-    $.quiet = true
-    await $`gh pr edit ${branch} --body ${body}`
-    $.quiet = false
+    await $({ quiet: true })`gh pr edit ${branch} --body ${body}`
   } catch (error: unknown) {
     logger.error({ error, branch }, `Error updating release PR body for ${branch}`)
     throw error
@@ -185,46 +184,127 @@ interface CreateReleaseBranchArgs {
   jiraVersionUrl: string
   type: ReleaseType
   description?: string
+  /**
+   * The `origin/<base>` SHA `prepareGitForRelease` just landed on. The caller guarantees a
+   * freshly fetched and fast-forwarded base checkout; this is how that guarantee is checked
+   * at the moment it is consumed rather than taken on trust.
+   */
+  baseSha: string
+}
+
+/**
+ * Roll back a release branch that was created locally but never reached the remote.
+ *
+ * Only the local-only window is undone, and the probe is what establishes that window: what
+ * the code can observe is not "the push has not happened" but "the push *call* rejected", and
+ * a push the remote accepted whose transport then died exits non-zero with the ref created.
+ * So a ref that exists on origin — or a probe that cannot answer — means keep the branch and
+ * report it. Deleting there would destroy the operator's only handle on a half-made release.
+ */
+// Never throws. It runs on the failure path, and an exception here would replace the real
+// diagnosis with whatever the cleanup tripped over. `git switch` has to come first because
+// `deleteLocalBranch` silently no-ops on the current branch, so a rollback that skipped it
+// would report success while leaving the branch in place.
+const cleanupUnpushedBranch = async (branchName: string, baseBranch: string): Promise<void> => {
+  const git = $({ quiet: true, nothrow: true })
+
+  const refs = await git`git ls-remote --heads origin ${branchName}`
+  const probeFailed = refs.exitCode !== 0
+  const onRemote = refs.stdout.trim().length > 0
+
+  if (probeFailed || onRemote) {
+    // Two different states, reported as two different sentences. Telling an operator a branch
+    // "may" exist when we just listed it wastes their time re-checking; telling them it does
+    // exist when the probe never answered would be a claim we cannot support.
+    logger.error(
+      { branchName },
+      probeFailed
+        ? `could not reach origin to check whether ${branchName} was pushed — the branch is left in place; check with \`git ls-remote --heads origin ${branchName}\` before deleting anything`
+        : `release branch ${branchName} exists on origin without a PR — left in place; delete it with \`git push origin --delete ${branchName}\` once you are sure`,
+    )
+
+    return
+  }
+
+  // The switch has to land before the delete: git refuses to delete the branch you are standing
+  // on, and under `nothrow` that refusal is silent. So the delete is checked rather than assumed —
+  // a cleanup that quietly did nothing is worse than one that says so, because the operator would
+  // otherwise discover it only when the retry fails with "branch already exists".
+  await git`git switch ${baseBranch}`
+
+  const deleted = await git`git branch -D ${branchName}`
+
+  if (deleted.exitCode !== 0) {
+    logger.error(
+      { branchName },
+      `could not remove the local branch ${branchName} after a failed release — delete it with \`git branch -D ${branchName}\` before retrying`,
+    )
+  }
 }
 
 // Function to create a release branch
 export const createReleaseBranch = async (
   args: CreateReleaseBranchArgs,
 ): Promise<{ branchName: string; prUrl: string }> => {
-  const { id, jiraVersionUrl, type, description } = args
+  const { id, jiraVersionUrl, type, description, baseSha } = args
   const prTitle = formatPrTitle(id, type)
   const baseBranch = getBaseBranch(type)
+  const git = $({ quiet: true })
 
   const branchName = formatBranchName(id)
 
-  const body = description && description.trim() !== '' ? `${jiraVersionUrl}\n\n${description}` : `${jiraVersionUrl} \n`
+  const body = buildReleasePrBody(jiraVersionUrl, description)
 
   try {
-    $.quiet = true
+    // The base switch/pull the old code repeated here is gone: `prepareGitForRelease` already
+    // did it, and doing it twice only widened the window in which the checkout could change
+    // under us. What replaces it is a check rather than a repeat — the two assertions below
+    // are the *last* thing that happens before the first destructive command, because the
+    // caller's own checks are separated from this point by a Jira round trip.
+    await assertCleanCheckout({ operation: `create release branch ${branchName}` })
 
-    await $`git switch ${baseBranch}`
-    await $`git pull origin ${baseBranch}`
-    await $`git checkout -b ${branchName}`
-    await $`git push -u origin ${branchName}`
-    await $`git commit --allow-empty-message --allow-empty --message ''`
-    await $`git push origin ${branchName}`
+    const head = (await git`git rev-parse HEAD`).stdout.trim()
 
-    // Create PR and capture URL
-    const prResult = await $`gh pr create --title ${prTitle} --body ${body} --base ${baseBranch} --head ${branchName}`
+    if (head !== baseSha) {
+      throw new OperationError(undefined, {
+        operation: `create release branch ${branchName}`,
+        remediation: 'something moved the checkout mid-run — re-run the release',
+        stderrExcerpt: `expected to be on ${baseSha.slice(0, 8)} (${baseBranch}) but HEAD is ${head.slice(0, 8)}`,
+      })
+    }
 
-    const prLink = prResult.stdout.trim()
+    await git`git checkout -b ${branchName}`
 
-    await $`git switch ${baseBranch}`
+    // Everything from here on can leave a branch behind, so it runs under cleanup. The commit
+    // precedes the push deliberately: pushing first published a branch with zero commits, so
+    // any later failure left a remote ref that could not even take a PR (`gh pr create`
+    // rejects "no commits between base and head"). One push, of a branch that is already
+    // complete, makes the local-only window cover the ordinary failures instead of one command.
+    try {
+      await git`git commit --allow-empty-message --allow-empty --message ''`
+      await git`git push -u origin ${branchName}`
 
-    $.quiet = false
+      const prResult =
+        await git`gh pr create --title ${prTitle} --body ${body} --base ${baseBranch} --head ${branchName}`
 
-    return {
-      branchName,
-      prUrl: prLink,
+      return {
+        branchName,
+        prUrl: prResult.stdout.trim(),
+      }
+    } catch (error: unknown) {
+      await cleanupUnpushedBranch(branchName, baseBranch)
+
+      throw error
     }
   } catch (error: unknown) {
     logger.error({ error, branchName }, `Error creating release branch ${branchName}`)
 
     throw error
+  } finally {
+    // In a `finally`, and swallowing: the old code put this switch on the success path only,
+    // so a failure left the operator standing on a half-made release branch — the one place
+    // the "you end on the base branch" contract mattered most. Swallowing is required for the
+    // same reason the cleanup swallows: a throw here would replace the original error.
+    await $({ quiet: true, nothrow: true })`git switch ${baseBranch}`
   }
 }

@@ -20,6 +20,8 @@ const responses = vi.hoisted(() => {
     release: [] as FakePR[],
     hotfix: [] as FakePR[],
     calls: [] as { strings: string[]; values: unknown[] }[],
+    /** The base SHA `prepareGitForRelease` would have returned; `git rev-parse HEAD` echoes it. */
+    baseSha: 'a'.repeat(40),
   }
 })
 
@@ -31,24 +33,58 @@ const responses = vi.hoisted(() => {
 vi.mock('zx', async (importOriginal) => {
   const actual = await importOriginal<typeof import('zx')>()
 
-  return {
-    ...actual,
-    $: vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
-      const command = strings.join('')
+  // The single source of truth for what a mocked command answers. `createReleaseBranch` now
+  // reads git state as well as writing it — a clean-tree assertion, a HEAD check against the
+  // base SHA, and a remote-ref probe on the cleanup path — and the previous fallthrough
+  // answered all three with the `gh pr list` JSON payload. That made `git status --porcelain`
+  // return "[]", i.e. a dirty tree, so the branch cut refused before it began.
+  const run = (strings: TemplateStringsArray, values: unknown[]) => {
+    const command = strings.join('')
 
-      responses.calls.push({ strings: [...strings], values })
+    responses.calls.push({ strings: [...strings], values })
 
-      if (command.includes('gh pr create')) {
-        return Promise.resolve({ stdout: 'https://github.com/acme/repo/pull/123' })
-      }
+    if (command.includes('gh pr create')) {
+      return Promise.resolve({ stdout: 'https://github.com/acme/repo/pull/123', exitCode: 0 })
+    }
 
-      if (command.includes('--base main')) {
-        return Promise.resolve({ stdout: JSON.stringify(responses.hotfix) })
-      }
+    if (command.includes('git status --porcelain')) {
+      return Promise.resolve({ stdout: '', exitCode: 0 })
+    }
 
-      return Promise.resolve({ stdout: JSON.stringify(responses.release) })
-    }),
+    if (command.includes('git rev-parse HEAD')) {
+      return Promise.resolve({ stdout: responses.baseSha, exitCode: 0 })
+    }
+
+    if (command.includes('git ls-remote')) {
+      return Promise.resolve({ stdout: '', exitCode: 0 })
+    }
+
+    if (command.startsWith('git ')) {
+      return Promise.resolve({ stdout: '', exitCode: 0 })
+    }
+
+    if (command.includes('--base main')) {
+      return Promise.resolve({ stdout: JSON.stringify(responses.hotfix), exitCode: 0 })
+    }
+
+    return Promise.resolve({ stdout: JSON.stringify(responses.release), exitCode: 0 })
   }
+
+  // `$` is now called both as a tagged template and as `$({ quiet: true })` — the
+  // per-invocation form that replaced the global `$.quiet` flag — so the mock has to answer
+  // an options object with a fresh tagged-template function rather than treating it as a
+  // command.
+  const $ = vi.fn((strings: TemplateStringsArray | Record<string, unknown>, ...values: unknown[]) => {
+    if (!Array.isArray(strings)) {
+      return (inner: TemplateStringsArray, ...innerValues: unknown[]) => {
+        return run(inner, innerValues)
+      }
+    }
+
+    return run(strings as TemplateStringsArray, values)
+  })
+
+  return { ...actual, $ }
 })
 
 vi.mock('src/lib/logger', () => {
@@ -271,7 +307,12 @@ describe('createReleaseBranch (gh pr create title quoting)', () => {
   it("delivers a spaced title to gh as the literal string, with no $'...' corruption", async () => {
     const id = { kind: 'version', semver: { major: 1, minor: 89, patch: 1 }, raw: '1.89.1' } as const
 
-    await createReleaseBranch({ id, jiraVersionUrl: 'https://jira.example/v1.89.1', type: 'hotfix' })
+    await createReleaseBranch({
+      id,
+      jiraVersionUrl: 'https://jira.example/v1.89.1',
+      type: 'hotfix',
+      baseSha: responses.baseSha,
+    })
 
     const command = findCreateCommand()
 
@@ -285,7 +326,12 @@ describe('createReleaseBranch (gh pr create title quoting)', () => {
   it('delivers a named release title to gh as the literal string', async () => {
     const id = { kind: 'name', name: 'checkout-redesign', raw: 'checkout-redesign' } as const
 
-    await createReleaseBranch({ id, jiraVersionUrl: 'https://jira.example/checkout-redesign', type: 'regular' })
+    await createReleaseBranch({
+      id,
+      jiraVersionUrl: 'https://jira.example/checkout-redesign',
+      type: 'regular',
+      baseSha: responses.baseSha,
+    })
 
     const command = findCreateCommand()
 

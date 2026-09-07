@@ -2,8 +2,7 @@ import input from '@inquirer/input'
 import { z } from 'zod'
 
 import { getReleasePRsWithInfo, updateReleasePRBody } from 'src/integrations/gh'
-import { findVersionByName, loadJiraConfig, updateJiraVersion } from 'src/integrations/jira'
-import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
+import { buildJiraVersionUrl, findVersionByName, loadJiraConfig, updateJiraVersion } from 'src/integrations/jira'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
@@ -11,6 +10,7 @@ import { withEscape } from 'src/lib/prompts/escapable-context'
 import { pickReleaseBranch as pickReleaseBranchPrompt } from 'src/lib/prompts/release-picker'
 import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
 import {
+  buildReleasePrBody,
   detectReleaseType,
   formatBranchPickerItems,
   getJiraDescriptions,
@@ -23,14 +23,6 @@ import type { RequiredConfirmedOptionArg } from 'src/types'
 interface ReleaseDescEditArgs extends RequiredConfirmedOptionArg {
   version?: string
   description?: string
-}
-
-const buildJiraVersionUrl = (jiraConfig: JiraConfig, version: JiraVersion): string => {
-  return `${jiraConfig.baseUrl}/projects/${version.projectId}/versions/${version.id}/tab/release-report-all-issues`
-}
-
-const buildPRBody = (jiraVersionUrl: string, description: string): string => {
-  return description.trim() !== '' ? `${jiraVersionUrl}\n\n${description}` : `${jiraVersionUrl} \n`
 }
 
 const pickReleaseBranch = async (): Promise<{ branch: string; type: ReleaseType }> => {
@@ -180,7 +172,7 @@ export const releaseDescEdit = async (args: ReleaseDescEditArgs) => {
   await updateJiraVersion({ versionId: jiraVersion.id, description: newDescription }, jiraConfig)
 
   const jiraVersionUrl = buildJiraVersionUrl(jiraConfig, jiraVersion)
-  const body = buildPRBody(jiraVersionUrl, newDescription)
+  const body = buildReleasePrBody(jiraVersionUrl, newDescription)
 
   await updateReleasePRBody({ branch: selectedBranch, body })
 

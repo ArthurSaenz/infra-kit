@@ -1,8 +1,15 @@
 import { $ } from 'zx'
 
 import { createReleaseBranch } from 'src/integrations/gh'
-import { createJiraVersion, getProjectVersions, loadJiraConfigOptional } from 'src/integrations/jira'
-import type { JiraConfig } from 'src/integrations/jira'
+import {
+  buildJiraVersionUrl,
+  createJiraVersion,
+  findVersionByName,
+  getProjectVersions,
+  loadJiraConfigOptional,
+  updateJiraVersion,
+} from 'src/integrations/jira'
+import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
 import { OperationError } from 'src/lib/errors/operation-error'
 // Type-only cross-layer import: src/lib/prompts/types.ts is intentionally a
 // zero-import leaf so it can be imported from any layer (including this one)
@@ -24,6 +31,17 @@ export const getBaseBranch = (type: ReleaseType): string => {
   return type === 'hotfix' ? 'main' : 'dev'
 }
 
+/**
+ * The body of a release PR: the Jira fix-version link, then the description when there is one.
+ *
+ * Single home for a rule that was written out twice, byte for byte — once where the PR is opened
+ * and once where its description is edited. Two copies of a format string drift silently, and the
+ * drift only shows up as a PR whose body no longer matches what the other command would write.
+ */
+export const buildReleasePrBody = (jiraVersionUrl: string, description?: string): string => {
+  return (description ?? '').trim() !== '' ? `${jiraVersionUrl}\n\n${description}` : `${jiraVersionUrl} \n`
+}
+
 export interface ReleaseCreationResult {
   version: string
   type: ReleaseType
@@ -33,19 +51,56 @@ export interface ReleaseCreationResult {
 }
 
 /**
- * Prepare git repository for release creation
- * Fetches latest changes, switches to base branch, and pulls latest
+ * Put the operator's checkout on a freshly fetched base branch and report the SHA it landed
+ * on, so the caller can prove that checkout is still the verified one when it finally mutates.
+ *
+ * `--ff-only` on the pull: without it a base branch that has drifted locally is *merged*
+ * rather than refused, which writes a merge commit onto `dev`/`main` in the operator's own
+ * checkout and cuts the release from a commit nobody reviewed. Refusing is the safe half of
+ * that trade — the cost of a false refusal is one `git pull --rebase`, the cost of a false
+ * proceed is a release branch rooted in an accidental merge.
  */
-export const prepareGitForRelease = async (type: ReleaseType = 'regular'): Promise<void> => {
+// Quiet is scoped per invocation rather than set on the global `$`. The old form assigned
+// `$.quiet = true` and cleared it only after the last successful statement, so any throw in
+// between left the whole process silent — and this process is also a long-lived MCP server,
+// so the leak outlived the failing tool call and muted every command after it.
+export const prepareGitForRelease = async (type: ReleaseType = 'regular'): Promise<string> => {
   const baseBranch = getBaseBranch(type)
+  const git = $({ quiet: true })
 
-  $.quiet = true
+  await git`git fetch origin`
+  await git`git switch ${baseBranch}`
 
-  await $`git fetch origin`
-  await $`git switch ${baseBranch}`
-  await $`git pull origin ${baseBranch}`
+  try {
+    await git`git pull --ff-only origin ${baseBranch}`
+  } catch (error) {
+    // `nothrow`, because this probe exists only to enrich the refusal. If it fails in turn —
+    // `origin/<base>` missing, a broken remote — throwing from here would replace an accurate
+    // "your base branch has diverged" with an unrelated error about counting commits.
+    const counts = await $({
+      quiet: true,
+      nothrow: true,
+    })`git rev-list --left-right --count origin/${baseBranch}...${baseBranch}`
+    const [behind = '?', ahead = '?'] = counts.exitCode === 0 ? counts.stdout.trim().split(/\s+/) : []
+    const diverged = ahead !== '0' || behind !== '0'
 
-  $.quiet = false
+    // The excerpt is attached ONLY when the branches really have diverged. `buildMessage` gives an
+    // explicit `stderrExcerpt` priority over the cause, so an unconditional one would overwrite
+    // git's own text on every OTHER `--ff-only` failure — auth, network, a branch with no upstream —
+    // and print "local dev is 0 commit(s) ahead and 0 behind" next to advice about diverging. Left
+    // off, `extractStderr` walks to the zx error and reports what git actually said.
+    throw new OperationError(error, {
+      operation: `fast-forward ${baseBranch} onto origin/${baseBranch}`,
+      remediation: diverged
+        ? `your local ${baseBranch} has diverged — rebase or reset it to origin/${baseBranch}, then retry`
+        : `check your access to origin and that ${baseBranch} tracks it, then retry`,
+      ...(diverged
+        ? { stderrExcerpt: `local ${baseBranch} is ${ahead} commit(s) ahead and ${behind} behind origin/${baseBranch}` }
+        : {}),
+    })
+  }
+
+  return (await git`git rev-parse HEAD`).stdout.trim()
 }
 
 interface CreateSingleReleaseArgs {
@@ -53,33 +108,85 @@ interface CreateSingleReleaseArgs {
   jiraConfig: JiraConfig
   description?: string
   type?: ReleaseType
+  /** The base-branch SHA from {@link prepareGitForRelease}, forwarded to the branch cut. */
+  baseSha: string
+}
+
+interface EnsureJiraVersionArgs {
+  versionName: string
+  jiraConfig: JiraConfig
+  description?: string
+}
+
+/**
+ * Return the project's fix version named `versionName`, creating it only if it is absent.
+ *
+ * Idempotent on purpose. `createJiraVersion` POSTs unconditionally and Jira answers a
+ * duplicate name with a 4xx, so the unconditional create made a *retry* impossible: the
+ * version outlives any later git failure, and the next attempt at the same release dies on
+ * the leftover rather than on whatever actually went wrong. Reusing it costs one lookup — the
+ * same `getProjectVersions` call this module already makes elsewhere — and keeps the older
+ * invariant that a release PR never exists without its fix version.
+ */
+// Reuse is deliberately not silent about two things:
+//
+// - A differing description is written through. The PR body is composed from the description
+//   passed to THIS call, so a bare reuse would leave the PR and the fix version disagreeing
+//   permanently, with nothing to indicate which one is current.
+// - A released or archived version is refused rather than reused. Re-cutting a release whose
+//   version was already delivered is a plausible mistake, and quietly attaching a new branch
+//   to a closed version would misreport the delivered scope.
+const ensureJiraVersion = async (args: EnsureJiraVersionArgs): Promise<JiraVersion> => {
+  const { versionName, jiraConfig, description } = args
+  const existing = await findVersionByName(versionName, jiraConfig)
+
+  if (!existing) {
+    const created = await createJiraVersion(
+      {
+        name: versionName,
+        projectId: jiraConfig.projectId,
+        description: description || '',
+        released: false,
+        archived: false,
+      },
+      jiraConfig,
+    )
+
+    return created.version!
+  }
+
+  if (existing.released || existing.archived) {
+    throw new OperationError(undefined, {
+      operation: `reuse Jira fix version "${versionName}"`,
+      remediation: 'pick a different version, or un-release it in Jira first',
+      stderrExcerpt: `fix version "${versionName}" is already ${existing.released ? 'released' : 'archived'}`,
+    })
+  }
+
+  const wanted = description || ''
+
+  if (wanted !== '' && wanted !== (existing.description ?? '')) {
+    await updateJiraVersion({ versionId: existing.id, description: wanted }, jiraConfig)
+
+    return { ...existing, description: wanted }
+  }
+
+  return existing
 }
 
 /**
  * Create a single release by creating both Jira version and GitHub release branch
  */
 export const createSingleRelease = async (args: CreateSingleReleaseArgs): Promise<ReleaseCreationResult> => {
-  const { id, jiraConfig, description, type = 'regular' } = args
-  // 1. Create Jira version (mandatory). For versioned releases this is
+  const { id, jiraConfig, description, type = 'regular', baseSha } = args
+  // 1. Ensure the Jira version exists (mandatory). For versioned releases this is
   // "v1.2.3" (byte-identical to before); for named releases it is "<name>".
   const versionName = formatJiraName(id)
-
-  const result = await createJiraVersion(
-    {
-      name: versionName,
-      projectId: jiraConfig.projectId,
-      description: description || '',
-      released: false,
-      archived: false,
-    },
-    jiraConfig,
-  )
-
-  // Construct user-friendly Jira URL using project key from API response
-  const jiraVersionUrl = `${jiraConfig.baseUrl}/projects/${result.version!.projectId}/versions/${result.version!.id}/tab/release-report-all-issues`
+  const jiraVersion = await ensureJiraVersion({ versionName, jiraConfig, description })
+  const jiraVersionUrl = buildJiraVersionUrl(jiraConfig, jiraVersion)
 
   // 2. Create GitHub release branch
-  const releaseInfo = await createReleaseBranch({ id, jiraVersionUrl, type, description })
+  const releaseInfo = await createReleaseBranch({ id, jiraVersionUrl, type, description, baseSha })
 
   return {
     version: displayLabel(id),

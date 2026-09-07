@@ -1,4 +1,5 @@
 export {
+  buildReleasePrBody,
   createSingleRelease,
   detectReleaseType,
   formatBranchPickerItems,

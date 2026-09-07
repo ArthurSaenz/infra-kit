@@ -1,0 +1,112 @@
+# release create — auto-switch safety (Ship 1)
+
+Plan: docs/release-create-switch-safety-plan.md (ralplan --deliberate, Critic APPROVE at iteration 3)
+
+## Implemented
+
+US-001  operation-error.ts: OperationError keeps `stderrExcerpt` on the instance and
+        `extractStderr` now WALKS the cause chain (bounded by a seen-set), reading both
+        `.stderr` and `.stderrExcerpt`. Without this every per-entry refusal was erased by
+        executeOne's re-wrap — the outer error carried only its own generic remediation.
+        git-utils.ts: `getWorkingTreeStatus(): Promise<string[]>` added; isWorkingTreeClean
+        derives from it. The porcelain output used to be read and thrown away.
+
+US-002  git-guard.ts: `assertCleanCheckout` (two channels — full list to logger.error, first 4
+        paths + honest "(+N more)" into the OperationError, because the excerpt is capped at
+        200 bytes and joined into ONE line) and `assertBaseBranchSwitchable` (first leg is
+        `getCurrentBranch() === base`; match by branch name, never by path).
+        assertManagementContext delegates its clean-tree leg.
+
+US-003  release-utils.ts: `ensureJiraVersion` — findVersionByName ?? createJiraVersion.
+        Writes a changed description through via updateJiraVersion; refuses a released or
+        archived version rather than reusing it.
+        buildJiraVersionUrl moved to integrations/jira (exporting it from release-desc-edit
+        would have closed a cycle: that command already imports lib/release-utils).
+
+US-004  gh-release-prs.ts: order is now checkout -b -> empty commit -> ONE push -u -> gh pr
+        create. Cleanup region opens only AFTER checkout -b resolves. `cleanupUnpushedBranch`
+        probes `git ls-remote`; a present ref OR a failed probe means keep-and-report.
+        Trailing `git switch <base>` moved into a swallowing `finally`.
+        prepareGitForRelease: `--ff-only`, returns the base SHA, per-invocation quiet.
+
+US-005  release-create.ts: assertManagementContext hoisted to the first statement;
+        assertBaseBranchSwitchable after assertHomogeneousReleaseType (earliest point `base`
+        exists) and before confirmReleases; per-entry assertCleanCheckout inside executeOne's
+        try; baseSha threaded through createSingleRelease.
+
+US-006  Tests green. New: create-release-branch-cleanup.test.ts (11 cases),
+        ensure-jira-version.test.ts (6), git-guard additions (8),
+        release-create-batch.test.ts (7, incl. invocation-order assertions) and
+        prepare-git-for-release.test.ts (8) — the first handler-level coverage this command has.
+
+## Learnings
+
+- The zx mock in gh-release-prs.test.ts had a fallthrough returning the `gh pr list` JSON, so
+  `git status --porcelain` answered "[]" = dirty. Any new git READ inside a mocked-zx module
+  silently inverts. New mocks answer per command and support `$({quiet:true})`.
+- PM4 (commit-msg hook rejecting the empty commit) was mis-scoped as a landing gate: the empty
+  commit ALREADY runs today, so a hook would break the command as it stands. A0 only moves the
+  failure ahead of the push, which is strictly better. Gate dropped.
+- git-guard.test.ts mocks src/lib/git-utils wholesale, so ANY new import there breaks it with
+  "No X export is defined on the mock" — add to the factory, not just to the source.
+
+## Measured during implementation
+
+- MUTATION-TESTED the cause-walk: reverting extractStderr to a one-level read makes
+  release-create-batch.test.ts fail with the message "failed to create release v1.2.3 (regular)
+  — try: verify the version or name is unique and the base branch is clean" — the paths gone,
+  exactly the silent-erasure defect. The assertion is load-bearing, not decorative.
+- getWorkingTreeStatus trims only the RIGHT side: the two leading porcelain columns ARE the
+  status, so left-trimming renders " M file" (worktree-modified) as "M file" (staged).
+
+- zx `$({ quiet: true, nothrow: true })` verified empirically: a failing command yields
+  `exitCode: 128` instead of throwing, so cleanupUnpushedBranch's probe-failure branch is live
+  code, not dead. `git ls-remote` on an absent branch gives exitCode 0 with empty stdout.
+- Updating release-create's MCP `description` (attempted, then reverted as Ship 2 scope) fails
+  `mcp-stdio.e2e.test.ts:1495` — the `unchangedControl` self-check — BEFORE the whole-object
+  compare at :1560. That is the plan's C-A prediction confirmed against the running test.
+
+## Fixed after reviewer rejection
+
+- Finding 2 (real bug): the divergence `stderrExcerpt` was attached UNCONDITIONALLY, and
+  buildMessage gives it priority over the cause — so every non-divergence `--ff-only` failure
+  (auth, network, no upstream) printed "local dev is 0 ahead and 0 behind" and hid git's own
+  error. Now attached only when ahead/behind are non-zero; otherwise git speaks.
+- Ship-1 criterion 5: `parseRemoteRefs` (load-existing-versions.ts) still toggled the GLOBAL
+  `$.quiet`. Balanced, so it leaked nothing, but it silenced a shared `$` across a network call
+  in a long-lived MCP server. Now `$({ quiet: true })`. No global `$.quiet` remains on the path.
+- V1 (vacuous tests): the zx mock resolved every override regardless of `nothrow`, so the
+  probe-failure tests passed even with `nothrow` deleted. The mock now rejects a non-zero exit
+  unless the invocation opted in — MUTATION-VERIFIED: deleting `nothrow` reddens 2 tests.
+- US-004 AC5: `prepareGitForRelease` had ZERO coverage. Added 8 tests, including the ahead/behind
+  field order by value (left=behind, right=ahead — the easiest line here to transpose).
+- V2/V3: two assertions that could not fail (`null === 'dev'` under any predicate; a test named
+  for switch+pull that only checked pull) replaced with ones that can.
+- Findings 3 and 4 (silent failed delete; one message for two different states) were already
+  fixed during implementation.
+
+## Deslop pass (bounded to this session's files)
+
+- Duplication removed: the release-PR body rule existed in TWO byte-identical copies
+  (gh-release-prs.ts and release-desc-edit.ts) — now one `buildReleasePrBody` in release-utils,
+  which BOTH callers already imported, so no new import edge. A format string kept in two places
+  drifts silently and shows up only as two commands writing different PR bodies.
+- Duplication removed: my own `rejection` test helper had 3 copies -> `expect-rejection.ts`.
+- Duplication removed: the options-capturing, nothrow-honouring zx dispatcher had 2 copies ->
+  `git-utils/__tests__/zx-command-mock.ts`. This is the part whose ABSENCE made tests vacuous,
+  so a third hand-rolled copy without it would silently produce green-but-empty tests.
+  Re-ran the mutation check after consolidating: deleting `nothrow` still reddens exactly 2 tests.
+- Dead surface removed: I had exported two arg types from the git-guard barrel that nothing
+  imports; the barrel had no type exports before. Reverted to functions only.
+- Caught by the gate, not by me: the new helper imported OperationError as a value where it is
+  only a type (ts/consistent-type-imports). Fixed. Worth noting because the eslint step is where
+  it surfaced — the targeted test runs were all green.
+- NOT done, deliberately: the third zx mock (gh-release-prs.test.ts) answers a different command
+  set and predates this work; folding it in would be abstraction for its own sake.
+
+## Not done (Ship 2, by design)
+
+A8 (post-push rollback with a progress record), A10 (resume a half-created release), A11
+(widen failedReleases + the MCP outputSchema, which needs a served-side strip in
+withoutAuthoredDeltas — `unchangedControl` resolves to release-create, so the self-check
+fails before the whole-object compare at :1560 — measured at :1495 during this session). Open question for the operator on Option B is recorded at the end of the plan.

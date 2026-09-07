@@ -16,10 +16,27 @@ export interface OperationErrorContext {
  * extractStderr({ stderr: '' })               // undefined  (empty treated as missing)
  */
 export const extractStderr = (cause: unknown): string | undefined => {
-  if (cause === null || typeof cause !== 'object') return undefined
-  const stderr = (cause as { stderr?: unknown }).stderr
+  // Walks the `cause` chain rather than reading one level. `OperationError` renders
+  // `stderrExcerpt` into its message and keeps it on the instance, but an OperationError
+  // wrapped in another OperationError — which is what `executeOne` does to every per-entry
+  // failure — carries no `.stderr` of its own. Reading one level there returns undefined, so
+  // the inner refusal's evidence would be silently dropped from the message the operator and
+  // the MCP client actually see.
+  const seen = new Set<unknown>()
+  let current = cause
 
-  return typeof stderr === 'string' && stderr.length > 0 ? stderr : undefined
+  while (current !== null && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current)
+
+    const { stderr, stderrExcerpt } = current as { stderr?: unknown; stderrExcerpt?: unknown }
+
+    if (typeof stderr === 'string' && stderr.length > 0) return stderr
+    if (typeof stderrExcerpt === 'string' && stderrExcerpt.length > 0) return stderrExcerpt
+
+    current = (current as { cause?: unknown }).cause
+  }
+
+  return undefined
 }
 
 /**
@@ -60,11 +77,19 @@ const buildMessage = (cause: unknown, ctx: OperationErrorContext): string => {
 export class OperationError extends Error {
   readonly operation: string
   readonly remediation?: string
+  /**
+   * Kept on the instance, not merely rendered into the message: this error is routinely
+   * re-wrapped in another `OperationError` (see `executeOne`), and {@link extractStderr}
+   * walks the `cause` chain looking for exactly this field. Without it the outer message
+   * reports only its own generic remediation and the real reason disappears.
+   */
+  readonly stderrExcerpt?: string
 
   constructor(cause: unknown, ctx: OperationErrorContext) {
     super(buildMessage(cause, ctx), { cause })
     this.name = 'OperationError'
     this.operation = ctx.operation
     this.remediation = ctx.remediation
+    this.stderrExcerpt = ctx.stderrExcerpt ?? extractStderr(cause)
   }
 }

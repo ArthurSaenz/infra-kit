@@ -198,12 +198,35 @@ export const getCurrentBranch = async (): Promise<string> => {
 }
 
 /**
+ * The working tree's `git status --porcelain` lines: staged, unstaged, and untracked
+ * changes, one entry per path. Empty means clean.
+ *
+ * The porcelain output is returned rather than reduced to a boolean because every refusal
+ * built on it has to name the paths that block the operation — an operator told only
+ * "working tree has uncommitted changes" has to run `git status` themselves to act on it.
+ */
+export const getWorkingTreeStatus = async (): Promise<string[]> => {
+  const result = await $`git status --porcelain`
+
+  // Only the trailing whitespace is stripped. The two leading columns are the status itself —
+  // ` M` is "modified in the worktree" and `M ` is "modified and staged" — so trimming the left
+  // side would render the first as the second in a message whose whole job is to tell the
+  // operator what is in their way.
+  return result.stdout
+    .split('\n')
+    .map((line) => {
+      return line.trimEnd()
+    })
+    .filter((line) => {
+      return line.trim().length > 0
+    })
+}
+
+/**
  * Whether the working tree has no staged, unstaged, or untracked changes.
  */
 export const isWorkingTreeClean = async (): Promise<boolean> => {
-  const result = await $`git status --porcelain`
-
-  return result.stdout.trim().length === 0
+  return (await getWorkingTreeStatus()).length === 0
 }
 
 /**

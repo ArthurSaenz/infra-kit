@@ -7,11 +7,11 @@ import { z } from 'zod'
 import { loadJiraConfig } from 'src/integrations/jira'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
-import { assertManagementContext } from 'src/lib/git-guard'
+import { assertBaseBranchSwitchable, assertCleanCheckout, assertManagementContext } from 'src/lib/git-guard'
 import { logger } from 'src/lib/logger'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { InvalidReleaseNameError, displayLabel, validateName } from 'src/lib/release-id'
-import { createSingleRelease, prepareGitForRelease } from 'src/lib/release-utils'
+import { createSingleRelease, getBaseBranch, prepareGitForRelease } from 'src/lib/release-utils'
 import type { ReleaseCreationResult, ReleaseType } from 'src/lib/release-utils'
 import {
   NoPriorVersionsError,
@@ -282,13 +282,21 @@ const executeOne = async (
   const prTitleLabel = entry.id.kind === 'version' ? `v${entry.id.raw}` : entry.id.name
 
   try {
-    await prepareGitForRelease(entry.type)
+    // Re-asserted per entry, and deliberately inside this `try`. The batch guard ran once,
+    // before a confirmation prompt and before every preceding entry's Jira and GitHub round
+    // trips, so by the time entry k>1 reaches here its evidence of a clean tree is minutes
+    // old. Inside the `try` so a refusal is recorded as this entry's failure and the batch
+    // still reports the releases that already succeeded.
+    await assertCleanCheckout({ operation: `create release ${prTitleLabel}` })
+
+    const baseSha = await prepareGitForRelease(entry.type)
 
     const result = await createSingleRelease({
       id: entry.id,
       jiraConfig,
       description: entry.description,
       type: entry.type,
+      baseSha,
     })
 
     logger.info(`✅ Successfully created release: ${prTitleLabel} (${entry.type})`)
@@ -329,6 +337,12 @@ const logFinalSummary = (total: number, successCount: number, failureCount: numb
 export const releaseCreate = async (args: ReleaseCreateArgs) => {
   const { releases: inputReleases, confirmedCommand } = args
 
+  // First statement, matching `release deliver`. Both legs are base-agnostic, so neither
+  // needs the entries the wizard is about to collect — and refusing here means an operator in
+  // a linked worktree, or with a dirty tree, is told before they type a version, a type and a
+  // description rather than after.
+  await assertManagementContext({ operation: 'create release' })
+
   const jiraConfig = await loadJiraConfig()
 
   let known: SemVer[] | null = null
@@ -350,10 +364,15 @@ export const releaseCreate = async (args: ReleaseCreateArgs) => {
 
   assertHomogeneousReleaseType(entries)
 
-  // Branch-agnostic: `prepareGitForRelease` self-switches onto a freshly fetched
-  // base branch below, after the confirmation prompt, so only the worktree +
-  // clean-tree legs apply.
-  await assertManagementContext({ operation: 'create release' })
+  // The earliest point at which the base branch is knowable: it is derived from the entries,
+  // and the entries are what the wizard above produces. Still ahead of the confirmation
+  // prompt and of every mutation, which is the property that matters — a base branch held by
+  // a linked worktree would otherwise surface as a raw `git switch` failure in the middle of
+  // a batch, relabelled with advice about version uniqueness.
+  await assertBaseBranchSwitchable({
+    operation: 'create release',
+    base: getBaseBranch((entries[0] as ReleaseEntry).type),
+  })
 
   await confirmReleases(entries, Boolean(confirmedCommand))
 

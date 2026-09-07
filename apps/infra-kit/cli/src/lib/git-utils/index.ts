@@ -6,6 +6,7 @@ export {
   getMainRepoRoot,
   getProjectRoot,
   getRepoName,
+  getWorkingTreeStatus,
   isInsideLinkedWorktree,
   isWorkingTreeClean,
   listWorktrees,
