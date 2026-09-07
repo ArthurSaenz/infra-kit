@@ -191,7 +191,11 @@ export const reopenCurrentProject = async (options: ReopenArgs = {}): Promise<To
   } catch (error) {
     if (error instanceof OperationError) throw error
 
-    logger.error({ error }, '❌ Error reopening worktree windows')
+    // `debug`, not `error`: this rethrows as an OperationError, and `entry/cli.ts` logs any
+    // uncaught error at ERROR and exits 1 — so logging here too printed one fault as two red
+    // lines. Kept (demoted, not deleted) because the wrapped message renders only the operation
+    // and remediation; the cause's stack survives here and is reachable with `--debug`.
+    logger.debug({ err: error }, 'Error reopening worktree windows')
     throw new OperationError(error, {
       operation: 'reopen worktrees',
       remediation: "run `infra-kit doctor` to check this project's setup",

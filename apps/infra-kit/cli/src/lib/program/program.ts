@@ -53,6 +53,8 @@ import type { ReleaseInput } from 'src/lib/version-utils'
  * triggering those boot side effects. `cli.ts` calls `buildProgram()` once and owns everything else.
  */
 
+import { addDebugOption } from './debug-option'
+
 const collectReleaseSpec = (value: string, prev: string[]): string[] => {
   return [...prev, value]
 }
@@ -734,6 +736,11 @@ export const buildProgram = (): Command => {
   // lines stop cluttering stderr while errors still surface; the structured
   // payload is written to stdout by `emit`. No handler logic is affected.
   program.commands.forEach(addJsonOption)
+
+  // Register `--debug` on the root AND every subcommand. The logger already reads the flag off
+  // `process.argv` at module load; this only stops Commander rejecting it as unknown first, which
+  // is what made the log level unreachable from the command line.
+  addDebugOption(program)
 
   program.hook('preAction', async (_thisCommand, actionCommand) => {
     // Bind the "📟 Equivalent command" line to the argv Commander just parsed. This is the only place

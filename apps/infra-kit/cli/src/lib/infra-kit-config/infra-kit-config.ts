@@ -63,6 +63,14 @@ const ideSchema = z.discriminatedUnion('provider', [cursorIdeSchema, zedIdeSchem
 const idesSchema = z.union([ideSchema, z.array(ideSchema).min(1)])
 
 // taskManager
+//
+// PARSED BUT NEVER READ. Nothing in this CLI consumes `config.taskManager` — every Jira call builds
+// its config from the JIRA_BASE_URL / JIRA_EMAIL / JIRA_TOKEN / JIRA_PROJECT_ID environment
+// variables (see `loadJiraConfig` in integrations/jira/api.ts). Keeping it validated is deliberate:
+// `infraKitConfigObject` is `.strict()` and `getInfraKitConfig()` runs as an unconditional guard on
+// most commands, so deleting the key would make every command throw in any consumer repo whose
+// infra-kit.json declares it. The trap it sets is real — a `projectId` here looks authoritative and
+// changing it does nothing — so the consumer-facing template carries the same warning.
 const jiraTaskManagerSchema = z.object({
   provider: z.literal('jira'),
   config: z.object({

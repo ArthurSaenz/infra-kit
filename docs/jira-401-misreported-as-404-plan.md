@@ -29,6 +29,8 @@ the CLI actually makes**; the rest are controls.
 | 8 | `GET /serverInfo` with the configured creds | `200`, no seraph header |
 | 9 | `GET /serverInfo` with no creds | `200`, no seraph header |
 | 10 | `GET /project/11713/versions` with a **malformed** `Authorization` (not base64) | `404`, **no seraph header** |
+| 11 | `GET /project/999999/versions` with a **live, authenticated** token *(2026-09-07, post-rotation)* | `404`, **no seraph header**, body in **English**: `No project could be found with id '999999'.` |
+| 12 | `GET /project/999999/versions` with no creds | `404`, no seraph header, body in **Chinese** |
 
 Config in play: `JIRA_BASE_URL=https://marcom-it.atlassian.net`, `JIRA_EMAIL=a***@uptarget.co`,
 `JIRA_PROJECT_ID=11713`, `JIRA_TOKEN` = 192 chars, prefix `ATATT3` (current Atlassian API-token format).
@@ -46,9 +48,14 @@ Two consequences worth stating up front, because the plan rests on them:
   anonymous. Therefore: **its presence is conclusive; its absence proves nothing.** Two consequences —
   (a) F2's `auth` rule must key on the header's *value* (`AUTHENTICATED_FAILED`), never on its presence;
   (b) `not-found-or-forbidden` covers **three** readings, not two (see F2).
-  *Not directly measured:* an authenticated 404 (no live token exists yet). But since the header rides on
-  credential *rejection*, and a successful auth rejects nothing, it follows from the mechanism that an
-  authenticated 404 carries no header. F1 makes this measurable for free — see F1's verification leg.
+- **Row 11 closes the last gap — measured, not inferred.** After the token was rotated (2026-09-07) the
+  authenticated 404 was captured directly: **no seraph header**, exactly as rev 4 predicted from the
+  mechanism. So `not-found-or-forbidden` (404, no header) is the right bucket for a genuine missing
+  project, and the classifier is sound in both directions.
+  Rows 11 vs 12 also expose a second, independent tell: the body is **English** when authenticated (the
+  account's `en_US` locale) and **Chinese** when anonymous (site default). Useful to a human reading a log;
+  **do not build the classifier on it** — it is per-account locale-dependent and breaks the moment
+  someone's Jira language differs.
 
 ### 1.2 Root cause
 
@@ -187,10 +194,10 @@ Mint a fresh Atlassian API token for the `@uptarget.co` account. Set `JIRA_TOKEN
 `travelist` config that defines it — `dev`, `arthur`, `oriana`, `roman`, `renana`, `eliran`,
 `prod_observability` — then audit `hulyo` for the same token.
 *Verification (P1):* per config, `GET /rest/api/3/myself` → `200` and no `x-seraph-loginreason`.
-*Also capture, with the fresh token (closes AC3's fixture gap — Major 3 of Critic pass 2):*
-`GET /rest/api/3/project/<nonexistent-id>/versions` → record status, body, and presence/absence of
-`x-seraph-loginreason`. This is the **authenticated 404** — the only case rev 3 proposed to synthesise
-from the hypothesis under test. F1 makes it obtainable for free; do not synthesise it.
+*Authenticated-404 fixture: **already captured** (§1.1 row 11, 2026-09-07). AC3's gap is closed by a real
+measurement; nothing is synthesised.*
+**Status: F1 is DONE for `travelist/dev`** — `/myself` → `200` (Arthur Saenko, `en_US`),
+`/project/11713/versions` → `200`. The other six configs and `hulyo` remain unverified.
 
 **F2 — Classify the failure (`integrations/jira/api.ts`).** Add `JiraApiError` as a **typed class with a
 guard**, modelled on `EnvAuthError` (class at `lib/errors/env-auth-error.ts:30-44`), whose comment at `:22` says

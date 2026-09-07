@@ -252,7 +252,11 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     // logged as an error with a misleading "branches already exist" remediation.
     if (isPromptCancellation(error)) throw error
 
-    logger.error({ error }, '❌ Error managing worktrees')
+    // `debug`, not `error`: this rethrows as an OperationError, and `entry/cli.ts` logs any
+    // uncaught error at ERROR and exits 1 — so logging here too printed one fault as two red
+    // lines. Kept (demoted, not deleted) because the wrapped message renders only the operation
+    // and remediation; the cause's stack survives here and is reachable with `--debug`.
+    logger.debug({ err: error }, 'Error managing worktrees')
     throw new OperationError(error, {
       operation: 'create worktrees',
       remediation: "verify branches don't already exist as worktrees: 'git worktree list'",

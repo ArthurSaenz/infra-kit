@@ -2,6 +2,7 @@ import process from 'node:process'
 
 import { logger } from 'src/lib/logger'
 
+import { JiraApiError, readSeraphLoginReason } from './jira-api-error.js'
 import type {
   CreateJiraVersionParams,
   CreateJiraVersionResult,
@@ -14,29 +15,33 @@ import type {
 } from './types.js'
 
 /**
- * Throws a normalized error when a Jira API response is not OK, logging the
- * status, statusText, and response body under the given context message.
+ * Throw a classified {@link JiraApiError} when a Jira API response is not OK.
+ *
+ * Emits at `debug`, not `error`. Severity is not the transport's to decide: the same failed call is
+ * fatal to `release create` and merely cosmetic to `worktrees list`, and only the caller that
+ * catches knows which. Callers that do not catch surface it through `entry/cli.ts`, which already
+ * logs at ERROR and exits 1 — logging here as well is what printed one fault as two red blocks.
+ * This line survives as the only record of the raw upstream body; reach it with `--debug`.
  *
  * @param response - The fetch Response to check
- * @param context - Log message describing the failed operation
+ * @param context - Describes the failed operation; becomes the error's prefix
  */
 const assertJiraOk = async (response: Response, context: string): Promise<void> => {
   if (response.ok) {
     return
   }
 
-  const errorText = await response.text()
-
-  logger.error(
-    {
-      status: response.status,
-      statusText: response.statusText,
-      error: errorText,
-    },
+  const body = await response.text()
+  const error = new JiraApiError({
+    status: response.status,
+    seraphLoginReason: readSeraphLoginReason(response),
+    body,
     context,
-  )
+  })
 
-  throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+  logger.debug({ status: response.status, kind: error.kind, body }, context)
+
+  throw error
 }
 
 /**
@@ -63,44 +68,38 @@ export const createJiraVersion = async (
   params: CreateJiraVersionParams,
   config: JiraConfig,
 ): Promise<CreateJiraVersionResult> => {
-  try {
-    const { baseUrl, token, email, projectId } = config
+  const { baseUrl, token, email, projectId } = config
 
-    const requestBody = {
-      name: params.name,
-      projectId: params.projectId || projectId,
-      description: params.description || '',
-      released: params.released || false,
-      archived: params.archived || false,
-    }
+  const requestBody = {
+    name: params.name,
+    projectId: params.projectId || projectId,
+    description: params.description || '',
+    released: params.released || false,
+    archived: params.archived || false,
+  }
 
-    const url = `${baseUrl}/rest/api/3/version`
+  const url = `${baseUrl}/rest/api/3/version`
 
-    // Create Basic auth credentials
-    const credentials = btoa(`${email}:${token}`)
+  // Create Basic auth credentials
+  const credentials = btoa(`${email}:${token}`)
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        Authorization: `Basic ${credentials}`,
-      },
-      body: JSON.stringify(requestBody),
-    })
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Authorization: `Basic ${credentials}`,
+    },
+    body: JSON.stringify(requestBody),
+  })
 
-    await assertJiraOk(response, 'Failed to create Jira version')
+  await assertJiraOk(response, 'Failed to create Jira version')
 
-    const version = (await response.json()) as JiraVersion
+  const version = (await response.json()) as JiraVersion
 
-    return {
-      success: true,
-      version,
-    }
-  } catch (error) {
-    logger.error({ error }, 'Error creating Jira version')
-
-    throw error
+  return {
+    success: true,
+    version,
   }
 }
 
@@ -111,30 +110,24 @@ export const createJiraVersion = async (
  * @returns Array of JiraVersion objects
  */
 export const getProjectVersions = async (config: JiraConfig): Promise<JiraVersion[]> => {
-  try {
-    const { baseUrl, token, email, projectId } = config
+  const { baseUrl, token, email, projectId } = config
 
-    const url = `${baseUrl}/rest/api/3/project/${projectId}/versions`
-    const credentials = btoa(`${email}:${token}`)
+  const url = `${baseUrl}/rest/api/3/project/${projectId}/versions`
+  const credentials = btoa(`${email}:${token}`)
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Basic ${credentials}`,
-      },
-    })
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Basic ${credentials}`,
+    },
+  })
 
-    await assertJiraOk(response, 'Failed to get Jira project versions')
+  await assertJiraOk(response, 'Failed to get Jira project versions')
 
-    const versions = (await response.json()) as JiraVersion[]
+  const versions = (await response.json()) as JiraVersion[]
 
-    return versions
-  } catch (error) {
-    logger.error({ error }, 'Error getting Jira project versions')
-
-    throw error
-  }
+  return versions
 }
 
 /**
@@ -145,18 +138,12 @@ export const getProjectVersions = async (config: JiraConfig): Promise<JiraVersio
  * @returns JiraVersion if found, null otherwise
  */
 export const findVersionByName = async (versionName: string, config: JiraConfig): Promise<JiraVersion | null> => {
-  try {
-    const versions = await getProjectVersions(config)
-    const version = versions.find((v) => {
-      return v.name === versionName
-    })
+  const versions = await getProjectVersions(config)
+  const version = versions.find((v) => {
+    return v.name === versionName
+  })
 
-    return version || null
-  } catch (error) {
-    logger.error({ error, versionName }, 'Error finding Jira version by name')
-
-    throw error
-  }
+  return version || null
 }
 
 /**
@@ -170,42 +157,36 @@ export const updateJiraVersion = async (
   params: UpdateJiraVersionParams,
   config: JiraConfig,
 ): Promise<UpdateJiraVersionResult> => {
-  try {
-    const { baseUrl, token, email } = config
+  const { baseUrl, token, email } = config
 
-    // Only include fields the caller explicitly passed.
-    const requestBody: Record<string, any> = {}
+  // Only include fields the caller explicitly passed.
+  const requestBody: Record<string, any> = {}
 
-    if (params.released !== undefined) requestBody.released = params.released
-    if (params.archived !== undefined) requestBody.archived = params.archived
-    if (params.releaseDate !== undefined) requestBody.releaseDate = params.releaseDate
-    if (params.description !== undefined) requestBody.description = params.description
+  if (params.released !== undefined) requestBody.released = params.released
+  if (params.archived !== undefined) requestBody.archived = params.archived
+  if (params.releaseDate !== undefined) requestBody.releaseDate = params.releaseDate
+  if (params.description !== undefined) requestBody.description = params.description
 
-    const url = `${baseUrl}/rest/api/3/version/${params.versionId}`
-    const credentials = btoa(`${email}:${token}`)
+  const url = `${baseUrl}/rest/api/3/version/${params.versionId}`
+  const credentials = btoa(`${email}:${token}`)
 
-    const response = await fetch(url, {
-      method: 'PUT',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        Authorization: `Basic ${credentials}`,
-      },
-      body: JSON.stringify(requestBody),
-    })
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Authorization: `Basic ${credentials}`,
+    },
+    body: JSON.stringify(requestBody),
+  })
 
-    await assertJiraOk(response, 'Failed to update Jira version')
+  await assertJiraOk(response, 'Failed to update Jira version')
 
-    const version = (await response.json()) as JiraVersion
+  const version = (await response.json()) as JiraVersion
 
-    return {
-      success: true,
-      version,
-    }
-  } catch (error) {
-    logger.error({ error }, 'Error updating Jira version')
-
-    throw error
+  return {
+    success: true,
+    version,
   }
 }
 
@@ -221,32 +202,29 @@ export const deliverJiraRelease = async (
   params: DeliverJiraReleaseParams,
   config: JiraConfig,
 ): Promise<DeliverJiraReleaseResult> => {
-  try {
-    const { versionName } = params
+  const { versionName } = params
 
-    // Find the version by name
-    const version = await findVersionByName(versionName, config)
+  // Find the version by name
+  const version = await findVersionByName(versionName, config)
 
-    if (!version) {
-      logger.error({ versionName }, 'Jira version not found')
-      throw new Error(`Version "${versionName}" not found in Jira project`)
-    }
-
-    // Update the version to mark it as released
-    const result = await updateJiraVersion(
-      {
-        versionId: version.id,
-        released: true,
-        releaseDate: new Date().toISOString().split('T')[0], // Current date in YYYY-MM-DD format
-      },
-      config,
-    )
-
-    return result
-  } catch (error) {
-    logger.error({ error }, 'Error delivering Jira release')
-    throw error
+  if (!version) {
+    // No log: this sits inside the `try`, so it is not a tolerance decision, and its own throw
+    // already names the version. Logging here made `release deliver` print one fault twice —
+    // once here and again at the tolerance site in gh-release-deliver.
+    throw new Error(`Version "${versionName}" not found in Jira project`)
   }
+
+  // Update the version to mark it as released
+  const result = await updateJiraVersion(
+    {
+      versionId: version.id,
+      released: true,
+      releaseDate: new Date().toISOString().split('T')[0], // Current date in YYYY-MM-DD format
+    },
+    config,
+  )
+
+  return result
 }
 
 /**
@@ -308,7 +286,9 @@ export const loadJiraConfigOptional = async (): Promise<JiraConfig | null> => {
 
     return config
   } catch (error) {
-    logger.warn({ error }, 'Jira configuration not available, skipping Jira integration')
+    // `err` — pino renders an Error under any other key as `{}`, which is what made the old
+    // second ERROR line say literally `error: {}`.
+    logger.warn({ err: error }, 'Jira configuration not available, skipping Jira integration')
 
     return null
   }

@@ -5,6 +5,11 @@ import process from 'node:process'
 import { z } from 'zod'
 
 import { loadJiraConfig } from 'src/integrations/jira'
+// Imported from the leaf module, not the `src/integrations/jira` barrel, and deliberately so:
+// `isJiraApiError` is a pure `instanceof` guard with no I/O. Tests mock that barrel to stub NETWORK
+// calls, and a partial mock drops every export it does not name — so a barrel import both broke
+// those tests and, worse, would have silently sent a mocked run down the wrong branch.
+import { isJiraApiError } from 'src/integrations/jira/jira-api-error'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertBaseBranchSwitchable, assertCleanCheckout, assertManagementContext } from 'src/lib/git-guard'
@@ -305,9 +310,20 @@ const executeOne = async (
 
     return { result }
   } catch (error) {
+    // `stderrExcerpt` explicitly, because OperationError would otherwise drop the reason entirely:
+    // `extractStderr` walks the cause chain for `.stderr`/`.stderrExcerpt` and never falls back to
+    // `cause.message`, so a JiraApiError — which has neither — rendered as nothing but the generic
+    // remediation below. A dead token used to advise "verify the version or name is unique", which
+    // sent operators to check two things that were both fine.
+    const jiraFailure = isJiraApiError(error) ? error : undefined
+
     const err = new OperationError(error, {
       operation: `create release ${prTitleLabel} (${entry.type})`,
-      remediation: 'verify the version or name is unique and the base branch is clean',
+      remediation:
+        jiraFailure?.kind === 'auth'
+          ? 'reissue the Atlassian API token and update JIRA_TOKEN'
+          : 'verify the version or name is unique and the base branch is clean',
+      stderrExcerpt: jiraFailure?.message,
     })
 
     logger.error(`❌ ${err.message}\n`)

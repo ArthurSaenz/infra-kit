@@ -45,6 +45,9 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   //   "provider": "jira",
   //   "config": { "baseUrl": "https://acme.atlassian.net", "projectId": 123 }
   // },
+  // NOTE: taskManager is validated but NOT yet used — Jira credentials and the project id are read
+  // from the JIRA_BASE_URL / JIRA_EMAIL / JIRA_TOKEN / JIRA_PROJECT_ID environment variables
+  // (Doppler), never from this file. Editing projectId here changes nothing; change it in Doppler.
   //
   // "worktrees": {
   //   "openInGithubDesktop": false,

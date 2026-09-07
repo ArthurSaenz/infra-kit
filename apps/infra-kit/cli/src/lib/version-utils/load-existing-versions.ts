@@ -69,11 +69,12 @@ export const loadExistingVersions = async (): Promise<SemVer[]> => {
   const [branchesResult, jiraResult] = await Promise.allSettled([parseRemoteRefs(), fetchJiraVersionNames()])
 
   if (branchesResult.status === 'rejected') {
-    logger.warn({ error: branchesResult.reason }, 'Failed to list remote release branches; continuing without them')
+    logger.warn({ err: branchesResult.reason }, 'Failed to list remote release branches; continuing without them')
   }
 
   if (jiraResult.status === 'rejected') {
-    logger.warn({ error: jiraResult.reason }, 'Failed to fetch Jira versions; continuing without them')
+    // `err`: pino renders an Error under any other key as `{}`.
+    logger.warn({ err: jiraResult.reason }, 'Failed to fetch Jira versions; continuing without them')
   }
 
   return collectKnownVersions({

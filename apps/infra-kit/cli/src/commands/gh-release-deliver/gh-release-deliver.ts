@@ -3,6 +3,11 @@ import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { deliverJiraRelease, loadJiraConfigOptional } from 'src/integrations/jira'
+// Imported from the leaf module, not the `src/integrations/jira` barrel, and deliberately so:
+// `isJiraApiError` is a pure `instanceof` guard with no I/O. Tests mock that barrel to stub NETWORK
+// calls, and a partial mock drops every export it does not name — so a barrel import both broke
+// those tests and, worse, would have silently sent a mocked run down the wrong branch.
+import { isJiraApiError } from 'src/integrations/jira/jira-api-error'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { formatZxError } from 'src/lib/errors/format-zx-error'
@@ -45,7 +50,11 @@ const runStep = async <T>(operation: string, remediation: string, fn: () => Prom
   try {
     return await fn()
   } catch (error) {
-    logger.error({ err: formatZxError(error) }, `❌ Failed to ${operation}`)
+    // `debug`, not `error`: this rethrows as an OperationError, and `entry/cli.ts` logs any
+    // uncaught error at ERROR and exits 1 — so logging here too printed one fault as two red
+    // lines. Kept (demoted, not deleted) because the wrapped message renders only the operation
+    // and remediation; the cause's stack survives here and is reachable with `--debug`.
+    logger.debug({ err: formatZxError(error) }, `Failed to ${operation}`)
     throw new OperationError(error, { operation, remediation })
   }
 }
@@ -351,7 +360,14 @@ const deliverJiraReleaseSafely = async (id: ReleaseId): Promise<void> => {
 
     await deliverJiraRelease({ versionName }, jiraConfig)
   } catch (error) {
-    logger.error({ err: formatZxError(error) }, 'Failed to deliver Jira release (non-blocking)')
+    // Stays ERROR while the command continues: the residue is durable and user-visible — the fix
+    // version is left unreleased in Jira after the PR has already merged and deployed, so someone
+    // must go finish it by hand. Naming the credentials matters here more than anywhere: this runs
+    // late in `release deliver`, long past the point where the run can be retried from the top.
+    const hint =
+      isJiraApiError(error) && error.kind === 'auth' ? ' — reissue the Atlassian API token and update JIRA_TOKEN' : ''
+
+    logger.error({ err: formatZxError(error) }, `Failed to deliver Jira release (non-blocking)${hint}`)
   }
 }
 

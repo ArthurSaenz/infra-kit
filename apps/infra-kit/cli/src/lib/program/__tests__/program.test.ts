@@ -1,3 +1,4 @@
+import type { Command } from 'commander'
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -232,5 +233,73 @@ describe('program — the sticky auth-failure warning is not gated by the auto-l
 
     expect(surfaceStickyAuthFailure).toHaveBeenCalled()
     expect(runEnvAutoLoad).toHaveBeenCalledWith(expect.objectContaining({ expectedTrigger: 'cli-invocation' }))
+  })
+})
+
+describe('program — --debug is registered, so the log level is reachable at all', () => {
+  /**
+   * The regression this pins is not a logging bug — the logger has always read `--debug` straight off
+   * `process.argv`. It is that Commander rejected the flag as unknown *before* any of that ran, so
+   * `infra-kit worktrees list --debug` exited 1 with `error: unknown option '--debug'` and the CLI had
+   * no way whatsoever to raise its own log level. Measured against the published 0.4.0 build.
+   *
+   * `exitOverride` on every node because an unknown option makes Commander call `process.exit` from
+   * whichever command parsed it; without it a failure here would kill the test runner instead of
+   * failing the assertion.
+   */
+  const overrideExitDeep = (cmd: Command): void => {
+    cmd.exitOverride()
+    cmd.commands.forEach(overrideExitDeep)
+  }
+
+  const parseWithDebug = async (groupPath: string[]): Promise<void> => {
+    const program = buildProgram()
+
+    overrideExitDeep(program)
+
+    const leaf = resolveLeaf(program.commands, groupPath)!
+
+    leaf.action(() => {})
+
+    const requiredArgs = leaf.registeredArguments
+      .filter((argument) => {
+        return argument.required
+      })
+      .map(() => {
+        return 'placeholder'
+      })
+
+    await program.parseAsync(['node', 'infra-kit', ...groupPath, ...requiredArgs, '--debug'])
+  }
+
+  // Catalog-driven for the same reason the echo guard above is: a command added or regrouped tomorrow
+  // is covered without editing this test, which is the only way the guard stays honest.
+  it('accepts --debug on every catalog leaf', async () => {
+    for (const entry of leafEntries()) {
+      await expect(parseWithDebug(entry.groupPath)).resolves.toBeUndefined()
+    }
+  })
+
+  it('registers --debug on the root program and on every subcommand, at any depth', () => {
+    const hasDebug = (cmd: Command): boolean => {
+      return cmd.options.some((option) => {
+        return option.long === '--debug'
+      })
+    }
+
+    const everyNode = (cmd: Command): Command[] => {
+      return [cmd, ...cmd.commands.flatMap(everyNode)]
+    }
+
+    const program = buildProgram()
+    const missing = everyNode(program)
+      .filter((cmd) => {
+        return !hasDebug(cmd)
+      })
+      .map((cmd) => {
+        return cmd.name()
+      })
+
+    expect(missing).toEqual([])
   })
 })

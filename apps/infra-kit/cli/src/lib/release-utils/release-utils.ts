@@ -11,6 +11,7 @@ import {
 } from 'src/integrations/jira'
 import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { logger } from 'src/lib/logger'
 // Type-only cross-layer import: src/lib/prompts/types.ts is intentionally a
 // zero-import leaf so it can be imported from any layer (including this one)
 // without creating a cycle.
@@ -216,8 +217,15 @@ export const getJiraDescriptions = async (): Promise<Map<string, string>> => {
         descriptions.set(version.name, version.description)
       }
     }
-  } catch {
-    // Jira fetch failed, continue without descriptions
+  } catch (error) {
+    // WARN, not ERROR: the only residue is cosmetic — release rows render without their Jira
+    // description. Loud enough to name the likely cause, quiet enough not to claim the command
+    // failed when it did not. MUST NOT rethrow: `worktrees list` awaits this inside a
+    // `Promise.all`, so throwing here would take the whole listing down over missing decoration.
+    logger.warn(
+      { err: error },
+      'Jira descriptions unavailable — the release list will render without them. If this persists, check JIRA_EMAIL / JIRA_TOKEN.',
+    )
   }
 
   return descriptions

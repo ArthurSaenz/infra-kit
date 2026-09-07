@@ -8,6 +8,8 @@ export {
   loadJiraConfigOptional,
   updateJiraVersion,
 } from './api.js'
+export { classifyJiraFailure, isJiraApiError, JiraApiError } from './jira-api-error.js'
+export type { JiraFailureKind } from './jira-api-error.js'
 export type {
   CreateJiraVersionParams,
   CreateJiraVersionResult,
