@@ -6,8 +6,6 @@ export { buildDesignSkeleton } from './bodies/design-skeleton'
 export { buildPackageBody } from './bodies/package-body'
 export type { BuildPackageBodyArgs } from './bodies/package-body'
 export { buildRootBody } from './bodies/root-body'
-export { TYPE_RULES } from './bodies/type-rules'
-export type { TypeRules } from './bodies/type-rules'
 export { inspectPackageGuidance } from './inspect'
 export type { GuidanceState, PackageGuidanceInspection } from './inspect'
 export {
@@ -21,13 +19,5 @@ export {
 export { detectPackageType, PACKAGE_TYPES } from './package-type'
 export type { DetectPackageTypeArgs, PackageType, PackageTypeManifest } from './package-type'
 export { readGuidanceFile } from './read-guidance-file'
-export {
-  assertBlockPresent,
-  assertNotSymlink,
-  assertOutsideMarkersUnchanged,
-  backupFile,
-  classifyGitState,
-  resetGitStateCache,
-  writeManaged,
-} from './write-managed-file'
-export type { BackupPolicy, GitState, WriteAction, WriteManagedOptions } from './write-managed-file'
+export { assertBlockPresent, assertNotSymlink, assertOutsideMarkersUnchanged, writeManaged } from './write-managed-file'
+export type { WriteAction } from './write-managed-file'

@@ -1,10 +1,6 @@
 ---
 name: update-toolchain
-description: >-
-  Update pnpm, Node.js, and Turbo to their latest stable versions across the monorepo. This skill
-  should be used when the user explicitly asks to bump the repository's package manager, Node
-  runtime, or Turbo build tool. Run all version-bump phases in order; each phase self-skips when
-  already current. Require explicit user confirmation before committing or pushing.
+description: Bump pnpm, Node.js, and Turbo to the latest stable versions across the monorepo
 ---
 
 # Update toolchain: pnpm, Node.js, and Turbo

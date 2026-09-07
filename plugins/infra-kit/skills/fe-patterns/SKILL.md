@@ -1,6 +1,6 @@
 ---
 name: fe-patterns
-description: Analyze how features talk to each other — feature boundaries, the three component injection patterns, cross-feature type extraction, page-level orchestration, and where a component should live once a second feature wants it. Activate when reviewing feature boundaries, debugging cross-feature data flow, resolving a cross-feature import violation, deciding between element/component/render-function injection, or judging whether a component should be promoted to shared. For everything inside a single feature — naming rules, dumb vs smart, state scope, container guards — use fe-architect.
+description: Analyze the seams between React features — boundaries, component injection, cross-feature imports
 allowed-tools: Read, Glob, Grep, Bash(node "${CLAUDE_PLUGIN_ROOT}"/skills/fe-architect/scripts/analyze_imports.mjs *)
 ---
 

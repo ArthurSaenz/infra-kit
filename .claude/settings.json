@@ -77,8 +77,7 @@
     "commit-commands@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
     "context-mode@context-mode": true,
-    "typescript-lsp@claude-plugins-official": true,
-    "infra-kit@infra-kit": true
+    "typescript-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "context-mode": {
@@ -97,12 +96,6 @@
       "source": {
         "source": "git",
         "url": "https://github.com/Yeachan-Heo/oh-my-claudecode.git"
-      }
-    },
-    "infra-kit": {
-      "source": {
-        "source": "github",
-        "repo": "ArthurSaenz/infra-kit"
       }
     }
   }

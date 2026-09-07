@@ -1,6 +1,6 @@
 ---
 name: e2e-architect
-description: Scaffold and enforce the per-feature Playwright e2e test structure used across this monorepo family (apps/*/tests/src/tests/feature-name/). This skill should be used when creating a new e2e test suite for a feature, restructuring an existing flat test file into the feature layout, or reviewing whether an e2e folder follows the conventions - a single Page Object that owns all selectors, a fixture that guarantees marker-based cleanup in teardown, and specs split by behavioral axis (smoke, create+validation, edit, lifecycle, list-filter).
+description: Scaffold, restructure, and review per-feature Playwright e2e suites (Page Object, fixture, split specs)
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash(python3 "${CLAUDE_PLUGIN_ROOT}"/skills/e2e-architect/scripts/scaffold_feature.py *)
 ---
 

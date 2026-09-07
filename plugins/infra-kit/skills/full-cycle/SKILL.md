@@ -1,6 +1,6 @@
 ---
 name: full-cycle
-description: Decomposition pipeline - deep-interview clarifies the task, ralplan breaks it into right-sized units with testable acceptance criteria, a review gate checks that breakdown, you approve, then ralph implements unit by unit and verify proves it. Stops for you several times and expects you present throughout. Requires oh-my-claudecode. Use for multi-file work with real unknowns; not for small changes.
+description: Decomposition pipeline: interview, plan, review gate, ralph implements, verify proves — needs oh-my-claudecode
 argument-hint: "[--from=interview|plan|plan-review|implement|verify] <idea or task description>"
 allowed-tools: Read, Edit, Write, Glob, Grep, Skill, Bash(node "${CLAUDE_PLUGIN_ROOT}"/skills/full-cycle/scripts/plan-review-gate.mjs *)
 ---

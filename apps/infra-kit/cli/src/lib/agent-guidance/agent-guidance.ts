@@ -11,14 +11,8 @@ import { buildRootBody } from './bodies/root-body'
 import { PACKAGE_MARKER_END, PACKAGE_MARKER_START, ROOT_MARKER_END, ROOT_MARKER_START } from './markers'
 import type { PackageType } from './package-type'
 import { detectPackageType } from './package-type'
-import {
-  assertBlockPresent,
-  assertNotSymlink,
-  assertOutsideMarkersUnchanged,
-  backupFile,
-  writeManaged,
-} from './write-managed-file'
-import type { BackupPolicy, WriteAction } from './write-managed-file'
+import { assertBlockPresent, assertNotSymlink, assertOutsideMarkersUnchanged, writeManaged } from './write-managed-file'
+import type { WriteAction } from './write-managed-file'
 
 /**
  * Marker pair for the legacy `@AGENTS.md` import region once injected into `CLAUDE.md`.
@@ -98,7 +92,6 @@ interface UpsertFileArgs {
   body: string
   startMarker: string
   endMarker: string
-  backup: BackupPolicy
   /**
    * Rewrite the file's existing content before the block is upserted into it — the root file
    * strips its legacy `@AGENTS.md` import region this way. The unchanged-bytes assertion runs
@@ -111,14 +104,7 @@ interface UpsertFileArgs {
  * Upsert a managed block into one file, then assert what the write promised: the block is
  * present, and — on the replace-in-place path only — every byte outside the markers survived.
  */
-const upsertGuidanceFile = ({
-  filePath,
-  body,
-  startMarker,
-  endMarker,
-  backup,
-  prepare,
-}: UpsertFileArgs): WriteAction => {
+const upsertGuidanceFile = ({ filePath, body, startMarker, endMarker, prepare }: UpsertFileArgs): WriteAction => {
   const before = readExistingFile(filePath)
   const baseline = before === null ? '' : (prepare?.(before) ?? before)
 
@@ -130,7 +116,7 @@ const upsertGuidanceFile = ({
     placement: 'replace-in-place',
   })
 
-  const action = writeManaged(filePath, next, { backup })
+  const action = writeManaged(filePath, next)
 
   assertBlockPresent(filePath, startMarker, endMarker)
 
@@ -145,9 +131,8 @@ const upsertGuidanceFile = ({
  * Migrate a legacy `AGENTS.md` now that the guidance lives solely in `CLAUDE.md`.
  * Strips the infra-kit managed block, then asymmetrically:
  * - no infra-kit block at all (hand-authored, not ours) → leave untouched (`unchanged`),
- * - file was purely generated (nothing but whitespace remains) → back up + delete (`removed`),
- * - hand-authored content surrounds the block → back up + write the block-free remainder (`updated`).
- * Every destructive path leaves a timestamped `.backup.` first.
+ * - file was purely generated (nothing but whitespace remains) → delete (`removed`),
+ * - hand-authored content surrounds the block → write the block-free remainder (`updated`).
  */
 const migrateLegacyAgentsFile = (agentsPath: string): WriteAction => {
   if (!fs.existsSync(agentsPath)) return 'unchanged'
@@ -160,13 +145,12 @@ const migrateLegacyAgentsFile = (agentsPath: string): WriteAction => {
   if (stripped === null) return 'unchanged'
 
   if (stripped.trim() === '') {
-    backupFile(agentsPath)
     fs.rmSync(agentsPath)
 
     return 'removed'
   }
 
-  return writeManaged(agentsPath, stripped, { backup: 'always' })
+  return writeManaged(agentsPath, stripped)
 }
 
 /** The root `CLAUDE.md` write: strip the legacy import region, then upsert the root block. */
@@ -176,7 +160,6 @@ const syncRootClaudeFile = (claudePath: string, version: string): WriteAction =>
     body: buildRootBody(version),
     startMarker: ROOT_MARKER_START,
     endMarker: ROOT_MARKER_END,
-    backup: 'always',
     prepare: (content) => {
       return removeManagedBlock(content, LEGACY_IMPORT_START, LEGACY_IMPORT_END) ?? content
     },
@@ -185,9 +168,7 @@ const syncRootClaudeFile = (claudePath: string, version: string): WriteAction =>
 
 /**
  * Refresh the repo-root guidance block in `<root>/CLAUDE.md`, preserving every hand-authored
- * byte outside the markers, and migrate a legacy `AGENTS.md` away. The root keeps the
- * always-backup policy: it is one file written by a command a human runs deliberately, so the
- * volume argument behind the git-aware package policy does not apply.
+ * byte outside the markers, and migrate a legacy `AGENTS.md` away.
  *
  * Never throws. A per-file error comes back as an entry with `action: 'failed'` and a
  * `message`, so a caller syncing many files can continue and report.
@@ -228,7 +209,7 @@ const syncDesignFile = (packageDir: string, packageName: string, type: PackageTy
   try {
     return {
       path: designPath,
-      action: writeManaged(designPath, buildDesignSkeleton(packageName), { backup: 'git-aware' }),
+      action: writeManaged(designPath, buildDesignSkeleton(packageName)),
       type,
     }
   } catch (error) {
@@ -239,8 +220,7 @@ const syncDesignFile = (packageDir: string, packageName: string, type: PackageTy
 /**
  * Write (or refresh) one workspace package's guidance block in its own `CLAUDE.md`, selecting
  * the body by detected package type and preserving every hand-authored byte outside the
- * markers. Package files use the git-aware backup policy — a backup lands exactly when git
- * could not recover the file.
+ * markers.
  *
  * Never throws: a per-file error comes back as `action: 'failed'` with a `message`, because a
  * run that aborted halfway could leave one well-formed block behind, which adopts the whole
@@ -278,7 +258,6 @@ export const syncPackageGuidance = async (
         body,
         startMarker: PACKAGE_MARKER_START,
         endMarker: PACKAGE_MARKER_END,
-        backup: 'git-aware',
       }),
       type,
     })

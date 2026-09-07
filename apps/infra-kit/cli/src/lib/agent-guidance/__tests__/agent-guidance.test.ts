@@ -1,11 +1,10 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import { syncPackageGuidance, syncRootGuidance } from '../agent-guidance'
 import { PACKAGE_MARKER_END, PACKAGE_MARKER_START, ROOT_MARKER_START } from '../markers'
-import { resetGitStateCache } from '../write-managed-file'
 
 const VERSION = '0.4.0'
 
@@ -25,10 +24,6 @@ const makeRepo = (relDir: string, name: string): { root: string; packageDir: str
 }
 
 describe('syncPackageGuidance', () => {
-  beforeEach(() => {
-    resetGitStateCache()
-  })
-
   it('creates a typed package block, then reports unchanged on a re-run', async () => {
     const { root, packageDir } = makeRepo(path.join('packages', 'lib-a'), '@x/lib-a')
 
@@ -131,10 +126,6 @@ describe('syncPackageGuidance', () => {
 })
 
 describe('syncRootGuidance', () => {
-  beforeEach(() => {
-    resetGitStateCache()
-  })
-
   it('writes the root block and reports a failed root file rather than throwing', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'infra-kit-sync-root-'))
 

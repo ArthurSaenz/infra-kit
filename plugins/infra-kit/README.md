@@ -1,6 +1,6 @@
 # infra-kit — Claude Code plugin
 
-Engineering skills and the code-quality agent used across the infra-kit family of monorepos.
+Engineering skills used across the infra-kit family of monorepos.
 Installed once per repo, updated from this repo, versioned in `.claude-plugin/plugin.json`.
 
 This plugin **complements** the infra-kit MCP server; it does not replace or bundle it. The
@@ -21,7 +21,6 @@ teammate may never have installed. The reasoning is recorded in
 | skill | `/infra-kit:e2e-architect` | Per-feature Playwright e2e layout: page object, fixture, specs by axis |
 | skill | `/infra-kit:update-toolchain` | Bumps pnpm, Node and Turbo across a monorepo, phase by phase |
 | skill | `/infra-kit:full-cycle` | deep-interview → ralplan → review gate → ralph → verify (requires oh-my-claudecode) |
-| agent | `code-quality-validator` | Runs the monorepo's quality gates and reports per package |
 
 Skill scripts run from the plugin root (`${CLAUDE_PLUGIN_ROOT}/skills/<skill>/scripts/…`) and
 each skill's `allowed-tools` whitelists exactly the commands its body runs, so a bundled script

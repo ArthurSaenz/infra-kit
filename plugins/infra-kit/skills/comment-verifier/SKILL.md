@@ -1,6 +1,6 @@
 ---
 name: comment-verifier
-description: Reviews and then fixes code comments against one comment policy - why not what. This skill should be used when the user asks to review comments, audit JSDoc, check comment quality, or перевірити коментарі in changed or named TypeScript files. One run decides an action per comment, applies the ones that rewrite or remove, and proves mechanically that nothing else in the file changed.
+description: Review and fix code comments and JSDoc against one policy — why, never what
 argument-hint: "[files...]"
 allowed-tools: Read, Edit, Bash(node "${CLAUDE_PLUGIN_ROOT}"/skills/comment-verifier/scripts/lint-comments.mjs *), Bash(git diff:*), Bash(git merge-base:*), Bash(pnpm --filter * run ts-check), Bash(pnpm run test:claude)
 ---

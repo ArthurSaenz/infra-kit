@@ -4,7 +4,6 @@ import path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { resetGitStateCache } from 'src/lib/agent-guidance'
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
@@ -107,7 +106,6 @@ beforeEach(() => {
   process.env.INFRA_KIT_NO_SEED = '1'
 
   resetInfraKitConfigCache()
-  resetGitStateCache()
 })
 
 afterEach(() => {

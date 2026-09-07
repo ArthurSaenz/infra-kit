@@ -5,7 +5,6 @@ import { extractVersion } from 'src/lib/managed-block'
 import { buildDesignSkeleton } from '../bodies/design-skeleton'
 import { buildPackageBody } from '../bodies/package-body'
 import { buildRootBody } from '../bodies/root-body'
-import { TYPE_RULES } from '../bodies/type-rules'
 import {
   PACKAGE_MARKER_END,
   PACKAGE_MARKER_START,
@@ -32,9 +31,31 @@ const body = (type: PackageType, overrides: { hasReadme?: boolean; hasDesign?: b
   })
 }
 
+/**
+ * Rendered line count per type, with a `README.md`; one fewer without it.
+ *
+ * Exact numbers rather than a `<= 25` budget, and this is the primary guard on the
+ * markdown resources. Prettier's characteristic damage to those files is to leave
+ * every token in place and insert a line *beside* one — which a placeholder-presence
+ * check cannot see, and which `prettier-check` cannot see either once `prettier-fix`
+ * has written the damage into the file. A count fails loudly on exactly that class.
+ *
+ * Headroom is one line: `managed-block` wraps these in markers and the block budget
+ * is 25. Adding a line to the shared region of the five resource files puts three
+ * types at the ceiling.
+ */
+const LINE_COUNTS: Readonly<Record<PackageType, number>> = {
+  frontend: 24,
+  backend: 23,
+  lib: 24,
+  e2e: 24,
+  mobile: 24,
+}
+
 describe('buildPackageBody — every type', () => {
-  it.each([...PACKAGE_TYPES])('%s renders at most 25 lines', (type) => {
-    expect(body(type).split('\n').length).toBeLessThanOrEqual(25)
+  it.each([...PACKAGE_TYPES])('%s renders exactly its expected line count', (type) => {
+    expect(body(type).split('\n')).toHaveLength(LINE_COUNTS[type])
+    expect(body(type, { hasReadme: false }).split('\n')).toHaveLength(LINE_COUNTS[type] - 1)
   })
 
   it.each([...PACKAGE_TYPES])('%s names the package, its directory and its type', (type) => {
@@ -42,7 +63,7 @@ describe('buildPackageBody — every type', () => {
 
     expect(rendered).toContain(`# ${PACKAGE_NAME}`)
     expect(rendered).toContain(`\`${REL_DIR}\``)
-    expect(rendered).toContain(`**${TYPE_RULES[type].label}**`)
+    expect(rendered).toContain(`**${type}**`)
   })
 
   it.each([...PACKAGE_TYPES])('%s puts the version line first and round-trips through extractVersion', (type) => {
@@ -60,13 +81,11 @@ describe('buildPackageBody — every type', () => {
     }
   })
 
-  it.each([...PACKAGE_TYPES])('%s renders its own Rules bullets', (type) => {
-    const rendered = body(type)
-
-    for (const rule of TYPE_RULES[type].rules) {
-      expect(rendered).toContain(rule)
-    }
-  })
+  // The per-rule `toContain` loop that stood here is deliberately gone. With the
+  // rules now living in `resources/package/<type>.md`, its only possible source is
+  // the same file the renderer reads, so it could only ever assert that a parse
+  // equals itself. The characterization snapshot in `bodies-snapshot.test.ts` is
+  // its replacement and is a genuine literal-string contract.
 
   it('renders a different body per type', () => {
     const bodies = PACKAGE_TYPES.map((type) => {
@@ -116,6 +135,14 @@ describe('buildRootBody', () => {
     expect(rendered).toContain('Every workspace package has its own CLAUDE.md with package-scoped rules')
   })
 
+  it('renders exactly 23 lines', () => {
+    // Same net as the per-type counts, extended to the two resources `PACKAGE_TYPES`
+    // does not reach. Neither file contains a bare-placeholder construct today, so the
+    // prettier-inserts-a-line class is not reachable here — this is defence in depth,
+    // and the only alternative backstop is a snapshot whose update path is `vitest -u`.
+    expect(rendered.split('\n')).toHaveLength(23)
+  })
+
   it('keeps the pre-existing command and convention text', () => {
     expect(rendered).toContain('# infra-kit')
     expect(rendered).toContain('`ik env-load -c <config>`')
@@ -135,6 +162,24 @@ describe('buildDesignSkeleton', () => {
     }
 
     expect(rendered).toContain(`name: ${PACKAGE_NAME}`)
+  })
+
+  it('injects the package name at both points, front matter and heading', () => {
+    // Two points, two mechanisms: the front matter carries a static `name: TODO`
+    // replaced by exact match (prettier destroys `{{ }}` inside front matter), the
+    // heading an ordinary placeholder. Asserting only the first would ship a literal
+    // `# Design — {{packageName}}` heading into every scaffolded file.
+    expect(rendered).toContain(`# Design — ${PACKAGE_NAME}`)
+    expect(rendered).not.toContain('name: TODO')
+    expect(rendered).not.toContain('{{')
+  })
+
+  it('renders exactly 70 lines and ends with a single newline', () => {
+    expect(rendered.split('\n')).toHaveLength(70)
+    // Unlike the two block bodies this one is written as a whole file, so its single
+    // trailing newline is part of the contract rather than an artefact.
+    expect(rendered.endsWith('\n')).toBe(true)
+    expect(rendered.endsWith('\n\n')).toBe(false)
   })
 
   it('renders the prose sections in spec order', () => {

@@ -4,7 +4,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { PACKAGE_MARKER_START, resetGitStateCache } from 'src/lib/agent-guidance'
+import { PACKAGE_MARKER_START } from 'src/lib/agent-guidance'
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
@@ -82,17 +82,15 @@ beforeEach(() => {
   // The layer-3 reseed needs a real git repo we deliberately do not have here.
   process.env.INFRA_KIT_NO_SEED = '1'
 
-  // Both caches key on values these tests change between cases (the mocked project root,
-  // and a fresh temp tree git has never seen), so a carried-over entry would answer for
-  // the previous test's already-deleted directory.
+  // The config cache keys on values these tests change between cases (the mocked project
+  // root), so a carried-over entry would answer for the previous test's already-deleted
+  // directory.
   resetInfraKitConfigCache()
-  resetGitStateCache()
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
   resetInfraKitConfigCache()
-  resetGitStateCache()
   delete process.env.INFRA_KIT_NO_SEED
   fs.rmSync(home, { recursive: true, force: true })
   fs.rmSync(repo, { recursive: true, force: true })
@@ -165,7 +163,6 @@ describe('init() — repo-wide agent-guidance refresh', () => {
     })
 
     vi.clearAllMocks()
-    resetGitStateCache()
 
     await init()
 

@@ -50,6 +50,15 @@ export const buildOptions = {
   // Automatic JSX runtime so .tsx needs no `import React`. Pairs with
   // tsconfig `"jsx": "react-jsx"`.
   jsx: 'automatic',
+  // Inline `resources/**/*.md` as strings. Esbuild strips the `?raw` query before
+  // resolving, so this `.md` entry is what serves `import body from './body.md?raw'`.
+  //
+  // The `?raw` spelling — not a bare `.md` — is deliberate and is the reason this
+  // loader alone is not the whole wiring (see src/md.d.ts). Esbuild accepts both,
+  // but vitest resolves through Vite, where `?raw` is the native raw-text query and
+  // a bare `.md` import is an unknown asset type. Dropping the suffix would keep
+  // this build green while the test suite failed to load a resource at all.
+  loader: { '.md': 'text' },
   // Externalize every runtime dependency, plus the React JSX runtime subpaths.
   //
   // A package key DOES cover its own subpaths: `@modelcontextprotocol/server` in this list

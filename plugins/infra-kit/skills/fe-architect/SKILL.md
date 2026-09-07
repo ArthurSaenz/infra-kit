@@ -1,6 +1,6 @@
 ---
 name: fe-architect
-description: Build and review the inside of a feature — React, TypeScript, Jotai, Tailwind. Activate for creating or scaffolding features, restructuring code into features, modifying services/containers/state, enforcing the naming rules ($ prefix, Fx suffix, service export names), dumb vs smart component boundaries, container loading/error/empty guards, state scope, splitting, error handling, and optimistic updates. Use fe-patterns instead when the question crosses a feature boundary. Do NOT activate for trivial CSS tweaks, console.log additions, or simple one-line fixes.
+description: Build and review inside a React feature — services, containers, state, naming rules, dumb vs smart
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash(node "${CLAUDE_PLUGIN_ROOT}"/skills/fe-architect/scripts/scaffold_feature.mjs *), Bash(node "${CLAUDE_PLUGIN_ROOT}"/skills/fe-architect/scripts/validate_feature.mjs *), Bash(node "${CLAUDE_PLUGIN_ROOT}"/skills/fe-architect/scripts/analyze_imports.mjs *), Bash(node "${CLAUDE_PLUGIN_ROOT}"/skills/fe-architect/scripts/check_structure.mjs *), Bash(pnpm exec eslint --print-config *)
 ---
 

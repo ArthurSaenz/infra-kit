@@ -43,10 +43,7 @@ const EXPECTED_TYPES: Readonly<Record<(typeof FIXTURE_PACKAGES)[number], string>
 }
 
 /* eslint-disable sonarjs/no-os-command-from-path -- hermetic test fixture drives the real `git` CLI */
-/**
- * Make `dir` a git repo. The package backup policy is git-aware, so a non-repo fixture would
- * exercise a different branch of `writeManaged` than a real consumer ever hits.
- */
+/** Make `dir` a git repo, so the fixture matches the versioned workspace a real consumer runs in. */
 const gitInit = (dir: string): void => {
   execFileSync('git', ['init', '--quiet'], { cwd: dir, stdio: 'ignore' })
   execFileSync('git', ['add', '-A'], { cwd: dir, stdio: 'ignore' })

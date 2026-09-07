@@ -31,6 +31,13 @@ const writeFile = (filePath: string, content: string): void => {
   fs.writeFileSync(filePath, content, 'utf-8')
 }
 
+/** Sibling files a former backup policy would have left next to `basename`. */
+const backupsIn = (dir: string, basename: string): string[] => {
+  return fs.readdirSync(dir).filter((entry) => {
+    return entry.startsWith(`${basename}.backup.`)
+  })
+}
+
 /** A tmp dir that is a "valid repo" (has infra-kit.json) unless `repo: false`. */
 const withTmpRepo = async (fn: (tmp: string) => Promise<void>, opts: { repo?: boolean } = {}): Promise<void> => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'infra-kit-agents-test-'))
@@ -148,18 +155,18 @@ describe('writeAgentFiles', () => {
     })
   })
 
-  it('backs up an existing CLAUDE.md before overwriting', async () => {
+  it('updates an existing CLAUDE.md in place, leaving no backup sibling', async () => {
     await withTmpRepo(async (tmp) => {
       writeFile(path.join(tmp, 'CLAUDE.md'), 'previous content without markers\n')
 
       await writeAgentFiles()
 
-      const backups = fs.readdirSync(tmp).filter((f) => {
-        return f.startsWith('CLAUDE.md.backup.')
-      })
+      // The hand-authored text survives inside the file itself — no sibling copy is kept.
+      const claude = fs.readFileSync(path.join(tmp, 'CLAUDE.md'), 'utf-8')
 
-      expect(backups).toHaveLength(1)
-      expect(fs.readFileSync(path.join(tmp, backups[0]!), 'utf-8')).toContain('previous content without markers')
+      expect(claude).toContain('previous content without markers')
+      expect(claude).toContain(AGENTS_MARKER_START)
+      expect(backupsIn(tmp, 'CLAUDE.md')).toHaveLength(0)
     })
   })
 
@@ -176,19 +183,14 @@ describe('writeAgentFiles', () => {
       writeFile(path.join(tmp, 'CLAUDE.md'), `${opts.claudeExtra ?? ''}${importBlock}`)
     }
 
-    it('removes a purely-generated AGENTS.md (with a backup) and strips the @AGENTS.md import from CLAUDE.md', async () => {
+    it('removes a purely-generated AGENTS.md and strips the @AGENTS.md import from CLAUDE.md', async () => {
       await withTmpRepo(async (tmp) => {
         await seedLegacy(tmp)
 
         await writeAgentFiles()
 
-        // AGENTS.md is gone, but a backup survives.
         expect(fs.existsSync(path.join(tmp, 'AGENTS.md'))).toBe(false)
-        const backups = fs.readdirSync(tmp).filter((f) => {
-          return f.startsWith('AGENTS.md.backup.')
-        })
-
-        expect(backups).toHaveLength(1)
+        expect(backupsIn(tmp, 'AGENTS.md')).toHaveLength(0)
 
         // CLAUDE.md now carries the full block and no longer imports @AGENTS.md.
         const claude = fs.readFileSync(path.join(tmp, 'CLAUDE.md'), 'utf-8')
@@ -199,7 +201,7 @@ describe('writeAgentFiles', () => {
       })
     })
 
-    it('retains an AGENTS.md that has hand-authored content (block removed, file kept, backup made)', async () => {
+    it('retains an AGENTS.md that has hand-authored content (block removed, file kept)', async () => {
       await withTmpRepo(async (tmp) => {
         await seedLegacy(tmp, { agentsExtra: '# My own notes\n\nkeep me\n\n' })
 
@@ -212,13 +214,7 @@ describe('writeAgentFiles', () => {
         expect(agents).toContain('# My own notes')
         expect(agents).toContain('keep me')
         expect(agents).not.toContain(AGENTS_MARKER_START)
-
-        // A backup of the pre-strip file exists.
-        const backups = fs.readdirSync(tmp).filter((f) => {
-          return f.startsWith('AGENTS.md.backup.')
-        })
-
-        expect(backups).toHaveLength(1)
+        expect(backupsIn(tmp, 'AGENTS.md')).toHaveLength(0)
       })
     })
 
@@ -231,11 +227,7 @@ describe('writeAgentFiles', () => {
         await writeAgentFiles()
 
         expect(fs.readFileSync(path.join(tmp, 'AGENTS.md'), 'utf-8')).toBe(handAuthored)
-        const backups = fs.readdirSync(tmp).filter((f) => {
-          return f.startsWith('AGENTS.md.backup.')
-        })
-
-        expect(backups).toHaveLength(0)
+        expect(backupsIn(tmp, 'AGENTS.md')).toHaveLength(0)
       })
     })
 
@@ -265,13 +257,8 @@ describe('writeAgentFiles', () => {
 
       await writeAgentFiles()
 
-      // Untouched: same content, no backup, no deletion.
+      // Untouched: same content, no deletion.
       expect(fs.readFileSync(cursorPath, 'utf-8')).toBe(existing)
-      const backups = fs.readdirSync(path.join(tmp, '.cursor', 'rules')).filter((f) => {
-        return f.startsWith('infra-kit.mdc.backup.')
-      })
-
-      expect(backups).toHaveLength(0)
     })
   })
 })
