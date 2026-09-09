@@ -514,3 +514,71 @@ test('T5: no consumer-repo name appears anywhere under plugins/', () => {
   }
   assert.deepEqual(hits, [])
 })
+
+// ---------------------------------------------------------------------------
+// U13 / U14 / T1b — the commands/ tree
+//
+// Three of the plugin's strongest guards do not see commands/ at all: U6 and U12 walk skillDirs(),
+// and T1 walks SKILLS_DIR. That is not an oversight to route around — T1's scope is precisely what
+// LETS a command name an MCP tool, which a skill may never do. T1b pins both halves of that boundary
+// so a reasonable-looking future widening of T1 to PLUGINS_DIR turns a test red instead of silently
+// deleting the command's fallback clause. U6/U12 coverage of commands/ stays a known gap (G-U6).
+// ---------------------------------------------------------------------------
+
+const COMMANDS_DIR = join(PLUGIN_ROOT, 'commands')
+const EXPECTED_COMMANDS = ['release-create.md']
+const COMMAND_FRONTMATTER_KEYS = ['argument-hint', 'description', 'name']
+
+test('U13: the commands/ file list equals the expected literal', () => {
+  const found = existsSync(COMMANDS_DIR)
+    ? readdirSync(COMMANDS_DIR, { withFileTypes: true })
+        .filter((e) => e.isFile())
+        .map((e) => e.name)
+        .sort()
+    : []
+  assert.deepEqual(found, [...EXPECTED_COMMANDS].sort())
+})
+
+test('U14: every command pins its frontmatter key set, its name, and its body length', () => {
+  for (const name of EXPECTED_COMMANDS) {
+    const file = join(COMMANDS_DIR, name)
+    const parsed = parseFrontmatter(readText(file))
+    assert.ok(parsed, `${rel(file)} has no parseable frontmatter`)
+
+    assert.deepEqual(
+      Object.keys(parsed.data).sort(),
+      COMMAND_FRONTMATTER_KEYS,
+      `${rel(file)} frontmatter must carry exactly ${COMMAND_FRONTMATTER_KEYS.join(', ')}`,
+    )
+    assert.equal(parsed.data.name, name.replace(/\.md$/, ''), `${rel(file)} name must equal its filename stem`)
+
+    // Exactly 3, not "at most 10". The ≤10 budget is the DECISION and lives in the plan; asserting it
+    // here would leave 7 lines of drift no test would notice, and a command that doubled in length
+    // would stay green — the exact rot the defer-to-the-resource design exists to prevent. A
+    // deliberate 4th line is a one-character edit here and a visible diff, which is the point.
+    const bodyLines = parsed.body.split('\n').filter((line) => line.trim() !== '')
+    assert.equal(bodyLines.length, 3, `${rel(file)} body must be exactly 3 non-empty lines`)
+  }
+})
+
+test('T1b: T1 is scoped to skills, and the command does name an infra-kit MCP tool', () => {
+  // Half one: T1 walks SKILLS_DIR, asserted against T1's OWN SOURCE.
+  //
+  // An earlier spelling called walkFiles(SKILLS_DIR) here and checked the result held no command
+  // file. That was VACUOUS: SKILLS_DIR and COMMANDS_DIR are disjoint siblings, so it is true however
+  // T1 is written — widening T1 to PLUGINS_DIR reddened T1 and left this green, which is the exact
+  // "mutually unsatisfiable" property this test exists to provide. Reading the source is brittle by
+  // design: T1's walk root is the invariant, so a change to it SHOULD require touching this line.
+  const suiteSource = readText(join(TESTS_DIR, 'manifest.test.mjs'))
+  const t1Body = /test\('T1:[\s\S]*?\n\}\)/.exec(suiteSource)?.[0]
+  assert.ok(t1Body, 'could not locate T1 in the suite source')
+  assert.match(t1Body, /walkFiles\(SKILLS_DIR\)/, 'T1 must walk SKILLS_DIR — widening it breaks the fallback clause')
+
+  // Half two: the command really does depend on that scoping. Naming the tool in prose is the ONLY
+  // binding mechanism a command has; there is no declarative command→tool wiring.
+  const command = join(COMMANDS_DIR, 'release-create.md')
+  assert.ok(
+    readText(command).includes('mcp__infra-kit__release-create'),
+    `${rel(command)} must name the tool it falls back to`,
+  )
+})
