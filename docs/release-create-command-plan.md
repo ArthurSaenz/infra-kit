@@ -543,7 +543,7 @@ comparison, not a new serializer."_ Both halves are false, verified:
 **The citation is dropped rather than repaired**, and the check is written as its own small function:
 
 ```ts
-/** True when `after` removed a top-level key of `before`, or shortened one of its arrays. */
+/** True when `after` removed a top-level key of `before`, or CHANGED the length of one of its arrays. */
 const narrowsArgs = (before: unknown, after: unknown): boolean => {
   if (!isRecord(before)) return false
   // `before` is a record and `after` is not: EVERY argument was narrowed away.
@@ -573,16 +573,27 @@ because it was used to demote `isFormable`.
 _Covered — and this half genuinely is structural:_
 
 - **Top-level key removal.** `releases` cannot vanish.
-- **Array truncation.** `releases` cannot get shorter. This is a **ceiling, not a heuristic**: there is
-  no legitimate form, present or future, that shortens an array the caller supplied. A form narrows a
-  _choice_; it never withdraws an item the caller asked for. So the check can never need relaxing, and
-  a future provider that trips it is wrong by construction rather than merely unusual.
+- **Array length change, in BOTH directions.** `releases` can neither shrink nor grow. This is a
+  **ceiling, not a heuristic**: no legitimate form, present or future, withdraws an item the caller
+  supplied or invents one they did not. A form narrows a _choice_; it never edits the list of things
+  being chosen about. So the check can never need relaxing, and a future provider that trips it is
+  wrong by construction rather than merely unusual.
+
+  **Growth is the dangerous half.** A shortened array loses a release the human asked for, which the
+  gate then shows them. A grown one **injects a release nobody asked for**, stays schema-valid, and
+  executes — the token is minted over the injected entry and `verify` passes clean.
 
 _Not covered — the residue, named rather than glossed:_
 
 - **Nested key removal** — `releases[0].type`, `releases[0].description`. The check reads top-level
   keys only.
 - **Equal-length / equal-shape substitution** — `[X]` → `[Y]`, or any value replacement at any depth.
+- **An injected top-level key** — `{version}` → `{version, force: true}`. The check walks the keys of
+  `before`, so a key `after` adds is invisible to it, is merged, and is minted into the token. It is
+  **not silent** — the gate echoes it in `resolvedArgs`, which is the one thing a human is told to
+  read — but a provider author consulting this list must know the check does not stop it. Named
+  because the array half of the same idea (growth) IS covered, which makes the omission read as a
+  deliberate exclusion rather than an oversight.
 
 **Both are B1a's class, not B1's** (label corrected in round 3): a field destroyed _inside_ a surviving
 entry, not an entry destroyed. The harm is identical — a `hotfix` silently becoming `regular`, the
@@ -1605,3 +1616,29 @@ users" is now false in exactly one respect, and the PR row should not be left cl
 user-visible change is, like its file list, a claim about the _code path_ — and it goes stale the moment
 scope moves between PRs. The executor flagged it rather than leaving it to be discovered, which is the
 behaviour the rule is meant to produce.
+
+**8.13 — the completion review found a third unwrapped throwing path, and a fifth vacuous assertion.**
+
+`isFormable` and the capability probe are the two calls that decide whether a form is offered at all,
+and both ran **outside** the wraps `argument-form.ts` puts around `buildRequestedSchema` and `toArgs`.
+A provider throwing in either escaped through the handler's outer catch as a **tool error on a call
+that was owed a gate** — the exact failure those wraps exist to prevent, reached one step earlier.
+`types.ts` states a never-throws contract for `isFormable`, but a contract is not a mechanism: it is
+enforced per provider, which is the residual class the non-narrowing check was adopted to remove. Both
+now run through a `tryPredicate` helper that fails to `false`, so the worst a broken predicate can do
+is decline a form the human would have seen — never skip the gate, never reach the handler. Inert
+today (no provider exists), closed before PR C rather than after.
+
+**The `declined` row's `!confirmed` conjunct was unasserted** — deleting it left the whole suite green,
+while the row's own comment implied all three spellings were load-bearing. A confirmed round 2 that
+still carries `inputResponses` (a client echoing them back) must reach `verify`, never be re-read as a
+decline. Now asserted.
+
+**And the first assertion written for it was itself vacuous** — the fifth of this document's run, and
+the second written by the person enforcing §3.0. It passed a bare `{ args: { action: 'decline' } }`
+where the context shape is `{ mcpReq: { inputResponses: { args: … } } }`, so `responses` resolved to
+`undefined`, the `declined` row could not match under **any** mutation, and the test passed trivially.
+Caught only by running the mutation and seeing it fail to redden.
+
+**The tally for this document is five: V10, F13, F5, and two written during implementation.** Every one
+looked correct on the page. Not one was caught by reading it.

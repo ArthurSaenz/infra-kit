@@ -261,6 +261,28 @@ interface GateArgs {
  * and it never proceeds with the client's values either. It gates on what the agent originally
  * asked for, and says so.
  */
+/**
+ * Runs one form PREDICATE, treating any throw as `false`.
+ *
+ * `isFormable` and the capability probe are the two calls that decide whether a form is even
+ * offered, and both run OUTSIDE the wraps `argument-form.ts` puts around `buildRequestedSchema`
+ * and `toArgs`. Unwrapped, a provider that throws here escapes through the handler's outer catch
+ * as a TOOL ERROR on a call that was owed a GATE — the exact failure those wraps exist to prevent,
+ * reached one step earlier.
+ *
+ * `types.ts` states a never-throws contract for `isFormable`, but a contract is not a mechanism:
+ * it is enforced per provider, which is the residual class the chokepoint's non-narrowing check was
+ * adopted to remove. Failing to `false` here means the worst a broken predicate can do is decline a
+ * form the human would have seen — never skip the gate, never reach the handler.
+ */
+const tryPredicate = (read: () => boolean): boolean => {
+  try {
+    return read()
+  } catch {
+    return false
+  }
+}
+
 const resolveGateArgs = async (
   deps: StopDeps,
   params: unknown,
@@ -346,9 +368,13 @@ const resolveStop = async (
     // `caps?.elicitation?.form`, NEVER `caps?.elicitation`: the SDK normalizes a bare
     // `{elicitation:{}}` to `{elicitation:{form:{}}}`, so both spellings agree on every fixture
     // except a url-only client — which is exactly the client that must NOT be offered a form.
-    canForm: deps.getClientCapabilities?.()?.elicitation?.form !== undefined,
+    canForm: tryPredicate(() => {
+      return deps.getClientCapabilities?.()?.elicitation?.form !== undefined
+    }),
     hasProvider: deps.formProvider !== undefined,
-    formable: deps.formProvider?.isFormable(params) === true,
+    formable: tryPredicate(() => {
+      return deps.formProvider?.isFormable(params) === true
+    }),
     accepted: formAction === 'accept',
   })
 

@@ -681,6 +681,66 @@ describe('createToolHandler — argument form', () => {
     expect(handler).not.toHaveBeenCalled()
   })
 
+  // The two predicates that decide whether a form is offered at all run OUTSIDE the wraps around
+  // `buildRequestedSchema` and `toArgs`. Unwrapped, a throw here escapes as a TOOL ERROR on a call
+  // that was owed a GATE — the same failure, one step earlier. Reviewer finding, Major 1.
+  it('f6: a provider whose isFormable THROWS falls to the gate, not to a tool error', async () => {
+    const provider = makeProvider({
+      isFormable: () => {
+        throw new Error('provider predicate blew up')
+      },
+    })
+    const { tool, handler } = formTool({ provider, capabilities: FORM_CAPABLE })
+
+    const result = await tool({ releases: [{ version: 'next' }] })
+
+    expect(isForm(result)).toBe(false)
+    expect(gateOf(result)).toMatchObject({ status: 'confirmation_required' })
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('f6: a capability probe that THROWS falls to the gate, not to a tool error', async () => {
+    const handler = vi.fn(async () => {
+      return payload
+    })
+    const tool = createToolHandler({
+      toolName: 'release-create',
+      handler,
+      requiresHumanConfirm: true,
+      formProvider: makeProvider(),
+      getClientCapabilities: () => {
+        throw new Error('capability read blew up')
+      },
+    })
+
+    const result = await tool({ releases: [{ version: 'next' }] })
+
+    expect(isForm(result)).toBe(false)
+    expect(gateOf(result)).toMatchObject({ status: 'confirmation_required' })
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  // The `declined` row spells `!confirmed` like every other row, and until now nothing asserted it:
+  // deleting that conjunct left the whole suite green. A confirmed round 2 that still carries
+  // `inputResponses` — a client that echoes them back — must reach VERIFY, never be re-read as a
+  // decline. Reviewer finding, Minor 2.
+  it('f7: a CONFIRMED round 2 that still carries inputResponses reaches VERIFY, not declined', async () => {
+    const { tool, handler } = formTool({ provider: makeProvider(), capabilities: FORM_CAPABLE })
+    const round1 = { releases: [{ version: 'next' }] }
+
+    const gate = await tool(round1, accepted({ version: '1.63.1' }))
+    const merged = { releases: [{ version: '1.63.1' }] }
+
+    // Round 2 carries confirm + the token AND a stale decline in inputResponses.
+    const result = await tool(
+      { ...merged, confirm: true, confirmToken: gateToken(gate) },
+      reentry({ action: 'decline' }),
+    )
+
+    expect(result).toBe(payload)
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
   it('f7: a round 2 carrying no inputResponses reaches VERIFY, not the gate', async () => {
     const { tool, handler } = formTool({ provider: makeProvider(), capabilities: URL_ONLY })
     const args = { releases: [{ version: '1.2.3' }] }
