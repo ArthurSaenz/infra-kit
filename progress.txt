@@ -178,3 +178,19 @@ no code with the thing under test), and confirmed on the real artifact:
   both channels   byte-identical
 Probe kept at <scratchpad>/probe-dist.mjs; it is the local twin of what the PM-C CI check does
 against the published package.
+
+Independent vacuity hunt on PR B (lead, separate from the executor and the reviewer). No fourth
+vacuous AC found, but one gap in the MUTATION TABLE:
+
+- f2 both lanes DO supply a provider, so the gate is caused by the missing capability and not by a
+  missing provider. Not the cause-substitution I suspected.
+- f11 lane 2 ("a field the human DID supply wins") is named as the guard against a merge written
+  BACKWARDS, but the reported table only lists the fresh-object mutation for it. Under fresh
+  construction lane 2 reddens via the dropped description, not via type — i.e. it reddens for a
+  different reason than its name claims. Ran the missing mutation myself: {...supplied, ...base}
+  reddens f4 and BOTH f11 lanes, so the guard is real and the coverage is fine.
+
+LESSON: an incomplete mutation table is a milder form of the vacuous-AC problem. A lane can redden
+under the listed mutation while its NAMED hazard goes untested — the test is not vacuous, but the
+table implies coverage it has not demonstrated. Trace every lane to the hazard in its own title,
+not merely to some mutation that happens to flip it.

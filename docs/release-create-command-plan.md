@@ -1587,3 +1587,21 @@ AC whose _predicted_ red is wrong invites the next reader to "fix" the code towa
 lands in the `declined` row. F3's fourth lane passes with **zero code reading the field**. It stays
 declared on `ToolCallContext` and documented, but §2.3's implication that it needs handling of its own
 is wrong.
+
+**8.12 — PR B is not "inert in production", and §5's row says it is.** §5 scopes PM-D(a) — the
+provider-less clause in `buildConfirmGate`'s message — to **PR C**, and its PR B row promises "none in
+production". The implementation brief put PM-D(a) in PR B instead, and it shipped there. So as landed,
+PR B changes what **every gated tool** returns on round 1:
+
+- the gate payload gains `formDiscarded` (`false` on every provider-less tool), and
+- the seven provider-less gated tools gain PM-D(a)'s clause in `message`.
+
+**Nothing is red and nothing is broken.** The e2e byte-for-byte fixture is keyed to `resources/list`,
+not to gate payloads; and the gate payload already fails the tool's `outputSchema` by construction
+(that is why it sets `isError`), so one more field changes no contract it was meeting. But "inert for
+users" is now false in exactly one respect, and the PR row should not be left claiming otherwise.
+
+**This is §8.5's rule finding its second instance in the same document.** A PR row's promise about
+user-visible change is, like its file list, a claim about the _code path_ — and it goes stale the moment
+scope moves between PRs. The executor flagged it rather than leaving it to be discovered, which is the
+behaviour the rule is meant to produce.
