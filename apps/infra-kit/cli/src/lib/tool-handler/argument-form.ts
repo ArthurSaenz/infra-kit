@@ -23,7 +23,12 @@ import type { ArgumentFormProvider } from 'src/types'
  * The identifier the form is registered under in `inputRequests`, and the key the client's reply
  * comes back under in `ctx.mcpReq.inputResponses`. One key, one form, one round trip.
  */
-export const FORM_KEY = 'args'
+// Module-private on purpose. Both sides of the round trip are in this file — `buildArgumentForm`
+// registers under it, `readFormAction` and `readAcceptedArgs` read back under it — so the key is an
+// internal convention, not a contract anyone outside gets to depend on. Exporting it would invite a
+// caller to reach into `inputResponses` themselves and re-derive an action without the totality the
+// functions below are built to guarantee.
+const FORM_KEY = 'args'
 
 /**
  * How long the chokepoint waits for a provider to produce a schema.
@@ -94,10 +99,33 @@ const withDeadline = async <T>(work: Promise<T>, ms: number): Promise<T | null> 
  * The provider's schema for these arguments, or `null` on ANY failure: a rejection, a deadline
  * overrun, a synchronous throw before the promise is even returned, or the provider's own `null`.
  *
- * Called on BOTH rounds. Round 1 needs it to build the form; round 2 needs the SAME schema to
- * validate what came back («d.mts»:1406), and the round-2 `params` are the round-1 arguments the
- * client echoed back, so re-asking the provider reproduces it.
+ * Called on BOTH rounds. Round 1 needs it to build the form; round 2 needs a schema to validate what
+ * came back («d.mts»:1406), and the round-2 `params` are the round-1 arguments the client echoed
+ * back, so re-asking the provider reproduces it.
  */
+// The REBUILD on round 2 is deliberate, and it is not free. The two rounds are two separate
+// `tools/call` requests — round 2 is a re-entry, discriminated by `responses !== undefined` — so this
+// runs at most once per request and never twice within one. Across an accepted form that is two
+// builds, and for a provider that reaches the network (the release provider runs `git ls-remote` and
+// a Jira fetch) four calls where a single build would cost two. Both alternatives are worse.
+//
+// Reusing round 1's schema is not "threading a value through": nothing in this chokepoint survives a
+// request. The gate is stateless BY CONSTRUCTION — round 2 is trusted because it returns an HMAC the
+// server minted, not because the server remembered anything — so a reused schema needs either a
+// keyed server-side cache with its own eviction, or transport through the client. The second hands
+// the client the validator that is the ONLY thing checking the content it just sent. The first
+// re-introduces on a long-lived process exactly the per-request state `confirm-token.ts` was built
+// to avoid, to save two network calls per human decision.
+//
+// The rebuild does mean round 2 validates against a MOVED world: a choice that was legal when the
+// human made it can fail now, and they lose it. That is the correct direction to fail. A provider
+// enumerates candidates precisely because the current world constrains them — the release provider
+// lists the versions that already exist so a cut cannot collide — so honouring a stale selection
+// executes the collision the enumeration was there to prevent. The loss is not silent either: it
+// lands on the `formDiscarded` gate, which names the discard in a field AND in prose. Telling a
+// drift-caused failure apart from ordinary invalid content would need round 1's schema to compare
+// against, which is the cross-request state above — bought to reword a message, not to change an
+// outcome. `f14` in the tests pins the drifted round trip.
 const trySchema = async (
   provider: ArgumentFormProvider,
   params: unknown,

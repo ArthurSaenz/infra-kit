@@ -1642,3 +1642,30 @@ Caught only by running the mutation and seeing it fail to redden.
 
 **The tally for this document is five: V10, F13, F5, and two written during implementation.** Every one
 looked correct on the page. Not one was caught by reading it.
+
+**8.14 — the double schema build is deliberate, and the alternative is worse than it looks.**
+
+`buildArgumentForm` and `readAcceptedArgs` each build the provider's schema, so `buildRequestedSchema`
+runs twice per accepted form — four provider network calls on the accept path once PR C's provider
+loads existing versions. An anti-slop review flagged it as duplication. It is not.
+
+**The two builds are in two separate `tools/call` requests, never in one.** Row 1 requires
+`responses === undefined` (`tool-handler.ts:121`) and `resolveGateArgs` returns early unless the action
+is `accept` (`:294`), which requires responses present — so within one invocation at most one build
+runs. "Build once and thread the schema through" is therefore not threading a value down a call chain;
+it is making a live Zod object survive a **request boundary**. The only two implementations are a keyed
+server-side cache with its own eviction on a long-lived process — reintroducing exactly the
+cross-request state `confirm-token.ts` exists to avoid — or transporting the schema through the client,
+which hands the client the one thing validating the content it just sent. Both to save two network
+calls per human decision.
+
+**"Validate the form you rendered" is also the wrong contract here**, which was the review's other
+argument. A provider enumerates candidates _because the current world constrains them_: PR C's reads
+existing versions so a cut cannot collide. Honouring a stale pick executes the collision the
+enumeration exists to prevent. Failing a drifted pick is the correct direction, and it is not silent —
+it lands on the `formDiscarded` gate, which names the discard in a field and in prose.
+
+Measured, not argued: under a cached-schema mutation the drifted pick is not merely accepted, it
+becomes the value the gate **binds the token to**. `f14` pins the intended behaviour — an enum that
+drifts between rounds discards the human's pick, gates on the round-1 arguments, and calls
+`buildRequestedSchema` twice.

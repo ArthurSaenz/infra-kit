@@ -933,6 +933,35 @@ describe('createToolHandler — argument form', () => {
     expect(handler).not.toHaveBeenCalled()
   })
 
+  it('f14: a schema that DRIFTS between rounds is rebuilt — the pick that was legal is discarded', async () => {
+    // The round-2 rebuild is deliberate (the note above `trySchema` says why): re-entry validates
+    // against the world as it is NOW, not the one the form was drawn from. A pick that was legal
+    // when the human made it and is not legal any more has to lose, because the provider enumerates
+    // candidates precisely to keep the call consistent with that world.
+    let versions: [string, ...string[]] = ['1.63.1', '1.64.0']
+    const buildRequestedSchema = vi.fn(async () => {
+      return z.object({ version: z.enum(versions) })
+    })
+    const { tool, handler } = formTool({
+      provider: makeProvider({ buildRequestedSchema }),
+      capabilities: FORM_CAPABLE,
+    })
+    const round1 = { releases: [{ version: 'next', type: 'hotfix' }] }
+
+    expect(asForm(await tool(round1)).resultType).toBe('input_required')
+    // Someone else cut 1.63.1 while the dialog sat open.
+    versions = ['1.64.0']
+
+    const gate = await tool(round1, accepted({ version: '1.63.1' }))
+
+    // Two builds, not one. Reusing round 1's schema — the rejected "build once" design — accepts
+    // '1.63.1' here and reports no discard, and this is the only case that can tell the two apart:
+    // every other form case holds its schema constant, so a cache and a rebuild agree.
+    expect(gateOf(gate)).toMatchObject({ status: 'confirmation_required', resolvedArgs: round1, formDiscarded: true })
+    expect(buildRequestedSchema).toHaveBeenCalledTimes(2)
+    expect(handler).not.toHaveBeenCalled()
+  })
+
   it('logs the form request and the form decline, each exactly once', async () => {
     const lines: string[] = []
     const spy = vi.spyOn(logger, 'info').mockImplementation((entry: unknown) => {
