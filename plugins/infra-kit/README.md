@@ -13,14 +13,15 @@ teammate may never have installed. The reasoning is recorded in
 
 ## What it contains
 
-| Component | Name | Purpose |
-| --- | --- | --- |
-| skill | `/infra-kit:comment-verifier` | Reviews and fixes comments against the "why, not what" policy, with a mechanical verify step |
-| skill | `/infra-kit:fe-architect` | Builds and reviews the inside of a React feature (naming, containers, state, services) |
-| skill | `/infra-kit:fe-patterns` | Cross-feature boundaries, injection patterns, promotion to shared |
-| skill | `/infra-kit:e2e-architect` | Per-feature Playwright e2e layout: page object, fixture, specs by axis |
-| skill | `/infra-kit:update-toolchain` | Bumps pnpm, Node and Turbo across a monorepo, phase by phase |
-| skill | `/infra-kit:full-cycle` | deep-interview → ralplan → review gate → ralph → verify (requires oh-my-claudecode) |
+| Component | Name                          | Purpose                                                                                                                    |
+| --------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| skill     | `/infra-kit:comment-verifier` | Reviews and fixes comments against the "why, not what" policy, with a mechanical verify step                               |
+| skill     | `/infra-kit:doctor`           | Runs the CLI health report, then adds the checks only a live session can make (which plugin tree loaded, drift, staleness) |
+| skill     | `/infra-kit:fe-architect`     | Builds and reviews the inside of a React feature (naming, containers, state, services)                                     |
+| skill     | `/infra-kit:fe-patterns`      | Cross-feature boundaries, injection patterns, promotion to shared                                                          |
+| skill     | `/infra-kit:e2e-architect`    | Per-feature Playwright e2e layout: page object, fixture, specs by axis                                                     |
+| skill     | `/infra-kit:update-toolchain` | Bumps pnpm, Node and Turbo across a monorepo, phase by phase                                                               |
+| skill     | `/infra-kit:full-cycle`       | deep-interview → ralplan → review gate → ralph → verify (requires oh-my-claudecode)                                        |
 
 Skill scripts run from the plugin root (`${CLAUDE_PLUGIN_ROOT}/skills/<skill>/scripts/…`) and
 each skill's `allowed-tools` whitelists exactly the commands its body runs, so a bundled script
@@ -81,7 +82,12 @@ Every skill description is loaded into context on every turn. The release checkl
 the recorded value below by more than 20%. Growing the budget is allowed; it must be a
 deliberate edit of this line in the same commit.
 
-- Recorded projected always-on token cost: **1438** (plugin version 0.1.0, measured with `claude --plugin-dir ./plugins/infra-kit plugin details infra-kit`)
+- Recorded projected always-on token cost: **347** (plugin version 0.3.0, measured with `claude --plugin-dir ./plugins/infra-kit plugin details infra-kit`)
+
+The previous recorded value was 1438, stamped against plugin version 0.1.0. It is not comparable to
+the number above: it went unrefreshed across two version bumps, and the reporting has since changed
+shape (it now itemises always-on against on-invoke cost per component). Treat 347 as the new
+baseline, not as evidence of a 4x reduction.
 
 ## Tests
 

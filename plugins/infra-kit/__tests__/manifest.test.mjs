@@ -18,6 +18,7 @@ const EXEMPT_DIRS = new Set([FIXTURES_DIR])
 
 const EXPECTED_SKILLS = [
   'comment-verifier',
+  'doctor',
   'e2e-architect',
   'fe-architect',
   'fe-patterns',
@@ -131,7 +132,12 @@ function parseFrontmatter(text) {
 // U6 — allowed-tools versus the fenced command corpus
 // ---------------------------------------------------------------------------
 
-const COMMAND_HEADS = new Set(['node', 'python3', 'pnpm', 'git'])
+// `infra-kit` is here for a reason worth stating: without it, a fenced `infra-kit …` line entered no
+// corpus, so clause 2 never checked it AND clause 3 flagged the matching allowed-tools rule as dead —
+// i.e. declaring the rule the README promises made U6 red, and omitting it made the command prompt on
+// every run. Widening closes both halves. Note this set feeds TWO predicates: U6's corpus below and
+// U5's `scripts/` rooting check.
+const COMMAND_HEADS = new Set(['node', 'python3', 'pnpm', 'git', 'infra-kit'])
 const PLACEHOLDER = '\u0001'
 
 function fencedLines(body) {
@@ -227,6 +233,15 @@ const SELF_LOCATION_ALLOWLIST = new Map([
       // The repo-root walk starts at the cwd on purpose: run as a plugin, the script's own
       // directory is never the consumer repo (comment-verifier/__tests__/repo-root.test.mjs).
       'const start = process.cwd()',
+    ],
+  ],
+  [
+    'doctor/scripts/session-probe.mjs',
+    [
+      // The repo being diagnosed, read once at the entry point. Note what is NOT here: the plugin
+      // root. That arrives as an argument, because a probe that located its own copy would report on
+      // that copy rather than on the tree the session actually loaded.
+      'const projectPath = process.cwd()',
     ],
   ],
   [
@@ -431,6 +446,68 @@ test('U6 red: an invocation moved from a fence into prose leaves the corpus', ()
   assert.ok(!result.ok, 'the orphaned rule must fail the check')
 })
 
+// Without this the `infra-kit` head added to COMMAND_HEADS would be a fail-open: it makes such lines
+// ELIGIBLE for checking, and only a red case proves they are actually checked.
+test('U6 red: a fenced infra-kit command with no matching rule fails clause 2', () => {
+  const { data, body } = loadFixture('u6-infra-kit-unruled.md')
+  const errors = checkSkillTools(data, body).errors
+
+  assert.deepEqual(
+    errors.map((e) => e.clause),
+    [2],
+  )
+  assert.match(errors[0].message, /infra-kit doctor/)
+})
+
+// ---------------------------------------------------------------------------
+// U15 / U16 — the doctor skill's two authoring contracts
+//
+// Both are DENY lists, not sources of truth. Neither enumerates what the doctor report contains; they
+// enumerate what this skill must not say. Drift therefore makes them weaker, never wrong, which is why
+// they do not constitute the "second inventory" the plugin's design forbids.
+// ---------------------------------------------------------------------------
+
+const DOCTOR_SKILL = join(SKILLS_DIR, 'doctor', 'SKILL.md')
+
+// Verbs that change the machine. The doctor skill may name these in prose, never in a fence: a fenced
+// line obliges an allowed-tools rule (clause 2), and a rule is a standing grant that runs without a
+// prompt. Keeping them unfenced is what keeps the grant out of the plugin.
+const MUTATING_INVOCATIONS = ['--fix', 'infra-kit init', 'audit --fix']
+
+test('U15: the doctor skill fences no state-changing command', () => {
+  const parsed = parseFrontmatter(readText(DOCTOR_SKILL))
+  assert.ok(parsed, 'doctor SKILL.md has no parseable frontmatter')
+
+  const offences = fencedLines(parsed.body).flatMap((line) =>
+    MUTATING_INVOCATIONS.filter((needle) => line.includes(needle)).map((needle) => `${needle} in \`${line}\``),
+  )
+
+  assert.deepEqual(offences, [], 'a mutating command inside a fence would be granted without a prompt')
+})
+
+// Row names and section labels owned by the CLI's report. The skill prints that report verbatim, so
+// repeating any of these would be a copy that goes stale the moment a check is renamed.
+const REPORT_OWNED_STRINGS = [
+  'claude CLI',
+  'marketplace registered',
+  'plugin installed',
+  'plugin version',
+  'CLI version',
+  'MCP server key',
+  'CLAUDE.md block',
+  'portless routes',
+  'tokens.json perms',
+  'infra-kit config valid',
+  'Tools & CLIs',
+]
+
+test('U16: the doctor skill restates no report row name or section label', () => {
+  const text = readText(DOCTOR_SKILL)
+  const hits = REPORT_OWNED_STRINGS.filter((needle) => text.includes(needle))
+
+  assert.deepEqual(hits, [], 'the skill must render the report, not describe its contents')
+})
+
 // ---------------------------------------------------------------------------
 // U7 / U8 — plugin.json and the marketplace entry
 // ---------------------------------------------------------------------------
@@ -558,6 +635,59 @@ test('U14: every command pins its frontmatter key set, its name, and its body le
     // deliberate 4th line is a one-character edit here and a visible diff, which is the point.
     const bodyLines = parsed.body.split('\n').filter((line) => line.trim() !== '')
     assert.equal(bodyLines.length, 3, `${rel(file)} body must be exactly 3 non-empty lines`)
+  }
+})
+
+// U17 — the `argument-hint` is a promise to the human, and the workflow body is the only text the
+// AGENT reads. `release-create.md` advertised `[--hotfix] [--desc <text>]` for a release cycle while
+// the body defined neither, so the hint named a syntax no reader could act on. The flags are not a
+// mistake — they are a deliberate command-level convention with a recorded precedence rule — but a
+// convention that reaches only one of the two readers is indistinguishable from a typo.
+//
+// U14 pins the frontmatter KEY SET and cannot catch this: the value was always a well-formed string.
+// Binding the hint to a *definition* rather than to a literal is what makes the guard survive a
+// deliberate change to either side — rename the flag in both places and it stays green, rename it in
+// one and it reddens.
+const WORKFLOW_RESOURCES_DIR = join(REPO_ROOT, 'apps', 'infra-kit', 'cli', 'resources', 'workflow')
+
+test('U17: every argument-hint flag is defined in the command’s workflow body', () => {
+  for (const name of EXPECTED_COMMANDS) {
+    const commandFile = join(COMMANDS_DIR, name)
+    const parsed = parseFrontmatter(readText(commandFile))
+    assert.ok(parsed, `${rel(commandFile)} has no parseable frontmatter`)
+
+    const hint = String(parsed.data['argument-hint'] ?? '')
+    const flags = [...hint.matchAll(/--[a-z][a-z-]*/g)].map((match) => {
+      return match[0]
+    })
+
+    // A hint carrying no flags is legal — the guard is about flags that exist, not a demand for them.
+    if (flags.length === 0) continue
+
+    const bodyFile = join(WORKFLOW_RESOURCES_DIR, name)
+    assert.ok(
+      existsSync(bodyFile),
+      `${rel(commandFile)} advertises ${flags.join(', ')} but has no workflow body at ${rel(bodyFile)}`,
+    )
+
+    const body = readText(bodyFile)
+
+    for (const flag of flags) {
+      // A DEFINITION, not a mention: the flag in backticks on a line that also carries the `→` used
+      // by every mapping line in these bodies. Requiring only that the flag appear somewhere would
+      // pass on a body that merely warns the flag is unsupported.
+      const defined = body.split('\n').some((line) => {
+        return line.includes(`\`${flag}`) && line.includes('→')
+      })
+
+      assert.ok(
+        defined,
+        `${rel(commandFile)}'s argument-hint promises ${flag}, but ${rel(bodyFile)} never defines what it maps to — ` +
+          'add a line of the form "- `' +
+          flag +
+          '` → <the tool field it sets>"',
+      )
+    }
   }
 })
 
