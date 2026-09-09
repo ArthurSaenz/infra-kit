@@ -1,8 +1,10 @@
+import type { ClientCapabilities, InputRequiredResult } from '@modelcontextprotocol/server'
+
 import { commandEcho } from 'src/lib/command-echo'
 import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
 import { logger } from 'src/lib/logger'
 import { textContent } from 'src/types'
-import type { ToolsExecutionResult } from 'src/types'
+import type { ArgumentFormProvider, ToolsExecutionResult } from 'src/types'
 
 import { getDefaultConfirmCodec, mintConfirmToken, stripGateKeys, verifyConfirmToken } from './confirm-token'
 import type { ConfirmCodec, ConfirmRefusal } from './confirm-token'
@@ -15,6 +17,21 @@ interface ToolHandlerArgs {
    * catalog tool's {@link CatalogMcpTool.requiresHumanConfirm} at registration (`mcp/tools/index.ts`).
    */
   requiresHumanConfirm?: boolean
+  /**
+   * Optional per-tool argument-form seam, sourced from the catalog tool's
+   * {@link CatalogMcpTool.formProvider} at registration. Absent on every tool today, and nothing here
+   * reads it yet: it is declared so registration can forward it while the state machine that consumes
+   * it lands separately. Absent must always mean "the gate behaves exactly as it always has".
+   */
+  formProvider?: ArgumentFormProvider
+  /**
+   * Reads the connected client's declared capabilities, so the chokepoint can ask whether this client
+   * can render a form at all before offering one. Injected as a CLOSURE rather than a value because
+   * capabilities are only known after initialize, and this handler is built at registration time —
+   * and because the accessor behind it is deprecated in favour of the per-request envelope, so the
+   * migration is a one-line change at the injection site rather than an edit in here.
+   */
+  getClientCapabilities?: () => ClientCapabilities | undefined
   /** Token codec for the gate. Defaults to the process-wide one; tests inject short-TTL or foreign-key codecs. */
   confirmCodec?: ConfirmCodec
 }
@@ -101,16 +118,33 @@ const buildConfirmRefusal = (toolName: string, reason: ConfirmRefusal): ToolsExe
   })
 }
 
+// The return is a union because the chokepoint can now answer a call with an `InputRequiredResult` —
+// the SDK's "I need input from the human before I can run" reply — as well as with a tool result.
+// It typechecks at the registration site because `ToolCallback` already returns
+// `CallToolResult | InputRequiredResult`.
+//
+// Deliberately UNCONDITIONAL, though nothing returns the second member yet. Narrowing it back for
+// callers that pass no `formProvider` would be asserting "no provider means a form is unreachable" —
+// true only while the state machine keeps requiring a provider, and enforced by nothing if that ever
+// changes. Every caller narrows the union explicitly instead.
 export const createToolHandler = ({
   toolName,
   handler,
   requiresHumanConfirm,
   confirmCodec,
-}: ToolHandlerArgs): ((params: unknown, ctx?: ToolCallContext) => Promise<ToolsExecutionResult>) => {
+}: ToolHandlerArgs): ((
+  params: unknown,
+  ctx?: ToolCallContext,
+) => Promise<ToolsExecutionResult | InputRequiredResult>) => {
   const codec = confirmCodec ?? getDefaultConfirmCodec()
 
-  return async (params: unknown) => {
-    logger.info({ msg: `Tool execution started: ${toolName}`, params })
+  // `ctx` is bound HERE, in the returned closure, and not merely declared on the exported type. The
+  // SDK passes it on every call, so a closure that omits the parameter discards it silently while
+  // the signature keeps advertising it — the gap survived PR 1 unnoticed for exactly that reason.
+  // Nothing branches on it yet; the entry log records the session, which keeps the binding live
+  // rather than a name TS would flag as unread.
+  return async (params: unknown, ctx?: ToolCallContext) => {
+    logger.info({ msg: `Tool execution started: ${toolName}`, params, sessionId: ctx?.sessionId })
     try {
       // MCP entry-boundary seed. This wrapper is the sole chokepoint for every exposed tool
       // (`src/mcp/tools/index.ts` holds the only `registerTool` call), and the `mcp` command itself is

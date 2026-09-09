@@ -1,3 +1,4 @@
+import type { InputRequiredResult } from '@modelcontextprotocol/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ensureUserProjectConfig, seedUserProjectConfig } from 'src/lib/config-bootstrap'
@@ -60,17 +61,35 @@ const payload: ToolsExecutionResult = {
   structuredContent: { ran: true },
 }
 
+/**
+ * Narrows a handler result to a TOOL result, throwing if the SDK's `InputRequiredResult` — "I need
+ * input from the human before I can run" — came back where a gate or a payload was expected.
+ *
+ * The handler's return type is the union of the two, so every case below has to say which one it
+ * expects. It says so with this check rather than a cast: nothing in this file may reach a form
+ * (that needs a `formProvider`, which none of these handlers is built with), so an `InputRequiredResult`
+ * arriving here is a real defect, and it must fail in the case that receives it instead of being
+ * typed away at the boundary.
+ */
+const asToolResult = (result: ToolsExecutionResult | InputRequiredResult): ToolsExecutionResult => {
+  if (!Array.isArray((result as ToolsExecutionResult).content)) {
+    throw new TypeError(`expected a tool result, got resultType=${String((result as InputRequiredResult).resultType)}`)
+  }
+
+  return result as ToolsExecutionResult
+}
+
 /** The token a round-1 gate hands out; throws if the gate carried none, so a missing token fails loudly. */
-const gateToken = (gate: ToolsExecutionResult): string => {
-  const { confirmToken } = gate.structuredContent as { confirmToken?: unknown }
+const gateToken = (gate: ToolsExecutionResult | InputRequiredResult): string => {
+  const { confirmToken } = asToolResult(gate).structuredContent as { confirmToken?: unknown }
 
   if (typeof confirmToken !== 'string') throw new Error('gate carried no confirmToken')
 
   return confirmToken
 }
 
-const refusalOf = (result: ToolsExecutionResult): { status?: unknown; reason?: unknown } => {
-  return result.structuredContent as { status?: unknown; reason?: unknown }
+const refusalOf = (result: ToolsExecutionResult | InputRequiredResult): { status?: unknown; reason?: unknown } => {
+  return asToolResult(result).structuredContent as { status?: unknown; reason?: unknown }
 }
 
 beforeEach(() => {
@@ -174,7 +193,7 @@ describe('createToolHandler — destructive-op confirm gate', () => {
       tool: 'env-clear',
       resolvedArgs: { version: '1.2.5' },
     })
-    expect(result.content[0]?.text).toContain('confirm')
+    expect(asToolResult(result).content[0]?.text).toContain('confirm')
   })
 
   it('runs the handler exactly once, with confirmedCommand:true, on a round 2 that carries the round-1 token', async () => {
@@ -249,7 +268,7 @@ describe('createToolHandler — confirm token binding (round-2 refusals)', () =>
     return { tool, handler }
   }
 
-  const expectRefusal = (result: ToolsExecutionResult, reason: string | string[]): void => {
+  const expectRefusal = (result: ToolsExecutionResult | InputRequiredResult, reason: string | string[]): void => {
     expect(result.isError).toBe(true)
     expect(refusalOf(result).status).toBe('confirmation_refused')
     expect(Array.isArray(reason) ? reason : [reason]).toContain(refusalOf(result).reason)

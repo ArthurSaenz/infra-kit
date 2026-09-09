@@ -24,7 +24,7 @@ import { worktreesAddMcpTool } from 'src/commands/worktrees-add'
 import { worktreesListMcpTool } from 'src/commands/worktrees-list'
 import { worktreesRemoveMcpTool } from 'src/commands/worktrees-remove'
 import { worktreesSyncMcpTool } from 'src/commands/worktrees-sync'
-import type { ToolsExecutionResult } from 'src/types'
+import type { ArgumentFormProvider, ToolsExecutionResult } from 'src/types'
 
 /**
  * Registration-facing shape of an MCP tool. The concrete `*McpTool` definitions
@@ -44,6 +44,17 @@ export interface CatalogMcpTool {
    * can forward it to `createToolHandler` without reaching into the concrete generic tool type.
    */
   requiresHumanConfirm?: boolean
+  /**
+   * Optional per-tool argument-form seam consumed by `lib/tool-handler`. Widened, non-generic mirror
+   * of {@link McpTool.formProvider} for the same reason `requiresHumanConfirm` is mirrored above:
+   * registration (`mcp/tools/index.ts`) forwards it to `createToolHandler` without reaching into the
+   * concrete generic tool type.
+   *
+   * {@link ArgumentFormProvider} is itself non-generic and lives in `src/types`, which this module
+   * already imports from — so mirroring it costs no new dependency and, in particular, no MCP SDK
+   * import.
+   */
+  formProvider?: ArgumentFormProvider
   // Heterogeneous tool params; loose `any` mirrors the existing tool-handler typing.
   handler: (params: any) => Promise<ToolsExecutionResult>
 }

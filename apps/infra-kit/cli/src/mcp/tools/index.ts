@@ -50,6 +50,19 @@ export const initializeTools = async (server: McpServer) => {
           toolName: tool.name,
           handler: tool.handler,
           requiresHumanConfirm: tool.requiresHumanConfirm,
+          formProvider: tool.formProvider,
+          // Capabilities are only knowable after initialize, and this handler is built at
+          // registration — so the probe is injected as a CLOSURE over the live server rather than as
+          // a snapshot taken here, which would be `undefined` for the life of the process.
+          // `server.server` is the underlying protocol instance the McpServer facade wraps; the
+          // integration test in `mcp/__tests__/server.test.ts` reaches through it the same way.
+          //
+          // `getClientCapabilities()` is deprecated in favour of `ctx.mcpReq.envelope`, which is
+          // backfilled per request on 2026-era instances. Kept deliberately: the accessor remains
+          // functional, and the migration is a one-line change HERE rather than inside the handler.
+          getClientCapabilities: () => {
+            return server.server.getClientCapabilities()
+          },
         }),
       ),
     )

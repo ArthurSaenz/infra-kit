@@ -1470,3 +1470,44 @@ growth, and the non-record guard), which makes it the section to re-read hardest
 `caps?.elicitation?.form` — is still unmeasured, and measuring it needs instrumentation, i.e.
 execution. If the probe returns `undefined`, PR C ships a form nobody sees and Option 4 becomes the
 correct choice on the corrected record. PRs A, B, D and E do not depend on it.
+
+---
+
+## 8. Found at implementation — corrections the review rounds did not catch
+
+Recorded here rather than silently patched, on the same principle as §0: a plan that is edited without
+saying what was wrong teaches nothing.
+
+**8.1 — PR A's two acceptance criteria are in direct conflict, measured.** §5's PR A row requires
+widening `createToolHandler`'s return to `ToolsExecutionResult | InputRequiredResult`, and its AC
+requires that every existing `tool-handler.test.ts` case pass **unmodified**. These cannot both hold:
+`InputRequiredResult` has no `content`, so it is not assignable to `ToolsExecutionResult`, and the
+union breaks **16 spots** in that file — the local `gateToken`/`refusalOf` helpers, which take
+`ToolsExecutionResult`, plus the `result.content[0]?.text` access at `:177`.
+
+**Resolution: widen unconditionally and adapt the three spots — but narrow them with a real check**
+(`'content' in result`, failing with a message that says an `InputRequiredResult` arrived where a gate
+was expected), never with a loosened type. The tests come out stronger than they went in.
+
+_A conditional overload was implemented first and rejected._ It typed provider-less callers narrowly
+and the registration site widely, which is sound **today** and only because candidate 1 requires
+`hasProvider`. TypeScript does not verify overload soundness against the implementation, so the day
+PR B relaxes that conjunct the narrow signature becomes a silent lie with nothing to catch it. That is
+the same shape as every claim §0 records this document having had to delete — a guarantee enforced by
+nothing — and it is not worth a saved test-file edit. The AC should read "no existing **assertion**
+changes", which is the property actually worth protecting.
+
+**8.2 — §2.4 declares four members, not three.** It also gives `message: string`, which PR B needs for
+`inputRequired.elicit({message, requestedSchema})`. Any brief that enumerates three is wrong.
+
+**8.3 — binding `ctx` requires _using_ it.** `noUnusedParameters` rejects a bound-but-unread parameter,
+so PR A carries one observable delta: the entry `logger.info` gains `sessionId: ctx?.sessionId`. A log
+field, not a branch. Stated because §5's PR A row promises "**none**" under user-visible change, and a
+new log field is a small but real exception to that.
+
+**8.4 — the PM-C check is red on arrival, by design.** `scripts/check-workflow-resource-published.mjs`
+reads the floor out of the command body and compares it to `infra-kit@latest`. Today that is 0.5.0
+against a published 0.4.0, so it fails — which is the mechanism working, not a broken build. It goes
+green when the CLI serving `infra-kit://workflow/release-create` is published. **Consequence for
+whoever holds this branch: the plugin reaches users from git, so the command must not be _pushed_
+before that publish.** Committing locally is safe; pushing opens PM-C's window for everyone.
