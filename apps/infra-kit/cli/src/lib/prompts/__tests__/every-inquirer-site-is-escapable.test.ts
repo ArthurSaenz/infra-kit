@@ -1,7 +1,9 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
+
+import { exposedTools, reachableModules, reachableSites, toolFiles, walkSources } from './mcp-reachable-prompt-sites'
 
 /**
  * @fileoverview
@@ -43,15 +45,10 @@ import { describe, expect, it } from 'vitest'
  */
 const SRC = path.resolve(__dirname, '../../..')
 
-const walk = (dir: string): string[] => {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const full = path.join(dir, entry.name)
-
-    if (entry.isDirectory()) return entry.name === '__tests__' ? [] : walk(full)
-
-    return entry.name.endsWith('.ts') || entry.name.endsWith('.tsx') ? [full] : []
-  })
-}
+// Shared with the reachability helper rather than copied. Both sweeps must walk EXACTLY the same
+// set — this one asserts every prompt is wrapped, that one decides which of those are MCP-reachable —
+// so two implementations that drift would silently disagree about which files exist to check.
+const walk = walkSources
 
 /**
  * Local names bound to an `@inquirer/*` prompt function.
@@ -211,5 +208,63 @@ describe('no raw readline outside the prompts module', () => {
     })
 
     expect(offenders).toEqual([])
+  })
+})
+
+/** G7 — the POLICY half of the contract the sweep above enforces structurally. */
+// The sweep proves every `@inquirer` call is WRAPPED. It says nothing about what the wrapper
+// ANSWERS when there is no human, and that is where the `worktrees-add` defect actually lived: both
+// prompts were wrapped, both were swept, and both still rendered into the JSON-RPC transport,
+// because `whenHeadless` did not exist yet and the correct answer (`false`, as the tool's own
+// `.describe()` had promised for two years) was written nowhere the toolchain could read.
+//
+// `whenHeadless` is OPTIONAL and defaults to `'refuse'`, so a site that omits it is byte-identical
+// to a site whose author never considered the question. `tsc` cannot tell them apart, and neither
+// can a reader. THE RULE closes that gap the only way that leaves no ambiguity: on an MCP-reachable
+// path the answer must be WRITTEN — `'refuse'` included. Omission stops being a silence and starts
+// being a failure.
+//
+// Chosen over the alternative of tabulating the deliberate defaults in a test file: that is the
+// same layer the defect was already invisible at, and it puts the answer somewhere the person
+// editing `confirm-deploy.ts` will never look. An explicit `'refuse'` costs one line and sits next
+// to the prompt it governs.
+//
+// SCOPE — MCP-reachable sites only. A CLI-only prompt (`entry/cli.ts`'s palette, the dev wizard,
+// `env-token-set`) faces a real human and keeps the default, because forcing a declaration there
+// would assert something about a tool that does not exist. Reachability, and the ways it
+// over-approximates, are documented in `./mcp-reachable-prompt-sites`.
+describe('every MCP-reachable withEscape site declares its headless policy', () => {
+  it('computes a real reachability graph (guards against a vacuous pass)', () => {
+    // Every assertion below is a filter over these three; if the graph collapsed, they would all
+    // pass by finding nothing to check.
+    expect(exposedTools.length).toBeGreaterThan(20)
+    expect(reachableModules.size).toBeGreaterThan(100)
+    expect(reachableSites.length).toBeGreaterThanOrEqual(15)
+  })
+
+  it('leaves no reachable site on the implicit default', () => {
+    const undeclared = reachableSites
+      .filter((site) => {
+        return site.policy === 'default'
+      })
+      .map((site) => {
+        return site.where
+      })
+
+    expect(undeclared).toEqual([])
+  })
+
+  it('still reaches every exposed tool from its own defineMcpTool declaration', () => {
+    // The roots. A tool whose declaring file cannot be found contributes NO reachable modules, so
+    // its prompts would silently drop out of the rule above.
+    const rootless = exposedTools
+      .filter((tool) => {
+        return !toolFiles.has(tool.name)
+      })
+      .map((tool) => {
+        return tool.name
+      })
+
+    expect(rootless).toEqual([])
   })
 })

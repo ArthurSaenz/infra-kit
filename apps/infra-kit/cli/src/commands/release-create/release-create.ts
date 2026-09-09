@@ -78,9 +78,13 @@ export const promptForVersionInput = async (running: SemVer[], type: ReleaseType
   // deliberately not inquirer's `default:`, which prefills the editable buffer and would change
   // both what the user sees and what an empty submit returns.
   const versionAnswer = (
-    await withEscape((context) => {
-      return input({ message: `  Version (e.g. ${VERSION_PROMPT_HINT})${defaultHint}: ` }, context)
-    })
+    await withEscape(
+      (context) => {
+        return input({ message: `  Version (e.g. ${VERSION_PROMPT_HINT})${defaultHint}: ` }, context)
+      },
+      // MCP-unreachable: `releases` is required (min 1) on the release-create tool, so this path is dead there.
+      { whenHeadless: 'unreachable' },
+    )
   ).trim()
   const versionInput = versionAnswer === '' ? (suggestion ?? '') : versionAnswer
 
@@ -94,9 +98,13 @@ export const promptForVersionInput = async (running: SemVer[], type: ReleaseType
 
 const promptForNameInput = async (): Promise<string> => {
   const name = (
-    await withEscape((context) => {
-      return input({ message: '  Name (kebab-case, e.g. "checkout-redesign"): ' }, context)
-    })
+    await withEscape(
+      (context) => {
+        return input({ message: '  Name (kebab-case, e.g. "checkout-redesign"): ' }, context)
+      },
+      // MCP-unreachable: `releases` is required (min 1) on the release-create tool, so this path is dead there.
+      { whenHeadless: 'unreachable' },
+    )
   ).trim()
 
   if (name === '') {
@@ -135,33 +143,41 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
 
   while (addAnother) {
     const ordinal = entries.length + 1
-    const kind = await withEscape((context) => {
-      return select<'version' | 'name'>(
-        {
-          message: `Release #${ordinal} — version or name?`,
-          choices: [
-            { name: 'version (semver / next)', value: 'version' },
-            { name: 'name (free-form)', value: 'name' },
-          ],
-          default: 'version',
-        },
-        context,
-      )
-    })
+    const kind = await withEscape(
+      (context) => {
+        return select<'version' | 'name'>(
+          {
+            message: `Release #${ordinal} — version or name?`,
+            choices: [
+              { name: 'version (semver / next)', value: 'version' },
+              { name: 'name (free-form)', value: 'name' },
+            ],
+            default: 'version',
+          },
+          context,
+        )
+      },
+      // MCP-unreachable: `releases` is required (min 1) on the release-create tool, so this path is dead there.
+      { whenHeadless: 'unreachable' },
+    )
 
-    const type = await withEscape((context) => {
-      return select<ReleaseType>(
-        {
-          message: `Release #${ordinal} — select type:`,
-          choices: [
-            { name: 'regular', value: 'regular' },
-            { name: 'hotfix', value: 'hotfix' },
-          ],
-          default: 'regular',
-        },
-        context,
-      )
-    })
+    const type = await withEscape(
+      (context) => {
+        return select<ReleaseType>(
+          {
+            message: `Release #${ordinal} — select type:`,
+            choices: [
+              { name: 'regular', value: 'regular' },
+              { name: 'hotfix', value: 'hotfix' },
+            ],
+            default: 'regular',
+          },
+          context,
+        )
+      },
+      // MCP-unreachable: `releases` is required (min 1) on the release-create tool, so this path is dead there.
+      { whenHeadless: 'unreachable' },
+    )
 
     let resolved: ReleaseEntry
 
@@ -181,16 +197,24 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
     }
 
     const description = (
-      await withEscape((context) => {
-        return input({ message: '  Description (optional, press Enter to skip): ' }, context)
-      })
+      await withEscape(
+        (context) => {
+          return input({ message: '  Description (optional, press Enter to skip): ' }, context)
+        },
+        // MCP-unreachable: `releases` is required (min 1) on the release-create tool, so this path is dead there.
+        { whenHeadless: 'unreachable' },
+      )
     ).trim()
 
     entries.push({ ...resolved, ...(description !== '' ? { description } : {}) })
 
-    addAnother = await withEscape((context) => {
-      return confirm({ message: 'Add another release?', default: false }, context)
-    })
+    addAnother = await withEscape(
+      (context) => {
+        return confirm({ message: 'Add another release?', default: false }, context)
+      },
+      // MCP-unreachable: `releases` is required (min 1) on the release-create tool, so this path is dead there.
+      { whenHeadless: 'unreachable' },
+    )
   }
 
   return entries

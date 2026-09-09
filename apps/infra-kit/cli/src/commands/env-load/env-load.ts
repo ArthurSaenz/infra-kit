@@ -275,7 +275,8 @@ export const envLoad = async (args: EnvLoadArgs) => {
       },
       // Render to stderr so the prompt is visible when stdout is captured via $() in the shell function.
       // Only env-load and env-clear use the $() stdout-capture shell pattern.
-      { output: process.stderr },
+      // MCP-unreachable: `config` is required on the env-load tool, so no agent call lands on this picker.
+      { output: process.stderr, whenHeadless: 'unreachable' },
     )
   }
 

@@ -5,6 +5,7 @@ export {
   DEFAULT_PROTECTED_ENVS,
   deployableEnvs,
   isProtectedEnv,
+  isSharedEnv,
   PROTECTED_ENV_DENIED,
 } from './protected-envs'
 export type { ProtectedEnvAccess } from './protected-envs'

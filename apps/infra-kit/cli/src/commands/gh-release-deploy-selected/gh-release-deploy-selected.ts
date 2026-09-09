@@ -1,7 +1,4 @@
 import checkbox from '@inquirer/checkbox'
-import fs from 'node:fs/promises'
-import { resolve } from 'node:path'
-import yaml from 'yaml'
 import { z } from 'zod'
 import { $ } from 'zx'
 
@@ -11,6 +8,7 @@ import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { pickEnv } from 'src/lib/prompts/env-picker'
 import { withEscape } from 'src/lib/prompts/escapable-context'
+import { createDeployFormProvider } from 'src/lib/deploy-form'
 import { confirmDeploy, resolveDeployBranch } from 'src/lib/release-deploy'
 import { releaseLabelFromBranch } from 'src/lib/release-utils'
 import {
@@ -20,20 +18,23 @@ import {
   resolveProtectedEnvAccess,
   warnProtectedEnvDispatch,
 } from 'src/lib/workflow-envs'
+import { readGatesFromWorkflow } from 'src/lib/workflow-gates'
+import { parseServicesFromWorkflow } from 'src/lib/workflow-services'
 import { defineMcpTool, textContent } from 'src/types'
 
 /** The workflow this command dispatches. Its own inputs are both the env list and the service list. */
 const DEPLOY_SELECTED_WORKFLOW = 'deploy-selected-services.yml'
 
-/** A `workflow_dispatch` boolean that is a flag, not a service — the one exclusion from the service list. */
-const SKIP_TERRAFORM_INPUT = 'skip_terraform_deploy'
-
 interface GhReleaseDeploySelectedArgs {
-  /** Optional on the CLI — omitted means "offer the open release PRs". The MCP schema requires it. */
+  // All three used to be REQUIRED in the MCP schema, and these comments used to say so. PR-1 relaxed
+  // them to `.optional()` so an argument form could offer real values, because `narrowsArgs` only
+  // lets a form add a key round 1 omitted. What replaced the required field as the guard is
+  // `whenHeadless` at each picker below, not the schema.
+  /** Omitted on the CLI offers the open release PRs; omitted over MCP offers them in a form. */
   version?: string
-  /** Optional on the CLI — omitted means "offer the workflow's own environments". The MCP schema requires it. */
+  /** Omitted on the CLI offers this workflow's own environments; over MCP the form offers them. */
   env?: string
-  /** Optional on the CLI — omitted opens the service checkbox. The MCP schema requires it. */
+  /** Omitted on the CLI opens the service checkbox; over MCP the form offers the declared services. */
   services?: string[]
   skipTerraform?: boolean
   confirmedCommand?: boolean
@@ -82,7 +83,9 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
   // enforced below — a `choice` value is validated by GitHub, but an undeclared `-f <service>=true` is
   // NOT known to be rejected, and a typo that GitHub shrugs at would dispatch a run that deploys
   // nothing and reports success. Until that is proven otherwise, the local check stays.
-  const availableServices = await parseServicesFromWorkflow()
+  const projectRoot = await getProjectRoot()
+
+  const availableServices = await parseServicesFromWorkflow(projectRoot, DEPLOY_SELECTED_WORKFLOW)
 
   // Genuinely fatal for THIS command — there is nothing to pick from. (The failure it replaces was an
   // uncaught ENOENT from `fs.readFile`, which is how a repo with no such workflow, like bridge, used to
@@ -102,20 +105,30 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
   } else {
     commandEcho.setInteractive()
 
-    selectedServices = await withEscape((context) => {
-      return checkbox(
-        {
-          message: '🚀 Select services to deploy (space to select, enter to confirm)',
-          choices: availableServices.map((svc) => {
-            return {
-              name: svc,
-              value: svc,
-            }
-          }),
-        },
-        context,
-      )
-    })
+    selectedServices = await withEscape(
+      (context) => {
+        return checkbox(
+          {
+            message: '🚀 Select services to deploy (space to select, enter to confirm)',
+            choices: availableServices.map((svc) => {
+              return {
+                name: svc,
+                value: svc,
+              }
+            }),
+          },
+          context,
+        )
+      },
+      // Refuse is the ANSWER, not an oversight. This was `'unreachable'` while `services` was required;
+      // PR-1 made it optional so the form could offer the declared service list, and G8 named the claim
+      // false the moment it did.
+      //
+      // Refusing rather than answering: an empty or guessed service list is not a safe default — it
+      // either deploys nothing while reporting success, or deploys something nobody picked. The form
+      // supplies `services` for a client that can render one; anything else gets a clean refusal.
+      { whenHeadless: 'refuse' },
+    )
   }
 
   commandEcho.addOption('--services', selectedServices)
@@ -138,6 +151,38 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
       operation: 'launch deploy-selected workflow',
       remediation: `pass services from: ${availableServices.join(', ')}`,
       stderrExcerpt: `invalid services: ${invalidServices.join(', ')}`,
+    })
+  }
+
+  // `workflow_dispatch.inputs` says a service CAN be asked for; the jobs' own `if:` says whether it
+  // will RUN. Both consumer repos gate jobs by environment — `docs-fe` to dev plus the per-developer
+  // envs, `mobile` to dev/prod — and dispatch is fire-and-forget, so without this check `mobile` to
+  // `stage` is accepted by GitHub, skipped by the job, and reported here as `success: true`: a deploy
+  // that shipped nothing. Refuse instead, after the env has resolved and before anything is sent.
+  //
+  // Scoped to THIS workflow, deliberately: the repo-wide union would import gates from files nobody
+  // is dispatching (travelist's `media` is prod-only in `deploy-all.yml` and ungated here), turning a
+  // legitimate `media` + `dev` run into a false refusal.
+  //
+  // Fail-open is also deliberate (`workflow-gates.ts`): a gate we cannot parse imposes no restriction,
+  // so this closes the gates we measured and does not pretend to close every possible one.
+  const gates = await readGatesFromWorkflow(projectRoot, DEPLOY_SELECTED_WORKFLOW)
+
+  const gatedOut = selectedServices.filter((svc) => {
+    const allowed = gates.get(svc)
+
+    return allowed !== undefined && !allowed.includes(selectedEnv)
+  })
+
+  if (gatedOut.length > 0) {
+    throw new OperationError(undefined, {
+      operation: 'launch deploy-selected workflow',
+      remediation: gatedOut
+        .map((svc) => {
+          return `${svc} deploys only to: ${(gates.get(svc) ?? []).join(', ')}`
+        })
+        .join('; '),
+      stderrExcerpt: `${DEPLOY_SELECTED_WORKFLOW} gates these services out of ${selectedEnv}: ${gatedOut.join(', ')}`,
     })
   }
 
@@ -198,67 +243,43 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
   }
 }
 
-/**
- * The services this workflow can deploy: its `workflow_dispatch` boolean inputs, minus the flags that
- * are not services.
- *
- * Returns `[]` rather than throwing when the workflow is missing or unreadable — the caller turns that
- * into a sentence. Previously an absent file (bridge has no `deploy-selected-services.yml`) escaped as
- * a raw `ENOENT` from `fs.readFile`, and a workflow with no `workflow_dispatch` as a `TypeError` on
- * `parsed.on.workflow_dispatch`.
- *
- * @example
- * await parseServicesFromWorkflow() // => ['client-be', 'client-fe']
- * // no such workflow => []
- */
-const parseServicesFromWorkflow = async (): Promise<string[]> => {
-  const projectRoot = await getProjectRoot()
-
-  const workflowPath = resolve(projectRoot, '.github/workflows', DEPLOY_SELECTED_WORKFLOW)
-
-  let parsed: unknown
-
-  try {
-    parsed = yaml.parse(await fs.readFile(workflowPath, 'utf-8'))
-  } catch {
-    return []
-  }
-
-  const on = (parsed as { on?: unknown } | null)?.on
-  const inputs = (on as { workflow_dispatch?: { inputs?: unknown } } | undefined)?.workflow_dispatch?.inputs
-
-  if (typeof inputs !== 'object' || inputs === null) return []
-
-  return Object.entries(inputs)
-    .filter(([key, value]) => {
-      return (value as { type?: string } | null)?.type === 'boolean' && key !== SKIP_TERRAFORM_INPUT
-    })
-    .map(([key]) => {
-      return key
-    })
-}
-
 // MCP Tool Registration
 export const ghReleaseDeploySelectedMcpTool = defineMcpTool({
   name: 'gh-release-deploy-selected',
   requiresHumanConfirm: true,
+  // The only one of the four with a `services` field, and it reads a DIFFERENT workflow file than
+  // `gh-release-deploy-all` — the consumer repos declare different environments in the two. The
+  // provider offers `services` only when round 1 omitted it, because a form that changes the LENGTH
+  // of an array the caller supplied is discarded whole by `narrowsArgs`.
+  formProvider: createDeployFormProvider({
+    workflowFile: DEPLOY_SELECTED_WORKFLOW,
+    fields: ['version', 'env', 'services'],
+    toolName: 'gh-release-deploy-selected',
+  }),
   description:
-    'Dispatch the deploy-selected-services.yml GitHub Actions workflow to deploy a chosen subset of services from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Service names are validated against the boolean inputs declared in the workflow. Use gh-release-deploy-all for every service. "version", "env", and "services" are all required when invoked via MCP (interactive pickers are unavailable without a TTY).',
+    'Dispatch the deploy-selected-services.yml GitHub Actions workflow to deploy a chosen subset of services from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Service names are validated against the boolean inputs declared in the workflow, and a service the target environment gates out is refused BEFORE dispatch rather than dispatched and silently skipped. Use gh-release-deploy-all for every service. Omit any of "version", "env" or "services" and this server offers the human a form built from the real releases, environments and services; a client that cannot render one gets a refusal naming the missing field, never a guess.',
   inputSchema: {
+    // All three `.optional()` for the same reason: `narrowsArgs` only lets a form ADD a key round 1
+    // omitted, so a required field cannot be form-filled. `services` matters most — it is the one
+    // the human actually wants to pick, and the one whose length the non-narrowing check would
+    // otherwise discard in silence.
     version: z
       .string()
+      .optional()
       .describe(
-        'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/<name> branch. Pass "dev" to deploy from the dev branch instead. Required for MCP calls.',
+        'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/<name> branch. Pass "dev" to deploy from the dev branch instead. Omit it to be offered the open releases.',
       ),
     env: z
       .string()
+      .optional()
       .describe(
-        'Target environment name — must match an env configured for the project (e.g. "dev", "renana", "oriana"). Required for MCP calls.',
+        'Target environment name — must match an env this project may reach (e.g. "dev", "renana", "oriana"). Omit it to be offered the environments deploy-selected-services.yml declares.',
       ),
     services: z
       .array(z.string())
+      .optional()
       .describe(
-        'Service names to deploy. Each must match a boolean input declared in .github/workflows/deploy-selected-services.yml (e.g. "client-be", "client-fe"). Required for MCP calls.',
+        'Service names to deploy. Each must match a boolean input declared in .github/workflows/deploy-selected-services.yml (e.g. "client-be", "client-fe"). Some services are gated to particular environments by that workflow and are refused here rather than skipped by CI. Omit it to be offered the declared services.',
       ),
     skipTerraform: z.boolean().optional().describe('Skip the terraform deployment stage.'),
     confirm: z

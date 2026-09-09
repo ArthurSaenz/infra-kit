@@ -7,17 +7,13 @@ import { z } from 'zod'
 import { $ } from 'zx'
 
 import { commandEcho } from 'src/lib/command-echo'
+import { createDeployFormProvider } from 'src/lib/deploy-form'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { getCurrentBranch, getProjectRoot, getRepoName, isWorkingTreeClean } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { pickEnv } from 'src/lib/prompts/env-picker'
 import { withEscape } from 'src/lib/prompts/escapable-context'
-import {
-  deployableEnvs,
-  isProtectedEnv,
-  readWorkflowEnvOptions,
-  resolveProtectedEnvAccess,
-} from 'src/lib/workflow-envs'
+import { deployableEnvs, isSharedEnv, readWorkflowEnvOptions, resolveProtectedEnvAccess } from 'src/lib/workflow-envs'
 import { defineMcpTool, textContent } from 'src/types'
 
 import { buildDeployEnv, contractRecord, formatContract } from './deploy-env'
@@ -29,42 +25,26 @@ import type { DeployService } from './service-discovery'
 /** The workflow whose `environment` choices seed the picker. Advisory only — `--env` always wins. */
 const DEPLOY_ALL_WORKFLOW = 'deploy-all.yml'
 
-/**
- * Environments the whole team shares. Everything else in the picker is somebody's personal account
- * (`arthur`, `renana`, …), where a dirty tree is the normal case rather than a hazard.
- */
-const SHARED_ENVS = ['dev', 'stage']
-
-/**
- * Whether this environment belongs to other people — the input to both the confirmation prompt and, via
- * `runPreflight`, the dirty-tree refusal.
- *
- * A delivery-shaped env is shared by definition, more so than `dev`, yet it is deliberately NOT in
- * {@link SHARED_ENVS}: until a project could reach `prod` at all the question never arose, because
- * `assertDeployable` refused first. Now that a project can allow it, resolving from the list alone
- * would hand production the WEAKER treatment of a personal environment — a y/N prompt and no clean-tree
- * check, i.e. shipping an uncommitted working tree to prod.
- *
- * Extracted rather than inlined so this resolution is testable. Asserting
- * `assertCleanTreeForSharedEnv({ isShared: true, … })` proves nothing about it: that hand-passes the
- * value under test and passes whether or not the bug exists.
- *
- * @example
- * isSharedEnv('dev')    // => true
- * isSharedEnv('prod')   // => true  — protected, therefore shared
- * isSharedEnv('arthur') // => false
- */
-export const isSharedEnv = (env: string): boolean => {
-  return SHARED_ENVS.includes(env) || isProtectedEnv(env)
-}
-
 /** Absolute, so the shell we run cannot be resolved from a caller-controlled PATH. */
 const SHELL = '/bin/sh'
 
 interface LocalDeployArgs {
   env?: string
   service?: string[]
-  yes?: boolean
+  /**
+   * Consent already given — skip {@link confirmTarget}.
+   *
+   * The name is not cosmetic and must match `confirmDeploy`'s (`confirm-deploy.ts:27`): the MCP
+   * chokepoint injects `confirmedCommand: true` into every handler call it lets through
+   * (`tool-handler.ts:466`), and nothing injects `yes`. This field was previously spelled `yes`, so
+   * on an MCP call it was `undefined`, `!yes` was true, and `confirmTarget` at the guard below
+   * rendered an inquirer prompt into the JSON-RPC stream — `@inquirer` writes to `process.stdout`
+   * (its `create-prompt.js` pipes to `context.output ?? process.stdout`, and no call site here
+   * passes `output`), which under MCP stdio IS the transport. That is stream corruption, not a hang.
+   * The CLI's `--yes` reaches this field through `release-deploy.ts`, exactly as it does for the two
+   * `gh-release-deploy-*` commands.
+   */
+  confirmedCommand?: boolean
   dryRun?: boolean
   printEnv?: boolean
 }
@@ -98,9 +78,13 @@ const pickServices = async (services: DeployService[], env: string): Promise<str
     return { name: service.name, value: service.name }
   })
 
-  const selected = await withEscape((context) => {
-    return checkbox({ message: `Deploy which services to ${env}?`, choices, pageSize: 20 }, context)
-  })
+  const selected = await withEscape(
+    (context) => {
+      return checkbox({ message: `Deploy which services to ${env}?`, choices, pageSize: 20 }, context)
+    },
+    // MCP-unreachable: `service` is required (min 1) on local-deploy-selected; local-deploy-all takes the "all" branch.
+    { whenHeadless: 'unreachable' },
+  )
 
   if (selected.length === 0) {
     throw new OperationError(undefined, {
@@ -123,23 +107,33 @@ const confirmTarget = async (args: { env: string; isShared: boolean; count: numb
   const { env, isShared, count } = args
 
   if (!isShared) {
-    return withEscape((context) => {
-      return confirm({ message: `Deploy ${count} service(s) to ${env} from this machine?`, default: false }, context)
-    })
+    return withEscape(
+      (context) => {
+        return confirm({ message: `Deploy ${count} service(s) to ${env} from this machine?`, default: false }, context)
+      },
+      // Refuse is the ANSWER, not an oversight: the caller gates this on `!confirmedCommand`, which the
+      // MCP chokepoint always injects. That is a gate, not a schema fact, so it is no `'unreachable'` claim.
+      { whenHeadless: 'refuse' },
+    )
   }
 
-  return withEscape((context) => {
-    return select(
-      {
-        message: `"${env}" is a SHARED environment — deploying ${count} service(s) from this machine. Continue?`,
-        choices: [
-          { name: 'No, cancel', value: false },
-          { name: `Yes, deploy to ${env}`, value: true },
-        ],
-      },
-      context,
-    )
-  })
+  return withEscape(
+    (context) => {
+      return select(
+        {
+          message: `"${env}" is a SHARED environment — deploying ${count} service(s) from this machine. Continue?`,
+          choices: [
+            { name: 'No, cancel', value: false },
+            { name: `Yes, deploy to ${env}`, value: true },
+          ],
+        },
+        context,
+      )
+    },
+    // Refuse is the ANSWER, not an oversight: the caller gates this on `!confirmedCommand`, which the
+    // MCP chokepoint always injects. That is a gate, not a schema fact, so it is no `'unreachable'` claim.
+    { whenHeadless: 'refuse' },
+  )
 }
 
 /**
@@ -309,7 +303,7 @@ const resolveNames = async (args: {
  * services they end up with; every gate applies identically.
  */
 const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
-  const { env, service, yes, dryRun, printEnv } = args
+  const { env, service, confirmedCommand, dryRun, printEnv } = args
 
   const projectRoot = await getProjectRoot()
   const project = await getRepoName()
@@ -408,7 +402,7 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
     })
   }
 
-  if (!yes && !(await confirmTarget({ env: selectedEnv, isShared, count: names.length }))) {
+  if (!confirmedCommand && !(await confirmTarget({ env: selectedEnv, isShared, count: names.length }))) {
     logger.info('Deployment cancelled')
 
     return buildResult({
@@ -474,7 +468,15 @@ const SHARED_TOOL_NOTE =
   'Runs the repo\'s own devops/scripts/deploy-*.sh on THIS machine instead of dispatching CI. Supplies the build contract (VITE_DOMAIN_ENV/BRANCH/COMMIT) that the workflow YAML normally provides and that the scripts do not set themselves, and refuses unless the requested environment matches the AWS account the shell is authenticated to. "prod" is refused by default — it is delivered, not deployed — and is reachable only if this project sets `protectedEnvs` in infra-kit.json; "cli-only" allows it in a terminal but still refuses it here. Services the environment forbids are refused, matching the workflow\'s own per-service gates. Use dryRun first.'
 
 const sharedInput = {
-  env: z.string().describe('Target environment, e.g. "dev" or a personal env like "arthur". Required for MCP.'),
+  // Shared by BOTH local tools, so this one `.optional()` relaxes `local-deploy-selected` too — which
+  // is what lets an env form reach it. Its `service` stays required deliberately: a services picker
+  // there needs an env-dependent domain (`eligibleServices`), which one round trip cannot supply.
+  env: z
+    .string()
+    .optional()
+    .describe(
+      'Target environment, e.g. "dev" or a personal env like "arthur". Omit it to be offered the environments this project may reach.',
+    ),
   dryRun: z.boolean().optional().describe('Resolve target, contract and commands without deploying.'),
   confirm: z.boolean().optional().describe('Set true to execute; omit for a dry-run gate.'),
 }
@@ -491,10 +493,24 @@ const sharedOutput = {
   success: z.boolean().describe('Whether every requested service deployed'),
 }
 
+/**
+ * Both local tools get an `env`-only form, off the SAME `deploy-all.yml` the picker already reads.
+ *
+ * No `version`: neither tool has one — a local deploy builds the working tree. And no `services`
+ * either, on `-selected` too: its `service` argument stays required because a services picker there
+ * needs the env-dependent `eligibleServices` domain, which one round trip cannot supply — the env is
+ * chosen in the same form. `toolName` differs so the `form options empty` log line names which tool
+ * had nothing to offer.
+ */
+const localDeployForm = (toolName: string) => {
+  return createDeployFormProvider({ workflowFile: DEPLOY_ALL_WORKFLOW, fields: ['env'], toolName })
+}
+
 export const localDeployAllMcpTool = defineMcpTool({
   name: 'local-deploy-all',
   description: `Deploy EVERY service enabled for an environment, from this machine. ${SHARED_TOOL_NOTE}`,
   requiresHumanConfirm: true,
+  formProvider: localDeployForm('local-deploy-all'),
   inputSchema: sharedInput,
   outputSchema: sharedOutput,
   handler: localDeployAll,
@@ -504,6 +520,7 @@ export const localDeploySelectedMcpTool = defineMcpTool({
   name: 'local-deploy-selected',
   description: `Deploy a NAMED SUBSET of services from this machine. ${SHARED_TOOL_NOTE}`,
   requiresHumanConfirm: true,
+  formProvider: localDeployForm('local-deploy-selected'),
   inputSchema: {
     ...sharedInput,
     service: z

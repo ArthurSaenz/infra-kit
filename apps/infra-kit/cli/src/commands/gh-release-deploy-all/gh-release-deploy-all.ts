@@ -5,6 +5,7 @@ import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { pickEnv } from 'src/lib/prompts/env-picker'
+import { createDeployFormProvider } from 'src/lib/deploy-form'
 import { confirmDeploy, resolveDeployBranch } from 'src/lib/release-deploy'
 import { releaseLabelFromBranch } from 'src/lib/release-utils'
 import {
@@ -20,9 +21,12 @@ import { defineMcpTool, textContent } from 'src/types'
 const DEPLOY_ALL_WORKFLOW = 'deploy-all.yml'
 
 interface GhReleaseDeployAllArgs {
-  /** Optional on the CLI — omitted means "offer the open release PRs". The MCP schema requires it. */
+  // Both used to be REQUIRED in the MCP schema, and these comments used to say so. PR-1 relaxed them
+  // to `.optional()` so an argument form could offer real values — `narrowsArgs` only lets a form add
+  // a key round 1 omitted. The guard that replaced the required field is `whenHeadless` at the picker.
+  /** Omitted on the CLI offers the open release PRs; omitted over MCP offers them in a form. */
   version?: string
-  /** Optional on the CLI — omitted means "offer the workflow's own environments". The MCP schema requires it. */
+  /** Omitted on the CLI offers this workflow's own environments; over MCP the form offers them. */
   env?: string
   skipTerraform?: boolean
   confirmedCommand?: boolean
@@ -134,19 +138,35 @@ export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs) => {
 // MCP Tool Registration
 export const ghReleaseDeployAllMcpTool = defineMcpTool({
   name: 'gh-release-deploy-all',
+  // The first of the four live form providers. `fields` omits `services` because this tool has no
+  // such argument — the two axes are the workflow FILE and the field set, and both differ across the
+  // four tools (`gh-release-deploy-selected` reads a different workflow AND offers services; the
+  // local pair offers no `version` at all).
+  formProvider: createDeployFormProvider({
+    workflowFile: DEPLOY_ALL_WORKFLOW,
+    fields: ['version', 'env'],
+    toolName: 'gh-release-deploy-all',
+  }),
   description:
-    'Dispatch the deploy-all.yml GitHub Actions workflow to deploy every service from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Use gh-release-deploy-selected for a subset of services. Pass version="dev" to deploy from the dev branch instead of a release branch. Both "version" and "env" are required when invoked via MCP (interactive pickers are unavailable without a TTY).',
+    'Dispatch the deploy-all.yml GitHub Actions workflow to deploy every service from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Use gh-release-deploy-selected for a subset of services. Pass version="dev" to deploy from the dev branch instead of a release branch. Omit "version" or "env" and this server offers the human a form listing the real releases and the environments this workflow declares; a client that cannot render one gets a refusal naming the missing field, never a guess.',
   requiresHumanConfirm: true,
   inputSchema: {
+    // `.optional()` is what makes the form possible, not a loosening of intent. `narrowsArgs` only
+    // lets the form ADD a key that round 1 omitted (`argument-form.ts`), so a required field can
+    // never be form-filled. The sentence these descriptions used to carry — "required for MCP
+    // calls (interactive pickers are unavailable without a TTY)" — was true, and the guard that
+    // replaced it is `whenHeadless` at the picker itself, not a required field here.
     version: z
       .string()
+      .optional()
       .describe(
-        'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/<name> branch. Pass "dev" to deploy from the dev branch instead. Required for MCP calls.',
+        'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/<name> branch. Pass "dev" to deploy from the dev branch instead. Omit it to be offered the open releases.',
       ),
     env: z
       .string()
+      .optional()
       .describe(
-        'Target environment name — must match an env configured for the project (e.g. "dev", "renana", "oriana"). Required for MCP calls.',
+        'Target environment name — must match an env this project may reach (e.g. "dev", "renana", "oriana"). Omit it to be offered the environments deploy-all.yml declares.',
       ),
     skipTerraform: z.boolean().optional().describe('Skip the terraform deployment stage.'),
     confirm: z

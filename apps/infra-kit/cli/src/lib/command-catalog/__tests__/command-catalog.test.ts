@@ -611,3 +611,46 @@ describe('command catalog — MCP tool annotations & titles', () => {
     }
   })
 })
+
+describe('command catalog — the registered argument-form providers', () => {
+  /**
+   * The four deploy tools, and only those, offer the human a form for their arguments.
+   *
+   * Pinned as a set rather than derived: the seam is optional and every failure on it is silent, so
+   * a `formProvider` dropped in a future refactor would take the pickers away without reddening
+   * anything — the tools would simply gate with whatever the agent guessed, exactly as they did
+   * before this existed.
+   */
+  const EXPECTED_FORM_TOOLS = [
+    'gh-release-deploy-all',
+    'gh-release-deploy-selected',
+    'local-deploy-all',
+    'local-deploy-selected',
+  ]
+
+  const providerFor = (name: string) => {
+    return commandCatalog.find((entry) => {
+      return entry.mcpTool?.name === name
+    })?.mcpTool?.formProvider
+  }
+
+  it('registers a form provider on exactly the four deploy tools', () => {
+    const withForm = commandCatalog
+      .flatMap((entry) => {
+        return entry.mcpExposed && entry.mcpTool?.formProvider !== undefined ? [entry.mcpTool.name] : []
+      })
+      .sort()
+
+    expect(withForm).toEqual([...EXPECTED_FORM_TOOLS].sort())
+  })
+
+  // The field set is the second of the provider's two axes, and passing the wrong one is invisible
+  // in the shape tests (which construct their own providers). `isFormable` is the cheapest probe of
+  // what each tool was actually wired with: it is pure and reads the field list directly.
+  it('wires each tool with its own field set — only -selected has services, only the CI pair has version', () => {
+    expect(providerFor('gh-release-deploy-all')?.isFormable({ version: '1.2.5', env: 'dev' })).toBe(false)
+    expect(providerFor('gh-release-deploy-selected')?.isFormable({ version: '1.2.5', env: 'dev' })).toBe(true)
+    expect(providerFor('local-deploy-all')?.isFormable({ env: 'dev' })).toBe(false)
+    expect(providerFor('local-deploy-selected')?.isFormable({ env: 'dev', service: ['client-be'] })).toBe(false)
+  })
+})

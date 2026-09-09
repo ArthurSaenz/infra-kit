@@ -31,9 +31,14 @@ export const confirmDeploy = async (args: ConfirmDeployArgs): Promise<boolean> =
 
   commandEcho.setInteractive()
 
-  const answer = await withEscape((context) => {
-    return confirm({ message: `Deploy ${branch} → ${env} via GitHub Actions?`, default: false }, context)
-  })
+  const answer = await withEscape(
+    (context) => {
+      return confirm({ message: `Deploy ${branch} → ${env} via GitHub Actions?`, default: false }, context)
+    },
+    // Refuse is the ANSWER, not an oversight: the early return above means an MCP call (which always
+    // carries `confirmedCommand`) never arrives here, and there is no field that could make it a claim.
+    { whenHeadless: 'refuse' },
+  )
 
   if (answer) commandEcho.addOption('--yes', true)
 

@@ -55,9 +55,14 @@ export const confirmOrExit = async (
 ): Promise<void> => {
   const answer = confirmedCommand
     ? true
-    : await withEscape((context) => {
-        return confirm({ message }, context)
-      })
+    : await withEscape(
+        (context) => {
+          return confirm({ message }, context)
+        },
+        // Refuse is the ANSWER, not an oversight: the ternary above short-circuits on `confirmedCommand`,
+        // which the MCP chokepoint injects into every call it lets through, and all seven callers pass it.
+        { whenHeadless: 'refuse' },
+      )
 
   if (!confirmedCommand) {
     commandEcho.setInteractive()

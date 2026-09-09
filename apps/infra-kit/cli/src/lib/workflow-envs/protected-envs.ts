@@ -56,6 +56,38 @@ export const isProtectedEnv = (env: string): boolean => {
 }
 
 /**
+ * Environments the whole team shares. Everything else in a deploy picker is somebody's personal
+ * account (`arthur`, `renana`, …), where a dirty tree is the normal case rather than a hazard.
+ */
+const SHARED_ENVS = ['dev', 'stage']
+
+/**
+ * Whether this environment belongs to other people — the input to `local-deploy`'s confirmation
+ * prompt and, via `runPreflight`, its dirty-tree refusal, and to the argument form's `env` prose.
+ *
+ * A delivery-shaped env is shared by definition, more so than `dev`, yet it is deliberately NOT in
+ * {@link SHARED_ENVS}: until a project could reach `prod` at all the question never arose, because
+ * `assertDeployable` refused first. Now that a project can allow it, resolving from the list alone
+ * would hand production the WEAKER treatment of a personal environment — a y/N prompt and no
+ * clean-tree check, i.e. shipping an uncommitted working tree to prod.
+ *
+ * @example
+ * isSharedEnv('dev')    // => true
+ * isSharedEnv('prod')   // => true  — protected, therefore shared
+ * isSharedEnv('arthur') // => false
+ */
+// Lives in this leaf rather than in `local-deploy.ts`, where it was written, because the deploy
+// argument form partitions its env dropdown's `.describe()` with it. The form provider is wired into
+// `local-deploy`'s own tool definitions, so importing it from there would close a cycle — and a
+// second hand-written list of shared envs in the provider is exactly the drift the plan requires the
+// prose be derived to avoid. Extracted rather than inlined so the resolution stays testable:
+// asserting `assertCleanTreeForSharedEnv({ isShared: true, … })` hand-passes the value under test and
+// passes whether or not the bug exists.
+export const isSharedEnv = (env: string): boolean => {
+  return SHARED_ENVS.includes(env) || isProtectedEnv(env)
+}
+
+/**
  * The ad-hoc deploy picker: a workflow's declared options, minus what this project may not reach.
  *
  * @example

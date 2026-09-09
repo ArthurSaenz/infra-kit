@@ -58,11 +58,22 @@ describe('--from routing', () => {
 
     expect(localDeployAll).toHaveBeenCalledWith({
       env: 'dev',
-      yes: undefined,
+      confirmedCommand: undefined,
       dryRun: true,
       printEnv: undefined,
     })
     expect(ghReleaseDeployAll).not.toHaveBeenCalled()
+  })
+
+  // The CLI's `--yes` must reach the local runner as `confirmedCommand`, the field the MCP chokepoint
+  // injects (`tool-handler.ts:466`) and the one `runLocalDeploy` now gates on. Spelled `yes`, the
+  // local entrypoints read a field nothing injects, so every MCP call fell through to `confirmTarget`
+  // and wrote an inquirer prompt into the JSON-RPC stream. Asserting `true` rather than presence: a
+  // normalization that forwarded `undefined` would satisfy a mere `objectContaining` on the key.
+  it('normalizes --yes onto confirmedCommand for the local runner, as it does for the CI one', async () => {
+    await releaseDeployAll({ from: 'local', env: 'dev', yes: true })
+
+    expect(localDeployAll).toHaveBeenCalledWith(expect.objectContaining({ confirmedCommand: true }))
   })
 
   it('maps the single --services flag onto the local runner’s `service` parameter', async () => {

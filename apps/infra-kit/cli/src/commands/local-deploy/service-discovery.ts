@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { intersectGates, readWorkflowGates } from './workflow-gates'
+import { intersectGates, readWorkflowGates } from 'src/lib/workflow-gates'
 
 /** Where both consumer monorepos keep their deploy scripts. The only place we look. */
 const SCRIPTS_DIR = 'devops/scripts'

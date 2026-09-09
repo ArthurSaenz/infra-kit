@@ -40,6 +40,26 @@ import type { RequiredConfirmedOptionArg } from 'src/types'
 const FEATURE_DIR = 'feature'
 const RELEASE_DIR = 'release'
 
+// The two optional follow-ups below declare `whenHeadless: { value: false }`, and that value is not
+// a convenience — it is what `githubDesktop`/`cmux`'s own `.describe()` text already promises:
+// "interactive prompt (CLI) / false (MCP, no TTY)". It was documented and never implemented. With
+// neither the flag nor the config key set, an MCP call fell through to a real `@inquirer/confirm`,
+// which writes to `process.stdout` — the JSON-RPC transport under MCP — corrupting the stream rather
+// than hanging. This tool is ungated (`requiresHumanConfirm` is unset), so one call carrying
+// `versions` or `all` reached both prompts: the happy path was the defect path.
+//
+// `{ value: false }` rather than `withEscape`'s `'refuse'` default, and the difference is the whole
+// reason the policy is declared per site. Refusing here would be right-outcome-by-accident at best:
+// it keeps the bytes out of the stream, but turns a documented harmless default into a hard failure
+// and makes the tool unusable over MCP unless a caller passes both booleans explicitly.
+//
+// The guard lives in `withEscape` keyed on `isMcpMode()`, never `process.stdin.isTTY` —
+// `commands/mcp/mcp.ts` spawns the server with `stdio: 'inherit'`, so a terminal-launched
+// `infra-kit mcp` has a real TTY stdin and an isTTY-keyed guard would not fire. And never on
+// `confirmedCommand`, which carries the CLI's `--yes` (`program.ts:109`): keying on that would stop
+// `worktrees add --yes` prompting on a terminal, breaking the documented order in the CLI direction
+// in order to fix it in the MCP one.
+
 interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
   all?: boolean
   versions?: string
@@ -143,9 +163,12 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     const openInGithubDesktop =
       githubDesktop ??
       config.worktrees?.openInGithubDesktop ??
-      (await withEscape((context) => {
-        return confirm({ message: 'Open created worktrees in GitHub Desktop?' }, context)
-      }))
+      (await withEscape(
+        (context) => {
+          return confirm({ message: 'Open created worktrees in GitHub Desktop?' }, context)
+        },
+        { whenHeadless: { value: false } },
+      ))
 
     if (typeof githubDesktop === 'undefined' && config.worktrees?.openInGithubDesktop === undefined) {
       commandEcho.setInteractive()
@@ -160,9 +183,12 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     const openInCmux =
       cmux ??
       config.worktrees?.openInCmux ??
-      (await withEscape((context) => {
-        return confirm({ message: 'Open created worktrees in cmux?' }, context)
-      }))
+      (await withEscape(
+        (context) => {
+          return confirm({ message: 'Open created worktrees in cmux?' }, context)
+        },
+        { whenHeadless: { value: false } },
+      ))
 
     if (typeof cmux === 'undefined' && config.worktrees?.openInCmux === undefined) {
       commandEcho.setInteractive()

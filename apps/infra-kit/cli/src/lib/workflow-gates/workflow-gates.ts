@@ -22,14 +22,14 @@ const REUSABLE_WORKFLOW_PATTERN = /uses:\s*\.\/\.github\/workflows\/_deploy-(?<s
 const ENV_EQUALS_PATTERN = /inputs\.environment\s*==\s*'(?<env>[a-z0-9-]+)'/g
 
 /**
- * Per-service environment gates declared in the workflows, as a fallback for services whose script
- * carries no `skip_unless_env_enabled`.
+ * Every environment gate the repo declares for a service, unioned across ALL workflows.
  *
- * Both sources encode the same rule and normally agree, but they drift: travelist gates `mobile` to
- * dev/prod and `media` to prod alone in `deploy-all.yml`, while neither script has the guard hulyo's
- * equivalents do. Reading only the scripts would let `--all` include services CI refuses; reading
- * only the YAML would miss the guard that actually protects a manual run. So we read both and take
- * the intersection.
+ * Answers "can this service deploy here at all from this machine". `local-deploy` uses it as a
+ * fallback for services whose script carries no `skip_unless_env_enabled`: both sources encode the
+ * same rule and normally agree, but they drift — travelist gates `mobile` to dev/prod and `media` to
+ * prod alone in `deploy-all.yml`, while neither script has the guard hulyo's equivalents do. Reading
+ * only the scripts would let `--all` include services CI refuses; reading only the YAML would miss
+ * the guard that actually protects a manual run. So we read both and take the intersection.
  *
  * Best-effort by design: a gate we cannot parse yields no restriction, because inventing one would
  * silently shrink what the user can deploy.
@@ -45,11 +45,38 @@ export const readWorkflowGates = async (projectRoot: string): Promise<Map<string
     return new Map()
   }
 
+  return collectFrom(
+    dir,
+    files.filter((entry) => {
+      return entry.endsWith('.yml') || entry.endsWith('.yaml')
+    }),
+  )
+}
+
+/**
+ * The gates one named workflow declares — the file a dispatch is actually about to run.
+ *
+ * Answers a strictly different question from {@link readWorkflowGates}: "will THIS dispatch's job
+ * run", not "can this service deploy here at all". Collapsing the two would be wrong in both
+ * directions, and the union is the worse wrong one for a dispatch: travelist's `media` inherits
+ * `['prod']` from `deploy-all.yml`, while `deploy-selected-services.yml` gates `media` not at all,
+ * so a union-based refusal blocks `media` + `dev` on a workflow that would happily run it — a gate
+ * borrowed from a file nobody dispatched.
+ *
+ * Same best-effort contract: an absent or unparseable file yields an empty map, i.e. no restriction.
+ */
+export const readGatesFromWorkflow = async (
+  projectRoot: string,
+  workflowFile: string,
+): Promise<Map<string, string[]>> => {
+  return collectFrom(path.resolve(projectRoot, WORKFLOWS_DIR), [workflowFile])
+}
+
+/** Union the gates of the given workflow files. An unreadable file contributes nothing. */
+const collectFrom = async (dir: string, files: string[]): Promise<Map<string, string[]>> => {
   const gates = new Map<string, string[]>()
 
-  for (const file of files.filter((entry) => {
-    return entry.endsWith('.yml') || entry.endsWith('.yaml')
-  })) {
+  for (const file of files) {
     let source: string
 
     try {

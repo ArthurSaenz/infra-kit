@@ -37,15 +37,20 @@ const SOURCE_DESCRIPTIONS: Record<DeploySource, string> = {
  * typed. The no-default property that the whole design rests on is untouched.
  */
 export const pickDeploySource = async (): Promise<DeploySource> => {
-  return withEscape((context) => {
-    return select(
-      {
-        message: '🚀 Where should this deploy run?',
-        choices: DEPLOY_SOURCES.map((source) => {
-          return { name: source, value: source, description: SOURCE_DESCRIPTIONS[source] }
-        }),
-      },
-      context,
-    )
-  })
+  return withEscape(
+    (context) => {
+      return select(
+        {
+          message: '🚀 Where should this deploy run?',
+          choices: DEPLOY_SOURCES.map((source) => {
+            return { name: source, value: source, description: SOURCE_DESCRIPTIONS[source] }
+          }),
+        },
+        context,
+      )
+    },
+    // Refuse is the ANSWER, not an oversight: this is barrel-reachable from the exposed deploy tools,
+    // but only the merged `release-deploy` CLI command calls it, and that command is not an MCP tool.
+    { whenHeadless: 'refuse' },
+  )
 }

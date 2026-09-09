@@ -30,18 +30,29 @@ export const pickEnv = async (options: string[], operation: string): Promise<str
     })
   }
 
-  return withEscape((context) => {
-    return select(
-      {
-        message: '🧪 Select environment',
-        choices: options.map((option) => {
-          return {
-            name: option,
-            value: option,
-          }
-        }),
-      },
-      context,
-    )
-  })
+  return withEscape(
+    (context) => {
+      return select(
+        {
+          message: '🧪 Select environment',
+          choices: options.map((option) => {
+            return {
+              name: option,
+              value: option,
+            }
+          }),
+        },
+        context,
+      )
+    },
+    // Refuse is the ANSWER, not an oversight. This was `'unreachable'` while `env` was required on all
+    // four deploy tools; PR-1 made it optional so the form could offer the real environment list, and
+    // G8 named this claim false the moment it did — which is the whole reason that guard exists.
+    //
+    // Now reachable, and refusing is the only honest outcome: there is no safe default for "which
+    // environment", so answering would deploy somewhere nobody chose. An elicitation-capable client
+    // never gets here (the form supplies `env`); one that cannot render a form gets a clean
+    // `OperationError` before anything dispatches, which is §2.4's stated residual.
+    { whenHeadless: 'refuse' },
+  )
 }

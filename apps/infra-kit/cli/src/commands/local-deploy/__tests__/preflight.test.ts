@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isSharedEnv } from '../local-deploy'
+import { isSharedEnv } from 'src/lib/workflow-envs'
 import {
   assertCleanTreeForSharedEnv,
   assertEnvMatchesAccount,

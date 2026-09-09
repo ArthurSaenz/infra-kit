@@ -1,6 +1,7 @@
 import type { Buffer } from 'node:buffer'
 import process from 'node:process'
 
+import { OperationError } from 'src/lib/errors/operation-error'
 import { isMcpMode } from 'src/lib/mcp-mode'
 
 import { acquireStdin, releaseStdin } from './stdin-ref'
@@ -18,7 +19,55 @@ export interface PromptContext {
   signal?: AbortSignal
 }
 
+/**
+ * What this call site does when there is no human: refuse, assert the path is blocked upstream, or
+ * answer with a fixed value.
+ *
+ * `'unreachable'` is a CLAIM about the owning tool's MCP schema — "a required field stops an agent
+ * reaching this prompt at all" — and it is checkable, which `'refuse'` is not. Reaching it at
+ * runtime means the claim is false, so it throws rather than degrading quietly.
+ */
+export type HeadlessPolicy<T> = 'refuse' | 'unreachable' | { value: T }
+
+/** {@link withEscape}'s options: the prompt context, plus this site's headless policy. */
+export type EscapeOptions<T> = PromptContext & { whenHeadless?: HeadlessPolicy<T> }
+
 const ESC_BYTE = 0x1b
+
+// Widening the existing options object rather than adding a third parameter: six call sites already
+// pass a `PromptContext` (`entry/cli.ts`, `env-load`, `env-token-set`, and the wizard's shared
+// context used by three prompts), all of them `{ output: process.stderr }` for documented reasons —
+// `env-token-set.ts:64-68` notes that some env commands run inside `$(…)`, where a prompt on stdout
+// would leave the user typing a credential into a captured stream. A third parameter would have
+// forced every one of them to grow a positional `undefined`.
+//
+// Optional, and the default is `'refuse'`. That default is safe for the same reason the guard exists
+// at all: under `isMcpMode()` `process.stdin` IS the JSON-RPC transport, so no prompt at any site can
+// return a usable answer, and refusing removes no capability that exists. It is what CLI-only sites
+// (the palette, the dev wizard, `env-token-set`) keep, because they face a real human.
+//
+// It is NOT what an MCP-reachable site may keep. There, omitting `whenHeadless` is indistinguishable
+// from never having considered the question, so G7 (`every-inquirer-site-is-escapable`) requires the
+// answer to be written out — `'refuse'` included.
+//
+// What the default is NOT is *correct* everywhere — that distinction is the whole point of the
+// parameter. `worktrees-add` documents a `false` fallback for MCP in its own schema, so a refusal
+// there is right-outcome-by-accident at best and a regression at worst. The type cannot tell those
+// apart; G6 (description-to-policy) and G8 (schema-to-`'unreachable'`) are what check the answers,
+// because a wrong answer here compiles and can never fail a test on its own.
+const resolveHeadless = <T>(policy: HeadlessPolicy<T>): T => {
+  if (typeof policy === 'object') return policy.value
+
+  throw new OperationError(undefined, {
+    operation: 'interactive prompt',
+    remediation:
+      policy === 'unreachable'
+        ? 'this prompt is declared unreachable under MCP because a required field should block the path — ' +
+          'reaching it means that field was relaxed without updating the call site'
+        : 'pass the value explicitly instead of relying on the prompt — MCP runs have no human to answer it',
+    stderrExcerpt: 'an interactive prompt was reached under MCP, where stdin carries JSON-RPC',
+  })
+}
 
 /**
  * Run an `@inquirer/*` prompt with Esc bound to cancellation. On Esc the prompt rejects with an
@@ -51,11 +100,23 @@ const ESC_BYTE = 0x1b
 // Esc immediately followed by another key) is silently dropped and the prompt stays open. The fix
 // would be Ink's 20ms deferred abort — hold the lone Esc, cancel it if a follow-up chunk lands.
 // That is a logged NON-GOAL; do not pre-build it.
-export const withEscape = async <T>(run: (context: PromptContext) => Promise<T>, base?: PromptContext): Promise<T> => {
+export const withEscape = async <T>(
+  run: (context: PromptContext) => Promise<T>,
+  base?: EscapeOptions<T>,
+): Promise<T> => {
   const controller = new AbortController()
-  const context: PromptContext = { ...base, signal: controller.signal }
+  // `whenHeadless` is ours, not inquirer's — split it off so it never reaches a prompt's context.
+  const { whenHeadless = 'refuse', ...promptBase } = base ?? {}
+  const context: PromptContext = { ...promptBase, signal: controller.signal }
 
-  if (isMcpMode() || !process.stdin.isTTY) return run(context)
+  // Keyed on `isMcpMode()` alone. `!isTTY` deliberately does NOT ride along: a piped-but-human run
+  // (`infra-kit worktrees add > log.txt`) has no TTY and still deserves its prompt, and the two
+  // conditions were only ever collapsed here because both merely skipped the Esc listener. Now that
+  // this branch decides an ANSWER rather than just a listener, conflating them would refuse prompts
+  // no MCP server is waiting on. `release-picker.ts` keeps its own `!isTTY` clause for its own reason.
+  if (isMcpMode()) return resolveHeadless(whenHeadless)
+
+  if (!process.stdin.isTTY) return run(context)
 
   const input = process.stdin
 

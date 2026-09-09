@@ -69,9 +69,13 @@ export const promptDescription = async (current: string): Promise<string> => {
   // its ANSI erase-line count from the rendered message, so a manual newline miscounts and
   // leaves orphaned prompt fragments on screen. Inlining the hint removes the hazard outright
   // rather than testing around it.
-  const answer = await withEscape((context) => {
-    return input({ message: `  New description ${hint} (press Enter to keep current): ` }, context)
-  })
+  const answer = await withEscape(
+    (context) => {
+      return input({ message: `  New description ${hint} (press Enter to keep current): ` }, context)
+    },
+    // MCP-unreachable: `description` is required on the release-desc-edit tool, so this prompt is dead there.
+    { whenHeadless: 'unreachable' },
+  )
   // `.trim()`, where the zx version only stripped a trailing newline. Whitespace-only input now
   // means keep-current instead of overwriting the description with blanks.
   const trimmed = answer.trim()

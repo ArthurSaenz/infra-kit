@@ -807,6 +807,8 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   //   D9  tools[].inputSchema.properties.confirmToken on gated tools (AUTHORED)     legacy + modern
   //   D10 tools[].title (AUTHORED)                                                  legacy + modern
   //   D11 tools[].annotations (AUTHORED)                                            legacy + modern
+  //   D12 required[] shrank on four deploy tools (AUTHORED)                        legacy + modern
+  //   D13 the prose those four tools carry was rewritten (AUTHORED)                legacy + modern
   // Why UNNAMED differences must fail: a normalization broad enough to swallow a known delta is
   // the same hole an unnoticed one would slip through. Only the named deltas are normalized away
   // before the whole-object comparison, and each is asserted positively FIRST so the normalization
@@ -850,6 +852,139 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
 
       return tool.name as string
     })
+  /**
+   * D12 — an AUTHORED delta, normalized on the BASELINE side at load exactly like D4, and for the
+   * same reason: the fixture is evidence captured before any dependency change and must not be
+   * re-captured. Four exposed deploy tools relaxed required fields to `.optional()` so the server
+   * can offer a human a real argument form instead of leaving the agent to guess a version or an
+   * environment.
+   */
+  // The expected post-change array is written out PER TOOL rather than blanket-emptied.
+  // `local-deploy-selected` keeps `service` required — a services picker there needs an
+  // env-dependent domain (`eligibleServices`) that one round trip cannot supply, so relaxing it is
+  // deferred (F-7) — and a normalization that emptied every array would hide the day that changes.
+  //
+  // `undefined` is an explicit expected value, not a shrug: `z.toJSONSchema` omits `required`
+  // entirely when nothing is required, so the served schema carries NO such key on three of the
+  // four. A served `required: []`, or a re-tightened `required: ['env']`, both fail this.
+  const D12_REQUIRED: Record<string, string[] | undefined> = {
+    'gh-release-deploy-all': undefined,
+    'gh-release-deploy-selected': undefined,
+    'local-deploy-all': undefined,
+    'local-deploy-selected': ['service'],
+  }
+
+  const findBaselineTool = (name: string): Record<string, any> | undefined => {
+    return (v1Tools.tools as Record<string, any>[]).find((tool) => {
+      return tool.name === name
+    })
+  }
+
+  /**
+   * Rewrites the baseline's `required` arrays in place and returns what they held BEFORE, so
+   * `w1c-pre-d12` has something to assert — the same discipline `d4Carriers` follows. A tool missing
+   * from the fixture is captured as `undefined` and reds there, rather than letting the rewrite
+   * decay into a silent no-op.
+   */
+  const applyD12ToBaseline = (): Record<string, unknown> => {
+    const captured: Record<string, unknown> = {}
+
+    for (const [name, expected] of Object.entries(D12_REQUIRED)) {
+      const schema = findBaselineTool(name)?.inputSchema as Record<string, any> | undefined
+
+      captured[name] = schema?.required
+
+      if (schema === undefined) continue
+
+      if (expected === undefined) delete schema.required
+      else schema.required = [...expected]
+    }
+
+    return captured
+  }
+
+  const d12Baseline = applyD12ToBaseline()
+
+  /**
+   * D13 — the prose D12 falsified. Every string here used to tell an MCP caller a field was
+   * mandatory ("Required for MCP calls.", "required when invoked via MCP (interactive pickers are
+   * unavailable without a TTY)"), which stopped being true the moment the field went optional and
+   * the argument form became the way it gets filled.
+   */
+  // Written as the LITERAL post-change text, not copied from the served side. That keeps the
+  // whole-object comparison doing real work on these strings: the served value must equal the
+  // literal, so a further prose edit fails `w1c` and has to be re-declared here — the same contract
+  // D4 and D9 impose by naming their carriers. Copying the served text in would retire nine strings
+  // from the differential permanently, which is the broad normalization PM-C warns about.
+  //
+  // Scope is nine named paths on four named tools, and only `description` at each. Nothing else
+  // about these tools — `type`, `outputSchema`, property sets — is touched, so a change to any of
+  // that still reaches the comparison and fails it.
+  const D13_PROSE: Record<string, { description?: string; properties?: Record<string, string> }> = {
+    'gh-release-deploy-all': {
+      description:
+        'Dispatch the deploy-all.yml GitHub Actions workflow to deploy every service from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Use gh-release-deploy-selected for a subset of services. Pass version="dev" to deploy from the dev branch instead of a release branch. Omit "version" or "env" and this server offers the human a form listing the real releases and the environments this workflow declares; a client that cannot render one gets a refusal naming the missing field, never a guess.',
+      properties: {
+        version:
+          'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/<name> branch. Pass "dev" to deploy from the dev branch instead. Omit it to be offered the open releases.',
+        env: 'Target environment name — must match an env this project may reach (e.g. "dev", "renana", "oriana"). Omit it to be offered the environments deploy-all.yml declares.',
+      },
+    },
+    'gh-release-deploy-selected': {
+      description:
+        'Dispatch the deploy-selected-services.yml GitHub Actions workflow to deploy a chosen subset of services from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Service names are validated against the boolean inputs declared in the workflow, and a service the target environment gates out is refused BEFORE dispatch rather than dispatched and silently skipped. Use gh-release-deploy-all for every service. Omit any of "version", "env" or "services" and this server offers the human a form built from the real releases, environments and services; a client that cannot render one gets a refusal naming the missing field, never a guess.',
+      properties: {
+        version:
+          'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/<name> branch. Pass "dev" to deploy from the dev branch instead. Omit it to be offered the open releases.',
+        env: 'Target environment name — must match an env this project may reach (e.g. "dev", "renana", "oriana"). Omit it to be offered the environments deploy-selected-services.yml declares.',
+        services:
+          'Service names to deploy. Each must match a boolean input declared in .github/workflows/deploy-selected-services.yml (e.g. "client-be", "client-fe"). Some services are gated to particular environments by that workflow and are refused here rather than skipped by CI. Omit it to be offered the declared services.',
+      },
+    },
+    // Both local tools share one `sharedInput`, so the single `.optional()` on `env` rewrote the
+    // same sentence twice. Their TOOL descriptions did not change and are deliberately absent here.
+    'local-deploy-all': {
+      properties: {
+        env: 'Target environment, e.g. "dev" or a personal env like "arthur". Omit it to be offered the environments this project may reach.',
+      },
+    },
+    'local-deploy-selected': {
+      properties: {
+        env: 'Target environment, e.g. "dev" or a personal env like "arthur". Omit it to be offered the environments this project may reach.',
+      },
+    },
+  }
+
+  /**
+   * Rewrites the baseline's prose in place and returns what it held BEFORE, keyed `<tool>` and
+   * `<tool>.<property>`, for `w1c-pre-d13`.
+   */
+  const applyD13ToBaseline = (): Record<string, unknown> => {
+    const captured: Record<string, unknown> = {}
+
+    for (const [name, prose] of Object.entries(D13_PROSE)) {
+      const tool = findBaselineTool(name)
+
+      if (prose.description !== undefined) {
+        captured[name] = tool?.description
+
+        if (tool !== undefined) tool.description = prose.description
+      }
+
+      for (const [property, text] of Object.entries(prose.properties ?? {})) {
+        const node = tool?.inputSchema?.properties?.[property] as Record<string, any> | undefined
+
+        captured[`${name}.${property}`] = node?.description
+
+        if (node !== undefined) node.description = text
+      }
+    }
+
+    return captured
+  }
+
+  const d13Baseline = applyD13ToBaseline()
+
   /**
    * D9 — an AUTHORED delta, handled like D4: the confirm gate now binds round 2 to round 1 with a
    * `confirmToken`, which every gated tool accepts in `inputSchema` (`src/mcp/tools/index.ts`).
@@ -1337,7 +1472,81 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     // The positive half of D4, held to the same bar as D2 and D3: the normalization must never be what
     // makes w1c pass. Without this, the delete above decays into a silent no-op the moment the fixture
     // is re-captured, and D4's documentation becomes a lie about the file it describes.
-    expect(d4Carriers).toEqual(['local-deploy-all', 'local-deploy-selected'])
+    //
+    // The message is in the assertion rather than only in this comment for the reason D12/D13 spell
+    // out: on a re-capture this fires with two arrays sitting side by side, and the tempting "fix" is
+    // to edit the literal — which leaves the delete removing a key that is not there and w1c comparing
+    // the server against itself.
+    expect(
+      d4Carriers,
+      'D4 no longer describes the fixture on disk.\n' +
+        'If tools-list-baseline.v1.json was just RE-CAPTURED: do NOT edit the array below to match. A\n' +
+        're-captured baseline carries no `skipPreflight` at all, so the delete at load would be removing\n' +
+        'a key that is already absent and w1c would be comparing the server against itself. DELETE D4\n' +
+        'entirely — the carrier list, the delete, and this test — and let the whole-object comparison\n' +
+        'guard those two tools directly again.\n' +
+        'If the fixture was NOT re-captured: the set of tools carrying `skipPreflight` changed and D4 is stale.',
+    ).toEqual(['local-deploy-all', 'local-deploy-selected'])
+  })
+
+  it('w1c-pre-d12: D12 — the baseline really demanded the four fields that are now optional', () => {
+    // The positive half of D12, held to the same bar as D4: the rewrite at load must never be what
+    // makes w1c pass. If the fixture is ever re-captured against today's server these arrays arrive
+    // already shrunken and this reds loudly, instead of the rewrite quietly guarding nothing.
+    expect(
+      d12Baseline,
+      'D12/D13 no longer describe the fixture on disk.\n' +
+        'If tools-list-baseline.v1.json was just RE-CAPTURED: do NOT update the arrays below to match. A\n' +
+        're-captured baseline already carries the shrunken `required` and the new prose, so the rewrites\n' +
+        'at load would be replacing each value with itself and w1c would be comparing the server against\n' +
+        'itself. DELETE D12 and D13 entirely — the map, the rewrite, this test,\n' +
+        'w1c-pre-d13, and the served-side assertion in assertToolsMatchBaseline — and let the whole-object\n' +
+        'comparison guard these tools directly again.\n' +
+        'If the fixture was NOT re-captured: a deploy tool changed shape and the declaration is stale.',
+    ).toEqual({
+      'gh-release-deploy-all': ['version', 'env'],
+      'gh-release-deploy-selected': ['version', 'env', 'services'],
+      'local-deploy-all': ['env'],
+      'local-deploy-selected': ['env', 'service'],
+    })
+  })
+
+  it('w1c-pre-d13: D13 — every rewritten string really carried the now-false "required for MCP" prose', () => {
+    // The positive half of D13. Two claims: the rewrite touched EXACTLY nine paths (so it cannot
+    // grow to cover a tool nobody declared), and every string it replaced really did tell an MCP
+    // caller the field was mandatory — the claim D12 falsified and the only reason to rewrite them.
+    expect(
+      Object.keys(d13Baseline).sort(),
+      'D12/D13 no longer describe the fixture on disk.\n' +
+        'If tools-list-baseline.v1.json was just RE-CAPTURED: do NOT update the arrays below to match. A\n' +
+        're-captured baseline already carries the shrunken `required` and the new prose, so the rewrites\n' +
+        'at load would be replacing each value with itself and w1c would be comparing the server against\n' +
+        'itself. DELETE D12 and D13 entirely — the map, the rewrite, this test,\n' +
+        'w1c-pre-d13, and the served-side assertion in assertToolsMatchBaseline — and let the whole-object\n' +
+        'comparison guard these tools directly again.\n' +
+        'If the fixture was NOT re-captured: a deploy tool changed shape and the declaration is stale.',
+    ).toEqual([
+      'gh-release-deploy-all',
+      'gh-release-deploy-all.env',
+      'gh-release-deploy-all.version',
+      'gh-release-deploy-selected',
+      'gh-release-deploy-selected.env',
+      'gh-release-deploy-selected.services',
+      'gh-release-deploy-selected.version',
+      'local-deploy-all.env',
+      'local-deploy-selected.env',
+    ])
+
+    for (const [path, text] of Object.entries(d13Baseline)) {
+      expect(
+        text,
+        `D13 ${path}: no such string in the baseline, so the rewrite at that path replaced nothing. Either the path is misspelled in D13_PROSE, or the fixture was re-captured — in which case delete D12/D13 rather than adjusting the path.`,
+      ).toBeTypeOf('string')
+      expect(
+        String(text),
+        `D13 ${path}: the baseline text there never claimed the field was MCP-required, so D13 is rewriting prose it was not created to rewrite. If the fixture was re-captured, delete D12/D13; otherwise this path does not belong in D13_PROSE.`,
+      ).toMatch(/required (?:for MCP|when invoked via MCP)/i)
+    }
   })
 
   it('w1c-pre-d9: D9 — the baseline carries `confirmToken` on no tool, and the gated set is non-empty', () => {
@@ -1417,6 +1626,22 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
    * destroy the comparison rather than merely weaken it.
    */
   const assertToolsMatchBaseline = (servedToolsRaw: Record<string, any>): void => {
+    // D12 asserted POSITIVELY on the served side, per tool. Deliberately NOT a blanket "nothing is
+    // required any more": `local-deploy-selected` must still demand `service`, and pinning each
+    // array here means the day F-7 relaxes it this fails by name rather than sliding through a
+    // normalization that had already emptied it.
+    for (const [name, expected] of Object.entries(D12_REQUIRED)) {
+      const served = (servedToolsRaw.tools as Record<string, any>[]).find((tool) => {
+        return tool.name === name
+      })
+
+      expect(served, `D12: ${name} is not in the served list`).toBeDefined()
+      expect(
+        served?.inputSchema?.required,
+        `D12: ${name}'s served \`required\` is not the array this test declares`,
+      ).toEqual(expected)
+    }
+
     // D9 asserted POSITIVELY on the served side before it is normalized away: the token property
     // must sit on exactly the gated tools — no more (an ungated tool would be advertising a round-2
     // it never runs) and no fewer (a gated tool without it refuses every confirmation as absent).

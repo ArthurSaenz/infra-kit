@@ -53,9 +53,12 @@ const runReleaseDeploy = async (args: ReleaseDeployArgs, selection: Selection, e
   if (source === 'local') {
     // `--services` is the one service flag on the merged surface; the local entrypoints still take
     // `service`, which is what their MCP tools declare and must keep declaring.
+    // `confirmedCommand: yes`, the same normalization the two `gh` calls below do. The local
+    // entrypoints used to take `yes` directly, which read correctly here and was `undefined` on
+    // every MCP call — the chokepoint injects `confirmedCommand`, never `yes`.
     return selection === 'all'
-      ? localDeployAll({ env, yes, dryRun, printEnv })
-      : localDeploySelected({ env, service: services, yes, dryRun, printEnv })
+      ? localDeployAll({ env, confirmedCommand: yes, dryRun, printEnv })
+      : localDeploySelected({ env, service: services, confirmedCommand: yes, dryRun, printEnv })
   }
 
   return selection === 'all'
