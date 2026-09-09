@@ -1,6 +1,9 @@
 # `/infra-kit:release-deploy` — the second plugin command, and the first live argument form
 
-**Status: pending approval.** Plan document only; nothing here is implemented.
+**Status: APPROVED and IMPLEMENTED** (e9ea02d and the three commits before it). Approved by the
+architect and critic passes recorded in `docs/reviews/`; PR-0a, PR-0b, PR-1, PR-A, PR-B and PR-D are
+landed on `main`. **PR-C and PR-E are NOT done** — both need an npm publish, and PR-E is additionally
+gated on PR-C being live on the registry, which no code change can satisfy.
 
 Increment of `docs/infra-kit-slash-commands-plan.md` (**§n**) and sibling of
 `docs/release-create-command-plan.md` (**RC §n**). Where they decide something this document does not
@@ -1202,7 +1205,7 @@ guard.
 live-defect fix and a type-enforced headless-behaviour contract, with env-bearing forms on all four and
 service gating moved to execution time
 
-**Status:** pending approval
+**Status:** approved, and implemented except PR-C/PR-E (see the header)
 
 **Decision.** Ship **PR-0a standalone and ahead of this plan** — two exposed tools corrupt the JSON-RPC
 stream today and must not wait behind a publish cycle. Then give `withEscape` a **required
@@ -1367,4 +1370,11 @@ question I would rather put to you separately.
 
 ---
 
-*Artifact status: **pending approval**. No source file has been modified.*
+*Artifact status: **approved and implemented**. Landed in e9ea02d, 715b8a5, 6d48b3c, 98e101e.*
+
+*What the implementation changed about this document's claims, recorded rather than quietly edited:*
+*G8 fired for real when PR-1 relaxed the schemas, naming all five `'unreachable'` claims it falsified*
+*— the tripwire §2.4 predicted. G0f's byte assertion turned out to be superseded by PR-0b's*
+*`whenHeadless: 'refuse'` at that site, so the mutation now reddens the outcome leg instead; the*
+*coverage is intact and the AC wording was wrong. And `readWorkflowGates` had to keep BOTH reads, which*
+*§2.5 called a requirement and the union-read mutation proved by falsely refusing `media` + `dev`.*
