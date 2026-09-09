@@ -10,11 +10,16 @@ on:
       - '.github/fixtures/unknown-frontmatter-plugin/**'
       - 'scripts/check-plugin-version-bump.mjs'
       - 'scripts/check-workflow-resource-published.mjs'
+      # The bodies the commands defer to. A command names a resource it does not contain, so editing
+      # the resource — renaming it, or dropping the `?raw` import that inlines it — breaks the
+      # command without touching `plugins/**`, and the gate would not have run.
+      - 'apps/infra-kit/cli/resources/workflow/**'
   push:
     branches: [main]
     paths:
       - 'plugins/**'
       - '.claude-plugin/**'
+      - 'apps/infra-kit/cli/resources/workflow/**'
 
 jobs:
   validate:

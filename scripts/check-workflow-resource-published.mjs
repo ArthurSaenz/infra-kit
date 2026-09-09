@@ -27,8 +27,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-const COMMAND_FILE = path.join(REPO_ROOT, 'plugins', 'infra-kit', 'commands', 'release-create.md')
-const REQUIRED_URI = 'infra-kit://workflow/release-create'
+const COMMANDS_DIR = path.join(REPO_ROOT, 'plugins', 'infra-kit', 'commands')
 const SPAWN_TIMEOUT_MS = 60_000
 
 const fail = (message) => {
@@ -36,20 +35,76 @@ const fail = (message) => {
   process.exit(1)
 }
 
+// Enumerated, never a literal. The first spelling of this check hardcoded `release-create.md` and
+// one URI, so the SECOND command to be added would have shipped completely unchecked — the gate
+// would have stayed green while reintroducing the exact broken window it exists to prevent. A gate
+// that only guards the example it was written for is worse than none, because it reads as coverage.
+const readCommands = () => {
+  if (!fs.existsSync(COMMANDS_DIR)) return []
+
+  return fs
+    .readdirSync(COMMANDS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .map((entry) => {
+      const file = path.join(COMMANDS_DIR, entry.name)
+      const body = fs.readFileSync(file, 'utf8')
+      const name = entry.name.replace(/\.md$/, '')
+
+      return {
+        name,
+        rel: path.relative(REPO_ROOT, file),
+        // Both read out of the body rather than duplicated here, so the check cannot drift from the
+        // sentences the user actually reads, and deleting either one fails loudly instead of
+        // silently disabling the gate for that command.
+        floor: /it needs infra-kit (\d+\.\d+\.\d+) or newer/.exec(body)?.[1] ?? null,
+        uri: /infra-kit:\/\/workflow\/[a-z0-9-]+/.exec(body)?.[0] ?? null,
+      }
+    })
+}
+
 /**
- * The floor is read out of the command body rather than duplicated here. There is exactly one
- * statement of it, so the check can never drift from the sentence the user actually reads.
+ * The pure half: given what the commands claim and what the published build serves, list every
+ * violation. No filesystem, no registry, no spawn — so the gate's logic is testable without a
+ * network round trip, which the previous all-in-one shape made impossible.
+ *
+ * Returns ALL violations rather than the first. Fail-fast was a real hazard here and not a style
+ * point: the gate is red today for `release-create` (floor 0.5.0, published 0.4.0), so an early
+ * `exit` on that known redness would mean a newly added second command was never examined at all.
  */
-const readFloor = () => {
-  const body = fs.readFileSync(COMMAND_FILE, 'utf8')
-  const match = /it needs infra-kit (\d+\.\d+\.\d+) or newer/.exec(body)
-  if (!match) {
-    fail(
-      `could not find the version floor in ${path.relative(REPO_ROOT, COMMAND_FILE)} — has the fallback line changed?`,
-    )
+export const collectViolations = ({ commands, published, servedUris }) => {
+  const violations = []
+
+  for (const command of commands) {
+    if (command.floor === null) {
+      violations.push(
+        `${command.rel}: no version floor found — has the "it needs infra-kit X.Y.Z or newer" line changed?`,
+      )
+      continue
+    }
+
+    if (command.uri === null) {
+      violations.push(`${command.rel}: names no infra-kit://workflow/... resource — what is this command's body?`)
+      continue
+    }
+
+    if (!isAtLeast(published, command.floor)) {
+      violations.push(
+        `${command.rel}: infra-kit@latest is ${published}, below the floor ${command.floor} its body names. ` +
+          `Publish the CLI that serves ${command.uri} before merging this command.`,
+      )
+      continue
+    }
+
+    if (!servedUris.includes(command.uri)) {
+      violations.push(
+        `${command.rel}: infra-kit@${published} does not serve ${command.uri}. ` +
+          `Served: ${servedUris.join(', ') || '(none)'}. The floor is satisfied but the bundle does not carry the ` +
+          `body — check the ?raw import survived the build.`,
+      )
+    }
   }
 
-  return match[1]
+  return violations
 }
 
 /** Numeric semver compare, enough for the x.y.z the floor and the registry both use. */
@@ -121,27 +176,39 @@ const listPublishedResources = async (version) => {
   })
 }
 
-const floor = readFloor()
-const published = execFileSync('pnpm', ['view', 'infra-kit@latest', 'version'], { encoding: 'utf8' }).trim()
+// Guarded so importing this module for its `collectViolations` seam does not hit the registry.
+const isEntrypoint = process.argv[1] === fileURLToPath(import.meta.url)
 
-console.log(`floor from the command body: ${floor}`)
-console.log(`published infra-kit@latest:  ${published}`)
+if (isEntrypoint) {
+  const commands = readCommands()
 
-if (!isAtLeast(published, floor)) {
-  fail(
-    `infra-kit@latest is ${published}, below the floor ${floor} the command body names. ` +
-      `Publish the CLI that serves ${REQUIRED_URI} before merging the command.`,
-  )
+  if (commands.length === 0) {
+    console.log('no plugin commands to check')
+    process.exit(0)
+  }
+
+  const published = execFileSync('pnpm', ['view', 'infra-kit@latest', 'version'], { encoding: 'utf8' }).trim()
+
+  console.log(`published infra-kit@latest: ${published}`)
+  for (const command of commands) {
+    console.log(`  ${command.name}: floor ${command.floor ?? '(none found)'} → ${command.uri ?? '(no URI found)'}`)
+  }
+
+  // ONE spawn for every command, not one each. The resource list is a property of the published
+  // build, so asking it N times would cost N cold `pnpm dlx` installs to learn the same answer.
+  // Skipped entirely when no command's floor is met — there is nothing the list could tell us that
+  // the floor has not already decided, and the spawn is the expensive half.
+  const anyFloorMet = commands.some((command) => {
+    return command.floor !== null && isAtLeast(published, command.floor)
+  })
+  const servedUris = anyFloorMet ? (await listPublishedResources(published)).map((r) => r.uri) : []
+
+  const violations = collectViolations({ commands, published, servedUris })
+
+  if (violations.length > 0) {
+    for (const violation of violations) console.error(`FAIL: ${violation}`)
+    fail(`${violations.length} command(s) would ship ahead of the CLI that serves their resource`)
+  }
+
+  console.log(`OK: infra-kit@${published} serves every command's workflow resource`)
 }
-
-const resources = await listPublishedResources(published)
-const uris = resources.map((r) => r.uri)
-
-if (!uris.includes(REQUIRED_URI)) {
-  fail(
-    `infra-kit@${published} does not serve ${REQUIRED_URI}. Its resources: ${uris.join(', ') || '(none)'}. ` +
-      `The version floor is satisfied but the bundle does not carry the body — check the ?raw import survived the build.`,
-  )
-}
-
-console.log(`OK: infra-kit@${published} serves ${REQUIRED_URI}`)
