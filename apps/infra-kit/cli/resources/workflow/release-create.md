@@ -86,6 +86,30 @@ the remote branches alone and can land on a version Jira already knows about. If
 yields a prior version the tool refuses and asks for an explicit one. When the exact number
 matters, pass the semver instead of the token.
 
+### Reading `$ARGUMENTS`
+
+The `/infra-kit:release-create` command hands you `$ARGUMENTS` verbatim, and its argument hint is
+`[--hotfix] [--desc <text>] [<version|name>]`. **Those two flags are conventions of this command, not
+CLI flags** — `infra-kit release create` accepts neither, and the tool takes neither. They exist so a
+human can type the whole request on one line, and it is your job to translate them:
+
+- `--hotfix` → `type: "hotfix"` on every entry you build. Its absence means `"regular"`.
+- `--desc <text>` → `description` on the entry. The text runs to the end of the argument string.
+- The bare token → `version` when it is a semver or the literal `next`, `name` when it is kebab-case.
+
+So `--hotfix --desc "Card expiry fix" 1.63.3` is one entry:
+`{version: "1.63.3", type: "hotfix", description: "Card expiry fix"}`.
+
+If `$ARGUMENTS` is empty, ask the human what to cut rather than guessing a version — and read the
+`"next"` caveats above before offering it.
+
+**Precedence, when a form is also involved.** If the server answers with an argument form and the
+human edits it, **the form wins field by field wherever the human supplied a value, and the values
+you parsed from `$ARGUMENTS` win everywhere else.** A human who typed `--hotfix` and then picked
+`regular` in the form gets `regular` — they saw the field and changed it. A human who typed
+`--hotfix` and left `type` untouched gets `hotfix`. Never rebuild the entry from the form alone: that
+converts every untouched field into a silent overwrite by a value the human never saw.
+
 ### Batches
 
 One call may create several releases, but **all entries must share the same `type`**. Regular and

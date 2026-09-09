@@ -189,7 +189,7 @@ describe('the release-create procedure, over the wire', () => {
   it('renders a body that still carries the clauses an agent needs', () => {
     const body = WORKFLOW_BODIES['release-create']
 
-    expect(body.split('\n')).toHaveLength(118)
+    expect(body.split('\n')).toHaveLength(142)
     expect(body.endsWith('\n')).toBe(false)
 
     // The tool the procedure is for, named so an agent that read the resource can call it.
@@ -198,6 +198,15 @@ describe('the release-create procedure, over the wire', () => {
     expect(body).toContain('confirmation_required')
     expect(body).toContain('confirmToken')
     expect(body).toContain('"confirm": true')
+
+    // The `$ARGUMENTS` flags the plugin command's `argument-hint` advertises. They are conventions of
+    // that command — neither the CLI nor the tool accepts them — so THIS body is the only place an
+    // agent can learn what they mean. The hint promised them for a release cycle while nothing
+    // defined them; the count above moved by exactly that repair, so these lines are what the new
+    // lines have to be. `manifest.test.mjs`'s U17 binds the hint to these definitions from the other
+    // side, but it is plain node and cannot see the bundled `WORKFLOW_BODIES` this asserts.
+    expect(body).toContain('`--hotfix` → `type: "hotfix"`')
+    expect(body).toContain('`--desc <text>` → `description`')
     expect(body).toContain('does not mean the call failed')
     expect(body).toContain('Bash')
     // The argument rules.
