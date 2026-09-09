@@ -272,6 +272,15 @@ const assertResourcesAreListedAndReadable = async (client: Client): Promise<void
 
   expect(uris).toContain('infra-kit://config')
   expect(uris).toContain('infra-kit://dev-context')
+  expect(uris).toContain('infra-kit://workflow/release-create')
+
+  // The workflow procedure, read against the BUILT bundle. Every other assertion about it runs from
+  // `src/`, where a `resources/workflow/*.md` import that esbuild failed to inline still resolves.
+  const workflow = await client.readResource({ uri: 'infra-kit://workflow/release-create' })
+  const workflowBody = workflow.contents[0]
+
+  expect(workflowBody?.mimeType).toBe('text/markdown')
+  expect(String((workflowBody as { text: string }).text)).toContain('mcp__infra-kit__release-create')
 
   // dev-context with no active session must resolve to a payload, NOT an error.
   const devContext = await client.readResource({ uri: 'infra-kit://dev-context' })
@@ -945,6 +954,35 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     any
   >
 
+  /**
+   * Resources REGISTERED AFTER the v1 baseline was captured, and therefore not migration artefacts.
+   *
+   * Stripped rather than folded into the fixture, for the same reason `withoutAuthoredDeltas` strips
+   * the tool-side additions: the fixture's whole value is that it is what the pre-migration server
+   * actually served, and re-capturing it against today's server would retire the differential in the
+   * act of making it pass.
+   *
+   * The workflow resource keeps its own coverage — `assertResourcesAreListedAndReadable` lists and
+   * reads it on every lane, and `src/mcp/__tests__/server.test.ts` asserts its bytes.
+   */
+  const AUTHORED_RESOURCE_URIS = new Set(['infra-kit://workflow/release-create'])
+
+  const withoutAuthoredResources = (list: Record<string, any>): Record<string, any> => {
+    const copy = JSON.parse(JSON.stringify(list)) as Record<string, any>
+    const listed = copy.resources as Record<string, any>[]
+
+    copy.resources = listed.filter((resource) => {
+      return !AUTHORED_RESOURCE_URIS.has(resource.uri as string)
+    })
+
+    // The strip has to strip. Without this, a renamed or deleted workflow URI leaves the helper
+    // inert and the differential silently reverts to comparing whatever is registered today —
+    // which is the failure mode a normalization broad enough to swallow drift always has.
+    expect(listed.length - (copy.resources as unknown[]).length).toBe(AUTHORED_RESOURCE_URIS.size)
+
+    return copy
+  }
+
   const DRAFT_07 = 'http://json-schema.org/draft-07/schema#'
   const DRAFT_2020 = 'https://json-schema.org/draft/2020-12/schema'
 
@@ -1566,8 +1604,8 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     assertToolsMatchBaseline(toolsResult)
   })
 
-  it('w1d: resources/list is byte-identical', () => {
-    expect(resourcesResult).toEqual(v1Resources)
+  it('w1d: resources/list is byte-identical, once the authored additions are stripped', () => {
+    expect(withoutAuthoredResources(resourcesResult)).toEqual(v1Resources)
   })
 
   it('w1e-pre: the v1 baseline carries NONE of the three modern-encode stamps', () => {
@@ -1615,7 +1653,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     // Only `serverInfo.version` would ever need normalizing here, and the D7 strip removes the whole
     // stamp, so nothing version-shaped survives into the comparison.
     assertToolsMatchBaseline(stripModernStamps(modernTools))
-    expect(stripModernStamps(modernResources)).toEqual(v1Resources)
+    expect(withoutAuthoredResources(stripModernStamps(modernResources))).toEqual(v1Resources)
   })
 
   it('o1: stdout carries valid JSON-RPC frames and nothing else, on BOTH lanes', () => {

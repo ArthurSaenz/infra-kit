@@ -110,3 +110,59 @@ A8 (post-push rollback with a progress record), A10 (resume a half-created relea
 (widen failedReleases + the MCP outputSchema, which needs a served-side strip in
 withoutAuthoredDeltas — `unchangedControl` resolves to release-create, so the self-check
 fails before the whole-object compare at :1560 — measured at :1495 during this session). Open question for the operator on Option B is recorded at the end of the plan.
+
+=== release-create command / MCP elicitation (session d5e18117) ===
+US-001 DONE — six must-fix approval conditions applied to docs/release-create-command-plan.md,
+committed as ce80b43. Edits: narrowsArgs < -> !== (array GROWTH was passing, and that is the silent
+case: it stays schema-valid and executes); split the non-record guard; E-A drops a probe mutation
+that could not flip on its own form-capable client; E-E gets the only mutation that can flip its
+count; E-B/E-C fixtures stated; the 2.4 docblock pronoun no longer reads as isFormable. F12 gained
+growth + non-record rows. Size re-derived ~15-18 lines: the canonicalArgs reuse it rested on does
+not exist (sortKeysDeep is module-private at confirm-token.ts:49, absent from index.ts).
+
+US-004 BLOCKED on a user action, and the reason is a real finding rather than a stall:
+.mcp.json runs the command "infra-kit" — the GLOBALLY INSTALLED binary, not this workspace. So no
+edit here can instrument the server Claude Code actually talks to, and no restart changes that
+until a new version is published and installed globally. Measurement therefore needs a separate
+probe server, written and TESTED at <scratchpad>/rcap-probe.mjs. It is raw-wire and SDK-free on
+purpose: the SDK normalizes {elicitation:{}} into {elicitation:{form:{}}} (M4), which would destroy
+the very distinction being measured. Verified against a synthetic initialize.
+
+LEARNINGS:
+- Use pnpm exec. The repo hook rejects the npx runner and kills the WHOLE compound command, so a
+  "cat > file <<EOF && <that runner> ..." chain silently writes nothing. It also matches the bare word
+  inside heredoc TEXT, so notes mentioning it must spell it apart.
+- Package-level gate only: cd apps/infra-kit/cli && pnpm run qa. Root qa runs vendor:check first,
+  which shells out to the global infra-kit and is already red on HEAD.
+
+US-007 (PR E) — command file + U13/U14/T1b written, 20/20 green, all mutation-traced.
+
+IMPORTANT LEARNING — my own first version of T1b was VACUOUS, and only a mutation caught it.
+T1b half one originally made its OWN walkFiles(SKILLS_DIR) call and asserted the result held no
+command file. That is a tautology: SKILLS_DIR and COMMANDS_DIR are disjoint siblings, so it holds
+however T1 is written. Proof: widening T1 to PLUGINS_DIR turned T1 RED and left T1b GREEN — the
+opposite of the mutually-unsatisfiable property the plan asked T1b to provide.
+Fixed by asserting against T1s OWN SOURCE (regex the T1 test body out of the suite file and match
+/walkFiles\(SKILLS_DIR\)/). Brittle on purpose: T1s walk root IS the invariant, so changing it
+SHOULD force an edit here. Re-verified: the same mutation now reddens BOTH.
+
+The general rule this cost me: a green test proves nothing until its named mutation has been RUN.
+I spent this session finding vacuous ACs in someone elses plan and then wrote one myself on the
+first try. Run the mutation. Every time.
+
+US-003 (PR D) verified independently before accepting:
+- Body facts spot-checked against source: JIRA_BASE_URL / JIRA_EMAIL / JIRA_PROJECT_ID /
+  JIRA_TOKEN||JIRA_API_TOKEN all match integrations/jira/api.ts:237-247 (email IS required);
+  600s TTL matches CONFIRM_TOKEN_TTL_SECONDS at confirm-token.ts:22; the five non-mismatch
+  refusal reasons match REFUSAL_TEXT exactly.
+- The critical AC was mutation-proved, not assumed: adding a bare z.object argsSchema to the
+  prompt registration turns THREE tests red including "serves prompts/get with arguments omitted
+  entirely". That is the AC the review rounds flagged as previously uncatchable.
+
+NEAR-MISS worth remembering: that mutation test almost left the tree mutated. The command was
+  cp file /tmp/bak ; node -e mutate ; cd apps/infra-kit/cli && vitest ; cp /tmp/bak file
+and the cd shifted cwd, so the final restore resolved a relative path that no longer existed. It
+printed "No such file or directory" and I nearly read the following green line as success. Two
+rules: never put cd in the middle of a mutate/restore chain, and verify the restore by GREPPING
+FOR THE MUTATION, not by re-running the tests — a restore that silently failed still shows the
+same red/green pattern you were expecting to see.

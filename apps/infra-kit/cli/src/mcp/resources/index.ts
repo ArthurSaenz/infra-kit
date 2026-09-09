@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 
+import { WORKFLOW_BODIES } from '../workflow-bodies'
 import type { DevContextSnapshot } from './dev-context'
 import { readDevContext } from './dev-context'
 
@@ -11,6 +12,14 @@ export const CONFIG_RESOURCE_URI = 'infra-kit://config'
 
 /** Stable URI of the dev-context resource. */
 export const DEV_CONTEXT_RESOURCE_URI = 'infra-kit://dev-context'
+
+/**
+ * Stable URI of the `release-create` procedure.
+ *
+ * This is the agent-reachable half of the pair: the same body is also registered as a prompt
+ * (`src/mcp/prompts`), because an agent can read a resource but cannot fetch a prompt.
+ */
+export const RELEASE_CREATE_WORKFLOW_URI = 'infra-kit://workflow/release-create'
 
 /**
  * The two disk reads the resources need, injected so the registration is unit-testable without touching
@@ -78,6 +87,26 @@ export const initializeResources = async (server: McpServer, deps: ResourceDeps 
     // The SDK's `ReadResourceCallback` accepts a synchronous return; the disk read is sync, so no `async`.
     (uri) => {
       return jsonResource(uri.toString(), deps.readDevContext())
+    },
+  )
+
+  server.registerResource(
+    'infra-kit-workflow-release-create',
+    RELEASE_CREATE_WORKFLOW_URI,
+    {
+      title: 'release-create procedure',
+      description:
+        'How to cut a release with the release-create tool: the preconditions, the two-call confirm ' +
+        'protocol, and what the "next" token actually resolves against. Read this before calling ' +
+        'mcp__infra-kit__release-create.',
+      mimeType: 'text/markdown',
+    },
+    // No dep injection and no `async`: the body is a build-time constant, so there is nothing to
+    // read, nothing to fail, and nothing a test would need to stub.
+    (uri) => {
+      return {
+        contents: [{ uri: uri.toString(), mimeType: 'text/markdown', text: WORKFLOW_BODIES['release-create'] }],
+      }
     },
   )
 }

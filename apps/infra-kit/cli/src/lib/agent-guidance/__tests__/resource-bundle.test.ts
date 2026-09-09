@@ -52,6 +52,14 @@ describe('resources are inlined into the bundle', () => {
         expect(emitted, `${key} was not inlined into the bundle`).toContain(sentinel)
       }
 
+      // `resources/workflow/*.md` rides the same esbuild text loader and the same flat-static-import
+      // rule, and is served over MCP rather than written into a consumer file — so a refactor that
+      // leaves its specifier unresolved surfaces as an MCP server that cannot answer `resources/read`
+      // for a procedure an agent was told to fetch. Asserted here, in the one lane that reads `dist`.
+      expect(emitted, 'workflow/release-create was not inlined into the bundle').toContain(
+        'mcp__infra-kit__release-create',
+      )
+
       // Recorded rather than asserted: a full multi-entry esbuild build inside the unit
       // lane. If this creeps far past a few seconds, move the file to the opt-in
       // `qa:pty`-style lane rather than deleting the only guard on Scenario 1.

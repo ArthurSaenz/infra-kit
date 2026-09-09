@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 
 import type { ResourceDeps } from '..'
-import { CONFIG_RESOURCE_URI, DEV_CONTEXT_RESOURCE_URI, initializeResources } from '..'
+import { CONFIG_RESOURCE_URI, DEV_CONTEXT_RESOURCE_URI, RELEASE_CREATE_WORKFLOW_URI, initializeResources } from '..'
+import { WORKFLOW_BODIES } from '../../workflow-bodies'
 import type { DevContextSnapshot } from '../dev-context'
 
 /** Reach into the SDK's private resource registry to assert what was registered. */
@@ -56,6 +57,27 @@ describe('initializeResources', () => {
     expect(uris.length).toBeGreaterThanOrEqual(1)
     expect(uris).toContain(CONFIG_RESOURCE_URI)
     expect(uris).toContain(DEV_CONTEXT_RESOURCE_URI)
+    expect(uris).toContain(RELEASE_CREATE_WORKFLOW_URI)
+  })
+
+  /**
+   * The agent-reachable half of the workflow pair. The prompt half, and the byte-identity between
+   * the two channels, are asserted over a real transport in `src/mcp/__tests__/server.test.ts`.
+   */
+  it('resolves the release-create procedure as markdown, from the shared constant', async () => {
+    const server = newServer()
+
+    await initializeResources(server, makeDeps())
+
+    const result = await registeredOf(server)[RELEASE_CREATE_WORKFLOW_URI]!.readCallback(
+      new URL(RELEASE_CREATE_WORKFLOW_URI),
+      {},
+    )
+
+    expect(result.contents).toHaveLength(1)
+    expect(result.contents[0]!.uri).toBe(RELEASE_CREATE_WORKFLOW_URI)
+    expect((result.contents[0] as { mimeType?: string }).mimeType).toBe('text/markdown')
+    expect(result.contents[0]!.text).toBe(WORKFLOW_BODIES['release-create'])
   })
 
   it('resolves the config resource to the merged config from the loader', async () => {
