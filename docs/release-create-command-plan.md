@@ -1561,3 +1561,29 @@ byte-identical text on both channels — but that is a _different artifact_ reac
 failure (publish, then point it at a build with the resource removed, or at the prior version) before
 the assertion may be called guarded. Recorded here rather than left to be assumed green on its first
 real invocation, which is exactly how V10 and F13 got in.
+
+**8.9 — F5's named mutation cannot flip an end-to-end assertion. Third of its class.** §2.3 writes the
+form predicate as `formable = formProvider.isFormable(params)`, which presumes a provider and is
+therefore unwritable in TypeScript without the very `hasProvider` guard it is meant to justify. Written
+honestly it is `formProvider?.isFormable(params) === true`, already `false` with no provider, and
+`buildFormOrGate` narrows on the provider a second time before building. **Measured: dropping
+`hasProvider` from row 1 leaves the observable outcome unchanged.**
+
+`resolveGateState` is therefore exported and F5 gains a second lane driving the predicate directly —
+the only assertion that deletion reddens. Note the export is from the module, **not** from
+`tool-handler/index.ts`: the production surface is unchanged.
+
+**This is the third AC in this document whose mutation could not flip it** — after V10 (deleted) and
+F13 (respelled) — and the third caught only by _running_ the mutation rather than reading the AC. §3.0
+is not ceremony; it is the only thing that has ever caught this class here.
+
+**8.10 — F0's predicted outcome is wrong, though the AC still flips.** Deleting row 0 does not emit a
+form: row 1 spells `gated` in full, so an ungated call falls through to `verify` and is refused as
+`absent`. The AC reddens either way, but for a different reason than stated — worth correcting, since an
+AC whose _predicted_ red is wrong invites the next reader to "fix" the code toward the wrong outcome.
+
+**8.11 — `droppedInputResponseKeys` needs no branch.** A dropped entry is _removed_ from
+`inputResponses`, so `inputResponse` reads it as `{kind:'missing'}`, which is already not-an-accept and
+lands in the `declined` row. F3's fourth lane passes with **zero code reading the field**. It stays
+declared on `ToolCallContext` and documented, but §2.3's implication that it needs handling of its own
+is wrong.
