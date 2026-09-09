@@ -1511,3 +1511,36 @@ against a published 0.4.0, so it fails — which is the mechanism working, not a
 green when the CLI serving `infra-kit://workflow/release-create` is published. **Consequence for
 whoever holds this branch: the plugin reaches users from git, so the command must not be _pushed_
 before that publish.** Committing locally is safe; pushing opens PM-C's window for everyone.
+
+**8.5 — §2.6's predicted file footprint for PR D is wrong; the independence claim survives it.** Round
+2 verified PR D as touching "only `resources/index.ts` and `prompts/index.ts`", and used that to argue
+PR D is independent of A–C. The independence holds — PR D touched no file PR A, B or C touches — but the
+**list** does not. Two further files were forced, not chosen:
+
+- **`mcp-stdio.e2e.test.ts`.** `w1d` and `w1e` compare `resources/list` byte-for-byte against
+  `fixtures/resources-list-baseline.v1.json`, a **pre-migration** fixture, so a third resource reddens
+  them. Re-capturing the fixture would retire the differential in the act of making it pass, so the
+  file's own tool-side idiom (`withoutAuthoredDeltas`) is mirrored as `withoutAuthoredResources`,
+  keyed on `AUTHORED_RESOURCE_URIS` and carrying an assertion that the strip **actually removed
+  something**, so it cannot go inert on a rename. Stripping owes positive coverage, so
+  `assertResourcesAreListedAndReadable` now lists **and reads** the workflow resource on every lane.
+- **`resource-bundle.test.ts`.** §2.6 names the bundle guard as the only net for the
+  flat-static-import rule, but PR D as specified ships no such guard: that file is keyed to
+  agent-guidance's own `SENTINELS`, so a dynamic-import refactor of `workflow-bodies.ts` passes every
+  test in this PR — they all run from `src/` — and throws `ERR_UNKNOWN_FILE_EXTENSION` in `dist`.
+
+**Rule for future PR rows: a verified file footprint is evidence about _coupling_, not a complete
+list.** Shared fixtures and shared build guards are reached by any change that alters what the server
+serves, and neither shows up in an import graph.
+
+**8.6 — where the plan and a task brief disagree, the plan is the artifact to trust.** The PR D brief
+specified `src/mcp/resources/workflow/release-create.md`; §2.6 says `«cli»/resources/workflow/…`, which
+is also what item 2's `'../../resources/workflow/…'` specifier resolves to from `src/mcp/`, and what the
+existing `resources/root/`, `resources/package/`, `resources/design/` siblings establish. The plan was
+right. (Checked before relying on it: `resources.test.ts:24` walks only `['root','package','design']`,
+so the new sibling does not trip its one-entry-per-file reconciliation.)
+
+**8.7 — the PR A widening breaks four spots, not three.** The fourth is `expectRefusal` at
+`tool-handler.test.ts:271`, a helper nested inside the token-binding `describe` and absent from the
+first error dump. Recorded because the "three spots" figure in §8.1 came from a first pass and was an
+undercount — the same class of error as a file-footprint claim taken as complete.
