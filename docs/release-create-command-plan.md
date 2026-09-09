@@ -1544,3 +1544,20 @@ so the new sibling does not trip its one-entry-per-file reconciliation.)
 `tool-handler.test.ts:271`, a helper nested inside the token-binding `describe` and absent from the
 first error dump. Recorded because the "three spots" figure in §8.1 came from a first pass and was an
 undercount — the same class of error as a file-footprint claim taken as complete.
+
+**8.8 — the PM-C check's second assertion is unexercised, and saying so is the point.**
+`scripts/check-workflow-resource-published.mjs` makes two assertions: that `infra-kit@latest` is at or
+above the floor named in the command body, and that the published build actually answers
+`resources/list` with the URI. Only the **first** has ever run — the second is unreachable until a
+version at or above the floor is published, because the first fails and exits before it.
+
+So by §3.0's own rule the second assertion is **not yet accepted**: its named mutation has never been
+traced to a flipped assertion. It is not vacuous — its positive path was exercised against the local
+built bundle, which lists the URI, reads back 6080 bytes of `text/markdown` naming
+`mcp__infra-kit__release-create`, serves `prompts/get` with `arguments` omitted, and returns
+byte-identical text on both channels — but that is a _different artifact_ reached by _different code_.
+
+**Whoever publishes the CLI owes this check one run in its passing direction**, and one deliberate
+failure (publish, then point it at a build with the resource removed, or at the prior version) before
+the assertion may be called guarded. Recorded here rather than left to be assumed green on its first
+real invocation, which is exactly how V10 and F13 got in.

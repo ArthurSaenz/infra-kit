@@ -166,3 +166,15 @@ printed "No such file or directory" and I nearly read the following green line a
 rules: never put cd in the middle of a mutate/restore chain, and verify the restore by GREPPING
 FOR THE MUTATION, not by re-running the tests — a restore that silently failed still shows the
 same red/green pattern you were expecting to see.
+
+PR D verified against the BUILT BUNDLE, not just src/ — the strongest check short of publishing.
+Built dist/cli.js, spawned it as `mcp` over stdio with hand-rolled JSON-RPC (deliberately sharing
+no code with the thing under test), and confirmed on the real artifact:
+  resources/list  contains infra-kit://workflow/release-create
+  resources/read  returns 6080 bytes of text/markdown naming mcp__infra-kit__release-create
+                  -> the ?raw import DID inline; an empty body would have proved it did not
+  prompts/list    contains release-create
+  prompts/get     with `arguments` OMITTED succeeds on the real bundle
+  both channels   byte-identical
+Probe kept at <scratchpad>/probe-dist.mjs; it is the local twin of what the PM-C CI check does
+against the published package.
