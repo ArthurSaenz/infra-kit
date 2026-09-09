@@ -194,3 +194,15 @@ LESSON: an incomplete mutation table is a milder form of the vacuous-AC problem.
 under the listed mutation while its NAMED hazard goes untested — the test is not vacuous, but the
 table implies coverage it has not demonstrated. Trace every lane to the hazard in its own title,
 not merely to some mutation that happens to flip it.
+
+PR B verified on the BUILT BUNDLE after the fact, not only through unit fakes.
+Round 1 of a gated tool is side-effect-free by construction (the gate returns before the command
+handler runs), so the real release-create was called with real arguments on dist/cli.js:
+  status         confirmation_required, isError true
+  formDiscarded  false, PRESENT -> the section 8.12 production delta confirmed on the artifact
+  confirmToken   minted
+  resolvedArgs   echo the human-facing args intact, including type:hotfix
+  server frames  NONE -> a client declaring no capabilities got no elicitation/create.
+                 That is M3 holding on the live wire, not just in the SDK type docs.
+  server log     "gated (awaiting confirm)", never "successful" -> nothing was cut.
+Probe kept at <scratchpad>/probe-gate.mjs alongside probe-dist.mjs.
