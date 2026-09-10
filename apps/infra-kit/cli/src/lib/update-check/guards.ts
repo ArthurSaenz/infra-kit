@@ -29,11 +29,15 @@ export type SkipReason = 'opt-out' | 'json' | 'own-command' | 'not-a-tty' | 'loc
 /**
  * Commands that must never trigger the background updater.
  *
- * `mcp` hands its stdio to a child speaking JSON-RPC. `self-update` already performs the update itself:
- * without this, `ik self-update` would install interactively AND leave behind a detached worker that
- * waits for it to exit and then installs the very same `@latest` a second time.
+ * `mcp` hands its stdio to a child speaking JSON-RPC, and a spawned worker on that path races the
+ * transport the server is mid-conversation on.
+ *
+ * A set rather than an `=== 'mcp'` because the membership rule outlives its members: it held
+ * `self-update` until that command was retired in favour of the background updater alone, and any
+ * future command that performs the update itself belongs here for the same reason it did — otherwise it
+ * would install once in the foreground AND leave a detached worker to install the same `@latest` again.
  */
-const SELF_MANAGING_COMMANDS = new Set(['mcp', 'self-update'])
+const SELF_MANAGING_COMMANDS = new Set(['mcp'])
 
 /**
  * Positional `argv[2]` mirrors the existing `warnIfLocalInstall` guard and is correct today because the

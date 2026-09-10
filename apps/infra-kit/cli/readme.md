@@ -110,7 +110,7 @@ When infra-kit runs as an MCP server (via `.mcp.json`), these commands are avail
 
 26 tools total.
 
-**Not exposed**: `dev` (long-running), `release deliver` (irreversible prod delivery), `config edit` / `config path` (interactive/CLI-only), `vendor config` (CLI-only), `self-update` and `mcp` (process-level).
+**Not exposed**: `dev` (long-running), `release deliver` (irreversible prod delivery), `config edit` / `config path` (interactive/CLI-only), `vendor config` (CLI-only), and `mcp` (process-level).
 
 ---
 

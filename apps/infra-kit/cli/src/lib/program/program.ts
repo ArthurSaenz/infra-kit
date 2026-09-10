@@ -24,7 +24,6 @@ import { deprecatedLocalDeploy, releaseDeployAll, releaseDeploySelected } from '
 import { releaseDescEdit } from 'src/commands/release-desc-edit'
 import { releaseRemove } from 'src/commands/release-remove'
 import { reopen } from 'src/commands/reopen'
-import { runSelfUpdate } from 'src/commands/self-update'
 import { setup } from 'src/commands/setup'
 import { vendorCheck } from 'src/commands/vendor-check'
 import { vendorConfig } from 'src/commands/vendor-config'
@@ -377,8 +376,7 @@ const configureConfigEdit = (cmd: Command): Command => {
 // host-inspecting / meta commands where priming Doppler env would be surprising
 // (`setup` bootstraps the shell block AND installs doppler itself, `doctor`
 // inspects auth, `version` prints a string, `dev` is a long-running server that
-// manages its own env, `self-update` replaces this binary, and `mcp` hands its
-// stdio to a child).
+// manages its own env, and `mcp` hands its stdio to a child).
 // `--help`/`--version`/the bare-arg menu don't fire preAction at all.
 //
 // `setup` is the member that carries the machine-bootstrap case, and it carries it under BOTH its
@@ -387,7 +385,7 @@ const configureConfigEdit = (cmd: Command): Command => {
 // form a user runs BEFORE doppler is installed, where there is nothing to prime from — priming there
 // would write a Doppler env-load file into the session cache off a command that exists to install the
 // tool it would be priming from.
-const AUTO_LOAD_EXCLUDED = new Set(['setup', 'doctor', 'version', 'dev', 'self-update', 'mcp'])
+const AUTO_LOAD_EXCLUDED = new Set(['setup', 'doctor', 'version', 'dev', 'mcp'])
 
 const isAutoLoadExcludedCommand = (name: string): boolean => {
   return name.startsWith('env-') || AUTO_LOAD_EXCLUDED.has(name)
@@ -399,8 +397,7 @@ const isAutoLoadExcludedCommand = (name: string): boolean => {
 //     (see the shell body in init.ts). It runs constantly; the seed has no business on that path.
 //   - `mcp` is excluded for LAZINESS, not cwd: the MCP server seeds at its first TOOL INVOCATION
 //     (lib/tool-handler), so a server that never receives a tool call never writes to $HOME.
-//   - `version` / `self-update` touch config ZERO times today, so seeding is pure new cost on the two
-//     fastest paths; `self-update` also re-execs the binary.
+//   - `version` touches config ZERO times today, so seeding is pure new cost on the fastest path.
 // Everything else DOES seed — `doctor`, `config path`, `dev` and `setup` included (they are all in
 // AUTO_LOAD_EXCLUDED, but that set answers a different question), as does the whole `env-*` family
 // apart from `env-autoload`.
@@ -409,7 +406,7 @@ const isAutoLoadExcludedCommand = (name: string): boolean => {
 // establishes this project's layer-3 override file, so excluding it would mean the setup command is the
 // one command that does not set up the config. That holds for `setup --skip-tools` too — the seed is a
 // local write, not a tool install, so the additive form has exactly the same business here.
-const SEED_EXCLUDED = new Set(['env-autoload', 'mcp', 'version', 'self-update'])
+const SEED_EXCLUDED = new Set(['env-autoload', 'mcp', 'version'])
 
 /**
  * Canonical space-joined command path for a leaf (e.g. the `check` leaf of `vendor` → "vendor check").
@@ -605,15 +602,6 @@ export const buildProgram = (): Command => {
       if (pluginMissing) process.exitCode = 1
 
       emit(result)
-    })
-
-  // No `update` alias: the `update` verb is reserved.
-  program
-    .command('self-update')
-    .description('Update this CLI using the package manager that installed it')
-    .option('--dry-run', 'Print the detected manager and the command that would run; install nothing')
-    .action((options) => {
-      runSelfUpdate({ dryRun: Boolean(options.dryRun) })
     })
 
   program

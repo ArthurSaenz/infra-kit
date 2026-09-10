@@ -7,8 +7,8 @@
  * so every cheap matcher misses and detection reports `unknown` / `canSelfSpawn: false`. Without this
  * probe the single most common install method can never update itself.
  *
- * Shared by `self-update` (interactive) and the background update worker so the two can never disagree
- * about who owns the install.
+ * Read by the background update worker, and by the `doctor` advisory that names the command a human
+ * would run by hand — one probe so the two can never disagree about who owns the install.
  */
 import { execFileSync } from 'node:child_process'
 import process from 'node:process'

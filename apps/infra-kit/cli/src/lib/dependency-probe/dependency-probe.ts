@@ -6,7 +6,7 @@
  * boolean would report that install as "not installed", which is wrong and actively misleading.
  *
  * Every process interaction is an injected seam ({@link ProbeDeps}), same discipline as
- * `src/dev/proxy/portless-driver.ts` and `src/commands/self-update/self-update.ts`: nothing here calls
+ * `src/dev/proxy/portless-driver.ts` and `src/lib/update-check/auto-update.ts`: nothing here calls
  * `spawn`/`zx`/`fs` directly, so the whole matrix — including the aws script-vs-homebrew split-brain case —
  * is table-testable without shelling out.
  */

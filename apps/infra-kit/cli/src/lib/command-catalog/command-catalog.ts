@@ -484,8 +484,45 @@ export const commandCatalog: CommandCatalogEntry[] = [
 
   // --- Setup & Diagnostics (menu group) ---
   // `doctor` checks the machine; `audit` checks the REPO against its config rules. Both answer "is this
-  // in a good state?", which is why they sit together. The command that ACTS on those answers — `setup` —
-  // is deliberately not here; see its entry below for the two reasons.
+  // in a good state?". `setup` is the command that ACTS on those answers, which is why it leads the
+  // group rather than sitting outside it.
+  //
+  // Sets the machine up in one pass: the local `initCore` writes, then install-or-update for the five
+  // external tools. Exposed — over MCP and in the menu — despite mutating, on the rule the catalog
+  // already enforces: exposure is bounded by a tool's own invariants, not by the verb (`worktrees-add`
+  // is exposed, ungated, and runs `pnpm install`). Here the invariant is computed —
+  // `lib/dependency-install/risk-predicate` refuses any recipe needing sudo or piping a network-fetched
+  // script, which is both bootstrap recipes, on every host regardless of configuration.
+  //
+  // `requiresHumanConfirm` rather than LOW_RISK_MUTATING_ALLOWLIST membership: the allowlist ASSERTS low
+  // risk, and that would be a false claim for a command that installs software. It also carries
+  // `_meta['anthropic/requiresUserInteraction']` (setup.ts), the only gate that puts a human on the MCP
+  // path. Both fire unconditionally — `skipTools` included — because the read path that raises no prompt
+  // is `doctor`, a separate tool name and therefore a separate permission identity.
+  //
+  // `menuGroup: 'setup'` REVERSES an earlier decision to hide the row, and the two reasons it rested on
+  // are recorded here so they are not silently re-adopted:
+  //   1. "It would be a one-keystroke installer" — `run-session.ts` spawns `[deps.cliPath,
+  //      ...command.groupPath]` with ZERO flags, so the palette can only offer the flagless form, never
+  //      the narrowed `setup --skip-tools`. That argument does not survive the catalog's own rule, which
+  //      the far more consequential `release deploy-all` row already tests: exposure follows the
+  //      invariant, and setup's is a converge that installs nothing sudo-shaped and is idempotent on a
+  //      machine that is already set up.
+  //   2. "The row would read a bare `setup` and collide with the `pnpm run setup` script" — the label is
+  //      a render inside a palette the user reached by typing `ik`, where every other row is likewise
+  //      unqualified (`doctor`, `audit`). A label ambiguity that exists only for a reader who ignores
+  //      the surface they are standing in does not outweigh the command being undiscoverable.
+  // The cost that decided it: `setup` reachable only from `--help` is a command most users never learn
+  // exists. A human who wants the additive local writes without the installer still types
+  // `infra-kit setup --skip-tools`.
+  {
+    cliName: 'setup',
+    menuGroup: 'setup',
+    mcpTool: setupMcpTool,
+    mcpExposed: true,
+    mutating: true,
+    groupPath: ['setup'],
+  },
   {
     cliName: 'doctor',
     menuGroup: 'setup',
@@ -551,50 +588,6 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mcpExposed: false,
     mutating: true,
     groupPath: ['env-token-remove'],
-  },
-  // Sets the machine up in one pass: the local `initCore` writes, then install-or-update for the five
-  // external tools. Exposed despite mutating, on the rule the catalog already enforces: exposure is
-  // bounded by a tool's own invariants, not by the verb (`worktrees-add` is exposed, ungated, and runs
-  // `pnpm install`). Here the invariant is computed — `lib/dependency-install/risk-predicate` refuses any
-  // recipe needing sudo or piping a network-fetched script, which is both bootstrap recipes, on every
-  // host regardless of configuration.
-  //
-  // `requiresHumanConfirm` rather than LOW_RISK_MUTATING_ALLOWLIST membership: the allowlist ASSERTS low
-  // risk, and that would be a false claim for a command that installs software. It also carries
-  // `_meta['anthropic/requiresUserInteraction']` (setup.ts), the only gate that puts a human on the MCP
-  // path. Both fire unconditionally — `skipTools` included — because the read path that raises no prompt
-  // is `doctor`, a separate tool name and therefore a separate permission identity.
-  //
-  // `menuGroup: null` IS THE DECISION, not an oversight — do not "fix" it by giving it a group. Two
-  // independent reasons, either sufficient:
-  //   1. It would be a one-keystroke installer. `run-session.ts:199` spawns `[deps.cliPath,
-  //      ...command.groupPath]` with ZERO flags, and flags are not Commander leaves, so the palette has
-  //      no way to offer the narrowed `--skip-tools` form — only flagless `setup`, which installs.
-  //      Installing software is a deliberate act rather than something to land on by arrowing a menu.
-  //   2. `command-palette.tsx:285` renders `item.name` — `groupPath.join(' ')`, with NO binary
-  //      qualifier — so the row would read a bare `setup`, colliding with the `pnpm run setup` script
-  //      that exists in this repo and in every consumer. Every GENERATED instruction is bound to write
-  //      `ik setup`; a palette row is a render, not generated text, and is the one place that
-  //      mitigation cannot reach.
-  // A human who wants the additive local writes without the installer types `infra-kit setup --skip-tools`.
-  {
-    cliName: 'setup',
-    menuGroup: null,
-    mcpTool: setupMcpTool,
-    mcpExposed: true,
-    mutating: true,
-    groupPath: ['setup'],
-  },
-  // The MCP boundary auto-confirms every tool, so an agent-triggered unattended global package install
-  // must never be reachable there. menuGroup null keeps it off the no-arg picker too — updating the CLI
-  // is a deliberate act, not something to land on by arrowing through a menu.
-  {
-    cliName: 'self-update',
-    menuGroup: null,
-    mcpTool: null,
-    mcpExposed: false,
-    mutating: true,
-    groupPath: ['self-update'],
   },
   // Launcher for the MCP server itself; it blocks on a stdio transport, so it is neither a one-shot menu
   // command nor expressible as a request/response tool.

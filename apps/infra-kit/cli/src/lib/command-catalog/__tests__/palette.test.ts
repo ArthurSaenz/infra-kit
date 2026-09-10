@@ -56,11 +56,11 @@ describe('command palette', () => {
       ['Environment', ['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list']],
       ['Configuration', ['config-get', 'config path', 'config edit']],
       ['Vendor', ['vendor check', 'vendor config']],
-      // No `setup` row, deliberately — see the same list in `command-catalog.test.ts`. This is the
-      // rendered half of that assertion: `command-palette.tsx` labels a row with `groupPath.join(' ')`
-      // and dispatches it with zero flags, so a row here would read a bare `setup` (colliding with the
-      // `pnpm run setup` script) and run the installing form on one keystroke.
-      ['Setup & Diagnostics', ['doctor', 'audit', 'version']],
+      // `setup` LEADS this group and the order is asserted, not incidental: it is the command that acts
+      // on what `doctor` and `audit` report. It was hidden from the palette until the cost of that
+      // showed up as a user unable to find a command they had just shipped — the reasoning, and the two
+      // arguments that no longer hold, are recorded on its catalog entry.
+      ['Setup & Diagnostics', ['setup', 'doctor', 'audit', 'version']],
     ])
   })
 

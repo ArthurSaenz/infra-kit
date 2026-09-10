@@ -18,8 +18,8 @@ import { resolveLeaf } from '../palette'
 /**
  * Every menu-eligible catalog entry, derived from MENU_GROUPS rather than a second hardcoded group list.
  * This is what keeps the guards below honest: a new group is covered by the leaf invariant and the
- * self-update/mcp exclusion the moment it is declared, with no test edit. A hardcoded list would go
- * quietly stale and stop checking the very commands a regrouping just added.
+ * `mcp` exclusion the moment it is declared, with no test edit. A hardcoded list would go quietly stale
+ * and stop checking the very commands a regrouping just added.
  */
 const allMenuEntries = (): CommandCatalogEntry[] => {
   return MENU_GROUPS.flatMap(({ key }) => {
@@ -153,9 +153,10 @@ describe('command catalog — MCP exposure policy', () => {
     }
   })
 
-  // The MCP boundary auto-confirms every tool: an agent must never be able to trigger an unattended
-  // global package install, nor recursively launch the server it is already talking to.
-  it('keeps self-update and mcp off the MCP surface and out of every menu group', () => {
+  // The MCP boundary auto-confirms every tool, so the server must never be able to recursively launch
+  // the server it is already talking to. `mcp` is also not a one-shot menu command: it blocks on a stdio
+  // transport, so a palette row would hang the picker on the frame it was picked from.
+  it('keeps mcp off the MCP surface and out of every menu group', () => {
     const exposedNames = new Set(
       getExposedMcpTools().map((tool) => {
         return tool.name
@@ -163,7 +164,7 @@ describe('command catalog — MCP exposure policy', () => {
     )
     const menuNames = new Set(allMenuPaths())
 
-    for (const cliName of ['self-update', 'mcp']) {
+    for (const cliName of ['mcp']) {
       const entry = commandCatalog.find((candidate) => {
         return candidate.cliName === cliName
       })
@@ -423,11 +424,11 @@ describe('command catalog — menu grouping', () => {
     expect(groupPaths('environment')).toEqual(['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list'])
     expect(groupPaths('configuration')).toEqual(['config-get', 'config path', 'config edit'])
     expect(groupPaths('vendor')).toEqual(['vendor check', 'vendor config'])
-    // `setup` itself is ABSENT, and that is the assertion, not an omission: it carries `menuGroup: null`
-    // so the palette cannot offer it (see its catalog entry — a row would be a flagless, one-keystroke
-    // installer labelled with a bare `setup`). Leaving `setup` in this list is the observable symptom of
-    // a `menuGroup: 'setup'` that put an installer in the picker.
-    expect(groupPaths('setup')).toEqual(['doctor', 'audit', 'version'])
+    // `setup` LEADS the group: it is the command that acts on what `doctor` and `audit` report, and the
+    // position is asserted so a later reshuffle has to be deliberate. It carried `menuGroup: null` until
+    // the cost of hiding it landed — a shipped command nobody could find outside `--help`; its catalog
+    // entry records the two arguments that kept it out and why neither survives.
+    expect(groupPaths('setup')).toEqual(['setup', 'doctor', 'audit', 'version'])
   })
 
   /**

@@ -39,11 +39,6 @@ describe('autoUpdateSkipReason', () => {
     expect(autoUpdateSkipReason(allowed({ argv: ['node', 'cli.js', 'mcp'] }))).toBe('own-command')
   })
 
-  it('skips self-update, which already performs the update itself', () => {
-    // Otherwise `ik self-update` installs interactively AND leaves a worker that installs again.
-    expect(autoUpdateSkipReason(allowed({ argv: ['node', 'cli.js', 'self-update'] }))).toBe('own-command')
-  })
-
   it('skips when stdout is not a TTY (piped or scripted)', () => {
     expect(autoUpdateSkipReason(allowed({ isTty: false }))).toBe('not-a-tty')
   })

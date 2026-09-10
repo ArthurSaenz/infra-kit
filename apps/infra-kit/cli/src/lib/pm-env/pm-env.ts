@@ -3,7 +3,7 @@
  * the whole `npm_*` block plus `PNPM_SCRIPT_SRC_DIR`. The result makes the child look exactly like
  * a direct `node <pkg>/dist/cli.js` run — which it is.
  */
-// Any child we launch through `node <bin>` (the portless driver, self-update, the mcp launcher)
+// Any child we launch through `node <bin>` (the portless driver, the update worker, the mcp launcher)
 // inherits our env, and a tool that sniffs those markers will conclude it was run via `npx`/`pnpm
 // dlx` and refuse to work. portless is the motivating case; its guard (cli.js `main()`) is:
 //

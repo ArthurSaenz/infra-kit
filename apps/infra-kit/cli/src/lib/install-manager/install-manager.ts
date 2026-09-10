@@ -1,6 +1,6 @@
 /**
- * Pure detection of *how* this CLI was installed, so a self-update advisory can name the one command
- * that will actually work. No fs, no spawn, no `process.env` read — every input is injected, which is
+ * Pure detection of *how* this CLI was installed, so the background updater knows whether it may act at
+ * all, and the advisory it prints can name the one command that will actually work. No fs, no spawn, no `process.env` read — every input is injected, which is
  * what lets the whole matrix be table-tested.
  *
  * Detection is env-first and LAZY: the only signal that costs a subprocess (`npm root -g`) is passed in
