@@ -257,6 +257,7 @@ behaviour and no test can pin it. C7/C7b guarantee the sentence exists, never th
    this criterion is for. A single-word substitution on the same line (`backgrounded` →
    `put in the background`; `nothing is watching` → `nobody is watching`) keeps the count intact and
    fails exactly one `toContain`, naming it.
+
 9. `docs/session-context-orchestrator.md` exists and states that adding a provider must **not**
    change the four env MCP tools nor the command's **frontmatter**, and explicitly lists the command
    body's fallback line as a thing to review at that time.
@@ -264,16 +265,16 @@ behaviour and no test can pin it. C7/C7b guarantee the sentence exists, never th
 
 ---
 
-## S2 — `[DO] release: publish infra-kit 0.6.0 carrying infra-kit://workflow/session`
+## S2 — `[DO] release: publish infra-kit 0.5.2 carrying infra-kit://workflow/session`
 
-The gate S3 waits on. A new agent-reachable resource is a capability addition, so `0.6.0`, not a
-patch. Whatever number publishes must be the number written into S3's floor sentence, character for
-character.
+The gate S3 waits on. A patch bump on the `0.5.x` line, by the repo owner's decision — the addition is
+additive and reaches no existing caller, so it does not need a version line of its own. Whatever
+number publishes must be the number written into S3's floor sentence, character for character.
 
 **Acceptance criteria**
 
-1. `pnpm view infra-kit@latest version` reports `0.6.0`.
-2. A hand-driven `pnpm dlx infra-kit@0.6.0 mcp` answers `resources/list` with
+1. `pnpm view infra-kit@latest version` reports `0.5.2`.
+2. A hand-driven `pnpm dlx infra-kit@0.5.2 mcp` answers `resources/list` with
    `infra-kit://workflow/session`.
 3. `node scripts/check-workflow-resource-published.mjs`, run before S3 exists, prints the published
    version and `OK` for the one command that exists.
@@ -306,7 +307,7 @@ argument-hint: [--clear] [<environment>]
 ---
 
 Read the MCP resource `infra-kit://workflow/session` and follow it exactly, treating $ARGUMENTS as the environment and flags the user asked for.
-If that resource cannot be read — this session may expose no resource tools, or the server may predate it: it needs infra-kit 0.6.0 or newer — call `mcp__infra-kit__env-list` to see the environments, ask the user which one, and load the Doppler environment with `mcp__infra-kit__env-load`.
+If that resource cannot be read — this session may expose no resource tools, or the server may predate it: it needs infra-kit 0.5.2 or newer — call `mcp__infra-kit__env-list` to see the environments, ask the user which one, and load the Doppler environment with `mcp__infra-kit__env-load`.
 If the infra-kit MCP server is not connected in this session, say so and stop — do not improvise with the doppler CLI or by exporting variables in Bash.
 ```
 
@@ -334,7 +335,7 @@ lists it as a thing to review at that point.
 
 ### Acceptance criteria
 
-1. The body contains the literal `it needs infra-kit 0.6.0 or newer` (the gate's regex is
+1. The body contains the literal `it needs infra-kit 0.5.2 or newer` (the gate's regex is
    `/it needs infra-kit (\d+\.\d+\.\d+) or newer/`) and the literal `infra-kit://workflow/session`.
 2. `node --test 'plugins/infra-kit/__tests__/*.test.mjs'` green.
 3. `node scripts/check-workflow-resource-published.mjs` exits **0**.
@@ -424,8 +425,9 @@ both lines.
   (`INFRA_KIT_SESSION`), and it survives provider two — `env` names the one provider and would force
   a rename, `workspace` collides with pnpm-workspace vocabulary in this very repo. Expensive to
   reverse after S2 publishes (new URI, new floor, another publish), which is why it is called out.
-- **Version: `0.6.0`.** A new agent-reachable resource is a capability addition, and the floor
-  sentence is a user-visible promise; a minor also leaves room for a `0.5.x` patch between S1 and S2.
+- **Version: `0.5.2`.** A patch on the existing line, chosen by the repo owner over the `0.6.0` this
+  plan first proposed. The reasoning that survives either way: the number is a user-visible promise
+  because S3's floor sentence quotes it, so it must be decided before S2 publishes, not after.
 
 **Open — each genuinely changes the work:**
 
