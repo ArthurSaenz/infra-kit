@@ -250,8 +250,53 @@ const assertToolsListIsCatalog = async (client: Client): Promise<void> => {
   // catalog change for the wrong reason, and the natural "fix" is to loosen the assertion —
   // which destroys the drift guard this exists to be.
   expect(actual).toEqual(expected)
-  expect(actual).not.toContain('doctor')
+  // INVERTED, never deleted. It used to read `.not.toContain('doctor')`, pinning the decision that the
+  // host-inspecting command stayed off the wire; `doctor` is now the read half of the two-command setup
+  // surface, so the same line pins the opposite decision. Deleting it instead would have been the
+  // tempting wrong repair: it would leave the presence of the tool asserted nowhere on the wire, which
+  // is the only place registration can actually be observed.
+  expect(actual).toContain('doctor')
   expect(actual.size).toBeGreaterThan(20)
+
+  // E-1: `doctor` is advertised READ-ONLY, read back off the wire rather than off the catalog object —
+  // the annotation is what tells a host it may call this tool without interrupting a human, and a unit
+  // assertion would pass even if registration dropped it.
+  const doctorTool = listed.tools.find((tool) => {
+    return tool.name === 'doctor'
+  })
+
+  expect(doctorTool?.annotations?.readOnlyHint).toBe(true)
+  expect(doctorTool?.annotations?.destructiveHint).toBeUndefined()
+}
+
+/** The one tool that installs software, and the only one that may carry the host-prompt annotation. */
+const REQUIRES_INTERACTION_TOOLS = new Set(['setup'])
+
+/**
+ * `_meta['anthropic/requiresUserInteraction']` is the only mechanism that puts a human on the MCP path:
+ * the host prompts on every call, in `bypassPermissions` too, and an allow rule cannot skip it. It is
+ * declared at registration, so nothing short of reading it back off the wire proves it actually reaches
+ * a host — a unit test on the tool object would pass even if registration dropped the field.
+ *
+ * Asserted in BOTH directions on purpose. Missing on `setup` means the gate silently is not there;
+ * present on any other tool — a read-only one above all — means every agent call to a harmless tool
+ * interrupts a human, and users who are interrupted for nothing learn to click through, which costs the
+ * gate its meaning on the calls that matter.
+ */
+const assertRequiresUserInteractionIsDeclared = async (client: Client): Promise<void> => {
+  const listed = await client.listTools()
+
+  const carrying = new Set(
+    listed.tools
+      .filter((tool) => {
+        return (tool._meta as Record<string, unknown> | undefined)?.['anthropic/requiresUserInteraction'] === true
+      })
+      .map((tool) => {
+        return tool.name
+      }),
+  )
+
+  expect(carrying).toEqual(REQUIRES_INTERACTION_TOOLS)
 }
 
 const assertReadOnlyToolCallRoundTrips = async (client: Client): Promise<void> => {
@@ -273,14 +318,24 @@ const assertResourcesAreListedAndReadable = async (client: Client): Promise<void
   expect(uris).toContain('infra-kit://config')
   expect(uris).toContain('infra-kit://dev-context')
   expect(uris).toContain('infra-kit://workflow/release-create')
+  expect(uris).toContain('infra-kit://workflow/setup')
 
-  // The workflow procedure, read against the BUILT bundle. Every other assertion about it runs from
+  // The workflow procedures, read against the BUILT bundle. Every other assertion about them runs from
   // `src/`, where a `resources/workflow/*.md` import that esbuild failed to inline still resolves.
-  const workflow = await client.readResource({ uri: 'infra-kit://workflow/release-create' })
-  const workflowBody = workflow.contents[0]
+  //
+  // Both are read, and each is checked for the tool ITS OWN body names: the two registrations go
+  // through one helper, so a helper that captured the first key would serve `release-create`'s text at
+  // both URIs — and a listing assertion alone would never see it, because both URIs would still list.
+  for (const [uri, toolName] of [
+    ['infra-kit://workflow/release-create', 'mcp__infra-kit__release-create'],
+    ['infra-kit://workflow/setup', 'mcp__infra-kit__setup'],
+  ] as const) {
+    const workflow = await client.readResource({ uri })
+    const workflowBody = workflow.contents[0]
 
-  expect(workflowBody?.mimeType).toBe('text/markdown')
-  expect(String((workflowBody as { text: string }).text)).toContain('mcp__infra-kit__release-create')
+    expect(workflowBody?.mimeType).toBe('text/markdown')
+    expect(String((workflowBody as { text: string }).text)).toContain(toolName)
+  }
 
   // dev-context with no active session must resolve to a payload, NOT an error.
   const devContext = await client.readResource({ uri: 'infra-kit://dev-context' })
@@ -462,6 +517,10 @@ describe('e1–E3, E6, E9 — the served surface (shared bare v2 client)', () =>
 
   it('e1: tools/list is exactly the catalog allowlist, doctor absent', async () => {
     await assertToolsListIsCatalog(client)
+  }, 45_000)
+
+  it('e1b: the host-prompt annotation reaches the wire on exactly the one installing tool', async () => {
+    await assertRequiresUserInteractionIsDeclared(client)
   }, 45_000)
 
   it('e2: a read-only tool call round-trips through v2 serialization', async () => {
@@ -809,6 +868,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   //   D11 tools[].annotations (AUTHORED)                                            legacy + modern
   //   D12 required[] shrank on four deploy tools (AUTHORED)                        legacy + modern
   //   D13 the prose those four tools carry was rewritten (AUTHORED)                legacy + modern
+  //   D14 env-clear's description stopped naming the removed `init` (AUTHORED)     legacy + modern
   // Why UNNAMED differences must fail: a normalization broad enough to swallow a known delta is
   // the same hole an unnoticed one would slip through. Only the named deltas are normalized away
   // before the whole-object comparison, and each is asserted positively FIRST so the normalization
@@ -986,6 +1046,31 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   const d13Baseline = applyD13ToBaseline()
 
   /**
+   * D14 — an AUTHORED delta, handled exactly like D13: ONE tool description, rewritten because the
+   * command it named stopped existing. `env-clear` told an MCP caller that `infra-kit init` installs
+   * the zsh integration that auto-sources the unset script; `init` was removed, and `infra-kit setup`
+   * is what installs it now. Leaving the old text would have shipped a tool description pointing at a
+   * name the binary rejects.
+   */
+  // Written as the LITERAL post-change text for D13's reason: the served value must equal this
+  // string, so a further edit to `env-clear`'s description fails `w1c` and has to be re-declared
+  // here rather than retiring the description from the differential.
+  const D14_ENV_CLEAR_DESCRIPTION =
+    'Generate a shell script that unsets every env var previously loaded by env-load for this session, plus the infra-kit session metadata vars. Does NOT mutate the calling process. When `infra-kit setup` has installed the zsh shell integration, the user\'s terminal auto-sources the unset script on its next prompt (precmd hook) — so calling this via MCP will clear the vars in the shell that launched Claude Code automatically. Other callers must source "<filePath>" themselves or surface it to the user. Errors if no env is currently loaded.'
+
+  /** Rewrites the baseline's `env-clear` description in place and returns what it held BEFORE. */
+  const applyD14ToBaseline = (): unknown => {
+    const tool = findBaselineTool('env-clear')
+    const captured = tool?.description
+
+    if (tool !== undefined) tool.description = D14_ENV_CLEAR_DESCRIPTION
+
+    return captured
+  }
+
+  const d14Baseline = applyD14ToBaseline()
+
+  /**
    * D9 — an AUTHORED delta, handled like D4: the confirm gate now binds round 2 to round 1 with a
    * `confirmToken`, which every gated tool accepts in `inputSchema` (`src/mcp/tools/index.ts`).
    * The baseline pre-dates the token and carries it on no tool, so it is stripped from a COPY of
@@ -1072,8 +1157,28 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
    * three, and shared by both lanes: `w1c` and `w1e` exist to be compared, so a divergence between
    * two copies of the strip would destroy the comparison instead of merely weakening it.
    */
+  /**
+   * Tools REGISTERED AFTER the v1 baseline was captured, and therefore not migration artefacts.
+   *
+   * Stripped rather than folded into the fixture, for the same reason {@link AUTHORED_RESOURCE_URIS}
+   * is: the fixture's whole value is that it is what the pre-migration server actually served, and
+   * adding today's tools to it would retire the differential in the act of making it pass.
+   */
+  // `doctor` existed at baseline time but was NOT exposed — it was flipped to `mcpExposed: true` after
+  // the capture, so on the wire it is a post-baseline registration like the other two.
+  const AUTHORED_TOOL_NAMES = new Set(['setup', 'release-remove', 'doctor'])
+
   const withoutAuthoredDeltas = (list: Record<string, any>): Record<string, any> => {
     const copy = JSON.parse(JSON.stringify(list)) as Record<string, any>
+    const listed = copy.tools as Record<string, any>[]
+
+    copy.tools = listed.filter((tool) => {
+      return !AUTHORED_TOOL_NAMES.has(tool.name as string)
+    })
+
+    // The strip has to strip. Without this, a renamed or deleted tool leaves the helper inert and the
+    // differential silently reverts to comparing whatever is registered today.
+    expect(listed.length - (copy.tools as unknown[]).length).toBe(AUTHORED_TOOL_NAMES.size)
 
     for (const tool of copy.tools as Record<string, any>[]) {
       delete tool.inputSchema?.properties?.confirmToken
@@ -1100,7 +1205,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
    * The workflow resource keeps its own coverage — `assertResourcesAreListedAndReadable` lists and
    * reads it on every lane, and `src/mcp/__tests__/server.test.ts` asserts its bytes.
    */
-  const AUTHORED_RESOURCE_URIS = new Set(['infra-kit://workflow/release-create'])
+  const AUTHORED_RESOURCE_URIS = new Set(['infra-kit://workflow/release-create', 'infra-kit://workflow/setup'])
 
   const withoutAuthoredResources = (list: Record<string, any>): Record<string, any> => {
     const copy = JSON.parse(JSON.stringify(list)) as Record<string, any>
@@ -1547,6 +1652,20 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
         `D13 ${path}: the baseline text there never claimed the field was MCP-required, so D13 is rewriting prose it was not created to rewrite. If the fixture was re-captured, delete D12/D13; otherwise this path does not belong in D13_PROSE.`,
       ).toMatch(/required (?:for MCP|when invoked via MCP)/i)
     }
+  })
+
+  it('w1c-pre-d14: D14 — the baseline description really did name the command that was removed', () => {
+    // The positive half of D14, and the only thing that makes the rewrite at load honest: the text it
+    // replaced must be the text that named `infra-kit init`. A re-captured fixture already carries the
+    // new wording, so `d14Baseline` would equal the replacement and this reds — at which point D14 is
+    // to be DELETED (the literal, the rewrite, and this test), not adjusted, so the whole-object
+    // comparison guards `env-clear`'s description directly again.
+    expect(d14Baseline, 'D14: no `env-clear` description in the baseline to replace').toBeTypeOf('string')
+    expect(
+      String(d14Baseline),
+      'D14: the baseline text never named `infra-kit init`, so D14 is rewriting prose it was not created to rewrite. If the fixture was re-captured, delete D14.',
+    ).toContain('`infra-kit init`')
+    expect(d14Baseline).not.toBe(D14_ENV_CLEAR_DESCRIPTION)
   })
 
   it('w1c-pre-d9: D9 — the baseline carries `confirmToken` on no tool, and the gated set is non-empty', () => {

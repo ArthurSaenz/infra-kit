@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MARKETPLACE_NAME, PLUGIN_KEY, ensurePluginPointer } from '../plugin-pointer'
 
 /**
- * I7/I8 — `init`'s merge into a consumer's `.claude/settings.json` must be additive and nothing else.
+ * I7/I8 — `initCore`'s merge into a consumer's `.claude/settings.json` must be additive and nothing else.
  *
  * The fixture is the REAL shape of a consumer repo's settings file (hulyo-monorepo's, as of this
  * commit): six `permissions.deny` entries, five `hooks` events, nine `enabledPlugins` and three

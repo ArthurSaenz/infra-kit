@@ -1,7 +1,11 @@
 import { Chalk } from 'chalk'
 import process from 'node:process'
 
-import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config'
+// Imported from the leaf module, not the `src/lib/infra-kit-config` barrel, because this is read at
+// module scope (below) and 22 suites partially mock that barrel — a partial mock drops every export it
+// does not name, so a barrel import here makes an unrelated suite fail the moment anything imports
+// `report.ts`. Nothing mocks the leaf.
+import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config/infra-kit-config'
 
 import type { CheckResult } from './doctor'
 
@@ -61,6 +65,10 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
   [
     SECTION_TOOLS,
     [
+      // First in the section because it is first in prerequisite order: `gh` and `doppler` are both
+      // installed THROUGH brew here, so a reader scanning a failing report reads the cause above the
+      // effects.
+      'brew installed',
       'gh installed',
       'gh authenticated',
       'doppler installed',

@@ -77,6 +77,6 @@ describe('getInfraKitConfig — missing layer-1 config (Step 4 prefix stability)
 
     expect(message.startsWith('infra-kit.json not found at ')).toBe(true)
     expect(message).toContain('A legacy infra-kit.yml exists')
-    expect(message).toContain('`infra-kit init`')
+    expect(message).toContain('`infra-kit setup --skip-tools`')
   })
 })

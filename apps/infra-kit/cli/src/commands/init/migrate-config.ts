@@ -37,10 +37,10 @@ const legacyYmlPath = (jsonPath: string): string => {
 
 /**
  * Convert any legacy `infra-kit.yml` config layers to `infra-kit.json` as part
- * of `infra-kit init`. Best-effort and non-fatal: each merge-chain layer
+ * of `infra-kit setup`. Best-effort and non-fatal: each merge-chain layer
  * (project, user-global, user-project) is migrated independently, and a
  * conflict (both `.yml` and `.json` present) or an invalid `.yml` warns and
- * skips that layer rather than aborting init or touching the other layers.
+ * skips that layer rather than aborting the run or touching the other layers.
  * Idempotent — already-JSON layers are left untouched.
  *
  * @example
@@ -96,7 +96,7 @@ export const migrateLegacyConfig = async (): Promise<void> => {
 
     // Keep per-layer migration non-fatal even for malformed YAML or I/O errors
     // (TOCTOU after the existence probe, EACCES, read-only FS): warn and skip
-    // so one bad layer never aborts `init` or the other layers.
+    // so one bad layer never aborts `initCore` or the other layers.
     try {
       const raw = await fs.readFile(layer.yml, 'utf-8')
       const parsed = (yaml.parse(raw) ?? {}) as unknown
@@ -128,7 +128,7 @@ export const migrateLegacyConfig = async (): Promise<void> => {
  * Rename the user-global config from the legacy `config.json` filename to the
  * canonical `infra-kit.json` (and its `config.example.jsonc` reference to
  * `infra-kit.example.jsonc`), so every merge-chain layer shares one filename.
- * Run by `infra-kit init` before the user-global config is seeded, so a user's
+ * Run by `infra-kit setup` before the user-global config is seeded, so a user's
  * existing overrides are carried forward instead of being shadowed by a fresh
  * `{}` stub written under the new name.
  *
@@ -198,7 +198,7 @@ export const migrateUserGlobalConfigFilename = async (): Promise<void> => {
 /**
  * Convert a legacy machine-local factory config from executable TypeScript
  * (`~/.infra-kit/vendor.config.ts`) to static JSON (`~/.infra-kit/vendor.json`) as part of
- * `infra-kit init`: dynamic-import the old `.ts`, resolve a factory-function or object default
+ * `infra-kit setup`: dynamic-import the old `.ts`, resolve a factory-function or object default
  * export, validate it, write `vendor.json`, remove the old `.ts`.
  *
  * Best-effort, non-fatal, idempotent (no old `.ts` → no-op), and never overwrites an existing
@@ -328,7 +328,7 @@ const stripLegacyIdeMode = (parsed: Record<string, unknown>): { changed: boolean
 /**
  * Normalize any existing `infra-kit.json` config layers (project, user-global,
  * user-project) from the old IDE structure to the new one by removing the
- * removed `ide.config.mode` field. Run by `infra-kit init` after the YAML→JSON
+ * removed `ide.config.mode` field. Run by `infra-kit setup` after the YAML→JSON
  * migration. Best-effort and non-fatal per layer; only rewrites a file when its
  * `ide` config actually carries the dead key, so clean configs are left byte-for-
  * byte untouched (idempotent). Resets the config cache when anything changed.

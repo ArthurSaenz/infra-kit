@@ -155,7 +155,7 @@ const readLegacyTargets = async (sourceRoot: string): Promise<string[]> => {
  * `targets` is empty the stub writes `"targets": []`, which fails the schema's
  * `targets.min(1)` on load: this is intentional — `--init` produces an incomplete
  * stub the user must edit before running vendor sync/manifest/diff. The annotated
- * guidance lives in the sibling `vendor.example.jsonc` (seeded by `infra-kit init`).
+ * guidance lives in the sibling `vendor.example.jsonc` (seeded by `infra-kit setup`).
  */
 const buildScaffold = (targets: string[]): string => {
   return `${JSON.stringify({ workspaceDir: PLACEHOLDER_WORKSPACE_DIR, targets }, null, 2)}\n`

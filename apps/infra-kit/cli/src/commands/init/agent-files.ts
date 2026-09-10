@@ -1,9 +1,10 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 import { syncPackageGuidance, syncRootGuidance } from 'src/lib/agent-guidance'
 import type { GuidanceWrite, WriteAction } from 'src/lib/agent-guidance'
-import { getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
+import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { discoverPackages, readDeclaredPackageType } from 'src/lib/package-validator/loader'
 
@@ -33,25 +34,121 @@ export interface WriteAgentFilesResult {
   written: AgentFileWrite[]
 }
 
-/** The repo root, or `null` when this is not an infra-kit repo (the caller logs and skips). */
-const resolveRepoRoot = async (): Promise<string | null> => {
-  let mainConfigPath: string
+const INFRA_KIT_CONFIG_FILE = 'infra-kit.json'
+
+/**
+ * The one skip announcement for every step gated on {@link resolveGitRootForWrites}.
+ *
+ * It names all four steps because one `null` skips all four: naming only the guidance
+ * files (as it did while a single gate served everything) leaves a reader who lost the
+ * plugin pointer, the plugin install and the `.mcp.json` write with no record of it.
+ */
+const SKIPPED_GIT_ROOT_STEPS =
+  'Skipped agent-instruction files, the plugin pointer, the plugin install and .mcp.json — no usable git repo root here (not a git repo, or the root is your home directory)'
+
+/**
+ * The skip announcement for the guidance-only gate.
+ *
+ * Names the other three steps as UNAFFECTED: after the gate split this `null` stops the
+ * guidance files alone, so a reader who saw the old text would wrongly assume the pointer,
+ * the install and the `.mcp.json` write were skipped too.
+ */
+const SKIPPED_GUIDANCE_ONLY =
+  'Skipped agent-instruction files — no infra-kit.json at the repo root (the plugin pointer, the plugin install and .mcp.json are unaffected)'
+
+/**
+ * The git toplevel, or `null` when there is no root safe to write into — a failed resolve,
+ * a blank resolve, or `$HOME`.
+ *
+ * SILENT, and that is load-bearing: this answers a question, it does not narrate a decision.
+ * `doctor` consults it read-only to decide whether the `MCP server key` row is answerable, and
+ * a predicate that logs made a read-only command print `initCore`'s "Skipped …" line — first, above
+ * its own report header — in every non-git directory and in `$HOME`. Writers announce through
+ * {@link resolveGitRootForWrites}; a new reader gets silence by default, which is the safe
+ * direction for a default to fail in.
+ *
+ * Worktree-local by design: Claude Code reads `.mcp.json` and `.claude/settings.json` from
+ * the session cwd, and sessions do run in worktrees, so `getMainRepoRoot` would write config
+ * a worktree session never reads.
+ *
+ * @example
+ * const root = await resolveGitRoot()
+ * // => '/Users/me/projects/api'   (or null, and nothing is logged)
+ */
+export const resolveGitRoot = async (): Promise<string | null> => {
+  let resolved: string
 
   try {
-    mainConfigPath = (await getInfraKitConfigPaths()).main
+    resolved = await getProjectRoot()
   } catch {
-    logger.info('Skipped agent-instruction files — not inside an infra-kit repo')
+    return null
+  }
+
+  const root = resolved.trim()
+
+  // Blank is a failed resolve by contract, not a lenient case. `getProjectRoot` is
+  // `result.stdout.trim()` and rejects only when the shell-out itself fails, so empty
+  // stdout resolves as `''` — and `''` is not merely an invalid root but a cwd-relative
+  // one: every `path.join('', x)` silently targets `process.cwd()`, and `'' !== homedir()`
+  // means the home check below would pass it.
+  //
+  // `$HOME` is checked here because "inside a git repo" does not protect the home
+  // directory: anyone who git-manages their dotfiles has a repo there, and this is all
+  // that stands between that and a `.claude/` directory written into it.
+  if (root === '' || root === os.homedir()) return null
+
+  return root
+}
+
+/**
+ * {@link resolveGitRoot} for the callers that were about to WRITE — the same predicate, plus the
+ * announcement.
+ *
+ * The line lives here because `initCore` is the only caller for whom the skip is otherwise invisible:
+ * the steps it gates (the plugin pointer, the plugin install, the `.mcp.json` write) are silent
+ * when they do not run, so this is the only evidence they did not. A decorator rather than a
+ * `quiet` parameter: a boolean would default to loud, and the next reader who needs the predicate
+ * would forget to pass it.
+ *
+ * @example
+ * const root = await resolveGitRootForWrites()
+ * // => '/Users/me/projects/api'   (or null, with the four-step skip logged)
+ */
+export const resolveGitRootForWrites = async (): Promise<string | null> => {
+  const root = await resolveGitRoot()
+
+  if (root === null) logger.info(SKIPPED_GIT_ROOT_STEPS)
+
+  return root
+}
+
+/**
+ * The git toplevel of an infra-kit repo — {@link resolveGitRoot} plus an `infra-kit.json`
+ * at that root — or `null`.
+ *
+ * Gates the guidance writers only. They render config-derived content, so the config file
+ * is a real precondition for them; the plugin and MCP steps never read it.
+ *
+ * Announces its OWN predicate only. A refused git gate returns `null` silently here, because
+ * `initCore` calls {@link resolveGitRootForWrites} for the same refusal — one gate, one line, rather
+ * than the duplicate a delegating announcement produced.
+ *
+ * @example
+ * const root = await resolveInfraKitRoot()
+ * // => '/Users/me/projects/api'   (null in a git repo with no infra-kit.json)
+ */
+export const resolveInfraKitRoot = async (): Promise<string | null> => {
+  const root = await resolveGitRoot()
+
+  if (root === null) return null
+
+  if (!fs.existsSync(path.join(root, INFRA_KIT_CONFIG_FILE))) {
+    logger.info(SKIPPED_GUIDANCE_ONLY)
 
     return null
   }
 
-  if (!fs.existsSync(mainConfigPath)) {
-    logger.info('Skipped agent-instruction files — no infra-kit.json at the repo root')
-
-    return null
-  }
-
-  return path.dirname(mainConfigPath)
+  return root
 }
 
 /**
@@ -60,7 +157,7 @@ const resolveRepoRoot = async (): Promise<string | null> => {
  * `syncRootGuidance` is continue-and-report — it never throws — because a multi-package fix
  * run must not abort halfway. `writeAgentFiles` is the opposite case: one file, written by a
  * command a human ran deliberately, whose failure has always propagated (a symlinked
- * `CLAUDE.md` still aborts `init`). Restoring that here keeps the CLI behaviour unchanged
+ * `CLAUDE.md` still aborts `initCore`). Restoring that here keeps the CLI behaviour unchanged
  * while the library stays reusable by the multi-file writer.
  */
 const rethrowFailures = (written: GuidanceWrite[]): void => {
@@ -86,7 +183,7 @@ const rethrowFailures = (written: GuidanceWrite[]): void => {
  * // INFO: Agent-instruction files synced (infra-kit 0.1.105)
  */
 export const writeAgentFiles = async (): Promise<WriteAgentFilesResult> => {
-  const root = await resolveRepoRoot()
+  const root = await resolveInfraKitRoot()
 
   if (root === null) return { skipped: true, root: null, written: [] }
 
@@ -136,7 +233,7 @@ export interface SyncRepoGuidanceResult {
  *
  * `discoverPackages` reads `pnpm-workspace.yaml` and rejects with `ENOENT` when there
  * is none. A single-package infra-kit repo is a legitimate setup, so that rejection
- * must not abort `init` — it means "the root block is the whole job".
+ * must not abort `initCore` — it means "the root block is the whole job".
  */
 const discoverWorkspacePackages = async (root: string): Promise<string[]> => {
   try {
@@ -159,7 +256,7 @@ const discoverWorkspacePackages = async (root: string): Promise<string[]> => {
  * the run never reached.
  *
  * Writes unconditionally — it does not ask, and does not skip an unadopted workspace.
- * `init` is the repo-wide refresh path, so a consumer re-running it after a CLI upgrade
+ * `initCore` is the repo-wide refresh path, so a consumer re-running it after a CLI upgrade
  * gets every block regenerated in one pass.
  *
  * @example
@@ -167,7 +264,7 @@ const discoverWorkspacePackages = async (root: string): Promise<string[]> => {
  * // => { skipped: false, root: '/repo', version: '0.4.0', written: [ ...root, ...packages ] }
  */
 export const syncRepoGuidance = async (): Promise<SyncRepoGuidanceResult> => {
-  const root = await resolveRepoRoot()
+  const root = await resolveInfraKitRoot()
   const version = packageJson.version
 
   if (root === null) return { skipped: true, root: null, version, written: [] }

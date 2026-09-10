@@ -47,14 +47,14 @@ export interface DetectInstallManagerInput {
  * `/Users/x/pnpm-ish` a child of `/Users/x/pnpm`. `parent` is canonicalised first because it arrives raw
  * from the environment while `child` is already a realpath.
  */
-const isWithin = (parent: string, child: string, realpath: RealpathFn): boolean => {
+export const isWithin = (parent: string, child: string, realpath: RealpathFn): boolean => {
   const rel = path.relative(realpath(path.resolve(parent)), path.resolve(child))
 
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
 /** Does `p` contain `name` as a whole path SEGMENT? `/a/node_modules_backup/b` must not match `node_modules`. */
-const hasSegment = (p: string, name: string): boolean => {
+export const hasSegment = (p: string, name: string): boolean => {
   return path.resolve(p).split(path.sep).includes(name)
 }
 
@@ -73,7 +73,7 @@ const hasSegment = (p: string, name: string): boolean => {
  * (`Cellar/infra-kit/1.2.3/libexec/lib/node_modules/infra-kit/dist/cli.js`). Do NOT try to tell them
  * apart by excluding `node_modules` — the second one contains it.
  */
-const isBrewKegOf = (p: string, name: string): boolean => {
+export const isBrewKegOf = (p: string, name: string): boolean => {
   const segments = path.resolve(p).split(path.sep)
   const cellar = segments.indexOf('Cellar')
 
@@ -81,10 +81,10 @@ const isBrewKegOf = (p: string, name: string): boolean => {
 }
 
 /**
- * The npm global prefix that owns `selfRealPath`, derived from the path ITSELF, or null when the
+ * The npm global prefix that owns `binRealPath`, derived from the path ITSELF, or null when the
  * layout is not an npm global one.
  *
- * Matches `<prefix>/lib/node_modules/<PACKAGE_NAME>` — npm's global layout and no other manager's
+ * Matches `<prefix>/lib/node_modules/<packageName>` — npm's global layout and no other manager's
  * — requiring BOTH the `lib` parent and our package as the immediate child. Windows global npm has
  * no `lib` segment (`%APPDATA%\npm\node_modules`), so this returns null there and detection falls
  * through to `npm root -g`, which is correct on Windows, where there is normally one npm.
@@ -105,16 +105,23 @@ const isBrewKegOf = (p: string, name: string): boolean => {
 // Requiring both segments is what makes the match proof rather than a hint. The `lib` requirement
 // is also what keeps a project-local `<repo>/node_modules/<pkg>` out (it has no `lib`), and nesting
 // cannot spoof it: `.../node_modules/foo/node_modules/<pkg>` fails the `lib` test.
-const npmPrefixFromSelfPath = (selfRealPath: string): string | null => {
-  const segments = path.resolve(selfRealPath).split(path.sep)
+export const npmPrefixOfPackage = (binRealPath: string, packageName: string): string | null => {
+  const segments = path.resolve(binRealPath).split(path.sep)
   const nodeModules = segments.lastIndexOf('node_modules')
 
   if (nodeModules < 2) return null
   if (segments[nodeModules - 1] !== 'lib') return null
-  if (segments[nodeModules + 1] !== PACKAGE_NAME) return null
+  if (segments[nodeModules + 1] !== packageName) return null
 
   // Drop `lib/node_modules/...`; the empty result of a root-level prefix (`/lib/node_modules/...`) is `/`.
   return segments.slice(0, nodeModules - 1).join(path.sep) || path.sep
+}
+
+// The self-scoped reading, kept as the name every call site below already uses. `dependency-registry`
+// asks the same question about OTHER packages (`portless`), which is why the body moved up one level
+// rather than gaining a defaulted parameter — a default is how the wrong package silently gets probed.
+const npmPrefixFromSelfPath = (selfRealPath: string): string | null => {
+  return npmPrefixOfPackage(selfRealPath, PACKAGE_NAME)
 }
 
 /**

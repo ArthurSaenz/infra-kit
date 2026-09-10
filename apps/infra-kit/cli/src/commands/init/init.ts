@@ -11,14 +11,16 @@ import { logger } from 'src/lib/logger'
 import { removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
 import {
   MARKETPLACE_ADD_COMMAND,
+  MARKETPLACE_NAME,
   PLUGIN_INSTALL_COMMAND,
   PLUGIN_KEY,
+  ensureMcpRegistration,
   ensurePluginPointer,
   installPluginForProject,
 } from 'src/lib/plugin-pointer'
-import type { PluginInstallOutcome, PluginPointerResult } from 'src/lib/plugin-pointer'
+import type { McpRegistrationResult, PluginInstallOutcome, PluginPointerResult } from 'src/lib/plugin-pointer'
 
-import { syncRepoGuidance } from './agent-files'
+import { resolveGitRootForWrites, syncRepoGuidance } from './agent-files'
 import {
   migrateFactoryConfigToJson,
   migrateLegacyConfig,
@@ -32,28 +34,216 @@ export const MARKER_END = '# -- infra-kit:end --'
 const LEGACY_PAIRED: [start: string, end: string][] = [['# region infra-kit', '# endregion infra-kit']]
 const LEGACY_SINGLE = '# infra-kit shell functions'
 
+/** Which of `initCore`'s steps an {@link InitStep} reports on. */
+export type InitStepName =
+  'guidance' | 'mcp-server' | 'migrations' | 'plugin-pointer' | 'project-config' | 'shell' | 'user-config' | 'zshrc'
+
+/**
+ * What a step did.
+ *
+ * `written` changed something; `unchanged` ran and found nothing to change; `skipped` did not run, or
+ * reports through another channel (the migrators and both `agent-files` gates print their own lines);
+ * `warned` is a best-effort failure that did not stop the run.
+ */
+export type InitOutcome = 'skipped' | 'unchanged' | 'warned' | 'written'
+
+/**
+ * One reportable thing `initCore` did, in the order it did it.
+ *
+ * Required rather than cosmetic: `logger` writes to `/tmp/mcp-infra-kit.log` and never to the caller, so
+ * a `setup` tool reporting only through it performs ~8 local writes and tells the agent nothing about any
+ * of them.
+ */
+export interface InitStep {
+  step: InitStepName
+  outcome: InitOutcome
+  message: string
+}
+
+/**
+ * How the CLI prints an entry — carried rather than derived from `outcome`, because the two disagree:
+ * a guidance file whose write FAILED prints at `info` (it is one row of a per-file list) while the
+ * "N files could not be written" summary prints at `warn`, and an already-installed plugin prints at
+ * `debug`. Deriving the level from the outcome would move one of those lines to another stream, which
+ * is exactly the byte difference this refactor may not introduce.
+ *
+ * `silent` reports to MCP and prints nothing, because the library that performed the step already
+ * printed its own line — printing here would double every one of them.
+ */
+type InitLevel = 'debug' | 'info' | 'silent' | 'warn'
+
+export interface InitEntry extends InitStep {
+  level: InitLevel
+}
+
+export type InitReport = InitEntry[]
+
+/** Notified as each entry happens, so a caller prints in step order instead of in a trailing block. */
+export type InitStepSink = (entry: InitEntry) => void
+
+/** `initCore`'s internal accumulator, handed to the steps that must report as they go. */
+type InitStepRecorder = (...entries: InitEntry[]) => void
+
+/**
+ * Tags a throwing step with the step it threw in.
+ *
+ * The tag exists for `setup`, the only caller: it catches this, records the step as `warned`, and goes
+ * on to its dependency half rather than losing the run to one failed local write. Nothing unwraps it
+ * back to the bare reason any more — the standalone command that used to do that is gone — so a caller
+ * that lets it escape surfaces the step name too, which is strictly more than the old CLI printed.
+ */
+export class InitStepError extends Error {
+  constructor(
+    readonly step: InitStepName,
+    readonly reason: unknown,
+  ) {
+    super(reason instanceof Error ? reason.message : String(reason), { cause: reason })
+    this.name = 'InitStepError'
+  }
+}
+
+/**
+ * `initCore`'s closing line.
+ *
+ * Exported so `setup` can hold this ONE entry back and print it after its dependency half, which is
+ * where the reminder belongs when both halves run — without pattern-matching a message it does not own.
+ */
+export const SHELL_ACTIVATION_REMINDER = 'Run `source ~/.zshrc` or open a new terminal to activate.'
+
+/** The four migrations announce their own conversions, so this step has nothing of its own to print. */
+const MIGRATIONS_CHECKED: InitEntry = {
+  step: 'migrations',
+  outcome: 'skipped',
+  message: 'Config migrations checked (legacy yml layers, ide structure, user-global filename, factory config)',
+  level: 'silent',
+}
+
+/** Run one step, tagging anything it throws with which step it was. */
+const withStep = async <T>(step: InitStepName, body: () => Promise<T> | T): Promise<T> => {
+  try {
+    return await body()
+  } catch (err) {
+    throw new InitStepError(step, err)
+  }
+}
+
 /**
  * Append infra-kit shell functions to .zshrc, migrate any legacy `infra-kit.yml`
  * config layers to JSON, normalize existing JSON configs from the old IDE structure
  * (strip the removed `ide.config.mode`), convert a legacy factory `vendor.config.ts`
  * to `vendor.json`, and seed the user-global config at ~/.infra-kit/infra-kit.json on
- * first run. Idempotent: a subsequent run replaces the existing zshrc block in place,
+ * first run.
+ *
+ * Idempotent: a subsequent run replaces the existing zshrc block in place,
  * has nothing left to migrate or normalize, and leaves the REAL config files
  * (infra-kit.json / vendor.json) untouched — but the annotated `.example.jsonc`
  * reference files are refreshed on every run so they always reflect the current schema.
  *
+ * Returns the report; `onStep` is notified as each entry happens.
+ *
  * @example
- * // CLI: `infra-kit init`  (or via the `pnpm dx-init` alias)
+ * // CLI: `infra-kit setup --skip-tools` (the additive half on its own; flagless `setup` runs it too)
  * // INFO: Added infra-kit shell functions to /Users/me/.zshrc
  * // INFO: Wrote user-global config to /Users/me/.infra-kit/infra-kit.json (see …/infra-kit.example.jsonc …)
  * // INFO: Run `source ~/.zshrc` or open a new terminal to activate.
  */
-export const init = async (): Promise<void> => {
-  const zshrcPath = path.join(os.homedir(), '.zshrc')
+// Why both a return value AND a sink: the return value is what an MCP caller reads, and the streaming
+// sink is what keeps the CLI's lines interleaved with the ones its libraries print (`✓ Migrated …`, the
+// two skip announcements) exactly where they have always been. A trailing replay would reorder them.
+export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
+  const report: InitReport = []
+  const record = (...entries: InitEntry[]): void => {
+    for (const entry of entries) {
+      report.push(entry)
+      onStep?.(entry)
+    }
+  }
 
-  // Strip any prior block (current or legacy markers) anywhere in the file, then
-  // append a fresh block at end-of-file via the shared managed-block utility —
-  // the historical `removeExistingBlock` + append behavior, now centralized.
+  await withStep('zshrc', () => {
+    record(writeShellBlock())
+  })
+
+  await withStep('migrations', async () => {
+    await runConfigMigrations()
+    record(MIGRATIONS_CHECKED)
+  })
+
+  await withStep('user-config', () => {
+    record(seedUserGlobalConfig())
+  })
+
+  // Best-effort, non-fatal, repo-gated: keep the agent-instruction files in sync
+  // with the CLI surface — root AND every workspace package. A no-op outside an
+  // infra-kit repo (gated on `resolveInfraKitRoot`: the blocks render config-derived
+  // content, so `infra-kit.json` is a real precondition for THEM).
+  const guidanceRoot = await withStep('guidance', async () => {
+    const { entries, root } = await syncAgentGuidance()
+
+    record(...entries)
+
+    return root
+  })
+
+  // A SEPARATE, weaker gate for the plugin steps: they write `.claude/settings.json`,
+  // `.mcp.json` and drive `claude plugin install`, and none of the three reads
+  // `infra-kit.json` — so gating them on it was incidental coupling that made a fresh
+  // repo impossible to set up. One `resolveGitRootForWrites` for all three, because
+  // `syncPluginPointer`'s contract binds pointer ↔ installation ↔ MCP entry to ONE
+  // project: `--scope project` must record exactly what the pointer names.
+  //
+  // The announcing variant, and this is the ONLY call to it: the four-step skip is `initCore`'s line
+  // to print, so the bare predicate stays silent for `doctor`, which only reads it.
+  const gitRoot = await withStep('plugin-pointer', async () => {
+    return resolveGitRootForWrites()
+  })
+
+  record(...gateDisagreementEntries(gitRoot, guidanceRoot))
+
+  await withStep('plugin-pointer', () => {
+    syncPluginPointer(gitRoot, record)
+  })
+
+  // Close the legacy-yml migration gap so a single `dx-init` leaves EVERY example current.
+  await withStep('project-config', async () => {
+    record(...(await reseedUserProjectConfig()))
+  })
+
+  record(...shellEntries())
+
+  return report
+}
+
+/**
+ * The one place an {@link InitEntry} becomes a log line.
+ *
+ * Exported for `setup`, which prints the same half with the same words — a second renderer there would
+ * be a second set of strings to keep in step with this one.
+ */
+export const logInitEntry = (entry: InitEntry): void => {
+  if (entry.level === 'silent') return
+
+  if (entry.level === 'warn') {
+    logger.warn(entry.message)
+
+    return
+  }
+
+  if (entry.level === 'debug') {
+    logger.debug({ msg: entry.message })
+
+    return
+  }
+
+  logger.info(entry.message)
+}
+
+/**
+ * Strip any prior block (current or legacy markers) anywhere in the file, then append a fresh block at
+ * end-of-file via the shared managed-block utility — the historical `removeExistingBlock` + append
+ * behavior, now centralized.
+ */
+const writeShellBlock = (): InitEntry => {
+  const zshrcPath = path.join(os.homedir(), '.zshrc')
   const existing = fs.existsSync(zshrcPath) ? removeExistingBlock(fs.readFileSync(zshrcPath, 'utf-8')) : ''
 
   const updated = upsertManagedBlock({
@@ -66,8 +256,16 @@ export const init = async (): Promise<void> => {
 
   fs.writeFileSync(zshrcPath, updated)
 
-  logger.info(`Added infra-kit shell functions to ${zshrcPath}`)
+  return {
+    step: 'zshrc',
+    outcome: 'written',
+    message: `Added infra-kit shell functions to ${zshrcPath}`,
+    level: 'info',
+  }
+}
 
+/** The four config migrations, in the one order that works. */
+const runConfigMigrations = async (): Promise<void> => {
   // Convert any legacy infra-kit.yml config layers to JSON before seeding, so a
   // migrated infra-kit.json is not re-seeded as an empty stub.
   await migrateLegacyConfig()
@@ -85,33 +283,30 @@ export const init = async (): Promise<void> => {
   // (~/.infra-kit/vendor.config.ts) to static JSON (~/.infra-kit/vendor.json).
   // Independent of the infra-kit.json layers; grouped with the other migrations.
   await migrateFactoryConfigToJson()
+}
 
-  seedUserGlobalConfig()
-
-  // Best-effort, non-fatal, repo-gated: keep the agent-instruction files in sync
-  // with the CLI surface — root AND every workspace package. A no-op outside an
-  // infra-kit repo.
-  const repoRoot = await syncAgentGuidance()
-
-  // Same gate, same repo root: point this project's Claude Code at the infra-kit plugin
-  // marketplace, then install the plugin for that same root.
-  syncPluginPointer(repoRoot)
-
-  // Close the legacy-yml migration gap so a single `dx-init` leaves EVERY example current.
-  await reseedUserProjectConfig()
-
-  // The shell integration is zsh-only (zmodload zsh/stat, add-zsh-hook, ${dir:h}).
-  // Warn non-fatally if the user's login shell isn't zsh so the block isn't a
-  // silent no-op for them.
+/**
+ * The shell integration is zsh-only (zmodload zsh/stat, add-zsh-hook, ${dir:h}), so a non-zsh login
+ * shell is warned about non-fatally rather than left with a silent no-op block.
+ */
+const shellEntries = (): InitEntry[] => {
   const shell = process.env.SHELL ?? ''
+  const entries: InitEntry[] = []
 
   if (!shell.includes('zsh')) {
-    logger.warn(
-      `Your login shell ($SHELL=${shell || 'unset'}) is not zsh. The infra-kit shell integration (env-load/env-clear/auto-load) is zsh-only and won't activate in bash/fish.`,
-    )
+    entries.push({
+      step: 'shell',
+      outcome: 'warned',
+      message: `Your login shell ($SHELL=${shell || 'unset'}) is not zsh. The infra-kit shell integration (env-load/env-clear/auto-load) is zsh-only and won't activate in bash/fish.`,
+      level: 'warn',
+    })
   }
 
-  logger.info('Run `source ~/.zshrc` or open a new terminal to activate.')
+  // `unchanged` because that is what it reports: the running shell keeps its old environment until the
+  // user sources the file this run just wrote.
+  entries.push({ step: 'shell', outcome: 'unchanged', message: SHELL_ACTIVATION_REMINDER, level: 'info' })
+
+  return entries
 }
 
 /**
@@ -130,7 +325,7 @@ export const init = async (): Promise<void> => {
  * // first call:  writes ~/.infra-kit/infra-kit.json ({}) + both .example.jsonc files
  * // later calls: leaves infra-kit.json alone, refreshes both .example.jsonc files
  */
-export const seedUserGlobalConfig = (): void => {
+export const seedUserGlobalConfig = (): InitEntry => {
   const userConfigDir = path.join(os.homedir(), '.infra-kit')
   const userConfigPath = path.join(userConfigDir, 'infra-kit.json')
 
@@ -142,22 +337,30 @@ export const seedUserGlobalConfig = (): void => {
   fs.writeFileSync(path.join(userConfigDir, 'vendor.example.jsonc'), buildVendorExample(), 'utf-8')
 
   if (fs.existsSync(userConfigPath)) {
-    logger.info(`User-global config already present at ${userConfigPath} (refreshed reference examples)`)
-
-    return
+    return {
+      step: 'user-config',
+      outcome: 'unchanged',
+      message: `User-global config already present at ${userConfigPath} (refreshed reference examples)`,
+      level: 'info',
+    }
   }
 
   fs.writeFileSync(userConfigPath, CONFIG_STUB, 'utf-8')
 
-  logger.info(`Wrote user-global config to ${userConfigPath} (see the sibling .example.jsonc files for reference)`)
+  return {
+    step: 'user-config',
+    outcome: 'written',
+    message: `Wrote user-global config to ${userConfigPath} (see the sibling .example.jsonc files for reference)`,
+    level: 'info',
+  }
 }
 
 /**
- * Re-run the layer-3 seed at the END of `init()`, closing the legacy-yml migration gap.
+ * Re-run the layer-3 seed at the END of `initCore`, closing the legacy-yml migration gap.
  *
  * Re-evaluates the preAction gate itself and drives the UNGATED `seedUserProjectConfig`, so it
  * honours `INFRA_KIT_NO_SEED` by hand. Any failure (no git repo, no project config, an unwritable
- * `$HOME`) degrades to a debug line — seeding a reference file must never fail `init`. Separate
+ * `$HOME`) degrades to a debug line — seeding a reference file must never fail `initCore`. Separate
  * from {@link seedUserGlobalConfig}, which keeps its layer-2-only duty and stays sync.
  *
  * @example
@@ -167,7 +370,7 @@ export const seedUserGlobalConfig = (): void => {
  */
 // Why this exists at all: the per-command seed lives in the program's preAction hook, which
 // evaluates its "is this an infra-kit repo?" gate (does `<repo-root>/infra-kit.json` exist?)
-// BEFORE the action body runs. On the legacy-yml migration path `init()` itself CREATES that file
+// BEFORE the action body runs. On the legacy-yml migration path `initCore` itself CREATES that file
 // (`migrateLegacyConfig`), so the gate had already declined and this very run would otherwise
 // leave the layer-3 example unwritten — self-healing only on the user's next command. Re-running
 // the gate here makes one `dx-init` enough.
@@ -175,23 +378,37 @@ export const seedUserGlobalConfig = (): void => {
 // Why the ungated primitive: `ensureUserProjectConfig()` is an ENTRY-BOUNDARY primitive whose
 // once-per-process guard has ALREADY fired in preAction, so calling it here would be a silent
 // no-op — unusable as a re-seed hook. Its ungated replacement does not read `INFRA_KIT_NO_SEED`,
-// so without the check above the kill switch would be airtight on every path EXCEPT `init`.
-const reseedUserProjectConfig = async (): Promise<void> => {
-  if (process.env.INFRA_KIT_NO_SEED) return
+// so without the check above the kill switch would be airtight on every path EXCEPT `initCore`.
+const reseedUserProjectConfig = async (): Promise<InitEntry[]> => {
+  if (process.env.INFRA_KIT_NO_SEED) return [projectConfigSkip('INFRA_KIT_NO_SEED is set')]
 
   try {
     const paths = await getInfraKitConfigPaths()
 
     // The same D2 gate the preAction seed applies — re-evaluated now that the migrations have run.
-    if (!fs.existsSync(paths.main)) return
+    if (!fs.existsSync(paths.main)) return [projectConfigSkip(`no project config at ${paths.main}`)]
 
     const result = await seedUserProjectConfig(paths)
 
-    if (result.createdConfig) {
-      logger.info(seedCreatedMessage(result))
-    }
+    if (!result.createdConfig) return [projectConfigSkip('the user-project config was already present')]
+
+    return [{ step: 'project-config', outcome: 'written', message: seedCreatedMessage(result), level: 'info' }]
   } catch (err) {
+    // Kept as a raw logger call rather than routed through an entry: the `err` OBJECT is the whole point
+    // of this line, and an entry carries a message string. The entry beside it reports the outcome.
     logger.debug({ err, msg: 'Skipped seeding the user-project config (init).' })
+
+    return [projectConfigSkip(err instanceof Error ? err.message : String(err))]
+  }
+}
+
+/** Every reason the layer-3 reseed does nothing is silent on the CLI, exactly as it has always been. */
+const projectConfigSkip = (why: string): InitEntry => {
+  return {
+    step: 'project-config',
+    outcome: 'skipped',
+    message: `Skipped seeding the user-project config — ${why}`,
+    level: 'silent',
   }
 }
 
@@ -199,38 +416,59 @@ const reseedUserProjectConfig = async (): Promise<void> => {
  * Log one line per guidance file this run actually changed, then the step's closing line.
  *
  * Unchanged files are omitted: a repo-wide refresh touches every package, and a clean
- * re-run would otherwise print one no-op line per package on top of `init`'s other output.
+ * re-run would otherwise print one no-op line per package on top of `initCore`'s other output.
  *
- * When any file failed, a distinct summary line names the count and the fix. `init` exits 0
+ * When any file failed, a distinct summary line names the count and the fix. `initCore` exits 0
  * regardless (its contract is shell setup, and the sync is a side effect that must not turn
  * a machine-setup command red), which makes this line the only signal a partial sync
  * happened — so it must not be a per-path line buried among the rest.
  */
-const logGuidanceWrites = (root: string, version: string, written: GuidanceWrite[]): void => {
+const guidanceEntries = (root: string, version: string, written: GuidanceWrite[]): InitEntry[] => {
+  const entries: InitEntry[] = []
+
   for (const file of written) {
     if (file.action === 'unchanged') continue
 
     const suffix = file.type === undefined ? '' : ` (${file.type})`
 
-    logger.info(`  ${file.action.padEnd(9)} ${path.relative(root, file.path)}${suffix}`)
+    entries.push({
+      step: 'guidance',
+      // A failed row is still one line of the per-file list, so it prints at `info` like its siblings —
+      // the level and the outcome part company here, which is why the entry carries both.
+      outcome: file.action === 'failed' ? 'warned' : 'written',
+      message: `  ${file.action.padEnd(9)} ${path.relative(root, file.path)}${suffix}`,
+      level: 'info',
+    })
   }
 
-  logger.info(`Agent-instruction files synced (infra-kit ${version})`)
+  entries.push({
+    step: 'guidance',
+    outcome: 'written',
+    message: `Agent-instruction files synced (infra-kit ${version})`,
+    level: 'info',
+  })
 
   const failed = written.filter((file) => {
     return file.action === 'failed'
   })
 
-  if (failed.length === 0) return
+  if (failed.length === 0) return entries
 
-  logger.warn(`${failed.length} package guidance files could not be written — run: infra-kit audit --fix --all`)
+  entries.push({
+    step: 'guidance',
+    outcome: 'warned',
+    message: `${failed.length} package guidance files could not be written — run: infra-kit audit --fix --all`,
+    level: 'warn',
+  })
+
+  return entries
 }
 
 /**
- * `init`'s agent-guidance step: refresh the root block AND every workspace package's block in
+ * `initCore`'s agent-guidance step: refresh the root block AND every workspace package's block in
  * one pass, then report. Continue-and-report — `syncRepoGuidance` never throws, a per-file
  * error arrives as `action: 'failed'`, and `process.exitCode` is deliberately left untouched
- * so `init` goes on to its remaining steps. A user who wants a failure to be an error runs
+ * so `initCore` goes on to its remaining steps. A user who wants a failure to be an error runs
  * `infra-kit audit --fix --all`, which does exit non-zero.
  *
  * @example
@@ -239,28 +477,126 @@ const logGuidanceWrites = (root: string, version: string, written: GuidanceWrite
  * // INFO:   created   apps/client/ui/CLAUDE.md (frontend)
  * // INFO: Agent-instruction files synced (infra-kit 0.4.0)
  */
-const syncAgentGuidance = async (): Promise<string | null> => {
+const syncAgentGuidance = async (): Promise<{ root: string | null; entries: InitEntry[] }> => {
   const { skipped, root, version, written } = await syncRepoGuidance()
 
-  if (skipped || root === null) return null
+  if (skipped || root === null) {
+    // Silent: `resolveInfraKitRoot` has already printed the reason it declined.
+    return {
+      root: null,
+      entries: [
+        {
+          step: 'guidance',
+          outcome: 'skipped',
+          message: 'Agent-instruction files skipped — not an infra-kit repo',
+          level: 'silent',
+        },
+      ],
+    }
+  }
 
-  logGuidanceWrites(root, version, written)
-
-  return root
+  return { root, entries: guidanceEntries(root, version, written) }
 }
 
 /** One line per pointer outcome. `unparseable` already warned from inside the lib, so it says nothing here. */
-const logPointerResult = (root: string, result: PluginPointerResult): void => {
+const pointerEntry = (root: string, result: PluginPointerResult): InitEntry => {
   const relative = path.relative(root, result.path)
 
-  if (result.status === 'created') logger.info(`  created   ${relative} (Claude Code plugin pointer)`)
-  else if (result.status === 'added') logger.info(`  updated   ${relative} — added ${result.added.join(', ')}`)
+  if (result.status === 'created') {
+    return {
+      step: 'plugin-pointer',
+      outcome: 'written',
+      message: `  created   ${relative} (Claude Code plugin pointer)`,
+      level: 'info',
+    }
+  }
+
+  if (result.status === 'added') {
+    return {
+      step: 'plugin-pointer',
+      outcome: 'written',
+      message: `  updated   ${relative} — added ${result.added.join(', ')}`,
+      level: 'info',
+    }
+  }
+
+  return {
+    step: 'plugin-pointer',
+    outcome: result.status === 'unchanged' ? 'unchanged' : 'warned',
+    message: `${relative} — ${result.status}`,
+    level: 'silent',
+  }
 }
 
-/** The two commands, in order, that a person runs by hand when `init` could not run them. */
-const logManualInstallCommands = (): void => {
-  logger.info(MARKETPLACE_ADD_COMMAND)
-  logger.info(PLUGIN_INSTALL_COMMAND)
+/**
+ * One line per MCP-registration outcome, in {@link logPointerResult}'s style.
+ *
+ * Only the two writing outcomes speak here. Every refusal (`unparseable`, `misfiled`, a failed
+ * write) already warned from inside the lib with the path and the fix, so repeating it would
+ * double every real problem while adding nothing.
+ */
+const mcpEntry = (root: string, result: McpRegistrationResult): InitEntry => {
+  const relative = path.relative(root, result.path)
+
+  if (result.status === 'created') {
+    return {
+      step: 'mcp-server',
+      outcome: 'written',
+      message: `  created   ${relative} (infra-kit MCP server)`,
+      level: 'info',
+    }
+  }
+
+  if (result.status === 'added') {
+    return {
+      step: 'mcp-server',
+      outcome: 'written',
+      message: `  updated   ${relative} — added the ${MARKETPLACE_NAME} MCP server`,
+      level: 'info',
+    }
+  }
+
+  return {
+    step: 'mcp-server',
+    outcome: result.status === 'unchanged' ? 'unchanged' : 'warned',
+    message: `${relative} — ${result.status}`,
+    level: 'silent',
+  }
+}
+
+/**
+ * Announce the one state where the two gates disagree: a git root resolved, but no
+ * `infra-kit.json` at it.
+ *
+ * This is the ONLY protection that exists there. `initCore` takes no arguments, and `setup`'s three
+ * flags all narrow the DEPENDENCY half, so there is nothing here that could offer an
+ * "outside an infra-kit repo" confirmation, and it must not prompt because non-TTY runs skip
+ * prompts silently — so a run whose cwd is inside a stranger's project would otherwise write
+ * three tracked files, print its success line and exit 0, surfacing later as an unexplained diff.
+ *
+ * It names the ABSOLUTE root rather than "this repo" because the whole failure mode is a caller
+ * who is somewhere other than they think. That is truthful only because `resolveGitRoot` rejects a
+ * blank resolve: `''` would reach this branch and announce the wrong path while the writers below
+ * targeted `process.cwd()`.
+ */
+const gateDisagreementEntries = (gitRoot: string | null, guidanceRoot: string | null): InitEntry[] => {
+  if (gitRoot === null || guidanceRoot !== null) return []
+
+  return [
+    {
+      step: 'plugin-pointer',
+      outcome: 'warned',
+      message: `No infra-kit.json at ${gitRoot} — setting up Claude Code there anyway: writing .claude/settings.json and .mcp.json, and installing the ${PLUGIN_KEY} plugin for that project. If that is not the repo you meant to set up, revert those two files.`,
+      level: 'warn',
+    },
+  ]
+}
+
+/** The two commands, in order, that a person runs by hand when `initCore` could not run them. */
+const manualInstallEntries = (): InitEntry[] => {
+  return [MARKETPLACE_ADD_COMMAND, PLUGIN_INSTALL_COMMAND].map((command) => {
+    return { step: 'plugin-pointer', outcome: 'skipped', message: command, level: 'info' }
+  })
 }
 
 /**
@@ -271,24 +607,39 @@ const logManualInstallCommands = (): void => {
  * outcomes are WARN and carry the step, the tool's own first line, and the command to run instead —
  * a warning a reader cannot act on is noise.
  */
-const logInstallOutcome = (outcome: PluginInstallOutcome): void => {
+const installEntries = (outcome: PluginInstallOutcome): InitEntry[] => {
   if (outcome.status === 'already-installed') {
-    logger.debug({ msg: `Claude Code plugin ${PLUGIN_KEY} is already installed for this project.` })
-
-    return
+    return [
+      {
+        step: 'plugin-pointer',
+        outcome: 'unchanged',
+        message: `Claude Code plugin ${PLUGIN_KEY} is already installed for this project.`,
+        level: 'debug',
+      },
+    ]
   }
 
   if (outcome.status === 'installed') {
-    logger.info(`installed Claude Code plugin ${PLUGIN_KEY} (project scope)`)
-
-    return
+    return [
+      {
+        step: 'plugin-pointer',
+        outcome: 'written',
+        message: `installed Claude Code plugin ${PLUGIN_KEY} (project scope)`,
+        level: 'info',
+      },
+    ]
   }
 
   if (outcome.status === 'claude-missing') {
-    logger.info('No `claude` on PATH, so the Claude Code plugin was not installed. Install Claude Code, then run:')
-    logManualInstallCommands()
-
-    return
+    return [
+      {
+        step: 'plugin-pointer',
+        outcome: 'skipped',
+        message: 'No `claude` on PATH, so the Claude Code plugin was not installed. Install Claude Code, then run:',
+        level: 'info',
+      },
+      ...manualInstallEntries(),
+    ]
   }
 
   const reason =
@@ -296,33 +647,66 @@ const logInstallOutcome = (outcome: PluginInstallOutcome): void => {
       ? 'the install reported success but Claude Code recorded no installation'
       : `the ${outcome.step} step failed: ${outcome.error}`
 
-  logger.warn(`Could not install the Claude Code plugin — ${reason}. Run by hand: ${PLUGIN_INSTALL_COMMAND}`)
+  return [
+    {
+      step: 'plugin-pointer',
+      outcome: 'warned',
+      message: `Could not install the Claude Code plugin — ${reason}. Run by hand: ${PLUGIN_INSTALL_COMMAND}`,
+      level: 'warn',
+    },
+  ]
 }
 
 /**
- * Point this repo's Claude Code at the infra-kit plugin marketplace, then INSTALL the plugin so a
- * teammate's whole setup is one command.
+ * Point this repo's Claude Code at the infra-kit plugin marketplace, register the MCP server the
+ * plugin's skills call, then INSTALL the plugin so a teammate's whole setup is one command.
  *
- * Repo-gated on the SAME root the guidance sync resolved, so both steps agree about what "this
- * project" is; outside an infra-kit repo it does nothing rather than writing a `.claude/` directory
- * into whatever the cwd happens to be. The install is driven for that same root, which is what
- * `--scope project` records — the pointer keys and the installation therefore name one project.
+ * All three are driven from ONE root — `resolveGitRoot`'s, no longer the guidance sync's — so the
+ * pointer keys, the `.mcp.json` entry and what `--scope project` records name a single project.
+ * That binding is the contract here; which predicate produced the root is not.
  *
  * There is deliberately NO opt-out flag. The install is idempotent (an already-installed plugin runs
  * no command at all) and best-effort (every failure is a logged outcome, never a thrown error), so a
  * switch would only buy a way to end up with the pointer keys pointing at a plugin nobody has.
  */
-const syncPluginPointer = (root: string | null): void => {
-  if (root === null) return
+const syncPluginPointer = (root: string | null, record: InitStepRecorder): void => {
+  if (root === null) {
+    // Silent: `resolveGitRootForWrites` has already printed the four-step skip.
+    record({
+      step: 'plugin-pointer',
+      outcome: 'skipped',
+      message: 'Claude Code plugin steps skipped — no git root safe to write into',
+      level: 'silent',
+    })
+
+    return
+  }
 
   try {
-    logPointerResult(root, ensurePluginPointer(path.join(root, '.claude', 'settings.json')))
-    logInstallOutcome(installPluginForProject({ projectRoot: root }))
+    // The MCP write goes AHEAD of the install: the install is the only step that spawns a process,
+    // so it is the only one that can fail for reasons unrelated to this repo, and a `claude` binary
+    // that throws on spawn must not cost the repo its server registration.
+    //
+    // Recorded one at a time rather than returned as an array: each of the three libraries logs its own
+    // refusals, and a batched return would print all three of `initCore`'s lines after all three libraries'
+    // — reordering output that a partial failure makes visible.
+    record(pointerEntry(root, ensurePluginPointer(path.join(root, '.claude', 'settings.json'))))
+    record(mcpEntry(root, ensureMcpRegistration(root)))
+    record(...installEntries(installPluginForProject({ projectRoot: root })))
   } catch (err) {
-    // Best-effort: neither an unwritable `.claude/settings.json`, a hand-broken
+    // Best-effort — neither an unwritable `.claude/settings.json`, a hand-broken
     // `~/.claude/plugins/installed_plugins.json`, nor a `claude` binary that throws on spawn may turn
-    // a machine-setup command red.
-    logger.debug({ err, msg: 'Skipped the Claude Code plugin step (init).' })
+    // a machine-setup command red. But WARN, not debug: `initCore` goes on to print its success line and
+    // exit 0, so at `debug` a read-only settings file or a `.mcp.json` that is a directory failed with
+    // no output at all. The error text carries the offending path; the root says which project.
+    const message = err instanceof Error ? err.message : String(err)
+
+    record({
+      step: 'plugin-pointer',
+      outcome: 'warned',
+      message: `Could not finish the Claude Code plugin step for ${root} (${message}). Run by hand: ${PLUGIN_INSTALL_COMMAND}`,
+      level: 'warn',
+    })
   }
 }
 
@@ -380,7 +764,7 @@ export const removeExistingBlock = (content: string): string => {
 
 /**
  * The inner shell-function lines (no markers). Composed into the full marked
- * block by {@link buildShellBlock} and fed to `upsertManagedBlock` by `init()`.
+ * block by {@link buildShellBlock} and fed to `upsertManagedBlock` by `initCore`.
  */
 export const buildShellBody = (): string => {
   const runCmd = 'pnpm exec infra-kit'
@@ -409,7 +793,7 @@ export const buildShellBody = (): string => {
     `env-status() { ${runCmd} env-status; }`,
     // No `alias ik=…` here: a global install provides real `infra-kit` and `ik` bins, and an alias
     // would SHADOW the global `ik`, forcing the project-local `pnpm exec` even when a global CLI exists.
-    // (`isBlockLine` still lists `alias ` so re-running `init` strips the stale alias from old configs.)
+    // (`isBlockLine` still lists `alias ` so re-running `initCore` strips the stale alias from old configs.)
     // Print an async notice without corrupting an already-drawn prompt. The
     // startup poll fires via `sched` at an IDLE prompt (ZLE active) which does
     // NOT redraw the prompt, so a bare `print` lands appended to the visible

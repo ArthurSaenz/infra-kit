@@ -37,6 +37,7 @@ const allMenuPaths = (): string[] => {
 // The exact MCP tool surface that was hand-listed in src/mcp/tools/index.ts
 // before the catalog refactor. The catalog must keep this byte-for-byte.
 const EXPECTED_EXPOSED_TOOLS = [
+  'setup',
   'env-status',
   'env-list',
   'env-load',
@@ -60,13 +61,17 @@ const EXPECTED_EXPOSED_TOOLS = [
   'dev-status',
   'local-deploy-all',
   'local-deploy-selected',
+  'release-remove',
+  // The read half of the two-command setup surface. Exposed with `mutating: false`, which is a claim
+  // about the TOOL: `--fix` is CLI-only and unreachable through an empty `inputSchema`.
+  'doctor',
 ]
 
-// Deliberately NOT exposed as MCP tools (mutating / host-inspecting / irreversible).
-// release-deliver (prod delivery + admin-merge) is CLI-only by design; doctor is host-inspecting.
+// Deliberately NOT exposed as MCP tools (mutating / irreversible).
+// release-deliver (prod delivery + admin-merge) is CLI-only by design.
 // worktrees-remove IS exposed — git protects tracked work and its own invariants (no MCP all=true,
 // error on unmatched target) contain the residual risk.
-const EXPECTED_UNEXPOSED_WITH_TOOL = ['doctor', 'gh-release-deliver']
+const EXPECTED_UNEXPOSED_WITH_TOOL = ['gh-release-deliver']
 
 /**
  * Credential commands that must carry NO MCP tool at all — not merely `mcpExposed: false`. The MCP
@@ -76,7 +81,7 @@ const EXPECTED_UNEXPOSED_WITH_TOOL = ['doctor', 'gh-release-deliver']
 const CREDENTIAL_WRITE_COMMANDS = ['env-token-set', 'env-token-remove']
 
 describe('command catalog — MCP exposure policy', () => {
-  it('exposes exactly the expected 23 MCP tools (set-equal, order-independent)', () => {
+  it('exposes exactly the expected 26 MCP tools (set-equal, order-independent)', () => {
     const exposedNames = getExposedMcpTools()
       .map((tool) => {
         return tool.name
@@ -84,7 +89,9 @@ describe('command catalog — MCP exposure policy', () => {
       .sort()
 
     expect(exposedNames).toEqual([...EXPECTED_EXPOSED_TOOLS].sort())
-    expect(exposedNames).toHaveLength(23)
+    // 26: `setup-dependency` and `setup-dependency-status` folded into the single `setup` tool
+    // (26 → 25), then `doctor` was exposed (25 → 26).
+    expect(exposedNames).toHaveLength(26)
   })
 
   it('keeps env-token-set / env-token-remove off MCP entirely (no tool object to flip on)', () => {
@@ -120,7 +127,7 @@ describe('command catalog — MCP exposure policy', () => {
     expect(exposedNames.has('worktrees-remove')).toBe(true)
   })
 
-  it('keeps doctor UNEXPOSED even though it has a tool', () => {
+  it('keeps release-deliver UNEXPOSED even though it has a tool', () => {
     const exposedNames = new Set(
       getExposedMcpTools().map((tool) => {
         return tool.name
@@ -203,6 +210,7 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
   // (not just deriving it) makes a future mis-flag to `requiresHumanConfirm: undefined` red this test,
   // not merely the default-deny invariant below.
   const EXPECTED_GATED_TOOLS = [
+    'setup',
     'gh-merge-dev',
     'release-create',
     'gh-release-deploy-all',
@@ -214,6 +222,10 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
     // deploy it decided on by itself.
     'local-deploy-all',
     'local-deploy-selected',
+    // Deletes a PR, both branches and the Jira fix version. Exposed rather than CLI-only because the
+    // gate plus its MCP narrowing (no `moveIssuesTo`/`skipJira`, and the irreversible Jira delete
+    // never attempted) contain the residual risk — the same reasoning that exposes `worktrees-remove`.
+    'release-remove',
   ]
 
   it('gates exactly the expected high-risk destructive tools with requiresHumanConfirm', () => {
@@ -262,6 +274,49 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
     expect(entry).toMatchObject({ mcpExposed: true, mutating: false })
   })
 
+  /**
+   * U-D1, the same shape one command over. `doctor --fix` chmods the token store and prunes stale
+   * portless routes, so `mutating: false` is only true of the EXPOSED TOOL — and it is true only
+   * because the tool takes no input: an empty `inputSchema` is what leaves an agent no way to ask for
+   * `--fix`. Adding any key here, however harmless it looks, is the change that makes the catalog's
+   * claim false, and the ungated-mutating gate above cannot see it.
+   *
+   * The behavioural half — that the handler actually reaches zero `chmodSync` calls — is U-D2(b) in
+   * `commands/doctor/__tests__/doctor-mcp-surface.test.ts`. This half is the declaration.
+   */
+  it('keeps `doctor` exposed, non-mutating, and inputless despite the CLI-only --fix flag', () => {
+    const entry = commandCatalog.find((candidate) => {
+      return candidate.cliName === 'doctor'
+    })
+
+    expect(entry).toMatchObject({ mcpExposed: true, mutating: false })
+    expect(Object.keys(entry?.mcpTool?.inputSchema ?? { fix: true })).toEqual([])
+  })
+
+  /**
+   * U-C1. The two-command setup surface, asserted as a shape rather than as four separate absences.
+   *
+   * `setup` and `doctor` are the whole of it. `init` is gone from Commander too, so a catalog entry
+   * appearing for it is the observable symptom of someone reviving the removed name onto the palette
+   * and the MCP surface (which both derive from here), and it fails this test rather than passing
+   * quietly. The three `setup-dependency*` names were never published, so they were deleted outright
+   * instead of being aliased.
+   */
+  it('carries setup and doctor, and no entry for init or the setup-dependency trio', () => {
+    const cliNames = commandCatalog.map((entry) => {
+      return entry.cliName
+    })
+
+    expect(cliNames).toContain('setup')
+    expect(cliNames).toContain('doctor')
+
+    const removed = cliNames.filter((cliName) => {
+      return /^(?:init|setup-dependency)/u.test(cliName)
+    })
+
+    expect(removed, `catalog still carries removed setup-surface names: ${removed.join(', ')}`).toEqual([])
+  })
+
   // The allowlist is a safety escape hatch, not a dumping ground: every member must actually be a
   // mutating, MCP-exposed catalog entry that is NOT gated. A stale name (e.g. a tool that was later
   // gated or removed) would silently widen the escape hatch, so pin it.
@@ -291,6 +346,7 @@ describe('command catalog — CLI/MCP name parity', () => {
     'local-deploy-selected': 'local-deploy-selected',
     'merge-dev': 'gh-merge-dev',
     'release-list': 'gh-release-list',
+    'release-remove': 'release-remove',
     'release-create': 'release-create',
     'release-desc-edit': 'release-desc-edit',
     'release-deploy-all': 'gh-release-deploy-all',
@@ -312,6 +368,7 @@ describe('command catalog — CLI/MCP name parity', () => {
     'vendor-check': 'vendor-check',
     'config-get': 'config-get',
     'dev-status': 'dev-status',
+    setup: 'setup',
   }
 
   it('every catalog entry with a tool matches its expected (cliName, mcpName) pair', () => {
@@ -345,6 +402,7 @@ describe('command catalog — menu grouping', () => {
       'release deploy-all',
       'release deploy-selected',
       'release deliver',
+      'release remove',
       // `local deploy-*` are absent by design: they are DEPRECATED aliases of
       // `release deploy-* --from local`, carrying `menuGroup: null` so the palette offers only
       // the merged commands. They remain in the catalog (and as MCP tools) and still resolve if typed.
@@ -365,7 +423,11 @@ describe('command catalog — menu grouping', () => {
     expect(groupPaths('environment')).toEqual(['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list'])
     expect(groupPaths('configuration')).toEqual(['config-get', 'config path', 'config edit'])
     expect(groupPaths('vendor')).toEqual(['vendor check', 'vendor config'])
-    expect(groupPaths('setup')).toEqual(['init', 'doctor', 'audit', 'version'])
+    // `setup` itself is ABSENT, and that is the assertion, not an omission: it carries `menuGroup: null`
+    // so the palette cannot offer it (see its catalog entry — a row would be a flagless, one-keystroke
+    // installer labelled with a bare `setup`). Leaving `setup` in this list is the observable symptom of
+    // a `menuGroup: 'setup'` that put an installer in the picker.
+    expect(groupPaths('setup')).toEqual(['doctor', 'audit', 'version'])
   })
 
   /**

@@ -7,6 +7,12 @@
       "Bash(pnpm exec ik release-deliver:*)",
       "Bash(pnpm exec ik release deliver:*)",
       "Bash(ik release deliver:*)"
+    ],
+    "ask": [
+      "mcp__infra-kit__setup",
+      "Bash(infra-kit setup)",
+      "Bash(infra-kit setup --tools:*)",
+      "Bash(infra-kit setup --update:*)"
     ]
   },
   "hooks": {
@@ -77,7 +83,8 @@
     "commit-commands@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
     "context-mode@context-mode": true,
-    "typescript-lsp@claude-plugins-official": true
+    "typescript-lsp@claude-plugins-official": true,
+    "infra-kit@infra-kit": true
   },
   "extraKnownMarketplaces": {
     "context-mode": {
@@ -96,6 +103,12 @@
       "source": {
         "source": "git",
         "url": "https://github.com/Yeachan-Heo/oh-my-claudecode.git"
+      }
+    },
+    "infra-kit": {
+      "source": {
+        "source": "github",
+        "repo": "ArthurSaenz/infra-kit"
       }
     }
   }

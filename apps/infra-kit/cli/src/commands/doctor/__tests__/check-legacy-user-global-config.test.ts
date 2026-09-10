@@ -68,7 +68,7 @@ describe('checkLegacyUserGlobalConfig', () => {
       const result = await checkLegacyUserGlobalConfig()
 
       expect(result.status).toBe('fail')
-      expect(result.message).toMatch(/run `infra-kit init` to migrate/)
+      expect(result.message).toMatch(/run `infra-kit setup --skip-tools` to migrate/)
       expect(result.message).toMatch(/not being applied/)
     })
   })

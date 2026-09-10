@@ -109,7 +109,7 @@ export const seedUserProjectConfig = async (paths: InfraKitConfigPaths): Promise
 
 /**
  * The one INFO line announcing a freshly created layer-3 config. Shared by all three seed call sites
- * (the entry-boundary bootstrap below, `config edit`, and `init`) — they announce the same event and
+ * (the entry-boundary bootstrap below, `config edit`, and `initCore`) — they announce the same event and
  * must not drift into three wordings.
  *
  * @example

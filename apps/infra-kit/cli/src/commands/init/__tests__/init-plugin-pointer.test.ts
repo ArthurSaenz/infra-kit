@@ -9,19 +9,22 @@ import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import {
   MARKETPLACE_ADD_COMMAND,
+  MARKETPLACE_NAME,
   PLUGIN_INSTALL_COMMAND,
   PLUGIN_KEY,
   installPluginForProject,
 } from 'src/lib/plugin-pointer'
 
-import { init } from '../init'
+import { initCore, logInitEntry } from '../init'
 
 /**
- * `init`'s plugin-pointer step, exercised through the real `init()` rather than the lib.
+ * The additive half's plugin steps — the pointer, the install and the `.mcp.json` registration —
+ * exercised through the real `initCore` rather than the libs.
  *
- * The lib's own suite proves the merge; what can only be proved here is the WIRING — that the step
- * runs, that it targets the repo root the guidance step resolved (not the cwd), and that the install
- * command is printed exactly once and only when the plugin is actually missing.
+ * Each lib's own suite proves its merge; what can only be proved here is the WIRING: that the steps
+ * run, that all three target the ONE root `resolveGitRoot` produced (not the cwd, and no longer the
+ * guidance step's `infra-kit.json`-gated root), that the two gates announce themselves separately
+ * when they disagree, and that no failure below turns a machine-setup command red.
  */
 
 vi.mock('../migrate-config', () => {
@@ -92,6 +95,46 @@ const readSettings = (): Record<string, Record<string, unknown>> => {
   return JSON.parse(fs.readFileSync(settingsPath(), 'utf-8')) as Record<string, Record<string, unknown>>
 }
 
+const mcpPath = (): string => {
+  return path.join(repo, '.mcp.json')
+}
+
+const readMcp = (): Record<string, Record<string, unknown>> => {
+  return JSON.parse(fs.readFileSync(mcpPath(), 'utf-8')) as Record<string, Record<string, unknown>>
+}
+
+const warnLines = (): string[] => {
+  return vi.mocked(logger.warn).mock.calls.map((call) => {
+    return typeof call[0] === 'string' ? call[0] : JSON.stringify(call[0])
+  })
+}
+
+const linesMatching = (pattern: RegExp): string[] => {
+  return infoLines().filter((line) => {
+    return pattern.test(line)
+  })
+}
+
+/**
+ * The skip that covers all four gated steps. Logged EXACTLY ONCE per run, by `initCore`'s own
+ * `resolveGitRootForWrites` call: the shared predicate is silent (`doctor` reads it too), so the
+ * guidance gate's delegation to it announces nothing and cannot duplicate the line.
+ */
+const GIT_ROOT_SKIP = /^Skipped agent-instruction files, the plugin pointer, the plugin install and \.mcp\.json —/
+
+/** The guidance-only skip: this `null` stops the guidance files alone, and says so. */
+const GUIDANCE_ONLY_SKIP = /^Skipped agent-instruction files — no infra-kit\.json at the repo root/
+
+/**
+ * The additive half on its own: `initCore` with the CLI's entry logger, which is exactly what
+ * `infra-kit setup --skip-tools` runs (setup wraps the same sink only to hold its closing
+ * shell-activation line back until after the dependency half). The standalone `init` command this
+ * suite used to drive no longer exists, so the pairing IS the subject now.
+ */
+const runInit = async (): Promise<void> => {
+  await initCore(logInitEntry)
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
 
@@ -115,9 +158,9 @@ afterEach(() => {
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
-describe('init — plugin pointer', () => {
+describe('setup --skip-tools — plugin pointer', () => {
   it('creates .claude/settings.json at the repo root with both keys', async () => {
-    await init()
+    await runInit()
 
     const settings = readSettings()
 
@@ -133,7 +176,7 @@ describe('init — plugin pointer', () => {
       '{\n  "permissions": {\n    "deny": ["Bash(rm:*)"]\n  },\n  "enabledPlugins": {\n    "omc@omc": true\n  }\n}\n',
     )
 
-    await init()
+    await runInit()
 
     const settings = readSettings()
 
@@ -142,7 +185,7 @@ describe('init — plugin pointer', () => {
   })
 
   it('prints the install command verbatim when the plugin is not installed', async () => {
-    await init()
+    await runInit()
 
     expect(infoLines()).toContain(PLUGIN_INSTALL_COMMAND)
   })
@@ -156,7 +199,7 @@ describe('init — plugin pointer', () => {
       }),
     )
 
-    await init()
+    await runInit()
 
     expect(infoLines()).not.toContain(PLUGIN_INSTALL_COMMAND)
     expect(
@@ -179,55 +222,284 @@ describe('init — plugin pointer', () => {
       }),
     )
 
-    await init()
+    await runInit()
 
     expect(infoLines()).toContain(PLUGIN_INSTALL_COMMAND)
   })
 
   it('is idempotent: a second init leaves the file byte-identical', async () => {
-    await init()
+    await runInit()
 
     const first = fs.readFileSync(settingsPath(), 'utf-8')
 
-    await init()
+    await runInit()
 
     expect(fs.readFileSync(settingsPath(), 'utf-8')).toBe(first)
   })
 
   it('prints the marketplace command alongside the install command when claude is missing', async () => {
-    await init()
+    await runInit()
 
     expect(infoLines()).toContain(MARKETPLACE_ADD_COMMAND)
     expect(infoLines().indexOf(MARKETPLACE_ADD_COMMAND)).toBeLessThan(infoLines().indexOf(PLUGIN_INSTALL_COMMAND))
   })
 
-  it('writes no .claude directory outside an infra-kit repo', async () => {
-    fs.rmSync(path.join(repo, 'infra-kit.json'))
-    resetInfraKitConfigCache()
+  it('writes no .claude directory when no git root resolves', async () => {
+    // Replaces "outside an infra-kit repo": after the gate split a missing `infra-kit.json` no
+    // longer stops the pointer (see the gate-split suite below), so the only state that does is a
+    // root the git gate refuses.
+    vi.mocked(getProjectRoot).mockRejectedValue(new Error('not a git repository'))
 
-    await init()
+    await runInit()
 
     expect(fs.existsSync(path.join(repo, '.claude'))).toBe(false)
   })
 })
 
 /**
+ * The gate split (criteria 2.1, 2.3, 2.4, 2.8).
+ *
+ * The guidance writers stay gated on `resolveInfraKitRoot` (`infra-kit.json` present, because their
+ * content is config-derived); the pointer, the install and the `.mcp.json` writer are gated on
+ * `resolveGitRoot` alone, since none of the three reads that file. What is asserted here is the
+ * behaviour a reader of `initCore`'s output depends on: which steps ran, which announced that they did
+ * not, and — in the one state where the two gates disagree — the warn that is the only protection
+ * standing between a mistargeted run and three tracked files in a stranger's repo.
+ */
+describe('setup --skip-tools — the gate split', () => {
+  it('2.1: emits the four-step skip exactly once and writes nothing in a non-git directory', async () => {
+    vi.mocked(getProjectRoot).mockRejectedValue(new Error('not a git repository'))
+
+    await expect(runInit()).resolves.toBeUndefined()
+
+    // EXACTLY one line, and the exactness is the load-bearing half: `1` forbids the duplicate the
+    // announcing predicate used to emit (once per gate that refused) AND the fail-open where the
+    // announcement is dropped everywhere, which is the state US-001 exists to prevent. The one line
+    // names the guidance step AND the pointer/install/.mcp.json steps, so a single line is still a
+    // complete record of all four.
+    const skips = linesMatching(GIT_ROOT_SKIP)
+
+    expect(skips).toHaveLength(1)
+    expect(skips[0]).toContain('agent-instruction files')
+    expect(skips[0]).toContain('the plugin pointer, the plugin install and .mcp.json')
+    expect(fs.existsSync(settingsPath())).toBe(false)
+    expect(fs.existsSync(mcpPath())).toBe(false)
+  })
+
+  it('2.3: sets up the plugin steps in a git repo with no infra-kit.json, guidance skipped', async () => {
+    fs.rmSync(path.join(repo, 'infra-kit.json'))
+    resetInfraKitConfigCache()
+
+    await expect(runInit()).resolves.toBeUndefined()
+
+    expect(linesMatching(GUIDANCE_ONLY_SKIP)).toHaveLength(1)
+    expect(linesMatching(GIT_ROOT_SKIP)).toHaveLength(0)
+    expect(readSettings().enabledPlugins?.[PLUGIN_KEY]).toBe(true)
+    expect(readMcp().mcpServers?.[MARKETPLACE_NAME]).toBeDefined()
+    expect(vi.mocked(installPluginForProject)).toHaveBeenCalledWith({ projectRoot: repo })
+  })
+
+  it('2.3: warns exactly once, naming the absolute root and the files it touches', async () => {
+    fs.rmSync(path.join(repo, 'infra-kit.json'))
+    resetInfraKitConfigCache()
+
+    await runInit()
+
+    // Filtered on the root rather than taken as the only warn: `initCore` legitimately warns about a
+    // non-zsh $SHELL on some machines, and that line says nothing about this repo.
+    const warnings = warnLines().filter((line) => {
+      return line.includes(repo)
+    })
+
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('No infra-kit.json at')
+    expect(warnings[0]).toContain('.claude/settings.json')
+    expect(warnings[0]).toContain('.mcp.json')
+    expect(warnings[0]).toContain(PLUGIN_KEY)
+    // The absolute path, not "this repo": the failure mode is a caller who is somewhere else than
+    // they think, and a relative name would read as correct wherever they are.
+    expect(path.isAbsolute(repo)).toBe(true)
+  })
+
+  it('2.4: writes nothing when the resolved toplevel is $HOME', async () => {
+    vi.mocked(getProjectRoot).mockResolvedValue(home)
+
+    // Evidence that this exercises the $HOME branch and not the blank one: the seam answers a
+    // non-empty absolute path that EQUALS os.homedir(). With the prevailing `stdout: ''` zx idiom
+    // the blank branch would refuse first and this test would pass for the wrong reason — which is
+    // why 2.8 below keeps the blank case separate.
+    const stubbed = await vi.mocked(getProjectRoot)()
+
+    expect(stubbed).toBe(os.homedir())
+    expect(stubbed).not.toBe('')
+
+    await expect(runInit()).resolves.toBeUndefined()
+
+    expect(fs.existsSync(path.join(home, '.claude', 'settings.json'))).toBe(false)
+    expect(fs.existsSync(path.join(home, '.mcp.json'))).toBe(false)
+    expect(fs.existsSync(settingsPath())).toBe(false)
+    expect(fs.existsSync(mcpPath())).toBe(false)
+    expect(linesMatching(GIT_ROOT_SKIP)).toHaveLength(1)
+  })
+
+  it('2.8: treats blank git stdout as a failed resolve and writes no cwd-relative files', async () => {
+    // `getProjectRoot` is `result.stdout.trim()` and rejects only when the shell-out itself fails,
+    // so blank stdout RESOLVES as ''. Every `path.join('', x)` targets the cwd, so the cwd is moved
+    // to an empty directory: a regression writes `.mcp.json` / `.claude/settings.json` HERE.
+    const cwdBefore = process.cwd()
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'init-pointer-cwd-'))
+
+    vi.mocked(getProjectRoot).mockResolvedValue('')
+    process.chdir(elsewhere)
+
+    try {
+      await expect(runInit()).resolves.toBeUndefined()
+
+      expect(fs.readdirSync(elsewhere)).toEqual([])
+    } finally {
+      process.chdir(cwdBefore)
+      fs.rmSync(elsewhere, { recursive: true, force: true })
+    }
+
+    expect(fs.existsSync(settingsPath())).toBe(false)
+    expect(fs.existsSync(mcpPath())).toBe(false)
+    expect(linesMatching(GIT_ROOT_SKIP)).toHaveLength(1)
+  })
+})
+
+/**
+ * The `.mcp.json` registration's wiring (criteria 2.2 and 1.8).
+ *
+ * The writer's merge behaviour — key order, indent, the misfiled-key refusal — is proved
+ * byte-for-byte in `lib/plugin-pointer/__tests__/mcp-registration.test.ts`. What only `initCore` can
+ * prove is that the call happens at all, that it is aimed at the resolved absolute root rather than
+ * the cwd, and that a file it cannot write is audible instead of swallowed at `debug`.
+ */
+describe('setup --skip-tools — the MCP registration', () => {
+  it('2.2: writes .mcp.json at the resolved absolute root, not relative to the cwd', async () => {
+    // The cwd is moved to an empty directory it owns, because the earlier form of this test asserted
+    // `!existsSync(path.resolve('.mcp.json'))` against the AMBIENT cwd — which made its verdict depend
+    // on where vitest was launched. From this package that path is `apps/infra-kit/cli/.mcp.json` and
+    // the test passed; from the repo root it is the repository's OWN committed `.mcp.json` and the test
+    // failed. A test that asserts something about the cwd has to own the cwd, or it is asserting
+    // something about the launcher. `readdirSync` is also stricter than the old check: it proves
+    // NOTHING was written here, not merely that one filename is absent.
+    const cwdBefore = process.cwd()
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'init-pointer-cwd-'))
+
+    process.chdir(elsewhere)
+
+    try {
+      await runInit()
+
+      expect(fs.readdirSync(elsewhere)).toEqual([])
+    } finally {
+      process.chdir(cwdBefore)
+      fs.rmSync(elsewhere, { recursive: true, force: true })
+    }
+
+    expect(readMcp().mcpServers?.[MARKETPLACE_NAME]).toEqual({ type: 'stdio', command: 'infra-kit', args: ['mcp'] })
+    // Aimed at the root, not the cwd — the distinction the whole gate exists to make.
+    expect(path.isAbsolute(mcpPath())).toBe(true)
+  })
+
+  it('1.8: warns once and still exits 0 when .mcp.json is a directory', async () => {
+    fs.mkdirSync(mcpPath())
+
+    await expect(runInit()).resolves.toBeUndefined()
+
+    const warnings = warnLines().filter((line) => {
+      return line.includes(mcpPath())
+    })
+
+    expect(warnings).toHaveLength(1)
+    // The steps before it still ran: a failed registration is not a reason to abandon the rest.
+    expect(readSettings().enabledPlugins?.[PLUGIN_KEY]).toBe(true)
+  })
+
+  it('1.8: warns once — not at debug — when a plugin step throws on an unwritable root', async () => {
+    // A real EACCES rather than a stubbed throw: the pointer's `mkdirSync` is what fails on a
+    // read-only repo, and `initCore`'s catch used to swallow it at `debug` while printing its success
+    // line. Restoring the mode is in a `finally` so the tmpdir stays removable.
+    fs.chmodSync(repo, 0o500)
+
+    try {
+      await expect(runInit()).resolves.toBeUndefined()
+    } finally {
+      fs.chmodSync(repo, 0o700)
+    }
+
+    const warnings = warnLines().filter((line) => {
+      return line.includes('Could not finish the Claude Code plugin step')
+    })
+
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain(repo)
+    expect(fs.existsSync(settingsPath())).toBe(false)
+  })
+})
+
+/**
+ * Additivity, asserted per writer (criterion 2.7).
+ *
+ * `initCore` drives three file writers, and every one of them lands in a file a consumer maintains by
+ * hand. This is the property that makes running it in an already-configured repo safe, so it is
+ * pinned once per writer here rather than left to each lib's suite.
+ */
+describe('setup --skip-tools — additivity per writer', () => {
+  it('2.7: never overwrites an existing value in .claude/settings.json', async () => {
+    // `false` there is a deliberate per-machine opt-out, and a custom marketplace source is a
+    // deliberate fork — flipping either would be `initCore` overruling the user.
+    writeFile(
+      settingsPath(),
+      `{\n  "extraKnownMarketplaces": {\n    "infra-kit": { "source": { "source": "github", "repo": "me/fork" } }\n  },\n  "enabledPlugins": {\n    "${PLUGIN_KEY}": false\n  }\n}\n`,
+    )
+
+    await runInit()
+
+    const settings = readSettings()
+
+    expect(settings.enabledPlugins?.[PLUGIN_KEY]).toBe(false)
+    expect(settings.extraKnownMarketplaces?.['infra-kit']).toEqual({
+      source: { source: 'github', repo: 'me/fork' },
+    })
+  })
+
+  it('2.7: never overwrites an existing entry or sibling in .mcp.json', async () => {
+    writeFile(
+      mcpPath(),
+      `{\n  "mcpServers": {\n    "linear-server": { "type": "http", "url": "https://mcp.linear.app/mcp" },\n    "${MARKETPLACE_NAME}": { "type": "stdio", "command": "/custom/infra-kit", "args": ["mcp"] }\n  }\n}\n`,
+    )
+
+    const before = fs.readFileSync(mcpPath(), 'utf-8')
+
+    await runInit()
+
+    // Already registered: no write at all, so the bytes — key order and the user's own command
+    // included — are untouched.
+    expect(fs.readFileSync(mcpPath(), 'utf-8')).toBe(before)
+  })
+
+  it('2.7: never overwrites hand-authored content in CLAUDE.md', async () => {
+    writeFile(path.join(repo, 'CLAUDE.md'), '# House rules\n\nNever touch this line.\n')
+
+    await runInit()
+
+    expect(fs.readFileSync(path.join(repo, 'CLAUDE.md'), 'utf-8')).toContain('Never touch this line.')
+  })
+})
+
+/**
  * The install step's WIRING. What the installer itself does is proved against an injected runner in
- * `lib/plugin-pointer/__tests__/install-plugin.test.ts`; what only `init` can prove is that the step
+ * `lib/plugin-pointer/__tests__/install-plugin.test.ts`; what only `initCore` can prove is that the step
  * runs at all, that it is aimed at the resolved repo root rather than the cwd, and that each outcome
  * reaches the user as one readable line.
  */
-describe('init — plugin install', () => {
+describe('setup --skip-tools — plugin install', () => {
   const installMock = vi.mocked(installPluginForProject)
 
-  const warnLines = (): string[] => {
-    return vi.mocked(logger.warn).mock.calls.map((call) => {
-      return typeof call[0] === 'string' ? call[0] : JSON.stringify(call[0])
-    })
-  }
-
   it('installs the plugin for the resolved repo root', async () => {
-    await init()
+    await runInit()
 
     expect(installMock).toHaveBeenCalledTimes(1)
     expect(installMock).toHaveBeenCalledWith({ projectRoot: repo })
@@ -236,7 +508,7 @@ describe('init — plugin install', () => {
   it('reports a successful install on one INFO line', async () => {
     installMock.mockReturnValue({ status: 'installed' })
 
-    await init()
+    await runInit()
 
     expect(infoLines()).toContain(`installed Claude Code plugin ${PLUGIN_KEY} (project scope)`)
   })
@@ -244,7 +516,7 @@ describe('init — plugin install', () => {
   it('says nothing on INFO when the plugin was already installed', async () => {
     installMock.mockReturnValue({ status: 'already-installed' })
 
-    await init()
+    await runInit()
 
     // The pointer step's own `(Claude Code plugin pointer)` line is legitimate and stays; what must
     // NOT appear is any report about the install, which on a configured machine did nothing.
@@ -258,7 +530,7 @@ describe('init — plugin install', () => {
   it('warns with the step and the error first line when a step fails', async () => {
     installMock.mockReturnValue({ status: 'failed', step: 'marketplace', error: 'could not read from remote' })
 
-    await init()
+    await runInit()
 
     const warning = warnLines().find((line) => {
       return line.includes('Could not install the Claude Code plugin')
@@ -272,7 +544,7 @@ describe('init — plugin install', () => {
   it('warns rather than claiming success when Claude Code recorded no installation', async () => {
     installMock.mockReturnValue({ status: 'unverified' })
 
-    await init()
+    await runInit()
 
     expect(
       warnLines().some((line) => {
@@ -292,7 +564,7 @@ describe('init — plugin install', () => {
       throw new Error('spawn EPERM')
     })
 
-    await expect(init()).resolves.toBeUndefined()
+    await expect(runInit()).resolves.toBeUndefined()
     expect(readSettings().enabledPlugins?.[PLUGIN_KEY]).toBe(true)
   })
 })

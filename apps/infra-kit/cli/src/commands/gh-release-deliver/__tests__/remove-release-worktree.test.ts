@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
-import { removeWorktrees } from 'src/lib/worktrees'
-
-import { removeReleaseWorktreeIfPresent } from '../gh-release-deliver'
+import { removeReleaseWorktreeIfPresent } from 'src/lib/worktrees/remove-release-worktree'
+import { removeWorktrees } from 'src/lib/worktrees/remove-worktrees'
 
 /**
  * `removeWorktrees` now returns `{ removed, failed }`. The pre-merge worktree removal must check
@@ -13,6 +12,9 @@ import { removeReleaseWorktreeIfPresent } from '../gh-release-deliver'
 
 const PROJECT_ROOT = '/workspace/project-root'
 const RELEASE_BRANCH = 'release/v1.2.5'
+// Required, but their exact text is not under test here — `operation`/`remediation` are asserted
+// by production callers (e.g. gh-release-deliver's own test coverage), not by this generic helper.
+const MESSAGES = { operation: 'remove the release worktree', remediation: 'resolve manually, then retry' }
 
 vi.mock('src/lib/git-utils', () => {
   return {
@@ -23,7 +25,10 @@ vi.mock('src/lib/git-utils', () => {
   }
 })
 
-vi.mock('src/lib/worktrees', () => {
+// Mocked at the leaf module, not the `src/lib/worktrees` barrel: `removeReleaseWorktreeIfPresent`
+// now lives in this same package and imports `removeWorktrees` directly from its sibling module, so
+// a barrel-level mock here would never intercept that call.
+vi.mock('src/lib/worktrees/remove-worktrees', () => {
   return { removeWorktrees: vi.fn() }
 })
 
@@ -57,7 +62,7 @@ describe('removeReleaseWorktreeIfPresent', () => {
   it('does nothing when the release branch has no worktree', async () => {
     vi.mocked(getCurrentWorktrees).mockResolvedValue([])
 
-    await removeReleaseWorktreeIfPresent(RELEASE_BRANCH)
+    await removeReleaseWorktreeIfPresent(RELEASE_BRANCH, MESSAGES)
 
     expect(removeWorktrees).not.toHaveBeenCalled()
   })
@@ -65,7 +70,7 @@ describe('removeReleaseWorktreeIfPresent', () => {
   it('passes projectRoot and resolves when the release worktree was removed', async () => {
     vi.mocked(removeWorktrees).mockResolvedValue({ removed: [RELEASE_BRANCH], failed: [] })
 
-    await expect(removeReleaseWorktreeIfPresent(RELEASE_BRANCH)).resolves.toBeUndefined()
+    await expect(removeReleaseWorktreeIfPresent(RELEASE_BRANCH, MESSAGES)).resolves.toEqual([RELEASE_BRANCH])
 
     expect(vi.mocked(removeWorktrees).mock.calls[0]?.[0]).toMatchObject({
       branches: [RELEASE_BRANCH],
@@ -79,6 +84,6 @@ describe('removeReleaseWorktreeIfPresent', () => {
       failed: [{ branch: RELEASE_BRANCH, reason: 'fatal: contains modified or untracked files' }],
     })
 
-    await expect(removeReleaseWorktreeIfPresent(RELEASE_BRANCH)).rejects.toThrow(/modified or untracked/)
+    await expect(removeReleaseWorktreeIfPresent(RELEASE_BRANCH, MESSAGES)).rejects.toThrow(/modified or untracked/)
   })
 })

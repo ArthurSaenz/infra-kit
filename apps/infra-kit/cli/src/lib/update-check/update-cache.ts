@@ -2,7 +2,7 @@
  * The throttle + notice state for the auto-update check, at `$cacheRoot/update-check.json`.
  *
  * `getCacheRoot()` — NOT `getSessionCacheDir()`, which throws unless `INFRA_KIT_SESSION` is set. A user
- * who installed this CLI globally and never ran `infra-kit init` has no session, and the update check
+ * who installed this CLI globally and never ran `infra-kit setup` has no session, and the update check
  * must still work for exactly that person.
  */
 import fs from 'node:fs'

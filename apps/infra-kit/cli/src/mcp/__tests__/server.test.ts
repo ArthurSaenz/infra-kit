@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mcpMode } from 'src/lib/mcp-mode'
 
 import packageJson from '../../../package.json' with { type: 'json' }
-import { RELEASE_CREATE_WORKFLOW_URI } from '../resources'
+import { RELEASE_CREATE_WORKFLOW_URI, SETUP_WORKFLOW_URI } from '../resources'
 import { createMcpServer } from '../server'
 import { WORKFLOW_BODIES } from '../workflow-bodies'
 
@@ -216,5 +216,83 @@ describe('the release-create procedure, over the wire', () => {
     // The preconditions.
     expect(body).toContain('linked worktree')
     expect(body).toContain('clean working tree')
+  })
+
+  /**
+   * `setup`'s procedure over the wire. Resource-only, deliberately: unlike `release-create` it is NOT
+   * registered as a prompt, because its human surface is the `/infra-kit:setup` plugin command. The
+   * prompt-count assertion above is what pins that decision from the other side — adding a `setup`
+   * prompt reddens it and forces this comment to be revisited rather than silently contradicted.
+   */
+  it('serves the setup procedure as a markdown resource at its URI', async () => {
+    const { client, close } = await connectedClient()
+
+    try {
+      const result = await client.readResource({ uri: SETUP_WORKFLOW_URI })
+
+      expect(result.contents).toHaveLength(1)
+      expect(result.contents[0]!.uri).toBe(SETUP_WORKFLOW_URI)
+      expect(result.contents[0]!.mimeType).toBe('text/markdown')
+      expect(resourceText(result)).toBe(WORKFLOW_BODIES.setup)
+    } finally {
+      await close()
+    }
+  })
+
+  /**
+   * As above: prettier owns the bytes of `resources/workflow/setup.md`, so this asserts the RENDERED
+   * shape — the line count and the substantive clauses — never that the source file is prettier-clean.
+   *
+   * Each clause below is one the plan requires the served body to carry, and each is the reason the
+   * plugin command can be three lines: if the detail is not HERE, it is nowhere an agent can read it.
+   */
+  it('renders a setup body that still carries the clauses an agent needs', () => {
+    const body = WORKFLOW_BODIES.setup
+
+    expect(body.split('\n')).toHaveLength(163)
+    expect(body.endsWith('\n')).toBe(false)
+
+    // The tool the procedure is for, named so an agent that read the resource can call it — and the
+    // read-path tool it must use instead when it only wants to look.
+    expect(body).toContain('mcp__infra-kit__setup')
+    expect(body).toContain('`doctor`')
+
+    // The ordered procedure: the init half's writes first, then the dependency converge.
+    expect(body).toContain('the init half')
+    expect(body).toContain('`~/.zshrc`')
+    expect(body).toContain('`.mcp.json`')
+    expect(body).toContain('the dependency converge')
+    expect(body).toContain('**brew, aws, gh, doppler, portless**')
+    expect(body.indexOf('the init half')).toBeLessThan(body.indexOf('the dependency converge'))
+
+    // What each flag narrows, in the `flag → tool field` form `manifest.test.mjs`'s U17 reads from the
+    // other side. U17 is plain node and cannot see the bundled body this asserts.
+    expect(body).toContain('`--tools <ids...>` → `tools: ["gh", "doppler"]`')
+    expect(body).toContain('`--update [ids...]` → `mode: "update"`')
+    expect(body).toContain('`--skip-tools` → `skipTools: true`')
+    expect(body).toContain('usage error, not a precedence rule')
+
+    // Refused recipes are PRINTED rather than run, and why — both refusing conjuncts, and both of the
+    // two recipes that fail them.
+    expect(body).toContain('needs-sudo')
+    expect(body).toContain('fetches-network-script')
+    expect(body).toContain('the Homebrew bootstrap')
+    expect(body).toContain('the first AWS CLI install')
+    expect(body).toContain('A refusal is not a failure')
+
+    // The gate, and the `isError` reading that makes an agent bypass it.
+    expect(body).toContain('confirmation_required')
+    expect(body).toContain('confirmToken')
+    expect(body).toContain('"confirm": true')
+    expect(body).toContain('does not mean the call failed')
+
+    // That `init` is gone AND what to run instead — both, because a body saying only that the command
+    // was removed leaves an agent holding a repo's stale instruction with no next action.
+    expect(body).toContain('There is no `init` command')
+    expect(body).toContain('`infra-kit setup`')
+    // Binary-qualified, and I-13 (`generated-instruction-spelling.test.ts`) is why: a bare `setup`
+    // code span in this file resolves three ways in a consumer repo — `pnpm setup`, `pnpm run setup`
+    // and `infra-kit setup` — and all three mutate something different.
+    expect(body).toContain('`infra-kit setup --skip-tools`')
   })
 })

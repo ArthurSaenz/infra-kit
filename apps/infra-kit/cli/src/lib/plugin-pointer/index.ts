@@ -13,6 +13,8 @@ export {
   resolvePluginInstall,
 } from './install-state'
 export type { McpRegistration, PluginInstallState } from './install-state'
+export { ensureMcpRegistration } from './mcp-registration'
+export type { McpRegistrationResult, McpRegistrationStatus } from './mcp-registration'
 export {
   ensurePluginPointer,
   MARKETPLACE_ADD_COMMAND,

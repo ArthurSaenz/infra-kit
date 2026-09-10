@@ -3,9 +3,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { MARKER_START, buildShellBlock, init } from '../init'
+import { MARKER_START, buildShellBlock, initCore, logInitEntry } from '../init'
 
-// Isolate init()'s ~/.zshrc injection from the config-migration/seed machinery:
+// Isolate the additive half's ~/.zshrc injection from the config-migration/seed machinery:
 // stub the collaborators to no-ops so only the real removeExistingBlock +
 // upsertManagedBlock + writeFileSync path executes against a temp $HOME.
 vi.mock('../migrate-config', () => {
@@ -19,6 +19,13 @@ vi.mock('../migrate-config', () => {
 
 vi.mock('../agent-files', () => {
   return {
+    // `null`: no git root here either, so the pointer, install and `.mcp.json` steps stay the
+    // no-ops this suite needs — the gate split gave them their own resolver, separate from the
+    // guidance sync's. `initCore` calls the announcing wrapper, so that is the name to stub; the bare
+    // predicate is `doctor`'s, and this suite never reaches it.
+    resolveGitRootForWrites: vi.fn(async () => {
+      return null
+    }),
     writeAgentFiles: vi.fn(async () => {}),
     syncRepoGuidance: vi.fn(async () => {
       return { skipped: true, root: null, version: '0.0.0-test', written: [] }
@@ -48,9 +55,19 @@ afterEach(() => {
   fs.rmSync(home, { recursive: true, force: true })
 })
 
-describe('init() — ~/.zshrc injection', () => {
+/**
+ * The additive half on its own: `initCore` with the CLI's entry logger, which is exactly what
+ * `infra-kit setup --skip-tools` runs (setup wraps the same sink only to hold its closing
+ * shell-activation line back until after the dependency half). The standalone `init` command this
+ * suite used to drive no longer exists, so the pairing IS the subject now.
+ */
+const runInit = async (): Promise<void> => {
+  await initCore(logInitEntry)
+}
+
+describe('setup --skip-tools — ~/.zshrc injection', () => {
   it('creates ~/.zshrc with the current shell block when none exists', async () => {
-    await init()
+    await runInit()
 
     const written = fs.readFileSync(zshrcPath, 'utf-8')
 
@@ -58,8 +75,8 @@ describe('init() — ~/.zshrc injection', () => {
   })
 
   it('is idempotent — running twice leaves exactly one block', async () => {
-    await init()
-    await init()
+    await runInit()
+    await runInit()
 
     const written = fs.readFileSync(zshrcPath, 'utf-8')
     const occurrences = written.match(new RegExp(MARKER_START, 'g'))?.length
@@ -71,7 +88,7 @@ describe('init() — ~/.zshrc injection', () => {
   it('preserves pre-existing user content and appends the block at end-of-file', async () => {
     fs.writeFileSync(zshrcPath, '# my rc\nexport USER_VAR=42\n')
 
-    await init()
+    await runInit()
 
     const written = fs.readFileSync(zshrcPath, 'utf-8')
 

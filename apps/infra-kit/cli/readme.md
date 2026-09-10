@@ -42,36 +42,37 @@ Strict schema file that declares audit rules (`requiredScripts`, `requiredFiles`
 
 ## Commands
 
-| Group | Command | Purpose |
-|-------|---------|---------|
-| **Develop** | `dev` | Start local dev server with portless proxy (interactive wizard, long-running) |
-| | `dev-status` | Report what `infra-kit dev` currently has running (read-only; finds the fragment dir by searching upward, so it works from any subdirectory) |
-| **Release** | `release merge-dev` | Merge `origin/dev` into open release branches in a scratch worktree, then push atomically (`--dry-run`, `--versions`) |
-| | `release list` | List available releases |
-| | `release create` | Create a new release |
-| | `release desc-edit` | Edit release notes |
-| | `release deploy-all --from <ci\|local>` | Deploy every service — in CI, or from this machine |
-| | `release deploy-selected --from <ci\|local>` | Deploy chosen services — in CI, or from this machine |
-| | `release deliver` | Deliver to prod (CLI-only, irreversible) |
-| **Worktrees** | `worktrees add` | Create a new git worktree |
-| | `worktrees list` | List all worktrees |
-| | `worktrees remove` | Remove a worktree (no `--force`; a branch git refuses is reported and the command exits non-zero; a leftover git already unregistered that holds only `.omc/state`, `.omc/sessions` or `.DS_Store` is swept automatically) |
-| | `worktrees sync` | Sync worktree state (same removal and failure reporting as `worktrees remove`) |
-| | `reopen` | Reopen a closed worktree |
-| **Environment** | `env-status` | Show Doppler env status |
-| | `env-list` | List secrets in current env |
-| | `env-load` | Load env secrets into shell |
-| | `env-clear` | Clear loaded secrets |
-| | `env-token-list` | List redacted service tokens |
-| **Configuration** | `config-get` | Print the fully merged infra-kit config (read-only) |
-| | `config path` | Print config file locations |
-| | `config edit` | Edit infra-kit.json in `$EDITOR` |
-| **Vendor** | `vendor check` | Validate vendor mirrors |
-| | `vendor config` | Show vendor manifest |
-| **Setup** | `init` | Initialize infra-kit in repo |
-| | `audit [--fix] [--design]` | Check repo against config rules, including the per-package `agent-guidance` `CLAUDE.md` check; `--fix` writes guidance blocks (CLI-only, not in MCP), `--design` also scaffolds `DESIGN.md` |
-| | `doctor` | Diagnose machine setup (CLI-only) |
-| | `version` | Show installed version |
+| Group             | Command                                      | Purpose                                                                                                                                                                                                                                                                                                                                         |
+| ----------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Develop**       | `dev`                                        | Start local dev server with portless proxy (interactive wizard, long-running)                                                                                                                                                                                                                                                                   |
+|                   | `dev-status`                                 | Report what `infra-kit dev` currently has running (read-only; finds the fragment dir by searching upward, so it works from any subdirectory)                                                                                                                                                                                                    |
+| **Release**       | `release merge-dev`                          | Merge `origin/dev` into open release branches in a scratch worktree, then push atomically (`--dry-run`, `--versions`)                                                                                                                                                                                                                           |
+|                   | `release list`                               | List available releases                                                                                                                                                                                                                                                                                                                         |
+|                   | `release create`                             | Create a new release                                                                                                                                                                                                                                                                                                                            |
+|                   | `release desc-edit`                          | Edit release notes                                                                                                                                                                                                                                                                                                                              |
+|                   | `release deploy-all --from <ci\|local>`      | Deploy every service — in CI, or from this machine                                                                                                                                                                                                                                                                                              |
+|                   | `release deploy-selected --from <ci\|local>` | Deploy chosen services — in CI, or from this machine                                                                                                                                                                                                                                                                                            |
+|                   | `release deliver`                            | Deliver to prod (CLI-only, irreversible)                                                                                                                                                                                                                                                                                                        |
+|                   | `release remove`                             | Tear down one release — worktree, IDE folders, PR, local and remote branches, then the Jira fix version last. Refuses a merged PR, a released fix version, or one with issues attached (`--move-issues-to` is the opt-in). Resumable: a partially-removed release re-runs cleanly. Over MCP the Jira step is never attempted (`jira: 'manual'`) |
+| **Worktrees**     | `worktrees add`                              | Create a new git worktree                                                                                                                                                                                                                                                                                                                       |
+|                   | `worktrees list`                             | List all worktrees                                                                                                                                                                                                                                                                                                                              |
+|                   | `worktrees remove`                           | Remove a worktree (no `--force`; a branch git refuses is reported and the command exits non-zero; a leftover git already unregistered that holds only `.omc/state`, `.omc/sessions` or `.DS_Store` is swept automatically)                                                                                                                      |
+|                   | `worktrees sync`                             | Sync worktree state (same removal and failure reporting as `worktrees remove`)                                                                                                                                                                                                                                                                  |
+|                   | `reopen`                                     | Reopen a closed worktree                                                                                                                                                                                                                                                                                                                        |
+| **Environment**   | `env-status`                                 | Show Doppler env status                                                                                                                                                                                                                                                                                                                         |
+|                   | `env-list`                                   | List secrets in current env                                                                                                                                                                                                                                                                                                                     |
+|                   | `env-load`                                   | Load env secrets into shell                                                                                                                                                                                                                                                                                                                     |
+|                   | `env-clear`                                  | Clear loaded secrets                                                                                                                                                                                                                                                                                                                            |
+|                   | `env-token-list`                             | List redacted service tokens                                                                                                                                                                                                                                                                                                                    |
+| **Configuration** | `config-get`                                 | Print the fully merged infra-kit config (read-only)                                                                                                                                                                                                                                                                                             |
+|                   | `config path`                                | Print config file locations                                                                                                                                                                                                                                                                                                                     |
+|                   | `config edit`                                | Edit infra-kit.json in `$EDITOR`                                                                                                                                                                                                                                                                                                                |
+| **Vendor**        | `vendor check`                               | Validate vendor mirrors                                                                                                                                                                                                                                                                                                                         |
+|                   | `vendor config`                              | Show vendor manifest                                                                                                                                                                                                                                                                                                                            |
+| **Setup**         | `infra-kit setup [--tools <ids...>] [--update [ids...]] [--skip-tools]` | Set up infra-kit on this machine: shell integration, the Claude Code plugin, the `.mcp.json` key, then install or update the external CLIs (brew, aws, gh, doppler, portless). `--tools` / `--update` narrow the converge; `--skip-tools` writes only, reporting what is missing without installing it. Written binary-qualified here because `pnpm setup` and `pnpm run setup` both exist in every consumer and both mutate |
+|                   | `audit [--fix] [--design]`                   | Check repo against config rules, including the per-package `agent-guidance` `CLAUDE.md` check; `--fix` writes guidance blocks (CLI-only, not in MCP), `--design` also scaffolds `DESIGN.md`                                                                                                                                                     |
+|                   | `doctor [--fix]`                             | Diagnose this machine: infra-kit install, tool auth, and repo wiring; `--fix` repairs what it safely can (CLI-only — the MCP tool is read-only)                                                                                                                                                                                                                               |
+|                   | `version`                                    | Show installed version                                                                                                                                                                                                                                                                                                                          |
 
 ## Agent guidance blocks (CLAUDE.md)
 
@@ -99,15 +100,17 @@ Runs long-running until you press Ctrl-C. Manages multiple backend/frontend proc
 When infra-kit runs as an MCP server (via `.mcp.json`), these commands are available as structured agent tools:
 
 - `dev-status`
-- `gh-merge-dev`, `gh-release-list`, `release-create`, `release-desc-edit`, `gh-release-deploy-all`, `gh-release-deploy-selected`
+- `gh-merge-dev`, `gh-release-list`, `release-create`, `release-remove`, `release-desc-edit`, `gh-release-deploy-all`, `gh-release-deploy-selected`
+- `local-deploy-all`, `local-deploy-selected`
 - `worktrees-add`, `worktrees-list`, `reopen`, `worktrees-remove`, `worktrees-sync`
 - `env-status`, `env-list`, `env-load`, `env-clear`, `env-token-list`
 - `config-get`, `vendor-check`
 - `audit`, `version`
+- `doctor` (read-only), `setup` (gated — every call raises the host prompt and the confirm round-trip)
 
-21 tools total.
+26 tools total.
 
-**Not exposed**: `dev` (long-running), `doctor` (host inspection), `release deliver` (irreversible prod delivery), `config edit` / `config path` (interactive/CLI-only), `vendor config` (CLI-only), `init` (interactive).
+**Not exposed**: `dev` (long-running), `release deliver` (irreversible prod delivery), `config edit` / `config path` (interactive/CLI-only), `vendor config` (CLI-only), `self-update` and `mcp` (process-level).
 
 ---
 

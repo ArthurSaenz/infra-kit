@@ -105,7 +105,7 @@ test('records present but empty for this plugin is a failure naming the fix', ()
   const row = find(run({ root, configDir: makeConfigDir({ records: [] }) }), 'session vs records')
 
   assert.equal(row.status, 'fail')
-  assert.match(row.message, /infra-kit init/)
+  assert.match(row.message, /infra-kit setup --skip-tools/)
 })
 
 // A project-scope record belonging to a DIFFERENT repo must not stand in for this one. Taking the

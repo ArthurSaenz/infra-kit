@@ -78,7 +78,7 @@ out explicitly, because neither half says it alone:
 Fixes are **listed, not run by this skill.** Give the exact command and let the person run it, so
 the decision to change their machine is theirs and they see what it does first.
 
-- Re-running the setup command (`init`) is the fix for most plugin, marketplace and guidance-block
+- Re-running the setup command (`setup`) is the fix for most plugin, marketplace and guidance-block
   failures; the CLI's own lines name it where it applies.
 - The CLI's repair flag (`--fix`) resolves the two things it knows how to repair, and refuses while
   a dev session is running. Its report says when it is worth running.

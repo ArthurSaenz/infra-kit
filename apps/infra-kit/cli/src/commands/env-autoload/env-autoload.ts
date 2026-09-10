@@ -10,7 +10,7 @@ export interface EnvAutoloadArgs {
 }
 
 /**
- * Internal command invoked (backgrounded) by the `infra-kit init` shell-startup
+ * Internal command invoked (backgrounded) by the `infra-kit setup` shell-startup
  * integration. Runs the 'shell-startup' trigger, writing env-load.sh when
  * envAutoLoad is configured for it + eligible; the shell precmd hook sources it on
  * a subsequent prompt. Intentionally writes NOTHING to stdout and never throws —

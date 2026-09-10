@@ -8,14 +8,14 @@ import { MARKETPLACE_REPO, PLUGIN_KEY } from './plugin-pointer'
 /**
  * @fileoverview
  *
- * The step that makes `infra-kit init` enough on its own: it DRIVES `claude plugin …` so a teammate
+ * The step that makes `infra-kit setup` enough on its own: it DRIVES `claude plugin …` so a teammate
  * does not have to copy two commands out of the terminal and run them by hand.
  *
  * The design constraint is that this shells out to somebody else's CLI. So every step is guarded by a
  * host-state READ first (`install-state.ts`), never by a second invocation: an already-installed
  * plugin runs nothing at all, an already-registered marketplace skips its `add`, and a machine with
  * no `claude` on PATH is a reported outcome rather than a spawn error. That is what makes re-running
- * `init` on a configured machine free, and what keeps this from turning a setup command red.
+ * `initCore` on a configured machine free, and what keeps this from turning a setup command red.
  *
  * TWO RULES THAT ARE NOT NEGOTIABLE.
  *
@@ -35,7 +35,7 @@ const CLAUDE_BIN = 'claude'
 
 /**
  * Ceiling for any one `claude` invocation. `plugin install` clones a marketplace repo, so it is not
- * instant — but an `init` that hangs forever on a wedged network is worse than one that reports a
+ * instant — but an `initCore` that hangs forever on a wedged network is worse than one that reports a
  * failed install step, and the user's remaining setup steps are behind this call.
  */
 const CLAUDE_TIMEOUT_MS = 120_000
@@ -67,7 +67,7 @@ export type ClaudeRunner = (command: ClaudeCommand) => ClaudeCommandResult
 /**
  * Run one `claude` command, capturing its output instead of inheriting the terminal.
  *
- * Captured, not inherited, because `init` renders its own progress: a raw `plugin install` transcript
+ * Captured, not inherited, because `initCore` renders its own progress: a raw `plugin install` transcript
  * dumped between two `INFO:` lines reads as a crash. The captured text is not discarded — its first
  * line is what the failure warning quotes.
  *

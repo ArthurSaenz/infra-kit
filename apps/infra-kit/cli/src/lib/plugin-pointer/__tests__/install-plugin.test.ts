@@ -243,7 +243,7 @@ describe('installPluginForProject — success', () => {
 describe('the PATH shim that protects every suite', () => {
   /**
    * `vitest.setup.ts` prepends `src/__fixtures__/bin` to `PATH` so the three suites that call the real
-   * `init()` reach a fake `claude` instead of the developer's own. There is no product-facing kill
+   * `initCore` reach a fake `claude` instead of the developer's own. There is no product-facing kill
    * switch, so this shim is the ONLY thing standing between a test run and a real plugin install —
    * asserted here, through the real runner, so removing that setup line fails a test.
    */

@@ -32,29 +32,34 @@ executes without a permission prompt.
 From the consumer repo root:
 
 ```
-infra-kit init
+infra-kit setup
 ```
 
-That is the whole install. `init` writes the two pointer keys into `.claude/settings.json`
-(`extraKnownMarketplaces` and `enabledPlugins`, nothing else), registers the marketplace when this
-machine does not already know it, and runs the project-scope install. Every step reads host state
-first, so re-running `init` on a configured machine spawns nothing.
+That is the whole install. `infra-kit setup` writes the two pointer keys into
+`.claude/settings.json` (`extraKnownMarketplaces` and `enabledPlugins`, nothing else), registers the
+marketplace when this machine does not already know it, and runs the project-scope install. Every
+step reads host state first, so re-running it on a configured machine spawns nothing.
 
-The commands `init` runs, for anyone who wants to run them by hand:
+`infra-kit setup` also installs or updates the external CLIs infra-kit needs (brew, aws, gh,
+doppler, portless). For the pointer keys and nothing installed, add `--skip-tools`: it reports what
+is missing and the argv that would fix it, and installs none of it.
+
+The commands `infra-kit setup` runs, for anyone who wants to run them by hand:
 
 ```
 claude plugin marketplace add ArthurSaenz/infra-kit
 claude plugin install infra-kit@infra-kit --scope project
 ```
 
-These are the fallback, not the normal path. `init` prints them when `claude` is not on PATH — it
-cannot install a plugin without Claude Code — and warns with them when a step fails. `infra-kit
-doctor` reports the same prerequisite as its `claude CLI` row.
+These are the fallback, not the normal path. `infra-kit setup` prints them when `claude` is not on
+PATH — it cannot install a plugin without Claude Code — and warns with them when a step fails.
+`infra-kit doctor` reports the same prerequisite as its `claude CLI` row.
 
 **Always `--scope project`.** The CLI default is `user`, which would activate this plugin in
 every repository you open. Its skills are written against this family's conventions and every
 skill description costs context on every turn, so the correct scope is the repo that uses them.
-Project scope writes `enabledPlugins` into `.claude/settings.json`, the same key `init` manages.
+Project scope writes `enabledPlugins` into `.claude/settings.json`, the same key `infra-kit setup`
+manages.
 
 ## Update
 
@@ -72,8 +77,8 @@ it and none is needed.
 - Repo-wide: delete `extraKnownMarketplaces["infra-kit"]` and
   `enabledPlugins["infra-kit@infra-kit"]` from `.claude/settings.json`.
 - This machine only: set `"infra-kit@infra-kit": false` under `enabledPlugins` in
-  `.claude/settings.local.json`. `init` never overwrites an existing value, so the opt-out
-  survives every later `init` run.
+  `.claude/settings.local.json`. `infra-kit setup` never overwrites an existing value, so the
+  opt-out survives every later run.
 
 ## Token budget
 

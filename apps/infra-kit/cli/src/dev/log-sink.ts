@@ -152,7 +152,7 @@ const safeSegment = (raw: string): string | null => {
  * The `<pid>` segment is load-bearing, not cosmetic. `--cmux` spawns one `infra-kit dev` per pane and
  * every pane inherits the SAME `INFRA_KIT_SESSION`, so without it N panes interleave into one file.
  * Falls back to a literal `no-session` folder when the shell exported no id, so dev logging never
- * depends on `infra-kit init` having run.
+ * depends on `infra-kit setup` having run.
  */
 export const resolveLogDir = (): string => {
   // The session id is collapsed to a single safe segment, exactly as a service name is. It is normally

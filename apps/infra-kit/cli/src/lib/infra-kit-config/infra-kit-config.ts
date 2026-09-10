@@ -476,14 +476,14 @@ export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
 
     if (await statIfExists(legacyYmlPath)) {
       throw new Error(
-        `infra-kit.json not found at ${paths.main}. A legacy infra-kit.yml exists — run \`infra-kit init\` to convert it.`,
+        `infra-kit.json not found at ${paths.main}. A legacy infra-kit.yml exists — run \`infra-kit setup --skip-tools\` to convert it.`,
       )
     }
 
     throw new Error(
       isMcpMode()
         ? `infra-kit.json not found at ${paths.main} — the directory the infra-kit MCP server was launched in is not an infra-kit project. The operator must relaunch the server with its working directory set to an infra-kit project repo.`
-        : `infra-kit.json not found at ${paths.main} — this git repo is not an infra-kit project. Run \`infra-kit init\` here to create it, cd into an infra-kit project repo, or check out a branch that has infra-kit.json.`,
+        : `infra-kit.json not found at ${paths.main} — this git repo is not an infra-kit project. Run \`infra-kit setup --skip-tools\` here to create it, cd into an infra-kit project repo, or check out a branch that has infra-kit.json.`,
     )
   }
 

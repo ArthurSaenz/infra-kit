@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 
+import type { WorkflowKey } from '../workflow-bodies'
 import { WORKFLOW_BODIES } from '../workflow-bodies'
 import type { DevContextSnapshot } from './dev-context'
 import { readDevContext } from './dev-context'
@@ -20,6 +21,16 @@ export const DEV_CONTEXT_RESOURCE_URI = 'infra-kit://dev-context'
  * (`src/mcp/prompts`), because an agent can read a resource but cannot fetch a prompt.
  */
 export const RELEASE_CREATE_WORKFLOW_URI = 'infra-kit://workflow/release-create'
+
+/**
+ * Stable URI of the `setup` procedure.
+ *
+ * Resource-only, unlike `release-create`: `setup`'s human channel is the `/infra-kit:setup` plugin
+ * command, so the prompt half would duplicate it rather than reach a second reader. It ships in the
+ * CLI and not in the plugin because `scripts/check-workflow-resource-published.mjs` refuses to let a
+ * plugin command merge until the PUBLISHED CLI answers `resources/list` with the URI its body names.
+ */
+export const SETUP_WORKFLOW_URI = 'infra-kit://workflow/setup'
 
 /**
  * The two disk reads the resources need, injected so the registration is unit-testable without touching
@@ -42,6 +53,31 @@ const defaultDeps: ResourceDeps = {
 /** Serialize a resource body as pretty JSON text — the wire form every MCP client can read. */
 const jsonResource = (uri: string, value: unknown): { contents: { uri: string; mimeType: string; text: string }[] } => {
   return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(value, null, 2) }] }
+}
+
+/**
+ * Register one workflow procedure at its URI.
+ *
+ * A helper rather than a second copy of the registration block: the two bodies differ only in their
+ * key, URI and blurb, and a hand-copied handler is exactly where a second workflow would quietly get
+ * the FIRST one's text — a drift no `resources/list` assertion would catch, because the URI would
+ * still be listed.
+ *
+ * No dep injection and no `async`: the body is a build-time constant, so there is nothing to read,
+ * nothing to fail, and nothing a test would need to stub.
+ */
+const registerWorkflow = (
+  server: McpServer,
+  workflow: { key: WorkflowKey; uri: string; title: string; description: string },
+): void => {
+  server.registerResource(
+    `infra-kit-workflow-${workflow.key}`,
+    workflow.uri,
+    { title: workflow.title, description: workflow.description, mimeType: 'text/markdown' },
+    (uri) => {
+      return { contents: [{ uri: uri.toString(), mimeType: 'text/markdown', text: WORKFLOW_BODIES[workflow.key] }] }
+    },
+  )
 }
 
 /**
@@ -90,23 +126,24 @@ export const initializeResources = async (server: McpServer, deps: ResourceDeps 
     },
   )
 
-  server.registerResource(
-    'infra-kit-workflow-release-create',
-    RELEASE_CREATE_WORKFLOW_URI,
-    {
-      title: 'release-create procedure',
-      description:
-        'How to cut a release with the release-create tool: the preconditions, the two-call confirm ' +
-        'protocol, and what the "next" token actually resolves against. Read this before calling ' +
-        'mcp__infra-kit__release-create.',
-      mimeType: 'text/markdown',
-    },
-    // No dep injection and no `async`: the body is a build-time constant, so there is nothing to
-    // read, nothing to fail, and nothing a test would need to stub.
-    (uri) => {
-      return {
-        contents: [{ uri: uri.toString(), mimeType: 'text/markdown', text: WORKFLOW_BODIES['release-create'] }],
-      }
-    },
-  )
+  registerWorkflow(server, {
+    key: 'release-create',
+    uri: RELEASE_CREATE_WORKFLOW_URI,
+    title: 'release-create procedure',
+    description:
+      'How to cut a release with the release-create tool: the preconditions, the two-call confirm ' +
+      'protocol, and what the "next" token actually resolves against. Read this before calling ' +
+      'mcp__infra-kit__release-create.',
+  })
+
+  registerWorkflow(server, {
+    key: 'setup',
+    uri: SETUP_WORKFLOW_URI,
+    title: 'setup procedure',
+    description:
+      'How to set a machine up with the setup tool: the ordered local writes, then the dependency ' +
+      'converge; what tools/mode/skipTools each narrow; which recipes are printed instead of run and ' +
+      'why; and what to run when a repo still tells you to set it up some older way. Read this before ' +
+      'calling mcp__infra-kit__setup.',
+  })
 }

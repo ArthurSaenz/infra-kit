@@ -33,6 +33,15 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     ],
   },
   {
+    "input": [],
+    "name": "doctor",
+    "output": [
+      "allPassed",
+      "checks",
+      "cliVersion",
+    ],
+  },
+  {
     "input": [
       "confirm",
     ],
@@ -219,6 +228,28 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
   },
   {
     "input": [
+      "confirm",
+      "version",
+    ],
+    "name": "release-remove",
+    "output": [
+      "baseBranch",
+      "branch",
+      "ideFolders",
+      "jira",
+      "jiraVersion",
+      "localBranch",
+      "localTipSha",
+      "pr",
+      "prNumber",
+      "remoteBranch",
+      "remoteTipSha",
+      "version",
+      "worktree",
+    ],
+  },
+  {
+    "input": [
       "dryRun",
       "force",
       "releaseOnly",
@@ -233,6 +264,21 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
       "releaseOnly",
       "repo",
       "worktreePaths",
+    ],
+  },
+  {
+    "input": [
+      "mode",
+      "skipTools",
+      "tools",
+    ],
+    "name": "setup",
+    "output": [
+      "allSucceeded",
+      "changed",
+      "converged",
+      "init",
+      "tools",
     ],
   },
   {

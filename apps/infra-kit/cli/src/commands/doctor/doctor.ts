@@ -6,8 +6,14 @@ import { z } from 'zod'
 import { $ } from 'zx'
 
 import { decidePrune, isDevSessionRunning } from 'src/commands/doctor/prune-routes'
+// The one source of truth for "does `--fix` repair this row". Imported rather than restated so the
+// `fixable` field on the payload cannot drift from the `--fix` code paths, exactly as `report.ts`'s
+// own comment requires of its hint.
+import { FIXABLE_NAMES } from 'src/commands/doctor/report'
 import { buildDopplerChildEnv } from 'src/commands/env-load/env-load'
-import { AGENTS_MARKER_END, AGENTS_MARKER_START } from 'src/commands/init/agent-files'
+// `resolveGitRoot` is the WRITER's gate, imported rather than re-derived so the reader's row set and
+// the writer's reach cannot drift apart (see the gate comment beside the plugin rows below).
+import { AGENTS_MARKER_END, AGENTS_MARKER_START, resolveGitRoot } from 'src/commands/init/agent-files'
 import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
 import {
   caFingerprintMatches,
@@ -26,6 +32,15 @@ import type { EnvTokenProbe, EnvTokenSource, ResolvedEnvToken } from 'src/integr
 import { inspectPackageGuidance, readGuidanceFile } from 'src/lib/agent-guidance'
 import { describeOverrides, readOverrideSummary } from 'src/lib/config-overrides'
 import { DEFAULT_WARM_TTL_SECONDS, ENV_LOAD_FILE, getProjectWarmCacheDir } from 'src/lib/constants'
+// The probe reports FACTS about an install and can neither name nor run a fix — the same one-way seam
+// as the registry import below. `lib/dependency-plan` is the module that turns a probe into a recipe,
+// and `doctor` deliberately stops one module short of it.
+import { defaultProbeDeps, probeAll } from 'src/lib/dependency-probe'
+import type { DependencyState, ProbeDeps } from 'src/lib/dependency-probe'
+// Probe argv only. `doctor` must never import the install recipes: the registry owns "how do I ask this
+// tool for its version", `setup-dependency*` owns "what would fix it", and the direction is one-way.
+import { specFor } from 'src/lib/dependency-registry'
+import type { DependencyId } from 'src/lib/dependency-registry'
 import { getTokenStorePath, readTokenStore } from 'src/lib/env-tokens'
 import type { TokenStore } from 'src/lib/env-tokens'
 import { getProjectRoot } from 'src/lib/git-utils/git-utils'
@@ -59,13 +74,62 @@ import { defineMcpTool, textContent } from 'src/types'
 import packageJson from '../../../package.json' with { type: 'json' }
 
 /**
+ * What the probe knows about one external tool, riding along on the row that already answers "is it
+ * installed" — so an agent asking that question reads ONE list, never a sibling array with its own
+ * semantics. Deliberately probe facts ONLY: no `action`, no `commands`. Widening it to the install
+ * report is how `doctor --fix` would arrive by another door, and `probe-argv-single-source.test.ts`
+ * asserts the absence of those two keys at the type level for that reason.
+ *
+ * `present` and `onPath` are separate because they genuinely disagree: the AWS-documented installer
+ * writes `$HOME/.local/bin`, so `aws` can be `status: 'fail'` (the row means "resolves on PATH") while
+ * `detail.present` is `true`.
+ */
+export interface DependencyDetail {
+  manager: DependencyState['manager']
+  version: string | null
+  present: boolean
+  onPath: boolean
+}
+
+/**
  * One diagnosis. `name` is a stable public identifier — it is returned over MCP, keyed by the report's
  * section map (`report.ts`), and pasted into bug reports — so renaming one is a breaking change.
+ *
+ * `detail` is OPTIONAL and carried by the four dependency rows alone, which is what keeps the ~23 other
+ * check functions untouched. `portless installed` deliberately has none: it resolves out of
+ * `node_modules` rather than off `PATH`, so a probe payload would describe a different question than
+ * the row asks (`probe-argv-single-source.test.ts`).
  */
 export interface CheckResult {
   name: string
   status: 'pass' | 'fail'
   message: string
+  detail?: DependencyDetail
+}
+
+/**
+ * The rows that carry a {@link DependencyDetail} — every registry id except `portless`, whose
+ * exclusion is argued in `probe-argv-single-source.test.ts`. Declared here rather than derived from
+ * `DEPENDENCY_IDS` minus a filter: the exclusion is a decision, and a decision should be readable.
+ */
+const DETAILED_IDS: readonly DependencyId[] = ['brew', 'gh', 'doppler', 'aws']
+
+/**
+ * Probe the detailed ids once, keyed by id. Runs alongside the `--version` rows rather than replacing
+ * them: the rows keep their published meaning ("resolves on PATH"), and the probe answers the richer
+ * question beside it.
+ */
+const probeDependencyDetails = async (deps: ProbeDeps): Promise<Map<DependencyId, DependencyDetail>> => {
+  const states = await probeAll(DETAILED_IDS, deps)
+
+  return new Map(
+    states.map((state): [DependencyId, DependencyDetail] => {
+      return [
+        state.id,
+        { manager: state.manager, version: state.version, present: state.present, onPath: state.onPath },
+      ]
+    }),
+  )
 }
 
 const checkCommand = async (
@@ -88,7 +152,7 @@ export const checkZshrcInitialized = (): CheckResult => {
   const zshrcPath = path.join(os.homedir(), '.zshrc')
 
   if (!fs.existsSync(zshrcPath)) {
-    return { name, status: 'fail', message: '~/.zshrc not found. Run: infra-kit init' }
+    return { name, status: 'fail', message: '~/.zshrc not found. Run: infra-kit setup --skip-tools' }
   }
 
   const content = fs.readFileSync(zshrcPath, 'utf-8')
@@ -99,7 +163,7 @@ export const checkZshrcInitialized = (): CheckResult => {
     return {
       name,
       status: 'fail',
-      message: 'infra-kit shell block missing from ~/.zshrc. Run: infra-kit init',
+      message: 'infra-kit shell block missing from ~/.zshrc. Run: infra-kit setup --skip-tools',
     }
   }
 
@@ -110,7 +174,7 @@ export const checkZshrcInitialized = (): CheckResult => {
     return {
       name,
       status: 'fail',
-      message: 'infra-kit shell block in ~/.zshrc is out of date. Run: infra-kit init',
+      message: 'infra-kit shell block in ~/.zshrc is out of date. Run: infra-kit setup --skip-tools',
     }
   }
 
@@ -668,8 +732,8 @@ export const checkUserOverridePath = async (): Promise<CheckResult> => {
 
 /**
  * Surface a lingering legacy `~/.infra-kit/config.json` left behind after the
- * user-global config was renamed to `infra-kit.json`. The on-`init` auto-rename
- * is the migration path, but a user who edits the file and never re-runs `init`
+ * user-global config was renamed to `infra-kit.json`. The on-`setup` auto-rename
+ * is the migration path, but a user who edits the file and never re-runs `setup`
  * would silently have their overrides stop applying — this makes that visible.
  *
  * Branches on whether the canonical `infra-kit.json` already exists so the
@@ -703,7 +767,7 @@ export const checkLegacyUserGlobalConfig = async (): Promise<CheckResult> => {
     return {
       name,
       status: 'fail',
-      message: `Legacy user-global config.json found at ${tildify(legacyPath)} — run \`infra-kit init\` to migrate it (your overrides are not being applied).`,
+      message: `Legacy user-global config.json found at ${tildify(legacyPath)} — run \`infra-kit setup --skip-tools\` to migrate it (your overrides are not being applied).`,
     }
   }
 
@@ -874,11 +938,11 @@ const packageGuidanceStaleness = async (root: string, current: string): Promise<
 }
 
 /**
- * Check that the repo agent-instruction guidance managed by `infra-kit init` exists:
+ * Check that the repo agent-instruction guidance managed by `infra-kit setup` exists:
  * the guidance block in `CLAUDE.md`. Presence only. Repo-gated: returns no checks
  * when run outside an infra-kit repo so doctor never crashes there. A repo that
  * predates the AGENTS.md→CLAUDE.md migration will report this check as failing until
- * `infra-kit init` is re-run.
+ * `infra-kit setup` is re-run.
  *
  * The message also carries a read-only per-package staleness report (see
  * {@link packageGuidanceStaleness}). It rides on THIS check rather than a new one on purpose:
@@ -900,7 +964,7 @@ export const checkAgentFiles = async (): Promise<CheckResult[]> => {
   const claudePath = path.join(root, 'CLAUDE.md')
   const content = fs.existsSync(claudePath) ? fs.readFileSync(claudePath, 'utf-8') : ''
   const present = hasManagedBlock(content, AGENTS_MARKER_START, AGENTS_MARKER_END)
-  const message = present ? 'CLAUDE.md block present' : 'infra-kit block missing from CLAUDE.md. Run: infra-kit init'
+  const message = present ? 'CLAUDE.md block present' : 'infra-kit block missing from CLAUDE.md. Run: infra-kit setup --skip-tools'
   const staleness = await packageGuidanceStaleness(root, packageJson.version)
 
   return [
@@ -975,7 +1039,7 @@ const claudePluginInstalledCheck = (state: PluginInstallState): CheckResult => {
 }
 
 /**
- * Is the `claude` binary on PATH? The PREREQUISITE row for everything below it: `infra-kit init`
+ * Is the `claude` binary on PATH? The PREREQUISITE row for everything below it: `infra-kit setup`
  * installs the plugin by driving `claude plugin install`, so on a machine without that binary the
  * three rows that follow are failing for a reason none of their own messages names.
  *
@@ -990,7 +1054,7 @@ export const checkClaudeCli = (): Promise<CheckResult> => {
     'claude CLI',
     ['claude', '--version'],
     'Installed: claude',
-    'claude CLI not found on PATH — `infra-kit init` cannot install the plugin; install Claude Code first',
+    'claude CLI not found on PATH — `infra-kit setup` cannot install the plugin; install Claude Code first',
   )
 }
 
@@ -1026,16 +1090,22 @@ export const checkClaudePlugin = (root: string | null): CheckResult[] => {
 /** One message per `.mcp.json` verdict; `wrong-key` is built by the caller, which has the key. */
 const MCP_MESSAGES: Record<Exclude<McpRegistration['kind'], 'wrong-key'>, string> = {
   ok: `.mcp.json registers the server as "${MARKETPLACE_NAME}" — plugin skills resolve mcp__${MARKETPLACE_NAME}__* tools`,
-  'missing-file': 'Not applicable: no .mcp.json at the repo root, so there is no server key to check',
+  'missing-file': 'No .mcp.json at the repo root yet, so there is no server key to check. Run: infra-kit setup --skip-tools',
   unparseable: 'Could not read mcpServers from .mcp.json — fix the JSON and re-run',
   absent: `.mcp.json has no "${MARKETPLACE_NAME}" server. Plugin skills name mcp__${MARKETPLACE_NAME}__* tools and will resolve nothing without it`,
 }
 
 /**
  * The verdicts that do NOT fail the row: a correct registration, and a repo with no `.mcp.json` at
- * all. The second is a deliberate carve-out — this check is about the server's KEY, and a repo that
- * has chosen not to register any MCP server has no key to get wrong. A file that IS present and does
- * not name the server fails, because that is a misconfiguration rather than an abstention.
+ * all.
+ *
+ * The second is no longer an abstention. `setup` now always writes the file, so — the row being gated
+ * on the writer's own predicate — `missing-file` means one thing only: `setup` has never run here (or
+ * ran on a CLI predating the writer). It stays a `pass` because two rows already fail in that exact
+ * state with `infra-kit setup` as their fix (`zshrc init block`, `CLAUDE.md block`); a third would
+ * repeat them and change nothing, since exit 1 is scoped to `plugin installed` alone.
+ *
+ * A file that IS present and does not name the server still fails: that is a misconfiguration.
  */
 const MCP_NON_FAILING: ReadonlySet<McpRegistration['kind']> = new Set(['ok', 'missing-file'])
 
@@ -1378,17 +1448,38 @@ export const pruneStalePortlessRoutes = async (deps: PruneRoutesDeps = {}): Prom
 /**
  * Check installation and authentication status of gh, doppler, and aws CLIs
  */
-export const doctor = async (options: { fix?: boolean } = {}) => {
+export const doctor = async (options: { fix?: boolean; probeDeps?: ProbeDeps } = {}) => {
   // ONE read, before anything is dispatched: the checks below used to reset the shared config cache
   // concurrently from inside the `Promise.all`. See `readDoctorConfig`.
   const read = await readDoctorConfig()
+  // Started here and awaited inside `withDetail`, so the probe runs ALONGSIDE the ~95 checks rather
+  // than in front of them.
+  const details = probeDependencyDetails(options.probeDeps ?? defaultProbeDeps())
+  const withDetail = async (id: DependencyId, check: Promise<CheckResult>): Promise<CheckResult> => {
+    const [result, detail] = await Promise.all([check, details])
+    const found = detail.get(id)
+
+    return found === undefined ? result : { ...result, detail: found }
+  }
 
   const baseChecks: CheckResult[] = await Promise.all([
-    checkCommand(
-      'gh installed',
-      ['gh', '--version'],
-      'GitHub CLI is installed',
-      'GitHub CLI is not installed. Install from: https://cli.github.com/',
+    withDetail(
+      'brew',
+      checkCommand(
+        'brew installed',
+        specFor('brew').probeArgv,
+        'Homebrew is installed',
+        'Homebrew is not installed. Install from: https://brew.sh/',
+      ),
+    ),
+    withDetail(
+      'gh',
+      checkCommand(
+        'gh installed',
+        specFor('gh').probeArgv,
+        'GitHub CLI is installed',
+        'GitHub CLI is not installed. Install from: https://cli.github.com/',
+      ),
     ),
     checkCommand(
       'gh authenticated',
@@ -1396,17 +1487,23 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
       'GitHub CLI is authenticated',
       'GitHub CLI is not authenticated. Run: gh auth login',
     ),
-    checkCommand(
-      'doppler installed',
-      ['doppler', '--version'],
-      'Doppler CLI is installed',
-      'Doppler CLI is not installed. Install from: https://docs.doppler.com/docs/install-cli',
+    withDetail(
+      'doppler',
+      checkCommand(
+        'doppler installed',
+        specFor('doppler').probeArgv,
+        'Doppler CLI is installed',
+        'Doppler CLI is not installed. Install from: https://docs.doppler.com/docs/install-cli',
+      ),
     ),
-    checkCommand(
-      'aws installed',
-      ['aws', '--version'],
-      'AWS CLI is installed',
-      'AWS CLI is not installed. Install from: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html',
+    withDetail(
+      'aws',
+      checkCommand(
+        'aws installed',
+        specFor('aws').probeArgv,
+        'AWS CLI is installed',
+        'AWS CLI is not installed. Install from: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html',
+      ),
     ),
     checkCommand(
       'package manager installed',
@@ -1454,14 +1551,22 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
   }
 
   // The Claude Code plugin rows read `~/.claude/` and answer from anywhere; the `.mcp.json` row is
-  // about a PROJECT and is omitted outside an infra-kit repo, the same way the guidance check is.
+  // about a PROJECT and so is gated — but NOT on the same predicate as the guidance check any more.
+  // The row set follows the WRITER's gate, per writer: `setup` writes `.mcp.json` in any git toplevel
+  // that is not `$HOME` (`resolveGitRoot`), while the guidance writer still requires an
+  // `infra-kit.json` there. Gating this row on `infra-kit.json` too would leave the writer with no
+  // monitoring row at all in exactly the repos that lack one.
+  //
+  // `resolveGitRoot` is also what keeps a blank `git rev-parse` from being answered: it returns
+  // `null` rather than `''`, so the row is omitted instead of rendered against `process.cwd()`.
   const repoRoot = await resolveCheckedRepoRoot()
+  const gitRoot = await resolveGitRoot()
   const pluginChecks = [
     // First in the section: the binary the install step drives. Read the prerequisite before the
     // three rows whose failure it explains.
     await checkClaudeCli(),
     ...checkClaudePlugin(repoRoot),
-    ...(repoRoot === null ? [] : [checkMcpServerKey(repoRoot)]),
+    ...(gitRoot === null ? [] : [checkMcpServerKey(gitRoot)]),
   ]
 
   const checks: CheckResult[] = [...baseChecks, ...portlessChecks, ...(await checkAgentFiles()), ...pluginChecks]
@@ -1469,13 +1574,31 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
   // NO rendering here, deliberately. `doctor()` has two callers — the CLI action and the MCP tool —
   // and only one of them has a terminal. Printing from inside would emit a human report into an MCP
   // server's stderr on every agent call; the CLI action owns presentation instead (see `report.ts`).
+  //
+  // `fixable` and `cliVersion` are here because this payload is what a non-terminal caller reads, and
+  // neither is recoverable from it otherwise. The `--fix` hint lives in `report.ts`, which `--json`
+  // skips entirely, and fixability is deliberately NOT derivable from a message — `portless routes`
+  // names a MANUAL removal command in its failure text while `--fix` owns the row, so a caller
+  // reading messages would send a user down the hand-removal path. `cliVersion` is a top-level field
+  // rather than a parse of the `CLI version` row's message: a version floor is a comparison, and the
+  // failure direction of a slipped parse is "assume the floor is met".
   const structuredContent = {
     checks: checks.map((c) => {
-      return { name: c.name, status: c.status, message: c.message }
+      // `detail` is carried unconditionally, `undefined` on the ~23 rows that have none: a conditional
+      // spread would type the array as a UNION and make `row.detail` unreadable at every call site.
+      // `JSON.stringify` drops an undefined value, so the rendered payload is identical either way.
+      return {
+        name: c.name,
+        status: c.status,
+        message: c.message,
+        fixable: FIXABLE_NAMES.has(c.name),
+        detail: c.detail,
+      }
     }),
     allPassed: checks.every((c) => {
       return c.status === 'pass'
     }),
+    cliVersion: packageJson.version,
   }
 
   return {
@@ -1487,7 +1610,8 @@ export const doctor = async (options: { fix?: boolean } = {}) => {
 // MCP Tool Registration
 export const doctorMcpTool = defineMcpTool({
   name: 'doctor',
-  description: 'Check installation and authentication status of gh, doppler, and aws CLIs',
+  description:
+    'Check installation and authentication status of gh, doppler, and aws CLIs. Read-only: a row marked fixable is one `infra-kit doctor --fix` repairs, and that flag is not reachable from this boundary — report such a row to the human instead.',
   inputSchema: {},
   outputSchema: {
     checks: z
@@ -1496,10 +1620,24 @@ export const doctorMcpTool = defineMcpTool({
           name: z.string().describe('Name of the check'),
           status: z.enum(['pass', 'fail']).describe('Check result'),
           message: z.string().describe('Details about the check result'),
+          fixable: z.boolean().describe('Whether `infra-kit doctor --fix` repairs this row'),
+          // Present on the four dependency rows only. `status` answers "resolves on PATH"; this answers
+          // the richer question beside it, which is why `present` and `onPath` are both here and can
+          // disagree with each other.
+          detail: z
+            .object({
+              manager: z.string().describe('Which package manager owns this install, read from its resolved path'),
+              version: z.string().nullable().describe('The version the tool reported, or null'),
+              present: z.boolean().describe('The tool is installed somewhere findable — on PATH or not'),
+              onPath: z.boolean().describe('The binary resolves on PATH'),
+            })
+            .optional()
+            .describe('Probe facts about an external dependency. Never a fix: no action, no commands'),
         }),
       )
       .describe('List of all check results'),
     allPassed: z.boolean().describe('Whether all checks passed'),
+    cliVersion: z.string().describe('Version of the infra-kit CLI that produced this report'),
   },
   // Read-only on purpose: `--fix` is NOT reachable here. The MCP boundary auto-confirms every tool call,
   // so a state-mutating flag must never be one `handler: doctor` away from an agent invoking it.

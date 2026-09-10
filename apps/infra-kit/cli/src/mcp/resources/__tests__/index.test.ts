@@ -4,7 +4,13 @@ import { describe, expect, it } from 'vitest'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 
 import type { ResourceDeps } from '..'
-import { CONFIG_RESOURCE_URI, DEV_CONTEXT_RESOURCE_URI, RELEASE_CREATE_WORKFLOW_URI, initializeResources } from '..'
+import {
+  CONFIG_RESOURCE_URI,
+  DEV_CONTEXT_RESOURCE_URI,
+  RELEASE_CREATE_WORKFLOW_URI,
+  SETUP_WORKFLOW_URI,
+  initializeResources,
+} from '..'
 import { WORKFLOW_BODIES } from '../../workflow-bodies'
 import type { DevContextSnapshot } from '../dev-context'
 
@@ -58,26 +64,32 @@ describe('initializeResources', () => {
     expect(uris).toContain(CONFIG_RESOURCE_URI)
     expect(uris).toContain(DEV_CONTEXT_RESOURCE_URI)
     expect(uris).toContain(RELEASE_CREATE_WORKFLOW_URI)
+    expect(uris).toContain(SETUP_WORKFLOW_URI)
   })
 
   /**
-   * The agent-reachable half of the workflow pair. The prompt half, and the byte-identity between
-   * the two channels, are asserted over a real transport in `src/mcp/__tests__/server.test.ts`.
+   * The agent-reachable channel for every workflow procedure. `release-create`'s prompt half, and the
+   * byte-identity between its two channels, are asserted over a real transport in
+   * `src/mcp/__tests__/server.test.ts`.
+   *
+   * Run per URI rather than once, because both registrations now go through one helper: a helper that
+   * captured the first workflow's key would serve `release-create`'s text at BOTH URIs, and a test
+   * that only read the first one would stay green while `setup` served the wrong procedure.
    */
-  it('resolves the release-create procedure as markdown, from the shared constant', async () => {
+  it.each([
+    ['release-create', RELEASE_CREATE_WORKFLOW_URI],
+    ['setup', SETUP_WORKFLOW_URI],
+  ] as const)('resolves the %s procedure as markdown, from the shared constant', async (key, uri) => {
     const server = newServer()
 
     await initializeResources(server, makeDeps())
 
-    const result = await registeredOf(server)[RELEASE_CREATE_WORKFLOW_URI]!.readCallback(
-      new URL(RELEASE_CREATE_WORKFLOW_URI),
-      {},
-    )
+    const result = await registeredOf(server)[uri]!.readCallback(new URL(uri), {})
 
     expect(result.contents).toHaveLength(1)
-    expect(result.contents[0]!.uri).toBe(RELEASE_CREATE_WORKFLOW_URI)
+    expect(result.contents[0]!.uri).toBe(uri)
     expect((result.contents[0] as { mimeType?: string }).mimeType).toBe('text/markdown')
-    expect(result.contents[0]!.text).toBe(WORKFLOW_BODIES['release-create'])
+    expect(result.contents[0]!.text).toBe(WORKFLOW_BODIES[key])
   })
 
   it('resolves the config resource to the merged config from the loader', async () => {

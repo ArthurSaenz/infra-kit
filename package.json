@@ -4,10 +4,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "env-use": "pnpm env use --global 24.18.0",
-    "setup": "pnpm env-use && pnpm install",
-    "reinstall": "pnpm run clean-artifacts && pnpm run clean-cache-root && pnpm clean && pnpm store prune && pnpm run env-use && pnpm install --force",
-    "print-env-node": "pnpm env list --remote 24",
+    "runtime-set-node": "pnpm runtime set node 24.18.0 --global",
+    "setup": "pnpm run runtime-set-node && pnpm install",
+    "reinstall": "pnpm run clean-artifacts && pnpm run clean-cache-root && pnpm clean && pnpm store prune && pnpm run runtime-set-node && pnpm install --force",
     "upgrade-pnpm": "pnpm self-update",
     "upgrade-deps": "pnpm --recursive --interactive --latest update",
     "dedupe-deps": "pnpm dedupe",

@@ -49,13 +49,18 @@ describe('command palette', () => {
           'release deploy-all',
           'release deploy-selected',
           'release deliver',
+          'release remove',
         ],
       ],
       ['Worktrees', ['worktrees add', 'worktrees list', 'reopen', 'worktrees remove', 'worktrees sync']],
       ['Environment', ['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list']],
       ['Configuration', ['config-get', 'config path', 'config edit']],
       ['Vendor', ['vendor check', 'vendor config']],
-      ['Setup & Diagnostics', ['init', 'doctor', 'audit', 'version']],
+      // No `setup` row, deliberately — see the same list in `command-catalog.test.ts`. This is the
+      // rendered half of that assertion: `command-palette.tsx` labels a row with `groupPath.join(' ')`
+      // and dispatches it with zero flags, so a row here would read a bare `setup` (colliding with the
+      // `pnpm run setup` script) and run the installing form on one keystroke.
+      ['Setup & Diagnostics', ['doctor', 'audit', 'version']],
     ])
   })
 

@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { $ } from 'zx'
 
-import { getReleasePRsWithInfo } from 'src/integrations/gh'
+import { fetchPRByHead, getReleasePRsWithInfo } from 'src/integrations/gh'
+import type { PRStatus } from 'src/integrations/gh'
 import { deliverJiraRelease, loadJiraConfigOptional } from 'src/integrations/jira'
 // Imported from the leaf module, not the `src/integrations/jira` barrel, and deliberately so:
 // `isJiraApiError` is a pure `instanceof` guard with no I/O. Tests mock that barrel to stub NETWORK
@@ -13,7 +14,7 @@ import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { formatZxError } from 'src/lib/errors/format-zx-error'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
-import { deleteLocalBranch, deleteRemoteBranch, getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
+import { deleteLocalBranch, deleteRemoteBranch, getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import { displayLabel, formatJiraName, formatRcTitle, parseBranchName } from 'src/lib/release-id'
@@ -25,20 +26,12 @@ import {
   resolveReleaseBranch,
 } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import { removeWorktrees } from 'src/lib/worktrees'
+import { removeReleaseWorktreeIfPresent } from 'src/lib/worktrees'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
 interface GhReleaseDeliverArgs extends RequiredConfirmedOptionArg {
   version: string
-}
-
-type PRState = 'OPEN' | 'MERGED' | 'CLOSED'
-
-interface PRStatus {
-  number: number
-  state: PRState
-  title: string
 }
 
 /**
@@ -57,18 +50,6 @@ const runStep = async <T>(operation: string, remediation: string, fn: () => Prom
     logger.debug({ err: formatZxError(error) }, `Failed to ${operation}`)
     throw new OperationError(error, { operation, remediation })
   }
-}
-
-/**
- * Fetch the (most-recent) PR for the given head branch, across all states, so
- * we can resume a partially-completed delivery: a PR merged on a prior attempt
- * still appears here as `state: 'MERGED'`, letting the caller skip the merge.
- */
-const fetchPRByHead = async (head: string): Promise<PRStatus | null> => {
-  const result = await $`gh pr list --head ${head} --state all --json number,state,title --limit 1`
-  const prs = JSON.parse(result.stdout) as PRStatus[]
-
-  return prs[0] ?? null
 }
 
 /**
@@ -155,36 +136,6 @@ const resolveTargetInteractively = async (): Promise<ResolvedTarget> => {
   }
 
   return { selectedReleaseBranch, releasePrTitle: prInfo.title }
-}
-
-/**
- * `gh pr merge --delete-branch` also deletes the local branch, which fails if a
- * worktree has it checked out (the actual root cause of the "Failed to merge
- * release PR" surface error). Pre-remove any worktree for the release branch
- * so the local delete can succeed.
- */
-export const removeReleaseWorktreeIfPresent = async (releaseBranch: string): Promise<void> => {
-  const worktreeBranches = await getCurrentWorktrees('release')
-
-  if (!worktreeBranches.includes(releaseBranch)) return
-
-  const projectRoot = await getProjectRoot()
-  const worktreeDir = `${projectRoot}${WORKTREES_DIR_SUFFIX}`
-
-  const { removed, failed } = await removeWorktrees({ branches: [releaseBranch], worktreeDir, projectRoot })
-
-  // Check membership, not emptiness: `removed` is one of two result lists now.
-  if (!removed.includes(releaseBranch)) {
-    const failure = failed.find((entry) => {
-      return entry.branch === releaseBranch
-    })
-
-    throw new OperationError(undefined, {
-      operation: `remove worktree for ${releaseBranch} before merge`,
-      remediation: `run manually: git worktree remove ${worktreeDir}/${releaseBranch} (use --force if uncommitted changes)`,
-      stderrExcerpt: failure?.reason,
-    })
-  }
 }
 
 interface MergeReleasePRArgs {
@@ -417,7 +368,16 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
 
   $.quiet = true
 
-  await removeReleaseWorktreeIfPresent(selectedReleaseBranch)
+  // `worktreeDir` is re-derived here (rather than exposed by the helper) so the messages below can
+  // name the exact path, matching this command's original wording; `removeReleaseWorktreeIfPresent`
+  // recomputes it internally for the same reason it needs it for the actual `removeWorktrees` call.
+  const deliverProjectRoot = await getProjectRoot()
+  const deliverWorktreeDir = `${deliverProjectRoot}${WORKTREES_DIR_SUFFIX}`
+
+  await removeReleaseWorktreeIfPresent(selectedReleaseBranch, {
+    operation: `remove worktree for ${selectedReleaseBranch} before merge`,
+    remediation: `run manually: git worktree remove ${deliverWorktreeDir}/${selectedReleaseBranch} (use --force if uncommitted changes)`,
+  })
   await mergeReleasePR({ selectedReleaseBranch, releaseType })
 
   if (releaseType !== 'hotfix') {

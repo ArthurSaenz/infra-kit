@@ -11,7 +11,7 @@ import { MARKETPLACE_NAME, PLUGIN_KEY } from './plugin-pointer'
  * marketplace and plugin, plus the consumer repo's own MCP server registration.
  *
  * All of it is read-only and total — every reader answers "not registered / not installed" for an
- * absent, unreadable or malformed file rather than throwing. `init` prints an install hint from
+ * absent, unreadable or malformed file rather than throwing. `initCore` prints an install hint from
  * these answers and `doctor` reports them as rows, and neither may crash because a user hand-edited
  * a JSON file under `~/.claude/`.
  *
@@ -58,7 +58,7 @@ const pluginsPath = (file: string, home: string = os.homedir()): string => {
  * Is the `infra-kit` marketplace registered on this machine?
  *
  * Registration is a machine fact (`~/.claude/plugins/known_marketplaces.json`), distinct from the
- * per-project `extraKnownMarketplaces` pointer `init` writes: the pointer says where to look, this
+ * per-project `extraKnownMarketplaces` pointer `initCore` writes: the pointer says where to look, this
  * says the lookup has actually happened.
  *
  * @example

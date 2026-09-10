@@ -8,22 +8,27 @@
 // The `?raw` suffix — not a bare `.md` — is the one spelling correct in all three
 // toolchains this package builds with (see src/md.d.ts).
 import releaseCreate from '../../resources/workflow/release-create.md?raw'
+import setup from '../../resources/workflow/setup.md?raw'
 
 /** Name of a workflow procedure, matching the exposed MCP tool it is the procedure for. */
-export type WorkflowKey = 'release-create'
+export type WorkflowKey = 'release-create' | 'setup'
 
 /**
  * The workflow procedures, inlined at build time.
  *
- * Each body is registered TWICE from this one record — as an MCP resource under
- * `infra-kit://workflow/<key>` and as an MCP prompt named `<key>` — because the two channels
- * reach different readers: an agent cannot fetch a prompt (it is a host UI affordance) but can
- * read a resource, while a human picks the prompt out of the `/` menu. One constant, so drift
- * takes two edits and is not silent.
+ * Every body is registered as an MCP resource under `infra-kit://workflow/<key>`, which is the
+ * channel an AGENT can reach: an agent cannot fetch a prompt, because a prompt is a host UI
+ * affordance a human picks out of the `/` menu.
  *
- * `trimEnd()` because prettier gives every `.md` a trailing newline and both wire forms carry the
- * body verbatim; normalizing here keeps the two channels byte-identical by construction.
+ * `release-create` is additionally registered as a prompt of that name, so the human half exists
+ * too — one constant for both, so the prose cannot drift between them without two edits. `setup`
+ * deliberately has no prompt: its human surface is the `/infra-kit:setup` plugin command, and a
+ * second `/` entry carrying the same text would be a duplicate of it rather than a second reader.
+ *
+ * `trimEnd()` because prettier gives every `.md` a trailing newline and every wire form carries the
+ * body verbatim; normalizing here keeps the channels byte-identical by construction.
  */
 export const WORKFLOW_BODIES: Readonly<Record<WorkflowKey, string>> = {
   'release-create': releaseCreate.trimEnd(),
+  setup: setup.trimEnd(),
 }

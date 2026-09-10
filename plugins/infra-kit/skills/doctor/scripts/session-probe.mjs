@@ -154,7 +154,7 @@ const checkSessionVsRecords = (root, env, projectPath) => {
     return row(
       name,
       FAIL,
-      `Nothing records ${PLUGIN_KEY} as installed, so this session loads no infra-kit skills. ` + 'Run: infra-kit init',
+      `Nothing records ${PLUGIN_KEY} as installed, so this session loads no infra-kit skills. ` + 'Run: infra-kit setup --skip-tools',
     )
   }
 
@@ -165,7 +165,7 @@ const checkSessionVsRecords = (root, env, projectPath) => {
       name,
       FAIL,
       `${installations.value.length} install record(s) for ${PLUGIN_KEY}, but none covers this ` +
-        'project, so this session loads no infra-kit skills here. Run: infra-kit init',
+        'project, so this session loads no infra-kit skills here. Run: infra-kit setup --skip-tools',
     )
   }
 

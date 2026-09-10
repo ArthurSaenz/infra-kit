@@ -6,7 +6,7 @@ import { logger } from 'src/lib/logger'
 /**
  * @fileoverview
  *
- * The two-key POINTER `infra-kit init` writes into a consumer repo's `.claude/settings.json`
+ * The two-key POINTER `infra-kit setup` writes into a consumer repo's `.claude/settings.json`
  * so Claude Code knows where the `infra-kit` plugin marketplace lives and that the plugin is
  * enabled for that project.
  *
@@ -41,7 +41,7 @@ export const PLUGIN_INSTALL_COMMAND = `claude plugin install ${PLUGIN_KEY} --sco
 /**
  * The command that makes the marketplace known to this machine, and the prerequisite of the one
  * above. Rendered from the same constants the automated install passes as argv, so the line a user
- * copies and the command `init` runs can never drift apart.
+ * copies and the command `setup` runs can never drift apart.
  */
 export const MARKETPLACE_ADD_COMMAND = `claude plugin marketplace add ${MARKETPLACE_REPO}`
 
@@ -170,7 +170,7 @@ export const ensurePluginPointer = (settingsPath: string): PluginPointerResult =
 
   if (!isPlainObject(parsed)) {
     logger.warn(
-      `Could not parse ${settingsPath} — left it untouched. Add "${PLUGIN_KEY}" to enabledPlugins by hand, or fix the JSON and re-run: infra-kit init`,
+      `Could not parse ${settingsPath} — left it untouched. Add "${PLUGIN_KEY}" to enabledPlugins by hand, or fix the JSON and re-run: infra-kit setup --skip-tools`,
     )
 
     return { status: 'unparseable', path: settingsPath, added: [] }

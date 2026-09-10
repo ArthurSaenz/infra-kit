@@ -89,6 +89,16 @@ export interface McpTool<TIn extends z.ZodRawShape = z.ZodRawShape, TOut extends
    * — the form is collected on the way INTO the gate, never instead of it.
    */
   formProvider?: ArgumentFormProvider
+  /**
+   * Host-facing `_meta` for this tool's `tools/list` entry.
+   *
+   * The one key used today is `anthropic/requiresUserInteraction: true`, which makes Claude Code prompt
+   * a human on EVERY call — including in `acceptEdits`, `auto` and `bypassPermissions`, and with allow
+   * rules unable to skip it. It is a Claude Code extension rather than MCP spec, so any other host, and
+   * any Claude Code below v2.1.199, ignores it silently: it is a gate where honoured and a no-op
+   * elsewhere, never a substitute for a refusal computed inside the CLI.
+   */
+  meta?: Record<string, unknown>
   handler: (
     params: z.infer<z.ZodObject<TIn>> & RequiredConfirmedOptionArg,
   ) => Promise<ToolsExecutionResult<z.infer<z.ZodObject<TOut>>>>

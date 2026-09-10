@@ -262,6 +262,22 @@ export const getRepoName = async (): Promise<string> => {
 }
 
 /**
+ * Check whether a local branch exists.
+ *
+ * `deleteLocalBranch` fails open: it silently returns without deleting when
+ * the branch is the current checkout or already absent, and either way its
+ * `void` return gives the caller no way to tell "deleted" apart from "did
+ * nothing". A caller that must not report an unperformed deletion — such as
+ * a teardown command confirming a branch is actually gone — needs this
+ * independent check rather than trusting `deleteLocalBranch`'s outcome.
+ */
+export const branchExists = async (branch: string): Promise<boolean> => {
+  const listed = await $`git branch --list ${branch}`
+
+  return listed.stdout.trim().length > 0
+}
+
+/**
  * Delete a local branch if it exists and is not the current checkout.
  *
  * Idempotent: a no-op when the branch is absent (`git branch --list` prints

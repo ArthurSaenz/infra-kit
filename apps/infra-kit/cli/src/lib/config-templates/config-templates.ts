@@ -131,7 +131,7 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
 
 /**
  * Annotated JSONC reference for the user-global (layer 2) config, written next to the
- * real `~/.infra-kit/infra-kit.json` by `infra-kit init`. Documents every top-level
+ * real `~/.infra-kit/infra-kit.json` by `infra-kit setup`. Documents every top-level
  * key of the schema.
  *
  * @example
@@ -201,7 +201,7 @@ ${CONFIG_KEY_DOCS}
 /**
  * Annotated JSONC reference for the machine-local factory registry
  * (`~/.infra-kit/vendor.json`). Independent of the infra-kit.json merge chain: the real
- * file is scaffolded by `infra-kit vendor config --init`, never seeded by `init`.
+ * file is scaffolded by `infra-kit vendor config --init`, never seeded by `setup`.
  *
  * @example
  * buildVendorExample()

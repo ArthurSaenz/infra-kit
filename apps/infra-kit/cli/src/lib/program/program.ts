@@ -18,13 +18,14 @@ import { ghMergeDev } from 'src/commands/gh-merge-dev'
 import { withRunCleanup } from 'src/commands/gh-merge-dev/run-cleanup'
 import { ghReleaseDeliver } from 'src/commands/gh-release-deliver'
 import { ghReleaseList } from 'src/commands/gh-release-list'
-import { init } from 'src/commands/init'
 import { runMcp } from 'src/commands/mcp'
 import { releaseCreate } from 'src/commands/release-create'
 import { deprecatedLocalDeploy, releaseDeployAll, releaseDeploySelected } from 'src/commands/release-deploy'
 import { releaseDescEdit } from 'src/commands/release-desc-edit'
+import { releaseRemove } from 'src/commands/release-remove'
 import { reopen } from 'src/commands/reopen'
 import { runSelfUpdate } from 'src/commands/self-update'
+import { setup } from 'src/commands/setup'
 import { vendorCheck } from 'src/commands/vendor-check'
 import { vendorConfig } from 'src/commands/vendor-config'
 import { version } from 'src/commands/version'
@@ -237,6 +238,25 @@ const configureReleaseDeliver = (cmd: Command): Command => {
     })
 }
 
+const configureReleaseRemove = (cmd: Command): Command => {
+  return cmd
+    .description('Tear down a release: worktree, PR, branches, and the Jira fix version')
+    .option('-v, --version <version>', 'Version (e.g. 1.2.5) or release name (e.g. checkout-redesign) to remove')
+    .option('--move-issues-to <version>', 'Reassign issues carrying the fix version to this version before removing it')
+    .option('--skip-jira', 'Remove everything except the Jira fix version')
+    .option('-y, --yes', 'Skip confirmation prompt')
+    .action(async (options) => {
+      emit(
+        await releaseRemove({
+          version: options.version,
+          moveIssuesTo: options.moveIssuesTo,
+          skipJira: options.skipJira,
+          confirmedCommand: options.yes,
+        }),
+      )
+    })
+}
+
 const configureWorktreesSync = (cmd: Command): Command => {
   return cmd
     .description('Remove release worktrees whose PRs are no longer open')
@@ -355,11 +375,19 @@ const configureConfigEdit = (cmd: Command): Command => {
 // Commands excluded from the cli-invocation auto-load trigger: the env-* family
 // (avoids recursion — `env-autoload`/`env-load` would re-enter), plus the
 // host-inspecting / meta commands where priming Doppler env would be surprising
-// (`init` bootstraps the shell block, `doctor` inspects auth, `version` prints a
-// string, `dev` is a long-running server that manages its own env,
-// `self-update` replaces this binary, and `mcp` hands its stdio to a child).
+// (`setup` bootstraps the shell block AND installs doppler itself, `doctor`
+// inspects auth, `version` prints a string, `dev` is a long-running server that
+// manages its own env, `self-update` replaces this binary, and `mcp` hands its
+// stdio to a child).
 // `--help`/`--version`/the bare-arg menu don't fire preAction at all.
-const AUTO_LOAD_EXCLUDED = new Set(['init', 'doctor', 'version', 'dev', 'self-update', 'mcp'])
+//
+// `setup` is the member that carries the machine-bootstrap case, and it carries it under BOTH its
+// spellings: the set is keyed on the INVOKED command name, and `setup --skip-tools` invokes the same
+// name, so the additive form is excluded by the same entry. That matters because `--skip-tools` is the
+// form a user runs BEFORE doppler is installed, where there is nothing to prime from — priming there
+// would write a Doppler env-load file into the session cache off a command that exists to install the
+// tool it would be priming from.
+const AUTO_LOAD_EXCLUDED = new Set(['setup', 'doctor', 'version', 'dev', 'self-update', 'mcp'])
 
 const isAutoLoadExcludedCommand = (name: string): boolean => {
   return name.startsWith('env-') || AUTO_LOAD_EXCLUDED.has(name)
@@ -373,9 +401,14 @@ const isAutoLoadExcludedCommand = (name: string): boolean => {
 //     (lib/tool-handler), so a server that never receives a tool call never writes to $HOME.
 //   - `version` / `self-update` touch config ZERO times today, so seeding is pure new cost on the two
 //     fastest paths; `self-update` also re-execs the binary.
-// Everything else DOES seed — `doctor`, `config path`, `dev` and `init` included (they are all in
+// Everything else DOES seed — `doctor`, `config path`, `dev` and `setup` included (they are all in
 // AUTO_LOAD_EXCLUDED, but that set answers a different question), as does the whole `env-*` family
 // apart from `env-autoload`.
+//
+// `setup` is deliberately absent from this set rather than overlooked: it is the command that
+// establishes this project's layer-3 override file, so excluding it would mean the setup command is the
+// one command that does not set up the config. That holds for `setup --skip-tools` too — the seed is a
+// local write, not a tool install, so the additive form has exactly the same business here.
 const SEED_EXCLUDED = new Set(['env-autoload', 'mcp', 'version', 'self-update'])
 
 /**
@@ -415,6 +448,7 @@ export const buildProgram = (): Command => {
   configureReleaseDeployAll(releaseGroup.command('deploy-all'))
   configureReleaseDeploySelected(releaseGroup.command('deploy-selected'))
   configureReleaseDeliver(releaseGroup.command('deliver'))
+  configureReleaseRemove(releaseGroup.command('remove'))
 
   const worktreesGroup = program.command('worktrees').description('Git worktree management commands')
 
@@ -631,6 +665,30 @@ export const buildProgram = (): Command => {
       emit(await devStatus())
     })
 
+  // The one command that sets a machine up: the local `initCore` writes, then install-or-update for
+  // brew, aws, gh, doppler and portless. The recipes that need sudo or pipe a network-fetched script are
+  // never run from here — they are printed, for the human to run in their own shell.
+  //
+  // `--skip-tools` is the additive form (the local writes, and nothing installed). It
+  // cannot be combined with `--tools` or `--update`: that is a usage error rather than a precedence
+  // rule, because every precedence answer either installs software the caller asked not to install or
+  // acts on a set they did not choose (`setup.ts` SKIP_TOOLS_CONFLICT).
+  program
+    .command('setup')
+    .description('Set this machine up: shell integration, agent files, MCP server, then the external tools')
+    .option('--tools <ids...>', 'Limit to these tools (brew, aws, gh, doppler, portless)')
+    .option('--update [ids...]', 'Update what is already installed; never install a missing tool')
+    .option('--skip-tools', 'Do the local setup only, then REPORT what each tool needs — installs nothing')
+    .action(async (options: { tools?: string[]; update?: boolean | string[]; skipTools?: boolean }) => {
+      emit(
+        await setup({
+          tools: options.tools as never,
+          update: options.update as never,
+          skipTools: options.skipTools,
+        }),
+      )
+    })
+
   program
     .command('version')
     .description('Print the installed infra-kit CLI version')
@@ -652,15 +710,6 @@ export const buildProgram = (): Command => {
     )
     .action(async () => {
       emit(await envList())
-    })
-
-  program
-    .command('init')
-    .description(
-      'Inject shell integration into .zshrc, sync repo agent-instruction files, and install the Claude Code plugin',
-    )
-    .action(async () => {
-      emit(await init())
     })
 
   program

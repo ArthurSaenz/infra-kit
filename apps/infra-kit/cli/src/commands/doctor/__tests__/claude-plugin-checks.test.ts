@@ -202,15 +202,17 @@ describe('checkMcpServerKey (T4b)', () => {
   })
 
   /**
-   * A repo with no `.mcp.json` has abstained from MCP entirely and has no key to get wrong, so this
-   * row states that and does not fail. A file that IS present without the key is the misconfiguration
-   * the check exists for, and that case above stays red.
+   * `initCore` now always writes `.mcp.json`, so a missing file is no longer an abstention — it is the
+   * pre-setup state, and the message has to name the command that leaves it. Still a `pass`: two
+   * rows already fail in that state with the same fix. A file that IS present without the key is the
+   * misconfiguration the check exists for, and that case above stays red.
    */
-  it('passes with a not-applicable note when there is no .mcp.json', () => {
+  it('passes and names the setup command when there is no .mcp.json', () => {
     const check = checkMcpServerKey(repo)
 
     expect(check.status).toBe('pass')
-    expect(check.message).toContain('Not applicable: no .mcp.json')
+    expect(check.message).toContain('No .mcp.json at the repo root yet')
+    expect(check.message).toContain('infra-kit setup --skip-tools')
   })
 })
 

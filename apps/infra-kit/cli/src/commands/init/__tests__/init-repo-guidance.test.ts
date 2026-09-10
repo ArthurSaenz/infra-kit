@@ -10,10 +10,10 @@ import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 
 import { AGENTS_MARKER_START } from '../agent-files'
-import { init } from '../init'
+import { initCore, logInitEntry } from '../init'
 
 // The migrations are exercised by their own suites; here they would only add temp-dir
-// bookkeeping between `init()` and the agent-guidance step under test.
+// bookkeeping between `initCore` and the agent-guidance step under test.
 vi.mock('../migrate-config', () => {
   return {
     migrateFactoryConfigToJson: vi.fn(async () => {}),
@@ -56,7 +56,7 @@ const loggedAt = (level: 'info' | 'warn'): string[] => {
   })
 }
 
-/** The `  <action> <relPath>` line `init` logged for `relPath`, or undefined when it logged none. */
+/** The `  <action> <relPath>` line `initCore` logged for `relPath`, or undefined when it logged none. */
 const lineFor = (relPath: string): string | undefined => {
   return loggedAt('info').find((line) => {
     return line.includes(` ${relPath}`)
@@ -96,9 +96,19 @@ afterEach(() => {
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
-describe('init() — repo-wide agent-guidance refresh', () => {
+/**
+ * The additive half on its own: `initCore` with the CLI's entry logger, which is exactly what
+ * `infra-kit setup --skip-tools` runs (setup wraps the same sink only to hold its closing
+ * shell-activation line back until after the dependency half). The standalone `init` command this
+ * suite used to drive no longer exists, so the pairing IS the subject now.
+ */
+const runInit = async (): Promise<void> => {
+  await initCore(logInitEntry)
+}
+
+describe('setup --skip-tools — repo-wide agent-guidance refresh', () => {
   it('writes the root block and one block per workspace package, reporting each action', async () => {
-    await init()
+    await runInit()
 
     expect(fs.readFileSync(path.join(repo, 'CLAUDE.md'), 'utf-8')).toContain(AGENTS_MARKER_START)
 
@@ -135,7 +145,7 @@ describe('init() — repo-wide agent-guidance refresh', () => {
       path.join(repo, 'packages', 'alpha', 'CLAUDE.md'),
     )
 
-    await init()
+    await runInit()
 
     // The failed path is named, with its action.
     expect(lineFor(path.join('packages', 'alpha', 'CLAUDE.md'))).toMatch(
@@ -145,18 +155,18 @@ describe('init() — repo-wide agent-guidance refresh', () => {
     // The distinct summary line names the count and the fix.
     expect(loggedAt('warn')).toContain(FAILURE_SUMMARY)
 
-    // `init`'s contract is shell setup: a guidance write failure must not turn it red.
+    // `initCore`'s contract is shell setup: a guidance write failure must not turn it red.
     expect(process.exitCode ?? 0).toBe(0)
 
     // Continue-and-report: the package discovered AFTER the failing one was still written,
-    // as were the root block and the rest of init's steps.
+    // as were the root block and the rest of initCore's steps.
     expect(fs.readFileSync(path.join(repo, 'packages', 'beta', 'CLAUDE.md'), 'utf-8')).toContain(PACKAGE_MARKER_START)
     expect(fs.readFileSync(path.join(repo, 'CLAUDE.md'), 'utf-8')).toContain(AGENTS_MARKER_START)
     expect(fs.existsSync(path.join(home, '.zshrc'))).toBe(true)
   })
 
   it('is idempotent — a second run reports nothing changed and logs no summary line', async () => {
-    await init()
+    await runInit()
 
     const before = ['CLAUDE.md', 'packages/alpha/CLAUDE.md', 'packages/beta/CLAUDE.md'].map((rel) => {
       return fs.readFileSync(path.join(repo, rel), 'utf-8')
@@ -164,7 +174,7 @@ describe('init() — repo-wide agent-guidance refresh', () => {
 
     vi.clearAllMocks()
 
-    await init()
+    await runInit()
 
     const after = ['CLAUDE.md', 'packages/alpha/CLAUDE.md', 'packages/beta/CLAUDE.md'].map((rel) => {
       return fs.readFileSync(path.join(repo, rel), 'utf-8')
@@ -186,7 +196,7 @@ describe('init() — repo-wide agent-guidance refresh', () => {
     fs.rmSync(path.join(repo, 'infra-kit.json'))
     resetInfraKitConfigCache()
 
-    await init()
+    await runInit()
 
     expect(fs.existsSync(path.join(repo, 'CLAUDE.md'))).toBe(false)
     expect(fs.existsSync(path.join(repo, 'packages', 'alpha', 'CLAUDE.md'))).toBe(false)

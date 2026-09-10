@@ -59,4 +59,5 @@ changes the text around it.
 
 Consumers run a globally-installed CLI, so the text reaches them through a publish —
 there is no runtime read of this directory. Bump the version, publish, then each
-developer runs `pnpm add -g infra-kit@latest` and re-runs `infra-kit init`.
+developer runs `pnpm add -g infra-kit@latest` and re-runs `infra-kit audit --fix --root`
+(`--fix --all` for the per-package blocks).

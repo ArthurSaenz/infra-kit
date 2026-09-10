@@ -129,6 +129,8 @@ describe('package manager installed', () => {
       name: 'package manager installed',
       status: 'pass',
       message: 'Installed: pnpm',
+      // Payload rows carry `fixable`, and a probe row is not one `--fix` repairs.
+      fixable: false,
     })
   })
 
@@ -148,6 +150,7 @@ describe('terminal installed', () => {
       name: 'terminal installed',
       status: 'pass',
       message: 'Installed: cmux',
+      fixable: false,
     })
   })
 

@@ -307,16 +307,16 @@ describe('getInfraKitConfig', () => {
     await withTmpRepo(async () => {
       await expect(getInfraKitConfig()).rejects.toThrow(/not found/)
       // The plain branch (Step 4) — NOT the legacy-yml migration branch. Both now mention
-      // `infra-kit init`, so the legacy-yml phrasing is the discriminator.
+      // `infra-kit setup --skip-tools`, so the legacy-yml phrasing is the discriminator.
       await expect(getInfraKitConfig()).rejects.not.toThrow(/legacy infra-kit\.yml/)
     })
   })
 
-  it('points at `infra-kit init` when a legacy infra-kit.yml exists but infra-kit.json does not', async () => {
+  it('points at `infra-kit setup --skip-tools` when a legacy infra-kit.yml exists but infra-kit.json does not', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(path.join(tmp, 'infra-kit.yml'), 'environments:\n  - dev\n')
 
-      await expect(getInfraKitConfig()).rejects.toThrow(/infra-kit init/)
+      await expect(getInfraKitConfig()).rejects.toThrow(/infra-kit setup --skip-tools/)
     })
   })
 

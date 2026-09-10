@@ -17,18 +17,18 @@ process.env.INFRA_KIT_NO_SEED = '1'
 
 // Second tripwire, same purpose, different mechanism.
 //
-// `infra-kit init` DRIVES `claude plugin install` (src/lib/plugin-pointer/install-plugin), and three
-// suites call the real `init()`. Unguarded, every run of those suites would install this plugin into
+// `initCore` DRIVES `claude plugin install` (src/lib/plugin-pointer/install-plugin), and three
+// suites call it for real. Unguarded, every run of those suites would install this plugin into
 // the developer's own Claude Code — recorded against a temp directory deleted seconds later — and
 // each install would take tens of seconds against the network.
 //
 // A PATH SHIM, not an env kill switch. There is deliberately no product-facing way to turn the
 // install off, so the guard must live entirely in the test environment: `src/__fixtures__/bin/claude`
 // answers `--version`, exits 0 for the two plugin subcommands, and writes nothing. PREPENDED, so it
-// wins over a real `claude` when the developer has one. Global, so a NEW test that calls `init()`
+// wins over a real `claude` when the developer has one. Global, so a NEW test that calls `initCore`
 // cannot reintroduce the side effect by omission.
 //
 // The shim writes no `installed_plugins.json` record on purpose: the installer verifies against that
-// file, so `init` correctly reports `unverified` and warns. Forging the record would hollow out the
+// file, so `initCore` correctly reports `unverified` and warns. Forging the record would hollow out the
 // one check that exists to catch a silent install failure.
 process.env.PATH = `${path.join(import.meta.dirname, 'src', '__fixtures__', 'bin')}${path.delimiter}${process.env.PATH ?? ''}`

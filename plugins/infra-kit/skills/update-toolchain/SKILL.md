@@ -28,12 +28,12 @@ push until the Finalize phase, and only after explicit user confirmation.
 > workflows do not need separate version updates.
 
 1. Read the current Node.js version from the `.node-version` file (this is the OLD version).
-2. Run `pnpm run print-env-node` to list available Node.js versions. Pick the highest version number
-   from the list.
-3. If the latest version matches the OLD version, Node.js is already up-to-date — skip to Phase 3.
+2. Run `pnpm runtime set node 24 --global`. A bare major resolves to the exact latest release in that
+   line and prints it (`+ node 24.21.0`) — that resolved version is the NEW version.
+3. If the resolved version matches the OLD version, Node.js is already up-to-date — skip to Phase 3.
 4. Update the `.node-version` file with the new version.
-5. Update the `env-use` script in `package.json` to reference the new version.
-6. Run the updated `pnpm run env-use` to switch the local Node.js version.
+5. Update the `runtime-set-node` script in `package.json` to reference the new version.
+6. Run the updated `pnpm run runtime-set-node` to pin the exact version globally.
 7. Run `pnpm install` to recompile any native addons for the new Node.js version.
 8. Verify: grep the entire repo for the OLD Node.js version (excluding `pnpm-lock.yaml` and
    `node_modules/`) — expect zero hits.

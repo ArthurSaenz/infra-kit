@@ -7,8 +7,16 @@ import type { ToolCallContext } from 'src/lib/tool-handler'
 
 export const initializeTools = async (server: McpServer) => {
   // The registered tool set is derived from the single command catalog, filtered
-  // by its explicit `mcpExposed` allowlist. doctor is intentionally excluded there
-  // (host-inspecting) and must never be registered here.
+  // by its explicit `mcpExposed` allowlist. Nothing is added or subtracted here —
+  // an exposure decision that is not visible in the catalog is invisible to the
+  // catalog's own gates, so this loop stays a plain projection of it.
+  //
+  // `doctor` IS exposed, and it is the one entry whose safety does not come from
+  // those gates: it is `mutating: false` (read-only, ungated) purely because
+  // `doctorMcpTool` is nullary and forwards nothing, so the CLI's `--fix` write path
+  // is unreachable from MCP by construction. The P1 fail-closed gate only inspects
+  // `mutating && mcpExposed` entries, so it cannot see that claim go false — the
+  // guard is `src/commands/doctor/__tests__/doctor-mcp-surface.test.ts`, not this list.
   for (const tool of getExposedMcpTools()) {
     server.registerTool(
       tool.name,
@@ -18,7 +26,7 @@ export const initializeTools = async (server: McpServer) => {
         // present and two titles are a divergence waiting to happen.
         title: tool.title,
         description: tool.description,
-        // Wrapped HERE, at the single `registerTool` call site, rather than in the 24
+        // Wrapped HERE, at the single `registerTool` call site, rather than in the 27
         // `defineMcpTool` definitions or in `CatalogMcpTool`. SDK v2 offers a deprecated
         // raw-shape overload that would auto-wrap, but it types the shape as its own
         // `ZodRawShape` (`Record<string, ZodType>`) while zod 4's `z.ZodRawShape` is the
@@ -27,7 +35,7 @@ export const initializeTools = async (server: McpServer) => {
         // unreachable for us. `z.object()` closes that gap and lands on v2's PREFERRED
         // (non-deprecated) Standard Schema overload, since a `ZodObject` carries `~standard`.
         //
-        // Wrapping here keeps the authoring shape in all 24 `src/commands/**` definitions
+        // Wrapping here keeps the authoring shape in all 27 `src/commands/**` definitions
         // unchanged and leaves `defineMcpTool`'s `z.infer<z.ZodObject<TIn>>` handler typing
         // untouched — the migration needs zero edits under `src/commands/`.
         //
@@ -42,6 +50,10 @@ export const initializeTools = async (server: McpServer) => {
         // destructive operations remains `requiresHumanConfirm` + `lib/tool-handler`'s confirm gate;
         // nothing in that gate reads these, and the spec forbids a client treating them as security.
         annotations: tool.annotations,
+        // `anthropic/requiresUserInteraction` rides here on `setup`, the one tool that carries it. It is the
+        // only human gate on the MCP path: the host prompts on EVERY call, in `bypassPermissions` too,
+        // and an allow rule cannot skip it. Undefined for every other tool, which is the same as absent.
+        _meta: tool.meta,
       },
       // The SDK's second callback argument (session, request state, signal) is threaded through so
       // the handler signature lands once; the gate binds tokens by tool name and needs none of it.

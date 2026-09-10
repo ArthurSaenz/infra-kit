@@ -84,7 +84,7 @@ describe('sessionGateEnabled', () => {
     expect(sessionGateEnabled({ TERM: 'xterm', [SESSION_REPORT_ENV]: '/fake/r.json' }, ttyStreams)).toBe(false)
   })
 
-  it('does not require INFRA_KIT_SESSION (works without `infra-kit init`)', () => {
+  it('does not require INFRA_KIT_SESSION (works without `infra-kit setup`)', () => {
     expect(sessionGateEnabled({ TERM: 'xterm' }, ttyStreams)).toBe(true)
   })
 })

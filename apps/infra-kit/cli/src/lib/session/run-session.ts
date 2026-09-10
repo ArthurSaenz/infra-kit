@@ -497,7 +497,7 @@ export const installSessionSignals = (getPhase: () => SessionPhase, deps: Sessio
 /**
  * Pure gate: may bare `infra-kit` engage the persistent session shell? Requires an interactive TTY on
  * all three streams, a capable terminal, and no opt-out. Deliberately does NOT depend on
- * `INFRA_KIT_SESSION` (the shell must work without `infra-kit init` having run). Everything else keeps
+ * `INFRA_KIT_SESSION` (the shell must work without `infra-kit setup` having run). Everything else keeps
  * the one-shot path.
  *
  * **stderr is load-bearing**, not an afterthought: the palette and every transcript line are written

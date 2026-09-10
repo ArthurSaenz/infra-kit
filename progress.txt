@@ -206,3 +206,385 @@ handler runs), so the real release-create was called with real arguments on dist
                  That is M3 holding on the live wire, not just in the SDK type docs.
   server log     "gated (awaiting confirm)", never "successful" -> nothing was cut.
 Probe kept at <scratchpad>/probe-gate.mjs alongside probe-dist.mjs.
+
+## US-000 — Phase 0 additive exports (DONE)
+- Exported isWithin, hasSegment, isBrewKegOf from install-manager.ts (added `export`, no body change).
+- npmPrefixFromSelfPath's body moved up into a NEW exported npmPrefixOfPackage(binRealPath, packageName);
+  the self-scoped name now delegates with PACKAGE_NAME. No default parameter — a default is how the
+  wrong package silently gets probed. detectInstallManager untouched.
+- New test file __tests__/path-predicates.test.ts (existing install-manager.test.ts NOT edited).
+- Evidence: `pnpm exec vitest run src/lib/install-manager src/commands/self-update` -> 3 files, 67 tests, EXIT=0.
+  ts-check EXIT=0. eslint --no-cache EXIT=0.
+- Learning: prettier --check on any src subtree trips over OMC's own `.omc/state/**/*.json` droppings
+  written INSIDE src/ (e.g. src/lib/install-manager/.omc/...). Pre-existing, not caused here.
+- Learning: eslint prints "Dependency @types/* could not be resolved for catalog default" — that is the
+  parallel session's in-flight toolchain bump, not a regression from this work.
+
+## US-001 — dependency-registry (DONE)
+- src/lib/dependency-registry/{dependency-registry.ts,index.ts} + __tests__. 29 tests, EXIT=0. tsc 0. eslint 0.
+- SHAPE DEVIATION from the plan's prose, recorded deliberately: the plan said `recipesFor(manager)`
+  returning {install, update}. Implemented as `bootstrapInstall: Recipe` (used when the tool is ABSENT)
+  plus `updateFor(manager): Recipe | null`. This maps 1:1 onto the plan's own §5.2 outcome table and
+  removes the "install recipe for a manager that already installed it" cell, which had no meaning.
+- gnupg is a STEP of doppler's bootstrapInstall, not a DependencyId — its binary (gpg) and formula
+  (gnupg) diverge, so a spec row would carry a 5-name set for one `brew install` line. Asserted by test.
+- Recipe.steps is string[][] (not one argv) because doppler needs gnupg first.
+- Added `script` to DependencyManager: install-manager has no such class, and without it the aws
+  installer layout reads `unknown`, which means print-never-execute — making the safe `aws update`
+  permanently unreachable.
+- Traps hit: (1) sonarjs/super-linear-regex rejects `\d+\.\d+\.\d+` over third-party stdout — use
+  bounded `\d{1,10}`; (2) `DEPENDENCY_IDS.sort()` in a test mutates the module's exported array and
+  makes later tests order-dependent — copy first.
+
+## US-004 — doctor consumes the registry's probe argv (DONE)
+- doctor.ts: three literals -> specFor('gh'|'doppler'|'aws').probeArgv. Check NAMES untouched;
+  report.ts and its two tests untouched. 15 files / 173 tests EXIT=0, tsc 0, eslint 0.
+- New __tests__/probe-argv-single-source.test.ts asserts against the SOURCE TEXT, not behaviour: a
+  behavioural test passes just as happily when doctor keeps its own identical copy, which is the exact
+  state being forbidden. Also asserts doctor cannot reach bootstrapInstall/updateFor (one-way seam).
+- PLAN CORRECTION (§5.5 is wrong): it says the duplication is "four probes, not three", counting
+  `portless installed`. That row is NOT a `<bin> --version` probe — doctor resolves portless out of
+  node_modules via resolvePortlessBin (doctor.ts:1279). Unifying it would change the row's meaning from
+  "resolvable in node_modules" to "on PATH", and portless is never on PATH here. Left as-is, with the
+  reason pinned by a test so nobody "finishes" the unification later.
+
+## US-005 — risk predicate (DONE)
+- src/lib/dependency-install/risk-predicate.ts + __tests__. 22 tests EXIT=0, eslint 0.
+- managerDriving() reads the manager off the recipe's OWN first token rather than a declared field, so a
+  recipe cannot claim to be an npm one while invoking brew.
+- staticRefusals() takes only the Recipe — it cannot read RiskContext even by accident, which is the
+  non-circularity property expressed in the type signature rather than in a comment.
+- assessBootstrap() returns {recipe, verdict} together so "assess then ignore the answer" is not
+  writable by accident.
+- BLOCKER-ADJACENT (not mine): `pnpm run ts-check` now fails with 4 errors in
+  src/commands/init/agent-files.ts — the PARALLEL session is editing that file live (mtime == now).
+  Zero tsc errors in any file this session owns. Whole-package ts-check is therefore not a usable gate
+  while they work: filter by path (`ts-check 2>&1 | grep '^src/' | grep -v 'commands/init/'`).
+
+## US-003 — setup-dependency-status (DONE) + USER-DIRECTED RESHAPE
+- Renamed from setup-deps-* to setup-dependency-* on the user's instruction mid-run: they asked for ONE
+  command that installs OR updates ("встановлює або оновлює... один раз викликаємо"), not an
+  install/update verb split. Primary tool becomes `setup-dependency` (converge); status is its dry run.
+- Full package suite after the wiring: 256 files / 3074 tests EXIT=0. eslint 0. tsc 0 in my files.
+- Catalog wiring cost, all of it load-bearing (each omission reddens a different test):
+  entry + MCP_TOOL_PRESENTATION row + EXPECTED_EXPOSED_TOOLS + count 23->24 + name-parity map +
+  menu-group order + palette group list + Commander registration in lib/program/program.ts.
+- The w1 differential e2e does NOT want the v1 baseline fixture regenerated — its value is that it is
+  what the pre-migration server actually served. Followed the existing AUTHORED_RESOURCE_URIS pattern:
+  added AUTHORED_TOOL_NAMES + strip + the "the strip has to strip" length guard, so a rename cannot
+  leave the helper inert.
+- Trap: `describe` is a terrible name for a source-file helper (shadows the test global) — renamed toReport.
+
+## US-007 — setup-dependency (converge) + setup-dependency-update (DONE)
+- New: lib/dependency-plan/ (planDependencies — the ONE place the install-or-update choice is made),
+  lib/dependency-install/dependency-install.ts (the only spawner), commands/setup-dependency/.
+- setup-dependency-status was REWRITTEN to render planDependencies rather than carry its own copy, so
+  it is the converge command's dry run by construction. That was an explicit acceptance criterion and
+  the first version failed it — it had duplicated defaultProbeDeps/presentManagers/remediationFor.
+- `meta` added to McpTool (src/types.ts) + CatalogMcpTool, threaded to registerTool as `_meta`.
+  tsc ACCEPTS it on the non-deprecated overload -> the SDK supports it, verified by the typechecker
+  rather than by reading docs. No workaround needed.
+- e2e `e1b` asserts the annotation reaches the WIRE on exactly {setup-dependency, setup-dependency-update}
+  and no other tool — both directions. A unit test on the tool object would pass even if registration
+  dropped the field; and a third tool carrying it (setup-dependency-status above all) would interrupt a
+  human on a read-only call, which teaches people to click through.
+- planDependencies probes ALL five even when `--tools gh` is passed: planning only the requested ids
+  would hide `brew` from presentManagers, so a single-tool run would decide brew is absent and refuse a
+  recipe it should have run. Pinned by a test.
+- Catalog cost for two gated tools: entries + 2 MCP_TOOL_PRESENTATION rows + EXPECTED_EXPOSED_TOOLS
+  (24->26) + EXPECTED_GATED_TOOLS + name-parity + Commander registration + AUTHORED_TOOL_NAMES.
+- BLOCKED GATE (not mine): full-suite is now 7 files / 30 tests red, ALL cascading from the parallel
+  session's in-flight edits — `ReferenceError: resolveGitRoot is not defined` at doctor.ts:1478 plus
+  init.ts tsc errors. My four doctor.ts lines (import :37, argv :1404/:1416/:1422) are intact. Both
+  `pnpm run qa` and a full vitest run are unusable as my gate until they land; scope to my paths.
+
+## US-008 — mutation tests (DONE)
+- risk-predicate-mutation.test.ts: 7 mutations via esbuild onLoad source transforms, each asserting the
+  replacement CHANGED something (a renamed construct would otherwise build an unmutated module and the
+  "mutation check" would report success while checking nothing).
+  Covered: needsSudo made conditional; fetchesNetworkScript made conditional (swept over every manager
+  classification); manager-present dropped; manager-mismatch dropped; the two executor guards proven
+  INDEPENDENT (neutering mcpMode alone still refuses a dangerous recipe, but does run a safe one).
+- Dropped deliberately: the TTY-guard mutation (that guard was REMOVED, not weakened — isMcpMode is the
+  only MCP decision), and the plan's PM-3 `mcpTool: null -> object` mutation, which is obsolete under the
+  risk axis because these tools are deliberately exposed and there is no null to flip.
+- Replacement for PM-3: setup-dependency-gate-mutation.test.ts re-runs command-catalog.test.ts's own
+  fail-closed predicate against a catalog with requiresHumanConfirm stripped, and asserts it names the
+  offender. Also pins that neither installer is on LOW_RISK_MUTATING_ALLOWLIST — the one edit that would
+  silence the gate without looking like a safety change.
+- 40 tests in dependency-install, 41 in command-catalog. EXIT=0.
+
+## US-009 — host boundary (PARTIAL — 3 of 5 done, 2 blocked on the parallel session)
+DONE: 4 ask rules in .claude/settings.json (the two `mcp__` ones carry NO parentheses — Claude Code
+skips parenthesised mcp__ rules at settings load); both installers added to MUTATING_INVOCATIONS;
+confirmed no skill grants setup-dependency* (nothing to remove — the negative deliverable holds).
+DEFERRED, both on commands/init/init.ts + commands/doctor/doctor.ts, which the parallel session is
+editing live and which currently do not typecheck/run:
+  - `init` writing the ask rules at project scope
+  - doctor's `setup-dependency ask rule present` row (+ SECTION_MEMBERS / DOCTOR_CHECK_NAMES / FIXABLE_NAMES)
+Neither is a design problem: the insertion regions and report.ts are textually free of their edits. It
+is purely that I cannot verify anything in those two files while they are red for someone else's reason.
+
+## Verifier round: 5 defects found on green code, all fixed
+1. SEVERE — `setup-dependency` could never install anything. `owner` was derived in TWO places and they
+   disagreed: an absent tool has `manager: 'unknown'`, and passing that as the owner made every install
+   refuse as `manager-mismatch` while the plan said executable. FIX: `DependencyPlan` now carries the
+   exact `RiskContext` its verdict was reached under; the command passes `plan.context` verbatim.
+   WHY THE SUITE WAS BLIND: every test injected a fake `run` that never re-assesses — the seam added for
+   testability hid the bug. New test drives the REAL runRecipe with only spawnSync stubbed. Proved it
+   bites by restoring the buggy line (1 failed) and reverting (9 passed).
+2. The PM-4 mutation test was vacuous — it built a local literal and asserted its own keys. Now it reads
+   `dependency-install.ts` and pins `InstallDeps`' actual field set. Arity is NOT a usable guard: `deps`
+   is defaulted, so `runRecipe.length` is 2 and stays 2 after any optional parameter is added.
+3. prettier failed on 2 files I own; my earlier "clean" claim was wrong because I filtered `.omc/` from
+   the output and misread the remaining count. eslint being green is not evidence — separate gates.
+4. `humanLikelyPresent` was dead code with a tautological test (`f() === (process.stdin.isTTY === true)`,
+   true for any implementation). Deleted rather than wired.
+5. The five name fields were DECORATIVE — `identify`/`updateFor` used string literals, so editing
+   `kegName` changed no behaviour and the test pinning it guarded nothing. Now read via `brewKegIdentify`
+   / `brewUpgradeFor` closures over the spec's own names.
+
+## Two facts I had WRONG and stated to the owner (corrected)
+- `doctor` IS agent-reachable: `plugins/infra-kit/skills/doctor/SKILL.md:4` grants `Bash(infra-kit doctor)`.
+  The gap "an agent cannot read host state without the status tool" is FALSE for a Claude Code session
+  with the plugin; it is true only for MCP-only hosts that lack the plugin.
+- `doctor` is `mutating: true` (`command-catalog.ts:480`), so exposing it over MCP is not one flag: the
+  fail-closed gate at `command-catalog.test.ts:238` reds unless it also becomes `mutating: false` — the
+  `audit` shape (`:498-499`), justified there because `--fix` is unreachable through the MCP schema.
+
+## US-009 deferrals — STILL blocked, and the block deepened
+The parallel session has not committed (HEAD still 969bbe0) and has now started editing `report.ts` too.
+A new doctor row needs `SECTION_MEMBERS` in exactly that file, so the collision is now direct rather than
+adjacent. Tree is otherwise stable: tsc 0 repo-wide, full suite 260 files / 3121 tests EXIT=0.
+
+## Deslop pass (ralph step 7.5) — 3 findings, one of them latent-fragility not cosmetics
+1. `assessBootstrap` (risk-predicate.ts) — exported, ZERO consumers, ZERO tests. Speculative abstraction
+   written "in case". Deleted.
+2. `installOrder` — a topological sort that was written, exported, and used ONLY by its own test.
+   `planDependencies` walked the probe results in registry order instead. It worked, but only because
+   `brew` happens to be declared first in DEPENDENCY_SPECS: reordering two rows there would have broken
+   gh/doppler installs silently. WIRED IT IN rather than deleting it.
+   The first ordering test I wrote did NOT bite — for `['doppler','brew']` both implementations give the
+   same answer. Replaced with `['portless','gh']`, the one request where they disagree (registry walk
+   gives [gh, portless]; installOrder gives [portless, brew, gh] → filtered [portless, gh]). Proved it:
+   mutated the line to registry order → 1 failed; restored → 11 passed.
+3. `presentManagers` / `defaultProbeDeps` — exported from the barrel with no consumer outside their own
+   module. Un-exported.
+Post-deslop regression: full suite 260 files / 3124 tests EXIT=0; tsc 0; eslint 0; prettier clean.
+
+## Q6 — "delete status, move it into doctor?" — consensus: KEEP BOTH
+The shape argument I relayed was WEAK and the critic said so: an OPTIONAL `detail?` on CheckResult costs
+the 23 non-producing check functions nothing. `report.ts:56` records a precedent for refusing a field to
+spare 24 functions — but that field was REQUIRED. We reused that reasoning where it does not apply.
+What actually decides it: merging needs `doctor` to become `mcpExposed: true` AND `mutating: false`,
+which asserts "not mutating" about a handler that reaches `checkTokenStorePerms(fix)` and disarms the
+fail-closed P1 gate (command-catalog.test.ts:238). Bad trade for deleting 88 lines. Also doctor returns
+~95 rows of host state — a poor MCP answer to "is aws installed".
+The population objection is CLOSED by code, not argument: `init` writes `.mcp.json` and installs the
+plugin as separate steps, and `install-plugin.ts:159-176` enumerates `claude-missing` / `failed` /
+`unverified` — states where the server lands and the plugin does not. Plus every non-Claude-Code host.
+Landed: one comment in the catalog naming why the tool exists, so this is not re-litigated.
+FOLLOW-UP (not now): doctor's failure message for an off-PATH binary asserts something false AND gives
+non-terminating advice (the documented installer writes $HOME/.local/bin, so re-running reproduces the
+state). Narrow fix: probe `binRealPath` ONLY in `checkCommand`'s failure branch — zero extra subprocesses
+on the happy path. Blocked on the parallel session holding doctor.ts + report.ts.
+
+# ── two-command-setup-surface — ralph run (Revision 8 of the plan) ────────────
+## US-000 Phase 0 — rebase/re-verify: PASS
+Commit-1 artefacts all present: FIXABLE_NAMES/fixable (6 hits), cliVersion (4), mcp-registration.ts.
+resolveGitRoot/resolveGitRootForWrites/resolveInfraKitRoot are in src/commands/init/agent-files.ts
+:78/:117/:140 — NOT git-utils.ts. Phase 2 moves the init half, so it touches these.
+doctor.ts has NOT drifted despite the reported parallel session: :274 TOKEN_FILE_MODE, :601 the
+loose-length early return (the `if` is :600 — plan cites the `return`, which is exact), :619 chmodPath,
+:1348 pruneStalePortlessRoutes def, :1462 its --fix call, :1541 handler. No stale-line edits needed.
+In-scope untracked: lib/dependency-{install,plan,probe,registry}/, commands/setup-dependency{,-status}/.
+HEAD 969bbe0.
+
+## US-001 Phase 1 — Commit A gate: PASS (staged, NOT committed)
+vitest src/lib/dependency-* → 5 files / 82 tests, exit 0.
+tsc --noEmit → exit 0.  eslint --no-cache → exit 0 (the two "could not be resolved for catalog"
+lines and the jsdoc typescript warning are pre-existing environmental noise, not findings).
+NOTE: zsh has no usable $PIPESTATUS[0] — `cmd | tail` then `echo ${PIPESTATUS[0]}` prints EMPTY,
+not 0. Gate on `cmd > file 2>&1; echo $?` instead. This silently reported "no exit code" once.
+14 files staged, all under lib/dependency-*; forbidden-path check clean (no command-catalog.ts,
+no program.ts, no resources/, no vendor/).
+NOT COMMITTED: we are on `main` and the tree carries a parallel session's uncommitted work.
+Branch-vs-main is an owner decision; work continues in the tree meanwhile.
+
+## US-002 Phase 2 — src/commands/setup/: PASS
+Created setup/{setup,converge,index}.ts + 2 test files. init() -> initCore(onStep?) + CLI wrapper.
+Verified independently: 14 tests exit 0, tsc 0. Scope proven by MTIME, not by claim — the
+command-catalog.ts/program.ts/body.md/vendor entries showing in `git status` are dated 01:21-01:34,
+i.e. the pre-existing tree work; Phase 2's own files are 03:26-03:27.
+BYTE-IDENTICAL init output was MEASURED, not argued: the pre-refactor init() was extracted to a temp
+sibling and both run against 5 fixtures, comparing the full ordered (level, message) sequence incl.
+debug records and library-printed lines. Control: mutating one message string redded all 5.
+Two sanctioned departures from the plan's literal §2, both forced by that criterion:
+  - InitEntry carries an internal 4th key `level` ('info'|'warn'|'debug'|'silent'), STRIPPED by
+    toInitStep() before structuredContent. Wire shape is exactly {step,outcome,message} and a test
+    pins Object.keys().sort(). Reason: outcome cannot derive the stream — a FAILED guidance write
+    prints at info (one row of a list) while its summary prints at warn.
+  - initCore takes an optional SINK, because the migrators and both agent-files gates log from
+    INSIDE; replaying entries in a trailing block reordered output against library-printed lines.
+converge.ts imports NOTHING from src/commands/* — verified. It is a MOVE, not a fork: preflight/
+toResult/describeBefore/skipped/serial-loop each had exactly 2 definitions, the second being the
+file scheduled for deletion.
+RULING: MCP inputSchema keeps `mode`, does not mirror the CLI's 3 flags. command-catalog.ts:592-601
+already records that reasoning, and mode:'update' + tools:[] expresses everything --update [ids] does.
+
+## US-003 Phase 3 — catalog + Commander: PASS
+setup added (menuGroup: null, both gates); the 3 setup-dependency* rows and registrations removed;
+init re-registered hidden + non-catalog with a 0.7.0 deprecation pointer; gate-mutation test
+retargeted to ['setup']. New src/lib/program/__tests__/setup-surface.test.ts.
+Verified independently: full package suite 275 files / 3230 tests, exit 0.
+P1 GUARD: byte-identical to HEAD. NOTE — a fixed LINE-RANGE diff reports a false DIFFERS, because
+release-remove was added to EXPECTED_GATED_TOOLS above it and shifted the block down. Extract the
+`leaves no mutating, exposed tool ungated` block BY CONTENT: 14 lines vs 14, zero diff.
+Best evidence of the phase: the U-C3 mutation (strip requiresHumanConfirm from setupMcpTool) reds
+in that untouched P1 guard — so the guard is proven to BITE on setup, not merely to have survived.
+DECISION accepted AGAINST the plan's literal I-4: AUTO_LOAD_EXCLUDED keeps `init`. The set keys on
+the invoked name and init is still invokable; dropping it would give a 104-version-old name a
+Doppler env-load it has never had, on the command run BEFORE doppler exists. Plan's I-4 row to be
+updated to match. SEED_EXCLUDED unchanged (setup must seed, like init always did).
+OPEN: setup-dependency{,-status}/ NOT deleted — 4 tests at setup-dependency.test.ts:195-266 have no
+counterpart under setup/. Untracked + unregistered, so unreachable, but "dead dirs kept because
+their tests have no home" is how such state becomes permanent. Porting decision pending.
+US-003 addendum: setup-dependency{,-status}/ ARE deleted. Phase3's initial "4 tests have no
+counterpart" flag was WRONG — it compared only against setup/__tests__/ and never against the
+lib/dependency-* suites landed in Phase 1. Checked properly: 4 of 5 already covered there and better
+(risk-predicate-mutation.test.ts:173 carries a positive control; dependency-registry.test.ts:106-131
+covers installOrder in 4). The 5th WAS a real hole and moved to
+src/lib/dependency-plan/__tests__/dependency-plan.test.ts (new, 3 tests) — it is a planDependencies
+property, and BOTH setup and setup --skip-tools reach the same planner, so pinning it to either
+command leaves the other unguarded. Mutation probeAll(DEPENDENCY_IDS,deps)->probeAll(ids,deps) reds 2/3.
+mcp-stdio.e2e.test.ts: :253 (`not.toContain('doctor')`) is UNTOUCHED — Phase 4 still owes the
+inversion. Phase3's 4 edits there were forced by its own rename redding 3 tests via the strip's
+self-check `listed.length - copy.tools.length === AUTHORED_TOOL_NAMES.size` (got 1, wanted 3).
+Plan doc updated at :1076 — I-4 rewritten as rev9, marked "do NOT fix the code back to revision 8's
+wording", noting `version` is itself excluded and so is the wrong positive control.
+
+## US-004 Phase 4 — doctor exposed + the mutation drill: PASS
+doctor is mcpExposed:true / mutating:false; inputSchema stays {} and the handler stays parameterless.
+detail on 4 dependency rows + a new `brew installed` row via ONE SECTION_MEMBERS edit;
+DOCTOR_CHECK_NAMES untouched (derived). MCP_TOOL_PRESENTATION.doctor openWorld:true.
+mcp-stdio.e2e.test.ts:253 INVERTED to toContain('doctor'), not deleted.
+Full suite 277 files / 3237 tests exit 0; tsc 0; cold eslint 0.
+
+THE DRILL, RE-RUN BY ME not taken on report: `handler: (params) => doctor(params as never)` ->
+EXIT 1, failing at :201 — the NEGATIVE assertion, FIRST, before the fixture is altered, naming the
+fixture path. Revert -> byte-identical (cmp) -> 3/3 green. After 4 wrong specifications it bites.
+Also proven: the arity bypass `(params = {}) =>` passes U-D2(a) but STILL reds U-D2(b) — the two
+tests are genuinely independent and (b) never inspects the signature.
+chmodSpy.mockClear() at :157 is at the END of beforeEach, after the fixture's own 4 chmod calls —
+NECESSARY there (else setup's calls pollute assertion 1), and absent between the two assertions.
+
+FENCE EXTENSION — APPROVED as architecture. defaultProbeDeps moved to a new
+src/lib/dependency-probe/default-probe-deps.ts. Verified pure relocation: stripping comments/blanks,
+34 code lines before vs 34 after; the only delta is the 6 imports the new file needs on its own
+(they lived above line 43 in dependency-plan.ts, outside the moved slice). NOTE: comparing the whole
+new file against the slice, or awk-ing from the new header JSDoc, both report false differences —
+compare stripped code.
+WHY it is not convenience: doctor needs resolveBinPath's search BEYOND PATH ($HOME/.local/bin,
+/opt/homebrew/bin) — the only mechanism by which `present` and `onPath` can disagree, which IS the
+aws split-brain case that justifies `detail` existing. Importing from dependency-plan would put
+doctor one identifier from planDependencies, which returns recipe/commands — the remediation
+capability the one-way seam exists to exclude. Seam verified: doctor.ts:38-43 imports
+dependency-probe + dependency-registry ONLY.
+
+TWO PLAN CORRECTIONS FROM PHASE 4, both measured:
+1. U-D5's failure is LOUD BUT MISATTRIBUTED, not silent. `import * as fs` (the only non-default form
+   that still compiles — ~20 `fs.` call sites) gives zero spy calls while the real chmod happens, but
+   the suite reds at the POSITIVE CONTROL (:210); the invariant (:201) passes VACUOUSLY. A maintainer
+   reads "the CLI --fix path never reached …" as a broken fixture and is tempted to weaken the
+   positive half — restoring revision 5's vacuum with the invariant permanently green. So U-D5 buys
+   ATTRIBUTION, not detection. §5b amended in the plan.
+2. AUTHORED_TOOL_NAMES += 'doctor' is forced by the BASELINE LENGTH EQUALITY at
+   mcp-stdio.e2e.test.ts:1748, NOT by the strip's self-check as I had relayed. The self-check stays
+   GREEN on removal (2 stripped, size 2), so it cannot compel the addition.
+
+## US-005 Phase 5 — generated text + grants: PASS
+body.md :4 -> `ik audit --fix --root` (regenerate), :15 -> `ik setup` (install). NEITHER claims the
+other's job — that split is the whole point: "generated by infra-kit setup" would tell every
+consumer that regenerating docs means running the INSTALLER (the plan's own Scenario 5, printed into
+4 repos by the plan's own hand).
+Regenerated via BUILD FIRST + absolute dist/cli.js; no bare `infra-kit`, no `pnpm exec infra-kit`.
+Full suite 278 files / 3252 tests exit 0; tsc 0; cold eslint 0; plugin 29/29; doctor skill 23/23.
+
+CLASS-B FINDING (the phase's real result). 13 LIVE instruction strings said "Run: infra-kit init"
+and NO PHASE OWNED THEM — so nothing in the plan would ever have surfaced them again. SIX were in
+doctor.ts, the command this plan just promoted to the agent-facing MCP read path: an agent calling
+mcp__infra-kit__doctor was being told to run the command this same plan deprecates.
+All 13 -> `infra-kit setup --skip-tools`. NOT bare `setup`: each fires because a WRITE is missing,
+and answering "your zshrc block is missing" with five global package installs is Scenario 5 again.
+Sites: doctor.ts :155,:166,:177,:770,:967,:1093 | mcp-registration.ts :140,:205,:251,:262 |
+infra-kit-config.ts :479,:486 | plugin-pointer.ts :173 | constants.ts :127 | session-probe.mjs :157,:168.
+
+RESOLUTION of the apparent plan contradiction: NOT a contradiction, an imprecision. §1's
+"mention-only, no change" list is right about the MENTIONS in those files; it did not anticipate the
+same files carry LIVE strings. The acceptance criterion's own qualifier — "as an instruction" —
+resolves it. Narration stays (init still exists and still does what the JSDoc says).
+doctor.ts:1057 is narration, NOT changed: its imperative is "install Claude Code first"; rewriting
+it would read as an indictment of the new command rather than of the missing binary.
+
+FREE POSITIVE CONTROL, unasked: after the source edits and BEFORE touching any test, the suite went
+red on exactly 5 test files and nothing else — proving every string classified "live" WAS covered by
+a test and no string classified "narration" was. Nothing changed silently.
+CORRECTIONS TO ME: the guard is U16 (manifest.test.mjs:499-518), not U19, and its subject is row
+NAMES and section labels asserted absent from SKILL.md — never row MESSAGES. Not implicated.
+ORDERING: session-probe.mjs reaches consumers ONLY on the plugin bump (Commit C, after the publish),
+so the Phase-5 edit buys no earlier delivery — it buys not being forgotten. And it is safe ONLY
+because Commit C follows the publish: `setup --skip-tools` exists in no published CLI before 0.5.0.
+
+## US-006 Phase 6a — the served resource: DONE. Publish half: BLOCKED on owner.
+resources/workflow/setup.md (162 rendered lines) + ?raw import in workflow-bodies.ts; both workflows
+now register through one registerWorkflow helper. Verified against the BUILT dist/mcp.js over real
+stdio JSON-RPC, not just src: resources/list returns infra-kit://workflow/setup, read gives
+text/markdown 162 lines.
+No PROMPT registered for setup (release-create has both). Reason: Phase 7 makes /infra-kit:setup a
+plugin COMMAND, which is its human channel; a prompt would duplicate it, not reach a second reader.
+Pinned from the other side by the existing `lists exactly one prompt` assertion.
+THIRD VACUOUS GUARD FOUND THIS RUN: resource-bundle.test.ts asserted the bundle contains
+`mcp__infra-kit__release-create` — but that same string is in the resource's TypeScript *description*,
+which lands in the bundle regardless of whether the .md was inlined. Passed either way. Fixed.
+I-12 HAS NO COVERAGE OF THIS WORK YET: check-workflow-resource-published.mjs readCommands() (:44-67)
+enumerates plugins/infra-kit/commands/*.md, which holds only release-create.md; setup.md is Phase 7's.
+Its exit 1 today is entirely release-create's pre-existing floor-vs-published red (0.5.0 vs 0.4.0).
+
+## FINAL STATE OF THE IMPLEMENTED WORK (verified from the BUILT binary, not src)
+full suite 278 files / 3256 tests EXIT=0; tsc EXIT=0.
+`dist/cli.js --help` top level: setup present, doctor present, no setup-dependency*, init hidden.
+`setup --help` shows exactly --tools / --update / --skip-tools.
+`init --help`: "Deprecated, removed in 0.7.0 — use `infra-kit setup`. … Installs no external tools."
+— the U-S5 invariant stated in the help text itself.
+
+## BLOCKED — two owner decisions, nothing else outstanding
+1. BRANCH vs main. All of Phases 1-6a is uncommitted, in a tree that also carries a parallel
+   session's uncommitted work. Plan calls these Commit A and Commit B.
+2. npm publish 0.5.0. Outward-facing and effectively irreversible. Phase 7 (the plugin command)
+   cannot merge before it — plugin-ci.yml runs check-workflow-resource-published.mjs on the PR and
+   its comment says that redness between merging the command and publishing the CLI "is the feature".
+
+## OWNER OVERRIDE — `infra-kit init` REMOVED ENTIRELY
+Reverses §1 of the plan (preserve hidden, remove at 0.7.0, marker-gated). Owner: "remove init at
+all" / "only setup". The whole 0.7.0 + consumer-marker apparatus is moot.
+Removed: the hidden Commander registration + its 18-line rationale + import;
+INIT_DEPRECATION_WARNING and its call site; AUTO_LOAD_EXCLUDED's `init` entry (set is now
+['setup','doctor','version','dev','self-update','mcp']); the init() CLI wrapper (deadness grep-proven
+— after the registration went its only importers were 3 test files); the deprecation-warning test;
+'infra-kit init' from MUTATING_INVOCATIONS.
+SEED_EXCLUDED: no membership change needed — `init` was never in it; only its narration named init.
+KEPT (all still referenced by setup/doctor): initCore, logInitEntry, InitStepError,
+SHELL_ACTIVATION_REMINDER, the entry types, agent-files.ts (resolveGitRoot/ForWrites/InfraKitRoot,
+syncRepoGuidance), migrate-config.ts, MARKER_START/END + buildShellBlock (doctor reads those).
+The 13 live `setup --skip-tools` instruction strings unchanged; '--fix' and 'audit --fix' survive.
+ADDED one needle: 'infra-kit setup' to MUTATING_INVOCATIONS — otherwise removing the init needle left
+the fence guard with NO coverage of the setup command. Substring matching covers
+'infra-kit setup --skip-tools' too, which is INTENDED here (--skip-tools still writes ~/.zshrc, the
+plugin pointer and every guidance block) and is safe because the permitted map is {}.
+RETARGETED, not deleted: U-S5 -> `setup --skip-tools` never reaches lib/dependency-install (mutation
+skipTools -> undefined: 1 failed/9 passed). I-3 -> 'resolves no init command at all' + 'rejects init
+as an unknown command' (the latter needs a locally exitOverride()'d program — the real one calls
+process.exit(1) and would take the vitest worker down). Mutation: re-register hidden init -> both red.
+VERIFIED BY ME from the BUILT binary: build 0; `dist/cli.js init` -> "error: unknown command 'init'";
+setup + doctor alive; no setup-dependency*.
+Full suite 278 files / 3257 tests EXIT=0; tsc 0; plugin node --test 0.

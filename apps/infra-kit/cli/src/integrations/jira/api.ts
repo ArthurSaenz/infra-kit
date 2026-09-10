@@ -26,7 +26,7 @@ import type {
  * @param response - The fetch Response to check
  * @param context - Describes the failed operation; becomes the error's prefix
  */
-const assertJiraOk = async (response: Response, context: string): Promise<void> => {
+export const assertJiraOk = async (response: Response, context: string): Promise<void> => {
   if (response.ok) {
     return
   }

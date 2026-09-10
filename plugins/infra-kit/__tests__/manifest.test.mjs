@@ -472,7 +472,16 @@ const DOCTOR_SKILL = join(SKILLS_DIR, 'doctor', 'SKILL.md')
 // Verbs that change the machine. The doctor skill may name these in prose, never in a fence: a fenced
 // line obliges an allowed-tools rule (clause 2), and a rule is a standing grant that runs without a
 // prompt. Keeping them unfenced is what keeps the grant out of the plugin.
-const MUTATING_INVOCATIONS = ['--fix', 'infra-kit init', 'audit --fix']
+// `setup-dependency` is a PREFIX of `setup-dependency-status`, which is read-only and which a future
+// skill may legitimately fence. Matching is by substring, so a status line is caught too — deliberately
+// the fail-closed direction, the same tradeoff `block-deploy.mjs` documents for its own lookbehind. If a
+// status-fencing skill ever ships, this needle needs a word boundary rather than a widened allowlist.
+//
+// `infra-kit setup` replaces the `infra-kit init` needle this list carried while that command existed.
+// Substring matching makes it cover `infra-kit setup --skip-tools` as well, which is the intended
+// reading and not an accident of the prefix: `--skip-tools` still writes `~/.zshrc`, the plugin pointer
+// and every guidance block, so it is exactly as unfit for a standing grant as the flagless form.
+const MUTATING_INVOCATIONS = ['--fix', 'audit --fix', 'infra-kit setup', 'setup-dependency', 'setup-dependency-update']
 
 test('U15: the doctor skill fences no state-changing command', () => {
   const parsed = parseFrontmatter(readText(DOCTOR_SKILL))

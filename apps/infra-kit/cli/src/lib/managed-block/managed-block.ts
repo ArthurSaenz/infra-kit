@@ -2,7 +2,7 @@
  * Generic "managed block" helpers — a marker-delimited region a tool owns and
  * rewrites idempotently while never touching content outside the markers.
  *
- * This is the same mechanism `infra-kit init` already uses for the `~/.zshrc`
+ * This is the same mechanism `infra-kit setup` already uses for the `~/.zshrc`
  * shell block (`# -- infra-kit:begin -- … # -- infra-kit:end --`), lifted here so
  * it can be reused for the repo agent-instruction guidance block in `CLAUDE.md`.
  * It mirrors the design of OMC's

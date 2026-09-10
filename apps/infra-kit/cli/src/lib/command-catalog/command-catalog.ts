@@ -17,7 +17,9 @@ import { ghReleaseListMcpTool } from 'src/commands/gh-release-list'
 import { localDeployAllMcpTool, localDeploySelectedMcpTool } from 'src/commands/local-deploy'
 import { releaseCreateMcpTool } from 'src/commands/release-create'
 import { releaseDescEditMcpTool } from 'src/commands/release-desc-edit'
+import { releaseRemoveMcpTool } from 'src/commands/release-remove'
 import { reopenMcpTool } from 'src/commands/reopen'
+import { setupMcpTool } from 'src/commands/setup'
 import { vendorCheckMcpTool } from 'src/commands/vendor-check'
 import { versionMcpTool } from 'src/commands/version'
 import { worktreesAddMcpTool } from 'src/commands/worktrees-add'
@@ -55,6 +57,12 @@ export interface CatalogMcpTool {
    * import.
    */
   formProvider?: ArgumentFormProvider
+  /**
+   * Host-facing `_meta` for the tool's `tools/list` entry. Widened, non-generic mirror of
+   * {@link McpTool.meta}, mirrored here for the same reason `requiresHumanConfirm` is: registration
+   * forwards it without reaching into the concrete generic tool type.
+   */
+  meta?: Record<string, unknown>
   // Heterogeneous tool params; loose `any` mirrors the existing tool-handler typing.
   handler: (params: any) => Promise<ToolsExecutionResult>
 }
@@ -280,6 +288,20 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mutating: true,
     groupPath: ['release', 'deliver'],
   },
+  // Exposed, unlike its neighbour `release-deliver`. Exposure here is governed by the allowlist-or-gate
+  // rule, not by whether the verb sounds destructive: `requiresHumanConfirm` puts it behind the
+  // two-phase gate, and the tool narrows itself under MCP — `version` is required, `moveIssuesTo` /
+  // `skipJira` are refused, and the one irreversible step (the Jira fix version) is never attempted,
+  // returning `jira: 'manual'` instead. The asymmetry that would otherwise exist is the argument for
+  // exposing it: `release-create` IS exposed, so an agent can create a release it could never clean up.
+  {
+    cliName: 'release-remove',
+    menuGroup: 'release',
+    mcpTool: releaseRemoveMcpTool,
+    mcpExposed: true,
+    mutating: true,
+    groupPath: ['release', 'remove'],
+  },
   // The CLI commands behind these two are DEPRECATED aliases of `release deploy-* --from local`,
   // so `menuGroup: null` keeps them out of the palette while they still resolve for anyone who types
   // them. The MCP tools are deliberately NOT folded into the release pair: the MCP boundary
@@ -461,15 +483,21 @@ export const commandCatalog: CommandCatalogEntry[] = [
   },
 
   // --- Setup & Diagnostics (menu group) ---
-  // `init`/`doctor` set the machine up and check it; `audit` checks the REPO against its config rules.
-  // Both answer "is this in a good state?", which is why they sit together.
-  { cliName: 'init', menuGroup: 'setup', mcpTool: null, mcpExposed: false, mutating: true, groupPath: ['init'] },
+  // `doctor` checks the machine; `audit` checks the REPO against its config rules. Both answer "is this
+  // in a good state?", which is why they sit together. The command that ACTS on those answers — `setup` —
+  // is deliberately not here; see its entry below for the two reasons.
   {
     cliName: 'doctor',
     menuGroup: 'setup',
     mcpTool: doctorMcpTool,
-    mcpExposed: false,
-    mutating: true,
+    mcpExposed: true,
+    // `mutating: false` is a statement about the EXPOSED TOOL, not about the CLI command. `--fix`
+    // chmods the token store and prunes stale portless routes, and it is unreachable from here:
+    // `doctorMcpTool.inputSchema` is `{}` and its handler is parameterless, so an agent has no way to
+    // ask for it. Exactly the `audit` precedent (`mutating: false` beside a CLI-only `--fix`), and
+    // pinned the same way — plus U-D2(b), which drives the real `doctor()` and asserts the handler
+    // reaches zero `chmodSync` calls on a fixture the CLI path demonstrably chmods.
+    mutating: false,
     groupPath: ['doctor'],
   },
   {
@@ -523,6 +551,39 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mcpExposed: false,
     mutating: true,
     groupPath: ['env-token-remove'],
+  },
+  // Sets the machine up in one pass: the local `initCore` writes, then install-or-update for the five
+  // external tools. Exposed despite mutating, on the rule the catalog already enforces: exposure is
+  // bounded by a tool's own invariants, not by the verb (`worktrees-add` is exposed, ungated, and runs
+  // `pnpm install`). Here the invariant is computed — `lib/dependency-install/risk-predicate` refuses any
+  // recipe needing sudo or piping a network-fetched script, which is both bootstrap recipes, on every
+  // host regardless of configuration.
+  //
+  // `requiresHumanConfirm` rather than LOW_RISK_MUTATING_ALLOWLIST membership: the allowlist ASSERTS low
+  // risk, and that would be a false claim for a command that installs software. It also carries
+  // `_meta['anthropic/requiresUserInteraction']` (setup.ts), the only gate that puts a human on the MCP
+  // path. Both fire unconditionally — `skipTools` included — because the read path that raises no prompt
+  // is `doctor`, a separate tool name and therefore a separate permission identity.
+  //
+  // `menuGroup: null` IS THE DECISION, not an oversight — do not "fix" it by giving it a group. Two
+  // independent reasons, either sufficient:
+  //   1. It would be a one-keystroke installer. `run-session.ts:199` spawns `[deps.cliPath,
+  //      ...command.groupPath]` with ZERO flags, and flags are not Commander leaves, so the palette has
+  //      no way to offer the narrowed `--skip-tools` form — only flagless `setup`, which installs.
+  //      Installing software is a deliberate act rather than something to land on by arrowing a menu.
+  //   2. `command-palette.tsx:285` renders `item.name` — `groupPath.join(' ')`, with NO binary
+  //      qualifier — so the row would read a bare `setup`, colliding with the `pnpm run setup` script
+  //      that exists in this repo and in every consumer. Every GENERATED instruction is bound to write
+  //      `ik setup`; a palette row is a render, not generated text, and is the one place that
+  //      mitigation cannot reach.
+  // A human who wants the additive local writes without the installer types `infra-kit setup --skip-tools`.
+  {
+    cliName: 'setup',
+    menuGroup: null,
+    mcpTool: setupMcpTool,
+    mcpExposed: true,
+    mutating: true,
+    groupPath: ['setup'],
   },
   // The MCP boundary auto-confirms every tool, so an agent-triggered unattended global package install
   // must never be reachable there. menuGroup null keeps it off the no-arg picker too — updating the CLI
@@ -594,12 +655,25 @@ export const MCP_TOOL_PRESENTATION: Record<string, { title: string; openWorld: b
   audit: { title: 'Package audit', openWorld: false },
   // Reads packageJson.version; no registry check.
   version: { title: 'CLI version', openWorld: false },
+  // doctor.ts spawns `gh auth status`, and the `gh` / `doppler` / `aws` rows shell out to binaries that
+  // reach their own services. openWorld is TRUE for that reason. DECLARED, never derived: the network
+  // is reached through third-party binaries, so no import-graph rule could have spotted it.
+  doctor: { title: 'Diagnose this machine', openWorld: true },
 
   // --- Mutating, gated ---
+  // setup.ts — the init half writes locally, then `converge.ts` reaches `runRecipe`, which spawns
+  // `brew install` / `npm install -g`; both fetch from a remote registry. openWorld is TRUE for that
+  // reason, even though the argv are registry literals. It stays TRUE under `skipTools:true` as well:
+  // the annotation describes the tool, not the arguments of one call.
+  setup: { title: 'Set up this machine', openWorld: true },
   // gh-merge-dev.ts:355 getReleasePRsWithInfo(); pushes to remote release branches.
   'gh-merge-dev': { title: 'Merge dev into release branches', openWorld: true },
   // release-create.ts:7 loadJiraConfig from src/integrations/jira; creates branches and PRs.
   'release-create': { title: 'Create releases', openWorld: true },
+  // release-remove.ts:5 fetchPRByHead from src/integrations/gh and :9-15 the Jira barrel; closes the
+  // PR via the gh CLI and deletes the remote branch. Reaches Jira read-only under MCP — the delete is
+  // the one step it never attempts there — but a read is still an outbound call, so openWorld holds.
+  'release-remove': { title: 'Remove a release', openWorld: true },
   // gh-release-deploy-all.ts:2 `import { $ } from 'zx'` — dispatches deploy-all.yml via the gh CLI.
   // Imports NO src/integrations/*, which is why the import-graph derivation was rejected.
   'gh-release-deploy-all': { title: 'Deploy all services (CI)', openWorld: true },

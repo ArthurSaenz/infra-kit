@@ -111,7 +111,7 @@ export const parseVarNamesFromEnvFile = (filePath: string): string[] => {
 /**
  * Root cache dir for infra-kit across all sessions. Resolved from
  * $XDG_CACHE_HOME when set, falling back to ~/.cache/infra-kit. Keep in sync
- * with the shell block emitted by `infra-kit init` (src/commands/init/init.ts).
+ * with the shell block emitted by `infra-kit setup` (src/commands/init/init.ts).
  */
 export const getCacheRoot = (): string => {
   const xdg = process.env.XDG_CACHE_HOME
@@ -124,7 +124,7 @@ export const getSessionCacheDir = (): string => {
   const session = process.env[INFRA_KIT_SESSION_VAR]
 
   if (!session) {
-    throw new Error(`${INFRA_KIT_SESSION_VAR} is not set. Run \`infra-kit init\` then \`source ~/.zshrc\`.`)
+    throw new Error(`${INFRA_KIT_SESSION_VAR} is not set. Run \`infra-kit setup --skip-tools\` then \`source ~/.zshrc\`.`)
   }
 
   return path.join(getCacheRoot(), session)
