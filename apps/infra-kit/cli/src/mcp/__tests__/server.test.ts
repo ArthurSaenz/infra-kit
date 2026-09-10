@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mcpMode } from 'src/lib/mcp-mode'
 
 import packageJson from '../../../package.json' with { type: 'json' }
-import { RELEASE_CREATE_WORKFLOW_URI, SETUP_WORKFLOW_URI } from '../resources'
+import { RELEASE_CREATE_WORKFLOW_URI, SESSION_WORKFLOW_URI, SETUP_WORKFLOW_URI } from '../resources'
 import { createMcpServer } from '../server'
 import { WORKFLOW_BODIES } from '../workflow-bodies'
 
@@ -294,5 +294,107 @@ describe('the release-create procedure, over the wire', () => {
     // code span in this file resolves three ways in a consumer repo — `pnpm setup`, `pnpm run setup`
     // and `infra-kit setup` — and all three mutate something different.
     expect(body).toContain('`infra-kit setup --skip-tools`')
+  })
+
+  /**
+   * `session`'s procedure over the wire. Resource-only for the same reason as `setup`, and pinned
+   * from the other side by the prompt-count assertion above.
+   *
+   * Unlike the other two, `session` is the procedure for no single tool — it composes `env-list`,
+   * `env-load` and `env-clear`. So `resources/list` is asserted here too: an agent that cannot
+   * DISCOVER the URI cannot read it, and the composing procedure is the one nothing else announces.
+   */
+  it('serves the session procedure as a markdown resource at its URI', async () => {
+    const { client, close } = await connectedClient()
+
+    try {
+      const [{ resources }, result] = await Promise.all([
+        client.listResources(),
+        client.readResource({ uri: SESSION_WORKFLOW_URI }),
+      ])
+
+      expect(
+        resources.map((r) => {
+          return r.uri
+        }),
+      ).toContain(SESSION_WORKFLOW_URI)
+
+      expect(result.contents).toHaveLength(1)
+      expect(result.contents[0]!.uri).toBe(SESSION_WORKFLOW_URI)
+      expect(result.contents[0]!.mimeType).toBe('text/markdown')
+      expect(resourceText(result)).toBe(WORKFLOW_BODIES.session)
+    } finally {
+      await close()
+    }
+  })
+
+  /**
+   * As above: prettier owns the bytes, so this asserts the RENDERED shape.
+   *
+   * Every literal below is authored on a SINGLE line of `session.md` deliberately. `proseWrap` is
+   * unset in the shared prettier config, so it defaults to `preserve` — prettier will not reflow that
+   * file, but an author's own rewrap will, and a fragment spanning a line break fails `toContain`
+   * even though the sentence still reads correctly. That is why these are fragments rather than
+   * whole sentences: a whole sentence would redden on the first honest rewrap.
+   *
+   * What is enforced is that the body CARRIES the instruction. An agent's actual behaviour is
+   * runtime and no test can pin it.
+   */
+  it('renders a session body that still carries the clauses an agent needs', () => {
+    const body = WORKFLOW_BODIES.session
+
+    expect(body.split('\n')).toHaveLength(109)
+    expect(body.endsWith('\n')).toBe(false)
+
+    // The three tools composed, named so an agent that read the resource can call them. `env-status`
+    // is deliberately NOT among them: it is named in the body only as the thing not to verify with.
+    expect(body).toContain('mcp__infra-kit__env-list')
+    expect(body).toContain('mcp__infra-kit__env-load')
+    // The flag definition, in the `flag → tool` form `manifest.test.mjs`'s U17 reads from the other
+    // side once the plugin command exists. U17 is plain node and cannot see this bundled body.
+    expect(body).toContain('`--clear` → `mcp__infra-kit__env-clear`')
+
+    // The three properties of the shell round trip. Each one is a way the feature is judged broken
+    // when the body omits it, and none of them is visible in any single tool's own description.
+    expect(body).toContain('at its next prompt — after Claude Code exits or is backgrounded')
+    expect(body).toContain('the terminal that launched Claude Code and no other')
+    expect(body).toContain('writes into a directory nothing is watching and still returns success')
+
+    // The only check a human can perform against that silent wrong-target. Two fragments of one
+    // instruction: the second alone pins the rationale and would stay green while the instruction it
+    // guards disappeared.
+    expect(body).toContain('report the session id from the returned filePath')
+    expect(body).toContain('compare it with INFRA_KIT_SESSION at their own prompt')
+
+    // The Bash lie, both halves — that sourcing changes nothing, and the reason it changes nothing.
+    expect(body).toContain('Bash')
+    expect(body).toContain('does not persist shell state between calls')
+
+    // The loud failure and its remediation, which is a setup run rather than a retry.
+    expect(body).toContain('INFRA_KIT_SESSION is not set')
+    expect(body).toContain('infra-kit setup --skip-tools')
+    // Where an authoritative reading actually comes from, since `env-status` over MCP is not one.
+    expect(body).toContain('typed in the terminal, not over MCP')
+
+    // What `env-list` is and is not, so an absent name is still tried and an empty list is not
+    // reported as breakage.
+    expect(body).toContain('not a live Doppler enumeration')
+    expect(body).toContain('an empty list is a legitimate result')
+
+    // The gate, and the `isError` reading that makes an agent bypass it — plus the fact that the
+    // OTHER tool has no gate, so nobody waits for a prompt that never arrives.
+    expect(body).toContain('confirmation_required')
+    expect(body).toContain('confirmToken')
+    expect(body).toContain('"confirm": true')
+    expect(body).toContain('`env-load` is not gated')
+
+    // The same-second tie, and the symptom to look for: the shell's load gate wins, so what appears
+    // after a clear is a LOAD notice, not a missing clear notice.
+    expect(body).toContain('in the same wall-clock second')
+    expect(body).toContain('infra-kit: auto-loaded vars for')
+
+    // The body's only tether to the provider contract, which lives in the doc rather than here so an
+    // agent spends its attention on the failure modes instead of on design narration.
+    expect(body).toContain('docs/session-context-orchestrator.md')
   })
 })

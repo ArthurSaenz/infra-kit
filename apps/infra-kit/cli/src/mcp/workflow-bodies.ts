@@ -8,10 +8,16 @@
 // The `?raw` suffix — not a bare `.md` — is the one spelling correct in all three
 // toolchains this package builds with (see src/md.d.ts).
 import releaseCreate from '../../resources/workflow/release-create.md?raw'
+import session from '../../resources/workflow/session.md?raw'
 import setup from '../../resources/workflow/setup.md?raw'
 
-/** Name of a workflow procedure, matching the exposed MCP tool it is the procedure for. */
-export type WorkflowKey = 'release-create' | 'setup'
+/**
+ * Name of a workflow procedure.
+ *
+ * `release-create` and `setup` name the exposed MCP tool they are the procedure for; `session` names
+ * the plugin command instead, because it is the procedure for no single tool.
+ */
+export type WorkflowKey = 'release-create' | 'session' | 'setup'
 
 /**
  * The workflow procedures, inlined at build time.
@@ -21,8 +27,8 @@ export type WorkflowKey = 'release-create' | 'setup'
  * affordance a human picks out of the `/` menu.
  *
  * `release-create` is additionally registered as a prompt of that name, so the human half exists
- * too — one constant for both, so the prose cannot drift between them without two edits. `setup`
- * deliberately has no prompt: its human surface is the `/infra-kit:setup` plugin command, and a
+ * too — one constant for both, so the prose cannot drift between them without two edits. `setup` and
+ * `session` deliberately have no prompt: each one's human surface is its own plugin command, and a
  * second `/` entry carrying the same text would be a duplicate of it rather than a second reader.
  *
  * `trimEnd()` because prettier gives every `.md` a trailing newline and every wire form carries the
@@ -30,5 +36,6 @@ export type WorkflowKey = 'release-create' | 'setup'
  */
 export const WORKFLOW_BODIES: Readonly<Record<WorkflowKey, string>> = {
   'release-create': releaseCreate.trimEnd(),
+  session: session.trimEnd(),
   setup: setup.trimEnd(),
 }

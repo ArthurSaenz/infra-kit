@@ -1205,7 +1205,11 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
    * The workflow resource keeps its own coverage — `assertResourcesAreListedAndReadable` lists and
    * reads it on every lane, and `src/mcp/__tests__/server.test.ts` asserts its bytes.
    */
-  const AUTHORED_RESOURCE_URIS = new Set(['infra-kit://workflow/release-create', 'infra-kit://workflow/setup'])
+  const AUTHORED_RESOURCE_URIS = new Set([
+    'infra-kit://workflow/release-create',
+    'infra-kit://workflow/setup',
+    'infra-kit://workflow/session',
+  ])
 
   const withoutAuthoredResources = (list: Record<string, any>): Record<string, any> => {
     const copy = JSON.parse(JSON.stringify(list)) as Record<string, any>

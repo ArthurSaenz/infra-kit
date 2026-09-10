@@ -33,6 +33,18 @@ export const RELEASE_CREATE_WORKFLOW_URI = 'infra-kit://workflow/release-create'
 export const SETUP_WORKFLOW_URI = 'infra-kit://workflow/setup'
 
 /**
+ * Stable URI of the `session` procedure.
+ *
+ * Resource-only, on `setup`'s precedent: its human channel is the `/infra-kit:session` plugin
+ * command, so a prompt would duplicate that entry rather than reach a second reader.
+ *
+ * What it carries that no tool's own description can: the order to call them in, and the two silent
+ * failures — a load that lands in a terminal nobody is watching, and an `env-status` over MCP that
+ * cannot see a load made in the same session.
+ */
+export const SESSION_WORKFLOW_URI = 'infra-kit://workflow/session'
+
+/**
  * The two disk reads the resources need, injected so the registration is unit-testable without touching
  * the filesystem or the config-loader's mtime cache. Production uses the real readers by default.
  */
@@ -145,5 +157,17 @@ export const initializeResources = async (server: McpServer, deps: ResourceDeps 
       'converge; what tools/mode/skipTools each narrow; which recipes are printed instead of run and ' +
       'why; and what to run when a repo still tells you to set it up some older way. Read this before ' +
       'calling mcp__infra-kit__setup.',
+  })
+
+  registerWorkflow(server, {
+    key: 'session',
+    uri: SESSION_WORKFLOW_URI,
+    title: 'session procedure',
+    description:
+      'How to switch a terminal to a named environment by composing env-list, env-load and ' +
+      'env-clear: which tool to call when the human names no environment, how the loaded vars reach ' +
+      'the terminal that launched Claude Code and when they appear there, and the two silent ' +
+      'failures — a load that lands in a session nothing is watching, and a clear that loses a ' +
+      'same-second tie to the load before it. Read this before loading an environment for someone.',
   })
 }
