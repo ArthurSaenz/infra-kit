@@ -67,9 +67,12 @@ export type ExistingPlugin =
   | 'eslint-plugin-n'
   | (string & {})
 
+// Two axes rather than one, because `status` alone would let a dormant rule read as `covered` and
+// turn the catalog into a greenfield re-spec instead of an honest gap-map. A dormant rule enforces
+// nothing, so it stays `status: 'none'`; `enabledInRepo: false` is the separate record that turning
+// it on is possible.
 /**
  * Records whether the repo's existing ESLint chain already covers this detector.
- * Makes the catalog an honest gap-map rather than a greenfield re-spec.
  *
  * `status` describes what ACTUALLY RUNS in this repo:
  * - `covered` — a RUNNING rule enforces the SAME invariant.
@@ -77,12 +80,11 @@ export type ExistingPlugin =
  * - `none`    — no running rule catches it (a genuine gap — the catalog's real value).
  *
  * `enabledInRepo` is an ORTHOGONAL axis: set it to `false` when a rule for this
- * detector EXISTS in the installed toolchain but is off/dormant (e.g. a
- * type-aware `ts/*` rule with no `tsconfigPath`, or a rule explicitly disabled
- * in the vendor config). A dormant rule enforces nothing, so it stays
- * `status: 'none'`; `enabledInRepo: false` records that turning it on is
- * possible, and `plugin`/`rule`/`note` MUST then name the rule and the gating
- * reason. Query "what runs today" = `enabledInRepo !== false && status !== 'none'`.
+ * detector EXISTS in the installed toolchain but is off/dormant (e.g. a type-aware
+ * `ts/*` rule with no `tsconfigPath`, or one disabled in the vendor config).
+ * `plugin`/`rule`/`note` MUST then name the rule and the gating reason.
+ *
+ * Query "what runs today" = `enabledInRepo !== false && status !== 'none'`.
  */
 export interface ExistingCoverage {
   status: 'covered' | 'partial' | 'none'

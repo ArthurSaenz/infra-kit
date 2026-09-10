@@ -3,12 +3,12 @@ import { z } from 'zod'
 import { $ } from 'zx'
 
 import { commandEcho } from 'src/lib/command-echo'
+import { createDeployFormProvider } from 'src/lib/deploy-form'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { pickEnv } from 'src/lib/prompts/env-picker'
 import { withEscape } from 'src/lib/prompts/escapable-context'
-import { createDeployFormProvider } from 'src/lib/deploy-form'
 import { confirmDeploy, resolveDeployBranch } from 'src/lib/release-deploy'
 import { releaseLabelFromBranch } from 'src/lib/release-utils'
 import {

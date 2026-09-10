@@ -42,6 +42,9 @@ const DEV_CONTEXT_DIR = path.join('.infra-kit', 'dev-context')
  */
 const DEV_CONTEXT_FILE = path.join('.infra-kit', 'dev-context.json')
 
+// Kept lenient (not `.strict()`) so extra writer fields never reject a valid fragment, and
+// deliberately un-`refine`d: a rejected fragment would drop a started package to `cloud` instead of
+// falling into legacy mode, which is what makes the rollback path work.
 /**
  * One `.infra-kit/dev-context/<app>.json` fragment. `package` is the load-bearing
  * field the helper reads (→ localSet); `origin` is **the authoritative local target** —
@@ -55,10 +58,6 @@ const DEV_CONTEXT_FILE = path.join('.infra-kit', 'dev-context.json')
  * survives as diagnostic provenance. `pid` is the staleness guard: {@link readFragmentDir}
  * drops a fragment whose writer is no longer alive, so a crashed runner cannot keep a
  * package pinned `local` at a dead alias. `writtenAt` is provenance only.
- *
- * Kept lenient (not `.strict()`) so extra writer fields never reject a valid fragment, and
- * deliberately un-`refine`d: a rejected fragment would drop a started package to `cloud`
- * instead of falling into legacy mode, which is what makes the rollback path work.
  */
 const devContextFragmentSchema = z.object({
   package: z.string(),
@@ -72,18 +71,18 @@ const devContextFragmentSchema = z.object({
   v: z.number().optional(),
 })
 
+// Why the promise is load-bearing: it is what makes the guard in {@link resolveLocalTarget} possible.
+// Without it, a missing `origin` is ambiguous — it means BOTH "an old CLI wrote this, legacy mode is
+// correct" AND "a current CLI wrote a broken fragment, legacy mode is catastrophic" — and the helper
+// has to guess. It guesses legacy, rebuilds the target from a `templates.local` that says `http://`,
+// and proxies plain HTTP into a TLS listener. Silently, because portless answers :80 with a 302
+// rather than refusing.
 /**
  * Wire version of the dev-context fragment — the ONE contract between the `infra-kit` CLI (which writes
  * fragments) and this helper (which reads them). They ship as SEPARATE npm packages on separate cadences,
  * so this number is the only thing either side can trust about the other.
  *
  * `v >= 2` is a PROMISE that `origin` is present and authoritative.
- *
- * That promise is what makes the guard in {@link resolveLocalTarget} possible. Without it, a missing
- * `origin` is ambiguous — it means BOTH "an old CLI wrote this, legacy mode is correct" AND "a current
- * CLI wrote a broken fragment, legacy mode is catastrophic" — and the helper has to guess. It guesses
- * legacy, rebuilds the target from a `templates.local` that says `http://`, and proxies plain HTTP into
- * a TLS listener. Silently, because portless answers :80 with a 302 rather than refusing.
  *
  * A fragment with NO `v` is a pre-v2 (legacy) writer and must still be honoured: rejecting it would drop
  * a running package to `cloud` instead of falling into legacy mode, and that rollback path is exactly why
@@ -239,21 +238,25 @@ const withProxyPort = (target: string, proxyPort: number | undefined): string =>
  */
 const LEGACY_SELF_SPAWNED_PORT_FLOOR = 1024
 
+// Why each branch is what it is:
+//
+// `>= 1024` is a **mitigation, not a proof** — infra-kit's own `spawnDaemon` always passed `--no-tls`,
+// so an unprivileged daemon *infra-kit created* was always plain HTTP; a HAND-STARTED TLS daemon on
+// such a port (portless's own default is TLS) would be wrongly downgraded here. That corner is
+// accepted: forcing `http` reproduces what the old CLI + old helper already emitted, so it regresses
+// nothing that worked.
+//
+// `< 1024` (80/443) or absent means the daemon was installed out-of-band and may well be TLS, and we
+// cannot know. Forcing `http` on a `:443` fragment would emit `http://<alias>:443`, plain HTTP into a
+// TLS listener — the exact silent failure this design exists to remove.
 /**
  * Legacy target resolution — reached ONLY for an origin-less fragment, i.e. one written by an OLD CLI
  * (a CLI-only rollback). It must reproduce the old helper rather than reject anything, because that is
  * what lets the CLI be reverted without touching a single consumer repo.
  *
- * `proxyPort >= 1024`: force the scheme to `http`. **Mitigation, not a proof** — infra-kit's own
- * `spawnDaemon` always passed `--no-tls`, so an unprivileged daemon *infra-kit created* was always plain
- * HTTP; a HAND-STARTED TLS daemon on such a port (portless's own default is TLS) would be wrongly
- * downgraded here. That corner is accepted: forcing `http` reproduces what the old CLI + old helper
- * already emitted, so it regresses nothing that worked.
+ * `proxyPort >= 1024`: force the scheme to `http`.
  *
- * `proxyPort < 1024` (80/443) or absent: the daemon was installed out-of-band and may well be TLS, and we
- * cannot know. Reproduce the old helper verbatim and NEVER rewrite the scheme — forcing `http` on a `:443`
- * fragment would emit `http://<alias>:443`, plain HTTP into a TLS listener, the exact silent failure this
- * design exists to remove.
+ * `proxyPort < 1024` (80/443) or absent: reproduce the old helper verbatim and NEVER rewrite the scheme.
  */
 const resolveLegacyTarget = (target: string, proxyPort: number | undefined): string => {
   if (proxyPort != null && proxyPort >= LEGACY_SELF_SPAWNED_PORT_FLOOR) {
@@ -408,35 +411,31 @@ interface ResolveProxyArgs {
   localInfo?: ReadonlyMap<string, LocalPackageInfo>
 }
 
+// Why order matters at all: vite matches `server.proxy` **first-hit-wins over insertion order** —
+// `doesProxyContextMatchUrl` is `context[0] === '^' && new RegExp(context).test(url) ||
+// url.startsWith(context)` — so a config that happens to list `/api` before `/api/v1/cronjob`
+// silently routes every cronjob call to whatever `/api` resolves to. Emitting longest-first makes the
+// consumer's key order irrelevant for literal prefixes.
+//
+// **Length is the correct key, and provably so:** if key `B` captures a URL that key `A` also
+// captures, then both are prefixes of that URL, so one is a prefix of the other — `A.startsWith(B)` —
+// and hence `A.length >= B.length`. Sorting by descending length therefore always places the more
+// specific of any overlapping pair first. Segment counting would be *worse*, because `startsWith` is
+// not segment-aware: `/api` captures `/api-docs` too, yet both are "one segment".
+//
+// **Why regex keys bail out.** A `^`-anchored key is schema-legal (`routes` is
+// `z.record(z.string().min(1), …)`), and its capture set is unknowable to a sorter — length says
+// nothing about breadth, and there is no position, ahead or behind, that is right in general: a broad
+// `'^/(api|dynamic)'` must lose to `/api/v1/cronjob`, while a narrow one must not. Returning the
+// consumer's own order is at least the order they can reason about. No consumer uses a regex key
+// today; this exists so the sort can never invert one's intent.
 /**
- * Pure resolver: turn a `dev.proxy` config + resolved inputs (local set, env,
- * lazy release) into a Vite `server.proxy` map. Side-effect-free so the
- * resolution shape is fully unit-testable. When `authHeader` is set, every route
- * entry gets a matching `headers.Authorization`; otherwise no `headers` key.
- */
-/**
- * Order the emitted routes so a more specific prefix always beats a more general one.
+ * Order the emitted routes so a more specific prefix always beats a more general one, by descending
+ * key length. A `^`-anchored (regex) key is schema-legal and unsortable, so if ANY key is a regex the
+ * map is returned in the consumer's own order, untouched.
  *
- * Vite matches `server.proxy` **first-hit-wins over insertion order** — `doesProxyContextMatchUrl` is
- * `context[0] === '^' && new RegExp(context).test(url) || url.startsWith(context)` — so a config that
- * happens to list `/api` before `/api/v1/cronjob` silently routes every cronjob call to whatever `/api`
- * resolves to. Emitting longest-first makes the consumer's key order irrelevant for literal prefixes.
- *
- * **Length is the correct key, and provably so:** if key `B` captures a URL that key `A` also captures,
- * then both are prefixes of that URL, so one is a prefix of the other — `A.startsWith(B)` — and hence
- * `A.length >= B.length`. Sorting by descending length therefore always places the more specific of any
- * overlapping pair first. Segment counting would be *worse*, because `startsWith` is not segment-aware:
- * `/api` captures `/api-docs` too, yet both are "one segment".
- *
- * **Regex keys bail out entirely.** A `^`-anchored key is schema-legal (`routes` is
- * `z.record(z.string().min(1), …)`), and its capture set is unknowable to a sorter — length says nothing
- * about breadth, and there is no position, ahead or behind, that is right in general: a broad
- * `'^/(api|dynamic)'` must lose to `/api/v1/cronjob`, while a narrow one must not. So if ANY key is a
- * regex, the map is returned in the consumer's own order, which is at least the order they can reason
- * about. No consumer uses a regex key today; this exists so the sort can never invert one's intent.
- *
- * Note this only governs the routes INFRA-KIT emits. A consumer who writes their own `server.proxy`
- * keeps priority regardless: vite merges a plugin's config over the user's, placing user keys first.
+ * Governs only the routes INFRA-KIT emits. A consumer who writes their own `server.proxy` keeps
+ * priority regardless: vite merges a plugin's config over the user's, placing user keys first.
  */
 const orderBySpecificity = (routes: InfraKitViteProxy): InfraKitViteProxy => {
   const keys = Object.keys(routes)
@@ -459,6 +458,12 @@ const orderBySpecificity = (routes: InfraKitViteProxy): InfraKitViteProxy => {
   return ordered
 }
 
+/**
+ * Pure resolver: turn a `dev.proxy` config + resolved inputs (local set, env,
+ * lazy release) into a Vite `server.proxy` map. Side-effect-free so the
+ * resolution shape is fully unit-testable. When `authHeader` is set, every route
+ * entry gets a matching `headers.Authorization`; otherwise no `headers` key.
+ */
 export const resolveProxyConfig = ({
   proxy,
   localSet,
@@ -510,21 +515,18 @@ const once = <T>(fn: () => T): (() => T) => {
   }
 }
 
+// Reached from two different processes, and only one of them is ours. Under the CLI (`infra-kit dev`,
+// `audit`) the entry has installed {@link ../node-warnings.suppressTypelessPackageJsonWarning}, so a
+// consumer package with no `"type"` loads quietly. Under `infraKitDev()` in a consumer's own
+// `vite.config.ts` we are a library in their process and do NOT patch their globals, so such a package
+// still prints Node's MODULE_TYPELESS_PACKAGE_JSON banner there. Harmless (it is a double-parse
+// notice), and latent while consumer UI packages declare `"type": "module"`.
 /**
  * Load a package's `infra-kit.config.ts` and return its `dev` block, or
  * `undefined` when the config or the `dev` key is absent. The `.ts` config is
  * evaluated via Node's native type stripping (Node >= 24) — the same mechanism
  * the CLI's config loader uses. Cache-busted by mtime so repeated dev-server
  * reloads pick up edits.
- *
- * Reached from two different processes, and only one of them is ours. Under the
- * CLI (`infra-kit dev`, `audit`) the entry has installed
- * {@link ../node-warnings.suppressTypelessPackageJsonWarning}, so a consumer package
- * with no `"type"` loads quietly. Under `infraKitDev()` in a consumer's own
- * `vite.config.ts` we are a library in their process and do NOT patch their globals,
- * so such a package still prints Node's MODULE_TYPELESS_PACKAGE_JSON banner there.
- * Harmless (it is a double-parse notice), and latent while consumer UI packages
- * declare `"type": "module"`.
  */
 export const loadDev = async (cwd: string): Promise<InfraKitDev | undefined> => {
   const configPath = path.join(cwd, PACKAGE_CONFIG_FILE)
@@ -826,21 +828,21 @@ const resolveManagedUi = (cwd: string): ManagedUi | null => {
 /** The port an `https://` alias is served on — never spelled out in a URL, and what the HMR client dials. */
 const HTTPS_PORT = 443
 
+// This is `server.ws`, NOT the older `server.hmr`: vite 8 deprecated `server.hmr.{protocol,host,port,
+// path,clientPort,timeout,server}` in favour of `server.ws.*` and warns on every dev boot that sets
+// them — a warning consumers were seeing in the wild, emitted by us. The field names are unchanged
+// (vite's `WsOptions` is `HmrOptions` minus `overlay`), so this is a key rename, not a behaviour
+// change. Vite 8 ships `setupHmrWsOptionCompat` to copy a legacy `hmr` onto `ws`, which is what makes
+// `ws` the forward direction and `hmr` the legacy one. Emitting both keys is NOT an option — it would
+// re-trigger the very deprecation warning being removed.
 /**
  * Vite's `server.ws` override, pointing the HMR client at the alias instead of at the raw dev-server port.
  * The page is loaded over `https://<alias>`, so its websocket must be `wss://` on the same origin or the
  * browser blocks it as mixed content; `clientPort` is the proxy's implicit `:443`, not vite's bound port.
  *
- * This is `server.ws`, NOT the older `server.hmr`: vite 8 deprecated `server.hmr.{protocol,host,port,
- * path,clientPort,timeout,server}` in favour of `server.ws.*` and warns on every dev boot that sets them
- * — a warning consumers were seeing in the wild, emitted by us. The field names are unchanged (vite's
- * `WsOptions` is `HmrOptions` minus `overlay`), so this is a key rename, not a behaviour change.
- *
- * **Requires vite >= 8.** `server.ws` does not exist before it; vite 8 ships `setupHmrWsOptionCompat` to
- * copy a legacy `hmr` onto `ws`, which is what makes `ws` the forward direction and `hmr` the legacy one.
- * Neither this package (zod-only) nor `@slip-stream-kit/vite` (which imports vite as `import type`, erased
- * at runtime) can detect the version, so the floor is a documented requirement rather than a runtime check.
- * Emitting both keys is NOT an option — it would re-trigger the very deprecation warning being removed.
+ * **Requires vite >= 8.** `server.ws` does not exist before it. Neither this package (zod-only) nor
+ * `@slip-stream-kit/vite` (which imports vite as `import type`, erased at runtime) can detect the
+ * version, so the floor is a documented requirement rather than a runtime check.
  */
 export interface InfraKitViteWs {
   protocol: 'wss'

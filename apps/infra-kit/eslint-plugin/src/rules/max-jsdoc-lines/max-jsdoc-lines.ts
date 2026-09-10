@@ -54,6 +54,13 @@ const tagNameOf = (line: string): string | null => {
   return line.match(/^@([A-Z][\w-]*)/i)?.[1]?.toLowerCase() ?? null
 }
 
+// KNOWN PARSER HAZARD: any line opening with `@` ends the body, so a decorator (`@Injectable`)
+// written inside an `@example` truncates it early. The effect is worse than an under-count: the
+// truncated lines are recharged to PROSE, so the block reports `tooManyLines` and advises
+// `@fileoverview` — misleading advice for a block whose real problem is a long example. A scan of
+// all 637 example bodies in the corpus found ZERO lines starting with `@` that were not real tags,
+// so this is correct today — measured, not assumed, and not future-proof. A real JSDoc parser is
+// the fix if that ever stops holding.
 /**
  * Total lines occupied by the block's `@example` bodies.
  *
@@ -61,14 +68,6 @@ const tagNameOf = (line: string): string | null => {
  * it at the next line opening any tag. An `@example` that is the block's last tag therefore
  * runs through the closing `*` + `/` line — which is how the corpus was measured, and what
  * makes `prose + example === total` exact. Bodies from multiple `@example` tags sum.
- *
- * KNOWN PARSER HAZARD: any line opening with `@` ends the body, so a decorator
- * (`@Injectable`) written inside an `@example` truncates it early. The effect is worse than an
- * under-count: the truncated lines are recharged to PROSE, so the block reports `tooManyLines`
- * and advises `@fileoverview` — misleading advice for a block whose real problem is a long
- * example. A scan of all 637 example bodies in the corpus found ZERO lines starting with `@`
- * that were not real tags, so this is correct today — measured, not assumed, and not
- * future-proof. A real JSDoc parser is the fix if that ever stops holding.
  */
 const countExampleLines = (lines: string[]): number => {
   let inExample = false

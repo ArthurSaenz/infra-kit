@@ -964,7 +964,9 @@ export const checkAgentFiles = async (): Promise<CheckResult[]> => {
   const claudePath = path.join(root, 'CLAUDE.md')
   const content = fs.existsSync(claudePath) ? fs.readFileSync(claudePath, 'utf-8') : ''
   const present = hasManagedBlock(content, AGENTS_MARKER_START, AGENTS_MARKER_END)
-  const message = present ? 'CLAUDE.md block present' : 'infra-kit block missing from CLAUDE.md. Run: infra-kit setup --skip-tools'
+  const message = present
+    ? 'CLAUDE.md block present'
+    : 'infra-kit block missing from CLAUDE.md. Run: infra-kit setup --skip-tools'
   const staleness = await packageGuidanceStaleness(root, packageJson.version)
 
   return [
@@ -1090,7 +1092,8 @@ export const checkClaudePlugin = (root: string | null): CheckResult[] => {
 /** One message per `.mcp.json` verdict; `wrong-key` is built by the caller, which has the key. */
 const MCP_MESSAGES: Record<Exclude<McpRegistration['kind'], 'wrong-key'>, string> = {
   ok: `.mcp.json registers the server as "${MARKETPLACE_NAME}" — plugin skills resolve mcp__${MARKETPLACE_NAME}__* tools`,
-  'missing-file': 'No .mcp.json at the repo root yet, so there is no server key to check. Run: infra-kit setup --skip-tools',
+  'missing-file':
+    'No .mcp.json at the repo root yet, so there is no server key to check. Run: infra-kit setup --skip-tools',
   unparseable: 'Could not read mcpServers from .mcp.json — fix the JSON and re-run',
   absent: `.mcp.json has no "${MARKETPLACE_NAME}" server. Plugin skills name mcp__${MARKETPLACE_NAME}__* tools and will resolve nothing without it`,
 }

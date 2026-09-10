@@ -124,7 +124,9 @@ export const getSessionCacheDir = (): string => {
   const session = process.env[INFRA_KIT_SESSION_VAR]
 
   if (!session) {
-    throw new Error(`${INFRA_KIT_SESSION_VAR} is not set. Run \`infra-kit setup --skip-tools\` then \`source ~/.zshrc\`.`)
+    throw new Error(
+      `${INFRA_KIT_SESSION_VAR} is not set. Run \`infra-kit setup --skip-tools\` then \`source ~/.zshrc\`.`,
+    )
   }
 
   return path.join(getCacheRoot(), session)
