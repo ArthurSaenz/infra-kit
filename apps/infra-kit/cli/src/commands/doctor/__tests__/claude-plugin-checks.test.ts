@@ -2,7 +2,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { $ } from 'zx'
 
 import { checkClaudeCli, checkClaudePlugin, checkMcpServerKey } from '../doctor'
 import { DOCTOR_CHECK_NAMES, groupChecks } from '../report'
@@ -15,9 +14,24 @@ import { DOCTOR_CHECK_NAMES, groupChecks } from '../report'
  * POSIX, which is what makes the stub reach the readers without threading a seam through the checks.
  */
 
-/** `checkClaudeCli` is the one row here that SPAWNS. Mocked so the verdict is the fixture's, not the machine's. */
-vi.mock('zx', () => {
-  return { $: vi.fn() }
+/**
+ * `checkClaudeCli` is the one row here that SPAWNS. Mocked so the verdict is the fixture's, not the
+ * machine's, and driven through {@link spawnOutcome} rather than by re-stubbing `$` per case — `$` is a
+ * tag AND a factory, and a `mockResolvedValue` on it replaces the factory too, which leaves the
+ * production code holding a promise where it expects a configured tag.
+ */
+const spawnOutcome = { reject: false }
+
+vi.mock('zx', async () => {
+  // Imported INSIDE the factory: `vi.mock` is hoisted above the imports, and `doctor.ts` pulls
+  // in `zx` at module scope, so a top-level binding is still in its TDZ when this runs.
+  const { zxShellMock } = await import('src/lib/quiet-shell/__tests__/zx-shell-mock')
+
+  return zxShellMock(() => {
+    if (spawnOutcome.reject) return Promise.reject(new Error('command not found: claude'))
+
+    return Promise.resolve({ stdout: '2.0.0 (Claude Code)' })
+  })
 })
 
 let home: string
@@ -218,7 +232,7 @@ describe('checkMcpServerKey (T4b)', () => {
 
 describe('checkClaudeCli', () => {
   it('passes when the binary answers --version', async () => {
-    vi.mocked($).mockResolvedValue({ stdout: '2.0.0 (Claude Code)' } as never)
+    spawnOutcome.reject = false
 
     const check = await checkClaudeCli()
 
@@ -227,7 +241,7 @@ describe('checkClaudeCli', () => {
   })
 
   it('fails, naming the consequence, when the binary is not on PATH', async () => {
-    vi.mocked($).mockRejectedValue(new Error('command not found: claude'))
+    spawnOutcome.reject = true
 
     const check = await checkClaudeCli()
 
@@ -239,7 +253,7 @@ describe('checkClaudeCli', () => {
 
 describe('report placement', () => {
   it('puts every new row in the Claude Code plugin section, never Other', async () => {
-    vi.mocked($).mockResolvedValue({ stdout: '' } as never)
+    spawnOutcome.reject = false
 
     const sections = groupChecks([await checkClaudeCli(), ...checkClaudePlugin(repo), checkMcpServerKey(repo)])
 

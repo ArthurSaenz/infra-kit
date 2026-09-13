@@ -120,14 +120,16 @@ vi.mock('src/dev/proxy/portless-driver', async (importOriginal) => {
  * Rejecting `doppler` here is what lets the aws row and the doppler row be told apart from their
  * details.
  */
-vi.mock('zx', () => {
-  return {
-    $: vi.fn((_strings: TemplateStringsArray, command: string[]) => {
-      if (command[0] === 'doppler' || command[0] === 'aws') return Promise.reject(new Error('exit 127'))
+vi.mock('zx', async () => {
+  // Imported INSIDE the factory: `vi.mock` is hoisted above the imports, and `doctor.ts` pulls
+  // in `zx` at module scope, so a top-level binding is still in its TDZ when this runs.
+  const { zxShellMock } = await import('src/lib/quiet-shell/__tests__/zx-shell-mock')
 
-      return Promise.resolve({ stdout: '', stderr: '' })
-    }),
-  }
+  return zxShellMock((_strings: TemplateStringsArray, command: string[]) => {
+    if (command[0] === 'doppler' || command[0] === 'aws') return Promise.reject(new Error('exit 127'))
+
+    return Promise.resolve({ stdout: '', stderr: '' })
+  })
 })
 
 const rows = async () => {

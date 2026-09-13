@@ -71,6 +71,12 @@ const buildMutant = async (name: string, mutate: (source: string) => string) => 
 /** Everything present, nothing owned — so any refusal is the recipe's own, not the detection conjuncts. */
 const PERMISSIVE: RiskContext = { owner: null, present: ['homebrew', 'npm', 'script'] }
 
+/** A brew keg path: `updateFor` reads the layout, so this is how a keg-owned recipe is requested. */
+const AWS_KEG = '/opt/homebrew/Cellar/awscli/2.17.0/bin/aws'
+
+/** Swallow the per-step narration; a test run is not the place for it. */
+const silent = (): void => {}
+
 describe('mutation: the static conjuncts must be applied unconditionally', () => {
   it('reddens when `needsSudo` is made contingent on detection', async () => {
     // NOT a reorder: a pure conjunction is order-independent, so reordering is a no-op that could never
@@ -133,7 +139,7 @@ describe('mutation: each detection conjunct is load-bearing', () => {
       )
     })
     // A script-installed aws handed `brew upgrade awscli`: the split-brain that installs a second aws.
-    const recipe = specFor('aws').updateFor('homebrew')
+    const recipe = specFor('aws').updateFor(AWS_KEG)
     const scriptOwned: RiskContext = { owner: 'script', present: ['homebrew', 'script'] }
 
     expect(assessRecipe(recipe as never, scriptOwned).executable).toBe(false)
@@ -164,6 +170,7 @@ describe('mutation: the executor’s two guards are independent, not one guard w
       mcpMode: () => {
         return false
       },
+      notify: silent,
     })
 
     expect(outcome.ran).toBe(false)
@@ -177,6 +184,7 @@ describe('mutation: the executor’s two guards are independent, not one guard w
       mcpMode: () => {
         return false
       },
+      notify: silent,
     })
 
     expect(outcome.ran).toBe(true)
@@ -203,6 +211,8 @@ describe('mutation: there is no confirmation bypass to honour', () => {
       return match[1]
     })
 
-    expect(fields.sort()).toEqual(['env', 'mcpMode', 'spawnSync'])
+    // Every field here is read for HOW to run, never for WHETHER: `notify` is a write-only sink the
+    // executor pushes a line into. Adding one is a deliberate edit to this list, which is the point.
+    expect(fields.sort()).toEqual(['env', 'mcpMode', 'notify', 'spawnSync'])
   })
 })

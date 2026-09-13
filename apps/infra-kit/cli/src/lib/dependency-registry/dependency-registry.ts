@@ -1,22 +1,24 @@
 /**
  * What the five external tools are, how to recognise an existing install, and the exact argv that
- * installs or updates each one. Pure data and pure predicates: no `fs`, no `spawn`, no `process.env`
- * read, matching `lib/install-manager`'s discipline, so the whole matrix is table-testable.
+ * installs or updates each one. Pure data and pure predicates: no `spawn`, no `process.env` read,
+ * matching `lib/install-manager`'s discipline, so the whole matrix is table-testable. The one filesystem
+ * touch is `isWithin`'s `realpath`, which resolves a constant this module declares and never a value a
+ * caller supplied.
  *
  * Nothing here executes anything. `lib/dependency-install` is the only module that spawns, and it
  * decides what may run from {@link Recipe.needsSudo} and {@link Recipe.fetchesNetworkScript} — the two
  * literals declared below and derived from nothing.
  */
-import { hasSegment, isBrewKegOf, npmPrefixOfPackage } from 'src/lib/install-manager'
+import { hasSegment, isBrewKegOf, isWithin, npmPrefixOfPackage, safeRealpath } from 'src/lib/install-manager'
 import type { InstallManager } from 'src/lib/install-manager'
 
 export type DependencyId = 'brew' | 'aws' | 'gh' | 'doppler' | 'portless'
 
 /**
  * `install-manager`'s classification plus `script`, which it has no reason to know about: the
- * AWS-documented installer unpacks into `~/.local/share/aws-cli` and is owned by no package manager at
- * all. Without this it would classify as `unknown`, and `unknown` means "print, never execute" — which
- * would make `aws update`, a safe no-sudo no-network-script recipe, permanently unreachable.
+ * AWS-documented installer unpacks into `~/.local/share/aws-cli` or `/usr/local/aws-cli` and is owned by
+ * no package manager at all. Without this it would classify as `unknown`, and `unknown` yields no update
+ * recipe at all — so a script install could never be told how to update itself, not even by printing.
  */
 export type DependencyManager = InstallManager | 'script'
 
@@ -60,8 +62,16 @@ export interface DependencySpec {
   bootstrapInstall: Recipe
   /** Which manager owns this binary, read from its resolved path alone. */
   identify: (binRealPath: string) => DependencyManager
-  /** The update recipe for an existing install, or null when this manager must not be updated by us. */
-  updateFor: (manager: DependencyManager) => Recipe | null
+  /**
+   * The update recipe for the install at `binRealPath`, or null when we must not update it — because no
+   * layout we recognise owns it, or because its manager's binaries are not ours to touch.
+   *
+   * It takes the PATH, not the manager, and re-derives the manager through the spec's own
+   * {@link DependencySpec.identify}. A `(manager, binRealPath)` pair would admit combinations that
+   * cannot occur — `('script', <a brew keg>)` — since the probe computes the manager from that very
+   * path with that very function. See {@link updateWhenIdentified}.
+   */
+  updateFor: (binRealPath: string | null) => Recipe | null
 }
 
 /** A recipe that runs a package manager already on the box: no privilege escalation, no piped script. */
@@ -93,11 +103,32 @@ const brewKegIdentify = (kegName: string): DependencySpec['identify'] => {
   }
 }
 
-/** `brew upgrade <formula>` — the FORMULA, never the binary and never the tap-qualified install spec. */
-const brewUpgradeFor = (brewFormula: string): DependencySpec['updateFor'] => {
-  return (manager) => {
-    return manager === 'homebrew' ? managed(['brew', 'upgrade', brewFormula]) : null
+/**
+ * Build an `updateFor` that classifies the path with `identify` first, then asks `recipeFor` what that
+ * layout takes. The single place a spec's two answers about one path are tied together.
+ *
+ * A null path means the probe found the tool but could not resolve a binary, which is the same evidence
+ * as an unrecognised layout: no recipe.
+ */
+const updateWhenIdentified = (
+  identify: DependencySpec['identify'],
+  recipeFor: (manager: DependencyManager, binRealPath: string) => Recipe | null,
+): DependencySpec['updateFor'] => {
+  return (binRealPath) => {
+    return binRealPath === null ? null : recipeFor(identify(binRealPath), binRealPath)
   }
+}
+
+/** `brew upgrade <formula>` for a keg — the FORMULA, never the binary and never the tap-qualified spec. */
+const brewKegUpdate = (names: { kegName: string; brewFormula: string }): DependencySpec['updateFor'] => {
+  return updateWhenIdentified(brewKegIdentify(names.kegName), (manager) => {
+    return manager === 'homebrew' ? managed(['brew', 'upgrade', names.brewFormula]) : null
+  })
+}
+
+/** brew's own layout: `/opt/homebrew/...` or `/usr/local/Homebrew/...`, either capitalisation. */
+const BREW_IDENTIFY: DependencySpec['identify'] = (binRealPath) => {
+  return hasSegment(binRealPath, 'Homebrew') || hasSegment(binRealPath, 'homebrew') ? 'homebrew' : 'unknown'
 }
 
 const BREW: DependencySpec = {
@@ -117,17 +148,82 @@ const BREW: DependencySpec = {
     needsSudo: true,
     fetchesNetworkScript: true,
   },
-  identify: (binRealPath) => {
-    return hasSegment(binRealPath, 'Homebrew') || hasSegment(binRealPath, 'homebrew') ? 'homebrew' : 'unknown'
-  },
-  updateFor: (manager) => {
+  identify: BREW_IDENTIFY,
+  updateFor: updateWhenIdentified(BREW_IDENTIFY, (manager) => {
     return manager === 'homebrew' ? managed(['brew', 'update']) : null
-  },
+  }),
 }
 
 // aws is the row that proves the fields must stay separate: the BINARY is `aws`, the FORMULA `awscli`.
 // One conflated name emits `brew upgrade aws`, a formula that does not exist.
 const AWS_NAMES = { brewFormula: 'awscli', brewInstallSpec: 'awscli', kegName: 'awscli' } as const
+
+/** The AWS-documented installer for macOS and Linux alike. It is also the updater — see {@link awsInstallerRerun}. */
+const AWS_INSTALL_SH = 'https://awscli.amazonaws.com/v2/install.sh'
+
+/**
+ * The default, user-scope run: installs under XDG paths (`$HOME/.local`), so no sudo. It is still a
+ * script fetched over the network, so it fails that conjunct and is printed rather than run. We never
+ * pass `--system` here, which is the sudo variant.
+ */
+const AWS_USER_INSTALL: Recipe = {
+  steps: [['/bin/bash', '-c', `curl -fsSL ${AWS_INSTALL_SH} | bash`]],
+  needsSudo: false,
+  fetchesNetworkScript: true,
+}
+
+/**
+ * Where `--system` puts things: `install.sh`'s own `SYSTEM_INSTALL_DIR`. Everything else the installer
+ * writes is user-scope under XDG paths (`$XDG_DATA_HOME`, default `$HOME/.local/share`).
+ */
+const AWS_SYSTEM_DIR = '/usr/local/aws-cli'
+
+/**
+ * Updating a script install means re-running the installer: it detects an existing install and updates
+ * in place. Which variant depends on the layout `binRealPath` reveals.
+ */
+// There is no `aws update` subcommand — AWS CLI v2 rejects it in argparse (`argument command: Found
+// invalid choice 'update'`, exit 252). This row claimed there was one, so every `setup` on a machine
+// with a script-installed aws reported a failure it could never not report.
+//
+// The layout decides the argv and cannot be skipped. `--system` owns `/usr/local/aws-cli` and needs
+// root; the default is user-local under XDG paths. Handing a `/usr/local` install the user-local
+// command writes a SECOND aws into `~/.local/bin` that shadows or is shadowed by the first depending on
+// `PATH` order — the same split-brain the keg-vs-script distinction exists to prevent. That is why the
+// test is `isWithin` and not `startsWith`: `binRealPath` arrives canonicalised while the constant does
+// not, and on a host where `/usr/local` is itself a symlink a prefix test silently answers "user-scope"
+// for a system install — the exact outcome this branch exists to avoid.
+//
+// `sudo` is in the argv, not merely declared: this recipe is refused and PRINTED, and the installer's
+// own error for the elevated variant is "requires root. Re-run with sudo", so a line without it is a
+// line that does not work when pasted.
+//
+// "Updates in place" is the OUTCOME, not one mechanism: on Linux install.sh passes `--update` to the
+// unpacked installer, while on macOS it re-runs `installer -pkg` with a choices file and no such flag.
+//
+// `isWithin` canonicalises the PARENT only, which is right here because `binRealPath` already arrives
+// canonicalised from the probe — the two sides are resolved consistently. It does mean the constant is
+// resolved against the real filesystem: identity for a real directory and for a missing one (see
+// `safeRealpath`), so the only machine on which this reads differently is one where
+// `/usr/local/aws-cli` is itself a symlink. No such layout is one the vendor installer creates.
+const awsInstallerRerun = (binRealPath: string): Recipe => {
+  if (!isWithin(AWS_SYSTEM_DIR, binRealPath, safeRealpath)) return AWS_USER_INSTALL
+
+  return {
+    steps: [['sudo', '/bin/bash', '-c', `curl -fsSL ${AWS_INSTALL_SH} | bash -s -- --system`]],
+    needsSudo: true,
+    fetchesNetworkScript: true,
+  }
+}
+
+/** The keg, then the installer's own two layouts (`~/.local/share/aws-cli`, `/usr/local/aws-cli`). */
+const AWS_IDENTIFY: DependencySpec['identify'] = (binRealPath) => {
+  if (isBrewKegOf(binRealPath, AWS_NAMES.kegName)) return 'homebrew'
+  // Owned by no package manager. Which of the two script layouts it is, only `awsInstallerRerun` asks.
+  if (hasSegment(binRealPath, 'aws-cli')) return 'script'
+
+  return 'unknown'
+}
 
 const AWS: DependencySpec = {
   id: 'aws',
@@ -137,29 +233,16 @@ const AWS: DependencySpec = {
   versionFrom: firstVersion,
   platforms: UNIX,
   prerequisites: [],
-  // The AWS-documented path for macOS and Linux alike. It needs NO sudo (user scope, `$HOME/.local`),
-  // but it is still a script fetched over the network, so it fails that conjunct and is printed.
-  // We never pass `--system`, which is the sudo variant.
-  bootstrapInstall: {
-    steps: [['/bin/bash', '-c', 'curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash']],
-    needsSudo: false,
-    fetchesNetworkScript: true,
-  },
-  identify: (binRealPath) => {
-    if (isBrewKegOf(binRealPath, AWS_NAMES.kegName)) return 'homebrew'
-    // `~/.local/share/aws-cli/...` — the installer's own layout, owned by no package manager.
-    if (hasSegment(binRealPath, 'aws-cli')) return 'script'
-
-    return 'unknown'
-  },
-  updateFor: (manager) => {
+  bootstrapInstall: AWS_USER_INSTALL,
+  identify: AWS_IDENTIFY,
+  updateFor: updateWhenIdentified(AWS_IDENTIFY, (manager, binRealPath) => {
     if (manager === 'homebrew') return managed(['brew', 'upgrade', AWS_NAMES.brewFormula])
-    // The vendor's own updater, correct ONLY for a script install. Running it against a keg is the
-    // split-brain `install-manager` already refuses for infra-kit itself.
-    if (manager === 'script') return managed(['aws', 'update'])
+    // Re-running the vendor installer, correct ONLY for a script install. Running it against a keg is
+    // the split-brain `install-manager` already refuses for infra-kit itself.
+    if (manager === 'script') return awsInstallerRerun(binRealPath)
 
     return null
-  },
+  }),
 }
 
 const GH_NAMES = { brewFormula: 'gh', brewInstallSpec: 'gh', kegName: 'gh' } as const
@@ -174,7 +257,7 @@ const GH: DependencySpec = {
   prerequisites: ['brew'],
   bootstrapInstall: managed(['brew', 'install', GH_NAMES.brewInstallSpec]),
   identify: brewKegIdentify(GH_NAMES.kegName),
-  updateFor: brewUpgradeFor(GH_NAMES.brewFormula),
+  updateFor: brewKegUpdate(GH_NAMES),
 }
 
 // The tap-qualified spec `brew install` is given. The KEG it lands in is `Cellar/doppler` — asking
@@ -198,10 +281,15 @@ const DOPPLER: DependencySpec = {
   identify: brewKegIdentify(DOPPLER_NAMES.kegName),
   // `brew upgrade doppler`, never `doppler update`, for a keg: the vendor self-updater against a
   // brew-managed binary is the same split-brain as running npm against a Homebrew install.
-  updateFor: brewUpgradeFor(DOPPLER_NAMES.brewFormula),
+  updateFor: brewKegUpdate(DOPPLER_NAMES),
 }
 
 const PORTLESS_PACKAGE = 'portless'
+
+/** A global npm install of `portless`; a `node_modules` copy in some repo is not ours to update. */
+const PORTLESS_IDENTIFY: DependencySpec['identify'] = (binRealPath) => {
+  return npmPrefixOfPackage(binRealPath, PORTLESS_PACKAGE) === null ? 'unknown' : 'npm'
+}
 
 const PORTLESS: DependencySpec = {
   id: 'portless',
@@ -216,12 +304,10 @@ const PORTLESS: DependencySpec = {
   // is why the codebase prints `<node> <abs cli.js>` via `formatPortlessCommand`. A global install helps
   // interactive use and repos that do not depend on infra-kit; it changes nothing about the sudo case.
   bootstrapInstall: managed(['npm', 'install', '-g', PORTLESS_PACKAGE]),
-  identify: (binRealPath) => {
-    return npmPrefixOfPackage(binRealPath, PORTLESS_PACKAGE) === null ? 'unknown' : 'npm'
-  },
-  updateFor: (manager) => {
+  identify: PORTLESS_IDENTIFY,
+  updateFor: updateWhenIdentified(PORTLESS_IDENTIFY, (manager) => {
     return manager === 'npm' ? managed(['npm', 'install', '-g', `${PORTLESS_PACKAGE}@latest`]) : null
-  },
+  }),
 }
 
 /** Every spec, keyed by id. The single source of the probe argv `doctor` also reads. */

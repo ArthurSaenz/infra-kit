@@ -121,6 +121,25 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   // // grants yourself production access with no trace in the repo.
   // "protectedEnvs": "disallow"
   //
+  // // MCP servers fronted by \`ik-mcp\`, the credential-agnostic stdio proxy: one entry per server,
+  // // naming the command to spawn and the env-var NAMES it reads from the \`ik env-load\` session
+  // // file. \`ik setup\` derives a committed \`.mcp.json\` entry from each; \`ik audit\` guards drift.
+  // //
+  // // PROJECT LAYER ONLY. This key is REFUSED here and in the per-project override — the loader
+  // // throws with a message saying so — because it feeds a committed file and the layer merge is
+  // // shallow: a per-machine copy would replace the project's servers for everyone. For a
+  // // machine-only override of one server (a local fork), use Claude Code's own local scope:
+  // //   claude mcp add --scope local <name> -- ik-mcp --name <name> --env <VAR> -- <command> <args>
+  // // The proxy is for STATELESS servers: a credential change respawns the child.
+  // "mcp": {
+  //   "grafana": {
+  //     "command": "mcp-grafana",
+  //     "args": ["-t", "stdio"],
+  //     "env": ["GRAFANA_URL", "GRAFANA_SERVICE_ACCOUNT_TOKEN"],
+  //     "unset": ["GRAFANA_API_KEY", "GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE"]
+  //   }
+  // }
+  //
   // // Doppler SERVICE TOKENS are not a config key and never belong in this file. They live in
   // // tokens.json — a SIBLING of this file, at ~/.infra-kit/projects/<repo>/tokens.json (mode 0600) —
   // // shaped { "envs": { "<env>": "dp.st…" } }. Write it with \`infra-kit env-token-set <env>\` (which
@@ -149,7 +168,7 @@ export const buildUserGlobalExample = (): string => {
 // Merge is shallow: setting a top-level key replaces that whole section from
 // layer 1. Arrays do not concatenate. Top-level keys recognized:
 // envManagement, ide, taskManager, worktrees, envAutoLoad, dev,
-// devServersPresets, devProxy, protectedEnvs. The schema is strict — an
+// devServersPresets, devProxy, protectedEnvs, mcp (project layer only). The schema is strict — an
 // unrecognized top-level key is a parse error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real global
@@ -183,7 +202,7 @@ export const buildUserProjectExample = (projectName: string): string => {
 // top-level key set here replaces that whole section wholesale; arrays do not
 // concatenate. Top-level keys recognized: envManagement, ide,
 // taskManager, worktrees, envAutoLoad, dev, devServersPresets, devProxy,
-// protectedEnvs. The schema is strict — an unrecognized top-level key is a parse
+// protectedEnvs, mcp (project layer only — refused here). The schema is strict — an unrecognized top-level key is a parse
 // error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real overrides

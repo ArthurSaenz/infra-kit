@@ -568,3 +568,113 @@ describe('setup --skip-tools — plugin install', () => {
     expect(readSettings().enabledPlugins?.[PLUGIN_KEY]).toBe(true)
   })
 })
+
+/**
+ * The `mcp-proxies` step: derived `ik-mcp` entries land beside the `infra-kit` key, in a step of
+ * their own, so a broken `mcp` block can cost this step and never the plugin install.
+ */
+describe('setup — the mcp-proxies step', () => {
+  const VALID_WITH_MCP = JSON.stringify({
+    envManagement: { provider: 'doppler', config: { name: 'x' } },
+    mcp: { grafana: { command: 'mcp-grafana', args: ['-t', 'stdio'], env: ['GRAFANA_URL'] } },
+  })
+
+  it('derives one .mcp.json entry per mcp.<name>, beside the infra-kit key', async () => {
+    writeFile(path.join(repo, 'infra-kit.json'), VALID_WITH_MCP)
+    resetInfraKitConfigCache()
+
+    await runInit()
+
+    const servers = readMcp().mcpServers ?? {}
+
+    expect(servers['infra-kit'], 'the add-only infra-kit key is untouched by the new step').toMatchObject({
+      command: 'infra-kit',
+    })
+    expect(servers.grafana).toEqual({
+      type: 'stdio',
+      command: 'ik-mcp',
+      args: ['--name', 'grafana', '--env', 'GRAFANA_URL', '--', 'mcp-grafana', '-t', 'stdio'],
+    })
+    expect(linesMatching(/ik-mcp "grafana"/)).toHaveLength(1)
+  })
+
+  it('is idempotent — a second run writes nothing and prints no ik-mcp line', async () => {
+    writeFile(path.join(repo, 'infra-kit.json'), VALID_WITH_MCP)
+    resetInfraKitConfigCache()
+
+    await runInit()
+
+    const before = fs.readFileSync(mcpPath(), 'utf-8')
+
+    vi.mocked(logger.info).mockClear()
+    await runInit()
+
+    expect(fs.readFileSync(mcpPath(), 'utf-8')).toBe(before)
+    expect(linesMatching(/ik-mcp/)).toHaveLength(0)
+  })
+
+  it('a broken mcp block warns about THIS step only — the plugin pointer and infra-kit key still land', async () => {
+    writeFile(
+      path.join(repo, 'infra-kit.json'),
+      JSON.stringify({
+        envManagement: { provider: 'doppler', config: { name: 'x' } },
+        mcp: { grafana: { command: 'x', env: ['PATH'] } },
+      }),
+    )
+    resetInfraKitConfigCache()
+
+    await runInit()
+
+    expect(
+      warnLines().some((line) => {
+        return /ik-mcp entries not synced/.test(line)
+      }),
+    ).toBe(true)
+    expect(readSettings(), 'the plugin pointer must not be a casualty of a bad mcp block').toBeTruthy()
+    expect(readMcp().mcpServers?.['infra-kit']).toMatchObject({ command: 'infra-kit' })
+    expect(readMcp().mcpServers?.grafana).toBeUndefined()
+  })
+
+  it('stays silent when there is no infra-kit.json at all — the guidance gate already said so', async () => {
+    fs.rmSync(path.join(repo, 'infra-kit.json'))
+    resetInfraKitConfigCache()
+
+    await runInit()
+
+    expect(
+      warnLines().filter((line) => {
+        return /ik-mcp/.test(line)
+      }),
+    ).toHaveLength(0)
+  })
+})
+
+describe('setup — the mcp-proxies step on an unwritable .mcp.json', () => {
+  it('warns that the file could not be written instead of claiming it was updated', async () => {
+    writeFile(
+      path.join(repo, 'infra-kit.json'),
+      JSON.stringify({
+        envManagement: { provider: 'doppler', config: { name: 'x' } },
+        mcp: { grafana: { command: 'mcp-grafana', env: ['GRAFANA_URL'] } },
+      }),
+    )
+    resetInfraKitConfigCache()
+    // A directory where the file should be: readable-as-absent is not the case here — it EXISTS and
+    // cannot be read or written, which is the reconciler's `unreadable` path, then `failed` on write.
+    writeFile(mcpPath(), '{"mcpServers":{}}\n')
+    fs.chmodSync(mcpPath(), 0o400)
+
+    try {
+      await runInit()
+
+      expect(linesMatching(/ik-mcp "grafana"/), 'no "updated" line may describe a write that failed').toHaveLength(0)
+      expect(
+        warnLines().some((line) => {
+          return /could not be written|Could not write/.test(line)
+        }),
+      ).toBe(true)
+    } finally {
+      fs.chmodSync(mcpPath(), 0o600)
+    }
+  })
+})

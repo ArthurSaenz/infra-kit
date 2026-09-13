@@ -33,21 +33,23 @@ export interface DependencyPlan {
   commands: string[]
 }
 
-/** The managers observed present, derived from the probe results rather than asked for separately. */
+/**
+ * The managers observed present, derived from the probe results rather than asked for separately.
+ *
+ * Only managers some recipe actually DRIVES belong here. `script` is not one: no recipe invokes the aws
+ * binary as its own updater any more — that was `aws update`, a subcommand AWS CLI v2 does not have —
+ * and the installer re-run that replaced it drives `/bin/bash`, which drives no package manager at all.
+ */
 export const presentManagers = (states: readonly DependencyState[]): DependencyManager[] => {
   const present: DependencyManager[] = []
   const brewPresent = states.some((state) => {
     return state.id === 'brew' && state.present
-  })
-  const awsIsScriptInstalled = states.some((state) => {
-    return state.id === 'aws' && state.manager === 'script'
   })
 
   // `brew` present at all means the homebrew manager is available, whoever owns the individual tools.
   if (brewPresent) present.push('homebrew')
   // npm ships with the node running this process, so it is present by construction.
   present.push('npm')
-  if (awsIsScriptInstalled) present.push('script')
 
   return present
 }
@@ -56,7 +58,9 @@ export const presentManagers = (states: readonly DependencyState[]): DependencyM
 const remediationFor = (state: DependencyState): Recipe | null => {
   const spec = specFor(state.id)
 
-  return state.present ? spec.updateFor(state.manager) : spec.bootstrapInstall
+  // The PATH, not `state.manager`: the spec re-derives the manager with the same `identify` the probe
+  // used, and it is the only thing that can tell aws's two script layouts apart.
+  return state.present ? spec.updateFor(state.binRealPath) : spec.bootstrapInstall
 }
 
 const planFor = (state: DependencyState, context: RiskContext): DependencyPlan => {

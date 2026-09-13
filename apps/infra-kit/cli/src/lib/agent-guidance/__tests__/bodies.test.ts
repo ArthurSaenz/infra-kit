@@ -155,12 +155,12 @@ describe('buildRootBody', () => {
     expect(rendered).not.toContain('infra-kit init')
   })
 
-  it('renders exactly 23 lines', () => {
+  it('renders exactly 27 lines', () => {
     // Same net as the per-type counts, extended to the two resources `PACKAGE_TYPES`
     // does not reach. Neither file contains a bare-placeholder construct today, so the
     // prettier-inserts-a-line class is not reachable here — this is defence in depth,
     // and the only alternative backstop is a snapshot whose update path is `vitest -u`.
-    expect(rendered.split('\n')).toHaveLength(23)
+    expect(rendered.split('\n')).toHaveLength(27)
   })
 
   it('keeps the pre-existing command and convention text', () => {

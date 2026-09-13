@@ -1,6 +1,8 @@
 import path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { resetZxFactoryArgs, zxFactoryArgs, zxTagCalls } from 'src/lib/quiet-shell/__tests__/zx-shell-mock'
+
 import { doctor } from '../doctor'
 import type { CheckResult } from '../doctor'
 
@@ -15,14 +17,16 @@ import type { CheckResult } from '../doctor'
 /** Command names the mocked `$` rejects for; empty means every probe succeeds. */
 const failing = new Set<string>()
 
-vi.mock('zx', () => {
-  return {
-    $: vi.fn((_strings: TemplateStringsArray, command: string[]) => {
-      if (failing.has(command[0] ?? '')) return Promise.reject(new Error('exit 127'))
+vi.mock('zx', async () => {
+  // Imported INSIDE the factory: `vi.mock` is hoisted above the imports, and `doctor.ts` pulls
+  // in `zx` at module scope, so a top-level binding is still in its TDZ when this runs.
+  const { zxShellMock } = await import('src/lib/quiet-shell/__tests__/zx-shell-mock')
 
-      return Promise.resolve({ stdout: '' })
-    }),
-  }
+  return zxShellMock((_strings: TemplateStringsArray, command: string[]) => {
+    if (failing.has(command[0] ?? '')) return Promise.reject(new Error('exit 127'))
+
+    return Promise.resolve({ stdout: '' })
+  })
 })
 
 vi.mock('src/lib/env-tokens', () => {
@@ -121,6 +125,41 @@ const runCheck = async (name: string): Promise<CheckResult> => {
 
 beforeEach(() => {
   failing.clear()
+  resetZxFactoryArgs()
+})
+
+/**
+ * `checkCommand` probes binaries that are routinely ABSENT — that is the whole point of the row — and
+ * zx relays a child's stderr to the parent's by default, so an unconfigured `$` here printed
+ * `command not found` into the terminal of every `doctor` run, in the shell's voice. The verdict below
+ * is identical either way, so the option itself is what has to be asserted.
+ */
+describe('the binary probes capture their output instead of relaying it', () => {
+  it('configures zx quiet before shelling out', async () => {
+    failing.add('cmux')
+    await runCheck('terminal installed')
+
+    expect(zxFactoryArgs).toContainEqual({ quiet: true })
+  })
+
+  // Asserting only that SOME call configured the shell would stay green with one site reverted, since
+  // the others still configure theirs. Every command actually run has to have come from a configured
+  // shell, which is why the mock records the tag calls and not just the configuration.
+  it('leaves no probe anywhere in the report on an unconfigured shell', async () => {
+    await doctor()
+
+    expect(zxTagCalls.length).toBeGreaterThan(0)
+    expect(
+      zxTagCalls.filter((call) => {
+        return !call.configured
+      }),
+    ).toEqual([])
+    expect(
+      zxFactoryArgs.filter((args) => {
+        return (args as { quiet?: boolean } | undefined)?.quiet !== true
+      }),
+    ).toEqual([])
+  })
 })
 
 describe('package manager installed', () => {

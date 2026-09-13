@@ -84,28 +84,117 @@ const advanceSingleQuoteState = (line: string, startInQuote: boolean): boolean =
   return inQuote
 }
 
-export const parseVarNamesFromEnvFile = (filePath: string): string[] => {
-  if (!fs.existsSync(filePath)) return []
+/** One `KEY=value` assignment recovered from an env file, value already unescaped. */
+export interface EnvAssignment {
+  name: string
+  value: string
+}
 
-  const content = fs.readFileSync(filePath, 'utf-8')
-  const names: string[] = []
+/**
+ * Undo {@link shellSingleQuote}: drop the wrapping quotes, then turn each `'\''`
+ * back into a literal `'`. Order matters — unescaping first would let an embedded
+ * `'\''` be mistaken for the closing quote.
+ */
+const decodeSingleQuoted = (raw: string): string => {
+  const withoutOpen = raw.startsWith("'") ? raw.slice(1) : raw
+  const body = withoutOpen.endsWith("'") ? withoutOpen.slice(0, -1) : withoutOpen
+
+  return body.split("'\\''").join("'")
+}
+
+/** File contents, or '' when the path is absent, a directory, or unreadable. */
+const readEnvFileContent = (filePath: string): string => {
+  try {
+    return fs.readFileSync(filePath, 'utf-8')
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Walk every assignment in an env-load.sh body, skipping the continuation lines of
+ * multiline values. Both {@link parseVarNamesFromEnvFile} and
+ * {@link parseVarsFromEnvFile} go through here, so the two can never disagree about
+ * where a value ends.
+ */
+const forEachAssignment = (content: string, visit: (assignment: EnvAssignment) => void): void => {
+  // A trailing CR is stripped per line: a CRLF file would otherwise hand back values
+  // ending in '\r' — a token that looks right in a diff and fails every request.
+  const lines = content.split('\n').map((line) => {
+    return line.endsWith('\r') ? line.slice(0, -1) : line
+  })
+  let index = 0
   let inQuote = false
 
-  for (const line of content.split('\n')) {
+  while (index < lines.length) {
+    const line = lines[index]!
+
     // Only a line that starts OUTSIDE a quoted value can be a real assignment;
     // continuation lines of a multiline secret value are skipped.
-    if (!inQuote) {
-      const match = ENV_VAR_LINE_PATTERN.exec(line)
-
-      if (match) {
-        names.push(match[1]!)
-      }
+    if (inQuote) {
+      inQuote = advanceSingleQuoteState(line, inQuote)
+      index += 1
+      continue
     }
 
-    inQuote = advanceSingleQuoteState(line, inQuote)
+    const match = ENV_VAR_LINE_PATTERN.exec(line)
+
+    if (!match) {
+      inQuote = advanceSingleQuoteState(line, false)
+      index += 1
+      continue
+    }
+
+    const name = match[1]!
+    const rest = line.slice(match[0].length)
+
+    // An unquoted value cannot span lines (`CONNECTION_STRING=host=db;user=admin`).
+    if (!rest.startsWith("'")) {
+      visit({ name, value: rest })
+      inQuote = advanceSingleQuoteState(line, false)
+      index += 1
+      continue
+    }
+
+    const parts = [rest]
+    let open = advanceSingleQuoteState(rest, false)
+
+    while (open && index + 1 < lines.length) {
+      index += 1
+      const continuation = lines[index]!
+
+      parts.push(continuation)
+      open = advanceSingleQuoteState(continuation, true)
+    }
+
+    visit({ name, value: decodeSingleQuoted(parts.join('\n')) })
+    inQuote = open
+    index += 1
   }
+}
+
+export const parseVarNamesFromEnvFile = (filePath: string): string[] => {
+  const names: string[] = []
+
+  forEachAssignment(readEnvFileContent(filePath), ({ name }) => {
+    names.push(name)
+  })
 
   return names
+}
+
+/**
+ * Same walk as {@link parseVarNamesFromEnvFile}, but keeping the values. Later
+ * assignments win, matching what `source`ing the file would do.
+ */
+export const parseVarsFromEnvFile = (filePath: string): Record<string, string> => {
+  const vars: Record<string, string> = {}
+
+  forEachAssignment(readEnvFileContent(filePath), ({ name, value }) => {
+    vars[name] = value
+  })
+
+  return vars
 }
 
 /**

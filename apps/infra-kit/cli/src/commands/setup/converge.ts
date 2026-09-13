@@ -69,7 +69,7 @@ const preflight = (plan: DependencyPlan, mode: SetupMode): ToolResult | null => 
       ...describeBefore(plan),
       action: 'refused',
       commands: plan.commands,
-      detail: `refused (${plan.refusedBecause.join(', ')}) — run the commands above yourself`,
+      detail: `refused (${plan.refusedBecause.join(', ')}) — run the commands printed below yourself`,
     }
   }
 
@@ -82,7 +82,7 @@ const toResult = (plan: DependencyPlan, outcome: InstallOutcome): ToolResult => 
       ...describeBefore(plan),
       action: 'refused',
       commands: outcome.commands,
-      detail: `refused (${outcome.refusedBecause.join(', ')}) — run the commands above yourself`,
+      detail: `refused (${outcome.refusedBecause.join(', ')}) — run the commands printed below yourself`,
     }
   }
 

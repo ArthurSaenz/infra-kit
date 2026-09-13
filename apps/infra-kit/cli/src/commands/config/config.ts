@@ -97,7 +97,9 @@ export const configEdit = async (): Promise<ToolsExecutionResult> => {
     logger.info(seedCreatedMessage(seed))
   }
 
-  logger.info(`Opening ${tildify(paths.userProject)} in ${editor}`)
+  // Every key but `mcp` is welcome here; that one feeds the committed .mcp.json and the loader
+  // refuses it outside the project file (the refusal message says where it goes instead).
+  logger.info(`Opening ${tildify(paths.userProject)} in ${editor} (per-machine override — every key except "mcp")`)
 
   await $({ stdio: 'inherit' })`${editor} ${paths.userProject}`
 

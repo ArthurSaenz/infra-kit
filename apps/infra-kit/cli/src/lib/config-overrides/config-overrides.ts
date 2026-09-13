@@ -26,7 +26,9 @@ export interface OverrideSummary {
 // That one throws on malformed JSON and on schema failure, and the schema object is strict, so a
 // single typo'd top-level key would invalidate the whole layer and turn these diagnostic commands
 // into throwers — precisely when the user reaches for them. Raw keys also surface the typo (a
-// misspelled `devServersPreset` shows up in the list) instead of swallowing it.
+// misspelled `devServersPreset` shows up in the list) instead of swallowing it. The same goes for a
+// key the loader REFUSES in this layer (`mcp`): it is listed here on purpose, because this is how the
+// user sees the offending key at all — do not "fix" this to throw.
 //
 // The empty-file tolerance mirrors `loadLayer`'s. A non-object cannot be a merge layer, and
 // reporting an array's indices as `(3 override(s): 0, 1, 2)` would be a lie.

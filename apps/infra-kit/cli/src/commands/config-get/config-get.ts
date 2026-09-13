@@ -56,7 +56,7 @@ const configGetOutputSchema = {
 export const configGetMcpTool = defineMcpTool({
   name: 'config-get',
   description:
-    'Return the fully merged infra-kit configuration (project + user-global + per-project override layers) as it is resolved at runtime. Read-only introspection — makes no changes; use `config edit` (CLI-only) to modify the override file. Fails with the loader error when run outside a configured infra-kit repo.',
+    'Return the fully merged infra-kit configuration (project + user-global + per-project override layers) as it is resolved at runtime. Read-only introspection — makes no changes; use `config edit` (CLI-only) to modify the per-machine override file (every key except `mcp`, which is project-layer only and refused there). Fails with the loader error when run outside a configured infra-kit repo, or when an override layer carries a refused key.',
   inputSchema: {},
   outputSchema: configGetOutputSchema,
   handler: () => {

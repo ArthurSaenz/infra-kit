@@ -588,3 +588,279 @@ process.exit(1) and would take the vitest worker down). Mutation: re-register hi
 VERIFIED BY ME from the BUILT binary: build 0; `dist/cli.js init` -> "error: unknown command 'init'";
 setup + doctor alive; no setup-dependency*.
 Full suite 278 files / 3257 tests EXIT=0; tsc 0; plugin node --test 0.
+
+## 2026-09-10 — `infra-kit setup` output defects (ralph, session 9526c284)
+
+Trigger: a screenshot of a real `infra-kit setup` run showing three separate problems.
+
+### What was actually wrong
+
+1. **`aws update` is not a command.** `dependency-registry.ts` mapped a script-installed aws to
+   `managed(['aws','update'])` with a comment calling it "the vendor's own updater". AWS CLI v2 has no
+   `update` subcommand — argparse answers `argument command: Found invalid choice 'update'` and exits
+   252. The recipe passed every risk conjunct (no sudo, no network script, manager owned + present), so
+   it RAN, and `setup` reported `failed  aws` on every machine with a script/pkg-installed aws. Nothing
+   pinned the recipe in a test, which is why it survived.
+   Fix: `updateFor` now takes `(manager, binRealPath)` and a script install re-runs the vendor
+   installer (`https://awscli.amazonaws.com/v2/install.sh`), which self-detects an existing install and
+   passes `--update` internally. Layout-aware: `/usr/local/aws-cli/` -> `sudo … | bash -s -- --system`;
+   otherwise the user-scope form. Both fetch a network script, so both are REFUSED and printed.
+
+2. **zx relays child stderr.** zx 8.8.5 pipes child stdout but forwards child STDERR to the parent's.
+   `default-probe-deps.ts` used a bare `$`, so a read-only probe of an absent binary printed
+   `/bin/bash: portless: command not found` into the terminal of every `setup` AND `doctor` run.
+   Fix: `$({ quiet: true })`, built lazily inside the function — at module scope it fires on IMPORT,
+   which crashes any test that mocks `zx` with a tag-only fake before its fixtures exist.
+
+3. **`stdio: 'inherit'` in the installer.** brew/npm chatter interleaved with the summary the command
+   exists to print. Fix: capture, narrate each step in infra-kit's own voice first, and put the tail of
+   the child's own stderr into the failure detail — which is where the `exited 252` diagnosis went.
+
+Plus: `formatRecipe` used `steps.join(' ')`, so a refused `bash -c 'curl … | bash'` printed as a line
+that does NOT reproduce the recipe. Extracted `shellQuote`/`shellLine` from `portless-driver` into
+`src/lib/shell-quote/` and used it in both.
+
+### Learnings worth carrying
+
+- zx's `$` is BOTH a tag and a factory. A `vi.mock('zx')` that models only the tag call crashes the
+  moment production code writes `$({ … })`. Two doctor mocks needed teaching; `src/lib/vendor/__tests__/zx-mock.ts`
+  already had the both-shapes pattern and is the one to copy.
+- Never create a configured zx shell at module scope in a module that tests import transitively.
+- The CLI's local eslint enforces `max-jsdoc-lines` (<=15 prose lines) — rationale goes in `//` notes
+  below the block, not inside it.
+- Running `infra-kit setup` to verify regenerates every CLAUDE.md guidance block with the current
+  version stamp. Revert those before committing; they are not part of the change.
+- `pnpm run qa` is RED on HEAD for unrelated version drift: `publish-lifecycle.test.ts` and
+  `lockstep.test.ts` assert infra-kit@0.5.1 against @slip-stream-kit/*@0.5.0 and config@0.4.0. Check
+  whether a red is one of those two before blaming your diff.
+
+### Review round 1 — rejected, three blockers (all now fixed)
+
+1. **`spawnSync` had no `maxBuffer`.** Node's default is 1 MiB and at the limit it does not truncate —
+   it SIGTERMs the child and returns `ENOBUFS`. A `brew install` building from source clears 1 MiB
+   routinely, so capturing output introduced a way to kill an install that `stdio: 'inherit'` could
+   never have. Worse, `describeFailure` tested `result.error` first, so the kill reported as
+   "could not start" — the one description guaranteed to be false. Now 64 MiB with an explicit
+   ENOBUFS branch ahead of the generic one.
+2. **The leak was only half-fixed.** `doctor.ts`'s `checkCommand` and `probeIde` still used a bare `$`
+   over possibly-absent binaries, across ten call sites. Extracted `lib/quiet-shell` and used it in
+   both places plus the probe.
+3. **`startsWith` for the aws `--system` layout.** This repo already ships `isWithin`, whose docblock
+   argues against exactly that, and the memory note "realpath asymmetry breaks path containment"
+   records the failure mode. Verified: `isWithin` rejects the `/usr/local/aws-cli-backup` sibling that
+   `startsWith` accepts, and `safeRealpath` handles a parent that does not exist.
+
+Also taken from the review: `updateFor(manager, binRealPath)` was one parameter too many — the manager
+is `identify(binRealPath)`, computed by the same spec, so the pair could disagree in ways the probe can
+never produce. Collapsed to `updateFor(binRealPath)` via `updateWhenIdentified`. Test sweeps now range
+over layouts rather than over `DependencyManager` strings, several of which no `identify` can return.
+
+Fallout worth remembering: teaching zx's factory form to the doctor mocks broke FOUR suites, and the
+shared helper had to be imported INSIDE the hoisted `vi.mock` factory (`await import`) because
+`doctor.ts` pulls `zx` in at module scope, leaving a top-level binding in its TDZ. A test that stubs
+`vi.mocked($).mockResolvedValue` also clobbers the factory shape, not just the tag.
+
+## 2026-09-10 — Grafana MCP shim, phases 0-3 (ralph, session 68b53e4f)
+
+Plan: `docs/grafana-mcp-port-plan.md` rev 4 (Architect + Critic consensus). Architecture is
+Option D — an stdio<->stdio RESPAWNING shim, not the prototype's http hop.
+
+### Phase 0 probes (both recorded in docs/grafana-mcp-plan.md)
+
+- **P0-d: an `mcp-grafana` stdio child DOES exit on parent SIGKILL, 3/3.** Closing the pipe
+  gives it stdin EOF. So no parent-pid poll and no reap sweep — which is what dissolves the
+  principle-1-vs-3 tension the plan recorded.
+- **P0-c: terminal launch green, GUI launch confirmed broken.** `INFRA_KIT_SESSION` is
+  identical across the Bash tool, the claude process and its MCP children (measured live).
+  With the var unset the CLI REFUSES (`env-status` errors), so in a GUI launch the shim reads
+  `no-session` while a tool call's `env-load` writes to a freshly minted random id. Not
+  Grafana-specific — `ik env-load`'s channel is unreachable from a GUI-launched Claude for
+  every consumer. Own ticket.
+
+### What Option D actually cost
+
+The plan predicted D would delete four defects and create two. Both created defects were
+real and both were caught by tests I had to watch fail first:
+
+- **N1 (id namespace).** The first implementation remapped client ids OUTBOUND but resolved
+  with the wire message, so the client got an answer labelled with the shim's private id.
+  The fix is `deferred.clientId` — present means relabel and relay, absent means the shim's
+  own request (the replayed handshake), whose answer is consumed and never forwarded.
+- **N2 (readiness deadline).** Dropping `waitForPort` dropped the only timeout. Plus a
+  second bug the deadline work surfaced: a send on a session closed between `ensure()`
+  resolving and the write landing registered a pending entry AFTER the rejection sweep had
+  run, so the caller hung forever. Both now reject.
+
+### Learnings worth carrying
+
+- **The prototype's credential regex is exploitable, and I have the repro.** Doppler emits
+  keys sorted, so any secret sorting after `GRAFANA_` whose multiline value contains
+  assignment-shaped lines HIJACKS both url and token —
+  `GRAFANA_URL -> \''https://attacker.example'\'`. `constants.ts` already had the
+  quote-state machine; `parseVarsFromEnvFile` now shares it with `parseVarNamesFromEnvFile`
+  so the two can never disagree.
+- **`dist-shebang.test.ts` enumerates entries BY NAME.** It would not have caught a missing
+  hashbang on a new bin. A new entry needs a POSITIVE case added, not just the file.
+- **Build the shim into a temp dir inside the test**, never read `dist/` — qa has no build
+  step. Mutation-tested three ways (respawn disabled, protocolVersion echoed, capabilities
+  pinned) and confirmed each turns the suite red.
+- **Test the real binary, not only your fixture.** The whole suite passes against a fixture
+  I wrote; the live run against `mcp-grafana` v1.3.0 is what proves the framing. It returned
+  72 tools — matching the design doc's measured fact 6 — with `api_key_set=true` from the
+  inline env var.
+- `dist/grafana-stdio.js` is 6.4 KB against `cli.js`'s 36.9 KB, which is the isolation claim
+  made concrete.
+
+### Not done, deliberately
+
+Phase 4 (doctor row + `mcp-grafana` dependency-registry entry) is gated on the uncommitted
+`setup`/dependency-registry workstream landing first — phases 1-3 touch none of its files.
+Phase 5 (Doppler provisioning) is externally blocked: no service token for `dev`, and
+`GRAFANA_*` is not in the config.
+
+`pnpm run qa` in the CLI has ONE error, and it is not mine: `dependency-install.ts:150`
+`regexp/no-contradiction-with-assertion` on an `ERROR_SHAPED` regex that does not exist at
+HEAD — it arrived with that same uncommitted workstream.
+
+### Review round 1 — REJECTED, two blockers (both fixed)
+
+1. **Lazy spawn was defeated by the mandatory handshake.** `notifications/initialized` — which
+   every client sends right after `initialize` — fell through to `upstream.notify` and spawned a
+   child. So every real session with credentials spawned eagerly, and D7 was fiction.
+2. **The test that was supposed to prove D7 was vacuous.** `FAKE_SPAWN_LOG` was set on
+   `process.env` AFTER the shim child had already been spawned with a snapshot of the
+   environment, so the fixture's guard never fired and `existsSync(spawnLog)` was false whether
+   or not a child had started.
+
+I fixed (2) FIRST, on purpose, so the test would go red and prove (1) was real. It did. Then (1):
+`notify(message, credentials)` is gone entirely, replaced by `notifyIfActive(message)` which does
+NOT call `ensure()` — so no client notification can cause a spawn structurally, not just for the
+one method. The entry additionally swallows `notifications/initialized`, since the handshake
+replay already sends one to every child.
+
+Five non-blocking findings, all fixed with a guard each: `readBinaryVersion` now gets the same
+augmented PATH (without it, a `go install` layout always probes `unknown` and D8's version keying
+collapses into one bucket); a per-request deadline joins the readiness one (a child that answers
+`initialize` then goes silent used to hang the session forever); server-initiated REQUESTS are
+refused with -32601 instead of relayed (relaying hands the client an id from the upstream's
+namespace, and the client's reply re-enters as a request with no method); CRLF no longer leaves a
+`\r` inside a token; the module-load `spawnSync` is gone.
+
+Security: the child inherits `process.env`, and the shim is normally launched from a shell that
+sourced the very env file — so the `GRAFANA_` READ filter never closed the inheritance path.
+`stripFromChildEnv` now deletes the file's non-Grafana names, and the loop runs LAST over the
+merged env because my own test caught that `extraEnv` could otherwise put a secret back. A
+`NEVER_STRIP` set protects `PATH` (set immediately before the loop — stripping it ENOENTs the
+spawn) and the proxy/TLS vars.
+
+**Review round 2 — APPROVED**, with one low-severity find: a message carrying an `id` and NO
+`method` is a RESPONSE, and it fell through to the request path — spawning an upstream and
+answering `no method undefined`. Fixed with an early return.
+
+### The readline fence — a repo invariant I tripped
+
+`every-inquirer-site-is-escapable.test.ts` forbids `node:readline` outside `src/lib/prompts/`; it
+is a forward fence with ZERO exemptions, aimed at future stdin readers that the identifier-based
+sweep cannot see. My transport tripped it. Rather than carve the first exemption I dropped
+readline entirely — `src/lib/grafana/line-stream.ts` hand-frames newline-delimited JSON in a dozen
+lines, with its own tests for split-across-chunk messages, unterminated tails and CRLF. The fence
+stays pristine and the transport no longer inherits readline's buffering semantics.
+
+### Deslop pass
+
+Deleted `src/lib/grafana/index.ts` (a barrel nothing imported); removed `spawnCount()` from the
+`Upstream` API — production surface that existed only for tests, replaced by the fixture's own
+spawn log, which is a STRONGER observable because the child writes it; inlined a single-use cast
+wrapper; and hoisted the `shellSingleQuote` mirror duplicated across two test files into
+`__tests__/helpers/env-file.ts`. The real encoder is deliberately NOT imported — `env-load.ts`
+drags `zx` and `@inquirer/select` into what are otherwise pure unit tests.
+
+### Final state
+
+- Full suite: **3349 passing**, 2 failing — `publish-lifecycle` and `lockstep`, both the
+  pre-existing `@slip-stream-kit/config@0.4.0` vs `infra-kit@0.5.2` drift.
+- eslint on my files: clean. `pnpm run qa`'s only error is `dependency-install.ts:150`, whose
+  regex does not exist at HEAD.
+- Live re-run against the real `mcp-grafana` v1.3.0 after the deslop pass: still 72 tools.
+
+## 2026-09-12 — ik-mcp: the Grafana shim generalized (ralph, session 68b53e4f)
+
+Plan: `docs/mcp-proxy-generalization-plan.md` rev 5 (two Architect + two Critic rounds). Architecture
+is Option F2 — the proxy never reads `infra-kit.json`. `mcp.<name>` lives there; `ik setup` /
+`ik audit --root --fix` DERIVE the `.mcp.json` entry with resolved argv; `ik audit` guards drift; the
+proxy consumes argv only. `dist/mcp-proxy.js` is 8.5 KB with zero runtime deps (not even zod).
+
+### Where the pieces landed
+
+- Schema: `envVarName`, `mcpProxySchema`, `mcpProxiesSchema`, `mcp` on `infraKitConfigObject`
+  (`infra-kit-config.ts`). `loadLayer` REFUSES `mcp` in non-required layers via the `envTokens`
+  precedent — the layer merge is `{...merged, ...data}` (shallow), so a per-machine `mcp` would
+  replace the project block and be derived into the committed file. The message names
+  `claude mcp add --scope local` for the legitimate per-machine case.
+- Derivation: `src/lib/mcp-proxy/derive.ts` — repeated flags, `--unset` only when non-empty.
+- Writer: `src/lib/plugin-pointer/mcp-proxy-registration.ts`, SIBLING of the add-only `infra-kit`
+  writer, sharing its file primitives. Ownership fork: owned+configured → rewrite (preserving other
+  fields); owned+unconfigured → REPORT, never remove; foreign+configured → refuse. `--fix` deletes
+  nothing. Invalid config never reaches the writer (empty set is indistinguishable from "all removed").
+- `ik setup`: own `mcp-proxies` step + label; silent when no infra-kit.json (the guidance gate already
+  warned once); warns on invalid config; plugin install is never a casualty.
+- `ik audit --root`: `mcp-proxy-check.ts` next to `preset-proxy-check.ts`; stale/conflict = FAILURE.
+- Library: `src/lib/grafana/` → `src/lib/mcp-proxy/` (`env-vars.ts`, `upstream.ts` on `ProxySpec`,
+  `cache.ts` per-name subdir + stat fingerprint, `argv.ts`, `line-stream.ts`, `protected-env.ts`).
+- Entry: `src/entry/mcp-proxy.ts`, bin `ik-mcp`. `ik-grafana` and `grafana-stdio.ts` are gone.
+
+### Learnings worth carrying
+
+- **A W1 wire-baseline red is a tool DESCRIPTION edit.** Changing `config-get`'s description tripped
+  `mcp-stdio.e2e` w1c/w1e. Handled as the memory says: a named D15 delta + `w1c-pre-d15` control
+  asserting the OLD prose, never a re-capture. The `setup` output-schema enum change was NOT on the
+  wire — only what the baseline fixture compares is.
+- **Three guards pin the config surface**: `config-templates.test.ts` counts schema keys and asserts
+  the example documents each; `setup-init-report.test.ts` pins the init step set; `init-plugin-pointer`
+  2.3 asserts "warns exactly once" in a repo with no config. A new key/step touches all three.
+- **The init harness writes `infra-kit.json` as `{}`** (invalid), so any step that loads config warns in
+  every existing test there — fine, but know it before reading failures.
+- **Test-name diff before/after a rename** caught nothing missing; two semantic changes were named
+  on purpose: `--version` failure → stat fingerprint (not 'unknown'); the `GRAFANA_API_KEY` fallback
+  is GONE — the `env` list decides what is required.
+- `sonarjs/no-unenclosed-multiline-block` fires on the `;(cond ? a : b).push(x)` idiom; write if/else.
+
+### Verification
+
+Full suite 3415 passing; the 2 reds are `publish-lifecycle` / `lockstep` version drift. eslint: the one
+known `dependency-install.ts:150` error (the dirty `setup` workstream's). Live smoke of the BUILT
+`dist/mcp-proxy.js` with the argv `ik setup` derives, against the REAL `mcp-grafana` v1.3.0: cold
+init → `[]` → env written → `list_changed` → 72 tools → URL switch → upstream replaced → 72 tools.
+
+### Not done, deliberately
+
+Phase 4 (release ordering: CLI with the schema ships BEFORE any consumer writes `mcp`) and phase 5
+(doctor `mcp proxies`, Doppler) are not code. Nothing committed — not asked.
+
+### Review — APPROVED, four non-blocking nits, all applied
+
+The reviewer built the proxy with esbuild's metafile and read the output closure: `mcp-proxy.js` +
+2 chunks, 8.8 KB, inputs = 8 `src/lib/mcp-proxy/*` files + `constants`, ZERO `node_modules/` inputs,
+zero `import()`/`require()`. F2 ("argv only") holds at the bundle level, not just by inspection.
+
+Nits applied: (1) layer-2 and `"mcp": {}` refusal tests beside the layer-3 one — `{}` MUST be refused,
+because the shallow merge would replace the project's servers with none; (2) the chunk-isolation guard
+now reads the **metafile** (no `node_modules/` input in the entry's output closure, no external
+non-`node:` import) instead of regexing import statements — mutation-tested with a static AND a
+reachable dynamic `import('zod')`, both red (an UNREACHABLE dynamic import is tree-shaken and never
+reaches the output, so make the mutation reachable before trusting the guard); (3) the argv parser
+refuses `PROTECTED_CHILD_ENV_NAMES` in `--env`/`--unset`, because hand-written argv (the
+`claude mcp add --scope local` path) never passes the schema and `--unset PATH` would ENOENT the
+spawn; (4) `Object.hasOwn(proxies, name)`, not `name in proxies` — an entry named `constructor` fell
+into the prototype and was never reported stale.
+
+### Deslop
+
+The e2e `Shim` re-implemented newline framing — replaced with `onEachLine`. One real bug surfaced:
+`proxyEntry` echoed the reconciler's per-entry DECISIONS as "updated" even when the write FAILED
+(`status: 'failed'`), describing a file that did not change. Now a warn; regression test on a 0o400
+`.mcp.json` was red before the fix. Five exported TYPES flagged as "unused" are public signatures of
+exported functions — kept.
+
+Post-deslop: 3420 passing (2 known reds), eslint 1 known error, live smoke 72 tools + mid-session
+switch. `dist/mcp-proxy.js` 8.7 KB.

@@ -54,7 +54,7 @@ describe('config templates', () => {
     expect(JSON.parse(CONFIG_STUB)).toEqual({})
   })
 
-  it('knows all nine top-level schema keys', () => {
+  it('knows all ten top-level schema keys', () => {
     expect(SCHEMA_KEYS).toEqual([
       'envManagement',
       'ide',
@@ -65,6 +65,7 @@ describe('config templates', () => {
       'devServersPresets',
       'devProxy',
       'protectedEnvs',
+      'mcp',
     ])
   })
 

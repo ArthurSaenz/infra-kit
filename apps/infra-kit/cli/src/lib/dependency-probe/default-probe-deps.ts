@@ -13,9 +13,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
-import { $ } from 'zx'
 
 import { safeRealpath } from 'src/lib/install-manager'
+import { quietShell } from 'src/lib/quiet-shell'
 
 import type { ProbeDeps } from './dependency-probe'
 
@@ -34,7 +34,7 @@ const extraBinDirs = (): string[] => {
 /** `command -v`, so a shell-managed PATH (asdf, mise, nvm shims) is honoured rather than guessed at. */
 const resolveOnPath = async (binName: string): Promise<string | null> => {
   try {
-    const result = await $`command -v ${binName}`
+    const result = await quietShell()`command -v ${binName}`
 
     return result.stdout.trim() || null
   } catch {
@@ -45,7 +45,7 @@ const resolveOnPath = async (binName: string): Promise<string | null> => {
 export const defaultProbeDeps = (): ProbeDeps => {
   return {
     runCommand: async (argv) => {
-      const result = await $`${argv}`
+      const result = await quietShell()`${argv}`
 
       // stderr, not stdout, is where several of these print their version — `aws --version` is the
       // everyday case. Concatenating is what keeps `versionFrom` from silently returning null.

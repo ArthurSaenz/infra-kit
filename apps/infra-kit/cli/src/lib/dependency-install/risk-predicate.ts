@@ -6,6 +6,7 @@
  * at all — every place where the `anthropic/requiresUserInteraction` prompt is silently ignored.
  */
 import type { DependencyManager, Recipe } from 'src/lib/dependency-registry'
+import { shellLine } from 'src/lib/shell-quote'
 
 /** Why a recipe may not run. `printed` is the only outcome an agent ever sees for a refusal. */
 export type RefusalReason = 'needs-sudo' | 'fetches-network-script' | 'manager-absent' | 'manager-mismatch'
@@ -24,9 +25,16 @@ export interface RiskContext {
  * Which manager a recipe drives, read from its own first token.
  *
  * Derived from the argv rather than declared beside it, so a recipe cannot claim to be an `npm` one
- * while invoking `brew`. `null` means the recipe drives no package manager at all — which is only ever
- * true of the two bootstrap recipes, and those are already refused on the static conjuncts below.
+ * while invoking `brew`. `null` means the recipe drives no package manager at all, and on that answer
+ * {@link detectionRefusals} contributes nothing — so a recipe reaching it is judged by the static
+ * conjuncts ALONE.
  */
+// That is a fail-open default, and what keeps it safe is a property of the registry rather than of this
+// file: every recipe that drives no package manager pipes a script fetched over the network, so
+// `staticRefusals` already refuses it. It is not "only the two bootstraps" any more — aws's `--system`
+// update re-runs the vendor installer through `sudo /bin/bash` and lands here too. The registry's suite
+// asserts the property over every recipe it can produce, which is what makes this branch safe to leave
+// permissive rather than something to re-derive here.
 const managerDriving = (recipe: Recipe): DependencyManager | null => {
   const commands = new Set(
     recipe.steps.map((step) => {
@@ -36,8 +44,6 @@ const managerDriving = (recipe: Recipe): DependencyManager | null => {
 
   if (commands.has('brew')) return 'homebrew'
   if (commands.has('npm')) return 'npm'
-  // `aws update` is the vendor's own updater, which only a script install has.
-  if (commands.has('aws')) return 'script'
 
   return null
 }
@@ -65,6 +71,11 @@ const staticRefusals = (recipe: Recipe): RefusalReason[] => {
  * the one that currently owns the binary (or the binary must be absent, in which case the recipe's own
  * manager is by construction the canonical one for it).
  */
+// `manager-mismatch` is defence in depth rather than a live discriminator. In production the planner
+// derives both sides from the same `binRealPath` — `owner` from the probe's `identify`, the recipe from
+// the spec's `updateFor`, which calls that same `identify` — so they cannot disagree by construction.
+// The tests hand-build the disagreeing pair. It stays because "cannot disagree" is a property of a
+// caller, and this module is the one that must not depend on its callers being right.
 const detectionRefusals = (recipe: Recipe, context: RiskContext): RefusalReason[] => {
   const manager = managerDriving(recipe)
 
@@ -92,8 +103,10 @@ export const assessRecipe = (recipe: Recipe, context: RiskContext): RiskVerdict 
 }
 
 /** The argv a refusal prints, one line per step, so the human can run it themselves verbatim. */
+// `shellLine`, not `join(' ')`. Both refused bootstraps carry their whole pipeline in one `bash -c`
+// argument, and joining on spaces spills it into the outer command line: the printed
+// `/bin/bash -c curl -fsSL <url> | bash` runs curl with no URL and pipes its usage text into a shell.
+// "Verbatim" is the contract of this function, and unquoted argv does not meet it.
 export const formatRecipe = (recipe: Recipe): string[] => {
-  return recipe.steps.map((step) => {
-    return step.join(' ')
-  })
+  return recipe.steps.map(shellLine)
 }

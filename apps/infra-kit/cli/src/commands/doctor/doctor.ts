@@ -3,7 +3,6 @@ import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
-import { $ } from 'zx'
 
 import { decidePrune, isDevSessionRunning } from 'src/commands/doctor/prune-routes'
 // The one source of truth for "does `--fix` repair this row". Imported rather than restated so the
@@ -67,6 +66,7 @@ import {
 } from 'src/lib/plugin-pointer'
 import type { McpRegistration, PluginInstallState } from 'src/lib/plugin-pointer'
 import { listProjectEnvNames } from 'src/lib/project-envs'
+import { quietShell } from 'src/lib/quiet-shell'
 import { sortVersions } from 'src/lib/version-utils'
 import { canonicalizeProjectRoot } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
@@ -139,7 +139,7 @@ const checkCommand = async (
   failMsg: string,
 ): Promise<CheckResult> => {
   try {
-    await $`${command}`
+    await quietShell()`${command}`
 
     return { name, status: 'pass', message: successMsg }
   } catch {
@@ -801,7 +801,7 @@ const probeIde = async (provider: 'cursor' | 'zed'): Promise<IdeProbe> => {
   const meta = IDE_PROBE_META[provider]
 
   try {
-    await $`${meta.command}`
+    await quietShell()`${meta.command}`
 
     return { ok: true, label: meta.label, failMsg: meta.failMsg }
   } catch {

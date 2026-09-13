@@ -21,6 +21,8 @@ export type {
   EnvAutoLoadConfig,
   InfraKitConfig,
   InfraKitConfigPaths,
+  McpProxies,
+  McpProxySpec,
   ProtectedEnvsSetting,
   ProxySource,
 } from './infra-kit-config'

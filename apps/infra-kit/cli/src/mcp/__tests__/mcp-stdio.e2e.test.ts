@@ -869,6 +869,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   //   D12 required[] shrank on four deploy tools (AUTHORED)                        legacy + modern
   //   D13 the prose those four tools carry was rewritten (AUTHORED)                legacy + modern
   //   D14 env-clear's description stopped naming the removed `init` (AUTHORED)     legacy + modern
+  //   D15 config-get's description names the `mcp` layer-1 refusal (AUTHORED)      legacy + modern
   // Why UNNAMED differences must fail: a normalization broad enough to swallow a known delta is
   // the same hole an unnoticed one would slip through. Only the named deltas are normalized away
   // before the whole-object comparison, and each is asserted positively FIRST so the normalization
@@ -1069,6 +1070,29 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   }
 
   const d14Baseline = applyD14ToBaseline()
+
+  /**
+   * D15 — an AUTHORED delta, handled exactly like D14: ONE tool description, rewritten because the
+   * guidance it gave became wrong. `config-get` told an MCP caller to "use `config edit` to modify
+   * the override file" — and `mcp`, the key that feeds the committed `.mcp.json`, is now REFUSED in
+   * that very file (`infra-kit-config.ts`, `loadLayer`). The text names the exception and the new
+   * failure mode, so a caller is not sent to edit a layer that will then throw.
+   */
+  // LITERAL post-change text, for D13's reason: a further edit fails `w1c` and must be re-declared.
+  const D15_CONFIG_GET_DESCRIPTION =
+    'Return the fully merged infra-kit configuration (project + user-global + per-project override layers) as it is resolved at runtime. Read-only introspection — makes no changes; use `config edit` (CLI-only) to modify the per-machine override file (every key except `mcp`, which is project-layer only and refused there). Fails with the loader error when run outside a configured infra-kit repo, or when an override layer carries a refused key.'
+
+  /** Rewrites the baseline's `config-get` description in place and returns what it held BEFORE. */
+  const applyD15ToBaseline = (): unknown => {
+    const tool = findBaselineTool('config-get')
+    const captured = tool?.description
+
+    if (tool !== undefined) tool.description = D15_CONFIG_GET_DESCRIPTION
+
+    return captured
+  }
+
+  const d15Baseline = applyD15ToBaseline()
 
   /**
    * D9 — an AUTHORED delta, handled like D4: the confirm gate now binds round 2 to round 1 with a
@@ -1670,6 +1694,20 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
       'D14: the baseline text never named `infra-kit init`, so D14 is rewriting prose it was not created to rewrite. If the fixture was re-captured, delete D14.',
     ).toContain('`infra-kit init`')
     expect(d14Baseline).not.toBe(D14_ENV_CLEAR_DESCRIPTION)
+  })
+
+  it('w1c-pre-d15: D15 — the baseline description really sent callers to the override file without the `mcp` exception', () => {
+    // The positive half of D15, mirroring D14: the text replaced at load must be the one that pointed
+    // at the override file unconditionally. A re-captured fixture already carries the new wording, so
+    // `d15Baseline` would equal the replacement and this reds — at which point D15 is to be DELETED,
+    // not adjusted, so the whole-object comparison guards `config-get`'s description directly again.
+    expect(d15Baseline, 'D15: no `config-get` description in the baseline to replace').toBeTypeOf('string')
+    expect(
+      String(d15Baseline),
+      'D15: the baseline text never sent callers to the override file unconditionally, so D15 is rewriting prose it was not created to rewrite. If the fixture was re-captured, delete D15.',
+    ).toContain('to modify the override file.')
+    expect(String(d15Baseline)).not.toContain('`mcp`')
+    expect(d15Baseline).not.toBe(D15_CONFIG_GET_DESCRIPTION)
   })
 
   it('w1c-pre-d9: D9 — the baseline carries `confirmToken` on no tool, and the gated set is non-empty', () => {

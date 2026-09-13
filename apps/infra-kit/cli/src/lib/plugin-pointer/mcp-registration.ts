@@ -26,10 +26,10 @@ import { MARKETPLACE_NAME } from './plugin-pointer'
  */
 
 /** The project-scoped MCP manifest Claude Code reads, at the repo root. */
-const MCP_FILE_NAME = '.mcp.json'
+export const MCP_FILE_NAME = '.mcp.json'
 
 /** The container key inside that file. */
-const SERVERS_KEY = 'mcpServers'
+export const SERVERS_KEY = 'mcpServers'
 
 /**
  * The command, bare on purpose: consumer repos run the global install, so this is what `PATH`
@@ -39,7 +39,7 @@ const SERVERS_KEY = 'mcpServers'
 const SERVER_COMMAND = 'infra-kit'
 
 /** Indentation for a file we create ourselves, and the fallback when detection finds none. */
-const DEFAULT_INDENT = '  '
+export const DEFAULT_INDENT = '  '
 
 /** What `ensureMcpRegistration` did. Only `added` and `created` wrote; the rest are all deliberate. */
 export type McpRegistrationStatus = 'added' | 'created' | 'unchanged' | 'unparseable' | 'misfiled' | 'failed'
@@ -52,7 +52,7 @@ export interface McpRegistrationResult {
   misfiledKey: string | null
 }
 
-type JsonObject = Record<string, unknown>
+export type JsonObject = Record<string, unknown>
 
 /**
  * The server entry, minted fresh per call so no caller can mutate a shared constant.
@@ -63,7 +63,7 @@ const buildServerEntry = (): JsonObject => {
   return { type: 'stdio', command: SERVER_COMMAND, args: ['mcp'] }
 }
 
-const isPlainObject = (value: unknown): value is JsonObject => {
+export const isPlainObject = (value: unknown): value is JsonObject => {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
@@ -82,14 +82,14 @@ const outcome = (
  * nothing else — a tab-indented `.mcp.json` must not come back reindented to spaces, which would land
  * as a whole-file diff in the consumer's commit.
  */
-const detectIndent = (raw: string): string => {
+export const detectIndent = (raw: string): string => {
   const match = /\n([ \t]+)"/.exec(raw)
 
   return match?.[1] ?? DEFAULT_INDENT
 }
 
 /** Absent, readable, or present-but-unreadable — three states the caller must treat differently. */
-type McpFileRead = { kind: 'absent' } | { kind: 'raw'; raw: string } | { kind: 'unreadable'; error: unknown }
+export type McpFileRead = { kind: 'absent' } | { kind: 'raw'; raw: string } | { kind: 'unreadable'; error: unknown }
 
 /**
  * Only `ENOENT` means "no file here yet".
@@ -100,7 +100,7 @@ type McpFileRead = { kind: 'absent' } | { kind: 'raw'; raw: string } | { kind: '
  * `.mcp.json` (mode `0o200`) is the reproducer: the read fails, the write succeeds, and an unrelated
  * server entry is gone with no warning.
  */
-const readMcpFile = (mcpPath: string): McpFileRead => {
+export const readMcpFile = (mcpPath: string): McpFileRead => {
   try {
     return { kind: 'raw', raw: fs.readFileSync(mcpPath, 'utf-8') }
   } catch (error) {
@@ -110,7 +110,7 @@ const readMcpFile = (mcpPath: string): McpFileRead => {
   }
 }
 
-const parseJson = (raw: string): unknown => {
+export const parseJson = (raw: string): unknown => {
   try {
     return JSON.parse(raw)
   } catch {
@@ -118,7 +118,7 @@ const parseJson = (raw: string): unknown => {
   }
 }
 
-const describeError = (error: unknown): string => {
+export const describeError = (error: unknown): string => {
   return error instanceof Error ? error.message : String(error)
 }
 

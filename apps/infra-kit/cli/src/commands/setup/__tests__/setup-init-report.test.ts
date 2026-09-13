@@ -124,6 +124,7 @@ describe('the MCP payload reports what the init half did', () => {
         'guidance',
         'plugin-pointer',
         'mcp-server',
+        'mcp-proxies',
         'project-config',
         'shell',
       ]),

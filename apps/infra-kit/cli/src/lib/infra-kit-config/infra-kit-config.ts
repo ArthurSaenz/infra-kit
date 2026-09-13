@@ -6,6 +6,7 @@ import { z } from 'zod'
 
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { isMcpMode } from 'src/lib/mcp-mode'
+import { PROTECTED_CHILD_ENV_NAMES } from 'src/lib/mcp-proxy/protected-env'
 
 const INFRA_KIT_CONFIG_FILE = 'infra-kit.json'
 
@@ -221,6 +222,60 @@ const envAutoLoadSchema = z
 // default, so nothing here demonstrates the trap: this comment is the only warning.
 const protectedEnvsSchema = z.enum(['disallow', 'allow', 'cli-only'])
 
+/** A POSIX environment-variable name. Comma-free by construction, which is what keeps the derived
+ *  `ik-mcp` argv unambiguous. */
+const envVarName = z.string().regex(/^[A-Z_]\w*$/i, 'must be a POSIX environment-variable name')
+
+/**
+ * One stdio MCP server fronted by `ik-mcp`, the credential-agnostic proxy.
+ *
+ * `env` are the names the proxy reads from the `ik env-load` session file and injects inline; all of
+ * them non-empty means "credentials present", and their ordered values are the respawn key. `unset`
+ * names are forced empty in the child so a stale file-based credential can never outrank the inline
+ * one. Everything else the env file holds is withheld from the child.
+ */
+// The proxy is for STATELESS servers: a credential change respawns the child and discards its
+// memory. A browser-automation server would lose its open tabs on every `env-load`. Servers that
+// take credentials only as flags, via OAuth, or from their own config file are out of scope.
+const mcpProxySchema = z
+  .object({
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    env: z.array(envVarName).min(1),
+    unset: z.array(envVarName).default([]),
+  })
+  .strict()
+  .superRefine((spec, ctx) => {
+    for (const name of spec.env) {
+      if (PROTECTED_CHILD_ENV_NAMES.has(name)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['env'],
+          message: `"${name}" is process plumbing the proxy never strips or injects — it cannot be a credential name`,
+        })
+      }
+    }
+  })
+
+/**
+ * `mcp.<name>` → the proxy spec. The name is the `.mcp.json` key and the proxy's cache subdir.
+ *
+ * A name containing `infra-kit` is refused because `install-state.ts` recognises THE infra-kit MCP
+ * server by that substring in `command args`, so `infra-kit-docs` would read as a misfiled copy of it.
+ */
+const mcpProxiesSchema = z.record(
+  z
+    .string()
+    .regex(/^[a-z][a-z0-9-]*$/, 'must be lowercase letters, digits and hyphens, starting with a letter')
+    .refine(
+      (name) => {
+        return !name.includes('infra-kit')
+      },
+      { message: '"infra-kit" is reserved for the infra-kit MCP server itself' },
+    ),
+  mcpProxySchema,
+)
+
 export const infraKitConfigObject = z
   .object({
     envManagement: envManagementSchema,
@@ -232,6 +287,7 @@ export const infraKitConfigObject = z
     devServersPresets: devPresetsSchema.optional(),
     devProxy: devProxyConfigSchema.optional(),
     protectedEnvs: protectedEnvsSchema.optional(),
+    mcp: mcpProxiesSchema.optional(),
   })
   .strict()
 
@@ -281,6 +337,10 @@ export type InfraKitConfig = z.infer<typeof infraKitConfigSchema>
 
 /** This project's access to the delivery-shaped environments. Absent in config means `'disallow'`. */
 export type ProtectedEnvsSetting = z.infer<typeof protectedEnvsSchema>
+
+/** One `mcp.<name>` entry after parsing — defaults applied. */
+export type McpProxySpec = z.infer<typeof mcpProxySchema>
+export type McpProxies = z.infer<typeof mcpProxiesSchema>
 
 /** Resolved env auto-load config (`{ trigger, config }`), or `undefined` when off. */
 export type EnvAutoLoadConfig = z.infer<typeof envAutoLoadSchema>
@@ -665,6 +725,15 @@ const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | 
     throw new Error(buildEnvTokensRejectionMessage(layer))
   }
 
+  // `mcp` is the ONE key that feeds a committed artifact: `ik setup` derives `.mcp.json` entries from
+  // it. The layer merge below is shallow (`{ ...merged, ...data }`), so a per-machine `mcp` would
+  // replace the project's block wholesale and then be derived into the shared file — either
+  // reddening `audit` on this machine alone or, worse, getting committed. Refused loudly rather than
+  // silently ignored: the message names the tool that DOES own a per-machine server override.
+  if (!layer.required && isRecord(parsedRaw) && 'mcp' in parsedRaw) {
+    throw new Error(buildMcpLayerRejectionMessage(layer))
+  }
+
   const result = infraKitOverrideConfigSchema.safeParse(parsedRaw)
 
   if (!result.success) {
@@ -672,6 +741,21 @@ const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | 
   }
 
   return result.data as Record<string, unknown>
+}
+
+/**
+ * Why `mcp` cannot live in this layer, and where the two things a developer might have wanted go
+ * instead: the project file for a shared server, Claude Code's own local scope for a machine-only
+ * override (which shadows the project entry by name and needs no infra-kit involvement).
+ */
+export const buildMcpLayerRejectionMessage = (layer: ConfigLayer): string => {
+  return [
+    `"mcp" is not allowed in ${layer.label} (${layer.path}): it feeds the committed .mcp.json, so a per-machine copy would replace the project's servers for everyone.`,
+    'Move the block to the project infra-kit.json and run `infra-kit setup`.',
+    'For a machine-only override of one server (e.g. a local fork), use Claude Code directly:',
+    '  claude mcp add --scope local <name> -- ik-mcp --name <name> --env <VAR> ... -- <command> <args>',
+    '(local scope shadows the project entry by name; `claude mcp list` will show a same-name conflict warning, which is expected).',
+  ].join('\n')
 }
 
 /**

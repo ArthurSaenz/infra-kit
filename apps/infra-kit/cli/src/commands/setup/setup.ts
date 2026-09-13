@@ -179,7 +179,17 @@ export const setup = async (options: SetupOptions = {}) => {
 
 const initStepSchema = z.object({
   step: z
-    .enum(['zshrc', 'migrations', 'user-config', 'guidance', 'plugin-pointer', 'mcp-server', 'project-config', 'shell'])
+    .enum([
+      'zshrc',
+      'migrations',
+      'user-config',
+      'guidance',
+      'plugin-pointer',
+      'mcp-server',
+      'mcp-proxies',
+      'project-config',
+      'shell',
+    ])
     .describe('Which init step this reports on'),
   outcome: z
     .enum(['written', 'unchanged', 'skipped', 'warned'])

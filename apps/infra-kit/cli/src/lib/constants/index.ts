@@ -18,6 +18,7 @@ export {
   INFRA_KIT_SESSION_VAR,
   LOG_FILE_PATH,
   parseVarNamesFromEnvFile,
+  parseVarsFromEnvFile,
   warmCacheKey,
   WORKTREES_DIR_SUFFIX,
 } from './constants'

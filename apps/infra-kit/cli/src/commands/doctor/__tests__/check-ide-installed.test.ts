@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
+import { resetZxFactoryArgs, zxTagCalls } from 'src/lib/quiet-shell/__tests__/zx-shell-mock'
 
 import type { DoctorConfig } from '../doctor'
 import { checkIdeInstalled, readDoctorConfig } from '../doctor'
@@ -35,20 +36,43 @@ const zx = vi.hoisted(() => {
   return { shouldThrow: false }
 })
 
-vi.mock('zx', () => {
-  return {
-    $: vi.fn(() => {
-      if (zx.shouldThrow) {
-        return Promise.reject(new Error('command not found'))
-      }
+vi.mock('zx', async () => {
+  // Imported INSIDE the factory: `vi.mock` is hoisted above the imports, and `doctor.ts` pulls
+  // in `zx` at module scope, so a top-level binding is still in its TDZ when this runs.
+  const { zxShellMock } = await import('src/lib/quiet-shell/__tests__/zx-shell-mock')
 
-      return Promise.resolve({ stdout: '' })
-    }),
-  }
+  return zxShellMock(() => {
+    if (zx.shouldThrow) {
+      return Promise.reject(new Error('command not found'))
+    }
+
+    return Promise.resolve({ stdout: '' })
+  })
 })
 
 vi.mock('src/lib/logger', () => {
   return { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }
+})
+
+/**
+ * The IDE probe shells out at binaries a user may well not have installed — that is the row's whole
+ * question — and zx relays a child's stderr to the parent's unless told otherwise. This suite is the
+ * only one that reaches `probeIde`, so it is the only place the option can be pinned.
+ */
+describe('the IDE probe captures its output instead of relaying it', () => {
+  it('runs every probe through a configured shell', async () => {
+    resetZxFactoryArgs()
+    zx.shouldThrow = false
+
+    await checkIdeInstalled(read({ ide: { provider: 'cursor', config: { workspaceConfigPath: 'ws' } } }))
+
+    expect(zxTagCalls.length).toBeGreaterThan(0)
+    expect(
+      zxTagCalls.filter((call) => {
+        return !call.configured
+      }),
+    ).toEqual([])
+  })
 })
 
 /** The already-read config every check is threaded, standing in for one `readDoctorConfig()` run. */

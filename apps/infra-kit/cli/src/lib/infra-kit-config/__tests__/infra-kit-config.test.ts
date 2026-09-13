@@ -811,3 +811,67 @@ describe('worktrees.cmux schema validation', () => {
     })
   })
 })
+
+describe('mcp is refused outside the project layer', () => {
+  const GRAFANA = {
+    command: 'mcp-grafana',
+    args: ['-t', 'stdio'],
+    env: ['GRAFANA_URL', 'GRAFANA_SERVICE_ACCOUNT_TOKEN'],
+  }
+
+  it('parses mcp from the project infra-kit.json', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({ ...JSON.parse(VALID_JSON), mcp: { grafana: GRAFANA } }),
+      )
+
+      const cfg = await getInfraKitConfig()
+
+      expect(cfg.mcp?.grafana?.command).toBe('mcp-grafana')
+    })
+  })
+
+  it('throws a targeted message when the per-project override carries mcp', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
+
+      // The shallow layer merge would let this REPLACE the project's block; the refusal is what
+      // stops a per-machine file from being derived into the committed .mcp.json.
+      const overrideDir = path.join(tmp, '.infra-kit', 'projects', path.basename(tmp))
+
+      fs.mkdirSync(overrideDir, { recursive: true })
+      fs.writeFileSync(path.join(overrideDir, 'infra-kit.json'), JSON.stringify({ mcp: { grafana: GRAFANA } }))
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/"mcp" is not allowed in .*\.infra-kit\/projects/)
+      await expect(getInfraKitConfig()).rejects.toThrow(/claude mcp add --scope local/)
+    })
+  })
+
+  it('refuses mcp in the user-global layer too — both non-required layers, not just the per-project one', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
+      fs.mkdirSync(path.join(tmp, '.infra-kit'), { recursive: true })
+      fs.writeFileSync(path.join(tmp, '.infra-kit', 'infra-kit.json'), JSON.stringify({ mcp: { grafana: GRAFANA } }))
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/"mcp" is not allowed in/)
+    })
+  })
+
+  it('refuses an EMPTY mcp in an override — the shallow merge would otherwise erase the project’s servers', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(
+        path.join(tmp, 'infra-kit.json'),
+        JSON.stringify({ ...JSON.parse(VALID_JSON), mcp: { grafana: GRAFANA } }),
+      )
+
+      const overrideDir = path.join(tmp, '.infra-kit', 'projects', path.basename(tmp))
+
+      fs.mkdirSync(overrideDir, { recursive: true })
+      fs.writeFileSync(path.join(overrideDir, 'infra-kit.json'), JSON.stringify({ mcp: {} }))
+
+      // `{...merged, ...{mcp:{}}}` = no servers; `ik setup` would then derive nothing and `audit` go red.
+      await expect(getInfraKitConfig()).rejects.toThrow(/"mcp" is not allowed in/)
+    })
+  })
+})

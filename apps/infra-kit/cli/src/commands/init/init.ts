@@ -6,7 +6,7 @@ import process from 'node:process'
 import type { GuidanceWrite } from 'src/lib/agent-guidance'
 import { seedCreatedMessage, seedUserProjectConfig } from 'src/lib/config-bootstrap'
 import { CONFIG_STUB, buildUserGlobalExample, buildVendorExample } from 'src/lib/config-templates'
-import { getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
+import { getInfraKitConfig, getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
 import {
@@ -19,6 +19,8 @@ import {
   installPluginForProject,
 } from 'src/lib/plugin-pointer'
 import type { McpRegistrationResult, PluginInstallOutcome, PluginPointerResult } from 'src/lib/plugin-pointer'
+import { reconcileMcpProxies } from 'src/lib/plugin-pointer/mcp-proxy-registration'
+import type { McpProxyReconcileResult } from 'src/lib/plugin-pointer/mcp-proxy-registration'
 
 import { resolveGitRootForWrites, syncRepoGuidance } from './agent-files'
 import {
@@ -36,7 +38,15 @@ const LEGACY_SINGLE = '# infra-kit shell functions'
 
 /** Which of `initCore`'s steps an {@link InitStep} reports on. */
 export type InitStepName =
-  'guidance' | 'mcp-server' | 'migrations' | 'plugin-pointer' | 'project-config' | 'shell' | 'user-config' | 'zshrc'
+  | 'guidance'
+  | 'mcp-proxies'
+  | 'mcp-server'
+  | 'migrations'
+  | 'plugin-pointer'
+  | 'project-config'
+  | 'shell'
+  | 'user-config'
+  | 'zshrc'
 
 /**
  * What a step did.
@@ -201,6 +211,10 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
 
   await withStep('plugin-pointer', () => {
     syncPluginPointer(gitRoot, record)
+  })
+
+  await withStep('mcp-proxies', async () => {
+    record(...(await syncMcpProxies(gitRoot)))
   })
 
   // Close the legacy-yml migration gap so a single `dx-init` leaves EVERY example current.
@@ -708,6 +722,98 @@ const syncPluginPointer = (root: string | null, record: InitStepRecorder): void 
       level: 'warn',
     })
   }
+}
+
+const proxyEntry = (root: string, result: McpProxyReconcileResult): InitEntry[] => {
+  const relative = path.relative(root, result.path)
+
+  if (result.status !== 'ok' && result.status !== 'failed') {
+    return [
+      {
+        step: 'mcp-proxies',
+        outcome: 'warned',
+        message: `  ${relative} could not be read as JSON — ik-mcp entries not synced`,
+        level: 'warn',
+      },
+    ]
+  }
+
+  // The reconciler reports what it DECIDED per entry; `failed` means the write of those decisions
+  // did not land, so echoing them as "updated" would describe a file that did not change.
+  if (result.status === 'failed') {
+    return [
+      {
+        step: 'mcp-proxies',
+        outcome: 'warned',
+        message: `  ${relative} could not be written — ik-mcp entries not synced`,
+        level: 'warn',
+      },
+    ]
+  }
+
+  const entries: InitEntry[] = []
+
+  for (const entry of result.entries) {
+    if (entry.status === 'written') {
+      entries.push({
+        step: 'mcp-proxies',
+        outcome: 'written',
+        message: `  updated   ${relative} — ik-mcp "${entry.name}"`,
+        level: 'info',
+      })
+    } else if (entry.status === 'conflict' || entry.status === 'stale') {
+      entries.push({ step: 'mcp-proxies', outcome: 'warned', message: `  ${entry.message}`, level: 'warn' })
+    }
+  }
+
+  return entries
+}
+
+/**
+ * Derive one `.mcp.json` entry per `mcp.<name>` in the project config, in its OWN step.
+ *
+ * Kept out of {@link syncPluginPointer}'s `try` on purpose: that catch labels everything
+ * `plugin-pointer`, and `syncPluginPointer` deliberately does not need an `infra-kit.json` at all —
+ * so a bad `mcp` block, or no config, must cost this step alone and never the plugin install.
+ */
+// Absent or invalid config is a NO-OP that reports, never a reconcile: an empty derived set is
+// indistinguishable from "every server was removed", so it must not reach the writer.
+const syncMcpProxies = async (root: string | null): Promise<InitEntry[]> => {
+  if (root === null) return []
+
+  // No project config at all is the guidance gate's warning, already printed exactly once; this
+  // step stays silent so `setup` in a non-infra-kit repo does not warn twice about one fact.
+  if (!fs.existsSync(path.join(root, 'infra-kit.json'))) {
+    return [
+      {
+        step: 'mcp-proxies',
+        outcome: 'skipped',
+        message: 'no infra-kit.json — no ik-mcp entries to derive',
+        level: 'silent',
+      },
+    ]
+  }
+
+  let proxies: Awaited<ReturnType<typeof getInfraKitConfig>>['mcp']
+
+  try {
+    proxies = (await getInfraKitConfig()).mcp
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+
+    return [
+      {
+        step: 'mcp-proxies',
+        outcome: 'skipped',
+        message: `  ik-mcp entries not synced — infra-kit.json could not be loaded (${message.split('\n')[0] ?? message})`,
+        level: 'warn',
+      },
+    ]
+  }
+
+  if (!proxies || Object.keys(proxies).length === 0) return []
+
+  return proxyEntry(root, reconcileMcpProxies({ projectRoot: root, proxies, write: true }))
 }
 
 const isBlockLine = (line: string): boolean => {

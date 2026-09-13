@@ -13,6 +13,7 @@ import { defineMcpTool, textContent } from 'src/types'
 
 import { runAuditFix } from './fix'
 import type { FixedEntry } from './fix'
+import { checkMcpProxies } from './mcp-proxy-check'
 import { checkDevPresets } from './preset-proxy-check'
 
 // TODO [DO]: extract `audit` into its own standalone CLI tool, decoupled from infra-kit.
@@ -185,6 +186,14 @@ export const audit = async (options: AuditOptions = {}) => {
 
     if (presetResult) {
       results.push(presetResult)
+    }
+
+    // Root audit also keeps `.mcp.json`'s ik-mcp entries in step with the `mcp` block. With
+    // `--fix` it rewrites drifted owned entries; it never removes anything (see mcp-proxy-check).
+    const proxyResult = await checkMcpProxies(targets[0]!.dir, options.fix === true)
+
+    if (proxyResult) {
+      results.push(proxyResult)
     }
   }
 

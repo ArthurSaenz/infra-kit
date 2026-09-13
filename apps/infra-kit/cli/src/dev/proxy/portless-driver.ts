@@ -41,6 +41,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { withoutPackageManagerEnv } from 'src/lib/pm-env'
+import { shellLine } from 'src/lib/shell-quote'
 
 const execFileAsync = promisify(execFile)
 
@@ -92,20 +93,6 @@ const portlessBin = (): string | null => {
   return cachedBin
 }
 
-/**
- * Characters that survive a POSIX shell unquoted. Anything outside this set (a space, a paren — both of
- * which appear in real install paths like `/Applications/My Editor.app`) gets single-quoted.
- */
-const SHELL_SAFE = /^[\w@%+=:,./-]+$/
-
-/** A literal `'` inside single quotes: close, emit an escaped quote, reopen — the only way a shell allows it. */
-const SINGLE_QUOTE_ESCAPE = "'\\''"
-
-/** Single-quote `value` for a POSIX shell unless it is already inert. */
-const shellQuote = (value: string): string => {
-  return SHELL_SAFE.test(value) ? value : `'${value.replaceAll("'", SINGLE_QUOTE_ESCAPE)}'`
-}
-
 /** Seams for {@link formatPortlessCommand}, injected so tests never depend on the real node_modules layout. */
 export interface FormatPortlessCommandOptions {
   /**
@@ -146,7 +133,7 @@ export const formatPortlessCommand = (args: string[], options: FormatPortlessCom
   const words = [options.execPath ?? process.execPath, options.bin, ...args]
   const prefix = options.sudo === true ? 'sudo ' : ''
 
-  return prefix + words.map(shellQuote).join(' ')
+  return prefix + shellLine(words)
 }
 
 /** Awaited portless invocation. Rejects on non-zero exit / timeout; the driver swallows that into a no-op. */
