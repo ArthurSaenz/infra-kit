@@ -59,18 +59,19 @@ describe('publish lifecycle — a publish must never upload a stale dist', () =>
     ).toEqual(['@slip-stream-kit/config', '@slip-stream-kit/eslint-plugin', '@slip-stream-kit/vite', 'infra-kit'])
   })
 
-  it.each(PACKAGES)('$manifest.name rebuilds on both publish entry points', ({ manifest }) => {
+  it.each(PACKAGES)('$manifest.name rebuilds exactly once on both publish entry points', ({ manifest }) => {
     const scripts = manifest.scripts ?? {}
 
-    // `prepack` covers `pnpm pack` and `pnpm publish`; `prepublishOnly` covers the npm path and
-    // fires even where prepack does not. Shipping the artifact needs both, not either.
+    // `prepack` fires on `pnpm pack` AND `pnpm publish` (npm too), so it alone covers every path
+    // that produces a tarball. `pnpm publish` runs `prepublishOnly` right before `prepack`, so
+    // wiring both builds the same dist twice back to back on every release.
     expect(scripts.prepack, `${manifest.name} has no prepack — publish would upload the dist on disk`).toBe(
       'pnpm run build',
     )
     expect(
       scripts.prepublishOnly,
-      `${manifest.name} has no prepublishOnly — publish would upload the dist on disk`,
-    ).toBe('pnpm run build')
+      `${manifest.name} wires prepublishOnly — publish builds twice, prepack already covers it`,
+    ).toBeUndefined()
   })
 
   it.each(PACKAGES)('$manifest.name builds from clean, so a stale file cannot survive', ({ manifest }) => {
