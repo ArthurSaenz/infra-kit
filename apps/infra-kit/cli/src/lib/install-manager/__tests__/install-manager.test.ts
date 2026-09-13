@@ -317,6 +317,42 @@ describe('detectInstallManager', () => {
       detectInstallManager({ selfRealPath: '/opt/custom/bin/infra-kit', env: {}, realpath: identity }).manager,
     ).toBe('unknown')
   })
+
+  // pnpm resolves `infra-kit@latest` from its on-disk metadata cache and does not revalidate the tag when
+  // a cached version already satisfies it (pnpm 12.3.4, measured 90+ minutes after a publish). The worker
+  // knows the real latest — it fetched it — so the spec it runs must name that version.
+  it('pins the spec to the given version for every manager, leaving the rest of the argv untouched', () => {
+    const pinned = (selfRealPath: string, env: NodeJS.ProcessEnv): string[] => {
+      return detectInstallManager({ selfRealPath, env, realpath: identity, version: '0.5.5' }).updateCommand
+    }
+
+    expect(
+      pinned('/Users/x/Library/pnpm/global/5/node_modules/infra-kit/dist/cli.js', {
+        PNPM_HOME: '/Users/x/Library/pnpm',
+      }),
+    ).toEqual(['pnpm', 'add', '-g', 'infra-kit@0.5.5'])
+    expect(pinned('/usr/local/lib/node_modules/infra-kit/dist/cli.js', {})).toEqual([
+      'npm',
+      'install',
+      '-g',
+      '--prefix',
+      '/usr/local',
+      'infra-kit@0.5.5',
+    ])
+    expect(pinned('/opt/custom/bin/infra-kit', {})).toEqual(['npm', 'install', '-g', 'infra-kit@0.5.5'])
+    // volta and brew take a bare package name; there is no tag token to pin.
+    expect(pinned('/Users/x/.volta/tools/image/packages/infra-kit/bin/infra-kit', {})).toEqual([
+      'volta',
+      'install',
+      'infra-kit',
+    ])
+  })
+
+  it('keeps the `@latest` tag when no version is given — the printed advisory has nothing better to name', () => {
+    expect(
+      detectInstallManager({ selfRealPath: '/opt/custom/bin/infra-kit', env: {}, realpath: identity }).updateCommand,
+    ).toEqual(['npm', 'install', '-g', 'infra-kit@latest'])
+  })
 })
 
 /**

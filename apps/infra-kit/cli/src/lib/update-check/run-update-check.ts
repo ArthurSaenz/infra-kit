@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import process from 'node:process'
 
-import { defaultLazyNpmRoot, detectInstallManager, safeRealpath } from 'src/lib/install-manager'
+import { PACKAGE_NAME, defaultLazyNpmRoot, detectInstallManager, safeRealpath } from 'src/lib/install-manager'
 import { packageManagerInstallEnv } from 'src/lib/pm-env'
 
 import { acquireUpdateLock } from './lock'
@@ -46,9 +46,52 @@ export interface RunUpdateCheckDeps {
   /** Single-flight guard. Returns a release fn, or null when another worker already holds the lock. */
   acquireLock?: () => (() => void) | null
   spawnSync?: typeof spawnSync
+  /**
+   * The version the user now gets from the `infra-kit` on their PATH. Consulted once, after the install
+   * command returns 0, because that exit code is not proof of anything — see {@link readInstalledVersion}.
+   */
+  installedVersion?: (env: NodeJS.ProcessEnv) => string | null
   /** Realpath of the installed `dist/cli.js`, used to identify the owning package manager. */
   selfRealPath: string
   parentPid?: number
+}
+
+/** Bounds the post-install probe; a hung shim must not pin this worker for the parent's 5-minute budget. */
+const VERSION_PROBE_TIMEOUT_MS = 15_000
+
+/**
+ * Ask the freshly installed CLI what it is, the way the user will: the `infra-kit` bin on PATH.
+ *
+ * Not `<selfRealPath>/../package.json`. pnpm keeps each version in its own directory
+ * (`.pnpm/infra-kit@0.5.1/…`, `global/v11/<hash>/…`) and repoints the shim, so the path THIS worker was
+ * launched from keeps reporting the old version forever, while the path the user gets has moved.
+ *
+ * `--json` doubles as the guard that stops the probe spawning a second updater from inside the first:
+ * `autoUpdateSkipReason` returns `json` before anything else runs, and piped stdio fails the tty arm too.
+ * Anything short of a parseable version is `null` — a shim that no longer resolves, a bin that crashes on
+ * boot, output that is not JSON — and the caller treats every one of those as "not verified".
+ */
+const readInstalledVersion = (env: NodeJS.ProcessEnv): string | null => {
+  const result = spawnSync(PACKAGE_NAME, ['version', '--json'], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+    shell: process.platform === 'win32',
+    cwd: homedir(),
+    env,
+    timeout: VERSION_PROBE_TIMEOUT_MS,
+    windowsHide: true,
+    encoding: 'utf8',
+  })
+
+  if (result.error || result.signal || result.status !== 0) return null
+
+  try {
+    const parsed: unknown = JSON.parse(result.stdout)
+    const version = (parsed as { version?: unknown } | null)?.version
+
+    return typeof version === 'string' && version !== '' ? version : null
+  } catch {
+    return null
+  }
 }
 
 /** Signal 0 performs the permission/existence check without delivering anything. */
@@ -90,6 +133,8 @@ const waitForParentExit = async (
 export type UpdateCheckOutcome =
   | 'installed'
   | 'install-failed'
+  /** The install command returned 0, yet the `infra-kit` on PATH still does not report `latestVersion`. */
+  | 'install-stale'
   | 'up-to-date'
   | 'fetch-failed'
   | 'cannot-self-spawn'
@@ -135,6 +180,7 @@ const runUpdateCheckLocked = async (currentVersion: string, deps: RunUpdateCheck
   const clock = deps.clock ?? Date.now
   const lazyNpmRoot = deps.lazyNpmRoot ?? defaultLazyNpmRoot
   const spawn = deps.spawnSync ?? spawnSync
+  const installedVersion = deps.installedVersion ?? readInstalledVersion
 
   const latestVersion = await fetchLatest(env)
 
@@ -161,11 +207,14 @@ const runUpdateCheckLocked = async (currentVersion: string, deps: RunUpdateCheck
   // `npm_config_prefix` in the user's shell, so every cheap matcher misses and detection would report
   // `unknown` / `canSelfSpawn: false`. Without this probe the auto-update would silently degrade to a
   // notice for the majority of installs. The subprocess is affordable here and nowhere else.
+  // `version` pins the spec to what we just fetched: a `@latest` command is resolved by the package
+  // manager from ITS cache, which pnpm does not revalidate — see `pinSpec` in install-manager.
   const { canSelfSpawn, updateCommand } = detectInstallManager({
     selfRealPath: deps.selfRealPath,
     env,
     realpath: safeRealpath,
     lazyNpmRoot,
+    version: latestVersion,
   })
 
   // Homebrew relinks its prefix and may prompt; an unknown location means the command is a guess.
@@ -226,6 +275,16 @@ const runUpdateCheckLocked = async (currentVersion: string, deps: RunUpdateCheck
     return finish('install-failed', { latestVersion, updateCommand })
   }
 
-  // The installed version is now `latestVersion`; clear it so the next run does not re-notify.
+  // Exit 0 is the package manager saying it is content, not that anything changed. `pnpm add -g
+  // infra-kit@latest` resolved the tag from its own stale metadata cache, reinstalled the version already
+  // present, and returned 0 — and this function recorded `installed`, cleared `latestVersion`, and
+  // repeated the same no-op every cycle. The spec is pinned now, but the check that would have SHOWN
+  // that bug is this one: ask the binary the user actually runs. A mismatch keeps `latestVersion` and the
+  // command in the cache, so the parent prints the manual line instead of staying silent.
+  const nowInstalled = installedVersion(env)
+
+  if (nowInstalled !== latestVersion) return finish('install-stale', { latestVersion, updateCommand })
+
+  // Verified: clear `latestVersion` so the next run does not re-notify.
   return finish('installed', { latestVersion: null, updateCommand: null })
 }

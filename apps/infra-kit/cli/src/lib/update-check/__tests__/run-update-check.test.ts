@@ -54,6 +54,10 @@ const harness = (overrides: Partial<RunUpdateCheckDeps> = {}) => {
       }
     },
     spawnSync: spawnMock as unknown as typeof spawnSync,
+    // The probe agrees with `fetchLatest` by default: the install did what it claimed.
+    installedVersion: () => {
+      return '0.1.131'
+    },
     ...overrides,
   }
 
@@ -115,8 +119,10 @@ describe('runUpdateCheck', () => {
     const [bin, args, options] = spawnMock.mock.calls[0] as unknown as [string, string[], { stdio: string }]
 
     // `--prefix` is derived from GLOBAL_NPM_CLI's own path, so the install lands in the tree we run from
-    // rather than wherever the `npm` on PATH happens to default to.
-    expect([bin, ...args]).toEqual(['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@latest'])
+    // rather than wherever the `npm` on PATH happens to default to. The spec is the version the worker
+    // fetched, never `@latest`: pnpm resolves a tag from its own metadata cache without revalidating, so the
+    // tag form reinstalled the stale version, exited 0, and was recorded as `installed`.
+    expect([bin, ...args]).toEqual(['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@0.1.131'])
     // Silent: a detached child has nowhere to write, and stdout must never carry chatter.
     expect(options.stdio).toBe('ignore')
   })
@@ -156,7 +162,7 @@ describe('runUpdateCheck', () => {
 
     const [bin, args] = spawnMock.mock.calls[0] as unknown as [string, string[]]
 
-    expect([bin, ...args]).toEqual(['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@latest'])
+    expect([bin, ...args]).toEqual(['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@0.1.131'])
   })
 
   it('persists lastCheckMs even when the fetch FAILS, so an offline user is not a fetch-storm', async () => {
@@ -292,6 +298,52 @@ describe('runUpdateCheck', () => {
     await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('install-failed')
   })
 
+  // `pnpm add -g infra-kit@latest` did exactly this: resolved the tag from a stale metadata cache,
+  // reinstalled the old version, exited 0. Trusting the exit code recorded `installed` and cleared the
+  // notice, so the user stayed on the old binary with nothing telling them.
+  it('records install-stale with the command when the install exits 0 but the PATH binary still reports the old version', async () => {
+    const { deps, writes } = harness({
+      installedVersion: () => {
+        return '0.1.130'
+      },
+    })
+
+    await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('install-stale')
+
+    expect(writes.at(-1)).toEqual({
+      lastCheckMs: NOW,
+      latestVersion: '0.1.131',
+      updateCommand: ['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@0.1.131'],
+      outcome: 'install-stale',
+    })
+  })
+
+  it('treats an unreadable post-install version as stale, never as installed', async () => {
+    const { deps, writes } = harness({
+      installedVersion: () => {
+        return null
+      },
+    })
+
+    await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('install-stale')
+    expect(writes.at(-1)?.latestVersion).toBe('0.1.131')
+  })
+
+  it('does not probe the installed version when the install itself failed', async () => {
+    const installedVersion = vi.fn(() => {
+      return '0.1.131'
+    })
+    const { deps } = harness({
+      installedVersion,
+      spawnSync: (() => {
+        return { status: 1, signal: null, error: undefined }
+      }) as unknown as typeof spawnSync,
+    })
+
+    await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('install-failed')
+    expect(installedVersion).not.toHaveBeenCalled()
+  })
+
   it('records the manual command when the silent install FAILS, so it cannot fail invisibly forever', async () => {
     // e.g. EACCES on a root-owned global dir. Without this the user is told nothing, ever.
     const { deps, writes } = harness({
@@ -306,7 +358,7 @@ describe('runUpdateCheck', () => {
     expect(writes.at(-1)).toEqual({
       lastCheckMs: NOW,
       latestVersion: '0.1.131',
-      updateCommand: ['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@latest'],
+      updateCommand: ['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@0.1.131'],
       outcome: 'install-failed',
     })
   })

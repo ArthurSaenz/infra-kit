@@ -40,6 +40,29 @@ export interface DetectInstallManagerInput {
   realpath: RealpathFn
   /** `npm root -g`, deferred: invoked at most once, and only when no cheaper matcher hit. */
   lazyNpmRoot?: () => string | undefined
+  /**
+   * The exact version to install, when the caller has already resolved it. Omitted, the command targets
+   * the `latest` dist-tag — fine to PRINT, unsafe to RUN: see {@link pinSpec}.
+   */
+  version?: string
+}
+
+/**
+ * Swap the `@latest` token for `@<version>`.
+ *
+ * `pnpm add -g infra-kit@latest` resolves the tag from pnpm's on-disk metadata cache and does not
+ * revalidate it when a cached version already satisfies the tag (pnpm 12.3.4, measured: two runs 90+
+ * minutes after a publish both reinstalled the stale `latest` while `pnpm view` already reported the new
+ * one). The updater had fetched the real latest itself moments earlier, ran the tag command, got exit 0
+ * — nothing was reinstalled — and recorded `installed`, so the stale binary looked up to date until the
+ * next cycle repeated the same no-op. A concrete version the cache has never seen forces the fetch.
+ */
+const pinSpec = (command: string[], version: string | undefined): string[] => {
+  if (version === undefined) return command
+
+  return command.map((token) => {
+    return token === LATEST ? `${PACKAGE_NAME}@${version}` : token
+  })
 }
 
 /**
@@ -273,8 +296,17 @@ const NPM_UPDATE_COMMAND = ['npm', 'install', '-g', LATEST]
  * @example
  * detectInstallManager({ selfRealPath: '/Users/x/Library/pnpm/global/5/node_modules/infra-kit/dist/cli.js', env: {} })
  * // => { manager: 'pnpm', updateCommand: ['pnpm', 'add', '-g', 'infra-kit@latest'], canSelfSpawn: true }
+ * detectInstallManager({ selfRealPath: '/Users/x/Library/pnpm/global/5/node_modules/infra-kit/dist/cli.js', env: {}, version: '0.5.5' })
+ * // => { manager: 'pnpm', updateCommand: ['pnpm', 'add', '-g', 'infra-kit@0.5.5'], canSelfSpawn: true }
  */
 export const detectInstallManager = (input: DetectInstallManagerInput): InstallManagerInfo => {
+  const { selfRealPath, env, realpath, lazyNpmRoot, version } = input
+  const detected = detectUnpinned({ selfRealPath, env, realpath, lazyNpmRoot })
+
+  return { ...detected, updateCommand: pinSpec(detected.updateCommand, version) }
+}
+
+const detectUnpinned = (input: DetectInstallManagerInput): InstallManagerInfo => {
   const { selfRealPath, env, realpath, lazyNpmRoot } = input
   const toInfo = (hit: Matcher): InstallManagerInfo => {
     return { manager: hit.manager, updateCommand: hit.updateCommand, canSelfSpawn: hit.canSelfSpawn }
