@@ -2,7 +2,7 @@ import { Provider, useAtomValue, useSetAtom } from 'jotai'
 import { describe, expect, it, vi } from 'vitest'
 import { render } from 'vitest-browser-react'
 
-import { createDeferredAtom } from './create-deferred-atom'
+import { createDeferredAtom } from '../create-deferred-atom'
 
 interface OpenArgs {
   id: string

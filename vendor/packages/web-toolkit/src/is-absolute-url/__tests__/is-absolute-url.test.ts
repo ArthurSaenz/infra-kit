@@ -1,7 +1,7 @@
 /* eslint-disable sonarjs/no-clear-text-protocols */
 import { describe, expect, it } from 'vitest'
 
-import { isAbsoluteURL } from './is-absolute-url'
+import { isAbsoluteURL } from '../is-absolute-url'
 
 describe('isAbsoluteURL', () => {
   it('should return true for standard HTTP URLs', () => {

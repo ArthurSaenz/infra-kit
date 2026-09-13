@@ -1,7 +1,7 @@
 import { atom } from 'jotai'
 import { describe, expectTypeOf, it } from 'vitest'
 
-import type { ExtractAtomActionArgs, ExtractAtomSetter, ExtractedAtomType } from './extracted-atom-type'
+import type { ExtractAtomActionArgs, ExtractAtomSetter, ExtractedAtomType } from '../extracted-atom-type'
 
 describe('atom utility types', () => {
   describe('extractedAtomType', () => {

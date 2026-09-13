@@ -7,11 +7,7 @@ import { RootProvider } from 'fumadocs-ui/provider/tanstack'
 export const Route = createRootRoute({
   head: () => {
     return {
-      meta: [
-        { charSet: 'utf-8' },
-        { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { title: appName },
-      ],
+      meta: [{ charSet: 'utf-8' }, { name: 'viewport', content: 'width=device-width' }, { title: appName }],
       links: [{ rel: 'stylesheet', href: appCss }],
     }
   },
