@@ -52,7 +52,7 @@ const makeScratchProject = (qaScript) => {
 test("a failing qa reports the check's own output, not a generic sentence", () => {
   const project = makeScratchProject('echo "src/x.ts(4,7): error TS2322: nope" && exit 1');
   try {
-    const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir }) });
+    const res = runHook('quality-gates.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir }) });
     assert.equal(res.status, 2, 'a failing qa must block completion');
     assert.match(res.stderr, /TS2322/, "the failing check's own output must reach the agent");
     assert.match(res.stderr, /pnpm run qa/, 'and it must say how to re-run the whole thing');
@@ -64,7 +64,7 @@ test("a failing qa reports the check's own output, not a generic sentence", () =
 test('a qa failure with no output still produces a usable message', () => {
   const project = makeScratchProject('exit 1');
   try {
-    const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir }) });
+    const res = runHook('quality-gates.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir }) });
     assert.equal(res.status, 2);
     assert.match(res.stderr, /QA failed/);
   } finally {
@@ -86,7 +86,7 @@ test('a gate that cannot get the lock skips its run instead of failing the task'
 
   try {
     const res = runHook(
-      'quality-gate.mjs',
+      'quality-gates.mjs',
       { tool_name: 'Stop' },
       { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir, CLAUDE_HOOK_LOCK_WAIT_MS: '0' }) },
     );
@@ -111,7 +111,7 @@ test('a gate waits for a busy lock and then runs, rather than skipping immediate
   assert.ok(held, 'precondition: the test holds the qa lock');
 
   const pending = runHookAsync(
-    'quality-gate.mjs',
+    'quality-gates.mjs',
     { tool_name: 'Stop' },
     { CLAUDE_HOOK_QA_NESTED: '', CLAUDE_PROJECT_DIR: project.dir, CLAUDE_HOOK_LOCK_WAIT_MS: '10000' },
   );
@@ -135,7 +135,7 @@ test('a gate waits for a busy lock and then runs, rather than skipping immediate
 // reads the literal instead. Window bounded by length, matching the call-site scan in
 // hook-lock.test.mjs.
 test('the gate queues on a busy lock: its waitMs literal is positive, never 0', () => {
-  const source = readFileSync(join(HOOKS_DIR, 'quality-gate.mjs'), 'utf8');
+  const source = readFileSync(join(HOOKS_DIR, 'quality-gates.mjs'), 'utf8');
   const call = /\bacquireLock\(/.exec(source);
   assert.ok(call, 'precondition: the gate acquires a lock');
 
@@ -174,7 +174,7 @@ test('a nested gate returns without running qa at all', () => {
   const project = makeScratchProject('echo NESTED_QA_MUST_NOT_RUN && exit 1');
   try {
     const res = runHook(
-      'quality-gate.mjs',
+      'quality-gates.mjs',
       { tool_name: 'Stop' },
       { env: { CLAUDE_PROJECT_DIR: project.dir, CLAUDE_HOOK_QA_NESTED: '1' } },
     );
@@ -195,14 +195,14 @@ test('a nested gate returns without running qa at all', () => {
 
 // THE REGRESSION THIS CATCHES: editing `.claude/hooks/*.mjs` makes the edit pipeline hold a
 // repo-root lock, so a shared filename would let a prettier stage refuse a task completion.
-test('a quality-gate is NOT refused while the pipeline holds the repo-root lock', () => {
+test('a quality-gates is NOT refused while the pipeline holds the repo-root lock', () => {
   const project = makeScratchProject('exit 1');
   // The lock the EDIT PIPELINE would hold, in the same directory, under its own name.
   const pipelineLock = acquireLock(project.dir, { waitMs: 0, staleMs: 120_000 });
   assert.ok(pipelineLock, 'precondition: the pipeline holds the lock in this directory');
 
   try {
-    const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir }) });
+    const res = runHook('quality-gates.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir }) });
     // Free to fail on qa itself; what it must NOT do is refuse on the lock.
     assert.doesNotMatch(
       res.stderr,
@@ -215,8 +215,8 @@ test('a quality-gate is NOT refused while the pipeline holds the repo-root lock'
   }
 });
 
-test('quality-gate fails closed when CLAUDE_PROJECT_DIR is unset (exit 2)', () => {
-  const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: '' }) });
+test('quality-gates fails closed when CLAUDE_PROJECT_DIR is unset (exit 2)', () => {
+  const res = runHook('quality-gates.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: '' }) });
   assert.equal(res.status, 2);
   assert.match(res.stderr, /failing closed/);
 });
@@ -225,7 +225,7 @@ test('quality-gate fails closed when CLAUDE_PROJECT_DIR is unset (exit 2)', () =
 test('the qa lock is released even when qa fails', () => {
   const project = makeScratchProject('exit 1');
   try {
-    const res = runHook('quality-gate.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir }) });
+    const res = runHook('quality-gates.mjs', { tool_name: 'Stop' }, { env: gateEnv({ CLAUDE_PROJECT_DIR: project.dir }) });
     assert.equal(res.status, 2, 'a failing qa must block completion');
     assert.ok(
       !existsSync(join(project.dir, 'node_modules', '.cache', 'claude-qa.lock')),

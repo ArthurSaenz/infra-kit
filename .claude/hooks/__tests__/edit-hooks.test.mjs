@@ -88,7 +88,7 @@ test('the Edit|Write matcher still catches MultiEdit', () => {
   assert.match('MultiEdit', new RegExp(entry.matcher));
 });
 
-// quality-gate's own cases live in quality-gate.test.mjs.
+// quality-gates's own cases live in quality-gates.test.mjs.
 
 // -------------------------------------------------------------- findPackageDir
 

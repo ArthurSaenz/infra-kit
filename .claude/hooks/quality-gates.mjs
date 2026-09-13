@@ -10,10 +10,9 @@ import { acquireLock, releaseLock } from './lock.mjs';
 const TAIL_CHARS = 4000;
 
 const main = () => {
-  // SELF-DESCENT GUARD, before anything else so there is no lock to unwind. `qa` ends with
-  // `test:claude`, which runs the `.claude/hooks` suite, and that suite spawns this hook again.
-  // Lock serialises peers; this stops recursion. Covered by quality-gate.test.mjs, which sets the
-  // flag directly.
+  // SELF-DESCENT GUARD, before anything else so there is no lock to unwind. `qa` does not run the
+  // `.claude` suite today; if it ever does, that suite spawns this hook again. Lock serialises
+  // peers; this stops recursion. Covered by quality-gates.test.mjs, which sets the flag directly.
   if (process.env.CLAUDE_HOOK_QA_NESTED) allow();
 
   let input;
@@ -24,7 +23,7 @@ const main = () => {
   }
 
   const cwd = process.env.CLAUDE_PROJECT_DIR;
-  if (!cwd) block('quality-gate: CLAUDE_PROJECT_DIR not set — cannot run QA, failing closed.');
+  if (!cwd) block('quality-gates: CLAUDE_PROJECT_DIR not set — cannot run QA, failing closed.');
 
   // Every subagent completion fires a full-monorepo turbo run, contending on the turbo cache.
   // `name` is NOT the pipeline's lock, which it also holds at the repo root on root-level edits.
@@ -37,7 +36,7 @@ const main = () => {
 
   if (!lock) {
     process.stderr.write(
-      'quality-gate: another gate held the lock for the whole wait; skipping this run. ' +
+      'quality-gates: another gate held the lock for the whole wait; skipping this run. ' +
         'The next task completion re-runs qa over the whole monorepo.\n',
     );
     allow();

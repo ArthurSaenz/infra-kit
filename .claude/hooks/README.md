@@ -14,7 +14,7 @@ rule is enforced, the suite fails. Run it with `pnpm run test:claude` — delibe
 | `PreToolUse` / `Bash` | `bash-guard.mjs` | advisory guards | block (exit 2) / advise | **open** |
 | `PreToolUse` / `Edit\|Write` | `protect-files.mjs` | protected paths | block (exit 2) | policy closed, **load open** |
 | `PostToolUse` / `Edit\|Write` | `edit-pipeline.mjs` | format + typecheck + lint feedback | context | open |
-| `TaskCompleted` | `quality-gate.mjs` | runs `pnpm run qa` | block (exit 2) | policy closed, **timeout + load open** |
+| `TaskCompleted` | `quality-gates.mjs` | runs `pnpm run qa` | block (exit 2) | policy closed, **timeout + load open** |
 | `SessionStart` | `setup-env.mjs` | env bootstrap | context | open |
 
 Only the deploy lane is fail-closed *end to end*, and only because `bash-launcher.mjs` turns a load
@@ -109,7 +109,7 @@ never reach that line. `hook-map.test.mjs` refuses the spelling.
 | `design-notes.test.mjs` | the `## Design notes` sections above cite real files at reachable lines |
 | `hook-map.test.mjs` | this README, settings paths, the launcher's zero-import rule, lane isolation |
 | `guard-policy.test.mjs` | the over-blocking policy (I1/I2) as an executable invariant |
-| `edit-hooks.test.mjs`, `lint-feedback.test.mjs`, `hook-lock.test.mjs`, `quality-gate.test.mjs`, `process-containment.test.mjs` | the Edit/Write and TaskCompleted lanes |
+| `edit-hooks.test.mjs`, `lint-feedback.test.mjs`, `hook-lock.test.mjs`, `quality-gates.test.mjs`, `process-containment.test.mjs` | the Edit/Write and TaskCompleted lanes |
 
 ## Known limits
 
@@ -129,7 +129,7 @@ Why a few things are the way they are. Kept here rather than inline because each
 incident, a measurement — and the code sites only need the rule. Anything a person editing a
 specific line must know stayed in that line's comment.
 
-### The quality gate queues, it never refuses (`quality-gate.mjs:35`)
+### The quality gate queues, it never refuses (`quality-gates.mjs:35`)
 
 `waitMs: 0` plus a block on contention meant a peer holding the lock failed a task that was itself
 fine. Parallel subagents then ping-ponged exit 2 at each other through the model. The gate now waits
@@ -162,7 +162,7 @@ file, a PostToolUse hook's stderr is **dropped** on exit 0 while `additionalCont
 verbatim. The test that used to assert "a contended edit degrades to silence" was the defect written
 down; it now asserts the opposite, channel included.
 
-The same measurement puts a question over `quality-gate.mjs`'s skip notice, which is a plain
+The same measurement puts a question over `quality-gates.mjs`'s skip notice, which is a plain
 `process.stderr.write` on a hook that then exits 0.
 
 ### Stage 3b has never fired, and stays (`edit-pipeline.mjs:217`)

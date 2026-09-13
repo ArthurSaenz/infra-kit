@@ -3,7 +3,9 @@
     "infra-kit": {
       "type": "stdio",
       "command": "infra-kit",
-      "args": ["mcp"]
+      "args": [
+        "mcp"
+      ]
     },
     "linear-server": {
       "type": "http",

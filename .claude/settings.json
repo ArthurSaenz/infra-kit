@@ -7,12 +7,6 @@
       "Bash(pnpm exec ik release-deliver:*)",
       "Bash(pnpm exec ik release deliver:*)",
       "Bash(ik release deliver:*)"
-    ],
-    "ask": [
-      "mcp__infra-kit__setup",
-      "Bash(infra-kit setup)",
-      "Bash(infra-kit setup --tools:*)",
-      "Bash(infra-kit setup --update:*)"
     ]
   },
   "hooks": {
@@ -57,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/quality-gate.mjs",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/quality-gates.mjs",
             "timeout": 600
           }
         ]
