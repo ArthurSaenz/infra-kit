@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "runtime-set-node": "pnpm runtime set node 24.18.0 --global",
+    "runtime-set-node": "pnpm runtime set node 24.21.0 --global",
     "setup": "pnpm run runtime-set-node && pnpm install",
     "reinstall": "pnpm run clean-artifacts && pnpm run clean-cache-root && pnpm clean && pnpm store prune && pnpm run runtime-set-node && pnpm install --force",
     "upgrade-pnpm": "pnpm self-update",
@@ -44,12 +44,12 @@
     "@wl/prettier-config": "workspace:*",
     "infra-kit": "workspace:*",
     "shadcn": "^4.12.0",
-    "turbo": "2.10.3",
+    "turbo": "2.10.12",
     "typescript": "catalog:"
   },
   "engines": {
     "node": ">=24.x",
     "pnpm": ">=10"
   },
-  "packageManager": "pnpm@11.10.0"
+  "packageManager": "pnpm@12.4.1"
 }

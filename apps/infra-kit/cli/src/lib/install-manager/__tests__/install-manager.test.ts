@@ -98,7 +98,7 @@ const cases: Case[] = [
     selfRealPath: '/opt/homebrew/lib/node_modules/infra-kit/dist/cli.js',
     env: {},
     lazyNpmRoot: () => {
-      return '/Users/x/Library/pnpm/nodejs/24.18.0/lib/node_modules'
+      return '/Users/x/Library/pnpm/nodejs/24.21.0/lib/node_modules'
     },
     expected: { manager: 'npm', updateCommand: npmAtPrefix('/opt/homebrew'), canSelfSpawn: true },
   },
@@ -107,11 +107,11 @@ const cases: Case[] = [
     // this path, but `pnpm add -g` writes to `<PNPM_HOME>/global/<v>/node_modules` instead. The install
     // reports success, the binary on PATH stays old, and nothing is ever printed.
     name: 'plain npm install under a pnpm-managed node is npm-at-that-prefix, NOT `pnpm add -g`',
-    selfRealPath: '/Users/x/Library/pnpm/nodejs/24.18.0/lib/node_modules/infra-kit/dist/cli.js',
+    selfRealPath: '/Users/x/Library/pnpm/nodejs/24.21.0/lib/node_modules/infra-kit/dist/cli.js',
     env: { PNPM_HOME: '/Users/x/Library/pnpm' },
     expected: {
       manager: 'npm',
-      updateCommand: npmAtPrefix('/Users/x/Library/pnpm/nodejs/24.18.0'),
+      updateCommand: npmAtPrefix('/Users/x/Library/pnpm/nodejs/24.21.0'),
       canSelfSpawn: true,
     },
   },

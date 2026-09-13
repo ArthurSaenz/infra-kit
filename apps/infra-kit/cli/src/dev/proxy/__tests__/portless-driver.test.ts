@@ -557,7 +557,7 @@ describe('portless driver — child env sanitising', () => {
   it('strips every npm_* key so portless does not mistake `pnpm exec` for `pnpm dlx`', () => {
     const sanitised = withoutPackageManagerEnv({
       npm_command: 'exec',
-      npm_config_user_agent: 'pnpm/11.10.0',
+      npm_config_user_agent: 'pnpm/12.4.1',
       npm_lifecycle_event: 'dev',
       PATH: '/usr/bin',
       HOME: '/Users/dev',

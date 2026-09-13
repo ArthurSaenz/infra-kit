@@ -148,7 +148,7 @@ describe('runUpdateCheck', () => {
     const { deps, spawnMock } = harness({
       env: {},
       lazyNpmRoot: () => {
-        return '/Users/x/Library/pnpm/nodejs/24.18.0/lib/node_modules'
+        return '/Users/x/Library/pnpm/nodejs/24.21.0/lib/node_modules'
       },
     })
 
