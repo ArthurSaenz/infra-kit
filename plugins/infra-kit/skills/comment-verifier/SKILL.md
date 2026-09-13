@@ -1,6 +1,6 @@
 ---
 name: comment-verifier
-description: Review and fix code comments and JSDoc against one policy — why, never what
+description: Review and fix code comments and JSDoc against one comment policy — why not what. Use when the user asks to review comments, audit JSDoc, check comment quality, or перевірити коментарі in changed or named TypeScript files.
 argument-hint: "[files...]"
 allowed-tools: Read, Edit, Bash(node "${CLAUDE_PLUGIN_ROOT}"/skills/comment-verifier/scripts/lint-comments.mjs *), Bash(git diff:*), Bash(git merge-base:*), Bash(pnpm --filter * run ts-check), Bash(pnpm run test:claude)
 ---
