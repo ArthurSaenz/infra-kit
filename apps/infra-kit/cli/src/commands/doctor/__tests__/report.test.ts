@@ -86,10 +86,10 @@ describe('section coverage', () => {
     expect(unmapped).toEqual([])
   })
 
-  it('covers exactly 31 checks', () => {
-    // 31, up from 30: `brew installed` joined the dependency rows.
-    expect(DOCTOR_CHECK_NAMES).toHaveLength(31)
-    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(31)
+  it('covers exactly 32 checks', () => {
+    // 32, up from 31: `portless service target` joined the proxy rows.
+    expect(DOCTOR_CHECK_NAMES).toHaveLength(32)
+    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(32)
   })
 
   it('keeps the Claude Code plugin rows adjacent, in order, followed by the MCP key row (O3)', () => {

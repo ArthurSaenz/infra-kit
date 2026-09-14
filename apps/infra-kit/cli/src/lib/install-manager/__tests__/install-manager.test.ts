@@ -1,6 +1,15 @@
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { detectInstallManager, formatUpdateCommand, isLocalNodeModulesInstall } from 'src/lib/install-manager'
+import {
+  detectInstallManager,
+  formatUpdateCommand,
+  isGlobalInstall,
+  isLocalNodeModulesInstall,
+  shouldWarnLocalInstall,
+} from 'src/lib/install-manager'
 import type { DetectInstallManagerInput, InstallManagerInfo, RealpathFn } from 'src/lib/install-manager'
 
 const NPM_LATEST = ['npm', 'install', '-g', 'infra-kit@latest']
@@ -472,5 +481,227 @@ describe('isLocalNodeModulesInstall', () => {
     expect(isLocalNodeModulesInstall('/real/repo/node_modules/infra-kit/dist/cli.js', '/link/repo', resolveLink)).toBe(
       true,
     )
+  })
+})
+
+describe('isGlobalInstall', () => {
+  const HOME = '/Users/x'
+  const PNPM_HOME = `${HOME}/Library/pnpm`
+  const PNPM_GLOBAL_DIR = `${PNPM_HOME}/global/v11/8a83-1`
+  const PNPM_GLOBAL_SELF = `${PNPM_GLOBAL_DIR}/node_modules/.pnpm/infra-kit@0.5.6/node_modules/infra-kit/dist/cli.js`
+  const BREW_SELF = '/opt/homebrew/Cellar/infra-kit/0.5.6/libexec/lib/node_modules/infra-kit/dist/cli.js'
+
+  /** The disk as a set of paths that exist — the walk asks about `.git` entries and nothing else. */
+  const diskWith = (...present: string[]) => {
+    return (p: string): boolean => {
+      return present.includes(p)
+    }
+  }
+
+  interface GlobalCase {
+    name: string
+    selfRealPath: string
+    env?: NodeJS.ProcessEnv
+    home?: string
+    present?: string[]
+    expected: boolean
+  }
+
+  const globalCases: GlobalCase[] = [
+    {
+      // The case the cwd-based advisory gets wrong: the updater spawns with cwd = $HOME, and every global
+      // layout under $HOME is "within" it.
+      name: 'pnpm-global self under PNPM_HOME → global',
+      selfRealPath: PNPM_GLOBAL_SELF,
+      env: { PNPM_HOME },
+      expected: true,
+    },
+    {
+      // brew is `canSelfSpawn: false` — the gate must key on the manager verdict, not on that flag.
+      name: 'homebrew keg self → global, even though brew may never be self-spawned',
+      selfRealPath: BREW_SELF,
+      expected: true,
+    },
+    {
+      name: 'project-local <repo>/node_modules/infra-kit with <repo>/.git → not global',
+      selfRealPath: `${HOME}/repo/node_modules/infra-kit/dist/cli.js`,
+      present: [`${HOME}/repo/.git`],
+      expected: false,
+    },
+    {
+      // Matcher false positive 1: a checkout with a `volta` path segment reads as the volta wrapper.
+      name: 'a repo under ~/work/volta matches the volta segment heuristic — the .git walk vetoes it',
+      selfRealPath: `${HOME}/work/volta/node_modules/infra-kit/dist/cli.js`,
+      present: [`${HOME}/work/volta/.git`],
+      expected: false,
+    },
+    {
+      // Matcher false positive 2: Yarn Berry unplugs packages into `.yarn/unplugged/<pkg>/node_modules`.
+      name: 'Yarn Berry .yarn/unplugged inside a checkout matches the yarn heuristic — vetoed',
+      selfRealPath: `${HOME}/repo/.yarn/unplugged/infra-kit-npm-0.5.6-abc/node_modules/infra-kit/dist/cli.js`,
+      present: [`${HOME}/repo/.git`],
+      expected: false,
+    },
+    {
+      // Matcher false positive 3: a checkout cloned UNDER $PNPM_HOME is inside the pnpm tree, and its
+      // `.git` sits below $HOME, so the walk must find it before the exclusive $HOME stop.
+      name: 'a checkout cloned under $PNPM_HOME/clone matches PNPM_HOME containment — vetoed',
+      selfRealPath: `${PNPM_HOME}/clone/node_modules/infra-kit/dist/cli.js`,
+      env: { PNPM_HOME },
+      present: [`${PNPM_HOME}/clone/.git`],
+      expected: false,
+    },
+    {
+      // Matcher false positive 4: a workspace package literally named `lib` yields `lib/node_modules/infra-kit`,
+      // which the npm-prefix derivation reads as an npm global root.
+      name: 'a workspace package named `lib` derives an npm prefix — vetoed',
+      selfRealPath: `${HOME}/repo/packages/lib/node_modules/infra-kit/dist/cli.js`,
+      present: [`${HOME}/repo/.git`],
+      expected: false,
+    },
+    {
+      // pnpm 12 writes a `pnpm-workspace.yaml` INSIDE the global dir; only `.git` is a marker.
+      name: 'pnpm-12 global dir containing pnpm-workspace.yaml → still global',
+      selfRealPath: PNPM_GLOBAL_SELF,
+      env: { PNPM_HOME },
+      present: [`${PNPM_GLOBAL_DIR}/pnpm-workspace.yaml`],
+      expected: true,
+    },
+    {
+      // Dotfiles users `git init ~` — $HOME is excluded from the walk, so this cannot refuse forever.
+      name: '~/.git present + pnpm-global self → global, $HOME itself is never inspected',
+      selfRealPath: PNPM_GLOBAL_SELF,
+      env: { PNPM_HOME },
+      present: [`${HOME}/.git`],
+      expected: true,
+    },
+    {
+      name: '~/repo/.git + ~/repo/node_modules/infra-kit self → not global (a checkout is strictly below $HOME)',
+      selfRealPath: `${HOME}/repo/node_modules/infra-kit/dist/cli.js`,
+      present: [`${HOME}/repo/.git`, `${HOME}/.git`],
+      expected: false,
+    },
+    {
+      // Fail-safe: no PNPM_HOME, no `lib` parent, no `pnpm`+`global` segments → manager unknown.
+      name: 'env stripped, no derivable prefix → not global (a skipped write is never wrong)',
+      selfRealPath: `${HOME}/.local/share/tools/node_modules/infra-kit/dist/cli.js`,
+      expected: false,
+    },
+  ]
+
+  it.each(globalCases)('$name', ({ selfRealPath, env = {}, home = HOME, present = [], expected }) => {
+    expect(isGlobalInstall({ selfRealPath, env, realpath: identity, home, exists: diskWith(...present) })).toBe(
+      expected,
+    )
+  })
+
+  it('walks from the OUTERMOST node_modules, not the innermost — pnpm nests two', () => {
+    const exists = vi.fn(diskWith())
+
+    isGlobalInstall({ selfRealPath: PNPM_GLOBAL_SELF, env: { PNPM_HOME }, realpath: identity, home: HOME, exists })
+
+    const inspected = exists.mock.calls.map(([p]) => {
+      return p
+    })
+
+    expect(inspected).toStrictEqual([
+      `${PNPM_GLOBAL_DIR}/.git`,
+      `${PNPM_HOME}/global/v11/.git`,
+      `${PNPM_HOME}/global/.git`,
+      `${PNPM_HOME}/.git`,
+      `${HOME}/Library/.git`,
+    ])
+  })
+
+  it('canonicalises home before the exclusive stop — a symlinked $HOME must still end the walk', () => {
+    const resolveLink: RealpathFn = (dir) => {
+      return dir.startsWith('/link/') ? dir.replace('/link/', '/real/') : dir
+    }
+    const self = '/real/home/Library/pnpm/global/v11/8a83-1/node_modules/infra-kit/dist/cli.js'
+
+    expect(
+      isGlobalInstall({
+        selfRealPath: self,
+        env: { PNPM_HOME: '/real/home/Library/pnpm' },
+        realpath: resolveLink,
+        home: '/link/home',
+        exists: diskWith('/real/home/.git'),
+      }),
+    ).toBe(true)
+  })
+
+  /**
+   * A path-set stub cannot tell a file from a directory, so this one runs against the real disk: a git
+   * WORKTREE's `.git` is a file, and a `statSync().isDirectory()` walk would wave it through.
+   */
+  it('counts a `.git` FILE (a git worktree) — proven with the real existsSync', () => {
+    const tmp = realpathSync(mkdtempSync(path.join(tmpdir(), 'ik-global-')))
+    const repo = path.join(tmp, 'repo')
+    const self = path.join(repo, 'node_modules/infra-kit/dist/cli.js')
+
+    try {
+      mkdirSync(path.dirname(self), { recursive: true })
+      writeFileSync(self, '')
+      writeFileSync(path.join(repo, '.git'), 'gitdir: /elsewhere/.git/worktrees/repo\n')
+
+      // PNPM_HOME = tmp makes the manager verdict pass, so only the walk decides.
+      const input = { selfRealPath: self, env: { PNPM_HOME: tmp }, realpath: identity, home: tmp, exists: existsSync }
+
+      expect(isGlobalInstall(input)).toBe(false)
+
+      rmSync(path.join(repo, '.git'))
+      expect(isGlobalInstall(input)).toBe(true)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('never throws — a seam that throws reports not-global', () => {
+    const exists = (): boolean => {
+      throw new Error('EACCES')
+    }
+
+    expect(
+      isGlobalInstall({ selfRealPath: PNPM_GLOBAL_SELF, env: { PNPM_HOME }, realpath: identity, home: HOME, exists }),
+    ).toBe(false)
+  })
+})
+
+describe('shouldWarnLocalInstall', () => {
+  const HOME = '/Users/x'
+  const PNPM_HOME = `${HOME}/Library/pnpm`
+  const PNPM_GLOBAL_SELF = `${PNPM_HOME}/global/v11/8a83-1/node_modules/.pnpm/infra-kit@0.5.6/node_modules/infra-kit/dist/cli.js`
+  const nothing = (): boolean => {
+    return false
+  }
+
+  it('does NOT warn for a pnpm-global self when cwd is $HOME — the case the cwd clause alone got wrong', () => {
+    expect(
+      shouldWarnLocalInstall({
+        selfRealPath: PNPM_GLOBAL_SELF,
+        cwd: HOME,
+        env: { PNPM_HOME },
+        realpath: identity,
+        home: HOME,
+        exists: nothing,
+      }),
+    ).toBe(false)
+  })
+
+  it('still warns for a project-local install under the cwd', () => {
+    const repo = `${HOME}/repo`
+
+    expect(
+      shouldWarnLocalInstall({
+        selfRealPath: `${repo}/node_modules/infra-kit/dist/cli.js`,
+        cwd: repo,
+        env: {},
+        realpath: identity,
+        home: HOME,
+        exists: (p) => {
+          return p === `${repo}/.git`
+        },
+      }),
+    ).toBe(true)
   })
 })

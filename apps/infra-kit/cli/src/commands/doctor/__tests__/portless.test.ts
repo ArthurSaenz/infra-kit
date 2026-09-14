@@ -66,6 +66,16 @@ const healthyDeps = (overrides: PortlessCheckDeps = {}): PortlessCheckDeps => {
     caPath: () => {
       return path.join(stateDir, 'ca.pem')
     },
+    // No OS service file and no `~/.infra-kit/portless` link: the service-target row is its `Skipped —`
+    // pass and every remediation renders the real bin, whatever the author's machine holds at those paths.
+    // The link's own rows live in `doctor-service-target.test.ts`.
+    readServiceFile: () => {
+      return null
+    },
+    exists: () => {
+      return false
+    },
+    home: '/nowhere/home',
     ...overrides,
   }
 }
@@ -97,10 +107,10 @@ afterEach(() => {
 })
 
 describe('checkPortless', () => {
-  it('reports five passes and NOT ONE remediation on a healthy, correctly-trusted machine', async () => {
+  it('reports six passes and NOT ONE remediation on a healthy, correctly-trusted machine', async () => {
     const checks = await checkPortless(healthyDeps())
 
-    expect(checks).toHaveLength(5)
+    expect(checks).toHaveLength(6)
     expect(
       checks.filter((check) => {
         return check.status !== 'pass'
@@ -146,7 +156,9 @@ describe('checkPortless', () => {
       'ca.trusted': `${sha256('CA-BYTES')}\n`,
     })
 
-    // Only the wire seams are injected: the CA checks read the (clobbered) real state dir on disk.
+    // Only the wire seams are injected: the CA checks read the (clobbered) real state dir on disk. The
+    // service file is the one exception — root-owned and present on the author's machine, so an
+    // un-injected read would make this test's row set depend on that machine's Node history.
     const checks = await checkPortless({
       resolveBin: () => {
         return BIN
@@ -157,6 +169,10 @@ describe('checkPortless', () => {
       handshake: () => {
         return Promise.resolve<HandshakeResult>({ ok: true })
       },
+      readServiceFile: () => {
+        return null
+      },
+      home: '/nowhere/home',
     })
 
     expect(statusOf(checks, 'portless serving TLS')).toBe('pass')

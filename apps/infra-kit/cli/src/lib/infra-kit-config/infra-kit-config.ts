@@ -4,20 +4,17 @@ import path from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
 
+import { USER_CONFIG_DIR_NAME } from 'src/lib/constants'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { isMcpMode } from 'src/lib/mcp-mode'
 import { PROTECTED_CHILD_ENV_NAMES } from 'src/lib/mcp-proxy/protected-env'
 
 const INFRA_KIT_CONFIG_FILE = 'infra-kit.json'
 
-/**
- * Directory under the user's home that holds all machine-local infra-kit config:
- * the runtime `infra-kit.json` merge layer, per-project overrides, and the factory
- * registry (`vendor.json`). Single source of truth for `.infra-kit`, reused
- * by the vendor factory-config loader (no import cycle — this module imports no
- * `lib/vendor` code).
- */
-export const USER_CONFIG_DIR_NAME = '.infra-kit'
+// Re-exported for the existing consumers (the vendor factory-config loader, no import cycle — this
+// module imports no `lib/vendor` code); the definition lives in `lib/constants` so zod-free entries
+// can share it.
+export { USER_CONFIG_DIR_NAME }
 const USER_GLOBAL_CONFIG_FILE = 'infra-kit.json'
 const USER_PROJECTS_DIR = 'projects'
 

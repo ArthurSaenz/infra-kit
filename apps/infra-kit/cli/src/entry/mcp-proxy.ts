@@ -3,6 +3,7 @@
 // directly by the MCP client, not invoked as `node dist/mcp-proxy.js`.
 import process from 'node:process'
 
+import { bootPortlessLink } from 'src/dev/proxy/portless-link'
 import { parseProxyArgv } from 'src/lib/mcp-proxy/argv'
 import { proxyCacheDir, readBinaryVersion, readProfile, writeProfile } from 'src/lib/mcp-proxy/cache'
 import type { UpstreamProfile } from 'src/lib/mcp-proxy/cache'
@@ -31,6 +32,14 @@ const log = (message: string): void => {
 const write = (payload: JsonRpcMessage): void => {
   process.stdout.write(`${JSON.stringify(payload)}\n`)
 }
+
+// This bin is the process Claude Code keeps alive, so it is where `~/.infra-kit/portless` converges on
+// a machine that only ever runs the MCP surface. fs-only and synchronous — nothing is spawned before the
+// handshake — and stdout is the transport, so only a failure earns a stderr line; the ordinary outcomes
+// are `doctor`'s to show.
+bootPortlessLink((result, message) => {
+  if (result.outcome === 'failed') log(`${message} failed: ${result.link} -> ${result.target}`)
+})
 
 const parsed = parseProxyArgv(process.argv.slice(2))
 

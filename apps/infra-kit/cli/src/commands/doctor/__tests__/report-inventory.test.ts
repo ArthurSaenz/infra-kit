@@ -145,8 +145,21 @@ vi.mock('src/lib/git-utils', () => {
   }
 })
 
+/**
+ * `portless service target` reads the service file at the driver's fixed path and, when it parses, dates
+ * the daemon through `ps`. Both constants are pointed at paths that cannot exist so the row is the
+ * deterministic `Skipped —` pass on every machine — including one with a real root plist — and no `ps`
+ * is ever spawned: the pid file lives under the same unreachable state dir.
+ */
 vi.mock('src/dev/proxy/portless-driver', () => {
   return {
+    DARWIN_SERVICE_LABEL: 'sh.portless.proxy',
+    DARWIN_SERVICE_PLIST_PATH: '/nowhere/LaunchDaemons/sh.portless.proxy.plist',
+    LINUX_SERVICE_UNIT_NAME: 'portless',
+    LINUX_SERVICE_UNIT_PATH: '/nowhere/systemd/portless.service',
+    portlessStateDir: vi.fn(() => {
+      return '/nowhere/.portless'
+    }),
     caFingerprintMatches: vi.fn(() => {
       return true
     }),

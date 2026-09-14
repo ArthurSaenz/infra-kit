@@ -358,3 +358,117 @@ const detectUnpinned = (input: DetectInstallManagerInput): InstallManagerInfo =>
 export const isLocalNodeModulesInstall = (selfRealPath: string, cwd: string, realpath: RealpathFn): boolean => {
   return hasSegment(selfRealPath, 'node_modules') && isWithin(cwd, selfRealPath, realpath)
 }
+
+/** Does this path exist at all — directory, file, or symlink? Injected so the walk never touches the real disk in tests. */
+export type ExistsFn = (p: string) => boolean
+
+export interface IsGlobalInstallInput {
+  /** Fully-resolved (symlinks followed) path to this CLI's entry file. */
+  selfRealPath: string
+  env: NodeJS.ProcessEnv
+  /** Canonicalises `home` and every root {@link detectInstallManager} compares against. */
+  realpath: RealpathFn
+  /** The user's home directory (`os.homedir()`), raw — canonicalised here before the walk compares it. */
+  home: string
+  exists: ExistsFn
+}
+
+/** Upper bound on the `.git` walk: deeper than any real install layout, so it only ever guards against a pathological path. */
+const GIT_WALK_MAX_HOPS = 32
+
+/**
+ * Where the `.git` walk starts: the parent of the OUTERMOST `node_modules` segment (`indexOf`, not
+ * `lastIndexOf` — pnpm's `.pnpm/<pkg>@<v>/node_modules/<pkg>` nests two, and the checkout that owns the
+ * tree sits above the first). A self path with no `node_modules` at all (a plain brew keg's `bin/`) starts
+ * at its own directory, so the walk still inspects every ancestor.
+ */
+const gitWalkStart = (selfRealPath: string): string => {
+  const segments = path.resolve(selfRealPath).split(path.sep)
+  const outermost = segments.indexOf('node_modules')
+
+  if (outermost === -1) return path.dirname(selfRealPath)
+
+  return segments.slice(0, outermost).join(path.sep) || path.sep
+}
+
+/** `start` and its ancestors up to but EXCLUDING `homeReal`, bounded — the directories the `.git` walk may inspect. */
+const ancestorsBelowHome = (start: string, homeReal: string): string[] => {
+  const dirs: string[] = []
+  let dir = start
+
+  while (dir !== homeReal && dirs.length < GIT_WALK_MAX_HOPS) {
+    dirs.push(dir)
+
+    const parent = path.dirname(dir)
+
+    if (parent === dir) break
+
+    dir = parent
+  }
+
+  return dirs
+}
+
+const hasGitAncestor = (start: string, homeReal: string, exists: ExistsFn): boolean => {
+  return ancestorsBelowHome(start, homeReal).some((dir) => {
+    return exists(path.join(dir, '.git'))
+  })
+}
+
+/**
+ * Is this CLI the machine's *global* install — the one a root-owned daemon or a system-wide link may be
+ * aimed at — as opposed to a checkout or a project-local dependency? Probe-free: fs + env only, never a
+ * subprocess, because it runs on every boot.
+ *
+ * True iff {@link detectInstallManager} names a manager AND no `.git` entry (directory or file — a
+ * worktree's is a file) exists above the outermost `node_modules`, walking up to but EXCLUDING
+ * `realpath(home)`. Never throws: any seam failure reports false, the safe direction for every caller.
+ *
+ * @example
+ * isGlobalInstall({
+ *   selfRealPath: '/Users/x/Library/pnpm/global/v11/8a83-1/node_modules/.pnpm/infra-kit@0.5.6/node_modules/infra-kit/dist/cli.js',
+ *   env: { PNPM_HOME: '/Users/x/Library/pnpm' },
+ *   realpath: (p) => p,
+ *   home: '/Users/x',
+ *   exists: (p) => p === '/Users/x/.git',
+ * }) // => true — the only `.git` is $HOME's own, which the walk never inspects
+ */
+// Why these two predicates and not the obvious candidates:
+//   - Not `canSelfSpawn`: that flag encodes "may I run an unattended `npm i -g`", and homebrew is
+//     `canSelfSpawn: false` while being unmistakably global — gating on it would leave a brew install
+//     unconverged forever. A global install whose manager cannot be identified in a stripped env (no
+//     `PNPM_HOME`, no derivable prefix) reports false: fail-safe, since a skipped write is never wrong and
+//     the next shell-run command converges it.
+//   - Not `isLocalNodeModulesInstall`: its cwd clause calls every global layout under `$HOME` "local" the
+//     moment cwd is `$HOME` — which is exactly the cwd the background updater spawns with, and a plain
+//     `cd ~ && infra-kit version` reproduces it. This predicate reads the tree, not the cwd.
+//   - Why the `.git` walk at all: the cheap matchers are segment heuristics that also fire on
+//     project-local shapes — a repo with a `volta` path segment, Yarn Berry's `.yarn/unplugged/…`, a
+//     checkout cloned under `$PNPM_HOME`, a workspace package literally named `lib` — and every one of
+//     those is a checkout; every checkout has a `.git`, no global root does.
+//   - Why `$HOME` is excluded: dotfiles users `git init ~`, and a `~/.git` would refuse the pnpm-global
+//     install permanently. Every checkout under `$HOME` (`~/repo/.git`) is still strictly below it.
+//   - Why `.git` ONLY, not `pnpm-workspace.yaml`: pnpm 12 writes one INSIDE the global install dir, so
+//     that marker would refuse the very install this is for.
+export const isGlobalInstall = (input: IsGlobalInstallInput): boolean => {
+  try {
+    const { selfRealPath, env, realpath, home, exists } = input
+
+    if (detectInstallManager({ selfRealPath, env, realpath }).manager === 'unknown') return false
+
+    return !hasGitAncestor(gitWalkStart(selfRealPath), realpath(path.resolve(home)), exists)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The advisory gate for `warnIfLocalInstall`, pulled out so it is testable without spawning the CLI.
+ * Warn only when the install is provably NOT global AND looks project-local: the second clause alone
+ * fires on a global pnpm root whenever cwd is `$HOME` (see {@link isGlobalInstall}).
+ */
+export const shouldWarnLocalInstall = (input: IsGlobalInstallInput & { cwd: string }): boolean => {
+  const { selfRealPath, cwd, realpath } = input
+
+  return !isGlobalInstall(input) && isLocalNodeModulesInstall(selfRealPath, cwd, realpath)
+}

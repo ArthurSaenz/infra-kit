@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -9,12 +10,17 @@ import { decidePrune, isDevSessionRunning } from 'src/commands/doctor/prune-rout
 // `fixable` field on the payload cannot drift from the `--fix` code paths, exactly as `report.ts`'s
 // own comment requires of its hint.
 import { FIXABLE_NAMES } from 'src/commands/doctor/report'
+import { parseServiceArgv } from 'src/commands/doctor/service-file'
 import { buildDopplerChildEnv } from 'src/commands/env-load/env-load'
 // `resolveGitRoot` is the WRITER's gate, imported rather than re-derived so the reader's row set and
 // the writer's reach cannot drift apart (see the gate comment beside the plugin rows below).
 import { AGENTS_MARKER_END, AGENTS_MARKER_START, resolveGitRoot } from 'src/commands/init/agent-files'
 import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
 import {
+  DARWIN_SERVICE_LABEL,
+  DARWIN_SERVICE_PLIST_PATH,
+  LINUX_SERVICE_UNIT_NAME,
+  LINUX_SERVICE_UNIT_PATH,
   caFingerprintMatches,
   createPortlessDriver,
   defaultIsListening,
@@ -22,10 +28,13 @@ import {
   formatPortlessCommand,
   handshakeChainsToCa,
   listRoutes,
+  portlessStateDir,
   readCaPath,
   resolvePortlessBin,
 } from 'src/dev/proxy/portless-driver'
-import type { HandshakeResult, PortlessRoute } from 'src/dev/proxy/portless-driver'
+import type { ExistsCheck, HandshakeResult, PortlessRoute } from 'src/dev/proxy/portless-driver'
+import { portlessLinkCliPath, portlessLinkPath, serviceInstallCommand } from 'src/dev/proxy/portless-link'
+import type { ServiceInstallSeams } from 'src/dev/proxy/portless-link'
 import { INFRA_KIT_ENV_TOKEN_VAR, probeEnvToken, resolveEnvToken } from 'src/integrations/doppler'
 import type { EnvTokenProbe, EnvTokenSource, ResolvedEnvToken } from 'src/integrations/doppler'
 import { inspectPackageGuidance, readGuidanceFile } from 'src/lib/agent-guidance'
@@ -51,6 +60,7 @@ import {
   resolveConfiguredIdes,
 } from 'src/lib/infra-kit-config'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
+import { isWithin, safeRealpath } from 'src/lib/install-manager'
 import { hasManagedBlock } from 'src/lib/managed-block'
 import { discoverPackages } from 'src/lib/package-validator/loader'
 import { tildify } from 'src/lib/path-display'
@@ -1138,18 +1148,6 @@ export const checkMcpServerKey = (root: string): CheckResult => {
   }
 }
 
-/**
- * The one-time, out-of-band, ROOT command that installs the `:443` daemon. infra-kit never runs it — it
- * only ever prints it (principle 3: infra-kit probes and prints, it never elevates).
- *
- * Rendered from the resolved `dist/cli.js`, never as a bare `portless`: portless is an npm dependency in
- * `node_modules`, not a global bin, and `sudo` swaps `PATH` for `secure_path` — so the bare form cannot
- * resolve under sudo even in a shell where it otherwise would. See {@link formatPortlessCommand}.
- */
-const installDaemonCmd = (bin: string): string => {
-  return formatPortlessCommand(['service', 'install'], { sudo: true, bin })
-}
-
 /** The sudo-free "trust the local CA" command, rendered from the same resolved bin. */
 const trustCmd = (bin: string): string => {
   return formatPortlessCommand(['trust'], { bin })
@@ -1166,8 +1164,35 @@ const CA_MISMATCH_CODES = new Set(['SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIF
  */
 const PROBE_BUG_CODE = 'ERR_TLS_CERT_ALTNAME_INVALID'
 
+/**
+ * The seams of `portless service target` (and of the `service install` line every remediation prints).
+ * Split out of {@link PortlessCheckDeps} because `setup` asks this one row the same question doctor does
+ * ({@link portlessServiceTargetState}) without the wire seams the other portless rows need.
+ */
+export interface ServiceTargetDeps {
+  /** `process.platform` — picks the service-file grammar; anything but darwin/linux skips the row. */
+  platform?: NodeJS.Platform
+  /** The OS service file's text, or `null` when it is not present (= the service is not installed). */
+  readServiceFile?: (filePath: string) => string | null
+  /** Small text reads (`proxy.pid`, the link target's `package.json`); `null` on any failure. */
+  readFile?: (filePath: string) => string | null
+  exists?: ExistsCheck
+  realpath?: (target: string) => string
+  /** A file's mtime, or `null` when it cannot be stat'ed. */
+  mtime?: (filePath: string) => Date | null
+  execPath?: string
+  home?: string
+  cwd?: string
+  /** The git toplevel of `cwd`, or `null` outside a repo (or in `$HOME`); the containment root of the "checkout" row. */
+  repoRoot?: () => Promise<string | null>
+  /** portless's state dir — where the daemon's `proxy.pid` lives. */
+  stateDir?: () => string
+  /** When `pid` started, or `null` when the process table cannot answer (dead pid, no `ps`). */
+  processStartTime?: (pid: number) => Date | null
+}
+
 /** Every process/fs seam the portless checks touch, injected so tests never reach the real daemon. */
-export interface PortlessCheckDeps {
+export interface PortlessCheckDeps extends ServiceTargetDeps {
   resolveBin?: () => string | null
   isProxyServing?: (port: number, tls: boolean) => Promise<boolean>
   handshake?: (port: number, servername: string) => Promise<HandshakeResult>
@@ -1181,6 +1206,7 @@ export interface PortlessCheckDeps {
 const checkPortlessServing = async (
   isProxyServing: NonNullable<PortlessCheckDeps['isProxyServing']>,
   bin: string,
+  seams: ServiceInstallSeams,
 ): Promise<CheckResult> => {
   const name = `portless serving TLS on :${DEFAULT_DEV_PROXY_PORT}`
   const serving = await isProxyServing(DEFAULT_DEV_PROXY_PORT, true)
@@ -1189,7 +1215,7 @@ const checkPortlessServing = async (
     return {
       name,
       status: 'fail',
-      message: `No portless daemon is serving HTTPS on :${DEFAULT_DEV_PROXY_PORT}. Install it once (needs root): \`${installDaemonCmd(bin)}\`.`,
+      message: `No portless daemon is serving HTTPS on :${DEFAULT_DEV_PROXY_PORT}. Install it once (needs root): \`${serviceInstallCommand(bin, seams)}\`.`,
     }
   }
 
@@ -1209,6 +1235,7 @@ const checkPortlessCaChain = async (
   routes: PortlessRoute[],
   caPath: string,
   bin: string,
+  seams: ServiceInstallSeams,
 ): Promise<CheckResult> => {
   const name = 'portless CA chain valid'
   const servernames = [
@@ -1258,7 +1285,7 @@ const checkPortlessCaChain = async (
     return {
       name,
       status: 'fail',
-      message: `The daemon is serving a certificate that does not chain to ${tildify(caPath)}. Its CA was regenerated — run \`${trustCmd(bin)}\`, or reinstall: \`${installDaemonCmd(bin)}\`.`,
+      message: `The daemon is serving a certificate that does not chain to ${tildify(caPath)}. Its CA was regenerated — run \`${trustCmd(bin)}\`, or reinstall: \`${serviceInstallCommand(bin, seams)}\`.`,
     }
   }
 
@@ -1323,6 +1350,300 @@ const checkPortlessStaleRoutes = async (
   }
 }
 
+const SERVICE_TARGET_NAME = 'portless service target'
+
+/**
+ * `warn` rendered in the only vocabulary {@link CheckResult} has: `status` is `'pass' | 'fail'` with no
+ * third state (see {@link packageGuidanceStaleness}), so an advisory is a green row whose message leads
+ * with `Warning —`. Every warn in the service-target table is by design NOT a broken machine — an old Node
+ * that still exists, a version-specific script path that still exists, a daemon one release behind — so a
+ * red row would tell a working user to go run sudo now.
+ */
+const warnRow = (message: string): CheckResult => {
+  return { name: SERVICE_TARGET_NAME, status: 'pass', message: `Warning — ${message}` }
+}
+
+/** The plain-text file `service install` wrote on this platform, or `null` where portless writes none we read. */
+const serviceFilePath = (platform: NodeJS.Platform): string | null => {
+  if (platform === 'darwin') return DARWIN_SERVICE_PLIST_PATH
+  if (platform === 'linux') return LINUX_SERVICE_UNIT_PATH
+
+  return null
+}
+
+/** The root command that restarts the daemon in place — the only way a running daemon picks up a new portless. */
+const restartDaemonCmd = (platform: NodeJS.Platform): string => {
+  return platform === 'darwin'
+    ? `sudo launchctl kickstart -k system/${DARWIN_SERVICE_LABEL}`
+    : `sudo systemctl restart ${LINUX_SERVICE_UNIT_NAME}`
+}
+
+/** Absolute path to `ps` — never resolved through `PATH`, which a writable entry could substitute. */
+const PS_BIN = '/bin/ps'
+
+/**
+ * The daemon's start time via `ps -o lstart=`, the one portable field the process table prints as a
+ * date. `null` on any failure — no such pid, no `ps`, unparsable output — and the caller treats `null` as
+ * "cannot tell", never as "predates".
+ */
+const defaultProcessStartTime = (pid: number): Date | null => {
+  try {
+    const result = spawnSync(PS_BIN, ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf-8' })
+
+    if (result.status !== 0) return null
+
+    const started = new Date(result.stdout.trim())
+
+    return Number.isNaN(started.getTime()) ? null : started
+  } catch {
+    return null
+  }
+}
+
+const readTextFile = (filePath: string): string | null => {
+  try {
+    return fs.readFileSync(filePath, 'utf-8')
+  } catch {
+    return null
+  }
+}
+
+const fileMtime = (filePath: string): Date | null => {
+  try {
+    return fs.statSync(filePath).mtime
+  } catch {
+    return null
+  }
+}
+
+/** {@link ServiceTargetDeps} with every seam resolved to a value. */
+interface ServiceTargetSeams extends Required<ServiceInstallSeams> {
+  platform: NodeJS.Platform
+  readServiceFile: NonNullable<ServiceTargetDeps['readServiceFile']>
+  readFile: NonNullable<ServiceTargetDeps['readFile']>
+  realpath: NonNullable<ServiceTargetDeps['realpath']>
+  mtime: NonNullable<ServiceTargetDeps['mtime']>
+  cwd: string
+  repoRoot: NonNullable<ServiceTargetDeps['repoRoot']>
+  stateDir: string
+  processStartTime: NonNullable<ServiceTargetDeps['processStartTime']>
+  bin: string
+}
+
+const resolveServiceTargetSeams = (deps: ServiceTargetDeps, bin: string): ServiceTargetSeams => {
+  return {
+    platform: deps.platform ?? process.platform,
+    readServiceFile: deps.readServiceFile ?? readTextFile,
+    readFile: deps.readFile ?? readTextFile,
+    exists: deps.exists ?? fs.existsSync,
+    realpath: deps.realpath ?? safeRealpath,
+    mtime: deps.mtime ?? fileMtime,
+    execPath: deps.execPath ?? process.execPath,
+    home: deps.home ?? os.homedir(),
+    cwd: deps.cwd ?? process.cwd(),
+    repoRoot: deps.repoRoot ?? resolveGitRoot,
+    stateDir: (deps.stateDir ?? portlessStateDir)(),
+    processStartTime: deps.processStartTime ?? defaultProcessStartTime,
+    bin,
+  }
+}
+
+/** `version` of the package at `target`, or `'?'` — a display value; nothing is gated on it, so a corrupt file is `'?'` too. */
+const readPortlessVersion = (target: string, seams: ServiceTargetSeams): string => {
+  const raw = seams.readFile(path.join(target, 'package.json'))
+
+  try {
+    const parsed = raw === null ? null : z.object({ version: z.string() }).safeParse(JSON.parse(raw))
+
+    return parsed?.success === true ? parsed.data.version : '?'
+  } catch {
+    return '?'
+  }
+}
+
+/**
+ * Was the daemon started before the link's current target was installed? Advisory ONLY, and it reads
+ * portless's `proxy.pid` marker to find the daemon — the one place this block touches a marker. That is
+ * acceptable here because every unanswerable input (no pid file, an unparsable one, a pid `ps` cannot
+ * date, a target without a `package.json` mtime) collapses to `false`: the marker can only ever ADD an
+ * advisory, never turn a healthy row red. A marker-gated `fail` is what the block's design note forbids.
+ */
+const daemonPredatesTarget = (target: string, seams: ServiceTargetSeams): boolean => {
+  const pid = Number.parseInt(seams.readFile(path.join(seams.stateDir, 'proxy.pid'))?.trim() ?? '', 10)
+
+  if (!Number.isInteger(pid) || pid <= 0) return false
+
+  const started = seams.processStartTime(pid)
+  const installed = seams.mtime(path.join(target, 'package.json'))
+
+  return started !== null && installed !== null && started.getTime() < installed.getTime()
+}
+
+/**
+ * Is the link's target inside the repo the user is standing in? A daemon aimed there dangles the moment
+ * the worktree is removed. Containment is tested against the git toplevel, not the cwd: from
+ * `<repo>/apps/x` a link into `<repo>/node_modules/portless` is just as doomed. Outside a repo the cwd
+ * is the root, and `cwd = $HOME` is excluded for the same reason `isGlobalInstall` excludes it: every
+ * global layout is below `$HOME`, so from there the test would flag the correct target.
+ */
+const targetInsideRepo = async (target: string, seams: ServiceTargetSeams): Promise<boolean> => {
+  const cwd = seams.realpath(seams.cwd)
+
+  if (cwd === seams.realpath(seams.home)) return false
+
+  return isWithin((await seams.repoRoot()) ?? cwd, target, seams.realpath)
+}
+
+/**
+ * The row's verdict reduced to what `setup` acts on: `'absent'` (no service file to converge — not
+ * installed, or a platform portless writes none for), `'converged'` (the file names the current node and
+ * the stable link, and the link is healthy), or `'drifted'` (anything else, an unparsable file included).
+ * The daemon-age advisory does not move a `'converged'` file: it asks for a restart, not a reinstall.
+ */
+export type ServiceTargetState = 'absent' | 'converged' | 'drifted'
+
+/** The rendered row plus the state it encodes — one place decides both, so they cannot disagree. */
+interface ServiceTargetOutcome {
+  state: ServiceTargetState
+  row: CheckResult
+}
+
+const drifted = (row: CheckResult): ServiceTargetOutcome => {
+  return { state: 'drifted', row }
+}
+
+/**
+ * The verdict once the service's `[node, script]` are known. Failures (a daemon launchd cannot start at
+ * the next boot) are decided before advisories (a daemon that starts, but not the way `dev` expects),
+ * and the link's own health before Node's: the plist row order in the plan is a table of states, and a
+ * single-status row has to show the most severe one.
+ */
+const serviceTargetVerdict = async (
+  node: string,
+  script: string,
+  seams: ServiceTargetSeams,
+): Promise<ServiceTargetOutcome> => {
+  const install = serviceInstallCommand(seams.bin, seams)
+
+  if (!seams.exists(node)) {
+    return drifted({
+      name: SERVICE_TARGET_NAME,
+      status: 'fail',
+      message: `The service runs \`${node}\`, which no longer exists (Node was upgraded). Re-run: \`${install}\``,
+    })
+  }
+
+  const linkCli = path.join(portlessLinkPath(seams.home), 'dist', 'cli.js')
+
+  if (script !== linkCli) {
+    return drifted(
+      warnRow(
+        `The service points at \`${script}\`, a version-specific location. Re-run once to switch it to the stable link: \`${install}\``,
+      ),
+    )
+  }
+  if (portlessLinkCliPath(seams.home, seams.exists) === null) {
+    return drifted({
+      name: SERVICE_TARGET_NAME,
+      status: 'fail',
+      message: `~/.infra-kit/portless is broken. Run any infra-kit command from the global install (e.g. \`infra-kit setup\`) to repair it.`,
+    })
+  }
+
+  const target = seams.realpath(portlessLinkPath(seams.home))
+
+  if (await targetInsideRepo(target, seams)) {
+    return drifted({
+      name: SERVICE_TARGET_NAME,
+      status: 'fail',
+      message: `The service runs portless from a project checkout (${target}). Re-run \`service install\` from the global install: \`${install}\``,
+    })
+  }
+  if (seams.realpath(node) !== seams.realpath(seams.execPath)) {
+    return drifted(
+      warnRow(
+        `The service runs \`${node}\`; infra-kit runs \`${seams.execPath}\`. Works until the old Node is removed. Re-run when convenient: \`${install}\``,
+      ),
+    )
+  }
+
+  const version = readPortlessVersion(target, seams)
+
+  if (daemonPredatesTarget(target, seams)) {
+    return {
+      state: 'converged',
+      row: warnRow(
+        `The running daemon predates portless ${version} that \`dev\` will talk to. Restart it: \`${restartDaemonCmd(seams.platform)}\` (or reboot).`,
+      ),
+    }
+  }
+
+  return {
+    state: 'converged',
+    row: {
+      name: SERVICE_TARGET_NAME,
+      status: 'pass',
+      message: `service runs \`${node}\` + stable link → portless ${version}`,
+    },
+  }
+}
+
+/**
+ * Which node and which `cli.js` the ROOT daemon will run at the next boot — read back from the service
+ * file `service install` wrote, with the same two grammars portless reads it with (`service-file.ts`).
+ * The plist is the only witness: the running daemon's argv is what it was, not what launchd will use next.
+ *
+ * "Not installed" is a `Skipped —` pass (the `:443` row already says what to do), a file this reader
+ * cannot make sense of is an advisory, never a throw.
+ */
+const checkPortlessServiceTarget = async (seams: ServiceTargetSeams): Promise<ServiceTargetOutcome> => {
+  const filePath = serviceFilePath(seams.platform)
+
+  if (filePath === null) {
+    return {
+      state: 'absent',
+      row: {
+        name: SERVICE_TARGET_NAME,
+        status: 'pass',
+        message: 'Skipped — no portless OS service file on this platform',
+      },
+    }
+  }
+
+  const content = seams.readServiceFile(filePath)
+
+  if (content === null) {
+    return {
+      state: 'absent',
+      row: {
+        name: SERVICE_TARGET_NAME,
+        status: 'pass',
+        message: `Skipped — the OS service is not installed (no ${filePath})`,
+      },
+    }
+  }
+
+  const [node, script] = parseServiceArgv(seams.platform, content) ?? []
+
+  if (node === undefined || script === undefined) {
+    return drifted(
+      warnRow(`could not parse ${filePath} — re-run \`${serviceInstallCommand(seams.bin, seams)}\` to rewrite it.`),
+    )
+  }
+
+  return serviceTargetVerdict(node, script, seams)
+}
+
+/**
+ * `setup`'s view of the row above: the state alone, from the same seams and the same grammars, so the
+ * two commands can never disagree about whether the installed service has caught up to the stable link.
+ * `bin` is the fallback the row's remediation renders when no link resolves; the caller prints its own
+ * line, so it is display-only here. Never throws: every unreadable input is a state, not an error.
+ */
+export const portlessServiceTargetState = async (deps: ServiceTargetDeps, bin: string): Promise<ServiceTargetState> => {
+  return (await checkPortlessServiceTarget(resolveServiceTargetSeams(deps, bin))).state
+}
+
 /**
  * The portless block of doctor: is the HTTPS dev proxy installed, serving, trusted, and free of dead routes?
  * This is the diagnostic surface for the port-free HTTPS dev URLs — it is what tells a developer to run
@@ -1332,12 +1653,13 @@ const checkPortlessStaleRoutes = async (
  * Every check observes the daemon **on the wire or on our own disk** — never through portless's `proxy.port`
  * / `proxy.pid` / `proxy.tls` markers, which are process-global singletons that ANY daemon start rewrites and
  * ANY daemon stop deletes. Gating on them made doctor report a perfectly healthy `:443` daemon as dead.
+ * (The one advisory that reads `proxy.pid` — {@link daemonPredatesTarget} — can only add a warning.)
  *
  * Reports only: nothing here is auto-run, and nothing requiring sudo ever could be.
  *
  * @example
  * await checkPortless()
- * // [{ name: 'portless installed', status: 'pass', message: '…' }, … 5 checks]
+ * // [{ name: 'portless installed', status: 'pass', message: '…' }, … 6 checks]
  */
 export const checkPortless = async (deps: PortlessCheckDeps = {}): Promise<CheckResult[]> => {
   const resolveBin = deps.resolveBin ?? resolvePortlessBin
@@ -1366,17 +1688,19 @@ export const checkPortless = async (deps: PortlessCheckDeps = {}): Promise<Check
     status: 'pass',
     message: 'portless is resolvable from node_modules',
   }
+  const seams = resolveServiceTargetSeams(deps, bin)
   const routes = readRoutes()
-  const serving = await checkPortlessServing(isProxyServing, bin)
+  const serving = await checkPortlessServing(isProxyServing, bin, seams)
   // Nothing is answering on :443 — there is no certificate to validate, so the chain check would only add a
   // second, derivative failure to the one the user must fix first.
   const chain: CheckResult =
     serving.status === 'fail'
       ? { name: 'portless CA chain valid', status: 'pass', message: 'Skipped — no daemon to handshake with' }
-      : await checkPortlessCaChain(handshake, routes, caPath, bin)
+      : await checkPortlessCaChain(handshake, routes, caPath, bin, seams)
 
   return [
     installed,
+    (await checkPortlessServiceTarget(seams)).row,
     serving,
     chain,
     checkPortlessCaTrusted(caTrusted(), caPath, bin),

@@ -83,6 +83,15 @@ vi.mock('src/lib/infra-kit-config', () => {
 
 vi.mock('src/dev/proxy/portless-driver', () => {
   return {
+    // `portless service target` reads the service file at these paths and dates the daemon from the pid
+    // under the state dir; both are pointed nowhere so the row is its `Skipped —` pass on every machine.
+    DARWIN_SERVICE_LABEL: 'sh.portless.proxy',
+    DARWIN_SERVICE_PLIST_PATH: '/nowhere/LaunchDaemons/sh.portless.proxy.plist',
+    LINUX_SERVICE_UNIT_NAME: 'portless',
+    LINUX_SERVICE_UNIT_PATH: '/nowhere/systemd/portless.service',
+    portlessStateDir: vi.fn(() => {
+      return '/nowhere/.portless'
+    }),
     caFingerprintMatches: vi.fn(() => {
       return true
     }),

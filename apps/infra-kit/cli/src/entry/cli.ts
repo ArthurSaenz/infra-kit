@@ -3,15 +3,17 @@
 // directly, unlike pnpm's `.bin` shim which invokes `node <path>` explicitly.
 // esbuild preserves it on this entry only — never on the library entries.
 import select, { Separator } from '@inquirer/select'
-import { realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
+import { bootPortlessLink } from 'src/dev/proxy/portless-link'
 import { commandCatalog } from 'src/lib/command-catalog'
 import { buildPaletteItems as buildPaletteItemsFromCommands } from 'src/lib/command-catalog/palette'
 import type { PaletteItem } from 'src/lib/command-catalog/palette'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
-import { isLocalNodeModulesInstall, safeRealpath } from 'src/lib/install-manager'
+import { safeRealpath, shouldWarnLocalInstall } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
 import { suppressTypelessPackageJsonWarning } from 'src/lib/node-warnings'
 import { buildProgram } from 'src/lib/program'
@@ -62,9 +64,11 @@ const runProgram = async (argv?: string[]): Promise<void> => {
  * Best-effort nudge when the CLI runs out of a project-local `node_modules`. Advisory only: it must never
  * throw and never change the exit code.
  *
- * The cwd clause inside `isLocalNodeModulesInstall` is what distinguishes a project-local install from a
- * global root — BOTH contain a `node_modules` segment (`pnpm root -g` is
- * `/Users/<me>/Library/pnpm/global/5/node_modules`). Without it we would nag every global pnpm user.
+ * BOTH a project install and a global root contain a `node_modules` segment (`pnpm root -g` is
+ * `/Users/<me>/Library/pnpm/global/5/node_modules`), and the cwd clause in `isLocalNodeModulesInstall`
+ * is not enough on its own to tell them apart: every global layout under `$HOME` is "within" a cwd of
+ * `$HOME`, so `cd ~ && infra-kit version` nagged the pnpm-global install. `isGlobalInstall` reads the
+ * tree instead (a named manager, no `.git` above the outermost `node_modules`) and vetoes the advisory.
  *
  * `logger` is pino-pretty with `destination: 2`, i.e. stderr — never stdout, so `--json` payloads and the
  * MCP child's stdio framing stay clean. It is still suppressed for `--json` (machine consumers want no
@@ -75,7 +79,16 @@ const warnIfLocalInstall = (): void => {
     if (process.env.INFRA_KIT_NO_LOCATION_WARN) return
     if (process.argv.includes('--json') || process.argv[2] === 'mcp') return
 
-    if (isLocalNodeModulesInstall(realpathSync(fileURLToPath(import.meta.url)), process.cwd(), safeRealpath)) {
+    const shouldWarn = shouldWarnLocalInstall({
+      selfRealPath: realpathSync(fileURLToPath(import.meta.url)),
+      cwd: process.cwd(),
+      env: process.env,
+      realpath: safeRealpath,
+      home: homedir(),
+      exists: existsSync,
+    })
+
+    if (shouldWarn) {
       logger.info('Running from a project-local node_modules. Install globally for faster startup: npm i -g infra-kit')
     }
   } catch {
@@ -84,6 +97,14 @@ const warnIfLocalInstall = (): void => {
 }
 
 warnIfLocalInstall()
+
+// Deliberately NOT inside `warnIfLocalInstall`: its `--json` / `mcp` early return would skip exactly the
+// invocation that matters — the updater verifies a fresh install with `version --json`, and that run is
+// what re-points `~/.infra-kit/portless` after a silent update (see the portless-link header). fs-only,
+// never throws, never touches stdout; the outcome is a debug line on stderr under `--debug`.
+bootPortlessLink((result, message) => {
+  logger.debug(result, message)
+})
 
 // Fire-and-forget: reads a cached timestamp, and at most once per throttle window hands off to a detached
 // `dist/update-check.js` that fetches, and silently installs, AFTER this process exits. Adds no

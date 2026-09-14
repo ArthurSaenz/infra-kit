@@ -75,6 +75,8 @@ import { deriveTargetLabel, resolvePreset, validatePresetKeys, validatePresetPro
 import type { DiscoveredParts } from './presets.js'
 import { createPortlessDriver, formatPortlessCommand, readCaPath } from './proxy/portless-driver.js'
 import type { PortlessDriver } from './proxy/portless-driver.js'
+import { serviceInstallCommand } from './proxy/portless-link.js'
+import type { ServiceInstallSeams } from './proxy/portless-link.js'
 import { describeStaleFiles, isHotReloadableChange } from './reload-scope.js'
 import { DevRenderer, resolveEndpointUrl } from './render.js'
 import type { DegradedRow, EndpointRow, HealthState, ProxyRouteRow, ReadySummary, UiRef } from './render.js'
@@ -296,6 +298,12 @@ export interface DevServerOptions {
    * A test seam only — lets a test drive the monitor loop fast; production never sets it.
    */
   livenessIntervalMs?: number
+  /**
+   * Where `~/.infra-kit/portless` is looked up when the daemon-down refusal prints `service install`
+   * (default: the real home + `existsSync`). A test seam only — it lets a test force the link-resolved and
+   * the real-bin rendering without a real `~/.infra-kit` on the author's machine; production never sets it.
+   */
+  portlessLink?: ServiceInstallSeams
   /**
    * Probe the frontends' liveness (vite's HMR ping) and give their rows a health dot. Default `true`;
    * `--no-ui-health` / `INFRA_KIT_NO_UI_HEALTH=1` turns it off, which drops every UI row back to no dot
@@ -1839,6 +1847,12 @@ export class DevServerRunner {
       )
     }
 
+    // The one exception is the ROOT install line: portless bakes the script path it is invoked with into the
+    // plist, so that line carries the stable `~/.infra-kit/portless/dist/cli.js` whenever the link resolves —
+    // the version-specific path would dangle at the next `pnpm add -g infra-kit`. `status` and `trust` run
+    // now, against this driver's bin, and stay on it.
+    const install = serviceInstallCommand(bin, this.options.portlessLink ?? { home: os.homedir() })
+
     const outcome = await this.proxy.probeProxy(this.proxyPort, true)
 
     if (outcome === 'serving') return
@@ -1860,7 +1874,7 @@ export class DevServerRunner {
       throw new Error(
         `infra-kit dev: no portless daemon is serving HTTPS on :${this.proxyPort}, and its OS service is not ` +
           'installed yet, so no dev URL can resolve. Install it once (this is the only step that needs root):\n' +
-          `    ${formatPortlessCommand(['service', 'install'], { sudo: true, bin })}\n` +
+          `    ${install}\n` +
           'Then trust its local CA (no sudo needed):\n' +
           `    ${formatPortlessCommand(['trust'], { bin })}\n` +
           '`infra-kit doctor` checks both.',
@@ -1872,7 +1886,7 @@ export class DevServerRunner {
         `:${this.proxyPort} — it may have crashed or been stopped, so no dev URL can resolve. Check its state:\n` +
         `    ${formatPortlessCommand(['service', 'status'], { bin })}\n` +
         'Reinstalling restarts it (still the only step that needs root):\n' +
-        `    ${formatPortlessCommand(['service', 'install'], { sudo: true, bin })}\n` +
+        `    ${install}\n` +
         '`infra-kit doctor` checks the daemon and CA trust state.',
     )
   }

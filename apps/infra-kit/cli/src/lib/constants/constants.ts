@@ -24,6 +24,18 @@ export const DEFAULT_WARM_TTL_SECONDS = 2 * 60 * 60
 
 export const INFRA_KIT_SESSION_VAR = 'INFRA_KIT_SESSION'
 /**
+ * Directory under the user's home that holds all machine-local infra-kit config:
+ * the runtime `infra-kit.json` merge layer, per-project overrides, the factory
+ * registry (`vendor.json`), and the `portless` package link. Single source of
+ * truth for `.infra-kit`.
+ *
+ * Defined HERE, not in `lib/infra-kit-config`, because that module pulls in zod
+ * and the `ik-mcp` proxy bundle must stay Node-builtins-only (guarded in
+ * `entry/__tests__/dist-shebang.test.ts`); `lib/infra-kit-config` re-exports it
+ * for its existing consumers.
+ */
+export const USER_CONFIG_DIR_NAME = '.infra-kit'
+/**
  * The active environment/config NAME (e.g. `dev`, `arthur`), exported plainly so
  * non-shell consumers can read it from `process.env`. Notably `infra-kit/vite`'s
  * `infraKitDev()` reads this to interpolate the `<env>` placeholder in cloud proxy

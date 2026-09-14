@@ -19,6 +19,7 @@ export {
   LOG_FILE_PATH,
   parseVarNamesFromEnvFile,
   parseVarsFromEnvFile,
+  USER_CONFIG_DIR_NAME,
   warmCacheKey,
   WORKTREES_DIR_SUFFIX,
 } from './constants'

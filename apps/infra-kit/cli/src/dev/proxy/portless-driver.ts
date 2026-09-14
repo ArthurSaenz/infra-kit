@@ -180,8 +180,11 @@ export type ServiceInstalled = 'yes' | 'no' | 'unknown'
  * is no per-user or per-project variant: `service install` always targets exactly one of these two paths.
  * Exported so a test can assert against the exact path this check reads, without hard-coding a second copy.
  */
-export const DARWIN_SERVICE_PLIST_PATH = '/Library/LaunchDaemons/sh.portless.proxy.plist'
+export const DARWIN_SERVICE_LABEL = 'sh.portless.proxy'
+export const DARWIN_SERVICE_PLIST_PATH = `/Library/LaunchDaemons/${DARWIN_SERVICE_LABEL}.plist`
 export const LINUX_SERVICE_UNIT_PATH = '/etc/systemd/system/portless.service'
+/** The systemd unit name `service install` registers on Linux — the `systemctl` argument, not a path. */
+export const LINUX_SERVICE_UNIT_NAME = 'portless'
 
 /** The `existsSync` seam {@link defaultIsServiceInstalled} takes, injected so tests never touch real root paths. */
 export type ExistsCheck = (path: string) => boolean

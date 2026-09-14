@@ -14,8 +14,18 @@
 import process from 'node:process'
 import { z } from 'zod'
 
+import { portlessServiceTargetState } from 'src/commands/doctor/doctor'
+import type { ServiceTargetDeps } from 'src/commands/doctor/doctor'
 import { InitStepError, SHELL_ACTIVATION_REMINDER, initCore, logInitEntry } from 'src/commands/init'
 import type { InitEntry, InitStep, InitStepName } from 'src/commands/init'
+import {
+  ensurePortlessLink,
+  portlessLinkCliPath,
+  realPortlessLinkDeps,
+  serviceInstallCommand,
+} from 'src/dev/proxy/portless-link'
+import type { EnsurePortlessLinkDeps, PortlessLinkOutcome } from 'src/dev/proxy/portless-link'
+import { assertNever } from 'src/lib/assert-never'
 import type { runRecipe } from 'src/lib/dependency-install'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
 import { DEPENDENCY_IDS } from 'src/lib/dependency-registry'
@@ -37,6 +47,88 @@ export interface SetupOptions {
   probeDeps?: ProbeDeps
   /** The executor, injected so a test can assert what WOULD have run. Never reached under `skipTools`. */
   run?: typeof runRecipe
+  /** Portless-service seams for tests; production omits it and builds the real ones. */
+  portlessDeps?: PortlessServiceDeps
+}
+
+/**
+ * Everything the portless-service step (§5.6 of the stable-path plan) needs: the `ensurePortlessLink`
+ * seams to converge `~/.infra-kit/portless`, and doctor's `portless service target` seams to decide
+ * whether the installed system service has caught up to it. The verdict is doctor's own
+ * ({@link portlessServiceTargetState}), not a second reading of the plist: two readers of one file can
+ * only ever disagree, and the sudo line is printed exactly when doctor's row would not be a clean pass.
+ */
+export interface PortlessServiceDeps {
+  link: EnsurePortlessLinkDeps
+  target: ServiceTargetDeps
+}
+
+/**
+ * The real seams: the link's own, plus doctor's defaults for the service-target row — all but one. The
+ * daemon-age seam is a no-op: that row is doctor's restart advisory, never a `service install` verdict,
+ * and answering it spawns `ps`. `setup` asks the file, not the process table.
+ */
+const realPortlessServiceDeps = (): PortlessServiceDeps => {
+  const link = realPortlessLinkDeps()
+
+  return {
+    link,
+    target: {
+      home: link.home,
+      processStartTime: () => {
+        return null
+      },
+    },
+  }
+}
+
+/** One line describing what `ensurePortlessLink` did, in the same `<outcome> <name> — <detail>` shape the tool lines use. */
+const portlessLinkDetail = (outcome: PortlessLinkOutcome): string => {
+  switch (outcome) {
+    case 'created': {
+      return 'linked ~/.infra-kit/portless to the running portless'
+    }
+    case 'repointed': {
+      return 're-pointed ~/.infra-kit/portless to the running portless'
+    }
+    case 'unchanged': {
+      return 'already linked to the running portless'
+    }
+    case 'skipped-local': {
+      return 'skipped — this install is not global'
+    }
+    case 'skipped-unresolved': {
+      return 'skipped — portless is not installed'
+    }
+    case 'failed': {
+      return 'could not update the link — see the debug log'
+    }
+    default: {
+      return assertNever(outcome)
+    }
+  }
+}
+
+/**
+ * Converge `~/.infra-kit/portless` and, when the installed system service (if any) has not caught up to
+ * it, print the single `service install` command a human has to run — sudo is never run here. This is its
+ * own step, run unconditionally like the init half rather than gated on `--skip-tools`/`--tools`: it is
+ * local and idempotent, not a network install of one of the five tracked tools.
+ */
+const convergePortlessService = async (deps: PortlessServiceDeps): Promise<void> => {
+  const result = ensurePortlessLink(deps.link)
+
+  logger.info(`  ${result.outcome.padEnd(9)} portless link — ${portlessLinkDetail(result.outcome)}`)
+
+  const bin = portlessLinkCliPath(deps.link.home, deps.target.exists) ?? deps.link.resolveBin()
+
+  if (bin === null) return
+  if ((await portlessServiceTargetState(deps.target, bin)) === 'converged') return
+
+  logger.info('Run this yourself to finish the portless service:')
+  logger.info(
+    `  ${serviceInstallCommand(bin, { home: deps.link.home, exists: deps.target.exists, execPath: deps.target.execPath })}`,
+  )
 }
 
 /**
@@ -112,8 +204,15 @@ const runInitHalf = async (): Promise<{ entries: InitEntry[]; failed: boolean }>
   }
 }
 
-/** One line per tool, then the argv a human has to run themselves, then the activation reminder. */
-const printSummary = (tools: ToolResult[], skipTools: boolean): void => {
+/**
+ * One line per tool, then the argv a human has to run themselves, then the portless-service step, then
+ * the activation reminder last of all.
+ */
+const printSummary = async (
+  tools: ToolResult[],
+  skipTools: boolean,
+  portlessDeps: PortlessServiceDeps,
+): Promise<void> => {
   for (const tool of tools) {
     logger.info(`  ${tool.action.padEnd(9)} ${tool.id} — ${tool.detail}`)
   }
@@ -127,6 +226,8 @@ const printSummary = (tools: ToolResult[], skipTools: boolean): void => {
       logger.info(`  ${command}`)
     }
   }
+
+  await convergePortlessService(portlessDeps)
 
   logger.info(SHELL_ACTIVATION_REMINDER)
 }
@@ -155,7 +256,7 @@ export const setup = async (options: SetupOptions = {}) => {
         run: options.run,
       })
 
-  printSummary(tools, request.skipTools)
+  await printSummary(tools, request.skipTools, options.portlessDeps ?? realPortlessServiceDeps())
 
   const structuredContent = {
     init: init.entries.map(toInitStep),

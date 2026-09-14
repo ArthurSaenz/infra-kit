@@ -7,7 +7,7 @@ import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DevServerRunner } from 'src/dev/dev-server'
-import type { ProbeOutcome } from 'src/dev/dev-server'
+import type { DevServerOptions, ProbeOutcome } from 'src/dev/dev-server'
 import type { DevUi } from 'src/dev/dev-ui'
 import { DevLogSink } from 'src/dev/log-sink'
 import type { ReadySummary } from 'src/dev/render'
@@ -1367,6 +1367,7 @@ const setupProxyRunner = async (
   packageName = `${appName}-api`,
   daemonOk?: (port: number) => boolean,
   proxyOptions?: FakeProxyOptions,
+  options: DevServerOptions = {},
 ): Promise<{ runner: DevServerRunner; root: string } & FakeProxy> => {
   const root = temp.register(makeMonorepo([{ name: appName, packageName, withHandler: true }]))
 
@@ -1383,10 +1384,26 @@ const setupProxyRunner = async (
   const fake = makeFakeProxy(available, daemonOk, undefined, proxyOptions)
   const { driver } = fake
   // ctor positions: options, runBuild, turboWatchFactory, uiDevFactory, dryRunner, renderer, healthProbe, proxy
-  const runner = new DevServerRunner({}, fakeRunBuild, undefined, undefined, undefined, undefined, undefined, driver)
+  //
+  // `portlessLink` pinned to a home that holds no `~/.infra-kit/portless`: the refusal messages under test
+  // render `service install` through that link when it resolves, and whether the AUTHOR's machine has one
+  // must not decide which bin these assertions see. The link branch has its own test below.
+  const runner = new DevServerRunner(
+    { portlessLink: { home: NO_LINK_HOME }, ...options },
+    fakeRunBuild,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    driver,
+  )
 
   return { runner, root, ...fake }
 }
+
+/** A home with no `~/.infra-kit/portless` — every `service install` line renders the driver's real bin. */
+const NO_LINK_HOME = '/nowhere/home'
 
 /** {@link setupProxyRunner} + a successful `start()` — the happy-path boot used by most Layer-B tests. */
 const bootWithProxy = async (
@@ -1528,6 +1545,98 @@ describe('devServerRunner — Layer B portless aliases', () => {
     expect(error.message).not.toContain('is not installed yet')
     expect(error.message).not.toContain(`${process.execPath} '${FAKE_PORTLESS_BIN}' trust`)
     expect(ensuredPorts).toEqual([DEFAULT_DEV_PROXY_PORT])
+  }, 15000)
+
+  it('renders BOTH daemon-down `service install` lines through ~/.infra-kit/portless when the link resolves', async () => {
+    // portless writes the script path it is invoked with into the root plist, so the line printed here is
+    // the line that decides whether the daemon survives the next `pnpm add -g infra-kit`. With the link
+    // resolving, the install goes through it; `status` and `trust` keep the driver's real bin — they run
+    // now, against the portless THIS process ships.
+    const home = '/Users/dev'
+    const linkCli = `${home}/.infra-kit/portless/dist/cli.js`
+    const portlessLink = {
+      home,
+      exists: (target: string): boolean => {
+        return target === linkCli
+      },
+    }
+    const neverInstalled = await setupProxyRunner(
+      temp,
+      'client',
+      'feat-x',
+      true,
+      undefined,
+      daemonNeverStarts,
+      undefined,
+      {
+        portlessLink,
+      },
+    )
+    const notInstalledError = await neverInstalled.runner.start().then(
+      () => {
+        return new Error('start() resolved, but an un-provisioned machine must refuse to boot')
+      },
+      (err: unknown) => {
+        return err as Error
+      },
+    )
+
+    expect(notInstalledError.message.replaceAll(process.execPath, '<node>')).toMatchInlineSnapshot(`
+      "infra-kit dev: no portless daemon is serving HTTPS on :443, and its OS service is not installed yet, so no dev URL can resolve. Install it once (this is the only step that needs root):
+          sudo <node> /Users/dev/.infra-kit/portless/dist/cli.js service install
+      Then trust its local CA (no sudo needed):
+          <node> '/Users/dev/My Projects/repo/node_modules/portless/dist/cli.js' trust
+      \`infra-kit doctor\` checks both."
+    `)
+
+    const stopped = await setupProxyRunner(
+      temp,
+      'client',
+      'feat-y',
+      true,
+      undefined,
+      daemonNeverStarts,
+      { serviceInstalled: 'yes' },
+      { portlessLink },
+    )
+    const stoppedError = await stopped.runner.start().then(
+      () => {
+        return new Error('start() resolved, but a dead daemon must refuse to boot')
+      },
+      (err: unknown) => {
+        return err as Error
+      },
+    )
+
+    expect(stoppedError.message.replaceAll(process.execPath, '<node>')).toMatchInlineSnapshot(`
+      "infra-kit dev: portless's OS service is installed, but no daemon is currently serving HTTPS on :443 — it may have crashed or been stopped, so no dev URL can resolve. Check its state:
+          <node> '/Users/dev/My Projects/repo/node_modules/portless/dist/cli.js' service status
+      Reinstalling restarts it (still the only step that needs root):
+          sudo <node> /Users/dev/.infra-kit/portless/dist/cli.js service install
+      \`infra-kit doctor\` checks the daemon and CA trust state."
+    `)
+  }, 15000)
+
+  it('renders the daemon-down `service install` line from the real bin when no link resolves', async () => {
+    const { runner } = await setupProxyRunner(temp, 'client', 'feat-x', true, undefined, daemonNeverStarts, undefined, {
+      portlessLink: { home: NO_LINK_HOME },
+    })
+    const error = await runner.start().then(
+      () => {
+        return new Error('start() resolved, but an un-provisioned machine must refuse to boot')
+      },
+      (err: unknown) => {
+        return err as Error
+      },
+    )
+
+    expect(error.message.replaceAll(process.execPath, '<node>')).toMatchInlineSnapshot(`
+      "infra-kit dev: no portless daemon is serving HTTPS on :443, and its OS service is not installed yet, so no dev URL can resolve. Install it once (this is the only step that needs root):
+          sudo <node> '/Users/dev/My Projects/repo/node_modules/portless/dist/cli.js' service install
+      Then trust its local CA (no sudo needed):
+          <node> '/Users/dev/My Projects/repo/node_modules/portless/dist/cli.js' trust
+      \`infra-kit doctor\` checks both."
+    `)
   }, 15000)
 
   it('rejects with a THIRD message when something else (not portless) is squatting on the port', async () => {

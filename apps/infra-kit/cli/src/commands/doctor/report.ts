@@ -84,7 +84,14 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
   [SECTION_TOKENS, ['tokens.json present', 'env tokens configured', 'env token valid', 'tokens.json perms']],
   [
     SECTION_PROXY,
-    ['portless installed', PORTLESS_SERVING_NAME, 'portless CA chain valid', 'portless CA trusted', 'portless routes'],
+    [
+      'portless installed',
+      'portless service target',
+      PORTLESS_SERVING_NAME,
+      'portless CA chain valid',
+      'portless CA trusted',
+      'portless routes',
+    ],
   ],
   [
     SECTION_PLUGIN,
