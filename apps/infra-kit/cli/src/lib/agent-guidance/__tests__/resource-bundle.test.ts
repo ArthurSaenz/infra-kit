@@ -61,10 +61,10 @@ describe('resources are inlined into the bundle', () => {
       // `?raw` specifier resolves on its own, so a guard naming only the first body goes green on a
       // build where the SECOND one survived unresolved.
       //
-      // Each sentinel is a phrase that appears ONLY in its `.md`. The obvious choice — the
-      // `mcp__infra-kit__<tool>` name — is not sound: `src/mcp/resources/index.ts` puts that same
-      // string in each resource's DESCRIPTION, which is TypeScript and lands in the bundle whether or
-      // not the markdown was inlined. That is what this assertion looked like before `setup` was added,
+      // Each sentinel is a phrase that appears ONLY in its `.md`. The obvious choice — the prefixed
+      // tool name (`toolName(key, launch)`) — is not sound: `src/mcp/resources/index.ts` puts that
+      // same string in each resource's DESCRIPTION, which is TypeScript and lands in the bundle
+      // whether or not the markdown was inlined. That is what this assertion looked like before `setup` was added,
       // and it would have passed on a bundle carrying no procedure text at all.
       for (const [name, sentinel] of [
         ['release-create', 'Do not invent a list of candidate versions'],

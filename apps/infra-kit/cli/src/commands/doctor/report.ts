@@ -98,7 +98,15 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ],
   [
     SECTION_PLUGIN,
-    ['claude CLI', 'marketplace registered', 'plugin installed', 'plugin version', 'CLI version', 'MCP server key'],
+    [
+      'claude CLI',
+      'marketplace registered',
+      'plugin installed',
+      'plugin version',
+      'plugin MCP server',
+      'CLI version',
+      'MCP server key',
+    ],
   ],
 ]
 

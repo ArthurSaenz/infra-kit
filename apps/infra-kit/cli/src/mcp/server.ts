@@ -1,9 +1,11 @@
 import { McpServer } from '@modelcontextprotocol/server'
+import process from 'node:process'
 
 import { mcpMode } from 'src/lib/mcp-mode'
 
 import packageJson from '../../package.json' with { type: 'json' }
 import { initializeResources } from './resources'
+import { resolveLaunch } from './tool-prefix'
 import { initializeTools } from './tools'
 
 export async function createMcpServer() {
@@ -34,7 +36,14 @@ export async function createMcpServer() {
     },
   )
 
-  await initializeResources(server)
+  // Which route spawned this process decides how every tool name it serves is spelled (tool-prefix.ts).
+  // Read HERE, per build, and never at module scope: `serveStdio` may build the server twice per
+  // connection, and a value cached at first import would pin the spelling to whatever the first
+  // build saw — a test that toggles the variable between two builds would then pass on the
+  // first-imported spelling both times.
+  const launch = resolveLaunch(process.env)
+
+  await initializeResources(server, launch)
   await initializeTools(server)
 
   return server

@@ -8,7 +8,7 @@ import { MARKETPLACE_NAME, PLUGIN_KEY } from './names'
  * @fileoverview
  *
  * HOST-STATE readers: what Claude Code itself records on this machine about the `infra-kit`
- * marketplace and plugin, plus the consumer repo's own MCP server registration.
+ * marketplace and plugin. The consumer repo's own `.mcp.json` is read by `mcp-registration.ts`.
  *
  * All of it is read-only and total — every reader answers "not registered / not installed" for an
  * absent, unreadable or malformed file rather than throwing. `initCore` prints an install hint from
@@ -247,55 +247,4 @@ export const readMarketplacePluginVersion = ({ home }: Pick<PluginInstallationQu
   const manifest = readJsonFile(manifestPath)
 
   return isPlainObject(manifest) ? readString(manifest, 'version') : null
-}
-
-/** How a repo's `.mcp.json` registers (or fails to register) the infra-kit MCP server. */
-export type McpRegistration =
-  | { kind: 'ok' }
-  | { kind: 'missing-file' }
-  | { kind: 'unparseable' }
-  | { kind: 'wrong-key'; key: string }
-  | { kind: 'absent' }
-
-/** A server entry that IS infra-kit's, whatever key it was filed under. */
-const looksLikeInfraKitServer = (value: unknown): boolean => {
-  if (!isPlainObject(value)) return false
-
-  const command = readString(value, 'command') ?? ''
-  const args = Array.isArray(value.args) ? value.args.join(' ') : ''
-
-  return `${command} ${args}`.includes('infra-kit')
-}
-
-/**
- * Inspect a repo's `.mcp.json` for the `infra-kit` server key.
- *
- * Why the KEY and not merely the server: Claude Code namespaces MCP tools as
- * `mcp__<server key>__<tool>`, and every skill this plugin ships names its tools with the
- * `mcp__infra-kit__` prefix. Register the same server under `ik` and every one of those references
- * silently resolves to nothing — the skills do not fail loudly, they just never find the tool. So a
- * correctly-configured server under the wrong key is a FAILURE here, and it is reported as one.
- *
- * @example
- * inspectMcpRegistration('/repo') // => { kind: 'ok' }
- * inspectMcpRegistration('/other') // => { kind: 'wrong-key', key: 'ik' }
- */
-export const inspectMcpRegistration = (projectRoot: string): McpRegistration => {
-  const mcpPath = path.join(projectRoot, '.mcp.json')
-
-  if (!fs.existsSync(mcpPath)) return { kind: 'missing-file' }
-
-  const parsed = readJsonFile(mcpPath)
-
-  if (!isPlainObject(parsed) || !isPlainObject(parsed.mcpServers)) return { kind: 'unparseable' }
-
-  const servers = parsed.mcpServers
-
-  if (MARKETPLACE_NAME in servers) return { kind: 'ok' }
-
-  const misfiled = Object.keys(servers).find((key) => {
-    return looksLikeInfraKitServer(servers[key])
-  })
-
-  return misfiled === undefined ? { kind: 'absent' } : { kind: 'wrong-key', key: misfiled }
 }

@@ -1,6 +1,6 @@
 # setup — bringing a machine to a working infra-kit
 
-The tool is `mcp__infra-kit__setup`. Everything below is about calling that tool.
+The tool is `mcp__plugin_infra-kit_infra-kit__setup`. Everything below is about calling that tool.
 
 The same code runs behind `infra-kit setup` in a terminal, so this body describes both spellings: the
 CLI flag first, the tool field it sets second. They are one implementation, not two.
@@ -119,7 +119,7 @@ unattended `sudo` and the same piped script, with the control removed.
 
 ## 4. The confirm gate
 
-`mcp__infra-kit__setup` is gated, and **both gates fire on every call — `skipTools` included**.
+`mcp__plugin_infra-kit_infra-kit__setup` is gated, and **both gates fire on every call — `skipTools` included**.
 
 **Call 1** — send the real arguments, with no `confirm` and no `confirmToken`. The result is a gate
 payload, `{"status": "confirmation_required", …}`, carrying `"isError": true`.

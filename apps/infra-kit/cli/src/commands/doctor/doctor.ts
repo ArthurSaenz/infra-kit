@@ -71,18 +71,21 @@ import {
   PLUGIN_INSTALL_COMMAND,
   PLUGIN_KEY,
   PLUGIN_UPDATE_COMMAND,
-  inspectMcpRegistration,
+  inspectLegacyMcpRegistration,
+  isInfraKitServerEntry,
   isMarketplaceRegistered,
   readInstalledPluginVersion,
   resolvePluginInstall,
 } from 'src/lib/plugin-pointer'
 import type { McpRegistration, PluginInstallState } from 'src/lib/plugin-pointer'
 import { readMarketplacePluginVersion } from 'src/lib/plugin-pointer/install-state'
+import { MCP_FILE_NAME, SERVERS_KEY } from 'src/lib/plugin-pointer/mcp-registration'
 import { listProjectEnvNames } from 'src/lib/project-envs'
 import { quietShell } from 'src/lib/quiet-shell'
 import { isNewerVersion } from 'src/lib/update-check/semver'
 import { sortVersions } from 'src/lib/version-utils'
 import { canonicalizeProjectRoot } from 'src/lib/warm-cache'
+import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
 import { defineMcpTool, textContent } from 'src/types'
 
 import packageJson from '../../../package.json' with { type: 'json' }
@@ -1045,19 +1048,78 @@ const claudePluginVersionCheck = (state: PluginInstallState): CheckResult => {
 /** How many other projects the `elsewhere` message names before it summarises the rest as a count. */
 const MAX_LISTED_PROJECTS = 3
 
+/**
+ * Where this `doctor` was invoked from — the inputs of the subdirectory advisory on `plugin installed`.
+ *
+ * A project-scope plugin and the repo's `.claude/settings.json` hooks load from the directory Claude
+ * Code was LAUNCHED in, and only from there (measured, plan §3.2 F5 / §12 S1-6); a session started in
+ * `apps/` has neither. `doctor` cannot see the launch directory, so it reads two proxies for it:
+ * `projectDir` (`CLAUDE_PROJECT_DIR`, which only the MCP-served tool has — set by Claude Code to the
+ * launch directory, so `≠ gitRoot` is the PRECISE test) and `cwd` (all the typed CLI has — a hint,
+ * since a root-launched session whose model `cd`s into `apps/` and types `doctor` is not a
+ * subdirectory session, hence the hedged wording).
+ */
+export interface DoctorOrigin {
+  /** `CLAUDE_PROJECT_DIR`, or `null` when unset — the typed CLI. */
+  projectDir: string | null
+  cwd: string
+  /** The git toplevel, or `null` outside a repo (no advisory can be made). */
+  gitRoot: string | null
+}
+
+/** Realpath'd on both sides: git answers `/private/var/…` where the shell says `/var/…` on macOS. */
+const samePath = (a: string, b: string): boolean => {
+  return safeRealpath(a) === safeRealpath(b)
+}
+
+/**
+ * The sentence appended to `plugin installed` when this session may have been launched below the
+ * root, or `''`. Message-only — status is a fact about the install record, not about where the
+ * caller stands (plan §3.3 A-2 mitigation).
+ */
+const subdirectoryAdvisory = (origin: DoctorOrigin | undefined): string => {
+  if (origin === undefined || origin.gitRoot === null) return ''
+
+  const root = tildify(origin.gitRoot)
+
+  if (origin.projectDir !== null) {
+    if (samePath(origin.projectDir, origin.gitRoot)) return ''
+
+    // `realpath` on the child too (`isWithin` resolves the parent only): `/var` vs `/private/var`.
+    const where = isWithin(origin.gitRoot, safeRealpath(origin.projectDir), safeRealpath)
+      ? 'below the repo root'
+      : 'not this checkout'
+
+    return ` — this session was launched from ${tildify(origin.projectDir)}, ${where}: the plugin and this repo's .claude/settings.json hooks load only from ${root} (measured); restart Claude Code there`
+  }
+
+  if (samePath(origin.cwd, origin.gitRoot)) return ''
+
+  return ` — if Claude Code was launched from ${tildify(origin.cwd)} rather than ${root}, it loaded neither the plugin nor this repo's hooks; launch it at ${root}`
+}
+
 /** The install row. `elsewhere` names the projects the existing records DO cover, which is the fix. */
-const claudePluginInstalledCheck = (state: PluginInstallState): CheckResult => {
+const claudePluginInstalledCheck = (state: PluginInstallState, origin: DoctorOrigin | undefined): CheckResult => {
   const name = 'plugin installed'
+  const advisory = subdirectoryAdvisory(origin)
 
   if (state.kind === 'installed') {
     const { scope, projectPath } = state.installation
     const where = projectPath === null ? '' : `, ${tildify(projectPath)}`
 
-    return { name, status: 'pass', message: `Plugin ${PLUGIN_KEY} installed (${scope ?? 'unknown'} scope${where})` }
+    return {
+      name,
+      status: 'pass',
+      message: `Plugin ${PLUGIN_KEY} installed (${scope ?? 'unknown'} scope${where})${advisory}`,
+    }
   }
 
   if (state.kind === 'absent') {
-    return { name, status: 'fail', message: `Plugin ${PLUGIN_KEY} is not installed. Run: ${PLUGIN_INSTALL_COMMAND}` }
+    return {
+      name,
+      status: 'fail',
+      message: `Plugin ${PLUGIN_KEY} is not installed. Run: ${PLUGIN_INSTALL_COMMAND}${advisory}`,
+    }
   }
 
   // Capped at three: a machine that has rolled this out to every repo carries a dozen records, and a
@@ -1072,7 +1134,7 @@ const claudePluginInstalledCheck = (state: PluginInstallState): CheckResult => {
   return {
     name,
     status: 'fail',
-    message: `Plugin ${PLUGIN_KEY} is installed for ${others} only, not this project. Run: ${PLUGIN_INSTALL_COMMAND}`,
+    message: `Plugin ${PLUGIN_KEY} is installed for ${others} only, not this project. Run: ${PLUGIN_INSTALL_COMMAND}${advisory}`,
   }
 }
 
@@ -1097,17 +1159,128 @@ export const checkClaudeCli = (): Promise<CheckResult> => {
 }
 
 /**
- * The four host-state rows about the `infra-kit` Claude Code plugin: is its marketplace registered
- * on this machine, is the plugin installed, which version, and which CLI is reporting it.
+ * What the SERVED plugin copy carries by way of an MCP server.
  *
- * All four are emitted whatever `root` is, so the row set never changes shape between directories.
+ * The served copy is the install record's `installPath` (`~/.claude/plugins/cache/…/<v>/`), NOT the
+ * marketplace clone: the clone is what `claude plugin update` fetches, the record is what a session
+ * loads (measured, plan §6.1 S0-7(b)) — so a clone that is ahead of the record must not change this
+ * verdict. Capability-keyed on purpose: the row reads the served `.mcp.json`, never a version floor,
+ * so an older copy hand-patched with the file passes and a newer one that lost it fails.
+ */
+export type ServedPluginServer =
+  | { kind: 'not-installed' }
+  /** No `.mcp.json` in the served copy — a plugin predating the server, or a record with no path. */
+  | { kind: 'no-server'; version: string | null }
+  /** A `.mcp.json` is there but the server under it is not ours as-shipped: renamed or corrupt. */
+  | { kind: 'renamed'; version: string | null; keys: string[] }
+  | { kind: 'serves'; version: string | null }
+
+const readServedJson = (installPath: string, ...segments: string[]): unknown => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(installPath, ...segments), 'utf-8'))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Read the served copy's `.mcp.json` and `.claude-plugin/plugin.json`. `serves` requires the exact
+ * pair the tool prefix is composed from — plugin `name` and server key both `infra-kit`, entry ours —
+ * which is what pins the composed prefix to `MCP_TOOL_PREFIX` (the cross-unit test in
+ * `src/mcp/__tests__/tool-prefix.test.ts` pins the constant to the same two files at the source).
+ *
+ * @example
+ * inspectServedPluginServer(resolvePluginInstall({ projectPath: '/repo' })) // => { kind: 'serves', version: '<served>' }
+ */
+export const inspectServedPluginServer = (state: PluginInstallState): ServedPluginServer => {
+  if (state.kind !== 'installed') return { kind: 'not-installed' }
+
+  const version = readInstalledPluginVersion(state.installation)
+  const { installPath } = state.installation
+
+  if (installPath === null) return { kind: 'no-server', version }
+
+  const mcp = readServedJson(installPath, MCP_FILE_NAME)
+  const servers = mcp !== null && typeof mcp === 'object' ? (mcp as Record<string, unknown>)[SERVERS_KEY] : undefined
+
+  if (servers === undefined || servers === null || typeof servers !== 'object') return { kind: 'no-server', version }
+
+  const manifest = readServedJson(installPath, '.claude-plugin', 'plugin.json')
+  const pluginName =
+    manifest !== null && typeof manifest === 'object' ? (manifest as Record<string, unknown>).name : null
+  const entries = servers as Record<string, unknown>
+
+  if (pluginName === MARKETPLACE_NAME && isInfraKitServerEntry(entries[MARKETPLACE_NAME])) {
+    return { kind: 'serves', version }
+  }
+
+  return { kind: 'renamed', version, keys: Object.keys(entries) }
+}
+
+/** `Plugin <key> <version>` with a readable stand-in when no version could be read. */
+const describeServedPlugin = (version: string | null): string => {
+  const suffix = version === null ? '(version unreadable)' : version
+
+  return `Plugin ${PLUGIN_KEY} ${suffix}`
+}
+
+/**
+ * The `plugin MCP server` row: does the served plugin carry the infra-kit MCP server? The row the
+ * `MCP server key` verdicts are transition-guarded on (plan §3.3 Rows).
+ *
+ * Fixes are the plugin's own commands, never a `.mcp.json` write: a plugin that predates the server
+ * has nothing to serve, and `claude plugin update` is what advances the record a session loads.
+ */
+const claudePluginServerCheck = (served: ServedPluginServer): CheckResult => {
+  const name = 'plugin MCP server'
+
+  if (served.kind === 'not-installed') {
+    return {
+      name,
+      status: 'fail',
+      message: `No infra-kit plugin installed for this project to serve the MCP server. Run: ${PLUGIN_INSTALL_COMMAND}`,
+    }
+  }
+
+  if (served.kind === 'no-server') {
+    return {
+      name,
+      status: 'fail',
+      message: `${describeServedPlugin(served.version)} does not carry the infra-kit MCP server — update it: ${PLUGIN_UPDATE_COMMAND}`,
+    }
+  }
+
+  if (served.kind === 'renamed') {
+    const under = served.keys.length === 0 ? 'no server' : `a server under "${served.keys.join('", "')}"`
+
+    return {
+      name,
+      status: 'fail',
+      message: `${describeServedPlugin(served.version)} carries ${under} in its ${MCP_FILE_NAME}, not the infra-kit server as shipped — install corrupt or renamed; reinstall: claude plugin uninstall ${PLUGIN_KEY} && ${PLUGIN_INSTALL_COMMAND}`,
+    }
+  }
+
+  return {
+    name,
+    status: 'pass',
+    message: `${describeServedPlugin(served.version)} serves the infra-kit MCP server as ${MCP_TOOL_PREFIX}*`,
+  }
+}
+
+/**
+ * The five host-state rows about the `infra-kit` Claude Code plugin: is its marketplace registered
+ * on this machine, is the plugin installed, which version, does the served copy carry the MCP
+ * server, and which CLI is reporting it.
+ *
+ * All five are emitted whatever `root` is, so the row set never changes shape between directories.
  * `root` narrows the VERDICT only: it is the project a project-scope install has to name to count.
+ * `origin` feeds the subdirectory advisory on `plugin installed` and nothing else.
  *
  * @example
  * checkClaudePlugin('/repo')
  * // => [{ name: 'marketplace registered', … }, { name: 'plugin installed', … }, … ]
  */
-export const checkClaudePlugin = (root: string | null): CheckResult[] => {
+export const checkClaudePlugin = (root: string | null, origin?: DoctorOrigin): CheckResult[] => {
   const state = resolvePluginInstall(root === null ? {} : { projectPath: root })
   const registered = isMarketplaceRegistered()
 
@@ -1119,58 +1292,82 @@ export const checkClaudePlugin = (root: string | null): CheckResult[] => {
         ? `Marketplace ${MARKETPLACE_NAME} is known to Claude Code`
         : `Marketplace ${MARKETPLACE_NAME} is not registered. Run: claude plugin marketplace add ${MARKETPLACE_REPO}`,
     },
-    claudePluginInstalledCheck(state),
+    claudePluginInstalledCheck(state, origin),
     claudePluginVersionCheck(state),
+    claudePluginServerCheck(inspectServedPluginServer(state)),
     { name: 'CLI version', status: 'pass', message: `infra-kit CLI ${packageJson.version}` },
   ]
 }
 
-/** One message per `.mcp.json` verdict; `wrong-key` is built by the caller, which has the key. */
+/** The chore text for a leftover key: what today's session runs on, whose the fix is, and how. */
+const STALE_KEY_ADVISORY = `${MCP_FILE_NAME} still registers "${MARKETPLACE_NAME}", so Claude Code uses that entry and the plugin's copy of the server is shadowed (same key, project scope wins). Until this repo's key-deletion PR merges, sessions here serve ${LEGACY_MCP_TOOL_PREFIX}* and every body they read already names that prefix — nothing to fix on this machine. The PR: delete the "${MARKETPLACE_NAME}" entry from ${MCP_FILE_NAME} by hand, keeping its siblings (\`claude mcp remove ${MARKETPLACE_NAME} --scope project\` also works but re-indents the file)`
+
+/**
+ * One message per `.mcp.json` verdict once the served plugin CARRIES the server — the post-switch
+ * branch. `absent` is the healthy state, `stale` a pass with the chore spelled out (plan §3.3:
+ * a chore is not red), `wrong-key` is built by the caller, which has the key.
+ */
 const MCP_MESSAGES: Record<Exclude<McpRegistration['kind'], 'wrong-key'>, string> = {
-  ok: `.mcp.json registers the server as "${MARKETPLACE_NAME}" — plugin skills resolve mcp__${MARKETPLACE_NAME}__* tools`,
-  'missing-file':
-    'No .mcp.json at the repo root yet, so there is no server key to check. Run: infra-kit setup --skip-tools',
-  unparseable: 'Could not read mcpServers from .mcp.json — fix the JSON and re-run',
-  absent: `.mcp.json has no "${MARKETPLACE_NAME}" server. Plugin skills name mcp__${MARKETPLACE_NAME}__* tools and will resolve nothing without it`,
+  stale: STALE_KEY_ADVISORY,
+  absent: `served by the plugin — ${MCP_FILE_NAME} carries no "${MARKETPLACE_NAME}" key`,
+  'missing-file': `served by the plugin — no ${MCP_FILE_NAME} at the repo root, so no "${MARKETPLACE_NAME}" key to shadow it`,
+  unparseable: `Could not read ${SERVERS_KEY} from ${MCP_FILE_NAME} — fix the JSON and re-run`,
 }
 
 /**
- * The verdicts that do NOT fail the row: a correct registration, and a repo with no `.mcp.json` at
- * all.
- *
- * The second is no longer an abstention. `setup` now always writes the file, so — the row being gated
- * on the writer's own predicate — `missing-file` means one thing only: `setup` has never run here (or
- * ran on a CLI predating the writer). It stays a `pass` because two rows already fail in that exact
- * state with `infra-kit setup` as their fix (`zshrc init block`, `CLAUDE.md block`); a third would
- * repeat them and change nothing, since exit 1 is scoped to `plugin installed` alone.
- *
- * A file that IS present and does not name the server still fails: that is a misconfiguration.
+ * The same verdicts while the served plugin does NOT carry the server — the transition branch, and
+ * the PM-1 detector reachable from a typed `doctor`. Here the repo's own entry is the only route, so
+ * a leftover key is the LIVE registration and its absence means no server at all.
  */
-const MCP_NON_FAILING: ReadonlySet<McpRegistration['kind']> = new Set(['ok', 'missing-file'])
+const MCP_TRANSITION_MESSAGES: Record<Exclude<McpRegistration['kind'], 'wrong-key'>, string> = {
+  stale: `${MCP_FILE_NAME} registers the server as "${MARKETPLACE_NAME}" — the live route until the plugin carries it; this session's tools are ${LEGACY_MCP_TOOL_PREFIX}*`,
+  absent: `no server at all: ${MCP_FILE_NAME} has no "${MARKETPLACE_NAME}" key and the served plugin does not carry it — ${PLUGIN_UPDATE_COMMAND}, then restart Claude Code`,
+  'missing-file': `no server at all: no ${MCP_FILE_NAME} at the repo root and the served plugin does not carry it — ${PLUGIN_UPDATE_COMMAND}, then restart Claude Code`,
+  unparseable: `Could not read ${SERVERS_KEY} from ${MCP_FILE_NAME} — fix the JSON and re-run`,
+}
 
 /**
- * T4(b) — the live half of the tool-prefix guard, run IN the consumer repo against its own
- * `.mcp.json` rather than against a fixture copy of it committed elsewhere.
+ * The verdicts that do NOT fail the row once the plugin serves: no key (the healthy state, with or
+ * without a file) and a leftover key (a chore, not a fault — the session it shadows works end to
+ * end because the server renders its guidance for the route that spawned it, `tool-prefix.ts`).
+ * Exit 1 stays scoped to `plugin installed` alone (`program.ts`), so none of this touches it.
+ */
+const MCP_NON_FAILING: ReadonlySet<McpRegistration['kind']> = new Set(['absent', 'missing-file', 'stale'])
+
+/** In transition only the live registration passes; everything else is a repo without a server. */
+const MCP_TRANSITION_NON_FAILING: ReadonlySet<McpRegistration['kind']> = new Set(['stale'])
+
+/**
+ * The `MCP server key` row: the repo's own `.mcp.json` against the infra-kit server, read-only,
+ * transition-guarded on whether the served plugin carries the server (`plugin MCP server`).
+ *
+ * `wrong-key` fails in both branches: our server under another key is a second server process with
+ * a prefix no served body names, whichever route the plugin is on.
  *
  * @example
- * checkMcpServerKey('/repo') // => { name: 'MCP server key', status: 'pass', … }
+ * checkMcpServerKey('/repo', { kind: 'serves', version: '0.8.0' })
+ * // => { name: 'MCP server key', status: 'pass', message: 'served by the plugin — …' }
  */
-export const checkMcpServerKey = (root: string): CheckResult => {
+export const checkMcpServerKey = (root: string, served: ServedPluginServer): CheckResult => {
   const name = 'MCP server key'
-  const registration = inspectMcpRegistration(root)
+  const registration = inspectLegacyMcpRegistration(root)
+  const pluginServes = served.kind === 'serves'
 
   if (registration.kind === 'wrong-key') {
     return {
       name,
       status: 'fail',
-      message: `.mcp.json registers the infra-kit server under "${registration.key}". Rename the key to "${MARKETPLACE_NAME}": tool names are mcp__<key>__<tool>, and every plugin skill expects the mcp__${MARKETPLACE_NAME}__ prefix`,
+      message: `${MCP_FILE_NAME} registers an infra-kit server under "${registration.key}" — a second server process whose tools carry that key as their prefix, which no served guidance names. Remove that entry (a repo PR, by hand); the plugin${pluginServes ? '' : ', once updated,'} serves the server under "${MARKETPLACE_NAME}"`,
     }
   }
 
+  const nonFailing = pluginServes ? MCP_NON_FAILING : MCP_TRANSITION_NON_FAILING
+  const messages = pluginServes ? MCP_MESSAGES : MCP_TRANSITION_MESSAGES
+
   return {
     name,
-    status: MCP_NON_FAILING.has(registration.kind) ? 'pass' : 'fail',
-    message: MCP_MESSAGES[registration.kind],
+    status: nonFailing.has(registration.kind) ? 'pass' : 'fail',
+    message: messages[registration.kind],
   }
 }
 
@@ -1915,12 +2112,17 @@ export const doctor = async (options: { fix?: boolean; probeDeps?: ProbeDeps } =
   // `null` rather than `''`, so the row is omitted instead of rendered against `process.cwd()`.
   const repoRoot = await resolveCheckedRepoRoot()
   const gitRoot = await resolveGitRoot()
+  // Resolved once more here for the key row's transition guard: the plugin rows resolve it inside
+  // `checkClaudePlugin` and return rows, not state, and two reads of one small JSON file are cheaper
+  // than a second return shape on a function three suites call.
+  const served = inspectServedPluginServer(resolvePluginInstall(repoRoot === null ? {} : { projectPath: repoRoot }))
+  const origin: DoctorOrigin = { projectDir: process.env.CLAUDE_PROJECT_DIR || null, cwd: process.cwd(), gitRoot }
   const pluginChecks = [
     // First in the section: the binary the install step drives. Read the prerequisite before the
-    // three rows whose failure it explains.
+    // rows whose failure it explains.
     await checkClaudeCli(),
-    ...checkClaudePlugin(repoRoot),
-    ...(gitRoot === null ? [] : [checkMcpServerKey(gitRoot)]),
+    ...checkClaudePlugin(repoRoot, origin),
+    ...(gitRoot === null ? [] : [checkMcpServerKey(gitRoot, served)]),
   ]
 
   const checks: CheckResult[] = [...baseChecks, ...portlessChecks, ...(await checkAgentFiles()), ...pluginChecks]

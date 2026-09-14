@@ -51,7 +51,7 @@ export const RESOURCES: Readonly<Record<ResourceKey, string>> = {
  * in `bodies.test.ts` are the primary net for that.
  */
 export const PLACEHOLDERS: Readonly<Record<ResourceKey, readonly string[]>> = {
-  'root/body': [],
+  'root/body': ['{{mcpToolPrefix}}'],
   'package/frontend': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
   'package/backend': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
   'package/lib': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],

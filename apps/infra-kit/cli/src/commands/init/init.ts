@@ -16,15 +16,17 @@ import {
   PLUGIN_INSTALL_COMMAND,
   PLUGIN_KEY,
   PLUGIN_UPDATE_COMMAND,
-  ensureMcpRegistration,
   ensurePluginPointer,
+  inspectLegacyMcpRegistration,
   installPluginForProject,
   resolvePluginInstall,
 } from 'src/lib/plugin-pointer'
-import type { McpRegistrationResult, PluginInstallOutcome, PluginPointerResult } from 'src/lib/plugin-pointer'
+import type { McpRegistration, PluginInstallOutcome, PluginPointerResult } from 'src/lib/plugin-pointer'
 import { reconcileMcpProxies } from 'src/lib/plugin-pointer/mcp-proxy-registration'
 import type { McpProxyReconcileResult } from 'src/lib/plugin-pointer/mcp-proxy-registration'
+import { MCP_FILE_NAME, SERVERS_KEY } from 'src/lib/plugin-pointer/mcp-registration'
 import { fetchLatestVersion, pluginStepWithheld, readUpdateCache } from 'src/lib/update-check'
+import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
 
 import packageJson from '../../../package.json' with { type: 'json' }
 import { resolveGitRootForWrites, syncRepoGuidance } from './agent-files'
@@ -205,10 +207,10 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
   })
 
   // A SEPARATE, weaker gate for the plugin steps: they write `.claude/settings.json`,
-  // `.mcp.json` and drive `claude plugin install`, and none of the three reads
+  // drive `claude plugin install` and read `.mcp.json`, and none of the three reads
   // `infra-kit.json` — so gating them on it was incidental coupling that made a fresh
   // repo impossible to set up. One `resolveGitRootForWrites` for all three, because
-  // `syncPluginPointer`'s contract binds pointer ↔ installation ↔ MCP entry to ONE
+  // `syncPluginPointer`'s contract binds pointer ↔ installation ↔ MCP verdict to ONE
   // project: `--scope project` must record exactly what the pointer names.
   //
   // The announcing variant, and this is the ONLY call to it: the four-step skip is `initCore`'s line
@@ -580,38 +582,54 @@ const pointerEntry = (root: string, result: PluginPointerResult): InitEntry => {
 }
 
 /**
- * One line per MCP-registration outcome, in {@link logPointerResult}'s style.
+ * One line per `.mcp.json` verdict — a READ, never a write. The plugin ships the MCP server, so
+ * `setup` no longer registers one; it reports what the repo's own file says about it.
  *
- * Only the two writing outcomes speak here. Every refusal (`unparseable`, `misfiled`, a failed
- * write) already warned from inside the lib with the path and the fix, so repeating it would
- * double every real problem while adding nothing.
+ * `stale` is `unchanged` at `info`, not `warned`: the leftover key shadows the plugin's server, but
+ * the shadowed session runs the legacy route end to end (the server renders its guidance for the
+ * route that spawned it), so this is a pending repo chore with no deadline — the line names it and
+ * says how today's session works. `absent` / `missing-file` are the steady state and say so, so a
+ * reader who knew the old "created .mcp.json" line learns where the server went. `wrong-key` and
+ * `unparseable` are the two faults, and WARN with the fix: the lib no longer logs, so this is the
+ * only place they are audible.
  */
-const mcpEntry = (root: string, result: McpRegistrationResult): InitEntry => {
-  const relative = path.relative(root, result.path)
+const mcpEntry = (root: string, registration: McpRegistration): InitEntry => {
+  const relative = MCP_FILE_NAME
 
-  if (result.status === 'created') {
+  if (registration.kind === 'stale') {
     return {
       step: 'mcp-server',
-      outcome: 'written',
-      message: `  created   ${relative} (infra-kit MCP server)`,
+      outcome: 'unchanged',
+      message: `  ${relative} still registers the "${MARKETPLACE_NAME}" MCP server, which shadows the plugin's copy (same key, project scope wins): sessions here use ${LEGACY_MCP_TOOL_PREFIX}* and the guidance they read names that prefix — nothing to fix on this machine. To move this repo to the plugin's ${MCP_TOOL_PREFIX}* route, delete the "${MARKETPLACE_NAME}" entry from ${relative} by hand in a PR, keeping its siblings`,
       level: 'info',
     }
   }
 
-  if (result.status === 'added') {
+  if (registration.kind === 'wrong-key') {
     return {
       step: 'mcp-server',
-      outcome: 'written',
-      message: `  updated   ${relative} — added the ${MARKETPLACE_NAME} MCP server`,
-      level: 'info',
+      outcome: 'warned',
+      message: `${relative} registers an infra-kit server under "${registration.key}" — a second server process whose tools carry that key as their prefix, which no served guidance names. Remove that entry by hand; the plugin serves the server under "${MARKETPLACE_NAME}"`,
+      level: 'warn',
     }
   }
+
+  if (registration.kind === 'unparseable') {
+    return {
+      step: 'mcp-server',
+      outcome: 'warned',
+      message: `Could not read ${SERVERS_KEY} from ${path.join(root, MCP_FILE_NAME)} — fix the JSON and re-run: infra-kit setup --skip-tools`,
+      level: 'warn',
+    }
+  }
+
+  const carries = registration.kind === 'absent' ? `${relative} carries no "${MARKETPLACE_NAME}" key` : `no ${relative}`
 
   return {
     step: 'mcp-server',
-    outcome: result.status === 'unchanged' ? 'unchanged' : 'warned',
-    message: `${relative} — ${result.status}`,
-    level: 'silent',
+    outcome: 'unchanged',
+    message: `  infra-kit MCP server: served by the Claude Code plugin (${carries})`,
+    level: 'info',
   }
 }
 
@@ -637,7 +655,7 @@ const gateDisagreementEntries = (gitRoot: string | null, guidanceRoot: string | 
     {
       step: 'plugin-pointer',
       outcome: 'warned',
-      message: `No infra-kit.json at ${gitRoot} — setting up Claude Code there anyway: writing .claude/settings.json and .mcp.json, and installing the ${PLUGIN_KEY} plugin for that project. If that is not the repo you meant to set up, revert those two files.`,
+      message: `No infra-kit.json at ${gitRoot} — setting up Claude Code there anyway: writing .claude/settings.json and installing the ${PLUGIN_KEY} plugin for that project. If that is not the repo you meant to set up, revert that file and uninstall the plugin.`,
       level: 'warn',
     },
   ]
@@ -773,12 +791,14 @@ const resolveCliStaleness = async (): Promise<CliStaleness> => {
 }
 
 /**
- * Point this repo's Claude Code at the infra-kit plugin marketplace, register the MCP server the
- * plugin's skills call, then INSTALL the plugin so a teammate's whole setup is one command.
+ * Point this repo's Claude Code at the infra-kit plugin marketplace, INSTALL (or update) the plugin
+ * so a teammate's whole setup is one command, then report what the repo's own `.mcp.json` says about
+ * the MCP server the plugin now ships.
  *
- * All three are driven from ONE root — `resolveGitRoot`'s, no longer the guidance sync's — so the
- * pointer keys, the `.mcp.json` entry and what `--scope project` records name a single project.
- * That binding is the contract here; which predicate produced the root is not.
+ * The pointer write and the install are driven from ONE root — `resolveGitRoot`'s, no longer the
+ * guidance sync's — so the pointer keys and what `--scope project` records name a single project,
+ * and the `.mcp.json` read answers about that same project. That binding is the contract here; which
+ * predicate produced the root is not.
  *
  * There is deliberately NO opt-out flag. The install is idempotent (an already-installed plugin runs
  * only the idempotent `plugin update`) and best-effort (every failure is a logged outcome, never a
@@ -799,15 +819,10 @@ const syncPluginPointer = async (root: string | null, record: InitStepRecorder):
   }
 
   try {
-    // The MCP write goes AHEAD of the install: the install is the only step that spawns a process,
-    // so it is the only one that can fail for reasons unrelated to this repo, and a `claude` binary
-    // that throws on spawn must not cost the repo its server registration.
-    //
-    // Recorded one at a time rather than returned as an array: each of the three libraries logs its own
-    // refusals, and a batched return would print all three of `initCore`'s lines after all three libraries'
-    // — reordering output that a partial failure makes visible.
+    // Recorded one at a time rather than returned as an array: the pointer library logs its own
+    // refusals, and a batched return would print `initCore`'s lines after the libraries' — reordering
+    // output that a partial failure makes visible.
     record(pointerEntry(root, ensurePluginPointer(path.join(root, '.claude', 'settings.json'))))
-    record(mcpEntry(root, ensureMcpRegistration(root)))
 
     // Resolved ahead of the (synchronous) installer, and only when there is an update to withhold: a
     // fresh install has nothing to gate, and an opt-out machine without the plugin must not pay a
@@ -826,6 +841,12 @@ const syncPluginPointer = async (root: string | null, record: InitStepRecorder):
         staleness,
       ),
     )
+
+    // AFTER the install, which is what puts the server on this machine: the read is about whether
+    // the repo's own file shadows what the plugin just started serving. It writes nothing in any
+    // branch — the retired writer used to re-add the key here, which on a repo that had deliberately
+    // deleted it meant a dirty tracked file and a silent flip back to the legacy route (plan §4 PM-9).
+    record(mcpEntry(root, inspectLegacyMcpRegistration(root)))
   } catch (err) {
     // Best-effort — neither an unwritable `.claude/settings.json`, a hand-broken
     // `~/.claude/plugins/installed_plugins.json`, nor a `claude` binary that throws on spawn may turn

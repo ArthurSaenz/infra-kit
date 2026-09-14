@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "infra-kit",
-      "description": "Engineering skills and the code-quality agent used across the infra-kit monorepos.",
+      "description": "Engineering skills and the infra-kit MCP server used across the infra-kit monorepos; the server is the global infra-kit CLI on PATH.",
       "source": "./plugins/infra-kit",
       "category": "development",
       "homepage": "https://github.com/ArthurSaenz/infra-kit",

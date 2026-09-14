@@ -86,20 +86,21 @@ describe('section coverage', () => {
     expect(unmapped).toEqual([])
   })
 
-  it('covers exactly 33 checks', () => {
-    // 33, up from 32: `zshenv session block` joined the shell rows.
-    expect(DOCTOR_CHECK_NAMES).toHaveLength(33)
-    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(33)
+  it('covers exactly 34 checks', () => {
+    // 34, up from 33: `plugin MCP server` joined the plugin rows (the served copy carries the server).
+    expect(DOCTOR_CHECK_NAMES).toHaveLength(34)
+    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(34)
   })
 
   it('keeps the Claude Code plugin rows adjacent, in order, followed by the MCP key row (O3)', () => {
-    const plugin = DOCTOR_CHECK_NAMES.slice(-6)
+    const plugin = DOCTOR_CHECK_NAMES.slice(-7)
 
     expect(plugin).toEqual([
       'claude CLI',
       'marketplace registered',
       'plugin installed',
       'plugin version',
+      'plugin MCP server',
       'CLI version',
       'MCP server key',
     ])

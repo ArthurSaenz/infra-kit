@@ -99,8 +99,9 @@ const runVersionJson = (cliPath: string, input: { cwd: string; home: string; pnp
 
 const expectVersionPayload = (run: VersionRun): void => {
   expect(run.status, run.stderr).toBe(0)
-  // Parsed from the WHOLE stdout: a stray line from the boot hook would fail here.
-  expect(JSON.parse(run.stdout)).toEqual({ version: packageJson.version })
+  // Parsed from the WHOLE stdout: a stray line from the boot hook would fail here. `toMatchObject`
+  // because `version` also reports where it runs (cwd, repo roots, launch) — fields this test is not about.
+  expect(JSON.parse(run.stdout)).toMatchObject({ version: packageJson.version })
 }
 
 const readLink = (home: string): string => {

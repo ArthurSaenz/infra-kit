@@ -4,7 +4,6 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
-  inspectMcpRegistration,
   isMarketplaceRegistered,
   listProjectPluginInstallations,
   readInstalledPluginVersion,
@@ -218,52 +217,5 @@ describe('readInstalledPluginVersion', () => {
     expect(
       readInstalledPluginVersion({ scope: 'project', projectPath: repo, installPath: null, version: null }),
     ).toBeNull()
-  })
-})
-
-describe('inspectMcpRegistration (T4b)', () => {
-  const writeMcp = (value: unknown): void => {
-    fs.writeFileSync(path.join(repo, '.mcp.json'), JSON.stringify(value, null, 2), 'utf-8')
-  }
-
-  it('reports a missing file', () => {
-    expect(inspectMcpRegistration(repo)).toEqual({ kind: 'missing-file' })
-  })
-
-  it('reports an unparseable file', () => {
-    fs.writeFileSync(path.join(repo, '.mcp.json'), '{ nope', 'utf-8')
-
-    expect(inspectMcpRegistration(repo)).toEqual({ kind: 'unparseable' })
-  })
-
-  it('passes on the canonical key', () => {
-    writeMcp({
-      mcpServers: {
-        'infra-kit': { type: 'stdio', command: 'infra-kit', args: ['mcp'] },
-        'linear-server': { type: 'http', url: 'https://mcp.linear.app/mcp' },
-      },
-    })
-
-    expect(inspectMcpRegistration(repo)).toEqual({ kind: 'ok' })
-  })
-
-  it('fails, naming the key, when the same server is filed under another name', () => {
-    writeMcp({ mcpServers: { ik: { type: 'stdio', command: 'infra-kit', args: ['mcp'] } } })
-
-    expect(inspectMcpRegistration(repo)).toEqual({ kind: 'wrong-key', key: 'ik' })
-  })
-
-  it('detects the misfiled server through its args as well as its command', () => {
-    writeMcp({
-      mcpServers: { tools: { type: 'stdio', command: 'node', args: ['./node_modules/infra-kit/dist/mcp.js'] } },
-    })
-
-    expect(inspectMcpRegistration(repo)).toEqual({ kind: 'wrong-key', key: 'tools' })
-  })
-
-  it('reports absence when no server resembles infra-kit', () => {
-    writeMcp({ mcpServers: { 'linear-server': { type: 'http', url: 'https://mcp.linear.app/mcp' } } })
-
-    expect(inspectMcpRegistration(repo)).toEqual({ kind: 'absent' })
   })
 })

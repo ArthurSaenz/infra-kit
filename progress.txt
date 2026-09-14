@@ -911,3 +911,40 @@ PRD: .omc/state/sessions/8bfe04d3-459d-4fa5-b326-900d533117a6/prd.json
 ## Closed (ralph): reviewer APPROVED (architect, thorough tier); deslop removed two re-export shims (install-plugin → claude-cli,
 plugin-pointer → names); post-deslop regression 619/619, tsc 0, eslint 0. Commits on do/mcp-via-plugin-step0: 3f7eabf (step 0), c30c5a2 (plan).
 Not pushed. Root qa: 42/43 tasks — the single red is the pre-existing lockstep guard (HEAD 0.7.1 vs config ^0.7.0).
+
+# mcp-via-plugin — MIGRATION (ralph run 2, 2026-09-14) — plan docs/mcp-via-plugin-migration-plan.md rev 3.2 (Critic APPROVE)
+
+## Shipped (two branches, NOT pushed)
+- `do/mcp-via-plugin-step0` + 5059e57 — PM-9 gate: the update child withholds the plugin advance when the cache says a newer
+  CLI exists that this run did not install (`plugin: 'skipped-cli-stale'`); `setup` applies the same predicate (own bounded
+  registry fetch when no cache); new scope guard test: no `--scope user` / `claude mcp add` anywhere in src. = CLI 0.7.2 content.
+- `do/mcp-via-plugin-migration` (from step0) — CLI 0.8.0 + plugin 0.8.0 content:
+  - `src/mcp/tool-prefix.ts`: the ONLY speller of both prefixes; `resolveLaunch(env)` on CLAUDE_PLUGIN_ROOT; bodies authored
+    in the plugin spelling, rendered legacy at serve time; read inside createMcpServer (AC-2b pins no module-scope caching).
+  - `plugins/infra-kit/.mcp.json` (key infra-kit, command infra-kit, args [mcp], cwd ${CLAUDE_PROJECT_DIR}); plugin.json 0.8.0
+    (own commit 8fb7396); commands name both prefixes; doctor SKILL carries the PM-9 rule; README rewritten; U7 flipped, U17 added.
+  - `.mcp.json` writer retired → `inspectLegacyMcpRegistration` (writes nothing); doctor: new `plugin MCP server` row, `MCP server
+    key` stale = pass + advisory, subdirectory advisory; `version` reports cwd/repoRoot/mainRepoRoot/projectDir/launch/toolPrefix;
+    `audit --root` prints a report-only `mcp:legacy-key` line; root CLAUDE.md block gains the "launch at the repo root" line.
+- E2E on the branch build (§12 S1-4): plugin route → `mcp__plugin_infra-kit_infra-kit__*`, launch=plugin, bodies plugin-only;
+  project key present → legacy-only (shadow), launch=legacy, bodies legacy-only; subdirectory → no tools (documented).
+- CLI qa: 3664/3665 (lockstep red pre-existing). test:claude 320/320. `claude plugin validate --strict` passes (NB: it never
+  reads .mcp.json — `plugin details` listing "MCP servers (1) infra-kit" is the real check).
+
+## The user's sequence (plan §5 steps 3–5)
+1. Merge `do/mcp-via-plugin-step0` → lockstep publish CLI 0.7.2 (bump → publish config → re-pin → publish cli).
+2. Merge `do/mcp-via-plugin-migration` (plugin 0.8.0 is live the moment it lands on main) → publish CLI 0.8.0 IMMEDIATELY
+   (the merge→publish window is the one automatic path into "plugin 0.8.0 on CLI < 0.8.0" for Homebrew machines).
+   `claude plugin tag ./plugins/infra-kit`.
+3. Type any `infra-kit` command (or `infra-kit setup`) → `infra-kit doctor` here → `plugin MCP server: pass` is the only
+   pre-canary evidence (`claude mcp list` proves nothing — both rows show connected under the shadow).
+4. Canary PR in THIS repo: delete the `infra-kit` entry from .mcp.json by hand + sweep `.claude/hooks/block-deploy.mjs:100-101`,
+   hooks README, block-deploy test + `ik audit --fix --root`. After merge + relaunch: `mcp__plugin_infra-kit_infra-kit__version`
+   answers with launch=plugin (AC-9). If not: `git revert` the PR — the key re-shadows and service is back.
+5. Consumer PRs, no deadline: travelist → hulyo → starter → nomadream → bridge → sandbox → GLV-Backend, nomadream-ota (2 PRs
+   each). PR body: CLI ≥ 0.8.0 AND plugin ≥ 0.8.0; on Homebrew update the CLI first; never `infra-kit setup` from an older CLI
+   in a migrated repo (it would re-add the key).
+
+## Caveat carried forward (PM-9)
+A Homebrew/unknown-location machine cannot self-update the CLI; the gate keeps its plugin from outrunning the CLI, except
+inside the merge→publish window. The doctor skill rule "no `launch` field in `version` ⇒ CLI < 0.8.0" is the detector.

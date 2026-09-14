@@ -8,5 +8,6 @@
     ["hul", "yo"],
     ["trave", "list"],
     ["gulli", "ver"]
-  ]
+  ],
+  "legacyToolPrefix": [["mcp__", "infra-kit__"]]
 }

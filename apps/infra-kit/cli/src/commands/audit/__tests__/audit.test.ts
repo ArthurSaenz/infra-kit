@@ -5,6 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetAdoptionCache } from 'src/lib/agent-guidance'
+import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 
 import { audit, auditMcpTool } from '../audit'
 import { captureLog } from './helpers/capture-log'
@@ -309,6 +310,77 @@ describe('audit --root — agent-guidance regression', () => {
       }),
     ).not.toContain('agent-guidance')
     expect(result.structuredContent.allPassed).toBe(true)
+  })
+})
+
+/**
+ * The leftover-key line (plan §3.3, `ik audit --root`): report-only. A `.mcp.json` that still carries
+ * the `infra-kit` key the plugin now serves is a chore, not a fault — a pass row, one info line, and
+ * the audit's verdict untouched. It is also never a `--fix`: the deletion is a repo PR by hand.
+ */
+describe('audit --root — leftover .mcp.json key', () => {
+  beforeEach(() => {
+    resetAdoptionCache()
+    // The preset/proxy checks read `infra-kit.json` through the cwd-keyed path cache; a previous
+    // root audit's (now deleted) workspace would otherwise be served to this one.
+    resetInfraKitConfigCache()
+  })
+
+  const legacyChecks = (result: Awaited<ReturnType<typeof audit>>): { status: string; message: string }[] => {
+    return result.structuredContent.packages.flatMap((pkg) => {
+      return pkg.checks.filter((check) => {
+        return check.name === 'mcp:legacy-key'
+      })
+    })
+  }
+
+  it('reports a stale infra-kit key as a pass row and an info line, and keeps the audit green', async () => {
+    const root = makeWorkspace()
+    const mcp = `{\n  "mcpServers": {\n    "infra-kit": { "type": "stdio", "command": "infra-kit", "args": ["mcp"] }\n  }\n}\n`
+
+    fs.writeFileSync(path.join(root, '.mcp.json'), mcp)
+    projectRoot.value = root
+
+    let result: Awaited<ReturnType<typeof audit>> | undefined
+    const lines = await captureLog(async () => {
+      result = await audit({ root: true })
+    })
+
+    expect(result?.structuredContent.allPassed).toBe(true)
+    expect(legacyChecks(result!)).toHaveLength(1)
+    expect(legacyChecks(result!)[0]?.status).toBe('pass')
+    expect(legacyChecks(result!)[0]?.message).toContain('shadows the plugin')
+    expect(
+      lines.filter((line) => {
+        return line.includes('mcp:legacy-key')
+      }),
+    ).toHaveLength(1)
+    expect(lines.at(-1)).toMatch(/^✅ audit passed/)
+  })
+
+  it('emits nothing when the key is gone, and never fixes the file', async () => {
+    const root = makeWorkspace()
+    const mcp = `{\n  "mcpServers": {\n    "linear-server": { "type": "http", "url": "https://mcp.linear.app/mcp" }\n  }\n}\n`
+
+    fs.writeFileSync(path.join(root, '.mcp.json'), mcp)
+    projectRoot.value = root
+
+    const result = await audit({ root: true })
+
+    expect(legacyChecks(result)).toHaveLength(0)
+    expect(fs.readFileSync(path.join(root, '.mcp.json'), 'utf-8')).toBe(mcp)
+  })
+
+  it('never touches a stale key under --fix', async () => {
+    const root = makeWorkspace()
+    const mcp = `{\n  "mcpServers": {\n    "infra-kit": { "type": "stdio", "command": "infra-kit", "args": ["mcp"] }\n  }\n}\n`
+
+    fs.writeFileSync(path.join(root, '.mcp.json'), mcp)
+    projectRoot.value = root
+
+    await audit({ root: true, fix: true })
+
+    expect(fs.readFileSync(path.join(root, '.mcp.json'), 'utf-8')).toBe(mcp)
   })
 })
 

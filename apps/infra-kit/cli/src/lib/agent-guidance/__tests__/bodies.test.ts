@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { extractVersion } from 'src/lib/managed-block'
+import { MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
 
 import { buildDesignSkeleton } from '../bodies/design-skeleton'
 import { buildPackageBody } from '../bodies/package-body'
@@ -130,7 +131,7 @@ describe('buildRootBody', () => {
   it('documents the fix writer, the setup command and the per-package convention', () => {
     expect(rendered).toContain('`ik audit --fix`')
     expect(rendered).toContain(
-      '`ik setup` — set up infra-kit on this machine: shell integration, the Claude Code plugin, the `.mcp.json` key, and the external CLIs (brew, aws, gh, doppler, portless).',
+      '`ik setup` — set up infra-kit on this machine: shell integration, the Claude Code plugin (which serves the infra-kit MCP server), and the external CLIs (brew, aws, gh, doppler, portless).',
     )
     expect(rendered).toContain('Every workspace package has its own CLAUDE.md with package-scoped rules')
   })
@@ -155,12 +156,13 @@ describe('buildRootBody', () => {
     expect(rendered).not.toContain('infra-kit init')
   })
 
-  it('renders exactly 27 lines', () => {
+  it('renders exactly 28 lines', () => {
     // Same net as the per-type counts, extended to the two resources `PACKAGE_TYPES`
-    // does not reach. Neither file contains a bare-placeholder construct today, so the
-    // prettier-inserts-a-line class is not reachable here — this is defence in depth,
-    // and the only alternative backstop is a snapshot whose update path is `vitest -u`.
-    expect(rendered.split('\n')).toHaveLength(27)
+    // does not reach. The root body carries one placeholder (the MCP tool prefix)
+    // today, so the prettier-inserts-a-line class is reachable through it — this is
+    // defence in depth, and the only alternative backstop is a snapshot whose update
+    // path is `vitest -u`.
+    expect(rendered.split('\n')).toHaveLength(28)
   })
 
   it('keeps the pre-existing command and convention text', () => {
@@ -168,6 +170,12 @@ describe('buildRootBody', () => {
     expect(rendered).toContain('`ik env-load -c <config>`')
     expect(rendered).toContain('`ik release merge-dev`')
     expect(rendered).toContain('Tickets are prefixed by area')
+  })
+
+  it('tells the agent to relaunch at the repository root when plugin tools are absent, spelling the MCP prefix through tool-prefix.ts', () => {
+    expect(rendered).toContain(
+      `Launch Claude Code at the repository root: the infra-kit plugin (skills, \`/infra-kit:*\` commands, the \`${MCP_TOOL_PREFIX}*\` MCP server) and this repo's \`.claude/settings.json\` hooks load only from there. If those tools are absent, this is a subdirectory session — restart Claude Code at the root.`,
+    )
   })
 })
 

@@ -11,12 +11,15 @@ import {
   SETUP_WORKFLOW_URI,
   initializeResources,
 } from '..'
+import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX, renderForLaunch } from '../../tool-prefix'
+import type { McpLaunch } from '../../tool-prefix'
 import { WORKFLOW_BODIES } from '../../workflow-bodies'
 import type { DevContextSnapshot } from '../dev-context'
 
 /** Reach into the SDK's private resource registry to assert what was registered. */
 interface RegisteredResource {
   name: string
+  metadata?: { description?: string }
   readCallback: (uri: URL, extra: unknown) => Promise<{ contents: { uri: string; text: string }[] }>
 }
 
@@ -56,7 +59,7 @@ describe('initializeResources', () => {
   it('registers at least one resource (proves it is no longer a no-op)', async () => {
     const server = newServer()
 
-    await initializeResources(server, makeDeps())
+    await initializeResources(server, 'plugin', makeDeps())
 
     const uris = Object.keys(registeredOf(server))
 
@@ -81,7 +84,7 @@ describe('initializeResources', () => {
   ] as const)('resolves the %s procedure as markdown, from the shared constant', async (key, uri) => {
     const server = newServer()
 
-    await initializeResources(server, makeDeps())
+    await initializeResources(server, 'plugin', makeDeps())
 
     const result = await registeredOf(server)[uri]!.readCallback(new URL(uri), {})
 
@@ -91,10 +94,47 @@ describe('initializeResources', () => {
     expect(result.contents[0]!.text).toBe(WORKFLOW_BODIES[key])
   })
 
+  /**
+   * The served body and the description are spelled for the route that spawned the server, and
+   * NEVER for the other one: a session on the legacy route (a consumer `.mcp.json` key still
+   * present) has legacy-prefixed tools and nothing else, so a body naming the plugin spelling there
+   * would send an agent to a tool it does not have.
+   *
+   * Both launches are asserted per workflow, and each against the OTHER prefix's absence, because a
+   * render that forgot one substitution site would still contain the expected prefix somewhere.
+   */
+  it.each([
+    ['plugin', MCP_TOOL_PREFIX, LEGACY_MCP_TOOL_PREFIX],
+    ['legacy', LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX],
+  ] as [McpLaunch, string, string][])(
+    'spells every workflow body and description for the %s launch only',
+    async (launch, expected, forbidden) => {
+      const server = newServer()
+
+      await initializeResources(server, launch, makeDeps())
+
+      for (const [key, uri] of [
+        ['release-create', RELEASE_CREATE_WORKFLOW_URI],
+        ['setup', SETUP_WORKFLOW_URI],
+      ] as const) {
+        const registered = registeredOf(server)[uri]!
+        const result = await registered.readCallback(new URL(uri), {})
+        const body = result.contents[0]!.text
+
+        expect(body).toBe(renderForLaunch(WORKFLOW_BODIES[key], launch))
+        expect(body).toContain(`${expected}${key}`)
+        expect(body).not.toContain(forbidden)
+
+        expect(registered.metadata?.description).toContain(`${expected}${key}`)
+        expect(registered.metadata?.description).not.toContain(forbidden)
+      }
+    },
+  )
+
   it('resolves the config resource to the merged config from the loader', async () => {
     const server = newServer()
 
-    await initializeResources(server, makeDeps())
+    await initializeResources(server, 'plugin', makeDeps())
 
     expect(await readResource(server, CONFIG_RESOURCE_URI)).toEqual(fakeConfig)
   })
@@ -104,6 +144,7 @@ describe('initializeResources', () => {
 
     await initializeResources(
       server,
+      'plugin',
       makeDeps({
         loadConfig: async () => {
           throw new Error('infra-kit.json not found at /nope')
@@ -117,7 +158,7 @@ describe('initializeResources', () => {
   it('resolves the dev-context resource cleanly when no dev session is active', async () => {
     const server = newServer()
 
-    await initializeResources(server, makeDeps())
+    await initializeResources(server, 'plugin', makeDeps())
 
     expect(await readResource(server, DEV_CONTEXT_RESOURCE_URI)).toMatchObject({ session: 'none', apps: [] })
   })
@@ -146,6 +187,7 @@ describe('initializeResources', () => {
 
     await initializeResources(
       server,
+      'plugin',
       makeDeps({
         readDevContext: () => {
           return active

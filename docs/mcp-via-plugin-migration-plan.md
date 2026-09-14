@@ -1,6 +1,8 @@
 # [DO] MCP via plugin — the migration (§8.2+ of the approved plan, re-planned on the measured facts)
 
-Status: pending approval
+Status: approved ("роби", 2026-09-14) — steps 1–2 IMPLEMENTED on branches: `do/mcp-via-plugin-step0` (+ the PM-9 gate, = CLI 0.7.2 content)
+and `do/mcp-via-plugin-migration` (CLI 0.8.0 + plugin 0.8.0 content), verified locally end-to-end (§12 S1-4). Steps 3–5
+(publish 0.7.2 → merge → publish 0.8.0 → doctor evidence → canary PR → consumer PRs) are the user's sequence. OQ-1 = A (plugin), OQ-2 = 0.7.2 first.
 Revision: 3.2 (rev 1, rev 2 and rev 3 reviewed by Architect, rev 2.1 and rev 3.1 by Critic — APPROVE on 3.1; dispositions in §13)
 Date: 2026-09-14
 Mode: ralplan (deliberate) — Planner draft
@@ -636,7 +638,7 @@ Designed, not yet run:
 | S1-0 | Does `claude plugin validate --strict` accept `type` and `cwd` in a plugin `.mcp.json`? (Acceptance by the validator does NOT prove `${CLAUDE_PROJECT_DIR}` expands in `cwd` — that evidence is F4, measured on 2.1.270; S1-0 gates only the file shape.) | `claude plugin validate ./plugins/infra-kit --strict --json` on the branch | exit 0; else drop the field |
 | S1-2 | Context cost of the 26 infra-kit tools at user scope in a NON-family directory (C's every-session cost). **Take it now** — C is a real runner-up and OQ-1 deserves a number, and it is five minutes: | `mkdir -p /tmp/s1-2 && cd /tmp/s1-2 && git init -q`; baseline `env -u CLAUDECODE claude -p --output-format json <<< 'Reply OK'` → record `usage.input_tokens` (+ cache fields); then `claude mcp add --scope user infra-kit -- infra-kit mcp`, repeat the same prompt, record again, and a third run asking "list every tool whose name starts with mcp__infra-kit__" to confirm the 26 are present; finally `claude mcp remove infra-kit --scope user` and re-run the baseline to confirm it returns. Delta = C's per-session cost on that machine; note whether the tool list was deferred (tools listed but schemas not in the count). | a number in §3.2's "New cost" cell; no gate |
 | S1-3 | `claude mcp add --scope user` formatting of `~/.claude.json`; user+project same key → one process? | diff before/after; `claude mcp list` + `-p` tool listing | recorded; only if C |
-| S1-4 | AC-3/3b/4 on the published 0.8.0 plugin — the proof of PM-4's equality (`repoRoot === projectDir` in a worktree) | §7 E2E recipe | as stated |
+| S1-4 | AC-3/3b/4 on the published 0.8.0 plugin — the proof of PM-4's equality (`repoRoot === projectDir` in a worktree) | §7 E2E recipe | **Local pre-publish run, 2026-09-14, branch build (dist/cli.js via a PATH shim), this checkout's plugin installed at project scope from a throwaway local marketplace (`infra-kit@e2e`, symlinked source), scratch git repo, `claude -p` with CLAUDECODE unset, prompt on stdin, `--dangerously-skip-permissions`.** E2E-1 root, no `.mcp.json`: 24 tools `mcp__plugin_infra-kit_infra-kit__*`, `version` → `launch: "plugin"`, `repoRoot` = `mainRepoRoot` = `projectDir` = `cwd` = the scratch repo, `toolPrefix` = the plugin prefix; served `infra-kit://workflow/setup` body: plugin-prefix hits > 0, legacy hits 0; no `mcp__infra-kit__*` tools. E2E-2 root WITH a scratch `.mcp.json` `infra-kit` key (approved via `enabledMcpjsonServers`): tools are `mcp__infra-kit__*` ONLY (F2 shadow, 0 plugin-prefix tools), `version.launch: "legacy"`, served body legacy-only (plugin hits 0). E2E-3 subdirectory, no `.mcp.json`: NO tools of either prefix, resource unavailable (documented behaviour, F5). Worktree row and the PUBLISHED-plugin re-run remain for AC-9 after step 3. Throwaway plugin + marketplace removed afterwards; real records unchanged (0.7.0 ×3). |
 
 ## 13. Review dispositions
 

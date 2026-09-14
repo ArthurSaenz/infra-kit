@@ -3,6 +3,8 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 
+import type { McpLaunch } from '../tool-prefix'
+import { renderForLaunch, toolName } from '../tool-prefix'
 import type { WorkflowKey } from '../workflow-bodies'
 import { WORKFLOW_BODIES } from '../workflow-bodies'
 import type { DevContextSnapshot } from './dev-context'
@@ -78,9 +80,14 @@ const jsonResource = (uri: string, value: unknown): { contents: { uri: string; m
  *
  * No dep injection and no `async`: the body is a build-time constant, so there is nothing to read,
  * nothing to fail, and nothing a test would need to stub.
+ *
+ * The body is rendered for `launch` in the read callback, not once at registration: the render is
+ * pure and cheap, and keeping `WORKFLOW_BODIES` the canonical (plugin-spelled) constant is what lets
+ * the spelling and bundle tests read it without knowing which route a server was spawned on.
  */
 const registerWorkflow = (
   server: McpServer,
+  launch: McpLaunch,
   workflow: { key: WorkflowKey; uri: string; title: string; description: string },
 ): void => {
   server.registerResource(
@@ -88,7 +95,15 @@ const registerWorkflow = (
     workflow.uri,
     { title: workflow.title, description: workflow.description, mimeType: 'text/markdown' },
     (uri) => {
-      return { contents: [{ uri: uri.toString(), mimeType: 'text/markdown', text: WORKFLOW_BODIES[workflow.key] }] }
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: 'text/markdown',
+            text: renderForLaunch(WORKFLOW_BODIES[workflow.key], launch),
+          },
+        ],
+      }
     },
   )
 }
@@ -104,8 +119,10 @@ const registerWorkflow = (
  *
  * Both handlers are side-effect free and swallow their reader's failure into an `{ error }` payload rather
  * than throwing, so a bad on-disk config can never crash the long-lived MCP server.
+ *
+ * `launch` is the route that spawned this server (tool-prefix.ts); every tool name served is spelled for it.
  */
-export const initializeResources = async (server: McpServer, deps: ResourceDeps = defaultDeps) => {
+export const initializeResources = async (server: McpServer, launch: McpLaunch, deps: ResourceDeps = defaultDeps) => {
   server.registerResource(
     'infra-kit-config',
     CONFIG_RESOURCE_URI,
@@ -139,17 +156,17 @@ export const initializeResources = async (server: McpServer, deps: ResourceDeps 
     },
   )
 
-  registerWorkflow(server, {
+  registerWorkflow(server, launch, {
     key: 'release-create',
     uri: RELEASE_CREATE_WORKFLOW_URI,
     title: 'release-create procedure',
     description:
       'How to cut a release with the release-create tool: the preconditions, the two-call confirm ' +
       'protocol, and what the "next" token actually resolves against. Read this before calling ' +
-      'mcp__infra-kit__release-create.',
+      `${toolName('release-create', launch)}.`,
   })
 
-  registerWorkflow(server, {
+  registerWorkflow(server, launch, {
     key: 'setup',
     uri: SETUP_WORKFLOW_URI,
     title: 'setup procedure',
@@ -157,10 +174,10 @@ export const initializeResources = async (server: McpServer, deps: ResourceDeps 
       'How to set a machine up with the setup tool: the ordered local writes, then the dependency ' +
       'converge; what tools/mode/skipTools each narrow; which recipes are printed instead of run and ' +
       'why; and what to run when a repo still tells you to set it up some older way. Read this before ' +
-      'calling mcp__infra-kit__setup.',
+      `calling ${toolName('setup', launch)}.`,
   })
 
-  registerWorkflow(server, {
+  registerWorkflow(server, launch, {
     key: 'session',
     uri: SESSION_WORKFLOW_URI,
     title: 'session procedure',

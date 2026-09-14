@@ -1,3 +1,5 @@
+import { MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
+
 import { ROOT_VERSION_PREFIX } from '../markers'
 import { RESOURCES } from '../resources'
 import { renderTemplate } from '../template'
@@ -18,10 +20,13 @@ const buildVersionLine = (version: string): string => {
  * // => '<!-- infra-kit:version 0.4.0 -->\n\n# infra-kit\n…'
  */
 export const buildRootBody = (version: string): string => {
-  // Rendered with no variables on purpose: the root body has no placeholders, and
-  // `renderTemplate` throws on an unknown one — so adding a `{{…}}` to the resource
-  // without wiring a value here fails loudly instead of shipping the literal token.
-  const body = renderTemplate(RESOURCES['root/body'], {})
+  // The one placeholder this body carries: the MCP tool prefix, spelled through
+  // `tool-prefix.ts` rather than as a literal here. `renderTemplate` throws on an
+  // unknown or unwired placeholder, so a resource edit that adds another `{{…}}`
+  // without a matching entry here fails loudly instead of shipping the literal token.
+  const body = renderTemplate(RESOURCES['root/body'], {
+    mcpToolPrefix: `${MCP_TOOL_PREFIX}*`,
+  })
 
   return [buildVersionLine(version), '', body].join('\n')
 }

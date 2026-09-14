@@ -1,6 +1,6 @@
 # release-create — cutting a release through infra-kit
 
-The tool is `mcp__infra-kit__release-create`. Everything below is about calling that tool.
+The tool is `mcp__plugin_infra-kit_infra-kit__release-create`. Everything below is about calling that tool.
 
 Do not shell out. A `Bash` call running `git switch`, `git push` or `gh pr create` reproduces none
 of the preconditions below and bypasses the confirm gate in section 2 — which is the only place a

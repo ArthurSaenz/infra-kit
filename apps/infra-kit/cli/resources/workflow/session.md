@@ -1,7 +1,7 @@
 # session — switching a terminal's context through infra-kit
 
 Three tools do the work, and this body is only the procedure that composes them:
-`mcp__infra-kit__env-list`, `mcp__infra-kit__env-load` and `mcp__infra-kit__env-clear`. None of them
+`mcp__plugin_infra-kit_infra-kit__env-list`, `mcp__plugin_infra-kit_infra-kit__env-load` and `mcp__plugin_infra-kit_infra-kit__env-clear`. None of them
 changes here.
 
 ## 1. What a session is
@@ -56,9 +56,9 @@ ago. Never use it to verify one.
 
 ## 3. Resolving `$ARGUMENTS`
 
-**A bare token is the environment name.** Call `mcp__infra-kit__env-load` with `config: <token>`.
+**A bare token is the environment name.** Call `mcp__plugin_infra-kit_infra-kit__env-load` with `config: <token>`.
 
-**No token means the human has not chosen yet.** Call `mcp__infra-kit__env-list`, then ask with
+**No token means the human has not chosen yet.** Call `mcp__plugin_infra-kit_infra-kit__env-list`, then ask with
 `AskUserQuestion` — one option per environment, and **no table**. You receive `structuredContent`,
 not the aligned table `env-list` prints on the CLI path, so any table here is one you hand-built from
 JSON.
@@ -83,7 +83,7 @@ the list is not authoritative about what exists. Only `hasToken` is authoritativ
 
 ## 5. The flag
 
-- `--clear` → `mcp__infra-kit__env-clear`, through the two-call confirm protocol in section 6.
+- `--clear` → `mcp__plugin_infra-kit_infra-kit__env-clear`, through the two-call confirm protocol in section 6.
 
 `--clear` together with a bare environment token is a usage error and is refused, not resolved by
 precedence. Both precedence answers are wrong: loading is not what was asked for, and clearing

@@ -46,6 +46,9 @@ const BANNED_FRONTMATTER_KEYS = [
 const SCAN_PATTERNS = JSON.parse(readFileSync(join(import.meta.dirname, '__fixtures__', 'scan-patterns.json'), 'utf8'))
 const PROJECT_RELATIVE = SCAN_PATTERNS.projectRelative.map((parts) => parts.join(''))
 const DENYLIST = SCAN_PATTERNS.denylist.map((parts) => parts.join(''))
+// The pre-0.8.0 tool prefix (`.mcp.json`-spawned server). U17 counts it, so its needle is fragmented
+// like the others; T1 and T1b keep their inline literals and U17's allowed list accounts for them.
+const [LEGACY_TOOL_PREFIX] = SCAN_PATTERNS.legacyToolPrefix.map((parts) => parts.join(''))
 
 // ---------------------------------------------------------------------------
 // Filesystem helpers
@@ -503,6 +506,7 @@ const REPORT_OWNED_STRINGS = [
   'plugin version',
   'CLI version',
   'MCP server key',
+  'plugin MCP server',
   'CLAUDE.md block',
   'portless routes',
   'tokens.json perms',
@@ -528,11 +532,29 @@ function readPluginJson() {
   return JSON.parse(readText(PLUGIN_JSON))
 }
 
-test('U7: plugin.json declares no mcpServers, hooks, or commands', () => {
+// The server lives in `.mcp.json`, never inline in plugin.json: one place to read, one place to
+// diff. The whole object is asserted, not picked fields — a dropped `cwd` or an added `env` is a
+// contract change the CLI's `git rev-parse`-from-cwd resolution depends on, and a field-by-field
+// check is blind to additions (memory: a hand-picked-field diff misses added/removed fields).
+const PLUGIN_MCP_JSON = join(PLUGIN_ROOT, '.mcp.json')
+const EXPECTED_MCP_JSON = {
+  mcpServers: {
+    'infra-kit': {
+      type: 'stdio',
+      command: 'infra-kit',
+      args: ['mcp'],
+      cwd: '${CLAUDE_PROJECT_DIR}',
+    },
+  },
+}
+
+test('U7: plugin.json declares no inline mcpServers, hooks, or commands; .mcp.json carries exactly the one server', () => {
   const manifest = readPluginJson()
   for (const key of ['mcpServers', 'hooks', 'commands']) {
-    assert.ok(!(key in manifest), `plugin.json must not declare ${key}`)
+    assert.ok(!(key in manifest), `plugin.json must not declare ${key} inline`)
   }
+  assert.ok(existsSync(PLUGIN_MCP_JSON), `${rel(PLUGIN_MCP_JSON)} is missing`)
+  assert.deepEqual(JSON.parse(readText(PLUGIN_MCP_JSON)), EXPECTED_MCP_JSON)
 })
 
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$/
@@ -722,6 +744,51 @@ test('T1b: T1 is scoped to skills, and the command does name an infra-kit MCP to
       readText(command),
       /mcp__infra-kit__[a-z-]+/,
       `${rel(command)} must name the infra-kit MCP tool it falls back to`,
+    )
+  }
+})
+
+// ---------------------------------------------------------------------------
+// U17 (plan §7 "U15") — where the pre-0.8.0 prefix may still appear
+//
+// Since 0.8.0 the plugin's own `.mcp.json` spawns the server and the served prefix is
+// `mcp__plugin_infra-kit_infra-kit__`. The old spelling survives in exactly two places on purpose:
+// the fallback clause of each command, which is a static file and cannot be rendered per launch the
+// way the server's workflow resources are, so it names both prefixes until the last consumer drops
+// its `.mcp.json` key. Every other occurrence is a body that would send a plugin-launched session
+// to a tool it does not have. The list is exact, file and count, so a second legacy mention in a
+// command — or a new one anywhere — is red, and so is the day the fallback clauses are finally
+// removed (edit this list in that PR). The suite's own two literals (T1, T1b) are counted here
+// rather than fragmented: T1's literal IS the old-prefix negative for skills, and the tests are
+// scanned like everything else under plugins/.
+// ---------------------------------------------------------------------------
+
+const LEGACY_PREFIX_ALLOWED = {
+  'plugins/infra-kit/__tests__/manifest.test.mjs': 2,
+  'plugins/infra-kit/commands/release-create.md': 1,
+  'plugins/infra-kit/commands/session.md': 1,
+}
+
+function countOccurrences(text, needle) {
+  return text.split(needle).length - 1
+}
+
+test('U17: the legacy tool prefix appears under plugins/ only in the two command fallback clauses', () => {
+  const found = {}
+  for (const file of walkFiles(PLUGINS_DIR)) {
+    const count = countOccurrences(readText(file), LEGACY_TOOL_PREFIX)
+    if (count > 0) found[rel(file)] = count
+  }
+  assert.deepEqual(found, LEGACY_PREFIX_ALLOWED)
+
+  // The clause must lead with the canonical spelling: a command that named only the old prefix
+  // would satisfy T1b and still strand every plugin-launched session.
+  for (const name of EXPECTED_COMMANDS) {
+    const command = join(COMMANDS_DIR, name)
+    assert.match(
+      readText(command),
+      /mcp__plugin_infra-kit_infra-kit__[a-z-]+/,
+      `${rel(command)} must name the plugin-served tool before its legacy fallback`,
     )
   }
 })

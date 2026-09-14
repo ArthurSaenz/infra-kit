@@ -1,4 +1,5 @@
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
+import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { mcpMode } from 'src/lib/mcp-mode'
@@ -6,10 +7,37 @@ import { mcpMode } from 'src/lib/mcp-mode'
 import packageJson from '../../../package.json' with { type: 'json' }
 import { RELEASE_CREATE_WORKFLOW_URI, SESSION_WORKFLOW_URI, SETUP_WORKFLOW_URI } from '../resources'
 import { createMcpServer } from '../server'
+import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX, renderForLaunch } from '../tool-prefix'
+import type { McpLaunch } from '../tool-prefix'
 import { WORKFLOW_BODIES } from '../workflow-bodies'
+
+/**
+ * The launch signal as the server reads it: `CLAUDE_PLUGIN_ROOT` set by a plugin-spawned host, absent
+ * otherwise. Captured once so `afterEach` can put back whatever this test process was started with,
+ * rather than assuming it was unset.
+ */
+const inheritedPluginRoot = process.env.CLAUDE_PLUGIN_ROOT
+
+/**
+ * `resolveLaunch` tests the variable for presence only, never as a path, so the plugin value is a
+ * stand-in under this file's own directory rather than a real plugin cache that would have to exist.
+ */
+const setLaunch = (launch: McpLaunch): void => {
+  if (launch === 'plugin') {
+    process.env.CLAUDE_PLUGIN_ROOT = path.join(import.meta.dirname, 'fixtures', 'plugin-root')
+  } else {
+    delete process.env.CLAUDE_PLUGIN_ROOT
+  }
+}
 
 afterEach(() => {
   mcpMode.enabled = false
+
+  if (inheritedPluginRoot === undefined) {
+    delete process.env.CLAUDE_PLUGIN_ROOT
+  } else {
+    process.env.CLAUDE_PLUGIN_ROOT = inheritedPluginRoot
+  }
 })
 
 /**
@@ -19,8 +47,15 @@ afterEach(() => {
  *
  * Reaching into the server's registration maps instead would assert what was registered and
  * prove nothing about what a client can actually FETCH, or be refused, over the wire.
+ *
+ * `launch` is pinned per connection rather than inherited, because the served spelling depends on it
+ * and the process running this file may or may not have been spawned by a plugin.
  */
-const connectedClient = async (): Promise<{ client: Client; close: () => Promise<void> }> => {
+const connectedClient = async (
+  launch: McpLaunch = 'plugin',
+): Promise<{ client: Client; close: () => Promise<void> }> => {
+  setLaunch(launch)
+
   const server = await createMcpServer()
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   const client = new Client({ name: 'server-test', version: '0.0.0' })
@@ -136,8 +171,10 @@ describe('the release-create procedure, over the wire', () => {
     expect(body.split('\n')).toHaveLength(142)
     expect(body.endsWith('\n')).toBe(false)
 
-    // The tool the procedure is for, named so an agent that read the resource can call it.
-    expect(body).toContain('mcp__infra-kit__release-create')
+    // The tool the procedure is for, named so an agent that read the resource can call it — in the
+    // canonical spelling, because `WORKFLOW_BODIES` is the source constant and the legacy route is a
+    // serve-time render (asserted over the wire below).
+    expect(body).toContain(`${MCP_TOOL_PREFIX}release-create`)
     // The two-call gate, and the reading of `isError` that makes an agent bypass it.
     expect(body).toContain('confirmation_required')
     expect(body).toContain('confirmToken')
@@ -198,7 +235,7 @@ describe('the release-create procedure, over the wire', () => {
 
     // The tool the procedure is for, named so an agent that read the resource can call it — and the
     // read-path tool it must use instead when it only wants to look.
-    expect(body).toContain('mcp__infra-kit__setup')
+    expect(body).toContain(`${MCP_TOOL_PREFIX}setup`)
     expect(body).toContain('`doctor`')
 
     // The ordered procedure: the init half's writes first, then the dependency converge.
@@ -292,11 +329,11 @@ describe('the release-create procedure, over the wire', () => {
 
     // The three tools composed, named so an agent that read the resource can call them. `env-status`
     // is deliberately NOT among them: it is named in the body only as the thing not to verify with.
-    expect(body).toContain('mcp__infra-kit__env-list')
-    expect(body).toContain('mcp__infra-kit__env-load')
+    expect(body).toContain(`${MCP_TOOL_PREFIX}env-list`)
+    expect(body).toContain(`${MCP_TOOL_PREFIX}env-load`)
     // The flag definition, in the `flag → tool` form `manifest.test.mjs`'s U17 reads from the other
     // side once the plugin command exists. U17 is plain node and cannot see this bundled body.
-    expect(body).toContain('`--clear` → `mcp__infra-kit__env-clear`')
+    expect(body).toContain(`\`--clear\` → \`${MCP_TOOL_PREFIX}env-clear\``)
 
     // The three properties of the shell round trip. Each one is a way the feature is judged broken
     // when the body omits it, and none of them is visible in any single tool's own description.
@@ -347,5 +384,93 @@ describe('the release-create procedure, over the wire', () => {
     // The body's only tether to the provider contract, which lives in the doc rather than here so an
     // agent spends its attention on the failure modes instead of on design narration.
     expect(body).toContain('docs/session-context-orchestrator.md')
+  })
+})
+
+/**
+ * The served prefix is launch-aware (docs/mcp-via-plugin-migration-plan.md §3.3). A plugin-spawned
+ * server sees `CLAUDE_PLUGIN_ROOT`; a `.mcp.json`-spawned one does not; and a session on either route
+ * has ONLY that route's tools. So every tool name the server serves — in a workflow body and in the
+ * resource description an agent reads before fetching it — must be spelled for the route that spawned
+ * it, and never for the other.
+ */
+describe('the served prefix follows the launch', () => {
+  const workflows = [
+    ['release-create', RELEASE_CREATE_WORKFLOW_URI, 'release-create'],
+    ['setup', SETUP_WORKFLOW_URI, 'setup'],
+    ['session', SESSION_WORKFLOW_URI, 'env-load'],
+  ] as const
+
+  /**
+   * Each body assertion runs twice — once per launch — and each checks the OTHER prefix's absence
+   * too: a render that substituted at one site and missed another would still contain the expected
+   * spelling somewhere, and a `toContain` alone would pass on it.
+   */
+  it.each([
+    ['plugin', MCP_TOOL_PREFIX, LEGACY_MCP_TOOL_PREFIX],
+    ['legacy', LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX],
+  ] as [McpLaunch, string, string][])(
+    'serves every workflow body and description in the %s spelling only',
+    async (launch, expected, forbidden) => {
+      const { client, close } = await connectedClient(launch)
+
+      try {
+        const { resources } = await client.listResources()
+
+        for (const [key, uri, tool] of workflows) {
+          const body = resourceText(await client.readResource({ uri }))
+
+          expect(body).toBe(renderForLaunch(WORKFLOW_BODIES[key], launch))
+          expect(body).toContain(`${expected}${tool}`)
+          expect(body).not.toContain(forbidden)
+        }
+
+        // `session` composes three tools and names none of them in its description, so only the two
+        // tool-procedure descriptions carry a prefix to assert.
+        for (const [key, uri] of workflows.slice(0, 2)) {
+          const description = resources.find((r) => {
+            return r.uri === uri
+          })?.description
+
+          expect(description).toContain(`${expected}${key}`)
+          expect(description).not.toContain(forbidden)
+        }
+      } finally {
+        await close()
+      }
+    },
+  )
+
+  /**
+   * AC-2b: the launch is read INSIDE `createMcpServer()`, per build. Two builds in ONE process with
+   * the variable toggled between them must serve differently-spelled bodies. A module-scope
+   * `resolveLaunch(process.env)` would freeze the render at first import, and every `it.each` case
+   * above would then pass on the first-imported spelling both times — a false green of the kind a
+   * digest compared across a restart gives. This is the one test that distinguishes the two.
+   */
+  it('re-reads the launch on every build, never at module scope', async () => {
+    const first = await connectedClient('legacy')
+    let legacyBody: string
+
+    try {
+      legacyBody = resourceText(await first.client.readResource({ uri: SESSION_WORKFLOW_URI }))
+    } finally {
+      await first.close()
+    }
+
+    const second = await connectedClient('plugin')
+    let pluginBody: string
+
+    try {
+      pluginBody = resourceText(await second.client.readResource({ uri: SESSION_WORKFLOW_URI }))
+    } finally {
+      await second.close()
+    }
+
+    expect(legacyBody).not.toBe(pluginBody)
+    expect(legacyBody).toContain(`${LEGACY_MCP_TOOL_PREFIX}env-load`)
+    expect(legacyBody).not.toContain(MCP_TOOL_PREFIX)
+    expect(pluginBody).toContain(`${MCP_TOOL_PREFIX}env-load`)
+    expect(pluginBody).not.toContain(LEGACY_MCP_TOOL_PREFIX)
   })
 })

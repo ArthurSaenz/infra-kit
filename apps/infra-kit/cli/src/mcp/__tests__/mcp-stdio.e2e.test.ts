@@ -11,6 +11,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { commandCatalog, getExposedMcpTools } from 'src/lib/command-catalog'
 import { LOG_FILE_PATH } from 'src/lib/logger'
+import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
+import type { McpLaunch } from 'src/mcp/tool-prefix'
 
 import { KILL_SWITCHES, buildMcpBundle, makeDisposableSession } from './helpers/mcp-harness'
 import { TEE_PROXY_SOURCE, readTee } from './helpers/stdio-tee'
@@ -39,7 +41,7 @@ import type { TeeConnection, TeeLog } from './helpers/stdio-tee'
  *                legacy gate fixture (E4/E5), pinned-modern client (E8b + E1m/E2m/E3m/E6m/E9m),
  *                pinned-modern gate fixture (E4m/E5m),
  *                pinned-modern client THROUGH THE TEE PROXY (W1a-modern + W1e + O1's modern half)
- *   short-lived: W1 raw ×2 (also carries O1's legacy half), E8a auto ×1, O6 ×1
+ *   short-lived: W1 raw ×2 (also carries O1's legacy half), E8a auto ×1, E3p plugin-launch ×1, O6 ×1
  *
  * Every NEGOTIATED connection — E8a's `auto` client and each pinned client — additionally spawns a
  * disposable probe sibling, which the client reaps before `connect()` resolves. Those siblings are
@@ -53,8 +55,27 @@ let mcpPath = ''
 const tmpDirs: string[] = []
 const strays: ChildProcess[] = []
 
+/**
+ * The legacy launch, explicitly: `CLAUDE_PLUGIN_ROOT` is the one variable the server reads to pick its
+ * tool-name spelling (`src/mcp/tool-prefix.ts`), and a vitest process spawned from inside a plugin
+ * host would inherit it — so it is stripped rather than assumed absent, and every shared connection
+ * below serves the legacy spelling by construction.
+ */
 const childEnv = (): NodeJS.ProcessEnv => {
-  return { ...process.env, ...KILL_SWITCHES }
+  const env: NodeJS.ProcessEnv = { ...process.env, ...KILL_SWITCHES }
+
+  delete env.CLAUDE_PLUGIN_ROOT
+
+  return env
+}
+
+/**
+ * The plugin launch: what a server spawned by the plugin's `.mcp.json` sees. The value is never
+ * read as a path — `resolveLaunch` tests it for presence only — so it points at this file's fixtures
+ * rather than at a directory that would have to exist.
+ */
+const pluginLaunchEnv = (): NodeJS.ProcessEnv => {
+  return { ...childEnv(), CLAUDE_PLUGIN_ROOT: join(FIXTURES, 'plugin-root') }
 }
 
 /** Raw JSON-RPC over stdio. Used where a typed client cannot express the request (W1's era probes). */
@@ -309,7 +330,12 @@ const assertReadOnlyToolCallRoundTrips = async (client: Client): Promise<void> =
   expect(result.structuredContent).toBeTypeOf('object')
 }
 
-const assertResourcesAreListedAndReadable = async (client: Client): Promise<void> => {
+const assertResourcesAreListedAndReadable = async (client: Client, launch: McpLaunch): Promise<void> => {
+  // The spelling the server on the other end must serve, and the one it must not: a session on
+  // either route has only that route's tools, so a body naming the other spelling sends the agent to
+  // a tool it does not have.
+  const [expected, forbidden] =
+    launch === 'plugin' ? [MCP_TOOL_PREFIX, LEGACY_MCP_TOOL_PREFIX] : [LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX]
   const listed = await client.listResources()
   const uris = listed.resources.map((r) => {
     return r.uri
@@ -326,15 +352,28 @@ const assertResourcesAreListedAndReadable = async (client: Client): Promise<void
   // Both are read, and each is checked for the tool ITS OWN body names: the two registrations go
   // through one helper, so a helper that captured the first key would serve `release-create`'s text at
   // both URIs — and a listing assertion alone would never see it, because both URIs would still list.
-  for (const [uri, toolName] of [
-    ['infra-kit://workflow/release-create', 'mcp__infra-kit__release-create'],
-    ['infra-kit://workflow/setup', 'mcp__infra-kit__setup'],
+  //
+  // The name is spelled for `launch`, and the other spelling must be absent: the served body is a
+  // per-build render of the canonical Markdown, and this is the lane that proves the render happens
+  // in the BUILT bundle over a real spawn, not only in `src/`.
+  for (const [uri, tool] of [
+    ['infra-kit://workflow/release-create', 'release-create'],
+    ['infra-kit://workflow/setup', 'setup'],
   ] as const) {
     const workflow = await client.readResource({ uri })
     const workflowBody = workflow.contents[0]
+    const text = String((workflowBody as { text: string }).text)
 
     expect(workflowBody?.mimeType).toBe('text/markdown')
-    expect(String((workflowBody as { text: string }).text)).toContain(toolName)
+    expect(text).toContain(`${expected}${tool}`)
+    expect(text).not.toContain(forbidden)
+
+    const description = listed.resources.find((r) => {
+      return r.uri === uri
+    })?.description
+
+    expect(description).toContain(`${expected}${tool}`)
+    expect(description).not.toContain(forbidden)
   }
 
   // dev-context with no active session must resolve to a payload, NOT an error.
@@ -527,8 +566,8 @@ describe('e1–E3, E6, E9 — the served surface (shared bare v2 client)', () =>
     await assertReadOnlyToolCallRoundTrips(client)
   }, 45_000)
 
-  it('e3: both read-only resources are listed and readable', async () => {
-    await assertResourcesAreListedAndReadable(client)
+  it('e3: both read-only resources are listed and readable, spelled for the legacy launch', async () => {
+    await assertResourcesAreListedAndReadable(client, 'legacy')
   }, 45_000)
 
   it('e6: the long-lived server survives a failing tool call and answers the next one', async () => {
@@ -801,8 +840,8 @@ describe('e1m–E9m — the served surface over a PINNED MODERN connection', () 
     await assertReadOnlyToolCallRoundTrips(client)
   }, 45_000)
 
-  it('e3m: both read-only resources are listed and readable', async () => {
-    await assertResourcesAreListedAndReadable(client)
+  it('e3m: both read-only resources are listed and readable, spelled for the legacy launch', async () => {
+    await assertResourcesAreListedAndReadable(client, 'legacy')
   }, 45_000)
 
   it('e6m: the long-lived server survives a failing tool call and answers the next one', async () => {
@@ -812,6 +851,25 @@ describe('e1m–E9m — the served surface over a PINNED MODERN connection', () 
   it('e9m: every deterministic read-only tool round-trips a well-formed modern result', async () => {
     await assertEveryReadOnlyToolRoundTrips(client)
   }, 120_000)
+})
+
+/**
+ * The plugin launch, over a real spawn. The shared clients above are all spawned on the legacy route
+ * (`childEnv` strips the signal), so without this lane the built bundle's plugin-route render — the
+ * one every migrated consumer's session reads — would be proven only from `src/`.
+ *
+ * Short-lived and closed here, not ledgered with the pinned clients: one spawn, one read, done.
+ */
+describe('e3p — the served surface follows the plugin launch', () => {
+  it('e3p: a server spawned with CLAUDE_PLUGIN_ROOT serves every workflow in the plugin spelling', async () => {
+    const client = await connectV2(pluginLaunchEnv())
+
+    try {
+      await assertResourcesAreListedAndReadable(client, 'plugin')
+    } finally {
+      await client.close()
+    }
+  }, 45_000)
 })
 
 describe('e4m/E5m — the confirm gate over a PINNED MODERN connection', () => {
@@ -870,6 +928,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   //   D13 the prose those four tools carry was rewritten (AUTHORED)                legacy + modern
   //   D14 env-clear's description stopped naming the removed `init` (AUTHORED)     legacy + modern
   //   D15 config-get's description names the `mcp` layer-1 refusal (AUTHORED)      legacy + modern
+  //   D16 version reports where it runs and which route spawned it (AUTHORED)       legacy + modern
   // Why UNNAMED differences must fail: a normalization broad enough to swallow a known delta is
   // the same hole an unnoticed one would slip through. Only the named deltas are normalized away
   // before the whole-object comparison, and each is asserted positively FIRST so the normalization
@@ -1093,6 +1152,74 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   }
 
   const d15Baseline = applyD15ToBaseline()
+
+  /**
+   * D16 — an AUTHORED delta: `version` grew from a one-field answer into the session's location and
+   * route report (docs/mcp-via-plugin-migration-plan.md §4 PM-4, §5 step 2.7).
+   *
+   * A plugin-spawned server runs in `${CLAUDE_PROJECT_DIR}`, and the doctor skill asserts
+   * `cwd === repoRoot === projectDir` from THIS tool's answer; `launch` / `toolPrefix` are the only
+   * server-authored proof of which route a session is on. Description AND output schema move, so
+   * both are rewritten on the baseline at load — literally, for D13's reason: a further edit fails
+   * `w1c` and must be re-declared here.
+   */
+  const D16_VERSION_DESCRIPTION =
+    'Print the installed infra-kit CLI version, where this server process runs (cwd, repo root, main repo root, CLAUDE_PROJECT_DIR) and which route spawned it (plugin or a repo .mcp.json entry) with the tool prefix that route produces'
+
+  // The nullable fields are written in the served `type: [T, 'null']` form directly, not as the
+  // baseline's `anyOf` — D8's normalization runs on the baseline and would render them the same way,
+  // but writing the post-change form keeps D16 legible on its own and out of D8's carrier count.
+  const D16_VERSION_OUTPUT_PROPERTIES: Record<string, unknown> = {
+    version: { type: 'string', description: 'Installed infra-kit CLI version (from package.json)' },
+    cwd: { type: 'string', description: 'The working directory of this server process' },
+    repoRoot: {
+      description: 'git toplevel of cwd — the worktree itself in a linked worktree; null when git cannot answer',
+      type: ['string', 'null'],
+    },
+    mainRepoRoot: {
+      description:
+        'The main checkout a linked worktree belongs to (equals repoRoot outside worktrees); null with repoRoot',
+      type: ['string', 'null'],
+    },
+    projectDir: {
+      description: 'CLAUDE_PROJECT_DIR as Claude Code set it for this server, or null',
+      type: ['string', 'null'],
+    },
+    launch: {
+      type: 'string',
+      enum: ['plugin', 'legacy'],
+      description: 'Which route spawned this server: the Claude Code plugin, or a repo .mcp.json entry (legacy)',
+    },
+    toolPrefix: { type: 'string', description: 'The prefix every tool of this server carries in this session' },
+  }
+
+  const D16_VERSION_OUTPUT_REQUIRED = [
+    'version',
+    'cwd',
+    'repoRoot',
+    'mainRepoRoot',
+    'projectDir',
+    'launch',
+    'toolPrefix',
+  ]
+
+  /** Rewrites the baseline's `version` tool in place and returns what it held BEFORE. */
+  const applyD16ToBaseline = (): { description: unknown; properties: unknown; required: unknown } => {
+    const tool = findBaselineTool('version')
+    const schema = tool?.outputSchema as Record<string, any> | undefined
+    const captured = { description: tool?.description, properties: schema?.properties, required: schema?.required }
+
+    if (tool !== undefined) tool.description = D16_VERSION_DESCRIPTION
+
+    if (schema !== undefined) {
+      schema.properties = structuredClone(D16_VERSION_OUTPUT_PROPERTIES)
+      schema.required = [...D16_VERSION_OUTPUT_REQUIRED]
+    }
+
+    return captured
+  }
+
+  const d16Baseline = applyD16ToBaseline()
 
   /**
    * D9 — an AUTHORED delta, handled like D4: the confirm gate now binds round 2 to round 1 with a
@@ -1725,6 +1852,17 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     ).toContain('to modify the override file.')
     expect(String(d15Baseline)).not.toContain('`mcp`')
     expect(d15Baseline).not.toBe(D15_CONFIG_GET_DESCRIPTION)
+  })
+
+  it('w1c-pre-d16: D16 — the baseline `version` really answered with the version alone', () => {
+    // The positive half of D16, on D14's model: what the rewrite replaced must be the one-field
+    // answer, or the rewrite is a no-op against a re-captured fixture and D16 is to be DELETED.
+    expect(d16Baseline.description).toBe('Print the installed infra-kit CLI version')
+    expect(Object.keys(d16Baseline.properties as Record<string, unknown>)).toEqual(['version'])
+    expect(d16Baseline.required).toEqual(['version'])
+    // The one field the baseline had is carried over unchanged — D16 adds, it does not rewrite.
+    expect((d16Baseline.properties as Record<string, unknown>).version).toEqual(D16_VERSION_OUTPUT_PROPERTIES.version)
+    expect(D16_VERSION_OUTPUT_REQUIRED).toEqual(Object.keys(D16_VERSION_OUTPUT_PROPERTIES))
   })
 
   it('w1c-pre-d9: D9 — the baseline carries `confirmToken` on no tool, and the gated set is non-empty', () => {

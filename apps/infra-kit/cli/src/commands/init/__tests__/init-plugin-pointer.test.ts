@@ -322,7 +322,8 @@ describe('setup --skip-tools — the gate split', () => {
     expect(linesMatching(GUIDANCE_ONLY_SKIP)).toHaveLength(1)
     expect(linesMatching(GIT_ROOT_SKIP)).toHaveLength(0)
     expect(readSettings().enabledPlugins?.[PLUGIN_KEY]).toBe(true)
-    expect(readMcp().mcpServers?.[MARKETPLACE_NAME]).toBeDefined()
+    // The plugin serves the MCP server: no `.mcp.json` is written for it any more.
+    expect(fs.existsSync(mcpPath())).toBe(false)
     expect(vi.mocked(installPluginForProject)).toHaveBeenCalledWith(expect.objectContaining({ projectRoot: repo }))
   })
 
@@ -341,7 +342,7 @@ describe('setup --skip-tools — the gate split', () => {
     expect(warnings).toHaveLength(1)
     expect(warnings[0]).toContain('No infra-kit.json at')
     expect(warnings[0]).toContain('.claude/settings.json')
-    expect(warnings[0]).toContain('.mcp.json')
+    expect(warnings[0]).not.toContain('.mcp.json')
     expect(warnings[0]).toContain(PLUGIN_KEY)
     // The absolute path, not "this repo": the failure mode is a caller who is somewhere else than
     // they think, and a relative name would read as correct wherever they are.
@@ -395,39 +396,95 @@ describe('setup --skip-tools — the gate split', () => {
 })
 
 /**
- * The `.mcp.json` registration's wiring (criteria 2.2 and 1.8).
- *
- * The writer's merge behaviour — key order, indent, the misfiled-key refusal — is proved
- * byte-for-byte in `lib/plugin-pointer/__tests__/mcp-registration.test.ts`. What only `initCore` can
- * prove is that the call happens at all, that it is aimed at the resolved absolute root rather than
- * the cwd, and that a file it cannot write is audible instead of swallowed at `debug`.
+ * The `.mcp.json` step is a READ (plan docs/mcp-via-plugin-migration-plan.md §3.3, `setup`): the plugin
+ * serves the MCP server, so `setup` reports what the repo's own file says and writes nothing in any
+ * branch. Byte and mtime assertions, because the retired writer used to ADD the key here — and on a
+ * repo that had deliberately deleted it, re-adding it is a dirty tracked file and a silent flip back to
+ * the legacy route (§4 PM-9).
  */
-describe('setup --skip-tools — the MCP registration', () => {
-  it('2.2: writes .mcp.json at the resolved absolute root, not relative to the cwd', async () => {
-    // The cwd is moved to an empty directory it owns, because the earlier form of this test asserted
-    // `!existsSync(path.resolve('.mcp.json'))` against the AMBIENT cwd — which made its verdict depend
-    // on where vitest was launched. From this package that path is `apps/infra-kit/cli/.mcp.json` and
-    // the test passed; from the repo root it is the repository's OWN committed `.mcp.json` and the test
-    // failed. A test that asserts something about the cwd has to own the cwd, or it is asserting
-    // something about the launcher. `readdirSync` is also stricter than the old check: it proves
-    // NOTHING was written here, not merely that one filename is absent.
-    const cwdBefore = process.cwd()
-    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'init-pointer-cwd-'))
+describe('setup --skip-tools — the MCP registration is read-only', () => {
+  const SIBLING_ONLY = `{\n  "mcpServers": {\n    "linear-server": { "type": "http", "url": "https://mcp.linear.app/mcp" }\n  }\n}\n`
+  const WITH_KEY = `{\n  "mcpServers": {\n    "infra-kit": { "type": "stdio", "command": "infra-kit", "args": ["mcp"] },\n    "linear-server": { "type": "http", "url": "https://mcp.linear.app/mcp" }\n  }\n}\n`
 
-    process.chdir(elsewhere)
+  const writeAged = (content: string): number => {
+    writeFile(mcpPath(), content)
 
-    try {
-      await runInit()
+    const aged = new Date(Date.now() - 60_000)
 
-      expect(fs.readdirSync(elsewhere)).toEqual([])
-    } finally {
-      process.chdir(cwdBefore)
-      fs.rmSync(elsewhere, { recursive: true, force: true })
-    }
+    fs.utimesSync(mcpPath(), aged, aged)
 
-    expect(readMcp().mcpServers?.[MARKETPLACE_NAME]).toEqual({ type: 'stdio', command: 'infra-kit', args: ['mcp'] })
-    // Aimed at the root, not the cwd — the distinction the whole gate exists to make.
-    expect(path.isAbsolute(mcpPath())).toBe(true)
+    return fs.statSync(mcpPath()).mtimeMs
+  }
+
+  it('leaves a sibling-only .mcp.json byte-identical and reports the server as served by the plugin', async () => {
+    const mtime = writeAged(SIBLING_ONLY)
+
+    await runInit()
+
+    expect(fs.readFileSync(mcpPath(), 'utf-8')).toBe(SIBLING_ONLY)
+    expect(fs.statSync(mcpPath()).mtimeMs).toBe(mtime)
+    expect(linesMatching(/served by the Claude Code plugin/)).toHaveLength(1)
+    expect(linesMatching(/created\s+\.mcp\.json|added the infra-kit MCP server/)).toHaveLength(0)
+  })
+
+  it('leaves a leftover infra-kit key byte-identical and prints the advisory, at info, once', async () => {
+    const mtime = writeAged(WITH_KEY)
+
+    await runInit()
+
+    expect(fs.readFileSync(mcpPath(), 'utf-8')).toBe(WITH_KEY)
+    expect(fs.statSync(mcpPath()).mtimeMs).toBe(mtime)
+
+    const advisories = linesMatching(/still registers the "infra-kit" MCP server/)
+
+    expect(advisories).toHaveLength(1)
+    expect(advisories[0]).toContain('shadows the plugin')
+    expect(advisories[0]).toContain('nothing to fix on this machine')
+    expect(advisories[0]).toContain('delete the "infra-kit" entry from .mcp.json by hand')
+    expect(
+      warnLines().filter((line) => {
+        return line.includes('.mcp.json')
+      }),
+    ).toHaveLength(0)
+  })
+
+  it('creates no .mcp.json when there is none (AC-6)', async () => {
+    await runInit()
+
+    expect(fs.existsSync(mcpPath())).toBe(false)
+    expect(linesMatching(/served by the Claude Code plugin/)).toHaveLength(1)
+  })
+
+  it('warns, naming the key, on our server filed under another key', async () => {
+    writeAged(`{\n  "mcpServers": {\n    "ik": { "type": "stdio", "command": "infra-kit", "args": ["mcp"] }\n  }\n}\n`)
+
+    await runInit()
+
+    const warnings = warnLines().filter((line) => {
+      return line.includes('"ik"')
+    })
+
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('second server process')
+  })
+
+  it('reads AFTER the plugin install, so the verdict is about the server the install just put here', async () => {
+    writeAged(WITH_KEY)
+
+    const order: string[] = []
+
+    vi.mocked(installPluginForProject).mockImplementationOnce(() => {
+      order.push('install')
+
+      return { status: 'claude-missing' }
+    })
+    vi.mocked(logger.info).mockImplementation((message: unknown) => {
+      if (typeof message === 'string' && message.includes('still registers')) order.push('mcp-read')
+    })
+
+    await runInit()
+
+    expect(order).toEqual(['install', 'mcp-read'])
   })
 
   it('1.8: warns once and still exits 0 when .mcp.json is a directory', async () => {
@@ -440,7 +497,7 @@ describe('setup --skip-tools — the MCP registration', () => {
     })
 
     expect(warnings).toHaveLength(1)
-    // The steps before it still ran: a failed registration is not a reason to abandon the rest.
+    // The steps before it still ran: an unreadable file is not a reason to abandon the rest.
     expect(readSettings().enabledPlugins?.[PLUGIN_KEY]).toBe(true)
   })
 
@@ -502,8 +559,7 @@ describe('setup --skip-tools — additivity per writer', () => {
 
     await runInit()
 
-    // Already registered: no write at all, so the bytes — key order and the user's own command
-    // included — are untouched.
+    // A read, not a write: the bytes — key order and the user's own command included — are untouched.
     expect(fs.readFileSync(mcpPath(), 'utf-8')).toBe(before)
   })
 
@@ -777,7 +833,7 @@ describe('setup — the mcp-proxies step', () => {
     mcp: { grafana: { command: 'mcp-grafana', args: ['-t', 'stdio'], env: ['GRAFANA_URL'] } },
   })
 
-  it('derives one .mcp.json entry per mcp.<name>, beside the infra-kit key', async () => {
+  it('derives one .mcp.json entry per mcp.<name>, and no infra-kit key', async () => {
     writeFile(path.join(repo, 'infra-kit.json'), VALID_WITH_MCP)
     resetInfraKitConfigCache()
 
@@ -785,9 +841,7 @@ describe('setup — the mcp-proxies step', () => {
 
     const servers = readMcp().mcpServers ?? {}
 
-    expect(servers['infra-kit'], 'the add-only infra-kit key is untouched by the new step').toMatchObject({
-      command: 'infra-kit',
-    })
+    expect(servers['infra-kit'], 'the plugin serves the server; setup writes no key for it').toBeUndefined()
     expect(servers.grafana).toEqual({
       type: 'stdio',
       command: 'ik-mcp',
@@ -811,7 +865,7 @@ describe('setup — the mcp-proxies step', () => {
     expect(linesMatching(/ik-mcp/)).toHaveLength(0)
   })
 
-  it('a broken mcp block warns about THIS step only — the plugin pointer and infra-kit key still land', async () => {
+  it('a broken mcp block warns about THIS step only — the plugin pointer still lands', async () => {
     writeFile(
       path.join(repo, 'infra-kit.json'),
       JSON.stringify({
@@ -829,8 +883,7 @@ describe('setup — the mcp-proxies step', () => {
       }),
     ).toBe(true)
     expect(readSettings(), 'the plugin pointer must not be a casualty of a bad mcp block').toBeTruthy()
-    expect(readMcp().mcpServers?.['infra-kit']).toMatchObject({ command: 'infra-kit' })
-    expect(readMcp().mcpServers?.grafana).toBeUndefined()
+    expect(fs.existsSync(mcpPath()), 'nothing writes .mcp.json when the proxies step refuses').toBe(false)
   })
 
   it('stays silent when there is no infra-kit.json at all — the guidance gate already said so', async () => {
