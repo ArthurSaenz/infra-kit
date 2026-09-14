@@ -158,77 +158,43 @@ const checkCommand = async (
   }
 }
 
-export const checkZshrcInitialized = (): CheckResult => {
-  const name = 'zshrc init block'
-  const zshrcPath = path.join(os.homedir(), '.zshrc')
+/**
+ * Freshness of one marker-delimited rc block: present, and byte-equal to what `setup` would write today.
+ * `what` is the phrase the messages use for the block ("shell" / "session-env"); the file is always
+ * read from the home directory. Blind spot shared by both callers: a `/etc/zshenv`-set `ZDOTDIR` makes
+ * zsh read `$ZDOTDIR/<file>` instead, so "up to date" here can be true while the block never runs.
+ */
+const checkManagedRcBlock = (name: string, file: string, what: string, expected: string): CheckResult => {
+  const rcPath = path.join(os.homedir(), file)
+  const fix = 'Run: infra-kit setup --skip-tools'
 
-  if (!fs.existsSync(zshrcPath)) {
-    return { name, status: 'fail', message: '~/.zshrc not found. Run: infra-kit setup --skip-tools' }
+  if (!fs.existsSync(rcPath)) {
+    return { name, status: 'fail', message: `~/${file} not found. ${fix}` }
   }
 
-  const content = fs.readFileSync(zshrcPath, 'utf-8')
+  const content = fs.readFileSync(rcPath, 'utf-8')
   const startIdx = content.indexOf(MARKER_START)
   const endIdx = content.indexOf(MARKER_END)
 
   if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) {
-    return {
-      name,
-      status: 'fail',
-      message: 'infra-kit shell block missing from ~/.zshrc. Run: infra-kit setup --skip-tools',
-    }
+    return { name, status: 'fail', message: `infra-kit ${what} block missing from ~/${file}. ${fix}` }
   }
 
   const installedBlock = content.slice(startIdx, endIdx + MARKER_END.length).trim()
-  const expectedBlock = buildShellBlock().trim()
 
-  if (installedBlock !== expectedBlock) {
-    return {
-      name,
-      status: 'fail',
-      message: 'infra-kit shell block in ~/.zshrc is out of date. Run: infra-kit setup --skip-tools',
-    }
+  if (installedBlock !== expected.trim()) {
+    return { name, status: 'fail', message: `infra-kit ${what} block in ~/${file} is out of date. ${fix}` }
   }
 
-  return { name, status: 'pass', message: 'infra-kit shell block in ~/.zshrc is up to date' }
+  return { name, status: 'pass', message: `infra-kit ${what} block in ~/${file} is up to date` }
 }
 
-/**
- * Note: a `/etc/zshenv`-set `ZDOTDIR` makes zsh read `$ZDOTDIR/.zshenv` instead of `~/.zshenv`, so this
- * check reporting "up to date" against the home-directory file can still be true while the block never
- * actually runs — the same blind spot {@link checkZshrcInitialized} has for `~/.zshrc`.
- */
+export const checkZshrcInitialized = (): CheckResult => {
+  return checkManagedRcBlock('zshrc init block', '.zshrc', 'shell', buildShellBlock())
+}
+
 export const checkZshenvInitialized = (): CheckResult => {
-  const name = 'zshenv session block'
-  const zshenvPath = path.join(os.homedir(), '.zshenv')
-
-  if (!fs.existsSync(zshenvPath)) {
-    return { name, status: 'fail', message: '~/.zshenv not found. Run: infra-kit setup --skip-tools' }
-  }
-
-  const content = fs.readFileSync(zshenvPath, 'utf-8')
-  const startIdx = content.indexOf(MARKER_START)
-  const endIdx = content.indexOf(MARKER_END)
-
-  if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) {
-    return {
-      name,
-      status: 'fail',
-      message: 'infra-kit session-env block missing from ~/.zshenv. Run: infra-kit setup --skip-tools',
-    }
-  }
-
-  const installedBlock = content.slice(startIdx, endIdx + MARKER_END.length).trim()
-  const expectedBlock = buildZshenvBlock().trim()
-
-  if (installedBlock !== expectedBlock) {
-    return {
-      name,
-      status: 'fail',
-      message: 'infra-kit session-env block in ~/.zshenv is out of date. Run: infra-kit setup --skip-tools',
-    }
-  }
-
-  return { name, status: 'pass', message: 'infra-kit session-env block in ~/.zshenv is up to date' }
+  return checkManagedRcBlock('zshenv session block', '.zshenv', 'session-env', buildZshenvBlock())
 }
 
 /**
