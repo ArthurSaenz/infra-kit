@@ -324,8 +324,19 @@ describe('the release-create procedure, over the wire', () => {
   it('renders a session body that still carries the clauses an agent needs', () => {
     const body = WORKFLOW_BODIES.session
 
-    expect(body.split('\n')).toHaveLength(119)
+    expect(body.split('\n')).toHaveLength(118)
     expect(body.endsWith('\n')).toBe(false)
+
+    // The picker is the server's elicitation form, reached by calling `env-load` WITHOUT `config`; the
+    // curating rule ("four most likely" through `AskUserQuestion`, which caps a list at four) is the
+    // defect this body was rewritten to remove, so both spellings are pinned as absent. The two-shape
+    // phrase is the fallback trigger for a client that cannot render forms — the published 0.7.7
+    // answers a missing `config` with an `isError` RESULT, a future SDK may answer a JSON-RPC error.
+    expect(body).toContain('without `config`')
+    expect(body).toContain('a tool error or a refused result naming `config`')
+    expect(body).not.toContain('four most likely')
+    expect(body).not.toContain('AskUserQuestion` — one option')
+    expect(body).toContain('Never send `inputResponses` yourself')
 
     // The three tools composed, named so an agent that read the resource can call them. `env-status`
     // is deliberately NOT among them: it is named in the body only as the thing not to verify with.

@@ -28,9 +28,11 @@ import {
   atomicWriteFileSync,
   getSessionCacheDir,
 } from 'src/lib/constants'
-import { extractStderr } from 'src/lib/errors/operation-error'
+import { createEnvLoadFormProvider } from 'src/lib/env-load-form'
+import { OperationError, extractStderr } from 'src/lib/errors/operation-error'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
+import { isMcpMode } from 'src/lib/mcp-mode'
 import { listProjectEnvNames } from 'src/lib/project-envs'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { canonicalizeProjectRoot, evictStaleWarmCaches, shouldWriteWarm, writeWarmCache } from 'src/lib/warm-cache'
@@ -258,6 +260,16 @@ export const envLoad = async (args: EnvLoadArgs) => {
     // `lib/project-envs`). Deliberately NOT filtered to the envs we hold a token for: an env you cannot
     // yet load is exactly the one you need to SEE, so that picking it tells you to run
     // `infra-kit env-token-set <env>` rather than leaving you to wonder where it went.
+    //
+    // An agent that omits `config` is offered a form by the MCP seam before this handler runs; landing
+    // here headless means the client could not render one, and the refusal has to name the source.
+    if (isMcpMode()) {
+      throw new OperationError(undefined, {
+        operation: 'env-load',
+        remediation: 'call env-list, ask the human which environment, and re-call env-load with "config"',
+      })
+    }
+
     const envs = await listProjectEnvNames()
 
     commandEcho.setInteractive()
@@ -275,8 +287,7 @@ export const envLoad = async (args: EnvLoadArgs) => {
       },
       // Render to stderr so the prompt is visible when stdout is captured via $() in the shell function.
       // Only env-load and env-clear use the $() stdout-capture shell pattern.
-      // MCP-unreachable: `config` is required on the env-load tool, so no agent call lands on this picker.
-      { output: process.stderr, whenHeadless: 'unreachable' },
+      { output: process.stderr, whenHeadless: 'refuse' },
     )
   }
 
@@ -528,12 +539,16 @@ export const parseDopplerSecretsJson = (stdout: string): Array<[string, string]>
 export const envLoadMcpTool = defineMcpTool({
   name: 'env-load',
   description:
-    'Download the env vars for a Doppler config and write them to a temporary shell script. Does NOT mutate the calling process — returns the path to a script that must be sourced ("source <filePath>") for the vars to take effect. The infra-kit shell wrapper auto-sources; direct MCP callers must handle sourcing themselves or surface filePath to the user. "config" is required when invoked via MCP (the CLI interactive picker is unreachable without a TTY).',
+    'Download the env vars for a Doppler config and write them to a temporary shell script. Does NOT mutate the calling process — returns the path to a script that must be sourced ("source <filePath>") for the vars to take effect. The infra-kit shell wrapper auto-sources; direct MCP callers must handle sourcing themselves or surface filePath to the user. Omit "config" and this server offers the human a form listing every environment env-list knows, token-less ones marked; a client that cannot render one gets a refusal naming the missing field — call env-list and ask the human, never guess.',
   inputSchema: {
     config: z
       .string()
-      .describe('Doppler config / environment name to load (e.g. "dev", "arthur", "renana"). Required for MCP calls.'),
+      .optional()
+      .describe(
+        'Doppler config / environment name to load (e.g. "dev", "arthur"). Omit it to have the human choose from a form.',
+      ),
   },
+  formProvider: createEnvLoadFormProvider(),
   outputSchema: {
     filePath: z.string().describe('Path to the file that must be sourced to apply variables'),
     variableCount: z.number().describe('Number of variables loaded'),

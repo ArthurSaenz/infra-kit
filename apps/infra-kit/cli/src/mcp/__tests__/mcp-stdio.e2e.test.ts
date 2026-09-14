@@ -1,19 +1,23 @@
-import { Client } from '@modelcontextprotocol/client'
+import { Client, isInputRequiredResult } from '@modelcontextprotocol/client'
+import type { CallToolResult, ElicitRequestFormParams, ElicitResult } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { Client as ClientV1 } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport as StdioClientTransportV1 } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { commandCatalog, getExposedMcpTools } from 'src/lib/command-catalog'
 import { LOG_FILE_PATH } from 'src/lib/logger'
+import { deployableEnvs } from 'src/lib/workflow-envs'
 import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
 import type { McpLaunch } from 'src/mcp/tool-prefix'
 
+import { makeEnvPickerFixture } from './helpers/env-picker-fixture'
+import type { EnvPickerFixture } from './helpers/env-picker-fixture'
 import { KILL_SWITCHES, buildMcpBundle, makeDisposableSession } from './helpers/mcp-harness'
 import { TEE_PROXY_SOURCE, readTee } from './helpers/stdio-tee'
 import type { TeeConnection, TeeLog } from './helpers/stdio-tee'
@@ -40,7 +44,9 @@ import type { TeeConnection, TeeLog } from './helpers/stdio-tee'
  *   long-lived : shared bare v2 client (E1/E2/E3/E6/E9/O2 + E8c control), v1 client (E7),
  *                legacy gate fixture (E4/E5), pinned-modern client (E8b + E1m/E2m/E3m/E6m/E9m),
  *                pinned-modern gate fixture (E4m/E5m),
- *                pinned-modern client THROUGH THE TEE PROXY (W1a-modern + W1e + O1's modern half)
+ *                pinned-modern client THROUGH THE TEE PROXY (W1a-modern + W1e + O1's modern half),
+ *                env-picker fixture: legacy form client (E-L1/E-L2), url-only client (E-L3),
+ *                manual pinned-modern client (E-M1/E-M2/E-M3), loaded-session client (SEC)
  *   short-lived: W1 raw ×2 (also carries O1's legacy half), E8a auto ×1, E3p plugin-launch ×1, O6 ×1
  *
  * Every NEGOTIATED connection — E8a's `auto` client and each pinned client — additionally spawns a
@@ -158,16 +164,16 @@ const rawSession = (
   })
 }
 
-const connectV2 = async (env: NodeJS.ProcessEnv = childEnv()): Promise<Client> => {
+const connectV2 = async (env: NodeJS.ProcessEnv = childEnv(), cwd?: string): Promise<Client> => {
   const client = new Client({ name: 'e2e-v2', version: '0.0.0' })
 
-  await client.connect(new StdioClientTransport({ command: process.execPath, args: [mcpPath], env: env as any }))
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [mcpPath], env: env as any, cwd }))
 
   return client
 }
 
-/** Long-lived pinned-modern connections. Closed in `afterAll` so no served child outlives the file. */
-const pinnedClients: Client[] = []
+/** Every long-lived connection — pinned-modern and the form lanes' — closed in `afterAll` so no served child outlives the file. */
+const longLivedClients: Client[] = []
 
 /**
  * A client PINNED to `2026-07-28`. `pin` has no legacy fallback, so `connect()` resolving is itself
@@ -193,7 +199,7 @@ const connectPinnedModern = async (env: NodeJS.ProcessEnv = childEnv(), args?: s
     new StdioClientTransport({ command: process.execPath, args: args ?? [mcpPath], env: env as any }),
   )
 
-  pinnedClients.push(client)
+  longLivedClients.push(client)
 
   return client
 }
@@ -517,7 +523,7 @@ afterAll(async () => {
   // Closed rather than swept: a pinned connection's served child is owned by its transport, and
   // closing the client is what stops it. The SIGKILL sweep below only reaches children this file
   // spawned itself. A close that throws (already-dead child) must not mask the sweep.
-  for (const client of pinnedClients) {
+  for (const client of longLivedClients) {
     try {
       await client.close()
     } catch {
@@ -908,6 +914,447 @@ describe('e4m/E5m — the confirm gate over a PINNED MODERN connection', () => {
 })
 /* eslint-enable sonarjs/assertions-in-tests */
 
+/*
+ * ---------------------------------------------------------------------------------------------
+ * The `env-load` argument form over the wire — docs/session-env-picker-plan.md §6.4.
+ *
+ * `env-load` is UNGATED: the form fills `config`, it never withholds execution. So unlike E4/E5 the
+ * proof that the handler ran is not a file — a token-less load writes nothing — but the handler's
+ * OWN auth error naming the env the form chose (`env-token-set stage`), which nothing upstream of
+ * the handler can produce. The proof that it did NOT run is that text's absence.
+ *
+ * OBS — WHERE THE `Tool execution …` LINES ACTUALLY GO. The plan reads them from `LOG_FILE_PATH`,
+ * and `o2` explains their absence there as pino's async buffer. Both are wrong about the mechanism:
+ * `src/lib/logger`'s `logger` singleton is `initLoggerCLI()` — pino-pretty on fd 2 — and the MCP
+ * entry's `initLoggerMcp()` file logger is a SECOND instance that only the entry writes to. The
+ * tool handler logs to the child's STDERR, so that is what these lanes capture (`stderr: 'pipe'`),
+ * which also makes the attribution problem `o2` solves by pid disappear: a piped stderr belongs to
+ * exactly one child by construction.
+ * ---------------------------------------------------------------------------------------------
+ */
+
+/** A legacy form client's `elicitation/create` handler: records every request, answers with `answer`. */
+interface FormSpy {
+  calls: ElicitRequestFormParams[]
+  answer: ElicitResult
+}
+
+/** A served connection plus everything its child has written to stderr so far. */
+interface CapturedConnection {
+  client: Client
+  stderr: () => string
+}
+
+/** The handler's own auth error for the fixture's token-less env — the "handler ran" witness. */
+const authErrorFor = (fixture: EnvPickerFixture): RegExp => {
+  return new RegExp(`env-token-set ${fixture.tokenlessEnv}`)
+}
+
+/** Every text block of a result, joined: the handler's error and the chokepoint's refusal both travel as text. */
+const resultText = (result: CallToolResult): string => {
+  return result.content
+    .map((block) => {
+      return block.type === 'text' ? block.text : ''
+    })
+    .join('\n')
+}
+
+/**
+ * Spawns the server in the fixture repo behind `client`, capturing the child's stderr. Long-lived:
+ * every connection made here is closed in `afterAll`.
+ */
+const connectCaptured = async (client: Client, fixture: EnvPickerFixture): Promise<CapturedConnection> => {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [mcpPath],
+    env: fixture.env as Record<string, string>,
+    cwd: fixture.repo,
+    stderr: 'pipe',
+  })
+
+  let captured = ''
+
+  // Attached BEFORE `connect()`: the transport hands out its `PassThrough` at construction precisely so
+  // nothing the child writes at boot is lost.
+  transport.stderr?.on('data', (chunk: Uint8Array | string) => {
+    captured += String(chunk)
+  })
+
+  await client.connect(transport)
+  longLivedClients.push(client)
+
+  return {
+    client,
+    stderr: () => {
+      return captured
+    },
+  }
+}
+
+/** A bare 2025-era client that CAN render a form — the served side reaches it through the SDK's legacy shim. */
+const connectLegacyFormClient = (fixture: EnvPickerFixture, spy: FormSpy): Promise<CapturedConnection> => {
+  const client = new Client({ name: 'e2e-form', version: '0.0.0' }, { capabilities: { elicitation: { form: {} } } })
+
+  client.setRequestHandler('elicitation/create', (request) => {
+    spy.calls.push(request.params as ElicitRequestFormParams)
+
+    return spy.answer
+  })
+
+  return connectCaptured(client, fixture)
+}
+
+/** A 2025-era client that declares elicitation but NOT the form mode — the one client a form must never reach. */
+const connectUrlOnlyClient = (fixture: EnvPickerFixture): Promise<CapturedConnection> => {
+  return connectCaptured(
+    new Client({ name: 'e2e-url-only', version: '0.0.0' }, { capabilities: { elicitation: { url: {} } } }),
+    fixture,
+  )
+}
+
+/**
+ * A client PINNED to 2026-07-28 that drives the multi-round-trip flow BY HAND: `autoFulfill: false`
+ * turns the SDK's driver off, and each call opts in with `allowInputRequired: true` so an
+ * `input_required` result is handed back instead of being fulfilled through the handler above.
+ * That is what lets E-M3 post an accept the server never asked for.
+ */
+const connectManualModern = (fixture: EnvPickerFixture): Promise<CapturedConnection> => {
+  return connectCaptured(
+    new Client(
+      { name: 'e2e-manual-modern', version: '0.0.0' },
+      {
+        versionNegotiation: { mode: { pin: '2026-07-28' } },
+        inputRequired: { autoFulfill: false },
+        capabilities: { elicitation: { form: {} } },
+      },
+    ),
+    fixture,
+  )
+}
+
+/** `env-load` with `config` omitted, on the manual modern driver. `extra` carries a hand-posted round 2. */
+const callEnvLoadManually = (client: Client, extra: Record<string, unknown> = {}): Promise<CallToolResult> => {
+  return client.callTool({ name: 'env-load', arguments: {}, ...extra }, { allowInputRequired: true })
+}
+
+/** A hand-posted `inputResponses` carrying one answer to the form under its registered key. */
+const answered = (answer: ElicitResult): { inputResponses: Record<string, unknown> } => {
+  return { inputResponses: { args: answer } }
+}
+
+/**
+ * The stderr this lane's calls produced: everything the child wrote after `mark`. Polled, because
+ * pino-pretty writes to fd 2 on its own schedule and the tool result can land a tick ahead of it.
+ */
+const stderrSince = (connection: CapturedConnection, mark: number): (() => string) => {
+  return () => {
+    return connection.stderr().slice(mark)
+  }
+}
+
+describe('e-l1–e-l3 — the env-load form on a 2025-era connection', () => {
+  let fixture: EnvPickerFixture
+  let form: CapturedConnection
+  let urlOnly: CapturedConnection
+  const spy: FormSpy = { calls: [], answer: { action: 'cancel' } }
+
+  beforeAll(async () => {
+    fixture = await makeEnvPickerFixture()
+    tmpDirs.push(...fixture.dirs)
+
+    form = await connectLegacyFormClient(fixture, spy)
+    urlOnly = await connectUrlOnlyClient(fixture)
+  }, 45_000)
+
+  it('e-l1: omitting `config` draws ONE form whose choices are what env-list reports; accepting runs the handler with the choice', async () => {
+    // The enum is compared against `env-list` over the SAME connection, not the fixture's literal:
+    // the claim is that the picker and `env-list` are one source, and a literal would pass while they
+    // disagreed. The literal guards only the fixture itself — that the server really sees the workflow.
+    const listed = await form.client.callTool({ name: 'env-list', arguments: {} })
+    const configs = (listed.structuredContent as { configs?: string[] } | undefined)?.configs
+
+    expect(configs, 'fixture precondition: the server must see the fixture workflow').toEqual([...fixture.envNames])
+
+    const mark = form.stderr().length
+
+    spy.calls.length = 0
+    spy.answer = { action: 'accept', content: { config: fixture.tokenlessEnv } }
+
+    const result = await form.client.callTool({ name: 'env-load', arguments: {} })
+
+    // Delete the `formProvider` wiring on `envLoadMcpTool` → the spy is never called and the handler
+    // refuses headless (`command-catalog.test.ts` pins the same wiring from the catalog side).
+    expect(spy.calls).toHaveLength(1)
+
+    const requested = spy.calls[0]?.requestedSchema
+
+    expect(Object.keys(requested?.properties ?? {})).toEqual(['config'])
+    expect(requested?.properties.config).toMatchObject({ enum: configs })
+    expect(requested?.required).toEqual(['config'])
+
+    // The handler ran with the ACCEPTED `config`: only the load path can name the env in an
+    // `env-token-set` remediation, and only `stage` is token-less in the fixture.
+    expect(result.isError).toBe(true)
+    expect(resultText(result)).toMatch(authErrorFor(fixture))
+    expect(result.structuredContent).toBeUndefined()
+    expect(existsSync(join(fixture.sessionDir, 'env-load.sh')), 'a token-less load must write nothing').toBe(false)
+
+    // OBS: the two lines the ungated path logs, in this child's stderr. Delete the
+    // `Tool execution form accepted` line in `resolveUngatedForm` → this reddens.
+    await expect.poll(stderrSince(form, mark), { timeout: 3_000 }).toContain('Tool execution form requested: env-load')
+    await expect.poll(stderrSince(form, mark), { timeout: 3_000 }).toContain('Tool execution form accepted: env-load')
+  }, 45_000)
+
+  it('e-l2: declining the form is terminal — `form_declined`, one form, no load, no second prompt', async () => {
+    const mark = form.stderr().length
+
+    spy.calls.length = 0
+    spy.answer = { action: 'decline' }
+
+    const result = await form.client.callTool({ name: 'env-load', arguments: {} })
+
+    // Delete `buildFormDeclined` on row U2 → the handler runs with the round-1 arguments and answers
+    // with its own refusal text instead of this shape.
+    expect(spy.calls).toHaveLength(1)
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toMatchObject({ status: 'form_declined', tool: 'env-load', action: 'decline' })
+    expect(resultText(result)).not.toMatch(authErrorFor(fixture))
+    expect(existsSync(join(fixture.sessionDir, 'env-load.sh'))).toBe(false)
+
+    await expect
+      .poll(stderrSince(form, mark), { timeout: 3_000 })
+      .toContain('Tool execution form declined (decline): env-load')
+    expect(form.stderr().slice(mark)).not.toContain('Tool execution form accepted')
+  }, 45_000)
+
+  it("e-l3: a client that cannot render a form gets the handler's refusal naming `config` and `env-list`, not the shim's", async () => {
+    const mark = urlOnly.stderr().length
+
+    spy.calls.length = 0
+
+    const result = await urlOnly.client.callTool({ name: 'env-load', arguments: {} })
+
+    // Probe `caps?.elicitation` instead of `caps?.elicitation?.form` → the chokepoint offers the form,
+    // the SDK's legacy shim cannot deliver it, and the result carries the shim's "did not declare the
+    // required capability" text instead of a refusal that sends the agent to `env-list`.
+    expect(spy.calls).toHaveLength(0)
+    expect(result.isError).toBe(true)
+
+    const text = resultText(result)
+
+    expect(text).toContain('config')
+    expect(text).toContain('env-list')
+    expect(text).not.toContain('did not declare the required capability')
+    expect(text).not.toMatch(authErrorFor(fixture))
+    expect(result.structuredContent).toBeUndefined()
+
+    // OBS: the refusal is the HANDLER's, so the chokepoint logged neither a request nor an outcome.
+    await expect.poll(stderrSince(urlOnly, mark), { timeout: 3_000 }).toContain('Tool execution failed: env-load')
+    expect(urlOnly.stderr().slice(mark)).not.toContain('Tool execution form')
+  }, 45_000)
+})
+
+describe('e-m1–e-m3 — the env-load form on a PINNED MODERN connection, driven by hand', () => {
+  let fixture: EnvPickerFixture
+  let manual: CapturedConnection
+
+  beforeAll(async () => {
+    fixture = await makeEnvPickerFixture()
+    tmpDirs.push(...fixture.dirs)
+
+    manual = await connectManualModern(fixture)
+
+    assertConnectionIsModern(manual.client)
+  }, 45_000)
+
+  it('e-m1: omitting `config` answers `input_required` with ONE form; posting the accept back runs the handler', async () => {
+    const round1 = await callEnvLoadManually(manual.client)
+
+    // The modern driver path: the same chokepoint answers with the SDK's `input_required` result
+    // instead of a server→client request, and the client — not a shim — carries the answer back.
+    const form = isInputRequiredResult(round1) ? round1 : undefined
+
+    expect(form, `expected input_required, got: ${JSON.stringify(round1)}`).toBeDefined()
+
+    const request = form?.inputRequests?.args as { method: string; params: ElicitRequestFormParams } | undefined
+
+    expect(Object.keys(form?.inputRequests ?? {})).toEqual(['args'])
+    expect(request?.method).toBe('elicitation/create')
+    expect(request?.params.requestedSchema.properties.config).toMatchObject({ enum: [...fixture.envNames] })
+
+    // `requestState` is echoed byte-exact when the server issued one — the driver's contract, kept by hand here.
+    const round2 = await callEnvLoadManually(manual.client, {
+      ...answered({ action: 'accept', content: { config: fixture.tokenlessEnv } }),
+      ...(form?.requestState === undefined ? {} : { requestState: form.requestState }),
+    })
+
+    expect(round2.isError).toBe(true)
+    expect(resultText(round2)).toMatch(authErrorFor(fixture))
+  }, 45_000)
+
+  it('e-m2: a hand-posted decline is terminal — `form_declined`, the handler never ran', async () => {
+    const result = await callEnvLoadManually(manual.client, answered({ action: 'decline' }))
+
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toMatchObject({ status: 'form_declined', tool: 'env-load', action: 'decline' })
+    expect(resultText(result)).not.toMatch(authErrorFor(fixture))
+  }, 45_000)
+
+  it('e-m3: an accept the server never asked for is validated like any other — a known env runs, an unknown one is discarded', async () => {
+    // Row U3 is reachable with no form ever offered: on the modern era a client may send
+    // `inputResponses` on any `tools/call`, and the stateless server cannot tell a driver re-entry
+    // from a hand-posted accept (plan F14). The guarantee is therefore not "a human chose" but "the
+    // ungated form path can execute nothing a direct call could not" — an accept is validated against
+    // a schema built on THIS request, and what runs is exactly `env-load {config}`.
+    const known = await callEnvLoadManually(
+      manual.client,
+      answered({ action: 'accept', content: { config: fixture.tokenlessEnv } }),
+    )
+
+    expect(known.isError).toBe(true)
+    expect(resultText(known)).toMatch(authErrorFor(fixture))
+
+    // Skip `readAcceptedArgs`'s schema validation → `nope` reaches the handler and fails on the token
+    // store instead of being discarded here.
+    const unknown = await callEnvLoadManually(
+      manual.client,
+      answered({ action: 'accept', content: { config: 'nope' } }),
+    )
+
+    expect(unknown.isError).toBe(true)
+    expect(unknown.structuredContent).toMatchObject({
+      status: 'form_discarded',
+      tool: 'env-load',
+      reason: 'validation',
+    })
+    expect(resultText(unknown)).not.toContain('env-token-set')
+  }, 45_000)
+
+  it('e-d1m: the GATED deploy-all form is offered on the modern era too — `input_required` before any gate', async () => {
+    // docs/release-deploy-command-plan.md E1, modern half. Never live over stdio before the
+    // envelope-first capability read in `src/mcp/tools/index.ts`: with the accessor alone, a modern
+    // stdio call read no capabilities, skipped the form, and answered the confirm gate straight away.
+    // Revert that read → this lane gets `confirmation_required` instead of a form.
+    const round1 = await manual.client.callTool(
+      { name: 'gh-release-deploy-all', arguments: { version: fixture.releaseLabel } },
+      { allowInputRequired: true },
+    )
+    const form = isInputRequiredResult(round1) ? round1 : undefined
+
+    expect(form, `expected input_required, got: ${JSON.stringify(round1)}`).toBeDefined()
+
+    const request = form?.inputRequests?.args as { method: string; params: ElicitRequestFormParams } | undefined
+    const properties = request?.params.requestedSchema.properties ?? {}
+
+    expect(request?.method).toBe('elicitation/create')
+    // Both fields ride one form (the provider offers every field it owns, blank keeps the caller's);
+    // the env enum is the workflow's list minus the protected envs this project may not reach.
+    expect(Object.keys(properties).sort()).toEqual(['env', 'version'])
+    expect(properties.env).toMatchObject({ enum: deployableEnvs([...fixture.envNames]) })
+    expect(properties.version).toMatchObject({ enum: [fixture.releaseLabel, 'dev'] })
+  }, 45_000)
+})
+
+describe('sec — a loaded session file never leaks a VALUE through the read-only env tools', () => {
+  /**
+   * `env-status` and `env-list` are the two tools an agent calls freely before and after a load.
+   * `env-status` opens `env-load.sh` to COUNT its variables; `env-list` reads the token store next
+   * to it. A hand-written session file with one unmistakable value is the haystack, and the
+   * assertion is that the value appears nowhere in either result — not in `structuredContent`, not in
+   * the text rendering.
+   *
+   * The session vars are set on the CHILD because `env-status` only opens the file when
+   * `INFRA_KIT_ENV_CONFIG` says something is loaded; without them the count stays 0, the file is
+   * never read, and the lane would pass without looking. `sessionTotalCount` is asserted to prove
+   * the read happened.
+   */
+  let fixture: EnvPickerFixture
+  let client: Client
+
+  beforeAll(async () => {
+    fixture = await makeEnvPickerFixture()
+    tmpDirs.push(...fixture.dirs)
+
+    mkdirSync(fixture.sessionDir, { recursive: true })
+    // The exact shape `buildEnvLoadFileLines` writes — `parseVarNamesFromEnvFile` reads assignments, not `export`s.
+    writeFileSync(join(fixture.sessionDir, 'env-load.sh'), ['set -a', "FOO='s3cr3t-value'", 'set +a', ''].join('\n'))
+
+    const loadedEnv: NodeJS.ProcessEnv = {
+      ...fixture.env,
+      INFRA_KIT_ENV_CONFIG: fixture.tokenlessEnv,
+      INFRA_KIT_ENV_PROJECT: 'env-picker-project',
+      INFRA_KIT_ENV_LOADED_AT: new Date().toISOString(),
+    }
+
+    client = await connectV2(loadedEnv, fixture.repo)
+    longLivedClients.push(client)
+  }, 45_000)
+
+  it('sec: env-status counts the session file without echoing its values', async () => {
+    const result = await client.callTool({ name: 'env-status', arguments: {} })
+
+    expect(result.isError ?? false).toBe(false)
+    expect(result.structuredContent).toMatchObject({ sessionConfig: fixture.tokenlessEnv, sessionTotalCount: 1 })
+    expect(JSON.stringify(result)).not.toContain('s3cr3t-value')
+  }, 45_000)
+
+  it('sec: env-list reports token PRESENCE and nothing from the session file', async () => {
+    const result = await client.callTool({ name: 'env-list', arguments: {} })
+
+    expect(result.isError ?? false).toBe(false)
+    expect(result.structuredContent).toMatchObject({ configs: [...fixture.envNames] })
+
+    const serialized = JSON.stringify(result)
+
+    expect(serialized).not.toContain('s3cr3t-value')
+    // The token store sits beside the session file and is read by this tool — its value must not leak either.
+    expect(serialized).not.toContain('dp.st.dev.x')
+  }, 45_000)
+})
+
+describe('e-skew — a straggler CLI and the live server both answer `env-load {}` with a RESULT naming `config`', () => {
+  /**
+   * The plan's F13 said the published 0.7.7 answers a JSON-RPC `-32602` ERROR. V0.6
+   * (docs/reviews/session-env-picker-v0.md) captured the real wire and refuted it: the SDK wraps the
+   * argument-validation failure into an `isError` RESULT before it reaches stdio. So both shapes the
+   * skill body has to survive are results — the fixture pins the straggler's, the live call pins ours —
+   * and the two are told apart by what the text names: `config` alone, or `config` AND `env-list`.
+   */
+  const captured = JSON.parse(readFileSync(join(FIXTURES, 'env-load-missing-config.0.7.7.json'), 'utf8')) as {
+    capturedFrom: { version: string; request: { params: { name: string; arguments: Record<string, unknown> } } }
+    response: { result?: { isError?: boolean; content?: { type: string; text?: string }[] }; error?: unknown }
+  }
+
+  it('e-skew: the 0.7.7 fixture is an isError RESULT (not a -32602 error) whose text names `config`', () => {
+    expect(captured.capturedFrom.version).toBe('0.7.7')
+    expect(captured.capturedFrom.request.params).toEqual({ name: 'env-load', arguments: {} })
+    expect(captured.response.error).toBeUndefined()
+    expect(captured.response.result?.isError).toBe(true)
+
+    const text = (captured.response.result?.content ?? [])
+      .map((block) => {
+        return block.text ?? ''
+      })
+      .join('\n')
+
+    expect(text).toContain('config')
+    expect(text).toMatch(/^Input validation error: Invalid arguments for tool env-load:/)
+  })
+
+  it('e-skew: the live server answers a client that cannot form with an isError RESULT naming `config` and `env-list`', async () => {
+    const client = await sharedBareV2()
+    const result = await client.callTool({ name: 'env-load', arguments: {} })
+
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toBeUndefined()
+
+    const text = resultText(result)
+
+    expect(text).toContain('config')
+    expect(text).toContain('env-list')
+  }, 45_000)
+})
+
 describe('w1 — differential wire compatibility against the pre-migration v1 baseline', () => {
   /**
    * The plan's central confidence artifact. It asserts every KNOWN delta POSITIVELY (rather than
@@ -929,6 +1376,8 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   //   D14 env-clear's description stopped naming the removed `init` (AUTHORED)     legacy + modern
   //   D15 config-get's description names the `mcp` layer-1 refusal (AUTHORED)      legacy + modern
   //   D16 version reports where it runs and which route spawned it (AUTHORED)       legacy + modern
+  //   D17 env-load's `config` went optional — `required` vanished (AUTHORED, docs/session-env-picker-plan.md §2.4)  legacy + modern
+  //   D18 env-load's description and `config` prose stopped calling the field MCP-required (AUTHORED)  legacy + modern
   // Why UNNAMED differences must fail: a normalization broad enough to swallow a known delta is
   // the same hole an unnoticed one would slip through. Only the named deltas are normalized away
   // before the whole-object comparison, and each is asserted positively FIRST so the normalization
@@ -978,6 +1427,9 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
    * re-captured. Four exposed deploy tools relaxed required fields to `.optional()` so the server
    * can offer a human a real argument form instead of leaving the agent to guess a version or an
    * environment.
+   *
+   * D17 — `env-load`'s `config`, relaxed for the session env picker — rides the same mechanism: one
+   * more entry here, one more in `w1c-pre-d12`.
    */
   // The expected post-change array is written out PER TOOL rather than blanket-emptied.
   // `local-deploy-selected` keeps `service` required — a services picker there needs an
@@ -992,6 +1444,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     'gh-release-deploy-selected': undefined,
     'local-deploy-all': undefined,
     'local-deploy-selected': ['service'],
+    'env-load': undefined,
   }
 
   const findBaselineTool = (name: string): Record<string, any> | undefined => {
@@ -1037,9 +1490,11 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   // D4 and D9 impose by naming their carriers. Copying the served text in would retire nine strings
   // from the differential permanently, which is the broad normalization PM-C warns about.
   //
-  // Scope is nine named paths on four named tools, and only `description` at each. Nothing else
+  // Scope is eleven named paths on five named tools, and only `description` at each. Nothing else
   // about these tools — `type`, `outputSchema`, property sets — is touched, so a change to any of
-  // that still reaches the comparison and fails it.
+  // that still reaches the comparison and fails it. The two `env-load` paths are D18, the prose half
+  // of D17: the literals are the ones `commands/env-load/env-load.ts` carries, so an edit there fails
+  // `w1c` until it is re-declared here.
   const D13_PROSE: Record<string, { description?: string; properties?: Record<string, string> }> = {
     'gh-release-deploy-all': {
       description:
@@ -1071,6 +1526,14 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     'local-deploy-selected': {
       properties: {
         env: 'Target environment, e.g. "dev" or a personal env like "arthur". Omit it to be offered the environments this project may reach.',
+      },
+    },
+    'env-load': {
+      description:
+        'Download the env vars for a Doppler config and write them to a temporary shell script. Does NOT mutate the calling process — returns the path to a script that must be sourced ("source <filePath>") for the vars to take effect. The infra-kit shell wrapper auto-sources; direct MCP callers must handle sourcing themselves or surface filePath to the user. Omit "config" and this server offers the human a form listing every environment env-list knows, token-less ones marked; a client that cannot render one gets a refusal naming the missing field — call env-list and ask the human, never guess.',
+      properties: {
+        config:
+          'Doppler config / environment name to load (e.g. "dev", "arthur"). Omit it to have the human choose from a form.',
       },
     },
   }
@@ -1766,7 +2229,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     ).toEqual(['local-deploy-all', 'local-deploy-selected'])
   })
 
-  it('w1c-pre-d12: D12 — the baseline really demanded the four fields that are now optional', () => {
+  it('w1c-pre-d12: D12 + D17 — the baseline really demanded the five fields that are now optional', () => {
     // The positive half of D12, held to the same bar as D4: the rewrite at load must never be what
     // makes w1c pass. If the fixture is ever re-captured against today's server these arrays arrive
     // already shrunken and this reds loudly, instead of the rewrite quietly guarding nothing.
@@ -1785,11 +2248,12 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
       'gh-release-deploy-selected': ['version', 'env', 'services'],
       'local-deploy-all': ['env'],
       'local-deploy-selected': ['env', 'service'],
+      'env-load': ['config'],
     })
   })
 
-  it('w1c-pre-d13: D13 — every rewritten string really carried the now-false "required for MCP" prose', () => {
-    // The positive half of D13. Two claims: the rewrite touched EXACTLY nine paths (so it cannot
+  it('w1c-pre-d13: D13 + D18 — every rewritten string really carried the now-false "required for MCP" prose', () => {
+    // The positive half of D13. Two claims: the rewrite touched EXACTLY eleven paths (so it cannot
     // grow to cover a tool nobody declared), and every string it replaced really did tell an MCP
     // caller the field was mandatory — the claim D12 falsified and the only reason to rewrite them.
     expect(
@@ -1803,6 +2267,8 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
         'comparison guard these tools directly again.\n' +
         'If the fixture was NOT re-captured: a deploy tool changed shape and the declaration is stale.',
     ).toEqual([
+      'env-load',
+      'env-load.config',
       'gh-release-deploy-all',
       'gh-release-deploy-all.env',
       'gh-release-deploy-all.version',

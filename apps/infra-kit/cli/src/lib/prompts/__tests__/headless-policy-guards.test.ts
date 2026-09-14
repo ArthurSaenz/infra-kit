@@ -31,16 +31,12 @@ import { exposedTools, promptSites, reachableSites } from './mcp-reachable-promp
  * before either is compared to the schema.
  */
 const POLICY_SITES: Record<string, { policy: 'unreachable' | 'value'; tools: string[]; fields: string[] }> = {
-  'commands/env-load/env-load.ts#envLoad': {
-    policy: 'unreachable',
-    tools: ['env-load'],
-    fields: ['config'],
-  },
-  // NOT listed any more: `gh-release-deploy-selected#ghReleaseDeploySelected` and
-  // `lib/prompts/env-picker.ts#pickEnv`. Both claimed `'unreachable'` until PR-1 relaxed `services`
-  // and `env` to `.optional()` so the form could offer real lists — at which point G8 named all five
-  // claims false in one run. They now declare `'refuse'` at the call site, which this table does not
-  // track by design. That transition is what G8 is for, and it is the only time it has fired in anger.
+  // NOT listed any more: `gh-release-deploy-selected#ghReleaseDeploySelected`,
+  // `lib/prompts/env-picker.ts#pickEnv` and `env-load.ts#envLoad`. The first two claimed `'unreachable'`
+  // until PR-1 relaxed `services` and `env` to `.optional()` so the form could offer real lists — at
+  // which point G8 named all five claims false in one run. `env-load` followed when `config` went
+  // `.optional()` for its own form. They now declare `'refuse'` at the call site, which this table does
+  // not track by design. That transition is what G8 is for, and it is the only time it has fired in anger.
   // `local-deploy-all` never reaches `pickServices` — it takes the `selection === 'all'` branch
   // above it — so `local-deploy-selected` is the only owner, and `service` is the field.
   'commands/local-deploy/local-deploy.ts#pickServices': {
@@ -225,16 +221,25 @@ describe('g6 — a tool that promises a non-interactive answer must not refuse',
     // blocked outright. That is a CLAIM about the code below them, and this is the only place the
     // two are ever compared.
     //
-    // The two `gh-release-deploy-*` tools USED to be on this list and deliberately are not any more.
-    // Their promise was "required when invoked via MCP (interactive pickers are unavailable without a
-    // TTY)" — a true statement about a required field. PR-1 made those fields `.optional()` so a form
-    // could offer the real releases, environments and services, so the promise stopped being true and
-    // was removed with the same change. `local-deploy-selected` stays because its `service` is still
+    // The two `gh-release-deploy-*` tools and `env-load` USED to be on this list and deliberately are
+    // not any more. Their promise was "required when invoked via MCP (interactive pickers are
+    // unavailable without a TTY)" — a true statement about a required field. PR-1 made the deploy
+    // fields `.optional()` so a form could offer the real releases, environments and services, and
+    // `env-load`'s `config` followed for its own form, so the promise stopped being true and was
+    // removed with the same change. `local-deploy-selected` stays because its `service` is still
     // required and still says so. Removing a tool from here is only legitimate when its prose changed;
     // this row exists so that dropping one silently cannot happen.
     expect([...promiseCarryingTools]).toEqual(
-      expect.arrayContaining(['env-load', 'release-desc-edit', 'worktrees-add', 'local-deploy-selected']),
+      expect.arrayContaining(['release-desc-edit', 'worktrees-add', 'local-deploy-selected']),
     )
+  })
+
+  it('keeps env-load off the promise list now that a form, not a required field, owns the headless answer', () => {
+    // The description now says "omit config and a form is offered", which is a claim about the seam
+    // rather than about this handler's own prompt. Re-matching `PROMISE` would drag the `'refuse'`
+    // picker back under the "never refuse" assertion below and red it for the right tool with the
+    // wrong reason.
+    expect(promiseCarryingTools.has('env-load')).toBe(false)
   })
 
   it('never leaves a promised tool site on refuse', () => {

@@ -677,7 +677,7 @@ describe('command catalog — MCP tool annotations & titles', () => {
 
 describe('command catalog — the registered argument-form providers', () => {
   /**
-   * The four deploy tools, and only those, offer the human a form for their arguments.
+   * The four deploy tools plus `env-load`, and only those, offer the human a form for their arguments.
    *
    * Pinned as a set rather than derived: the seam is optional and every failure on it is silent, so
    * a `formProvider` dropped in a future refactor would take the pickers away without reddening
@@ -685,6 +685,7 @@ describe('command catalog — the registered argument-form providers', () => {
    * before this existed.
    */
   const EXPECTED_FORM_TOOLS = [
+    'env-load',
     'gh-release-deploy-all',
     'gh-release-deploy-selected',
     'local-deploy-all',
@@ -697,7 +698,7 @@ describe('command catalog — the registered argument-form providers', () => {
     })?.mcpTool?.formProvider
   }
 
-  it('registers a form provider on exactly the four deploy tools', () => {
+  it('registers a form provider on exactly the four deploy tools and env-load', () => {
     const withForm = commandCatalog
       .flatMap((entry) => {
         return entry.mcpExposed && entry.mcpTool?.formProvider !== undefined ? [entry.mcpTool.name] : []
@@ -715,5 +716,11 @@ describe('command catalog — the registered argument-form providers', () => {
     expect(providerFor('gh-release-deploy-selected')?.isFormable({ version: '1.2.5', env: 'dev' })).toBe(true)
     expect(providerFor('local-deploy-all')?.isFormable({ env: 'dev' })).toBe(false)
     expect(providerFor('local-deploy-selected')?.isFormable({ env: 'dev', service: ['client-be'] })).toBe(false)
+  })
+
+  it('wires env-load with the config picker — formable only while config is missing or blank', () => {
+    expect(providerFor('env-load')?.isFormable({})).toBe(true)
+    expect(providerFor('env-load')?.isFormable({ config: '' })).toBe(true)
+    expect(providerFor('env-load')?.isFormable({ config: 'dev' })).toBe(false)
   })
 })

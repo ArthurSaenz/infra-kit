@@ -58,17 +58,13 @@ ago. Never use it to verify one.
 
 **A bare token is the environment name.** Call `mcp__plugin_infra-kit_infra-kit__env-load` with `config: <token>`.
 
-**No token means the human has not chosen yet.** Call `mcp__plugin_infra-kit_infra-kit__env-list`, then ask with
-`AskUserQuestion` — one option per environment, and **no table**. You receive `structuredContent`,
-not the aligned table `env-list` prints on the CLI path, so any table here is one you hand-built from
-JSON.
-
-Carry exactly one field into the options: an environment whose `hasToken` is `false` cannot succeed,
-so annotate that option with `infra-kit env-token-set <env>` as its fix. Do not surface `source` — it
-records how we learned the environment exists, which helps nobody choose.
-
-More than four environments: offer the four most likely and let a typed "Other" carry the rest. Then
-load what they picked. Never invent a name, and never load without an explicit choice.
+**No token means the human has not chosen yet.** Call `mcp__plugin_infra-kit_infra-kit__env-load` **without `config`**:
+the server offers the human a form listing every environment, and the human's pick IS the load — there
+is no second prompt. If the call comes back as a tool error or a refused result naming `config`, this client cannot
+render forms: call `mcp__plugin_infra-kit_infra-kit__env-list` and show **every** entry as a numbered prose list,
+`hasToken: false` annotated with `infra-kit env-token-set <env>`, then ask in prose which one. Never
+`AskUserQuestion` — it caps the list at four and drops the rest — never invent a name, and never load
+without an explicit choice.
 
 ## 4. The list is local and may be wrong
 
@@ -97,7 +93,8 @@ was cleared. Show the human what it resolved, because that is the approval momen
 those arguments unchanged plus `"confirm": true` and the `confirmToken` from call 1. A mismatch comes
 back `confirmation_refused`, which is terminal — mint a fresh gate, never reuse a token.
 
-`env-load` is not gated. Say so if the human expects a prompt, so nobody waits for one that never comes.
+`env-load` is not gated, but it can PROMPT: called without `config` it offers an argument form, not a confirm
+gate, and the human's pick is the load. Say so if the human expects a second prompt, so nobody waits for one.
 
 **The tie hazard.** The shell's clear gate compares mtimes in whole seconds and strictly, while its
 load gate does not. A clear whose file lands in the same wall-clock second as the load it follows
@@ -117,3 +114,5 @@ where nothing interposes. Raise it when a clear closely follows a load, not on e
   single-quoted secrets — printing one puts it in the transcript.
 - Do not read `isError: true` on a `confirmation_required` payload as a failure. See section 6.
 - Do not verify a load with `env-status` over MCP. See section 2.
+- Do not supply a `config` the human did not name in order to skip the form.
+- Never send `inputResponses` yourself — that field is the human's answer, and the server cannot tell yours from theirs.
