@@ -714,9 +714,8 @@ test('T1b: T1 is scoped to skills, and the command does name an infra-kit MCP to
   assert.match(t1Body, /walkFiles\(SKILLS_DIR\)/, 'T1 must walk SKILLS_DIR — widening it breaks the fallback clause')
 
   // Half two: every command really does depend on that scoping. Naming the tool in prose is the ONLY
-  // binding mechanism a command has; there is no declarative command→tool wiring. Looped over
-  // EXPECTED_COMMANDS rather than hardcoding one file: a command whose fallback clause was quietly
-  // dropped would otherwise stay green, and the boundary would be proven for a single file only.
+  // binding mechanism a command has; there is no declarative command→tool wiring. Every command, not
+  // one — a fallback clause quietly dropped from a second command would otherwise stay green.
   for (const name of EXPECTED_COMMANDS) {
     const command = join(COMMANDS_DIR, name)
     assert.match(

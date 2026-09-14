@@ -87,10 +87,8 @@ test('G-A5: a command naming no workflow URI is a violation', () => {
   assert.match(violations[0], /names no infra-kit:\/\/workflow/)
 })
 
-// G-A1–G-A5 all use the fictional `release-deploy`. G-A6 is the first row covering a second REAL
-// command: `session` shipped as a resource in 0.5.2 with a plugin command that landed later, so a
-// floor below that release plus a served list holding only release-create is the exact state the
-// gate exists to refuse — and it must name `session`, not the command that is fine.
+// G-A1–G-A5 use the fictional `release-deploy`; G-A6 is the first row over two REAL commands. A
+// published CLI below session's floor must be refused naming `session`, not the command that is fine.
 test('G-A6: session is refused while the published CLI predates its resource', () => {
   const violations = collectViolations({
     commands: [command('release-create'), command('session', { floor: '0.5.2' })],
@@ -99,7 +97,6 @@ test('G-A6: session is refused while the published CLI predates its resource', (
   })
 
   assert.equal(violations.length, 1)
-  assert.match(violations[0], /session/)
   assert.match(violations[0], /infra-kit:\/\/workflow\/session/)
   assert.doesNotMatch(violations[0], /release-create/)
 })

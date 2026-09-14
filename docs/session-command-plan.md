@@ -1,6 +1,6 @@
 # `/infra-kit:session` — plan
 
-**Status: S1–S3 shipped (S1 `5a34d47`, S2 infra-kit 0.5.2, S3 `plugins/infra-kit/commands/session.md`, plugin 0.4.0). S4 — the real-terminal shell round trip — is still open.**
+**Status: S1–S3 shipped (S1 `5a34d47`, S2 infra-kit 0.5.2, S3 `plugins/infra-kit/commands/session.md`, plugin 0.4.0). S4 run 2026-09-14: AC1–AC4 pass, the PM-4 tie is unreachable by design, one out-of-scope stdout finding recorded.**
 
 Read §1 to review scope. The derivation that produced it is in Appendix A; the ADR is Appendix B.
 
@@ -399,6 +399,57 @@ transcript pasted into it.
 the load on `load_mtime >= clear_mtime` (**non-strict**) while `:828` gates the clear on
 `clear_mtime > load_mtime` (**strict**), and `zstat +mtime` is integer seconds. Verified by reading
 both lines.
+
+### S4 run — 2026-09-14, infra-kit@0.5.6 (published, `~/Library/pnpm/bin/infra-kit`), hulyo-monorepo
+
+Terminal: a fresh `zsh -i` in tmux with `INFRA_KIT_SESSION` unset at spawn so the rc minted one.
+Client: a scripted stdio client (`initialize` → `notifications/initialized` → `tools/call`) with
+`INFRA_KIT_SESSION=6389e2c0` in its env, cwd `hulyo-monorepo`. Config `arthur` — the shell had
+already warm-loaded `dev` at prompt 0, so `dev` would not have distinguished the load from the cache.
+
+```
+$ echo "SESSION=$INFRA_KIT_SESSION STARTED=$_INFRA_KIT_SHELL_STARTED"
+SESSION=6389e2c0 STARTED=1789376034
+infra-kit: auto-loaded vars for dev                      ← warm cache at prompt 0, not the probe
+
+# stdio client: tools/call env-load {"config":"arthur"}
+pre  mtime: 1789376540
+post mtime: 1789376580                                   ← advanced, and ≥ 1789376034
+structuredContent.filePath = /Users/arthur/.cache/infra-kit/6389e2c0/env-load.sh
+                                                         ← penultimate segment == INFRA_KIT_SESSION
+# ⏎ in the tmux shell
+infra-kit: auto-loaded vars for arthur
+$ infra-kit env-status
+  arthur: 61 of 61 vars loaded (manually loaded, project: hulyo, loadedAt: 2026-09-14T09:03:00, session: 6389e2c0)
+
+# negative control: same call, INFRA_KIT_SESSION unset in the client env
+isError: true, text: "INFRA_KIT_SESSION is not set. Run `infra-kit setup --skip-tools` then `source ~/.zshrc`."
+
+# tie probe: env-load, then env-clear round 1 → confirmation_required + confirmToken,
+# round 2 {confirm:true, confirmToken} — no human between the calls
+env-clear.sh mtime: 1789376604
+env-load.sh  mtime: (file absent)
+# ⏎ in the tmux shell
+infra-kit: auto-cleared env
+$ infra-kit env-status
+  Session 6389e2c0: no env loaded (cleared — auto-load suppressed until a new shell or explicit env-load)
+```
+
+**Verdict.** AC1–AC4 pass. AC5 has a third outcome the criteria did not list: the tie **cannot be
+constructed** on the shipped path, because `env-clear` unlinks `env-load.sh` after writing the clear
+file (`env-clear.ts:108`, deliberate — "so the next env-clear call correctly reports 'no env
+loaded'"). The precmd then reads `load_mtime=0`, and `clear_mtime > 0` holds regardless of the
+second. The strict/non-strict asymmetry (`init.ts:928/934` today; the plan above cites the older `:822/828`) is real but unreachable; the PM-4
+spin-off is **not opened**.
+
+**Finding, out of scope (D2 forbids touching `env-load` here) — spin-off:**
+`[DO] env-load/env-clear: keep filePath off stdout when served over MCP`. Both tools
+`process.stdout.write(filePath)` unconditionally (`env-load.ts:293`, `env-clear.ts:104`) — the line
+the zsh wrapper captures. Over `infra-kit mcp` stdout **is** the JSON-RPC transport, so every call
+emits one bare, non-JSON line between frames. The v1 SDK's `ReadBuffer` consumes the line and routes
+it to `onerror`, so Claude Code works by tolerance, and a strict client (or a v2 host that treats
+transport errors as fatal) would not. Verified: the probe printed
+`/Users/arthur/.cache/infra-kit/6389e2c0/env-load.sh` as a non-JSON stdout line on every call.
 
 ---
 
