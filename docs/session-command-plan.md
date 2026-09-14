@@ -1,6 +1,6 @@
 # `/infra-kit:session` — plan
 
-**Status: pending approval.** No source file has been changed.
+**Status: S1–S3 shipped (S1 `5a34d47`, S2 infra-kit 0.5.2, S3 `plugins/infra-kit/commands/session.md`, plugin 0.4.0). S4 — the real-terminal shell round trip — is still open.**
 
 Read §1 to review scope. The derivation that produced it is in Appendix A; the ADR is Appendix B.
 

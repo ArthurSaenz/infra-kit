@@ -612,7 +612,7 @@ test('T5: no consumer-repo name appears anywhere under plugins/', () => {
 // ---------------------------------------------------------------------------
 
 const COMMANDS_DIR = join(PLUGIN_ROOT, 'commands')
-const EXPECTED_COMMANDS = ['release-create.md']
+const EXPECTED_COMMANDS = ['release-create.md', 'session.md']
 const COMMAND_FRONTMATTER_KEYS = ['argument-hint', 'description', 'name']
 
 test('U13: the commands/ file list equals the expected literal', () => {
@@ -713,11 +713,16 @@ test('T1b: T1 is scoped to skills, and the command does name an infra-kit MCP to
   assert.ok(t1Body, 'could not locate T1 in the suite source')
   assert.match(t1Body, /walkFiles\(SKILLS_DIR\)/, 'T1 must walk SKILLS_DIR — widening it breaks the fallback clause')
 
-  // Half two: the command really does depend on that scoping. Naming the tool in prose is the ONLY
-  // binding mechanism a command has; there is no declarative command→tool wiring.
-  const command = join(COMMANDS_DIR, 'release-create.md')
-  assert.ok(
-    readText(command).includes('mcp__infra-kit__release-create'),
-    `${rel(command)} must name the tool it falls back to`,
-  )
+  // Half two: every command really does depend on that scoping. Naming the tool in prose is the ONLY
+  // binding mechanism a command has; there is no declarative command→tool wiring. Looped over
+  // EXPECTED_COMMANDS rather than hardcoding one file: a command whose fallback clause was quietly
+  // dropped would otherwise stay green, and the boundary would be proven for a single file only.
+  for (const name of EXPECTED_COMMANDS) {
+    const command = join(COMMANDS_DIR, name)
+    assert.match(
+      readText(command),
+      /mcp__infra-kit__[a-z-]+/,
+      `${rel(command)} must name the infra-kit MCP tool it falls back to`,
+    )
+  }
 })
