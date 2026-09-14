@@ -47,6 +47,7 @@ export type InitStepName =
   | 'shell'
   | 'user-config'
   | 'zshrc'
+  | 'zshenv'
 
 /**
  * What a step did.
@@ -173,6 +174,10 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
     record(writeShellBlock())
   })
 
+  await withStep('zshenv', () => {
+    record(writeZshenvBlock())
+  })
+
   await withStep('migrations', async () => {
     await runConfigMigrations()
     record(MIGRATIONS_CHECKED)
@@ -274,6 +279,33 @@ const writeShellBlock = (): InitEntry => {
     step: 'zshrc',
     outcome: 'written',
     message: `Added infra-kit shell functions to ${zshrcPath}`,
+    level: 'info',
+  }
+}
+
+/**
+ * Upsert the session-env block in `~/.zshenv`. Unlike {@link writeShellBlock} there is no legacy
+ * strip — `.zshenv` never carried an infra-kit block — and placement is the default replace-in-place:
+ * a first install lands at end-of-file, so a user's own `export XDG_CACHE_HOME=…` above it is
+ * honoured, and later runs keep whatever position the user moved it to.
+ */
+const writeZshenvBlock = (): InitEntry => {
+  const zshenvPath = path.join(os.homedir(), '.zshenv')
+  const existing = fs.existsSync(zshenvPath) ? fs.readFileSync(zshenvPath, 'utf-8') : ''
+
+  const updated = upsertManagedBlock({
+    content: existing,
+    body: buildZshenvBody(),
+    startMarker: MARKER_START,
+    endMarker: MARKER_END,
+  })
+
+  fs.writeFileSync(zshenvPath, updated)
+
+  return {
+    step: 'zshenv',
+    outcome: 'written',
+    message: `Added infra-kit session-env block to ${zshenvPath}`,
     level: 'info',
   }
 }
@@ -1040,4 +1072,43 @@ export const buildShellBody = (): string => {
  */
 export const buildShellBlock = (): string => {
   return `${MARKER_START}\n${buildShellBody()}\n${MARKER_END}`
+}
+
+/**
+ * The inner lines of the `~/.zshenv` block (no markers): source this terminal's session `env-load.sh`
+ * — or, once cleared, its `env-clear.sh` — into every zsh that inherited `INFRA_KIT_SESSION`, so a
+ * long-lived process spawned before the load (Claude Code's Bash tool, a tmux server, an editor)
+ * still sees it. Every line is load-bearing; see docs/session-zshenv-plan.md §1.2 for why each one.
+ */
+export const buildZshenvBody = (): string => {
+  return [
+    "# Inherit this terminal's infra-kit session env into every zsh it spawns, interactive or not.",
+    '# A fresh terminal has no session yet (it is minted in .zshrc, after this file) and skips.',
+    '# Only the canonical 8-hex id .zshrc mints is honoured. Load wins a tie with clear, as the',
+    '# .zshrc precmd gate does. Prints nothing of its own.',
+    // eslint-disable-next-line no-template-curly-in-string
+    'if [[ -n "${INFRA_KIT_SESSION:-}" ]]; then',
+    '  () {',
+    '    emulate -L zsh -o extendedglob',
+    // eslint-disable-next-line no-template-curly-in-string
+    '    [[ "${INFRA_KIT_SESSION:-}" == [0-9a-f](#c8) ]] || return',
+    // eslint-disable-next-line no-template-curly-in-string
+    '    local _ik_dir="${XDG_CACHE_HOME:-$HOME/.cache}/infra-kit/$INFRA_KIT_SESSION"',
+    '    local _ik_load="$_ik_dir/env-load.sh" _ik_clear="$_ik_dir/env-clear.sh"',
+    '    if [[ -r "$_ik_load" && ! "$_ik_clear" -nt "$_ik_load" ]]; then',
+    '      source "$_ik_load"',
+    '    elif [[ -r "$_ik_clear" ]]; then',
+    '      source "$_ik_clear"',
+    '    fi',
+    '  }',
+    'fi',
+  ].join('\n')
+}
+
+/**
+ * The full marker-delimited `.zshenv` block. Same shape as {@link buildShellBlock} so `doctor`'s
+ * exact-match freshness check works on both files.
+ */
+export const buildZshenvBlock = (): string => {
+  return `${MARKER_START}\n${buildZshenvBody()}\n${MARKER_END}`
 }

@@ -25,6 +25,15 @@ State all three of the following.
 the shell. The variables appear at its next prompt — after Claude Code exits or is backgrounded, not
 when the tool returns.
 
+Every zsh spawned from that terminal after the file lands sees it immediately — the `Bash` tool
+included — because a fresh shell sources `~/.zshenv` on its own at startup, not through `precmd`.
+That holds only when `~/.zshenv` carries the infra-kit session-env block; `infra-kit doctor` reports
+the row `zshenv session block` for it, and a machine set up before that row existed needs
+`infra-kit setup --skip-tools` once to gain it.
+So `infra-kit env-status` run through Bash is a truthful reading of what the agent's own commands
+see — it reads that child shell's inherited environment, not the terminal's. `env-status` over MCP
+has not changed: it is still the long-lived server's frozen environment, never a verification.
+
 **Destination.** The session id is the one the MCP server inherited when Claude Code launched, so the
 file lands in the terminal that launched Claude Code and no other. A server that has outlived its
 shell writes into a directory nothing is watching and still returns success — no error, no other
@@ -33,7 +42,8 @@ compare it with INFRA_KIT_SESSION at their own prompt. That comparison is the on
 
 **Sourcing it yourself is not a substitute.** Claude Code's `Bash` tool
 does not persist shell state between calls, so a `source` call changes nothing durable, and
-reporting success from it hides the real failure.
+reporting success from it hides the real failure. A shell spawned fresh after the block lands is
+different: it sources `~/.zshenv` on its own at startup, needing no `source` call from you at all.
 
 The loud failure is `INFRA_KIT_SESSION is not set`: the shell block was never installed, or this
 shell predates it. Tell the human to run `infra-kit setup --skip-tools` and then `source ~/.zshrc`.

@@ -114,11 +114,12 @@ describe('the MCP payload reports what the init half did', () => {
       return entry.step
     })
 
-    // All eight: a step that did nothing this run still reports (`skipped`), because "nothing happened"
+    // All ten: a step that did nothing this run still reports (`skipped`), because "nothing happened"
     // is an answer an agent needs and silence is not.
     expect(new Set(steps)).toEqual(
       new Set([
         'zshrc',
+        'zshenv',
         'migrations',
         'user-config',
         'guidance',
@@ -135,12 +136,18 @@ describe('the MCP payload reports what the init half did', () => {
       message: `Added infra-kit shell functions to ${path.join(home, '.zshrc')}`,
     })
     expect(structuredContent.init).toContainEqual({
+      step: 'zshenv',
+      outcome: 'written',
+      message: `Added infra-kit session-env block to ${path.join(home, '.zshenv')}`,
+    })
+    expect(structuredContent.init).toContainEqual({
       step: 'user-config',
       outcome: 'written',
       message: expect.stringContaining(path.join(home, '.infra-kit', 'infra-kit.json')) as unknown as string,
     })
     // The steps really ran — the report is a record of writes, not a description of intended ones.
     expect(fs.readFileSync(path.join(home, '.zshrc'), 'utf-8')).toContain('# -- infra-kit:begin --')
+    expect(fs.readFileSync(path.join(home, '.zshenv'), 'utf-8')).toContain('# -- infra-kit:begin --')
     expect(fs.existsSync(path.join(repo, '.mcp.json'))).toBe(true)
   })
 

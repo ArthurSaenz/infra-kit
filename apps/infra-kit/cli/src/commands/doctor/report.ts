@@ -79,7 +79,10 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
       'ide installed',
     ],
   ],
-  [SECTION_SHELL, ['zshrc init block', 'warm cache', 'pnpm enableGlobalVirtualStore', 'CLAUDE.md block']],
+  [
+    SECTION_SHELL,
+    ['zshrc init block', 'zshenv session block', 'warm cache', 'pnpm enableGlobalVirtualStore', 'CLAUDE.md block'],
+  ],
   [SECTION_CONFIG, ['infra-kit config valid', 'user override path', 'legacy user-global config']],
   [SECTION_TOKENS, ['tokens.json present', 'env tokens configured', 'env token valid', 'tokens.json perms']],
   [

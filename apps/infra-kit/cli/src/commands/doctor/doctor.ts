@@ -12,6 +12,7 @@ import { decidePrune, isDevSessionRunning } from 'src/commands/doctor/prune-rout
 import { FIXABLE_NAMES } from 'src/commands/doctor/report'
 import { parseServiceArgv } from 'src/commands/doctor/service-file'
 import { buildDopplerChildEnv } from 'src/commands/env-load/env-load'
+import { buildZshenvBlock } from 'src/commands/init'
 // `resolveGitRoot` is the WRITER's gate, imported rather than re-derived so the reader's row set and
 // the writer's reach cannot drift apart (see the gate comment beside the plugin rows below).
 import { AGENTS_MARKER_END, AGENTS_MARKER_START, resolveGitRoot } from 'src/commands/init/agent-files'
@@ -189,6 +190,45 @@ export const checkZshrcInitialized = (): CheckResult => {
   }
 
   return { name, status: 'pass', message: 'infra-kit shell block in ~/.zshrc is up to date' }
+}
+
+/**
+ * Note: a `/etc/zshenv`-set `ZDOTDIR` makes zsh read `$ZDOTDIR/.zshenv` instead of `~/.zshenv`, so this
+ * check reporting "up to date" against the home-directory file can still be true while the block never
+ * actually runs — the same blind spot {@link checkZshrcInitialized} has for `~/.zshrc`.
+ */
+export const checkZshenvInitialized = (): CheckResult => {
+  const name = 'zshenv session block'
+  const zshenvPath = path.join(os.homedir(), '.zshenv')
+
+  if (!fs.existsSync(zshenvPath)) {
+    return { name, status: 'fail', message: '~/.zshenv not found. Run: infra-kit setup --skip-tools' }
+  }
+
+  const content = fs.readFileSync(zshenvPath, 'utf-8')
+  const startIdx = content.indexOf(MARKER_START)
+  const endIdx = content.indexOf(MARKER_END)
+
+  if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) {
+    return {
+      name,
+      status: 'fail',
+      message: 'infra-kit session-env block missing from ~/.zshenv. Run: infra-kit setup --skip-tools',
+    }
+  }
+
+  const installedBlock = content.slice(startIdx, endIdx + MARKER_END.length).trim()
+  const expectedBlock = buildZshenvBlock().trim()
+
+  if (installedBlock !== expectedBlock) {
+    return {
+      name,
+      status: 'fail',
+      message: 'infra-kit session-env block in ~/.zshenv is out of date. Run: infra-kit setup --skip-tools',
+    }
+  }
+
+  return { name, status: 'pass', message: 'infra-kit session-env block in ~/.zshenv is up to date' }
 }
 
 /**
@@ -1851,6 +1891,7 @@ export const doctor = async (options: { fix?: boolean; probeDeps?: ProbeDeps } =
       'cmux is not installed. Install from: https://cmux.com/',
     ),
     Promise.resolve(checkZshrcInitialized()),
+    Promise.resolve(checkZshenvInitialized()),
     checkWarmCache(),
     checkPnpmWorkspaceVirtualStore(),
     Promise.resolve(checkInfraKitConfigValid(read)),

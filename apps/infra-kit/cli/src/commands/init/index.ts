@@ -5,5 +5,12 @@ export {
   AGENTS_MARKER_START,
   writeAgentFiles,
 } from './agent-files'
-export { initCore, InitStepError, logInitEntry, SHELL_ACTIVATION_REMINDER } from './init'
+export {
+  buildZshenvBlock,
+  buildZshenvBody,
+  initCore,
+  InitStepError,
+  logInitEntry,
+  SHELL_ACTIVATION_REMINDER,
+} from './init'
 export type { InitEntry, InitOutcome, InitReport, InitStep, InitStepName, InitStepSink } from './init'

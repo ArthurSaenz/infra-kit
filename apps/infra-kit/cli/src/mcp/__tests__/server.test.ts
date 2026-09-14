@@ -193,7 +193,7 @@ describe('the release-create procedure, over the wire', () => {
   it('renders a setup body that still carries the clauses an agent needs', () => {
     const body = WORKFLOW_BODIES.setup
 
-    expect(body.split('\n')).toHaveLength(163)
+    expect(body.split('\n')).toHaveLength(164)
     expect(body.endsWith('\n')).toBe(false)
 
     // The tool the procedure is for, named so an agent that read the resource can call it — and the
@@ -287,7 +287,7 @@ describe('the release-create procedure, over the wire', () => {
   it('renders a session body that still carries the clauses an agent needs', () => {
     const body = WORKFLOW_BODIES.session
 
-    expect(body.split('\n')).toHaveLength(109)
+    expect(body.split('\n')).toHaveLength(119)
     expect(body.endsWith('\n')).toBe(false)
 
     // The three tools composed, named so an agent that read the resource can call them. `env-status`
@@ -303,6 +303,13 @@ describe('the release-create procedure, over the wire', () => {
     expect(body).toContain('at its next prompt — after Claude Code exits or is backgrounded')
     expect(body).toContain('the terminal that launched Claude Code and no other')
     expect(body).toContain('writes into a directory nothing is watching and still returns success')
+
+    // Every zsh spawned after the file lands sees it immediately, `Bash` tool included — but only
+    // once `~/.zshenv` carries this doctor row, and only for a child shell's own environment. The
+    // second fragment is what makes an `env-status` call run through Bash trustworthy where the same
+    // call over MCP is not.
+    expect(body).toContain('zshenv session block')
+    expect(body).toContain('run through Bash is a truthful reading')
 
     // The only check a human can perform against that silent wrong-target. Two fragments of one
     // instruction: the second alone pins the rationale and would stay green while the instruction it
