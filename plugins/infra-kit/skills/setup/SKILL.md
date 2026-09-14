@@ -1,6 +1,12 @@
+---
+name: setup
+description: Set a machine up for infra-kit through the setup MCP tool — the ordered local writes, the dependency converge, the recipes printed instead of run, and the confirm gate.
+---
+
 # setup — bringing a machine to a working infra-kit
 
 The tool is `mcp__plugin_infra-kit_infra-kit__setup`. Everything below is about calling that tool.
+If `mcp__plugin_infra-kit_infra-kit__*` tools are absent this is a subdirectory or legacy session — say so and stop.
 
 The same code runs behind `infra-kit setup` in a terminal, so this body describes both spellings: the
 CLI flag first, the tool field it sets second. They are one implementation, not two.

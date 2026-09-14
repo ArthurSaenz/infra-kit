@@ -9,5 +9,7 @@
     ["trave", "list"],
     ["gulli", "ver"]
   ],
-  "legacyToolPrefix": [["mcp__", "infra-kit__"]]
+  "legacyToolPrefix": [["mcp__", "infra-kit__"]],
+  "_pluginToolNameWhy": "The ONE definition of 'names a plugin-served tool': a regex source whose first group is the bare tool name. Read by manifest.test.mjs (U14', U18), by scripts/report-published-cli-skew.mjs (collectSkew) and by the CLI's command-catalog.test.ts cross-check, so the three cannot drift on what counts as naming a tool. Not fragmented: the plugin prefix is the LIVE spelling every skill may name, not a needle any scan denies.",
+  "pluginToolName": "mcp__plugin_infra-kit_infra-kit__([a-z][a-z0-9-]*)"
 }

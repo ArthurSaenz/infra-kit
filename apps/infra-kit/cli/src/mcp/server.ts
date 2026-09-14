@@ -1,11 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/server'
-import process from 'node:process'
 
 import { mcpMode } from 'src/lib/mcp-mode'
 
 import packageJson from '../../package.json' with { type: 'json' }
 import { initializeResources } from './resources'
-import { resolveLaunch } from './tool-prefix'
 import { initializeTools } from './tools'
 
 export async function createMcpServer() {
@@ -27,23 +25,14 @@ export async function createMcpServer() {
         // `registerResource` also declares `resources.listChanged` on top of this.
         resources: { listChanged: true },
         tools: {},
-        // Deliberately no `prompts`. Every workflow's human surface is its plugin
-        // command/skill and its agent surface is the `infra-kit://workflow/*`
-        // resource; a prompt registered here rendered a duplicate
-        // `/infra-kit:release-create (MCP)` row next to the plugin command (see
-        // docs/release-create-prompt-removal-plan.md).
+        // Deliberately no `prompts`. Every procedure's surface is its plugin skill;
+        // a prompt registered here rendered a duplicate `/infra-kit:release-create (MCP)`
+        // row next to it (see docs/release-create-prompt-removal-plan.md).
       },
     },
   )
 
-  // Which route spawned this process decides how every tool name it serves is spelled (tool-prefix.ts).
-  // Read HERE, per build, and never at module scope: `serveStdio` may build the server twice per
-  // connection, and a value cached at first import would pin the spelling to whatever the first
-  // build saw — a test that toggles the variable between two builds would then pass on the
-  // first-imported spelling both times.
-  const launch = resolveLaunch(process.env)
-
-  await initializeResources(server, launch)
+  await initializeResources(server)
   await initializeTools(server)
 
   return server

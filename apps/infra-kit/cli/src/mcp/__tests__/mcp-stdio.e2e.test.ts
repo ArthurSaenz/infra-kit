@@ -13,8 +13,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { commandCatalog, getExposedMcpTools } from 'src/lib/command-catalog'
 import { LOG_FILE_PATH } from 'src/lib/logger'
 import { deployableEnvs } from 'src/lib/workflow-envs'
-import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
-import type { McpLaunch } from 'src/mcp/tool-prefix'
 
 import { makeEnvPickerFixture } from './helpers/env-picker-fixture'
 import type { EnvPickerFixture } from './helpers/env-picker-fixture'
@@ -336,12 +334,7 @@ const assertReadOnlyToolCallRoundTrips = async (client: Client): Promise<void> =
   expect(result.structuredContent).toBeTypeOf('object')
 }
 
-const assertResourcesAreListedAndReadable = async (client: Client, launch: McpLaunch): Promise<void> => {
-  // The spelling the server on the other end must serve, and the one it must not: a session on
-  // either route has only that route's tools, so a body naming the other spelling sends the agent to
-  // a tool it does not have.
-  const [expected, forbidden] =
-    launch === 'plugin' ? [MCP_TOOL_PREFIX, LEGACY_MCP_TOOL_PREFIX] : [LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX]
+const assertResourcesAreListedAndReadable = async (client: Client): Promise<void> => {
   const listed = await client.listResources()
   const uris = listed.resources.map((r) => {
     return r.uri
@@ -349,37 +342,27 @@ const assertResourcesAreListedAndReadable = async (client: Client, launch: McpLa
 
   expect(uris).toContain('infra-kit://config')
   expect(uris).toContain('infra-kit://dev-context')
-  expect(uris).toContain('infra-kit://workflow/release-create')
-  expect(uris).toContain('infra-kit://workflow/setup')
 
-  // The workflow procedures, read against the BUILT bundle. Every other assertion about them runs from
-  // `src/`, where a `resources/workflow/*.md` import that esbuild failed to inline still resolves.
-  //
-  // Both are read, and each is checked for the tool ITS OWN body names: the two registrations go
-  // through one helper, so a helper that captured the first key would serve `release-create`'s text at
-  // both URIs — and a listing assertion alone would never see it, because both URIs would still list.
-  //
-  // The name is spelled for `launch`, and the other spelling must be absent: the served body is a
-  // per-build render of the canonical Markdown, and this is the lane that proves the render happens
-  // in the BUILT bundle over a real spawn, not only in `src/`.
-  for (const [uri, tool] of [
-    ['infra-kit://workflow/release-create', 'release-create'],
-    ['infra-kit://workflow/setup', 'setup'],
-  ] as const) {
-    const workflow = await client.readResource({ uri })
-    const workflowBody = workflow.contents[0]
-    const text = String((workflowBody as { text: string }).text)
+  // RES (docs/session-env-picker-plan.md §3.6): the procedures moved to the plugin's skills, and the
+  // ONLY workflow URI left is the `session` deprecation stub that keeps an old plugin's command on the
+  // form path for one release. Read against the BUILT bundle: three lines, the form-path instruction
+  // in the second. The other two URIs are gone outright, so a read is refused rather than answered.
+  expect(
+    uris.filter((uri) => {
+      return uri.startsWith('infra-kit://workflow/')
+    }),
+  ).toEqual(['infra-kit://workflow/session'])
 
-    expect(workflowBody?.mimeType).toBe('text/markdown')
-    expect(text).toContain(`${expected}${tool}`)
-    expect(text).not.toContain(forbidden)
+  const stub = await client.readResource({ uri: 'infra-kit://workflow/session' })
+  const stubBody = stub.contents[0]
+  const stubText = String((stubBody as { text: string }).text)
 
-    const description = listed.resources.find((r) => {
-      return r.uri === uri
-    })?.description
+  expect(stubBody?.mimeType).toBe('text/markdown')
+  expect(stubText.split('\n')).toHaveLength(3)
+  expect(stubText).toContain('without `config`')
 
-    expect(description).toContain(`${expected}${tool}`)
-    expect(description).not.toContain(forbidden)
+  for (const retired of ['infra-kit://workflow/release-create', 'infra-kit://workflow/setup']) {
+    await expect(client.readResource({ uri: retired })).rejects.toThrow()
   }
 
   // dev-context with no active session must resolve to a payload, NOT an error.
@@ -572,8 +555,8 @@ describe('e1–E3, E6, E9 — the served surface (shared bare v2 client)', () =>
     await assertReadOnlyToolCallRoundTrips(client)
   }, 45_000)
 
-  it('e3: both read-only resources are listed and readable, spelled for the legacy launch', async () => {
-    await assertResourcesAreListedAndReadable(client, 'legacy')
+  it('e3: both read-only resources are listed and readable, plus only the session stub', async () => {
+    await assertResourcesAreListedAndReadable(client)
   }, 45_000)
 
   it('e6: the long-lived server survives a failing tool call and answers the next one', async () => {
@@ -846,8 +829,8 @@ describe('e1m–E9m — the served surface over a PINNED MODERN connection', () 
     await assertReadOnlyToolCallRoundTrips(client)
   }, 45_000)
 
-  it('e3m: both read-only resources are listed and readable, spelled for the legacy launch', async () => {
-    await assertResourcesAreListedAndReadable(client, 'legacy')
+  it('e3m: both read-only resources are listed and readable, plus only the session stub', async () => {
+    await assertResourcesAreListedAndReadable(client)
   }, 45_000)
 
   it('e6m: the long-lived server survives a failing tool call and answers the next one', async () => {
@@ -861,17 +844,17 @@ describe('e1m–E9m — the served surface over a PINNED MODERN connection', () 
 
 /**
  * The plugin launch, over a real spawn. The shared clients above are all spawned on the legacy route
- * (`childEnv` strips the signal), so without this lane the built bundle's plugin-route render — the
- * one every migrated consumer's session reads — would be proven only from `src/`.
+ * (`childEnv` strips the signal), so without this lane the built bundle's resource surface on the
+ * route every migrated consumer's session actually uses would be proven only from `src/`.
  *
  * Short-lived and closed here, not ledgered with the pinned clients: one spawn, one read, done.
  */
-describe('e3p — the served surface follows the plugin launch', () => {
-  it('e3p: a server spawned with CLAUDE_PLUGIN_ROOT serves every workflow in the plugin spelling', async () => {
+describe('e3p — the served surface is the same on the plugin launch', () => {
+  it('e3p: a server spawned with CLAUDE_PLUGIN_ROOT serves the same resource surface', async () => {
     const client = await connectV2(pluginLaunchEnv())
 
     try {
-      await assertResourcesAreListedAndReadable(client, 'plugin')
+      await assertResourcesAreListedAndReadable(client)
     } finally {
       await client.close()
     }
@@ -1816,14 +1799,11 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
    * actually served, and re-capturing it against today's server would retire the differential in the
    * act of making it pass.
    *
-   * The workflow resource keeps its own coverage — `assertResourcesAreListedAndReadable` lists and
-   * reads it on every lane, and `src/mcp/__tests__/server.test.ts` asserts its bytes.
+   * The one entry is the `session` deprecation stub (RES) — `assertResourcesAreListedAndReadable`
+   * lists and reads it on every lane, and `src/mcp/__tests__/server.test.ts` asserts its bytes. It
+   * leaves in the release after next, and this set goes empty with it.
    */
-  const AUTHORED_RESOURCE_URIS = new Set([
-    'infra-kit://workflow/release-create',
-    'infra-kit://workflow/setup',
-    'infra-kit://workflow/session',
-  ])
+  const AUTHORED_RESOURCE_URIS = new Set(['infra-kit://workflow/session'])
 
   const withoutAuthoredResources = (list: Record<string, any>): Record<string, any> => {
     const copy = JSON.parse(JSON.stringify(list)) as Record<string, any>
@@ -1833,7 +1813,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
       return !AUTHORED_RESOURCE_URIS.has(resource.uri as string)
     })
 
-    // The strip has to strip. Without this, a renamed or deleted workflow URI leaves the helper
+    // The strip has to strip. Without this, a renamed or deleted stub URI leaves the helper
     // inert and the differential silently reverts to comparing whatever is registered today —
     // which is the failure mode a normalization broad enough to swallow drift always has.
     expect(listed.length - (copy.resources as unknown[]).length).toBe(AUTHORED_RESOURCE_URIS.size)

@@ -3,10 +3,6 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 
-import type { McpLaunch } from '../tool-prefix'
-import { renderForLaunch, toolName } from '../tool-prefix'
-import type { WorkflowKey } from '../workflow-bodies'
-import { WORKFLOW_BODIES } from '../workflow-bodies'
 import type { DevContextSnapshot } from './dev-context'
 import { readDevContext } from './dev-context'
 
@@ -17,35 +13,21 @@ export const CONFIG_RESOURCE_URI = 'infra-kit://config'
 export const DEV_CONTEXT_RESOURCE_URI = 'infra-kit://dev-context'
 
 /**
- * Stable URI of the `release-create` procedure.
+ * URI of the retired `session` procedure — served as a three-line deprecation stub, not the procedure.
  *
- * The only server channel for this body: an agent reads it here, and the human surface is the
- * `/infra-kit:release-create` plugin command. The prompt that once sat beside this resource rendered
- * a duplicate `/` row next to that command (docs/release-create-prompt-removal-plan.md).
- */
-export const RELEASE_CREATE_WORKFLOW_URI = 'infra-kit://workflow/release-create'
-
-/**
- * Stable URI of the `setup` procedure.
- *
- * Resource-only, like every workflow: `setup`'s human channel is the `/infra-kit:setup` plugin
- * command, so a prompt half would duplicate it rather than reach a second reader. It ships in the
- * CLI and not in the plugin because `scripts/check-workflow-resource-published.mjs` refuses to let a
- * plugin command merge until the PUBLISHED CLI answers `resources/list` with the URI its body names.
- */
-export const SETUP_WORKFLOW_URI = 'infra-kit://workflow/setup'
-
-/**
- * Stable URI of the `session` procedure.
- *
- * Resource-only, on `setup`'s precedent: its human channel is the `/infra-kit:session` plugin
- * command, so a prompt would duplicate that entry rather than reach a second reader.
- *
- * What it carries that no tool's own description can: the order to call them in, and the two silent
- * failures — a load that lands in a terminal nobody is watching, and an `env-status` over MCP that
- * cannot see a load made in the same session.
+ * The procedure moved to the plugin's `/infra-kit:session` skill (docs/session-env-picker-plan.md §3.6).
+ * The plugin is git-sourced and unpinned, so a consumer can run this CLI against a plugin whose old
+ * `/infra-kit:session` command still reads this URI FIRST: the stub keeps that command on the form path
+ * (`env-load` without `config`) instead of its 404 fallback. `release-create` and `setup` needed no stub —
+ * their commands' fallbacks call the tool directly. Leaves in the release after next.
  */
 export const SESSION_WORKFLOW_URI = 'infra-kit://workflow/session'
+
+const SESSION_WORKFLOW_STUB = [
+  'This procedure moved to the `/infra-kit:session` skill; update the plugin.',
+  "Meanwhile: no token → call `env-load` without `config`; the human's pick is the load.",
+  'On a tool error or a refused result naming `config`, call `env-list` and list every row in prose, then ask.',
+].join('\n')
 
 /**
  * The two disk reads the resources need, injected so the registration is unit-testable without touching
@@ -71,44 +53,6 @@ const jsonResource = (uri: string, value: unknown): { contents: { uri: string; m
 }
 
 /**
- * Register one workflow procedure at its URI.
- *
- * A helper rather than a second copy of the registration block: the two bodies differ only in their
- * key, URI and blurb, and a hand-copied handler is exactly where a second workflow would quietly get
- * the FIRST one's text — a drift no `resources/list` assertion would catch, because the URI would
- * still be listed.
- *
- * No dep injection and no `async`: the body is a build-time constant, so there is nothing to read,
- * nothing to fail, and nothing a test would need to stub.
- *
- * The body is rendered for `launch` in the read callback, not once at registration: the render is
- * pure and cheap, and keeping `WORKFLOW_BODIES` the canonical (plugin-spelled) constant is what lets
- * the spelling and bundle tests read it without knowing which route a server was spawned on.
- */
-const registerWorkflow = (
-  server: McpServer,
-  launch: McpLaunch,
-  workflow: { key: WorkflowKey; uri: string; title: string; description: string },
-): void => {
-  server.registerResource(
-    `infra-kit-workflow-${workflow.key}`,
-    workflow.uri,
-    { title: workflow.title, description: workflow.description, mimeType: 'text/markdown' },
-    (uri) => {
-      return {
-        contents: [
-          {
-            uri: uri.toString(),
-            mimeType: 'text/markdown',
-            text: renderForLaunch(WORKFLOW_BODIES[workflow.key], launch),
-          },
-        ],
-      }
-    },
-  )
-}
-
-/**
  * Register infra-kit's READ-ONLY MCP resources so an agent can inspect the repo's config and dev state
  * without calling a tool (or mutating anything):
  *
@@ -119,10 +63,8 @@ const registerWorkflow = (
  *
  * Both handlers are side-effect free and swallow their reader's failure into an `{ error }` payload rather
  * than throwing, so a bad on-disk config can never crash the long-lived MCP server.
- *
- * `launch` is the route that spawned this server (tool-prefix.ts); every tool name served is spelled for it.
  */
-export const initializeResources = async (server: McpServer, launch: McpLaunch, deps: ResourceDeps = defaultDeps) => {
+export const initializeResources = async (server: McpServer, deps: ResourceDeps = defaultDeps) => {
   server.registerResource(
     'infra-kit-config',
     CONFIG_RESOURCE_URI,
@@ -156,36 +98,17 @@ export const initializeResources = async (server: McpServer, launch: McpLaunch, 
     },
   )
 
-  registerWorkflow(server, launch, {
-    key: 'release-create',
-    uri: RELEASE_CREATE_WORKFLOW_URI,
-    title: 'release-create procedure',
-    description:
-      'How to cut a release with the release-create tool: the preconditions, the two-call confirm ' +
-      'protocol, and what the "next" token actually resolves against. Read this before calling ' +
-      `${toolName('release-create', launch)}.`,
-  })
-
-  registerWorkflow(server, launch, {
-    key: 'setup',
-    uri: SETUP_WORKFLOW_URI,
-    title: 'setup procedure',
-    description:
-      'How to set a machine up with the setup tool: the ordered local writes, then the dependency ' +
-      'converge; what tools/mode/skipTools each narrow; which recipes are printed instead of run and ' +
-      'why; and what to run when a repo still tells you to set it up some older way. Read this before ' +
-      `calling ${toolName('setup', launch)}.`,
-  })
-
-  registerWorkflow(server, launch, {
-    key: 'session',
-    uri: SESSION_WORKFLOW_URI,
-    title: 'session procedure',
-    description:
-      'How to switch a terminal to a named environment by composing env-list, env-load and ' +
-      'env-clear: which tool to call when the human names no environment, how the loaded vars reach ' +
-      'the terminal that launched Claude Code and when they appear there, and the two silent ' +
-      'failures — a load that lands in a session nothing is watching, and a clear that loses a ' +
-      'same-second tie to the load before it. Read this before loading an environment for someone.',
-  })
+  server.registerResource(
+    'infra-kit-workflow-session',
+    SESSION_WORKFLOW_URI,
+    {
+      title: 'session procedure (moved)',
+      description:
+        'Retired: the session procedure now lives in the /infra-kit:session plugin skill. Update the plugin.',
+      mimeType: 'text/markdown',
+    },
+    (uri) => {
+      return { contents: [{ uri: uri.toString(), mimeType: 'text/markdown', text: SESSION_WORKFLOW_STUB }] }
+    },
+  )
 }

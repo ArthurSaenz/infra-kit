@@ -33,8 +33,9 @@ reports it.
 | skill     | `/infra-kit:e2e-architect`    | Per-feature Playwright e2e layout: page object, fixture, specs by axis                                                     |
 | skill     | `/infra-kit:update-toolchain` | Bumps pnpm, Node and Turbo across a monorepo, phase by phase                                                               |
 | skill     | `/infra-kit:full-cycle`       | deep-interview → ralplan → review gate → ralph → verify (requires oh-my-claudecode)                                        |
-| command   | `/infra-kit:session`          | Loads a named environment through the server's `session` workflow resource                                                 |
-| command   | `/infra-kit:release-create`   | Cuts release branches through the server's `release-create` workflow resource                                              |
+| skill     | `/infra-kit:session`          | Loads a named environment into the terminal that launched Claude Code — the human picks from a form (human-invoked only)   |
+| skill     | `/infra-kit:release-create`   | Cuts release branches through the gated `release-create` tool (human-invoked only)                                         |
+| skill     | `/infra-kit:setup`            | The procedure for `infra-kit setup` over MCP: ordered local writes, dependency converge, printed-not-run recipes           |
 | server    | `infra-kit`                   | `infra-kit mcp` — the global CLI on `PATH`; tools are `mcp__plugin_infra-kit_infra-kit__*`                                 |
 
 Skill scripts run from the plugin root (`${CLAUDE_PLUGIN_ROOT}/skills/<skill>/scripts/…`) and
@@ -109,14 +110,15 @@ Every skill description is loaded into context on every turn. The release checkl
 the recorded value below by more than 20%. Growing the budget is allowed; it must be a
 deliberate edit of this line in the same commit.
 
-- Recorded projected always-on token cost: **431** (plugin version 0.7.7, measured with `claude --plugin-dir ./plugins/infra-kit plugin details infra-kit`)
+- Recorded projected always-on token cost: **496** (plugin version 0.7.8, measured with `claude --plugin-dir ./plugins/infra-kit plugin details infra-kit`)
 
-The previous recorded value was 347, stamped against plugin version 0.3.0 and left unrefreshed
-while four skills and two commands were added; 431 is +24% over it, past the 20% rule, and is
-recorded deliberately as the 0.7.7 baseline. The MCP server adds nothing to this number: tool
-schemas are resolved at runtime and `plugin details` does not count them. Before that, 1438 was
-recorded against 0.1.0 under an older report shape (no always-on / on-invoke split) and is not
-comparable to either.
+The previous recorded value was 431 against 0.7.7; 496 is +15%, the cost of the three procedure
+skills' descriptions (`/infra-kit:session`, `/infra-kit:release-create`, `/infra-kit:setup`) that replaced the two commands and the
+CLI-served workflow resources. Before that, 347 was stamped against 0.3.0 and left unrefreshed while
+four skills and two commands were added (431 was +24% over it, past the 20% rule, and recorded
+deliberately as the 0.7.7 baseline). The MCP server adds nothing to this number: tool schemas are
+resolved at runtime and `plugin details` does not count them. Before that, 1438 was recorded against
+0.1.0 under an older report shape (no always-on / on-invoke split) and is not comparable to either.
 
 ## Tests
 

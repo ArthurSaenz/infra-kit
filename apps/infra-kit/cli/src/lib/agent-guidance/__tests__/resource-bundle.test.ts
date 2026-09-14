@@ -52,27 +52,6 @@ describe('resources are inlined into the bundle', () => {
         expect(emitted, `${key} was not inlined into the bundle`).toContain(sentinel)
       }
 
-      // `resources/workflow/*.md` rides the same esbuild text loader and the same flat-static-import
-      // rule, and is served over MCP rather than written into a consumer file — so a refactor that
-      // leaves its specifier unresolved surfaces as an MCP server that cannot answer `resources/read`
-      // for a procedure an agent was told to fetch. Asserted here, in the one lane that reads `dist`.
-      //
-      // Enumerated, one assertion per workflow: `WORKFLOW_BODIES` is a flat static import list and each
-      // `?raw` specifier resolves on its own, so a guard naming only the first body goes green on a
-      // build where the SECOND one survived unresolved.
-      //
-      // Each sentinel is a phrase that appears ONLY in its `.md`. The obvious choice — the prefixed
-      // tool name (`toolName(key, launch)`) — is not sound: `src/mcp/resources/index.ts` puts that
-      // same string in each resource's DESCRIPTION, which is TypeScript and lands in the bundle
-      // whether or not the markdown was inlined. That is what this assertion looked like before `setup` was added,
-      // and it would have passed on a bundle carrying no procedure text at all.
-      for (const [name, sentinel] of [
-        ['release-create', 'Do not invent a list of candidate versions'],
-        ['setup', 'A refusal is not a failure'],
-      ] as const) {
-        expect(emitted, `workflow/${name} was not inlined into the bundle`).toContain(sentinel)
-      }
-
       // Recorded rather than asserted: a full multi-entry esbuild build inside the unit
       // lane. If this creeps far past a few seconds, move the file to the opt-in
       // `qa:pty`-style lane rather than deleting the only guard on Scenario 1.

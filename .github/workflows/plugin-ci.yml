@@ -9,17 +9,12 @@ on:
       - '.github/workflows/plugin-ci.yml'
       - '.github/fixtures/unknown-frontmatter-plugin/**'
       - 'scripts/check-plugin-version-bump.mjs'
-      - 'scripts/check-workflow-resource-published.mjs'
-      # The bodies the commands defer to. A command names a resource it does not contain, so editing
-      # the resource — renaming it, or dropping the `?raw` import that inlines it — breaks the
-      # command without touching `plugins/**`, and the gate would not have run.
-      - 'apps/infra-kit/cli/resources/workflow/**'
+      - 'scripts/report-published-cli-skew.mjs'
   push:
     branches: [main]
     paths:
       - 'plugins/**'
       - '.claude-plugin/**'
-      - 'apps/infra-kit/cli/resources/workflow/**'
 
 jobs:
   validate:
@@ -37,22 +32,24 @@ jobs:
         run: claude plugin validate ./plugins/infra-kit --strict --json
       - name: Marketplace catalog validates under --strict
         run: claude plugin validate . --strict --json
-      - name: Manifest guard suite (U2–U8, U12, U13, U14, T1, T1b, T5)
+      - name: Manifest guard suite (U2–U8, U12–U19, T1, T5) and the skew-report seam
         run: node --test 'plugins/infra-kit/__tests__/*.test.mjs'
       - name: Relocated skill tests (U11)
         run: node --test --test-concurrency=1 'plugins/infra-kit/skills/*/__tests__/*.test.mjs'
       - name: U9 — a plugin change must bump plugin.json version
         if: github.event_name == 'pull_request'
         run: node scripts/check-plugin-version-bump.mjs "origin/${{ github.base_ref }}"
-      # PM-C part 3 — the only mechanism enforcing "the command must not ship before the CLI that
-      # serves the resource it reads". The command body's fallback line and version floor make the
-      # residual window survivable; this is what stops the window opening. It is EXPECTED to be red
-      # between merging the command and publishing that CLI — that redness is the feature.
+      # Reports, never gates. The plugin is live on merge and the CLI on publish, so a skill can name a
+      # tool — or lean on `env-load` accepting a missing `config` — that the build a user installs does
+      # not have yet. Each skill's floor sentence and fallback clause are what make that window
+      # survivable; this step makes it VISIBLE on the PR (via the step summary) without reddening
+      # unrelated plugin PRs the way the gate it replaced did.
       #
-      # NOTE: the manifest suite above also defines tests named U13/U14/T1b. They are unrelated to
-      # the "U13" probe step below, which comes from a different plan's numbering. Two live U13s.
-      - name: PM-C — the published CLI serves infra-kit://workflow/release-create
-        run: node scripts/check-workflow-resource-published.mjs
+      # NOTE: the manifest suite above defines a test named U13'. It is unrelated to the "U13" probe
+      # step below, which comes from a different plan's numbering.
+      - name: Published CLI skew report (reported, never gating)
+        continue-on-error: true
+        run: node scripts/report-published-cli-skew.mjs
       - name: U13 — does --strict object to unknown frontmatter? (reported, never gating)
         continue-on-error: true
         run: |

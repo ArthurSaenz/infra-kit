@@ -2,8 +2,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { toolName } from 'src/mcp/tool-prefix'
-
 const CLI_ROOT = path.resolve(import.meta.dirname, '../../../..')
 const REPO_ROOT = path.resolve(CLI_ROOT, '../../..')
 
@@ -53,8 +51,7 @@ const commandSpellings = (markdown: string): string[] => {
   const spellings: string[] = []
   let fenced = false
   // Section-scoped exemption, and the only one. Under `## MCP Exposed Tools` the
-  // names are MCP tool identities (the bare `setup` of `toolName('setup', launch)`),
-  // never shell argv — the ambiguity with `pnpm run setup` cannot be reached from a
+  // names are MCP tool identities (the bare `setup` of `mcp__…__setup`), never shell argv — the ambiguity with `pnpm run setup` cannot be reached from a
   // tool name, and writing `infra-kit setup` there would name a tool that does not
   // exist.
   let exempt = false
@@ -103,17 +100,17 @@ describe('i-13 — generated instructions spell `setup` binary-qualified', () =>
   })
 
   /**
-   * The workflow bodies name the `setup` TOOL in a code span outside any exempt section, on both
-   * of its spellings (`resources/workflow/setup.md` is authored canonical and rendered legacy at
-   * serve time). Neither is an invocation anyone can type, and neither leads with `setup`.
+   * A procedure body (the plugin's `setup` skill) names the `setup` TOOL in a code span outside any
+   * exempt section, on either route's spelling. Neither is an invocation anyone can type, and neither
+   * leads with `setup`.
    *
    * That is the whole reason the positional rule, and not a word match, is the invariant — pinned
    * here so a rewrite of `isBareSetupInvocation` to a substring test reddens on the identity it
    * would start flagging, rather than on every consumer's next `audit --fix`.
    */
   it('does not mistake an MCP tool identity for a bare invocation, on either route', () => {
-    for (const launch of ['plugin', 'legacy'] as const) {
-      expect(unqualifiedSetupSpellings(`The tool is \`${toolName('setup', launch)}\`. Call it.`)).toEqual([])
+    for (const tool of ['mcp__plugin_infra-kit_infra-kit__setup', 'mcp__infra-kit__setup']) {
+      expect(unqualifiedSetupSpellings(`The tool is \`${tool}\`. Call it.`)).toEqual([])
     }
   })
 })

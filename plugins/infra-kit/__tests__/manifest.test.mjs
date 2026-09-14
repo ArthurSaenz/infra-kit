@@ -23,6 +23,9 @@ const EXPECTED_SKILLS = [
   'fe-architect',
   'fe-patterns',
   'full-cycle',
+  'release-create',
+  'session',
+  'setup',
   'update-toolchain',
 ]
 
@@ -46,9 +49,11 @@ const BANNED_FRONTMATTER_KEYS = [
 const SCAN_PATTERNS = JSON.parse(readFileSync(join(import.meta.dirname, '__fixtures__', 'scan-patterns.json'), 'utf8'))
 const PROJECT_RELATIVE = SCAN_PATTERNS.projectRelative.map((parts) => parts.join(''))
 const DENYLIST = SCAN_PATTERNS.denylist.map((parts) => parts.join(''))
-// The pre-0.8.0 tool prefix (`.mcp.json`-spawned server). U17 counts it, so its needle is fragmented
-// like the others; T1 and T1b keep their inline literals and U17's allowed list accounts for them.
+// The pre-0.8.0 tool prefix (`.mcp.json`-spawned server). U19 counts it, so its needle is fragmented
+// like the others; T1 keeps its inline literal and U19's expected count is that one occurrence.
 const [LEGACY_TOOL_PREFIX] = SCAN_PATTERNS.legacyToolPrefix.map((parts) => parts.join(''))
+// The one definition of "names a plugin-served tool" (see the fixture's `_pluginToolNameWhy`).
+const PLUGIN_TOOL_NAME_RE = new RegExp(SCAN_PATTERNS.pluginToolName, 'g')
 
 // ---------------------------------------------------------------------------
 // Filesystem helpers
@@ -624,96 +629,117 @@ test('T5: no consumer-repo name appears anywhere under plugins/', () => {
 })
 
 // ---------------------------------------------------------------------------
-// U13 / U14 / T1b — the commands/ tree
+// U13' / U14' / U17' / U18 / U19 — the procedure skills
 //
-// Three of the plugin's strongest guards do not see commands/ at all: U6 and U12 walk skillDirs(),
-// and T1 walks SKILLS_DIR. That is not an oversight to route around — T1's scope is precisely what
-// LETS a command name an MCP tool, which a skill may never do. T1b pins both halves of that boundary
-// so a reasonable-looking future widening of T1 to PLUGINS_DIR turns a test red instead of silently
-// deleting the command's fallback clause. U6/U12 coverage of commands/ stays a known gap (G-U6).
+// The procedures that were served as MCP resources and reached through `commands/` are skills now
+// (docs/session-env-picker-plan.md §3). A SKILL.md body is the ONLY text the agent reads, so what
+// `src/mcp/__tests__/server.test.ts` used to pin on the served bytes is pinned here, on the body.
 // ---------------------------------------------------------------------------
 
 const COMMANDS_DIR = join(PLUGIN_ROOT, 'commands')
-const EXPECTED_COMMANDS = ['release-create.md', 'session.md']
-const COMMAND_FRONTMATTER_KEYS = ['argument-hint', 'description', 'name']
 
-test('U13: the commands/ file list equals the expected literal', () => {
-  const found = existsSync(COMMANDS_DIR)
-    ? readdirSync(COMMANDS_DIR, { withFileTypes: true })
-        .filter((e) => e.isFile())
-        .map((e) => e.name)
-        .sort()
-    : []
-  assert.deepEqual(found, [...EXPECTED_COMMANDS].sort())
+test("U13': the commands/ tree is gone — every procedure is a skill", () => {
+  assert.equal(existsSync(COMMANDS_DIR), false, `${rel(COMMANDS_DIR)} must not exist`)
 })
 
-test('U14: every command pins its frontmatter key set, its name, and its body length', () => {
-  for (const name of EXPECTED_COMMANDS) {
-    const file = join(COMMANDS_DIR, name)
-    const parsed = parseFrontmatter(readText(file))
-    assert.ok(parsed, `${rel(file)} has no parseable frontmatter`)
+/** Every plugin-served tool `text` names, bare (`env-load`), de-duplicated, in order of first mention. */
+function namedPluginTools(text) {
+  return [...new Set([...text.matchAll(PLUGIN_TOOL_NAME_RE)].map((match) => match[1]))]
+}
+
+// The confirm-gated tools — `EXPECTED_GATED_TOOLS` in the CLI's command-catalog.test.ts. Copied, not
+// imported: this suite is plain node with no path into the CLI package; the CLI side cross-checks that
+// every tool NAME a skill mentions is an exposed catalog tool. A gated tool in `allowed-tools` would let
+// the gate's round 2 — an agent-authored, same-turn re-call — run with no host prompt at all (§3.1),
+// which is why `env-clear` is absent from the session skill's grant on purpose.
+const GATED_TOOLS = [
+  'release-create',
+  'env-clear',
+  'setup',
+  'gh-release-deploy-all',
+  'gh-release-deploy-selected',
+  'local-deploy-all',
+  'local-deploy-selected',
+  'worktrees-remove',
+  'release-remove',
+  'gh-merge-dev',
+]
+
+// Key sets are exact, and the `disable-model-invocation` split is the design: `session` and
+// `release-create` are human-only (one loads secrets into the human's terminal, the other is gated),
+// so only `/name` may invoke them. `setup` stays model-invocable ON PURPOSE — its reader is the agent
+// about to call the tool, so auto-loading is what replaces the deleted resource; its human gate is the
+// tool's own confirm protocol, which no `allowed-tools` grant can skip.
+const PROCEDURE_SKILLS = {
+  'release-create': {
+    keys: ['argument-hint', 'description', 'disable-model-invocation', 'name'],
+    humanOnly: true,
+  },
+  session: {
+    keys: ['allowed-tools', 'argument-hint', 'description', 'disable-model-invocation', 'name'],
+    humanOnly: true,
+  },
+  setup: {
+    keys: ['description', 'name'],
+    humanOnly: false,
+  },
+}
+
+function procedureSkill(name) {
+  const file = join(SKILLS_DIR, name, 'SKILL.md')
+  const parsed = parseFrontmatter(readText(file))
+  assert.ok(parsed, `${rel(file)} has no parseable frontmatter`)
+  return { file, ...parsed }
+}
+
+test("U14': each procedure skill pins its frontmatter keys, its invocation policy, and grants no gated tool", () => {
+  for (const [name, expected] of Object.entries(PROCEDURE_SKILLS)) {
+    const { file, data } = procedureSkill(name)
 
     assert.deepEqual(
-      Object.keys(parsed.data).sort(),
-      COMMAND_FRONTMATTER_KEYS,
-      `${rel(file)} frontmatter must carry exactly ${COMMAND_FRONTMATTER_KEYS.join(', ')}`,
+      Object.keys(data).sort(),
+      expected.keys,
+      `${rel(file)} frontmatter must carry exactly ${expected.keys.join(', ')}`,
     )
-    assert.equal(parsed.data.name, name.replace(/\.md$/, ''), `${rel(file)} name must equal its filename stem`)
 
-    // Exactly 3, not "at most 10". The ≤10 budget is the DECISION and lives in the plan; asserting it
-    // here would leave 7 lines of drift no test would notice, and a command that doubled in length
-    // would stay green — the exact rot the defer-to-the-resource design exists to prevent. A
-    // deliberate 4th line is a one-character edit here and a visible diff, which is the point.
-    const bodyLines = parsed.body.split('\n').filter((line) => line.trim() !== '')
-    assert.equal(bodyLines.length, 3, `${rel(file)} body must be exactly 3 non-empty lines`)
+    if (expected.humanOnly) {
+      assert.equal(data['disable-model-invocation'], 'true', `${rel(file)} must be human-only`)
+    } else {
+      assert.equal(
+        'disable-model-invocation' in data,
+        false,
+        `${rel(file)} must stay model-invocable — its reader is the agent about to call the tool`,
+      )
+    }
+
+    const allowed = String(data['allowed-tools'] ?? '')
+    const gatedGranted = namedPluginTools(allowed).filter((tool) => GATED_TOOLS.includes(tool))
+    assert.deepEqual(gatedGranted, [], `${rel(file)} allowed-tools must name no gated tool`)
+    assert.deepEqual(bashRules(allowed), [], `${rel(file)} must carry zero Bash( rules`)
   }
 })
 
-// U17 — the `argument-hint` is a promise to the human, and the workflow body is the only text the
-// AGENT reads. `release-create.md` advertised `[--hotfix] [--desc <text>]` for a release cycle while
-// the body defined neither, so the hint named a syntax no reader could act on. The flags are not a
-// mistake — they are a deliberate command-level convention with a recorded precedence rule — but a
-// convention that reaches only one of the two readers is indistinguishable from a typo.
-//
-// U14 pins the frontmatter KEY SET and cannot catch this: the value was always a well-formed string.
-// Binding the hint to a *definition* rather than to a literal is what makes the guard survive a
-// deliberate change to either side — rename the flag in both places and it stays green, rename it in
-// one and it reddens.
-const WORKFLOW_RESOURCES_DIR = join(REPO_ROOT, 'apps', 'infra-kit', 'cli', 'resources', 'workflow')
+// U17' — the `argument-hint` is a promise to the human, and the body is the only text the AGENT reads.
+// `release-create` once advertised `[--hotfix] [--desc <text>]` for a release cycle while nothing
+// defined them, so the hint named a syntax no reader could act on. Binding the hint to a DEFINITION in
+// the same file (the flag in backticks on a line carrying `→`) rather than to a literal is what lets
+// the guard survive a deliberate rename of both sides while reddening on a rename of one. Scoped to
+// the procedure skills: their flags are conventions the body must translate into tool fields, which
+// is what the `→` form spells; a pipeline skill's flags are its own.
+test("U17': every procedure-skill argument-hint flag is defined with → in the same SKILL.md", () => {
+  for (const name of Object.keys(PROCEDURE_SKILLS)) {
+    const { file, data, body } = procedureSkill(name)
 
-test('U17: every argument-hint flag is defined in the command’s workflow body', () => {
-  for (const name of EXPECTED_COMMANDS) {
-    const commandFile = join(COMMANDS_DIR, name)
-    const parsed = parseFrontmatter(readText(commandFile))
-    assert.ok(parsed, `${rel(commandFile)} has no parseable frontmatter`)
-
-    const hint = String(parsed.data['argument-hint'] ?? '')
-    const flags = [...hint.matchAll(/--[a-z][a-z-]*/g)].map((match) => {
-      return match[0]
-    })
-
-    // A hint carrying no flags is legal — the guard is about flags that exist, not a demand for them.
-    if (flags.length === 0) continue
-
-    const bodyFile = join(WORKFLOW_RESOURCES_DIR, name)
-    assert.ok(
-      existsSync(bodyFile),
-      `${rel(commandFile)} advertises ${flags.join(', ')} but has no workflow body at ${rel(bodyFile)}`,
-    )
-
-    const body = readText(bodyFile)
+    const hint = String(data['argument-hint'] ?? '')
+    const flags = [...hint.matchAll(/--[a-z][a-z-]*/g)].map((match) => match[0])
 
     for (const flag of flags) {
-      // A DEFINITION, not a mention: the flag in backticks on a line that also carries the `→` used
-      // by every mapping line in these bodies. Requiring only that the flag appear somewhere would
-      // pass on a body that merely warns the flag is unsupported.
-      const defined = body.split('\n').some((line) => {
-        return line.includes(`\`${flag}`) && line.includes('→')
-      })
-
+      // A DEFINITION, not a mention: requiring only that the flag appear somewhere would pass on a
+      // body that merely warns the flag is unsupported.
+      const defined = body.split('\n').some((line) => line.includes(`\`${flag}`) && line.includes('→'))
       assert.ok(
         defined,
-        `${rel(commandFile)}'s argument-hint promises ${flag}, but ${rel(bodyFile)} never defines what it maps to — ` +
+        `${rel(file)}'s argument-hint promises ${flag}, but its body never defines what it maps to — ` +
           'add a line of the form "- `' +
           flag +
           '` → <the tool field it sets>"',
@@ -722,73 +748,161 @@ test('U17: every argument-hint flag is defined in the command’s workflow body'
   }
 })
 
-test('T1b: T1 is scoped to skills, and the command does name an infra-kit MCP tool', () => {
-  // Half one: T1 walks SKILLS_DIR, asserted against T1's OWN SOURCE.
-  //
-  // An earlier spelling called walkFiles(SKILLS_DIR) here and checked the result held no command
-  // file. That was VACUOUS: SKILLS_DIR and COMMANDS_DIR are disjoint siblings, so it is true however
-  // T1 is written — widening T1 to PLUGINS_DIR reddened T1 and left this green, which is the exact
-  // "mutually unsatisfiable" property this test exists to provide. Reading the source is brittle by
-  // design: T1's walk root is the invariant, so a change to it SHOULD require touching this line.
-  const suiteSource = readText(join(TESTS_DIR, 'manifest.test.mjs'))
-  const t1Body = /test\('T1:[\s\S]*?\n\}\)/.exec(suiteSource)?.[0]
-  assert.ok(t1Body, 'could not locate T1 in the suite source')
-  assert.match(t1Body, /walkFiles\(SKILLS_DIR\)/, 'T1 must walk SKILLS_DIR — widening it breaks the fallback clause')
+// U18 — the session body. Every literal below is a fragment of one instruction, asserted against the
+// body with soft line breaks joined (prettier does not reflow these files, an author's rewrap does),
+// so a fragment survives an honest rewrap and reddens only when the instruction goes.
+const ABSENT_TOOLS_CLAUSE = 'tools are absent this is a subdirectory or legacy session — say so and stop'
 
-  // Half two: every command really does depend on that scoping. Naming the tool in prose is the ONLY
-  // binding mechanism a command has; there is no declarative command→tool wiring. Every command, not
-  // one — a fallback clause quietly dropped from a second command would otherwise stay green.
-  for (const name of EXPECTED_COMMANDS) {
-    const command = join(COMMANDS_DIR, name)
-    assert.match(
-      readText(command),
-      /mcp__infra-kit__[a-z-]+/,
-      `${rel(command)} must name the infra-kit MCP tool it falls back to`,
-    )
+/** The body with each paragraph's line breaks joined, so fragments do not depend on where a line wraps. */
+function joinedParagraphs(body) {
+  return body
+    .split('\n\n')
+    .map((paragraph) => paragraph.replace(/\n/g, ' '))
+    .join('\n\n')
+}
+
+const INJECTION_LINES = [
+  'Terminal status at invocation: !`zsh -c \'infra-kit env-status --json\' 2>/dev/null || echo \'{"error":"status unavailable"}\'`',
+  'Environments this project knows: !`zsh -c \'infra-kit env-list --json\' 2>/dev/null || echo \'{"error":"list unavailable"}\'`',
+]
+
+const SESSION_CLAUSES = [
+  // The three tools composed, and the resolution of a bare token.
+  'mcp__plugin_infra-kit_infra-kit__env-list',
+  'mcp__plugin_infra-kit_infra-kit__env-load',
+  '`--clear` → `mcp__plugin_infra-kit_infra-kit__env-clear`',
+  // The form path: no token → `env-load` without `config`; the human's pick is the load; a decline
+  // is terminal for this turn.
+  'without `config`',
+  'form_declined',
+  "`env-load` is not gated, but it can PROMPT — an argument form, not a confirm gate; the human's pick is the load.",
+  // The two-shape fallback (a JSON-RPC error from an old CLI, a refusal from a new one) and the CLI
+  // floor that decides which one arrives.
+  'a tool error or a refused result naming `config`',
+  // PM-5: a host that substitutes a placeholder for the injection leaves a non-JSON block.
+  'not JSON, treat it as unknown and call `env-list` yourself',
+  'infra-kit env-token-set <env>',
+  'a name absent from the form must still be typed and passed as `config`',
+  // The shell round trip's three properties, and the one check a human can perform.
+  'at its next prompt — after Claude Code exits or is backgrounded',
+  'the terminal that launched Claude Code and no other',
+  'writes into a directory nothing is watching and still returns success',
+  'report the session id from the returned filePath',
+  'compare it with INFRA_KIT_SESSION at their own prompt',
+  'does not persist shell state between calls',
+  'INFRA_KIT_SESSION is not set',
+  'infra-kit setup --skip-tools',
+  // What `env-list` is and is not.
+  'not a live Doppler enumeration',
+  'an empty list is a legitimate result',
+  // The gate, the tie hazard, and the tether to the provider contract.
+  'confirmation_required',
+  'confirmToken',
+  '"confirm": true',
+  'in the same wall-clock second',
+  'infra-kit: auto-loaded vars for',
+  'docs/session-context-orchestrator.md',
+  // What not to do — the two clauses that keep the form the human's, not the agent's.
+  'Do not supply a `config` the human did not name in order to skip the form.',
+  'Never send `inputResponses` yourself',
+  ABSENT_TOOLS_CLAUSE,
+]
+
+test('U18: the session body carries the two injections, every load-bearing clause, and none of the retired ones', () => {
+  const { file, body } = procedureSkill('session')
+  const lines = body.split('\n')
+  const joined = joinedParagraphs(body)
+
+  // The injections: each is one whole line (Claude Code runs `!` at the start of a line or after
+  // whitespace), spelled through `zsh -c` so the reading does not depend on which shell the host's
+  // Bash tool is, and never fenced — a fence would put it in U6's corpus and out of the host's.
+  for (const line of INJECTION_LINES) {
+    assert.ok(lines.includes(line), `${rel(file)} must carry the injection line verbatim: ${line}`)
+  }
+  assert.equal(body.split('!`').length - 1, INJECTION_LINES.length, `${rel(file)} must inject exactly twice`)
+  assert.deepEqual(
+    fencedLines(body).filter((line) => line.includes('!`')),
+    [],
+    `${rel(file)} must not fence an injection`,
+  )
+
+  for (const clause of SESSION_CLAUSES) {
+    assert.ok(joined.includes(clause), `${rel(file)} lost the clause: ${clause}`)
+  }
+
+  // The CLI floor for the form path, and the fallback that survives a server below it.
+  assert.match(joined, /form path needs infra-kit \d+\.\d+\.\d+ or newer/, `${rel(file)} must state the CLI floor`)
+
+  // The retired procedure: a hand-picked subset in an `AskUserQuestion` picker. The picker is named
+  // only as a prohibition — a line that ASKS through it is the defect this rewrite removed.
+  assert.equal(joined.includes('four most likely'), false, `${rel(file)} must not offer a subset`)
+  const askLines = lines.filter((line) => line.includes('AskUserQuestion'))
+  assert.ok(askLines.length > 0, `${rel(file)} must forbid AskUserQuestion by name`)
+  for (const line of askLines) {
+    assert.match(line, /Never `AskUserQuestion`/, `${rel(file)} may name AskUserQuestion only to forbid it: ${line}`)
   }
 })
 
-// ---------------------------------------------------------------------------
-// U17 (plan §7 "U15") — where the pre-0.8.0 prefix may still appear
-//
-// Since 0.8.0 the plugin's own `.mcp.json` spawns the server and the served prefix is
-// `mcp__plugin_infra-kit_infra-kit__`. The old spelling survives in exactly two places on purpose:
-// the fallback clause of each command, which is a static file and cannot be rendered per launch the
-// way the server's workflow resources are, so it names both prefixes until the last consumer drops
-// its `.mcp.json` key. Every other occurrence is a body that would send a plugin-launched session
-// to a tool it does not have. The list is exact, file and count, so a second legacy mention in a
-// command — or a new one anywhere — is red, and so is the day the fallback clauses are finally
-// removed (edit this list in that PR). The suite's own two literals (T1, T1b) are counted here
-// rather than fragmented: T1's literal IS the old-prefix negative for skills, and the tests are
-// scanned like everything else under plugins/.
-// ---------------------------------------------------------------------------
-
-const LEGACY_PREFIX_ALLOWED = {
-  'plugins/infra-kit/__tests__/manifest.test.mjs': 2,
-  'plugins/infra-kit/commands/release-create.md': 1,
-  'plugins/infra-kit/commands/session.md': 1,
+// The other two procedure bodies keep the clauses `server.test.ts` pinned when the CLI served them.
+const PROCEDURE_CLAUSES = {
+  'release-create': [
+    'mcp__plugin_infra-kit_infra-kit__release-create',
+    'confirmation_required',
+    'confirmToken',
+    '"confirm": true',
+    'does not mean the call failed',
+    '`--hotfix` → `type: "hotfix"`',
+    '`--desc <text>` → `description`',
+    'mutually exclusive',
+    '"next"',
+    'all entries must share the same `type`',
+    'linked worktree',
+    'clean working tree',
+    ABSENT_TOOLS_CLAUSE,
+  ],
+  setup: [
+    'mcp__plugin_infra-kit_infra-kit__setup',
+    '`doctor`',
+    'the init half',
+    'the dependency converge',
+    '**brew, aws, gh, doppler, portless**',
+    '`--tools <ids...>` → `tools: ["gh", "doppler"]`',
+    '`--update [ids...]` → `mode: "update"`',
+    '`--skip-tools` → `skipTools: true`',
+    'needs-sudo',
+    'fetches-network-script',
+    'A refusal is not a failure',
+    'confirmation_required',
+    'confirmToken',
+    '"confirm": true',
+    'There is no `init` command',
+    '`infra-kit setup --skip-tools`',
+    ABSENT_TOOLS_CLAUSE,
+  ],
 }
+
+test('U18: the release-create and setup bodies carry every load-bearing clause', () => {
+  for (const [name, clauses] of Object.entries(PROCEDURE_CLAUSES)) {
+    const { file, body } = procedureSkill(name)
+    const joined = joinedParagraphs(body)
+    for (const clause of clauses) {
+      assert.ok(joined.includes(clause), `${rel(file)} lost the clause: ${clause}`)
+    }
+  }
+})
 
 function countOccurrences(text, needle) {
   return text.split(needle).length - 1
 }
 
-test('U17: the legacy tool prefix appears under plugins/ only in the two command fallback clauses', () => {
+// U19 — where the pre-0.8.0 prefix may still appear: nowhere the plugin ships. The commands that
+// named it as a fallback are gone, and a skill body naming it would send a plugin-launched session to
+// a tool it does not have. The one occurrence is T1's own literal, which IS the negative for skills.
+test('U19: the legacy tool prefix appears under plugins/ only in T1 (count 1)', () => {
   const found = {}
   for (const file of walkFiles(PLUGINS_DIR)) {
     const count = countOccurrences(readText(file), LEGACY_TOOL_PREFIX)
     if (count > 0) found[rel(file)] = count
   }
-  assert.deepEqual(found, LEGACY_PREFIX_ALLOWED)
-
-  // The clause must lead with the canonical spelling: a command that named only the old prefix
-  // would satisfy T1b and still strand every plugin-launched session.
-  for (const name of EXPECTED_COMMANDS) {
-    const command = join(COMMANDS_DIR, name)
-    assert.match(
-      readText(command),
-      /mcp__plugin_infra-kit_infra-kit__[a-z-]+/,
-      `${rel(command)} must name the plugin-served tool before its legacy fallback`,
-    )
-  }
+  assert.deepEqual(found, { 'plugins/infra-kit/__tests__/manifest.test.mjs': 1 })
 })

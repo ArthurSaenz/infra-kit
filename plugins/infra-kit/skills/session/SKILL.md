@@ -1,8 +1,22 @@
+---
+name: session
+description: Switch this terminal's context — load a named environment through the infra-kit MCP server.
+argument-hint: [--clear] [<environment>]
+disable-model-invocation: true
+allowed-tools: mcp__plugin_infra-kit_infra-kit__env-list, mcp__plugin_infra-kit_infra-kit__env-load
+---
+
 # session — switching a terminal's context through infra-kit
+
+Terminal status at invocation: !`zsh -c 'infra-kit env-status --json' 2>/dev/null || echo '{"error":"status unavailable"}'`
+Environments this project knows: !`zsh -c 'infra-kit env-list --json' 2>/dev/null || echo '{"error":"list unavailable"}'`
 
 Three tools do the work, and this body is only the procedure that composes them:
 `mcp__plugin_infra-kit_infra-kit__env-list`, `mcp__plugin_infra-kit_infra-kit__env-load` and `mcp__plugin_infra-kit_infra-kit__env-clear`. None of them
-changes here.
+changes here. If `mcp__plugin_infra-kit_infra-kit__*` tools are absent this is a subdirectory or legacy session — say so and stop;
+do not improvise with the doppler CLI or by exporting variables in Bash.
+
+`$ARGUMENTS` is the environment and the flags the human asked for; section 3 and section 5 resolve it.
 
 ## 1. What a session is
 
@@ -19,20 +33,11 @@ The contract a second provider would implement, and the recipe for adding one, l
 `filePath`. The zsh block `infra-kit setup` installs registers a `precmd` hook that sources the file
 when its mtime beats the last one sourced, the shell's start time, and the clear file.
 
-State all three of the following.
+State both of the following.
 
 **Timing.** `precmd` runs before a prompt is drawn and cannot run while a foreground process holds
 the shell. The variables appear at its next prompt — after Claude Code exits or is backgrounded, not
 when the tool returns.
-
-Every zsh spawned from that terminal after the file lands sees it immediately — the `Bash` tool
-included — because a fresh shell sources `~/.zshenv` on its own at startup, not through `precmd`.
-That holds only when `~/.zshenv` carries the infra-kit session-env block; `infra-kit doctor` reports
-the row `zshenv session block` for it, and a machine set up before that row existed needs
-`infra-kit setup --skip-tools` once to gain it.
-So `infra-kit env-status` run through Bash is a truthful reading of what the agent's own commands
-see — it reads that child shell's inherited environment, not the terminal's. `env-status` over MCP
-has not changed: it is still the long-lived server's frozen environment, never a verification.
 
 **Destination.** The session id is the one the MCP server inherited when Claude Code launched, so the
 file lands in the terminal that launched Claude Code and no other. A server that has outlived its
@@ -40,31 +45,44 @@ shell writes into a directory nothing is watching and still returns success — 
 signal. So report the session id from the returned filePath, and tell the human to
 compare it with INFRA_KIT_SESSION at their own prompt. That comparison is the only check there is.
 
-**Sourcing it yourself is not a substitute.** Claude Code's `Bash` tool
-does not persist shell state between calls, so a `source` call changes nothing durable, and
-reporting success from it hides the real failure. A shell spawned fresh after the block lands is
-different: it sources `~/.zshenv` on its own at startup, needing no `source` call from you at all.
+**What the injected blocks mean.** The `Terminal status at invocation` block above is the truthful
+reading of what has landed for this session id at invocation: `~/.zshenv`'s session-env block sources
+the file `env-load` wrote for the inherited `INFRA_KIT_SESSION`, so its `sessionConfig` is the last
+load that landed, not what the terminal shows yet. Nothing in this turn can read the post-load state —
+the human confirms at their own prompt. Never verify a load with `env-status` over MCP: it reads the
+long-lived server's own environment, frozen when Claude Code launched, and can flatly contradict a
+load you made moments ago.
 
-The loud failure is `INFRA_KIT_SESSION is not set`: the shell block was never installed, or this
-shell predates it. Tell the human to run `infra-kit setup --skip-tools` and then `source ~/.zshrc`.
-Do not retry — nothing about a second call will differ.
+`{"error": …}` in the status block means stop before calling anything and tell the human to run
+`infra-kit setup --skip-tools`, then `source ~/.zshrc`. The same failure inside a tool result reads
+`INFRA_KIT_SESSION is not set`: same cause, same remediation. Do not retry — nothing about a second
+call will differ.
 
-The authoritative reading of what a terminal holds is `infra-kit env-status`
-typed in the terminal, not over MCP. Over MCP that tool reads the long-lived server's own
-environment, frozen when Claude Code launched, so it can flatly contradict a load you made moments
-ago. Never use it to verify one.
+**Sourcing it yourself is not a substitute.** Claude Code's `Bash` tool does not persist shell state
+between calls, so a `source` call changes nothing durable, and reporting success from it hides the
+real failure.
 
 ## 3. Resolving `$ARGUMENTS`
 
 **A bare token is the environment name.** Call `mcp__plugin_infra-kit_infra-kit__env-load` with `config: <token>`.
 
-**No token means the human has not chosen yet.** Call `mcp__plugin_infra-kit_infra-kit__env-load` **without `config`**:
-the server offers the human a form listing every environment, and the human's pick IS the load — there
-is no second prompt. If the call comes back as a tool error or a refused result naming `config`, this client cannot
-render forms: call `mcp__plugin_infra-kit_infra-kit__env-list` and show **every** entry as a numbered prose list,
-`hasToken: false` annotated with `infra-kit env-token-set <env>`, then ask in prose which one. Never
-`AskUserQuestion` — it caps the list at four and drops the rest — never invent a name, and never load
-without an explicit choice.
+**No token means the human has not chosen yet.** Call `mcp__plugin_infra-kit_infra-kit__env-load` **without `config`**: the
+server offers the human a form listing every environment, and the human's pick IS the load. A result
+whose `status` is `form_declined` means the human closed the form without choosing — nothing was
+loaded; say so and stop. Do not re-open the form and do not pick for them.
+
+The form path needs infra-kit 0.7.8 or newer; an older server answers a tool error or a refused result naming `config` — take the fallback.
+
+**The fallback.** If the call comes back as a tool error or a refused result naming `config`, this client
+cannot render forms or the server predates them: read the `Environments this project knows` block
+above and show **every** entry as a numbered prose list, `hasToken: false` annotated with
+`infra-kit env-token-set <env>` as its fix, then ask in prose which one. Do not surface `source` — it
+records how we learned the environment exists, which helps nobody choose. If either block above is not
+JSON, treat it as unknown and call `env-list` yourself, then list the same way. Never `AskUserQuestion`,
+never invent a name, and never load without an explicit choice.
+
+A load that fails after the pick — an error naming `infra-kit env-token-set <env>` — is relayed as
+is. Do not re-open the form; the human has to mint the token first.
 
 ## 4. The list is local and may be wrong
 
@@ -75,7 +93,8 @@ enumerate its siblings.
 
 Two consequences. First, an empty list is a legitimate result rather than an error: say so, and ask
 for a name in prose. Second, a name absent from the list must still be passed to `env-load`, because
-the list is not authoritative about what exists. Only `hasToken` is authoritative about what loads.
+the list is not authoritative about what exists — a name absent from the form must still be typed and
+passed as `config`. Only `hasToken` is authoritative about what loads.
 
 ## 5. The flag
 
@@ -93,8 +112,8 @@ was cleared. Show the human what it resolved, because that is the approval momen
 those arguments unchanged plus `"confirm": true` and the `confirmToken` from call 1. A mismatch comes
 back `confirmation_refused`, which is terminal — mint a fresh gate, never reuse a token.
 
-`env-load` is not gated, but it can PROMPT: called without `config` it offers an argument form, not a confirm
-gate, and the human's pick is the load. Say so if the human expects a second prompt, so nobody waits for one.
+`env-load` is not gated, but it can PROMPT — an argument form, not a confirm gate; the human's pick is the load.
+Say so if the human expects a confirm prompt, so nobody waits for one that never comes.
 
 **The tie hazard.** The shell's clear gate compares mtimes in whole seconds and strictly, while its
 load gate does not. A clear whose file lands in the same wall-clock second as the load it follows
@@ -112,7 +131,7 @@ where nothing interposes. Raise it when a clear closely follows a load, not on e
 - Do not `export` anything in a shell, and do not present a file you sourced as a loaded environment.
 - Never echo a variable's value. `env-list` reports token presence only, and `env-load.sh` holds
   single-quoted secrets — printing one puts it in the transcript.
-- Do not read `isError: true` on a `confirmation_required` payload as a failure. See section 6.
-- Do not verify a load with `env-status` over MCP. See section 2.
 - Do not supply a `config` the human did not name in order to skip the form.
 - Never send `inputResponses` yourself — that field is the human's answer, and the server cannot tell yours from theirs.
+- Do not read `isError: true` on a `confirmation_required` payload as a failure. See section 6.
+- Do not verify a load with `env-status` over MCP. See section 2.

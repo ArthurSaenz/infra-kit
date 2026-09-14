@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { buildProgram, commandPath } from 'src/lib/program'
@@ -203,6 +205,62 @@ describe('command catalog — MCP exposure policy', () => {
       })
 
     expect(surface).toMatchSnapshot()
+  })
+})
+
+/**
+ * The plugin's skills name this server's tools in prose (`mcp__plugin_infra-kit_infra-kit__<name>`), and
+ * prose is the ONLY binding a skill has — there is no declarative skill→tool wiring. A skill naming a
+ * tool the catalog does not expose sends every session that invokes it to a tool it does not have,
+ * and nothing in the plugin's own suite (plain node, no path into this package) can know.
+ *
+ * The scan pattern is read from the plugin suite's fixture rather than spelled here: it is the one
+ * definition of "names a tool" that `manifest.test.mjs` and `scripts/report-published-cli-skew.mjs`
+ * also read, so the three scans cannot drift on what counts as a mention.
+ */
+describe('command catalog — every tool the plugin skills name is exposed', () => {
+  const REPO_ROOT = path.resolve(import.meta.dirname, '../../../../../../..')
+  const PLUGIN_ROOT = path.join(REPO_ROOT, 'plugins', 'infra-kit')
+  const SKILLS_DIR = path.join(PLUGIN_ROOT, 'skills')
+
+  const pluginToolNameRe = (): RegExp => {
+    const fixture = path.join(PLUGIN_ROOT, '__tests__', '__fixtures__', 'scan-patterns.json')
+    const { pluginToolName } = JSON.parse(fs.readFileSync(fixture, 'utf8')) as { pluginToolName: string }
+
+    return new RegExp(pluginToolName, 'g')
+  }
+
+  /** `[skill, tool]` for every plugin-prefixed tool name in every `skills/<skill>/SKILL.md`. */
+  const namedBySkills = (): [string, string][] => {
+    const re = pluginToolNameRe()
+
+    return fs.readdirSync(SKILLS_DIR, { withFileTypes: true }).flatMap((entry) => {
+      const file = path.join(SKILLS_DIR, entry.name, 'SKILL.md')
+
+      if (!entry.isDirectory() || !fs.existsSync(file)) return []
+
+      return [...fs.readFileSync(file, 'utf8').matchAll(re)].map((match): [string, string] => {
+        return [entry.name, match[1]!]
+      })
+    })
+  }
+
+  it('names only mcpExposed catalog tools, and at least one', () => {
+    const exposed = new Set(
+      getExposedMcpTools().map((tool) => {
+        return tool.name
+      }),
+    )
+    const named = namedBySkills()
+
+    // A scan that finds nothing proves nothing: the procedure skills name their tools by design.
+    expect(named.length).toBeGreaterThan(0)
+
+    const unexposed = named.filter(([, tool]) => {
+      return !exposed.has(tool)
+    })
+
+    expect(unexposed, 'skills naming a tool the catalog does not expose').toEqual([])
   })
 })
 

@@ -2,15 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import {
-  LEGACY_MCP_TOOL_PREFIX,
-  MCP_TOOL_PREFIX,
-  prefixFor,
-  renderForLaunch,
-  resolveLaunch,
-  toolName,
-} from '../tool-prefix'
-import { WORKFLOW_BODIES } from '../workflow-bodies'
+import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX, prefixFor, resolveLaunch } from '../tool-prefix'
 
 const CLI_ROOT = path.resolve(import.meta.dirname, '../../..')
 const REPO_ROOT = path.resolve(CLI_ROOT, '../../..')
@@ -37,13 +29,6 @@ const shippedFiles = (dir: string): string[] => {
 
 const readJson = (file: string): Record<string, unknown> => {
   return JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
-}
-
-/** Every `mcp__…` token in `text` (a prefix plus the tool name that follows it), in order. */
-const mcpTokens = (text: string): string[] => {
-  return [...text.matchAll(/mcp__[\w-]+/gu)].map((match) => {
-    return match[0]
-  })
 }
 
 describe('mCP_TOOL_PREFIX is composed from the two plugin files on disk', () => {
@@ -98,62 +83,11 @@ describe('resolveLaunch', () => {
   })
 })
 
-describe('prefixFor / toolName', () => {
-  it('spell a tool for the route that spawned the server', () => {
+describe('prefixFor', () => {
+  it('spells the prefix for the route that spawned the server', () => {
     expect(prefixFor('plugin')).toBe(MCP_TOOL_PREFIX)
     expect(prefixFor('legacy')).toBe(LEGACY_MCP_TOOL_PREFIX)
-    expect(toolName('release-create', 'plugin')).toBe(`${MCP_TOOL_PREFIX}release-create`)
-    expect(toolName('release-create', 'legacy')).toBe(`${LEGACY_MCP_TOOL_PREFIX}release-create`)
   })
-})
-
-describe('renderForLaunch', () => {
-  const body = [
-    `Call ${MCP_TOOL_PREFIX}env-load, then ${MCP_TOOL_PREFIX}env-status.`,
-    'A bare `env-load` and the word plugin_infra-kit stay as they are.',
-    `And ${MCP_TOOL_PREFIX}env-clear once more.`,
-  ].join('\n')
-
-  it('serves the plugin launch the canonical bytes unchanged', () => {
-    expect(renderForLaunch(body, 'plugin')).toBe(body)
-  })
-
-  it('replaces EVERY canonical prefix for the legacy launch and nothing else', () => {
-    const rendered = renderForLaunch(body, 'legacy')
-
-    expect(rendered).toBe(
-      [
-        `Call ${LEGACY_MCP_TOOL_PREFIX}env-load, then ${LEGACY_MCP_TOOL_PREFIX}env-status.`,
-        'A bare `env-load` and the word plugin_infra-kit stay as they are.',
-        `And ${LEGACY_MCP_TOOL_PREFIX}env-clear once more.`,
-      ].join('\n'),
-    )
-    expect(rendered).not.toContain(MCP_TOOL_PREFIX)
-  })
-
-  it('is pure — the same input and launch always give the same output', () => {
-    expect(renderForLaunch(body, 'legacy')).toBe(renderForLaunch(body, 'legacy'))
-  })
-
-  /**
-   * The soundness of one `replaceAll`: the prefix ends in `__` and every tool name follows it
-   * directly, so it cannot occur inside another token. Asserted on the REAL bodies, both ways —
-   * every `mcp__` token in the source is canonical, and every one in the legacy render is legacy.
-   */
-  it.each(Object.keys(WORKFLOW_BODIES) as (keyof typeof WORKFLOW_BODIES)[])(
-    'spells every mcp__ token in the %s body for exactly one route',
-    (key) => {
-      const source = mcpTokens(WORKFLOW_BODIES[key])
-      const legacy = mcpTokens(renderForLaunch(WORKFLOW_BODIES[key], 'legacy'))
-
-      // Every body names at least one tool, or the render would be proven on nothing.
-      expect(source.length).toBeGreaterThan(0)
-      expect(legacy).toHaveLength(source.length)
-
-      for (const token of source) expect(token.startsWith(MCP_TOOL_PREFIX), token).toBe(true)
-      for (const token of legacy) expect(token.startsWith(LEGACY_MCP_TOOL_PREFIX), token).toBe(true)
-    },
-  )
 })
 
 describe('the negative grep — one spelling per prefix (P6)', () => {
@@ -176,12 +110,11 @@ describe('the negative grep — one spelling per prefix (P6)', () => {
   })
 
   /**
-   * The canonical prefix may be spelled in one more place than the legacy one: the served Markdown,
-   * which prettier owns and which therefore carries the literal rather than a template token
-   * (docs/mcp-via-plugin-migration-plan.md §3.3). Everything else in `src/` composes it from the
+   * The served Markdown that once carried the canonical literal (prettier-owned, so no template token)
+   * moved to the plugin's skills; everything left in `src/` and `resources/` composes it from the
    * constant.
    */
-  it('spells the canonical prefix in tool-prefix.ts and the workflow bodies only', () => {
+  it('spells the canonical prefix in tool-prefix.ts and nowhere else shipped', () => {
     const hits = [
       ...shippedFiles(path.join(CLI_ROOT, 'src')),
       ...shippedFiles(path.join(CLI_ROOT, 'resources')),
@@ -189,11 +122,6 @@ describe('the negative grep — one spelling per prefix (P6)', () => {
       return fs.readFileSync(path.join(CLI_ROOT, file), 'utf8').includes(MCP_TOOL_PREFIX)
     })
 
-    expect(hits.sort()).toEqual([
-      'resources/workflow/release-create.md',
-      'resources/workflow/session.md',
-      'resources/workflow/setup.md',
-      PREFIX_MODULE,
-    ])
+    expect(hits).toEqual([PREFIX_MODULE])
   })
 })

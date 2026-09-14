@@ -1,43 +1,14 @@
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
-import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { mcpMode } from 'src/lib/mcp-mode'
 
 import packageJson from '../../../package.json' with { type: 'json' }
-import { RELEASE_CREATE_WORKFLOW_URI, SESSION_WORKFLOW_URI, SETUP_WORKFLOW_URI } from '../resources'
+import { SESSION_WORKFLOW_URI } from '../resources'
 import { createMcpServer } from '../server'
-import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX, renderForLaunch } from '../tool-prefix'
-import type { McpLaunch } from '../tool-prefix'
-import { WORKFLOW_BODIES } from '../workflow-bodies'
-
-/**
- * The launch signal as the server reads it: `CLAUDE_PLUGIN_ROOT` set by a plugin-spawned host, absent
- * otherwise. Captured once so `afterEach` can put back whatever this test process was started with,
- * rather than assuming it was unset.
- */
-const inheritedPluginRoot = process.env.CLAUDE_PLUGIN_ROOT
-
-/**
- * `resolveLaunch` tests the variable for presence only, never as a path, so the plugin value is a
- * stand-in under this file's own directory rather than a real plugin cache that would have to exist.
- */
-const setLaunch = (launch: McpLaunch): void => {
-  if (launch === 'plugin') {
-    process.env.CLAUDE_PLUGIN_ROOT = path.join(import.meta.dirname, 'fixtures', 'plugin-root')
-  } else {
-    delete process.env.CLAUDE_PLUGIN_ROOT
-  }
-}
 
 afterEach(() => {
   mcpMode.enabled = false
-
-  if (inheritedPluginRoot === undefined) {
-    delete process.env.CLAUDE_PLUGIN_ROOT
-  } else {
-    process.env.CLAUDE_PLUGIN_ROOT = inheritedPluginRoot
-  }
 })
 
 /**
@@ -47,15 +18,8 @@ afterEach(() => {
  *
  * Reaching into the server's registration maps instead would assert what was registered and
  * prove nothing about what a client can actually FETCH, or be refused, over the wire.
- *
- * `launch` is pinned per connection rather than inherited, because the served spelling depends on it
- * and the process running this file may or may not have been spawned by a plugin.
  */
-const connectedClient = async (
-  launch: McpLaunch = 'plugin',
-): Promise<{ client: Client; close: () => Promise<void> }> => {
-  setLaunch(launch)
-
+const connectedClient = async (): Promise<{ client: Client; close: () => Promise<void> }> => {
   const server = await createMcpServer()
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   const client = new Client({ name: 'server-test', version: '0.0.0' })
@@ -72,7 +36,7 @@ const connectedClient = async (
 }
 
 /**
- * The text of the single content a workflow resource returns. `ReadResourceResult` unions text and
+ * The text of the single content a markdown resource returns. `ReadResourceResult` unions text and
  * blob contents, so a blob body fails here loudly rather than reading as `undefined === undefined`.
  */
 const resourceText = (result: { contents: unknown[] }): string => {
@@ -119,10 +83,10 @@ describe('createMcpServer', () => {
   })
 })
 
-describe('the release-create procedure, over the wire', () => {
+describe('the procedures, over the wire', () => {
   /**
    * The pin for retiring the MCP prompt (docs/release-create-prompt-removal-plan.md): the plugin
-   * command is the only human surface, so the server must neither ADVERTISE a prompt channel nor
+   * skill is the only human surface, so the server must neither ADVERTISE a prompt channel nor
    * ANSWER on it. The handshake half is what stops the host from listing prompts at all; the handler
    * half is what makes an empty `prompts: {}` capability — the vestigial slot that produced the
    * duplicate `/` row — a wire-visible regression rather than a shape the SDK quietly accepts.
@@ -144,148 +108,17 @@ describe('the release-create procedure, over the wire', () => {
     }
   })
 
-  it('serves the same procedure as a markdown resource at its URI', async () => {
-    const { client, close } = await connectedClient()
-
-    try {
-      const result = await client.readResource({ uri: RELEASE_CREATE_WORKFLOW_URI })
-
-      expect(result.contents).toHaveLength(1)
-      expect(result.contents[0]!.uri).toBe(RELEASE_CREATE_WORKFLOW_URI)
-      expect(result.contents[0]!.mimeType).toBe('text/markdown')
-      expect(resourceText(result)).toBe(WORKFLOW_BODIES['release-create'])
-    } finally {
-      await close()
-    }
-  })
-
   /**
-   * Prettier owns the bytes of `resources/workflow/release-create.md`, so this asserts the
-   * RENDERED shape — a line count and the substantive clauses — never that the file is
-   * prettier-clean. A reflow that drops a section reddens the count; a rewrite that keeps the
-   * count but loses the gate protocol reddens the substring checks.
-   */
-  it('renders a body that still carries the clauses an agent needs', () => {
-    const body = WORKFLOW_BODIES['release-create']
-
-    expect(body.split('\n')).toHaveLength(142)
-    expect(body.endsWith('\n')).toBe(false)
-
-    // The tool the procedure is for, named so an agent that read the resource can call it — in the
-    // canonical spelling, because `WORKFLOW_BODIES` is the source constant and the legacy route is a
-    // serve-time render (asserted over the wire below).
-    expect(body).toContain(`${MCP_TOOL_PREFIX}release-create`)
-    // The two-call gate, and the reading of `isError` that makes an agent bypass it.
-    expect(body).toContain('confirmation_required')
-    expect(body).toContain('confirmToken')
-    expect(body).toContain('"confirm": true')
-
-    // The `$ARGUMENTS` flags the plugin command's `argument-hint` advertises. They are conventions of
-    // that command — neither the CLI nor the tool accepts them — so THIS body is the only place an
-    // agent can learn what they mean. The hint promised them for a release cycle while nothing
-    // defined them; the count above moved by exactly that repair, so these lines are what the new
-    // lines have to be. `manifest.test.mjs`'s U17 binds the hint to these definitions from the other
-    // side, but it is plain node and cannot see the bundled `WORKFLOW_BODIES` this asserts.
-    expect(body).toContain('`--hotfix` → `type: "hotfix"`')
-    expect(body).toContain('`--desc <text>` → `description`')
-    expect(body).toContain('does not mean the call failed')
-    expect(body).toContain('Bash')
-    // The argument rules.
-    expect(body).toContain('mutually exclusive')
-    expect(body).toContain('"next"')
-    expect(body).toContain('all entries must share the same `type`')
-    // The preconditions.
-    expect(body).toContain('linked worktree')
-    expect(body).toContain('clean working tree')
-  })
-
-  /**
-   * `setup`'s procedure over the wire. Resource-only, like every workflow: its human surface is the
-   * `/infra-kit:setup` plugin command. The no-prompt-channel test above is what pins that decision
-   * from the other side — registering a `setup` prompt reddens it and forces this comment to be
-   * revisited rather than silently contradicted.
-   */
-  it('serves the setup procedure as a markdown resource at its URI', async () => {
-    const { client, close } = await connectedClient()
-
-    try {
-      const result = await client.readResource({ uri: SETUP_WORKFLOW_URI })
-
-      expect(result.contents).toHaveLength(1)
-      expect(result.contents[0]!.uri).toBe(SETUP_WORKFLOW_URI)
-      expect(result.contents[0]!.mimeType).toBe('text/markdown')
-      expect(resourceText(result)).toBe(WORKFLOW_BODIES.setup)
-    } finally {
-      await close()
-    }
-  })
-
-  /**
-   * As above: prettier owns the bytes of `resources/workflow/setup.md`, so this asserts the RENDERED
-   * shape — the line count and the substantive clauses — never that the source file is prettier-clean.
+   * The procedures themselves left the server for the plugin's skills (docs/session-env-picker-plan.md
+   * §3.4). What survives, for ONE release, is a deprecation stub at the `session` URI: a consumer whose
+   * plugin still carries the old `/infra-kit:session` command reads that URI FIRST, and the stub keeps it
+   * on the form path instead of the 404 fallback. `resources/list` is asserted alongside the read
+   * because that old command discovers the URI before fetching it.
    *
-   * Each clause below is one the plan requires the served body to carry, and each is the reason the
-   * plugin command can be three lines: if the detail is not HERE, it is nowhere an agent can read it.
+   * The other two URIs are gone outright — their commands' fallbacks call the tool directly — so a
+   * read is refused, not answered with a body that would be stale the moment it was written.
    */
-  it('renders a setup body that still carries the clauses an agent needs', () => {
-    const body = WORKFLOW_BODIES.setup
-
-    expect(body.split('\n')).toHaveLength(164)
-    expect(body.endsWith('\n')).toBe(false)
-
-    // The tool the procedure is for, named so an agent that read the resource can call it — and the
-    // read-path tool it must use instead when it only wants to look.
-    expect(body).toContain(`${MCP_TOOL_PREFIX}setup`)
-    expect(body).toContain('`doctor`')
-
-    // The ordered procedure: the init half's writes first, then the dependency converge.
-    expect(body).toContain('the init half')
-    expect(body).toContain('`~/.zshrc`')
-    expect(body).toContain('`.mcp.json`')
-    expect(body).toContain('the dependency converge')
-    expect(body).toContain('**brew, aws, gh, doppler, portless**')
-    expect(body.indexOf('the init half')).toBeLessThan(body.indexOf('the dependency converge'))
-
-    // What each flag narrows, in the `flag → tool field` form `manifest.test.mjs`'s U17 reads from the
-    // other side. U17 is plain node and cannot see the bundled body this asserts.
-    expect(body).toContain('`--tools <ids...>` → `tools: ["gh", "doppler"]`')
-    expect(body).toContain('`--update [ids...]` → `mode: "update"`')
-    expect(body).toContain('`--skip-tools` → `skipTools: true`')
-    expect(body).toContain('usage error, not a precedence rule')
-
-    // Refused recipes are PRINTED rather than run, and why — both refusing conjuncts, and both of the
-    // two recipes that fail them.
-    expect(body).toContain('needs-sudo')
-    expect(body).toContain('fetches-network-script')
-    expect(body).toContain('the Homebrew bootstrap')
-    expect(body).toContain('the first AWS CLI install')
-    expect(body).toContain('A refusal is not a failure')
-
-    // The gate, and the `isError` reading that makes an agent bypass it.
-    expect(body).toContain('confirmation_required')
-    expect(body).toContain('confirmToken')
-    expect(body).toContain('"confirm": true')
-    expect(body).toContain('does not mean the call failed')
-
-    // That `init` is gone AND what to run instead — both, because a body saying only that the command
-    // was removed leaves an agent holding a repo's stale instruction with no next action.
-    expect(body).toContain('There is no `init` command')
-    expect(body).toContain('`infra-kit setup`')
-    // Binary-qualified, and I-13 (`generated-instruction-spelling.test.ts`) is why: a bare `setup`
-    // code span in this file resolves three ways in a consumer repo — `pnpm setup`, `pnpm run setup`
-    // and `infra-kit setup` — and all three mutate something different.
-    expect(body).toContain('`infra-kit setup --skip-tools`')
-  })
-
-  /**
-   * `session`'s procedure over the wire. Resource-only for the same reason as `setup`, and pinned
-   * from the other side by the no-prompt-channel test above.
-   *
-   * Unlike the other two, `session` is the procedure for no single tool — it composes `env-list`,
-   * `env-load` and `env-clear`. So `resources/list` is asserted here too: an agent that cannot
-   * DISCOVER the URI cannot read it, and the composing procedure is the one nothing else announces.
-   */
-  it('serves the session procedure as a markdown resource at its URI', async () => {
+  it('serves only the session deprecation stub among the workflow URIs', async () => {
     const { client, close } = await connectedClient()
 
     try {
@@ -294,194 +127,31 @@ describe('the release-create procedure, over the wire', () => {
         client.readResource({ uri: SESSION_WORKFLOW_URI }),
       ])
 
-      expect(
-        resources.map((r) => {
+      const workflowUris = resources
+        .map((r) => {
           return r.uri
-        }),
-      ).toContain(SESSION_WORKFLOW_URI)
+        })
+        .filter((uri) => {
+          return uri.startsWith('infra-kit://workflow/')
+        })
+
+      expect(workflowUris).toEqual([SESSION_WORKFLOW_URI])
 
       expect(result.contents).toHaveLength(1)
       expect(result.contents[0]!.uri).toBe(SESSION_WORKFLOW_URI)
       expect(result.contents[0]!.mimeType).toBe('text/markdown')
-      expect(resourceText(result)).toBe(WORKFLOW_BODIES.session)
+
+      const body = resourceText(result)
+
+      expect(body.split('\n')).toHaveLength(3)
+      expect(body).toContain('/infra-kit:session')
+      expect(body).toContain('without `config`')
+
+      for (const retired of ['infra-kit://workflow/release-create', 'infra-kit://workflow/setup']) {
+        await expect(client.readResource({ uri: retired })).rejects.toThrow()
+      }
     } finally {
       await close()
     }
-  })
-
-  /**
-   * As above: prettier owns the bytes, so this asserts the RENDERED shape.
-   *
-   * Every literal below is authored on a SINGLE line of `session.md` deliberately. `proseWrap` is
-   * unset in the shared prettier config, so it defaults to `preserve` — prettier will not reflow that
-   * file, but an author's own rewrap will, and a fragment spanning a line break fails `toContain`
-   * even though the sentence still reads correctly. That is why these are fragments rather than
-   * whole sentences: a whole sentence would redden on the first honest rewrap.
-   *
-   * What is enforced is that the body CARRIES the instruction. An agent's actual behaviour is
-   * runtime and no test can pin it.
-   */
-  it('renders a session body that still carries the clauses an agent needs', () => {
-    const body = WORKFLOW_BODIES.session
-
-    expect(body.split('\n')).toHaveLength(118)
-    expect(body.endsWith('\n')).toBe(false)
-
-    // The picker is the server's elicitation form, reached by calling `env-load` WITHOUT `config`; the
-    // curating rule ("four most likely" through `AskUserQuestion`, which caps a list at four) is the
-    // defect this body was rewritten to remove, so both spellings are pinned as absent. The two-shape
-    // phrase is the fallback trigger for a client that cannot render forms — the published 0.7.7
-    // answers a missing `config` with an `isError` RESULT, a future SDK may answer a JSON-RPC error.
-    expect(body).toContain('without `config`')
-    expect(body).toContain('a tool error or a refused result naming `config`')
-    expect(body).not.toContain('four most likely')
-    expect(body).not.toContain('AskUserQuestion` — one option')
-    expect(body).toContain('Never send `inputResponses` yourself')
-
-    // The three tools composed, named so an agent that read the resource can call them. `env-status`
-    // is deliberately NOT among them: it is named in the body only as the thing not to verify with.
-    expect(body).toContain(`${MCP_TOOL_PREFIX}env-list`)
-    expect(body).toContain(`${MCP_TOOL_PREFIX}env-load`)
-    // The flag definition, in the `flag → tool` form `manifest.test.mjs`'s U17 reads from the other
-    // side once the plugin command exists. U17 is plain node and cannot see this bundled body.
-    expect(body).toContain(`\`--clear\` → \`${MCP_TOOL_PREFIX}env-clear\``)
-
-    // The three properties of the shell round trip. Each one is a way the feature is judged broken
-    // when the body omits it, and none of them is visible in any single tool's own description.
-    expect(body).toContain('at its next prompt — after Claude Code exits or is backgrounded')
-    expect(body).toContain('the terminal that launched Claude Code and no other')
-    expect(body).toContain('writes into a directory nothing is watching and still returns success')
-
-    // Every zsh spawned after the file lands sees it immediately, `Bash` tool included — but only
-    // once `~/.zshenv` carries this doctor row, and only for a child shell's own environment. The
-    // second fragment is what makes an `env-status` call run through Bash trustworthy where the same
-    // call over MCP is not.
-    expect(body).toContain('zshenv session block')
-    expect(body).toContain('run through Bash is a truthful reading')
-
-    // The only check a human can perform against that silent wrong-target. Two fragments of one
-    // instruction: the second alone pins the rationale and would stay green while the instruction it
-    // guards disappeared.
-    expect(body).toContain('report the session id from the returned filePath')
-    expect(body).toContain('compare it with INFRA_KIT_SESSION at their own prompt')
-
-    // The Bash lie, both halves — that sourcing changes nothing, and the reason it changes nothing.
-    expect(body).toContain('Bash')
-    expect(body).toContain('does not persist shell state between calls')
-
-    // The loud failure and its remediation, which is a setup run rather than a retry.
-    expect(body).toContain('INFRA_KIT_SESSION is not set')
-    expect(body).toContain('infra-kit setup --skip-tools')
-    // Where an authoritative reading actually comes from, since `env-status` over MCP is not one.
-    expect(body).toContain('typed in the terminal, not over MCP')
-
-    // What `env-list` is and is not, so an absent name is still tried and an empty list is not
-    // reported as breakage.
-    expect(body).toContain('not a live Doppler enumeration')
-    expect(body).toContain('an empty list is a legitimate result')
-
-    // The gate, and the `isError` reading that makes an agent bypass it — plus the fact that the
-    // OTHER tool has no gate, so nobody waits for a prompt that never arrives.
-    expect(body).toContain('confirmation_required')
-    expect(body).toContain('confirmToken')
-    expect(body).toContain('"confirm": true')
-    expect(body).toContain('`env-load` is not gated')
-
-    // The same-second tie, and the symptom to look for: the shell's load gate wins, so what appears
-    // after a clear is a LOAD notice, not a missing clear notice.
-    expect(body).toContain('in the same wall-clock second')
-    expect(body).toContain('infra-kit: auto-loaded vars for')
-
-    // The body's only tether to the provider contract, which lives in the doc rather than here so an
-    // agent spends its attention on the failure modes instead of on design narration.
-    expect(body).toContain('docs/session-context-orchestrator.md')
-  })
-})
-
-/**
- * The served prefix is launch-aware (docs/mcp-via-plugin-migration-plan.md §3.3). A plugin-spawned
- * server sees `CLAUDE_PLUGIN_ROOT`; a `.mcp.json`-spawned one does not; and a session on either route
- * has ONLY that route's tools. So every tool name the server serves — in a workflow body and in the
- * resource description an agent reads before fetching it — must be spelled for the route that spawned
- * it, and never for the other.
- */
-describe('the served prefix follows the launch', () => {
-  const workflows = [
-    ['release-create', RELEASE_CREATE_WORKFLOW_URI, 'release-create'],
-    ['setup', SETUP_WORKFLOW_URI, 'setup'],
-    ['session', SESSION_WORKFLOW_URI, 'env-load'],
-  ] as const
-
-  /**
-   * Each body assertion runs twice — once per launch — and each checks the OTHER prefix's absence
-   * too: a render that substituted at one site and missed another would still contain the expected
-   * spelling somewhere, and a `toContain` alone would pass on it.
-   */
-  it.each([
-    ['plugin', MCP_TOOL_PREFIX, LEGACY_MCP_TOOL_PREFIX],
-    ['legacy', LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX],
-  ] as [McpLaunch, string, string][])(
-    'serves every workflow body and description in the %s spelling only',
-    async (launch, expected, forbidden) => {
-      const { client, close } = await connectedClient(launch)
-
-      try {
-        const { resources } = await client.listResources()
-
-        for (const [key, uri, tool] of workflows) {
-          const body = resourceText(await client.readResource({ uri }))
-
-          expect(body).toBe(renderForLaunch(WORKFLOW_BODIES[key], launch))
-          expect(body).toContain(`${expected}${tool}`)
-          expect(body).not.toContain(forbidden)
-        }
-
-        // `session` composes three tools and names none of them in its description, so only the two
-        // tool-procedure descriptions carry a prefix to assert.
-        for (const [key, uri] of workflows.slice(0, 2)) {
-          const description = resources.find((r) => {
-            return r.uri === uri
-          })?.description
-
-          expect(description).toContain(`${expected}${key}`)
-          expect(description).not.toContain(forbidden)
-        }
-      } finally {
-        await close()
-      }
-    },
-  )
-
-  /**
-   * AC-2b: the launch is read INSIDE `createMcpServer()`, per build. Two builds in ONE process with
-   * the variable toggled between them must serve differently-spelled bodies. A module-scope
-   * `resolveLaunch(process.env)` would freeze the render at first import, and every `it.each` case
-   * above would then pass on the first-imported spelling both times — a false green of the kind a
-   * digest compared across a restart gives. This is the one test that distinguishes the two.
-   */
-  it('re-reads the launch on every build, never at module scope', async () => {
-    const first = await connectedClient('legacy')
-    let legacyBody: string
-
-    try {
-      legacyBody = resourceText(await first.client.readResource({ uri: SESSION_WORKFLOW_URI }))
-    } finally {
-      await first.close()
-    }
-
-    const second = await connectedClient('plugin')
-    let pluginBody: string
-
-    try {
-      pluginBody = resourceText(await second.client.readResource({ uri: SESSION_WORKFLOW_URI }))
-    } finally {
-      await second.close()
-    }
-
-    expect(legacyBody).not.toBe(pluginBody)
-    expect(legacyBody).toContain(`${LEGACY_MCP_TOOL_PREFIX}env-load`)
-    expect(legacyBody).not.toContain(MCP_TOOL_PREFIX)
-    expect(pluginBody).toContain(`${MCP_TOOL_PREFIX}env-load`)
-    expect(pluginBody).not.toContain(LEGACY_MCP_TOOL_PREFIX)
   })
 })

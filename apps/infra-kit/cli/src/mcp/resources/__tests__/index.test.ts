@@ -4,16 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 
 import type { ResourceDeps } from '..'
-import {
-  CONFIG_RESOURCE_URI,
-  DEV_CONTEXT_RESOURCE_URI,
-  RELEASE_CREATE_WORKFLOW_URI,
-  SETUP_WORKFLOW_URI,
-  initializeResources,
-} from '..'
-import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX, renderForLaunch } from '../../tool-prefix'
-import type { McpLaunch } from '../../tool-prefix'
-import { WORKFLOW_BODIES } from '../../workflow-bodies'
+import { CONFIG_RESOURCE_URI, DEV_CONTEXT_RESOURCE_URI, SESSION_WORKFLOW_URI, initializeResources } from '..'
 import type { DevContextSnapshot } from '../dev-context'
 
 /** Reach into the SDK's private resource registry to assert what was registered. */
@@ -59,82 +50,42 @@ describe('initializeResources', () => {
   it('registers at least one resource (proves it is no longer a no-op)', async () => {
     const server = newServer()
 
-    await initializeResources(server, 'plugin', makeDeps())
+    await initializeResources(server, makeDeps())
 
     const uris = Object.keys(registeredOf(server))
 
     expect(uris.length).toBeGreaterThanOrEqual(1)
     expect(uris).toContain(CONFIG_RESOURCE_URI)
     expect(uris).toContain(DEV_CONTEXT_RESOURCE_URI)
-    expect(uris).toContain(RELEASE_CREATE_WORKFLOW_URI)
-    expect(uris).toContain(SETUP_WORKFLOW_URI)
+    expect(uris).toContain(SESSION_WORKFLOW_URI)
   })
 
   /**
-   * The only server channel for every workflow procedure. That the server offers no prompt channel
-   * beside it is asserted over a real transport in `src/mcp/__tests__/server.test.ts`.
-   *
-   * Run per URI rather than once, because both registrations now go through one helper: a helper that
-   * captured the first workflow's key would serve `release-create`'s text at BOTH URIs, and a test
-   * that only read the first one would stay green while `setup` served the wrong procedure.
+   * The deprecation stub an OLD plugin's `/infra-kit:session` command still reads first. Three lines,
+   * and the first instruction is the form path (`env-load` without `config`): a stub that said only
+   * "moved" would drop that command onto its 404 fallback, which is the window the stub exists to close.
+   * Pinned by line so a helpful fourth line — or a reflow — is a visible diff, not silent growth.
    */
-  it.each([
-    ['release-create', RELEASE_CREATE_WORKFLOW_URI],
-    ['setup', SETUP_WORKFLOW_URI],
-  ] as const)('resolves the %s procedure as markdown, from the shared constant', async (key, uri) => {
+  it('serves the session URI as the three-line deprecation stub', async () => {
     const server = newServer()
 
-    await initializeResources(server, 'plugin', makeDeps())
+    await initializeResources(server, makeDeps())
 
-    const result = await registeredOf(server)[uri]!.readCallback(new URL(uri), {})
+    const result = await registeredOf(server)[SESSION_WORKFLOW_URI]!.readCallback(new URL(SESSION_WORKFLOW_URI), {})
+    const body = result.contents[0]!.text
 
     expect(result.contents).toHaveLength(1)
-    expect(result.contents[0]!.uri).toBe(uri)
     expect((result.contents[0] as { mimeType?: string }).mimeType).toBe('text/markdown')
-    expect(result.contents[0]!.text).toBe(WORKFLOW_BODIES[key])
+    expect(body.split('\n')).toHaveLength(3)
+    expect(body).toContain('/infra-kit:session')
+    expect(body).toContain('without `config`')
+    expect(body).toContain('a tool error or a refused result naming `config`')
   })
-
-  /**
-   * The served body and the description are spelled for the route that spawned the server, and
-   * NEVER for the other one: a session on the legacy route (a consumer `.mcp.json` key still
-   * present) has legacy-prefixed tools and nothing else, so a body naming the plugin spelling there
-   * would send an agent to a tool it does not have.
-   *
-   * Both launches are asserted per workflow, and each against the OTHER prefix's absence, because a
-   * render that forgot one substitution site would still contain the expected prefix somewhere.
-   */
-  it.each([
-    ['plugin', MCP_TOOL_PREFIX, LEGACY_MCP_TOOL_PREFIX],
-    ['legacy', LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX],
-  ] as [McpLaunch, string, string][])(
-    'spells every workflow body and description for the %s launch only',
-    async (launch, expected, forbidden) => {
-      const server = newServer()
-
-      await initializeResources(server, launch, makeDeps())
-
-      for (const [key, uri] of [
-        ['release-create', RELEASE_CREATE_WORKFLOW_URI],
-        ['setup', SETUP_WORKFLOW_URI],
-      ] as const) {
-        const registered = registeredOf(server)[uri]!
-        const result = await registered.readCallback(new URL(uri), {})
-        const body = result.contents[0]!.text
-
-        expect(body).toBe(renderForLaunch(WORKFLOW_BODIES[key], launch))
-        expect(body).toContain(`${expected}${key}`)
-        expect(body).not.toContain(forbidden)
-
-        expect(registered.metadata?.description).toContain(`${expected}${key}`)
-        expect(registered.metadata?.description).not.toContain(forbidden)
-      }
-    },
-  )
 
   it('resolves the config resource to the merged config from the loader', async () => {
     const server = newServer()
 
-    await initializeResources(server, 'plugin', makeDeps())
+    await initializeResources(server, makeDeps())
 
     expect(await readResource(server, CONFIG_RESOURCE_URI)).toEqual(fakeConfig)
   })
@@ -144,7 +95,6 @@ describe('initializeResources', () => {
 
     await initializeResources(
       server,
-      'plugin',
       makeDeps({
         loadConfig: async () => {
           throw new Error('infra-kit.json not found at /nope')
@@ -158,7 +108,7 @@ describe('initializeResources', () => {
   it('resolves the dev-context resource cleanly when no dev session is active', async () => {
     const server = newServer()
 
-    await initializeResources(server, 'plugin', makeDeps())
+    await initializeResources(server, makeDeps())
 
     expect(await readResource(server, DEV_CONTEXT_RESOURCE_URI)).toMatchObject({ session: 'none', apps: [] })
   })
@@ -187,7 +137,6 @@ describe('initializeResources', () => {
 
     await initializeResources(
       server,
-      'plugin',
       makeDeps({
         readDevContext: () => {
           return active

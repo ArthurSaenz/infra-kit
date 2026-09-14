@@ -1,6 +1,14 @@
+---
+name: release-create
+description: Cut one or more release branches through the infra-kit MCP server.
+argument-hint: [--hotfix] [--desc <text>] [<version|next|name>]
+disable-model-invocation: true
+---
+
 # release-create — cutting a release through infra-kit
 
 The tool is `mcp__plugin_infra-kit_infra-kit__release-create`. Everything below is about calling that tool.
+If `mcp__plugin_infra-kit_infra-kit__*` tools are absent this is a subdirectory or legacy session — say so and stop.
 
 Do not shell out. A `Bash` call running `git switch`, `git push` or `gh pr create` reproduces none
 of the preconditions below and bypasses the confirm gate in section 2 — which is the only place a
@@ -88,8 +96,8 @@ matters, pass the semver instead of the token.
 
 ### Reading `$ARGUMENTS`
 
-The `/infra-kit:release-create` command hands you `$ARGUMENTS` verbatim, and its argument hint is
-`[--hotfix] [--desc <text>] [<version|name>]`. **Those two flags are conventions of this command, not
+The `/infra-kit:release-create` skill hands you `$ARGUMENTS` verbatim, and its argument hint is
+`[--hotfix] [--desc <text>] [<version|next|name>]`. **Those two flags are conventions of this skill, not
 CLI flags** — `infra-kit release create` accepts neither, and the tool takes neither. They exist so a
 human can type the whole request on one line, and it is your job to translate them:
 
