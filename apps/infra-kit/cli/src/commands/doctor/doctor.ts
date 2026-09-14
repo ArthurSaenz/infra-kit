@@ -2102,11 +2102,12 @@ export const doctor = async (options: { fix?: boolean; probeDeps?: ProbeDeps } =
   }
 
   // The Claude Code plugin rows read `~/.claude/` and answer from anywhere; the `.mcp.json` row is
-  // about a PROJECT and so is gated — but NOT on the same predicate as the guidance check any more.
-  // The row set follows the WRITER's gate, per writer: `setup` writes `.mcp.json` in any git toplevel
-  // that is not `$HOME` (`resolveGitRoot`), while the guidance writer still requires an
-  // `infra-kit.json` there. Gating this row on `infra-kit.json` too would leave the writer with no
-  // monitoring row at all in exactly the repos that lack one.
+  // about a PROJECT and so is gated — but NOT on the same predicate as the guidance check. Nothing
+  // writes the `infra-kit` key any more (the plugin serves the server), so the row is a read-only
+  // report on a leftover or misfiled entry, and it belongs to any git toplevel that is not `$HOME`
+  // (`resolveGitRoot`) — the same set `setup` inspects — while the guidance writer still requires
+  // an `infra-kit.json` there. Gating this row on `infra-kit.json` too would hide a shadowing key in
+  // exactly the repos that lack one.
   //
   // `resolveGitRoot` is also what keeps a blank `git rev-parse` from being answered: it returns
   // `null` rather than `''`, so the row is omitted instead of rendered against `process.cwd()`.

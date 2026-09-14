@@ -9,7 +9,7 @@ export {
   resolvePluginInstall,
 } from './install-state'
 export type { PluginInstallation, PluginInstallState } from './install-state'
-export { inspectLegacyMcpRegistration, isInfraKitServerEntry, SERVER_ARGS, SERVER_COMMAND } from './mcp-registration'
+export { inspectLegacyMcpRegistration, isInfraKitServerEntry } from './mcp-registration'
 export type { McpRegistration } from './mcp-registration'
 export { MARKETPLACE_NAME, MARKETPLACE_REPO, PLUGIN_KEY } from './names'
 export {

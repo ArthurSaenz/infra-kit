@@ -2,8 +2,8 @@
  * One command that sets a machine up: the local, offline `initCore` half first, then the dependency
  * converge, then one combined summary.
  *
- * The order is not arbitrary. The init half is local, cheap, and one of its steps (`.mcp.json` plus the
- * plugin install) is what makes the MCP surface usable at all, so it must not sit behind a network
+ * The order is not arbitrary. The init half is local, cheap, and one of its steps (the plugin install,
+ * which serves the MCP server) is what makes the MCP surface usable at all, so it must not sit behind a network
  * converge. The refused recipes' manual commands are the last thing the human reads, and the
  * `source ~/.zshrc` reminder is last of all.
  *
@@ -357,7 +357,7 @@ const REQUIRES_USER_INTERACTION = { 'anthropic/requiresUserInteraction': true } 
 export const setupMcpTool = defineMcpTool({
   name: 'setup',
   description:
-    'Set this machine up in one call: inject the shell integration into .zshrc and the session-env block into .zshenv, run the config migrations, seed the user-global config, refresh the agent-instruction files, register the Claude Code plugin pointer and the infra-kit MCP server, then bring brew, aws, gh, doppler and portless to a working state — installing what is missing and updating what is present. Pass mode:"update" to update only and never install, or skipTools:true to do the local setup and then REPORT what each tool needs without installing anything. Recipes that need sudo or pipe a script fetched over the network — the Homebrew bootstrap and the first AWS CLI install — are never run; they are reported with the exact commands for you to run yourself. Use `doctor` first to see the state of this machine without changing it.',
+    'Set this machine up in one call: inject the shell integration into .zshrc and the session-env block into .zshenv, run the config migrations, seed the user-global config, refresh the agent-instruction files, register the Claude Code plugin pointer and install or update the plugin (which serves the infra-kit MCP server; a leftover .mcp.json entry is reported, never written), then bring brew, aws, gh, doppler and portless to a working state — installing what is missing and updating what is present. Pass mode:"update" to update only and never install, or skipTools:true to do the local setup and then REPORT what each tool needs without installing anything. Recipes that need sudo or pipe a script fetched over the network — the Homebrew bootstrap and the first AWS CLI install — are never run; they are reported with the exact commands for you to run yourself. Use `doctor` first to see the state of this machine without changing it.',
   inputSchema,
   outputSchema,
   requiresHumanConfirm: true,

@@ -37,29 +37,15 @@ export const SERVERS_KEY = 'mcpServers'
  * resolves. It equals `MARKETPLACE_NAME` by coincidence of naming, not by definition — one is a
  * binary on this machine, the other is a marketplace — so it is written out rather than aliased.
  */
-export const SERVER_COMMAND = 'infra-kit'
+const SERVER_COMMAND = 'infra-kit'
 
 /** The subcommand that runs the server; `SERVER_COMMAND` + this is the whole "ours" predicate. */
-export const SERVER_ARGS: readonly string[] = ['mcp']
+const SERVER_ARGS: readonly string[] = ['mcp']
 
 /** Indentation for a file the proxy writer creates, and the fallback when detection finds none. */
 export const DEFAULT_INDENT = '  '
 
 export type JsonObject = Record<string, unknown>
-
-/**
- * The server entry, minted fresh per call so no caller can mutate a shared constant.
- *
- * These exact three fields are what a consumer's committed `.mcp.json` carried while the CLI wrote
- * it, and what the plugin's own `.mcp.json` carries now; nothing writes it any more — it is kept as
- * the reference shape {@link isInfraKitServerEntry} is the predicate of.
- *
- * @example
- * buildServerEntry() // => { type: 'stdio', command: 'infra-kit', args: ['mcp'] }
- */
-export const buildServerEntry = (): JsonObject => {
-  return { type: 'stdio', command: SERVER_COMMAND, args: [...SERVER_ARGS] }
-}
 
 export const isPlainObject = (value: unknown): value is JsonObject => {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -71,7 +57,7 @@ export const isPlainObject = (value: unknown): value is JsonObject => {
  *
  * Exact fields, not a substring: the previous `"<command> <args>".includes('infra-kit')` read a
  * `grafana`-style proxy (`ik-mcp --name infra-kit-x …`) as a misfiled server and turned a correct
- * file into a red `wrong-key` row. The {@link buildServerEntry} shape is the predicate; `type` is
+ * file into a red `wrong-key` row. The entry the CLI used to write — `{ type: 'stdio', command: 'infra-kit', args: ['mcp'] }`, now the plugin's own — is the predicate; `type` is
  * left out because Claude Code defaults it and a hand-written entry may omit it.
  *
  * @example

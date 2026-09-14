@@ -3,7 +3,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { buildServerEntry, inspectLegacyMcpRegistration, isInfraKitServerEntry } from '../mcp-registration'
+import { inspectLegacyMcpRegistration, isInfraKitServerEntry } from '../mcp-registration'
+
+/** The entry the CLI used to write into consumer repos — the shape `isInfraKitServerEntry` recognises. */
+const buildServerEntry = (): Record<string, unknown> => {
+  return { type: 'stdio', command: 'infra-kit', args: ['mcp'] }
+}
 
 /**
  * The writer-free reader of a consumer repo's `.mcp.json` (plan docs/mcp-via-plugin-migration-plan.md

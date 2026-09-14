@@ -30,7 +30,7 @@ In this order:
 5. the repo's agent-instruction files (`CLAUDE.md` guidance blocks) — **non-fatal**; a repo it cannot
    resolve is warned about, not failed on
 6. the git-root resolution for writes, warning when the two root gates disagree
-7. the Claude Code plugin pointer — `.claude/settings.json`, `.mcp.json`, and the plugin install
+7. the Claude Code plugin pointer — `.claude/settings.json`, the plugin install or update (the plugin serves the MCP server), and a read-only report of the repo's `.mcp.json`
 8. the per-project config reseed
 9. a warning when `$SHELL` is not zsh
 
