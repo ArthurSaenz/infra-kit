@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { PLUGIN_UPDATE_ARGV } from 'src/lib/plugin-pointer/claude-cli'
 import type { PluginInstallation } from 'src/lib/plugin-pointer/install-state'
 
-import { PARENT_WAIT_TIMEOUT_MS, runUpdateCheck } from '../run-update-check'
+import { PARENT_WAIT_TIMEOUT_MS, pluginStepWithheld, runUpdateCheck } from '../run-update-check'
 import type { RunUpdateCheckDeps, UpdateCheckOutcome } from '../run-update-check'
 import type { UpdateCache } from '../update-cache'
 import { PLUGIN_UPDATE_BUDGET_MS, PLUGIN_UPDATE_RUN_TIMEOUT_MS } from '../update-plugin'
@@ -504,16 +504,21 @@ describe('runUpdateCheck', () => {
 
 /**
  * The Claude Code plugin step. It rides the same worker, AFTER the CLI outcome is settled and its
- * throttle stamp written, on every outcome — the CLI half above must not change shape because of it,
- * and a plugin failure must never reach the CLI outcome.
+ * throttle stamp written — the CLI half above must not change shape because of it, and a plugin
+ * failure must never reach the CLI outcome.
+ *
+ * Whether it RUNS follows the cache the locked function wrote, not the outcome's name: a newer
+ * `latestVersion` left behind means this run did not deliver the CLI, and the plugin must not get
+ * ahead of it. The two tables below split the outcomes by that predicate, and the synthetic cases
+ * after them prove it is the predicate — not either list — that decides.
  */
 describe('runUpdateCheck — plugin step', () => {
   const record = (projectPath: string): PluginInstallation => {
     return { scope: 'project', projectPath, installPath: null, version: '0.7.0' }
   }
 
-  /** Each locked-function outcome, with the harness overrides that produce it. */
-  const OUTCOMES: Array<[UpdateCheckOutcome, Partial<RunUpdateCheckDeps>]> = [
+  /** Outcomes whose cache write carries no newer `latestVersion`: the plugin step runs. */
+  const ADVANCING: Array<[UpdateCheckOutcome, Partial<RunUpdateCheckDeps>]> = [
     [
       'up-to-date',
       {
@@ -530,6 +535,11 @@ describe('runUpdateCheck — plugin step', () => {
         },
       },
     ],
+    ['installed', {}],
+  ]
+
+  /** Outcomes that leave the newer `latestVersion` in the cache: the plugin step is withheld. */
+  const WITHHELD: Array<[UpdateCheckOutcome, Partial<RunUpdateCheckDeps>]> = [
     ['cannot-self-spawn', { selfRealPath: HOMEBREW_CLI, env: {} }],
     ['parent-unknown', { parentPid: undefined }],
     [
@@ -567,31 +577,37 @@ describe('runUpdateCheck — plugin step', () => {
         },
       },
     ],
-    ['installed', {}],
   ]
 
-  describe.each(OUTCOMES)('after a %s outcome', (expected, overrides) => {
-    it('runs the plugin update AFTER the outcome is settled, returns that outcome unchanged, then releases the lock', async () => {
-      const order: string[] = []
-      const { deps, cliWrites, releasedCount } = harness({
-        ...overrides,
-        writeCache: (cache) => {
-          order.push(cache.plugin === undefined ? `cli:${String(cache.outcome)}` : `plugin:${cache.plugin.outcome}`)
-        },
-        listPluginInstallations: () => {
-          return [record('/repo')]
-        },
-        spawnPluginUpdate: (() => {
-          order.push('plugin-spawn')
+  /** Every overrides set above, plus an order log of writes, spawns and the lock release. */
+  const orderedHarness = (overrides: Partial<RunUpdateCheckDeps>) => {
+    const order: string[] = []
+    const built = harness({
+      ...overrides,
+      writeCache: (cache) => {
+        order.push(cache.plugin === undefined ? `cli:${String(cache.outcome)}` : `plugin:${cache.plugin.outcome}`)
+      },
+      listPluginInstallations: () => {
+        return [record('/repo')]
+      },
+      spawnPluginUpdate: (() => {
+        order.push('plugin-spawn')
 
-          return okSpawn()
-        }) as unknown as typeof spawnSync,
-        acquireLock: () => {
-          return () => {
-            order.push('release')
-          }
-        },
-      })
+        return okSpawn()
+      }) as unknown as typeof spawnSync,
+      acquireLock: () => {
+        return () => {
+          order.push('release')
+        }
+      },
+    })
+
+    return { ...built, order }
+  }
+
+  describe.each(ADVANCING)('after a %s outcome', (expected, overrides) => {
+    it('runs the plugin update AFTER the outcome is settled, returns that outcome unchanged, then releases the lock', async () => {
+      const { deps, cliWrites, releasedCount, order } = orderedHarness(overrides)
 
       await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe(expected)
 
@@ -600,6 +616,72 @@ describe('runUpdateCheck — plugin step', () => {
       expect(cliWrites()).toEqual([])
       expect(releasedCount()).toBe(0)
     })
+  })
+
+  describe.each(WITHHELD)('after a %s outcome', (expected, overrides) => {
+    it('withholds the plugin update, stamps skipped-cli-stale, returns the outcome unchanged, then releases the lock', async () => {
+      const { deps, cliWrites, releasedCount, order, runClaudeMock } = orderedHarness(overrides)
+
+      await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe(expected)
+
+      // No probe and no spawn: the step never started, and the stamp says why.
+      expect(order.slice(-3)).toEqual([`cli:${expected}`, 'plugin:skipped-cli-stale', 'release'])
+      expect(order).not.toContain('plugin-spawn')
+      expect(runClaudeMock).not.toHaveBeenCalled()
+      expect(cliWrites()).toEqual([])
+      expect(releasedCount()).toBe(0)
+    })
+  })
+
+  /**
+   * The predicate, on its own: a cache-shaped answer, not an outcome name. A future outcome that leaves
+   * a newer `latestVersion` behind is withheld without anyone adding it to a list; one that clears it
+   * or records a non-newer version advances.
+   */
+  describe('pluginStepWithheld', () => {
+    it('withholds on a newer latestVersion whatever outcome wrote it', () => {
+      expect(pluginStepWithheld('0.1.131', '0.1.130')).toBe(true)
+      expect(pluginStepWithheld('0.2.0', '0.1.130')).toBe(true)
+    })
+
+    it('advances on null (fetch-failed, installed) and on a non-newer version (up-to-date)', () => {
+      expect(pluginStepWithheld(null, '0.1.130')).toBe(false)
+      expect(pluginStepWithheld('0.1.130', '0.1.130')).toBe(false)
+      expect(pluginStepWithheld('0.1.9', '0.1.130')).toBe(false)
+    })
+
+    it('never withholds a hand-updated CLI that is already at or past the cached version', () => {
+      expect(pluginStepWithheld('0.1.131', '0.1.131')).toBe(false)
+      expect(pluginStepWithheld('0.1.131', '0.2.0')).toBe(false)
+    })
+  })
+
+  it('stamps skipped-cli-stale onto the SAME cache write that carries the newer latestVersion', async () => {
+    // The wrapper reads the version out of the locked function's last write and stamps its verdict
+    // back onto that write: one object on disk says both "0.9.0 exists" and "so the plugin waited".
+    const { deps, writes, pluginSpawnMock, runClaudeMock } = harness({
+      fetchLatest: async () => {
+        return '0.9.0'
+      },
+      installedVersion: () => {
+        return '0.8.0'
+      },
+      listPluginInstallations: () => {
+        return [record('/repo')]
+      },
+    })
+
+    await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('install-stale')
+
+    expect(writes.at(-1)).toEqual({
+      lastCheckMs: NOW,
+      latestVersion: '0.9.0',
+      updateCommand: ['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@0.9.0'],
+      outcome: 'install-stale',
+      plugin: { outcome: 'skipped-cli-stale', checkedMs: NOW },
+    })
+    expect(pluginSpawnMock).not.toHaveBeenCalled()
+    expect(runClaudeMock).not.toHaveBeenCalled()
   })
 
   it('stamps the plugin outcome onto the cache the locked function wrote, leaving every CLI field intact', async () => {

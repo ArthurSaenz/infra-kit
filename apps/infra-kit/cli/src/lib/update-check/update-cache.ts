@@ -36,8 +36,12 @@ export const CHECK_INTERVAL_MS = 20 * 60 * 1000
  * What the worker's Claude Code plugin step did. `skipped` = no project-scope install record on this
  * machine; `updated` = every recorded project whose path still exists took `claude plugin update`
  * with exit 0, "already at the latest version" included.
+ *
+ * `skipped-cli-stale` = the step was withheld because a newer CLI exists that this run did not install
+ * (`pluginStepWithheld` in `run-update-check.ts`) — advancing the plugin past the CLI would hand its
+ * skills a server that does not serve the tool names they cite.
  */
-export type PluginUpdateOutcome = 'updated' | 'failed' | 'claude-missing' | 'skipped'
+export type PluginUpdateOutcome = 'updated' | 'failed' | 'claude-missing' | 'skipped' | 'skipped-cli-stale'
 
 export interface PluginUpdateRecord {
   outcome: PluginUpdateOutcome

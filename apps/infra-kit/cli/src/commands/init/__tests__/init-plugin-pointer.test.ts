@@ -12,10 +12,15 @@ import {
   MARKETPLACE_NAME,
   PLUGIN_INSTALL_COMMAND,
   PLUGIN_KEY,
+  PLUGIN_UPDATE_ARGV,
   PLUGIN_UPDATE_COMMAND,
   installPluginForProject,
 } from 'src/lib/plugin-pointer'
+import type { ClaudeCommand, ClaudeRunner } from 'src/lib/plugin-pointer'
+import { fetchLatestVersion } from 'src/lib/update-check'
+import type { UpdateCache } from 'src/lib/update-check'
 
+import packageJson from '../../../../package.json' with { type: 'json' }
 import { initCore, logInitEntry } from '../init'
 
 /**
@@ -49,6 +54,22 @@ vi.mock('src/lib/git-utils', () => {
 
 vi.mock('src/lib/logger', () => {
   return { logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() } }
+})
+
+/**
+ * The registry fetch behind the stale-CLI gate, and nothing else in `update-check`: the cache read
+ * stays real (it targets the temp `$XDG_CACHE_HOME` below), so the gate's cache-present cases go
+ * through the same file the update worker writes. Rejecting by default makes an unexpected fetch loud.
+ */
+vi.mock('src/lib/update-check', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('src/lib/update-check')>()
+
+  return {
+    ...actual,
+    fetchLatestVersion: vi.fn(async () => {
+      throw new Error('fetchLatestVersion called without a stub')
+    }),
+  }
 })
 
 /**
@@ -149,12 +170,16 @@ beforeEach(() => {
 
   writeFile(path.join(repo, 'infra-kit.json'), '{}\n')
   process.env.INFRA_KIT_NO_SEED = '1'
+  // The update cache lives under the cache root; pin it inside the temp home so no case reads the
+  // developer's own `update-check.json` and passes or fails on what their last worker run wrote.
+  process.env.XDG_CACHE_HOME = path.join(home, '.cache')
 
   resetInfraKitConfigCache()
 })
 
 afterEach(() => {
   delete process.env.INFRA_KIT_NO_SEED
+  delete process.env.XDG_CACHE_HOME
   vi.restoreAllMocks()
   fs.rmSync(home, { recursive: true, force: true })
   fs.rmSync(repo, { recursive: true, force: true })
@@ -298,7 +323,7 @@ describe('setup --skip-tools — the gate split', () => {
     expect(linesMatching(GIT_ROOT_SKIP)).toHaveLength(0)
     expect(readSettings().enabledPlugins?.[PLUGIN_KEY]).toBe(true)
     expect(readMcp().mcpServers?.[MARKETPLACE_NAME]).toBeDefined()
-    expect(vi.mocked(installPluginForProject)).toHaveBeenCalledWith({ projectRoot: repo })
+    expect(vi.mocked(installPluginForProject)).toHaveBeenCalledWith(expect.objectContaining({ projectRoot: repo }))
   })
 
   it('2.3: warns exactly once, naming the absolute root and the files it touches', async () => {
@@ -504,7 +529,7 @@ describe('setup --skip-tools — plugin install', () => {
     await runInit()
 
     expect(installMock).toHaveBeenCalledTimes(1)
-    expect(installMock).toHaveBeenCalledWith({ projectRoot: repo })
+    expect(installMock).toHaveBeenCalledWith(expect.objectContaining({ projectRoot: repo }))
   })
 
   it('reports a successful install on one INFO line', async () => {
@@ -587,6 +612,158 @@ describe('setup --skip-tools — plugin install', () => {
 
     await expect(runInit()).resolves.toBeUndefined()
     expect(readSettings().enabledPlugins?.[PLUGIN_KEY]).toBe(true)
+  })
+})
+
+/**
+ * The stale-CLI gate on the update path (PM-9): `setup` must not advance the plugin past a CLI this
+ * machine has not received, by the same predicate the update worker applies before its own plugin
+ * step. Driven through the REAL installer (restored behind the module mock, with a recording runner)
+ * so "no plugin spawn" is the runner's call list, not a mock's return value.
+ */
+describe('setup --skip-tools — plugin update withheld behind a stale CLI', () => {
+  const installMock = vi.mocked(installPluginForProject)
+  const fetchMock = vi.mocked(fetchLatestVersion)
+  const CURRENT = packageJson.version
+  // One major up: newer than whatever this checkout is, and a final release, so a prerelease
+  // ordering rule can never turn this fixture into "not newer" on some future version string.
+  const NEWER = `${Number(CURRENT.split('.')[0]) + 1}.0.0`
+
+  let calls: ClaudeCommand[]
+
+  const recordingRunner: ClaudeRunner = (command) => {
+    calls.push(command)
+
+    return { ok: true }
+  }
+
+  const writeInstalledRecord = (): void => {
+    writeFile(
+      path.join(home, '.claude', 'plugins', 'installed_plugins.json'),
+      JSON.stringify({
+        version: 2,
+        plugins: { [PLUGIN_KEY]: [{ scope: 'project', projectPath: repo, installPath: null, version: '0.7.0' }] },
+      }),
+    )
+  }
+
+  const writeCache = (cache: Partial<UpdateCache>): void => {
+    writeFile(
+      path.join(home, '.cache', 'infra-kit', 'update-check.json'),
+      JSON.stringify({ lastCheckMs: 1, latestVersion: null, updateCommand: null, ...cache }),
+    )
+  }
+
+  const updateSpawned = (): boolean => {
+    return calls.some((call) => {
+      return call.args.join(' ') === PLUGIN_UPDATE_ARGV.join(' ')
+    })
+  }
+
+  const withheldLine = (): string | undefined => {
+    return warnLines().find((line) => {
+      return line.startsWith('Claude Code plugin not updated')
+    })
+  }
+
+  beforeEach(async () => {
+    calls = []
+
+    const actual = await vi.importActual<typeof import('src/lib/plugin-pointer')>('src/lib/plugin-pointer')
+
+    installMock.mockImplementation((options) => {
+      return actual.installPluginForProject({ ...options, home, run: recordingRunner })
+    })
+    writeInstalledRecord()
+  })
+
+  it('withholds the update and prints the cached command when the cache says a newer CLI exists', async () => {
+    writeCache({ latestVersion: NEWER, updateCommand: ['brew', 'upgrade', 'infra-kit'] })
+
+    await runInit()
+
+    expect(updateSpawned()).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(withheldLine()).toBe(
+      `Claude Code plugin not updated — CLI ${CURRENT} is behind ${NEWER}, update it first: brew upgrade infra-kit. The plugin follows on the next update check after that.`,
+    )
+    expect(
+      infoLines().some((line) => {
+        return line.includes('up to date')
+      }),
+    ).toBe(false)
+  })
+
+  it('falls back to the pinned npm command when the cache has a newer version but no verdict', async () => {
+    // `parent-still-running` and `parent-unknown` record the version and a null command.
+    writeCache({ latestVersion: NEWER, updateCommand: null })
+
+    await runInit()
+
+    expect(updateSpawned()).toBe(false)
+    expect(withheldLine()).toContain(`update it first: npm install -g infra-kit@${NEWER}.`)
+  })
+
+  it('updates as before when the cache holds a version that is not newer, without fetching', async () => {
+    writeCache({ latestVersion: CURRENT, updateCommand: null })
+
+    await runInit()
+
+    expect(updateSpawned()).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(withheldLine()).toBeUndefined()
+    expect(infoLines()).toContain(`Claude Code plugin ${PLUGIN_KEY} up to date (project scope)`)
+  })
+
+  it("updates when the cache holds no version at all (the worker's fetch-failed / installed writes)", async () => {
+    writeCache({ latestVersion: null, updateCommand: null })
+
+    await runInit()
+
+    expect(updateSpawned()).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('fetches exactly once when no cache exists (opt-out machine) and withholds on a newer version', async () => {
+    fetchMock.mockResolvedValue(NEWER)
+
+    await runInit()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(updateSpawned()).toBe(false)
+    expect(withheldLine()).toContain(
+      `CLI ${CURRENT} is behind ${NEWER}, update it first: npm install -g infra-kit@${NEWER}.`,
+    )
+  })
+
+  it('updates when no cache exists and the fetch reports nothing newer', async () => {
+    fetchMock.mockResolvedValue(CURRENT)
+
+    await runInit()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(updateSpawned()).toBe(true)
+    expect(withheldLine()).toBeUndefined()
+  })
+
+  it("updates when no cache exists and the fetch fails — unknowable, like the worker's fetch-failed", async () => {
+    fetchMock.mockResolvedValue(null)
+
+    await runInit()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(updateSpawned()).toBe(true)
+    expect(withheldLine()).toBeUndefined()
+  })
+
+  it('never fetches on the fresh-install path: there is no update to withhold', async () => {
+    fs.rmSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'))
+
+    await runInit()
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(updateSpawned()).toBe(false)
+    expect(withheldLine()).toBeUndefined()
   })
 })
 

@@ -133,6 +133,47 @@ describe('installPluginForProject — already installed → update', () => {
     expect(argvOf(calls)).toEqual([[...CLAUDE_VERSION_ARGV]])
   })
 
+  it('withholds the update and reports skipped-cli-stale when the injected predicate says the CLI is behind', () => {
+    writeInstalledRecord()
+
+    const { runner, calls } = recordingRunner()
+    const cliIsStale = (): boolean => {
+      return true
+    }
+
+    expect(installPluginForProject({ projectRoot: repo, home, run: runner, cliIsStale })).toEqual({
+      status: 'skipped-cli-stale',
+    })
+    // The probe still ran (a missing `claude` outranks the gate); the update did not.
+    expect(argvOf(calls)).toEqual([[...CLAUDE_VERSION_ARGV]])
+  })
+
+  it('updates as before when the predicate says the CLI is current', () => {
+    writeInstalledRecord()
+
+    const { runner, calls } = recordingRunner()
+    const cliIsStale = (): boolean => {
+      return false
+    }
+
+    expect(installPluginForProject({ projectRoot: repo, home, run: runner, cliIsStale })).toEqual({ status: 'updated' })
+    expect(argvOf(calls)).toEqual([[...CLAUDE_VERSION_ARGV], [...PLUGIN_UPDATE_ARGV]])
+  })
+
+  it('never consults the predicate on the fresh-install path — there is no update to withhold', () => {
+    registerMarketplace()
+
+    const { runner, calls } = recordingRunner()
+    const cliIsStale = (): boolean => {
+      throw new Error('asked on the install path')
+    }
+
+    expect(installPluginForProject({ projectRoot: repo, home, run: runner, cliIsStale })).toEqual({
+      status: 'unverified',
+    })
+    expect(argvOf(calls)).toEqual([[...CLAUDE_VERSION_ARGV], [...PLUGIN_INSTALL_ARGV]])
+  })
+
   it('still installs when the only record covers another project', () => {
     writeJson(path.join(pluginsDir(), 'installed_plugins.json'), {
       version: 2,

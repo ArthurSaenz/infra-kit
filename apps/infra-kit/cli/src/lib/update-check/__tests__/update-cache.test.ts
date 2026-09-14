@@ -92,6 +92,20 @@ describe('readUpdateCache — plugin field', () => {
     expect(readUpdateCache()?.plugin).toBeUndefined()
   })
 
+  it('round-trips the skipped-cli-stale outcome the worker stamps when it withholds the plugin step', () => {
+    // The stamp lands beside the newer `latestVersion` that caused it: the one write says both.
+    const withheld = {
+      lastCheckMs: NOW,
+      latestVersion: '0.8.0',
+      updateCommand: ['brew', 'upgrade', 'infra-kit'],
+      outcome: 'cannot-self-spawn',
+      plugin: { outcome: 'skipped-cli-stale' as const, checkedMs: NOW + 700 },
+    }
+
+    writeUpdateCache(withheld)
+    expect(readUpdateCache()).toEqual(withheld)
+  })
+
   it.each(['"updated"', '{"outcome":"updated"}', '{"checkedMs":1}', '{"outcome":1,"checkedMs":1}'])(
     'rejects a malformed plugin record %s as corrupt',
     (plugin) => {

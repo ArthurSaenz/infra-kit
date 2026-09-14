@@ -34,7 +34,7 @@ import { MARKETPLACE_REPO, PLUGIN_KEY } from './names'
 /** `claude plugin marketplace add ArthurSaenz/infra-kit`, as argv. */
 export const MARKETPLACE_ADD_ARGV: readonly string[] = ['plugin', 'marketplace', 'add', MARKETPLACE_REPO]
 
-/** `claude plugin install infra-kit@infra-kit --scope project`, as argv. Never `--scope user`. */
+/** `claude plugin install infra-kit@infra-kit --scope project`, as argv. Never the `user` scope. */
 export const PLUGIN_INSTALL_ARGV: readonly string[] = ['plugin', 'install', PLUGIN_KEY, '--scope', 'project']
 
 /**
@@ -50,6 +50,8 @@ export type PluginInstallOutcome =
   | { status: 'update-failed'; error: string }
   | { status: 'unverified' }
   | { status: 'failed'; step: 'marketplace' | 'install'; error: string }
+  /** Installed, and deliberately NOT updated: `cliIsStale` said the CLI has to move first. */
+  | { status: 'skipped-cli-stale' }
 
 export interface InstallPluginOptions {
   /** The repo the plugin is installed FOR — both the `cwd` of the install and the verified root. */
@@ -58,6 +60,14 @@ export interface InstallPluginOptions {
   run?: ClaudeRunner
   /** Override `$HOME` for the host-state reads (tests, and nothing else). */
   home?: string
+  /**
+   * Consulted only on the already-installed path, right before `claude plugin update`: `true` withholds
+   * the update and reports `skipped-cli-stale`. Injected rather than computed here because the answer
+   * lives in the update cache, and `lib/update-check` already imports this directory
+   * (`update-plugin.ts` → `install-state`), so reading it from here would close an import cycle. The
+   * caller (`commands/init`) reads the cache; this file stays a `claude` driver.
+   */
+  cliIsStale?: () => boolean
 }
 
 /** The single question that decides "already installed" and "verified installed" alike. */
@@ -125,7 +135,14 @@ export const installPluginForProject = (options: InstallPluginOptions): PluginIn
 
   if (!run({ args: CLAUDE_VERSION_ARGV }).ok) return { status: 'claude-missing' }
 
-  if (isInstalledFor(projectRoot, home)) return updateInstalledPlugin(run, projectRoot)
+  // The update, not the install, is what can run the plugin ahead of the CLI: a plugin whose skills
+  // cite tool names a stale CLI's server does not serve. Withheld here, the plugin follows on the
+  // first update check after the CLI has moved.
+  if (isInstalledFor(projectRoot, home)) {
+    if (options.cliIsStale?.() === true) return { status: 'skipped-cli-stale' }
+
+    return updateInstalledPlugin(run, projectRoot)
+  }
 
   const marketplaceFailure = ensureMarketplace(run, home)
 

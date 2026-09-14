@@ -186,13 +186,39 @@ export const runUpdateCheck = async (currentVersion: string, deps: RunUpdateChec
     // `finish()` after the fetch, and the lock is reaped as stale at `LOCK_STALE_MS` (30 min). A
     // `claude` probe (up to 120 s) plus an update ahead of the fetch would delay that stamp on every
     // run and eat into the stale window on a slow link. Here the stamp is written, the lock is still
-    // held (single-flight), and the step has a bounded budget of its own.
-    recordPluginUpdate(deps, written.last, writeCache)
+    // held (single-flight), and the step has a bounded budget of its own. "Every outcome" has one
+    // exception, decided by the cache the locked function wrote rather than by name: see
+    // `pluginStepWithheld`.
+    recordPluginUpdate(deps, written.last, currentVersion, writeCache)
 
     return outcome
   } finally {
     release()
   }
+}
+
+/**
+ * Must the plugin step stand down because the CLI is behind? Reads the `latestVersion` the locked
+ * function wrote, not its outcome name: "a newer CLI exists and this run did not install it" is
+ * exactly what a non-null value newer than `currentVersion` encodes.
+ *
+ * That covers `cannot-self-spawn` (`:300`), `parent-unknown` (`:305`), `parent-still-running` (`:326`),
+ * `install-failed` (`:353`) and `install-stale` (`:364`) — each leaves the newer version in the cache —
+ * and any outcome added later that does the same, without this list needing to know. `installed` clears
+ * `latestVersion` (`:367`) and `up-to-date` writes a non-newer one (`:282`), so both still advance the
+ * plugin and a plugin-only bump keeps delivering; `fetch-failed` writes null (`:280`) and cannot be
+ * gated — the plugin advances, as before; `already-running` never reaches the wrapper.
+ *
+ * @example
+ * pluginStepWithheld('0.8.0', '0.7.2') // => true
+ * pluginStepWithheld(null, '0.7.2') // => false
+ */
+// Without this a Homebrew or unknown-location machine advances the plugin on every run while its CLI
+// waits for a hand-typed update, and once a repo serves infra-kit through the plugin, plugin N+1 spawns
+// CLI N — skills citing tool names that server does not serve, a `doctor` that fails on a key that is
+// meant to be absent, and a `setup` that re-adds it to a tracked `.mcp.json`.
+export const pluginStepWithheld = (latestVersion: string | null, currentVersion: string): boolean => {
+  return latestVersion !== null && isNewerVersion(latestVersion, currentVersion)
 }
 
 /**
@@ -203,9 +229,12 @@ export const runUpdateCheck = async (currentVersion: string, deps: RunUpdateChec
 const recordPluginUpdate = (
   deps: UpdatePluginDeps,
   base: UpdateCache | null,
+  currentVersion: string,
   writeCache: typeof writeUpdateCache,
 ): void => {
-  const outcome = updatePlugin(deps)
+  const outcome = pluginStepWithheld(base?.latestVersion ?? null, currentVersion)
+    ? 'skipped-cli-stale'
+    : updatePlugin(deps)
   const checkedMs = (deps.clock ?? Date.now)()
 
   // `finish()` writes on every path the locked function returns through, so `base` is only null if that

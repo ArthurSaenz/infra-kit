@@ -1,5 +1,6 @@
 export {
   detectInstallManager,
+  fallbackUpdateCommand,
   formatUpdateCommand,
   isGlobalInstall,
   isLocalNodeModulesInstall,

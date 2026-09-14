@@ -7,6 +7,7 @@ import type { GuidanceWrite } from 'src/lib/agent-guidance'
 import { seedCreatedMessage, seedUserProjectConfig } from 'src/lib/config-bootstrap'
 import { CONFIG_STUB, buildUserGlobalExample, buildVendorExample } from 'src/lib/config-templates'
 import { getInfraKitConfig, getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
+import { fallbackUpdateCommand, formatUpdateCommand } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
 import { removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
 import {
@@ -18,11 +19,14 @@ import {
   ensureMcpRegistration,
   ensurePluginPointer,
   installPluginForProject,
+  resolvePluginInstall,
 } from 'src/lib/plugin-pointer'
 import type { McpRegistrationResult, PluginInstallOutcome, PluginPointerResult } from 'src/lib/plugin-pointer'
 import { reconcileMcpProxies } from 'src/lib/plugin-pointer/mcp-proxy-registration'
 import type { McpProxyReconcileResult } from 'src/lib/plugin-pointer/mcp-proxy-registration'
+import { fetchLatestVersion, pluginStepWithheld, readUpdateCache } from 'src/lib/update-check'
 
+import packageJson from '../../../package.json' with { type: 'json' }
 import { resolveGitRootForWrites, syncRepoGuidance } from './agent-files'
 import {
   migrateFactoryConfigToJson,
@@ -215,8 +219,8 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
 
   record(...gateDisagreementEntries(gitRoot, guidanceRoot))
 
-  await withStep('plugin-pointer', () => {
-    syncPluginPointer(gitRoot, record)
+  await withStep('plugin-pointer', async () => {
+    await syncPluginPointer(gitRoot, record)
   })
 
   await withStep('mcp-proxies', async () => {
@@ -647,6 +651,26 @@ const manualInstallEntries = (): InitEntry[] => {
 }
 
 /**
+ * The withheld update, as one WARN line the reader can act on: the version they are behind and the
+ * command that closes the gap. `outcome: 'skipped'` — nothing failed, the step chose not to run.
+ *
+ * The installer reports `skipped-cli-stale` only when the `cliIsStale` thunk it was handed returned
+ * true, and that thunk reads `staleness.stale`; the non-stale arm exists for the type, not for a path.
+ */
+const cliStaleEntry = (staleness: CliStaleness): InitEntry => {
+  const detail = staleness.stale
+    ? `CLI ${packageJson.version} is behind ${staleness.latestVersion}, update it first: ${formatUpdateCommand(staleness.updateCommand)}`
+    : `CLI ${packageJson.version} is behind the published version, update it first`
+
+  return {
+    step: 'plugin-pointer',
+    outcome: 'skipped',
+    message: `Claude Code plugin not updated — ${detail}. The plugin follows on the next update check after that.`,
+    level: 'warn',
+  }
+}
+
+/**
  * One line per install outcome.
  *
  * `updated` is the steady state of a configured machine and still prints at INFO: unlike the old
@@ -655,7 +679,9 @@ const manualInstallEntries = (): InitEntry[] => {
  * outcomes are WARN and carry the step, the tool's own first line, and the command to run instead —
  * a warning a reader cannot act on is noise.
  */
-const installEntries = (outcome: PluginInstallOutcome): InitEntry[] => {
+const installEntries = (outcome: PluginInstallOutcome, staleness: CliStaleness): InitEntry[] => {
+  if (outcome.status === 'skipped-cli-stale') return [cliStaleEntry(staleness)]
+
   if (outcome.status === 'updated') {
     return [
       {
@@ -716,6 +742,36 @@ const installEntries = (outcome: PluginInstallOutcome): InitEntry[] => {
   ]
 }
 
+/** What `resolveCliStaleness` found: a newer CLI this machine has not installed, or nothing to withhold for. */
+type CliStaleness = { stale: false } | { stale: true; latestVersion: string; updateCommand: string[] }
+
+const NOT_STALE: CliStaleness = { stale: false }
+
+/**
+ * Is a newer CLI published than the one running `setup`? The same predicate the update worker applies
+ * before its own plugin step (`pluginStepWithheld`), read from the same cache — so `setup` cannot run
+ * the plugin ahead of the CLI on a machine the worker refuses to.
+ *
+ * The cache read lives HERE, in `commands/`, and not in `install-plugin.ts`: `lib/update-check` already
+ * imports `lib/plugin-pointer` (`update-plugin.ts` → `install-state`), so the reverse import would be
+ * a cycle. No cache means an opt-out machine (`OPT_OUT_ENV_VARS` — the worker never runs there, so it
+ * never writes one), and `setup` is interactive: one bounded registry fetch is affordable. A fetch that
+ * fails is unknowable, exactly like the worker's `fetch-failed`, and withholds nothing.
+ *
+ * @example
+ * await resolveCliStaleness() // => { stale: true, latestVersion: '0.8.0', updateCommand: ['npm', …] }
+ */
+const resolveCliStaleness = async (): Promise<CliStaleness> => {
+  const cache = readUpdateCache()
+  const latestVersion = cache === null ? await fetchLatestVersion(process.env) : cache.latestVersion
+
+  if (latestVersion === null || !pluginStepWithheld(latestVersion, packageJson.version)) return NOT_STALE
+
+  // The worker's verdict when it has one (`cannot-self-spawn` records the manager-specific command);
+  // otherwise the same guess it records for an unrecognised location.
+  return { stale: true, latestVersion, updateCommand: cache?.updateCommand ?? fallbackUpdateCommand(latestVersion) }
+}
+
 /**
  * Point this repo's Claude Code at the infra-kit plugin marketplace, register the MCP server the
  * plugin's skills call, then INSTALL the plugin so a teammate's whole setup is one command.
@@ -729,7 +785,7 @@ const installEntries = (outcome: PluginInstallOutcome): InitEntry[] => {
  * thrown error), so a switch would only buy a way to end up with the pointer keys pointing at a
  * plugin nobody has.
  */
-const syncPluginPointer = (root: string | null, record: InitStepRecorder): void => {
+const syncPluginPointer = async (root: string | null, record: InitStepRecorder): Promise<void> => {
   if (root === null) {
     // Silent: `resolveGitRootForWrites` has already printed the four-step skip.
     record({
@@ -752,7 +808,24 @@ const syncPluginPointer = (root: string | null, record: InitStepRecorder): void 
     // — reordering output that a partial failure makes visible.
     record(pointerEntry(root, ensurePluginPointer(path.join(root, '.claude', 'settings.json'))))
     record(mcpEntry(root, ensureMcpRegistration(root)))
-    record(...installEntries(installPluginForProject({ projectRoot: root })))
+
+    // Resolved ahead of the (synchronous) installer, and only when there is an update to withhold: a
+    // fresh install has nothing to gate, and an opt-out machine without the plugin must not pay a
+    // registry fetch for a question nobody asked.
+    const installed = resolvePluginInstall({ projectPath: root }).kind === 'installed'
+    const staleness = installed ? await resolveCliStaleness() : NOT_STALE
+
+    record(
+      ...installEntries(
+        installPluginForProject({
+          projectRoot: root,
+          cliIsStale: () => {
+            return staleness.stale
+          },
+        }),
+        staleness,
+      ),
+    )
   } catch (err) {
     // Best-effort — neither an unwritable `.claude/settings.json`, a hand-broken
     // `~/.claude/plugins/installed_plugins.json`, nor a `claude` binary that throws on spawn may turn

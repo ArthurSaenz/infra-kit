@@ -280,6 +280,18 @@ const TREE_MATCHERS: Matcher[] = [
 const NPM_UPDATE_COMMAND = ['npm', 'install', '-g', LATEST]
 
 /**
+ * The command to print when nobody has identified this CLI's package manager — the same guess
+ * `detectInstallManager` records for an unrecognised location, pinned to `version`. For a caller that
+ * must name a command but has no worker verdict to read (no update cache on an opt-out machine).
+ *
+ * @example
+ * fallbackUpdateCommand('0.8.0') // => ['npm', 'install', '-g', 'infra-kit@0.8.0']
+ */
+export const fallbackUpdateCommand = (version: string): string[] => {
+  return pinSpec(NPM_UPDATE_COMMAND, version)
+}
+
+/**
  * Identify the package manager that owns `selfRealPath`.
  *
  * Order, and why it is this one: wrappers that own an npm-shaped tree (volta, brew) first, then the npm
