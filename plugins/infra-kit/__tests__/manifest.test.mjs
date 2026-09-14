@@ -24,6 +24,7 @@ const EXPECTED_SKILLS = [
   'fe-patterns',
   'full-cycle',
   'release-create',
+  'release-remove',
   'session',
   'setup',
   'update-toolchain',
@@ -665,13 +666,17 @@ const GATED_TOOLS = [
   'gh-merge-dev',
 ]
 
-// Key sets are exact, and the `disable-model-invocation` split is the design: `session` and
-// `release-create` are human-only (one loads secrets into the human's terminal, the other is gated),
-// so only `/name` may invoke them. `setup` stays model-invocable ON PURPOSE — its reader is the agent
+// Key sets are exact, and the `disable-model-invocation` split is the design: `session`,
+// `release-create` and `release-remove` are human-only (one loads secrets into the human's terminal,
+// the other two are gated), so only `/name` may invoke them. `setup` stays model-invocable ON PURPOSE — its reader is the agent
 // about to call the tool, so auto-loading is what replaces the deleted resource; its human gate is the
 // tool's own confirm protocol, which no `allowed-tools` grant can skip.
 const PROCEDURE_SKILLS = {
   'release-create': {
+    keys: ['argument-hint', 'description', 'disable-model-invocation', 'name'],
+    humanOnly: true,
+  },
+  'release-remove': {
     keys: ['argument-hint', 'description', 'disable-model-invocation', 'name'],
     humanOnly: true,
   },
@@ -843,7 +848,7 @@ test('U18: the session body carries the two injections, every load-bearing claus
   }
 })
 
-// The other two procedure bodies keep the clauses `server.test.ts` pinned when the CLI served them.
+// The other three procedure bodies keep the clauses `server.test.ts` pinned when the CLI served them.
 const PROCEDURE_CLAUSES = {
   'release-create': [
     'mcp__plugin_infra-kit_infra-kit__release-create',
@@ -858,6 +863,28 @@ const PROCEDURE_CLAUSES = {
     'all entries must share the same `type`',
     'linked worktree',
     'clean working tree',
+    ABSENT_TOOLS_CLAUSE,
+  ],
+  'release-remove': [
+    'mcp__plugin_infra-kit_infra-kit__release-remove',
+    'confirmation_required',
+    'confirmToken',
+    '"confirm": true',
+    'does not mean the call failed',
+    'The first call checks nothing about the release',
+    'carries `version` and nothing else',
+    'The bare token → `version`',
+    'There is no picker',
+    'have **no tool field**',
+    'Attached issues do not block',
+    '`jira: "manual"`',
+    '`jira: "absent"`',
+    '`MERGED` is refused',
+    'linked worktree',
+    'clean working tree',
+    'verified no-op',
+    'What is lost with the worktree directory',
+    '`git worktree remove`, `gh pr close`, `git branch -D` or `git push --delete`',
     ABSENT_TOOLS_CLAUSE,
   ],
   setup: [
@@ -881,7 +908,7 @@ const PROCEDURE_CLAUSES = {
   ],
 }
 
-test('U18: the release-create and setup bodies carry every load-bearing clause', () => {
+test('U18: the release-create, release-remove and setup bodies carry every load-bearing clause', () => {
   for (const [name, clauses] of Object.entries(PROCEDURE_CLAUSES)) {
     const { file, body } = procedureSkill(name)
     const joined = joinedParagraphs(body)

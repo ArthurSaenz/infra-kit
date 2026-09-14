@@ -24,19 +24,20 @@ reports it.
 
 ## What it contains
 
-| Component | Name                          | Purpose                                                                                                                    |
-| --------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| skill     | `/infra-kit:comment-verifier` | Reviews and fixes comments against the "why, not what" policy, with a mechanical verify step                               |
-| skill     | `/infra-kit:doctor`           | Runs the CLI health report, then adds the checks only a live session can make (which plugin tree loaded, drift, staleness) |
-| skill     | `/infra-kit:fe-architect`     | Builds and reviews the inside of a React feature (naming, containers, state, services)                                     |
-| skill     | `/infra-kit:fe-patterns`      | Cross-feature boundaries, injection patterns, promotion to shared                                                          |
-| skill     | `/infra-kit:e2e-architect`    | Per-feature Playwright e2e layout: page object, fixture, specs by axis                                                     |
-| skill     | `/infra-kit:update-toolchain` | Bumps pnpm, Node and Turbo across a monorepo, phase by phase                                                               |
-| skill     | `/infra-kit:full-cycle`       | deep-interview → ralplan → review gate → ralph → verify (requires oh-my-claudecode)                                        |
-| skill     | `/infra-kit:session`          | Loads a named environment into the terminal that launched Claude Code — the human picks from a form (human-invoked only)   |
-| skill     | `/infra-kit:release-create`   | Cuts release branches through the gated `release-create` tool (human-invoked only)                                         |
-| skill     | `/infra-kit:setup`            | The procedure for `infra-kit setup` over MCP: ordered local writes, dependency converge, printed-not-run recipes           |
-| server    | `infra-kit`                   | `infra-kit mcp` — the global CLI on `PATH`; tools are `mcp__plugin_infra-kit_infra-kit__*`                                 |
+| Component | Name                          | Purpose                                                                                                                       |
+| --------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| skill     | `/infra-kit:comment-verifier` | Reviews and fixes comments against the "why, not what" policy, with a mechanical verify step                                  |
+| skill     | `/infra-kit:doctor`           | Runs the CLI health report, then adds the checks only a live session can make (which plugin tree loaded, drift, staleness)    |
+| skill     | `/infra-kit:fe-architect`     | Builds and reviews the inside of a React feature (naming, containers, state, services)                                        |
+| skill     | `/infra-kit:fe-patterns`      | Cross-feature boundaries, injection patterns, promotion to shared                                                             |
+| skill     | `/infra-kit:e2e-architect`    | Per-feature Playwright e2e layout: page object, fixture, specs by axis                                                        |
+| skill     | `/infra-kit:update-toolchain` | Bumps pnpm, Node and Turbo across a monorepo, phase by phase                                                                  |
+| skill     | `/infra-kit:full-cycle`       | deep-interview → ralplan → review gate → ralph → verify (requires oh-my-claudecode)                                           |
+| skill     | `/infra-kit:session`          | Loads a named environment into the terminal that launched Claude Code — the human picks from a form (human-invoked only)      |
+| skill     | `/infra-kit:release-create`   | Cuts release branches through the gated `release-create` tool (human-invoked only)                                            |
+| skill     | `/infra-kit:release-remove`   | Tears down one release through the gated `release-remove` tool; the Jira fix version is left for a human (human-invoked only) |
+| skill     | `/infra-kit:setup`            | The procedure for `infra-kit setup` over MCP: ordered local writes, dependency converge, printed-not-run recipes              |
+| server    | `infra-kit`                   | `infra-kit mcp` — the global CLI on `PATH`; tools are `mcp__plugin_infra-kit_infra-kit__*`                                    |
 
 Skill scripts run from the plugin root (`${CLAUDE_PLUGIN_ROOT}/skills/<skill>/scripts/…`) and
 each skill's `allowed-tools` whitelists exactly the commands its body runs, so a bundled script
@@ -110,9 +111,10 @@ Every skill description is loaded into context on every turn. The release checkl
 the recorded value below by more than 20%. Growing the budget is allowed; it must be a
 deliberate edit of this line in the same commit.
 
-- Recorded projected always-on token cost: **496** (plugin version 0.7.8, measured with `claude --plugin-dir ./plugins/infra-kit plugin details infra-kit`)
+- Recorded projected always-on token cost: **540** (plugin version 0.7.10, measured with `claude --plugin-dir ./plugins/infra-kit plugin details infra-kit`)
 
-The previous recorded value was 431 against 0.7.7; 496 is +15%, the cost of the three procedure
+The previous recorded value was 496 against 0.7.8; 540 is +9%, the `/infra-kit:release-remove`
+description. Before that, 431 was recorded against 0.7.7; 496 was +15%, the cost of the three procedure
 skills' descriptions (`/infra-kit:session`, `/infra-kit:release-create`, `/infra-kit:setup`) that replaced the two commands and the
 CLI-served workflow resources. Before that, 347 was stamped against 0.3.0 and left unrefreshed while
 four skills and two commands were added (431 was +24% over it, past the 20% rule, and recorded
