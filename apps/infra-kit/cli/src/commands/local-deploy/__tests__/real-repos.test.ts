@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-import { discoverServices, eligibleServices } from '../service-discovery'
+import { discoverServices, eligibleServices, resolveSsmPrefix } from '../service-discovery'
 
 /**
  * Runs against the real consumer monorepos when they are checked out beside infra-kit.
@@ -61,6 +61,23 @@ describe.runIf(present(REPOS.hulyo))('hulyo', () => {
     expect(forStage).not.toContain('mobile')
     expect(forStage).toContain('client-be')
   })
+
+  it('resolves the SSM prefix the scripts read, not the checkout directory name', async () => {
+    const services = await discoverServices(REPOS.hulyo)
+    const byName = new Map(
+      services.map((service) => {
+        return [service.name, service]
+      }),
+    )
+
+    // The bug this prevents: preflight probing `/hulyo-monorepo/environment` (or the release name
+    // from a worktree) — neither exists — because the project was taken from a directory basename.
+    expect(resolveSsmPrefix(services)).toBe('hulyo')
+
+    // These two read no `/…/environment` at all; they must be null, not a refusal.
+    expect(byName.get('ai-be')?.ssmPrefix).toBeNull()
+    expect(byName.get('media')?.ssmPrefix).toBeNull()
+  })
 })
 
 describe.runIf(present(REPOS.travelist))('travelist', () => {
@@ -88,5 +105,9 @@ describe.runIf(present(REPOS.travelist))('travelist', () => {
     expect(forArthur).not.toContain('media')
     expect(forArthur).not.toContain('mobile')
     expect(forArthur).toContain('client-be')
+  })
+
+  it('resolves the SSM prefix the scripts read', async () => {
+    expect(resolveSsmPrefix(await discoverServices(REPOS.travelist))).toBe('travelist')
   })
 })

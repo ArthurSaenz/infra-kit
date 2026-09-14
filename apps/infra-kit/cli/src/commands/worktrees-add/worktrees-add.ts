@@ -222,7 +222,7 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
 
     if (openInCmux) {
       // Group name keys on the STABLE main-repo basename (not the worktree-local
-      // `getRepoName()`), so every worktree of a repo lands in the same sidebar
+      // toplevel basename), so every worktree of a repo lands in the same sidebar
       // group regardless of which checkout this runs from.
       const repoName = path.basename(await getMainRepoRoot(projectRoot))
       const openByCwd = await listCmuxWorkspacesByCwd()

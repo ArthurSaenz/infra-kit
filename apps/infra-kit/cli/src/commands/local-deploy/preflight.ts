@@ -17,6 +17,10 @@ export interface AccountIdentity {
  * derived from the account, never passed in. So the account decides the environment, and nothing in
  * the pipeline has ever checked that it matches what the human meant.
  *
+ * `project` is the prefix `service-discovery` read out of those very scripts, never a directory
+ * name: the checkout basename is `hulyo-monorepo` in the main clone and the release name in a
+ * linked worktree, and neither names a parameter that exists.
+ *
  * Throws on an unreadable parameter rather than returning a blank. An account with no such parameter
  * is precisely the "you are pointed somewhere unexpected" case this exists to catch, so treating it
  * as "probably fine" would inverts the check's purpose.

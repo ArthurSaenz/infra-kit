@@ -37,6 +37,7 @@ const SERVICE: DeployService = {
   name: 'client-be',
   scriptPath: '/fake-repo/devops/scripts/deploy-client-be.sh',
   allowedEnvs: null,
+  ssmPrefix: 'fake',
 }
 
 /** A `zx` result: awaitable for `` $`x` `` and `.quiet()`-able for `` $`x`.quiet() ``. */
@@ -85,9 +86,6 @@ vi.mock('src/lib/git-utils', async (importOriginal) => {
     ...actual,
     getProjectRoot: () => {
       return Promise.resolve('/fake-repo')
-    },
-    getRepoName: () => {
-      return Promise.resolve('fake-repo')
     },
     getCurrentBranch: () => {
       return Promise.resolve('main')

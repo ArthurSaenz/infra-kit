@@ -9,7 +9,7 @@ import { $ } from 'zx'
 import { commandEcho } from 'src/lib/command-echo'
 import { createDeployFormProvider } from 'src/lib/deploy-form'
 import { OperationError } from 'src/lib/errors/operation-error'
-import { getCurrentBranch, getProjectRoot, getRepoName, isWorkingTreeClean } from 'src/lib/git-utils'
+import { getCurrentBranch, getProjectRoot, isWorkingTreeClean } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { pickEnv } from 'src/lib/prompts/env-picker'
 import { withEscape } from 'src/lib/prompts/escapable-context'
@@ -19,7 +19,7 @@ import { defineMcpTool, textContent } from 'src/types'
 import { buildDeployEnv, contractRecord, formatContract } from './deploy-env'
 import type { BuildEnvResult } from './deploy-env'
 import { runPreflight } from './preflight'
-import { discoverServices, eligibleServices, isEligible } from './service-discovery'
+import { discoverServices, eligibleServices, isEligible, resolveSsmPrefix } from './service-discovery'
 import type { DeployService } from './service-discovery'
 
 /** The workflow whose `environment` choices seed the picker. Advisory only — `--env` always wins. */
@@ -306,7 +306,6 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
   const { env, service, confirmedCommand, dryRun, printEnv } = args
 
   const projectRoot = await getProjectRoot()
-  const project = await getRepoName()
   const services = await discoverServices(projectRoot)
 
   if (services.length === 0) {
@@ -316,6 +315,10 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
       stderrExcerpt: `no deploy scripts found under ${projectRoot}/devops/scripts`,
     })
   }
+
+  // After the no-scripts guard so that refusal keeps precedence, and before any picker so a
+  // repo whose scripts cannot be preflighted is refused without first asking for a target.
+  const project = resolveSsmPrefix(services)
 
   // Advisory only: `workflow-envs` reads the working tree while a dispatch targets a ref, and vetoing
   // against it once caused a real refuse-to-deploy bug. It seeds the picker; `--env` always wins.
@@ -380,6 +383,9 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
     logger.info(
       [
         `Would deploy to "${selectedEnv}" (AWS account ${accountId}) from this machine`,
+        // Named so a run from a linked worktree can prove it probed the scripts' parameter, not one
+        // derived from the checkout's directory name.
+        `Preflight parameter: /${project}/environment`,
         formatContract(built),
         'Commands:',
         ...chosen.map((entry) => {

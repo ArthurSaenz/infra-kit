@@ -253,7 +253,11 @@ export const isInsideLinkedWorktree = async (): Promise<boolean> => {
 }
 
 /**
- * Get the current repository name (basename of the project root)
+ * Basename of the CURRENT worktree's toplevel — a linked worktree returns the worktree dir name,
+ * not the repository. Not a repo identity; see {@link getMainRepoRoot} for the stable root.
+ *
+ * @deprecated It has no production caller: its last one fed `local-deploy` preflight the release
+ * name instead of the project. Kept only because the test suite still imports it.
  */
 export const getRepoName = async (): Promise<string> => {
   const projectRoot = await getProjectRoot()
