@@ -907,3 +907,7 @@ PRD: .omc/state/sessions/8bfe04d3-459d-4fa5-b326-900d533117a6/prd.json
 - AC-0 (observe the automatic plugin advance over ≥2 releases) — needs real releases after step 0 ships.
 - §8.2 (server into the plugin, prefix rename, doctor capability row), §8.4/8.5 consumer PRs — Gate G red on S0-2.
 - Next action for the user: decide T1 with §6.1's four options; if "keep D4-i", the plan closes with step 0 shipped.
+
+## Closed (ralph): reviewer APPROVED (architect, thorough tier); deslop removed two re-export shims (install-plugin → claude-cli,
+plugin-pointer → names); post-deslop regression 619/619, tsc 0, eslint 0. Commits on do/mcp-via-plugin-step0: 3f7eabf (step 0), c30c5a2 (plan).
+Not pushed. Root qa: 42/43 tasks — the single red is the pre-existing lockstep guard (HEAD 0.7.1 vs config ^0.7.0).
