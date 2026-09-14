@@ -109,11 +109,11 @@ Every skill description is loaded into context on every turn. The release checkl
 the recorded value below by more than 20%. Growing the budget is allowed; it must be a
 deliberate edit of this line in the same commit.
 
-- Recorded projected always-on token cost: **431** (plugin version 0.8.0, measured with `claude --plugin-dir ./plugins/infra-kit plugin details infra-kit`)
+- Recorded projected always-on token cost: **431** (plugin version 0.7.7, measured with `claude --plugin-dir ./plugins/infra-kit plugin details infra-kit`)
 
 The previous recorded value was 347, stamped against plugin version 0.3.0 and left unrefreshed
 while four skills and two commands were added; 431 is +24% over it, past the 20% rule, and is
-recorded deliberately as the 0.8.0 baseline. The MCP server adds nothing to this number: tool
+recorded deliberately as the 0.7.7 baseline. The MCP server adds nothing to this number: tool
 schemas are resolved at runtime and `plugin details` does not count them. Before that, 1438 was
 recorded against 0.1.0 under an older report shape (no always-on / on-invoke split) and is not
 comparable to either.

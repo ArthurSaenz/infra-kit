@@ -84,8 +84,8 @@ whichever prefix this session exposes it) and read its structured result:
   `mcp__plugin_infra-kit_infra-kit__` prefix) or `legacy` (this repo's own `.mcp.json` entry, the
   shorter project-level prefix). Report it as-is; the CLI already judges whether that route is the
   intended one.
-- A result with **no `launch` field** means the CLI predates 0.8.0. The fix is the update command
-  the CLI itself prints. **Never run `infra-kit setup` from a CLI older than 0.8.0 in a repo whose
+- A result with **no `launch` field** means the CLI predates 0.7.7. The fix is the update command
+  the CLI itself prints. **Never run `infra-kit setup` from a CLI older than 0.7.7 in a repo whose
   `.mcp.json` no longer carries the `infra-kit` key** — that CLI's `setup` re-adds it.
 
 ## Step 4 — offer fixes
