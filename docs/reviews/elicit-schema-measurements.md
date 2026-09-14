@@ -96,3 +96,24 @@ try {
   console.log(`${e.constructor.name}: ${e.message}`)
 }
 ```
+
+## Addendum 2026-09-15 — per-option labels ARE expressible, through a raw JSON schema
+
+Measured against `@modelcontextprotocol/server` 2.0.0 / zod 4.6.2 (V0.2 of
+`docs/session-env-picker-plan.md`). Consequence 4 above holds for every ZOD spelling, but not for the
+wire's own titled-enum form:
+
+| Input shape | Outcome | Rendered |
+|---|---|---|
+| `z.union([z.literal('dev').describe('…'), z.literal('stage').describe('…')])` | **THROW** | same flat-primitives `TypeError`, `properties.config` |
+| `z.enum(['dev','stage']).meta({ title: 'Environment' })` | OK | `title` at the FIELD level only |
+| raw `{ type:'string', oneOf:[{const:'dev', title:'dev — token set'}, …] }` | **OK** | `oneOf` with per-option `title` survives verbatim |
+| raw `{ type:'string', enum:[…], enumNames:[…] }` | OK | passes through, but `enumNames` is not in the MCP spec — do not rely on it |
+| `fromJsonSchema(raw oneOf)` → `elicit()` → `acceptedContent(responses, key, schema)` | **OK** | the same standard schema validates the re-entry: `{config:'dev'}` → content, `{config:'nope'}` → `undefined` |
+
+So a per-option annotation is buildable as a `TitledSingleSelectEnumSchema` (`oneOf` `const`+`title`,
+spec 2025-06-18+) via `fromJsonSchema`, and it validates on round 2. Two things it does NOT settle:
+`ArgumentFormProvider.buildRequestedSchema` is typed `z.ZodObject<z.ZodRawShape>` (a `fromJsonSchema`
+result is a Standard Schema, not a `ZodObject`), and whether Claude Code RENDERS the `title` is unmeasured
+(the 2025-11-25 form dialog may show the `const`). The env picker keeps the token annotation in the
+field's `description` (§2.3 of the plan); the titled enum is a follow-up gated on a live render check.
