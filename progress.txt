@@ -864,3 +864,46 @@ exported functions — kept.
 
 Post-deslop: 3420 passing (2 known reds), eslint 1 known error, live smoke 72 tools + mid-session
 switch. `dist/mcp-proxy.js` 8.7 KB.
+
+# mcp-via-plugin — step 0 + spike S0 (ralph run 2026-09-14)
+
+Plan: docs/mcp-via-plugin-plan.md (ralplan --deliberate, Critic APPROVE at rev 5.1 after 4 iterations)
+PRD: .omc/state/sessions/8bfe04d3-459d-4fa5-b326-900d533117a6/prd.json
+
+## Spike S0 — results in plan §6.1 (raw logs in the session scratchpad s0/)
+- S0-7 PASS: `claude plugin update infra-kit@infra-kit` needs `--scope project -y`; project is resolved from cwd only
+  when cwd is a recorded project (from $HOME it silently picks another record) → iterate records with cwd=projectPath.
+  Sessions load the plugin from the record's cache installPath, NOT the marketplace clone. spawnSync per record ≈0.7 s;
+  vanished path → ENOENT (skip).
+- S0-6(a) PASS: a registered worktree with the committed .claude/settings.json loads the plugin without its own record.
+- S0-1 PASS (bare command resolves via PATH). S0-4: prefix `mcp__plugin_infra-kit_infra-kit__<tool>`; plugin servers need no approval.
+- S0-3: same key in project .mcp.json AND plugin → the project entry SHADOWS the plugin server silently (no dual registration).
+- S0-5: `claude mcp remove` keeps siblings but rewrites indent (4→2) and drops the trailing newline.
+- S0-2 RED: from a SUBDIRECTORY the project-scope plugin is not loaded at all (enabledPlugins is read from <cwd>/.claude/settings.json
+  only, no walk-up) while .mcp.json IS found — a session started in `apps/` would lose every infra-kit tool under T1-i.
+  Reproduced in the real travelist repo. → Gate G red → §8.2 (server into plugin) does NOT proceed; decision returns to the user.
+  Corollary (out of scope): the repo's settings.json hooks (deploy guard) don't load from a subdirectory either.
+
+## Learnings
+- Nested `claude -p` works from inside a session once CLAUDECODE is unset; `--allowedTools` is variadic and eats a trailing prompt (use stdin).
+- `claude mcp list` shows project servers "Pending approval" even when `enabledMcpjsonServers` in settings.local.json makes them load in a session.
+- The repo bash-guard blocks raw `git worktree add` even for a /tmp scratch repo; ask rather than bypass.
+
+## Step 0 — implemented (branch do/mcp-via-plugin-step0)
+- 0a `lib/update-check/update-plugin.ts` (new) + `run-update-check.ts`: after `runUpdateCheckLocked` returns (every outcome,
+  inside the lock, after the throttle stamp) the worker probes `claude --version` and runs
+  `claude plugin update infra-kit@infra-kit --scope project -y` once per recorded project (cwd = recorded projectPath,
+  stdio ignore, npm_* + CLAUDECODE stripped, 60 s/run, 5 min total, vanished paths skipped). Never throws; outcome stamped
+  into update-check.json as `plugin: {outcome, checkedMs}`. Static imports; a bundle guard test proves no pino in the worker.
+- 0b `plugin-pointer/install-plugin.ts`: already-installed → runs the update → `updated` | `update-failed`; `init.ts` prints it.
+  `already-installed` outcome removed. Shared constants moved to `plugin-pointer/names.ts` + `claude-cli.ts` (logger-free).
+- 0c `doctor` `plugin version`: pass + "plugin X is fetched but not applied. Run: …" only when the marketplace clone is ahead
+  of the served cache copy; no CLI-vs-plugin comparison (guard test).
+- T2-a: CLI README documents `mcp.<name>` in infra-kit.json as the source and the generated .mcp.json entry; drift messages say so;
+  plugin README replaces the "ten minutes" claim with the measured mechanism; D4 addendum written; memory rule (Q4) updated.
+- CLI qa: 3585/3586 — the one failure is the pre-existing lockstep guard (HEAD cli 0.7.1 vs config ^0.7.0), untouched by this work.
+
+## NOT done, by the plan's own gate
+- AC-0 (observe the automatic plugin advance over ≥2 releases) — needs real releases after step 0 ships.
+- §8.2 (server into the plugin, prefix rename, doctor capability row), §8.4/8.5 consumer PRs — Gate G red on S0-2.
+- Next action for the user: decide T1 with §6.1's four options; if "keep D4-i", the plan closes with step 0 shipped.
