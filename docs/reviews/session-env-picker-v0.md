@@ -64,3 +64,24 @@ environments first, then token-only ones.`; Accept / Decline. The human declined
 form, the session id and the "the pick is the load" sentence are in the message, and the token-less
 annotation is in the field prose. Not exercised live: an Accept (every env here is token-less, so it
 would only produce the `env-token-set` error the E-L1 lane already pins).
+
+## V0.4 — the injected reading, measured (partial: the no-load half)
+
+On this machine, in this repo's session (`INFRA_KIT_SESSION=1e2285d3`), with nothing loaded: both the
+bare `infra-kit env-status --json` and the `zsh -c 'infra-kit env-status --json'` spelling return the
+same object — `sessionId: "1e2285d3"`, `sessionConfig: null`, `sessionTotalCount: 0`. That confirms
+F11's half of the claim (the Bash tool here IS zsh, and `INFRA_KIT_SESSION` is inherited, so the bare
+spelling is not broken on this host) and leaves `zsh -c` justified as host-independence rather than as
+a fix for this host.
+
+**Still unmeasured:** the post-load half — after an in-session `env-load dev`, does the injected block
+read `sessionConfig: "dev"`? That needs a load into a session whose token exists (this root has no
+tokens) and a re-invocation in the same Claude Code session, i.e. the consumer-repo run below.
+
+## V0.5 — the skill from the built plugin tree
+
+**Not yet run.** Requires a Claude Code restart with the 0.7.9 plugin (installed at project scope for
+infra-kit, travelist and hulyo on 2026-09-15) and a `/infra-kit:session` invocation in a repo with
+environments: the checks are that the injection fires, that `env-load` raises no permission prompt
+(`allowed-tools`), that the elicitation dialog still appears with `allowed-tools` set, that
+`/infra-kit:setup` is auto-loadable and `/infra-kit:release-create` is not.
