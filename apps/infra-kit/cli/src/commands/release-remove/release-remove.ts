@@ -986,7 +986,7 @@ export const releaseRemove = async (options: ReleaseRemoveArgs) => {
 export const releaseRemoveMcpTool = defineMcpTool({
   name: 'release-remove',
   description:
-    'Tear down ONE release created by release-create: removes its git worktree (and the cmux window rooted there), strips the worktree from the Cursor workspace, closes its pull request with a comment, and deletes the release branch locally and on origin. THE JIRA FIX VERSION IS DELIBERATELY LEFT IN PLACE — removing it is irreversible (new id, new URL, lost issue links), so this tool never attempts it and instead returns jira: "manual" with the version id, name and URL for a human to finish in Jira. Requires "version"; the moveIssuesTo/skipJira flags are CLI-only and are refused here because the Jira step does not run. Refuses before any mutation when the PR is MERGED (the release has shipped), when the fix version is released/archived or still carries issues, or when nothing named that version exists. Resumable: every step is a verified no-op when its artefact is already gone, so a re-run finishes a partial teardown. What is lost with the worktree directory: gitignored contents including a hydrated .env of Doppler secrets (re-fetch with env-load) and node_modules/dist.',
+    'Tear down ONE release created by release-create: removes its git worktree (and the cmux window rooted there), strips the worktree from the Cursor workspace, closes its pull request with a comment, and deletes the release branch locally and on origin. THE JIRA FIX VERSION IS DELIBERATELY LEFT IN PLACE — removing it is irreversible (new id, new URL, lost issue links), so this tool never attempts it and instead returns jira: "manual" with the version id, name and URL for a human to finish in Jira. Requires "version"; the moveIssuesTo/skipJira flags are CLI-only and have no field over MCP; the server strips them because the Jira step does not run. Refuses before any mutation when the PR is MERGED (the release has shipped), when the fix version is released/archived, or when nothing named that version exists. A fix version that still carries issues is reported, not refused: that guard protects a delete which never runs here. Resumable: every step is a verified no-op when its artefact is already gone, so a re-run finishes a partial teardown. What is lost with the worktree directory: gitignored contents including a hydrated .env of Doppler secrets (re-fetch with env-load) and node_modules/dist.',
   requiresHumanConfirm: true,
   inputSchema: {
     version: z
@@ -1026,7 +1026,7 @@ export const releaseRemoveMcpTool = defineMcpTool({
     remoteTipSha: z.string().nullable().describe('The origin tip before deletion'),
     jira: z
       .enum(['removed', 'absent', 'skipped', 'manual'])
-      .describe('Always "manual" over MCP: the fix version is left for a human. "absent" means none was found.'),
+      .describe('"manual" when a fix version exists over MCP (it is left for a human); "absent" when Jira knows none.'),
     jiraVersion: z
       .object({ id: z.string(), name: z.string(), url: z.string() })
       .nullable()
