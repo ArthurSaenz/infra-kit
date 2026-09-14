@@ -9,7 +9,7 @@ import type { ArgumentFormProvider, ToolsExecutionResult } from 'src/types'
 import { createConfirmCodec } from '../confirm-token'
 import type { ConfirmCodec } from '../confirm-token'
 import { createToolHandler, resolveGateState } from '../tool-handler'
-import type { ToolCallContext } from '../tool-handler'
+import type { GateInputs, GateState, ToolCallContext } from '../tool-handler'
 
 // The ENTIRE config-bootstrap module is faked: the real seed must never run here, because it writes
 // to ~/.infra-kit/projects/<repo>/ and no test may touch the developer's real $HOME. (The
@@ -374,10 +374,10 @@ describe('createToolHandler — confirm token binding (round-2 refusals)', () =>
  * The argument form: candidates 1 (`form`) and 2 (`declined`), the capability probe, the deadline
  * race, the validated re-entry and the non-narrowing check.
  *
- * Every provider below is a FAKE, and deliberately so: no tool in the tree carries a `formProvider`
- * yet, so candidate 1 is unreachable in production and injected fakes are the only thing that
- * exercises it at all. A fake is also the only way to drive a MALICIOUS provider, which is what
- * the non-narrowing check exists for.
+ * Every provider below is a FAKE, and deliberately so: no GATED tool in the tree carries a
+ * `formProvider`, so candidate 1 on the gated path is unreachable in production and injected fakes
+ * are the only thing that exercises it at all. A fake is also the only way to drive a MALICIOUS
+ * provider, which is what the non-narrowing check exists for.
  */
 describe('createToolHandler — argument form', () => {
   // The SDK normalizes a bare `{elicitation:{}}` to `{elicitation:{form:{}}}` (`ElicitationCapabilitySchema`
@@ -493,10 +493,14 @@ describe('createToolHandler — argument form', () => {
     return asToolResult(result).structuredContent as Record<string, unknown>
   }
 
-  it('f0: an UNGATED tool runs on call 1, provider and form-capable client notwithstanding', async () => {
+  it('f0: an UNGATED tool whose provider says NOT formable runs on call 1, form-capable client notwithstanding', async () => {
     const { tool, handler } = formTool({
       requiresHumanConfirm: false,
-      provider: makeProvider(),
+      provider: makeProvider({
+        isFormable: () => {
+          return false
+        },
+      }),
       capabilities: FORM_CAPABLE,
     })
 
@@ -752,6 +756,33 @@ describe('createToolHandler — argument form', () => {
     expect(handler).toHaveBeenCalledTimes(1)
   })
 
+  // The f7 lane above uses a URL_ONLY client, so `canForm` is false there and G1's `!confirmed` has
+  // no observer: delete it and a confirmed round 2 on a form-capable client with a still-formable
+  // argument set gets a SECOND form instead of verify. This lane pins every G1 conjunct true except
+  // `!confirmed`, and asserts the fixture rather than assuming it.
+  it('f7c: a CONFIRMED round 2 on a form-capable client, with formable arguments, reaches VERIFY — not a second form', async () => {
+    const provider = makeProvider()
+    const { tool, handler } = formTool({ provider, capabilities: FORM_CAPABLE })
+    const round1 = { releases: [{ version: 'next' }] }
+    const merged = { releases: [{ version: '1.63.1' }] }
+
+    expect(isForm(await tool(round1))).toBe(true)
+
+    const gate = await tool(round1, accepted({ version: '1.63.1' }))
+
+    expect(gateOf(gate)).toMatchObject({ status: 'confirmation_required', resolvedArgs: merged })
+    // The conjuncts G1 would need on round 2, pinned: without these the lane cannot tell verify from
+    // "no form was possible anyway".
+    expect(provider.isFormable(merged)).toBe(true)
+    expect(FORM_CAPABLE.elicitation?.form).toBeDefined()
+
+    const result = await tool({ ...merged, confirm: true, confirmToken: gateToken(gate) })
+
+    expect(isForm(result)).toBe(false)
+    expect(result).toBe(payload)
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
   it('f8: a multi-entry batch is NOT formable — all three entries reach the gate, and the token binds them', async () => {
     // `length > 1` AND at least one `next`: without the `next` a predicate weakened to
     // "absent/empty ∨ hasNextToken" stays false, the mutation is invisible, and the case is vacuous.
@@ -984,5 +1015,421 @@ describe('createToolHandler — argument form', () => {
         return line === 'Tool execution form declined (decline): release-create'
       }),
     ).toHaveLength(1)
+  })
+
+  /**
+   * Rows U1–U4: the form on a tool with NO gate. The answer is an argument, not consent — an
+   * accepted form runs the merged arguments directly, and the worst a forged accept can do is what
+   * a direct call with the same arguments could.
+   */
+  describe('ungated form path (U1–U4)', () => {
+    const ENVS = ['dev', 'stage'] as const
+
+    /** The shape `env-load`'s provider has: a form for `config` when the call did not name one. */
+    const makeEnvProvider = (overrides: Partial<ArgumentFormProvider> = {}): ArgumentFormProvider => {
+      return {
+        message: 'Which environment should this session load?',
+        isFormable: (params) => {
+          return (params as { config?: unknown }).config === undefined
+        },
+        buildRequestedSchema: async () => {
+          return z.object({ config: z.enum(ENVS) })
+        },
+        toArgs: (content, params) => {
+          return { ...(params as object), config: content.config }
+        },
+        ...overrides,
+      }
+    }
+
+    const ungatedTool = (
+      options: { provider?: ArgumentFormProvider; capabilities?: ClientCapabilities; formDeadlineMs?: number } = {},
+    ) => {
+      const handler = vi.fn(async () => {
+        return payload
+      })
+      const tool = createToolHandler({
+        toolName: 'env-load',
+        handler,
+        requiresHumanConfirm: false,
+        formProvider: options.provider,
+        getClientCapabilities: () => {
+          return options.capabilities
+        },
+        formDeadlineMs: options.formDeadlineMs ?? 50,
+      })
+
+      return { tool, handler }
+    }
+
+    it('f-u1: a form-capable client with no `config` is OFFERED the form — the tool did not run', async () => {
+      const { tool, handler } = ungatedTool({ provider: makeEnvProvider(), capabilities: FORM_CAPABLE })
+
+      const form = asForm(await tool({}))
+
+      expect(form.resultType).toBe('input_required')
+      expect(form.inputRequests.args.method).toBe('elicitation/create')
+      expect(Object.keys(form.inputRequests.args.params.requestedSchema.properties)).toEqual(['config'])
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('f-u2: a url-only client is not offered a form — the tool runs with its round-1 arguments', async () => {
+      const { tool, handler } = ungatedTool({ provider: makeEnvProvider(), capabilities: URL_ONLY })
+
+      const result = await tool({})
+
+      expect(result).toBe(payload)
+      expect(handler).toHaveBeenCalledWith({ confirmedCommand: true })
+    })
+
+    it('f-u3: a call that already names `config` is not formable — it runs', async () => {
+      const { tool, handler } = ungatedTool({ provider: makeEnvProvider(), capabilities: FORM_CAPABLE })
+
+      const result = await tool({ config: 'dev' })
+
+      expect(result).toBe(payload)
+      expect(handler).toHaveBeenCalledWith({ config: 'dev', confirmedCommand: true })
+    })
+
+    it('f-u4: an accepted form runs the handler ONCE with the merged arguments — no token, no gate', async () => {
+      const { tool, handler } = ungatedTool({ provider: makeEnvProvider(), capabilities: FORM_CAPABLE })
+
+      expect(isForm(await tool({}))).toBe(true)
+
+      const result = await tool({}, accepted({ config: 'stage' }))
+
+      expect(result).toBe(payload)
+      expect(handler).toHaveBeenCalledTimes(1)
+      expect(handler).toHaveBeenCalledWith({ config: 'stage', confirmedCommand: true })
+    })
+
+    it('f-u5: an ungated tool with NO provider runs on call 1, form-capable client notwithstanding', async () => {
+      const { tool, handler } = ungatedTool({ provider: undefined, capabilities: FORM_CAPABLE })
+
+      const result = await tool({})
+
+      expect(result).toBe(payload)
+      expect(handler).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      ['a decline', { action: 'decline' }, undefined, 'decline'],
+      ['a cancel', { action: 'cancel' }, undefined, 'cancel'],
+      ['a non-elicitation response kind', { roots: [] }, undefined, 'missing'],
+      ['an entry the SDK dropped', undefined, ['args'], 'missing'],
+    ])(
+      'f-u6: %s is terminal — form_declined, the handler never runs, no second form',
+      async (_label, response, dropped, action) => {
+        const { tool, handler } = ungatedTool({ provider: makeEnvProvider(), capabilities: FORM_CAPABLE })
+
+        const first = await tool({})
+        const second = await tool({}, reentry(response, dropped))
+
+        expect(isForm(first)).toBe(true)
+        expect(isForm(second)).toBe(false)
+        expect(asToolResult(second).isError).toBe(true)
+        expect(gateOf(second)).toMatchObject({ status: 'form_declined', tool: 'env-load', action })
+        expect(handler).not.toHaveBeenCalled()
+      },
+    )
+
+    it('f-u7: responses on a tool with NO provider are ignored — it runs with its round-1 arguments', async () => {
+      const { tool, handler } = ungatedTool({ provider: undefined, capabilities: FORM_CAPABLE })
+
+      const result = await tool({}, accepted({ config: 'stage' }))
+
+      expect(result).toBe(payload)
+      // Not `config: 'stage'`: with no provider there is nothing to validate the content against, so
+      // it must not reach the handler.
+      expect(handler).toHaveBeenCalledWith({ confirmedCommand: true })
+    })
+
+    it('f-u8: an accept whose content fails the schema is DISCARDED — terminal, the handler never runs', async () => {
+      const { tool, handler } = ungatedTool({ provider: makeEnvProvider(), capabilities: FORM_CAPABLE })
+
+      const result = await tool({}, accepted({ config: 'prod' }))
+
+      expect(isForm(result)).toBe(false)
+      expect(asToolResult(result).isError).toBe(true)
+      expect(gateOf(result)).toMatchObject({ status: 'form_discarded', tool: 'env-load', reason: 'validation' })
+      expect(gateOf(result).message).toContain('DISCARDED')
+      // Never the round-1 arguments either: on a gated tool a discard has the gate to fall to; here
+      // running `{}` would execute what the human never chose.
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('f-u9: a provider whose merge NARROWS the arguments is refused — terminal, the handler never runs', async () => {
+      // Synthetic on purpose: `env-load`'s merge only ever adds `config`, so it cannot trip this.
+      const { tool, handler } = ungatedTool({
+        provider: makeEnvProvider({
+          isFormable: () => {
+            return true
+          },
+          buildRequestedSchema: async () => {
+            return z.object({ label: z.string() })
+          },
+          toArgs: (content) => {
+            return { label: content.label }
+          },
+        }),
+        capabilities: FORM_CAPABLE,
+      })
+
+      const result = await tool({ items: ['a', 'b'], label: 'x' }, accepted({ label: 'y' }))
+
+      expect(gateOf(result)).toMatchObject({ status: 'form_discarded', tool: 'env-load', reason: 'narrowed' })
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('f-u10: a provider whose isFormable THROWS runs the tool — never a tool error', async () => {
+      const { tool, handler } = ungatedTool({
+        provider: makeEnvProvider({
+          isFormable: () => {
+            throw new Error('provider predicate blew up')
+          },
+        }),
+        capabilities: FORM_CAPABLE,
+      })
+
+      await expect(tool({})).resolves.toBe(payload)
+      expect(handler).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      [
+        'resolves null',
+        async () => {
+          return null
+        },
+      ],
+      [
+        'never resolves',
+        () => {
+          return new Promise<null>(() => {})
+        },
+      ],
+    ])(
+      'f-u11: a schema build that %s offers no form — the tool runs, and says the form was unavailable',
+      async (_label, buildRequestedSchema) => {
+        const lines: string[] = []
+        const spy = vi.spyOn(logger, 'info').mockImplementation((entry: unknown) => {
+          lines.push(String((entry as { msg?: unknown }).msg))
+        })
+        const { tool, handler } = ungatedTool({
+          provider: makeEnvProvider({ buildRequestedSchema }),
+          capabilities: FORM_CAPABLE,
+          formDeadlineMs: 40,
+        })
+
+        const result = await tool({})
+
+        spy.mockRestore()
+        expect(result).toBe(payload)
+        expect(handler).toHaveBeenCalledWith({ confirmedCommand: true })
+        expect(
+          lines.filter((line) => {
+            return line === 'Tool execution form unavailable: env-load'
+          }),
+        ).toHaveLength(1)
+      },
+    )
+
+    it('f-u12: each ungated log line is emitted exactly once per exchange', async () => {
+      const lines: string[] = []
+      const spy = vi.spyOn(logger, 'info').mockImplementation((entry: unknown) => {
+        lines.push(String((entry as { msg?: unknown }).msg))
+      })
+      const { tool } = ungatedTool({ provider: makeEnvProvider(), capabilities: FORM_CAPABLE })
+      const narrowing = ungatedTool({
+        provider: makeEnvProvider({
+          isFormable: () => {
+            return true
+          },
+          buildRequestedSchema: async () => {
+            return z.object({ label: z.string() })
+          },
+          toArgs: (content) => {
+            return { label: content.label }
+          },
+        }),
+        capabilities: FORM_CAPABLE,
+      })
+
+      await tool({})
+      await tool({}, accepted({ config: 'stage' }))
+      await tool({}, accepted({ config: 'prod' }))
+      await tool({}, reentry({ action: 'decline' }))
+      await narrowing.tool({ items: ['a'], label: 'x' }, accepted({ label: 'y' }))
+      spy.mockRestore()
+
+      const countOf = (expected: string): number => {
+        return lines.filter((line) => {
+          return line === expected
+        }).length
+      }
+
+      expect(countOf('Tool execution form requested: env-load')).toBe(1)
+      expect(countOf('Tool execution form accepted: env-load')).toBe(1)
+      expect(countOf('Tool execution form discarded (validation): env-load')).toBe(1)
+      expect(countOf('Tool execution form declined (decline): env-load')).toBe(1)
+      expect(countOf('Tool execution form discarded (narrowed): env-load')).toBe(1)
+      // The gate's own line must never appear on this path.
+      expect(countOf('Tool execution gated (awaiting confirm): env-load')).toBe(0)
+    })
+  })
+})
+
+/**
+ * Every one of the 2⁷ inputs against a reference table written INDEPENDENTLY of the function: each
+ * reference row spells its full condition, U4's included, so the partition — exactly one row per
+ * input — is asserted here even though the code reaches U4 by falling through. The gated rows sit
+ * first in both; moving the U rows above them is caught by the gated integration lanes (f2, f4, f5),
+ * not here — the state alone cannot tell G1 from U1.
+ */
+describe('resolveGateState — exhaustive partition', () => {
+  interface ReferenceRow {
+    name: string
+    state: GateState
+    holds: (input: GateInputs) => boolean
+  }
+
+  const REFERENCE: ReferenceRow[] = [
+    {
+      name: 'G1',
+      state: 'form',
+      holds: (i) => {
+        return i.gated && !i.confirmed && i.responses === undefined && i.canForm && i.hasProvider && i.formable
+      },
+    },
+    {
+      name: 'G2',
+      state: 'declined',
+      holds: (i) => {
+        return i.gated && !i.confirmed && i.responses !== undefined && !i.accepted
+      },
+    },
+    {
+      name: 'G3',
+      state: 'gate',
+      holds: (i) => {
+        return (
+          i.gated &&
+          !i.confirmed &&
+          !(i.responses === undefined && i.canForm && i.hasProvider && i.formable) &&
+          !(i.responses !== undefined && !i.accepted)
+        )
+      },
+    },
+    {
+      name: 'G4',
+      state: 'verify',
+      holds: (i) => {
+        return i.gated && i.confirmed
+      },
+    },
+    {
+      name: 'U1',
+      state: 'form',
+      holds: (i) => {
+        return !i.gated && i.responses === undefined && i.canForm && i.hasProvider && i.formable
+      },
+    },
+    {
+      name: 'U2',
+      state: 'declined',
+      holds: (i) => {
+        return !i.gated && i.responses !== undefined && i.hasProvider && !i.accepted
+      },
+    },
+    {
+      name: 'U3',
+      state: 'run-form',
+      holds: (i) => {
+        return !i.gated && i.responses !== undefined && i.hasProvider && i.accepted
+      },
+    },
+    {
+      name: 'U4',
+      state: 'run',
+      holds: (i) => {
+        return (
+          !i.gated &&
+          ((i.responses === undefined && !(i.canForm && i.hasProvider && i.formable)) ||
+            (i.responses !== undefined && !i.hasProvider))
+        )
+      },
+    },
+  ]
+
+  const FLAGS = ['gated', 'confirmed', 'responses', 'canForm', 'hasProvider', 'formable', 'accepted'] as const
+
+  const toInput = (bits: boolean[]): GateInputs => {
+    const [gated, confirmed, came, canForm, hasProvider, formable, accepted] = bits as [
+      boolean,
+      boolean,
+      boolean,
+      boolean,
+      boolean,
+      boolean,
+      boolean,
+    ]
+
+    return { gated, confirmed, responses: came ? {} : undefined, canForm, hasProvider, formable, accepted }
+  }
+
+  const ALL_INPUTS: GateInputs[] = FLAGS.reduce<boolean[][]>(
+    (combos) => {
+      return combos.flatMap((bits) => {
+        return [
+          [...bits, false],
+          [...bits, true],
+        ]
+      })
+    },
+    [[]],
+  ).map(toInput)
+
+  const label = (input: GateInputs): string => {
+    return FLAGS.map((flag) => {
+      const value = flag === 'responses' ? input.responses !== undefined : input[flag]
+
+      return `${flag}=${value ? 1 : 0}`
+    }).join(' ')
+  }
+
+  it('the reference rows partition the 2⁷ inputs: exactly one holds for each, and every row is hit', () => {
+    const hits = new Map<string, number>()
+
+    for (const input of ALL_INPUTS) {
+      const matching = REFERENCE.filter((row) => {
+        return row.holds(input)
+      })
+
+      expect(
+        matching.map((row) => {
+          return row.name
+        }),
+        label(input),
+      ).toHaveLength(1)
+      hits.set(matching[0]!.name, (hits.get(matching[0]!.name) ?? 0) + 1)
+    }
+
+    expect([...hits.keys()].sort()).toEqual(
+      REFERENCE.map((row) => {
+        return row.name
+      }).sort(),
+    )
+  })
+
+  it.each(
+    ALL_INPUTS.map((input) => {
+      const row = REFERENCE.find((candidate) => {
+        return candidate.holds(input)
+      })!
+
+      return [label(input), row.name, row.state, input] as const
+    }),
+  )('%s → %s %s', (_label, _row, state, input) => {
+    expect(resolveGateState(input)).toBe(state)
   })
 })

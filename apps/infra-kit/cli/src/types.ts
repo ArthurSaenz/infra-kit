@@ -18,9 +18,6 @@ export interface RequiredConfirmedOptionArg {
  * tool's arguments from a HUMAN via an MCP elicitation form, without learning anything about the
  * tool's domain. The chokepoint asks only "is there a provider?" and "can this client render a
  * form?"; every domain-specific answer lives behind these three members.
- *
- * Nothing consumes this yet — it is declared here so the registration path can forward it while the
- * state machine that reads it lands separately.
  */
 export interface ArgumentFormProvider {
   /** Human-facing prompt rendered above the form. */
@@ -84,9 +81,14 @@ export interface McpTool<TIn extends z.ZodRawShape = z.ZodRawShape, TOut extends
   requiresHumanConfirm?: boolean
   /**
    * Optional per-tool {@link ArgumentFormProvider}. Present means "this tool can offer the human a
-   * form for its arguments"; absent means the confirm gate behaves exactly as it always has. It is
-   * ORTHOGONAL to `requiresHumanConfirm` as a declaration, though only a gated tool can reach a form
-   * — the form is collected on the way INTO the gate, never instead of it.
+   * form for its arguments"; absent means the chokepoint behaves exactly as it always has. It is
+   * ORTHOGONAL to `requiresHumanConfirm`, and the two compose differently.
+   *
+   * On a gated tool the form feeds the gate: the merged arguments are what round 2 must confirm,
+   * token-bound, never a substitute for it. On an ungated tool the accepted form's merged arguments
+   * run directly — the human's answer is an ARGUMENT, not consent. The authority to run is the
+   * tool's allowlist, and the form path can execute nothing a direct call with the same arguments
+   * could not.
    */
   formProvider?: ArgumentFormProvider
   /**

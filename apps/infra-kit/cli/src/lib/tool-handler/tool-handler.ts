@@ -1,5 +1,6 @@
 import type { ClientCapabilities, InputRequiredResult } from '@modelcontextprotocol/server'
 
+import { assertNever } from 'src/lib/assert-never'
 import { commandEcho } from 'src/lib/command-echo'
 import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
 import { logger } from 'src/lib/logger'
@@ -21,19 +22,22 @@ interface ToolHandlerArgs {
   requiresHumanConfirm?: boolean
   /**
    * Optional per-tool argument-form seam, sourced from the catalog tool's
-   * {@link CatalogMcpTool.formProvider} at registration. Absent on every tool today, and nothing here
-   * reads it yet: it is declared so registration can forward it while the state machine that consumes
-   * it lands separately. Absent must always mean "the gate behaves exactly as it always has".
+   * {@link CatalogMcpTool.formProvider} at registration. Wired on gated and ungated tools alike (the
+   * ungated `env-load` carries one). Absent must always mean "the chokepoint behaves exactly as it
+   * always has": no form on either path.
    */
   formProvider?: ArgumentFormProvider
   /**
    * Reads the connected client's declared capabilities, so the chokepoint can ask whether this client
    * can render a form at all before offering one. Injected as a CLOSURE rather than a value because
-   * capabilities are only known after initialize, and this handler is built at registration time —
-   * and because the accessor behind it is deprecated in favour of the per-request envelope, so the
-   * migration is a one-line change at the injection site rather than an edit in here.
+   * capabilities are only known after initialize, and this handler is built at registration time.
+   *
+   * It receives the per-call context because on a 2026-era connection the capabilities travel in the
+   * request ENVELOPE (`ctx.mcpReq.envelope`), and the server-level accessor is seeded from it only by
+   * the SDK's HTTP entry — over stdio it stays `undefined` for the life of the process, which read as
+   * "cannot form" and silently refused every modern-era client a form (found by the E-M1 lane).
    */
-  getClientCapabilities?: () => ClientCapabilities | undefined
+  getClientCapabilities?: (ctx: ToolCallContext | undefined) => ClientCapabilities | undefined
   /** Token codec for the gate. Defaults to the process-wide one; tests inject short-TTL or foreign-key codecs. */
   confirmCodec?: ConfirmCodec
   /**
@@ -58,6 +62,12 @@ export interface ToolCallContext {
   mcpReq?: {
     inputResponses?: Record<string, unknown>
     /**
+     * The 2026-era request envelope. Read for ONE key — the client capabilities the SDK stamps under
+     * `CLIENT_CAPABILITIES_META_KEY` — because that is where a modern-era stdio connection carries
+     * them; the injection site owns the lookup.
+     */
+    envelope?: Record<string, unknown>
+    /**
      * Keys the SDK dropped because they were not bare response objects. Declared for completeness
      * and deliberately UNREAD: a dropped key is absent from `inputResponses`, so it already reads
      * as `{kind:'missing'}` — an action that is not an accept, which is the decline path.
@@ -66,7 +76,7 @@ export interface ToolCallContext {
   }
 }
 
-export type GateState = 'run' | 'form' | 'declined' | 'gate' | 'verify'
+export type GateState = 'run' | 'form' | 'declined' | 'gate' | 'verify' | 'run-form'
 
 /** Everything `resolveGateState` needs, all of it knowable BEFORE any work is done. */
 export interface GateInputs {
@@ -97,24 +107,32 @@ const isConfirmed = (params: unknown): boolean => {
  *
  * It is a candidate, not a verdict: `form` is the one outcome that can decline itself, because
  * whether a form can actually be built is knowable only after the provider has run under a
- * deadline. The caller falls through to `gate` when it does. Every other outcome is terminal in
- * the caller's own body.
+ * deadline. The caller falls through — to `gate` on a gated tool, to `run` on an ungated one —
+ * when it does. Every other outcome is terminal in the caller's own body.
+ *
+ * "Gate" describes rows G1–G4 only: they are today's gate, unchanged, and they consume every
+ * `gated` input before the ungated rows are reached. Rows U1–U4 are a CALL state, not a gate
+ * state — nothing on that path withholds execution pending consent; the form only fills arguments.
+ * The name is kept because the tests and the mutation build import it.
  */
-// `!confirmed` is spelled on rows 1, 2 AND 3 for one reason: a non-elicitation round 2 carries
-// `confirm:true` with no `inputResponses`, so without it row 3 matches, the call re-gates forever
+// `!confirmed` is spelled on G1, G2 AND G3 for one reason: a non-elicitation round 2 carries
+// `confirm:true` with no `inputResponses`, so without it G3 matches, the call re-gates forever
 // and `verify` is unreachable. `responses !== undefined` is likewise the ONLY first-call/came-back
 // discriminator — `acceptedContent(...)` being falsy reads the same for decline, cancel and absence
 // alike, which would send a decline back to the form and re-prompt forever.
 //
+// `confirmed` is unread on U1–U4: no ungated tool declares `confirm`, and the SDK's zod parse strips
+// undeclared keys before the params reach here, so it is `false` by construction on that path.
+//
+// The `!gated` conjuncts on U1–U3 are defence-in-depth, not load-bearing: G1–G4 partition `gated`
+// exhaustively, so the U rows are reachable only under `!gated` by ORDER. The order is what the
+// gated lanes pin — moving the U rows above the G rows lets an accepted form run without a token.
+//
 // Exported for its OWN tests, and not re-exported from `index.ts`, so the package's public surface
 // is unchanged. Some conjuncts are backed a second time downstream — `hasProvider` is also enforced
-// by the provider narrowing in `buildFormOrGate` — so an end-to-end assertion cannot tell which
+// by the provider narrowing in `resolveForm` — so an end-to-end assertion cannot tell which
 // guard held. Testing the predicate directly is what makes deleting one of them observable.
 export const resolveGateState = (input: GateInputs): GateState => {
-  // Spelled `=== true` at the call site that fills `gated`: `mcp-confirm-gate-mutation.test.ts`
-  // neuters exactly that predicate at build time to prove the gate's e2e assertions are load-bearing.
-  if (!input.gated) return 'run'
-
   if (
     input.gated &&
     !input.confirmed &&
@@ -130,10 +148,21 @@ export const resolveGateState = (input: GateInputs): GateState => {
 
   if (input.gated && !input.confirmed && (input.responses === undefined || input.accepted)) return 'gate'
 
-  // Row 4, condition complete: `gated ∧ confirmed`. Rows 2 and 3 partition `gated ∧ !confirmed`
-  // between them — row 2 is `responses !== undefined ∧ !accepted`, row 3 its exact complement — so
-  // this is reached on that condition and no other.
-  return 'verify'
+  if (input.gated && input.confirmed) return 'verify'
+
+  if (!input.gated && input.responses === undefined && input.canForm && input.hasProvider && input.formable) {
+    return 'form'
+  }
+
+  if (!input.gated && input.responses !== undefined && input.hasProvider && !input.accepted) return 'declined'
+
+  if (!input.gated && input.responses !== undefined && input.hasProvider && input.accepted) return 'run-form'
+
+  // U4, condition complete: `!gated ∧ ((responses === undefined ∧ !(canForm ∧ hasProvider ∧ formable))
+  // ∨ (responses !== undefined ∧ !hasProvider))` — the exact complement of U1–U3 under `!gated`.
+  // Spelled in the exhaustive partition test rather than here, so the fall-through stays the
+  // fall-through.
+  return 'run'
 }
 
 /**
@@ -218,6 +247,29 @@ const buildFormDeclined = (toolName: string, action: FormAction): ToolsExecution
   })
 }
 
+/** Why an accepted form's content was thrown away on the ungated path. */
+type FormDiscardReason = 'validation' | 'narrowed'
+
+const DISCARD_TEXT: Record<FormDiscardReason, string> = {
+  validation: 'failed validation',
+  narrowed: 'narrowed the arguments',
+}
+
+/**
+ * The ungated counterpart of the gate's `formDiscarded` notice. On a gated tool a discard still has
+ * somewhere to go — the gate, carrying the round-1 arguments for approval. On an ungated tool there
+ * is no gate, and running the round-1 arguments would silently execute the values the human never
+ * saw in place of the ones they chose. Terminal, and never a second form: the human already answered.
+ */
+const buildFormDiscarded = (toolName: string, reason: FormDiscardReason): ToolsExecutionResult => {
+  return softStop({
+    status: 'form_discarded',
+    tool: toolName,
+    reason,
+    message: `${toolName} was NOT executed: the values you submitted in the form ${DISCARD_TEXT[reason]} and were DISCARDED. No confirmation is pending — call ${toolName} again to start over.`,
+  })
+}
+
 const REFUSAL_TEXT: Record<ConfirmRefusal, string> = {
   absent: 'no "confirmToken" was supplied',
   malformed: 'the "confirmToken" is malformed',
@@ -243,7 +295,7 @@ interface StopDeps {
   codec: ConfirmCodec
   requiresHumanConfirm: boolean | undefined
   formProvider: ArgumentFormProvider | undefined
-  getClientCapabilities: (() => ClientCapabilities | undefined) | undefined
+  getClientCapabilities: ((ctx: ToolCallContext | undefined) => ClientCapabilities | undefined) | undefined
   formDeadlineMs: number
 }
 
@@ -253,14 +305,6 @@ interface GateArgs {
   formDiscarded: boolean
 }
 
-/**
- * The arguments a gate reached from an ACCEPTED form should carry. The round-1 arguments on every
- * path except one: a validated, merged, non-narrowing result.
- *
- * A failure here never goes back to the form — that is the re-prompt loop through a second door —
- * and it never proceeds with the client's values either. It gates on what the agent originally
- * asked for, and says so.
- */
 /**
  * Runs one form PREDICATE, treating any throw as `false`.
  *
@@ -283,6 +327,14 @@ const tryPredicate = (read: () => boolean): boolean => {
   }
 }
 
+/**
+ * The arguments a gate reached from an ACCEPTED form should carry. The round-1 arguments on every
+ * path except one: a validated, merged, non-narrowing result.
+ *
+ * A failure here never goes back to the form — that is the re-prompt loop through a second door —
+ * and it never proceeds with the client's values either. It gates on what the agent originally
+ * asked for, and says so.
+ */
 const resolveGateArgs = async (
   deps: StopDeps,
   params: unknown,
@@ -313,29 +365,28 @@ const resolveGateArgs = async (
 }
 
 /**
- * States `form` and `gate`. `form` is the one candidate that can decline itself: a provider that
- * rejects, outruns its deadline, resolves `null`, or hands `elicit()` a shape it cannot express
- * falls through to the gate here, with today's behaviour and no thrown error.
+ * The chokepoint's verdict: either a result that answers the call in the handler's place, or the
+ * arguments the handler runs with. A union rather than `null`-means-run because the ungated form
+ * path runs with MERGED arguments, not the ones the call arrived with.
  */
-const buildFormOrGate = async (
+type StopResolution =
+  { kind: 'stop'; result: ToolsExecutionResult | InputRequiredResult } | { kind: 'run'; params: unknown }
+
+const stopWith = (result: ToolsExecutionResult | InputRequiredResult): StopResolution => {
+  return { kind: 'stop', result }
+}
+
+const runWith = (params: unknown): StopResolution => {
+  return { kind: 'run', params }
+}
+
+/** State `gate`, and the landing for a gated `form` that could not be built. */
+const buildGate = async (
   deps: StopDeps,
   params: unknown,
   responses: Record<string, unknown> | undefined,
-  state: GateState,
   formAction: FormAction,
-): Promise<ToolsExecutionResult | InputRequiredResult> => {
-  if (state === 'form' && deps.formProvider !== undefined) {
-    const form = await buildArgumentForm(deps.formProvider, params, deps.formDeadlineMs)
-
-    if (form !== null) {
-      logger.info({ msg: `Tool execution form requested: ${deps.toolName}` })
-
-      return form
-    }
-
-    logger.info({ msg: `Tool execution form unavailable: ${deps.toolName}` })
-  }
-
+): Promise<ToolsExecutionResult> => {
   const gateArgs = await resolveGateArgs(deps, params, responses, formAction)
 
   logger.info({ msg: `Tool execution gated (awaiting confirm): ${deps.toolName}` })
@@ -347,29 +398,103 @@ const buildFormOrGate = async (
 }
 
 /**
- * The chokepoint's answer for a call, or `null` meaning "nothing stops this; run the handler".
+ * State `form` — the one candidate that can decline itself: a provider that rejects, outruns its
+ * deadline, resolves `null`, or hands `elicit()` a shape it cannot express falls through here with
+ * no thrown error — to the gate on a gated tool, to the handler with the round-1 arguments on an
+ * ungated one (where the handler, not the chokepoint, decides whether those arguments are enough).
+ */
+const resolveForm = async (
+  deps: StopDeps,
+  params: unknown,
+  responses: Record<string, unknown> | undefined,
+  formAction: FormAction,
+  gated: boolean,
+): Promise<StopResolution> => {
+  const form =
+    deps.formProvider === undefined ? null : await buildArgumentForm(deps.formProvider, params, deps.formDeadlineMs)
+
+  if (form !== null) {
+    logger.info({ msg: `Tool execution form requested: ${deps.toolName}` })
+
+    return stopWith(form)
+  }
+
+  logger.info({ msg: `Tool execution form unavailable: ${deps.toolName}` })
+
+  return gated ? stopWith(await buildGate(deps, params, responses, formAction)) : runWith(params)
+}
+
+/**
+ * State `run-form`: an ungated tool's accepted form. What runs is the provider's merge of content
+ * validated against a schema built on THIS request — never the round-1 arguments after a discard,
+ * and never a second form. The non-narrowing check is a chokepoint invariant kept for future
+ * providers; a merge that only ever ADDS a key cannot trip it.
+ */
+const resolveUngatedForm = async (
+  deps: StopDeps,
+  params: unknown,
+  responses: Record<string, unknown> | undefined,
+): Promise<StopResolution> => {
+  const provider = deps.formProvider
+
+  // U3 spells `hasProvider`, so this narrows for the types only; `run` is what U4 answers without one.
+  if (provider === undefined) return runWith(params)
+
+  const merged = await readAcceptedArgs(provider, params, responses, deps.formDeadlineMs)
+
+  if (merged === null) {
+    logger.info({ msg: `Tool execution form discarded (validation): ${deps.toolName}` })
+
+    return stopWith(buildFormDiscarded(deps.toolName, 'validation'))
+  }
+
+  if (narrowsArgs(stripGateKeys(params), merged)) {
+    logger.info({ msg: `Tool execution form discarded (narrowed): ${deps.toolName}` })
+
+    return stopWith(buildFormDiscarded(deps.toolName, 'narrowed'))
+  }
+
+  logger.info({ msg: `Tool execution form accepted: ${deps.toolName}` })
+
+  return runWith(merged)
+}
+
+/** State `verify`: round 2 of the gate. */
+const resolveVerify = async (deps: StopDeps, params: unknown): Promise<StopResolution> => {
+  const verdict = await verifyConfirmToken(deps.codec, deps.toolName, params)
+
+  if (verdict.ok) return runWith(params)
+
+  logger.info({ msg: `Tool execution refused (${verdict.reason}): ${deps.toolName}` })
+
+  return stopWith(buildConfirmRefusal(deps.toolName, verdict.reason))
+}
+
+/**
+ * The chokepoint's answer for a call.
  *
  * @example
- * await resolveStop(deps, { env: 'prod' }, undefined) // => the round-1 confirm gate
+ * await resolveStop(deps, { env: 'prod' }, undefined) // => { kind: 'stop', result: <the round-1 confirm gate> }
  */
 const resolveStop = async (
   deps: StopDeps,
   params: unknown,
   ctx: ToolCallContext | undefined,
-): Promise<ToolsExecutionResult | InputRequiredResult | null> => {
+): Promise<StopResolution> => {
   const responses = ctx?.mcpReq?.inputResponses
   const formAction = readFormAction(responses)
+  // Spelled `=== true` on purpose: `mcp-confirm-gate-mutation.test.ts` neuters exactly this
+  // predicate at build time to prove the gate's e2e assertions are load-bearing.
+  const gated = deps.requiresHumanConfirm === true
   const state = resolveGateState({
-    // Spelled `=== true` on purpose: `mcp-confirm-gate-mutation.test.ts` neuters exactly this
-    // predicate at build time to prove the gate's e2e assertions are load-bearing.
-    gated: deps.requiresHumanConfirm === true,
+    gated,
     confirmed: isConfirmed(params),
     responses,
     // `caps?.elicitation?.form`, NEVER `caps?.elicitation`: the SDK normalizes a bare
     // `{elicitation:{}}` to `{elicitation:{form:{}}}`, so both spellings agree on every fixture
     // except a url-only client — which is exactly the client that must NOT be offered a form.
     canForm: tryPredicate(() => {
-      return deps.getClientCapabilities?.()?.elicitation?.form !== undefined
+      return deps.getClientCapabilities?.(ctx)?.elicitation?.form !== undefined
     }),
     hasProvider: deps.formProvider !== undefined,
     formable: tryPredicate(() => {
@@ -378,25 +503,31 @@ const resolveStop = async (
     accepted: formAction === 'accept',
   })
 
-  if (state === 'run') return null
+  switch (state) {
+    case 'run': {
+      return runWith(params)
+    }
+    case 'declined': {
+      logger.info({ msg: `Tool execution form declined (${formAction}): ${deps.toolName}` })
 
-  if (state === 'declined') {
-    logger.info({ msg: `Tool execution form declined (${formAction}): ${deps.toolName}` })
-
-    return buildFormDeclined(deps.toolName, formAction)
+      return stopWith(buildFormDeclined(deps.toolName, formAction))
+    }
+    case 'verify': {
+      return await resolveVerify(deps, params)
+    }
+    case 'run-form': {
+      return await resolveUngatedForm(deps, params, responses)
+    }
+    case 'form': {
+      return await resolveForm(deps, params, responses, formAction, gated)
+    }
+    case 'gate': {
+      return stopWith(await buildGate(deps, params, responses, formAction))
+    }
+    default: {
+      return assertNever(state)
+    }
   }
-
-  if (state === 'verify') {
-    const verdict = await verifyConfirmToken(deps.codec, deps.toolName, params)
-
-    if (verdict.ok) return null
-
-    logger.info({ msg: `Tool execution refused (${verdict.reason}): ${deps.toolName}` })
-
-    return buildConfirmRefusal(deps.toolName, verdict.reason)
-  }
-
-  return await buildFormOrGate(deps, params, responses, state, formAction)
 }
 
 // The return is a union because the chokepoint can now answer a call with an `InputRequiredResult` —
@@ -404,10 +535,10 @@ const resolveStop = async (
 // It typechecks at the registration site because `ToolCallback` already returns
 // `CallToolResult | InputRequiredResult`.
 //
-// Deliberately UNCONDITIONAL, though nothing returns the second member yet. Narrowing it back for
-// callers that pass no `formProvider` would be asserting "no provider means a form is unreachable" —
-// true only while the state machine keeps requiring a provider, and enforced by nothing if that ever
-// changes. Every caller narrows the union explicitly instead.
+// Deliberately UNCONDITIONAL. Narrowing it back for callers that pass no `formProvider` would be
+// asserting "no provider means a form is unreachable" — true only while the state machine keeps
+// requiring a provider, and enforced by nothing if that ever changes. Every caller narrows the
+// union explicitly instead.
 export const createToolHandler = ({
   toolName,
   handler,
@@ -452,18 +583,19 @@ export const createToolHandler = ({
       // the options array would grow for the life of the process.
       commandEcho.reset()
 
-      // Orthogonal destructive-op confirm gate, and the argument form that feeds it. Both sit BEFORE
-      // the handler and are INDEPENDENT of the `confirmedCommand:true` injected below — that flag is a
-      // prompt-skip / behavior discriminator (e.g. worktrees-remove keys `allowEditorRelaunch` off it)
-      // and MUST keep being injected on the real call, or the non-TTY server would hang on an inquirer
-      // prompt and the Zed relaunch would re-enable. The form is collected on the way INTO the gate,
-      // never instead of it: round 1 returns a form or the gate, and round 2 runs only when
-      // `confirm:true` comes with that gate's token AND the same arguments.
-      const stop = await resolveStop(deps, params, ctx)
+      // Orthogonal destructive-op confirm gate, and the argument form. Both sit BEFORE the handler and
+      // are INDEPENDENT of the `confirmedCommand:true` injected below — that flag is a prompt-skip /
+      // behavior discriminator (e.g. worktrees-remove keys `allowEditorRelaunch` off it) and MUST keep
+      // being injected on the real call, or the non-TTY server would hang on an inquirer prompt and
+      // the Zed relaunch would re-enable. On a gated tool the form is collected on the way INTO the
+      // gate, never instead of it: round 2 runs only when `confirm:true` comes with that gate's token
+      // AND the same arguments. On an ungated tool the accepted form's merged arguments run directly —
+      // the answer is an argument, and the authority to run was never the chokepoint's to withhold.
+      const resolution = await resolveStop(deps, params, ctx)
 
-      if (stop !== null) return stop
+      if (resolution.kind === 'stop') return resolution.result
 
-      const payload = await handler({ ...(params as object), confirmedCommand: true })
+      const payload = await handler({ ...(resolution.params as object), confirmedCommand: true })
 
       logger.info({ msg: `Tool execution successful: ${toolName}` })
 

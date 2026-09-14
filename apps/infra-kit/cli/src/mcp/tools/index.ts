@@ -1,4 +1,5 @@
-import type { McpServer } from '@modelcontextprotocol/server'
+import { CLIENT_CAPABILITIES_META_KEY } from '@modelcontextprotocol/server'
+import type { ClientCapabilities, McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 
 import { getExposedMcpTools } from 'src/lib/command-catalog'
@@ -69,11 +70,16 @@ export const initializeTools = async (server: McpServer) => {
           // `server.server` is the underlying protocol instance the McpServer facade wraps; the
           // integration test in `mcp/__tests__/server.test.ts` reaches through it the same way.
           //
-          // `getClientCapabilities()` is deprecated in favour of `ctx.mcpReq.envelope`, which is
-          // backfilled per request on 2026-era instances. Kept deliberately: the accessor remains
-          // functional, and the migration is a one-line change HERE rather than inside the handler.
-          getClientCapabilities: () => {
-            return server.server.getClientCapabilities()
+          //
+          // Envelope FIRST, accessor second. On a 2026-era connection the capabilities ride in each
+          // request's envelope, and over stdio nothing ever seeds the server-level accessor from it
+          // (the SDK does that only in its HTTP entry) — so the accessor alone read `undefined` on
+          // every modern-era stdio call and no form was ever offered there. The accessor still answers
+          // for a 2025-era connection, whose requests carry no envelope.
+          getClientCapabilities: (ctx) => {
+            const fromEnvelope = ctx?.mcpReq?.envelope?.[CLIENT_CAPABILITIES_META_KEY] as ClientCapabilities | undefined
+
+            return fromEnvelope ?? server.server.getClientCapabilities()
           },
         }),
       ),
