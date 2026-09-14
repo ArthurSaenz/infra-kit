@@ -65,7 +65,7 @@ line, so no line opens prod.
 Delivery (`ik release deliver`, `dx-release-deliver`, and every spelling) is refused unconditionally,
 with no switch: it merges the release PR into `main` with `--admin` and deploys prod.
 
-**Allowed and expected:** deploying to non-prod through infra-kit — `mcp__infra-kit__gh-release-deploy-all`
+**Allowed and expected:** deploying to non-prod through infra-kit — `mcp__plugin_infra-kit_infra-kit__gh-release-deploy-all`
 / `-selected`, or the CLI equivalents. infra-kit refuses prod itself. All reads are allowed:
 `gh run list` / `view` / `watch`, `gh workflow view`, `gh api` GETs.
 

@@ -1,12 +1,5 @@
 {
   "mcpServers": {
-    "infra-kit": {
-      "type": "stdio",
-      "command": "infra-kit",
-      "args": [
-        "mcp"
-      ]
-    },
     "linear-server": {
       "type": "http",
       "url": "https://mcp.linear.app/mcp"
