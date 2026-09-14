@@ -122,6 +122,18 @@ const configureMergeDev = (cmd: Command): Command => {
     })
 }
 
+/**
+ * The zsh wrappers capture stdout as the file to source — `f=$(infra-kit env-load …); source "$f"` —
+ * so the bare path is the CLI's stdout contract, and the CLI's only: the same handlers serve
+ * `infra-kit mcp`, where stdout is the JSON-RPC transport. Printed BEFORE `emit` so `--json` keeps its
+ * historical shape (path line, then the payload).
+ */
+const emitSourcePath = <T extends { structuredContent: { filePath: string } }>(result: T): T => {
+  process.stdout.write(`${result.structuredContent.filePath}\n`)
+
+  return emit(result)
+}
+
 const configureReleaseList = (cmd: Command): Command => {
   return cmd.description('List all release branches').action(async () => {
     emit(await ghReleaseList())
@@ -705,7 +717,7 @@ export const buildProgram = (): Command => {
     .description('Load Doppler env vars for a config. Source the returned file path to apply.')
     .option('-c, --config <config>', 'Environment config name to load (e.g. dev, arthur)')
     .action(async (options) => {
-      emit(await envLoad({ config: options.config }))
+      emitSourcePath(await envLoad({ config: options.config }))
     })
 
   program
@@ -713,7 +725,7 @@ export const buildProgram = (): Command => {
     .description('Clear loaded env vars. Source the returned file path to apply.')
     .option('--purge', "Also delete this project's warm cache outright (durable disable)")
     .action(async (options) => {
-      emit(await envClear({ purge: Boolean(options.purge) }))
+      emitSourcePath(await envClear({ purge: Boolean(options.purge) }))
     })
 
   // --- Doppler service tokens (flat, related names — not a nested `env token <sub>` group) ---

@@ -442,7 +442,7 @@ loaded'"). The precmd then reads `load_mtime=0`, and `clear_mtime > 0` holds reg
 second. The strict/non-strict asymmetry (`init.ts:928/934` today; the plan above cites the older `:822/828`) is real but unreachable; the PM-4
 spin-off is **not opened**.
 
-**Finding, out of scope (D2 forbids touching `env-load` here) — spin-off:**
+**Finding, out of scope (D2 forbids touching `env-load` here) — spin-off, FIXED the same day (the stdout write moved from the handlers into the CLI actions in `lib/program`; `env-clear/__tests__/stdout-transport.test.ts` pins it):**
 `[DO] env-load/env-clear: keep filePath off stdout when served over MCP`. Both tools
 `process.stdout.write(filePath)` unconditionally (`env-load.ts:293`, `env-clear.ts:104`) — the line
 the zsh wrapper captures. Over `infra-kit mcp` stdout **is** the JSON-RPC transport, so every call

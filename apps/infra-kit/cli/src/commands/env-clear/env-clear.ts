@@ -1,6 +1,5 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import process from 'node:process'
 import { z } from 'zod'
 
 import {
@@ -72,8 +71,8 @@ export const buildEnvClearLines = (varNames: string[]): string[] => {
 }
 
 /**
- * Clear loaded env vars. Prints a file path to stdout that must be sourced to apply.
- * The env-clear shell alias does this automatically. Also invalidates the project's
+ * Clear loaded env vars. Returns the path of a file that must be sourced to apply; the CLI action
+ * prints it and the env-clear shell alias sources it (see `lib/program`). Also invalidates the project's
  * WARM cache so a new shell doesn't re-load what was just cleared. Throws when no env
  * is loaded AND `--purge` was not passed (a bare clear needs something to clear; a
  * purge is a standalone warm-cache wipe that works regardless of session state).
@@ -99,9 +98,6 @@ export const envClear = async ({ purge = false }: EnvClearArgs = {}) => {
   fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
 
   atomicWriteFileSync(clearFilePath, `${unsetLines.join('\n')}\n`, 0o600)
-
-  // REQUIRED
-  process.stdout.write(`${clearFilePath}\n`)
 
   // Remove env load file so the next env-clear call correctly reports "no env loaded".
   // `force` so concurrent clears don't throw ENOENT when another already removed it.
