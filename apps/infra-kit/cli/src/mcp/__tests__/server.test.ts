@@ -13,14 +13,12 @@ afterEach(() => {
 })
 
 /**
- * A real client on the other end of a real (in-memory) transport, so `prompts/get`,
- * `prompts/list` and `resources/read` go through the SDK's own request path — argument
- * validation included.
+ * A real client on the other end of a real (in-memory) transport, so `resources/read` and the
+ * refused `prompts/get` below go through the SDK's own request path — capability handshake
+ * included.
  *
- * Reaching into `_registeredPrompts` instead would assert what was registered and prove nothing
- * about whether it can be FETCHED, which is the entire point of the omitted-`arguments` case
- * below: a prompt carrying a bare `z.object({…})` argsSchema registers fine and throws on the
- * wire.
+ * Reaching into the server's registration maps instead would assert what was registered and
+ * prove nothing about what a client can actually FETCH, or be refused, over the wire.
  */
 const connectedClient = async (): Promise<{ client: Client; close: () => Promise<void> }> => {
   const server = await createMcpServer()
@@ -36,11 +34,6 @@ const connectedClient = async (): Promise<{ client: Client; close: () => Promise
       await server.close()
     },
   }
-}
-
-/** The text of the single message a workflow prompt returns. */
-const promptText = (result: { messages: { content: unknown }[] }): string => {
-  return (result.messages[0]!.content as { type: string; text: string }).text
 }
 
 /**
@@ -93,53 +86,24 @@ describe('createMcpServer', () => {
 
 describe('the release-create procedure, over the wire', () => {
   /**
-   * The AC the `argsSchema`-omitted decision exists for. Registering the prompt with a bare
-   * `z.object({version: z.string()})` makes THIS call throw — every other assertion in this file
-   * (name, bytes, count) passes against a prompt that cannot be fetched at all, because none of
-   * them fetches it.
+   * The pin for retiring the MCP prompt (docs/release-create-prompt-removal-plan.md): the plugin
+   * command is the only human surface, so the server must neither ADVERTISE a prompt channel nor
+   * ANSWER on it. The handshake half is what stops the host from listing prompts at all; the handler
+   * half is what makes an empty `prompts: {}` capability — the vestigial slot that produced the
+   * duplicate `/` row — a wire-visible regression rather than a shape the SDK quietly accepts.
+   *
+   * `listPrompts()` is deliberately NOT used: on a non-strict client it does not throw but logs and
+   * resolves `{ prompts: [] }`, which is byte-identical to what the rejected keep-empty-capability
+   * design returns — so it could not tell the chosen design from the rejected one. `getPrompt`
+   * reaches the wire (the client-side capability gate is strict-mode only, and `connectedClient()`
+   * enables no strict mode), where a server with no handler answers `Method not found` (-32601).
    */
-  it('serves prompts/get for release-create with `arguments` omitted entirely', async () => {
+  it('advertises no prompt channel and serves no prompt handler', async () => {
     const { client, close } = await connectedClient()
 
     try {
-      const result = await client.getPrompt({ name: 'release-create' })
-
-      expect(promptText(result)).toBe(WORKFLOW_BODIES['release-create'])
-    } finally {
-      await close()
-    }
-  })
-
-  /** An argsSchema-free prompt must IGNORE a stray `arguments`, not reject the request. */
-  it('serves prompts/get for release-create when a stray `arguments` object is sent', async () => {
-    const { client, close } = await connectedClient()
-
-    try {
-      const result = await client.getPrompt({ name: 'release-create', arguments: { version: '1.64.0' } })
-
-      expect(promptText(result)).toBe(WORKFLOW_BODIES['release-create'])
-    } finally {
-      await close()
-    }
-  })
-
-  /**
-   * Pins §2.6's recorded asymmetry as an assertion rather than a paragraph: the prompt takes no
-   * arguments, so a human picking it from the `/` menu gets the procedure and types the version in
-   * chat. Adding an argsSchema later must redden this and force a revisit.
-   */
-  it('lists exactly one prompt, and it declares no arguments', async () => {
-    const { client, close } = await connectedClient()
-
-    try {
-      const { prompts } = await client.listPrompts()
-
-      expect(
-        prompts.map((p) => {
-          return p.name
-        }),
-      ).toEqual(['release-create'])
-      expect(prompts[0]!.arguments ?? []).toEqual([])
+      expect(client.getServerCapabilities()?.prompts).toBeUndefined()
+      await expect(client.getPrompt({ name: 'release-create' })).rejects.toMatchObject({ code: -32601 })
     } finally {
       await close()
     }
@@ -155,26 +119,6 @@ describe('the release-create procedure, over the wire', () => {
       expect(result.contents[0]!.uri).toBe(RELEASE_CREATE_WORKFLOW_URI)
       expect(result.contents[0]!.mimeType).toBe('text/markdown')
       expect(resourceText(result)).toBe(WORKFLOW_BODIES['release-create'])
-    } finally {
-      await close()
-    }
-  })
-
-  /**
-   * The two channels exist because an agent can read a resource but cannot fetch a prompt. They
-   * are registered from ONE constant so the prose cannot drift; this compares what actually came
-   * back over each channel, so hand-typing a second literal into either registration reddens it.
-   */
-  it('serves byte-identical text through the prompt and the resource', async () => {
-    const { client, close } = await connectedClient()
-
-    try {
-      const [prompt, resource] = await Promise.all([
-        client.getPrompt({ name: 'release-create' }),
-        client.readResource({ uri: RELEASE_CREATE_WORKFLOW_URI }),
-      ])
-
-      expect(promptText(prompt)).toBe(resourceText(resource))
     } finally {
       await close()
     }
@@ -219,10 +163,10 @@ describe('the release-create procedure, over the wire', () => {
   })
 
   /**
-   * `setup`'s procedure over the wire. Resource-only, deliberately: unlike `release-create` it is NOT
-   * registered as a prompt, because its human surface is the `/infra-kit:setup` plugin command. The
-   * prompt-count assertion above is what pins that decision from the other side — adding a `setup`
-   * prompt reddens it and forces this comment to be revisited rather than silently contradicted.
+   * `setup`'s procedure over the wire. Resource-only, like every workflow: its human surface is the
+   * `/infra-kit:setup` plugin command. The no-prompt-channel test above is what pins that decision
+   * from the other side — registering a `setup` prompt reddens it and forces this comment to be
+   * revisited rather than silently contradicted.
    */
   it('serves the setup procedure as a markdown resource at its URI', async () => {
     const { client, close } = await connectedClient()
@@ -298,7 +242,7 @@ describe('the release-create procedure, over the wire', () => {
 
   /**
    * `session`'s procedure over the wire. Resource-only for the same reason as `setup`, and pinned
-   * from the other side by the prompt-count assertion above.
+   * from the other side by the no-prompt-channel test above.
    *
    * Unlike the other two, `session` is the procedure for no single tool — it composes `env-list`,
    * `env-load` and `env-clear`. So `resources/list` is asserted here too: an agent that cannot

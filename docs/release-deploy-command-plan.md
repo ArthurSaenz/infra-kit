@@ -868,6 +868,8 @@ A per-key metadata record beside `WORKFLOW_BODIES`, iterated on both channels. C
 (`prompts/list` 1 → 2, `resources/list` +1); every count assertion derives from the declared sets, **no
 literals**. `argsSchema` stays omitted on both prompts.
 
+> **Superseded 2026-09-14 (prompt half only):** the MCP prompt was retired once the plugin command landed — see `docs/release-create-prompt-removal-plan.md`. The resource half stands.
+
 ---
 
 ## 3. Pre-mortem — three scenarios, one authorization (§6.0b)

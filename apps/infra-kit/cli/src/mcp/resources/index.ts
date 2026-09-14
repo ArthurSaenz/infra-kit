@@ -17,16 +17,17 @@ export const DEV_CONTEXT_RESOURCE_URI = 'infra-kit://dev-context'
 /**
  * Stable URI of the `release-create` procedure.
  *
- * This is the agent-reachable half of the pair: the same body is also registered as a prompt
- * (`src/mcp/prompts`), because an agent can read a resource but cannot fetch a prompt.
+ * The only server channel for this body: an agent reads it here, and the human surface is the
+ * `/infra-kit:release-create` plugin command. The prompt that once sat beside this resource rendered
+ * a duplicate `/` row next to that command (docs/release-create-prompt-removal-plan.md).
  */
 export const RELEASE_CREATE_WORKFLOW_URI = 'infra-kit://workflow/release-create'
 
 /**
  * Stable URI of the `setup` procedure.
  *
- * Resource-only, unlike `release-create`: `setup`'s human channel is the `/infra-kit:setup` plugin
- * command, so the prompt half would duplicate it rather than reach a second reader. It ships in the
+ * Resource-only, like every workflow: `setup`'s human channel is the `/infra-kit:setup` plugin
+ * command, so a prompt half would duplicate it rather than reach a second reader. It ships in the
  * CLI and not in the plugin because `scripts/check-workflow-resource-published.mjs` refuses to let a
  * plugin command merge until the PUBLISHED CLI answers `resources/list` with the URI its body names.
  */

@@ -68,9 +68,8 @@ describe('initializeResources', () => {
   })
 
   /**
-   * The agent-reachable channel for every workflow procedure. `release-create`'s prompt half, and the
-   * byte-identity between its two channels, are asserted over a real transport in
-   * `src/mcp/__tests__/server.test.ts`.
+   * The only server channel for every workflow procedure. That the server offers no prompt channel
+   * beside it is asserted over a real transport in `src/mcp/__tests__/server.test.ts`.
    *
    * Run per URI rather than once, because both registrations now go through one helper: a helper that
    * captured the first workflow's key would serve `release-create`'s text at BOTH URIs, and a test

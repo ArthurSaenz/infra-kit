@@ -10,6 +10,8 @@ MCP surface the CLI already ships.
 downstream of one finding — **an agent cannot fetch an MCP prompt** — which turned resources from a
 deferred option into core work and deleted a generated artifact rather than repairing it.
 
+> **Superseded 2026-09-14 (prompt half only):** the MCP prompt was retired once the plugin command landed — see `docs/release-create-prompt-removal-plan.md`. The resource half stands.
+
 **Iteration 4 folds in the elicitation track**, which was briefly drafted as a second document and is
 merged here instead: a separate document would have required a 17-row delta table that no test can
 check, against a plan its author would have to re-read in full to keep accurate — which **P2 forbids by

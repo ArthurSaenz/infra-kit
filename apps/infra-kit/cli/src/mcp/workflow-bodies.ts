@@ -26,10 +26,10 @@ export type WorkflowKey = 'release-create' | 'session' | 'setup'
  * channel an AGENT can reach: an agent cannot fetch a prompt, because a prompt is a host UI
  * affordance a human picks out of the `/` menu.
  *
- * `release-create` is additionally registered as a prompt of that name, so the human half exists
- * too — one constant for both, so the prose cannot drift between them without two edits. `setup` and
- * `session` deliberately have no prompt: each one's human surface is its own plugin command, and a
- * second `/` entry carrying the same text would be a duplicate of it rather than a second reader.
+ * Every body is resource-only. The human surface for each is its plugin command or skill — the
+ * `/infra-kit:release-create` and `/infra-kit:setup` commands, the `session` skill — and a prompt
+ * carrying the same text is a duplicate `/` row next to it rather than a second reader, which is
+ * exactly what the retired `release-create` prompt was (docs/release-create-prompt-removal-plan.md).
  *
  * `trimEnd()` because prettier gives every `.md` a trailing newline and every wire form carries the
  * body verbatim; normalizing here keeps the channels byte-identical by construction.

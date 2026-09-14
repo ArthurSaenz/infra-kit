@@ -891,6 +891,8 @@ exists.**
 4. Register the **same constant** as a prompt named `release-create` in `initializePrompts`
    (`«cli»/src/mcp/prompts/index.ts:3`, today a no-op), **with `argsSchema` omitted entirely**.
 
+> **Superseded 2026-09-14 (prompt half only):** the MCP prompt was retired once the plugin command landed — see `docs/release-create-prompt-removal-plan.md`. The resource half stands.
+
 Why both: an agent cannot fetch a prompt (host UI affordance only) but can read a resource; a human
 picks the prompt from the `/` menu. One constant, so P-D holds by construction.
 

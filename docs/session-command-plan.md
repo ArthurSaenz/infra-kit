@@ -216,6 +216,9 @@ behaviour and no test can pin it. C7/C7b guarantee the sentence exists, never th
 5. **`prompts/list` still returns exactly `['release-create']`.** The existing test at
    `server.test.ts:131-146` is left untouched and still passes — that is the guard proving `session`
    is resource-only, on `setup`'s precedent.
+
+   > **Superseded 2026-09-14 (prompt half only):** the MCP prompt was retired once the plugin command landed — see `docs/release-create-prompt-removal-plan.md`. The resource half stands.
+
 6. **The `?raw` import survived the bundle**, checked against the built artifact and not `src` —
    `workflow-bodies.ts:1-8` records that every test in this package runs from `src/`, where a
    bundle-breaking refactor still passes. The check is:

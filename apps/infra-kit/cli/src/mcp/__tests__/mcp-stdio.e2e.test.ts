@@ -855,7 +855,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
    * The plan's central confidence artifact. It asserts every KNOWN delta POSITIVELY (rather than
    * merely normalizing it away) and fails on any UNNAMED difference.
    */
-  //   D1  initialize.capabilities.prompts  {} -> { listChanged: true }              legacy + modern
+  //   D1  initialize.capabilities.prompts  {} -> absent  (AUTHORED: prompt channel retired, docs/release-create-prompt-removal-plan.md)  legacy + modern
   //   D2  tool $schema  draft-07 -> draft-2020-12                                   legacy + modern
   //   D3  tools[].execution  { taskSupport: 'forbidden' } -> absent                 legacy + modern
   //   D4  local-deploy `skipPreflight` removed (AUTHORED, not SDK-induced)          legacy + modern
@@ -1585,7 +1585,18 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     ).toHaveProperty('resultType')
   })
 
-  it('w1b: D1 — capabilities.prompts gains listChanged; resources and tools are untouched', () => {
+  it('w1b: D1 — capabilities.prompts is gone; resources and tools are untouched', () => {
+    // D1 now stacks two changes against a `before` that no shipped build carries any more: the SDK
+    // migration turned the baseline's `{}` into `{ listChanged: true }`, and then the prompt channel
+    // was retired (AUTHORED), leaving no key at all. `after.prompts` is asserted absent POSITIVELY and
+    // `before.prompts` is kept as `{}` for the same reason D4 keeps its carrier list: normalizing the
+    // key out of both sides (a `delete`, an omit helper) would let an accidental `prompts: {}` re-add
+    // pass green, which is the vestigial slot that produced the duplicate `/` row in the first place.
+    //
+    // If initialize-baseline.v1.json is ever RE-CAPTURED: do NOT edit these literals to match. A
+    // re-captured baseline carries no `prompts` either, so the filter below would be dropping a key
+    // that is not there. DELETE D1 entirely — the row in the table and this test — and let the
+    // whole-object key comparison guard `prompts` directly.
     for (const [requested, current] of [
       ['2025-06-18', init2025],
       ['2026-07-28', init2026],
@@ -1594,10 +1605,16 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
       const after = current.capabilities
 
       expect(before.prompts).toEqual({})
-      expect(after.prompts).toEqual({ listChanged: true }) // D1, asserted positively
+      expect(after.prompts).toBeUndefined() // D1, asserted positively
       expect(after.resources).toEqual(before.resources)
       expect(after.tools).toEqual(before.tools)
-      expect(Object.keys(after).sort()).toEqual(Object.keys(before).sort())
+      expect(Object.keys(after).sort()).toEqual(
+        Object.keys(before)
+          .filter((key) => {
+            return key !== 'prompts'
+          })
+          .sort(),
+      )
     }
   })
 

@@ -3,7 +3,6 @@ import { McpServer } from '@modelcontextprotocol/server'
 import { mcpMode } from 'src/lib/mcp-mode'
 
 import packageJson from '../../package.json' with { type: 'json' }
-import { initializePrompts } from './prompts'
 import { initializeResources } from './resources'
 import { initializeTools } from './tools'
 
@@ -26,12 +25,15 @@ export async function createMcpServer() {
         // `registerResource` also declares `resources.listChanged` on top of this.
         resources: { listChanged: true },
         tools: {},
-        prompts: {},
+        // Deliberately no `prompts`. Every workflow's human surface is its plugin
+        // command/skill and its agent surface is the `infra-kit://workflow/*`
+        // resource; a prompt registered here rendered a duplicate
+        // `/infra-kit:release-create (MCP)` row next to the plugin command (see
+        // docs/release-create-prompt-removal-plan.md).
       },
     },
   )
 
-  await initializePrompts(server)
   await initializeResources(server)
   await initializeTools(server)
 
