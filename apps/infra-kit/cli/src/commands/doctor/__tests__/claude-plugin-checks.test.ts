@@ -56,10 +56,10 @@ const writeJson = (filePath: string, value: unknown): void => {
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf-8')
 }
 
-const installPlugin = (): string => {
+const installPlugin = (version = '0.4.0'): string => {
   const installPath = path.join(home, '.claude', 'plugins', 'cache', 'infra-kit')
 
-  writeJson(path.join(installPath, '.claude-plugin', 'plugin.json'), { name: 'infra-kit', version: '0.4.0' })
+  writeJson(path.join(installPath, '.claude-plugin', 'plugin.json'), { name: 'infra-kit', version })
   writeJson(path.join(home, '.claude', 'plugins', 'installed_plugins.json'), {
     version: 2,
     plugins: {
@@ -182,6 +182,121 @@ describe('checkClaudePlugin', () => {
     installPlugin()
 
     expect(statusOf(checkClaudePlugin(null), 'plugin installed')).toBe('fail')
+  })
+})
+
+/**
+ * Step 0c of the MCP-via-plugin plan (§8.0). Sessions load the plugin from the record's cache
+ * `installPath`, not from the marketplace clone (§6.1 S0-7(b)), and a failing `claude plugin update`
+ * still refreshes the clone — so the clone can be AHEAD of what a session serves, and that is the
+ * only freshness comparison the row is allowed to make. Never a status change: the row is `pass`
+ * whenever a served version can be read, advisory or not.
+ */
+describe('plugin version — fetched-but-not-applied advisory', () => {
+  const ADVISORY = 'fetched but not applied'
+  const UPDATE_COMMAND = 'claude plugin update infra-kit@infra-kit --scope project'
+
+  const writeClone = (manifest: unknown): void => {
+    writeJson(
+      path.join(
+        home,
+        '.claude',
+        'plugins',
+        'marketplaces',
+        'infra-kit',
+        'plugins',
+        'infra-kit',
+        '.claude-plugin',
+        'plugin.json',
+      ),
+      manifest,
+    )
+  }
+
+  it('advises, naming the fetched version and the update command, when the clone is ahead of the served copy', () => {
+    installPlugin('0.7.0')
+    writeClone({ name: 'infra-kit', version: '0.8.0' })
+
+    const checks = checkClaudePlugin(repo)
+    const message = messageOf(checks, 'plugin version')
+
+    expect(statusOf(checks, 'plugin version')).toBe('pass')
+    expect(message).toContain('version 0.7.0')
+    expect(message).toContain(`plugin 0.8.0 is ${ADVISORY}`)
+    expect(message).toContain(`Run: ${UPDATE_COMMAND}`)
+  })
+
+  it('stays silent when the clone and the served copy agree', () => {
+    installPlugin('0.7.0')
+    writeClone({ name: 'infra-kit', version: '0.7.0' })
+
+    const checks = checkClaudePlugin(repo)
+
+    expect(statusOf(checks, 'plugin version')).toBe('pass')
+    expect(messageOf(checks, 'plugin version')).toBe('Plugin infra-kit@infra-kit version 0.7.0')
+  })
+
+  /** A stale clone behind a newer served copy is not a lag to fix — no advisory. */
+  it('stays silent when the served copy is AHEAD of the clone', () => {
+    installPlugin('0.8.0')
+    writeClone({ name: 'infra-kit', version: '0.7.0' })
+
+    const checks = checkClaudePlugin(repo)
+
+    expect(statusOf(checks, 'plugin version')).toBe('pass')
+    expect(messageOf(checks, 'plugin version')).toBe('Plugin infra-kit@infra-kit version 0.8.0')
+  })
+
+  it('stays silent when there is no clone to compare against', () => {
+    installPlugin('0.7.0')
+
+    const checks = checkClaudePlugin(repo)
+
+    expect(statusOf(checks, 'plugin version')).toBe('pass')
+    expect(messageOf(checks, 'plugin version')).toBe('Plugin infra-kit@infra-kit version 0.7.0')
+  })
+
+  it('stays silent, never throws, on a clone manifest that cannot be read', () => {
+    installPlugin('0.7.0')
+    writeClone({ name: 'infra-kit' })
+
+    expect(messageOf(checkClaudePlugin(repo), 'plugin version')).toBe('Plugin infra-kit@infra-kit version 0.7.0')
+
+    fs.writeFileSync(
+      path.join(
+        home,
+        '.claude',
+        'plugins',
+        'marketplaces',
+        'infra-kit',
+        'plugins',
+        'infra-kit',
+        '.claude-plugin',
+        'plugin.json',
+      ),
+      '{not json',
+      'utf-8',
+    )
+
+    expect(messageOf(checkClaudePlugin(repo), 'plugin version')).toBe('Plugin infra-kit@infra-kit version 0.7.0')
+  })
+
+  /**
+   * P6, pinned at the source: the plugin bump is a separate commit after every lockstep release, so
+   * served-vs-CLI drifts legitimately for hours at every release. The row must never compare against
+   * the CLI's own version — `packageJson.version` is the one symbol `doctor.ts` reads it through
+   * (the `CLI version` row and the MCP tool's `cliVersion`), so its absence from the version row and
+   * its advisory helper is the whole guarantee.
+   */
+  it('never compares the served plugin against the CLI version (source guard)', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'doctor.ts'), 'utf-8')
+    const rowSource = /const fetchedNotAppliedAdvisory[\s\S]*?\nconst claudePluginVersionCheck[\s\S]*?\n\}\n/.exec(
+      source,
+    )?.[0]
+
+    expect(rowSource).toBeDefined()
+    expect(source).toContain('packageJson.version')
+    expect(rowSource).not.toMatch(/packageJson|cliVersion|CLI_VERSION|currentVersion/)
   })
 })
 

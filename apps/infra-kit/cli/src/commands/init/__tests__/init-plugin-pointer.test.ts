@@ -12,6 +12,7 @@ import {
   MARKETPLACE_NAME,
   PLUGIN_INSTALL_COMMAND,
   PLUGIN_KEY,
+  PLUGIN_UPDATE_COMMAND,
   installPluginForProject,
 } from 'src/lib/plugin-pointer'
 
@@ -56,9 +57,10 @@ vi.mock('src/lib/logger', () => {
  * Everything else in `src/lib/plugin-pointer` stays real — the pointer merge is what several cases
  * below assert, and a wholesale module mock would make them prove nothing.
  *
- * Its default behaviour is the honest one for a machine with no `claude` binary: `already-installed`
- * when the host state says so (read through the module's OWN resolver, so the fake cannot disagree
- * with the fixtures), `claude-missing` otherwise.
+ * Its default behaviour mirrors the real installer's two host-state branches: `updated` when the host
+ * state says the plugin is installed here (read through the module's OWN resolver, so the fake cannot
+ * disagree with the fixtures — the real installer would run `claude plugin update` and report the
+ * same), `claude-missing` otherwise, the honest answer for a machine with no `claude` binary.
  */
 vi.mock('src/lib/plugin-pointer', async (importOriginal) => {
   const actual = await importOriginal<typeof import('src/lib/plugin-pointer')>()
@@ -68,7 +70,7 @@ vi.mock('src/lib/plugin-pointer', async (importOriginal) => {
     installPluginForProject: vi.fn((options: { projectRoot: string }) => {
       const installed = actual.resolvePluginInstall({ projectPath: options.projectRoot }).kind === 'installed'
 
-      return installed ? { status: 'already-installed' } : { status: 'claude-missing' }
+      return installed ? { status: 'updated' } : { status: 'claude-missing' }
     }),
   }
 })
@@ -513,16 +515,35 @@ describe('setup --skip-tools — plugin install', () => {
     expect(infoLines()).toContain(`installed Claude Code plugin ${PLUGIN_KEY} (project scope)`)
   })
 
-  it('says nothing on INFO when the plugin was already installed', async () => {
-    installMock.mockReturnValue({ status: 'already-installed' })
+  it('reports an installed plugin as up to date on one INFO line, never as a fresh install', async () => {
+    // On a configured machine the installer ran `claude plugin update`, not `plugin install`; the line
+    // says so, and the install command must not be offered — there is nothing left to install.
+    installMock.mockReturnValue({ status: 'updated' })
 
     await runInit()
 
-    // The pointer step's own `(Claude Code plugin pointer)` line is legitimate and stays; what must
-    // NOT appear is any report about the install, which on a configured machine did nothing.
+    expect(infoLines()).toContain(`Claude Code plugin ${PLUGIN_KEY} up to date (project scope)`)
     expect(
       infoLines().some((line) => {
-        return line.includes('installed Claude Code plugin') || line.includes('claude plugin')
+        return line.includes('installed Claude Code plugin') || line.includes('claude plugin install')
+      }),
+    ).toBe(false)
+  })
+
+  it('warns with the error first line and the manual update command when the update fails', async () => {
+    installMock.mockReturnValue({ status: 'update-failed', error: 'Plugin infra-kit is not installed at scope user' })
+
+    await runInit()
+
+    const warning = warnLines().find((line) => {
+      return line.includes('Could not update the Claude Code plugin')
+    })
+
+    expect(warning).toContain('Plugin infra-kit is not installed at scope user')
+    expect(warning).toContain(PLUGIN_UPDATE_COMMAND)
+    expect(
+      infoLines().some((line) => {
+        return line.includes('up to date')
       }),
     ).toBe(false)
   })

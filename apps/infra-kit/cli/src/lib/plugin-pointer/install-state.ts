@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { MARKETPLACE_NAME, PLUGIN_KEY } from './plugin-pointer'
+import { MARKETPLACE_NAME, PLUGIN_KEY } from './names'
 
 /**
  * @fileoverview
@@ -167,6 +167,37 @@ export const resolvePluginInstall = (query: PluginInstallationQuery = {}): Plugi
 }
 
 /**
+ * Every PROJECT-scope record, one per distinct project path — the set `claude plugin update` has to be
+ * run against, because Claude Code resolves which record an update touches from the command's cwd
+ * (measured: from a non-project cwd it silently picks some other record, so one run from `$HOME`
+ * advances one project, not all).
+ *
+ * A record with no `scope` but a `projectPath` counts as project scope, the way `coversProject`
+ * treats it. User-scope records are excluded: this CLI never installs at user scope, and an update
+ * there needs no cwd at all. Duplicates collapse on the canonical path — the file is append-only, so
+ * a reinstalled project may carry two records naming one directory.
+ *
+ * @example
+ * listProjectPluginInstallations()
+ * // => [{ scope: 'project', projectPath: '/Users/me/hulyo', installPath: '…/0.7.0', version: '0.7.0' }]
+ */
+export const listProjectPluginInstallations = (home?: string): PluginInstallation[] => {
+  const seen = new Set<string>()
+
+  return readInstallations(home).filter((entry) => {
+    if (entry.scope === 'user' || entry.projectPath === null) return false
+
+    const key = canonicalPath(entry.projectPath)
+
+    if (seen.has(key)) return false
+
+    seen.add(key)
+
+    return true
+  })
+}
+
+/**
  * The installed plugin's version: the record's own `version`, falling back to the manifest at
  * `<installPath>/.claude-plugin/plugin.json`.
  *
@@ -185,6 +216,37 @@ export const readInstalledPluginVersion = (installation: PluginInstallation): st
   const declared = isPlainObject(manifest) ? readString(manifest, 'version') : null
 
   return declared ?? installation.version
+}
+
+/**
+ * The plugin's directory inside the marketplace clone: `plugins/<plugin name>`, the left half of
+ * `<plugin>@<marketplace>`. Derived, not spelled out again, so the two can never disagree.
+ */
+const [PLUGIN_NAME = MARKETPLACE_NAME] = PLUGIN_KEY.split('@')
+
+/**
+ * The plugin version the marketplace CLONE carries — `~/.claude/plugins/marketplaces/<marketplace>/
+ * plugins/<plugin>/.claude-plugin/plugin.json` — which is NOT what a session serves.
+ *
+ * Measured (plan §6.1 S0-7(b)): sessions load the plugin from the install record's cache
+ * `installPath`, and only a successful `claude plugin update --scope project` advances that record,
+ * while any `claude plugin update` — a failing user-scope one included — refreshes the clone as a
+ * side effect. So the clone can sit AHEAD of the served copy, and comparing the two is the one
+ * freshness signal readable offline: "fetched but not applied". Reads as `null` for a clone that is
+ * absent, unreadable or carries no version, so the caller drops the comparison instead of failing.
+ *
+ * @example
+ * readMarketplacePluginVersion() // => '0.8.0' after a `claude plugin update` refreshed the clone
+ * readMarketplacePluginVersion({ home: '/tmp/no-such-home' }) // => null
+ */
+export const readMarketplacePluginVersion = ({ home }: Pick<PluginInstallationQuery, 'home'> = {}): string | null => {
+  const manifestPath = pluginsPath(
+    path.join('marketplaces', MARKETPLACE_NAME, 'plugins', PLUGIN_NAME, '.claude-plugin', 'plugin.json'),
+    home,
+  )
+  const manifest = readJsonFile(manifestPath)
+
+  return isPlainObject(manifest) ? readString(manifest, 'version') : null
 }
 
 /** How a repo's `.mcp.json` registers (or fails to register) the infra-kit MCP server. */

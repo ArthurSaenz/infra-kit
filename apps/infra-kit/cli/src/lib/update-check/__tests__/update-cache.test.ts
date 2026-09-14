@@ -75,6 +75,37 @@ describe('readUpdateCache', () => {
   )
 })
 
+describe('readUpdateCache — plugin field', () => {
+  it('round-trips the optional plugin record and reads a cache written before it existed', () => {
+    const withPlugin = {
+      lastCheckMs: NOW,
+      latestVersion: null,
+      updateCommand: null,
+      outcome: 'up-to-date',
+      plugin: { outcome: 'updated' as const, checkedMs: NOW + 700 },
+    }
+
+    writeUpdateCache(withPlugin)
+    expect(readUpdateCache()).toEqual(withPlugin)
+
+    writeUpdateCache({ lastCheckMs: NOW, latestVersion: null, updateCommand: null, outcome: 'up-to-date' })
+    expect(readUpdateCache()?.plugin).toBeUndefined()
+  })
+
+  it.each(['"updated"', '{"outcome":"updated"}', '{"checkedMs":1}', '{"outcome":1,"checkedMs":1}'])(
+    'rejects a malformed plugin record %s as corrupt',
+    (plugin) => {
+      fs.mkdirSync(path.join(cacheHome, 'infra-kit'), { recursive: true })
+      fs.writeFileSync(
+        cacheFilePath(),
+        `{"lastCheckMs":1,"latestVersion":null,"updateCommand":null,"plugin":${plugin}}`,
+      )
+
+      expect(readUpdateCache()).toBeNull()
+    },
+  )
+})
+
 describe('isStale', () => {
   it('treats a missing cache as stale', () => {
     expect(isStale(null, NOW)).toBe(true)

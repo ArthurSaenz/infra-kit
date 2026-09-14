@@ -3,7 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { MARKETPLACE_NAME, PLUGIN_KEY, ensurePluginPointer } from '../plugin-pointer'
+import { MARKETPLACE_NAME, PLUGIN_KEY } from '../names'
+import { ensurePluginPointer } from '../plugin-pointer'
 
 /**
  * I7/I8 — `initCore`'s merge into a consumer's `.claude/settings.json` must be additive and nothing else.

@@ -7,7 +7,7 @@ import { logger } from 'src/lib/logger'
 
 import { inspectMcpRegistration } from '../install-state'
 import { ensureMcpRegistration } from '../mcp-registration'
-import { MARKETPLACE_NAME } from '../plugin-pointer'
+import { MARKETPLACE_NAME } from '../names'
 
 /**
  * Criteria 1.1-1.8 — `initCore`'s merge into a consumer repo's `.mcp.json` must be additive and nothing

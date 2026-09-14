@@ -32,6 +32,14 @@ If your repo uses Claude Code or another MCP-aware agent, add `.mcp.json` at the
 
 The agent will then have access to a curated subset of infra-kit commands as structured tools (see [MCP Exposed Tools](#mcp-exposed-tools) below).
 
+**Other stdio MCP servers whose secrets come from `ik env-load`** (Grafana, for example) are declared
+once, in `infra-kit.json` under `mcp.<name>` (`command`, `args`, `env`, `unset`). That block is the
+source of truth. The matching `.mcp.json` entry — `ik-mcp --name <name> --env … -- <command> …` — is
+**generated** from it by `infra-kit setup` and `infra-kit audit --root --fix`, and `infra-kit audit`
+reports drift between the two. Edit `infra-kit.json`, regenerate, commit both; never hand-edit the
+generated entry. It stays in `.mcp.json` by design: the proxy reads argv only, so the file Claude
+Code loads is self-contained and needs no config reader at session start.
+
 ## Configuration
 
 **infra-kit.json** (runtime)  

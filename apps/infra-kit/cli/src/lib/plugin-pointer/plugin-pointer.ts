@@ -3,6 +3,8 @@ import path from 'node:path'
 
 import { logger } from 'src/lib/logger'
 
+import { MARKETPLACE_NAME, MARKETPLACE_REPO, PLUGIN_KEY } from './names'
+
 /**
  * @fileoverview
  *
@@ -22,21 +24,19 @@ import { logger } from 'src/lib/logger'
  * byte-for-byte alone: rewriting what we could not read would destroy hand-written config.
  */
 
-/** The marketplace name, as it appears in `extraKnownMarketplaces` and in `<plugin>@<marketplace>`. */
-export const MARKETPLACE_NAME = 'infra-kit'
-
-/** The `enabledPlugins` key: `<plugin>@<marketplace>`, both `infra-kit`. */
-export const PLUGIN_KEY = 'infra-kit@infra-kit'
-
-/** The GitHub repo the marketplace is served from. */
-export const MARKETPLACE_REPO = 'ArthurSaenz/infra-kit'
-
 /**
  * The one command a teammate runs by hand. `--scope project` is not decoration: it bounds where the
  * plugin's skills are active and writes `enabledPlugins` into the same `.claude/settings.json` this
  * module writes, so the two agree by construction.
  */
 export const PLUGIN_INSTALL_COMMAND = `claude plugin install ${PLUGIN_KEY} --scope project`
+
+/**
+ * The manual form of what `setup` runs once the plugin is installed, and what the doctor names when the
+ * served copy lags. Same `--scope project` rule, for the same reason — and because `claude` resolves
+ * USER scope from every cwd when the flag is absent, then fails "not installed at scope user".
+ */
+export const PLUGIN_UPDATE_COMMAND = `claude plugin update ${PLUGIN_KEY} --scope project`
 
 /**
  * The command that makes the marketplace known to this machine, and the prerequisite of the one

@@ -1,11 +1,17 @@
 import type { spawnSync } from 'node:child_process'
+import fs from 'node:fs'
 import { homedir } from 'node:os'
+import path from 'node:path'
 import process from 'node:process'
 import { describe, expect, it, vi } from 'vitest'
 
+import { PLUGIN_UPDATE_ARGV } from 'src/lib/plugin-pointer/claude-cli'
+import type { PluginInstallation } from 'src/lib/plugin-pointer/install-state'
+
 import { PARENT_WAIT_TIMEOUT_MS, runUpdateCheck } from '../run-update-check'
-import type { RunUpdateCheckDeps } from '../run-update-check'
+import type { RunUpdateCheckDeps, UpdateCheckOutcome } from '../run-update-check'
 import type { UpdateCache } from '../update-cache'
+import { PLUGIN_UPDATE_BUDGET_MS, PLUGIN_UPDATE_RUN_TIMEOUT_MS } from '../update-plugin'
 
 const GLOBAL_NPM_CLI = '/usr/local/lib/node_modules/infra-kit/dist/cli.js'
 const HOMEBREW_CLI = '/opt/homebrew/Cellar/infra-kit/0.1.130/lib/node_modules/infra-kit/dist/cli.js'
@@ -19,6 +25,10 @@ const okSpawn = (): ReturnType<typeof spawnSync> => {
 const harness = (overrides: Partial<RunUpdateCheckDeps> = {}) => {
   const writes: UpdateCache[] = []
   const spawnMock = vi.fn(okSpawn)
+  const pluginSpawnMock = vi.fn(okSpawn)
+  const runClaudeMock = vi.fn(() => {
+    return { ok: true }
+  })
   let released = 0
 
   const deps: RunUpdateCheckDeps = {
@@ -58,13 +68,31 @@ const harness = (overrides: Partial<RunUpdateCheckDeps> = {}) => {
     installedVersion: () => {
       return '0.1.131'
     },
+    // The plugin step's seams, all injected so no unit test spawns a real `claude` or reads the
+    // developer's own `installed_plugins.json`. No records by default: the step reports `skipped`.
+    runClaude: runClaudeMock,
+    spawnPluginUpdate: pluginSpawnMock as unknown as typeof spawnSync,
+    listPluginInstallations: () => {
+      return []
+    },
+    pathExists: () => {
+      return true
+    },
     ...overrides,
   }
 
   return {
     deps,
     writes,
+    /** The locked function's own writes — the plugin stamp (the one write carrying `plugin`) excluded. */
+    cliWrites: (): UpdateCache[] => {
+      return writes.filter((cache) => {
+        return cache.plugin === undefined
+      })
+    },
     spawnMock,
+    pluginSpawnMock,
+    runClaudeMock,
     releasedCount: () => {
       return released
     },
@@ -73,7 +101,7 @@ const harness = (overrides: Partial<RunUpdateCheckDeps> = {}) => {
 
 describe('runUpdateCheck single-flight lock', () => {
   it('stands down without fetching or writing when another worker holds the lock', async () => {
-    const { deps, writes, spawnMock } = harness({
+    const { deps, writes, spawnMock, pluginSpawnMock, runClaudeMock } = harness({
       acquireLock: () => {
         return null
       },
@@ -86,6 +114,9 @@ describe('runUpdateCheck single-flight lock', () => {
 
     expect(writes).toEqual([])
     expect(spawnMock).not.toHaveBeenCalled()
+    // The plugin step is behind the same lock: no probe, no update, no stamp.
+    expect(runClaudeMock).not.toHaveBeenCalled()
+    expect(pluginSpawnMock).not.toHaveBeenCalled()
   })
 
   it('releases the lock on the happy path', async () => {
@@ -128,11 +159,16 @@ describe('runUpdateCheck', () => {
   })
 
   it('clears latestVersion after a successful install so the next run does not re-notify', async () => {
-    const { deps, writes } = harness()
+    const { deps, cliWrites } = harness()
 
     await runUpdateCheck('0.1.130', deps)
 
-    expect(writes.at(-1)).toEqual({ lastCheckMs: NOW, latestVersion: null, updateCommand: null, outcome: 'installed' })
+    expect(cliWrites().at(-1)).toEqual({
+      lastCheckMs: NOW,
+      latestVersion: null,
+      updateCommand: null,
+      outcome: 'installed',
+    })
   })
 
   it('self-spawns for a plain `npm i -g` install, whose shell has no npm_config_prefix', async () => {
@@ -168,7 +204,7 @@ describe('runUpdateCheck', () => {
   it('persists lastCheckMs even when the fetch FAILS, so an offline user is not a fetch-storm', async () => {
     // The whole point of the throttle: if lastCheckMs only landed on success, every command an
     // offline user runs would spawn another doomed detached child.
-    const { deps, writes, spawnMock } = harness({
+    const { deps, cliWrites, spawnMock } = harness({
       fetchLatest: async () => {
         return null
       },
@@ -176,7 +212,9 @@ describe('runUpdateCheck', () => {
 
     await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('fetch-failed')
 
-    expect(writes).toEqual([{ lastCheckMs: NOW, latestVersion: null, updateCommand: null, outcome: 'fetch-failed' }])
+    expect(cliWrites()).toEqual([
+      { lastCheckMs: NOW, latestVersion: null, updateCommand: null, outcome: 'fetch-failed' },
+    ])
     expect(spawnMock).not.toHaveBeenCalled()
   })
 
@@ -203,13 +241,13 @@ describe('runUpdateCheck', () => {
   })
 
   it('refuses to install a Homebrew-owned CLI, recording the version for the parent to announce', async () => {
-    const { deps, writes, spawnMock } = harness({ selfRealPath: HOMEBREW_CLI, env: {} })
+    const { deps, cliWrites, spawnMock } = harness({ selfRealPath: HOMEBREW_CLI, env: {} })
 
     await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('cannot-self-spawn')
 
     expect(spawnMock).not.toHaveBeenCalled()
     // The command is recorded so the PARENT can print it without paying for detection on startup.
-    expect(writes.at(-1)).toEqual({
+    expect(cliWrites().at(-1)).toEqual({
       lastCheckMs: NOW,
       latestVersion: '0.1.131',
       updateCommand: ['brew', 'upgrade', 'infra-kit'],
@@ -302,7 +340,7 @@ describe('runUpdateCheck', () => {
   // reinstalled the old version, exited 0. Trusting the exit code recorded `installed` and cleared the
   // notice, so the user stayed on the old binary with nothing telling them.
   it('records install-stale with the command when the install exits 0 but the PATH binary still reports the old version', async () => {
-    const { deps, writes } = harness({
+    const { deps, cliWrites } = harness({
       installedVersion: () => {
         return '0.1.130'
       },
@@ -310,7 +348,7 @@ describe('runUpdateCheck', () => {
 
     await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('install-stale')
 
-    expect(writes.at(-1)).toEqual({
+    expect(cliWrites().at(-1)).toEqual({
       lastCheckMs: NOW,
       latestVersion: '0.1.131',
       updateCommand: ['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@0.1.131'],
@@ -319,14 +357,14 @@ describe('runUpdateCheck', () => {
   })
 
   it('treats an unreadable post-install version as stale, never as installed', async () => {
-    const { deps, writes } = harness({
+    const { deps, cliWrites } = harness({
       installedVersion: () => {
         return null
       },
     })
 
     await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('install-stale')
-    expect(writes.at(-1)?.latestVersion).toBe('0.1.131')
+    expect(cliWrites().at(-1)?.latestVersion).toBe('0.1.131')
   })
 
   it('does not probe the installed version when the install itself failed', async () => {
@@ -346,7 +384,7 @@ describe('runUpdateCheck', () => {
 
   it('records the manual command when the silent install FAILS, so it cannot fail invisibly forever', async () => {
     // e.g. EACCES on a root-owned global dir. Without this the user is told nothing, ever.
-    const { deps, writes } = harness({
+    const { deps, cliWrites } = harness({
       parentPid: 4242,
       spawnSync: (() => {
         return { status: 1, signal: null, error: undefined }
@@ -355,7 +393,7 @@ describe('runUpdateCheck', () => {
 
     await runUpdateCheck('0.1.130', deps)
 
-    expect(writes.at(-1)).toEqual({
+    expect(cliWrites().at(-1)).toEqual({
       lastCheckMs: NOW,
       latestVersion: '0.1.131',
       updateCommand: ['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@0.1.131'],
@@ -383,7 +421,7 @@ describe('runUpdateCheck', () => {
     const spawnMock = vi.fn(() => {
       // Whatever the cache looks like at install time is what a concurrent shell would read. The
       // 'installing' checkpoint is retryable, so a worker killed here re-checks within the hour.
-      expect(writes.at(-1)).toEqual({
+      expect(cliWrites().at(-1)).toEqual({
         lastCheckMs: NOW,
         latestVersion: '0.1.131',
         updateCommand: null,
@@ -392,22 +430,27 @@ describe('runUpdateCheck', () => {
 
       return okSpawn()
     })
-    const { deps, writes } = harness({ parentPid: 4242, spawnSync: spawnMock as unknown as typeof spawnSync })
+    const { deps, cliWrites } = harness({ parentPid: 4242, spawnSync: spawnMock as unknown as typeof spawnSync })
 
     await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('installed')
 
     expect(spawnMock).toHaveBeenCalledTimes(1)
     // Checkpoint, then the real outcome. The install path is the one path that writes twice, by design.
-    expect(writes).toHaveLength(2)
-    expect(writes.at(-1)).toEqual({ lastCheckMs: NOW, latestVersion: null, updateCommand: null, outcome: 'installed' })
+    expect(cliWrites()).toHaveLength(2)
+    expect(cliWrites().at(-1)).toEqual({
+      lastCheckMs: NOW,
+      latestVersion: null,
+      updateCommand: null,
+      outcome: 'installed',
+    })
   })
 
   it('writes the cache exactly once when it does not reach the install', async () => {
-    const { deps, writes } = harness({ selfRealPath: HOMEBREW_CLI, env: {} })
+    const { deps, cliWrites } = harness({ selfRealPath: HOMEBREW_CLI, env: {} })
 
     await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('cannot-self-spawn')
 
-    expect(writes).toHaveLength(1)
+    expect(cliWrites()).toHaveLength(1)
   })
 
   it('strips the npx/dlx markers from the install child env', async () => {
@@ -456,5 +499,310 @@ describe('runUpdateCheck', () => {
     const [, , options] = spawnMock.mock.calls[0] as unknown as [string, string[], { env: NodeJS.ProcessEnv }]
 
     expect(options.env.NPM_CONFIG_REGISTRY).toBe('https://nexus.corp/npm')
+  })
+})
+
+/**
+ * The Claude Code plugin step. It rides the same worker, AFTER the CLI outcome is settled and its
+ * throttle stamp written, on every outcome — the CLI half above must not change shape because of it,
+ * and a plugin failure must never reach the CLI outcome.
+ */
+describe('runUpdateCheck — plugin step', () => {
+  const record = (projectPath: string): PluginInstallation => {
+    return { scope: 'project', projectPath, installPath: null, version: '0.7.0' }
+  }
+
+  /** Each locked-function outcome, with the harness overrides that produce it. */
+  const OUTCOMES: Array<[UpdateCheckOutcome, Partial<RunUpdateCheckDeps>]> = [
+    [
+      'up-to-date',
+      {
+        fetchLatest: async () => {
+          return '0.1.130'
+        },
+      },
+    ],
+    [
+      'fetch-failed',
+      {
+        fetchLatest: async () => {
+          return null
+        },
+      },
+    ],
+    ['cannot-self-spawn', { selfRealPath: HOMEBREW_CLI, env: {} }],
+    ['parent-unknown', { parentPid: undefined }],
+    [
+      'parent-still-running',
+      (() => {
+        // The clock advances in `sleep`, not per read: the plugin step's budget reads the same clock.
+        let clockMs = NOW
+
+        return {
+          isProcessAlive: () => {
+            return true
+          },
+          clock: () => {
+            return clockMs
+          },
+          sleep: async () => {
+            clockMs += PARENT_WAIT_TIMEOUT_MS / 2
+          },
+        }
+      })(),
+    ],
+    [
+      'install-failed',
+      {
+        spawnSync: (() => {
+          return { status: 1, signal: null, error: undefined }
+        }) as unknown as typeof spawnSync,
+      },
+    ],
+    [
+      'install-stale',
+      {
+        installedVersion: () => {
+          return '0.1.130'
+        },
+      },
+    ],
+    ['installed', {}],
+  ]
+
+  describe.each(OUTCOMES)('after a %s outcome', (expected, overrides) => {
+    it('runs the plugin update AFTER the outcome is settled, returns that outcome unchanged, then releases the lock', async () => {
+      const order: string[] = []
+      const { deps, cliWrites, releasedCount } = harness({
+        ...overrides,
+        writeCache: (cache) => {
+          order.push(cache.plugin === undefined ? `cli:${String(cache.outcome)}` : `plugin:${cache.plugin.outcome}`)
+        },
+        listPluginInstallations: () => {
+          return [record('/repo')]
+        },
+        spawnPluginUpdate: (() => {
+          order.push('plugin-spawn')
+
+          return okSpawn()
+        }) as unknown as typeof spawnSync,
+        acquireLock: () => {
+          return () => {
+            order.push('release')
+          }
+        },
+      })
+
+      await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe(expected)
+
+      // The CLI's terminal write is the last thing before the plugin spawn; the stamp and the release follow.
+      expect(order.slice(-4)).toEqual([`cli:${expected}`, 'plugin-spawn', 'plugin:updated', 'release'])
+      expect(cliWrites()).toEqual([])
+      expect(releasedCount()).toBe(0)
+    })
+  })
+
+  it('stamps the plugin outcome onto the cache the locked function wrote, leaving every CLI field intact', async () => {
+    const { deps, writes } = harness({
+      fetchLatest: async () => {
+        return '0.1.130'
+      },
+      listPluginInstallations: () => {
+        return [record('/repo')]
+      },
+    })
+
+    await runUpdateCheck('0.1.130', deps)
+
+    expect(writes.at(-1)).toEqual({
+      lastCheckMs: NOW,
+      latestVersion: '0.1.130',
+      updateCommand: null,
+      outcome: 'up-to-date',
+      plugin: { outcome: 'updated', checkedMs: NOW },
+    })
+  })
+
+  it('records failed and returns the CLI outcome unchanged when the plugin step throws', async () => {
+    const { deps, writes, releasedCount } = harness({
+      listPluginInstallations: () => {
+        throw new Error('installed_plugins.json exploded')
+      },
+    })
+
+    await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('installed')
+
+    expect(writes.at(-1)?.plugin).toEqual({ outcome: 'failed', checkedMs: NOW })
+    expect(releasedCount()).toBe(1)
+  })
+
+  it('records claude-missing and spawns no update when the probe fails', async () => {
+    const { deps, writes, pluginSpawnMock } = harness({
+      runClaude: () => {
+        return { ok: false, output: 'spawn claude ENOENT' }
+      },
+      listPluginInstallations: () => {
+        return [record('/repo')]
+      },
+    })
+
+    await runUpdateCheck('0.1.130', deps)
+
+    expect(writes.at(-1)?.plugin?.outcome).toBe('claude-missing')
+    expect(pluginSpawnMock).not.toHaveBeenCalled()
+  })
+
+  it('records skipped and spawns nothing when no project-scope record exists', async () => {
+    const { deps, writes, pluginSpawnMock } = harness()
+
+    await runUpdateCheck('0.1.130', deps)
+
+    expect(writes.at(-1)?.plugin?.outcome).toBe('skipped')
+    expect(pluginSpawnMock).not.toHaveBeenCalled()
+  })
+
+  it('runs once per recorded project, with that project as cwd, the measured argv, and silent stdio', async () => {
+    const { deps, writes, pluginSpawnMock } = harness({
+      env: { PATH: '/bin', npm_command: 'exec', PNPM_SCRIPT_SRC_DIR: '/x', CLAUDECODE: '1' },
+      listPluginInstallations: () => {
+        return [record('/repo/hulyo'), record('/repo/travelist')]
+      },
+    })
+
+    await runUpdateCheck('0.1.130', deps)
+
+    expect(writes.at(-1)?.plugin?.outcome).toBe('updated')
+    expect(pluginSpawnMock).toHaveBeenCalledTimes(2)
+
+    const calls = pluginSpawnMock.mock.calls as unknown as Array<
+      [string, string[], { cwd: string; stdio: string; env: NodeJS.ProcessEnv; timeout: number }]
+    >
+
+    expect(
+      calls.map(([, , options]) => {
+        return options.cwd
+      }),
+    ).toEqual(['/repo/hulyo', '/repo/travelist'])
+
+    for (const [bin, args, options] of calls) {
+      // `--scope project -y`: without the scope `claude` resolves USER scope and fails; without `-y` it
+      // waits for a confirmation on a stdin that is `ignore`.
+      expect([bin, ...args]).toEqual(['claude', ...PLUGIN_UPDATE_ARGV])
+      expect(args).toEqual(['plugin', 'update', 'infra-kit@infra-kit', '--scope', 'project', '-y'])
+      expect(options.stdio).toBe('ignore')
+      expect(options.timeout).toBe(PLUGIN_UPDATE_RUN_TIMEOUT_MS)
+      // The npx/dlx markers and the nested-session marker are gone; the rest of the env is intact.
+      expect(options.env.npm_command).toBeUndefined()
+      expect(options.env.PNPM_SCRIPT_SRC_DIR).toBeUndefined()
+      expect(options.env.CLAUDECODE).toBeUndefined()
+      expect(options.env.PATH).toBe('/bin')
+    }
+  })
+
+  it('skips a recorded path that no longer exists and still updates the others', async () => {
+    // `installed_plugins.json` is append-only: a deleted checkout keeps its record forever.
+    const { deps, writes, pluginSpawnMock } = harness({
+      listPluginInstallations: () => {
+        return [record('/gone'), record('/repo/live')]
+      },
+      pathExists: (target) => {
+        return target === '/repo/live'
+      },
+    })
+
+    await runUpdateCheck('0.1.130', deps)
+
+    expect(writes.at(-1)?.plugin?.outcome).toBe('updated')
+    expect(pluginSpawnMock).toHaveBeenCalledTimes(1)
+
+    const [, , options] = pluginSpawnMock.mock.calls[0] as unknown as [string, string[], { cwd: string }]
+
+    expect(options.cwd).toBe('/repo/live')
+  })
+
+  it('treats an ENOENT from the spawn as the same vanished-path skip, never as a failure', async () => {
+    const { deps, writes } = harness({
+      listPluginInstallations: () => {
+        return [record('/vanished-between-check-and-spawn')]
+      },
+      spawnPluginUpdate: (() => {
+        return {
+          status: null,
+          signal: null,
+          error: Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }),
+        }
+      }) as unknown as typeof spawnSync,
+    })
+
+    await runUpdateCheck('0.1.130', deps)
+
+    // Nothing ran, so nothing was updated: the honest verdict is `skipped`.
+    expect(writes.at(-1)?.plugin?.outcome).toBe('skipped')
+  })
+
+  it('records failed when any project update exits non-zero, after giving every project its turn', async () => {
+    const seen: string[] = []
+    const { deps, writes } = harness({
+      listPluginInstallations: () => {
+        return [record('/repo/a'), record('/repo/b')]
+      },
+      spawnPluginUpdate: ((_bin: string, _args: string[], options: { cwd: string }) => {
+        seen.push(options.cwd)
+
+        return options.cwd === '/repo/a' ? { status: 1, signal: null, error: undefined } : okSpawn()
+      }) as unknown as typeof spawnSync,
+    })
+
+    await runUpdateCheck('0.1.130', deps)
+
+    expect(writes.at(-1)?.plugin?.outcome).toBe('failed')
+    expect(seen).toEqual(['/repo/a', '/repo/b'])
+  })
+
+  it('stops spawning once the plugin budget is spent and records failed', async () => {
+    // The lock is reaped at LOCK_STALE_MS; a plugin step that ran past its budget would hand the next
+    // shell a reaped lock and the concurrent-install pile-up the lock exists to prevent.
+    let clockMs = NOW
+    const spawned: string[] = []
+    const { deps, writes } = harness({
+      clock: () => {
+        return clockMs
+      },
+      listPluginInstallations: () => {
+        return [record('/repo/a'), record('/repo/b')]
+      },
+      spawnPluginUpdate: ((_bin: string, _args: string[], options: { cwd: string }) => {
+        spawned.push(options.cwd)
+        clockMs += PLUGIN_UPDATE_BUDGET_MS
+
+        return okSpawn()
+      }) as unknown as typeof spawnSync,
+    })
+
+    await runUpdateCheck('0.1.130', deps)
+
+    expect(spawned).toEqual(['/repo/a'])
+    expect(writes.at(-1)?.plugin?.outcome).toBe('failed')
+  })
+
+  it('imports everything statically — no dynamic import() anywhere in the worker path', () => {
+    // On the `installed` path the plugin step runs AFTER `npm install -g` has replaced `dist/`; a lazy
+    // `import()` of a `chunk-*.js` from the replaced dist is exactly the crash the parent-wait exists
+    // to prevent, so nothing on this path may defer a module load.
+    for (const file of ['run-update-check.ts', 'update-plugin.ts']) {
+      // Comment lines are dropped first: the prose that explains this rule names `import()` by name,
+      // and every comment in these files is a whole line (a `/** … */` block or a `//` line).
+      const code = fs
+        .readFileSync(path.join(__dirname, '..', file), 'utf8')
+        .split('\n')
+        .filter((line) => {
+          const trimmed = line.trimStart()
+
+          return !trimmed.startsWith('//') && !trimmed.startsWith('/*') && !trimmed.startsWith('*')
+        })
+        .join('\n')
+
+      expect(code, `${file} must not contain a dynamic import()`).not.toMatch(/\bimport\s*\(/)
+    }
   })
 })

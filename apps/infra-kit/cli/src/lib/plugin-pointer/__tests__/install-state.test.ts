@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   inspectMcpRegistration,
   isMarketplaceRegistered,
+  listProjectPluginInstallations,
   readInstalledPluginVersion,
   resolvePluginInstall,
 } from '../install-state'
@@ -153,6 +154,46 @@ describe('resolvePluginInstall', () => {
       installPath: null,
       version: null,
     })
+  })
+})
+
+describe('listProjectPluginInstallations', () => {
+  it('is empty when the file is absent', () => {
+    expect(listProjectPluginInstallations(home)).toEqual([])
+  })
+
+  it('returns every project-scope record, in file order, and drops user-scope and pathless ones', () => {
+    writeInstalled([
+      { scope: 'user', projectPath: null, installPath: '/cache/u', version: '0.7.0' },
+      { scope: 'project', projectPath: '/repo/a', installPath: '/cache/a', version: '0.7.0' },
+      { scope: 'project', projectPath: null, installPath: '/cache/x', version: '0.7.0' },
+      // An older Claude Code wrote no `scope`; a projectPath is the stronger signal, as in coversProject.
+      { projectPath: '/repo/b', installPath: '/cache/b', version: '0.6.0' },
+    ])
+
+    expect(
+      listProjectPluginInstallations(home).map((entry) => {
+        return entry.projectPath
+      }),
+    ).toEqual(['/repo/a', '/repo/b'])
+  })
+
+  it('collapses records naming one directory — the file is append-only, so a reinstall leaves two', () => {
+    const link = path.join(os.tmpdir(), `install-state-link-${path.basename(repo)}`)
+
+    fs.symlinkSync(repo, link)
+
+    try {
+      writeInstalled([
+        { scope: 'project', projectPath: repo, installPath: null, version: '0.6.0' },
+        { scope: 'project', projectPath: link, installPath: null, version: '0.7.0' },
+        { scope: 'project', projectPath: repo, installPath: null, version: '0.7.0' },
+      ])
+
+      expect(listProjectPluginInstallations(home)).toHaveLength(1)
+    } finally {
+      fs.rmSync(link, { force: true })
+    }
   })
 })
 

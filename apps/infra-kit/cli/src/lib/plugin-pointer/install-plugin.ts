@@ -1,9 +1,9 @@
-import { spawnSync } from 'node:child_process'
-
 import { logger } from 'src/lib/logger'
 
+import { CLAUDE_BIN, CLAUDE_VERSION_ARGV, PLUGIN_UPDATE_ARGV, defaultClaudeRunner } from './claude-cli'
+import type { ClaudeRunner } from './claude-cli'
 import { isMarketplaceRegistered, resolvePluginInstall } from './install-state'
-import { MARKETPLACE_REPO, PLUGIN_KEY } from './plugin-pointer'
+import { MARKETPLACE_REPO, PLUGIN_KEY } from './names'
 
 /**
  * @fileoverview
@@ -13,9 +13,10 @@ import { MARKETPLACE_REPO, PLUGIN_KEY } from './plugin-pointer'
  *
  * The design constraint is that this shells out to somebody else's CLI. So every step is guarded by a
  * host-state READ first (`install-state.ts`), never by a second invocation: an already-installed
- * plugin runs nothing at all, an already-registered marketplace skips its `add`, and a machine with
- * no `claude` on PATH is a reported outcome rather than a spawn error. That is what makes re-running
- * `initCore` on a configured machine free, and what keeps this from turning a setup command red.
+ * plugin skips the marketplace and install steps and runs only the idempotent `plugin update`, an
+ * already-registered marketplace skips its `add`, and a machine with no `claude` on PATH is a
+ * reported outcome rather than a spawn error. That is what keeps re-running `initCore` on a
+ * configured machine cheap (one ≈1 s command), and what keeps this from turning a setup command red.
  *
  * TWO RULES THAT ARE NOT NEGOTIABLE.
  *
@@ -30,73 +31,23 @@ import { MARKETPLACE_REPO, PLUGIN_KEY } from './plugin-pointer'
  * one — precisely because the only honest source for "is it installed" is the file Claude Code owns.
  */
 
-/** Trust the `claude` binary resolved from `PATH`; there is no configured path and none is wanted. */
-const CLAUDE_BIN = 'claude'
-
-/**
- * Ceiling for any one `claude` invocation. `plugin install` clones a marketplace repo, so it is not
- * instant — but an `initCore` that hangs forever on a wedged network is worse than one that reports a
- * failed install step, and the user's remaining setup steps are behind this call.
- */
-const CLAUDE_TIMEOUT_MS = 120_000
-
 /** `claude plugin marketplace add ArthurSaenz/infra-kit`, as argv. */
 export const MARKETPLACE_ADD_ARGV: readonly string[] = ['plugin', 'marketplace', 'add', MARKETPLACE_REPO]
 
 /** `claude plugin install infra-kit@infra-kit --scope project`, as argv. Never `--scope user`. */
 export const PLUGIN_INSTALL_ARGV: readonly string[] = ['plugin', 'install', PLUGIN_KEY, '--scope', 'project']
 
-/** The PATH probe. Cheapest command that fails loudly when the binary is absent. */
-export const CLAUDE_VERSION_ARGV: readonly string[] = ['--version']
-
-/** One `claude` invocation. `cwd` matters: `--scope project` records the directory it ran in. */
-export interface ClaudeCommand {
-  args: readonly string[]
-  cwd?: string
-}
-
-export interface ClaudeCommandResult {
-  ok: boolean
-  /** Diagnostic text from the command. Only read when `ok` is false. */
-  output?: string
-}
-
-/** The injectable seam. Tests pass a fake so a suite never installs a plugin on the developer's machine. */
-export type ClaudeRunner = (command: ClaudeCommand) => ClaudeCommandResult
-
 /**
- * Run one `claude` command, capturing its output instead of inheriting the terminal.
+ * What `installPluginForProject` did. Every branch is a REPORTED outcome; none of them throws.
  *
- * Captured, not inherited, because `initCore` renders its own progress: a raw `plugin install` transcript
- * dumped between two `INFO:` lines reads as a crash. The captured text is not discarded — its first
- * line is what the failure warning quotes.
- *
- * @example
- * defaultClaudeRunner({ args: ['--version'] }) // => { ok: true, output: '2.0.0 (Claude Code)' }
+ * `updated` covers "already at the latest version" too: the update command exits 0 either way, and the
+ * caller's question is "is the served copy current", which both answer yes.
  */
-export const defaultClaudeRunner: ClaudeRunner = (command) => {
-  // PATH lookup is the point: `claude` is installed by its own installer to a location this CLI does
-  // not know and must not guess, and "is it on PATH" is exactly the question step (b) asks.
-  // eslint-disable-next-line sonarjs/no-os-command-from-path
-  const result = spawnSync(CLAUDE_BIN, [...command.args], {
-    cwd: command.cwd,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: CLAUDE_TIMEOUT_MS,
-  })
-
-  if (result.error !== undefined) return { ok: false, output: result.error.message }
-
-  const output = `${result.stderr ?? ''}\n${result.stdout ?? ''}`.trim()
-
-  return { ok: result.status === 0, output }
-}
-
-/** What `installPluginForProject` did. Every branch is a REPORTED outcome; none of them throws. */
 export type PluginInstallOutcome =
-  | { status: 'already-installed' }
   | { status: 'claude-missing' }
   | { status: 'installed' }
+  | { status: 'updated' }
+  | { status: 'update-failed'; error: string }
   | { status: 'unverified' }
   | { status: 'failed'; step: 'marketplace' | 'install'; error: string }
 
@@ -140,25 +91,41 @@ const ensureMarketplace = (run: ClaudeRunner, home?: string): { step: 'marketpla
 }
 
 /**
- * Install the `infra-kit` Claude Code plugin for `projectRoot`, at PROJECT scope, idempotently.
+ * Advance an installed plugin to what the marketplace serves. `cwd` is the project root because the
+ * cwd — not a flag — is what decides which project-scope record the command updates.
+ */
+const updateInstalledPlugin = (run: ClaudeRunner, projectRoot: string): PluginInstallOutcome => {
+  logger.debug({ msg: `Running: ${CLAUDE_BIN} ${PLUGIN_UPDATE_ARGV.join(' ')}` })
+
+  const updated = run({ args: PLUGIN_UPDATE_ARGV, cwd: projectRoot })
+
+  return updated.ok ? { status: 'updated' } : { status: 'update-failed', error: firstLine(updated.output) }
+}
+
+/**
+ * Install the `infra-kit` Claude Code plugin for `projectRoot`, at PROJECT scope, idempotently — and
+ * once it is installed, keep it current.
  *
- * Reads host state before each step, so a configured machine runs no commands at all; a `claude`
- * binary that is absent, a marketplace that will not register, an install that fails, and an install
- * that reports success without leaving a record are four DISTINCT outcomes, because the fix differs
- * for each and the caller prints them differently.
+ * Reads host state before each step, so a configured machine runs only the update; a `claude` binary
+ * that is absent, a marketplace that will not register, an install that fails, an install that reports
+ * success without leaving a record, and an update that fails are DISTINCT outcomes, because the fix
+ * differs for each and the caller prints them differently.
+ *
+ * The update is what makes `setup` the manual delivery path for plugin bumps: the marketplace advances
+ * on `main` and nothing on the machine notices until something runs `claude plugin update`.
  *
  * @example
  * installPluginForProject({ projectRoot: '/repo' })
  * // first run:  { status: 'installed' }
- * // second run: { status: 'already-installed' }  — nothing spawned
+ * // second run: { status: 'updated' }  — only `claude plugin update` ran
  */
 export const installPluginForProject = (options: InstallPluginOptions): PluginInstallOutcome => {
   const { projectRoot, home } = options
   const run = options.run ?? defaultClaudeRunner
 
-  if (isInstalledFor(projectRoot, home)) return { status: 'already-installed' }
-
   if (!run({ args: CLAUDE_VERSION_ARGV }).ok) return { status: 'claude-missing' }
+
+  if (isInstalledFor(projectRoot, home)) return updateInstalledPlugin(run, projectRoot)
 
   const marketplaceFailure = ensureMarketplace(run, home)
 

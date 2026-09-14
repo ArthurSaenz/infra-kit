@@ -125,8 +125,8 @@ const reconcileServers = (servers: JsonObject, proxies: McpProxies, write: boole
       status: 'drifted',
       message:
         existing === undefined
-          ? `"${name}" is configured under mcp but has no .mcp.json entry — ${SETUP_HINT}`
-          : `"${name}" in .mcp.json does not match its mcp.${name} config — ${SETUP_HINT}`,
+          ? `"${name}" is configured under mcp in infra-kit.json but has no .mcp.json entry — the entry is generated from that config: ${SETUP_HINT}`
+          : `"${name}" in .mcp.json does not match its mcp.${name} config in infra-kit.json — infra-kit.json is the source and the .mcp.json entry is generated from it, so edit the config and regenerate: ${SETUP_HINT}`,
     })
   }
 

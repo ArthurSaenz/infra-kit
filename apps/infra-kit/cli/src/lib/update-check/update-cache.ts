@@ -32,6 +32,19 @@ export const CACHE_FILE_NAME = 'update-check.json'
 // to prevent, and it is why a 5-minute retry window is not an option.
 export const CHECK_INTERVAL_MS = 20 * 60 * 1000
 
+/**
+ * What the worker's Claude Code plugin step did. `skipped` = no project-scope install record on this
+ * machine; `updated` = every recorded project whose path still exists took `claude plugin update`
+ * with exit 0, "already at the latest version" included.
+ */
+export type PluginUpdateOutcome = 'updated' | 'failed' | 'claude-missing' | 'skipped'
+
+export interface PluginUpdateRecord {
+  outcome: PluginUpdateOutcome
+  /** When the plugin step ran — stamped separately from `lastCheckMs`, which it never moves. */
+  checkedMs: number
+}
+
 export interface UpdateCache {
   /**
    * When the last check was ATTEMPTED — never "when it last succeeded". An offline user whose fetch
@@ -59,6 +72,12 @@ export interface UpdateCache {
    * say which happened, and a silent auto-update leaves no other trace of what it did.
    */
   outcome?: string | null
+  /**
+   * The plugin step's outcome, written beside the CLI outcome by the same worker; absent on a cache
+   * written before the step existed. Diagnostic like `outcome`: the plugin is delivered through the
+   * marketplace, and this is the only trace on disk of whether the worker asked for it.
+   */
+  plugin?: PluginUpdateRecord
 }
 
 export const cacheFilePath = (): string => {
@@ -74,17 +93,26 @@ const isStringArray = (value: unknown): value is string[] => {
   )
 }
 
+const isPluginUpdateRecord = (value: unknown): value is PluginUpdateRecord => {
+  if (typeof value !== 'object' || value === null) return false
+
+  const { outcome, checkedMs } = value as Partial<PluginUpdateRecord>
+
+  return typeof outcome === 'string' && typeof checkedMs === 'number' && Number.isFinite(checkedMs)
+}
+
 const isUpdateCache = (value: unknown): value is UpdateCache => {
   if (typeof value !== 'object' || value === null) return false
 
-  const { lastCheckMs, latestVersion, updateCommand, outcome } = value as Partial<UpdateCache>
+  const { lastCheckMs, latestVersion, updateCommand, outcome, plugin } = value as Partial<UpdateCache>
 
   return (
     typeof lastCheckMs === 'number' &&
     Number.isFinite(lastCheckMs) &&
     (latestVersion === null || typeof latestVersion === 'string') &&
     (updateCommand === null || isStringArray(updateCommand)) &&
-    (outcome === undefined || outcome === null || typeof outcome === 'string')
+    (outcome === undefined || outcome === null || typeof outcome === 'string') &&
+    (plugin === undefined || isPluginUpdateRecord(plugin))
   )
 }
 

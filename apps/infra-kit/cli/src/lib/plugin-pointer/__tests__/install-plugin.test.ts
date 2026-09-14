@@ -3,14 +3,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import {
-  CLAUDE_VERSION_ARGV,
-  MARKETPLACE_ADD_ARGV,
-  PLUGIN_INSTALL_ARGV,
-  defaultClaudeRunner,
-  installPluginForProject,
-} from '../install-plugin'
-import type { ClaudeCommand, ClaudeCommandResult, ClaudeRunner } from '../install-plugin'
+import { CLAUDE_VERSION_ARGV, PLUGIN_UPDATE_ARGV, defaultClaudeRunner } from '../claude-cli'
+import type { ClaudeCommand, ClaudeCommandResult, ClaudeRunner } from '../claude-cli'
+import { MARKETPLACE_ADD_ARGV, PLUGIN_INSTALL_ARGV, installPluginForProject } from '../install-plugin'
 
 /**
  * The install step, driven entirely through an injected runner.
@@ -20,8 +15,8 @@ import type { ClaudeCommand, ClaudeCommandResult, ClaudeRunner } from '../instal
  * machine running CI, which is both a side effect and a result that depends on the network.
  *
  * `$HOME` is a temp dir per case for the same reason the sibling host-state suite uses one: the
- * `already-installed` and `unverified` verdicts are read out of `installed_plugins.json`, so a suite
- * that read the developer's real one would pass or fail on whether they happen to use this plugin.
+ * installed-here (→ update) and `unverified` verdicts are read out of `installed_plugins.json`, so a
+ * suite that read the developer's real one would pass or fail on whether they happen to use this plugin.
  */
 
 let home: string
@@ -95,14 +90,47 @@ afterEach(() => {
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
-describe('installPluginForProject — idempotence', () => {
-  it('runs nothing at all when the plugin is already installed for this project', () => {
+describe('installPluginForProject — already installed → update', () => {
+  it('runs only `plugin update`, with the exact argv and the project as cwd, and reports updated', () => {
+    // The cwd IS the scope resolution: `claude` picks which project-scope record an update advances
+    // from the directory it runs in, and from any other directory it silently picks some other record.
     writeInstalledRecord()
 
     const { runner, calls } = recordingRunner()
 
-    expect(installPluginForProject({ projectRoot: repo, home, run: runner })).toEqual({ status: 'already-installed' })
-    expect(calls).toEqual([])
+    expect(installPluginForProject({ projectRoot: repo, home, run: runner })).toEqual({ status: 'updated' })
+    expect(argvOf(calls)).toEqual([[...CLAUDE_VERSION_ARGV], [...PLUGIN_UPDATE_ARGV]])
+    expect(calls[1]?.cwd).toBe(repo)
+    expect(argvOf(calls)).not.toContainEqual([...PLUGIN_INSTALL_ARGV])
+    expect(argvOf(calls)).not.toContainEqual([...MARKETPLACE_ADD_ARGV])
+  })
+
+  it('passes --scope project and -y, the two flags the update fails without off a TTY', () => {
+    expect([...PLUGIN_UPDATE_ARGV]).toEqual(['plugin', 'update', 'infra-kit@infra-kit', '--scope', 'project', '-y'])
+  })
+
+  it('reports update-failed with the command first line when the update exits non-zero', () => {
+    writeInstalledRecord()
+
+    const { runner } = recordingRunner({
+      [PLUGIN_UPDATE_ARGV.join(' ')]: { ok: false, output: '\nPlugin infra-kit is not installed at scope user\nmore' },
+    })
+
+    expect(installPluginForProject({ projectRoot: repo, home, run: runner })).toEqual({
+      status: 'update-failed',
+      error: 'Plugin infra-kit is not installed at scope user',
+    })
+  })
+
+  it('reports claude-missing without attempting the update when the probe fails', () => {
+    writeInstalledRecord()
+
+    const { runner, calls } = recordingRunner({
+      [CLAUDE_VERSION_ARGV.join(' ')]: { ok: false, output: 'spawn claude ENOENT' },
+    })
+
+    expect(installPluginForProject({ projectRoot: repo, home, run: runner })).toEqual({ status: 'claude-missing' })
+    expect(argvOf(calls)).toEqual([[...CLAUDE_VERSION_ARGV]])
   })
 
   it('still installs when the only record covers another project', () => {
@@ -220,7 +248,7 @@ describe('installPluginForProject — success', () => {
     expect(installPluginForProject({ projectRoot: repo, home, run: runner })).toEqual({ status: 'installed' })
   })
 
-  it('is idempotent: the second call runs nothing', () => {
+  it('is idempotent: the second call installs nothing and only updates', () => {
     registerMarketplace()
 
     const calls: ClaudeCommand[] = []
@@ -235,8 +263,8 @@ describe('installPluginForProject — success', () => {
 
     const afterFirst = calls.length
 
-    expect(installPluginForProject({ projectRoot: repo, home, run: runner })).toEqual({ status: 'already-installed' })
-    expect(calls).toHaveLength(afterFirst)
+    expect(installPluginForProject({ projectRoot: repo, home, run: runner })).toEqual({ status: 'updated' })
+    expect(argvOf(calls.slice(afterFirst))).toEqual([[...CLAUDE_VERSION_ARGV], [...PLUGIN_UPDATE_ARGV]])
   })
 })
 
@@ -254,9 +282,10 @@ describe('the PATH shim that protects every suite', () => {
     expect(result.output).toContain('0.0.0-fake')
   })
 
-  it('exits 0 for both plugin subcommands while writing no installed_plugins.json', () => {
+  it('exits 0 for all three plugin subcommands while writing no installed_plugins.json', () => {
     expect(defaultClaudeRunner({ args: [...MARKETPLACE_ADD_ARGV] }).ok).toBe(true)
     expect(defaultClaudeRunner({ args: [...PLUGIN_INSTALL_ARGV], cwd: repo }).ok).toBe(true)
+    expect(defaultClaudeRunner({ args: [...PLUGIN_UPDATE_ARGV], cwd: repo }).ok).toBe(true)
     expect(fs.existsSync(path.join(pluginsDir(), 'installed_plugins.json'))).toBe(false)
   })
 

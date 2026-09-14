@@ -14,6 +14,7 @@ import {
   MARKETPLACE_NAME,
   PLUGIN_INSTALL_COMMAND,
   PLUGIN_KEY,
+  PLUGIN_UPDATE_COMMAND,
   ensureMcpRegistration,
   ensurePluginPointer,
   installPluginForProject,
@@ -74,9 +75,9 @@ export interface InitStep {
 /**
  * How the CLI prints an entry — carried rather than derived from `outcome`, because the two disagree:
  * a guidance file whose write FAILED prints at `info` (it is one row of a per-file list) while the
- * "N files could not be written" summary prints at `warn`, and an already-installed plugin prints at
- * `debug`. Deriving the level from the outcome would move one of those lines to another stream, which
- * is exactly the byte difference this refactor may not introduce.
+ * "N files could not be written" summary prints at `warn`. Deriving the level from the outcome would
+ * move one of those lines to another stream, which is exactly the byte difference this refactor may
+ * not introduce.
  *
  * `silent` reports to MCP and prints nothing, because the library that performed the step already
  * printed its own line — printing here would double every one of them.
@@ -648,19 +649,31 @@ const manualInstallEntries = (): InitEntry[] => {
 /**
  * One line per install outcome.
  *
- * `already-installed` is DEBUG on purpose: it is the steady state of every configured machine, and a
- * setup command that reports its no-ops is a setup command people stop reading. The two failure
+ * `updated` is the steady state of a configured machine and still prints at INFO: unlike the old
+ * "already installed" no-op it reports something that RAN — `claude plugin update` — and that line is
+ * the only place a person learns `setup` is how a plugin bump reaches their machine. The failure
  * outcomes are WARN and carry the step, the tool's own first line, and the command to run instead —
  * a warning a reader cannot act on is noise.
  */
 const installEntries = (outcome: PluginInstallOutcome): InitEntry[] => {
-  if (outcome.status === 'already-installed') {
+  if (outcome.status === 'updated') {
     return [
       {
         step: 'plugin-pointer',
         outcome: 'unchanged',
-        message: `Claude Code plugin ${PLUGIN_KEY} is already installed for this project.`,
-        level: 'debug',
+        message: `Claude Code plugin ${PLUGIN_KEY} up to date (project scope)`,
+        level: 'info',
+      },
+    ]
+  }
+
+  if (outcome.status === 'update-failed') {
+    return [
+      {
+        step: 'plugin-pointer',
+        outcome: 'warned',
+        message: `Could not update the Claude Code plugin — ${outcome.error}. Run by hand: ${PLUGIN_UPDATE_COMMAND}`,
+        level: 'warn',
       },
     ]
   }
@@ -712,8 +725,9 @@ const installEntries = (outcome: PluginInstallOutcome): InitEntry[] => {
  * That binding is the contract here; which predicate produced the root is not.
  *
  * There is deliberately NO opt-out flag. The install is idempotent (an already-installed plugin runs
- * no command at all) and best-effort (every failure is a logged outcome, never a thrown error), so a
- * switch would only buy a way to end up with the pointer keys pointing at a plugin nobody has.
+ * only the idempotent `plugin update`) and best-effort (every failure is a logged outcome, never a
+ * thrown error), so a switch would only buy a way to end up with the pointer keys pointing at a
+ * plugin nobody has.
  */
 const syncPluginPointer = (root: string | null, record: InitStepRecorder): void => {
   if (root === null) {

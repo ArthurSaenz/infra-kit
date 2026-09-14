@@ -70,14 +70,17 @@ import {
   MARKETPLACE_REPO,
   PLUGIN_INSTALL_COMMAND,
   PLUGIN_KEY,
+  PLUGIN_UPDATE_COMMAND,
   inspectMcpRegistration,
   isMarketplaceRegistered,
   readInstalledPluginVersion,
   resolvePluginInstall,
 } from 'src/lib/plugin-pointer'
 import type { McpRegistration, PluginInstallState } from 'src/lib/plugin-pointer'
+import { readMarketplacePluginVersion } from 'src/lib/plugin-pointer/install-state'
 import { listProjectEnvNames } from 'src/lib/project-envs'
 import { quietShell } from 'src/lib/quiet-shell'
+import { isNewerVersion } from 'src/lib/update-check/semver'
 import { sortVersions } from 'src/lib/version-utils'
 import { canonicalizeProjectRoot } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
@@ -1008,6 +1011,23 @@ const resolveCheckedRepoRoot = async (): Promise<string | null> => {
   }
 }
 
+/**
+ * The one freshness line this row may carry: the marketplace clone is AHEAD of the copy sessions
+ * actually load (the record's cache `installPath`, measured in plan §6.1 S0-7(b)). Empty when the
+ * clone is absent, unreadable, equal or behind — a "served ahead" clone is a stale fetch, not a lag.
+ *
+ * Deliberately no comparison against the CLI's own version: the plugin bump is a separate commit
+ * after every lockstep release, so served-vs-CLI legitimately drifts for hours at every release and
+ * a line printed that often is one nobody reads (plan §8.0 0c, P6).
+ */
+const fetchedNotAppliedAdvisory = (served: string): string => {
+  const fetched = readMarketplacePluginVersion()
+
+  if (fetched === null || !isNewerVersion(fetched, served)) return ''
+
+  return ` — plugin ${fetched} is fetched but not applied. Run: ${PLUGIN_UPDATE_COMMAND}`
+}
+
 /** The version row, reported only for an install that covers THIS project. */
 const claudePluginVersionCheck = (state: PluginInstallState): CheckResult => {
   const version = state.kind === 'installed' ? readInstalledPluginVersion(state.installation) : null
@@ -1018,7 +1038,7 @@ const claudePluginVersionCheck = (state: PluginInstallState): CheckResult => {
     message:
       version === null
         ? 'No infra-kit plugin installed for this project to read a version from'
-        : `Plugin ${PLUGIN_KEY} version ${version}`,
+        : `Plugin ${PLUGIN_KEY} version ${version}${fetchedNotAppliedAdvisory(version)}`,
   }
 }
 

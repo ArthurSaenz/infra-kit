@@ -21,6 +21,10 @@ import { fetchLatestVersion } from './registry'
 import { isNewerVersion } from './semver'
 import { writeUpdateCache } from './update-cache'
 import type { UpdateCache } from './update-cache'
+// Static, like every import in this file — see the module doc: on the `installed` path the plugin step
+// runs after `dist/` has been replaced, and a lazy `import()` of a chunk from a replaced dist is unsafe.
+import { updatePlugin } from './update-plugin'
+import type { UpdatePluginDeps } from './update-plugin'
 
 /** How often to re-check whether the parent is gone. */
 export const PARENT_POLL_INTERVAL_MS = 200
@@ -32,7 +36,7 @@ export const PARENT_POLL_INTERVAL_MS = 200
  */
 export const PARENT_WAIT_TIMEOUT_MS = 5 * 60 * 1000
 
-export interface RunUpdateCheckDeps {
+export interface RunUpdateCheckDeps extends UpdatePluginDeps {
   env?: NodeJS.ProcessEnv
   nowMs?: number
   fetchLatest?: (env: NodeJS.ProcessEnv) => Promise<string | null>
@@ -155,6 +159,7 @@ export type UpdateCheckOutcome =
  */
 export const runUpdateCheck = async (currentVersion: string, deps: RunUpdateCheckDeps): Promise<UpdateCheckOutcome> => {
   const acquireLock = deps.acquireLock ?? acquireUpdateLock
+  const writeCache = deps.writeCache ?? writeUpdateCache
 
   // Single-flight. N shells launched at once all read the same stale cache and each spawns a worker;
   // the cache throttle cannot stop them because it is only written after the fetch returns. Without
@@ -163,10 +168,54 @@ export const runUpdateCheck = async (currentVersion: string, deps: RunUpdateChec
 
   if (!release) return 'already-running'
 
+  // Remember the locked function's final cache write so the plugin step can stamp its own outcome
+  // onto it instead of reading the file back (a holder, not a `let`: TypeScript cannot see a closure
+  // assignment and would narrow a `let` to its initial `null`).
+  const written: { last: UpdateCache | null } = { last: null }
+  const recordingWriteCache: typeof writeUpdateCache = (cache) => {
+    written.last = cache
+    writeCache(cache)
+  }
+
   try {
-    return await runUpdateCheckLocked(currentVersion, deps)
+    const outcome = await runUpdateCheckLocked(currentVersion, { ...deps, writeCache: recordingWriteCache })
+
+    // The plugin step runs AFTER the locked function has returned, on EVERY outcome — `up-to-date`
+    // included, which is what makes a plugin-only bump deliverable — and never inside its early-return
+    // chain or ahead of the fetch. Placement is about the throttle: `lastCheckMs` is stamped only by
+    // `finish()` after the fetch, and the lock is reaped as stale at `LOCK_STALE_MS` (30 min). A
+    // `claude` probe (up to 120 s) plus an update ahead of the fetch would delay that stamp on every
+    // run and eat into the stale window on a slow link. Here the stamp is written, the lock is still
+    // held (single-flight), and the step has a bounded budget of its own.
+    recordPluginUpdate(deps, written.last, writeCache)
+
+    return outcome
   } finally {
     release()
+  }
+}
+
+/**
+ * Run the plugin step and write its outcome beside the CLI outcome. Never throws: `updatePlugin` is
+ * total, and a cache write that fails here has nowhere left to record itself — the CLI outcome the
+ * worker already produced is worth more than a plugin diagnostic.
+ */
+const recordPluginUpdate = (
+  deps: UpdatePluginDeps,
+  base: UpdateCache | null,
+  writeCache: typeof writeUpdateCache,
+): void => {
+  const outcome = updatePlugin(deps)
+  const checkedMs = (deps.clock ?? Date.now)()
+
+  // `finish()` writes on every path the locked function returns through, so `base` is only null if that
+  // invariant breaks — and then there is no throttle stamp to attach the outcome to either.
+  if (base === null) return
+
+  try {
+    writeCache({ ...base, plugin: { outcome, checkedMs } })
+  } catch {
+    // Recorded nowhere, deliberately: see the function doc.
   }
 }
 

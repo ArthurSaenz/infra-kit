@@ -9,7 +9,11 @@ server keeps being registered by each consumer's own `.mcp.json` (`infra-kit mcp
 plugin ships **no `mcpServers`** and **no hooks**, by design: a plugin is per-user and opt-in,
 and neither a shared self-updating server nor a fail-closed guard can be owned by something a
 teammate may never have installed. The reasoning is recorded in
-`.omc/plans/infra-kit-claude-plugin.md` (D4, D9).
+`.omc/plans/infra-kit-claude-plugin.md` (D4, D9). Moving the server into the plugin was re-planned
+and measured in `docs/mcp-via-plugin-plan.md` (2026-09-14): Claude Code loads a project-scope plugin
+only when launched at the directory that holds `.claude/settings.json`, while `.mcp.json` is found
+from any subdirectory — so the move would drop every infra-kit tool from a session started in
+`apps/…`, and it stays on hold (§6.1, S0-2).
 
 ## What it contains
 
@@ -64,10 +68,18 @@ manages.
 ## Update
 
 Edit under `plugins/infra-kit/`, bump `version` in `.claude-plugin/plugin.json` **in the same
-commit** (CI fails otherwise), push to `main`. Consumers pick it up on the marketplace
-auto-update after their next session start (up to ten minutes), then `/reload-plugins` or the
-next launch. Run `claude plugin tag ./plugins/infra-kit` to create the `infra-kit--v<version>`
-release tag.
+commit** (CI fails otherwise), push to `main`. Run `claude plugin tag ./plugins/infra-kit` to create
+the `infra-kit--v<version>` release tag.
+
+How consumers receive it — measured, not assumed (2026-09-14, `docs/mcp-via-plugin-plan.md` §6.1):
+Claude Code does **not** advance a project-scope plugin on its own; every install record on the
+author's machine sat at 0.3.0 while `main` was at 0.7.0. The CLI carries the plugin forward instead.
+The silent self-update child that runs after a user-typed `infra-kit …` command on a TTY (at most
+once per 20 minutes) also runs `claude plugin update infra-kit@infra-kit --scope project -y` for
+every project it is installed in, and `infra-kit setup` updates an already-installed plugin rather
+than reporting it installed. A machine where nobody types an `infra-kit` command never advances —
+the same channel the CLI itself lives on. `/reload-plugins` or the next launch applies a fetched
+version; `infra-kit doctor` says when one is fetched but not yet applied.
 
 ## Remove or opt out
 

@@ -4,7 +4,7 @@ import path from 'node:path'
 import { logger } from 'src/lib/logger'
 
 import { inspectMcpRegistration } from './install-state'
-import { MARKETPLACE_NAME } from './plugin-pointer'
+import { MARKETPLACE_NAME } from './names'
 
 /**
  * @fileoverview

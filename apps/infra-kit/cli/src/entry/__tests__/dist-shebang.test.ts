@@ -123,6 +123,52 @@ describe('update-check worker isolation', () => {
     ).toBe(false)
   })
 
+  /**
+   * The plugin step (`update-plugin.ts`) reaches into `src/lib/plugin-pointer`, whose pointer and
+   * installer modules construct pino at import time. The worker must take only the lean modules
+   * (`names.ts`, `claude-cli.ts`, `install-state.ts`): a detached child with an ignored stderr has no
+   * use for a logger, and the plan for that step says it adds no heavy import to the worker.
+   */
+  it('keeps the logger (pino) out of dist/update-check.js and the chunks it reaches', () => {
+    expect(metafile, 'the build must have produced a metafile').toBeDefined()
+
+    const outputs = metafile!.outputs
+    const entryKey = Object.keys(outputs).find((key) => {
+      return key.endsWith('/update-check.js')
+    })
+
+    expect(entryKey, 'update-check.js must be one of the built outputs').toBeDefined()
+
+    const closure = new Set<string>()
+    const queue = [entryKey!]
+
+    while (queue.length > 0) {
+      const key = queue.shift()!
+
+      if (closure.has(key)) continue
+      closure.add(key)
+
+      for (const imported of outputs[key]?.imports ?? []) {
+        if (imported.path in outputs) queue.push(imported.path)
+        else {
+          expect(
+            imported.path,
+            `${key} imports "${imported.path}" — the worker must not load the logger (or any package) at boot`,
+          ).not.toMatch(/^pino/)
+        }
+      }
+    }
+
+    for (const key of closure) {
+      expect(
+        Object.keys(outputs[key]!.inputs).filter((input) => {
+          return input.startsWith('src/lib/logger/')
+        }),
+        `${key} was built from src/lib/logger — some plugin-pointer import pulled the pino singleton into the worker`,
+      ).toEqual([])
+    }
+  })
+
   it('keeps the hashbang off every shared chunk', () => {
     const chunks = readdirSync(outDir).filter((fileName) => {
       return fileName.startsWith('chunk-') && fileName.endsWith('.js')
