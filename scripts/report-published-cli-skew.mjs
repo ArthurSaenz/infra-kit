@@ -16,8 +16,7 @@
 //
 // Usage:  node scripts/report-published-cli-skew.mjs
 // Exit:   always 0. A registry or spawn failure is REPORTED, not raised.
-import { spawn } from 'node:child_process'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'

@@ -88,7 +88,6 @@ export interface GateInputs {
   responses: Record<string, unknown> | undefined
   /** The client declared form-mode elicitation. */
   canForm: boolean
-  /** This tool carries an {@link ArgumentFormProvider}. */
   hasProvider: boolean
   /** The provider wants a form for THESE arguments. */
   formable: boolean
@@ -96,7 +95,6 @@ export interface GateInputs {
   accepted: boolean
 }
 
-/** True when the incoming MCP params carry an explicit `confirm:true` (the call-2 execute signal). */
 const isConfirmed = (params: unknown): boolean => {
   return typeof params === 'object' && params !== null && (params as { confirm?: unknown }).confirm === true
 }
@@ -107,8 +105,7 @@ const isConfirmed = (params: unknown): boolean => {
  *
  * It is a candidate, not a verdict: `form` is the one outcome that can decline itself, because
  * whether a form can actually be built is knowable only after the provider has run under a
- * deadline. The caller falls through — to `gate` on a gated tool, to `run` on an ungated one —
- * when it does. Every other outcome is terminal in the caller's own body.
+ * deadline. Every other outcome is terminal in the caller's own body.
  *
  * "Gate" describes rows G1–G4 only: they are today's gate, unchanged, and they consume every
  * `gated` input before the ungated rows are reached. Rows U1–U4 are a CALL state, not a gate
@@ -187,7 +184,6 @@ interface GateNotices {
    * selection is a worse substitution than the single-field one the merge exists to prevent.
    */
   formDiscarded: boolean
-  /** This tool carries a form provider at all. */
   hasProvider: boolean
 }
 
@@ -587,10 +583,7 @@ export const createToolHandler = ({
       // are INDEPENDENT of the `confirmedCommand:true` injected below — that flag is a prompt-skip /
       // behavior discriminator (e.g. worktrees-remove keys `allowEditorRelaunch` off it) and MUST keep
       // being injected on the real call, or the non-TTY server would hang on an inquirer prompt and
-      // the Zed relaunch would re-enable. On a gated tool the form is collected on the way INTO the
-      // gate, never instead of it: round 2 runs only when `confirm:true` comes with that gate's token
-      // AND the same arguments. On an ungated tool the accepted form's merged arguments run directly —
-      // the answer is an argument, and the authority to run was never the chokepoint's to withhold.
+      // the Zed relaunch would re-enable.
       const resolution = await resolveStop(deps, params, ctx)
 
       if (resolution.kind === 'stop') return resolution.result

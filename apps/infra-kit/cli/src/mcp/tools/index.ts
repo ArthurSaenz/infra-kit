@@ -64,12 +64,8 @@ export const initializeTools = async (server: McpServer) => {
           handler: tool.handler,
           requiresHumanConfirm: tool.requiresHumanConfirm,
           formProvider: tool.formProvider,
-          // Capabilities are only knowable after initialize, and this handler is built at
-          // registration — so the probe is injected as a CLOSURE over the live server rather than as
-          // a snapshot taken here, which would be `undefined` for the life of the process.
           // `server.server` is the underlying protocol instance the McpServer facade wraps; the
           // integration test in `mcp/__tests__/server.test.ts` reaches through it the same way.
-          //
           //
           // Envelope FIRST, accessor second. On a 2026-era connection the capabilities ride in each
           // request's envelope, and over stdio nothing ever seeds the server-level accessor from it

@@ -16,10 +16,8 @@ import type { ArgumentFormProvider } from 'src/types'
  * The argument form `env-load` offers when `config` is omitted: pick the environment to load into
  * the calling terminal session, from the same list `env-list` reports.
  *
- * Same seam as `lib/deploy-form`, same silent failure modes: `buildArgumentForm` flattens anything
- * this provider throws — and a `z.enum([])` — into the `null` a non-elicitation client produces, so
- * a wrong provider is indistinguishable from an empty one. The tests assert `!== null` on the wire
- * shape for that reason.
+ * Same seam as `lib/deploy-form`, same silent failure modes — the tests assert `!== null` on the
+ * wire shape for that reason.
  */
 
 /** A plain object — not an array, not `null`, not a primitive. */
