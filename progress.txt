@@ -948,3 +948,6 @@ Not pushed. Root qa: 42/43 tasks — the single red is the pre-existing lockstep
 ## Caveat carried forward (PM-9)
 A Homebrew/unknown-location machine cannot self-update the CLI; the gate keeps its plugin from outrunning the CLI, except
 inside the merge→publish window. The doctor skill rule "no `launch` field in `version` ⇒ CLI < 0.8.0" is the detector.
+- Close-out: reviewer (architect, thorough) APPROVED all 7 stories; 3 prose fixes + deslop (dead buildServerEntry removed) in bb1f2cc;
+  post-deslop regression 1136/1136 (CLI suites) + 320/320 (plugin). Branch graph: main ← do/mcp-via-plugin-step0 (…5059e57) ←
+  do/mcp-via-plugin-migration (dc7d12b, 8fb7396, f353a16, bb1f2cc). Nothing pushed.
