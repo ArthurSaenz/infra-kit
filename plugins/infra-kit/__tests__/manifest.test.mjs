@@ -668,9 +668,10 @@ const GATED_TOOLS = [
 
 // Key sets are exact, and the `disable-model-invocation` split is the design: `session`,
 // `release-create` and `release-remove` are human-only (one loads secrets into the human's terminal,
-// the other two are gated), so only `/name` may invoke them. `setup` stays model-invocable ON PURPOSE — its reader is the agent
-// about to call the tool, so auto-loading is what replaces the deleted resource; its human gate is the
-// tool's own confirm protocol, which no `allowed-tools` grant can skip.
+// the other two are gated), so only `/name` may invoke them. `setup` stays model-invocable ON
+// PURPOSE — its reader is the agent about to call the tool, so auto-loading is what replaces the
+// deleted resource; its human gate is the tool's own confirm protocol, which no `allowed-tools`
+// grant can skip.
 const PROCEDURE_SKILLS = {
   'release-create': {
     keys: ['argument-hint', 'description', 'disable-model-invocation', 'name'],
