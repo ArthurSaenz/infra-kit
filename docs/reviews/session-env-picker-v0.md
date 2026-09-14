@@ -43,3 +43,24 @@ could not be read from the log.
 declined by hand — the `decline` above is theirs, not the host's. So Claude Code 2.1.270 renders the SDK
 legacy shim's `elicitation/create` for an `input_required` returned over a 2025-11-25 connection, and the
 answer reaches the chokepoint. C1 may start. (V0.3 repeats this for the UNGATED path after C2.)
+
+## V0.3 — the UNGATED form rendered live (after C2, before C4a)
+
+Setup: the C1+C2 build packed from the working tree (`pnpm pack`) and installed as the global
+`infra-kit` (`pnpm add -g <tarball>`, still versioned 0.7.7), the plugin's MCP server reconnected in
+the running Claude Code 2.1.270 session (`/mcp` → Reconnect; new pid confirmed by `ps`), the same
+temporary three-environment `deploy-all.yml` fixture as V0.1 (deleted afterwards; every env token-less
+at this root). The model called `mcp__plugin_infra-kit_infra-kit__env-load` with no arguments.
+
+Observed (screenshot): ONE dialog — "MCP server "plugin:infra-kit:infra-kit" requests your input" —
+message `Choose the environment to load into terminal session 1e2285d3. Picking one LOADS it; there is
+no further prompt.`; one required field `config` rendered as a select ("→ to expand"), its description
+`The environment to load. NO stored token for: dev, stage, arthur — choosing one of those fails until
+you run \`infra-kit env-token-set <env>\`. The list is what env-list knows: workflow-declared
+environments first, then token-only ones.`; Accept / Decline. The human declined; the wire answered
+`{"status":"form_declined","tool":"env-load","action":"decline"}` and no second dialog appeared.
+
+**Verdict: GO.** The ungated row U1 reaches the host's dialog through the same legacy shim as the gated
+form, the session id and the "the pick is the load" sentence are in the message, and the token-less
+annotation is in the field prose. Not exercised live: an Accept (every env here is token-less, so it
+would only produce the `env-token-set` error the E-L1 lane already pins).
