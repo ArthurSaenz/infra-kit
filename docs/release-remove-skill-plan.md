@@ -1,5 +1,7 @@
 # Plan — `/infra-kit:release-remove` procedure skill
 
+D7's _Jira step omitted over MCP_ is reversed by `docs/release-remove-form-and-jira-plan.md` (2026-09-15); the exposure decision stands.
+
 **Status: approved — implemented ca41400 (C1, plugin 0.7.10), e0d7d49 (C2, CLI strings)** (revision 2 — Architect: sound; Critic: approve; all 12 iteration-1 edits applied, evidence cited inline as `file:line`)
 
 Ticket area: `[DO]`. Analogy: the `release-create` procedure skill landed in e218c9f

@@ -74,11 +74,12 @@ const warnIfTruncated = (prs: ReleasePR[], source: string): void => {
  * Returns deduplicated ReleasePR objects.
  */
 const fetchAllReleasePRs = async (): Promise<ReleasePR[]> => {
-  const releasePRs =
-    await $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --search "Release in:title" --base dev --json number,title,headRefName,state,baseRefName,createdAt`
-
-  const hotfixPRs =
-    await $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --search "Hotfix in:title" --base main --json number,title,headRefName,state,baseRefName,createdAt`
+  // Issued together, not awaited in turn: one search runs 0.8–1.5 s on a consumer repo, and the
+  // MCP argument form that enumerates through here has 2.5 s for the pair (`lib/release-remove-form`).
+  const [releasePRs, hotfixPRs] = await Promise.all([
+    $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --search "Release in:title" --base dev --json number,title,headRefName,state,baseRefName,createdAt`,
+    $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --search "Hotfix in:title" --base main --json number,title,headRefName,state,baseRefName,createdAt`,
+  ])
 
   const releaseList: ReleasePR[] = JSON.parse(releasePRs.stdout)
   const hotfixList: ReleasePR[] = JSON.parse(hotfixPRs.stdout)
@@ -101,6 +102,13 @@ const fetchAllReleasePRs = async (): Promise<ReleasePR[]> => {
 }
 
 /**
+ * The `operation` of the refusal discovery throws when gh answered and there is simply nothing
+ * open. Exported because "none" and "gh failed" leave through the same `throw`, and a caller that
+ * must tell them apart (the release-remove argument form) has only this field to read.
+ */
+export const NO_OPEN_RELEASE_PRS_OPERATION = 'find open release PRs'
+
+/**
  * Fetch, guard against empty, and sort all open release PRs in the locked
  * deterministic order. Shared core of the two public variants below; wraps the
  * gh calls so a fetch failure surfaces as an OperationError.
@@ -111,7 +119,7 @@ const loadSortedReleasePRs = async (): Promise<ReleasePR[]> => {
 
     if (prs.length === 0) {
       throw new OperationError(undefined, {
-        operation: 'find open release PRs',
+        operation: NO_OPEN_RELEASE_PRS_OPERATION,
         remediation: 'open a release PR first, or check you are in the right repo',
       })
     }

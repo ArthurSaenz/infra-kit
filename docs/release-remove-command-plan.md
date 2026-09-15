@@ -7,13 +7,15 @@ Revision 3 folds in the apply-before-implementing items; it contains no new desi
 Citations are against `main` @ `969bbe0` unless a line is explicitly marked **(tree)**. Every
 reference was re-read for this revision. **Read §3.4 before making the first edit** — five of the
 files this change touches are modified-and-uncommitted by a concurrent landing, and this plan
-deliberately expresses every count as a *delta* rather than an absolute for that reason. Claims I
+deliberately expresses every count as a _delta_ rather than an absolute for that reason. Claims I
 could not verify are marked **UNVERIFIED** and carry the measurement that would settle them plus a
 stated fallback. The CLI package root is abbreviated `«cli»` = `apps/infra-kit/cli/`.
 
 ---
 
 ## 0. Review disposition
+
+D7's _Jira step omitted over MCP_ is reversed by `docs/release-remove-form-and-jira-plan.md` (2026-09-15); the exposure decision stands.
 
 ### Round 3 (revision 3) — consensus
 
@@ -25,12 +27,12 @@ Cursor wording, D7's gated-tool count, and the four test/description additions.
 
 **Two reviewer corrections carried on the record, and one finding that supersedes both:**
 
-| Claim | Verified |
-|---|---|
-| Architect: the in-flight tool is `setup-deps-status` | It is **`setup-dependency-status`**. The short form matches nothing; the Critic caught this. |
-| Architect: `deleteRemoteBranch`'s `ls-remote` probe is at `:291` | `:291` is the `export const`; the probe is **`:292`**. |
-| Critic: `AUTHORED_TOOL_NAMES` is at `mcp-stdio.e2e.test.ts:1082`, self-check `:1094` | **(tree)** `:1116` and `:1128`. Also: `withoutAuthoredDeltas` *does* exist at HEAD (`:1075`) — what is new is the tool-name `Set`, not the helper. |
-| Both: the working tree adds a 24th exposed tool, so the bump is 24 → 25 | **The tree moved again between the reviews and this revision.** Measured now: HEAD has 23 exposed / 8 gated; **(tree)** has **26 exposed / 10 gated**, and the `it(...)` title at **(tree)** `:82` still reads *"expected 23 MCP tools"* while its own assertion at `:90` says `toHaveLength(26)` — now stale by three. |
+| Claim                                                                                | Verified                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Architect: the in-flight tool is `setup-deps-status`                                 | It is **`setup-dependency-status`**. The short form matches nothing; the Critic caught this.                                                                                                                                                                                                                            |
+| Architect: `deleteRemoteBranch`'s `ls-remote` probe is at `:291`                     | `:291` is the `export const`; the probe is **`:292`**.                                                                                                                                                                                                                                                                  |
+| Critic: `AUTHORED_TOOL_NAMES` is at `mcp-stdio.e2e.test.ts:1082`, self-check `:1094` | **(tree)** `:1116` and `:1128`. Also: `withoutAuthoredDeltas` _does_ exist at HEAD (`:1075`) — what is new is the tool-name `Set`, not the helper.                                                                                                                                                                      |
+| Both: the working tree adds a 24th exposed tool, so the bump is 24 → 25              | **The tree moved again between the reviews and this revision.** Measured now: HEAD has 23 exposed / 8 gated; **(tree)** has **26 exposed / 10 gated**, and the `it(...)` title at **(tree)** `:82` still reads _"expected 23 MCP tools"_ while its own assertion at `:90` says `toHaveLength(26)` — now stale by three. |
 
 That last row is the decisive argument for §3.4: an absolute count in this plan was wrong within one
 review cycle, twice. **Revision 3 states no absolute count as a fact about this change.**
@@ -53,15 +55,15 @@ NON-BLOCKING 11-19. The two reversals worth naming up front:
 
 **Three reviewer citations came back wrong and are corrected here rather than propagated:**
 
-| Review says | Verified | Consequence |
-|---|---|---|
-| Critic B5: add **`«cli»/CLAUDE.md`** (the generated root block) | The block carrying the release line is the **repo-root `/CLAUDE.md`** (`:17-41`, marker `:18`, release line **`:29`** — not `:27`). `«cli»/CLAUDE.md` is a *package* block from `audit --fix` and contains no release line. | §3.2 edits `/CLAUDE.md`. Editing the wrong file would leave `infra-kit-check-root` red. |
-| Critic §1(ii)/B3: `readme.md:57` documents "no `--force`" | `:57` is the `worktrees list` row; the `worktrees remove` row with *"(no `--force`; …)"* is **`:58`**. | Cited correctly in D4 step 1. |
-| Architect W2: merge-specific throw at `:172-177` | **`:182-186`** (`operation` `:183`, `remediation` `:184`). The Critic caught this; confirmed. | §3.2. |
+| Review says                                                     | Verified                                                                                                                                                                                                                    | Consequence                                                                             |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Critic B5: add **`«cli»/CLAUDE.md`** (the generated root block) | The block carrying the release line is the **repo-root `/CLAUDE.md`** (`:17-41`, marker `:18`, release line **`:29`** — not `:27`). `«cli»/CLAUDE.md` is a _package_ block from `audit --fix` and contains no release line. | §3.2 edits `/CLAUDE.md`. Editing the wrong file would leave `infra-kit-check-root` red. |
+| Critic §1(ii)/B3: `readme.md:57` documents "no `--force`"       | `:57` is the `worktrees list` row; the `worktrees remove` row with _"(no `--force`; …)"_ is **`:58`**.                                                                                                                      | Cited correctly in D4 step 1.                                                           |
+| Architect W2: merge-specific throw at `:172-177`                | **`:182-186`** (`operation` `:183`, `remediation` `:184`). The Critic caught this; confirmed.                                                                                                                               | §3.2.                                                                                   |
 
 Also confirmed independently: `assertKnownTargets` has **zero** hits in `src/` — the helper is
 `assertTargetsExist` (`«cli»/src/commands/worktrees-remove/worktrees-remove.ts:66`, docblock `:59-65`,
-called `:144`). Its docblock's own *"Promise.allSettled"* is stale — `removeWorktrees` uses
+called `:144`). Its docblock's own _"Promise.allSettled"_ is stale — `removeWorktrees` uses
 `Promise.all` over a never-rejecting `removeOne` (`«cli»/src/lib/worktrees/remove-worktrees.ts:261-266`).
 Not propagated.
 
@@ -73,12 +75,12 @@ Not propagated.
 
 1. **Irreversibility is the ordering axis.** Steps run cheapest-to-undo first, hardest-to-undo last,
    so an abort at any point leaves a residue a human can repair. §D4's table now states each residue
-   *as the code actually leaves it*, and where recovery depends on a value (a branch tip SHA), the
+   _as the code actually leaves it_, and where recovery depends on a value (a branch tip SHA), the
    plan captures and prints that value rather than assuming it.
 2. **Report only what the code can substantiate — and where it cannot, say so instead of claiming
-   it.** Two primitives fail *open*: `deleteLocalBranch` silently no-ops on the current branch
-   (`«cli»/src/lib/git-utils/git-utils.ts:277-279`), and Zed folder removal *"confirms no specific
-   removal"* by construction (`«cli»/src/integrations/ide/remove-ide-worktree-folders.ts:42-43`).
+   it.** Two primitives fail _open_: `deleteLocalBranch` silently no-ops on the current branch
+   (`«cli»/src/lib/git-utils/git-utils.ts:277-279`), and Zed folder removal _"confirms no specific
+   removal"_ by construction (`«cli»/src/integrations/ide/remove-ide-worktree-folders.ts:42-43`).
    Verifiable steps are verified and reported as done; unverifiable ones are reported as `attempted`
    or `skipped`, never as `removed`.
 3. **Refuse rather than guess when the blast radius is other people's work.** A fix version with
@@ -87,21 +89,21 @@ Not propagated.
    prompt its way past them, because the MCP boundary auto-confirms and a `--yes` operator never
    reads a warning.
 4. **Resumability over batching.** One release per invocation, and a re-run after a partial removal
-   must succeed rather than error on already-gone things — bounded by a refusal when *nothing* about
+   must succeed rather than error on already-gone things — bounded by a refusal when _nothing_ about
    the named release can be found, so a typo is not reported as a successful no-op.
 5. **Symmetry with `release create`, not with `worktrees remove`.** Create is the operation this
    inverts. Applied consistently in revision 2: D2c mirrors `ensureJiraVersion`'s refusal, D1 mirrors
    its un-prefixed flat id, and **D7 now mirrors its MCP exposure** rather than inverting it without
-   argument. `worktrees remove` is a *reversible* cleanup whose ergonomics (`--all`, multi-select,
-   continue-on-error) must not be copied — but its *exposure posture* is the right precedent, and
+   argument. `worktrees remove` is a _reversible_ cleanup whose ergonomics (`--all`, multi-select,
+   continue-on-error) must not be copied — but its _exposure posture_ is the right precedent, and
    revision 1 was wrong to reach past it to `release-deliver`.
 
 ### 1.2 Decision drivers (top 3)
 
 - **D-a — Jira fix-version deletion is unrecoverable, invisible, and its guard is time-of-check.**
   Removing a version strips `fixVersion` from every issue that carried it; Jira records no prior
-  value the CLI can read back, and after the delete the affected issues are no longer enumerable *by
-  that version*. Worse, the count that authorises the delete is read in preflight and consumed six
+  value the CLI can read back, and after the delete the affected issues are no longer enumerable _by
+  that version_. Worse, the count that authorises the delete is read in preflight and consumed six
   steps later across an unbounded confirm prompt. Drives D2, D4 and PM-2.
 - **D-b — the repo's primitives fail open in exactly the situations this command creates.**
   `deleteLocalBranch` returns `void` with two silent early returns; `removeWorktrees` reports
@@ -114,28 +116,28 @@ Not propagated.
   argument. `worktrees-add` runs `pnpm install` ungated on the low-risk allowlist; the
   enforced rule is `LOW_RISK_MUTATING_ALLOWLIST` membership **or** `requiresHumanConfirm`
   (`command-catalog.test.ts:235-248`). "Destructive" is therefore not a disqualifier — the catalog's
-  own comment at `:65-68` says `worktrees-remove` *"IS exposed"* because its invariants contain the
+  own comment at `:65-68` says `worktrees-remove` _"IS exposed"_ because its invariants contain the
   residual risk. Drives D7.
 
 ### 1.3 Viable options for the overall shape
 
 **Option A — one command, full-stack, single target, exposed-and-gated over MCP minus the Jira step (CHOSEN).**
 
-- *Pros:* one mental model ("undo the create"); the ordering principle is enforceable because one
+- _Pros:_ one mental model ("undo the create"); the ordering principle is enforceable because one
   code path owns all six steps; the residue report is exact because the steps are sequential; agents
   can undo the releases the plugin actively encourages them to create.
-- *Cons:* the command spans three systems, so its unit tests need three sets of mocks; the MCP path
+- _Cons:_ the command spans three systems, so its unit tests need three sets of mocks; the MCP path
   is deliberately partial (five steps, then a printed Jira handoff), which is a second behaviour to
   document and test.
 
 **Option B — compose existing commands (`worktrees remove` + `gh pr close` + a new `release jira-remove`).**
 
-- *Pros:* smallest new surface; each piece independently testable.
-- *Cons:* **invalidated.** The ordering principle cannot be enforced across separately-invoked
+- _Pros:_ smallest new surface; each piece independently testable.
+- _Cons:_ **invalidated.** The ordering principle cannot be enforced across separately-invoked
   commands, and the merged-PR guard would have to be duplicated into every piece or absent from all
   of them. **A runbook cannot refuse.**
 
-  *The `local-deploy` precedent does not transfer, and here is why on the record.* That decision
+  _The `local-deploy` precedent does not transfer, and here is why on the record._ That decision
   ("fix the contract in bash; the CLI is preflight/UX only") was forced by a constraint absent here:
   **CI must never depend on the CLI.** The deploy contract is split across GitHub Actions YAML and
   `.sh` scripts, and a CLI owning the flow would put an npm-published binary on the critical path of
@@ -145,8 +147,8 @@ Not propagated.
 
 **Option C — `release remove --dry-run` / plan-then-apply.**
 
-- *Pros:* the operator sees the full inventory before anything runs.
-- *Cons:* **invalidated as the primary shape, folded into A.** Preflight already computes that
+- _Pros:_ the operator sees the full inventory before anything runs.
+- _Cons:_ **invalidated as the primary shape, folded into A.** Preflight already computes that
   inventory and prints it in the confirmation message. **This rejection creates an obligation**: the
   confirm text is now load-bearing, so revision 2 adds a test (T9) and an acceptance criterion
   (AC-20) that pin its contents. Retained as a follow-up (§8.6).
@@ -155,7 +157,7 @@ Not propagated.
 
 ## 2. Decisions
 
-### D1 — Command name, path, and flat id — *unchanged from revision 1; both reviews found it sound*
+### D1 — Command name, path, and flat id — _unchanged from revision 1; both reviews found it sound_
 
 **Pick: `release remove`**, group path `['release','remove']`, flat id **`release-remove`** for both
 `cliName` and the MCP tool `name`.
@@ -165,7 +167,7 @@ Rejected: `release delete` (a second teardown verb for a connotation the confirm
 carries is closed in the description and confirm text, not in the verb.
 
 **Placement is inside the `release` group, not top-level.** The house rule recorded for `reopen`
-(`«cli»/src/lib/program/program.ts:429`) is about not *inventing* groups; `release` exists and holds
+(`«cli»/src/lib/program/program.ts:429`) is about not _inventing_ groups; `release` exists and holds
 `release create` (`:409-417`). Stated so a reviewer does not re-open it.
 
 **Not `gh-release-remove`:** the `gh-` prefix marks tools whose subject is GitHub; this spans Jira +
@@ -181,8 +183,8 @@ GitHub + local git, like the un-prefixed `release-create`.
 
 **`--version` accepts a release NAME as well as a version.** `resolveReleaseBranch` is
 `formatBranchName(parseReleaseRef(…))` (`«cli»/src/lib/release-utils/release-utils.ts:285-294`) and
-its own remediation reads *"pass a version (e.g. "1.2.5") or a release name (e.g.
-"checkout-redesign")"*. Revision 1 spoke only of versions, which would leave every named release an
+its own remediation reads _"pass a version (e.g. "1.2.5") or a release name (e.g.
+"checkout-redesign")"_. Revision 1 spoke only of versions, which would leave every named release an
 undocumented target. The Commander help string is copied verbatim from `configureReleaseDeliver`
 (`program.ts:233`): `'Version (e.g. 1.2.5) or release name (e.g. checkout-redesign) to remove'`.
 
@@ -228,19 +230,19 @@ cycle:
   defines that flag as a deliberate exception echoed by `commandEcho`; defaulting it would invert its
   meaning from "exception" to "normal" and make shell history stop distinguishing the two cases.
   `jira: 'manual'` is a reported outcome, not a flag.
-- **The worst case is not a 404.** A 404 fails loudly at measurement time. A *semantic* surprise —
+- **The worst case is not a 404.** A 404 fails loudly at measurement time. A _semantic_ surprise —
   `removeAndSwap` being permissive in an unexpected direction — is discovered by an operator whose
   tickets moved somewhere they did not choose. The measurement must therefore assert the **post-state
   of a test issue**, not merely the HTTP status.
 
 #### D2b — versions with issues attached: the guard, per count
 
-| Option | Verdict |
-| --- | --- |
-| Delete regardless | **Rejected.** Silently strips `fixVersion` from real tickets; this is PM-2. |
-| Warn + extra confirm | **Rejected.** A confirm is not a gate over MCP and is skipped by `--yes`; and a warning is only actionable if it enumerates the issues, which is most of the work of the reassignment path. |
-| Always reassign | **Rejected as default.** Forces the operator to nominate a target even for the overwhelmingly common empty version. |
-| **Refuse per count, with `--move-issues-to <version>` as the opt-in (CHOSEN)** | The dangerous case is a hard stop; the safe case is one command; the escape is deliberate and greppable. |
+| Option                                                                         | Verdict                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Delete regardless                                                              | **Rejected.** Silently strips `fixVersion` from real tickets; this is PM-2.                                                                                                                 |
+| Warn + extra confirm                                                           | **Rejected.** A confirm is not a gate over MCP and is skipped by `--yes`; and a warning is only actionable if it enumerates the issues, which is most of the work of the reassignment path. |
+| Always reassign                                                                | **Rejected as default.** Forces the operator to nominate a target even for the overwhelmingly common empty version.                                                                         |
+| **Refuse per count, with `--move-issues-to <version>` as the opt-in (CHOSEN)** | The dangerous case is a hard stop; the safe case is one command; the escape is deliberate and greppable.                                                                                    |
 
 **The predicate, stated per count** (revision 1 left this ambiguous, which created a dead end):
 
@@ -250,12 +252,12 @@ refuse if (issuesFixedCount > 0 || issuesAffectedCount > 0) and --move-issues-to
 
 **`--move-issues-to <version>` maps to BOTH `moveFixIssuesTo` AND `moveAffectedIssuesTo`.** Revision 1
 mapped it to `moveFixIssuesTo` only, which meant a version with `issuesAffectedCount > 0` lost its
-affects links *through the very flag that exists to prevent data loss*, and a version with
+affects links _through the very flag that exists to prevent data loss_, and a version with
 `issuesFixedCount: 0, issuesAffectedCount: 2` was **permanently unremovable** — refused by the guard
 and un-clearable by the flag the refusal recommended. Mapping one flag to both parameters closes both
 holes with one line.
 
-*Rejected alternative: two flags (`--move-issues-to` + `--move-affected-to`).* An operator who wants
+_Rejected alternative: two flags (`--move-issues-to` + `--move-affected-to`)._ An operator who wants
 two different destinations has a Jira UI for it; two flags would double the preflight validation and
 the failure surface to serve a case nobody has asked for.
 
@@ -275,9 +277,9 @@ before any mutation.
 
 #### D2c — released / archived versions
 
-`ensureJiraVersion` already refuses to *reuse* a `released` or `archived` version
-(`release-utils.ts:159-165`, remediation *"pick a different version, or un-release it in Jira
-first"*). **The mirror rule: refuse to remove one.** Read from the `JiraVersion` that
+`ensureJiraVersion` already refuses to _reuse_ a `released` or `archived` version
+(`release-utils.ts:159-165`, remediation _"pick a different version, or un-release it in Jira
+first"_). **The mirror rule: refuse to remove one.** Read from the `JiraVersion` that
 `findVersionByName` already returned (`«cli»/src/integrations/jira/types.ts` carries `released` and
 `archived`) — no extra call.
 
@@ -289,13 +291,13 @@ shared override would collapse two guards into one.
 #### D2d — Jira absent, unconfigured, or out of scope
 
 - **Version not found by name** → not an error. `jira: 'absent'`. This is the resume path.
-- **Jira not configured at all** → **refuse**, unless `--skip-jira`. `release create` *requires* Jira
+- **Jira not configured at all** → **refuse**, unless `--skip-jira`. `release create` _requires_ Jira
   (`loadJiraConfig` throws, `api.ts:236`), so any release this CLI created lives in a repo where Jira
   is configured; an unconfigured environment means either "not ours" or "your env is broken", and in
   the second case tearing down branch and PR while orphaning a fix version is the mess this command
   exists to prevent. This is a deliberate departure from `gh-release-deliver`'s tolerant
   `deliverJiraReleaseSafely` (`gh-release-deliver.ts:348`) — correctly: deliver tolerates because the
-  irreversible merge and deploy *already happened* by the time it reaches Jira. Here nothing has
+  irreversible merge and deploy _already happened_ by the time it reaches Jira. Here nothing has
   happened yet. **Because this asymmetry is exactly what a later "consistency" refactor deletes, it
   is pinned by a test (T2e) and an acceptance criterion (AC-12).**
 - **Running over MCP** → the Jira step is **not attempted at all**; the outcome is `jira: 'manual'`
@@ -311,14 +313,14 @@ an open release — is silently overwritten, because the guard that would have r
 
 The repo has already split a guard for exactly this class. `«cli»/src/lib/git-guard/git-guard.ts:62-66`:
 
-> Split out of `assertManagementContext` because tree cleanliness is the *volatile* half of that
+> Split out of `assertManagementContext` because tree cleanliness is the _volatile_ half of that
 > guard: it is the only leg that can stop being true between the check and the mutation it
 > authorizes, **so it has to be re-assertable on its own immediately before each destructive step.**
 
 **Design — re-probe, do not re-guard.** The two checks ask different questions and only one is a
 guard:
 
-- **Preflight keeps the guard.** Refuse on a non-zero count. Its job is to fail *before consent*,
+- **Preflight keeps the guard.** Refuse on a non-zero count. Its job is to fail _before consent_,
   which is what makes the confirm text honest.
 - **Step 6 gets a re-probe.** Immediately before `removeJiraVersion`, call
   `getVersionRelatedIssueCounts` again and compare with the preflight values. **Equal ⇒ proceed
@@ -333,8 +335,8 @@ Cost: one API call on the path about to make an irreversible one.
 **Verified constraint, with revision 1's reasoning corrected.** `getReleasePRsWithInfo`
 (`«cli»/src/integrations/gh/gh-release-prs/gh-release-prs.ts:155-165`) projects to
 `{branch, title, createdAt}` and its two `gh pr list` calls (`:78`, `:81`) carry no `--state`, so gh's
-`open` default applies — **a merged PR is invisible to it.** But revision 1 said the helper *"carries
-no `state` or `number` field"*, and that is wrong about the fetch: `ReleasePR` (`:11-18`) declares
+`open` default applies — **a merged PR is invisible to it.** But revision 1 said the helper _"carries
+no `state` or `number` field"_, and that is wrong about the fetch: `ReleasePR` (`:11-18`) declares
 both, and **both** calls request `--json number,title,headRefName,state,baseRefName,createdAt`. **The
 data is fetched over the wire on every picker run and then discarded by the projection.** The
 conclusion (a separate `--state all` probe is needed) survives; the reason changes, and the change
@@ -342,17 +344,17 @@ matters because it turns "add a call" into "stop discarding, or reuse the call t
 
 **Reuse, do not fork.** `fetchPRByHead` (`gh-release-deliver.ts:67-72`, docblock `:62-66`) already
 **is** the call D3 needs — `gh pr list --head ${head} --state all --json number,state,title --limit 1`
-— and its docblock's stated purpose is *resume* semantics, the same purpose this command needs. It is
+— and its docblock's stated purpose is _resume_ semantics, the same purpose this command needs. It is
 hoisted with `PRStatus` into `«cli»/src/integrations/gh/` (§3.2), not re-declared. Revision 1
 proposed a private `fetchPrStatus` while applying an anti-fork rule to `removeReleaseWorktreeIfPresent`
 one section later; that contradiction is removed.
 
-| PR state | Action | Why |
-| --- | --- | --- |
+| PR state   | Action                           | Why                                                                                                                       |
+| ---------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | **MERGED** | **Refuse, before any mutation.** | The release has shipped. Removing it deletes the branch recording the merge and strips a fix version from delivered work. |
-| OPEN | `gh pr close <n> --comment "…"` | PRs cannot be deleted, only closed. Closing is reversible (reopen), which is why it sits early. |
-| CLOSED | Skip, `pr: 'already-closed'` | Idempotency. |
-| none | Skip, `pr: 'absent'` | A release whose PR creation failed, or a second run. |
+| OPEN       | `gh pr close <n> --comment "…"`  | PRs cannot be deleted, only closed. Closing is reversible (reopen), which is why it sits early.                           |
+| CLOSED     | Skip, `pr: 'already-closed'`     | Idempotency.                                                                                                              |
+| none       | Skip, `pr: 'absent'`             | A release whose PR creation failed, or a second run.                                                                      |
 
 ```
 operation:      remove release 1.2.5
@@ -371,7 +373,7 @@ which fails when a worktree holds it — the root cause documented at `gh-releas
 step 3, `gh pr close` fails with an opaque `gh` error after the worktree is already gone. One extra
 `fetchPRByHead` immediately before step 3 turns that into D3's own refusal message. Ranked below D2e
 because the residue is repairable (`worktrees add` restores the worktree) — but it is also what makes
-**AC-7** honest, since *"no mutation of any kind"* is otherwise only true when the merge precedes
+**AC-7** honest, since _"no mutation of any kind"_ is otherwise only true when the merge precedes
 preflight.
 
 ### D4 — Step order, residues, and partial-failure semantics
@@ -379,17 +381,17 @@ preflight.
 **Ordering principle: irreversibility ascending.** Each step placed by "if the command dies
 immediately after this step, how hard is the residue to repair by hand?"
 
-| # | Step | Verifiable? | Residue if we stop here |
-| --- | --- | --- | --- |
-| 0 | **Preflight** (no mutation): resolve target → guards → PR state → Jira version + both issue counts → validate `--move-issues-to` → **capture the local and remote tip SHAs** → confirm | n/a | Nothing done. |
-| 1 | Remove the release worktree (+ its cmux workspace) | **Yes** — `removeWorktrees` returns `removed`/`failed` per branch | `worktrees add` recreates it. Gitignored contents are destroyed: a hydrated `.env` of Doppler secrets (`env-load` re-fetches), `node_modules`, `dist`. |
-| 2 | Strip the worktree from configured editors | **Cursor yes, Zed no** (see below) | Cosmetic. Cursor's `.code-workspace` is re-added by `worktrees add`; Zed is untouched by design. |
-| 3 | Close the PR | **Yes** — `gh` returns the new state | Reopen in the GitHub UI. |
-| 4 | Delete the local branch | **Yes** — `branchExists` re-probe (D5) | Still on `origin`, and preflight captured the tip SHA. |
-| 5 | Delete the remote branch | **Yes** — `git ls-remote` re-probe | **Neither local nor remote.** Recoverable only from the tip SHA and git's gc window. |
-| 6 | **Remove the Jira fix version** (after the D2e re-probe) | **Yes** — the call either succeeds or throws | **Not repairable.** New id, new URL, lost issue links. |
+| #   | Step                                                                                                                                                                                   | Verifiable?                                                       | Residue if we stop here                                                                                                                                |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0   | **Preflight** (no mutation): resolve target → guards → PR state → Jira version + both issue counts → validate `--move-issues-to` → **capture the local and remote tip SHAs** → confirm | n/a                                                               | Nothing done.                                                                                                                                          |
+| 1   | Remove the release worktree (+ its cmux workspace)                                                                                                                                     | **Yes** — `removeWorktrees` returns `removed`/`failed` per branch | `worktrees add` recreates it. Gitignored contents are destroyed: a hydrated `.env` of Doppler secrets (`env-load` re-fetches), `node_modules`, `dist`. |
+| 2   | Strip the worktree from configured editors                                                                                                                                             | **Cursor yes, Zed no** (see below)                                | Cosmetic. Cursor's `.code-workspace` is re-added by `worktrees add`; Zed is untouched by design.                                                       |
+| 3   | Close the PR                                                                                                                                                                           | **Yes** — `gh` returns the new state                              | Reopen in the GitHub UI.                                                                                                                               |
+| 4   | Delete the local branch                                                                                                                                                                | **Yes** — `branchExists` re-probe (D5)                            | Still on `origin`, and preflight captured the tip SHA.                                                                                                 |
+| 5   | Delete the remote branch                                                                                                                                                               | **Yes** — `git ls-remote` re-probe                                | **Neither local nor remote.** Recoverable only from the tip SHA and git's gc window.                                                                   |
+| 6   | **Remove the Jira fix version** (after the D2e re-probe)                                                                                                                               | **Yes** — the call either succeeds or throws                      | **Not repairable.** New id, new URL, lost issue links.                                                                                                 |
 
-**Revision 1's row 5 was wrong and is corrected.** It read *"Still local (step 4 printed its SHA)"* —
+**Revision 1's row 5 was wrong and is corrected.** It read _"Still local (step 4 printed its SHA)"_ —
 but step 4 runs first, so at the moment step 5 completes the branch is neither local nor remote. And
 the fallback both rows retreated to does not exist in the shipped path: `deleteLocalBranch`
 (`git-utils.ts:273-281`) runs ``await $`git branch -D ${branch}` `` and **discards the result**, so
@@ -413,7 +415,7 @@ before deleting and **throws the SHA away**, testing only `.trim().length === 0`
 fetch-then-discard pattern this plan criticises in `ReleasePRInfo`. Capture it there and report that
 value for `remoteTipSha`, falling back to preflight's when the probe returns nothing.
 
-This is a deliberate departure from the reviewers' *"make `deleteLocalBranch` return or log the sha"*: reading
+This is a deliberate departure from the reviewers' _"make `deleteLocalBranch` return or log the sha"_: reading
 in preflight touches no shared primitive and no other caller, and it is **strictly more robust**,
 because `git branch -D`'s `(was <sha>)` output is a localizable porcelain string that a parser should
 not depend on. It also covers the case where the branch is already gone when step 4 runs, where there
@@ -422,11 +424,11 @@ is no delete output to read at all.
 **Ordering constraints that are not preferences:** step 1 before step 4 (git refuses to delete a
 branch checked out in another worktree — `git-utils.ts:265-272`); step 3 before step 5 (see D3).
 
-**The alternative order was considered and rejected.** "Least-recoverable *first*, so an abort has
+**The alternative order was considered and rejected.** "Least-recoverable _first_, so an abort has
 done nothing" reads well but maximises the probability that the one unrepairable step executes, and
 leaves the one residue a human cannot fix.
 
-**What a step-6 failure leaves — the only *good* residue, stated so nobody adds a rollback for it.**
+**What a step-6 failure leaves — the only _good_ residue, stated so nobody adds a rollback for it.**
 Everything else is gone and the fix version survives: an orphaned version pointing at a deleted
 branch, whose URL in the (now closed) PR body still resolves. Ten seconds in the Jira UI, or a
 re-run, which finds every other step already done and retries only step 6.
@@ -440,17 +442,17 @@ shows the situation is split, not uniform (`«cli»/src/integrations/ide/remove-
   and returns a **real, verified** `removed` list. It catches its own errors and warns (`:109-113`).
 - **Zed (`removeFromZed`, `:129-143`)** is gated on `allowEditorRelaunch`; when false it is a
   deliberate no-op with an info message (`:132-138`). When true it calls `reuseZedWorkspace`, and
-  `removed` is **always `[]`** — the module comment at `:36-43` explains why: *"`zed --reuse`
-  REPLACES the focused window's entire folder set … and silently drops any other open folder"*, and
-  *"`removed` stays empty because `--reuse` performs no diff — it confirms no specific removal, and
-  reporting intended-but-unverified paths would be a lie."*
+  `removed` is **always `[]`** — the module comment at `:36-43` explains why: _"`zed --reuse`
+  REPLACES the focused window's entire folder set … and silently drops any other open folder"_, and
+  _"`removed` stays empty because `--reuse` performs no diff — it confirms no specific removal, and
+  reporting intended-but-unverified paths would be a lie."_
 
 **Decision: `allowEditorRelaunch: false`, always.**
 
-| Option | Verdict |
-| --- | --- |
-| `!confirmedCommand` (what `worktrees-remove` passes, `worktrees-remove.ts:178`) | **Rejected.** It fires Zed's destructive relaunch on the interactive path — closing folders the operator opened for unrelated work, with no report. Principle 3 forbids exactly that. `worktrees remove` earns the trade because it is frequently a bulk operation where re-stating the whole folder set *is* the point; `release remove` is single-target by D6, so re-stating every folder to drop one is disproportionate. |
-| **`false`, always (CHOSEN)** | Cursor still works surgically and verifiably (it never reads the flag). Zed prints its own manual-close hint (`:133-136`). No unrelated window is touched. |
+| Option                                                                          | Verdict                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `!confirmedCommand` (what `worktrees-remove` passes, `worktrees-remove.ts:178`) | **Rejected.** It fires Zed's destructive relaunch on the interactive path — closing folders the operator opened for unrelated work, with no report. Principle 3 forbids exactly that. `worktrees remove` earns the trade because it is frequently a bulk operation where re-stating the whole folder set _is_ the point; `release remove` is single-target by D6, so re-stating every folder to drop one is disproportionate. |
+| **`false`, always (CHOSEN)**                                                    | Cursor still works surgically and verifiably (it never reads the flag). Zed prints its own manual-close hint (`:133-136`). No unrelated window is touched.                                                                                                                                                                                                                                                                    |
 
 This also resolves the Critic's sharpest version of the finding: on a `--yes` run — the exact
 invocation PM-1 narrates — `worktrees-remove`'s `!confirmedCommand` makes the Zed leg a **guaranteed
@@ -463,15 +465,15 @@ it is empty**, because `removed: []` arrives from three different paths: nothing
 `workspaceConfigPath` configured (`:95-96`), and a **caught write failure** (`:109-113`). An empty
 array is therefore not evidence of anything, and the realistic Cursor failure surfaces only as a
 `logger.warn` from inside the integration — which would let a success-shaped report stand over a
-failed write. This is exactly what revised Principle 2 prescribes (*"unverifiable ones are reported as
-`attempted` or `skipped`, never as `removed`"*); revision 2 said "Cursor's verified `removed`" without
+failed write. This is exactly what revised Principle 2 prescribes (_"unverifiable ones are reported as
+`attempted` or `skipped`, never as `removed`"_); revision 2 said "Cursor's verified `removed`" without
 the qualifier. Zed is always a declared skip. **And the whole step is best-effort: `warn` on failure,
 never abort.** A cosmetic step must not strand a teardown with the worktree gone, the PR
 open, the branch live and the fix version live.
 
 #### Failure semantics: abort on first error — except step 2
 
-Revision 1 justified this with *"the six steps are causally dependent"*. Checked pairwise that is
+Revision 1 justified this with _"the six steps are causally dependent"_. Checked pairwise that is
 **overstated** — only 1→4 and 3→5 are dependent; 2→anything, 3→6, 4→5 and 5→6 are not. **The
 argument that actually carries it is reachability:** continuing past an unseen failure can **reach
 the unrecoverable step on a state the operator never inspected**, which is Principle 1 inverted. That
@@ -502,13 +504,13 @@ early (`gh-release-deliver.ts:169`); local branch absent → `deleteLocalBranch`
 against a discovered release set.** `resolveReleaseBranch` is pure string formatting with no lookup
 (`release-utils.ts:285-294`), so `--version 1.2.5` addresses a half-removed release fine. This is the
 opposite of `worktrees-remove`'s `assertTargetsExist` (`worktrees-remove.ts:66`, docblock `:59-65`,
-called `:144`), which validates *because its downstream fails open* — there, an unmatched name builds
+called `:144`), which validates _because its downstream fails open_ — there, an unmatched name builds
 a path that does not exist and the removal reports a no-op as success. Here every downstream no-op is
 a verified early return.
 
 > **Why a copy-paste of `assertTargetsExist` into this command would be catastrophic, not merely
 > unhelpful:** it validates against `currentWorktrees`, and by the time `release remove` reaches its
-> second run **the worktree is gone by design**. It would refuse *every* resume run — the command's
+> second run **the worktree is gone by design**. It would refuse _every_ resume run — the command's
 > primary use case. T3 pins this.
 
 **The bound (Architect REQUIRED 4 — accepted).** Without a terminal check, a typo'd `--version 1.2.6`
@@ -527,11 +529,11 @@ remediation:    nothing named "9.9.9" exists to remove — check the spelling ag
 ```
 
 **Why this does not contradict AC-15 (a fully-removed release re-runs clean).** GitHub PRs cannot be
-deleted, only closed — so a release *this CLI removed* keeps a `CLOSED` PR forever, and the "no PR in
+deleted, only closed — so a release _this CLI removed_ keeps a `CLOSED` PR forever, and the "no PR in
 any state" conjunct never fires for it. Without this sentence the refusal and AC-15 read as a direct
 contradiction and an implementer would resolve it by weakening one of them.
 
-*The one genuine edge:* a release whose PR creation failed, later fully removed, then re-run — no PR
+_The one genuine edge:_ a release whose PR creation failed, later fully removed, then re-run — no PR
 ever existed, so it refuses. That is indistinguishable from a typo by construction, the refusal text
 says so, and a refusal costs nothing.
 
@@ -546,7 +548,7 @@ papered over:** a **dirty release worktree**. `removeOne` runs bare `git worktre
 worktree's own dirty paths. If that probe is dropped in implementation, step 1 is the one failure the
 confirm cannot precede and D4 must say so — it must not silently remain a claim that is false.
 
-### D5 — Self-destruction guards — *unchanged in substance; both reviews found it sound*
+### D5 — Self-destruction guards — _unchanged in substance; both reviews found it sound_
 
 Two hazards: (1) operator inside the release's linked worktree — covered by `assertManagementContext`
 (`git-guard.ts:145-158`); (2) operator standing on `release/vX` in the main checkout —
@@ -554,24 +556,24 @@ Two hazards: (1) operator inside the release's linked worktree — covered by `a
 with the branch still present. This is PM-1.
 
 **Pick: switch to the base branch, then delete, then verify.** Precedent, verbatim
-(`gh-release-prs.ts:209-211`): *"`git switch` has to come first because `deleteLocalBranch` silently
+(`gh-release-prs.ts:209-211`): _"`git switch` has to come first because `deleteLocalBranch` silently
 no-ops on the current branch, so a rollback that skipped it would report success while leaving the
-branch in place"*; and `:232-235`: *"the delete is checked rather than assumed — a cleanup that
-quietly did nothing is worse than one that says so."*
+branch in place"_; and `:232-235`: _"the delete is checked rather than assumed — a cleanup that
+quietly did nothing is worse than one that says so."_
 
 - Base = `getBaseBranch(detectReleaseType(prTitle ?? ''))` — the derivation `release create` uses;
   `detectReleaseType` returns `'regular'` for anything not starting with "hotfix", so a release with
   no PR falls to `dev`. The chosen base is named in the confirm text.
 - `assertBaseBranchSwitchable({ operation, base })` runs **in preflight, before the confirm**
-  (`git-guard.ts:111`); its own docblock gives the reason — it *"moves the failure ahead of the
-  confirmation prompt instead of into the middle of a batch that has already created releases."*
+  (`git-guard.ts:111`); its own docblock gives the reason — it _"moves the failure ahead of the
+  confirmation prompt instead of into the middle of a batch that has already created releases."_
 - The switch fires at step 4 only when `getCurrentBranch() === branch`.
 - **After** `deleteLocalBranch`, a new `branchExists(branch)` primitive re-probes and the command
   throws if it returns true. This converts the fail-open into a fail-closed.
 
 **Note on `-D`.** `deleteLocalBranch` force-deletes, and its docblock's justification
-(`git-utils.ts:265-272`) is that *"a delivered release branch was squash-merged — its tip is
-unreachable from the base"*. `release remove` targets an **undelivered** release by D3, so `-D` here
+(`git-utils.ts:265-272`) is that _"a delivered release branch was squash-merged — its tip is
+unreachable from the base"_. `release remove` targets an **undelivered** release by D3, so `-D` here
 discards genuinely unmerged commits. That is intended — an abandoned release branch is exactly what
 this removes — but it is the most destructive local act in the command, and it is a second
 independent reason the tip SHA must be captured in preflight and printed.
@@ -580,7 +582,7 @@ independent reason the tip SHA must be captured in preflight and printed.
 
 **Pick: a single `--version <ref>`. No `--versions`, no `--all`.**
 
-`worktrees remove --all` is defensible *because it is reversible* — its own tool description says the
+`worktrees remove --all` is defensible _because it is reversible_ — its own tool description says the
 release branches and commits are never deleted. Nothing here is recreatable. A destructive `--all`
 would be one keystroke from deleting every fix version in the project. Multi-target would also force
 continue-on-error semantics that destroy the residue report. The N-invocations cost is the point:
@@ -589,11 +591,11 @@ friction proportional to blast radius.
 - **Interactive:** `pickReleaseBranch` over open release PRs, fed by `formatBranchPickerItems`. Note
   the recorded fact that picker descriptions key off the **Jira** name (`formatJiraName(id)`), not
   the branch — reuse the helper.
-- **Empty picker:** log *"no open release PRs — pass `--version <ref>` to remove a release that is
-  already partially torn down"*. This is the resume affordance.
+- **Empty picker:** log _"no open release PRs — pass `--version <ref>` to remove a release that is
+  already partially torn down"_. This is the resume affordance.
 - **Non-TTY / `--json` / MCP:** `pickReleaseBranch` calls `assertInteractive`
   (`«cli»/src/lib/prompts/release-picker.ts:35-44`), which throws. **But its remediation is shared
-  and names flags this command rejects** — *"CLI: `--version`/`--versions`/`--all`"*. This command
+  and names flags this command rejects** — _"CLI: `--version`/`--versions`/`--all`"_. This command
   accepts only `--version`, so the shared string advertises two options it will reject as unknown.
   Revision 1's AC-2 certified that text. Resolution: the command **catches `assertInteractive`'s
   error and re-throws with its own remediation naming only `--version`**; the shared helper is left
@@ -611,11 +613,11 @@ through `entry/cli.ts`'s generic handler (`:45-57`) to exit 1 with a readable me
 
 **State the divergence plainly rather than implying the docblock supports it.** The option exists
 (`ConfirmOrExitOptions.throwOnDecline`, `:35-49`), but `CommandDeclinedError`'s own docblock says
-callers who opt in are *"responsible for catching it and exiting 0"* (`command-declined-error.ts:6-7`),
+callers who opt in are _"responsible for catching it and exiting 0"_ (`command-declined-error.ts:6-7`),
 and its only existing consumer does exactly that — `gh-merge-dev.ts:477` swallows it and returns a
 `declined: true` report at exit 0. **`release remove` is deliberately the first caller to use
 `throwOnDecline` for exit-code semantics rather than the leak safety the docblock describes.** Two
-things make that defensible: the default is not being flipped (the docblock's *"must stay that way"*
+things make that defensible: the default is not being flipped (the docblock's _"must stay that way"_
 binds the default, not a per-caller opt-in), and this command's decline genuinely must not read as
 success — an operator scripting `release remove && …` would otherwise proceed as though a release had
 been torn down. The Esc/decline split is deliberate and matches the entry file's own distinction:
@@ -631,29 +633,29 @@ incidental** — a future edit that opens a handle before the prompt breaks it.
 Revision 1 chose CLI-only on the `release-deliver` precedent. Both reviews rejected the reasoning on
 independent grounds, and re-reading the catalog shows they are right:
 
-- **The two supporting facts do not discriminate.** (1) *The boundary auto-confirms* (`«cli»/src/types.ts:78-84`)
+- **The two supporting facts do not discriminate.** (1) _The boundary auto-confirms_ (`«cli»/src/types.ts:78-84`)
   is true of **every** exposed mutating tool, including `release-create`, `worktrees-remove` and
   `local-deploy-all`; if it disqualified a tool, the entire exposed mutating set would be
-  disqualified. (2) *The two-phase gate is degraded for v1-SDK clients* — true, and it **fails safe
+  disqualified. (2) _The two-phase gate is degraded for v1-SDK clients_ — true, and it **fails safe
   (the tool never runs)** — but the catalog already ships a whole set of gated tools under that same
   degradation, **eight** of them at the time of writing (`gh-merge-dev`, `release-create`,
   `gh-release-deploy-all`, `gh-release-deploy-selected`, `env-clear`, `worktrees-remove`,
   `local-deploy-all`, `local-deploy-selected`); revision 2 said five, and the argument is stronger at
   the true number. Declining to add one more is a statement about the gate, not about this command.
-- **The stated criterion contradicts this plan's own table.** D7 quoted *"genuinely irreversible ⇒
-  CLI-only"*. D4's table marks **one of six** steps irreversible and gives repair paths for the other
+- **The stated criterion contradicts this plan's own table.** D7 quoted _"genuinely irreversible ⇒
+  CLI-only"_. D4's table marks **one of six** steps irreversible and gives repair paths for the other
   five. A whole-command exclusion on the strength of one step is a selective warrant.
 - **The governing rule in this repo is allowlist, not verb.** Roughly half the exposed set mutates
   (12 at the time of writing); `worktrees-add` runs `pnpm install` on the low-risk allowlist. The
   enforced rule is
   `LOW_RISK_MUTATING_ALLOWLIST` membership **or** `requiresHumanConfirm`
   (`command-catalog.test.ts:235-248`). The catalog says so about the closest analogue in its own words
-  (`:65-68`): *"`worktrees-remove` IS exposed — git protects tracked work and its own invariants (no
-  MCP `all=true`, error on unmatched target) contain the residual risk."*
+  (`:65-68`): _"`worktrees-remove` IS exposed — git protects tracked work and its own invariants (no
+  MCP `all=true`, error on unmatched target) contain the residual risk."_
 - **P5 was being applied selectively.** `release-create` is `mcpExposed: true`
   (`command-catalog.ts:242-248`), and `plugins/infra-kit/commands/` contains **exactly one file** —
-  `release-create.md` — whose body tells the agent to follow the MCP workflow resource and *"do not
-  improvise with git or gh"* if the server is absent. The plugin's entire command surface exists to
+  `release-create.md` — whose body tells the agent to follow the MCP workflow resource and _"do not
+  improvise with git or gh"_ if the server is absent. The plugin's entire command surface exists to
   make agents create releases. Under revision 1's D7, every one of those releases was a one-way door
   for the agent that made it, and the remedy was a five-step manual runbook — the exact thing Option
   B was rejected for.
@@ -682,20 +684,20 @@ description states plainly that this tool removes the worktree, editor entry, PR
 and that **the Jira fix version is deliberately left in place** for a human, returned as
 `jira: 'manual'` with its id, name and URL.
 
-**Catalog wiring this restores** (revision 1 dropped all of it, which was correct *only* under
+**Catalog wiring this restores** (revision 1 dropped all of it, which was correct _only_ under
 `mcpExposed: false`):
 
 **Every row is a delta.** No absolute count below is a fact about this change — see §3.4 for why.
 
-| Artefact | Edit (expressed as a delta) | Verified predicate |
-|---|---|---|
-| `EXPECTED_EXPOSED_TOOLS` | **add one entry** (`'release-remove'`) and **increment whatever `toHaveLength(N)` currently asserts by one**. Also fix the enclosing `it(...)` title, which already names a count its own assertion contradicts (§3.4). | `command-catalog.test.ts` — the array and its length assertion |
-| `EXPECTED_GATED_TOOLS` | **add one entry** | derived from `mcpExposed && requiresHumanConfirm === true` |
-| `MCP_TOOL_PRESENTATION` | **add one row**, with a one-line justification citing the call site that proves network reach | T3 asserts exact bidirectional correspondence with `getExposedMcpTools()` |
-| `LOW_RISK_MUTATING_ALLOWLIST` | **no edit** — `requiresHumanConfirm: true` satisfies default-deny | the filter is `mutating && mcpExposed && requiresHumanConfirm !== true` |
-| `palette.test.ts` grouped rows | **append one label**, `'release remove'`, after `'release deliver'` in the Release Management array (catalog insertion order) | a hardcoded `toEqual`, **not** derived — see §3.4 C1 |
-| `mcp-stdio.e2e.test.ts` `AUTHORED_TOOL_NAMES` | **add one name** | the `.size` self-check adjusts automatically — see §3.4 C2 |
-| Golden snapshot | **gains exactly one tool object**, nothing else changed | the single `exports[...]` key in `__snapshots__/command-catalog.test.ts.snap` |
+| Artefact                                      | Edit (expressed as a delta)                                                                                                                                                                                             | Verified predicate                                                            |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `EXPECTED_EXPOSED_TOOLS`                      | **add one entry** (`'release-remove'`) and **increment whatever `toHaveLength(N)` currently asserts by one**. Also fix the enclosing `it(...)` title, which already names a count its own assertion contradicts (§3.4). | `command-catalog.test.ts` — the array and its length assertion                |
+| `EXPECTED_GATED_TOOLS`                        | **add one entry**                                                                                                                                                                                                       | derived from `mcpExposed && requiresHumanConfirm === true`                    |
+| `MCP_TOOL_PRESENTATION`                       | **add one row**, with a one-line justification citing the call site that proves network reach                                                                                                                           | T3 asserts exact bidirectional correspondence with `getExposedMcpTools()`     |
+| `LOW_RISK_MUTATING_ALLOWLIST`                 | **no edit** — `requiresHumanConfirm: true` satisfies default-deny                                                                                                                                                       | the filter is `mutating && mcpExposed && requiresHumanConfirm !== true`       |
+| `palette.test.ts` grouped rows                | **append one label**, `'release remove'`, after `'release deliver'` in the Release Management array (catalog insertion order)                                                                                           | a hardcoded `toEqual`, **not** derived — see §3.4 C1                          |
+| `mcp-stdio.e2e.test.ts` `AUTHORED_TOOL_NAMES` | **add one name**                                                                                                                                                                                                        | the `.size` self-check adjusts automatically — see §3.4 C2                    |
+| Golden snapshot                               | **gains exactly one tool object**, nothing else changed                                                                                                                                                                 | the single `exports[...]` key in `__snapshots__/command-catalog.test.ts.snap` |
 
 Presentation row (`title` + the one annotation nothing derives):
 
@@ -728,7 +730,7 @@ Read, not assumed. **In scope:**
 
 **Explicitly NOT in scope, because no release-keyed state exists there:**
 
-- **dev-context fragments** are keyed by *app folder name* (`<app>.json`,
+- **dev-context fragments** are keyed by _app folder name_ (`<app>.json`,
   `«cli»/src/lib/dev-context/dev-context.ts:49`), never by branch or release.
 - **`~/.infra-kit/projects/<repo>/`** holds the Layer-3 config override keyed by main-repo root. No
   per-release entry, no name→release map.
@@ -737,9 +739,9 @@ Read, not assumed. **In scope:**
 
 **Corrected from revision 1:** the `.omc/` sweep is **not** a cleanup this command performs. It runs
 only inside `recoverFromRejectedRemove` (`remove-worktrees.ts:194`), only when git has **already
-unregistered** the worktree, and only for an allowlisted leftover; a path git still lists is *"a real
-refusal (dirty tree) and is reported as such"* (`:186-193`). Listing it as scope implied a cleanup
-that does not exist. What *is* true: `.omc/` inside the worktree directory goes with the directory
+unregistered** the worktree, and only for an allowlisted leftover; a path git still lists is _"a real
+refusal (dirty tree) and is reported as such"_ (`:186-193`). Listing it as scope implied a cleanup
+that does not exist. What _is_ true: `.omc/` inside the worktree directory goes with the directory
 when `git worktree remove` succeeds, and the recorded hazard that closing a Claude tab re-creates
 `<worktree>/.omc` seconds later is what the ENOTEMPTY single-retry recovery exists for.
 
@@ -836,26 +838,26 @@ makes a 404 read as "auth").
 
 ### 3.2 Edited files
 
-| File | Edit |
-| --- | --- |
-| `«cli»/src/lib/git-utils/git-utils.ts` | Add `export const branchExists = (branch: string): Promise<boolean>` beside `deleteLocalBranch` (`:273`); docblock states *why* — `deleteLocalBranch` fails open on the current branch, so callers that must not fail open verify. Export from the index. |
-| `«cli»/src/integrations/jira/api.ts` | Export `assertJiraOk` (`:29`) — `const` → `export const`; no behaviour change. |
-| `«cli»/src/integrations/jira/index.ts` | Re-export `getVersionRelatedIssueCounts`, `removeJiraVersion`, `JiraVersionIssueCounts`. |
-| `«cli»/src/commands/gh-release-deliver/gh-release-deliver.ts` | **Two hoists out**, both imported back. (1) `PRStatus` + `fetchPRByHead` (`:62-72`) → `src/integrations/gh/pr-status.ts`. (2) `removeReleaseWorktreeIfPresent` (`:166`) → `src/lib/worktrees/remove-release-worktree.ts` — **not a byte-identical move**, see the next row. |
-| `«cli»/src/commands/gh-release-deliver/__tests__/remove-release-worktree.test.ts` | **Two edits, both forced by the hoist.** `:6` imports `removeReleaseWorktreeIfPresent` from `'../gh-release-deliver'` — a path the hoist relocates — and `:68` asserts `await expect(removeReleaseWorktreeIfPresent(RELEASE_BRANCH)).resolves.toBeUndefined()`, which `Promise<string[]>` breaks. Revision 2's *"Deliver's call site ignores the new return"* was true of the **production** caller (`gh-release-deliver.ts:420`) only; this is a second consumer that **asserts** the return value. §7 step 2 already runs this directory, so it cannot ship silently — but §3.2 is the implementation contract and must name it. |
-| ↳ the worktree hoist, specifically | The signature changes twice over. **(a)** Both failure strings at `:182-186` are merge-specific and must become parameters — not just `operation` (`:183`, *"remove worktree for X **before merge**"*) but also `remediation` (`:184`), which tells the operator to run `git worktree remove --force`, an escape this repo has deliberately refused (`«cli»/readme.md:58` documents `worktrees remove` as having *"no `--force`"*; `removeOne` runs it bare at `remove-worktrees.ts:240`). Handing a teardown operator a `--force` suggestion would undo that policy through a hoisted string. **(b)** It returns `Promise<void>`; `removeIdeWorktreeFolders` needs `removedWorktrees` and **returns `[]` immediately when that is empty** (`remove-ide-worktree-folders.ts:49`), so the helper must return the removed branches (`Promise<string[]>`) or step 2 is a no-op for a second, independent reason. Deliver's call site ignores the new return. |
-| `«cli»/src/lib/worktrees/index.ts` | `export { removeReleaseWorktreeIfPresent } from './remove-release-worktree'`. |
-| `«cli»/src/integrations/gh/index.ts` | `export { fetchPRByHead } from './pr-status'; export type { PRStatus } from './pr-status'`. |
-| `«cli»/src/lib/program/program.ts` | Add `configureReleaseRemove` beside `configureReleaseDeliver` (`:230-238`) with `-v, --version <version>` (help string copied verbatim from `:233`, which already documents that a release *name* is accepted), `--move-issues-to <version>`, `--skip-jira`, `-y, --yes`, and `.action(async (options) => { emit(await releaseRemove({ … })) })`. Register at `:417`: `configureReleaseRemove(releaseGroup.command('remove'))`. |
-| `«cli»/src/lib/command-catalog/command-catalog.ts` | Import `releaseRemoveMcpTool`; entry after `release-deliver` (`:282`): `{ cliName: 'release-remove', menuGroup: 'release', mcpTool: releaseRemoveMcpTool, mcpExposed: true, mutating: true, groupPath: ['release','remove'] }`. Add the `MCP_TOOL_PRESENTATION` row from D7 with its justification comment. **No** `LOW_RISK_MUTATING_ALLOWLIST` edit. |
-| `«cli»/src/lib/command-catalog/__tests__/command-catalog.test.ts` | **Deltas, not absolutes** (§3.4): add one entry to `EXPECTED_EXPOSED_TOOLS`; **increment whatever `toHaveLength(N)` currently asserts**; add one entry to `EXPECTED_GATED_TOOLS`. **And fix the enclosing `it(...)` title** — it already names a count its own assertion contradicts, so a mechanical edit ships a test named for one number and asserting another. |
-| `«cli»/src/lib/command-catalog/__tests__/palette.test.ts` | **Append `'release remove'`** after `'release deliver'` in the Release Management array of the hardcoded `toEqual` (the `it('renders seven honest groups…')` block). Catalog insertion order governs the position. This is **not** covered by the derived menu invariants — see §3.4 C1 and the §5.3 correction. Group count is unchanged, so the test title stays accurate. |
-| `«cli»/src/mcp/__tests__/mcp-stdio.e2e.test.ts` | **Add `'release-remove'` to `AUTHORED_TOOL_NAMES`** ((tree) `:1116`). The `.size` self-check ((tree) `:1128`) adjusts automatically. **Carries a sequencing dependency on another session's unlanded work — see §3.4 C2.** |
-| `«cli»/src/lib/command-catalog/__tests__/__snapshots__/command-catalog.test.ts.snap` | Regenerate — **it must gain exactly one tool and change nothing else** (AC-23). |
-| `«cli»/resources/root/body.md:10` | Extend the release line to include `release remove`. |
-| **`/CLAUDE.md` (repo root)** | The generated block at `:17-41` — release line **`:29`** — is regenerated by `infra-kit audit --fix --root`. **This is an edited file and it is checked by root qa** (§3.3 contract 5). |
-| `«cli»/src/lib/agent-guidance/__tests__/__snapshots__/bodies-snapshot.test.ts.snap:351` | Update the snapshot line. **`bodies.test.ts` needs no edit** — its only release assertion is `toContain('`ik release merge-dev`')` (`:149`), a substring of `body.md` line 11, a different line from the one edited. Verified; do not "helpfully" add an assertion. Recorded hazard: prettier owns the bytes of `.md` resources. |
-| `«cli»/readme.md` | Add a `release remove` row to the Release table (after `:51`). |
+| File                                                                                    | Edit                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `«cli»/src/lib/git-utils/git-utils.ts`                                                  | Add `export const branchExists = (branch: string): Promise<boolean>` beside `deleteLocalBranch` (`:273`); docblock states _why_ — `deleteLocalBranch` fails open on the current branch, so callers that must not fail open verify. Export from the index.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `«cli»/src/integrations/jira/api.ts`                                                    | Export `assertJiraOk` (`:29`) — `const` → `export const`; no behaviour change.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `«cli»/src/integrations/jira/index.ts`                                                  | Re-export `getVersionRelatedIssueCounts`, `removeJiraVersion`, `JiraVersionIssueCounts`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `«cli»/src/commands/gh-release-deliver/gh-release-deliver.ts`                           | **Two hoists out**, both imported back. (1) `PRStatus` + `fetchPRByHead` (`:62-72`) → `src/integrations/gh/pr-status.ts`. (2) `removeReleaseWorktreeIfPresent` (`:166`) → `src/lib/worktrees/remove-release-worktree.ts` — **not a byte-identical move**, see the next row.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `«cli»/src/commands/gh-release-deliver/__tests__/remove-release-worktree.test.ts`       | **Two edits, both forced by the hoist.** `:6` imports `removeReleaseWorktreeIfPresent` from `'../gh-release-deliver'` — a path the hoist relocates — and `:68` asserts `await expect(removeReleaseWorktreeIfPresent(RELEASE_BRANCH)).resolves.toBeUndefined()`, which `Promise<string[]>` breaks. Revision 2's _"Deliver's call site ignores the new return"_ was true of the **production** caller (`gh-release-deliver.ts:420`) only; this is a second consumer that **asserts** the return value. §7 step 2 already runs this directory, so it cannot ship silently — but §3.2 is the implementation contract and must name it.                                                                                                                                                                                                                                                                                                                        |
+| ↳ the worktree hoist, specifically                                                      | The signature changes twice over. **(a)** Both failure strings at `:182-186` are merge-specific and must become parameters — not just `operation` (`:183`, _"remove worktree for X **before merge**"_) but also `remediation` (`:184`), which tells the operator to run `git worktree remove --force`, an escape this repo has deliberately refused (`«cli»/readme.md:58` documents `worktrees remove` as having _"no `--force`"_; `removeOne` runs it bare at `remove-worktrees.ts:240`). Handing a teardown operator a `--force` suggestion would undo that policy through a hoisted string. **(b)** It returns `Promise<void>`; `removeIdeWorktreeFolders` needs `removedWorktrees` and **returns `[]` immediately when that is empty** (`remove-ide-worktree-folders.ts:49`), so the helper must return the removed branches (`Promise<string[]>`) or step 2 is a no-op for a second, independent reason. Deliver's call site ignores the new return. |
+| `«cli»/src/lib/worktrees/index.ts`                                                      | `export { removeReleaseWorktreeIfPresent } from './remove-release-worktree'`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `«cli»/src/integrations/gh/index.ts`                                                    | `export { fetchPRByHead } from './pr-status'; export type { PRStatus } from './pr-status'`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `«cli»/src/lib/program/program.ts`                                                      | Add `configureReleaseRemove` beside `configureReleaseDeliver` (`:230-238`) with `-v, --version <version>` (help string copied verbatim from `:233`, which already documents that a release _name_ is accepted), `--move-issues-to <version>`, `--skip-jira`, `-y, --yes`, and `.action(async (options) => { emit(await releaseRemove({ … })) })`. Register at `:417`: `configureReleaseRemove(releaseGroup.command('remove'))`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `«cli»/src/lib/command-catalog/command-catalog.ts`                                      | Import `releaseRemoveMcpTool`; entry after `release-deliver` (`:282`): `{ cliName: 'release-remove', menuGroup: 'release', mcpTool: releaseRemoveMcpTool, mcpExposed: true, mutating: true, groupPath: ['release','remove'] }`. Add the `MCP_TOOL_PRESENTATION` row from D7 with its justification comment. **No** `LOW_RISK_MUTATING_ALLOWLIST` edit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `«cli»/src/lib/command-catalog/__tests__/command-catalog.test.ts`                       | **Deltas, not absolutes** (§3.4): add one entry to `EXPECTED_EXPOSED_TOOLS`; **increment whatever `toHaveLength(N)` currently asserts**; add one entry to `EXPECTED_GATED_TOOLS`. **And fix the enclosing `it(...)` title** — it already names a count its own assertion contradicts, so a mechanical edit ships a test named for one number and asserting another.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `«cli»/src/lib/command-catalog/__tests__/palette.test.ts`                               | **Append `'release remove'`** after `'release deliver'` in the Release Management array of the hardcoded `toEqual` (the `it('renders seven honest groups…')` block). Catalog insertion order governs the position. This is **not** covered by the derived menu invariants — see §3.4 C1 and the §5.3 correction. Group count is unchanged, so the test title stays accurate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `«cli»/src/mcp/__tests__/mcp-stdio.e2e.test.ts`                                         | **Add `'release-remove'` to `AUTHORED_TOOL_NAMES`** ((tree) `:1116`). The `.size` self-check ((tree) `:1128`) adjusts automatically. **Carries a sequencing dependency on another session's unlanded work — see §3.4 C2.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `«cli»/src/lib/command-catalog/__tests__/__snapshots__/command-catalog.test.ts.snap`    | Regenerate — **it must gain exactly one tool and change nothing else** (AC-23).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `«cli»/resources/root/body.md:10`                                                       | Extend the release line to include `release remove`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **`/CLAUDE.md` (repo root)**                                                            | The generated block at `:17-41` — release line **`:29`** — is regenerated by `infra-kit audit --fix --root`. **This is an edited file and it is checked by root qa** (§3.3 contract 5).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `«cli»/src/lib/agent-guidance/__tests__/__snapshots__/bodies-snapshot.test.ts.snap:351` | Update the snapshot line. **`bodies.test.ts` needs no edit** — its only release assertion is `toContain('`ik release merge-dev`')` (`:149`), a substring of `body.md` line 11, a different line from the one edited. Verified; do not "helpfully" add an assertion. Recorded hazard: prettier owns the bytes of `.md` resources.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `«cli»/readme.md`                                                                       | Add a `release remove` row to the Release table (after `:51`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 ### 3.3 Wiring contracts — five, not four
 
@@ -895,30 +897,30 @@ makes a 404 read as "auth").
 A concurrent `setup-dependency-status` landing is in flight in the same working tree. Six files are
 touched by **both** landings, five of them currently modified-and-uncommitted:
 
-| File | State | What both landings do to it |
-|---|---|---|
-| `«cli»/src/lib/command-catalog/command-catalog.ts` | `M` uncommitted | each adds one catalog entry |
-| `«cli»/src/lib/command-catalog/__tests__/command-catalog.test.ts` | `M` uncommitted | each adds entries to `EXPECTED_EXPOSED_TOOLS` (+ `EXPECTED_GATED_TOOLS` for ours) and increments the length assertion |
-| `«cli»/src/lib/command-catalog/__tests__/__snapshots__/command-catalog.test.ts.snap` | `M` uncommitted | each adds one tool object |
-| `«cli»/src/lib/command-catalog/__tests__/palette.test.ts` | `M` uncommitted | each appends one label to a hardcoded `toEqual` |
-| `«cli»/src/lib/program/program.ts` | `M` uncommitted | each registers a command |
-| `«cli»/src/mcp/__tests__/mcp-stdio.e2e.test.ts` | `M` uncommitted | each adds a name to `AUTHORED_TOOL_NAMES` |
+| File                                                                                 | State           | What both landings do to it                                                                                           |
+| ------------------------------------------------------------------------------------ | --------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `«cli»/src/lib/command-catalog/command-catalog.ts`                                   | `M` uncommitted | each adds one catalog entry                                                                                           |
+| `«cli»/src/lib/command-catalog/__tests__/command-catalog.test.ts`                    | `M` uncommitted | each adds entries to `EXPECTED_EXPOSED_TOOLS` (+ `EXPECTED_GATED_TOOLS` for ours) and increments the length assertion |
+| `«cli»/src/lib/command-catalog/__tests__/__snapshots__/command-catalog.test.ts.snap` | `M` uncommitted | each adds one tool object                                                                                             |
+| `«cli»/src/lib/command-catalog/__tests__/palette.test.ts`                            | `M` uncommitted | each appends one label to a hardcoded `toEqual`                                                                       |
+| `«cli»/src/lib/program/program.ts`                                                   | `M` uncommitted | each registers a command                                                                                              |
+| `«cli»/src/mcp/__tests__/mcp-stdio.e2e.test.ts`                                      | `M` uncommitted | each adds a name to `AUTHORED_TOOL_NAMES`                                                                             |
 
 **Why every count in this plan is a delta.** Measured directly, twice, a review cycle apart:
 
-| | `EXPECTED_EXPOSED_TOOLS` | `EXPECTED_GATED_TOOLS` |
-|---|---|---|
-| HEAD `969bbe0` | 23 | 8 |
-| Tree, when the reviews were written | 24 | — |
-| Tree, when revision 3 was written | **26** | **10** |
+|                                     | `EXPECTED_EXPOSED_TOOLS` | `EXPECTED_GATED_TOOLS` |
+| ----------------------------------- | ------------------------ | ---------------------- |
+| HEAD `969bbe0`                      | 23                       | 8                      |
+| Tree, when the reviews were written | 24                       | —                      |
+| Tree, when revision 3 was written   | **26**                   | **10**                 |
 
 An absolute count in this document was wrong within one review cycle, twice. So: **increment whatever
 `toHaveLength(N)` currently asserts; add one entry to each list. The absolute number is not a fact
-about this change.** AC-23 was already phrased this way (*"gains exactly one tool object"*) and is the
+about this change.** AC-23 was already phrased this way (_"gains exactly one tool object"_) and is the
 only count-adjacent criterion that survived both drifts — its phrasing is the model.
 
-**A trap already present in the tree.** The `it(...)` title reads *"exposes exactly the expected 23
-MCP tools"* while its own assertion three lines later says `toHaveLength(26)`. It is stale **before
+**A trap already present in the tree.** The `it(...)` title reads _"exposes exactly the expected 23
+MCP tools"_ while its own assertion three lines later says `toHaveLength(26)`. It is stale **before
 either command lands**. An implementer editing mechanically will ship a test named for one count and
 asserting another; fix the title in the same edit.
 
@@ -927,7 +929,7 @@ asserting another; fix the title in the same edit.
 hardcoded `toEqual` over every palette row, grouped and ordered; the Release Management array ends at
 `'release deliver'`. A catalog entry with `menuGroup: 'release'` appends a row there and the assertion
 goes red. The derived-from-`MENU_GROUPS` reasoning that makes `command-catalog.test.ts` need no edit
-is true of *that* file and false of this one. Proof this is real rather than hypothetical: the
+is true of _that_ file and false of this one. Proof this is real rather than hypothetical: the
 concurrent session had to make exactly this one-line edit for its own command
 (`+ 'setup-dependency-status'` in the Setup & Diagnostics array).
 
@@ -938,7 +940,7 @@ stripping tools registered after that baseline so the fixture keeps its evidenti
 the served set against a fixture that predates it.
 
 **The `Set`, its filter and its `.size` self-check exist only in the concurrent session's uncommitted
-work.** Verified: `withoutAuthoredDeltas` *does* exist at HEAD (`:1075`), but `AUTHORED_TOOL_NAMES`
+work.** Verified: `withoutAuthoredDeltas` _does_ exist at HEAD (`:1075`), but `AUTHORED_TOOL_NAMES`
 does not appear anywhere in the HEAD blob. **So D7's exposure depends on another session's unlanded
 change.** Two acceptable resolutions, and the implementer must pick one deliberately:
 
@@ -983,7 +985,7 @@ reads the branch again.
 **Mitigation in the plan.** D5: switch to base before the delete, plus the `branchExists` assertion
 that throws when the delete did not take. T4 runs the whole command with `getCurrentBranch()`
 returning the target and asserts both the switch and the fail-closed. Additionally D4 captures the
-tip SHA in preflight, so even the residue of a *partial* run hands back the string that restores the
+tip SHA in preflight, so even the residue of a _partial_ run hands back the string that restores the
 branch.
 
 ### PM-2 — "What shipped in 2.4.0?"
@@ -1027,34 +1029,34 @@ mocked and which stay real.
 
 ### 5.1 Unit — command
 
-| File | Invariant pinned |
-| --- | --- |
-| **T1** `release-remove-merged-pr-refusal.test.ts` | A `MERGED` PR refuses **before any mutation**: `removeWorktrees`, `deleteLocalBranch`, `deleteRemoteBranch` and `removeJiraVersion` each called **zero** times. Prevents "the guard existed but ran after step 1". Case (b): `--yes` does not bypass it. Case (c): a PR that becomes `MERGED` between preflight and step 3 is refused by the **re-probe** with D3's message, not by an opaque `gh pr close` failure. |
-| **T2** `release-remove-jira-guard.test.ts` | (a) `issuesFixedCount > 0` refuses, `removeJiraVersion` never called; (b) `released: true` refuses **with the PR mocked absent**, proving D2c and D3 are two guards and not one; (c) `issuesFixedCount: 0, issuesAffectedCount: 2` — **the revision-1 dead end** — refuses without the flag and **succeeds with it**; (d) `--move-issues-to` passes **both** `moveFixIssuesTo` **and** `moveAffectedIssuesTo`; (e) an unknown `--move-issues-to` target fails in preflight (`removeWorktrees` never called); (f) **Jira unconfigured refuses unless `--skip-jira`** — pinning D2d's deliberate asymmetry with `deliverJiraReleaseSafely` (`gh-release-deliver.ts:348`), which is exactly what a later "consistency" refactor would delete. |
-| **T3** `release-remove-resume.test.ts` | (a) **The already-partially-removed re-run**: worktree absent, PR `CLOSED`, branches absent, Jira version `null` → **succeeds**, every step reported skipped with its reason. (b) `--version` on a release with no *open* PR is accepted — no target validation is applied. The docblock states the sharpened hazard: a copy-paste of `assertTargetsExist` (`worktrees-remove.ts:66`) validates against `currentWorktrees`, which by the second run is **gone by design**, so it would refuse **every** resume — the command's primary use case. (c) **The typo case**: `--version 9.9.9` against an untouched repo → **throws**, does not exit 0 with an "everything skipped" success. |
-| **T4** `release-remove-current-branch.test.ts` | **The PM-1 fail-open.** With `getCurrentBranch()` returning the target: (a) `git switch <base>` is issued before the delete; (b) when `branchExists` still reports the branch after `deleteLocalBranch`, the command **throws** instead of reporting success. Docblock names the false-success verbatim. |
-| **T5** `release-remove-order.test.ts` | (a) The six steps run in D4's order. **Mechanism, stated because "assert call ordering" across five modules is not implementable as written:** a single `order: string[]` array that every mocked collaborator pushes its step name into, asserted with `toEqual`. (`mock.invocationCallOrder` is the fallback, but it compares opaque global counters and reads worse in a failure message.) (b) A failure at step 5 does **not** call `removeJiraVersion` and throws an `OperationError` enumerating the four completed steps, naming the surviving Jira version, **and carrying the local tip SHA**. (c) **A throwing `removeIdeWorktreeFolders` does not stop steps 3-6** and is reported as `attempted` — pinning D4's single exemption from abort-on-first-error. |
-| **T6** `release-remove-guard.test.ts` | Guard ordering: `assertManagementContext` throws before `getInfraKitConfig` is read; the missing-config message survives un-rewrapped; `assertBaseBranchSwitchable` runs before `confirmOrExit`. Mirrors `worktrees-remove-guard.test.ts`. **Plus the decline case, pinning AC-6** — the only behavioural criterion that had no test in revision 2: a declined confirm **throws `CommandDeclinedError`** rather than resolving, and no mutation collaborator is called. The docblock names the false-success: `confirmOrExit`'s default `process.exit(0)` would make a decline indistinguishable from AC-15's "already fully removed, every step skipped". |
-| **T7** `release-remove-echo-parity.test.ts` | `commandEcho` reproduces the exact invocation (`--version`, `--move-issues-to`, `--skip-jira`, `--yes`), and the MCP tool's `outputSchema` validates the returned `structuredContent` (the zod round-trip the `worktrees-remove` echo-parity test performs). |
-| **T8** `release-remove-mcp-guards.test.ts` | **New for D7.** In MCP mode: (a) a call without `version` throws with a remediation naming `version`; (b) `moveIssuesTo` is refused; (c) **the Jira step is never attempted** — `removeJiraVersion` called zero times — and the result carries `jira: 'manual'` with the version id, name and URL; (d) on the CLI path with the same inputs, the Jira step **does** run **and `moveIssuesTo`/`skipJira` are accepted** — proving the narrowing is MCP-scoped and not a general disablement. Both halves of (d) are needed: without the "Jira runs" half a command that simply broke Jira would pass; without the "flags accepted" half a guard that refused them unconditionally would pass (a\)-(c\) and be caught only by T2(d). |
-| **T9** `release-remove-confirm-text.test.ts` | **New.** The confirm message names the PR number, **both** issue counts separately (never a sum), the fix version name, the worktree path, the base branch, and the local tip SHA. Load-bearing because §1.3 rejects Option C on the grounds that this text carries the inventory; without this test that rejection rests on an unasserted string. |
-| **T10** `release-remove-toctou.test.ts` | **New.** (a) Issue counts unchanged between preflight and step 6 → the delete proceeds and nothing extra is logged. (b) Counts changed → the command **aborts before `removeJiraVersion`**, reporting steps 1-5 done and the version intact. Docblock names the false-success: a guard that passed six steps ago authorising an unrecoverable call. |
+| File                                              | Invariant pinned                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **T1** `release-remove-merged-pr-refusal.test.ts` | A `MERGED` PR refuses **before any mutation**: `removeWorktrees`, `deleteLocalBranch`, `deleteRemoteBranch` and `removeJiraVersion` each called **zero** times. Prevents "the guard existed but ran after step 1". Case (b): `--yes` does not bypass it. Case (c): a PR that becomes `MERGED` between preflight and step 3 is refused by the **re-probe** with D3's message, not by an opaque `gh pr close` failure.                                                                                                                                                                                                                                                                                                                                                    |
+| **T2** `release-remove-jira-guard.test.ts`        | (a) `issuesFixedCount > 0` refuses, `removeJiraVersion` never called; (b) `released: true` refuses **with the PR mocked absent**, proving D2c and D3 are two guards and not one; (c) `issuesFixedCount: 0, issuesAffectedCount: 2` — **the revision-1 dead end** — refuses without the flag and **succeeds with it**; (d) `--move-issues-to` passes **both** `moveFixIssuesTo` **and** `moveAffectedIssuesTo`; (e) an unknown `--move-issues-to` target fails in preflight (`removeWorktrees` never called); (f) **Jira unconfigured refuses unless `--skip-jira`** — pinning D2d's deliberate asymmetry with `deliverJiraReleaseSafely` (`gh-release-deliver.ts:348`), which is exactly what a later "consistency" refactor would delete.                              |
+| **T3** `release-remove-resume.test.ts`            | (a) **The already-partially-removed re-run**: worktree absent, PR `CLOSED`, branches absent, Jira version `null` → **succeeds**, every step reported skipped with its reason. (b) `--version` on a release with no _open_ PR is accepted — no target validation is applied. The docblock states the sharpened hazard: a copy-paste of `assertTargetsExist` (`worktrees-remove.ts:66`) validates against `currentWorktrees`, which by the second run is **gone by design**, so it would refuse **every** resume — the command's primary use case. (c) **The typo case**: `--version 9.9.9` against an untouched repo → **throws**, does not exit 0 with an "everything skipped" success.                                                                                 |
+| **T4** `release-remove-current-branch.test.ts`    | **The PM-1 fail-open.** With `getCurrentBranch()` returning the target: (a) `git switch <base>` is issued before the delete; (b) when `branchExists` still reports the branch after `deleteLocalBranch`, the command **throws** instead of reporting success. Docblock names the false-success verbatim.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **T5** `release-remove-order.test.ts`             | (a) The six steps run in D4's order. **Mechanism, stated because "assert call ordering" across five modules is not implementable as written:** a single `order: string[]` array that every mocked collaborator pushes its step name into, asserted with `toEqual`. (`mock.invocationCallOrder` is the fallback, but it compares opaque global counters and reads worse in a failure message.) (b) A failure at step 5 does **not** call `removeJiraVersion` and throws an `OperationError` enumerating the four completed steps, naming the surviving Jira version, **and carrying the local tip SHA**. (c) **A throwing `removeIdeWorktreeFolders` does not stop steps 3-6** and is reported as `attempted` — pinning D4's single exemption from abort-on-first-error. |
+| **T6** `release-remove-guard.test.ts`             | Guard ordering: `assertManagementContext` throws before `getInfraKitConfig` is read; the missing-config message survives un-rewrapped; `assertBaseBranchSwitchable` runs before `confirmOrExit`. Mirrors `worktrees-remove-guard.test.ts`. **Plus the decline case, pinning AC-6** — the only behavioural criterion that had no test in revision 2: a declined confirm **throws `CommandDeclinedError`** rather than resolving, and no mutation collaborator is called. The docblock names the false-success: `confirmOrExit`'s default `process.exit(0)` would make a decline indistinguishable from AC-15's "already fully removed, every step skipped".                                                                                                              |
+| **T7** `release-remove-echo-parity.test.ts`       | `commandEcho` reproduces the exact invocation (`--version`, `--move-issues-to`, `--skip-jira`, `--yes`), and the MCP tool's `outputSchema` validates the returned `structuredContent` (the zod round-trip the `worktrees-remove` echo-parity test performs).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **T8** `release-remove-mcp-guards.test.ts`        | **New for D7.** In MCP mode: (a) a call without `version` throws with a remediation naming `version`; (b) `moveIssuesTo` is refused; (c) **the Jira step is never attempted** — `removeJiraVersion` called zero times — and the result carries `jira: 'manual'` with the version id, name and URL; (d) on the CLI path with the same inputs, the Jira step **does** run **and `moveIssuesTo`/`skipJira` are accepted** — proving the narrowing is MCP-scoped and not a general disablement. Both halves of (d) are needed: without the "Jira runs" half a command that simply broke Jira would pass; without the "flags accepted" half a guard that refused them unconditionally would pass (a\)-(c\) and be caught only by T2(d).                                      |
+| **T9** `release-remove-confirm-text.test.ts`      | **New.** The confirm message names the PR number, **both** issue counts separately (never a sum), the fix version name, the worktree path, the base branch, and the local tip SHA. Load-bearing because §1.3 rejects Option C on the grounds that this text carries the inventory; without this test that rejection rests on an unasserted string.                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **T10** `release-remove-toctou.test.ts`           | **New.** (a) Issue counts unchanged between preflight and step 6 → the delete proceeds and nothing extra is logged. (b) Counts changed → the command **aborts before `removeJiraVersion`**, reporting steps 1-5 done and the version intact. Docblock names the false-success: a guard that passed six steps ago authorising an unrecoverable call.                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 ### 5.2 Unit — integration layer
 
-| File | Invariant pinned |
-| --- | --- |
-| **T11** `«cli»/src/integrations/jira/__tests__/remove-version.test.ts` | Docblock subject is the **classification**, not the URL shape: a non-OK response must throw a *classified* `JiraApiError` — assert `kind === 'auth'` for `404 + x-seraph-loginreason: AUTHENTICATED_FAILED`, the recorded misreport this repo already fixed once and which a hand-rolled second classifier would silently reintroduce. Secondary: `removeJiraVersion` POSTs to `/version/{id}/removeAndSwap` with Basic auth and includes each `move*` field only when supplied; `getVersionRelatedIssueCounts` parses both counts. |
+| File                                                                   | Invariant pinned                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **T11** `«cli»/src/integrations/jira/__tests__/remove-version.test.ts` | Docblock subject is the **classification**, not the URL shape: a non-OK response must throw a _classified_ `JiraApiError` — assert `kind === 'auth'` for `404 + x-seraph-loginreason: AUTHENTICATED_FAILED`, the recorded misreport this repo already fixed once and which a hand-rolled second classifier would silently reintroduce. Secondary: `removeJiraVersion` POSTs to `/version/{id}/removeAndSwap` with Basic auth and includes each `move*` field only when supplied; `getVersionRelatedIssueCounts` parses both counts. |
 
 ### 5.3 Integration / wiring
 
-| Check | Where |
-| --- | --- |
+| Check                                                                                 | Where                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `release remove` resolves as a Commander leaf and its `groupPath` matches the catalog | Covered with **zero edits** by `allMenuEntries()`/`allMenuPaths()`, which derive from `MENU_GROUPS` (`command-catalog.test.ts:24-35`). **This holds for `command-catalog.test.ts` ONLY.** Revision 2 generalised it to "the menu invariants", which was false: `palette.test.ts` asserts a hardcoded `toEqual` over every grouped row and **must** be edited (§3.4 C1). Do not read this row as "no menu test needs touching". |
-| Exposure, gating and presentation | The three list edits in §3.2 plus T3's correspondence assertion (`:526-534`). |
-| Golden snapshot moves by exactly one tool | Regenerate, then **read the diff**: exactly one added tool object, no other key touched (AC-23). |
-| Guidance body renders the new command | `bodies-snapshot.test.ts.snap:351`. |
-| Root `/CLAUDE.md` block regenerated from a **fresh** build | §7 step 5; AC-25. |
+| Exposure, gating and presentation                                                     | The three list edits in §3.2 plus T3's correspondence assertion (`:526-534`).                                                                                                                                                                                                                                                                                                                                                  |
+| Golden snapshot moves by exactly one tool                                             | Regenerate, then **read the diff**: exactly one added tool object, no other key touched (AC-23).                                                                                                                                                                                                                                                                                                                               |
+| Guidance body renders the new command                                                 | `bodies-snapshot.test.ts.snap:351`.                                                                                                                                                                                                                                                                                                                                                                                            |
+| Root `/CLAUDE.md` block regenerated from a **fresh** build                            | §7 step 5; AC-25.                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ### 5.4 Manual gate on the implementation PR (live Jira + a real repo)
 
@@ -1269,37 +1271,37 @@ and on a target for which no artefact of any kind exists. It is exposed over MCP
 
 **8.2 Drivers.** (a) Deleting a Jira fix version is unrecoverable, clears two fields on real tickets
 with no readable prior value, and its guard is separated from the act by an unbounded confirm.
-(b) The primitives this composes fail *open* — `deleteLocalBranch` no-ops on the current branch, the
+(b) The primitives this composes fail _open_ — `deleteLocalBranch` no-ops on the current branch, the
 release-PR projection discards the state it fetched, and Zed folder removal confirms nothing.
 (c) MCP exposure in this repo is governed by allowlist-or-gate, not by verb.
 
 **8.3 Alternatives considered.**
 
-- *Compose three existing commands* — rejected: a runbook cannot refuse, and the ordering principle is
+- _Compose three existing commands_ — rejected: a runbook cannot refuse, and the ordering principle is
   unenforceable across separate invocations. The `local-deploy` "CLI is preflight only" precedent does
-  not transfer: it was forced by *CI must never depend on the CLI*, and no CI or unattended path
+  not transfer: it was forced by _CI must never depend on the CLI_, and no CI or unattended path
   consumes release teardown.
-- *Multi-target `--versions` / `--all`* — rejected: multiplies an irreversible act behind one
+- _Multi-target `--versions` / `--all`_ — rejected: multiplies an irreversible act behind one
   confirmation and forces continue-on-error semantics that destroy the residue report.
-- *CLI-only (revision 1's D7)* — **rejected on review.** Its two supporting facts are true of the
+- _CLI-only (revision 1's D7)_ — **rejected on review.** Its two supporting facts are true of the
   entire exposed mutating set, and its stated criterion ("genuinely irreversible") applies to one of
   six steps. It also left agents able to create releases through a dedicated plugin command
   (`plugins/infra-kit/commands/release-create.md`, the plugin's only command) that they could never
   clean up.
-- *Expose including the Jira step* — rejected: it would put an unrecoverable call behind a boundary
+- _Expose including the Jira step_ — rejected: it would put an unrecoverable call behind a boundary
   that auto-confirms, against an API whose semantics are still unmeasured (U1-U3).
-- *Warn-and-confirm instead of refusing on attached issues* — rejected: a confirm is not a gate over
+- _Warn-and-confirm instead of refusing on attached issues_ — rejected: a confirm is not a gate over
   MCP and is skipped by `--yes`.
-- *Two reassignment flags (`--move-issues-to` + `--move-affected-to`)* — rejected: doubles the
+- _Two reassignment flags (`--move-issues-to` + `--move-affected-to`)_ — rejected: doubles the
   preflight surface to serve a case (two different destinations) that the Jira UI already handles.
-- *Least-recoverable step first* — rejected: it maximises the probability that the one unrepairable
+- _Least-recoverable step first_ — rejected: it maximises the probability that the one unrepairable
   step executes.
-- *`allowEditorRelaunch: !confirmedCommand`* (what `worktrees remove` passes) — rejected: it fires
+- _`allowEditorRelaunch: !confirmedCommand`_ (what `worktrees remove` passes) — rejected: it fires
   Zed's destructive relaunch, which silently drops unrelated open folders. Disproportionate for a
   single-target teardown.
-- *Parse the tip SHA from `git branch -D` output* — rejected: the string is localizable and absent when
+- _Parse the tip SHA from `git branch -D` output_ — rejected: the string is localizable and absent when
   the branch is already gone. Captured in preflight instead.
-- *`--force` to override the released-version guard* — rejected: D2c and D3 are deliberately
+- _`--force` to override the released-version guard_ — rejected: D2c and D3 are deliberately
   independent, and a shared override would collapse them into one.
 
 **8.4 Why chosen.** It keeps every failure mode repairable: single-target bounds the blast radius,
@@ -1328,7 +1330,7 @@ undo what they create without ever reaching the one call a human cannot undo.
   generated block drifts until `ik audit --fix --root` runs there — and regeneration **requires a
   fresh build** or it re-emits the old line.
 - The MCP path deliberately leaves an orphaned Jira fix version every time, reported as
-  `jira: 'manual'`. That is the plan's designated *good* residue, but it is a residue nonetheless and
+  `jira: 'manual'`. That is the plan's designated _good_ residue, but it is a residue nonetheless and
   agents must be told to hand the URL to a human.
 
 **8.6 Follow-ups (out of scope).**

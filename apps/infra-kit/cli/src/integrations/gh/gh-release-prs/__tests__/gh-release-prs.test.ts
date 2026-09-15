@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { quote } from 'zx'
 
 import { logger } from 'src/lib/logger'
@@ -22,6 +22,8 @@ const responses = vi.hoisted(() => {
     calls: [] as { strings: string[]; values: unknown[] }[],
     /** The base SHA `prepareGitForRelease` would have returned; `git rev-parse HEAD` echoes it. */
     baseSha: 'a'.repeat(40),
+    /** While set, every `gh pr list` answer waits on it — the only way to observe issue ORDER. */
+    listGate: null as Promise<void> | null,
   }
 })
 
@@ -63,11 +65,12 @@ vi.mock('zx', async (importOriginal) => {
       return Promise.resolve({ stdout: '', exitCode: 0 })
     }
 
-    if (command.includes('--base main')) {
-      return Promise.resolve({ stdout: JSON.stringify(responses.hotfix), exitCode: 0 })
-    }
+    const listed = command.includes('--base main') ? responses.hotfix : responses.release
+    const gate = responses.listGate ?? Promise.resolve()
 
-    return Promise.resolve({ stdout: JSON.stringify(responses.release), exitCode: 0 })
+    return gate.then(() => {
+      return { stdout: JSON.stringify(listed), exitCode: 0 }
+    })
   }
 
   // `$` is now called both as a tagged template and as `$({ quiet: true })` — the
@@ -261,6 +264,43 @@ describe('discovery page size (gh pr list --limit)', () => {
     await getReleasePRs()
 
     expect(vi.mocked(logger.warn)).not.toHaveBeenCalled()
+  })
+})
+
+describe('discovery concurrency', () => {
+  beforeEach(() => {
+    responses.release = []
+    responses.hotfix = []
+    responses.calls = []
+  })
+
+  afterEach(() => {
+    responses.listGate = null
+  })
+
+  const listCalls = (): number => {
+    return responses.calls.filter((call) => {
+      return call.strings.join('').includes('gh pr list')
+    }).length
+  }
+
+  // The gate holds BOTH answers, so a sequential implementation (await dev, then await main) would
+  // have issued only the first command by the time the assertion runs.
+  it('issues both gh pr list searches before either resolves', async () => {
+    let open: () => void = () => {}
+
+    responses.listGate = new Promise<void>((resolve) => {
+      open = resolve
+    })
+    responses.release = [pr({ headRefName: 'release/v1.0.0', createdAt: '2026-01-01T00:00:00Z' })]
+
+    const pending = getReleasePRs()
+
+    expect(listCalls()).toBe(2)
+
+    open()
+
+    await expect(pending).resolves.toEqual(['release/v1.0.0'])
   })
 })
 
