@@ -5,12 +5,25 @@ import { Client as ClientV1 } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport as StdioClientTransportV1 } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { $ } from 'zx'
 
+import { buildEnvClearLines } from 'src/commands/env-clear/env-clear'
+import { buildEnvLoadFileLines } from 'src/commands/env-load'
 import { commandCatalog, getExposedMcpTools } from 'src/lib/command-catalog'
+import { parseVarNamesFromEnvFile, parseVarsFromEnvFile } from 'src/lib/constants'
 import { LOG_FILE_PATH } from 'src/lib/logger'
 import { deployableEnvs } from 'src/lib/workflow-envs'
 
@@ -944,13 +957,18 @@ const resultText = (result: CallToolResult): string => {
 
 /**
  * Spawns the server in the fixture repo behind `client`, capturing the child's stderr. Long-lived:
- * every connection made here is closed in `afterAll`.
+ * every connection made here is closed in `afterAll`. `env` overrides the fixture's for the lanes
+ * that spawn with the session file's variables already in the environment (flow 1).
  */
-const connectCaptured = async (client: Client, fixture: EnvPickerFixture): Promise<CapturedConnection> => {
+const connectCaptured = async (
+  client: Client,
+  fixture: EnvPickerFixture,
+  env: NodeJS.ProcessEnv = fixture.env,
+): Promise<CapturedConnection> => {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [mcpPath],
-    env: fixture.env as Record<string, string>,
+    env: env as Record<string, string>,
     cwd: fixture.repo,
     stderr: 'pipe',
   })
@@ -2741,4 +2759,384 @@ describe('o6 — the migrated server exits cleanly on SIGTERM', () => {
 
     expect(exited, 'server did not exit on SIGTERM').toBe(true)
   }, 45_000)
+})
+
+describe('e-se — a mid-session load is visible to the next tool', () => {
+  /**
+   * The server is long-lived and the env-load file lands mid-session (docs/mcp-session-env-refresh-plan.md).
+   * Every lane drives a REAL served child through the session dir on disk — no restart between the
+   * writes — and reads the outcome back through a tool, never the module: the chokepoint applies
+   * the file at every call's entry, so the tool is the only honest witness.
+   *
+   * Three long-lived spawns:
+   *  - `live` (S0, no `JIRA_*` in its environment): E-SE1–E-SE5 and E-SE9, the file rewritten under it.
+   *  - `inherited` (S1, flow 1 — the shell sourced the file, THEN launched the server) and `fileOnly`
+   *    (S2, flow 2 — nothing from the file in its environment, the file on disk before its first call)
+   *    over ONE session dir: E-SE6–E-SE8, the two flows must be indistinguishable through `env-status`.
+   *
+   * Values are written under unmistakable sentinels; the last lane proves none reached a serialized
+   * result or a stderr line (AC3/AC4) — the overlay logs NAMES only.
+   */
+  const JIRA_NAMES = ['JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_PROJECT_ID', 'JIRA_TOKEN', 'JIRA_API_TOKEN']
+  const SENTINELS = ['jira-sentinel-8f3a', 'sentinel@example.invalid']
+  // `127.0.0.1:1` is deliberately unreachable: the handler must fail on `origin`, never on a Jira round trip.
+  const JIRA_PAIRS: Array<[string, string]> = [
+    ['JIRA_BASE_URL', 'http://127.0.0.1:1'],
+    ['JIRA_TOKEN', 'jira-sentinel-8f3a'],
+    ['JIRA_PROJECT_ID', '1'],
+    ['JIRA_EMAIL', 'sentinel@example.invalid'],
+  ]
+  const FLOW_LOADED_AT = '2026-09-15T10:00:00.000Z'
+  const RELEASE_ARGS = { releases: [{ version: '1.2.5', type: 'regular' }] }
+  const SESSION_ENV_APPLIED = 'session-env applied: set ['
+
+  let live: EnvPickerFixture
+  let flow: EnvPickerFixture
+  let server: CapturedConnection
+  let inherited: CapturedConnection
+  let fileOnly: CapturedConnection
+  let inheritedEnv: NodeJS.ProcessEnv
+  let flowLoadFile = ''
+  /** Every serialized tool result the lanes produced — the haystack for the sentinel scan. */
+  const results: string[] = []
+  /** E-SE4's round 1, minted BEFORE the file exists and confirmed only after it has landed. */
+  let releaseGate: { resolvedArgs?: unknown; confirmToken?: string } | undefined
+
+  /** The lane must prove the FILE supplied Jira, so a developer's own loaded Jira env is never inherited. */
+  const withoutJira = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+    const stripped = { ...env }
+
+    for (const name of JIRA_NAMES) delete stripped[name]
+
+    return stripped
+  }
+
+  /**
+   * `assertCleanCheckout` and the base-branch guard both need a commit to inspect; the fixture is
+   * left WITHOUT an `origin` on purpose so `git fetch origin` is where release-create fails.
+   */
+  const commitFixtureRepo = async (fixture: EnvPickerFixture): Promise<void> => {
+    // Identity inline: a CI checkout has no `user.*` and a developer's may sign.
+    const git = $({ cwd: fixture.repo, quiet: true })
+
+    await git`git add -A`
+    await git`git -c user.name=e2e -c user.email=e2e@example.com -c commit.gpgsign=false commit --quiet -m fixture`
+  }
+
+  /** Temp + rename, as `atomicWriteFileSync` does: a NEW inode per write, so a rewrite can never alias the last signature. */
+  const writeSessionFile = (fixture: EnvPickerFixture, name: string, lines: string[]): string => {
+    const file = join(fixture.sessionDir, name)
+
+    mkdirSync(fixture.sessionDir, { recursive: true })
+    writeFileSync(`${file}.tmp`, `${lines.join('\n')}\n`)
+    renameSync(`${file}.tmp`, file)
+
+    return file
+  }
+
+  /** The real writer's shape — markers included — for a manual load of `config`. */
+  const loadLines = (
+    fixture: EnvPickerFixture,
+    pairs: Array<[string, string]>,
+    config: string,
+    loadedAt = new Date().toISOString(),
+  ): string[] => {
+    return buildEnvLoadFileLines({
+      pairs,
+      config,
+      project: 'env-picker-project',
+      projectRoot: fixture.repo,
+      loadedAt,
+      autoLoaded: false,
+    })
+  }
+
+  /** What `env-clear` writes for the file currently loaded, then the load file removed as `env-clear` removes it. */
+  const clearLoadedFile = (fixture: EnvPickerFixture): void => {
+    const loadFile = join(fixture.sessionDir, 'env-load.sh')
+
+    writeSessionFile(fixture, 'env-clear.sh', buildEnvClearLines(parseVarNamesFromEnvFile(loadFile)))
+    unlinkSync(loadFile)
+  }
+
+  const connectSessionServer = (fixture: EnvPickerFixture, env: NodeJS.ProcessEnv): Promise<CapturedConnection> => {
+    return connectCaptured(
+      new Client(
+        { name: 'e2e-session-env', version: '0.0.0' },
+        { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+      ),
+      fixture,
+      env,
+    )
+  }
+
+  const call = async (
+    connection: CapturedConnection,
+    name: string,
+    args: Record<string, unknown> = {},
+  ): Promise<CallToolResult> => {
+    const result = await connection.client.callTool({ name, arguments: args })
+
+    results.push(JSON.stringify(result))
+
+    return result
+  }
+
+  const envStatus = async (connection: CapturedConnection): Promise<Record<string, unknown>> => {
+    const result = await call(connection, 'env-status')
+
+    expect(result.isError ?? false).toBe(false)
+
+    return result.structuredContent as Record<string, unknown>
+  }
+
+  const takeGate = async (
+    connection: CapturedConnection,
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<{ resolvedArgs?: unknown; confirmToken?: string }> => {
+    const gate = await call(connection, name, args)
+    const structured = gate.structuredContent as
+      { status?: string; tool?: string; resolvedArgs?: unknown; confirmToken?: string } | undefined
+
+    expect(gate.isError).toBe(true)
+    expect(structured).toMatchObject({ status: 'confirmation_required', tool: name })
+    expect(structured?.confirmToken, 'round 1 must hand out a confirmToken').toBeTypeOf('string')
+
+    return { resolvedArgs: structured?.resolvedArgs, confirmToken: structured?.confirmToken }
+  }
+
+  const confirmGate = (
+    connection: CapturedConnection,
+    name: string,
+    gate: { resolvedArgs?: unknown; confirmToken?: string },
+  ): Promise<CallToolResult> => {
+    return call(connection, name, {
+      ...(gate.resolvedArgs as Record<string, unknown>),
+      confirm: true,
+      confirmToken: gate.confirmToken,
+    })
+  }
+
+  /** The line pino writes AFTER the handler returned — once it is there, every earlier line of the call is too. */
+  const settled = (connection: CapturedConnection, mark: number, tool: string): Promise<void> => {
+    return expect
+      .poll(stderrSince(connection, mark), { timeout: 3_000 })
+      .toMatch(new RegExp(`Tool execution (successful|failed): ${tool}`))
+  }
+
+  beforeAll(async () => {
+    live = await makeEnvPickerFixture()
+    flow = await makeEnvPickerFixture()
+    tmpDirs.push(...live.dirs, ...flow.dirs)
+    await commitFixtureRepo(live)
+    await commitFixtureRepo(flow)
+
+    server = await connectSessionServer(live, withoutJira(live.env))
+
+    // Flow 1's file is on disk BEFORE either flow server spawns, and S1's environment is read from
+    // it by the real parser — a hand-typed copy could drift from the file and hide a flow difference.
+    flowLoadFile = writeSessionFile(flow, 'env-load.sh', loadLines(flow, JIRA_PAIRS, 'dev', FLOW_LOADED_AT))
+    inheritedEnv = { ...withoutJira(flow.env), ...parseVarsFromEnvFile(flowLoadFile) }
+    inherited = await connectSessionServer(flow, inheritedEnv)
+    fileOnly = await connectSessionServer(flow, withoutJira(flow.env))
+
+    assertConnectionIsModern(server.client)
+    assertConnectionIsModern(inherited.client)
+    assertConnectionIsModern(fileOnly.client)
+  }, 90_000)
+
+  it('e-se4 (round 1): the release-create gate is taken while no session file exists', async () => {
+    expect(existsSync(join(live.sessionDir, 'env-load.sh'))).toBe(false)
+
+    releaseGate = await takeGate(server, 'release-create', RELEASE_ARGS)
+
+    expect(releaseGate.resolvedArgs).toStrictEqual(RELEASE_ARGS)
+  }, 45_000)
+
+  it('e-se1: env-load.sh written under the running server — the next env-status reports it, names only on stderr', async () => {
+    const mark = server.stderr().length
+
+    writeSessionFile(live, 'env-load.sh', loadLines(live, JIRA_PAIRS, 'dev'))
+
+    const status = await envStatus(server)
+
+    expect(status).toMatchObject({ sessionConfig: 'dev', sessionProject: 'env-picker-project', cleared: false })
+    expect(status.sessionTotalCount).toBeGreaterThan(0)
+    expect(status.sessionLoadedCount).toBe(status.sessionTotalCount)
+
+    // The file's order, then the marker lines the writer appends; the trailing count is the parse.
+    await settled(server, mark, 'env-status')
+    expect(server.stderr().slice(mark)).toContain(
+      `${SESSION_ENV_APPLIED}JIRA_BASE_URL, JIRA_TOKEN, JIRA_PROJECT_ID, JIRA_EMAIL, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG`,
+    )
+    expect(server.stderr().slice(mark)).toContain('(load, 9 vars)')
+
+    // An unchanged file is not re-applied: the signature check is the whole per-call cost.
+    const again = server.stderr().length
+
+    expect(await envStatus(server)).toStrictEqual(status)
+    await settled(server, again, 'env-status')
+    expect(server.stderr().slice(again)).not.toContain(SESSION_ENV_APPLIED)
+  }, 45_000)
+
+  it('e-se5: PATH and INFRA_KIT_SESSION lines are skipped by name; the rest of the file still applies', async () => {
+    const mark = server.stderr().length
+
+    writeSessionFile(
+      live,
+      'env-load.sh',
+      loadLines(live, [['PATH', '/nowhere'], ['INFRA_KIT_SESSION', 'other'], ...JIRA_PAIRS], 'dev'),
+    )
+
+    const status = await envStatus(server)
+
+    // The same session id means the overlay never pointed the read at another session dir; the
+    // full count means the rest of the file was applied around the two skipped names.
+    expect(status).toMatchObject({ sessionId: 'env-picker', sessionConfig: 'dev', sessionTotalCount: 11 })
+    expect(status.sessionLoadedCount).toBe(status.sessionTotalCount)
+
+    await settled(server, mark, 'env-status')
+    expect(server.stderr().slice(mark)).toContain('session-env: skipped protected names [PATH, INFRA_KIT_SESSION]')
+    expect(server.stderr().slice(mark)).toContain(`${SESSION_ENV_APPLIED}JIRA_BASE_URL`)
+  }, 45_000)
+
+  it("e-se4 (round 2): confirmed after the file landed, the handler runs under the file's Jira and fails on `origin`", async () => {
+    const mark = server.stderr().length
+    const result = await confirmGate(server, 'release-create', releaseGate!)
+
+    // Not a tool error: release-create reports per-release failures in its payload. That payload
+    // exists only past `loadJiraConfig` (plan F14) — with the server's own environment the call
+    // would have thrown "incomplete" and carried no `structuredContent` at all.
+    expect(result.isError ?? false).toBe(false)
+
+    const structured = result.structuredContent as
+      { failureCount?: number; failedReleases?: Array<{ version: string; error: string }> } | undefined
+    const failure = structured?.failedReleases?.[0]?.error ?? ''
+
+    expect(structured?.failureCount).toBe(1)
+    expect(failure).toMatch(/create release v1\.2\.5 \(regular\)/)
+    // `git fetch origin` ran and named the missing remote: PATH survived E-SE5's `/nowhere` line.
+    expect(failure).toMatch(/origin/)
+    expect(failure).not.toMatch(/incomplete/)
+
+    await settled(server, mark, 'release-create')
+    expect(server.stderr().slice(mark)).not.toContain('Tool execution refused (')
+  }, 45_000)
+
+  it('e-se2: env-clear.sh written and env-load.sh removed — the next env-status reports the clear', async () => {
+    const mark = server.stderr().length
+
+    clearLoadedFile(live)
+
+    const status = await envStatus(server)
+
+    expect(status).toMatchObject({ sessionConfig: null, sessionLoadedCount: 0, sessionTotalCount: 0, cleared: true })
+
+    await settled(server, mark, 'env-status')
+    expect(server.stderr().slice(mark)).toContain(`${SESSION_ENV_APPLIED}INFRA_KIT_ENV_CLEARED] unset [JIRA_BASE_URL`)
+    expect(server.stderr().slice(mark)).toContain('(clear)')
+  }, 45_000)
+
+  it('e-se3: a fresh env-load.sh after the clear — loaded again, still the same server', async () => {
+    const mark = server.stderr().length
+
+    writeSessionFile(live, 'env-load.sh', loadLines(live, JIRA_PAIRS, 'dev'))
+
+    const status = await envStatus(server)
+
+    expect(status).toMatchObject({ sessionConfig: 'dev', sessionTotalCount: 9, cleared: false })
+    expect(status.sessionLoadedCount).toBe(status.sessionTotalCount)
+
+    await settled(server, mark, 'env-status')
+    expect(server.stderr().slice(mark)).toContain('(load, 9 vars)')
+  }, 45_000)
+
+  it('e-se9: a `prod` file is applied in full, and prod is still delivered, not deployed', async () => {
+    writeSessionFile(
+      live,
+      'env-load.sh',
+      loadLines(
+        live,
+        [
+          ['PROD_ONLY_A', 'a'],
+          ['PROD_ONLY_B', 'b'],
+        ],
+        'prod',
+      ),
+    )
+
+    const status = await envStatus(server)
+
+    expect(status).toMatchObject({ sessionConfig: 'prod', sessionTotalCount: 7, sessionLoadedCount: 7 })
+
+    // `version` is passed so the only thing between the confirm and the veto is the veto itself.
+    const gate = await takeGate(server, 'gh-release-deploy-all', { version: live.releaseLabel, env: 'prod' })
+    const refused = await confirmGate(server, 'gh-release-deploy-all', gate)
+
+    expect(refused.isError).toBe(true)
+    expect(refused.structuredContent).toBeUndefined()
+    expect(resultText(refused)).toContain('"prod" is delivered, not deployed ad-hoc')
+    expect(resultText(refused)).toContain('infra-kit release deliver')
+  }, 45_000)
+
+  it('e-se6: flow 1 — the server that inherited the file reports exactly what the file says', async () => {
+    // Literals, not derived from the file: the payload is the contract with the session skill.
+    // 9 = the four Jira pairs + the five marker assignments `buildEnvLoadFileLines` appends.
+    expect(await envStatus(inherited)).toStrictEqual({
+      sessionId: 'env-picker',
+      sessionLoadedCount: 9,
+      sessionTotalCount: 9,
+      sessionConfig: 'dev',
+      sessionProject: 'env-picker-project',
+      sessionLoadedAt: FLOW_LOADED_AT,
+      autoLoaded: false,
+      cleared: false,
+    })
+  }, 45_000)
+
+  it('e-se8 (loaded): flow 2 — the file-only server answers env-status field for field like flow 1', async () => {
+    const [fromInherited, fromFileOnly] = await Promise.all([envStatus(inherited), envStatus(fileOnly)])
+
+    expect(fromFileOnly).toStrictEqual(fromInherited)
+    expect(fromFileOnly.sessionId).toBe('env-picker')
+  }, 45_000)
+
+  it('e-se7: the clear reaches flow 1 — env-status reports it and release-create is refused as incomplete', async () => {
+    clearLoadedFile(flow)
+
+    expect(await envStatus(inherited)).toMatchObject({ sessionConfig: null, sessionTotalCount: 0, cleared: true })
+
+    const gate = await takeGate(inherited, 'release-create', RELEASE_ARGS)
+    const refused = await confirmGate(inherited, 'release-create', gate)
+
+    // The Jira vars this server was LAUNCHED with are gone: the clear file's `unset` lines
+    // reached `process.env`, not just the status report.
+    expect(refused.isError).toBe(true)
+    expect(refused.structuredContent).toBeUndefined()
+    expect(resultText(refused)).toMatch(/incomplete/)
+    expect(resultText(refused)).toContain('JIRA_BASE_URL')
+  }, 45_000)
+
+  it('e-se8 (cleared): both flows report the clear identically', async () => {
+    const [fromInherited, fromFileOnly] = await Promise.all([envStatus(inherited), envStatus(fileOnly)])
+
+    expect(fromFileOnly).toStrictEqual(fromInherited)
+    expect(fromFileOnly.cleared).toBe(true)
+  }, 45_000)
+
+  it('e-se5 (values): no sentinel value reached a tool result or a stderr line, from any of the three servers', () => {
+    // Anti-vacuity: S1 was launched WITH the values, so a leak had a real source to leak from.
+    expect(JSON.stringify(inheritedEnv)).toContain(SENTINELS[0])
+    expect(results.length).toBeGreaterThan(10)
+
+    const haystacks = [...results, server.stderr(), inherited.stderr(), fileOnly.stderr()]
+    const leaks = haystacks.filter((hay) => {
+      return SENTINELS.some((sentinel) => {
+        return hay.includes(sentinel)
+      })
+    })
+
+    expect(leaks).toStrictEqual([])
+  })
 })
