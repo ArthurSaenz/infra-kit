@@ -538,29 +538,17 @@ function readPluginJson() {
   return JSON.parse(readText(PLUGIN_JSON))
 }
 
-// The server lives in `.mcp.json`, never inline in plugin.json: one place to read, one place to
-// diff. The whole object is asserted, not picked fields — a dropped `cwd` or an added `env` is a
-// contract change the CLI's `git rev-parse`-from-cwd resolution depends on, and a field-by-field
-// check is blind to additions (memory: a hand-picked-field diff misses added/removed fields).
+// The plugin is skills only since 0.8.0: the tool surface is the CLI on PATH, driven through Bash.
+// A `.mcp.json` here would spawn a server no skill calls, and `infra-kit doctor` reads a served plugin
+// that carries one as stale — so its absence is pinned, not merely its content.
 const PLUGIN_MCP_JSON = join(PLUGIN_ROOT, '.mcp.json')
-const EXPECTED_MCP_JSON = {
-  mcpServers: {
-    'infra-kit': {
-      type: 'stdio',
-      command: 'infra-kit',
-      args: ['mcp'],
-      cwd: '${CLAUDE_PROJECT_DIR}',
-    },
-  },
-}
 
-test('U7: plugin.json declares no inline mcpServers, hooks, or commands; .mcp.json carries exactly the one server', () => {
+test('U7: plugin.json declares no inline mcpServers, hooks, or commands, and the plugin ships no .mcp.json', () => {
   const manifest = readPluginJson()
   for (const key of ['mcpServers', 'hooks', 'commands']) {
     assert.ok(!(key in manifest), `plugin.json must not declare ${key} inline`)
   }
-  assert.ok(existsSync(PLUGIN_MCP_JSON), `${rel(PLUGIN_MCP_JSON)} is missing`)
-  assert.deepEqual(JSON.parse(readText(PLUGIN_MCP_JSON)), EXPECTED_MCP_JSON)
+  assert.equal(existsSync(PLUGIN_MCP_JSON), false, `${rel(PLUGIN_MCP_JSON)} must not exist — the plugin is skills only`)
 })
 
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$/
@@ -619,6 +607,121 @@ test('T1: no skill under plugins/ names an infra-kit MCP tool', () => {
   assert.deepEqual(hits, [])
 })
 
+// The plugin-served prefix went the same way as the legacy one in 0.8.0: a body naming it sends the
+// agent to a tool no session has. Checked on SKILL.md only — the fixture that DEFINES the spelling
+// (`scan-patterns.json`) and the skew report's tests may still spell it.
+test('T2: no SKILL.md under plugins/ names a plugin-served MCP tool', () => {
+  const hits = skillDirs()
+    .map((name) => join(SKILLS_DIR, name, 'SKILL.md'))
+    .filter((file) => readText(file).includes('mcp__plugin_infra-kit'))
+    .map(rel)
+  assert.deepEqual(hits, [])
+})
+
+// ---------------------------------------------------------------------------
+// U20 — every `Bash(infra-kit …)` grant is a read-only catalog row
+//
+// An `allowed-tools` rule is a standing grant: the host runs a matching argv with no prompt. The plan
+// (§3.8, §3.9) keeps every mutating argv OUT of the grants so the host's prompt — argv visible,
+// `--yes` included — stays the human's approval. The catalog is read textually (this suite is plain
+// node with no path into the CLI package), comments stripped first because a row's own comment can
+// spell `mutating: false` before the field does (the `doctor` row).
+// ---------------------------------------------------------------------------
+
+const COMMAND_CATALOG = join(
+  REPO_ROOT,
+  'apps',
+  'infra-kit',
+  'cli',
+  'src',
+  'lib',
+  'command-catalog',
+  'command-catalog.ts',
+)
+
+/** `groupPath.join(' ')` → `mutating`, for every `{ cliName, …, mutating, …, groupPath }` row. */
+function readCatalog(text) {
+  const stripped = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  const rows = new Map()
+  const rowRe = /cliName:\s*'[^']+'[\s\S]*?mutating:\s*(true|false)[\s\S]*?groupPath:\s*\[([^\]]*)\]/g
+  for (const match of stripped.matchAll(rowRe)) {
+    const path = [...match[2].matchAll(/'([^']+)'/g)].map((m) => m[1]).join(' ')
+    rows.set(path, match[1] === 'true')
+  }
+  return rows
+}
+
+const CLI_HEAD = 'infra-kit'
+// Spellings that reach the CLI without `infra-kit` as the first token, so a catalog check keyed on
+// the head would never see them (plan §3.8 names the `ik` and `pnpm exec infra-kit` aliases).
+const CLI_ALIAS_TOKENS = new Set(['ik', CLI_HEAD])
+// `--yes` is the confirm bypass; `-y` its short form; `--fix` is the one write behind a
+// `mutating: false` row (`doctor`, `audit`), which U15 already keeps out of the doctor skill's fences.
+const FORBIDDEN_RULE_FLAGS = new Set(['--yes', '-y', '--fix'])
+
+/** U20. Pure: one rule (the text inside `Bash(...)`) against the parsed catalog. */
+function cliRuleErrors(rule, catalog) {
+  const tokens = rule.trim().split(/\s+/)
+  const [head, ...rest] = tokens
+
+  if (head !== CLI_HEAD) {
+    return tokens.some((token) => CLI_ALIAS_TOKENS.has(token))
+      ? [`reaches the CLI through an alias head, which the catalog check cannot see: Bash(${rule})`]
+      : []
+  }
+
+  const errors = []
+  const forbidden = rest.filter((token) => FORBIDDEN_RULE_FLAGS.has(token.replace(/[*:]+$/, '')))
+  if (forbidden.length > 0) errors.push(`grants ${forbidden.join(', ')}: Bash(${rule})`)
+
+  const commandPath = []
+  for (const token of rest) {
+    if (token.startsWith('-') || token.includes('*') || token.includes('<')) break
+    commandPath.push(token)
+  }
+  const path = commandPath.join(' ')
+  if (!catalog.has(path)) errors.push(`no catalog row for \`${path}\`: Bash(${rule})`)
+  else if (catalog.get(path)) errors.push(`\`${path}\` is a mutating catalog row: Bash(${rule})`)
+
+  return errors
+}
+
+test('U20: every Bash( rule in every allowed-tools is an infra-kit read-only row, a bundled script, or a non-CLI head', () => {
+  assert.ok(existsSync(COMMAND_CATALOG), `${rel(COMMAND_CATALOG)} is missing`)
+  const catalog = readCatalog(readText(COMMAND_CATALOG))
+  assert.ok(catalog.get('release list') === false, 'the catalog parse must see `release list` as read-only')
+  assert.ok(catalog.get('release remove') === true, 'the catalog parse must see `release remove` as mutating')
+
+  const failures = []
+  for (const name of skillDirs()) {
+    const file = join(SKILLS_DIR, name, 'SKILL.md')
+    const parsed = parseFrontmatter(readText(file))
+    if (!parsed) continue
+    for (const rule of bashRules(parsed.data['allowed-tools'])) {
+      failures.push(...cliRuleErrors(rule, catalog).map((error) => `${rel(file)}: ${error}`))
+    }
+  }
+  assert.deepEqual(failures, [])
+})
+
+// Without these the check is a fail-open: the live tree carries no mutating grant, so only a red case
+// proves the predicate rejects one.
+test('U20 red: a mutating row, a --yes grant, and an alias head are each rejected', () => {
+  const catalog = new Map([
+    ['release list', false],
+    ['release remove', true],
+    ['doctor', false],
+  ])
+  assert.deepEqual(cliRuleErrors('infra-kit release list --json*', catalog), [])
+  assert.deepEqual(cliRuleErrors('node "${CLAUDE_PLUGIN_ROOT}"/skills/x/scripts/y.mjs *', catalog), [])
+  assert.match(cliRuleErrors('infra-kit release remove -v * --json', catalog)[0], /mutating catalog row/)
+  assert.match(cliRuleErrors('infra-kit release list --json --yes', catalog)[0], /grants --yes/)
+  assert.match(cliRuleErrors('infra-kit doctor --fix', catalog)[0], /grants --fix/)
+  assert.match(cliRuleErrors('infra-kit nonesuch --json*', catalog)[0], /no catalog row/)
+  assert.match(cliRuleErrors('pnpm exec infra-kit release list --json*', catalog)[0], /alias head/)
+  assert.match(cliRuleErrors('ik release list --json*', catalog)[0], /alias head/)
+})
+
 test('T5: no consumer-repo name appears anywhere under plugins/', () => {
   const hits = []
   for (const file of walkFiles(PLUGINS_DIR)) {
@@ -648,37 +751,30 @@ function namedPluginTools(text) {
   return [...new Set([...text.matchAll(PLUGIN_TOOL_NAME_RE)].map((match) => match[1]))]
 }
 
-// The confirm-gated tools — `EXPECTED_GATED_TOOLS` in the CLI's command-catalog.test.ts. Copied, not
-// imported: this suite is plain node with no path into the CLI package; the CLI side cross-checks that
-// every tool NAME a skill mentions is an exposed catalog tool. A gated tool in `allowed-tools` would let
-// the gate's round 2 — an agent-authored, same-turn re-call — run with no host prompt at all (§3.1),
-// which is why `env-clear` is absent from the session skill's grant on purpose.
-const GATED_TOOLS = [
-  'release-create',
-  'env-clear',
-  'setup',
-  'gh-release-deploy-all',
-  'gh-release-deploy-selected',
-  'local-deploy-all',
-  'local-deploy-selected',
-  'worktrees-remove',
-  'release-remove',
-  'gh-merge-dev',
-]
+// The grants each procedure skill carries: read-only `--json` listings only, and every one is also
+// pinned by U20 against the catalog. What is NOT here is the point — no `env-load`, no `env-clear`,
+// no `setup`, no `release create|remove`: the host's prompt on those argv is the human's approval,
+// and a grant would let the `--yes` re-run pass with no prompt at all (plan §3.8).
+const READ_ONLY_GRANTS = {
+  'release-create': ['infra-kit release list --json*'],
+  'release-remove': ['infra-kit release list --json*', 'infra-kit worktrees list --json*'],
+  session: ['infra-kit env-list --json*', 'infra-kit env-status --json*'],
+  setup: [],
+}
 
 // Key sets are exact, and the `disable-model-invocation` split is the design: `session`,
 // `release-create` and `release-remove` are human-only (one loads secrets into the human's terminal,
-// the other two are gated), so only `/name` may invoke them. `setup` stays model-invocable ON
-// PURPOSE — its reader is the agent about to call the tool, so auto-loading is what replaces the
-// deleted resource; its human gate is the tool's own confirm protocol, which no `allowed-tools`
-// grant can skip.
+// the other two tear at branches and Jira), so only `/name` may invoke them. `setup` stays
+// model-invocable ON PURPOSE — its reader is the agent about to run the command, so auto-loading is
+// what replaces the deleted resource; its human gate is the preview → approve → `--yes` protocol,
+// which no `allowed-tools` grant can skip because `setup` is granted nowhere.
 const PROCEDURE_SKILLS = {
   'release-create': {
-    keys: ['argument-hint', 'description', 'disable-model-invocation', 'name'],
+    keys: ['allowed-tools', 'argument-hint', 'description', 'disable-model-invocation', 'name'],
     humanOnly: true,
   },
   'release-remove': {
-    keys: ['argument-hint', 'description', 'disable-model-invocation', 'name'],
+    keys: ['allowed-tools', 'argument-hint', 'description', 'disable-model-invocation', 'name'],
     humanOnly: true,
   },
   session: {
@@ -698,7 +794,7 @@ function procedureSkill(name) {
   return { file, ...parsed }
 }
 
-test("U14': each procedure skill pins its frontmatter keys, its invocation policy, and grants no gated tool", () => {
+test("U14': each procedure skill pins its frontmatter keys, its invocation policy, and exactly its read-only grants", () => {
   for (const [name, expected] of Object.entries(PROCEDURE_SKILLS)) {
     const { file, data } = procedureSkill(name)
 
@@ -719,9 +815,12 @@ test("U14': each procedure skill pins its frontmatter keys, its invocation polic
     }
 
     const allowed = String(data['allowed-tools'] ?? '')
-    const gatedGranted = namedPluginTools(allowed).filter((tool) => GATED_TOOLS.includes(tool))
-    assert.deepEqual(gatedGranted, [], `${rel(file)} allowed-tools must name no gated tool`)
-    assert.deepEqual(bashRules(allowed), [], `${rel(file)} must carry zero Bash( rules`)
+    assert.deepEqual(namedPluginTools(allowed), [], `${rel(file)} allowed-tools must name no MCP tool`)
+    assert.deepEqual(
+      bashRules(allowed),
+      READ_ONLY_GRANTS[name],
+      `${rel(file)} must grant exactly its read-only listings`,
+    )
   }
 })
 
@@ -757,7 +856,30 @@ test("U17': every procedure-skill argument-hint flag is defined with → in the 
 // U18 — the session body. Every literal below is a fragment of one instruction, asserted against the
 // body with soft line breaks joined (prettier does not reflow these files, an author's rewrap does),
 // so a fragment survives an honest rewrap and reddens only when the instruction goes.
+
+// The MCP-era "no tools → stop" guard, retired in 0.8.0 for the version floor below.
 const ABSENT_TOOLS_CLAUSE = 'tools are absent this is a subdirectory or legacy session — say so and stop'
+
+// The version floor every procedure skill opens with: one `!` line reading the CLI on PATH (the
+// command is `version`, not `--version`), and the sentence that stops the skill below the floor.
+const VERSION_FLOOR_LINE =
+  'CLI on PATH: !`zsh -c \'infra-kit version --json\' 2>/dev/null || echo \'{"error":"infra-kit not on PATH"}\'`'
+const VERSION_FLOOR_CLAUSES = ['a `version` below `0.8.0`', 'pnpm add -g infra-kit@latest']
+
+// The preview → approve → `--yes` protocol, spelled the same way in every skill that drives one of
+// the CLI's confirm-site commands (`release create|remove` here). `env-load`, `env-clear` and `setup`
+// have NO confirm site — they run once behind the host's prompt — so their skills carry
+// NO_CONFIRM_CLAUSES instead, and any `rerun` wording there would send the agent after a flag the CLI
+// does not take.
+const RERUN_CLAUSES = [
+  '`{"status": "confirmation_required"',
+  '`rerun`',
+  'rerun joined by spaces',
+  '`--yes` appended',
+  'does not mean the call failed',
+  'Never add `--yes`',
+]
+const NO_CONFIRM_CLAUSES = ['no confirm step in the CLI', "the host's prompt is the approval"]
 
 /** The body with each paragraph's line breaks joined, so fragments do not depend on where a line wraps. */
 function joinedParagraphs(body) {
@@ -768,32 +890,31 @@ function joinedParagraphs(body) {
 }
 
 const INJECTION_LINES = [
+  VERSION_FLOOR_LINE,
   'Terminal status at invocation: !`zsh -c \'infra-kit env-status --json\' 2>/dev/null || echo \'{"error":"status unavailable"}\'`',
   'Environments this project knows: !`zsh -c \'infra-kit env-list --json\' 2>/dev/null || echo \'{"error":"list unavailable"}\'`',
 ]
 
 const SESSION_CLAUSES = [
-  // The three tools composed, and the resolution of a bare token.
-  'mcp__plugin_infra-kit_infra-kit__env-list',
-  'mcp__plugin_infra-kit_infra-kit__env-load',
-  '`--clear` → `mcp__plugin_infra-kit_infra-kit__env-clear`',
-  // The form path: no token → `env-load` without `config`; the human's pick is the load; a decline
-  // is terminal for this turn.
-  'without `config`',
-  'form_declined',
-  "`env-load` is not gated, but it can PROMPT — an argument form, not a confirm gate; the human's pick is the load.",
-  // The two-shape fallback (a JSON-RPC error from an old CLI, a refusal from a new one) and the CLI
-  // floor that decides which one arrives.
-  'a tool error or a refused result naming `config`',
+  // The three commands composed, and the resolution of a bare token.
+  '`infra-kit env-list`, `infra-kit env-load` and `infra-kit env-clear`',
+  'infra-kit env-load -c <token> --json --agent',
+  '`--clear` → `infra-kit env-clear --json --agent`',
+  // The picker: every known env into AskUserQuestion, the human's pick is the `-c`; the CLI's own
+  // `argument_required` carries the same rows.
+  '**every** entry',
+  '`{"status": "argument_required", "argument": "config", "choices": [...]}`',
+  'never narrow the list, and never load without an explicit choice',
   // PM-5: a host that substitutes a placeholder for the injection leaves a non-JSON block.
   'not JSON, treat it as unknown and call `env-list` yourself',
   'infra-kit env-token-set <env>',
-  'a name absent from the form must still be typed and passed as `config`',
+  'a name absent from the picker must still be typed and passed as `-c`',
   // The shell round trip's three properties, and the one check a human can perform.
   'at its next prompt — after Claude Code exits or is backgrounded',
   'the terminal that launched Claude Code and no other',
   'writes into a directory nothing is watching and still returns success',
   'report the session id from the returned filePath',
+  '`sessionId`',
   'compare it with INFRA_KIT_SESSION at their own prompt',
   'does not persist shell state between calls',
   'INFRA_KIT_SESSION is not set',
@@ -801,20 +922,18 @@ const SESSION_CLAUSES = [
   // What `env-list` is and is not.
   'not a live Doppler enumeration',
   'an empty list is a legitimate result',
-  // The gate, the tie hazard, and the tether to the provider contract.
-  'confirmation_required',
-  'confirmToken',
-  '"confirm": true',
+  // The approval (host prompt, no confirm site), the tie hazard, and the tether to the provider contract.
+  ...NO_CONFIRM_CLAUSES,
+  'run it once, and never add `--yes`',
   'in the same wall-clock second',
   'infra-kit: auto-loaded vars for',
   'docs/session-context-orchestrator.md',
-  // What not to do — the two clauses that keep the form the human's, not the agent's.
-  'Do not supply a `config` the human did not name in order to skip the form.',
-  'Never send `inputResponses` yourself',
-  ABSENT_TOOLS_CLAUSE,
+  // What not to do — the clause that keeps the picker the human's, not the agent's.
+  'Do not supply a `-c` the human did not name in order to skip the picker.',
+  ...VERSION_FLOOR_CLAUSES,
 ]
 
-test('U18: the session body carries the two injections, every load-bearing clause, and none of the retired ones', () => {
+test('U18: the session body carries the three injections, every load-bearing clause, and none of the retired ones', () => {
   const { file, body } = procedureSkill('session')
   const lines = body.split('\n')
   const joined = joinedParagraphs(body)
@@ -825,7 +944,7 @@ test('U18: the session body carries the two injections, every load-bearing claus
   for (const line of INJECTION_LINES) {
     assert.ok(lines.includes(line), `${rel(file)} must carry the injection line verbatim: ${line}`)
   }
-  assert.equal(body.split('!`').length - 1, INJECTION_LINES.length, `${rel(file)} must inject exactly twice`)
+  assert.equal(body.split('!`').length - 1, INJECTION_LINES.length, `${rel(file)} must inject exactly three times`)
   assert.deepEqual(
     fencedLines(body).filter((line) => line.includes('!`')),
     [],
@@ -836,49 +955,49 @@ test('U18: the session body carries the two injections, every load-bearing claus
     assert.ok(joined.includes(clause), `${rel(file)} lost the clause: ${clause}`)
   }
 
-  // The CLI floor for the form path, and the fallback that survives a server below it.
-  assert.match(joined, /form path needs infra-kit \d+\.\d+\.\d+ or newer/, `${rel(file)} must state the CLI floor`)
-
-  // The retired procedure: a hand-picked subset in an `AskUserQuestion` picker. The picker is named
-  // only as a prohibition — a line that ASKS through it is the defect this rewrite removed.
+  // The retired procedure: a hand-picked SUBSET in an `AskUserQuestion` picker. The picker itself is
+  // the 0.8.0 contract (the CLI's `choices` rows go in as they are), so every paragraph that names it
+  // must bind it to the whole list — `**every**` entry, or the CLI's `choices`.
   assert.equal(joined.includes('four most likely'), false, `${rel(file)} must not offer a subset`)
-  const askLines = lines.filter((line) => line.includes('AskUserQuestion'))
-  assert.ok(askLines.length > 0, `${rel(file)} must forbid AskUserQuestion by name`)
-  for (const line of askLines) {
-    assert.match(line, /Never `AskUserQuestion`/, `${rel(file)} may name AskUserQuestion only to forbid it: ${line}`)
+  const askParagraphs = joined.split('\n\n').filter((paragraph) => paragraph.includes('AskUserQuestion'))
+  assert.ok(askParagraphs.length > 0, `${rel(file)} must name AskUserQuestion as the picker`)
+  for (const paragraph of askParagraphs) {
+    assert.match(
+      paragraph,
+      /\*\*every\*\*|`choices`/,
+      `${rel(file)} may name AskUserQuestion only over the whole list: ${paragraph}`,
+    )
   }
 })
 
 // The other three procedure bodies keep the clauses `server.test.ts` pinned when the CLI served them.
 const PROCEDURE_CLAUSES = {
   'release-create': [
-    'mcp__plugin_infra-kit_infra-kit__release-create',
-    'confirmation_required',
-    'confirmToken',
-    '"confirm": true',
-    'does not mean the call failed',
+    'infra-kit release create -r "<spec>" --json --agent',
+    ...RERUN_CLAUSES,
     '`--hotfix` → `type: "hotfix"`',
     '`--desc <text>` → `description`',
     'mutually exclusive',
-    '"next"',
+    '`next`',
     'all entries must share the same `type`',
     'linked worktree',
     'clean working tree',
-    ABSENT_TOOLS_CLAUSE,
+    'partial_failure',
+    ...VERSION_FLOOR_CLAUSES,
   ],
   'release-remove': [
-    'mcp__plugin_infra-kit_infra-kit__release-remove',
-    'confirmation_required',
-    'confirmToken',
-    '"confirm": true',
-    'does not mean the call failed',
-    'The first call checks nothing about the release',
-    'carries `version` and nothing else',
+    'infra-kit release remove -v <version> --json --agent',
+    ...RERUN_CLAUSES,
+    'in **preflight, before the plan is shown**',
     'The bare token → `version`',
-    'There is no picker',
-    'have **no tool field**',
-    'Attached issues do not block',
-    '`jira: "manual"`',
+    'omit `-v`',
+    '`{"status": "argument_required", "argument": "version", "choices": [...]}`',
+    'Put **every** `choices` row into `AskUserQuestion`',
+    'One release per call',
+    '`--skip-jira` has no field',
+    'Attached issues block',
+    'Do not pass `--move-issues-to` on your own initiative',
+    '`jira: "removed"`',
     '`jira: "absent"`',
     '`MERGED` is refused',
     'linked worktree',
@@ -886,27 +1005,66 @@ const PROCEDURE_CLAUSES = {
     'verified no-op',
     'What is lost with the worktree directory',
     '`git worktree remove`, `gh pr close`, `git branch -D` or `git push --delete`',
-    ABSENT_TOOLS_CLAUSE,
+    ...VERSION_FLOOR_CLAUSES,
   ],
   setup: [
-    'mcp__plugin_infra-kit_infra-kit__setup',
+    'infra-kit setup <flags> --json --agent',
+    ...NO_CONFIRM_CLAUSES,
+    'run it **once**',
+    'Never add `--yes`',
     '`doctor`',
     'the init half',
     'the dependency converge',
     '**brew, aws, gh, doppler, portless**',
-    '`--tools <ids...>` → `tools: ["gh", "doppler"]`',
-    '`--update [ids...]` → `mode: "update"`',
-    '`--skip-tools` → `skipTools: true`',
+    '`--tools <ids...>` → converge **only those ids**',
+    '`--update [ids...]` → update mode',
+    '`--skip-tools` → a **read-only probe**',
     'needs-sudo',
     'fetches-network-script',
+    'refusedBecause: ["agent-mode"]',
     'A refusal is not a failure',
-    'confirmation_required',
-    'confirmToken',
-    '"confirm": true',
+    '`--skip-tools` included',
     'There is no `init` command',
     '`infra-kit setup --skip-tools`',
-    ABSENT_TOOLS_CLAUSE,
+    ...VERSION_FLOOR_CLAUSES,
   ],
+}
+
+// Sentences a body once carried and must not carry again. The presence list alone cannot catch a
+// retired sentence that survives a merge, so each rewrite the body went through leaves its old
+// wording here.
+//
+// The MCP transport (0.7.x): the two-call HMAC token protocol, the `isError` gate payload, the
+// "no tools → stop" guard, and the form's `inputResponses`. A body carrying any of them would send
+// the agent to a tool no session has.
+const MCP_ERA_CLAUSES = [
+  'confirmToken',
+  '"confirm": true',
+  'isError',
+  'inputResponses',
+  'form_declined',
+  ABSENT_TOOLS_CLAUSE,
+]
+
+const RETIRED_CLAUSES = {
+  'release-create': MCP_ERA_CLAUSES,
+  // The Jira fix version was left for a human over MCP, and a missing `version` was refused rather
+  // than offered as a picker — both reversed by docs/release-remove-form-and-jira-plan.md.
+  'release-remove': [
+    ...MCP_ERA_CLAUSES,
+    'There is no picker',
+    'no tool field',
+    'Attached issues do not block',
+    'jira: "manual"',
+    'never removed over MCP',
+    'never touches the fix version',
+    'carries `version` and nothing else',
+    'inspects nothing',
+    'only inventory the human will get',
+  ],
+  // No confirm site behind these two: the preview → `rerun` protocol must not be spelled here.
+  session: [...MCP_ERA_CLAUSES, 'four most likely', 'confirmation_required', '`rerun`'],
+  setup: [...MCP_ERA_CLAUSES, 'requiresUserInteraction', 'confirmation_required', '`rerun`'],
 }
 
 test('U18: the release-create, release-remove and setup bodies carry every load-bearing clause', () => {
@@ -916,6 +1074,26 @@ test('U18: the release-create, release-remove and setup bodies carry every load-
     for (const clause of clauses) {
       assert.ok(joined.includes(clause), `${rel(file)} lost the clause: ${clause}`)
     }
+  }
+})
+
+test('U18: no procedure body carries a retired clause', () => {
+  for (const [name, clauses] of Object.entries(RETIRED_CLAUSES)) {
+    const { file, body } = procedureSkill(name)
+    const joined = joinedParagraphs(body)
+    for (const clause of clauses) {
+      assert.equal(joined.includes(clause), false, `${rel(file)} carries the retired clause: ${clause}`)
+    }
+  }
+})
+
+// The floor line is the same bytes in every procedure skill AND in doctor: a drifted copy would read
+// a different command, and `--version` is not one the CLI has.
+test('U18: every procedure skill and doctor open with the same version-floor injection', () => {
+  for (const name of [...Object.keys(PROCEDURE_SKILLS), 'doctor']) {
+    const { file, body } = procedureSkill(name)
+    assert.ok(body.split('\n').includes(VERSION_FLOOR_LINE), `${rel(file)} must carry the version-floor line verbatim`)
+    assert.ok(joinedParagraphs(body).includes('`0.8.0`'), `${rel(file)} must state the floor`)
   }
 })
 

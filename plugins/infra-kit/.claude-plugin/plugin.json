@@ -1,7 +1,7 @@
 {
   "name": "infra-kit",
-  "version": "0.7.12",
-  "description": "Engineering skills and the infra-kit MCP server for the infra-kit family of monorepos. The server is the global infra-kit CLI on PATH; bundles no hooks.",
+  "version": "0.8.0",
+  "description": "Engineering skills for the infra-kit family of monorepos. Skills only: the tool surface is the global infra-kit CLI on PATH, driven through Bash; bundles no hooks and no MCP server.",
   "author": {
     "name": "Arthur Saenko"
   },

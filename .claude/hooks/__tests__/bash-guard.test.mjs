@@ -5,7 +5,15 @@ import { runHook, bash } from './helpers.mjs';
 // Guards were six files under guards/ until they were inlined into bash-guard.mjs. They are still
 // named exports, so these unit tests reach each one directly; the file's dispatcher sits behind an
 // `import.meta.main` guard, so importing it here does not read fd 0.
-import { doppler, destructive, packageManager, style, cmux, worktree } from '../bash-guard.mjs';
+import {
+  doppler,
+  destructive,
+  packageManager,
+  style,
+  cmux,
+  worktree,
+  agentModeDemotion,
+} from '../bash-guard.mjs';
 
 const action = (decision) => decision?.action ?? null;
 
@@ -146,6 +154,8 @@ test('guard scope contracts are what the dispatcher expects', () => {
   assert.equal(destructive.scope, 'segment');
   assert.equal(style.scope, undefined);
   assert.equal(cmux.scope, undefined);
+  // agentModeDemotion walks segments itself to carry `unset CLAUDECODE` forward across `;`/`&&`.
+  assert.equal(agentModeDemotion.scope, undefined);
 });
 
 test('package-manager: does not fire on pnpm, or on the word npm inside another token', () => {
@@ -211,6 +221,75 @@ test('worktree: blocks add/remove at any path (incl. -C / env prefixes), advises
   assert.equal(action(worktree.check('git worktree prune')), null);
 });
 
+// The messages must name the CLI, not the retired MCP tools — worktree management moved there.
+test('worktree: messages name the infra-kit CLI, not MCP tools', () => {
+  const blocked = worktree.check('git worktree add ../repo-worktrees/feat');
+  assert.match(blocked.message, /infra-kit worktrees add/);
+  assert.match(blocked.message, /infra-kit worktrees remove/);
+  assert.doesNotMatch(blocked.message, /MCP|mcp__/);
+
+  const advised = worktree.check('git worktree list');
+  assert.match(advised.context, /infra-kit worktrees list --json/);
+  assert.doesNotMatch(advised.context, /MCP|mcp__/);
+});
+
+test('agent-mode-demotion: blocks every demotion spelling ahead of an infra-kit invocation', () => {
+  for (const command of [
+    'INFRA_KIT_AGENT=0 infra-kit dev',
+    'INFRA_KIT_AGENT=0 ik dev',
+    'INFRA_KIT_AGENT=0 pnpm exec infra-kit dev',
+    'INFRA_KIT_AGENT=0 pnpm infra-kit dev',
+    'CLAUDECODE= infra-kit dev',
+    'CLAUDECODE="" infra-kit dev',
+    "CLAUDECODE='' infra-kit dev",
+    'env -u CLAUDECODE infra-kit dev',
+    'env --unset CLAUDECODE infra-kit dev',
+    'env INFRA_KIT_AGENT=0 infra-kit dev',
+    'unset CLAUDECODE; infra-kit dev',
+    'unset CLAUDECODE && infra-kit dev',
+    'script -q /dev/null infra-kit dev',
+    'script -q /dev/null ik dev',
+    // export mutates shell state for the rest of the invocation, same as unset CLAUDECODE.
+    'export INFRA_KIT_AGENT=0; infra-kit dev',
+    'export INFRA_KIT_AGENT=0 && infra-kit dev',
+    // an arbitrary VAR=val ahead of the demotion assignment is noise, not an escape hatch.
+    'FOO=1 INFRA_KIT_AGENT=0 infra-kit dev',
+    'FOO=1 BAR=2 INFRA_KIT_AGENT=0 infra-kit dev',
+    // env -i wipes the whole environment, CLAUDECODE included.
+    'env -i infra-kit dev',
+    'env -i ik dev',
+    'env --ignore-environment infra-kit dev',
+  ]) {
+    assert.equal(action(agentModeDemotion.check(command)), 'block', command);
+  }
+});
+
+test('agent-mode-demotion: allows plain infra-kit calls and unrelated demotion-shaped commands', () => {
+  for (const command of [
+    'infra-kit worktrees add feat',
+    'ik worktrees list --json',
+    'INFRA_KIT_AGENT=1 infra-kit dev', // only =0 demotes
+    'CLAUDECODE=1 infra-kit dev', // an assigned value is not a demotion
+    'INFRA_KIT_AGENT=0 pnpm turbo run dev', // demotion present, but no infra-kit invocation
+    'unset CLAUDECODE; git status', // unset present, but no infra-kit invocation
+    'cat script.sh && infra-kit dev', // "script" here is a filename, not the wrapper
+    'git status',
+    'export INFRA_KIT_AGENT=0; pnpm turbo run dev', // export present, but no infra-kit invocation
+    'FOO=1 infra-kit dev', // an ordinary env assignment is not a demotion
+    'env FOO=1 infra-kit dev',
+  ]) {
+    assert.equal(action(agentModeDemotion.check(command)), null, command);
+  }
+});
+
+// The reason text must not read as a hook bug: it should name the wizard repro as a maintainer's
+// deliberate plain-terminal step, not something an agent stumbled into.
+test('agent-mode-demotion: message explains agent mode is inferred, not the agent\'s call', () => {
+  const blocked = agentModeDemotion.check('INFRA_KIT_AGENT=0 infra-kit dev');
+  assert.match(blocked.message, /is not\s+the agent's call to make/);
+  assert.match(blocked.message, /script -q \/dev\/null infra-kit dev/);
+});
+
 // -------------------------------------------------------------- integration: dispatcher
 
 test('bash-guard blocks when any guard blocks (exit 2)', () => {
@@ -227,6 +306,14 @@ test('bash-guard blocks when any guard blocks (exit 2)', () => {
     'echo hi; yarn install',
     'doppler secrets get API_KEY',
     'cd apps/api && doppler secrets download --no-file', // segment-scoped: ^ anchor survives the &&
+    'INFRA_KIT_AGENT=0 infra-kit dev',
+    'CLAUDECODE= infra-kit dev',
+    'env -u CLAUDECODE infra-kit dev',
+    'unset CLAUDECODE; infra-kit dev',
+    'script -q /dev/null infra-kit dev',
+    'export INFRA_KIT_AGENT=0; infra-kit dev',
+    'FOO=1 INFRA_KIT_AGENT=0 infra-kit dev',
+    'env -i infra-kit dev',
   ]) {
     assert.equal(runHook('bash-guard.mjs', bash(command)).status, 2, command);
   }
@@ -242,6 +329,11 @@ test('bash-guard allows clean commands (exit 0)', () => {
     'pnpm exec npm-run-all',
     'doppler run -- pnpm build',
     'doppler setup',
+    'infra-kit worktrees add feat',
+    'INFRA_KIT_AGENT=1 infra-kit dev',
+    'unset CLAUDECODE; git status',
+    'export INFRA_KIT_AGENT=0; pnpm turbo run dev',
+    'FOO=1 infra-kit dev',
   ]) {
     assert.equal(runHook('bash-guard.mjs', bash(command)).status, 0, command);
   }

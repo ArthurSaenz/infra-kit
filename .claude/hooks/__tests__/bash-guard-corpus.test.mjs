@@ -17,8 +17,9 @@ const IDENTITY = [
   ['destructive', /recursive force-remove|force push|destructive SQL/],
   ['package-manager', /pnpm workspace/],
   ['cmux', /Dev servers must run in cmux/],
-  ['worktree', /worktrees-add|worktrees-list/],
+  ['worktree', /infra-kit worktrees add|infra-kit worktrees list/],
   ['style', /ripgrep|find -name/],
+  ['agent-mode-demotion', /demotes agent mode/],
 ];
 
 const identify = (text) => IDENTITY.find(([, re]) => re.test(text))?.[0] ?? 'unrecognised';

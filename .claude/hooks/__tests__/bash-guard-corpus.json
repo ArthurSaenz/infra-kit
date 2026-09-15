@@ -418,5 +418,101 @@
     "blocked": true,
     "advised": false,
     "signal": "block:destructive"
+  },
+  {
+    "command": "INFRA_KIT_AGENT=0 infra-kit dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:agent-mode-demotion"
+  },
+  {
+    "command": "CLAUDECODE= infra-kit dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:agent-mode-demotion"
+  },
+  {
+    "command": "env -u CLAUDECODE infra-kit dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:agent-mode-demotion"
+  },
+  {
+    "command": "env INFRA_KIT_AGENT=0 infra-kit dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:agent-mode-demotion"
+  },
+  {
+    "command": "unset CLAUDECODE; infra-kit dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:agent-mode-demotion"
+  },
+  {
+    "command": "script -q /dev/null infra-kit dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:agent-mode-demotion"
+  },
+  {
+    "command": "INFRA_KIT_AGENT=1 infra-kit dev",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "CLAUDECODE=1 infra-kit dev",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "INFRA_KIT_AGENT=0 pnpm turbo run dev",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "unset CLAUDECODE; git status",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "cat script.sh && infra-kit dev",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "export INFRA_KIT_AGENT=0; infra-kit dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:agent-mode-demotion"
+  },
+  {
+    "command": "FOO=1 INFRA_KIT_AGENT=0 infra-kit dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:agent-mode-demotion"
+  },
+  {
+    "command": "env -i infra-kit dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:agent-mode-demotion"
+  },
+  {
+    "command": "export INFRA_KIT_AGENT=0; pnpm turbo run dev",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "FOO=1 infra-kit dev",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
   }
 ]

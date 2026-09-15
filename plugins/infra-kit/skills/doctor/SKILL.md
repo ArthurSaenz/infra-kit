@@ -1,15 +1,26 @@
 ---
 name: doctor
 description: Diagnose an infra-kit setup — the CLI health report plus the checks only a live session can make.
-allowed-tools: Read, Bash(infra-kit doctor), Bash(node "${CLAUDE_PLUGIN_ROOT}"/skills/doctor/scripts/session-probe.mjs *), mcp__plugin_infra-kit_infra-kit__version
+allowed-tools: Read, Bash(infra-kit doctor), Bash(infra-kit version --json*), Bash(node "${CLAUDE_PLUGIN_ROOT}"/skills/doctor/scripts/session-probe.mjs *)
 ---
 
 # infra-kit doctor
 
+CLI on PATH: !`zsh -c 'infra-kit version --json' 2>/dev/null || echo '{"error":"infra-kit not on PATH"}'`
+
 Two halves. The CLI reports host state; this skill adds what only a running session can see, and
 never restates a check the CLI already makes.
 
+**cwd.** Every call runs from the directory Claude Code was launched in — the repo root. If the shell
+was `cd`'d elsewhere, `cd` back first (the CLI also accepts `-C <dir>`).
+
 ## Step 0 — read the environment before the report
+
+**The CLI on `PATH`, and its version.** The block above is the first finding. `{"error": …}` means no
+`infra-kit` on `PATH`; a `version` below `0.8.0` means a CLI that predates the skills-only plugin.
+Either way say so **first** and name the fix — `pnpm add -g infra-kit@latest`, or `infra-kit setup`
+from the human's own terminal — then go on: the report in step 1 comes from whatever CLI is there
+(or from none), and step 2 needs no CLI at all.
 
 Check whether `CLAUDE_CONFIG_DIR` is set. The infra-kit CLI does not honour it — it always reads
 `~/.claude` — so when that variable is set and points elsewhere, the CLI's plugin-related rows
@@ -52,8 +63,7 @@ node "${CLAUDE_PLUGIN_ROOT}"/skills/doctor/scripts/session-probe.mjs <plugin-roo
 
 If `${CLAUDE_PLUGIN_ROOT}` is empty in the shell, substitute this skill's own base directory with
 the trailing `/skills/doctor` removed, and pass it as the argument. The variable is reliably
-substituted for hooks and MCP servers, not for shell commands, so treating it as always-set is how
-this breaks.
+substituted for hooks, not for shell commands, so treating it as always-set is how this breaks.
 
 The probe answers five questions the CLI cannot, because each compares against the **live session**:
 which tree this session loaded, whether that matches what Claude Code recorded, whether a newer
@@ -67,40 +77,46 @@ It always exits 0. Its findings are in its output.
 State the failing lines from both halves and what they mean together. Two combinations worth calling
 out explicitly, because neither half says it alone:
 
-- The CLI says the plugin serves the server, but no `mcp__plugin_infra-kit_infra-kit__*` tools are
-  in this session. Either the session is stale — started before the plugin advanced — or a leftover
-  `.mcp.json` key in this repo is shadowing the plugin's copy under the older prefix; the CLI's
-  report says which. A file on disk cannot tell a server that started from one that did not; the
-  session is the only place this shows up.
 - The CLI reports the plugin as installed, but the probe reports the loaded tree is not the recorded
   one. The records are right and the session is stale — it was started before the install.
+- The probe reports the loaded tree is intact, but the `/infra-kit:*` skills fail at their first
+  `infra-kit …` call. The plugin is skills only; the CLI on `PATH` is the tool surface, so this is
+  the step 0 finding — no CLI, or one below the floor — and the fix is the update command, not a
+  plugin reinstall.
 
-Then two checks that only a live tool call can make. Call the server's `version` tool (under
-whichever prefix this session exposes it) and read its structured result:
+Then one check that only a live call can make:
 
-- `repoRoot` must equal the directory this session runs in (`pwd`). When it does not, the server
-  was spawned for another checkout — say which, and that every row above describes that one.
-- `launch` names the route that spawned the server: `plugin` (its tools carry the
-  `mcp__plugin_infra-kit_infra-kit__` prefix) or `legacy` (this repo's own `.mcp.json` entry, the
-  shorter project-level prefix). Report it as-is; the CLI already judges whether that route is the
-  intended one.
-- A result with **no `launch` field** means the CLI predates 0.7.7. The fix is the update command
-  the CLI itself prints. **Never run `infra-kit setup` from a CLI older than 0.7.7 in a repo whose
-  `.mcp.json` no longer carries the `infra-kit` key** — that CLI's `setup` re-adds it.
+```
+infra-kit version --json --agent
+```
+
+Read its structured result:
+
+- `repoRoot` must equal the directory this session runs in (`pwd`). When it does not, the shell was
+  moved to another checkout — say which, and that every row above describes that one, and `cd`
+  back to the launch directory (the cwd rule at the top) before any other `infra-kit` call.
+- `version` is the CLI every skill in this plugin drives. Below `0.8.0` the skills' `--agent --json`
+  contract is not there; say so with the update command.
+- A CLI that still carries a served-server route in this result, or a repo whose `.mcp.json` still
+  registers an `infra-kit` key, is stale: the CLI's report says which and what to delete.
+  **Never run `infra-kit setup` from a CLI older than 0.7.7 in a repo whose `.mcp.json` no longer
+  carries the `infra-kit` key** — that CLI's `infra-kit setup` re-adds it.
 
 ## Step 4 — offer fixes
 
 Fixes are **listed, not run by this skill.** Give the exact command and let the person run it, so
 the decision to change their machine is theirs and they see what it does first.
 
-- Re-running the setup command (`setup`) is the fix for most plugin, marketplace and guidance-block
+- Re-running `infra-kit setup` is the fix for most plugin, marketplace and guidance-block
   failures; the CLI's own lines name it where it applies.
 - The CLI's repair flag (`--fix`) resolves the two things it knows how to repair, and refuses while
   a dev session is running. Its report says when it is worth running.
 - Stale per-package guidance is regenerated by the audit command's fix mode.
-- A leftover or misfiled `.mcp.json` entry is a hand edit in a PR: the plugin carries the server
-  now, and a project-scope key with the same name shadows it. Never rewrite that file.
+- A leftover `infra-kit` key in the repo's `.mcp.json` is a hand edit in a PR: nothing serves that
+  key any more, and a project-scope entry only spawns a server the skills never call. Never rewrite
+  that file yourself.
 - Anything the probe reports as drift, staleness or a truncated tree is fixed by reinstalling the
   plugin and restarting Claude Code. Restarting alone is enough when only the session is stale.
+- A CLI below the floor is fixed by updating the global install, never by pinning the plugin back.
 
 Ask before running anything that changes state, and run only what was agreed to.

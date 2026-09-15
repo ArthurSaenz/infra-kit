@@ -162,10 +162,10 @@ const RE_MANAGED = new RegExp(`${GIT_PREFIX}(add|remove)\\b`);
 const RE_LIST = new RegExp(`${GIT_PREFIX}list\\b`);
 
 const WORKTREE_BLOCK_MSG =
-  "Use infra-kit's MCP worktree tools instead of raw 'git worktree add/remove': 'worktrees-add' / 'worktrees-remove'. Raw git skips infra-kit's setup (pnpm install, IDE open, release description), which is why the branch works but the worktree is half-configured. If you are inside a linked worktree, cd to the main checkout first — both raw git and the MCP tool refuse worktree management from within a linked worktree. If you truly want an unmanaged throwaway worktree, ask the user to run the git command themselves.";
+  "Use infra-kit's CLI instead of raw 'git worktree add/remove': 'infra-kit worktrees add' / 'infra-kit worktrees remove'. Raw git skips infra-kit's setup (pnpm install, IDE open, release description), which is why the branch works but the worktree is half-configured. If you are inside a linked worktree, cd to the main checkout first — both raw git and the infra-kit CLI refuse worktree management from within a linked worktree. If you truly want an unmanaged throwaway worktree, ask the user to run the git command themselves.";
 
 const WORKTREE_ADVISE_MSG =
-  "There is also an infra-kit 'worktrees-list' MCP tool that returns a structured release-worktree summary (version, release type, Jira description). Prefer it for release-worktree info; keep using 'git worktree list' when you need the full inventory (feature/ad-hoc worktrees, the main checkout, paths or HEADs), which the MCP tool does not cover.";
+  "There is also an 'infra-kit worktrees list --json' command that returns a structured release-worktree summary (version, release type, Jira description). Prefer it for release-worktree info; keep using 'git worktree list' when you need the full inventory (feature/ad-hoc worktrees, the main checkout, paths or HEADs), which the CLI command does not cover.";
 
 export const worktree = {
   name: 'worktree',
@@ -177,10 +177,78 @@ export const worktree = {
   },
 };
 
+// ------------------------------------------------------------------ agent-mode-demotion
+
+// Own regexes — NOT GIT_PREFIX above, which is git-scoped and single-segment. This guard must also
+// catch `unset CLAUDECODE;` sitting in an EARLIER segment than the infra-kit invocation, which a
+// segment-scoped check never sees together, so it walks segments itself with a carried flag instead
+// of declaring scope: 'segment'.
+
+// An arbitrary run of ordinary `VAR=val` assignments ahead of the actual demotion prefix, e.g.
+// `FOO=1 INFRA_KIT_AGENT=0 infra-kit …` — those earlier assignments are noise, not the demotion.
+const ENV_ASSIGN_PREFIX = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*`;
+
+// Prefixes attached to the SAME segment as the invocation. Anchored to segment-start (past any
+// ENV_ASSIGN_PREFIX noise) so `cat script.sh && infra-kit dev` (an unrelated file named "script")
+// never matches.
+const RE_SAME_SEGMENT_DEMOTE = new RegExp(
+  [
+    String.raw`^${ENV_ASSIGN_PREFIX}INFRA_KIT_AGENT=0(?=\s|$)`,
+    // CLAUDECODE= or CLAUDECODE=""/'' only — an assigned value (CLAUDECODE=1) is not a demotion.
+    String.raw`^${ENV_ASSIGN_PREFIX}CLAUDECODE=(?:''|"")?(?=\s|$)`,
+    String.raw`^${ENV_ASSIGN_PREFIX}env\s+(?:-u|--unset)\s+CLAUDECODE\b`,
+    String.raw`^${ENV_ASSIGN_PREFIX}env\s+INFRA_KIT_AGENT=0\b`,
+    // `env -i` wipes the whole environment CLAUDECODE included, not just the one var.
+    String.raw`^${ENV_ASSIGN_PREFIX}env\s+(?:\S+\s+)*(?:-i|--ignore-environment)\b`,
+    // `script` fakes a TTY (the dev-wizard repro), which an agent has no business doing on its own.
+    String.raw`^${ENV_ASSIGN_PREFIX}script\b`,
+  ].join('|'),
+  'i',
+);
+
+// Mutate shell state for the rest of the invocation, so they demote every LATER segment too.
+const RE_PERSISTENT_DEMOTE = new RegExp(
+  [String.raw`^${ENV_ASSIGN_PREFIX}unset\s+CLAUDECODE\b`, String.raw`^${ENV_ASSIGN_PREFIX}export\s+INFRA_KIT_AGENT=0\b`].join(
+    '|',
+  ),
+  'i',
+);
+
+const RE_INFRA_KIT_INVOCATION = /\b(?:pnpm\s+(?:exec\s+)?)?(?:infra-kit|ik)\b/i;
+
+const AGENT_MODE_DEMOTION_MSG = [
+  "Blocked: this command demotes agent mode (INFRA_KIT_AGENT=0, an empty 'CLAUDECODE=', 'env -u",
+  "CLAUDECODE', 'env -i', 'unset CLAUDECODE', 'export INFRA_KIT_AGENT=0', or a 'script' pty",
+  'wrapper) ahead of an infra-kit invocation.',
+  '',
+  "infra-kit infers agent mode from the environment on purpose — deciding to turn that off is not",
+  "the agent's call to make. If a command genuinely needs plain-terminal behavior (for example the",
+  "dev-wizard TTY repro, 'script -q /dev/null infra-kit dev'), that is run by a maintainer from",
+  'their own terminal, not scripted by an agent — this is not a hook bug.',
+].join('\n');
+
+export const agentModeDemotion = {
+  name: 'agent-mode-demotion',
+  check(command) {
+    let demoted = false;
+
+    for (const segment of splitIntoSegments(command)) {
+      const segmentDemotes = demoted || RE_SAME_SEGMENT_DEMOTE.test(segment);
+      if (segmentDemotes && RE_INFRA_KIT_INVOCATION.test(segment)) {
+        return { action: 'block', message: AGENT_MODE_DEMOTION_MSG };
+      }
+
+      if (RE_PERSISTENT_DEMOTE.test(segment)) demoted = true;
+    }
+
+    return null;
+  },
+};
+
 // ------------------------------------------------------------------ dispatcher
 
 // `doppler` first: when a command trips two guards, the one about secrets is worth showing.
-export const GUARDS = [doppler, destructive, packageManager, style, cmux, worktree];
+export const GUARDS = [doppler, destructive, packageManager, style, cmux, worktree, agentModeDemotion];
 
 const decide = (guard, command, segments) => {
   const inputs = guard.scope === 'segment' ? segments : [command];
