@@ -92,7 +92,7 @@ export const envStatus = async () => {
 export const envStatusMcpTool = defineMcpTool({
   name: 'env-status',
   description:
-    'Report which Doppler project/config is currently loaded in the terminal session, when it was loaded, how many variables are cached, whether it was auto-loaded, and whether a clear is suppressing auto-load. Pure local introspection — makes NO Doppler call (use doctor for auth). Read-only — use env-load / env-clear to change the terminal session.',
+    'Report which Doppler project/config is currently loaded in the terminal session, when it was loaded, how many variables are cached, whether it was auto-loaded, and whether a clear is suppressing auto-load. Pure local introspection — makes NO Doppler call (use doctor for auth). Read-only — use env-load / env-clear to change the terminal session. Over MCP this reflects the session file as of this call — the server re-reads it before every tool.',
   inputSchema: {},
   outputSchema: {
     sessionId: z.string().describe('Current terminal session ID'),

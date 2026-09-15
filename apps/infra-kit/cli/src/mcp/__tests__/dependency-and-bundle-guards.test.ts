@@ -266,6 +266,7 @@ describe('u8 — the shipped MCP entry is on `serveStdio` (AC1/AC2)', () => {
 
 describe('b1–B3 — the v2 SDK is externalized, never inlined', () => {
   let bundle = ''
+  let mcpPath = ''
   const tmpDirs: string[] = []
 
   /**
@@ -285,7 +286,8 @@ describe('b1–B3 — the v2 SDK is externalized, never inlined', () => {
 
     tmpDirs.push(built.outDir)
 
-    bundle = readFileSync(built.mcpPath, 'utf8')
+    mcpPath = built.mcpPath
+    bundle = readFileSync(mcpPath, 'utf8')
   }, 120_000)
 
   afterAll(() => {
@@ -320,5 +322,82 @@ describe('b1–B3 — the v2 SDK is externalized, never inlined', () => {
     const stdioSrc = readFileSync(resolve(CLI_ROOT, 'node_modules/@modelcontextprotocol/server/dist/stdio.mjs'), 'utf8')
 
     expect(stdioSrc).toContain('2026-07-28')
+  })
+
+  /**
+   * The session-env overlay reaches the served process only through the chokepoint's four-line
+   * insertion (docs/mcp-session-env-refresh-plan.md §2.5). Deleting it type-checks and every gate
+   * lane stays green, so its presence is pinned from both ends: the module is IN the bundle, and
+   * `tool-handler.ts` is what pulls it in.
+   */
+  it('b4: the session-env module is in the served bundle', () => {
+    // The bundle is minified, so identifiers are gone; the sourcemap's `sources` and one log-line
+    // literal are what survive.
+    const map = JSON.parse(readFileSync(`${mcpPath}.map`, 'utf8')) as { sources: string[] }
+
+    expect(
+      map.sources.some((source) => {
+        return source.endsWith('src/lib/session-env/session-env.ts')
+      }),
+    ).toBe(true)
+    expect(bundle).toContain('session-env applied: set [')
+  })
+
+  it('b4: tool-handler.ts imports the overlay and calls it', () => {
+    const source = readFileSync(resolve(SRC, 'lib/tool-handler/tool-handler.ts'), 'utf8')
+
+    expect(source).toMatch(/from\s*['"]src\/lib\/session-env['"]/)
+    expect(source).toContain('applySessionEnv()')
+  })
+})
+
+/**
+ * S1 in docs/mcp-session-env-refresh-plan.md §3: the overlay captures its baseline lazily, on the
+ * first tool call, and restores to it before every apply — so any other in-process writer of
+ * `process.env` on the MCP path would be frozen into that baseline and "restored" forever. The
+ * `(?!=)` keeps `===` comparisons out; `??=` is a write and is included.
+ */
+const PROCESS_ENV_WRITE = /process\.env(?:\[[^\]]+\]|\.\w+)\s*(?:\?\?)?=(?!=)/
+
+describe('s1 — nobody but the overlay writes process.env on the MCP path', () => {
+  /** Tests INCLUDED: an in-process test that assigns before calling the real overlay freezes the same baseline. */
+  const mcpPathFiles = (): string[] => {
+    return ['mcp', 'lib/tool-handler'].flatMap((dir) => {
+      const root = resolve(SRC, dir)
+
+      return readdirSync(root, { recursive: true, encoding: 'utf8' })
+        .filter((rel) => {
+          return /\.tsx?$/.test(rel)
+        })
+        .map((rel) => {
+          return join(root, rel)
+        })
+    })
+  }
+
+  it('s1: no file under src/mcp or src/lib/tool-handler assigns to process.env', () => {
+    const files = mcpPathFiles()
+    const offenders = files.filter((file) => {
+      return PROCESS_ENV_WRITE.test(readFileSync(file, 'utf8'))
+    })
+
+    expect(files.length).toBeGreaterThan(0)
+    expect(offenders, `process.env written outside the overlay:\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  it('s1-meta: the pattern catches every write form and ignores comparisons', () => {
+    // Without this, s1 could pass because the regex matches nothing at all. The samples are
+    // assembled at runtime so this file does not itself carry a literal that s1 would report.
+    const sample = (tail: string): string => {
+      return `process.env${tail}`
+    }
+
+    for (const write of ['.FOO = x', "['FOO'] = x", '.FOO ??= x', '.FOO=x'].map(sample)) {
+      expect(write).toMatch(PROCESS_ENV_WRITE)
+    }
+
+    for (const read of ['.FOO === x', '.FOO == x', '.FOO', '[name]'].map(sample)) {
+      expect(read).not.toMatch(PROCESS_ENV_WRITE)
+    }
   })
 })

@@ -227,12 +227,12 @@ const assertJiraRemovable = (plan: ReleaseRemovePlan, args: ReleaseRemoveArgs): 
     // refuses that flag a few lines above, so naming it here would send an agent round a loop —
     // "pass --skip-jira" → "skipJira is meaningless over MCP" — with no way out. That is the same
     // refusal-with-no-exit shape the count guard was scoped to avoid. Jira config is read from
-    // `process.env` only, and an MCP server spawned by a host does not inherit an `ik env-load`ed
-    // shell, so an unconfigured Jira is an ordinary state there rather than an edge case.
+    // `process.env`, which over MCP is the session's `env-load` file as re-applied at this call's
+    // entry — so the exit an agent has is to load a config that carries the four names and re-call.
     refuse({
       operation: `remove release ${plan.label}`,
       remediation: isMcpMode()
-        ? 'set JIRA_BASE_URL / JIRA_TOKEN / JIRA_PROJECT_ID / JIRA_EMAIL in the environment the MCP server was launched with, or ask a human to run `infra-kit release remove --skip-jira` from a configured shell'
+        ? 'call `env-load` for a config that carries JIRA_BASE_URL / JIRA_TOKEN / JIRA_PROJECT_ID / JIRA_EMAIL, then re-call; or ask a human to run `infra-kit release remove --skip-jira` from a configured shell'
         : 'set JIRA_BASE_URL / JIRA_TOKEN / JIRA_PROJECT_ID / JIRA_EMAIL, or pass --skip-jira to tear down the branch and PR and leave any fix version alone',
       stderrExcerpt: 'Jira is not configured, so a fix version for this release cannot be checked or removed',
     })

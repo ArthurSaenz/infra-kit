@@ -326,9 +326,9 @@ describe('release remove — the count guard is scoped to the paths that delete'
    * The false-success is a LOOP rather than a wrong mutation: `assertMcpRemoveInput` refuses
    * `skipJira` over MCP, so a refusal whose remediation reads "or pass --skip-jira" sends the caller
    * straight back into "skipJira is meaningless over MCP". Nothing is mutated either way, so no
-   * mutation assertion can catch it — only the text can. Jira config is read from `process.env` only
-   * and an MCP server spawned by a host inherits no `ik env-load`ed shell, so this is an ordinary
-   * state there, not an edge case.
+   * mutation assertion can catch it — only the text can. The exit that does exist over MCP is the
+   * session's `env-load` file, re-applied to `process.env` at every tool call's entry, so the
+   * remediation has to name `env-load` — not an environment the server was launched with.
    */
   it('does not offer --skip-jira as the way out when Jira is unconfigured over MCP', async () => {
     vi.mocked(isMcpMode).mockReturnValue(true)
@@ -339,6 +339,8 @@ describe('release remove — the count guard is scoped to the paths that delete'
     })
 
     expect((error as Error).message).toContain('Jira is not configured')
+    expect((error as Error).message).toContain('call `env-load`')
+    expect((error as Error).message).not.toContain('launched with')
     expect((error as Error).message).not.toContain('pass --skip-jira')
     expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
   })

@@ -1361,6 +1361,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   //   D16 version reports where it runs and which route spawned it (AUTHORED)       legacy + modern
   //   D17 env-load's `config` went optional — `required` vanished (AUTHORED, docs/session-env-picker-plan.md §2.4)  legacy + modern
   //   D18 env-load's description and `config` prose stopped calling the field MCP-required (AUTHORED)  legacy + modern
+  //   D21 env-status's description says the server re-reads the session file before every tool (AUTHORED, docs/mcp-session-env-refresh-plan.md §2.7)  legacy + modern
   // Why UNNAMED differences must fail: a normalization broad enough to swallow a known delta is
   // the same hole an unnoticed one would slip through. Only the named deltas are normalized away
   // before the whole-object comparison, and each is asserted positively FIRST so the normalization
@@ -1513,7 +1514,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     },
     'env-load': {
       description:
-        'Download the env vars for a Doppler config and write them to a temporary shell script. Does NOT mutate the calling process — returns the path to a script that must be sourced ("source <filePath>") for the vars to take effect. The infra-kit shell wrapper auto-sources; direct MCP callers must handle sourcing themselves or surface filePath to the user. Omit "config" and this server offers the human a form listing every environment env-list knows, token-less ones marked; a client that cannot render one gets a refusal naming the missing field — call env-list and ask the human, never guess.',
+        'Download the env vars for a Doppler config and write them to a temporary shell script. Does NOT mutate the calling process — returns the path to a script that must be sourced ("source <filePath>") for the vars to take effect. The infra-kit shell wrapper auto-sources; direct MCP callers must handle sourcing themselves or surface filePath to the user. This server picks the file up on its next tool call, so a tool that needs the variables can be called right after. Omit "config" and this server offers the human a form listing every environment env-list knows, token-less ones marked; a client that cannot render one gets a refusal naming the missing field — call env-list and ask the human, never guess.',
       properties: {
         config:
           'Doppler config / environment name to load (e.g. "dev", "arthur"). Omit it to have the human choose from a form.',
@@ -1666,6 +1667,28 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   }
 
   const d16Baseline = applyD16ToBaseline()
+
+  /**
+   * D21 — an AUTHORED delta in D14's shape: ONE tool description. `env-status` over MCP used to
+   * describe the server's own launch environment; the chokepoint now re-applies the session's
+   * `env-load` file at every tool call's entry (docs/mcp-session-env-refresh-plan.md §2.5), so the
+   * description says what the tool reports as of the call.
+   */
+  // LITERAL post-change text, for D13's reason: a further edit fails `w1c` and must be re-declared.
+  const D21_ENV_STATUS_DESCRIPTION =
+    'Report which Doppler project/config is currently loaded in the terminal session, when it was loaded, how many variables are cached, whether it was auto-loaded, and whether a clear is suppressing auto-load. Pure local introspection — makes NO Doppler call (use doctor for auth). Read-only — use env-load / env-clear to change the terminal session. Over MCP this reflects the session file as of this call — the server re-reads it before every tool.'
+
+  /** Rewrites the baseline's `env-status` description in place and returns what it held BEFORE. */
+  const applyD21ToBaseline = (): unknown => {
+    const tool = findBaselineTool('env-status')
+    const captured = tool?.description
+
+    if (tool !== undefined) tool.description = D21_ENV_STATUS_DESCRIPTION
+
+    return captured
+  }
+
+  const d21Baseline = applyD21ToBaseline()
 
   /**
    * D9 — an AUTHORED delta, handled like D4: the confirm gate now binds round 2 to round 1 with a
@@ -2309,6 +2332,17 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     // The one field the baseline had is carried over unchanged — D16 adds, it does not rewrite.
     expect((d16Baseline.properties as Record<string, unknown>).version).toEqual(D16_VERSION_OUTPUT_PROPERTIES.version)
     expect(D16_VERSION_OUTPUT_REQUIRED).toEqual(Object.keys(D16_VERSION_OUTPUT_PROPERTIES))
+  })
+
+  it('w1c-pre-d21: D21 — the baseline `env-status` description is the pre-overlay one, not the new text', () => {
+    // The positive half of D21, on D14's model: the replaced text must be the one that predates the
+    // clause. A re-captured fixture already carries it, so the capture would equal its replacement
+    // and this reds — at which point D21 is to be DELETED (the literal, the rewrite, this test), never
+    // adjusted, so the whole-object comparison guards `env-status` directly again.
+    expect(d21Baseline, 'D21: no `env-status` description in the baseline to replace').toBeTypeOf('string')
+    expect(String(d21Baseline)).not.toContain('re-reads it before every tool')
+    expect(d21Baseline).not.toBe(D21_ENV_STATUS_DESCRIPTION)
+    expect(D21_ENV_STATUS_DESCRIPTION.startsWith(String(d21Baseline))).toBe(true)
   })
 
   it('w1c-pre-d9: D9 — the baseline carries `confirmToken` on no tool, and the gated set is non-empty', () => {

@@ -1,9 +1,15 @@
 import type { ClientCapabilities, InputRequiredResult } from '@modelcontextprotocol/server'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Mock } from 'vitest'
 import { z } from 'zod'
 
 import { ensureUserProjectConfig, seedUserProjectConfig } from 'src/lib/config-bootstrap'
 import { logger } from 'src/lib/logger'
+import { applySessionEnv } from 'src/lib/session-env'
+import { resetSessionEnvForTests } from 'src/lib/session-env/session-env'
 import type { ArgumentFormProvider, ToolsExecutionResult } from 'src/types'
 
 import { createConfirmCodec } from '../confirm-token'
@@ -57,6 +63,16 @@ vi.mock('src/lib/config-bootstrap', () => {
     }),
     seedUserProjectConfig: vi.fn(),
   }
+})
+
+// The overlay is a no-op spy for every lane that does not inject its own: the default wiring would
+// otherwise read the developer's REAL session dir (`INFRA_KIT_SESSION` is set in any rc-initialised
+// shell) on every un-injected call in this file. The real function is reached through `importActual`
+// by the one lane that pins its synchrony, under a temp session dir.
+vi.mock('src/lib/session-env', async (importOriginal) => {
+  const original = await importOriginal<typeof import('src/lib/session-env')>()
+
+  return { ...original, applySessionEnv: vi.fn() }
 })
 
 const payload: ToolsExecutionResult = {
@@ -1275,6 +1291,185 @@ describe('createToolHandler — argument form', () => {
       expect(countOf('Tool execution form discarded (narrowed): env-load')).toBe(1)
       // The gate's own line must never appear on this path.
       expect(countOf('Tool execution gated (awaiting confirm): env-load')).toBe(0)
+    })
+  })
+
+  // Nested here, not top-level, for the form fixtures above: `form`, `declined` and `run-form` are
+  // reachable only through a provider and a form-capable client.
+  describe('createToolHandler — session env', () => {
+    /**
+     * Every seam the chokepoint touches AFTER the overlay, each a spy. The lanes below assert the
+     * overlay's one invocation precedes every one of them — `invocationCallOrder` is global across
+     * spies, so "before" is a number comparison, not a narrative.
+     */
+    const sessionTool = (
+      options: {
+        provider?: ArgumentFormProvider
+        capabilities?: ClientCapabilities
+        requiresHumanConfirm?: boolean
+      } = {},
+    ) => {
+      const real = createConfirmCodec()
+      const codec = { mint: vi.fn(real.mint), verify: vi.fn(real.verify) }
+      const getClientCapabilities = vi.fn(() => {
+        return options.capabilities
+      })
+      const handler = vi.fn(async () => {
+        return payload
+      })
+      const applied = vi.fn()
+      const tool = createToolHandler({
+        toolName: 'release-create',
+        handler,
+        requiresHumanConfirm: options.requiresHumanConfirm ?? true,
+        formProvider: options.provider,
+        getClientCapabilities,
+        confirmCodec: codec,
+        formDeadlineMs: 50,
+        applySessionEnv: applied,
+      })
+
+      return { tool, handler, applied, codec, getClientCapabilities }
+    }
+
+    /** The provider's three hooks as spies, so the form lanes can order them against the overlay. */
+    const spiedProvider = (): ArgumentFormProvider & { isFormable: Mock; buildRequestedSchema: Mock; toArgs: Mock } => {
+      const base = makeProvider()
+
+      return {
+        ...base,
+        isFormable: vi.fn(base.isFormable),
+        buildRequestedSchema: vi.fn(base.buildRequestedSchema),
+        toArgs: vi.fn(base.toArgs),
+      }
+    }
+
+    const firstOrder = (spy: Mock): number => {
+      const [order] = spy.mock.invocationCallOrder
+
+      if (order === undefined) throw new Error('spy was never called')
+
+      return order
+    }
+
+    /** Exactly one apply on this call, and it precedes every invocation of every spy the path reached. */
+    const expectAppliedFirst = (applied: Mock, reached: Mock[]): void => {
+      expect(applied).toHaveBeenCalledTimes(1)
+      expect(reached.length).toBeGreaterThan(0)
+
+      for (const spy of reached) {
+        expect(spy).toHaveBeenCalled()
+        expect(firstOrder(spy)).toBeGreaterThan(firstOrder(applied))
+      }
+    }
+
+    const round1 = { releases: [{ version: 'next' }] }
+
+    it('run: an ungated tool with no provider applies the env once, before the handler', async () => {
+      const { tool, handler, applied, getClientCapabilities } = sessionTool({ requiresHumanConfirm: false })
+
+      const result = await tool(round1)
+
+      expect(result).toBe(payload)
+      expectAppliedFirst(applied, [getClientCapabilities, handler])
+    })
+
+    it('form: a gated tool offering a form applies the env once, before the provider is consulted', async () => {
+      const provider = spiedProvider()
+      const { tool, handler, applied, getClientCapabilities } = sessionTool({ provider, capabilities: FORM_CAPABLE })
+
+      const result = await tool(round1)
+
+      expect(isForm(result)).toBe(true)
+      expectAppliedFirst(applied, [getClientCapabilities, provider.isFormable, provider.buildRequestedSchema])
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('gate: a gated tool with no provider applies the env once, before the token is minted', async () => {
+      const { tool, handler, applied, codec, getClientCapabilities } = sessionTool()
+
+      const gate = await tool(round1)
+
+      expect(gateOf(gate).status).toBe('confirmation_required')
+      expectAppliedFirst(applied, [getClientCapabilities, codec.mint])
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('verify: round 2 applies the env again, once, before the token is verified and the handler runs', async () => {
+      const { tool, handler, applied, codec, getClientCapabilities } = sessionTool()
+      const confirmToken = gateToken(await tool(round1))
+
+      vi.clearAllMocks()
+      const result = await tool({ ...round1, confirm: true, confirmToken })
+
+      expect(result).toBe(payload)
+      expectAppliedFirst(applied, [getClientCapabilities, codec.verify, handler])
+    })
+
+    it('declined: a re-entry that declines the form applies the env once, before the state is resolved', async () => {
+      const provider = spiedProvider()
+      const { tool, handler, applied, getClientCapabilities } = sessionTool({ provider, capabilities: FORM_CAPABLE })
+
+      await tool(round1)
+
+      vi.clearAllMocks()
+      const second = await tool(round1, reentry({ action: 'decline' }))
+
+      expect(gateOf(second).status).toBe('form_declined')
+      expectAppliedFirst(applied, [getClientCapabilities, provider.isFormable])
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('run-form: an accepted ungated form applies the env once, before the merge and the handler', async () => {
+      const provider = spiedProvider()
+      const { tool, handler, applied, getClientCapabilities } = sessionTool({
+        provider,
+        capabilities: FORM_CAPABLE,
+        requiresHumanConfirm: false,
+      })
+
+      await tool(round1)
+
+      vi.clearAllMocks()
+      await tool(round1, accepted({ version: '1.63.1' }))
+
+      expectAppliedFirst(applied, [getClientCapabilities, provider.isFormable, provider.toArgs, handler])
+      expect(handler).toHaveBeenCalledWith({ releases: [{ version: '1.63.1' }], confirmedCommand: true })
+    })
+
+    it('defaults to the module overlay when none is injected — the wiring, not just the seam', async () => {
+      const handler = vi.fn(async () => {
+        return payload
+      })
+      const tool = createToolHandler({ toolName: 'env-status', handler })
+
+      await tool({})
+
+      expect(vi.mocked(applySessionEnv)).toHaveBeenCalledTimes(1)
+      expect(firstOrder(handler)).toBeGreaterThan(firstOrder(vi.mocked(applySessionEnv)))
+    })
+
+    it('the real overlay is synchronous — its return value is not a thenable', async () => {
+      // A temp session dir, so the real function never reads the developer's own; `stubEnv`, not an
+      // assignment, so the S1 writer guard in dependency-and-bundle-guards keeps matching nothing here.
+      const cacheHome = mkdtempSync(join(tmpdir(), 'tool-handler-session-env-'))
+      const { applySessionEnv: realApplySessionEnv } =
+        await vi.importActual<typeof import('src/lib/session-env')>('src/lib/session-env')
+
+      vi.stubEnv('XDG_CACHE_HOME', cacheHome)
+      vi.stubEnv('INFRA_KIT_SESSION', 'tool-handler-test')
+
+      try {
+        const result: unknown = realApplySessionEnv()
+
+        expect(result).toBeTypeOf('object')
+        expect(result).not.toHaveProperty('then')
+        expect(typeof (result as { then?: unknown }).then).toBe('undefined')
+      } finally {
+        vi.unstubAllEnvs()
+        resetSessionEnvForTests()
+        rmSync(cacheHome, { force: true, recursive: true })
+      }
     })
   })
 })

@@ -4,6 +4,7 @@ import { assertNever } from 'src/lib/assert-never'
 import { commandEcho } from 'src/lib/command-echo'
 import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
 import { logger } from 'src/lib/logger'
+import { applySessionEnv as applySessionEnvFromFile } from 'src/lib/session-env'
 import { textContent } from 'src/types'
 import type { ArgumentFormProvider, ToolsExecutionResult } from 'src/types'
 
@@ -46,6 +47,11 @@ interface ToolHandlerArgs {
    * instead of hanging until the runner's own timeout.
    */
   formDeadlineMs?: number
+  /**
+   * Re-applies the session's `env-load` file to `process.env`. Defaults to the real overlay; tests
+   * inject a spy for the ordering lanes, and the mutation build a no-op so it never reads a session dir.
+   */
+  applySessionEnv?: () => void
 }
 
 /**
@@ -543,6 +549,7 @@ export const createToolHandler = ({
   getClientCapabilities,
   confirmCodec,
   formDeadlineMs,
+  applySessionEnv = applySessionEnvFromFile,
 }: ToolHandlerArgs): ((
   params: unknown,
   ctx?: ToolCallContext,
@@ -578,6 +585,12 @@ export const createToolHandler = ({
       // hook, so without a reset here one tool call's flags would leak into the next one's snapshot and
       // the options array would grow for the life of the process.
       commandEcho.reset()
+
+      // The env-load file lands mid-session, and every read from here on is `process.env` at call
+      // time (Jira, the INFRA_KIT_ENV_* markers, the env children inherit). Applied at the call's
+      // ENTRY so the gate, the form and the handler all run under one environment; synchronous so
+      // a concurrently dispatched call cannot see a half-applied one.
+      applySessionEnv()
 
       // Orthogonal destructive-op confirm gate, and the argument form. Both sit BEFORE the handler and
       // are INDEPENDENT of the `confirmedCommand:true` injected below — that flag is a prompt-skip /

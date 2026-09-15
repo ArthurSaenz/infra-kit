@@ -539,7 +539,7 @@ export const parseDopplerSecretsJson = (stdout: string): Array<[string, string]>
 export const envLoadMcpTool = defineMcpTool({
   name: 'env-load',
   description:
-    'Download the env vars for a Doppler config and write them to a temporary shell script. Does NOT mutate the calling process — returns the path to a script that must be sourced ("source <filePath>") for the vars to take effect. The infra-kit shell wrapper auto-sources; direct MCP callers must handle sourcing themselves or surface filePath to the user. Omit "config" and this server offers the human a form listing every environment env-list knows, token-less ones marked; a client that cannot render one gets a refusal naming the missing field — call env-list and ask the human, never guess.',
+    'Download the env vars for a Doppler config and write them to a temporary shell script. Does NOT mutate the calling process — returns the path to a script that must be sourced ("source <filePath>") for the vars to take effect. The infra-kit shell wrapper auto-sources; direct MCP callers must handle sourcing themselves or surface filePath to the user. This server picks the file up on its next tool call, so a tool that needs the variables can be called right after. Omit "config" and this server offers the human a form listing every environment env-list knows, token-less ones marked; a client that cannot render one gets a refusal naming the missing field — call env-list and ask the human, never guess.',
   inputSchema: {
     config: z
       .string()
