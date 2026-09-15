@@ -804,3 +804,10 @@ bound instead of stating it. Nothing else declined.
   picker (gh + Jira + a form) before `assertDeployable`, so the veto would not be the thing under test.
 - The w1 differential block gained delta D21 (the `env-status` description) and the D18 literal moved
   to the new `env-load` text — both AUTHORED deltas of the §2.7 description edits.
+- AC7's "injected no-op overlay": the confirm-gate mutation build injects nothing — it runs the REAL
+  overlay against `makeDisposableSession`'s redirected `XDG_CACHE_HOME`/`INFRA_KIT_SESSION`
+  (`mcp-harness.ts:87`), which is the property that mattered (the real session dir is never touched).
+- **Open at stamp time (verifier, MINOR):** `plugins/infra-kit/skills/session/SKILL.md` pins the
+  floor "infra-kit CLI 0.7.11 or newer" while `apps/infra-kit/cli/package.json` is still 0.7.9.
+  §4 step 6 must publish the CLI as exactly 0.7.11, or the floor must be amended in the same release —
+  nothing pins the pairing.
