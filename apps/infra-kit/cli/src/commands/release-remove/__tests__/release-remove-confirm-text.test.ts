@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { listCmuxWorkspacesByCwd } from 'src/integrations/cmux'
 import { getVersionRelatedIssueCounts } from 'src/integrations/jira/remove-version'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
-import { isMcpMode } from 'src/lib/mcp-mode'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 
 import { releaseRemove } from '../release-remove'
 import {
@@ -72,10 +73,6 @@ vi.mock('src/lib/git-utils', () => {
 
 vi.mock('src/lib/infra-kit-config', () => {
   return { getInfraKitConfig: vi.fn() }
-})
-
-vi.mock('src/lib/mcp-mode', () => {
-  return { isMcpMode: vi.fn() }
 })
 
 vi.mock('src/lib/prompts/release-picker', () => {
@@ -146,7 +143,7 @@ beforeEach(() => {
   zx.overrides = []
 
   installDefaults()
-  vi.mocked(isMcpMode).mockReturnValue(false)
+  agentMode.source = null
   vi.mocked(confirm).mockResolvedValue(true)
   // Two issues on each field, so the counts are distinguishable from each other and from their sum;
   // `--move-issues-to` is what lets a version with attached issues reach the confirm at all.
@@ -202,5 +199,42 @@ describe('release remove — the confirm text carries the whole inventory', () =
     await releaseRemove({ confirmedCommand: false, version: LABEL, moveIssuesTo: MOVE_TARGET_NAME })
 
     expect(confirmMessage()).not.toContain('cmux window')
+  })
+})
+
+describe('release remove — the confirm site propagates its refusal with the plan', () => {
+  // The site sits under the handler's `catch`, which rewraps anything that is not an
+  // `OperationError` into "check `gh auth status`…". The refusal is one, and must come out intact —
+  // with the same inventory the confirm text renders, as data this time.
+  it('an unconfirmed agent run throws confirmation_required carrying the structured plan, before any step', async () => {
+    agentMode.source = 'mcp'
+
+    const thrown = await releaseRemove({
+      confirmedCommand: false,
+      version: LABEL,
+      moveIssuesTo: MOVE_TARGET_NAME,
+    }).catch((error: unknown) => {
+      return error
+    })
+
+    expect(thrown).toBeInstanceOf(StructuredRefusalError)
+
+    const { structuredContent, exitCode, message } = thrown as StructuredRefusalError
+
+    expect(exitCode).toBe(2)
+    expect(structuredContent.status).toBe('confirmation_required')
+    expect(structuredContent.message).toContain(`#${String(PR_NUMBER)} (OPEN)`)
+    expect(structuredContent.plan).toMatchObject({
+      label: LABEL,
+      pr: expect.objectContaining({ number: PR_NUMBER }),
+      jiraFixCount: 2,
+      jiraAffectsCount: 3,
+      skipJira: false,
+    })
+    // The plan is emitted to stdout under --json: no credential may ride along.
+    expect(JSON.stringify(structuredContent.plan)).not.toContain('token')
+    expect(Array.isArray(structuredContent.rerun)).toBe(true)
+    expect(message).not.toContain('gh auth status')
+    expect(vi.mocked(confirm)).not.toHaveBeenCalled()
   })
 })

@@ -71,6 +71,7 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
       "config",
       "filePath",
       "project",
+      "sessionId",
       "variableCount",
     ],
   },
@@ -229,6 +230,7 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
   {
     "input": [
       "confirm",
+      "moveIssuesTo",
       "version",
     ],
     "name": "release-remove",

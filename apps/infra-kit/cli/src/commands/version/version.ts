@@ -26,7 +26,7 @@ const rootOrNull = async (resolve: () => Promise<string>): Promise<string | null
 /**
  * Print the infra-kit CLI version, and — for the MCP caller — where this server process stands.
  *
- * The location fields exist for the doctor skill (plan docs/mcp-via-plugin-migration-plan.md §4
+ * The location fields exist for the doctor skill (plan docs/archive/mcp/mcp-via-plugin-migration-plan.md §4
  * PM-4): a plugin-spawned server runs in `${CLAUDE_PROJECT_DIR}`, so `cwd`, `repoRoot` and
  * `projectDir` are expected equal, and a worktree session must see ITS checkout as `repoRoot`
  * (worktree-local by construction — `git rev-parse --show-toplevel` of `cwd`) while `mainRepoRoot`

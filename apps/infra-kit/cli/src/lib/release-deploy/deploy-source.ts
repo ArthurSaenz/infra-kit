@@ -1,4 +1,6 @@
+import { agentMode, isHeadless } from 'src/lib/agent-mode'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 
 import { canPromptForDeploySource, pickDeploySource } from './source-picker'
 
@@ -29,11 +31,24 @@ const SOURCE_ONLY_FLAGS: Record<DeploySource, readonly string[]> = {
  */
 export const parseDeploySource = (from: string | undefined): DeploySource => {
   if (!from) {
-    throw new OperationError(undefined, {
+    const context = {
       operation: 'resolve the deploy source',
       remediation: `pass --from with one of: ${DEPLOY_SOURCES.join(', ')}`,
       stderrExcerpt: '--from is required — it decides whether this deploy runs in CI or on this machine',
-    })
+    }
+
+    // Structured for an agent / `--json` consumer, with the flag named and NO `choices`: `--from`
+    // is a two-value enum the remediation already spells, not a form. A non-TTY human run (CI, a
+    // script) keeps the plain error — nothing is parsing its stdout.
+    if (isHeadless()) {
+      throw new StructuredRefusalError(
+        { status: 'argument_required', argument: 'from', agentMode: agentMode.source },
+        2,
+        context,
+      )
+    }
+
+    throw new OperationError(undefined, context)
   }
 
   const match = DEPLOY_SOURCES.find((source) => {

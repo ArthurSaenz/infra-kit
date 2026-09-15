@@ -6,15 +6,18 @@ import process from 'node:process'
 import { z } from 'zod'
 import { $ } from 'zx'
 
-import { commandEcho } from 'src/lib/command-echo'
+import { isHeadless } from 'src/lib/agent-mode'
+import { commandEcho, refuseUnconfirmed } from 'src/lib/command-echo'
 import { createDeployFormProvider } from 'src/lib/deploy-form'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { getCurrentBranch, getProjectRoot, isWorkingTreeClean } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { pickEnv } from 'src/lib/prompts/env-picker'
 import { withEscape } from 'src/lib/prompts/escapable-context'
+import { refuseMissingArguments } from 'src/lib/prompts/refuse-missing-arguments'
 import { deployableEnvs, isSharedEnv, readWorkflowEnvOptions, resolveProtectedEnvAccess } from 'src/lib/workflow-envs'
 import { defineMcpTool, textContent } from 'src/types'
+import type { ArgumentFormProvider } from 'src/types'
 
 import { buildDeployEnv, contractRecord, formatContract } from './deploy-env'
 import type { BuildEnvResult } from './deploy-env'
@@ -82,8 +85,9 @@ const pickServices = async (services: DeployService[], env: string): Promise<str
     (context) => {
       return checkbox({ message: `Deploy which services to ${env}?`, choices, pageSize: 20 }, context)
     },
-    // MCP-unreachable: `service` is required (min 1) on local-deploy-selected; local-deploy-all takes the "all" branch.
-    { whenHeadless: 'unreachable' },
+    // Over MCP `service` is required (min 1) on local-deploy-selected and local-deploy-all takes the
+    // "all" branch, so this is only ever reached by a Bash-driven agent — which is told the flag to pass.
+    { whenHeadless: { refuse: 'service' } },
   )
 
   if (selected.length === 0) {
@@ -103,13 +107,27 @@ const pickServices = async (services: DeployService[], env: string): Promise<str
  * Shared targets get an explicit two-option prompt defaulting to cancel rather than a y/N whose
  * default is one keystroke away: `dev` is everyone's, and a reflexive Enter is how it gets clobbered.
  */
-const confirmTarget = async (args: { env: string; isShared: boolean; count: number }): Promise<boolean> => {
-  const { env, isShared, count } = args
+const confirmTarget = async (args: {
+  env: string
+  isShared: boolean
+  names: string[]
+  accountId: string
+}): Promise<boolean> => {
+  const { env, isShared, names, accountId } = args
+  const count = names.length
+  const message = isShared
+    ? `"${env}" is a SHARED environment — deploying ${count} service(s) from this machine. Continue?`
+    : `Deploy ${count} service(s) to ${env} from this machine?`
+
+  // The local confirm site speaks the same `confirmation_required` shape as `confirmOrExit`: an agent
+  // gets the plan (which env, which services, which AWS account the shell is authenticated to) and
+  // the argv that confirms. The caller gates this on `!confirmedCommand`, so `--yes` never reaches it.
+  if (isHeadless()) refuseUnconfirmed(message, { env, services: names, accountId, shared: isShared })
 
   if (!isShared) {
     return withEscape(
       (context) => {
-        return confirm({ message: `Deploy ${count} service(s) to ${env} from this machine?`, default: false }, context)
+        return confirm({ message, default: false }, context)
       },
       // Refuse is the ANSWER, not an oversight: the caller gates this on `!confirmedCommand`, which the
       // MCP chokepoint always injects. That is a gate, not a schema fact, so it is no `'unreachable'` claim.
@@ -121,7 +139,7 @@ const confirmTarget = async (args: { env: string; isShared: boolean; count: numb
     (context) => {
       return select(
         {
-          message: `"${env}" is a SHARED environment — deploying ${count} service(s) from this machine. Continue?`,
+          message,
           choices: [
             { name: 'No, cancel', value: false },
             { name: `Yes, deploy to ${env}`, value: true },
@@ -320,6 +338,15 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
   // repo whose scripts cannot be preflighted is refused without first asking for a target.
   const project = resolveSsmPrefix(services)
 
+  // Before the env picker: an agent / `--json` run without `--env` gets this workflow's environments
+  // as `choices` — the same `env`-only form both local tools offer over MCP.
+  await refuseMissingArguments({
+    provider: localDeployForms[selection],
+    params: args,
+    operation: 'deploy locally',
+    argument: 'env',
+  })
+
   // Advisory only: `workflow-envs` reads the working tree while a dispatch targets a ref, and vetoing
   // against it once caused a real refuse-to-deploy bug. It seeds the picker; `--env` always wins.
   const protectedEnvAccess = await resolveProtectedEnvAccess()
@@ -408,7 +435,7 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
     })
   }
 
-  if (!confirmedCommand && !(await confirmTarget({ env: selectedEnv, isShared, count: names.length }))) {
+  if (!confirmedCommand && !(await confirmTarget({ env: selectedEnv, isShared, names, accountId }))) {
     logger.info('Deployment cancelled')
 
     return buildResult({
@@ -512,11 +539,18 @@ const localDeployForm = (toolName: string) => {
   return createDeployFormProvider({ workflowFile: DEPLOY_ALL_WORKFLOW, fields: ['env'], toolName })
 }
 
+// ONE instance per tool, shared by the MCP registration below and the agent-mode refusal in
+// `runLocalDeploy`, keyed by the selection the handler already carries.
+const localDeployForms: Record<Selection, ArgumentFormProvider> = {
+  all: localDeployForm('local-deploy-all'),
+  selected: localDeployForm('local-deploy-selected'),
+}
+
 export const localDeployAllMcpTool = defineMcpTool({
   name: 'local-deploy-all',
   description: `Deploy EVERY service enabled for an environment, from this machine. ${SHARED_TOOL_NOTE}`,
   requiresHumanConfirm: true,
-  formProvider: localDeployForm('local-deploy-all'),
+  formProvider: localDeployForms.all,
   inputSchema: sharedInput,
   outputSchema: sharedOutput,
   handler: localDeployAll,
@@ -526,7 +560,7 @@ export const localDeploySelectedMcpTool = defineMcpTool({
   name: 'local-deploy-selected',
   description: `Deploy a NAMED SUBSET of services from this machine. ${SHARED_TOOL_NOTE}`,
   requiresHumanConfirm: true,
-  formProvider: localDeployForm('local-deploy-selected'),
+  formProvider: localDeployForms.selected,
   inputSchema: {
     ...sharedInput,
     service: z

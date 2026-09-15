@@ -2,9 +2,9 @@ import confirm from '@inquirer/confirm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { removeJiraVersion } from 'src/integrations/jira/remove-version'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { branchExists, deleteLocalBranch, deleteRemoteBranch, getCurrentBranch } from 'src/lib/git-utils'
-import { isMcpMode } from 'src/lib/mcp-mode'
 
 import { releaseRemove } from '../release-remove'
 import { BASE_BRANCH, BRANCH, LABEL, installDefaults } from './release-remove-mocks'
@@ -71,10 +71,6 @@ vi.mock('src/lib/infra-kit-config', () => {
   return { getInfraKitConfig: vi.fn() }
 })
 
-vi.mock('src/lib/mcp-mode', () => {
-  return { isMcpMode: vi.fn() }
-})
-
 vi.mock('src/lib/prompts/release-picker', () => {
   return { pickReleaseBranch: vi.fn() }
 })
@@ -138,7 +134,7 @@ beforeEach(() => {
   state.order = []
 
   installDefaults()
-  vi.mocked(isMcpMode).mockReturnValue(false)
+  agentMode.source = null
   vi.mocked(confirm).mockResolvedValue(true)
 
   vi.mocked(deleteLocalBranch).mockImplementation(async () => {

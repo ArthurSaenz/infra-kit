@@ -6,6 +6,7 @@ import { createDeployFormProvider } from 'src/lib/deploy-form'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { pickEnv } from 'src/lib/prompts/env-picker'
+import { refuseMissingArguments } from 'src/lib/prompts/refuse-missing-arguments'
 import { confirmDeploy, resolveDeployBranch } from 'src/lib/release-deploy'
 import { releaseLabelFromBranch } from 'src/lib/release-utils'
 import {
@@ -35,8 +36,27 @@ interface GhReleaseDeployAllArgs {
 /**
  * Deploy a release branch to an environment
  */
+// ONE provider instance for the MCP form and the agent-mode refusal, so an agent's `choices` are the
+// form an MCP client would have been offered: the open releases and this workflow's environments.
+const deployAllForm = createDeployFormProvider({
+  workflowFile: DEPLOY_ALL_WORKFLOW,
+  fields: ['version', 'env'],
+  toolName: 'gh-release-deploy-all',
+})
+
 export const ghReleaseDeployAll = async (args: GhReleaseDeployAllArgs) => {
   const { version, env, skipTerraform, confirmedCommand } = args
+
+  // Before either picker: the flags mirror the form's fields, so the first field the form would have
+  // asked for is the flag named.
+  await refuseMissingArguments({
+    provider: deployAllForm,
+    params: args,
+    operation: 'launch deploy-all workflow',
+    argument: (offered) => {
+      return offered[0] ?? 'version'
+    },
+  })
 
   const selectedReleaseBranch = await resolveDeployBranch(version)
 
@@ -142,11 +162,7 @@ export const ghReleaseDeployAllMcpTool = defineMcpTool({
   // such argument — the two axes are the workflow FILE and the field set, and both differ across the
   // four tools (`gh-release-deploy-selected` reads a different workflow AND offers services; the
   // local pair offers no `version` at all).
-  formProvider: createDeployFormProvider({
-    workflowFile: DEPLOY_ALL_WORKFLOW,
-    fields: ['version', 'env'],
-    toolName: 'gh-release-deploy-all',
-  }),
+  formProvider: deployAllForm,
   description:
     'Dispatch the deploy-all.yml GitHub Actions workflow to deploy every service from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Use gh-release-deploy-selected for a subset of services. Pass version="dev" to deploy from the dev branch instead of a release branch. Omit "version" or "env" and this server offers the human a form listing the real releases and the environments this workflow declares; a client that cannot render one gets a refusal naming the missing field, never a guess.',
   requiresHumanConfirm: true,

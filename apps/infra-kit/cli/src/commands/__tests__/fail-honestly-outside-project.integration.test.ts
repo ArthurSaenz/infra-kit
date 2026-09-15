@@ -70,8 +70,15 @@ const tmpDirs: string[] = []
  * three kill switches. `overrides` set a value, or DELETE the key when the value is `undefined`
  * (I2 deletes `INFRA_KIT_NO_SEED` to arm the seed leg).
  */
+// `CLAUDECODE` / `INFRA_KIT_AGENT` are scrubbed: the child's stdin is a pipe, so under Claude Code's
+// runner the inherited `CLAUDECODE=1` would put it in agent mode (lib/agent-mode) and every
+// human-channel remediation here would render its agent wording instead. The MCP block below
+// exercises the agent channel on its own.
 const cleanEnv = (overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...process.env, ...KILL_SWITCHES }
+
+  delete env.CLAUDECODE
+  delete env.INFRA_KIT_AGENT
 
   for (const [key, value] of Object.entries(overrides)) {
     if (value === undefined) {

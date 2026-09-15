@@ -106,6 +106,10 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
       'plugin MCP server',
       'CLI version',
       'MCP server key',
+      // The two agent rows close the section: how this shell would be classified, and whether the
+      // repo's allowlist would let an agent bypass the `--yes` re-run on a mutating command.
+      'Agent mode',
+      'Agent allowlist',
     ],
   ],
 ]
@@ -195,8 +199,8 @@ export interface DoctorReportOptions {
  * quotes). `--ascii` therefore means "don't require box-drawing/symbol glyphs", not "emit pure ASCII".
  */
 const GLYPHS = {
-  unicode: { pass: '✓', fail: '✗', separator: '·', rule: '─' },
-  ascii: { pass: 'ok', fail: '!!', separator: '-', rule: '-' },
+  unicode: { pass: '✓', fail: '✗', warn: '!', separator: '·', rule: '─' },
+  ascii: { pass: 'ok', fail: '!!', warn: '!?', separator: '-', rule: '-' },
 } as const
 
 type Glyphs = (typeof GLYPHS)[keyof typeof GLYPHS]
@@ -237,19 +241,28 @@ const wrapText = (text: string, width: number): string[] => {
   return lines.length > 0 ? lines : ['']
 }
 
-/** Per-section pass/fail tallies. */
-const tally = (checks: readonly CheckResult[]): { passed: number; failed: number } => {
-  const failed = checks.filter((check) => {
-    return check.status === 'fail'
-  }).length
+interface Tally {
+  passed: number
+  failed: number
+  warned: number
+}
 
-  return { passed: checks.length - failed, failed }
+/** Per-section tallies. A warning is neither a pass nor a failure: it is counted on its own so `n/n ok` stays honest. */
+const tally = (checks: readonly CheckResult[]): Tally => {
+  const count = (status: CheckResult['status']): number => {
+    return checks.filter((check) => {
+      return check.status === status
+    }).length
+  }
+
+  return { passed: count('pass'), failed: count('fail'), warned: count('warn') }
 }
 
 interface Palette {
   header: (text: string) => string
   pass: (text: string) => string
   fail: (text: string) => string
+  warn: (text: string) => string
   dim: (text: string) => string
   bold: (text: string) => string
 }
@@ -273,6 +286,9 @@ const createPalette = (color: boolean): Palette => {
     fail: (text): string => {
       return chalk.red(text)
     },
+    warn: (text): string => {
+      return chalk.yellow(text)
+    },
     dim: (text): string => {
       return chalk.dim(text)
     },
@@ -283,7 +299,7 @@ const createPalette = (color: boolean): Palette => {
 }
 
 /**
- * `7/7 ok` / `4/5 · 1 failed` — a section's verdict at a glance.
+ * `7/7 ok` / `4/5 · 1 failed` / `4/5 · 1 warning` — a section's verdict at a glance.
  *
  * Returns the VISIBLE width alongside the (coloured) text. The caller needs that width to right-align
  * the rollup and cannot recover it from the string, because colour has already been baked in. An
@@ -292,25 +308,36 @@ const createPalette = (color: boolean): Palette => {
  * mangled the one line the grouping exists to make obvious. Never measure a coloured string.
  */
 const formatRollup = (
-  counts: { passed: number; failed: number },
+  counts: Tally,
   total: number,
   palette: Palette,
   glyphs: Glyphs,
 ): { text: string; plainWidth: number } => {
-  if (counts.failed === 0) {
+  if (counts.failed === 0 && counts.warned === 0) {
     const plain = `${total}/${total} ok`
 
     return { text: palette.pass(plain), plainWidth: plain.length }
   }
 
   const ratio = `${counts.passed}/${total}`
-  const failed = `${counts.failed} failed`
+  const parts = [
+    ...(counts.failed === 0 ? [] : [{ plain: `${counts.failed} failed`, paint: palette.fail }]),
+    ...(counts.warned === 0
+      ? []
+      : [{ plain: `${counts.warned} warning${counts.warned === 1 ? '' : 's'}`, paint: palette.warn }]),
+  ]
+  const text = [
+    palette.dim(ratio),
+    ...parts.map((part) => {
+      return part.paint(part.plain)
+    }),
+  ].join(` ${glyphs.separator} `)
+  // Each joined part costs the space, the single-column separator, and the space.
+  const plainWidth = parts.reduce((width, part) => {
+    return width + part.plain.length + 3
+  }, ratio.length)
 
-  return {
-    text: `${palette.dim(ratio)} ${glyphs.separator} ${palette.fail(failed)}`,
-    // +3 = the space, the single-column separator, and the space.
-    plainWidth: ratio.length + failed.length + 3,
-  }
+  return { text, plainWidth }
 }
 
 const INDENT = '  '
@@ -341,22 +368,25 @@ const formatCheckRow = (
   check: CheckResult,
   nameWidth: number,
   palette: Palette,
-  glyphs: { pass: string; fail: string },
+  glyphs: { pass: string; fail: string; warn: string },
   width: number,
 ): string[] => {
-  const failed = check.status === 'fail'
-  // Both glyph pairs are internally equal-width (`✓`/`✗` = 1, `ok`/`!!` = 2), so the marker needs no
-  // padding — but the column arithmetic below still has to account for its width.
+  // A pass is the quiet row: green glyph, plain name, dimmed message. A failure or a warning is the
+  // line the report exists for, so its name takes the colour and its message stays bright.
+  const loud = check.status !== 'pass'
+  // Each glyph set is internally equal-width (`✓`/`✗`/`!` = 1, `ok`/`!!`/`!?` = 2), so the marker needs
+  // no padding — but the column arithmetic below still has to account for its width.
   const glyphWidth = glyphs.pass.length
-  const plainGlyph = failed ? glyphs.fail : glyphs.pass
+  const plainGlyph = glyphs[check.status]
   const plainName = check.name.padEnd(nameWidth)
-  const glyph = failed ? palette.fail(plainGlyph) : palette.pass(plainGlyph)
-  const name = failed ? palette.fail(plainName) : plainName
+  const colour = palette[check.status]
+  const glyph = colour(plainGlyph)
+  const name = loud ? colour(plainName) : plainName
   const messageColumn = ROW_INDENT.length + glyphWidth + 1 + nameWidth + 2
   const messageWidth = Math.max(MIN_MESSAGE_WIDTH, width - messageColumn)
   const [first, ...rest] = wrapText(check.message, messageWidth)
   const paint = (text: string): string => {
-    return failed ? text : palette.dim(text)
+    return loud ? text : palette.dim(text)
   }
   // `trimEnd` so a check with an empty message does not leave trailing whitespace on the line.
   const head = `${ROW_INDENT}${glyph} ${name}  ${paint(first ?? '')}`.trimEnd()
@@ -376,9 +406,11 @@ const formatSummary = (checks: readonly CheckResult[], palette: Palette, glyphs:
   const fixable = checks.filter((check) => {
     return check.status === 'fail' && FIXABLE_NAMES.has(check.name)
   }).length
-  const passed = palette.pass(`${counts.passed} passed`)
-  const failed = palette.fail(`${counts.failed} failed`)
-  const totals = counts.failed === 0 ? passed : `${passed} ${glyphs.separator} ${failed}`
+  const totals = [
+    palette.pass(`${counts.passed} passed`),
+    ...(counts.failed === 0 ? [] : [palette.fail(`${counts.failed} failed`)]),
+    ...(counts.warned === 0 ? [] : [palette.warn(`${counts.warned} warned`)]),
+  ].join(` ${glyphs.separator} `)
   const hintText = palette.dim(`${fixable} fixable — run \`infra-kit doctor --fix\``)
   const hint = fixable > 0 ? `  ${hintText}` : ''
 

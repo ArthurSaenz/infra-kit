@@ -19,6 +19,7 @@ import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig, resolveConfiguredIdes } from 'src/lib/infra-kit-config'
@@ -53,7 +54,7 @@ const RELEASE_DIR = 'release'
 // it keeps the bytes out of the stream, but turns a documented harmless default into a hard failure
 // and makes the tool unusable over MCP unless a caller passes both booleans explicitly.
 //
-// The guard lives in `withEscape` keyed on `isMcpMode()`, never `process.stdin.isTTY` —
+// The guard lives in `withEscape` keyed on `isAgentMode()`, never `process.stdin.isTTY` —
 // `commands/mcp/mcp.ts` spawns the server with `stdio: 'inherit'`, so a terminal-launched
 // `infra-kit mcp` has a real TTY stdin and an isTTY-keyed guard would not fire. And never on
 // `confirmedCommand`, which carries the CLI's `--yes` (`program.ts:109`): keying on that would stop
@@ -277,6 +278,11 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     // reach the top-level boundary untouched so it exits cleanly, instead of being
     // logged as an error with a misleading "branches already exist" remediation.
     if (isPromptCancellation(error)) throw error
+
+    // A refusal with a payload (the confirm site's `confirmation_required`) must reach the boundary
+    // intact: rewrapped, its `structuredContent` and exit code would be lost under a remediation
+    // about branches that already exist. Only this class passes; every other wrap is unchanged.
+    if (error instanceof StructuredRefusalError) throw error
 
     // `debug`, not `error`: this rethrows as an OperationError, and `entry/cli.ts` logs any
     // uncaught error at ERROR and exits 1 — so logging here too printed one fault as two red

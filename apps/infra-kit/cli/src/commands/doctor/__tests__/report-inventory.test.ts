@@ -285,11 +285,14 @@ describe('doctor --json payload', () => {
  * got wrong: it hid the row where `initCore` writes the file, and it would have rendered the row against
  * `process.cwd()` where `git rev-parse` answers nothing.
  */
-describe('the MCP server key row is gated on the git root', () => {
-  it('renders in a git repo with no infra-kit.json', async () => {
+describe('the MCP server key and Agent allowlist rows are gated on the git root', () => {
+  it('render in a git repo with no infra-kit.json', async () => {
     gitTopLevel = ensureGitOnlyFixture()
 
-    expect(await producedNames()).toContain('MCP server key')
+    const produced = await producedNames()
+
+    expect(produced).toContain('MCP server key')
+    expect(produced).toContain('Agent allowlist')
   })
 
   /**
@@ -309,12 +312,13 @@ describe('the MCP server key row is gated on the git root', () => {
     expect(row?.message).toContain('Could not read mcpServers')
   })
 
-  it('is omitted, not answered against the cwd, when the git seam is blank', async () => {
+  it('are omitted, not answered against the cwd, when the git seam is blank', async () => {
     gitTopLevel = ''
 
     const produced = await producedNames()
 
     expect(produced).not.toContain('MCP server key')
+    expect(produced).not.toContain('Agent allowlist')
     // `doctor` is READ-ONLY. It borrows the writer's predicate to decide the row set; it skips
     // nothing and intends to write nothing, so the writer's four-step skip line must not reach
     // someone who only ran the diagnostic — least of all as stderr line 1, above the report header.
@@ -322,7 +326,7 @@ describe('the MCP server key row is gated on the git root', () => {
     expect([...produced].sort()).toEqual(
       [...DOCTOR_CHECK_NAMES]
         .filter((name) => {
-          return name !== 'MCP server key'
+          return name !== 'MCP server key' && name !== 'Agent allowlist'
         })
         .sort(),
     )

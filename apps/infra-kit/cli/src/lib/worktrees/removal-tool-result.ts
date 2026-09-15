@@ -1,5 +1,6 @@
+import { isAgentMode } from 'src/lib/agent-mode'
 import { OperationError } from 'src/lib/errors/operation-error'
-import { isMcpMode } from 'src/lib/mcp-mode'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { textContent } from 'src/types'
 import type { ToolsExecutionResult } from 'src/types'
 
@@ -13,7 +14,7 @@ export interface RemovalStructuredContent {
 
 interface ToRemovalToolResultArgs {
   result: RemoveWorktreesResult
-  /** Used for the CLI-path OperationError, e.g. `remove worktrees`. */
+  /** Used for the thrown error's message, e.g. `remove worktrees`. */
   operation: string
 }
 
@@ -21,9 +22,9 @@ interface ToRemovalToolResultArgs {
  * Turn a batch removal into the command's return value, surfacing failures on whichever surface the
  * command runs on:
  *
- * - **MCP**: a thrown error is flattened by the SDK to text-only `isError` content and loses
- *   `structuredContent` entirely, so a failure is *returned* with `isError: true` and a
- *   schema-valid `failedWorktrees` (same pattern as the confirm gate in `tool-handler.ts`).
+ * - **agent** (MCP, `--agent`, env): a `StructuredRefusalError` with `status: 'partial_failure'` and
+ *   the schema-valid `removedWorktrees`/`failedWorktrees` payload, exit 1 — the tool handler renders
+ *   it as an `isError` result with that `structuredContent`, `entry/cli.ts` emits it under `--json`.
  * - **CLI**: an `OperationError` so the process exits non-zero and names what was not removed.
  *
  * Callers run their IDE cleanup and `commandEcho.print()` BEFORE calling this, so the successful
@@ -44,17 +45,19 @@ export const toRemovalToolResult = (args: ToRemovalToolResultArgs): ToolsExecuti
 
   if (result.failed.length === 0) return { content, structuredContent }
 
-  if (isMcpMode()) return { content, structuredContent, isError: true }
-
-  const failures = result.failed
-    .map((failure) => {
-      return `${failure.branch}: ${failure.reason}`
-    })
-    .join('; ')
-
-  throw new OperationError(undefined, {
+  const context = {
     operation,
     remediation: `not removed: ${structuredContent.failedWorktrees.join(', ')} — fix the cause above and re-run`,
-    stderrExcerpt: failures,
-  })
+    stderrExcerpt: result.failed
+      .map((failure) => {
+        return `${failure.branch}: ${failure.reason}`
+      })
+      .join('; '),
+  }
+
+  // Exit 1, not 2: something DID happen (`removedWorktrees` is non-empty or the attempt ran), and the
+  // agent has to read the payload to know which half.
+  if (isAgentMode()) throw new StructuredRefusalError({ status: 'partial_failure', ...structuredContent }, 1, context)
+
+  throw new OperationError(undefined, context)
 }

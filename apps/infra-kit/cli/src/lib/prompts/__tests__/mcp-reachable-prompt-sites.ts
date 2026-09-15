@@ -199,30 +199,41 @@ const enclosingName = (node: ts.Node, source: ts.SourceFile): string => {
   return '<module>'
 }
 
-/** Every `// MCP-unreachable: …` line attached to a node, as one string. */
-const unreachableComments = (node: ts.Node, source: ts.SourceFile): string => {
-  const text = source.getFullText()
-  const ranges = ts.getLeadingCommentRanges(text, node.getFullStart()) ?? []
-
-  return ranges
-    .map((range) => {
-      return text.slice(range.pos, range.end)
-    })
-    .filter((comment) => {
-      return comment.includes('MCP-unreachable:')
-    })
-    .join('\n')
-}
-
 export interface PromptSite {
   /** `<file>#<enclosing fn>` — stable across edits in a way a line number is not. */
   key: string
   where: string
-  /** `'default'` means no `whenHeadless` was written at all, which `withEscape` reads as refuse. */
-  policy: 'refuse' | 'unreachable' | 'value' | 'default'
-  /** The backticked identifier in the site's `// MCP-unreachable:` comment, if it has one. */
+  /**
+   * `'default'` means no `whenHeadless` was written at all, which `withEscape` reads as refuse;
+   * `'argument'` is `{ refuse: '<name>' }` — a refusal that names the argument to pass.
+   */
+  policy: 'refuse' | 'argument' | 'value' | 'default'
+  /** The string literal in a `{ refuse: '<name>' }` policy, if the site has one. */
   field: string | null
   reachable: boolean
+}
+
+/** The one `key: value` pair of a single-property object literal, or null for any other shape. */
+const singleProperty = (node: ts.Expression): { key: string; value: ts.Expression } | null => {
+  if (!ts.isObjectLiteralExpression(node) || node.properties.length !== 1) return null
+
+  const [property] = node.properties
+
+  if (!property || !ts.isPropertyAssignment(property)) return null
+
+  return { key: property.name.getText(), value: property.initializer }
+}
+
+// Read off the AST, not a comment: the argument name is now part of the policy VALUE, so the site
+// cannot name one thing in prose and pass another to `withEscape`.
+const policyOf = (initializer: ts.Expression): { policy: PromptSite['policy']; field: string | null } => {
+  if (ts.isStringLiteral(initializer)) return { policy: 'refuse', field: null }
+
+  const pair = singleProperty(initializer)
+
+  if (pair?.key === 'refuse' && ts.isStringLiteral(pair.value)) return { policy: 'argument', field: pair.value.text }
+
+  return { policy: 'value', field: null }
 }
 
 const readPolicy = (
@@ -237,12 +248,7 @@ const readPolicy = (
     if (!ts.isPropertyAssignment(property)) continue
     if (property.name.getText(source) !== 'whenHeadless') continue
 
-    const policy = ts.isStringLiteral(property.initializer)
-      ? (property.initializer.text as 'refuse' | 'unreachable')
-      : ('value' as const)
-    const comment = `${unreachableComments(options, source)}\n${unreachableComments(property, source)}`
-
-    return { policy, field: /`([A-Z]\w*)`/i.exec(comment)?.[1] ?? null }
+    return policyOf(property.initializer)
   }
 
   return { policy: 'default', field: null }

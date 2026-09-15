@@ -3,8 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { agentMode } from 'src/lib/agent-mode'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
-import { mcpMode } from 'src/lib/mcp-mode'
 
 import { getInfraKitConfig, resetInfraKitConfigCache } from '../infra-kit-config'
 
@@ -26,12 +26,12 @@ beforeEach(() => {
   vi.mocked(getProjectRoot).mockResolvedValue(tmp)
   vi.mocked(getMainRepoRoot).mockResolvedValue(tmp)
   homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmp)
-  mcpMode.enabled = false
+  agentMode.source = null
   resetInfraKitConfigCache()
 })
 
 afterEach(() => {
-  mcpMode.enabled = false
+  agentMode.source = null
   homedirSpy.mockRestore()
   resetInfraKitConfigCache()
   fs.rmSync(tmp, { recursive: true, force: true })
@@ -51,8 +51,8 @@ describe('getInfraKitConfig — missing layer-1 config (Step 4 prefix stability)
     expect(message).toContain('this git repo is not an infra-kit project')
   })
 
-  it('mCP channel: message STARTS WITH the same prefix and names neither `cd ` nor `--project` (Step 3)', async () => {
-    mcpMode.enabled = true
+  it('agent channel: message STARTS WITH the same prefix, names `-C <dir>` and neither `cd ` nor `--project` (Step 3)', async () => {
+    agentMode.source = 'mcp'
 
     const err = await getInfraKitConfig().catch((e: unknown) => {
       return e
@@ -61,7 +61,8 @@ describe('getInfraKitConfig — missing layer-1 config (Step 4 prefix stability)
     const message = (err as Error).message
 
     expect(message.startsWith('infra-kit.json not found at ')).toBe(true)
-    expect(message).toContain('the infra-kit MCP server was launched in')
+    expect(message).toContain('or pass `-C <dir>` naming one')
+    expect(message).not.toContain('relaunch the server')
     expect(message).not.toContain('cd ')
     expect(message).not.toContain('--project')
   })

@@ -4,8 +4,11 @@ import process from 'node:process'
 import { PassThrough, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { agentMode } from 'src/lib/agent-mode'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
-import { mcpMode } from 'src/lib/mcp-mode'
+import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
+import { jsonOutput } from 'src/lib/json-output'
 
 import { withEscape } from '../escapable-context'
 
@@ -47,7 +50,8 @@ const stdinSpies = () => {
 
 afterEach(() => {
   if (realStdin) Object.defineProperty(process, 'stdin', realStdin)
-  mcpMode.enabled = false
+  agentMode.source = null
+  jsonOutput.enabled = false
 })
 
 // `@inquirer/core`'s `create-prompt.js` does `output.pipe(context.output ?? process.stdout)`, and no
@@ -292,7 +296,7 @@ describe('withEscape — the MCP/TTY guard', () => {
     // raw listener to the JSON-RPC stream — so it MUST fail this test. That is the
     // entire reason the test exists.
     setStdin(stdin, true)
-    mcpMode.enabled = true
+    agentMode.source = 'mcp'
 
     const before = stdin.listenerCount('data')
     const stdout = captureStdout()
@@ -331,7 +335,7 @@ describe('withEscape — the MCP/TTY guard', () => {
     const stdin = new PassThrough()
 
     setStdin(stdin, true)
-    mcpMode.enabled = true
+    agentMode.source = 'mcp'
 
     const stdout = captureStdout()
     let resolved: boolean | undefined
@@ -353,23 +357,34 @@ describe('withEscape — the MCP/TTY guard', () => {
     expect(stdout.written()).toBe('')
   })
 
-  // `'unreachable'` is a claim that a required schema field blocks this path. Reaching it means the
-  // claim is false, so it must fail loudly rather than degrade — otherwise relaxing a field to
-  // `.optional()` silently re-opens a prompt site with nothing to notice it.
-  it('g0a2: an "unreachable" site throws under MCP, naming the broken claim', async () => {
+  // G0a2 — `--json` is a machine reader on stdout; a prompt there is stream corruption exactly as it
+  // is under MCP, and `release-picker`/`source-picker` already refuse on it. Source stays null, so the
+  // payload says so and the wording never invents an agent.
+  it('g0a2: refuses under --json with no agent source, and a { value } site still answers', async () => {
     const stdin = new PassThrough()
 
     setStdin(stdin, true)
-    mcpMode.enabled = true
+    jsonOutput.enabled = true
+
+    const error = await withEscape(() => {
+      return Promise.resolve('answered')
+    }).catch((e: unknown) => {
+      return e
+    })
+
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+    expect((error as StructuredRefusalError).structuredContent).toEqual({ status: 'refused', agentMode: null })
+    expect((error as Error).message).toMatch(/--json/)
+    expect((error as Error).message).not.toMatch(/MCP|JSON-RPC/)
 
     await expect(
       withEscape(
         () => {
-          return Promise.resolve('answered')
+          return Promise.resolve(true)
         },
-        { whenHeadless: 'unreachable' },
+        { whenHeadless: { value: false } },
       ),
-    ).rejects.toThrow(/relaxed|unreachable/i)
+    ).resolves.toBe(false)
   })
 
   it('attaches nothing when stdin is not a TTY and MCP is off', async () => {
@@ -525,5 +540,86 @@ describe('withEscape — stdin ownership', () => {
 
     // Acquiring below the early return would ref a handle nobody reads — a pure hang.
     expect(ref).not.toHaveBeenCalled()
+  })
+})
+
+describe('withEscape — the refusal payload (lib/errors/structured-refusal-error)', () => {
+  const refusalFrom = async (policy: 'refuse' | { refuse: string } | undefined): Promise<StructuredRefusalError> => {
+    const error = await withEscape(
+      () => {
+        return Promise.resolve('answered')
+      },
+      policy === undefined ? undefined : { whenHeadless: policy },
+    ).catch((e: unknown) => {
+      return e
+    })
+
+    // An `OperationError` subclass ON PURPOSE: the handler-level catches rewrap anything else.
+    expect(error).toBeInstanceOf(OperationError)
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+
+    return error as StructuredRefusalError
+  }
+
+  it("'refuse' → status refused, exit 2, the source in the payload", async () => {
+    setStdin(new PassThrough(), true)
+    agentMode.source = 'flag'
+
+    const error = await refusalFrom('refuse')
+
+    expect(error.structuredContent).toEqual({ status: 'refused', agentMode: 'flag' })
+    expect(error.exitCode).toBe(2)
+  })
+
+  it('the default (no whenHeadless) is the same refusal', async () => {
+    setStdin(new PassThrough(), true)
+    agentMode.source = 'env'
+
+    expect((await refusalFrom(undefined)).structuredContent).toEqual({ status: 'refused', agentMode: 'env' })
+  })
+
+  it('{ refuse: <argument> } → status argument_required naming the flag to pass', async () => {
+    setStdin(new PassThrough(), true)
+    agentMode.source = 'flag'
+
+    const error = await refusalFrom({ refuse: 'version' })
+
+    expect(error.structuredContent).toEqual({ status: 'argument_required', argument: 'version', agentMode: 'flag' })
+    expect(error.exitCode).toBe(2)
+    expect(error.message).toContain('pass --version')
+  })
+
+  // The wording is the contract a Bash-driven skill reads. "stdin carries JSON-RPC" would send it
+  // looking for a server that does not exist; only the `'mcp'` source may say it.
+  it.each([
+    { source: 'flag' as const, names: /--agent/ },
+    { source: 'env' as const, names: /INFRA_KIT_AGENT|CLAUDECODE/ },
+  ])('under $source the wording never mentions MCP or JSON-RPC, and names the source', async ({ source, names }) => {
+    setStdin(new PassThrough(), true)
+    agentMode.source = source
+
+    const plain = await refusalFrom('refuse')
+    const named = await refusalFrom({ refuse: 'description' })
+
+    for (const message of [plain.message, named.message]) {
+      expect(message).not.toMatch(/MCP|JSON-RPC/)
+      expect(message).toMatch(names)
+    }
+
+    expect(named.message).toContain('pass --description')
+  })
+
+  it("under 'mcp' the wording keeps today's JSON-RPC text and names the field, not a flag", async () => {
+    setStdin(new PassThrough(), true)
+    agentMode.source = 'mcp'
+
+    const plain = await refusalFrom('refuse')
+    const named = await refusalFrom({ refuse: 'description' })
+
+    expect(plain.message).toContain('stdin carries JSON-RPC')
+    expect(plain.message).toContain('MCP runs have no human to answer it')
+    expect(named.message).toContain('pass "description"')
+    expect(named.message).not.toContain('--description')
+    expect(named.structuredContent).toEqual({ status: 'argument_required', argument: 'description', agentMode: 'mcp' })
   })
 })

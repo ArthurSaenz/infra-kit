@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { agentMode } from 'src/lib/agent-mode'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
-import { mcpMode } from 'src/lib/mcp-mode'
 
 import { resolveProtectedEnvAccess } from '../protected-env-access'
 
@@ -17,9 +17,9 @@ const withConfig = (protectedEnvs?: string): void => {
 }
 
 afterEach(() => {
-  // `mcpMode.enabled` is mutable module state shared across every test FILE in the run, not just this
+  // `agentMode.source` is mutable module state shared across every test FILE in the run, not just this
   // one. Leaving it true here would silently flip unrelated suites into MCP behaviour.
-  mcpMode.enabled = false
+  agentMode.source = null
   vi.restoreAllMocks()
 })
 
@@ -54,7 +54,7 @@ describe('resolveProtectedEnvAccess', () => {
   describe('cli-only', () => {
     it('allows on the CLI', async () => {
       withConfig('cli-only')
-      mcpMode.enabled = false
+      agentMode.source = null
 
       expect(await resolveProtectedEnvAccess()).toEqual({ allowed: true, reason: 'allowed' })
     })
@@ -64,14 +64,14 @@ describe('resolveProtectedEnvAccess', () => {
     // run the delivery flow instead of telling the human to run it in a terminal.
     it('denies over MCP, with a reason distinct from a plain disallow', async () => {
       withConfig('cli-only')
-      mcpMode.enabled = true
+      agentMode.source = 'mcp'
 
-      expect(await resolveProtectedEnvAccess()).toEqual({ allowed: false, reason: 'mcp-blocked' })
+      expect(await resolveProtectedEnvAccess()).toEqual({ allowed: false, reason: 'agent-blocked' })
     })
 
     it('is unaffected by MCP mode when the project says "allow"', async () => {
       withConfig('allow')
-      mcpMode.enabled = true
+      agentMode.source = 'mcp'
 
       expect(await resolveProtectedEnvAccess()).toEqual({ allowed: true, reason: 'allowed' })
     })

@@ -2,15 +2,16 @@ import { z } from 'zod'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { removeIdeWorktreeFolders } from 'src/integrations/ide'
+import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 import { formatBranchName, parseReleaseRef } from 'src/lib/release-id'
 import {
@@ -37,22 +38,39 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
  * every worktree. Require MCP callers to name targets explicitly via `versions`. No-op on the CLI path.
  */
 const assertMcpRemovalInput = (input: { all?: boolean; versions?: string }): void => {
-  if (!isMcpMode()) return
+  if (!isAgentMode()) return
+
+  // Structured (exit 2, nothing ran): an agent reads `refused` as "this door is closed here" and
+  // `argument_required` as "re-run with --versions". Wording keyed on the source: over MCP `all` has
+  // no field and `versions` is the field; a Bash-driven agent reads the flags it can actually pass.
+  const overMcp = agentMode.source === 'mcp'
 
   if (input.all) {
-    throw new OperationError(undefined, {
+    throw new StructuredRefusalError({ status: 'refused', agentMode: agentMode.source }, 2, {
       operation: 'remove worktrees',
-      remediation: 'name targets explicitly via "versions"; bulk all=true removal is disabled over MCP',
-      stderrExcerpt: 'all=true is not permitted for worktrees-remove over MCP',
+      remediation: overMcp
+        ? 'name targets explicitly via "versions"; bulk all=true removal is disabled over MCP'
+        : 'name targets explicitly via --versions <refs>; bulk --all removal is disabled under agent mode',
+      stderrExcerpt: overMcp
+        ? 'all=true is not permitted for worktrees-remove over MCP'
+        : '--all is not permitted for worktrees remove under agent mode',
     })
   }
 
   if (!input.versions) {
-    throw new OperationError(undefined, {
-      operation: 'remove worktrees',
-      remediation: 'pass "versions" (comma-separated release versions/names); the interactive picker needs a TTY',
-      stderrExcerpt: 'worktrees-remove over MCP requires "versions"',
-    })
+    throw new StructuredRefusalError(
+      { status: 'argument_required', argument: 'versions', agentMode: agentMode.source },
+      2,
+      {
+        operation: 'remove worktrees',
+        remediation: overMcp
+          ? 'pass "versions" (comma-separated release versions/names); the interactive picker needs a TTY'
+          : 'pass --versions <refs> (comma-separated release versions/names) on the re-run — `infra-kit worktrees list --json` lists them',
+        stderrExcerpt: overMcp
+          ? 'worktrees-remove over MCP requires "versions"'
+          : 'worktrees remove under agent mode requires --versions',
+      },
+    )
   }
 }
 

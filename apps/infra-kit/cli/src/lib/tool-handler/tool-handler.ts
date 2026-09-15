@@ -3,6 +3,7 @@ import type { ClientCapabilities, InputRequiredResult } from '@modelcontextproto
 import { assertNever } from 'src/lib/assert-never'
 import { commandEcho } from 'src/lib/command-echo'
 import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { logger } from 'src/lib/logger'
 import { applySessionEnv as applySessionEnvFromFile } from 'src/lib/session-env'
 import { textContent } from 'src/types'
@@ -612,6 +613,14 @@ export const createToolHandler = ({
         params,
         msg: `Tool execution failed: ${toolName}`,
       })
+
+      // The one refusal channel for both surfaces (lib/errors/structured-refusal-error): thrown by the
+      // handler, RENDERED here — the SDK would otherwise flatten it to text-only `isError` content and
+      // drop `structuredContent`, the payload the agent is meant to act on. Same shape as `softStop`
+      // so a refusal from inside the handler is indistinguishable from one the gate produced.
+      if (error instanceof StructuredRefusalError) {
+        return { ...softStop(error.structuredContent), content: textContent(error.message) }
+      }
 
       throw error
     }

@@ -11,7 +11,7 @@ const buildServerEntry = (): Record<string, unknown> => {
 }
 
 /**
- * The writer-free reader of a consumer repo's `.mcp.json` (plan docs/mcp-via-plugin-migration-plan.md
+ * The writer-free reader of a consumer repo's `.mcp.json` (archived plan docs/archive/mcp/mcp-via-plugin-migration-plan.md
  * §3.3, "What `ensureMcpRegistration` becomes").
  *
  * Two properties, asserted on every case: the VERDICT, and that NOTHING WAS WRITTEN — mtime and bytes

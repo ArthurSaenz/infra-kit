@@ -1,8 +1,7 @@
 import select from '@inquirer/select'
 import process from 'node:process'
 
-import { jsonOutput } from 'src/lib/json-output'
-import { isMcpMode } from 'src/lib/mcp-mode'
+import { isHeadless } from 'src/lib/agent-mode'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 
 import { DEPLOY_SOURCES } from './deploy-source'
@@ -16,7 +15,7 @@ import type { DeploySource } from './deploy-source'
  * to stay a hard error, which is what keeps the strict contract for scripts, `--yes` and CI.
  */
 export const canPromptForDeploySource = (): boolean => {
-  return !isMcpMode() && process.stdin.isTTY === true && !jsonOutput.enabled
+  return !isHeadless() && process.stdin.isTTY === true
 }
 
 /** What each runner actually does, shown where the choice is made rather than buried in `--help`. */

@@ -40,7 +40,7 @@ vi.mock('src/lib/git-utils', () => {
 })
 
 const DENIED = { allowed: false, reason: 'disallow' } as const
-const MCP_BLOCKED = { allowed: false, reason: 'mcp-blocked' } as const
+const MCP_BLOCKED = { allowed: false, reason: 'agent-blocked' } as const
 const ALLOWED = { allowed: true, reason: 'allowed' } as const
 
 const deploy = async (access: typeof DENIED | typeof ALLOWED | typeof MCP_BLOCKED, env = 'prod') => {

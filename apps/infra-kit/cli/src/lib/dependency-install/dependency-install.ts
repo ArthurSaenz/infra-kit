@@ -9,11 +9,11 @@ import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import process from 'node:process'
 
+import { isAgentMode } from 'src/lib/agent-mode'
 import { assessRecipe, formatRecipe } from 'src/lib/dependency-install/risk-predicate'
 import type { RiskContext } from 'src/lib/dependency-install/risk-predicate'
 import type { Recipe } from 'src/lib/dependency-registry'
 import { logger } from 'src/lib/logger'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { packageManagerInstallEnv } from 'src/lib/pm-env'
 
 export type InstallOutcome =
@@ -23,8 +23,8 @@ export type InstallOutcome =
 export interface InstallDeps {
   spawnSync?: typeof spawnSync
   env?: NodeJS.ProcessEnv
-  /** Reads whether this process is serving MCP. Injected so the guard can be exercised without a server. */
-  mcpMode?: () => boolean
+  /** Reads whether an agent is driving this process. Injected so the guard can be exercised without a server. */
+  agentMode?: () => boolean
   /** Where a step announces itself before it runs. Injected so a test reads narration without stderr. */
   notify?: (line: string) => void
 }
@@ -51,13 +51,13 @@ const scrubbed = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
  * Run one recipe, or refuse and hand back the argv.
  *
  * Two refusals, and they are about different things. {@link assessRecipe} answers "is this recipe safe
- * to run unattended at all"; the MCP guard answers "may THIS caller run it" — an MCP server has no
+ * to run unattended at all"; the agent guard answers "may THIS caller run it" — an agent has no
  * human watching and is the wrong authority regardless of how safe the recipe is.
  */
 export const runRecipe = (recipe: Recipe, context: RiskContext, deps: InstallDeps = {}): InstallOutcome => {
   const spawn = deps.spawnSync ?? spawnSync
   const env = deps.env ?? process.env
-  const inMcpMode = (deps.mcpMode ?? isMcpMode)()
+  const inAgentMode = (deps.agentMode ?? isAgentMode)()
   const commands = formatRecipe(recipe)
   const verdict = assessRecipe(recipe, context)
 
@@ -65,7 +65,7 @@ export const runRecipe = (recipe: Recipe, context: RiskContext, deps: InstallDep
 
   // Deliberately AFTER the recipe verdict and independent of it: a caller that is allowed to ask is
   // still refused an unsafe recipe, and a safe recipe is still refused to a caller with no human.
-  if (inMcpMode) return { ran: false, commands, refusedBecause: ['mcp-mode'] }
+  if (inAgentMode) return { ran: false, commands, refusedBecause: ['agent-mode'] }
 
   return execute({ recipe, spawn, env, commands, notify: deps.notify ?? announce })
 }

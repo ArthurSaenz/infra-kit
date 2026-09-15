@@ -4,10 +4,15 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resolvePluginInstall } from 'src/lib/plugin-pointer'
-import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
 
-import { checkClaudeCli, checkClaudePlugin, checkMcpServerKey, inspectServedPluginServer } from '../doctor'
-import type { ServedPluginServer } from '../doctor'
+import {
+  checkAgentAllowlist,
+  checkAgentMode,
+  checkClaudeCli,
+  checkClaudePlugin,
+  checkMcpServerKey,
+  inspectServedPluginServer,
+} from '../doctor'
 import { DOCTOR_CHECK_NAMES, groupChecks } from '../report'
 
 /**
@@ -60,13 +65,11 @@ const writeJson = (filePath: string, value: unknown): void => {
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf-8')
 }
 
-/** The served copy's own `.mcp.json`, exactly as `plugins/infra-kit/.mcp.json` ships it (≥ 0.8.0). */
+/** The `.mcp.json` the plugin shipped BEFORE it went skills-only — what a stale served copy still carries. */
 const SERVED_MCP = { mcpServers: { 'infra-kit': { type: 'stdio', command: 'infra-kit', args: ['mcp'] } } }
 
-const SERVES: ServedPluginServer = { kind: 'serves', version: '0.8.0' }
-const NO_SERVER: ServedPluginServer = { kind: 'no-server', version: '0.7.0' }
-
-const installPlugin = (version = '0.4.0', served: unknown = SERVED_MCP, name = 'infra-kit'): string => {
+/** As shipped now: skills only, no `.mcp.json`. */
+const installPlugin = (version = '0.4.0', served: unknown = null, name = 'infra-kit'): string => {
   const installPath = path.join(home, '.claude', 'plugins', 'cache', 'infra-kit')
 
   writeJson(path.join(installPath, '.claude-plugin', 'plugin.json'), { name, version })
@@ -114,7 +117,7 @@ describe('checkClaudePlugin', () => {
     expect(messageOf(checks, 'plugin installed')).toContain('claude plugin install infra-kit@infra-kit --scope project')
   })
 
-  it('passes all five once the marketplace is registered and the plugin installed with the server', () => {
+  it('passes all five once the marketplace is registered and the skills-only plugin installed', () => {
     writeJson(path.join(home, '.claude', 'plugins', 'known_marketplaces.json'), {
       'infra-kit': { source: { source: 'github', repo: 'ArthurSaenz/infra-kit' } },
     })
@@ -315,7 +318,7 @@ describe('plugin version — fetched-but-not-applied advisory', () => {
  * Plan §3.3 Rows, `plugin MCP server`: capability-keyed on the SERVED copy (the install record's
  * `installPath`), never on a version floor and never on the marketplace clone.
  */
-describe('plugin MCP server', () => {
+describe('plugin MCP server — flipped: a served .mcp.json is the stale state', () => {
   const UPDATE_COMMAND = 'claude plugin update infra-kit@infra-kit --scope project'
 
   it('fails, with the install command, when no plugin is installed for this project', () => {
@@ -327,57 +330,51 @@ describe('plugin MCP server', () => {
     )
   })
 
-  it('fails, naming the update command, when the served copy has no .mcp.json (plugin < 0.8.0)', () => {
-    installPlugin('0.7.0', null)
-
-    const checks = checkClaudePlugin(repo)
-
-    expect(statusOf(checks, 'plugin MCP server')).toBe('fail')
-    expect(messageOf(checks, 'plugin MCP server')).toContain('0.7.0 does not carry the infra-kit MCP server')
-    expect(messageOf(checks, 'plugin MCP server')).toContain(UPDATE_COMMAND)
-  })
-
-  it('fails as corrupt or renamed when the served server sits under another key', () => {
-    installPlugin('0.8.0', { mcpServers: { ik: { type: 'stdio', command: 'infra-kit', args: ['mcp'] } } })
-
-    const checks = checkClaudePlugin(repo)
-
-    expect(statusOf(checks, 'plugin MCP server')).toBe('fail')
-    expect(messageOf(checks, 'plugin MCP server')).toContain('under "ik"')
-    expect(messageOf(checks, 'plugin MCP server')).toContain('claude plugin uninstall infra-kit@infra-kit')
-  })
-
-  it('fails as corrupt or renamed when the plugin name is not infra-kit', () => {
-    installPlugin('0.8.0', SERVED_MCP, 'my-fork')
-
-    expect(statusOf(checkClaudePlugin(repo), 'plugin MCP server')).toBe('fail')
-  })
-
-  it('passes, naming the plugin prefix, when the served copy carries the server as shipped', () => {
+  it('passes as skills-only when the served copy has no .mcp.json — the shipped shape', () => {
     installPlugin('0.8.0')
 
     const checks = checkClaudePlugin(repo)
 
     expect(statusOf(checks, 'plugin MCP server')).toBe('pass')
     expect(messageOf(checks, 'plugin MCP server')).toBe(
-      `Plugin infra-kit@infra-kit 0.8.0 serves the infra-kit MCP server as ${MCP_TOOL_PREFIX}*`,
+      'Plugin infra-kit@infra-kit 0.8.0 is skills-only — no .mcp.json, as shipped; the /infra-kit:* skills drive the infra-kit CLI',
     )
   })
 
-  /** Capability-keyed: a `0.7.0` that carries the file passes; there is no version floor. */
-  it('passes a served 0.7.0 that carries a correct .mcp.json', () => {
+  it('passes with the update advisory when the served copy still carries the old .mcp.json', () => {
+    installPlugin('0.7.7', SERVED_MCP)
+
+    const checks = checkClaudePlugin(repo)
+
+    expect(statusOf(checks, 'plugin MCP server')).toBe('pass')
+    expect(messageOf(checks, 'plugin MCP server')).toContain('0.7.7 still carries an MCP server in its .mcp.json')
+    expect(messageOf(checks, 'plugin MCP server')).toContain('under "infra-kit"')
+    expect(messageOf(checks, 'plugin MCP server')).toContain('infra-kit setup')
+    expect(messageOf(checks, 'plugin MCP server')).toContain(UPDATE_COMMAND)
+    expect(messageOf(checks, 'plugin MCP server')).toContain('restart Claude Code')
+  })
+
+  /** Whatever the file keys the server under, its presence is what dates the copy. */
+  it('reports a served .mcp.json under another key as stale too, naming the key', () => {
+    installPlugin('0.7.7', { mcpServers: { ik: { type: 'stdio', command: 'infra-kit', args: ['mcp'] } } })
+
+    const checks = checkClaudePlugin(repo)
+
+    expect(statusOf(checks, 'plugin MCP server')).toBe('pass')
+    expect(messageOf(checks, 'plugin MCP server')).toContain('under "ik"')
+    expect(messageOf(checks, 'plugin MCP server')).toContain(UPDATE_COMMAND)
+  })
+
+  /** Capability-keyed: an old version hand-stripped of the file is skills-only; there is no version floor. */
+  it('passes a served 0.7.0 that carries no .mcp.json', () => {
     installPlugin('0.7.0')
 
-    expect(statusOf(checkClaudePlugin(repo), 'plugin MCP server')).toBe('pass')
+    expect(messageOf(checkClaudePlugin(repo), 'plugin MCP server')).toContain('is skills-only')
   })
 
   /** Edit 7: the served copy is the RECORD's path; a clone that is ahead changes nothing. */
-  it('reads the install record path, not a marketplace clone that is ahead of it', () => {
-    installPlugin('0.7.0', null)
-    writeJson(
-      path.join(home, '.claude', 'plugins', 'marketplaces', 'infra-kit', 'plugins', 'infra-kit', '.mcp.json'),
-      SERVED_MCP,
-    )
+  it('reads the install record path, not a marketplace clone that differs from it', () => {
+    installPlugin('0.7.7', SERVED_MCP)
     writeJson(
       path.join(
         home,
@@ -393,10 +390,11 @@ describe('plugin MCP server', () => {
       { name: 'infra-kit', version: '0.8.0' },
     )
 
-    expect(statusOf(checkClaudePlugin(repo), 'plugin MCP server')).toBe('fail')
+    expect(messageOf(checkClaudePlugin(repo), 'plugin MCP server')).toContain('still carries an MCP server')
     expect(inspectServedPluginServer(resolvePluginInstall({ projectPath: repo }))).toEqual({
-      kind: 'no-server',
-      version: '0.7.0',
+      kind: 'stale-server',
+      version: '0.7.7',
+      keys: ['infra-kit'],
     })
   })
 
@@ -412,119 +410,82 @@ describe('plugin MCP server', () => {
 })
 
 /**
- * Plan §3.3 Rows, `MCP server key`: transition-guarded on `plugin MCP server`. Post-switch a leftover
- * key is a CHORE (pass + advisory) and no key is the healthy state; in transition the repo's own entry
- * is the only route, so no key means no server at all.
+ * `MCP server key`: the repo's own `.mcp.json` against the retired server. A leftover key under ANY
+ * name is a chore (pass + "delete this key"), no key is the healthy state, and only an unreadable file
+ * fails. No transition guard any more: the plugin serves nothing, so the served copy cannot change
+ * what the repo's entry means.
  */
 describe('checkMcpServerKey', () => {
   const writeMcp = (value: unknown): void => {
     fs.writeFileSync(path.join(repo, '.mcp.json'), JSON.stringify(value, null, 2), 'utf-8')
   }
 
-  describe('once the served plugin carries the server', () => {
-    it('passes with the chore advisory on a leftover infra-kit key (stale)', () => {
-      writeMcp({ mcpServers: { 'infra-kit': { type: 'stdio', command: 'infra-kit', args: ['mcp'] } } })
+  it('passes with the "delete this key" advisory on a leftover infra-kit key (stale)', () => {
+    writeMcp({ mcpServers: { 'infra-kit': { type: 'stdio', command: 'infra-kit', args: ['mcp'] } } })
 
-      const check = checkMcpServerKey(repo, SERVES)
+    const check = checkMcpServerKey(repo)
 
-      expect(check.status).toBe('pass')
-      expect(check.message).toContain('shadowed')
-      expect(check.message).toContain(`sessions here serve ${LEGACY_MCP_TOOL_PREFIX}*`)
-      expect(check.message).toContain('nothing to fix on this machine')
-      expect(check.message).toContain('delete the "infra-kit" entry from .mcp.json by hand')
-    })
-
-    it('passes as served by the plugin when only siblings remain (absent)', () => {
-      writeMcp({ mcpServers: { 'linear-server': { type: 'http', url: 'https://mcp.linear.app/mcp' } } })
-
-      const check = checkMcpServerKey(repo, SERVES)
-
-      expect(check.status).toBe('pass')
-      expect(check.message).toContain('served by the plugin')
-      expect(check.message).toContain('no "infra-kit" key')
-    })
-
-    it('passes as served by the plugin when there is no .mcp.json at all', () => {
-      const check = checkMcpServerKey(repo, SERVES)
-
-      expect(check.status).toBe('pass')
-      expect(check.message).toContain('served by the plugin')
-      expect(check.message).not.toContain('infra-kit setup')
-    })
-
-    it('fails, naming the key, when our server is filed under another key', () => {
-      writeMcp({ mcpServers: { ik: { type: 'stdio', command: 'infra-kit', args: ['mcp'] } } })
-
-      const check = checkMcpServerKey(repo, SERVES)
-
-      expect(check.status).toBe('fail')
-      expect(check.message).toContain('"ik"')
-      expect(check.message).toContain('second server process')
-    })
-
-    it('fails on a file it cannot read', () => {
-      fs.writeFileSync(path.join(repo, '.mcp.json'), '{ nope', 'utf-8')
-
-      const check = checkMcpServerKey(repo, SERVES)
-
-      expect(check.status).toBe('fail')
-      expect(check.message).toContain('Could not read mcpServers')
-    })
+    expect(check.status).toBe('pass')
+    expect(check.message).toContain('still registers "infra-kit" — delete this key')
+    expect(check.message).toContain('the plugin no longer serves an MCP server')
+    expect(check.message).toContain('compatibility stub')
+    expect(check.message).toContain('Delete the "infra-kit" entry from .mcp.json by hand')
   })
 
-  describe('while the served plugin does NOT carry the server (transition)', () => {
-    it('passes a leftover key as the live route, naming the legacy prefix', () => {
-      writeMcp({ mcpServers: { 'infra-kit': { type: 'stdio', command: 'infra-kit', args: ['mcp'] } } })
+  it('passes as nothing-to-spawn when only siblings remain (absent)', () => {
+    writeMcp({ mcpServers: { 'linear-server': { type: 'http', url: 'https://mcp.linear.app/mcp' } } })
 
-      const check = checkMcpServerKey(repo, NO_SERVER)
+    const check = checkMcpServerKey(repo)
 
-      expect(check.status).toBe('pass')
-      expect(check.message).toContain('the live route until the plugin carries it')
-      expect(check.message).toContain(`${LEGACY_MCP_TOOL_PREFIX}*`)
-    })
+    expect(check.status).toBe('pass')
+    expect(check.message).toContain('no "infra-kit" key')
+    expect(check.message).toContain('nothing spawns the retired server')
+  })
 
-    /** PM-1's detector from a typed `doctor`: consumer PR merged, teammate's plugin still < 0.8.0. */
-    it('fails as "no server at all" when the key is gone and the plugin cannot serve', () => {
-      writeMcp({ mcpServers: { 'linear-server': { type: 'http', url: 'https://mcp.linear.app/mcp' } } })
+  it('passes as nothing-to-spawn when there is no .mcp.json at all', () => {
+    const check = checkMcpServerKey(repo)
 
-      const check = checkMcpServerKey(repo, NO_SERVER)
+    expect(check.status).toBe('pass')
+    expect(check.message).toContain('no .mcp.json at the repo root')
+    expect(check.message).not.toContain('infra-kit setup')
+  })
 
-      expect(check.status).toBe('fail')
-      expect(check.message).toContain('no server at all')
-      expect(check.message).toContain('claude plugin update infra-kit@infra-kit --scope project')
-      expect(check.message).toContain('restart Claude Code')
-    })
+  /** The same chore under another key: named, and no longer red — there is no prefix left for it to break. */
+  it('passes with the advisory, naming the key, when our server is filed under another key', () => {
+    writeMcp({ mcpServers: { ik: { type: 'stdio', command: 'infra-kit', args: ['mcp'] } } })
 
-    it('fails as "no server at all" with no .mcp.json, never naming setup as the fix', () => {
-      const check = checkMcpServerKey(repo, { kind: 'not-installed' })
+    const check = checkMcpServerKey(repo)
 
-      expect(check.status).toBe('fail')
-      expect(check.message).toContain('no server at all')
-      expect(check.message).not.toContain('infra-kit setup')
-    })
+    expect(check.status).toBe('pass')
+    expect(check.message).toContain('still registers "ik" — delete this key')
+    expect(check.message).toContain('Delete the "ik" entry from .mcp.json by hand')
+  })
 
-    it('fails on a misfiled key as before', () => {
-      writeMcp({ mcpServers: { ik: { type: 'stdio', command: 'infra-kit', args: ['mcp'] } } })
+  it('fails on a file it cannot read', () => {
+    fs.writeFileSync(path.join(repo, '.mcp.json'), '{ nope', 'utf-8')
 
-      expect(checkMcpServerKey(repo, NO_SERVER).status).toBe('fail')
-    })
+    const check = checkMcpServerKey(repo)
+
+    expect(check.status).toBe('fail')
+    expect(check.message).toContain('Could not read mcpServers')
   })
 
   /** Edit 8 at the row: a proxy whose args mention infra-kit is not a misfiled server. */
   it('does not read an ik-mcp proxy named like us as wrong-key', () => {
     writeMcp({ mcpServers: { grafana: { command: 'ik-mcp', args: ['--name', 'infra-kit-x', '--', 'mcp-grafana'] } } })
 
-    expect(checkMcpServerKey(repo, SERVES).status).toBe('pass')
+    expect(checkMcpServerKey(repo).message).toContain('nothing spawns the retired server')
   })
 
-  it('spells both prefixes through the constants only (source guard)', () => {
+  it('spells no tool prefix at all (source guard)', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'doctor.ts'), 'utf-8')
 
     expect(source).not.toMatch(/mcp__/)
+    expect(source).not.toMatch(/tool-prefix/)
   })
 
   /**
-   * Exit 1 is scoped to `plugin installed` alone (F14): neither of the two MCP rows may reach the
+   * Exit 1 is scoped to `plugin installed` alone (F14): none of the MCP or agent rows may reach the
    * exit code, whatever their status. Pinned at the source of the CLI action, which is the only
    * place the code is set.
    */
@@ -534,7 +495,141 @@ describe('checkMcpServerKey', () => {
 
     expect(action).toBeDefined()
     expect(action).toContain("check.name === 'plugin installed'")
-    expect(action).not.toMatch(/MCP server key|plugin MCP server/)
+    expect(action).not.toMatch(/MCP server key|plugin MCP server|Agent mode|Agent allowlist/)
+  })
+})
+
+/**
+ * `Agent mode` (plan §3.1): the precedence table, read back as a row. Every case is a PASS — the row
+ * reports a classification, it does not judge one — so the assertions are about the message alone.
+ */
+describe('checkAgentMode', () => {
+  it('reports the --agent flag, and that it beats the environment', () => {
+    const check = checkAgentMode({ env: { INFRA_KIT_AGENT: '0' }, stdinIsTTY: true, flag: true })
+
+    expect(check.status).toBe('pass')
+    expect(check.message).toMatch(/^agent — the --agent flag/)
+    expect(check.message).toContain('INFRA_KIT_AGENT = "0"')
+    expect(check.message).toContain('--agent passed')
+  })
+
+  it('reports INFRA_KIT_AGENT=1 as the source', () => {
+    const check = checkAgentMode({ env: { INFRA_KIT_AGENT: '1' }, stdinIsTTY: true, flag: false })
+
+    expect(check.message).toMatch(/^agent — INFRA_KIT_AGENT=1/)
+    expect(check.message).toContain('stdin is a TTY')
+  })
+
+  it('reports the CLAUDECODE heuristic, with both of its inputs', () => {
+    const check = checkAgentMode({ env: { CLAUDECODE: '1' }, stdinIsTTY: false, flag: false })
+
+    expect(check.message).toMatch(/^agent — CLAUDECODE is set and stdin is not a TTY/)
+    expect(check.message).toContain('CLAUDECODE set')
+    expect(check.message).toContain('INFRA_KIT_AGENT unset')
+    expect(check.message).toContain('stdin is not a TTY')
+  })
+
+  it('explains a terminal Claude Code spawned for a person as human', () => {
+    const check = checkAgentMode({ env: { CLAUDECODE: '1' }, stdinIsTTY: true, flag: false })
+
+    expect(check.message).toMatch(/^human — CLAUDECODE is set but stdin is a TTY/)
+  })
+
+  it('explains INFRA_KIT_AGENT=0 as the suppressed heuristic', () => {
+    const check = checkAgentMode({ env: { CLAUDECODE: '1', INFRA_KIT_AGENT: '0' }, stdinIsTTY: false, flag: false })
+
+    expect(check.message).toMatch(/^human — INFRA_KIT_AGENT=0 suppresses/)
+  })
+
+  it('names how to opt in when nothing fires', () => {
+    const check = checkAgentMode({ env: {}, stdinIsTTY: true, flag: false })
+
+    expect(check.status).toBe('pass')
+    expect(check.message).toMatch(/^human — no source fires; pass --agent or set INFRA_KIT_AGENT=1/)
+    expect(check.message).toContain('CLAUDECODE unset')
+  })
+
+  it('never fails, whatever the inputs', () => {
+    for (const flag of [true, false])
+      for (const stdinIsTTY of [true, false])
+        for (const env of [{}, { CLAUDECODE: '1' }, { INFRA_KIT_AGENT: '1' }, { INFRA_KIT_AGENT: 'yes' }])
+          expect(checkAgentMode({ env, stdinIsTTY, flag }).status).toBe('pass')
+  })
+})
+
+/**
+ * `Agent allowlist` (plan §3.8): the row over real settings files in a temp repo. The matching rule
+ * itself is pinned in `agent-allowlist.test.ts`; here it is the verdict, the file it names, and the
+ * three non-warning shapes.
+ */
+describe('checkAgentAllowlist', () => {
+  const writeSettings = (file: string, value: unknown): void => {
+    writeJson(path.join(repo, file), value)
+  }
+
+  it('passes, naming both files, when neither exists', () => {
+    const check = checkAgentAllowlist(repo)
+
+    expect(check.status).toBe('pass')
+    expect(check.message).toContain('no .claude/settings.json or .claude/settings.local.json at the repo root')
+  })
+
+  it('passes when the allow list reaches only read-only commands', () => {
+    writeSettings('.claude/settings.json', {
+      permissions: { allow: ['Bash(infra-kit release list:*)', 'Bash(ik worktrees list:*)', 'Bash(git status:*)'] },
+    })
+
+    const check = checkAgentAllowlist(repo)
+
+    expect(check.status).toBe('pass')
+    expect(check.message).toContain('no permissions.allow pattern in .claude/settings.json reaches')
+  })
+
+  it('warns on a prefix allow, naming the file, the pattern and what it reaches', () => {
+    writeSettings('.claude/settings.local.json', { permissions: { allow: ['Bash(infra-kit release remove:*)'] } })
+
+    const check = checkAgentAllowlist(repo)
+
+    expect(check.status).toBe('warn')
+    expect(check.message).toContain('.claude/settings.local.json allows "Bash(infra-kit release remove:*)"')
+    expect(check.message).toContain('reaches 1 mutating infra-kit command (release remove)')
+    expect(check.message).toContain('--yes re-run')
+    expect(check.message).toContain('Bash(infra-kit release list:*)')
+  })
+
+  it('caps the named commands and counts the rest on a whole-CLI allow', () => {
+    writeSettings('.claude/settings.json', { permissions: { allow: ['Bash(infra-kit:*)'] } })
+
+    const check = checkAgentAllowlist(repo)
+
+    expect(check.status).toBe('warn')
+    expect(check.message).toMatch(
+      /reaches \d+ mutating infra-kit commands \(dev, release merge-dev, release create, release desc-edit \+\d+ more\)/,
+    )
+  })
+
+  it('reports every offending pattern across both files, checked-in file first', () => {
+    writeSettings('.claude/settings.json', { permissions: { allow: ['Bash(pnpm exec infra-kit worktrees:*)'] } })
+    writeSettings('.claude/settings.local.json', { permissions: { allow: ['Bash(ik env-load:*)'] } })
+
+    const check = checkAgentAllowlist(repo)
+
+    expect(check.status).toBe('warn')
+    expect(check.message.indexOf('.claude/settings.json allows')).toBeLessThan(
+      check.message.indexOf('.claude/settings.local.json allows'),
+    )
+    expect(check.message).toContain('(worktrees add, worktrees remove, worktrees sync)')
+    expect(check.message).toContain('(env-load)')
+  })
+
+  it('warns, naming the file, when a settings file cannot be parsed', () => {
+    fs.mkdirSync(path.join(repo, '.claude'), { recursive: true })
+    fs.writeFileSync(path.join(repo, '.claude', 'settings.local.json'), '{ nope', 'utf-8')
+
+    const check = checkAgentAllowlist(repo)
+
+    expect(check.status).toBe('warn')
+    expect(check.message).toContain('Could not read permissions.allow from .claude/settings.local.json')
   })
 })
 
@@ -627,14 +722,20 @@ describe('report placement', () => {
   it('puts every new row in the Claude Code plugin section, never Other', async () => {
     spawnOutcome.reject = false
 
-    const sections = groupChecks([await checkClaudeCli(), ...checkClaudePlugin(repo), checkMcpServerKey(repo, SERVES)])
+    const sections = groupChecks([
+      await checkClaudeCli(),
+      ...checkClaudePlugin(repo),
+      checkMcpServerKey(repo),
+      checkAgentMode({ env: {}, stdinIsTTY: true, flag: false }),
+      checkAgentAllowlist(repo),
+    ])
 
     expect(sections).toHaveLength(1)
     expect(sections[0]?.label).toBe('Claude Code plugin')
-    expect(sections[0]?.checks).toHaveLength(7)
+    expect(sections[0]?.checks).toHaveLength(9)
   })
 
-  it('lists the seven names in the canonical inventory', () => {
+  it('lists the nine names in the canonical inventory', () => {
     for (const name of [
       'claude CLI',
       'marketplace registered',
@@ -643,13 +744,15 @@ describe('report placement', () => {
       'plugin MCP server',
       'CLI version',
       'MCP server key',
+      'Agent mode',
+      'Agent allowlist',
     ])
       expect(DOCTOR_CHECK_NAMES).toContain(name)
   })
 
   /** `claude CLI` is a report, not a verdict: only `plugin installed` drives doctor's exit code. */
   it('places claude CLI first, ahead of the rows its absence explains', () => {
-    const plugin = DOCTOR_CHECK_NAMES.slice(-7)
+    const plugin = DOCTOR_CHECK_NAMES.slice(-9)
 
     expect(plugin[0]).toBe('claude CLI')
   })

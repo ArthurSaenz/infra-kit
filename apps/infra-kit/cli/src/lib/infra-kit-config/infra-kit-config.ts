@@ -4,9 +4,9 @@ import path from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
 
+import { isAgentMode } from 'src/lib/agent-mode'
 import { USER_CONFIG_DIR_NAME } from 'src/lib/constants'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { PROTECTED_CHILD_ENV_NAMES } from 'src/lib/mcp-proxy/protected-env'
 
 const INFRA_KIT_CONFIG_FILE = 'infra-kit.json'
@@ -538,8 +538,8 @@ export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
     }
 
     throw new Error(
-      isMcpMode()
-        ? `infra-kit.json not found at ${paths.main} — the directory the infra-kit MCP server was launched in is not an infra-kit project. The operator must relaunch the server with its working directory set to an infra-kit project repo.`
+      isAgentMode()
+        ? `infra-kit.json not found at ${paths.main} — the working directory is not an infra-kit project. Run infra-kit from inside an infra-kit project repo, or pass \`-C <dir>\` naming one.`
         : `infra-kit.json not found at ${paths.main} — this git repo is not an infra-kit project. Run \`infra-kit setup --skip-tools\` here to create it, cd into an infra-kit project repo, or check out a branch that has infra-kit.json.`,
     )
   }

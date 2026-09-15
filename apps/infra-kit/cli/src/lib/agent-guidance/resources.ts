@@ -51,7 +51,9 @@ export const RESOURCES: Readonly<Record<ResourceKey, string>> = {
  * in `bodies.test.ts` are the primary net for that.
  */
 export const PLACEHOLDERS: Readonly<Record<ResourceKey, readonly string[]>> = {
-  'root/body': ['{{mcpToolPrefix}}'],
+  // None since the MCP tool prefix left with the server; the line-count net in `bodies.test.ts` is
+  // what guards this body against prettier now.
+  'root/body': [],
   'package/frontend': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
   'package/backend': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
   'package/lib': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],

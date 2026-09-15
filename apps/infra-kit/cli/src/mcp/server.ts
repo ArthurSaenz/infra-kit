@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/server'
 
-import { mcpMode } from 'src/lib/mcp-mode'
+import { agentMode } from 'src/lib/agent-mode'
 
 import packageJson from '../../package.json' with { type: 'json' }
 import { initializeResources } from './resources'
@@ -12,7 +12,7 @@ export async function createMcpServer() {
   // module starts a server at import time and so can never be unit-tested — a test
   // there could only stub the flag, which proves nothing about it ever being set.
   // This runs before `server.connect`, so no tool handler can outrun it.
-  mcpMode.enabled = true
+  agentMode.source = 'mcp'
 
   const server = new McpServer(
     {

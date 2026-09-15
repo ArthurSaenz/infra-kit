@@ -290,9 +290,9 @@ export const commandCatalog: CommandCatalogEntry[] = [
   },
   // Exposed, unlike its neighbour `release-deliver`. Exposure here is governed by the allowlist-or-gate
   // rule, not by whether the verb sounds destructive: `requiresHumanConfirm` puts it behind the
-  // two-phase gate, and the tool narrows itself under MCP — `version` is required, `moveIssuesTo` /
-  // `skipJira` are refused, and the one irreversible step (the Jira fix version) is never attempted,
-  // returning `jira: 'manual'` instead. The asymmetry that would otherwise exist is the argument for
+  // two-phase gate, `version` is optional so the human picks from a form, `skipJira` is refused,
+  // `moveIssuesTo` is accepted and shown in the gate, and the one irreversible step (the Jira fix
+  // version) runs behind that gate. The asymmetry that would otherwise exist is the argument for
   // exposing it: `release-create` IS exposed, so an agent can create a release it could never clean up.
   {
     cliName: 'release-remove',
@@ -357,7 +357,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
   },
   // worktrees-remove runs `git worktree remove` (no --force) on the named leaf worktrees. It is NOT
   // irreversible in the way release-deliver is: the release branches/commits survive, the
-  // worktrees scaffold is left in place, and worktrees-add recreates a removed worktree. git also
+  // worktrees scaffold survives, and worktrees-add recreates a removed worktree. git also
   // refuses to remove a worktree with modified-tracked or untracked files. The residual risk —
   // deletion of gitignored local state (a hydrated `.env` of Doppler secrets, node_modules/dist) — is
   // contained by the tool's own invariants rather than by withholding it: over MCP it rejects
@@ -664,8 +664,8 @@ export const MCP_TOOL_PRESENTATION: Record<string, { title: string; openWorld: b
   // release-create.ts:7 loadJiraConfig from src/integrations/jira; creates branches and PRs.
   'release-create': { title: 'Create releases', openWorld: true },
   // release-remove.ts:5 fetchPRByHead from src/integrations/gh and :9-15 the Jira barrel; closes the
-  // PR via the gh CLI and deletes the remote branch. Reaches Jira read-only under MCP — the delete is
-  // the one step it never attempts there — but a read is still an outbound call, so openWorld holds.
+  // PR via the gh CLI and deletes the remote branch. Reaches Jira to read AND remove the fix version
+  // under MCP; `openWorld` holds either way.
   'release-remove': { title: 'Remove a release', openWorld: true },
   // gh-release-deploy-all.ts:2 `import { $ } from 'zx'` — dispatches deploy-all.yml via the gh CLI.
   // Imports NO src/integrations/*, which is why the import-graph derivation was rejected.
@@ -680,7 +680,7 @@ export const MCP_TOOL_PRESENTATION: Record<string, { title: string; openWorld: b
   'local-deploy-selected': { title: 'Deploy selected services from this machine', openWorld: true },
   // The only network path is worktrees-remove.ts:130, inside the picker `else` branch at :129-141.
   // That branch is unreachable via MCP twice over: the inputSchema declares `versions` REQUIRED and
-  // omits `all` entirely, and assertMcpRemovalInput (:39-57, called at :97) throws under isMcpMode()
+  // omits `all` entirely, and assertMcpRemovalInput (:39-57, called at :97) throws under isAgentMode()
   // on `all` and on missing `versions`.
   'worktrees-remove': { title: 'Remove release worktrees', openWorld: false },
   // Emits `unset` statements into a local shell script and returns its path; the whole output surface

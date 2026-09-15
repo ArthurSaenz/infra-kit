@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
+import { agentMode } from 'src/lib/agent-mode'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 
 import { DEFAULT_PROTECTED_ENVS, assertDeployable, deployableEnvs, isProtectedEnv } from '../protected-envs'
 
@@ -89,7 +91,7 @@ describe('with project access granted', () => {
 })
 
 describe('with access withheld from agents (cli-only)', () => {
-  const mcpBlocked = { allowed: false, reason: 'mcp-blocked' } as const
+  const mcpBlocked = { allowed: false, reason: 'agent-blocked' } as const
 
   // The whole reason `reason` exists. Under a bare boolean this case would emit the delivery message
   // and send an agent off to run `release deliver` — the one flow it must NOT reach — or to report
@@ -106,5 +108,42 @@ describe('with access withheld from agents (cli-only)', () => {
 
   it('still strips prod from the picker', () => {
     expect(deployableEnvs(['dev', 'prod'], mcpBlocked)).toEqual(['dev'])
+  })
+
+  // The refusal is structured (an agent reads it) and worded for the caller it has: "over MCP" is
+  // true of exactly one source; a Bash-driven agent is told the withholding is agent-side.
+  it.each([
+    { source: 'mcp' as const, says: /not reachable over MCP/, never: /withheld from agents in this project/ },
+    {
+      source: 'flag' as const,
+      says: /withheld from agents in this project \(protectedEnvs: "cli-only"\)/,
+      never: /over MCP/,
+    },
+    { source: 'env' as const, says: /withheld from agents in this project/, never: /over MCP/ },
+  ])('is a structured `refused` naming the env, worded for source $source', ({ source, says, never }) => {
+    agentMode.source = source
+
+    try {
+      let thrown: unknown
+
+      try {
+        assertDeployable('prod', 'launch deploy-all workflow', mcpBlocked)
+      } catch (error) {
+        thrown = error
+      }
+
+      expect(thrown).toBeInstanceOf(StructuredRefusalError)
+      expect((thrown as StructuredRefusalError).structuredContent).toEqual({
+        status: 'refused',
+        env: 'prod',
+        agentMode: source,
+      })
+      expect((thrown as StructuredRefusalError).exitCode).toBe(2)
+      expect((thrown as Error).message).toMatch(says)
+      expect((thrown as Error).message).not.toMatch(never)
+      expect((thrown as Error).message).toContain('cli-only')
+    } finally {
+      agentMode.source = null
+    }
   })
 })

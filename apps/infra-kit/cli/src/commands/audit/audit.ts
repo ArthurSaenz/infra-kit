@@ -11,7 +11,6 @@ import type { PackageValidationResult } from 'src/lib/package-validator'
 import { findPackageRoot } from 'src/lib/package-validator/loader'
 import { MARKETPLACE_NAME, inspectLegacyMcpRegistration } from 'src/lib/plugin-pointer'
 import { MCP_FILE_NAME } from 'src/lib/plugin-pointer/mcp-registration'
-import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
 import { defineMcpTool, textContent } from 'src/types'
 
 import { runAuditFix } from './fix'
@@ -153,23 +152,22 @@ const applyFix = async (options: AuditOptions, workspaceRoot: string | null): Pr
 }
 
 /**
- * Root-only, report-only: does `.mcp.json` still carry the `infra-kit` server key the plugin now
- * serves? A `pass` row plus one info line; the audit cannot go red on it and `--fix` never touches it.
+ * Root-only, report-only: does `.mcp.json` still carry the `infra-kit` server key? A `pass` row plus
+ * one info line; the audit cannot go red on it and `--fix` never touches it.
  *
- * A leftover key SHADOWS the plugin's server (same key, project scope wins), which leaves every
- * session in the repo on the legacy route — a working state, because the server renders its
- * guidance for whichever route spawned it (plan docs/mcp-via-plugin-migration-plan.md §3.3). Not
- * fixable here because the file is hand-maintained and holds other people's servers; the deletion is
- * a repo PR (§3.4).
+ * The plugin is skills-only and the skills drive the CLI over Bash, so the key serves nothing any
+ * more — it spawns `infra-kit mcp`, kept alive as a compatibility stub for exactly this leftover
+ * (`.omc/plans/mcp-to-cli-skills-migration.md` §3.10). Not fixable here because the file is
+ * hand-maintained and holds other people's servers; the deletion is a repo PR.
  *
  * `logResults` prints failures only, so the pass row would be invisible from a terminal; the line
  * is logged here so a human running `ik audit --root` sees the chore, while the row carries it to
- * the MCP caller. Every other verdict is `doctor`'s business and produces nothing here.
+ * a `--json` caller. Every other verdict is `doctor`'s business and produces nothing here.
  */
 const reportLegacyMcpKey = (root: string): PackageValidationResult | null => {
   if (inspectLegacyMcpRegistration(root).kind !== 'stale') return null
 
-  const message = `${MCP_FILE_NAME} still registers "${MARKETPLACE_NAME}", which shadows the plugin's copy of the server: sessions here use ${LEGACY_MCP_TOOL_PREFIX}* until the entry is deleted by hand in a PR (keep its siblings); after that they use ${MCP_TOOL_PREFIX}*`
+  const message = `${MCP_FILE_NAME} still registers "${MARKETPLACE_NAME}" — the plugin no longer serves an MCP server, so this entry only spawns a compatibility stub (\`infra-kit mcp\`). Delete the "${MARKETPLACE_NAME}" entry by hand in a PR, keeping its siblings`
 
   logger.info(`[INFO] mcp mcp:legacy-key: ${message}`)
 

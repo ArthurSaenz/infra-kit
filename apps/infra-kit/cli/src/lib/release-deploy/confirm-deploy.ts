@@ -1,6 +1,7 @@
 import confirm from '@inquirer/confirm'
 
-import { commandEcho } from 'src/lib/command-echo'
+import { isHeadless } from 'src/lib/agent-mode'
+import { commandEcho, refuseUnconfirmed } from 'src/lib/command-echo'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 
 interface ConfirmDeployArgs {
@@ -20,23 +21,27 @@ interface ConfirmDeployArgs {
  *
  * SCOPE LIMIT — this is a courtesy for the interactive human, NOT a control. `--yes` returns early,
  * and every MCP call arrives with `confirmedCommand: true` already set by the tool handler, so no
- * agent-initiated deploy ever sees this string. Nor is `--from` the control on that path: agents call
- * the `local-deploy-*` / `gh-release-deploy-*` tools directly and never traverse the merged command at
- * all. The only control an agent meets is `requiresHumanConfirm`'s two-phase gate.
+ * MCP-initiated deploy ever sees this string. A Bash-driven agent without `--yes` gets the same
+ * `confirmation_required` refusal `confirmOrExit` throws (the 9th confirm site speaks the shared
+ * shape, plan `{ branch, env }`), and re-runs with `--yes` to dispatch.
  */
 export const confirmDeploy = async (args: ConfirmDeployArgs): Promise<boolean> => {
   const { confirmedCommand, branch, env } = args
 
   if (confirmedCommand) return true
 
+  const message = `Deploy ${branch} → ${env} via GitHub Actions?`
+
+  if (isHeadless()) refuseUnconfirmed(message, { branch, env })
+
   commandEcho.setInteractive()
 
   const answer = await withEscape(
     (context) => {
-      return confirm({ message: `Deploy ${branch} → ${env} via GitHub Actions?`, default: false }, context)
+      return confirm({ message, default: false }, context)
     },
-    // Refuse is the ANSWER, not an oversight: the early return above means an MCP call (which always
-    // carries `confirmedCommand`) never arrives here, and there is no field that could make it a claim.
+    // Unreachable headless: the guard above already refused every agent / `--json` run without
+    // `confirmedCommand`. Written out anyway — G7 requires every reachable site to answer.
     { whenHeadless: 'refuse' },
   )
 

@@ -1,8 +1,9 @@
 import type { Buffer } from 'node:buffer'
 import process from 'node:process'
 
-import { OperationError } from 'src/lib/errors/operation-error'
-import { isMcpMode } from 'src/lib/mcp-mode'
+import { agentMode, isHeadless } from 'src/lib/agent-mode'
+import type { AgentModeSource } from 'src/lib/agent-mode'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 
 import { acquireStdin, releaseStdin } from './stdin-ref'
 
@@ -20,14 +21,19 @@ export interface PromptContext {
 }
 
 /**
- * What this call site does when there is no human: refuse, assert the path is blocked upstream, or
- * answer with a fixed value.
+ * What this call site does when there is no human: refuse, refuse NAMING the argument that would have
+ * answered the prompt, or answer with a fixed value.
  *
- * `'unreachable'` is a CLAIM about the owning tool's MCP schema — "a required field stops an agent
- * reaching this prompt at all" — and it is checkable, which `'refuse'` is not. Reaching it at
- * runtime means the claim is false, so it throws rather than degrading quietly.
+ * - `'refuse'` — throw `{ status: 'refused' }`: the site has no single argument to name.
+ * - `{ refuse: 'version' }` — throw `{ status: 'argument_required', argument: 'version' }`: the
+ *   agent is told exactly what to pass on the re-run. The name is the CLI flag / tool field without
+ *   its dashes; G8 (`headless-policy-guards`) checks it exists on every owning tool's schema.
+ * - `{ value: T }` — answer with `value`, no throw.
+ *
+ * There is no `'unreachable'` any more: that was a claim about an MCP schema making a field
+ * required, and no schema stands between a Bash-driven agent and this prompt.
  */
-export type HeadlessPolicy<T> = 'refuse' | 'unreachable' | { value: T }
+export type HeadlessPolicy<T> = 'refuse' | { refuse: string } | { value: T }
 
 /** {@link withEscape}'s options: the prompt context, plus this site's headless policy. */
 export type EscapeOptions<T> = PromptContext & { whenHeadless?: HeadlessPolicy<T> }
@@ -42,9 +48,10 @@ const ESC_BYTE = 0x1b
 // forced every one of them to grow a positional `undefined`.
 //
 // Optional, and the default is `'refuse'`. That default is safe for the same reason the guard exists
-// at all: under `isMcpMode()` `process.stdin` IS the JSON-RPC transport, so no prompt at any site can
-// return a usable answer, and refusing removes no capability that exists. It is what CLI-only sites
-// (the palette, the dev wizard, `env-token-set`) keep, because they face a real human.
+// at all: under `isAgentMode()` nobody is at the keyboard (and under `'mcp'` `process.stdin` IS the
+// JSON-RPC transport), so no prompt at any site can return a usable answer, and refusing removes no
+// capability that exists. It is what CLI-only sites (the palette, the dev wizard, `env-token-set`)
+// keep, because they face a real human.
 //
 // It is NOT what an MCP-reachable site may keep. There, omitting `whenHeadless` is indistinguishable
 // from never having considered the question, so G7 (`every-inquirer-site-is-escapable`) requires the
@@ -53,20 +60,49 @@ const ESC_BYTE = 0x1b
 // What the default is NOT is *correct* everywhere — that distinction is the whole point of the
 // parameter. `worktrees-add` documents a `false` fallback for MCP in its own schema, so a refusal
 // there is right-outcome-by-accident at best and a regression at worst. The type cannot tell those
-// apart; G6 (description-to-policy) and G8 (schema-to-`'unreachable'`) are what check the answers,
+// apart; G6 (description-to-policy) and G8 (argument-to-schema) are what check the answers,
 // because a wrong answer here compiles and can never fail a test on its own.
-const resolveHeadless = <T>(policy: HeadlessPolicy<T>): T => {
-  if (typeof policy === 'object') return policy.value
+//
+// WORDING IS SOURCE-AWARE. "stdin carries JSON-RPC" is true of exactly one caller; a skill driving
+// the CLI over Bash that reads it would go looking for a server that does not exist. Only the
+// `'mcp'` source keeps that text.
+const headlessExcerpt = (source: AgentModeSource): string => {
+  if (source === 'mcp') return 'an interactive prompt was reached under MCP, where stdin carries JSON-RPC'
+  if (source === null) return 'an interactive prompt was reached under --json, which never prompts'
 
-  throw new OperationError(undefined, {
-    operation: 'interactive prompt',
-    remediation:
-      policy === 'unreachable'
-        ? 'this prompt is declared unreachable under MCP because a required field should block the path — ' +
-          'reaching it means that field was relaxed without updating the call site'
-        : 'pass the value explicitly instead of relying on the prompt — MCP runs have no human to answer it',
-    stderrExcerpt: 'an interactive prompt was reached under MCP, where stdin carries JSON-RPC',
-  })
+  return `an interactive prompt was reached in agent mode (${source === 'flag' ? '--agent' : 'INFRA_KIT_AGENT / CLAUDECODE'}), where there is no human to answer it`
+}
+
+const headlessRemediation = (source: AgentModeSource, argument: string | undefined): string => {
+  const passIt =
+    argument === undefined ? 'pass the value explicitly instead of relying on the prompt' : `pass --${argument}`
+
+  if (source === 'mcp') {
+    return argument === undefined
+      ? `${passIt} — MCP runs have no human to answer it`
+      : `pass "${argument}" — MCP runs have no human to answer it`
+  }
+
+  return `${passIt} on the re-run`
+}
+
+const resolveHeadless = <T>(policy: HeadlessPolicy<T>): T => {
+  if (typeof policy === 'object' && 'value' in policy) return policy.value
+
+  const argument = typeof policy === 'object' ? policy.refuse : undefined
+  const { source } = agentMode
+
+  throw new StructuredRefusalError(
+    argument === undefined
+      ? { status: 'refused', agentMode: source }
+      : { status: 'argument_required', argument, agentMode: source },
+    2,
+    {
+      operation: 'interactive prompt',
+      remediation: headlessRemediation(source, argument),
+      stderrExcerpt: headlessExcerpt(source),
+    },
+  )
 }
 
 /**
@@ -75,7 +111,7 @@ const resolveHeadless = <T>(policy: HeadlessPolicy<T>): T => {
  * cancelled." -> exit 0.
  *
  * The listener attaches only on a real interactive terminal. `isTTY` alone is NOT a sufficient
- * guard — see lib/mcp-mode for why `stdio: 'inherit'` defeats it.
+ * guard — see lib/agent-mode for why `stdio: 'inherit'` defeats it.
  */
 // The cancel path is entirely pre-existing plumbing: an `AbortController`'s signal goes into the
 // prompt context, `@inquirer/core` rejects with an `AbortPromptError` when it fires, and that name
@@ -109,12 +145,16 @@ export const withEscape = async <T>(
   const { whenHeadless = 'refuse', ...promptBase } = base ?? {}
   const context: PromptContext = { ...promptBase, signal: controller.signal }
 
-  // Keyed on `isMcpMode()` alone. `!isTTY` deliberately does NOT ride along: a piped-but-human run
-  // (`infra-kit worktrees add > log.txt`) has no TTY and still deserves its prompt, and the two
+  // Keyed on `isHeadless()`. `!isTTY` deliberately does NOT ride along: a piped-but-human
+  // run (`infra-kit worktrees add > log.txt`) has no TTY and still deserves its prompt, and the two
   // conditions were only ever collapsed here because both merely skipped the Esc listener. Now that
   // this branch decides an ANSWER rather than just a listener, conflating them would refuse prompts
-  // no MCP server is waiting on. `release-picker.ts` keeps its own `!isTTY` clause for its own reason.
-  if (isMcpMode()) return resolveHeadless(whenHeadless)
+  // no agent is waiting on. `release-picker.ts` keeps its own `!isTTY` clause for its own reason.
+  //
+  // `--json` joins because a prompt is stdout traffic on a stream a machine is parsing, and because
+  // `release-picker`/`source-picker` already treat `--json` as never-prompt — this makes the 20 sites
+  // agree with those two.
+  if (isHeadless()) return resolveHeadless(whenHeadless)
 
   if (!process.stdin.isTTY) return run(context)
 

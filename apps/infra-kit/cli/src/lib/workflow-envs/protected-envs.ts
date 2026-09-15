@@ -1,4 +1,6 @@
+import { agentMode } from 'src/lib/agent-mode'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 
 /**
  * Environments that are NOT ordinary ad-hoc deploy targets by default.
@@ -38,7 +40,7 @@ export const DEFAULT_PROTECTED_ENVS = ['prod']
  */
 export interface ProtectedEnvAccess {
   allowed: boolean
-  reason: 'disallow' | 'mcp-blocked' | 'allowed'
+  reason: 'disallow' | 'agent-blocked' | 'allowed'
 }
 
 /**
@@ -122,13 +124,23 @@ export const assertDeployable = (
   if (access.allowed) return
   if (!isProtectedEnv(env)) return
 
-  if (access.reason === 'mcp-blocked') {
-    throw new OperationError(undefined, {
+  // Structured (exit 2, nothing ran): the agent that reads it needs the env named and the fact that no
+  // flag of its own opens this door. Wording keyed on the source — "over MCP" is true of one caller
+  // only; a Bash-driven agent is told it is an agent-side withholding, not a transport one.
+  if (access.reason === 'agent-blocked') {
+    const { source } = agentMode
+
+    throw new StructuredRefusalError({ status: 'refused', env, agentMode: source }, 2, {
       operation,
       remediation:
-        `run it yourself in a terminal — this project sets \`protectedEnvs: "cli-only"\`, which ` +
-        `deliberately withholds "${env}" from agents while allowing it on the CLI`,
-      stderrExcerpt: `"${env}" is not reachable over MCP in this project`,
+        source === 'mcp'
+          ? `run it yourself in a terminal — this project sets \`protectedEnvs: "cli-only"\`, which ` +
+            `deliberately withholds "${env}" from agents while allowing it on the CLI`
+          : `a human runs it from their own terminal — this project sets \`protectedEnvs: "cli-only"\``,
+      stderrExcerpt:
+        source === 'mcp'
+          ? `"${env}" is not reachable over MCP in this project`
+          : `"${env}" is withheld from agents in this project (protectedEnvs: "cli-only")`,
     })
   }
 

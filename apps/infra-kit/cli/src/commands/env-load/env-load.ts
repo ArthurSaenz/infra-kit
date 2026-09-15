@@ -15,6 +15,7 @@ import {
   getDopplerProject,
   resolveEnvToken,
 } from 'src/integrations/doppler'
+import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import {
   ENV_LOAD_FILE,
@@ -25,16 +26,18 @@ import {
   INFRA_KIT_ENV_PROJECT_ROOT_VAR,
   INFRA_KIT_ENV_PROJECT_VAR,
   INFRA_KIT_ENV_VAR,
+  INFRA_KIT_SESSION_VAR,
   atomicWriteFileSync,
   getSessionCacheDir,
 } from 'src/lib/constants'
 import { createEnvLoadFormProvider } from 'src/lib/env-load-form'
-import { OperationError, extractStderr } from 'src/lib/errors/operation-error'
+import { extractStderr } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { listProjectEnvNames } from 'src/lib/project-envs'
 import { withEscape } from 'src/lib/prompts/escapable-context'
+import { refuseMissingArguments } from 'src/lib/prompts/refuse-missing-arguments'
 import { canonicalizeProjectRoot, evictStaleWarmCaches, shouldWriteWarm, writeWarmCache } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
 
@@ -244,8 +247,16 @@ export const writeEnvLoadFile = async ({
 /**
  * Load environment variables from Doppler for the given config
  */
+// ONE provider instance for the MCP form (`envLoadMcpTool.formProvider`) and the agent-mode
+// refusal below, so the rows an agent is handed as `choices` are byte-for-byte the form an MCP
+// client would have been offered.
+const envLoadForm = createEnvLoadFormProvider()
+
 export const envLoad = async (args: EnvLoadArgs) => {
   const { config } = args
+
+  // Before the picker: an agent / `--json` run without `config` gets the form's env list as `choices`.
+  await refuseMissingArguments({ provider: envLoadForm, params: args, operation: 'env-load', argument: 'config' })
 
   let selectedConfig = ''
 
@@ -263,11 +274,15 @@ export const envLoad = async (args: EnvLoadArgs) => {
     //
     // An agent that omits `config` is offered a form by the MCP seam before this handler runs; landing
     // here headless means the client could not render one, and the refusal has to name the source.
-    if (isMcpMode()) {
-      throw new OperationError(undefined, {
-        operation: 'env-load',
-        remediation: 'call env-list, ask the human which environment, and re-call env-load with "config"',
-      })
+    if (isAgentMode()) {
+      throw new StructuredRefusalError(
+        { status: 'argument_required', argument: 'config', agentMode: agentMode.source },
+        2,
+        {
+          operation: 'env-load',
+          remediation: 'call env-list, ask the human which environment, and re-call env-load with "config"',
+        },
+      )
     }
 
     const envs = await listProjectEnvNames()
@@ -310,6 +325,10 @@ export const envLoad = async (args: EnvLoadArgs) => {
     variableCount: result.variableCount,
     project: result.project,
     config: result.config,
+    // The terminal session the file was written FOR. A Bash-driven agent inherits the session id but
+    // never sees the shell that sources the file; naming it here is how it can tell which terminal
+    // just got the variables (and notice when there was none).
+    sessionId: process.env[INFRA_KIT_SESSION_VAR] ?? null,
   }
 
   return {
@@ -548,12 +567,16 @@ export const envLoadMcpTool = defineMcpTool({
         'Doppler config / environment name to load (e.g. "dev", "arthur"). Omit it to have the human choose from a form.',
       ),
   },
-  formProvider: createEnvLoadFormProvider(),
+  formProvider: envLoadForm,
   outputSchema: {
     filePath: z.string().describe('Path to the file that must be sourced to apply variables'),
     variableCount: z.number().describe('Number of variables loaded'),
     project: z.string().describe('Doppler project name'),
     config: z.string().describe('Doppler config name'),
+    sessionId: z
+      .string()
+      .nullable()
+      .describe('The INFRA_KIT_SESSION the file was written for; null when the process had no session'),
   },
   handler: envLoad,
 })

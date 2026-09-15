@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
+import { agentMode } from 'src/lib/agent-mode'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertRepoWithOrigin } from 'src/lib/git-guard'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 
@@ -134,6 +136,7 @@ beforeEach(() => {
 
 afterEach(() => {
   process.stdin.isTTY = originalIsTTY
+  agentMode.source = null
 })
 
 describe('gh-merge-dev MCP omitted-arg guard', () => {
@@ -160,5 +163,26 @@ describe('gh-merge-dev MCP omitted-arg guard', () => {
     expect(boot.runBranchMultiPicker).not.toHaveBeenCalled()
     expect(boot.runBranchPicker).not.toHaveBeenCalled()
     expect(boot.runCommandPalette).not.toHaveBeenCalled()
+  })
+})
+
+describe('gh-merge-dev — the confirm site propagates its refusal', () => {
+  // The confirm sits inside the scratch-worktree callback and under the site's own
+  // `isCommandDeclined` catch, which rethrows everything else; the refusal must come out intact,
+  // before `applyPush`.
+  it('an unconfirmed agent run with the branches named throws confirmation_required, pushing nothing', async () => {
+    agentMode.source = 'env'
+
+    const error = await ghMergeDev({ confirmedCommand: false, versions: '1.2.5' }).catch((e: unknown) => {
+      return e
+    })
+
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+    expect((error as StructuredRefusalError).structuredContent).toMatchObject({
+      status: 'confirmation_required',
+      agentMode: 'env',
+    })
+    expect((error as StructuredRefusalError).exitCode).toBe(2)
+    expect(pickReleaseBranches).not.toHaveBeenCalled()
   })
 })

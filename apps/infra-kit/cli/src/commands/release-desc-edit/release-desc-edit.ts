@@ -73,8 +73,9 @@ export const promptDescription = async (current: string): Promise<string> => {
     (context) => {
       return input({ message: `  New description ${hint} (press Enter to keep current): ` }, context)
     },
-    // MCP-unreachable: `description` is required on the release-desc-edit tool, so this prompt is dead there.
-    { whenHeadless: 'unreachable' },
+    // Over MCP `description` is a required field, so this is only ever reached by a Bash-driven agent —
+    // which is told the flag to pass.
+    { whenHeadless: { refuse: 'description' } },
   )
   // `.trim()`, where the zx version only stripped a trailing newline. Whitespace-only input now
   // means keep-current instead of overwriting the description with blanks.

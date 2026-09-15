@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import { extractVersion } from 'src/lib/managed-block'
-import { MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
 
 import { buildDesignSkeleton } from '../bodies/design-skeleton'
 import { buildPackageBody } from '../bodies/package-body'
@@ -131,7 +130,7 @@ describe('buildRootBody', () => {
   it('documents the fix writer, the setup command and the per-package convention', () => {
     expect(rendered).toContain('`ik audit --fix`')
     expect(rendered).toContain(
-      '`ik setup` — set up infra-kit on this machine: shell integration, the Claude Code plugin (which serves the infra-kit MCP server), and the external CLIs (brew, aws, gh, doppler, portless).',
+      '`ik setup` — set up infra-kit on this machine: shell integration, the Claude Code skills plugin, and the external CLIs (brew, aws, gh, doppler, portless).',
     )
     expect(rendered).toContain('Every workspace package has its own CLAUDE.md with package-scoped rules')
   })
@@ -156,13 +155,12 @@ describe('buildRootBody', () => {
     expect(rendered).not.toContain('infra-kit init')
   })
 
-  it('renders exactly 28 lines', () => {
+  it('renders exactly 35 lines', () => {
     // Same net as the per-type counts, extended to the two resources `PACKAGE_TYPES`
-    // does not reach. The root body carries one placeholder (the MCP tool prefix)
-    // today, so the prettier-inserts-a-line class is reachable through it — this is
-    // defence in depth, and the only alternative backstop is a snapshot whose update
-    // path is `vitest -u`.
-    expect(rendered.split('\n')).toHaveLength(28)
+    // does not reach. The root body carries no placeholder today, so this count is the
+    // ONLY net against the prettier-inserts-a-line class here — the alternative backstop
+    // is a snapshot whose update path is `vitest -u`.
+    expect(rendered.split('\n')).toHaveLength(35)
   })
 
   it('keeps the pre-existing command and convention text', () => {
@@ -172,10 +170,30 @@ describe('buildRootBody', () => {
     expect(rendered).toContain('Tickets are prefixed by area')
   })
 
-  it('tells the agent to relaunch at the repository root when plugin tools are absent, spelling the MCP prefix through tool-prefix.ts', () => {
+  it('tells the agent to relaunch at the repository root when the skills are absent, naming no MCP server', () => {
     expect(rendered).toContain(
-      `Launch Claude Code at the repository root: the infra-kit plugin (skills, \`/infra-kit:*\` commands, the \`${MCP_TOOL_PREFIX}*\` MCP server) and this repo's \`.claude/settings.json\` hooks load only from there. If those tools are absent, this is a subdirectory session — restart Claude Code at the root.`,
+      "Launch Claude Code at the repository root: the infra-kit plugin (the `/infra-kit:*` skills) and this repo's `.claude/settings.json` hooks load only from there. If the `/infra-kit:*` skills are absent, this is a subdirectory session — restart Claude Code at the root.",
     )
+    expect(rendered).not.toMatch(/mcp__/)
+  })
+
+  /**
+   * The agent contract the skills rely on (plan §3.3, §3.8): the CLI over Bash with `--agent --json`,
+   * preview-then-`--yes` on a mutating command, and no prefix allow over one — the same rule the
+   * `Agent allowlist` doctor row warns on.
+   */
+  it('documents the CLI-on-PATH agent model: --agent --json, preview then --yes, no prefix allow', () => {
+    expect(rendered).toContain('## Agents')
+    expect(rendered).toContain('`infra-kit <command> --agent --json`')
+    expect(rendered).toContain('There is no MCP server')
+    expect(rendered).toContain(
+      'A confirm-gated command (`release create|remove|desc-edit|merge-dev|deploy-all|deploy-selected`, `worktrees add|remove|sync`) previews its plan',
+    )
+    expect(rendered).toContain('re-run the same argv with `--yes` to execute')
+    expect(rendered).toContain('`env-load`, `env-clear` and `infra-kit setup` have no confirm step and run once')
+    expect(rendered).toContain('`release deliver` is human-only and is refused under agent mode')
+    expect(rendered).toContain('Never put a mutating command behind a prefix allow')
+    expect(rendered).toContain('`argument_required`')
   })
 })
 

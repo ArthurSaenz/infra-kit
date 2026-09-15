@@ -326,7 +326,7 @@ describe('b1–B3 — the v2 SDK is externalized, never inlined', () => {
 
   /**
    * The session-env overlay reaches the served process only through the chokepoint's four-line
-   * insertion (docs/mcp-session-env-refresh-plan.md §2.5). Deleting it type-checks and every gate
+   * insertion (docs/archive/mcp/mcp-session-env-refresh-plan.md §2.5). Deleting it type-checks and every gate
    * lane stays green, so its presence is pinned from both ends: the module is IN the bundle, and
    * `tool-handler.ts` is what pulls it in.
    */
@@ -352,7 +352,7 @@ describe('b1–B3 — the v2 SDK is externalized, never inlined', () => {
 })
 
 /**
- * S1 in docs/mcp-session-env-refresh-plan.md §3: the overlay captures its baseline lazily, on the
+ * S1 in docs/archive/mcp/mcp-session-env-refresh-plan.md §3: the overlay captures its baseline lazily, on the
  * first tool call, and restores to it before every apply — so any other in-process writer of
  * `process.env` on the MCP path would be frozen into that baseline and "restored" forever. The
  * `(?!=)` keeps `===` comparisons out; `??=` is a write and is included.

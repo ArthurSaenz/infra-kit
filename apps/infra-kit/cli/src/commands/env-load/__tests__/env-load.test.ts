@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 
 import { logger } from 'src/lib/logger'
 
@@ -8,6 +9,7 @@ import {
   assertTokenScope,
   buildDopplerChildEnv,
   buildEnvLoadFileLines,
+  envLoadMcpTool,
   parseDopplerSecretsJson,
   shellSingleQuote,
 } from '../env-load'
@@ -321,5 +323,26 @@ describe('parseDopplerSecretsJson', () => {
     expect(() => {
       return parseDopplerSecretsJson('{"FOO":123}')
     }).toThrow(/non-string value/)
+  })
+})
+
+describe('env-load output schema — sessionId', () => {
+  // A Bash-driven agent inherits the session id but never sees the shell that sources the file;
+  // `sessionId` is how it tells which terminal just got the variables — and `null` when none did.
+  it('declares sessionId as a nullable string alongside the four original fields', () => {
+    expect(Object.keys(envLoadMcpTool.outputSchema)).toEqual([
+      'filePath',
+      'variableCount',
+      'project',
+      'config',
+      'sessionId',
+    ])
+
+    const schema = z.object(envLoadMcpTool.outputSchema)
+    const base = { filePath: '/f', variableCount: 1, project: 'p', config: 'dev' }
+
+    expect(schema.safeParse({ ...base, sessionId: 'abcd1234' }).success).toBe(true)
+    expect(schema.safeParse({ ...base, sessionId: null }).success).toBe(true)
+    expect(schema.safeParse(base).success).toBe(false)
   })
 })

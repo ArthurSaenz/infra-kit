@@ -148,12 +148,12 @@ describe('the MCP payload reports what the init half did', () => {
     // The steps really ran — the report is a record of writes, not a description of intended ones.
     expect(fs.readFileSync(path.join(home, '.zshrc'), 'utf-8')).toContain('# -- infra-kit:begin --')
     expect(fs.readFileSync(path.join(home, '.zshenv'), 'utf-8')).toContain('# -- infra-kit:begin --')
-    // The `mcp-server` step is a read now — the plugin serves the server — so nothing lands here.
+    // The `mcp-server` step is a read now — the plugin is skills-only — so nothing lands here.
     expect(fs.existsSync(path.join(repo, '.mcp.json'))).toBe(false)
     expect(structuredContent.init).toContainEqual({
       step: 'mcp-server',
       outcome: 'unchanged',
-      message: expect.stringContaining('served by the Claude Code plugin') as unknown as string,
+      message: expect.stringContaining('none wanted — the plugin is skills-only') as unknown as string,
     })
   })
 

@@ -3,17 +3,17 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { agentMode } from 'src/lib/agent-mode'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
-import { mcpMode } from 'src/lib/mcp-mode'
 import { removeWorktrees } from 'src/lib/worktrees'
 
 import { worktreesRemove } from '../worktrees-remove'
 
 // Real `getInfraKitConfig`: git-utils points at a config-less tmpdir so the hoisted read throws the
 // REAL Step 4 message. assertManagementContext / removeWorktrees are spies for ordering + side-effect
-// assertions; isMcpMode reads the real mcpMode holder (toggled per test).
+// assertions; isAgentMode reads the real agentMode holder (toggled per test).
 vi.mock('src/lib/git-guard', () => {
   return { assertManagementContext: vi.fn() }
 })
@@ -51,13 +51,13 @@ beforeEach(async () => {
   vi.mocked(assertManagementContext).mockResolvedValue(undefined)
   vi.mocked(removeWorktrees).mockResolvedValue({ removed: [], failed: [] })
   homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmp)
-  mcpMode.enabled = false
+  agentMode.source = null
   resetInfraKitConfigCache()
 })
 
 afterEach(() => {
   homedirSpy.mockRestore()
-  mcpMode.enabled = false
+  agentMode.source = null
   resetInfraKitConfigCache()
   fs.rmSync(tmp, { recursive: true, force: true })
 })
@@ -97,7 +97,7 @@ describe('worktrees remove — config-read guard', () => {
   // Test 7 (pin) — the config read runs BEFORE assertMcpRemovalInput: in MCP mode with no `versions`,
   // "not an infra-kit project" wins over "versions is required".
   it('reports the missing config before the MCP versions-required validation', async () => {
-    mcpMode.enabled = true
+    agentMode.source = 'mcp'
 
     const err = await worktreesRemove({ confirmedCommand: true }).catch((e: unknown) => {
       return e
@@ -105,5 +105,45 @@ describe('worktrees remove — config-read guard', () => {
 
     expect((err as Error).message).toContain('infra-kit.json not found at')
     expect((err as Error).message).not.toContain('requires "versions"')
+  })
+})
+
+/** A minimal valid project config, so the config-read guard passes and the input guard is reached. */
+const writeProjectConfig = (): void => {
+  fs.writeFileSync(
+    path.join(tmp, 'infra-kit.json'),
+    JSON.stringify({ envManagement: { provider: 'doppler', config: { name: 'my-project' } } }),
+  )
+  resetInfraKitConfigCache()
+}
+
+describe('worktrees remove — a Bash-driven agent reads CLI wording, not MCP wording', () => {
+  // Same guard as the MCP suite pins; only the wording forks on `agentMode.source === 'mcp'`. The
+  // config read wins first, so the refusal here is asserted THROUGH a present config.
+  it('--all under --agent: refused, naming --versions and "under agent mode"', async () => {
+    writeProjectConfig()
+    agentMode.source = 'flag'
+
+    const err = await worktreesRemove({ confirmedCommand: true, all: true }).catch((e: unknown) => {
+      return e
+    })
+
+    expect((err as Error).message).toContain('--all is not permitted for worktrees remove under agent mode')
+    expect((err as Error).message).toContain('--versions <refs>')
+    expect((err as Error).message).not.toContain('over MCP')
+    expect((err as Error).message).not.toContain('all=true')
+  })
+
+  it('no --versions under --agent: argument_required naming --versions with the list command', async () => {
+    writeProjectConfig()
+    agentMode.source = 'flag'
+
+    const err = await worktreesRemove({ confirmedCommand: true }).catch((e: unknown) => {
+      return e
+    })
+
+    expect((err as Error).message).toContain('worktrees remove under agent mode requires --versions')
+    expect((err as Error).message).toContain('`infra-kit worktrees list --json`')
+    expect((err as Error).message).not.toContain('needs a TTY')
   })
 })

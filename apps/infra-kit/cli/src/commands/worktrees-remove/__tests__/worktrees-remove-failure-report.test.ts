@@ -3,11 +3,12 @@ import { z } from 'zod'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { removeIdeWorktreeFolders } from 'src/integrations/ide'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { removeWorktrees } from 'src/lib/worktrees'
 
 import { worktreesRemove, worktreesRemoveMcpTool } from '../worktrees-remove'
@@ -15,9 +16,11 @@ import { worktreesRemove, worktreesRemoveMcpTool } from '../worktrees-remove'
 /**
  * A removal git refused used to be reported as "No unused worktrees to remove" with exit 0 and
  * `count: 0` — the exact false-success that hid the ENOTEMPTY race. These tests pin the truthful
- * report on both surfaces:
+ * report on both surfaces.
+ *
  *   - CLI: an OperationError naming the branch, thrown AFTER the IDE cleanup and the echo line
- *   - MCP: a resolved result with `isError: true` and a schema-valid `failedWorktrees`
+ *   - agent (MCP, `--agent`, env): a thrown `StructuredRefusalError` (`partial_failure`, exit 1) with a
+ *     schema-valid `failedWorktrees` — rendered as `isError: true` by the tool handler over MCP
  *
  * `removeWorktrees` is mocked (its recovery logic has its own unit tests); the reporting helpers
  * from src/lib/worktrees stay real.
@@ -40,10 +43,6 @@ vi.mock('src/lib/git-utils', () => {
 
 vi.mock('src/lib/infra-kit-config', () => {
   return { getInfraKitConfig: vi.fn() }
-})
-
-vi.mock('src/lib/mcp-mode', () => {
-  return { isMcpMode: vi.fn() }
 })
 
 vi.mock('src/lib/prompts/release-picker', () => {
@@ -94,7 +93,7 @@ beforeEach(() => {
   vi.mocked(getProjectRoot).mockResolvedValue(PROJECT_ROOT)
   vi.mocked(getRepoName).mockResolvedValue('repo')
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue([])
-  vi.mocked(isMcpMode).mockReturnValue(false)
+  agentMode.source = null
   vi.mocked(removeWorktrees).mockResolvedValue({ removed: [], failed: [] })
   vi.mocked(removeIdeWorktreeFolders).mockResolvedValue([])
 })
@@ -145,26 +144,54 @@ describe('worktrees-remove failure report — CLI path', () => {
   })
 })
 
-describe('worktrees-remove failure report — MCP path', () => {
-  it('resolves with isError and a schema-valid failedWorktrees instead of throwing', async () => {
-    vi.mocked(isMcpMode).mockReturnValue(true)
+describe('worktrees-remove failure report — agent path', () => {
+  // The throw, not a returned `isError`: one refusal class for both surfaces, rendered by the tool
+  // handler over MCP and emitted by `entry/cli.ts` under `--json`. It must be an `OperationError`
+  // subclass to survive this handler's rewrapping `catch`, and it must still run AFTER the IDE cleanup.
+  it('throws a partial_failure refusal with a schema-valid failedWorktrees, after the IDE cleanup', async () => {
+    agentMode.source = 'mcp'
     vi.mocked(removeWorktrees).mockResolvedValue(PARTIAL_FAILURE)
 
-    const result = await worktreesRemove({ confirmedCommand: true, versions: '1.2.5, 1.2.6' })
+    const thrown = await worktreesRemove({ confirmedCommand: true, versions: '1.2.5, 1.2.6' }).catch(
+      (error: unknown) => {
+        return error
+      },
+    )
 
-    expect(result.isError).toBe(true)
-    expect(result.structuredContent).toEqual({
+    expect(thrown).toBeInstanceOf(OperationError)
+    expect(thrown).toBeInstanceOf(StructuredRefusalError)
+
+    const { structuredContent, exitCode } = thrown as StructuredRefusalError
+
+    expect(exitCode).toBe(1)
+    expect(structuredContent).toEqual({
+      status: 'partial_failure',
       removedWorktrees: ['release/v1.2.5'],
       failedWorktrees: ['release/v1.2.6'],
       count: 1,
     })
     expect(() => {
-      return outputSchema.parse(result.structuredContent)
+      return outputSchema.parse(structuredContent)
     }).not.toThrow()
     expect(removeIdeWorktreeFolders).toHaveBeenCalledTimes(1)
   })
 
   it('declares failedWorktrees in the tool output schema', () => {
     expect(Object.keys(worktreesRemoveMcpTool.outputSchema)).toEqual(['removedWorktrees', 'failedWorktrees', 'count'])
+  })
+
+  // Same handler, same rewrapping `catch`: the confirm site's `confirmation_required` must come out
+  // intact and BEFORE any removal.
+  it('an unconfirmed agent run throws confirmation_required un-rewrapped and removes nothing', async () => {
+    agentMode.source = 'mcp'
+
+    const thrown = await worktreesRemove({ confirmedCommand: false, versions: '1.2.5' }).catch((error: unknown) => {
+      return error
+    })
+
+    expect(thrown).toBeInstanceOf(StructuredRefusalError)
+    expect((thrown as StructuredRefusalError).structuredContent).toMatchObject({ status: 'confirmation_required' })
+    expect((thrown as StructuredRefusalError).exitCode).toBe(2)
+    expect(removeWorktrees).not.toHaveBeenCalled()
   })
 })

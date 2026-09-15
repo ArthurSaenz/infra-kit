@@ -9,10 +9,12 @@ import { deliverJiraRelease, loadJiraConfigOptional } from 'src/integrations/jir
 // calls, and a partial mock drops every export it does not name — so a barrel import both broke
 // those tests and, worse, would have silently sent a mocked run down the wrong branch.
 import { isJiraApiError } from 'src/integrations/jira/jira-api-error'
+import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { formatZxError } from 'src/lib/errors/format-zx-error'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { deleteLocalBranch, deleteRemoteBranch, getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
@@ -357,6 +359,19 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
   logger.info(`Delivering ${releaseId.kind === 'name' ? 'named release' : 'version'} ${selectedReleaseBranch}`)
 
   const releaseType: ReleaseType = detectReleaseType(releasePrTitle)
+
+  // CLI-only, decided per site rather than in the shared helper: `confirmOrExit` short-circuits on
+  // `confirmedCommand` and must keep doing so for every other command's `--yes`. Delivering to
+  // production is the one action no agent confirms for a human, `--yes` or not — the same line
+  // `mcpExposed: false` draws for this command in the catalog. Humans keep `--yes` unchanged.
+  if (isAgentMode()) {
+    throw new StructuredRefusalError({ status: 'refused', agentMode: agentMode.source }, 2, {
+      operation: `deliver release ${selectedReleaseBranch}`,
+      remediation:
+        'ask a human to run `infra-kit release deliver` from their own shell — delivery is never confirmed by an agent',
+      stderrExcerpt: 'release deliver is CLI-only: refused in agent mode regardless of --yes',
+    })
+  }
 
   await confirmOrExit(
     confirmedCommand,

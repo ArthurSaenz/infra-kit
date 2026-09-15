@@ -2,8 +2,10 @@ import { Buffer } from 'node:buffer'
 import process from 'node:process'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 
-import { mcpMode } from 'src/lib/mcp-mode'
+import { agentMode } from 'src/lib/agent-mode'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 
 import type { DeployService } from '../service-discovery'
 
@@ -154,7 +156,7 @@ vi.mock('src/lib/command-echo', async (importOriginal) => {
   }
 })
 
-const { localDeployAll } = await import('../local-deploy')
+const { localDeployAll, localDeploySelected, localDeploySelectedMcpTool } = await import('../local-deploy')
 
 const realStdin = Object.getOwnPropertyDescriptor(process, 'stdin')
 const realWrite = process.stdout.write.bind(process.stdout)
@@ -178,7 +180,7 @@ const installStdin = () => {
 afterEach(() => {
   if (realStdin) Object.defineProperty(process, 'stdin', realStdin)
   process.stdout.write = realWrite
-  mcpMode.enabled = false
+  agentMode.source = null
   vi.restoreAllMocks()
 })
 
@@ -225,7 +227,7 @@ describe('local deploy under MCP — the confirm guard (G0f)', () => {
   it('writes ZERO bytes to process.stdout when the chokepoint injects confirmedCommand', async () => {
     const stdin = installStdin()
 
-    mcpMode.enabled = true
+    agentMode.source = 'mcp'
 
     const captured: string[] = []
 
@@ -273,5 +275,54 @@ describe('local deploy under MCP — the confirm guard (G0f)', () => {
     )
 
     await expect(pending).resolves.toMatchObject({ structuredContent: { environment: PERSONAL_ENV, success: true } })
+  })
+})
+
+describe('local deploy for a Bash-driven agent — argument_required with the env form as choices', () => {
+  // Same fixture as G0f (services discovered, workflow envs stubbed): a `--agent` run without
+  // `--env` is refused BEFORE the env picker, and `choices` is the tool's own env-only form rendered
+  // as JSON Schema — the rows an MCP client would have been offered.
+  it('omitting --env names `env` and carries the env-only form; nothing is preflighted or deployed', async () => {
+    installStdin()
+    agentMode.source = 'flag'
+
+    const error = await localDeploySelected({ service: [SERVICE.name], confirmedCommand: true }).catch((e: unknown) => {
+      return e
+    })
+
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+
+    const schema = await localDeploySelectedMcpTool.formProvider!.buildRequestedSchema({ service: [SERVICE.name] })
+
+    expect(schema).not.toBeNull()
+    expect((error as StructuredRefusalError).structuredContent).toEqual({
+      status: 'argument_required',
+      argument: 'env',
+      choices: z.toJSONSchema(schema!),
+      agentMode: 'flag',
+    })
+    expect((error as StructuredRefusalError).exitCode).toBe(2)
+  })
+})
+
+describe('local deploy for a Bash-driven agent — the confirm site propagates confirmation_required', () => {
+  // The ninth-and-a-half confirm site: `confirmTarget` gates through `withEscape`, not
+  // `confirmOrExit`, and must speak the same shape — plan = env, services, the authenticated account.
+  it('an unconfirmed --agent run with --env throws confirmation_required after preflight, deploying nothing', async () => {
+    installStdin()
+    agentMode.source = 'flag'
+
+    const error = await localDeployAll({ env: PERSONAL_ENV, confirmedCommand: false }).catch((e: unknown) => {
+      return e
+    })
+
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+    expect((error as StructuredRefusalError).structuredContent).toMatchObject({
+      status: 'confirmation_required',
+      message: `Deploy 1 service(s) to ${PERSONAL_ENV} from this machine?`,
+      plan: { env: PERSONAL_ENV, services: [SERVICE.name], accountId: ACCOUNT_ID, shared: false },
+      agentMode: 'flag',
+    })
+    expect((error as StructuredRefusalError).exitCode).toBe(2)
   })
 })

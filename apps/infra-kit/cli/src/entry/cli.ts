@@ -16,7 +16,9 @@ import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { safeRealpath, shouldWarnLocalInstall } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
 import { suppressTypelessPackageJsonWarning } from 'src/lib/node-warnings'
+import { setParsedArgv } from 'src/lib/parsed-argv'
 import { buildProgram } from 'src/lib/program'
+import { exitForError } from 'src/lib/program/exit-for-error'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { formatAlignedRows } from 'src/lib/render'
 import { captureSessionReportPath } from 'src/lib/session/report'
@@ -37,26 +39,16 @@ captureSessionReportPath()
 
 const program = buildProgram()
 
-const runProgram = async (argv?: string[]): Promise<void> => {
+const runProgram = async (argv: string[] = process.argv): Promise<void> => {
+  // Recorded BEFORE parsing so the argv a refusal names is the one Commander saw — including the
+  // interactive-menu re-entry, which hands in a synthetic argv that `process.argv` never carries.
+  setParsedArgv(argv)
+
   try {
-    if (argv) {
-      await program.parseAsync(argv)
-    } else {
-      await program.parseAsync()
-    }
+    await program.parseAsync(argv)
   } catch (error) {
-    // Ctrl-C / Esc out of any prompt is a deliberate back-out, not a failure:
-    // exit quietly with success so it matches the explicit "Operation cancelled."
-    // decline path and never trips scripts/CI into treating a cancel as an error.
-    if (isPromptCancellation(error)) {
-      logger.info('Operation cancelled.')
-      process.exit(0)
-    }
-
-    const message = error instanceof Error ? error.message : String(error)
-
-    logger.error(message)
-    process.exit(1)
+    // Lives in lib/program/exit-for-error so it can be tested; this module runs at import time.
+    exitForError(error)
   }
 }
 

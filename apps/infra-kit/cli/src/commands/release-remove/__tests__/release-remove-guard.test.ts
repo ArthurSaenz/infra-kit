@@ -4,10 +4,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { loadJiraConfigOptional } from 'src/integrations/jira'
 import { removeJiraVersion } from 'src/integrations/jira/remove-version'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { CommandDeclinedError } from 'src/lib/errors/command-declined-error'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertBaseBranchSwitchable, assertManagementContext } from 'src/lib/git-guard'
 import {
   deleteLocalBranch,
@@ -18,7 +21,6 @@ import {
   getRepoName,
 } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
-import { mcpMode } from 'src/lib/mcp-mode'
 import { removeReleaseWorktreeIfPresent } from 'src/lib/worktrees/remove-release-worktree'
 
 import { releaseRemove } from '../release-remove'
@@ -150,13 +152,13 @@ beforeEach(() => {
   vi.mocked(confirm).mockResolvedValue(true)
 
   homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmp)
-  mcpMode.enabled = false
+  agentMode.source = null
   resetInfraKitConfigCache()
 })
 
 afterEach(() => {
   homedirSpy.mockRestore()
-  mcpMode.enabled = false
+  agentMode.source = null
   resetInfraKitConfigCache()
   fs.rmSync(tmp, { recursive: true, force: true })
 })
@@ -254,5 +256,42 @@ describe('release remove — a declined confirm', () => {
     // `entry/cli.ts` renders this text at exit 1; a generic rewrap would bury it under "failed to
     // remove a release" and lose the distinction from a real failure.
     expect((error as Error).message).not.toContain('failed to remove a release')
+  })
+})
+
+describe('release remove — a Bash-driven agent reads CLI wording, not MCP wording', () => {
+  // The guards fire for every agent source; only the WORDING forks on `agentMode.source === 'mcp'`.
+  // A `--agent` run can pass every flag the CLI text names, so "re-call with a field" would be a
+  // refusal with no exit for it. (The MCP-guard suites pin the 'mcp' text.)
+  it('--skip-jira under --agent: refused, worded "under agent mode", naming the flag and a human hand-off', async () => {
+    writeProjectConfig()
+    agentMode.source = 'flag'
+
+    const error = await releaseRemove({ confirmedCommand: true, version: LABEL, skipJira: true }).catch(
+      (e: unknown) => {
+        return e
+      },
+    )
+
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+    expect((error as StructuredRefusalError).structuredContent).toEqual({ status: 'refused', agentMode: 'flag' })
+    expect((error as Error).message).toContain('--skip-jira is not permitted under agent mode')
+    expect((error as Error).message).toContain('drop --skip-jira')
+    expect((error as Error).message).not.toContain('over MCP')
+    expect((error as Error).message).not.toContain('skipJira')
+  })
+
+  it("jira unconfigured under --agent: the mcpOrCli fork names --skip-jira as the agent's own exit", async () => {
+    writeProjectConfig()
+    agentMode.source = 'flag'
+    vi.mocked(loadJiraConfigOptional).mockResolvedValue(null)
+
+    const error = await releaseRemove({ confirmedCommand: true, version: LABEL }).catch((e: unknown) => {
+      return e
+    })
+
+    expect((error as Error).message).toContain('pass --skip-jira to tear down the branch and PR')
+    expect((error as Error).message).not.toContain('re-call')
+    expect((error as Error).message).not.toContain('env-load')
   })
 })

@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { agentMode } from 'src/lib/agent-mode'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
+import { jsonOutput } from 'src/lib/json-output'
 
 import { DEPLOY_SOURCES, assertFlagsMatchSource, parseDeploySource } from '../deploy-source'
+
+afterEach(() => {
+  agentMode.source = null
+  jsonOutput.enabled = false
+})
 
 describe('parseDeploySource', () => {
   it('refuses a missing --from rather than assuming one', () => {
@@ -19,6 +28,43 @@ describe('parseDeploySource', () => {
 
   it.each(DEPLOY_SOURCES)('accepts %s', (source) => {
     expect(parseDeploySource(source)).toBe(source)
+  })
+
+  // The non-form picker's agent shape: the flag is named, and there are NO `choices` — `--from` is
+  // a two-value enum the remediation already spells, not a form.
+  it.each([
+    { source: 'flag' as const, json: false },
+    { source: null, json: true },
+  ])(
+    'source $source / --json $json: a missing --from is argument_required naming `from`, without choices',
+    ({ source, json }) => {
+      agentMode.source = source
+      jsonOutput.enabled = json
+
+      let thrown: unknown
+
+      try {
+        parseDeploySource(undefined)
+      } catch (error) {
+        thrown = error
+      }
+
+      expect(thrown).toBeInstanceOf(StructuredRefusalError)
+      expect((thrown as StructuredRefusalError).structuredContent).toEqual({
+        status: 'argument_required',
+        argument: 'from',
+        agentMode: source,
+      })
+      expect((thrown as StructuredRefusalError).message).toContain('pass --from with one of: ci, local')
+    },
+  )
+
+  it('a bad --from value stays a plain OperationError even for an agent — it is not a missing argument', () => {
+    agentMode.source = 'flag'
+
+    expect(() => {
+      return parseDeploySource('github')
+    }).toThrow(/unknown --from value "github"/)
   })
 })
 

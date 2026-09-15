@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
 import { getVersionRelatedIssueCounts } from 'src/integrations/jira/remove-version'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
-import { isMcpMode } from 'src/lib/mcp-mode'
 
 import { releaseRemove, releaseRemoveMcpTool } from '../release-remove'
 import { LABEL, MOVE_TARGET_NAME, installDefaults } from './release-remove-mocks'
@@ -59,10 +59,6 @@ vi.mock('src/lib/git-utils', () => {
 
 vi.mock('src/lib/infra-kit-config', () => {
   return { getInfraKitConfig: vi.fn() }
-})
-
-vi.mock('src/lib/mcp-mode', () => {
-  return { isMcpMode: vi.fn() }
 })
 
 vi.mock('src/lib/prompts/release-picker', () => {
@@ -131,7 +127,7 @@ beforeEach(() => {
   zx.overrides = []
 
   installDefaults()
-  vi.mocked(isMcpMode).mockReturnValue(false)
+  agentMode.source = null
   vi.mocked(confirm).mockResolvedValue(true)
 })
 
@@ -166,12 +162,12 @@ describe('release remove — MCP output schema round-trip', () => {
     }).not.toThrow()
   })
 
-  it('accepts the structuredContent an MCP run returns, including jira: "manual"', async () => {
-    vi.mocked(isMcpMode).mockReturnValue(true)
+  it('accepts the structuredContent an MCP run returns, including jira: "removed"', async () => {
+    agentMode.source = 'mcp'
 
     const result = await releaseRemove({ confirmedCommand: true, version: LABEL })
 
-    expect(result.structuredContent.jira).toBe('manual')
+    expect(result.structuredContent.jira).toBe('removed')
     expect(() => {
       return outputSchema.parse(result.structuredContent)
     }).not.toThrow()

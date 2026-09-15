@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getProjectRoot, getRepoName } from 'src/lib/git-utils'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { createToolHandler } from 'src/lib/tool-handler'
 
 import { worktreesRemove, worktreesRemoveMcpTool } from '../worktrees-remove'
@@ -17,7 +17,7 @@ vi.mock('src/lib/config-bootstrap', () => {
 
 /**
  * Guards that make `worktrees-remove` safe to expose as an MCP tool:
- *   - over MCP (`isMcpMode()`), `all=true` is rejected — bulk removal has no human gate there
+ *   - over MCP (`isAgentMode()`), `all=true` is rejected — bulk removal has no human gate there
  *   - over MCP, an explicit `versions` is required — the picker needs a TTY
  *   - a `versions` value that names a non-existent worktree errors BEFORE removing anything, on both
  *     the CLI and MCP paths (today `removeWorktrees`' allSettled would swallow it as a no-op success)
@@ -40,10 +40,6 @@ vi.mock('src/lib/git-utils', () => {
 // guard tests exercise the MCP/validation logic, not config resolution.
 vi.mock('src/lib/infra-kit-config', () => {
   return { getInfraKitConfig: vi.fn() }
-})
-
-vi.mock('src/lib/mcp-mode', () => {
-  return { isMcpMode: vi.fn() }
 })
 
 vi.mock('src/lib/prompts/release-picker', () => {
@@ -87,7 +83,7 @@ beforeEach(async () => {
   vi.mocked(getProjectRoot).mockResolvedValue('/workspace/project-root')
   vi.mocked(getRepoName).mockResolvedValue('repo')
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue([])
-  vi.mocked(isMcpMode).mockReturnValue(false)
+  agentMode.source = null
 
   const { removeWorktrees } = await import('src/lib/worktrees')
 
@@ -100,7 +96,7 @@ beforeEach(async () => {
 
 describe('worktrees-remove MCP guards', () => {
   it('rejects all=true over MCP and removes nothing', async () => {
-    vi.mocked(isMcpMode).mockReturnValue(true)
+    agentMode.source = 'mcp'
 
     await expect(worktreesRemove({ confirmedCommand: true, all: true })).rejects.toThrow(/all=true is not permitted/)
 
@@ -110,7 +106,7 @@ describe('worktrees-remove MCP guards', () => {
   })
 
   it('requires explicit versions over MCP', async () => {
-    vi.mocked(isMcpMode).mockReturnValue(true)
+    agentMode.source = 'mcp'
 
     await expect(worktreesRemove({ confirmedCommand: true })).rejects.toThrow(/over MCP requires/)
 
@@ -120,7 +116,7 @@ describe('worktrees-remove MCP guards', () => {
   })
 
   it('allows an explicit, matching versions target over MCP', async () => {
-    vi.mocked(isMcpMode).mockReturnValue(true)
+    agentMode.source = 'mcp'
 
     await worktreesRemove({ confirmedCommand: true, versions: '1.2.5' })
 
@@ -183,7 +179,7 @@ describe('worktrees-remove MCP tool surface', () => {
  */
 describe('worktrees-remove confirm gate — allowEditorRelaunch stays suppressed over MCP', () => {
   it('injects confirmedCommand:true on the confirmed call, keeping allowEditorRelaunch false', async () => {
-    vi.mocked(isMcpMode).mockReturnValue(true)
+    agentMode.source = 'mcp'
 
     const tool = createToolHandler({
       toolName: worktreesRemoveMcpTool.name,
@@ -207,7 +203,7 @@ describe('worktrees-remove confirm gate — allowEditorRelaunch stays suppressed
   })
 
   it('gates the FIRST call (no confirm): removes nothing and relaunches no editor', async () => {
-    vi.mocked(isMcpMode).mockReturnValue(true)
+    agentMode.source = 'mcp'
 
     const tool = createToolHandler({
       toolName: worktreesRemoveMcpTool.name,

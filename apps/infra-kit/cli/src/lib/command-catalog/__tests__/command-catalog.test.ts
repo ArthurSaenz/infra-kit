@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
+import { mutatingCommandsReachedBy } from 'src/commands/doctor/agent-allowlist'
 import { buildProgram, commandPath } from 'src/lib/program'
 
 import {
@@ -209,58 +210,92 @@ describe('command catalog — MCP exposure policy', () => {
 })
 
 /**
- * The plugin's skills name this server's tools in prose (`mcp__plugin_infra-kit_infra-kit__<name>`), and
- * prose is the ONLY binding a skill has — there is no declarative skill→tool wiring. A skill naming a
- * tool the catalog does not expose sends every session that invokes it to a tool it does not have,
- * and nothing in the plugin's own suite (plain node, no path into this package) can know.
+ * The plugin's skills drive the CLI over Bash now (`.omc/plans/mcp-to-cli-skills-migration.md` §3.9):
+ * a SKILL.md that still names an MCP tool — plugin-prefixed or the legacy `mcp__infra-kit__` route —
+ * sends every session that invokes it to a tool it does not have, and nothing in the plugin's own suite
+ * (plain node, no path into this package) can cross-check the argv it names against the catalog.
  *
- * The scan pattern is read from the plugin suite's fixture rather than spelled here: it is the one
+ * The scan patterns are read from the plugin suite's fixture rather than spelled here: they are the one
  * definition of "names a tool" that `manifest.test.mjs` and `scripts/report-published-cli-skew.mjs`
- * also read, so the three scans cannot drift on what counts as a mention.
+ * also read, so the scans cannot drift on what counts as a mention.
  */
-describe('command catalog — every tool the plugin skills name is exposed', () => {
+describe('command catalog — the plugin skills name no MCP tool and allow only read-only argv', () => {
   const REPO_ROOT = path.resolve(import.meta.dirname, '../../../../../../..')
   const PLUGIN_ROOT = path.join(REPO_ROOT, 'plugins', 'infra-kit')
   const SKILLS_DIR = path.join(PLUGIN_ROOT, 'skills')
 
-  const pluginToolNameRe = (): RegExp => {
-    const fixture = path.join(PLUGIN_ROOT, '__tests__', '__fixtures__', 'scan-patterns.json')
-    const { pluginToolName } = JSON.parse(fs.readFileSync(fixture, 'utf8')) as { pluginToolName: string }
-
-    return new RegExp(pluginToolName, 'g')
+  interface ScanPatterns {
+    pluginToolName: string
+    legacyToolPrefix: string[][]
   }
 
-  /** `[skill, tool]` for every plugin-prefixed tool name in every `skills/<skill>/SKILL.md`. */
-  const namedBySkills = (): [string, string][] => {
-    const re = pluginToolNameRe()
+  const scanPatterns = (): ScanPatterns => {
+    const fixture = path.join(PLUGIN_ROOT, '__tests__', '__fixtures__', 'scan-patterns.json')
 
-    return fs.readdirSync(SKILLS_DIR, { withFileTypes: true }).flatMap((entry) => {
+    return JSON.parse(fs.readFileSync(fixture, 'utf8')) as ScanPatterns
+  }
+
+  const skillFiles = (): [string, string][] => {
+    return fs.readdirSync(SKILLS_DIR, { withFileTypes: true }).flatMap((entry): [string, string][] => {
       const file = path.join(SKILLS_DIR, entry.name, 'SKILL.md')
 
-      if (!entry.isDirectory() || !fs.existsSync(file)) return []
-
-      return [...fs.readFileSync(file, 'utf8').matchAll(re)].map((match): [string, string] => {
-        return [entry.name, match[1]!]
-      })
+      return entry.isDirectory() && fs.existsSync(file) ? [[entry.name, fs.readFileSync(file, 'utf8')]] : []
     })
   }
 
-  it('names only mcpExposed catalog tools, and at least one', () => {
-    const exposed = new Set(
-      getExposedMcpTools().map((tool) => {
-        return tool.name
-      }),
-    )
-    const named = namedBySkills()
+  it('has at least one skill to scan', () => {
+    expect(skillFiles().length).toBeGreaterThan(0)
+  })
 
-    // A scan that finds nothing proves nothing: the procedure skills name their tools by design.
-    expect(named.length).toBeGreaterThan(0)
-
-    const unexposed = named.filter(([, tool]) => {
-      return !exposed.has(tool)
+  it('names no plugin-prefixed tool in any SKILL.md', () => {
+    const re = new RegExp(scanPatterns().pluginToolName, 'g')
+    const named = skillFiles().flatMap(([skill, body]) => {
+      return [...body.matchAll(re)].map((match) => {
+        return [skill, match[1]]
+      })
     })
 
-    expect(unexposed, 'skills naming a tool the catalog does not expose').toEqual([])
+    expect(named, 'skills still naming a plugin-served MCP tool').toEqual([])
+  })
+
+  it('names no legacy-route tool in any SKILL.md', () => {
+    const prefixes = scanPatterns().legacyToolPrefix.map((fragments) => {
+      return fragments.join('')
+    })
+    const named = skillFiles().filter(([, body]) => {
+      return prefixes.some((prefix) => {
+        return body.includes(prefix)
+      })
+    })
+
+    expect(
+      named.map(([skill]) => {
+        return skill
+      }),
+      'skills still naming a legacy-route MCP tool',
+    ).toEqual([])
+  })
+
+  /**
+   * Plan §3.9: `allowed-tools` lists read-only argv only, so the host prompts for every mutating call.
+   * Checked through the same rule the `Agent allowlist` doctor row applies to a repo's settings, so the
+   * plugin cannot ship an allow the doctor would warn a consumer about.
+   */
+  it('lists no allowed-tools pattern that reaches a mutating catalog row', () => {
+    const offending = skillFiles().flatMap(([skill, body]) => {
+      const line = /^allowed-tools:(.*)$/m.exec(body)?.[1] ?? ''
+      const patterns = [...line.matchAll(/Bash\((?:[^()]|\([^()]*\))*\)/g)].map((match) => {
+        return match[0]
+      })
+
+      return patterns.flatMap((pattern) => {
+        const reached = mutatingCommandsReachedBy(pattern)
+
+        return reached.length === 0 ? [] : [{ skill, pattern, reached }]
+      })
+    })
+
+    expect(offending).toEqual([])
   })
 })
 
@@ -282,8 +317,8 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
     'local-deploy-all',
     'local-deploy-selected',
     // Deletes a PR, both branches and the Jira fix version. Exposed rather than CLI-only because the
-    // gate plus its MCP narrowing (no `moveIssuesTo`/`skipJira`, and the irreversible Jira delete
-    // never attempted) contain the residual risk — the same reasoning that exposes `worktrees-remove`.
+    // gate plus its MCP narrowing (no `skipJira`, and the irreversible Jira delete behind the gate)
+    // contain the residual risk — the same reasoning that exposes `worktrees-remove`.
     'release-remove',
   ]
 
@@ -750,6 +785,7 @@ describe('command catalog — the registered argument-form providers', () => {
     'local-deploy-all',
     'local-deploy-selected',
     'release-create',
+    'release-remove',
   ]
 
   const providerFor = (name: string) => {
@@ -758,7 +794,7 @@ describe('command catalog — the registered argument-form providers', () => {
     })?.mcpTool?.formProvider
   }
 
-  it('registers a form provider on exactly the four deploy tools, env-load and release-create', () => {
+  it('registers a form provider on exactly the four deploy tools, env-load, release-create and release-remove', () => {
     const withForm = commandCatalog
       .flatMap((entry) => {
         return entry.mcpExposed && entry.mcpTool?.formProvider !== undefined ? [entry.mcpTool.name] : []
@@ -778,6 +814,8 @@ describe('command catalog — the registered argument-form providers', () => {
     expect(providerFor('local-deploy-selected')?.isFormable({ env: 'dev', service: ['client-be'] })).toBe(false)
     expect(providerFor('release-create')?.isFormable({})).toBe(true)
     expect(providerFor('release-create')?.isFormable({ releases: [{ version: 'next', type: 'regular' }] })).toBe(false)
+    expect(providerFor('release-remove')?.isFormable({})).toBe(true)
+    expect(providerFor('release-remove')?.isFormable({ version: '1.2.5' })).toBe(false)
   })
 
   it('wires env-load with the config picker — formable only while config is missing or blank', () => {

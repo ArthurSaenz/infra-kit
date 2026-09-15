@@ -1,14 +1,14 @@
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { mcpMode } from 'src/lib/mcp-mode'
+import { agentMode } from 'src/lib/agent-mode'
 
 import packageJson from '../../../package.json' with { type: 'json' }
 import { SESSION_WORKFLOW_URI } from '../resources'
 import { createMcpServer } from '../server'
 
 afterEach(() => {
-  mcpMode.enabled = false
+  agentMode.source = null
 })
 
 /**
@@ -49,7 +49,7 @@ const resourceText = (result: { contents: unknown[] }): string => {
 
 describe('createMcpServer', () => {
   /**
-   * The ONLY test that proves `mcpMode.enabled` is ever SET. Every other MCP test in
+   * The ONLY test that proves `agentMode.source` is ever SET. Every other MCP test in
    * this repo stubs the flag and then asserts a guard behaves — which tests the guard
    * GIVEN the flag, and would stay green if the one assignment were deleted or
    * misplaced, leaving the MCP hole exactly as open as before. Nothing here is stubbed.
@@ -59,11 +59,11 @@ describe('createMcpServer', () => {
    * would start a real server over stdio and could never be asserted against.
    */
   it('marks the process as MCP mode before any transport is connected', async () => {
-    expect(mcpMode.enabled).toBe(false)
+    expect(agentMode.source).toBeNull()
 
     await createMcpServer()
 
-    expect(mcpMode.enabled).toBe(true)
+    expect(agentMode.source).toBe('mcp')
   })
 
   /**

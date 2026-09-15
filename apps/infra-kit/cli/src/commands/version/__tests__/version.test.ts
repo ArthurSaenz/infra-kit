@@ -7,7 +7,7 @@ import packageJson from '../../../../package.json' with { type: 'json' }
 import { version, versionMcpTool } from '../version'
 
 /**
- * The `version` tool's location and route fields (plan docs/mcp-via-plugin-migration-plan.md §4
+ * The `version` tool's location and route fields (plan docs/archive/mcp/mcp-via-plugin-migration-plan.md §4
  * PM-4, §3.3): what the doctor skill reads to tell a worktree session from the main checkout and a
  * plugin-spawned server from a legacy one. Git is mocked at the seam: the fields are the seam's
  * answers passed through (or `null`), and a real `git` here would make the verdict depend on where

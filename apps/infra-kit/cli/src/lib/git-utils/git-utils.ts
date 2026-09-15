@@ -2,8 +2,8 @@ import path from 'node:path'
 import process from 'node:process'
 import { $ } from 'zx'
 
+import { isAgentMode } from 'src/lib/agent-mode'
 import { OperationError, extractStderr } from 'src/lib/errors/operation-error'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { isReleaseBranch } from 'src/lib/release-id'
 
 /**
@@ -120,16 +120,15 @@ const normalizeGitRootStderr = (error: unknown): string | undefined => {
 /**
  * Remediation text for a failed project-root resolution.
  *
- * Channel-aware: an MCP server's cwd is fixed at spawn and the CLI has no
- * `--project`/`--cwd`/`-C`, so an agent told to "cd" has NO available action —
- * the only actor who can act is the human operator.
+ * Channel-aware: an agent is told which action it has (`-C <dir>`, or re-running from the project
+ * directory) rather than to "cd", which a fixed-cwd caller cannot do.
  *
  * `hasStderr` gates the stderr-referencing clause: with no stderr (missing `git`
  * binary, ENOENT) the message must not point at evidence it does not carry.
  */
 const projectRootRemediation = ({ hasStderr }: { hasStderr: boolean }): string => {
-  if (isMcpMode()) {
-    return 'the infra-kit MCP server resolves its project from the working directory it was launched in; the operator must relaunch the server with its working directory set to an infra-kit project repo'
+  if (isAgentMode()) {
+    return 'infra-kit resolves its project from the working directory; run it from inside an infra-kit project repo (or one of its git worktrees), or pass `-C <dir>` naming one'
   }
 
   const base = 'run infra-kit from inside an infra-kit project repo (or one of its git worktrees)'

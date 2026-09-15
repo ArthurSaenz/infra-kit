@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fetchPRByHead } from 'src/integrations/gh/pr-status'
 import { findVersionByName, loadJiraConfigOptional } from 'src/integrations/jira'
 import { getVersionRelatedIssueCounts, removeJiraVersion } from 'src/integrations/jira/remove-version'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { removeReleaseWorktreeIfPresent } from 'src/lib/worktrees/remove-release-worktree'
 
 import { releaseRemove } from '../release-remove'
@@ -81,10 +81,6 @@ vi.mock('src/lib/infra-kit-config', () => {
   return { getInfraKitConfig: vi.fn() }
 })
 
-vi.mock('src/lib/mcp-mode', () => {
-  return { isMcpMode: vi.fn() }
-})
-
 vi.mock('src/lib/prompts/release-picker', () => {
   return { pickReleaseBranch: vi.fn() }
 })
@@ -149,7 +145,7 @@ beforeEach(() => {
   zx.overrides = []
 
   installDefaults()
-  vi.mocked(isMcpMode).mockReturnValue(false)
+  agentMode.source = null
   vi.mocked(confirm).mockResolvedValue(true)
 })
 

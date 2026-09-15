@@ -5,7 +5,7 @@ import type { RealpathFn } from 'src/lib/install-manager'
 
 /**
  * The four path predicates, exercised against the FIVE-NAME matrix the dependency registry needs
- * (`docs/mcp-setup-dependency-plan.md` §5.1). Red here looks like a predicate accepting a path from a
+ * (`docs/archive/mcp/mcp-setup-dependency-plan.md` §5.1). Red here looks like a predicate accepting a path from a
  * different tool's row.
  *
  * `install-manager.test.ts` covers these only through `detectInstallManager`, and only ever for

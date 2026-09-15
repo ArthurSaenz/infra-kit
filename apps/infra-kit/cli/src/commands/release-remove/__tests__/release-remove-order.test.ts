@@ -3,10 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { removeIdeWorktreeFolders } from 'src/integrations/ide'
 import { removeJiraVersion } from 'src/integrations/jira/remove-version'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { deleteLocalBranch, deleteRemoteBranch } from 'src/lib/git-utils'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { removeReleaseWorktreeIfPresent } from 'src/lib/worktrees/remove-release-worktree'
 
 import { releaseRemove } from '../release-remove'
@@ -82,10 +82,6 @@ vi.mock('src/lib/infra-kit-config', () => {
   return { getInfraKitConfig: vi.fn() }
 })
 
-vi.mock('src/lib/mcp-mode', () => {
-  return { isMcpMode: vi.fn() }
-})
-
 vi.mock('src/lib/prompts/release-picker', () => {
   return { pickReleaseBranch: vi.fn() }
 })
@@ -149,7 +145,7 @@ beforeEach(() => {
   state.order = []
 
   installDefaults()
-  vi.mocked(isMcpMode).mockReturnValue(false)
+  agentMode.source = null
   vi.mocked(confirm).mockResolvedValue(true)
 
   vi.mocked(removeReleaseWorktreeIfPresent).mockImplementation(async () => {

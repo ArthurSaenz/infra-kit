@@ -86,14 +86,14 @@ describe('section coverage', () => {
     expect(unmapped).toEqual([])
   })
 
-  it('covers exactly 34 checks', () => {
-    // 34, up from 33: `plugin MCP server` joined the plugin rows (the served copy carries the server).
-    expect(DOCTOR_CHECK_NAMES).toHaveLength(34)
-    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(34)
+  it('covers exactly 36 checks', () => {
+    // 36, up from 34: the two agent rows (`Agent mode`, `Agent allowlist`) joined the plugin section.
+    expect(DOCTOR_CHECK_NAMES).toHaveLength(36)
+    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(36)
   })
 
-  it('keeps the Claude Code plugin rows adjacent, in order, followed by the MCP key row (O3)', () => {
-    const plugin = DOCTOR_CHECK_NAMES.slice(-7)
+  it('keeps the Claude Code plugin rows adjacent, in order, followed by the MCP key and agent rows (O3)', () => {
+    const plugin = DOCTOR_CHECK_NAMES.slice(-9)
 
     expect(plugin).toEqual([
       'claude CLI',
@@ -103,6 +103,8 @@ describe('section coverage', () => {
       'plugin MCP server',
       'CLI version',
       'MCP server key',
+      'Agent mode',
+      'Agent allowlist',
     ])
   })
 })
@@ -133,6 +135,54 @@ describe('formatDoctorReport', () => {
 
     expect(summary).toContain('2 passed')
     expect(summary).toContain('1 failed')
+  })
+
+  /**
+   * A warning is its own count everywhere: it keeps a section off `n/n ok` without inflating `failed`,
+   * gets its own glyph in both glyph sets, and is never offered to `--fix`.
+   */
+  describe('warn', () => {
+    const warn = (name: string): CheckResult => {
+      return { name, status: 'warn', message: 'advisory' }
+    }
+
+    it('renders its own rollup, apart from the failure count', () => {
+      const lines = formatDoctorReport([pass('claude CLI'), warn('Agent allowlist')])
+      const header = strip(
+        lines.find((line) => {
+          return line.includes('Claude Code plugin')
+        }) ?? '',
+      )
+
+      expect(header).toContain('1/2')
+      expect(header).toContain('1 warning')
+      expect(header).not.toContain('failed')
+      expect(header).not.toContain('ok')
+    })
+
+    it('counts beside failures in a rollup and in the summary', () => {
+      const lines = formatDoctorReport([pass('claude CLI'), warn('Agent allowlist'), fail('plugin installed')])
+      const text = strip(lines.join('\n'))
+
+      expect(text).toContain('1/3 · 1 failed · 1 warning')
+      expect(text).toContain('1 passed · 1 failed · 1 warned')
+    })
+
+    it('has its own glyph in both glyph sets', () => {
+      const unicode = strip(formatDoctorReport([warn('Agent allowlist')]).join('\n'))
+      const ascii = strip(formatDoctorReport([warn('Agent allowlist')], { unicode: false }).join('\n'))
+
+      expect(unicode).toContain('! Agent allowlist')
+      expect(unicode).not.toContain('✗')
+      expect(ascii).toContain('!? Agent allowlist')
+      expect(ascii).not.toContain('!!')
+    })
+
+    it('is never counted as fixable', () => {
+      const output = strip(formatDoctorReport([{ name: 'portless routes', status: 'warn', message: 'x' }]).join('\n'))
+
+      expect(output).not.toContain('fixable')
+    })
   })
 
   it('shows the --fix hint only when a FAILING check is in FIXABLE_NAMES', () => {

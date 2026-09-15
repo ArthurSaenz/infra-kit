@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { agentMode } from 'src/lib/agent-mode'
 import { OperationError } from 'src/lib/errors/operation-error'
-import { mcpMode } from 'src/lib/mcp-mode'
 
 import { getMainRepoRoot, getProjectRoot } from '../git-utils'
 
@@ -48,11 +48,11 @@ beforeEach(() => {
   zx.state.handler = () => {
     return Promise.resolve({ stdout: '' })
   }
-  mcpMode.enabled = false
+  agentMode.source = null
 })
 
 afterEach(() => {
-  mcpMode.enabled = false
+  agentMode.source = null
 })
 
 describe('getProjectRoot — honest typed error (Step 1)', () => {
@@ -131,8 +131,8 @@ describe('getProjectRoot — honest typed error (Step 1)', () => {
     expect(zx.state.factoryArgs[0]).toEqual({ quiet: true })
   })
 
-  it('mCP remediation redirects to the operator and names neither `cd ` nor `--project` (Step 3)', async () => {
-    mcpMode.enabled = true
+  it('agent remediation names `-C <dir>` and neither `cd ` nor `--project` (Step 3)', async () => {
+    agentMode.source = 'mcp'
     rejectWith({ stderr: 'fatal: not a git repository (or any of the parent directories): .git' })
 
     const err = await getProjectRoot().catch((e: unknown) => {
@@ -141,7 +141,8 @@ describe('getProjectRoot — honest typed error (Step 1)', () => {
 
     const message = (err as Error).message
 
-    expect(message).toContain('the infra-kit MCP server resolves its project from the working directory')
+    expect(message).toContain('or pass `-C <dir>` naming one')
+    expect(message).not.toContain('relaunch the server')
     expect(message).not.toContain('cd ')
     expect(message).not.toContain('--project')
   })

@@ -1,45 +1,48 @@
 import process from 'node:process'
 
+import { agentMode, isHeadless } from 'src/lib/agent-mode'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { PromptCancelledError } from 'src/lib/errors/prompt-cancelled-error'
-import { jsonOutput } from 'src/lib/json-output'
-import { isMcpMode } from 'src/lib/mcp-mode'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 
 import type { BranchPickerItem } from './types'
 
 /**
- * Gate the interactive Ink picker. Throws a clear `OperationError`, without ever loading React,
- * when there is no interactive input (`stdin.isTTY`), when running under MCP, or when structured
- * output is requested (`jsonOutput.enabled`).
+ * Gate the interactive Ink picker: throw, without ever loading React, when nobody can answer it
+ * (`isHeadless()`) or when there is no interactive input (`stdin.isTTY`).
  */
-// All three clauses are load-bearing.
+// Both clauses are load-bearing.
 //
-// `--json` is registered on every command and sets `jsonOutput.enabled`, so `--json` on a TTY
-// without an explicit arg would otherwise pass a TTY-only gate and dynamically import the TUI,
-// leaking React onto the `--json` path.
+// `--json` on a TTY without an explicit arg would otherwise pass a TTY-only gate and dynamically
+// import the TUI, leaking React onto the `--json` path.
 //
 // The TTY predicate is `stdin.isTTY` only — deliberately NOT the palette's `stdout && stdin`.
 // These prompts render to stderr, so an interactive run whose STDOUT is redirected (e.g.
 // `worktrees-remove > log.txt`) must still prompt; requiring `stdout.isTTY` would regress that.
 // Input-side interactivity is what the picker actually needs.
 //
-// The MCP clause is not defensive: `worktrees-add` and `gh-merge-dev` are `mcpExposed: true` with
+// The agent clause is not defensive: `worktrees-add` and `gh-merge-dev` are `mcpExposed: true` with
 // ALL of their branch inputs `.optional()`, so an MCP call with those args omitted DOES enter the
-// interactive branch, and without a guard it would render an Ink picker into the JSON-RPC stream
-// (and load React there). It keys on `isMcpMode()`, NOT on `!process.stdin.isTTY`, because the TTY
-// check alone does not hold: `commands/mcp/mcp.ts` spawns the server with `stdio: 'inherit'`, so a
-// terminal-launched `infra-kit mcp` hands the child a real TTY stdin and an isTTY-keyed guard does
-// NOT fire. It only looks sufficient because Claude Code happens to spawn the server with piped
-// stdio — a property of one client, not a guarantee. The `!isTTY` clause stays as well, for
-// genuinely non-interactive runs (pipes, CI).
-const assertInteractive = () => {
-  if (isMcpMode() || !process.stdin.isTTY || jsonOutput.enabled) {
-    throw new OperationError(undefined, {
-      operation: 'interactive branch selection',
-      remediation:
-        'pass the branch selection explicitly (CLI: `--version`/`--versions`/`--all`; MCP: the `version`/`versions`/`all` fields) for non-interactive, --json, or MCP runs',
-    })
+// interactive branch, and without a guard it would render an Ink picker into the JSON-RPC stream.
+// `!isTTY` alone cannot catch it — see lib/agent-mode for why `stdio: 'inherit'` defeats it — and
+// stays only for genuinely non-interactive human runs (pipes, CI).
+//
+// Two error classes on purpose. An agent or a `--json` consumer gets `argument_required` naming the
+// flag this picker would have filled — no `choices`: the candidates are what `release list --json` /
+// `worktrees list --json` already return, and no picker invents a row shape of its own. A plain
+// non-TTY human run (a pipe, CI) keeps the `OperationError`: nothing is parsing its stdout.
+const assertInteractive = (argument: 'version' | 'versions') => {
+  const context = {
+    operation: 'interactive branch selection',
+    remediation:
+      'pass the branch selection explicitly (CLI: `--version`/`--versions`/`--all`; MCP: the `version`/`versions`/`all` fields) for non-interactive, --json, or MCP runs',
   }
+
+  if (isHeadless()) {
+    throw new StructuredRefusalError({ status: 'argument_required', argument, agentMode: agentMode.source }, 2, context)
+  }
+
+  if (!process.stdin.isTTY) throw new OperationError(undefined, context)
 }
 
 /**
@@ -50,7 +53,7 @@ const assertInteractive = () => {
  * bail paths.
  */
 export const pickReleaseBranch = async (items: BranchPickerItem[]): Promise<string> => {
-  assertInteractive()
+  assertInteractive('version')
   const { runBranchPicker } = await import('src/tui/boot')
   const value = await runBranchPicker(items)
 
@@ -68,7 +71,7 @@ export const pickReleaseBranches = async (
   items: BranchPickerItem[],
   opts?: { required?: boolean; allowSelectAll?: boolean },
 ): Promise<string[]> => {
-  assertInteractive()
+  assertInteractive('versions')
   const { runBranchMultiPicker } = await import('src/tui/boot')
   const values = await runBranchMultiPicker(items, opts)
 

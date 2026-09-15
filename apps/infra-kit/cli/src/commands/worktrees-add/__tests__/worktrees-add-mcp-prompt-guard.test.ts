@@ -4,12 +4,13 @@ import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { zxCommandMock } from 'src/lib/git-utils/__tests__/zx-command-mock'
 import { getInfraKitConfig, resolveConfiguredIdes } from 'src/lib/infra-kit-config'
-import { mcpMode } from 'src/lib/mcp-mode'
 
 import { worktreesAdd } from '../worktrees-add'
 
@@ -41,7 +42,7 @@ import { worktreesAdd } from '../worktrees-add'
 //
 // The third test is the counterweight, and it is load-bearing. `program.ts` maps the
 // CLI's `--yes` onto `confirmedCommand`, so a guard keyed on `confirmedCommand` rather
-// than `isMcpMode()` would silently stop `worktrees add --yes` prompting on a terminal —
+// than `isAgentMode()` would silently stop `worktrees add --yes` prompting on a terminal —
 // fixing the MCP direction by breaking the CLI one.
 
 vi.mock('zx', async (importOriginal) => {
@@ -198,7 +199,7 @@ beforeEach(() => {
 afterEach(() => {
   if (realStdin) Object.defineProperty(process, 'stdin', realStdin)
   if (realStdoutWrite) Object.defineProperty(process.stdout, 'write', realStdoutWrite)
-  mcpMode.enabled = false
+  agentMode.source = null
   vi.restoreAllMocks()
 })
 
@@ -208,9 +209,9 @@ describe('worktrees-add — the optional follow-up prompts under MCP', () => {
 
     // `stdio: 'inherit'` is how `commands/mcp/mcp.ts` spawns the server, so a
     // terminal-launched `infra-kit mcp` really does have a TTY stdin. Setting isTTY here
-    // means an isTTY-keyed guard would NOT fire — the guard has to key on `isMcpMode()`.
+    // means an isTTY-keyed guard would NOT fire — the guard has to key on `isAgentMode()`.
     setStdin(stdin, true)
-    mcpMode.enabled = true
+    agentMode.source = 'mcp'
 
     const cancelRescue = rescue(stdin)
 
@@ -236,7 +237,7 @@ describe('worktrees-add — the optional follow-up prompts under MCP', () => {
     const stdin = new PassThrough()
 
     setStdin(stdin, true)
-    mcpMode.enabled = true
+    agentMode.source = 'mcp'
 
     const cancelRescue = rescue(stdin)
 
@@ -253,12 +254,36 @@ describe('worktrees-add — the optional follow-up prompts under MCP', () => {
   })
 })
 
+describe('worktrees-add — the confirm site propagates its refusal', () => {
+  // The site sits inside this handler's rewrapping `catch`; a `StructuredRefusalError` is an
+  // `OperationError` and must come out intact, `confirmation_required` and all.
+  it('an unconfirmed agent run throws confirmation_required un-rewrapped, before the follow-ups', async () => {
+    const stdin = new PassThrough()
+
+    setStdin(stdin, true)
+    agentMode.source = 'flag'
+
+    const error = await worktreesAdd({ confirmedCommand: false, versions: '1.2.5' }).catch((e: unknown) => {
+      return e
+    })
+
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+    expect((error as StructuredRefusalError).structuredContent).toMatchObject({
+      status: 'confirmation_required',
+      agentMode: 'flag',
+    })
+    expect((error as StructuredRefusalError).exitCode).toBe(2)
+    expect(stdoutBytes.join('')).toBe('')
+    expect(addedOptions()).not.toContainEqual(['--yes', true])
+  })
+})
+
 describe('worktrees-add — the CLI direction still prompts', () => {
   it('reaches the prompt on a TTY even when confirmedCommand is true (the CLI --yes)', async () => {
     const stdin = new PassThrough()
 
     setStdin(stdin, true)
-    mcpMode.enabled = false
+    agentMode.source = null
 
     // Esc, one raw 0x1b byte — the same cancellation path `withEscape` binds in
     // production. It only lands if a real prompt is open, so the rejection below is

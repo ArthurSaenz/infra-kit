@@ -11,9 +11,11 @@ import { exposedTools, promptSites, reachableSites } from './mcp-reachable-promp
  * `withEscape` site to WRITE an answer. Writing one does not make it right, and neither of the two
  * wrong answers can fail anything on its own:
  *
- * - G8 — `'unreachable'` is a claim about SOMEONE ELSE'S Zod schema ("a required field stops an
- *   agent getting here"). Relaxing that field to `.optional()` is a stream-safety change made in a
- *   file that never mentions prompts. This is what makes that mechanical.
+ * - G8 — `{ refuse: '<argument>' }` names the argument an agent must pass on the re-run. That name
+ *   is a claim about SOMEONE ELSE'S Zod schema: if the field is renamed there, the refusal names
+ *   something no tool accepts, in a file that never mentions prompts. This is what makes that
+ *   mechanical. (It used to check `'unreachable'` claims — "a required field stops an agent getting
+ *   here" — until the CLI became a Bash-driven agent surface with no schema in front of a prompt.)
  * - G6 — a tool's description and its `.describe()` strings are the only place an agent is told what
  *   a headless call gets. `worktrees-add` promised `false` for two years while the code fell through
  *   to a `confirm()` writing into the JSON-RPC transport. This compares the prose to the code.
@@ -26,11 +28,11 @@ import { exposedTools, promptSites, reachableSites } from './mcp-reachable-promp
  * `<file>#<enclosing fn>` — a key that survives the edits a line number does not.
  *
  * `tools` are the exposed MCP tools that can reach the site; `fields` are the input fields the
- * answer's truth rests on. G8 re-derives each field from the site's own `// MCP-unreachable:`
- * comment and cross-checks it here, so the table and the source have to agree with each other
+ * answer's truth rests on. G8 re-derives each field from the site's own `{ refuse: '<name>' }`
+ * literal and cross-checks it here, so the table and the source have to agree with each other
  * before either is compared to the schema.
  */
-const POLICY_SITES: Record<string, { policy: 'unreachable' | 'value'; tools: string[]; fields: string[] }> = {
+const POLICY_SITES: Record<string, { policy: 'argument' | 'value'; tools: string[]; fields: string[] }> = {
   // NOT listed any more: `gh-release-deploy-selected#ghReleaseDeploySelected`,
   // `lib/prompts/env-picker.ts#pickEnv`, `env-load.ts#envLoad`, and the three
   // `release-create.ts#promptForVersionInput` / `#promptForNameInput` / `#promptForReleasesInteractive`
@@ -38,17 +40,17 @@ const POLICY_SITES: Record<string, { policy: 'unreachable' | 'value'; tools: str
   // `.optional()` so the form could offer real lists — at which point G8 named all five claims false in
   // one run. `env-load` followed when `config` went `.optional()` for its own form, and `release-create`
   // when `releases` did — G8 named all six of its claims false in one run. They now declare `'refuse'`
-  // at the call site, which this table does not track by design. That transition is what G8 is for,
+  // at the call site, which this table does not track by design. That transition is what G8 was for,
   // and those are the only times it has fired in anger.
   // `local-deploy-all` never reaches `pickServices` — it takes the `selection === 'all'` branch
   // above it — so `local-deploy-selected` is the only owner, and `service` is the field.
   'commands/local-deploy/local-deploy.ts#pickServices': {
-    policy: 'unreachable',
+    policy: 'argument',
     tools: ['local-deploy-selected'],
     fields: ['service'],
   },
   'commands/release-desc-edit/release-desc-edit.ts#promptDescription': {
-    policy: 'unreachable',
+    policy: 'argument',
     tools: ['release-desc-edit'],
     fields: ['description'],
   },
@@ -64,25 +66,13 @@ const POLICY_SITES: Record<string, { policy: 'unreachable' | 'value'; tools: str
 /** Prose that tells an agent what a headless call gets. G6 asserts only on tools carrying it. */
 const PROMISE = /without a TTY|no TTY|required for MCP|required when invoked via MCP/i
 
-/** Fields the tool's own schema refuses to default: parse `{}` and see what it complains about. */
-const requiredFields = (name: string): Set<string> => {
+/** Every input field the tool declares — the names a refusal may legitimately tell an agent to pass. */
+const declaredFields = (name: string): Set<string> => {
   const tool = exposedTools.find((candidate) => {
     return candidate.name === name
   })
 
-  if (!tool) return new Set()
-
-  const result = z.object(tool.inputSchema).safeParse({})
-
-  if (result.success) return new Set()
-
-  return new Set(
-    result.error.issues.flatMap((issue) => {
-      const first = issue.path[0]
-
-      return typeof first === 'string' ? [first] : []
-    }),
-  )
+  return new Set(tool ? Object.keys(z.object(tool.inputSchema).shape) : [])
 }
 
 /**
@@ -146,23 +136,19 @@ describe('the site table tracks the code it makes claims about', () => {
   })
 })
 
-describe('g8 — every `unreachable` claim is backed by a required field', () => {
-  it('names a field in a // MCP-unreachable comment at every claiming site', () => {
-    const unnamed = promptSites
-      .filter((site) => {
-        return site.policy === 'unreachable' && site.field === null
-      })
-      .map((site) => {
-        return site.where
-      })
+describe('g8 — every `{ refuse: <argument> }` names a field the owning tool declares', () => {
+  it('still has argument-naming sites to check (the guard is not vacuous)', () => {
+    const named = promptSites.filter((site) => {
+      return site.policy === 'argument'
+    })
 
-    expect(unnamed).toEqual([])
+    expect(named.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('agrees with the site table about which field carries the claim', () => {
+  it('agrees with the site table about which field the refusal names', () => {
     const mismatched = promptSites
       .filter((site) => {
-        return site.policy === 'unreachable'
+        return site.policy === 'argument'
       })
       .filter((site) => {
         const entry = POLICY_SITES[site.key]
@@ -176,20 +162,20 @@ describe('g8 — every `unreachable` claim is backed by a required field', () =>
     expect(mismatched).toEqual([])
   })
 
-  it('finds that field REQUIRED in every owning tool inputSchema', () => {
-    // The whole point. `'unreachable'` says "an agent cannot get here because the schema stops it";
-    // relaxing that field to `.optional()` turns the claim false and opens a prompt onto the
-    // JSON-RPC transport, with nothing else in the tree noticing.
+  it('finds that field DECLARED in every owning tool inputSchema', () => {
+    // The whole point. `argument_required` tells an agent "pass `<name>` and re-run"; a name no
+    // tool accepts is a refusal with no exit, and renaming the field happens in a file that never
+    // mentions prompts, with nothing else in the tree noticing.
     const broken = promptSites
       .filter((site) => {
-        return site.policy === 'unreachable' && site.field !== null
+        return site.policy === 'argument' && site.field !== null
       })
       .flatMap((site) => {
         const entry = POLICY_SITES[site.key]
         const field = site.field as string
 
         return (entry?.tools ?? []).flatMap((tool) => {
-          return requiredFields(tool).has(field) ? [] : [`${site.where}: \`${field}\` is not required on ${tool}`]
+          return declaredFields(tool).has(field) ? [] : [`${site.where}: \`${field}\` is not declared on ${tool}`]
         })
       })
 
@@ -236,10 +222,12 @@ describe('g6 — a tool that promises a non-interactive answer must not refuse',
     expect(promiseCarryingTools.has('release-create')).toBe(false)
   })
 
-  it('never leaves a promised tool site on refuse', () => {
+  it('never leaves a promised tool site on a NAMELESS refuse', () => {
     // The `worktrees-add` shape of the defect: the `.describe()` says an MCP caller gets `false`,
     // and the code threw instead. A refusal is not the documented answer, so it breaks a promise
-    // the schema itself advertises — and nothing but this compares the two.
+    // the schema itself advertises — and nothing but this compares the two. An `'argument'` refusal
+    // is NOT on this list: "required for MCP" is a promise that the field must be passed, and a
+    // refusal naming that field keeps it.
     const broken = declared
       .filter((pair) => {
         return promiseCarryingTools.has(pair.tool)

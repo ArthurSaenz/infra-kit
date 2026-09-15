@@ -163,11 +163,11 @@ describe('mutation: the executor’s two guards are independent, not one guard w
 
   it('neutering the MCP guard alone still does not run a dangerous recipe', () => {
     const { calls, spawn } = spawnSpy()
-    // `mcpMode: () => false` IS the neutered guard. The recipe verdict is what refuses here, so the two
+    // `agentMode: () => false` IS the neutered guard. The recipe verdict is what refuses here, so the two
     // guards genuinely stop different things — if they were redundant, this would spawn.
     const outcome = runRecipe(specFor('brew').bootstrapInstall, PERMISSIVE, {
       spawnSync: spawn,
-      mcpMode: () => {
+      agentMode: () => {
         return false
       },
       notify: silent,
@@ -181,7 +181,7 @@ describe('mutation: the executor’s two guards are independent, not one guard w
     const { calls, spawn } = spawnSpy()
     const outcome = runRecipe(specFor('gh').bootstrapInstall, PERMISSIVE, {
       spawnSync: spawn,
-      mcpMode: () => {
+      agentMode: () => {
         return false
       },
       notify: silent,
@@ -213,6 +213,6 @@ describe('mutation: there is no confirmation bypass to honour', () => {
 
     // Every field here is read for HOW to run, never for WHETHER: `notify` is a write-only sink the
     // executor pushes a line into. Adding one is a deliberate edit to this list, which is the point.
-    expect(fields.sort()).toEqual(['env', 'mcpMode', 'notify', 'spawnSync'])
+    expect(fields.sort()).toEqual(['agentMode', 'env', 'notify', 'spawnSync'])
   })
 })

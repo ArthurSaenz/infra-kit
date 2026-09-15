@@ -26,7 +26,6 @@ import { reconcileMcpProxies } from 'src/lib/plugin-pointer/mcp-proxy-registrati
 import type { McpProxyReconcileResult } from 'src/lib/plugin-pointer/mcp-proxy-registration'
 import { MCP_FILE_NAME, SERVERS_KEY } from 'src/lib/plugin-pointer/mcp-registration'
 import { fetchLatestVersion, pluginStepWithheld, readUpdateCache } from 'src/lib/update-check'
-import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
 
 import packageJson from '../../../package.json' with { type: 'json' }
 import { resolveGitRootForWrites, syncRepoGuidance } from './agent-files'
@@ -582,35 +581,28 @@ const pointerEntry = (root: string, result: PluginPointerResult): InitEntry => {
 }
 
 /**
- * One line per `.mcp.json` verdict — a READ, never a write. The plugin ships the MCP server, so
- * `setup` no longer registers one; it reports what the repo's own file says about it.
+ * One line per `.mcp.json` verdict — a READ, never a write. The plugin is skills-only and the skills
+ * drive the CLI over Bash, so `setup` registers no server; it reports what the repo's own file says.
  *
- * `stale` is `unchanged` at `info`, not `warned`: the leftover key shadows the plugin's server, but
- * the shadowed session runs the legacy route end to end (the server renders its guidance for the
- * route that spawned it), so this is a pending repo chore with no deadline — the line names it and
- * says how today's session works. `absent` / `missing-file` are the steady state and say so, so a
- * reader who knew the old "created .mcp.json" line learns where the server went. `wrong-key` and
- * `unparseable` are the two faults, and WARN with the fix: the lib no longer logs, so this is the
- * only place they are audible.
+ * `stale` is `unchanged` at `info`, not `warned`: the leftover key spawns `infra-kit mcp`, which stays
+ * alive as a compatibility stub for exactly this case, so the session keeps a working — if redundant —
+ * server. A pending repo chore with no deadline: the line names it and says what to delete. `wrong-key`
+ * is the same chore under another key, at `info` too, naming the key. `absent` / `missing-file` are
+ * the steady state and say so, so a reader who knew the old "created .mcp.json" line learns the entry
+ * is not wanted any more. `unparseable` is the one fault and WARNS with the fix: the lib no longer
+ * logs, so this is the only place it is audible.
  */
 const mcpEntry = (root: string, registration: McpRegistration): InitEntry => {
   const relative = MCP_FILE_NAME
 
-  if (registration.kind === 'stale') {
+  if (registration.kind === 'stale' || registration.kind === 'wrong-key') {
+    const key = registration.kind === 'stale' ? MARKETPLACE_NAME : registration.key
+
     return {
       step: 'mcp-server',
       outcome: 'unchanged',
-      message: `  ${relative} still registers the "${MARKETPLACE_NAME}" MCP server, which shadows the plugin's copy (same key, project scope wins): sessions here use ${LEGACY_MCP_TOOL_PREFIX}* and the guidance they read names that prefix — nothing to fix on this machine. To move this repo to the plugin's ${MCP_TOOL_PREFIX}* route, delete the "${MARKETPLACE_NAME}" entry from ${relative} by hand in a PR, keeping its siblings`,
+      message: `  ${relative} still registers the infra-kit MCP server under "${key}" — the plugin no longer serves one, so this entry only spawns a compatibility stub. Delete the "${key}" entry from ${relative} by hand in a PR, keeping its siblings`,
       level: 'info',
-    }
-  }
-
-  if (registration.kind === 'wrong-key') {
-    return {
-      step: 'mcp-server',
-      outcome: 'warned',
-      message: `${relative} registers an infra-kit server under "${registration.key}" — a second server process whose tools carry that key as their prefix, which no served guidance names. Remove that entry by hand; the plugin serves the server under "${MARKETPLACE_NAME}"`,
-      level: 'warn',
     }
   }
 
@@ -628,7 +620,7 @@ const mcpEntry = (root: string, registration: McpRegistration): InitEntry => {
   return {
     step: 'mcp-server',
     outcome: 'unchanged',
-    message: `  infra-kit MCP server: served by the Claude Code plugin (${carries})`,
+    message: `  infra-kit MCP server: none wanted — the plugin is skills-only (${carries})`,
     level: 'info',
   }
 }
@@ -793,7 +785,7 @@ const resolveCliStaleness = async (): Promise<CliStaleness> => {
 /**
  * Point this repo's Claude Code at the infra-kit plugin marketplace, INSTALL (or update) the plugin
  * so a teammate's whole setup is one command, then report what the repo's own `.mcp.json` says about
- * the MCP server the plugin now ships.
+ * the retired MCP server (a leftover key is a chore to delete, never a write).
  *
  * The pointer write and the install are driven from ONE root — `resolveGitRoot`'s, no longer the
  * guidance sync's — so the pointer keys and what `--scope project` records name a single project,
@@ -842,10 +834,10 @@ const syncPluginPointer = async (root: string | null, record: InitStepRecorder):
       ),
     )
 
-    // AFTER the install, which is what puts the server on this machine: the read is about whether
-    // the repo's own file shadows what the plugin just started serving. It writes nothing in any
-    // branch — the retired writer used to re-add the key here, which on a repo that had deliberately
-    // deleted it meant a dirty tracked file and a silent flip back to the legacy route (plan §4 PM-9).
+    // AFTER the install so the report reads in cause order: the skills are what an agent uses now,
+    // and the `.mcp.json` read is about a leftover the skills no longer need. It writes nothing in
+    // any branch — the retired writer used to re-add the key here, which on a repo that had
+    // deliberately deleted it meant a dirty tracked file (archived plan §4 PM-9).
     record(mcpEntry(root, inspectLegacyMcpRegistration(root)))
   } catch (err) {
     // Best-effort — neither an unwritable `.claude/settings.json`, a hand-broken

@@ -125,7 +125,7 @@ describe('runPreflight', () => {
 
   it('refuses a protected env over MCP when the project allows it CLI-only', async () => {
     await expect(
-      runPreflight({ ...baseArgs, env: 'prod', protectedEnvAccess: { allowed: false, reason: 'mcp-blocked' } }),
+      runPreflight({ ...baseArgs, env: 'prod', protectedEnvAccess: { allowed: false, reason: 'agent-blocked' } }),
     ).rejects.toThrow(/cli-only/)
   })
 

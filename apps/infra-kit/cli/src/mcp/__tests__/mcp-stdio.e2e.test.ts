@@ -1138,7 +1138,9 @@ describe('e-l1–e-l3 — the env-load form on a 2025-era connection', () => {
     expect(text).toContain('env-list')
     expect(text).not.toContain('did not declare the required capability')
     expect(text).not.toMatch(authErrorFor(fixture))
-    expect(result.structuredContent).toBeUndefined()
+    // The handler's refusal is a `StructuredRefusalError` and the chokepoint's catch renders its
+    // payload (lib/tool-handler) — the SDK would have flattened a plain throw to text only.
+    expect(result.structuredContent).toEqual({ status: 'argument_required', argument: 'config', agentMode: 'mcp' })
 
     // OBS: the refusal is the HANDLER's, so the chokepoint logged neither a request nor an outcome.
     await expect.poll(stderrSince(urlOnly, mark), { timeout: 3_000 }).toContain('Tool execution failed: env-load')
@@ -1264,6 +1266,158 @@ describe('e-r1–e-r2 — the release-create form: accept → gate → confirm o
     expect(Object.keys(offered?.inputRequests ?? {})).toEqual(['args'])
     expect(request?.method).toBe('elicitation/create')
     assertReleaseForm(request?.params.requestedSchema)
+  }, 45_000)
+})
+
+describe('e-rr1–e-rr3 — the release-remove form: pick → gate → confirm on a GATED, form-fed tool', () => {
+  /**
+   * Same three rounds as `e-r1`, on the tool whose form is a PICKER rather than a wizard: the enum
+   * is the open release PRs the fixture's `gh` stub reports (exactly `release/v1.2.5` on `dev`,
+   * nothing on `main`), and the fixture's scrubbed `JIRA_*` leave the rows without descriptions.
+   *
+   * On the fixture round 2 must FAIL before any mutation — the repo has no `origin`, no worktree and
+   * the `gh` stub answers `pr list --head` with exit 97 — and that failure is the witness: `Tool
+   * execution failed` means the token minted over the picked `version` verified and the handler was
+   * entered; `Tool execution refused (` would mean the gate rejected what the form produced.
+   *
+   * `e-rr3` also reads `tools/list` off the wire: the tool is AUTHORED in the v1 baseline
+   * differential, so nothing else pins that the description and schemas say what the handler now does.
+   */
+  let fixture: EnvPickerFixture
+  let form: CapturedConnection
+  let manual: CapturedConnection
+  const spy: FormSpy = { calls: [], answer: { action: 'cancel' } }
+
+  const assertRemoveForm = (requested: ElicitRequestFormParams['requestedSchema'] | undefined): void => {
+    // ONE required select whose options are the stub's single open release PR, rendered as the CLI
+    // picker renders it — the proof the provider's own enumeration ran rather than a stub schema.
+    expect(Object.keys(requested?.properties ?? {})).toEqual(['version'])
+    expect(requested?.properties.version).toMatchObject({ enum: ['1.2.5'] })
+    expect(requested?.required).toStrictEqual(['version'])
+    expect(requested?.properties.version?.description).toContain('1.2.5 [regular]')
+  }
+
+  beforeAll(async () => {
+    fixture = await makeEnvPickerFixture()
+    tmpDirs.push(...fixture.dirs)
+
+    form = await connectLegacyFormClient(fixture, spy)
+    manual = await connectManualModern(fixture)
+
+    assertConnectionIsModern(manual.client)
+  }, 45_000)
+
+  it('e-rr1: omitting `version` draws ONE picker; accepting gates on the pick; confirming enters the handler; declining is terminal', async () => {
+    const formMark = form.stderr().length
+
+    spy.calls.length = 0
+    spy.answer = { action: 'accept', content: { version: '1.2.5' } }
+
+    const gate = await form.client.callTool({ name: 'release-remove', arguments: {} })
+
+    // Delete the `formProvider` wiring on `releaseRemoveMcpTool` → the spy is never called and the
+    // gate carries no `version` (`command-catalog.test.ts` pins the same wiring from the catalog side).
+    expect(spy.calls).toHaveLength(1)
+    assertRemoveForm(spy.calls[0]?.requestedSchema)
+
+    await expect
+      .poll(stderrSince(form, formMark), { timeout: 3_000 })
+      .toContain('Tool execution form requested: release-remove')
+
+    const structured = gate.structuredContent as
+      | { status?: string; tool?: string; formDiscarded?: boolean; resolvedArgs?: unknown; confirmToken?: string }
+      | undefined
+
+    expect(gate.isError).toBe(true)
+    expect(structured).toMatchObject({ status: 'confirmation_required', tool: 'release-remove', formDiscarded: false })
+    expect(structured?.resolvedArgs).toStrictEqual({ version: '1.2.5' })
+    expect(structured?.confirmToken, 'round 1 must hand out a confirmToken').toBeTypeOf('string')
+
+    const mark = form.stderr().length
+
+    spy.calls.length = 0
+
+    const round2 = await form.client.callTool({
+      name: 'release-remove',
+      arguments: {
+        ...(structured?.resolvedArgs as Record<string, unknown>),
+        confirm: true,
+        confirmToken: structured?.confirmToken,
+      },
+    })
+
+    // Round 2 carries `version`, so it is not formable and no second picker is drawn.
+    expect(spy.calls).toHaveLength(0)
+    expect(round2.isError).toBe(true)
+    expect(round2.structuredContent).toBeUndefined()
+
+    // THE load-bearing pair (see `e-r1`): `failed` proves the handler was entered on the token
+    // minted over the picked `version`; `refused (` would mean the gate rejected the form's output.
+    await expect.poll(stderrSince(form, mark), { timeout: 3_000 }).toContain('Tool execution failed: release-remove')
+    expect(form.stderr().slice(mark)).not.toContain('Tool execution refused (')
+
+    spy.calls.length = 0
+    spy.answer = { action: 'decline' }
+
+    const declined = await form.client.callTool({ name: 'release-remove', arguments: {} })
+
+    expect(spy.calls).toHaveLength(1)
+    expect(declined.isError).toBe(true)
+    expect(declined.structuredContent).toMatchObject({
+      status: 'form_declined',
+      tool: 'release-remove',
+      action: 'decline',
+    })
+  }, 45_000)
+
+  it('e-rr2: the GATED release-remove picker is offered on the modern era too — `input_required` before any gate', async () => {
+    const round1 = await manual.client.callTool({ name: 'release-remove', arguments: {} }, { allowInputRequired: true })
+    const offered = isInputRequiredResult(round1) ? round1 : undefined
+
+    expect(offered, `expected input_required, got: ${JSON.stringify(round1)}`).toBeDefined()
+
+    const request = offered?.inputRequests?.args as { method: string; params: ElicitRequestFormParams } | undefined
+
+    expect(Object.keys(offered?.inputRequests ?? {})).toEqual(['args'])
+    expect(request?.method).toBe('elicitation/create')
+    assertRemoveForm(request?.params.requestedSchema)
+  }, 45_000)
+
+  it('e-rr3: a call that names `version` draws no picker, and tools/list says the Jira fix version is removed', async () => {
+    spy.calls.length = 0
+
+    const gate = await form.client.callTool({ name: 'release-remove', arguments: { version: '1.2.5' } })
+
+    expect(spy.calls).toHaveLength(0)
+    expect(gate.isError).toBe(true)
+    expect(gate.structuredContent).toMatchObject({
+      status: 'confirmation_required',
+      tool: 'release-remove',
+      resolvedArgs: { version: '1.2.5' },
+    })
+
+    const listed = await form.client.listTools()
+    const tool = listed.tools.find((entry) => {
+      return entry.name === 'release-remove'
+    })
+    const inputSchema = tool?.inputSchema as { required?: string[]; properties?: Record<string, unknown> } | undefined
+    const outputSchema = tool?.outputSchema as { properties?: { jira?: { enum?: string[] } } } | undefined
+
+    expect(tool).toBeDefined()
+    // `version` must be optional in the SCHEMA for the picker to be reachable at all: the SDK parses
+    // before the chokepoint runs.
+    expect(inputSchema?.required).toBeUndefined()
+    expect(inputSchema?.properties?.moveIssuesTo).toBeDefined()
+    expect(inputSchema?.properties?.skipJira).toBeUndefined()
+    // The one surface immune to plugin/CLI version skew: every host shows the agent this text.
+    expect(tool?.description).toContain('REMOVES ITS JIRA FIX VERSION')
+    expect(tool?.description).toContain('moveIssuesTo')
+    expect(tool?.description).toContain('One release per call')
+    expect(tool?.description).not.toContain('LEFT IN PLACE')
+    const versionField = inputSchema?.properties?.version as { description?: string } | undefined
+
+    expect(versionField?.description).not.toContain('Required: the interactive picker')
+    expect(outputSchema?.properties?.jira?.enum).toStrictEqual(['removed', 'absent', 'skipped'])
   }, 45_000)
 })
 
@@ -1459,7 +1613,7 @@ describe('e-skew — a straggler CLI and the live server both answer `env-load {
     const result = await client.callTool({ name: 'env-load', arguments: {} })
 
     expect(result.isError).toBe(true)
-    expect(result.structuredContent).toBeUndefined()
+    expect(result.structuredContent).toEqual({ status: 'argument_required', argument: 'config', agentMode: 'mcp' })
 
     const text = resultText(result)
 
@@ -1491,7 +1645,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   //   D16 version reports where it runs and which route spawned it (AUTHORED)       legacy + modern
   //   D17 env-load's `config` went optional — `required` vanished (AUTHORED, docs/session-env-picker-plan.md §2.4)  legacy + modern
   //   D18 env-load's description and `config` prose stopped calling the field MCP-required (AUTHORED)  legacy + modern
-  //   D21 env-status's description says the server re-reads the session file before every tool (AUTHORED, docs/mcp-session-env-refresh-plan.md §2.7)  legacy + modern
+  //   D21 env-status's description says the server re-reads the session file before every tool (AUTHORED, docs/archive/mcp/mcp-session-env-refresh-plan.md §2.7)  legacy + modern
   //   D19 release-create's releases went optional — required vanished (AUTHORED, docs/release-create-form-plan.md §3.4)  legacy + modern
   //   D20 release-create's description and `releases` prose stopped calling the gate auto-skipped (AUTHORED, docs/release-create-form-plan.md §3.4)  legacy + modern
   // Why UNNAMED differences must fail: a normalization broad enough to swallow a known delta is
@@ -1736,7 +1890,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
 
   /**
    * D16 — an AUTHORED delta: `version` grew from a one-field answer into the session's location and
-   * route report (docs/mcp-via-plugin-migration-plan.md §4 PM-4, §5 step 2.7).
+   * route report (docs/archive/mcp/mcp-via-plugin-migration-plan.md §4 PM-4, §5 step 2.7).
    *
    * A plugin-spawned server runs in `${CLAUDE_PROJECT_DIR}`, and the doctor skill asserts
    * `cwd === repoRoot === projectDir` from THIS tool's answer; `launch` / `toolPrefix` are the only
@@ -1805,7 +1959,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   /**
    * D21 — an AUTHORED delta in D14's shape: ONE tool description. `env-status` over MCP used to
    * describe the server's own launch environment; the chokepoint now re-applies the session's
-   * `env-load` file at every tool call's entry (docs/mcp-session-env-refresh-plan.md §2.5), so the
+   * `env-load` file at every tool call's entry (docs/archive/mcp/mcp-session-env-refresh-plan.md §2.5), so the
    * description says what the tool reports as of the call.
    */
   // LITERAL post-change text, for D13's reason: a further edit fails `w1c` and must be re-declared.
@@ -1823,6 +1977,34 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   }
 
   const d21Baseline = applyD21ToBaseline()
+
+  /**
+   * D22 — an AUTHORED delta in D16's shape: ONE output property. `env-load` now reports the terminal
+   * session its file was written FOR (`sessionId`, nullable): a Bash-driven agent inherits the
+   * session id but never sees the shell that sources the file, and this is how it tells which
+   * terminal just got the variables. The baseline pre-dates the field.
+   */
+  // LITERAL post-change shape, for D13's reason: a further edit fails `w1c` and must be re-declared.
+  const D22_ENV_LOAD_SESSION_ID = {
+    description: 'The INFRA_KIT_SESSION the file was written for; null when the process had no session',
+    type: ['string', 'null'],
+  }
+
+  /** Adds `sessionId` to the baseline's `env-load` output schema in place; returns what was there BEFORE. */
+  const applyD22ToBaseline = (): { property: unknown; required: unknown } => {
+    const tool = findBaselineTool('env-load')
+    const schema = tool?.outputSchema as Record<string, any> | undefined
+    const captured = { property: schema?.properties?.sessionId, required: schema?.required }
+
+    if (schema !== undefined) {
+      schema.properties = { ...schema.properties, sessionId: structuredClone(D22_ENV_LOAD_SESSION_ID) }
+      schema.required = [...(schema.required as string[]), 'sessionId']
+    }
+
+    return captured
+  }
+
+  const d22Baseline = applyD22ToBaseline()
 
   /**
    * D20 — an AUTHORED delta in D14's shape: `release-create`'s description and its `releases` prose,
@@ -2514,6 +2696,15 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     expect(D21_ENV_STATUS_DESCRIPTION.startsWith(String(d21Baseline))).toBe(true)
   })
 
+  it('w1c-pre-d22: D22 — the baseline `env-load` output schema had no `sessionId`', () => {
+    // The positive half of D22, on D16's model: the field must be ABSENT from the capture. A
+    // re-captured fixture already carries it, so the overlay would add a duplicate `required` entry
+    // and this reds — at which point D22 is to be DELETED (the literal, the rewrite, this test),
+    // never adjusted, so the whole-object comparison guards `env-load` directly again.
+    expect(d22Baseline.property).toBeUndefined()
+    expect(d22Baseline.required).toEqual(['filePath', 'variableCount', 'project', 'config'])
+  })
+
   it('w1c-pre-d20: D20 — the baseline really called the gate auto-skipped and never said `releases` could be omitted', () => {
     // The positive half of D20, on D14's model: the text replaced at load must be the text that made
     // the false claim. A re-captured fixture already carries the new wording, so both captures would
@@ -2938,7 +3129,7 @@ describe('o6 — the migrated server exits cleanly on SIGTERM', () => {
 
 describe('e-se — a mid-session load is visible to the next tool', () => {
   /**
-   * The server is long-lived and the env-load file lands mid-session (docs/mcp-session-env-refresh-plan.md).
+   * The server is long-lived and the env-load file lands mid-session (docs/archive/mcp/mcp-session-env-refresh-plan.md).
    * Every lane drives a REAL served child through the session dir on disk — no restart between the
    * writes — and reads the outcome back through a tool, never the module: the chokepoint applies
    * the file at every call's entry, so the tool is the only honest witness.

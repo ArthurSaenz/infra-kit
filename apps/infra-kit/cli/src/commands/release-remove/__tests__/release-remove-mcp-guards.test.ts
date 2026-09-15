@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { findVersionByName, loadJiraConfigOptional } from 'src/integrations/jira'
 import { getVersionRelatedIssueCounts, removeJiraVersion } from 'src/integrations/jira/remove-version'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { deleteLocalBranch, deleteRemoteBranch } from 'src/lib/git-utils'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { removeReleaseWorktreeIfPresent } from 'src/lib/worktrees/remove-release-worktree'
 
 import { releaseRemove, releaseRemoveMcpTool } from '../release-remove'
@@ -23,33 +23,32 @@ import {
 
 /**
  * @fileoverview
- * D7 — the MCP narrowing: an agent may perform every reversible step and may NEVER perform the one
- * irreversible one.
+ * The MCP path does what the CLI does — the Jira fix version is removed — and every refusal an MCP
+ * caller can read names an exit that is reachable from where it fires.
  *
- * `removeAndSwap` cannot be undone. The new version carries a new id and a new URL, and nothing in
- * Jira records which issues used to point at the old one — so an agent that misread a version name
- * destroys work no undo exists for. Over MCP the Jira step is therefore never attempted, and the
- * result hands a human the id, name and URL instead.
+ * `removeAndSwap` cannot be undone, which is why an earlier shape kept it off the MCP path entirely.
+ * What retired that shape is the confirm gate: round 1 mints a token over the arguments, round 2 is
+ * verified against it, and the form that fills `version` is filled by a human. An agent cannot reach
+ * the irreversible call alone, so the tool no longer pretends the call does not exist there.
  *
- * Two flags are REFUSED rather than ignored, and the difference matters: accepting `moveIssuesTo`
- * would let an agent report a reassignment that never happened, and accepting `skipJira` would name
- * an exception to a step that does not run. The guard lives on the shared handler, not only on the
- * tool schema, so a direct call cannot slip past it.
+ * Of the two Jira flags, `moveIssuesTo` is ACCEPTED and `skipJira` is REFUSED, and the line is what
+ * the result would say. `skipJira` loads no Jira state, so the result carries `jiraVersion: null` —
+ * a live fix version with nothing pointing at it. `moveIssuesTo` is the exit the count guard names,
+ * and that guard now fires over MCP: a refusal whose remediation named a flag this same path refuses
+ * would be a refusal with no exit. The guard lives on the shared handler, not only on the tool
+ * schema, so a direct call cannot slip past it.
  *
- * The count guard is the one refusal that is MCP-SCOPED, and the reason is that it protects the
- * DELETE. Over MCP no delete happens, `--move-issues-to` — the escape hatch the refusal’s own message
- * points at — is itself refused, so firing it there is a refusal with no exit: an agent can neither
- * proceed nor satisfy it. The released/archived refusal is deliberately NOT scoped the same way: it
- * means the release has shipped, which is a reason to refuse the whole teardown, not just one step.
- * The pair is asserted together because either alone is satisfiable by deleting the wrong thing.
+ * The rule the text assertions pin: over MCP a CLI flag or command may appear ONLY as an "ask a
+ * human to run … from a configured shell" hand-off, never as an action for the caller. So the
+ * released/archived pair asserts `not.toContain('via --skip-jira')` and NOT `not.toContain('--skip-
+ * jira')` — the hand-off half names the flag on purpose.
  *
- * The last describe is the one that keeps the rest honest, and it needs BOTH halves. Without the
- * "Jira still runs on the CLI" half, a command that simply broke the Jira step would satisfy every
- * MCP assertion above. Without the "the flags are still accepted on the CLI" half, a guard that
- * refused `moveIssuesTo`/`skipJira` unconditionally — on every path, not just MCP — would also
- * satisfy them, and only T2’s move-target case would notice.
+ * The "CLI path is unchanged" describe keeps the rest honest and needs BOTH halves: without "Jira
+ * still runs on the CLI", a command that removed the version on every path would satisfy the MCP
+ * assertions by accident; without "the flags are still accepted on the CLI", a guard that refused
+ * `skipJira` unconditionally would too.
  *
- * Mocked: git, gh, cmux, Jira and zx. Real: `isMcpMode` is a spy, so each test states its own mode.
+ * Mocked: git, gh, cmux, Jira and zx. Real: `agentMode`, so each test sets its own source.
  */
 
 const zx = vi.hoisted(() => {
@@ -84,10 +83,6 @@ vi.mock('src/lib/git-utils', () => {
 
 vi.mock('src/lib/infra-kit-config', () => {
   return { getInfraKitConfig: vi.fn() }
-})
-
-vi.mock('src/lib/mcp-mode', () => {
-  return { isMcpMode: vi.fn() }
 })
 
 vi.mock('src/lib/prompts/release-picker', () => {
@@ -156,53 +151,70 @@ beforeEach(() => {
   installDefaults()
   vi.mocked(confirm).mockResolvedValue(true)
   // The MCP boundary injects `confirmedCommand: true` into every call it lets through.
-  vi.mocked(isMcpMode).mockReturnValue(true)
+  agentMode.source = 'mcp'
 })
 
 describe('release remove — MCP input guards', () => {
-  it('requires version, naming the field in its remediation', async () => {
+  it('still refuses a call that reached the handler without version', async () => {
     const error = await releaseRemove({ confirmedCommand: true }).catch((e: unknown) => {
       return e
     })
 
-    expect((error as Error).message).toContain('requires "version"')
+    expect((error as Error).message).toContain('reached the handler without "version"')
     expect((error as Error).message).toContain('pass "version"')
+    expect((error as Error).message).toContain('offers the open release PRs as a form')
+    // The retired wording blamed the missing TTY; the causes are listed instead.
+    expect((error as Error).message).not.toContain('needs a TTY')
     expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
   })
 
-  it('refuses moveIssuesTo, pointing at the manual hand-off instead', async () => {
-    const error = await releaseRemove({
-      confirmedCommand: true,
-      version: LABEL,
-      moveIssuesTo: MOVE_TARGET_NAME,
-    }).catch((e: unknown) => {
-      return e
-    })
+  it('accepts moveIssuesTo and passes it as BOTH moveFixIssuesTo and moveAffectedIssuesTo', async () => {
+    vi.mocked(getVersionRelatedIssueCounts).mockResolvedValue({ issuesFixedCount: 1, issuesAffectedCount: 1 })
 
-    expect((error as Error).message).toContain('moveIssuesTo is not permitted over MCP')
-    expect((error as Error).message).toContain('jira: "manual"')
-    expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
+    const result = await releaseRemove({ confirmedCommand: true, version: LABEL, moveIssuesTo: MOVE_TARGET_NAME })
+
+    expect(result.structuredContent.jira).toBe('removed')
+    // ONE field, BOTH parameters: mapping it to the fix links alone would lose the affects links
+    // through the very field that exists to prevent data loss.
+    expect(removeJiraVersion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        versionId: JIRA_VERSION_ID,
+        moveFixIssuesTo: moveTargetVersion().id,
+        moveAffectedIssuesTo: moveTargetVersion().id,
+      }),
+      expect.anything(),
+    )
   })
 
-  it('refuses skipJira as meaningless where the step never runs', async () => {
-    await expect(releaseRemove({ confirmedCommand: true, version: LABEL, skipJira: true })).rejects.toThrow(
-      /skipJira is meaningless over MCP/,
+  it('refuses skipJira: the result would be silent about a live fix version', async () => {
+    const error = await releaseRemove({ confirmedCommand: true, version: LABEL, skipJira: true }).catch(
+      (e: unknown) => {
+        return e
+      },
     )
 
+    expect((error as Error).message).toMatch(/skipJira is not permitted over MCP/)
+    // The hand-off shape, not a caller action: the CLI command appears only after "ask a human to run".
+    expect((error as Error).message).toContain('ask a human to run infra-kit release remove --skip-jira')
     expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
   })
 
-  it('does not advertise the two CLI-only flags in its input schema', () => {
-    expect(Object.keys(releaseRemoveMcpTool.inputSchema)).toEqual(['version', 'confirm'])
+  it('advertises moveIssuesTo and not skipJira in its input schema', () => {
+    expect(Object.keys(releaseRemoveMcpTool.inputSchema)).toEqual(['version', 'moveIssuesTo', 'confirm'])
   })
 })
 
 describe('release remove — the Jira step over MCP', () => {
-  it('never calls removeJiraVersion, and hands back the id, name and URL for a human', async () => {
+  it('calls removeJiraVersion once with the version id, and reports jira: "removed" with the version', async () => {
     const result = await releaseRemove({ confirmedCommand: true, version: LABEL })
 
-    expect(removeJiraVersion).not.toHaveBeenCalled()
-    expect(result.structuredContent.jira).toBe('manual')
+    expect(removeJiraVersion).toHaveBeenCalledTimes(1)
+    expect(removeJiraVersion).toHaveBeenCalledWith(
+      expect.objectContaining({ versionId: JIRA_VERSION_ID }),
+      expect.anything(),
+    )
+    expect(result.structuredContent.jira).toBe('removed')
+    // Captured BEFORE the delete: after it the id is the only handle that survives.
     expect(result.structuredContent.jiraVersion).toEqual({
       id: JIRA_VERSION_ID,
       name: JIRA_NAME,
@@ -218,18 +230,18 @@ describe('release remove — the Jira step over MCP', () => {
     expect(deleteRemoteBranch).toHaveBeenCalledTimes(1)
   })
 
-  it('skips even the TOCTOU re-probe, because there is no delete to authorise', async () => {
+  it('runs the TOCTOU re-probe before the delete, exactly as the CLI does', async () => {
     await releaseRemove({ confirmedCommand: true, version: LABEL })
 
-    // Preflight only. A second read would mean the code walked into the guard that exists solely to
-    // gate `removeJiraVersion`.
-    expect(getVersionRelatedIssueCounts).toHaveBeenCalledTimes(1)
+    // Preflight AND the re-probe. A single read would mean the delete was authorised by a guard that
+    // passed five mutations ago.
+    expect(getVersionRelatedIssueCounts).toHaveBeenCalledTimes(2)
   })
 })
 
-describe('release remove — the narrowing is MCP-scoped, not a general disablement', () => {
+describe('release remove — the CLI path is unchanged', () => {
   it('runs the Jira step on the CLI path with the same inputs', async () => {
-    vi.mocked(isMcpMode).mockReturnValue(false)
+    agentMode.source = null
 
     const result = await releaseRemove({ confirmedCommand: true, version: LABEL })
 
@@ -238,7 +250,7 @@ describe('release remove — the narrowing is MCP-scoped, not a general disablem
   })
 
   it('accepts moveIssuesTo and skipJira on the CLI path', async () => {
-    vi.mocked(isMcpMode).mockReturnValue(false)
+    agentMode.source = null
     vi.mocked(getVersionRelatedIssueCounts).mockResolvedValue({ issuesFixedCount: 1, issuesAffectedCount: 1 })
 
     const moved = await releaseRemove({ confirmedCommand: true, version: LABEL, moveIssuesTo: MOVE_TARGET_NAME })
@@ -251,46 +263,59 @@ describe('release remove — the narrowing is MCP-scoped, not a general disablem
   })
 })
 
-describe('release remove — the count guard is scoped to the paths that delete', () => {
-  it('removes a release whose fix version still carries issues, leaving the version for a human', async () => {
-    // On the CLI this refuses. Over MCP the counts guard a mutation that cannot occur, and the flag
-    // that would satisfy them is refused on this very path — so firing here strands the agent.
+describe('release remove — the count guard applies over MCP', () => {
+  it('refuses a fix version that still carries issues, with both counts and an MCP-reachable exit', async () => {
     vi.mocked(getVersionRelatedIssueCounts).mockResolvedValue({ issuesFixedCount: 2, issuesAffectedCount: 3 })
 
-    const result = await releaseRemove({ confirmedCommand: true, version: LABEL })
-
-    expect(result.structuredContent.jira).toBe('manual')
-    expect(result.structuredContent.jiraVersion).toEqual({
-      id: JIRA_VERSION_ID,
-      name: JIRA_NAME,
-      url: JIRA_VERSION_URL,
+    const error = await releaseRemove({ confirmedCommand: true, version: LABEL }).catch((e: unknown) => {
+      return e
     })
+
+    const { message } = error as Error
+
+    expect(message).toContain('fixVersion on 2 issue(s)')
+    expect(message).toContain('affectsVersion on 3 issue(s)')
+    // The exit is the MCP field, never the CLI flag this path cannot pass.
+    expect(message).toContain('"moveIssuesTo"')
+    expect(message).not.toContain('--move-issues-to')
+    // Before any mutation: the refusal is preflight's, not step 6's.
+    expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
+    expect(deleteLocalBranch).not.toHaveBeenCalled()
     expect(removeJiraVersion).not.toHaveBeenCalled()
-    // Steps 1-5 ran: the reversible teardown is exactly what an agent is allowed to do.
-    expect(removeReleaseWorktreeIfPresent).toHaveBeenCalledTimes(1)
-    expect(deleteLocalBranch).toHaveBeenCalledTimes(1)
-    expect(deleteRemoteBranch).toHaveBeenCalledTimes(1)
   })
 
-  it('still reads the counts in preflight, so the version it hands back is reported with them', async () => {
+  it('proceeds and reassigns when moveIssuesTo names the target', async () => {
     vi.mocked(getVersionRelatedIssueCounts).mockResolvedValue({ issuesFixedCount: 2, issuesAffectedCount: 3 })
 
-    await releaseRemove({ confirmedCommand: true, version: LABEL })
+    const result = await releaseRemove({ confirmedCommand: true, version: LABEL, moveIssuesTo: MOVE_TARGET_NAME })
 
-    // Skipping the REFUSAL is not the same as skipping the QUERY: the counts still reach the debug
-    // projection of the plan, which is the only record of what the version carried when it was left.
-    expect(getVersionRelatedIssueCounts).toHaveBeenCalledTimes(1)
+    expect(result.structuredContent.jira).toBe('removed')
+    expect(removeJiraVersion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        moveFixIssuesTo: moveTargetVersion().id,
+        moveAffectedIssuesTo: moveTargetVersion().id,
+      }),
+      expect.anything(),
+    )
   })
 
-  it('still refuses a RELEASED version over MCP, before any mutation', async () => {
-    // D2c is not scoped: released means shipped, which refuses the whole teardown and not merely the
-    // Jira step. A refactor that scoped both guards to the deleting paths fails here.
+  it('still refuses a RELEASED version over MCP, before any mutation, without offering --skip-jira as an action', async () => {
+    // Released means shipped, which refuses the whole teardown and not merely the Jira step.
     vi.mocked(findVersionByName).mockImplementation(
       findVersionByNameFake([jiraVersion({ released: true }), moveTargetVersion()]),
     )
 
-    await expect(releaseRemove({ confirmedCommand: true, version: LABEL })).rejects.toThrow(/is already released/)
+    const error = await releaseRemove({ confirmedCommand: true, version: LABEL }).catch((e: unknown) => {
+      return e
+    })
 
+    const { message } = error as Error
+
+    expect(message).toMatch(/is already released/)
+    expect(message).toContain('un-release it in Jira')
+    // `--skip-jira` may still appear — inside the "ask a human to run" hand-off — but never as the
+    // caller's own move.
+    expect(message).not.toContain('via --skip-jira')
     expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
     expect(deleteLocalBranch).not.toHaveBeenCalled()
     expect(removeJiraVersion).not.toHaveBeenCalled()
@@ -301,14 +326,21 @@ describe('release remove — the count guard is scoped to the paths that delete'
       findVersionByNameFake([jiraVersion({ archived: true }), moveTargetVersion()]),
     )
 
-    await expect(releaseRemove({ confirmedCommand: true, version: LABEL })).rejects.toThrow(/is already archived/)
+    const error = await releaseRemove({ confirmedCommand: true, version: LABEL }).catch((e: unknown) => {
+      return e
+    })
 
+    const { message } = error as Error
+
+    expect(message).toMatch(/is already archived/)
+    expect(message).toContain('un-release it in Jira')
+    expect(message).not.toContain('via --skip-jira')
     expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
   })
 
-  it('keeps refusing the same attached-issue version on the CLI path', async () => {
+  it('keeps refusing the same attached-issue version on the CLI path, naming the flag', async () => {
     // Without this the whole count guard could be deleted and every assertion above would still pass.
-    vi.mocked(isMcpMode).mockReturnValue(false)
+    agentMode.source = null
     vi.mocked(getVersionRelatedIssueCounts).mockResolvedValue({ issuesFixedCount: 2, issuesAffectedCount: 3 })
 
     const error = await releaseRemove({ confirmedCommand: true, version: LABEL }).catch((e: unknown) => {
@@ -317,6 +349,7 @@ describe('release remove — the count guard is scoped to the paths that delete'
 
     expect((error as Error).message).toContain('fixVersion on 2 issue(s)')
     expect((error as Error).message).toContain('affectsVersion on 3 issue(s)')
+    expect((error as Error).message).toContain('--move-issues-to')
     expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
   })
 
@@ -325,13 +358,13 @@ describe('release remove — the count guard is scoped to the paths that delete'
    *
    * The false-success is a LOOP rather than a wrong mutation: `assertMcpRemoveInput` refuses
    * `skipJira` over MCP, so a refusal whose remediation reads "or pass --skip-jira" sends the caller
-   * straight back into "skipJira is meaningless over MCP". Nothing is mutated either way, so no
+   * straight back into "skipJira is not permitted over MCP". Nothing is mutated either way, so no
    * mutation assertion can catch it — only the text can. The exit that does exist over MCP is the
    * session's `env-load` file, re-applied to `process.env` at every tool call's entry, so the
    * remediation has to name `env-load` — not an environment the server was launched with.
    */
   it('does not offer --skip-jira as the way out when Jira is unconfigured over MCP', async () => {
-    vi.mocked(isMcpMode).mockReturnValue(true)
+    agentMode.source = 'mcp'
     vi.mocked(loadJiraConfigOptional).mockResolvedValue(null)
 
     const error = await releaseRemove({ confirmedCommand: true, version: LABEL }).catch((e: unknown) => {
@@ -346,7 +379,7 @@ describe('release remove — the count guard is scoped to the paths that delete'
   })
 
   it('still offers --skip-jira on the CLI path, where it is a real exit', async () => {
-    vi.mocked(isMcpMode).mockReturnValue(false)
+    agentMode.source = null
     vi.mocked(loadJiraConfigOptional).mockResolvedValue(null)
 
     const error = await releaseRemove({ confirmedCommand: true, version: LABEL }).catch((e: unknown) => {

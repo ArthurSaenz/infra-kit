@@ -33,7 +33,7 @@ describe('recipe safety and caller authority are separate refusals', () => {
     const spawn = spawnOk()
     const outcome = runRecipe(specFor('brew').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -48,20 +48,20 @@ describe('recipe safety and caller authority are separate refusals', () => {
     const spawn = spawnOk()
     const outcome = runRecipe(specFor('gh').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn,
-      mcpMode: () => {
+      agentMode: () => {
         return true
       },
     })
 
     expect(outcome.ran).toBe(false)
     expect(spawn).not.toHaveBeenCalled()
-    expect(outcome.ran === false && outcome.refusedBecause).toEqual(['mcp-mode'])
+    expect(outcome.ran === false && outcome.refusedBecause).toEqual(['agent-mode'])
   })
 
   it('hands back the argv on every refusal, so a human can run it verbatim', () => {
     const outcome = runRecipe(specFor('brew').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawnOk(),
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -76,7 +76,7 @@ describe('the child environment', () => {
 
     runRecipe(specFor('portless').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -98,7 +98,7 @@ describe('the child environment', () => {
     runRecipe(specFor('gh').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn,
       env,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -116,7 +116,7 @@ describe('the child environment', () => {
     runRecipe(specFor('portless').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn,
       env,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -132,7 +132,7 @@ describe('the child’s output', () => {
 
     runRecipe(specFor('portless').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -144,7 +144,7 @@ describe('the child’s output', () => {
 
     runRecipe(specFor('doppler').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawnOk(),
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: (line) => {
         said.push(line.trim())
       },
@@ -160,7 +160,7 @@ describe('multi-step recipes', () => {
 
     runRecipe(specFor('doppler').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -181,7 +181,7 @@ describe('multi-step recipes', () => {
 
     const outcome = runRecipe(specFor('doppler').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn as never,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -195,7 +195,7 @@ describe('failure reporting', () => {
     const spawn = vi.fn().mockReturnValue({ status: null, signal: null, error: new Error('spawn ENOENT') })
     const outcome = runRecipe(specFor('portless').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn as never,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -212,7 +212,7 @@ describe('failure reporting', () => {
 
     const outcome = runRecipe(specFor('portless').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn as never,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -225,7 +225,7 @@ describe('failure reporting', () => {
 
     const outcome = runRecipe(specFor('portless').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn as never,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -245,7 +245,7 @@ describe('failure reporting', () => {
 
     const outcome = runRecipe(specFor('portless').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn as never,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -265,7 +265,7 @@ describe('failure reporting', () => {
 
     const outcome = runRecipe(specFor('portless').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn as never,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -285,7 +285,7 @@ describe('failure reporting', () => {
 
     const outcome = runRecipe(specFor('gh').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn as never,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -296,7 +296,7 @@ describe('failure reporting', () => {
   it('caps how much of a chatty install it will hold in memory', () => {
     const spawn = spawnOk()
 
-    runRecipe(specFor('gh').bootstrapInstall, BREW_PRESENT, { spawnSync: spawn, mcpMode: notInMcp, notify: silent })
+    runRecipe(specFor('gh').bootstrapInstall, BREW_PRESENT, { spawnSync: spawn, agentMode: notInMcp, notify: silent })
 
     // Node's 1 MiB default is not a truncation — it KILLS the child, which a `brew install` building
     // from source would trip routinely.
@@ -317,7 +317,7 @@ describe('failure reporting', () => {
 
     const outcome = runRecipe(specFor('portless').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn as never,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -337,7 +337,7 @@ describe('failure reporting', () => {
 
     const outcome = runRecipe(specFor('portless').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn as never,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 
@@ -349,7 +349,7 @@ describe('failure reporting', () => {
 
     runRecipe(specFor('portless').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn as never,
-      mcpMode: notInMcp,
+      agentMode: notInMcp,
       notify: silent,
     })
 

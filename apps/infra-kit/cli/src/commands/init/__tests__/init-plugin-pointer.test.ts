@@ -322,7 +322,7 @@ describe('setup --skip-tools — the gate split', () => {
     expect(linesMatching(GUIDANCE_ONLY_SKIP)).toHaveLength(1)
     expect(linesMatching(GIT_ROOT_SKIP)).toHaveLength(0)
     expect(readSettings().enabledPlugins?.[PLUGIN_KEY]).toBe(true)
-    // The plugin serves the MCP server: no `.mcp.json` is written for it any more.
+    // The plugin is skills-only: no `.mcp.json` is written any more.
     expect(fs.existsSync(mcpPath())).toBe(false)
     expect(vi.mocked(installPluginForProject)).toHaveBeenCalledWith(expect.objectContaining({ projectRoot: repo }))
   })
@@ -396,8 +396,8 @@ describe('setup --skip-tools — the gate split', () => {
 })
 
 /**
- * The `.mcp.json` step is a READ (plan docs/mcp-via-plugin-migration-plan.md §3.3, `setup`): the plugin
- * serves the MCP server, so `setup` reports what the repo's own file says and writes nothing in any
+ * The `.mcp.json` step is a READ (archived plan docs/archive/mcp/mcp-via-plugin-migration-plan.md §3.3, `setup`):
+ * the plugin is skills-only, so `setup` reports what the repo's own file says and writes nothing in any
  * branch. Byte and mtime assertions, because the retired writer used to ADD the key here — and on a
  * repo that had deliberately deleted it, re-adding it is a dirty tracked file and a silent flip back to
  * the legacy route (§4 PM-9).
@@ -416,14 +416,14 @@ describe('setup --skip-tools — the MCP registration is read-only', () => {
     return fs.statSync(mcpPath()).mtimeMs
   }
 
-  it('leaves a sibling-only .mcp.json byte-identical and reports the server as served by the plugin', async () => {
+  it('leaves a sibling-only .mcp.json byte-identical and reports that no server is wanted', async () => {
     const mtime = writeAged(SIBLING_ONLY)
 
     await runInit()
 
     expect(fs.readFileSync(mcpPath(), 'utf-8')).toBe(SIBLING_ONLY)
     expect(fs.statSync(mcpPath()).mtimeMs).toBe(mtime)
-    expect(linesMatching(/served by the Claude Code plugin/)).toHaveLength(1)
+    expect(linesMatching(/none wanted — the plugin is skills-only/)).toHaveLength(1)
     expect(linesMatching(/created\s+\.mcp\.json|added the infra-kit MCP server/)).toHaveLength(0)
   })
 
@@ -435,12 +435,12 @@ describe('setup --skip-tools — the MCP registration is read-only', () => {
     expect(fs.readFileSync(mcpPath(), 'utf-8')).toBe(WITH_KEY)
     expect(fs.statSync(mcpPath()).mtimeMs).toBe(mtime)
 
-    const advisories = linesMatching(/still registers the "infra-kit" MCP server/)
+    const advisories = linesMatching(/still registers the infra-kit MCP server under "infra-kit"/)
 
     expect(advisories).toHaveLength(1)
-    expect(advisories[0]).toContain('shadows the plugin')
-    expect(advisories[0]).toContain('nothing to fix on this machine')
-    expect(advisories[0]).toContain('delete the "infra-kit" entry from .mcp.json by hand')
+    expect(advisories[0]).toContain('the plugin no longer serves one')
+    expect(advisories[0]).toContain('compatibility stub')
+    expect(advisories[0]).toContain('Delete the "infra-kit" entry from .mcp.json by hand')
     expect(
       warnLines().filter((line) => {
         return line.includes('.mcp.json')
@@ -452,20 +452,24 @@ describe('setup --skip-tools — the MCP registration is read-only', () => {
     await runInit()
 
     expect(fs.existsSync(mcpPath())).toBe(false)
-    expect(linesMatching(/served by the Claude Code plugin/)).toHaveLength(1)
+    expect(linesMatching(/none wanted — the plugin is skills-only/)).toHaveLength(1)
   })
 
-  it('warns, naming the key, on our server filed under another key', async () => {
+  /** The same chore under another key: the key is named, and it is info — not a warning — like `stale`. */
+  it('advises, naming the key, on our server filed under another key', async () => {
     writeAged(`{\n  "mcpServers": {\n    "ik": { "type": "stdio", "command": "infra-kit", "args": ["mcp"] }\n  }\n}\n`)
 
     await runInit()
 
-    const warnings = warnLines().filter((line) => {
-      return line.includes('"ik"')
-    })
+    const advisories = linesMatching(/still registers the infra-kit MCP server under "ik"/)
 
-    expect(warnings).toHaveLength(1)
-    expect(warnings[0]).toContain('second server process')
+    expect(advisories).toHaveLength(1)
+    expect(advisories[0]).toContain('Delete the "ik" entry from .mcp.json by hand')
+    expect(
+      warnLines().filter((line) => {
+        return line.includes('"ik"')
+      }),
+    ).toHaveLength(0)
   })
 
   it('reads AFTER the plugin install, so the verdict is about the server the install just put here', async () => {

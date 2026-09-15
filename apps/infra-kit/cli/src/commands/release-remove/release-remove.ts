@@ -15,6 +15,7 @@ import type { RemoveIdeWorktreeFoldersOutcome } from 'src/integrations/ide/types
 import { buildJiraVersionUrl, findVersionByName, loadJiraConfigOptional } from 'src/integrations/jira'
 import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
 import { getVersionRelatedIssueCounts, removeJiraVersion } from 'src/integrations/jira/remove-version'
+import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { isCommandDeclined } from 'src/lib/errors/command-declined-error'
@@ -22,6 +23,7 @@ import { formatZxError } from 'src/lib/errors/format-zx-error'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import type { OperationErrorContext } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertBaseBranchSwitchable, assertManagementContext } from 'src/lib/git-guard'
 import {
   branchExists,
@@ -35,10 +37,11 @@ import {
 } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
-import { isMcpMode } from 'src/lib/mcp-mode'
+import { refuseMissingArguments } from 'src/lib/prompts/refuse-missing-arguments'
 import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
 import type { ReleaseId } from 'src/lib/release-id'
+import { createReleaseRemoveFormProvider } from 'src/lib/release-remove-form'
 import {
   detectReleaseType,
   formatBranchPickerItems,
@@ -141,7 +144,7 @@ interface ReleaseRemoveStructured {
   localTipSha: string | null
   remoteBranch: 'deleted' | 'absent'
   remoteTipSha: string | null
-  jira: 'removed' | 'absent' | 'skipped' | 'manual'
+  jira: 'removed' | 'absent' | 'skipped'
   jiraVersion: { id: string; name: string; url: string } | null
 }
 
@@ -165,37 +168,77 @@ const refuse: (context: OperationErrorContext) => never = (context) => {
 }
 
 /**
- * MCP has no TTY and the boundary auto-confirms, so `version` cannot come from the picker. The two
- * Jira flags are refused rather than ignored: the Jira step is never attempted over MCP (D7), so
- * accepting `moveIssuesTo` would let an agent report a reassignment that never happened, and
- * `skipJira` would name an exception to a step that does not run. Applied to the shared handler, not
- * only the tool schema, so a direct call cannot slip past it. No-op on the CLI path.
+ * Over MCP a refusal may name a CLI flag or command ONLY as an "ask a human to run … from a
+ * configured shell" hand-off, never as an action for the caller: the agent cannot pass the flag, so
+ * a remediation that tells it to is a refusal with no exit. Every MCP-readable text below forks here.
+ *
+ * Keyed on the SOURCE, not on `isAgentMode()`: a Bash-driven agent (`--agent`, env) can pass every
+ * flag the CLI text names, so it reads the CLI spelling — the guards keep firing for it, only the
+ * wording changes.
  */
+const mcpOrCli = (mcp: string, cli: string): string => {
+  return agentMode.source === 'mcp' ? mcp : cli
+}
+
+/**
+ * Over MCP `version` comes from the argument form; this is the fallback for a call that reached the
+ * handler without one (form-less client, empty or failed enumeration, a gate confirmed with none).
+ *
+ * Of the two Jira flags, `skipJira` is refused and `moveIssuesTo` is accepted, and the line between
+ * them is what the RESULT would say. With `skipJira` the preflight loads nothing, so the result
+ * carries `jiraVersion: null` — a live fix version torn loose from its branch and PR with nothing in
+ * the result pointing at it, the mess this command exists to prevent; its two legitimate uses
+ * (unconfigured Jira, "leave the version") are both shell affairs. `moveIssuesTo` is the exit the
+ * count guard names, and that guard fires over MCP now that the delete runs there. Applied to the
+ * shared handler, not only the tool schema, so a direct call cannot slip past it. No-op on the CLI.
+ */
+// Structured, not `refuse()`: these two fire only for an agent, and an agent reads the payload —
+// `argument_required` says "re-run with --version", `refused` says "this door is closed here". Both
+// are logged the way `refuse()` logs, for the same operator-in-the-log reason.
+const refuseAgentInput = (
+  structuredContent: { status: 'argument_required'; argument: string } | { status: 'refused' },
+  context: OperationErrorContext,
+): never => {
+  logger.warn({ operation: context.operation }, `⛔ ${context.stderrExcerpt ?? context.operation}`)
+
+  throw new StructuredRefusalError({ ...structuredContent, agentMode: agentMode.source }, 2, context)
+}
+
 const assertMcpRemoveInput = (args: ReleaseRemoveArgs): void => {
-  if (!isMcpMode()) return
+  if (!isAgentMode()) return
 
   if (!args.version) {
-    refuse({
-      operation: OPERATION,
-      remediation: 'pass "version" (a release version or name); the interactive picker needs a TTY',
-      stderrExcerpt: 'release-remove over MCP requires "version"',
-    })
-  }
-
-  if (args.moveIssuesTo) {
-    refuse({
-      operation: OPERATION,
-      remediation: 'remove the Jira fix version yourself — this tool returns its id, name and URL as jira: "manual"',
-      stderrExcerpt: 'moveIssuesTo is not permitted over MCP: the Jira step is never attempted here',
-    })
+    refuseAgentInput(
+      { status: 'argument_required', argument: 'version' },
+      {
+        operation: OPERATION,
+        remediation: mcpOrCli(
+          'pass "version" (a release version or name). When "version" is omitted this server offers the open release PRs as a form; you reached this refusal instead because the client cannot render forms, there are no open release PRs, the enumeration failed or timed out (the server log names which), or a gate with no "version" was confirmed',
+          'pass --version <ref> (a release version or name) on the re-run — `infra-kit release list --json` lists the candidates',
+        ),
+        stderrExcerpt: mcpOrCli(
+          'release-remove reached the handler without "version"',
+          'release remove reached the handler without --version under agent mode',
+        ),
+      },
+    )
   }
 
   if (args.skipJira) {
-    refuse({
-      operation: OPERATION,
-      remediation: 'omit skipJira — over MCP the Jira fix version is always left in place',
-      stderrExcerpt: 'skipJira is meaningless over MCP: the Jira step is never attempted here',
-    })
+    refuseAgentInput(
+      { status: 'refused' },
+      {
+        operation: OPERATION,
+        remediation: mcpOrCli(
+          'omit skipJira — over MCP the fix version is checked and removed with the release; to keep it, do not remove the release from here, or ask a human to run infra-kit release remove --skip-jira from a configured shell',
+          'drop --skip-jira — under agent mode the fix version is checked and removed with the release; to keep it, ask a human to run `infra-kit release remove --skip-jira` from their own terminal',
+        ),
+        stderrExcerpt: mcpOrCli(
+          'skipJira is not permitted over MCP: it would tear down the branch and PR and leave a live Jira fix version behind with nothing in the result pointing at it',
+          '--skip-jira is not permitted under agent mode: it would tear down the branch and PR and leave a live Jira fix version behind with nothing in the result pointing at it',
+        ),
+      },
+    )
   }
 }
 
@@ -225,15 +268,16 @@ const assertJiraRemovable = (plan: ReleaseRemovePlan, args: ReleaseRemoveArgs): 
   if (!plan.jiraConfig) {
     // The remediation forks because `--skip-jira` is NOT an exit over MCP: `assertMcpRemoveInput`
     // refuses that flag a few lines above, so naming it here would send an agent round a loop —
-    // "pass --skip-jira" → "skipJira is meaningless over MCP" — with no way out. That is the same
-    // refusal-with-no-exit shape the count guard was scoped to avoid. Jira config is read from
+    // "pass --skip-jira" → "skipJira is not permitted over MCP" — with no way out, the shape
+    // `mcpOrCli` exists to rule out. Jira config is read from
     // `process.env`, which over MCP is the session's `env-load` file as re-applied at this call's
     // entry — so the exit an agent has is to load a config that carries the four names and re-call.
     refuse({
       operation: `remove release ${plan.label}`,
-      remediation: isMcpMode()
-        ? 'call `env-load` for a config that carries JIRA_BASE_URL / JIRA_TOKEN / JIRA_PROJECT_ID / JIRA_EMAIL, then re-call; or ask a human to run `infra-kit release remove --skip-jira` from a configured shell'
-        : 'set JIRA_BASE_URL / JIRA_TOKEN / JIRA_PROJECT_ID / JIRA_EMAIL, or pass --skip-jira to tear down the branch and PR and leave any fix version alone',
+      remediation: mcpOrCli(
+        'call `env-load` for a config that carries JIRA_BASE_URL / JIRA_TOKEN / JIRA_PROJECT_ID / JIRA_EMAIL, then re-call; or ask a human to run `infra-kit release remove --skip-jira` from a configured shell',
+        'set JIRA_BASE_URL / JIRA_TOKEN / JIRA_PROJECT_ID / JIRA_EMAIL, or pass --skip-jira to tear down the branch and PR and leave any fix version alone',
+      ),
       stderrExcerpt: 'Jira is not configured, so a fix version for this release cannot be checked or removed',
     })
   }
@@ -242,22 +286,18 @@ const assertJiraRemovable = (plan: ReleaseRemovePlan, args: ReleaseRemoveArgs): 
 
   const { version, fixCount, affectsCount } = plan.jira
 
-  // D2c is NOT scoped to the paths that delete, and deliberately so: a released or archived version
-  // means the release has shipped and is history rather than scaffolding — the same class of signal
-  // as the MERGED PR guard — so it refuses the whole teardown on every path, MCP included.
+  // D2c: a released or archived version means the release has shipped and is history rather than
+  // scaffolding — the same class of signal as the MERGED PR guard — so it refuses the whole teardown.
   if (version.released || version.archived) {
     refuse({
       operation: `remove Jira fix version "${version.name}"`,
-      remediation: 'un-release it in Jira first, or remove the release without it via --skip-jira',
+      remediation: mcpOrCli(
+        'un-release it in Jira first; or, to tear down the branch and PR and leave the fix version alone, ask a human to run infra-kit release remove --skip-jira from a configured shell',
+        'un-release it in Jira first, or remove the release without it via --skip-jira',
+      ),
       stderrExcerpt: `fix version "${version.name}" is already ${version.released ? 'released' : 'archived'}`,
     })
   }
-
-  // The count guard protects the DELETE, so it is scoped to the paths that delete. Over MCP the fix
-  // version is never removed (D7) — the counts guard a mutation that cannot occur, while
-  // `--move-issues-to`, the escape hatch this refusal's own message points at, is itself refused on
-  // that path. That is a refusal with no exit, protecting nothing. The counts are still reported.
-  if (isMcpMode()) return
 
   if (fixCount === 0 && affectsCount === 0) return
   if (plan.moveIssuesTo) return
@@ -266,8 +306,10 @@ const assertJiraRemovable = (plan: ReleaseRemovePlan, args: ReleaseRemoveArgs): 
   // version in both, so their sum is an upper bound on distinct issues rather than a total.
   refuse({
     operation: `remove Jira fix version "${version.name}"`,
-    remediation:
+    remediation: mcpOrCli(
+      'deleting it would clear both fields on those issues with no way to restore them — re-call with "moveIssuesTo": "<existing fix version name>" to reassign both, or clear the version from the issues in Jira first',
       'deleting it would clear both fields on those issues with no way to restore them — pass --move-issues-to <version> to reassign both, or clear the version from the issues in Jira first',
+    ),
     stderrExcerpt: `${version.name} is set as fixVersion on ${fixCount} issue(s) and as affectsVersion on ${affectsCount} issue(s)`,
   })
 }
@@ -287,9 +329,11 @@ const assertSomethingExists = (plan: ReleaseRemovePlan): void => {
 
   if (found) return
 
+  const listing = mcpOrCli('the gh-release-list tool (open PRs only) or worktrees-list', '`infra-kit release list`')
+
   refuse({
     operation: `remove release ${plan.label}`,
-    remediation: `nothing named "${plan.label}" exists to remove — check the spelling against \`infra-kit release list\`. (A release this command already removed keeps a CLOSED PR, so a genuine re-run is not affected.)`,
+    remediation: `nothing named "${plan.label}" exists to remove — check the spelling against ${listing}. (A release this command already removed keeps a CLOSED PR, so a genuine re-run is not affected.)`,
     stderrExcerpt: 'found no worktree, no PR (any state), no local or remote branch, and no Jira fix version',
   })
 }
@@ -499,7 +543,7 @@ class StepFailure extends Error {
 /**
  * The reportable outcome of a step result, for the log line.
  *
- * Steps return either a bare enum (`'deleted'`, `'absent'`, `'manual'`) or a record carrying one under
+ * Steps return either a bare enum (`'deleted'`, `'absent'`, `'skipped'`) or a record carrying one under
  * `outcome` (the PR step, which also reports its number), so both shapes are read here rather than
  * making every step return a uniform envelope for the sake of one log line.
  */
@@ -531,10 +575,10 @@ async function runStep<T extends StepResult>(step: RemovalStep, done: DoneStep[]
     done.push({ step })
 
     // The OUTCOME, not merely the label. §5.5 wants a partial run reconstructable from the log alone,
-    // and most steps legitimately do nothing: on a resume every one of them is a no-op, and over MCP
-    // the Jira step never removes anything. A bare `✅ remove the Jira fix version` in those cases
-    // reports a mutation that did not happen — the same class of lie the post-delete `branchExists`
-    // check exists to prevent, moved onto the log surface.
+    // and most steps legitimately do nothing: on a resume every one of them is a no-op, and with
+    // `--skip-jira` the Jira step touches nothing. A bare `✅ remove the Jira fix version` in those
+    // cases reports a mutation that did not happen — the same class of lie the post-delete
+    // `branchExists` check exists to prevent, moved onto the log surface.
     logger.info({ step, outcome }, `✅ ${STEP_LABELS[step]} — ${outcome}`)
 
     return result
@@ -588,7 +632,13 @@ const buildResidueError = (args: ResidueErrorArgs): OperationError => {
 
   const jiraNote = plan.jira ? `The Jira fix version ${plan.jira.version.name} was NOT removed. ` : ''
   const restore = plan.localTipSha ? `Restore the branch with \`git branch ${plan.branch} ${plan.localTipSha}\`. ` : ''
-  const residue = `completed: ${completed}. ${jiraNote}${restore}Re-run \`infra-kit release remove --version ${plan.label}\` to finish; completed steps are skipped.`
+  // Appended to EVERY step failure, so it is the sentence an MCP caller reads most; a CLI command
+  // here would contradict the refusal half that precedes it on the re-probe paths.
+  const rerun = mcpOrCli(
+    `Re-call release-remove with "version": "${plan.label}" to finish; completed steps are skipped.`,
+    `Re-run \`infra-kit release remove --version ${plan.label}\` to finish; completed steps are skipped.`,
+  )
+  const residue = `completed: ${completed}. ${jiraNote}${restore}${rerun}`
 
   // A step can end in a REFUSAL as well as a failure — the mid-flight PR and issue-count re-probes
   // both throw one — and a refusal's own remediation is the actionable half (it says what to do
@@ -750,9 +800,14 @@ const assertIssueCountsUnchanged = async (
 
   if (counts.issuesFixedCount === jira.fixCount && counts.issuesAffectedCount === jira.affectsCount) return
 
+  const rerun = mcpOrCli(
+    `re-call release-remove with "version": "${plan.label}"`,
+    `re-run \`infra-kit release remove --version ${plan.label}\``,
+  )
+
   refuse({
     operation: `remove Jira fix version "${jira.version.name}"`,
-    remediation: `the fix version was NOT removed and every other step is complete — re-run \`infra-kit release remove --version ${plan.label}\` so the guard re-evaluates the new counts`,
+    remediation: `the fix version was NOT removed and every other step is complete — ${rerun} so the guard re-evaluates the new counts`,
     stderrExcerpt: `issue counts changed since preflight: fixVersion ${jira.fixCount} → ${counts.issuesFixedCount}, affectsVersion ${jira.affectsCount} → ${counts.issuesAffectedCount}`,
   })
 }
@@ -763,18 +818,6 @@ const removeJiraStep = async (
 ): Promise<ReleaseRemoveStructured['jira']> => {
   if (args.skipJira) return 'skipped'
   if (!plan.jira || !plan.jiraConfig) return 'absent'
-
-  // The one irreversible step stays human-only: an agent can undo every reversible artefact it
-  // created and can never reach this call. The version's id, name and URL are returned instead, so a
-  // human has one link to finish the job.
-  if (isMcpMode()) {
-    logger.info(
-      { jiraVersionId: plan.jira.version.id, jiraVersionName: plan.jira.version.name, url: plan.jira.url },
-      'ℹ️ Jira fix version left in place for a human to remove',
-    )
-
-    return 'manual'
-  }
 
   await assertIssueCountsUnchanged(plan, plan.jira, plan.jiraConfig)
 
@@ -919,6 +962,10 @@ const resolveTargetBranch = async (version?: string): Promise<string> => {
  * Single-target by design (no `--versions`, no `--all`): nothing this removes is recreatable, and
  * multi-target would force continue-on-error semantics that destroy the residue report.
  */
+// ONE provider instance for the MCP form and the agent-mode refusal, so an agent's `choices` are the
+// form an MCP client would have been offered.
+const releaseRemoveForm = createReleaseRemoveFormProvider()
+
 export const releaseRemove = async (options: ReleaseRemoveArgs) => {
   const { confirmedCommand, version, moveIssuesTo, skipJira } = options
 
@@ -930,6 +977,15 @@ export const releaseRemove = async (options: ReleaseRemoveArgs) => {
   // ABOVE the `try` whose catch rewraps: this throws a plain `Error` whose text `buildMessage` would
   // drop. BELOW the guard above: "not an infra-kit project" is the less fundamental failure.
   await getInfraKitConfig()
+
+  // Before the MCP-worded guard: a Bash-driven agent (or `--json`) without `--version` is handed the
+  // open release PRs as `choices` — the very form an MCP client is offered before the handler.
+  await refuseMissingArguments({
+    provider: releaseRemoveForm,
+    params: options,
+    operation: OPERATION,
+    argument: 'version',
+  })
 
   assertMcpRemoveInput(options)
 
@@ -952,7 +1008,13 @@ export const releaseRemove = async (options: ReleaseRemoveArgs) => {
     // from a legitimate "already fully removed, every step skipped" success — and an operator
     // scripting `release remove && …` would proceed as though a release had been torn down.
     // It also makes the "acquire nothing before the confirm" ordering above load-bearing.
-    await confirmOrExit(confirmedCommand, buildConfirmMessage(plan, Boolean(skipJira)), { throwOnDecline: true })
+    //
+    // `plan` is the same secret-free projection the debug line above logs: an agent refused here gets
+    // the structured form of the confirm text, not prose to parse.
+    await confirmOrExit(confirmedCommand, buildConfirmMessage(plan, Boolean(skipJira)), {
+      throwOnDecline: true,
+      plan: { ...describePlan(plan), skipJira: Boolean(skipJira) },
+    })
 
     if (!confirmedCommand) {
       commandEcho.addOption('--yes', true)
@@ -986,13 +1048,21 @@ export const releaseRemove = async (options: ReleaseRemoveArgs) => {
 export const releaseRemoveMcpTool = defineMcpTool({
   name: 'release-remove',
   description:
-    'Tear down ONE release created by release-create: removes its git worktree (and the cmux window rooted there), strips the worktree from the Cursor workspace, closes its pull request with a comment, and deletes the release branch locally and on origin. THE JIRA FIX VERSION IS DELIBERATELY LEFT IN PLACE — removing it is irreversible (new id, new URL, lost issue links), so this tool never attempts it and instead returns jira: "manual" with the version id, name and URL for a human to finish in Jira. Requires "version"; the moveIssuesTo/skipJira flags are CLI-only and have no field over MCP; the server strips them because the Jira step does not run. Refuses before any mutation when the PR is MERGED (the release has shipped), when the fix version is released/archived, or when nothing named that version exists. A fix version that still carries issues is reported, not refused: that guard protects a delete which never runs here. Resumable: every step is a verified no-op when its artefact is already gone, so a re-run finishes a partial teardown. What is lost with the worktree directory: gitignored contents including a hydrated .env of Doppler secrets (re-fetch with env-load) and node_modules/dist.',
+    'Tear down ONE release created by release-create: removes its git worktree (and the cmux window rooted there), strips the worktree from the Cursor workspace, closes its pull request with a comment, deletes the release branch locally and on origin, and REMOVES ITS JIRA FIX VERSION — the one irreversible step (new id, new URL, lost issue links), which is why every call is gated behind human confirmation. Omit "version" and this server offers the human a form listing the open release PRs; the accepted choice feeds the confirm gate. A client that cannot render a form gets a gate with no version — confirming it is refused, never guessed. Pass "version" when the human already named the release. One release per call — repeat the call for another; there is no "versions" field. Refuses before any mutation when the PR is MERGED (the release has shipped), when the fix version is released/archived, when the fix version still carries issues (pass "moveIssuesTo" to reassign them), or when nothing named that version exists. skipJira is CLI-only and has no field here: it would leave a live fix version behind with nothing in the result pointing at it. Resumable: every step is a verified no-op when its artefact is already gone, so a re-run finishes a partial teardown. What is lost with the worktree directory: gitignored contents including a hydrated .env of Doppler secrets (re-fetch with env-load) and node_modules/dist.',
   requiresHumanConfirm: true,
+  formProvider: releaseRemoveForm,
   inputSchema: {
     version: z
       .string()
+      .optional()
       .describe(
-        'The release version or name to remove (e.g. "1.2.5" or "checkout-redesign"). Required: the interactive picker is unavailable without a TTY.',
+        'The release version or name to remove (e.g. "1.2.5" or "checkout-redesign"). Omit it to be offered the open release PRs.',
+      ),
+    moveIssuesTo: z
+      .string()
+      .optional()
+      .describe(
+        'Optional. An EXISTING Jira fix version name (exactly as in Jira, e.g. "v1.2.6") to move this release\'s issues to before its fix version is removed — both fixVersion and affectsVersion. Pass it only after a refusal reported the issue counts, or when the human named the target; a name Jira does not know is refused in preflight before anything is touched.',
       ),
     confirm: z
       .boolean()
@@ -1025,12 +1095,16 @@ export const releaseRemoveMcpTool = defineMcpTool({
     remoteBranch: z.enum(['deleted', 'absent']).describe('Whether the origin branch was deleted or none existed'),
     remoteTipSha: z.string().nullable().describe('The origin tip before deletion'),
     jira: z
-      .enum(['removed', 'absent', 'skipped', 'manual'])
-      .describe('"manual" when a fix version exists over MCP (it is left for a human); "absent" when Jira knows none.'),
+      .enum(['removed', 'absent', 'skipped'])
+      .describe(
+        '"removed" when the fix version was deleted; "absent" when Jira knows none for this release (the resume path); "skipped" only on the CLI with --skip-jira',
+      ),
     jiraVersion: z
       .object({ id: z.string(), name: z.string(), url: z.string() })
       .nullable()
-      .describe('The fix version this release owns — the link a human needs when jira is "manual"'),
+      .describe(
+        'The fix version this release owned, captured before removal — the id is the only handle that survives it',
+      ),
   },
   handler: releaseRemove,
 })

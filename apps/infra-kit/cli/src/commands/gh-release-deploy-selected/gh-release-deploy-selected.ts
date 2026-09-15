@@ -9,6 +9,7 @@ import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { pickEnv } from 'src/lib/prompts/env-picker'
 import { withEscape } from 'src/lib/prompts/escapable-context'
+import { refuseMissingArguments } from 'src/lib/prompts/refuse-missing-arguments'
 import { confirmDeploy, resolveDeployBranch } from 'src/lib/release-deploy'
 import { releaseLabelFromBranch } from 'src/lib/release-utils'
 import {
@@ -43,8 +44,27 @@ interface GhReleaseDeploySelectedArgs {
 /**
  * Deploy selected services from a release branch to an environment
  */
+// ONE provider instance for the MCP form and the agent-mode refusal, so an agent's `choices` are the
+// form an MCP client would have been offered.
+const deploySelectedForm = createDeployFormProvider({
+  workflowFile: DEPLOY_SELECTED_WORKFLOW,
+  fields: ['version', 'env', 'services'],
+  toolName: 'gh-release-deploy-selected',
+})
+
 export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs) => {
   const { version, env, services, skipTerraform, confirmedCommand } = args
+
+  // Before any of the three pickers: one refusal lists every field round 1 omitted, and names the
+  // first of them (the flags mirror the fields).
+  await refuseMissingArguments({
+    provider: deploySelectedForm,
+    params: args,
+    operation: 'launch deploy-selected workflow',
+    argument: (offered) => {
+      return offered[0] ?? 'version'
+    },
+  })
 
   const selectedReleaseBranch = await resolveDeployBranch(version)
 
@@ -251,11 +271,7 @@ export const ghReleaseDeploySelectedMcpTool = defineMcpTool({
   // `gh-release-deploy-all` — the consumer repos declare different environments in the two. The
   // provider offers `services` only when round 1 omitted it, because a form that changes the LENGTH
   // of an array the caller supplied is discarded whole by `narrowsArgs`.
-  formProvider: createDeployFormProvider({
-    workflowFile: DEPLOY_SELECTED_WORKFLOW,
-    fields: ['version', 'env', 'services'],
-    toolName: 'gh-release-deploy-selected',
-  }),
+  formProvider: deploySelectedForm,
   description:
     'Dispatch the deploy-selected-services.yml GitHub Actions workflow to deploy a chosen subset of services from a release branch to the given environment. Fire-and-forget — returns once GitHub accepts the workflow_dispatch, NOT when the deployment finishes; watch the workflow run for completion status. Service names are validated against the boolean inputs declared in the workflow, and a service the target environment gates out is refused BEFORE dispatch rather than dispatched and silently skipped. Use gh-release-deploy-all for every service. Omit any of "version", "env" or "services" and this server offers the human a form built from the real releases, environments and services; a client that cannot render one gets a refusal naming the missing field, never a guess.',
   inputSchema: {

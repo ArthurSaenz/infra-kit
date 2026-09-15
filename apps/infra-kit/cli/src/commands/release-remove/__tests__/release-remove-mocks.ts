@@ -105,8 +105,8 @@ export const findVersionByNameFake = (versions: JiraVersion[]) => {
  * The healthy baseline: worktree present and clean, an OPEN PR, both branch tips live, Jira
  * configured with an unreleased fix version carrying no issues, and no cmux window.
  *
- * `isMcpMode` is deliberately NOT wired here — `release-remove-guard.test.ts` reads the real
- * `mcpMode` holder, and wiring a spy onto a real function would throw.
+ * `isAgentMode` is deliberately NOT wired here — `release-remove-guard.test.ts` reads the real
+ * `agentMode` holder, and wiring a spy onto a real function would throw.
  */
 export const installDefaults = (): void => {
   vi.mocked(assertManagementContext).mockResolvedValue(undefined)

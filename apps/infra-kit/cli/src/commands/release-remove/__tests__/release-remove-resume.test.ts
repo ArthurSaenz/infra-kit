@@ -4,10 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fetchPRByHead } from 'src/integrations/gh/pr-status'
 import { findVersionByName } from 'src/integrations/jira'
 import { removeJiraVersion } from 'src/integrations/jira/remove-version'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { getCurrentWorktrees, lsRemoteHead, revParseVerify } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { removeReleaseWorktreeIfPresent } from 'src/lib/worktrees/remove-release-worktree'
 
 import { releaseRemove } from '../release-remove'
@@ -68,10 +68,6 @@ vi.mock('src/lib/git-utils', () => {
 
 vi.mock('src/lib/infra-kit-config', () => {
   return { getInfraKitConfig: vi.fn() }
-})
-
-vi.mock('src/lib/mcp-mode', () => {
-  return { isMcpMode: vi.fn() }
 })
 
 vi.mock('src/lib/prompts/release-picker', () => {
@@ -148,7 +144,7 @@ beforeEach(() => {
   zx.overrides = []
 
   installDefaults()
-  vi.mocked(isMcpMode).mockReturnValue(false)
+  agentMode.source = null
   vi.mocked(confirm).mockResolvedValue(true)
 })
 
@@ -245,6 +241,25 @@ describe('release remove — the typo case', () => {
 
     expect((error as Error).message).toContain('nothing named "9.9.9" exists to remove')
     expect((error as Error).message).toContain('infra-kit release list')
+    expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
+  })
+
+  it('over MCP: the typo refusal points at the gh-release-list tool, not the CLI command', async () => {
+    agentMode.source = 'mcp'
+    vi.mocked(getCurrentWorktrees).mockResolvedValue([])
+    vi.mocked(removeReleaseWorktreeIfPresent).mockResolvedValue([])
+    vi.mocked(fetchPRByHead).mockResolvedValue(null)
+    vi.mocked(revParseVerify).mockResolvedValue(null)
+    vi.mocked(lsRemoteHead).mockResolvedValue(null)
+    vi.mocked(findVersionByName).mockImplementation(findVersionByNameFake([]))
+
+    const error = await releaseRemove({ confirmedCommand: true, version: '9.9.9' }).catch((e: unknown) => {
+      return e
+    })
+
+    expect((error as Error).message).toContain('nothing named "9.9.9" exists to remove')
+    expect((error as Error).message).toContain('gh-release-list')
+    expect((error as Error).message).not.toContain('infra-kit release list')
     expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
   })
 

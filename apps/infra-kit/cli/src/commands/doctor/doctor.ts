@@ -39,6 +39,8 @@ import type { ServiceInstallSeams } from 'src/dev/proxy/portless-link'
 import { INFRA_KIT_ENV_TOKEN_VAR, probeEnvToken, resolveEnvToken } from 'src/integrations/doppler'
 import type { EnvTokenProbe, EnvTokenSource, ResolvedEnvToken } from 'src/integrations/doppler'
 import { inspectPackageGuidance, readGuidanceFile } from 'src/lib/agent-guidance'
+import { agentMode, resolveAgentModeSource } from 'src/lib/agent-mode'
+import type { ResolveAgentModeInput } from 'src/lib/agent-mode'
 import { describeOverrides, readOverrideSummary } from 'src/lib/config-overrides'
 import { DEFAULT_WARM_TTL_SECONDS, ENV_LOAD_FILE, getProjectWarmCacheDir } from 'src/lib/constants'
 // The probe reports FACTS about an install and can neither name nor run a fix — the same one-way seam
@@ -72,7 +74,6 @@ import {
   PLUGIN_KEY,
   PLUGIN_UPDATE_COMMAND,
   inspectLegacyMcpRegistration,
-  isInfraKitServerEntry,
   isMarketplaceRegistered,
   readInstalledPluginVersion,
   resolvePluginInstall,
@@ -85,10 +86,10 @@ import { quietShell } from 'src/lib/quiet-shell'
 import { isNewerVersion } from 'src/lib/update-check/semver'
 import { sortVersions } from 'src/lib/version-utils'
 import { canonicalizeProjectRoot } from 'src/lib/warm-cache'
-import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
 import { defineMcpTool, textContent } from 'src/types'
 
 import packageJson from '../../../package.json' with { type: 'json' }
+import { SETTINGS_FILES, inspectAgentAllowlist } from './agent-allowlist'
 
 /**
  * What the probe knows about one external tool, riding along on the row that already answers "is it
@@ -119,7 +120,12 @@ export interface DependencyDetail {
  */
 export interface CheckResult {
   name: string
-  status: 'pass' | 'fail'
+  /**
+   * `warn` is a third verdict, not a soft fail: the report counts it apart, `--fix` never claims it,
+   * and `allPassed` ignores it. It exists for one class of row — a setting that is legal but defeats a
+   * guard the CLI relies on (`Agent allowlist`) — where red would be a lie and green would hide it.
+   */
+  status: 'pass' | 'fail' | 'warn'
   message: string
   detail?: DependencyDetail
 }
@@ -1159,21 +1165,23 @@ export const checkClaudeCli = (): Promise<CheckResult> => {
 }
 
 /**
- * What the SERVED plugin copy carries by way of an MCP server.
+ * What the SERVED plugin copy carries by way of an MCP server — which, since the plugin went
+ * skills-only, is the STALE state: a copy that still ships `.mcp.json` predates the split and would
+ * spawn a server the skills no longer talk to.
  *
  * The served copy is the install record's `installPath` (`~/.claude/plugins/cache/…/<v>/`), NOT the
  * marketplace clone: the clone is what `claude plugin update` fetches, the record is what a session
- * loads (measured, plan §6.1 S0-7(b)) — so a clone that is ahead of the record must not change this
- * verdict. Capability-keyed on purpose: the row reads the served `.mcp.json`, never a version floor,
- * so an older copy hand-patched with the file passes and a newer one that lost it fails.
+ * loads (measured, archived plan docs/archive/mcp/mcp-via-plugin-migration-plan.md §6.1 S0-7(b)) — so
+ * a clone that is ahead of the record must not change this verdict. Capability-keyed on purpose: the
+ * row reads the served `.mcp.json`, never a version floor, so an older copy hand-stripped of the file
+ * passes and a newer one that regrew it is reported.
  */
 export type ServedPluginServer =
   | { kind: 'not-installed' }
-  /** No `.mcp.json` in the served copy — a plugin predating the server, or a record with no path. */
-  | { kind: 'no-server'; version: string | null }
-  /** A `.mcp.json` is there but the server under it is not ours as-shipped: renamed or corrupt. */
-  | { kind: 'renamed'; version: string | null; keys: string[] }
-  | { kind: 'serves'; version: string | null }
+  /** No `.mcp.json` in the served copy — as shipped since the split, or a record with no path. */
+  | { kind: 'skills-only'; version: string | null }
+  /** A `.mcp.json` is there: a copy from before the split, whatever it keys the server under. */
+  | { kind: 'stale-server'; version: string | null; keys: string[] }
 
 const readServedJson = (installPath: string, ...segments: string[]): unknown => {
   try {
@@ -1184,13 +1192,11 @@ const readServedJson = (installPath: string, ...segments: string[]): unknown => 
 }
 
 /**
- * Read the served copy's `.mcp.json` and `.claude-plugin/plugin.json`. `serves` requires the exact
- * pair the tool prefix is composed from — plugin `name` and server key both `infra-kit`, entry ours —
- * which is what pins the composed prefix to `MCP_TOOL_PREFIX` (the cross-unit test in
- * `src/mcp/__tests__/tool-prefix.test.ts` pins the constant to the same two files at the source).
+ * Read the served copy's `.mcp.json`. Any `mcpServers` object at all is `stale-server` — the plugin
+ * as shipped has no such file, so what the entries say is a detail for the message, not a verdict.
  *
  * @example
- * inspectServedPluginServer(resolvePluginInstall({ projectPath: '/repo' })) // => { kind: 'serves', version: '<served>' }
+ * inspectServedPluginServer(resolvePluginInstall({ projectPath: '/repo' })) // => { kind: 'skills-only', version: '<served>' }
  */
 export const inspectServedPluginServer = (state: PluginInstallState): ServedPluginServer => {
   if (state.kind !== 'installed') return { kind: 'not-installed' }
@@ -1198,23 +1204,14 @@ export const inspectServedPluginServer = (state: PluginInstallState): ServedPlug
   const version = readInstalledPluginVersion(state.installation)
   const { installPath } = state.installation
 
-  if (installPath === null) return { kind: 'no-server', version }
+  if (installPath === null) return { kind: 'skills-only', version }
 
   const mcp = readServedJson(installPath, MCP_FILE_NAME)
   const servers = mcp !== null && typeof mcp === 'object' ? (mcp as Record<string, unknown>)[SERVERS_KEY] : undefined
 
-  if (servers === undefined || servers === null || typeof servers !== 'object') return { kind: 'no-server', version }
+  if (servers === undefined || servers === null || typeof servers !== 'object') return { kind: 'skills-only', version }
 
-  const manifest = readServedJson(installPath, '.claude-plugin', 'plugin.json')
-  const pluginName =
-    manifest !== null && typeof manifest === 'object' ? (manifest as Record<string, unknown>).name : null
-  const entries = servers as Record<string, unknown>
-
-  if (pluginName === MARKETPLACE_NAME && isInfraKitServerEntry(entries[MARKETPLACE_NAME])) {
-    return { kind: 'serves', version }
-  }
-
-  return { kind: 'renamed', version, keys: Object.keys(entries) }
+  return { kind: 'stale-server', version, keys: Object.keys(servers as Record<string, unknown>) }
 }
 
 /** `Plugin <key> <version>` with a readable stand-in when no version could be read. */
@@ -1225,11 +1222,12 @@ const describeServedPlugin = (version: string | null): string => {
 }
 
 /**
- * The `plugin MCP server` row: does the served plugin carry the infra-kit MCP server? The row the
- * `MCP server key` verdicts are transition-guarded on (plan §3.3 Rows).
+ * The `plugin MCP server` row, kept under its old name so a pasted report still lines up: does the
+ * served plugin STILL carry an MCP server? Skills-only is healthy; a copy with `.mcp.json` is stale
+ * and passes with the update advisory — it works, on the old surface, until it is updated.
  *
- * Fixes are the plugin's own commands, never a `.mcp.json` write: a plugin that predates the server
- * has nothing to serve, and `claude plugin update` is what advances the record a session loads.
+ * Fixes are the plugin's own commands, never a `.mcp.json` write: `claude plugin update` (which
+ * `infra-kit setup` drives) is what advances the record a session loads.
  */
 const claudePluginServerCheck = (served: ServedPluginServer): CheckResult => {
   const name = 'plugin MCP server'
@@ -1238,39 +1236,31 @@ const claudePluginServerCheck = (served: ServedPluginServer): CheckResult => {
     return {
       name,
       status: 'fail',
-      message: `No infra-kit plugin installed for this project to serve the MCP server. Run: ${PLUGIN_INSTALL_COMMAND}`,
+      message: `No infra-kit plugin installed for this project — no skills to drive the CLI. Run: ${PLUGIN_INSTALL_COMMAND}`,
     }
   }
 
-  if (served.kind === 'no-server') {
-    return {
-      name,
-      status: 'fail',
-      message: `${describeServedPlugin(served.version)} does not carry the infra-kit MCP server — update it: ${PLUGIN_UPDATE_COMMAND}`,
-    }
-  }
-
-  if (served.kind === 'renamed') {
-    const under = served.keys.length === 0 ? 'no server' : `a server under "${served.keys.join('", "')}"`
+  if (served.kind === 'stale-server') {
+    const under = served.keys.length === 0 ? '' : ` (under "${served.keys.join('", "')}")`
 
     return {
       name,
-      status: 'fail',
-      message: `${describeServedPlugin(served.version)} carries ${under} in its ${MCP_FILE_NAME}, not the infra-kit server as shipped — install corrupt or renamed; reinstall: claude plugin uninstall ${PLUGIN_KEY} && ${PLUGIN_INSTALL_COMMAND}`,
+      status: 'pass',
+      message: `${describeServedPlugin(served.version)} still carries an MCP server in its ${MCP_FILE_NAME}${under} — a copy from before the plugin went skills-only. Update it: infra-kit setup (or ${PLUGIN_UPDATE_COMMAND}), then restart Claude Code`,
     }
   }
 
   return {
     name,
     status: 'pass',
-    message: `${describeServedPlugin(served.version)} serves the infra-kit MCP server as ${MCP_TOOL_PREFIX}*`,
+    message: `${describeServedPlugin(served.version)} is skills-only — no ${MCP_FILE_NAME}, as shipped; the /infra-kit:* skills drive the infra-kit CLI`,
   }
 }
 
 /**
  * The five host-state rows about the `infra-kit` Claude Code plugin: is its marketplace registered
- * on this machine, is the plugin installed, which version, does the served copy carry the MCP
- * server, and which CLI is reporting it.
+ * on this machine, is the plugin installed, which version, is the served copy skills-only, and which
+ * CLI is reporting it.
  *
  * All five are emitted whatever `root` is, so the row set never changes shape between directories.
  * `root` narrows the VERDICT only: it is the project a project-scope install has to name to count.
@@ -1299,75 +1289,160 @@ export const checkClaudePlugin = (root: string | null, origin?: DoctorOrigin): C
   ]
 }
 
-/** The chore text for a leftover key: what today's session runs on, whose the fix is, and how. */
-const STALE_KEY_ADVISORY = `${MCP_FILE_NAME} still registers "${MARKETPLACE_NAME}", so Claude Code uses that entry and the plugin's copy of the server is shadowed (same key, project scope wins). Until this repo's key-deletion PR merges, sessions here serve ${LEGACY_MCP_TOOL_PREFIX}* and every body they read already names that prefix — nothing to fix on this machine. The PR: delete the "${MARKETPLACE_NAME}" entry from ${MCP_FILE_NAME} by hand, keeping its siblings (\`claude mcp remove ${MARKETPLACE_NAME} --scope project\` also works but re-indents the file)`
+/** The chore text for a leftover entry under `key`: what it spawns today, and the hand deletion that retires it. */
+const deleteKeyAdvisory = (key: string): string => {
+  return `${MCP_FILE_NAME} still registers "${key}" — delete this key: the plugin no longer serves an MCP server, and the entry only spawns \`infra-kit mcp\`, a compatibility stub kept alive for repos that have not deleted it yet. Delete the "${key}" entry from ${MCP_FILE_NAME} by hand in a PR, keeping its siblings (\`claude mcp remove ${key} --scope project\` also works but re-indents the file)`
+}
 
 /**
- * One message per `.mcp.json` verdict once the served plugin CARRIES the server — the post-switch
- * branch. `absent` is the healthy state, `stale` a pass with the chore spelled out (plan §3.3:
- * a chore is not red), `wrong-key` is built by the caller, which has the key.
+ * One message per `.mcp.json` verdict. `absent` / `missing-file` are the healthy state, `stale` and
+ * `wrong-key` the chore spelled out (a chore is not red), `unparseable` the one fault — built by the
+ * caller, which has the key for `wrong-key`.
  */
 const MCP_MESSAGES: Record<Exclude<McpRegistration['kind'], 'wrong-key'>, string> = {
-  stale: STALE_KEY_ADVISORY,
-  absent: `served by the plugin — ${MCP_FILE_NAME} carries no "${MARKETPLACE_NAME}" key`,
-  'missing-file': `served by the plugin — no ${MCP_FILE_NAME} at the repo root, so no "${MARKETPLACE_NAME}" key to shadow it`,
+  stale: deleteKeyAdvisory(MARKETPLACE_NAME),
+  absent: `${MCP_FILE_NAME} carries no "${MARKETPLACE_NAME}" key — nothing spawns the retired server`,
+  'missing-file': `no ${MCP_FILE_NAME} at the repo root — nothing spawns the retired server`,
   unparseable: `Could not read ${SERVERS_KEY} from ${MCP_FILE_NAME} — fix the JSON and re-run`,
 }
 
 /**
- * The same verdicts while the served plugin does NOT carry the server — the transition branch, and
- * the PM-1 detector reachable from a typed `doctor`. Here the repo's own entry is the only route, so
- * a leftover key is the LIVE registration and its absence means no server at all.
- */
-const MCP_TRANSITION_MESSAGES: Record<Exclude<McpRegistration['kind'], 'wrong-key'>, string> = {
-  stale: `${MCP_FILE_NAME} registers the server as "${MARKETPLACE_NAME}" — the live route until the plugin carries it; this session's tools are ${LEGACY_MCP_TOOL_PREFIX}*`,
-  absent: `no server at all: ${MCP_FILE_NAME} has no "${MARKETPLACE_NAME}" key and the served plugin does not carry it — ${PLUGIN_UPDATE_COMMAND}, then restart Claude Code`,
-  'missing-file': `no server at all: no ${MCP_FILE_NAME} at the repo root and the served plugin does not carry it — ${PLUGIN_UPDATE_COMMAND}, then restart Claude Code`,
-  unparseable: `Could not read ${SERVERS_KEY} from ${MCP_FILE_NAME} — fix the JSON and re-run`,
-}
-
-/**
- * The verdicts that do NOT fail the row once the plugin serves: no key (the healthy state, with or
- * without a file) and a leftover key (a chore, not a fault — the session it shadows works end to
- * end because the server renders its guidance for the route that spawned it, `tool-prefix.ts`).
+ * The verdicts that do NOT fail the row: no key (with or without a file) and a leftover key under any
+ * name — the stub keeps such a session working, so the deletion is a chore with no deadline.
  * Exit 1 stays scoped to `plugin installed` alone (`program.ts`), so none of this touches it.
  */
-const MCP_NON_FAILING: ReadonlySet<McpRegistration['kind']> = new Set(['absent', 'missing-file', 'stale'])
-
-/** In transition only the live registration passes; everything else is a repo without a server. */
-const MCP_TRANSITION_NON_FAILING: ReadonlySet<McpRegistration['kind']> = new Set(['stale'])
+const MCP_NON_FAILING: ReadonlySet<McpRegistration['kind']> = new Set(['absent', 'missing-file', 'stale', 'wrong-key'])
 
 /**
- * The `MCP server key` row: the repo's own `.mcp.json` against the infra-kit server, read-only,
- * transition-guarded on whether the served plugin carries the server (`plugin MCP server`).
- *
- * `wrong-key` fails in both branches: our server under another key is a second server process with
- * a prefix no served body names, whichever route the plugin is on.
+ * The `MCP server key` row: the repo's own `.mcp.json` against the retired infra-kit server, read-only.
+ * No longer guarded on what the served plugin carries — the plugin serves nothing, so the repo's entry
+ * is a leftover whichever plugin copy is installed.
  *
  * @example
- * checkMcpServerKey('/repo', { kind: 'serves', version: '0.8.0' })
- * // => { name: 'MCP server key', status: 'pass', message: 'served by the plugin — …' }
+ * checkMcpServerKey('/repo')
+ * // => { name: 'MCP server key', status: 'pass', message: '.mcp.json still registers "infra-kit" — delete this key: …' }
  */
-export const checkMcpServerKey = (root: string, served: ServedPluginServer): CheckResult => {
+export const checkMcpServerKey = (root: string): CheckResult => {
   const name = 'MCP server key'
   const registration = inspectLegacyMcpRegistration(root)
-  const pluginServes = served.kind === 'serves'
 
   if (registration.kind === 'wrong-key') {
-    return {
-      name,
-      status: 'fail',
-      message: `${MCP_FILE_NAME} registers an infra-kit server under "${registration.key}" — a second server process whose tools carry that key as their prefix, which no served guidance names. Remove that entry (a repo PR, by hand); the plugin${pluginServes ? '' : ', once updated,'} serves the server under "${MARKETPLACE_NAME}"`,
-    }
+    return { name, status: 'pass', message: deleteKeyAdvisory(registration.key) }
   }
-
-  const nonFailing = pluginServes ? MCP_NON_FAILING : MCP_TRANSITION_NON_FAILING
-  const messages = pluginServes ? MCP_MESSAGES : MCP_TRANSITION_MESSAGES
 
   return {
     name,
-    status: nonFailing.has(registration.kind) ? 'pass' : 'fail',
-    message: messages[registration.kind],
+    status: MCP_NON_FAILING.has(registration.kind) ? 'pass' : 'fail',
+    message: MCP_MESSAGES[registration.kind],
+  }
+}
+
+/** The raw inputs, spelled out so a pasted row explains its own verdict. */
+const describeAgentModeInputs = ({ env, stdinIsTTY, flag }: ResolveAgentModeInput): string => {
+  const agentVar = env.INFRA_KIT_AGENT === undefined ? 'unset' : `= "${env.INFRA_KIT_AGENT}"`
+
+  return [
+    `CLAUDECODE ${env.CLAUDECODE === undefined ? 'unset' : 'set'}`,
+    `INFRA_KIT_AGENT ${agentVar}`,
+    `stdin ${stdinIsTTY ? 'is a TTY' : 'is not a TTY'}`,
+    `--agent ${flag ? 'passed' : 'not passed'}`,
+  ].join(', ')
+}
+
+/**
+ * The `Agent mode` row: which source `resolveAgentModeSource` fires on for THIS shell, with the inputs
+ * it read. Informational — always a pass — because neither answer is wrong: a human at a PTY and an
+ * agent under Claude Code are both correct classifications, and what the row is for is the third case,
+ * where someone expected one and got the other (a `!` shell reads as agent; a cmux window Claude Code
+ * spawned reads as human).
+ *
+ * Pure over its input so the precedence table (`agent-mode.ts`) is what the test drives, not the
+ * test runner's own environment.
+ *
+ * @example
+ * checkAgentMode({ env: { CLAUDECODE: '1' }, stdinIsTTY: false, flag: false })
+ * // => { name: 'Agent mode', status: 'pass', message: 'agent — CLAUDECODE is set and stdin is not a TTY (…)' }
+ */
+export const checkAgentMode = (input: ResolveAgentModeInput): CheckResult => {
+  const name = 'Agent mode'
+  const source = resolveAgentModeSource(input)
+  const inputs = describeAgentModeInputs(input)
+  const because = (): string => {
+    if (source === 'flag') return 'the --agent flag, which beats every environment value'
+    if (input.env.INFRA_KIT_AGENT === '1') return 'INFRA_KIT_AGENT=1'
+    if (source === 'env') return 'CLAUDECODE is set and stdin is not a TTY'
+    if (input.env.CLAUDECODE !== undefined && input.stdinIsTTY) {
+      return 'CLAUDECODE is set but stdin is a TTY, so this is a terminal Claude Code spawned for a person'
+    }
+    if (input.env.INFRA_KIT_AGENT === '0') return 'INFRA_KIT_AGENT=0 suppresses the CLAUDECODE heuristic'
+
+    return 'no source fires; pass --agent or set INFRA_KIT_AGENT=1 to drive this CLI as an agent'
+  }
+
+  return {
+    name,
+    status: 'pass',
+    message: `${source === null ? 'human' : 'agent'} — ${because()} (${inputs})`,
+  }
+}
+
+/** At most this many command names per pattern before `+N more`: a `Bash(infra-kit:*)` reaches ~20. */
+const NAMED_COMMANDS_PER_HIT = 4
+
+const describeReachedCommands = (commands: string[]): string => {
+  const named = commands.slice(0, NAMED_COMMANDS_PER_HIT).join(', ')
+  const rest = commands.length - NAMED_COMMANDS_PER_HIT
+
+  return rest > 0 ? `${named} +${rest} more` : named
+}
+
+/**
+ * The `Agent allowlist` row (plan §3.8): WARN when a `permissions.allow` pattern in either project
+ * settings file reaches a mutating infra-kit command, naming the pattern and what it reaches. A prefix
+ * allow is what lets an agent's `--yes` re-run go unprompted, so the row is the one place that
+ * exposure is visible. Never a fail: the setting is legal, and `doctor` does not know the human did not
+ * choose it deliberately.
+ *
+ * @example
+ * checkAgentAllowlist('/repo-allowing-Bash(infra-kit:*)')
+ * // => { name: 'Agent allowlist', status: 'warn', message: '.claude/settings.local.json allows "Bash(infra-kit:*)", which reaches …' }
+ */
+export const checkAgentAllowlist = (root: string): CheckResult => {
+  const name = 'Agent allowlist'
+  const { present, unreadable, hits } = inspectAgentAllowlist(root)
+
+  if (hits.length > 0) {
+    const findings = hits.map((hit) => {
+      return `${hit.file} allows "${hit.pattern}", which reaches ${hit.commands.length} mutating infra-kit command${hit.commands.length === 1 ? '' : 's'} (${describeReachedCommands(hit.commands)})`
+    })
+
+    return {
+      name,
+      status: 'warn',
+      message: `${findings.join('; ')} — a prefix allow lets an agent run the --yes re-run of a mutating command unprompted; narrow it to read-only argv (e.g. Bash(infra-kit release list:*)) so the host prompts for the rest`,
+    }
+  }
+
+  if (unreadable.length > 0) {
+    return {
+      name,
+      status: 'warn',
+      message: `Could not read permissions.allow from ${unreadable.join(' and ')} — fix the JSON and re-run; until then the allowlist is unchecked`,
+    }
+  }
+
+  if (present.length === 0) {
+    return {
+      name,
+      status: 'pass',
+      message: `no ${SETTINGS_FILES.join(' or ')} at the repo root — no Bash allow pattern to reach a mutating infra-kit command`,
+    }
+  }
+
+  return {
+    name,
+    status: 'pass',
+    message: `no permissions.allow pattern in ${present.join(' or ')} reaches a mutating infra-kit command`,
   }
 }
 
@@ -2101,29 +2176,29 @@ export const doctor = async (options: { fix?: boolean; probeDeps?: ProbeDeps } =
     else portlessChecks.push(pruned)
   }
 
-  // The Claude Code plugin rows read `~/.claude/` and answer from anywhere; the `.mcp.json` row is
-  // about a PROJECT and so is gated — but NOT on the same predicate as the guidance check. Nothing
-  // writes the `infra-kit` key any more (the plugin serves the server), so the row is a read-only
-  // report on a leftover or misfiled entry, and it belongs to any git toplevel that is not `$HOME`
-  // (`resolveGitRoot`) — the same set `setup` inspects — while the guidance writer still requires
-  // an `infra-kit.json` there. Gating this row on `infra-kit.json` too would hide a shadowing key in
-  // exactly the repos that lack one.
+  // The Claude Code plugin rows read `~/.claude/` and answer from anywhere; the `.mcp.json` and
+  // allowlist rows are about a PROJECT and so are gated — but NOT on the same predicate as the
+  // guidance check. Nothing writes the `infra-kit` key any more (the plugin is skills-only), so the
+  // key row is a read-only report on a leftover entry, and both belong to any git toplevel that is not
+  // `$HOME` (`resolveGitRoot`) — the same set `setup` inspects — while the guidance writer still
+  // requires an `infra-kit.json` there. Gating them on `infra-kit.json` too would hide a leftover key
+  // or a broad allow in exactly the repos that lack one.
   //
   // `resolveGitRoot` is also what keeps a blank `git rev-parse` from being answered: it returns
-  // `null` rather than `''`, so the row is omitted instead of rendered against `process.cwd()`.
+  // `null` rather than `''`, so the rows are omitted instead of rendered against `process.cwd()`.
   const repoRoot = await resolveCheckedRepoRoot()
   const gitRoot = await resolveGitRoot()
-  // Resolved once more here for the key row's transition guard: the plugin rows resolve it inside
-  // `checkClaudePlugin` and return rows, not state, and two reads of one small JSON file are cheaper
-  // than a second return shape on a function three suites call.
-  const served = inspectServedPluginServer(resolvePluginInstall(repoRoot === null ? {} : { projectPath: repoRoot }))
   const origin: DoctorOrigin = { projectDir: process.env.CLAUDE_PROJECT_DIR || null, cwd: process.cwd(), gitRoot }
   const pluginChecks = [
     // First in the section: the binary the install step drives. Read the prerequisite before the
     // rows whose failure it explains.
     await checkClaudeCli(),
     ...checkClaudePlugin(repoRoot, origin),
-    ...(gitRoot === null ? [] : [checkMcpServerKey(gitRoot, served)]),
+    ...(gitRoot === null ? [] : [checkMcpServerKey(gitRoot)]),
+    // `flag` is the resolved source, not a re-parse of argv: `preAction` has already run, and a
+    // `--agent` on this very invocation is what set it.
+    checkAgentMode({ env: process.env, stdinIsTTY: process.stdin.isTTY === true, flag: agentMode.source === 'flag' }),
+    ...(gitRoot === null ? [] : [checkAgentAllowlist(gitRoot)]),
   ]
 
   const checks: CheckResult[] = [...baseChecks, ...portlessChecks, ...(await checkAgentFiles()), ...pluginChecks]
@@ -2152,8 +2227,9 @@ export const doctor = async (options: { fix?: boolean; probeDeps?: ProbeDeps } =
         detail: c.detail,
       }
     }),
+    // A warning is advisory by definition (see `CheckResult`), so it does not unset this.
     allPassed: checks.every((c) => {
-      return c.status === 'pass'
+      return c.status !== 'fail'
     }),
     cliVersion: packageJson.version,
   }
@@ -2175,7 +2251,7 @@ export const doctorMcpTool = defineMcpTool({
       .array(
         z.object({
           name: z.string().describe('Name of the check'),
-          status: z.enum(['pass', 'fail']).describe('Check result'),
+          status: z.enum(['pass', 'fail', 'warn']).describe('Check result; warn is advisory and never fails the run'),
           message: z.string().describe('Details about the check result'),
           fixable: z.boolean().describe('Whether `infra-kit doctor --fix` repairs this row'),
           // Present on the four dependency rows only. `status` answers "resolves on PATH"; this answers
@@ -2193,7 +2269,7 @@ export const doctorMcpTool = defineMcpTool({
         }),
       )
       .describe('List of all check results'),
-    allPassed: z.boolean().describe('Whether all checks passed'),
+    allPassed: z.boolean().describe('Whether no check failed (warnings are advisory and do not count)'),
     cliVersion: z.string().describe('Version of the infra-kit CLI that produced this report'),
   },
   // Read-only on purpose: `--fix` is NOT reachable here. The MCP boundary auto-confirms every tool call,

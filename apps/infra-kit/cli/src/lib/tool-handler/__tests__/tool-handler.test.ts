@@ -7,6 +7,8 @@ import type { Mock } from 'vitest'
 import { z } from 'zod'
 
 import { ensureUserProjectConfig, seedUserProjectConfig } from 'src/lib/config-bootstrap'
+import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { logger } from 'src/lib/logger'
 import { applySessionEnv } from 'src/lib/session-env'
 import { resetSessionEnvForTests } from 'src/lib/session-env/session-env'
@@ -162,6 +164,42 @@ describe('createToolHandler', () => {
 
     expect(result).toBe(payload)
     expect(handler).toHaveBeenCalledWith({ branch: 'main', confirmedCommand: true })
+  })
+
+  // The adapter for the one refusal channel both surfaces share (lib/errors/structured-refusal-error):
+  // a handler THROWS it, and the MCP result must keep the payload the agent acts on. Left to the SDK,
+  // a thrown error is flattened to text-only `isError` content and `structuredContent` is gone.
+  it('renders a thrown StructuredRefusalError as an isError result carrying its structuredContent', async () => {
+    const refusal = new StructuredRefusalError(
+      { status: 'partial_failure', removedWorktrees: ['a'], failedWorktrees: ['b'], count: 1 },
+      1,
+      { operation: 'remove worktrees', remediation: 'not removed: b' },
+    )
+    const handler = vi.fn(async () => {
+      throw refusal
+    })
+    const tool = createToolHandler({ toolName: 'worktrees-remove', handler })
+
+    const result = await tool({ versions: 'a, b' })
+
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toEqual({
+      status: 'partial_failure',
+      removedWorktrees: ['a'],
+      failedWorktrees: ['b'],
+      count: 1,
+    })
+    expect(result.content).toEqual([{ type: 'text', text: refusal.message }])
+  })
+
+  it('still rethrows a plain OperationError (the adapter is for the structured class only)', async () => {
+    const plain = new OperationError(undefined, { operation: 'x' })
+    const handler = vi.fn(async () => {
+      throw plain
+    })
+    const tool = createToolHandler({ toolName: 'worktrees-remove', handler })
+
+    await expect(tool({})).rejects.toBe(plain)
   })
 
   it('does not fail the tool call when the seed itself fails', async () => {

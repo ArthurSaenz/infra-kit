@@ -47,7 +47,7 @@ vi.mock('src/lib/workflow-envs', async (importOriginal) => {
 })
 
 const DENIED = { allowed: false, reason: 'disallow' } as const
-const MCP_BLOCKED = { allowed: false, reason: 'mcp-blocked' } as const
+const MCP_BLOCKED = { allowed: false, reason: 'agent-blocked' } as const
 const ALLOWED = { allowed: true, reason: 'allowed' } as const
 
 // `confirmedCommand: true` is what the MCP boundary injects on every real tool call, and it

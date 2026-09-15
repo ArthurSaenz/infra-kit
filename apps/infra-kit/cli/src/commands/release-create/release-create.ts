@@ -10,12 +10,14 @@ import { loadJiraConfig } from 'src/integrations/jira'
 // calls, and a partial mock drops every export it does not name — so a barrel import both broke
 // those tests and, worse, would have silently sent a mocked run down the wrong branch.
 import { isJiraApiError } from 'src/integrations/jira/jira-api-error'
+import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertBaseBranchSwitchable, assertCleanCheckout, assertManagementContext } from 'src/lib/git-guard'
 import { logger } from 'src/lib/logger'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { withEscape } from 'src/lib/prompts/escapable-context'
+import { refuseMissingArguments } from 'src/lib/prompts/refuse-missing-arguments'
 import { createReleaseFormProvider } from 'src/lib/release-form'
 import { InvalidReleaseNameError, displayLabel, validateName } from 'src/lib/release-id'
 import { createSingleRelease, getBaseBranch, prepareGitForRelease } from 'src/lib/release-utils'
@@ -250,13 +252,17 @@ const collectEntries = async (
   // An agent that omits `releases` is offered a form by the MCP seam before this handler runs; landing
   // here headless means the client could not render one (or confirmed the empty gate), and the
   // refusal has to say so — the wizard below would otherwise hit its first `'refuse'` site nameless.
-  if (isMcpMode()) {
-    throw new OperationError(undefined, {
-      operation: 'create release',
-      remediation:
-        'pass "releases" explicitly, or call from a client that can render the argument form (omit "releases" and the human is asked)',
-      stderrExcerpt: 'no releases provided and no human to ask',
-    })
+  if (isAgentMode()) {
+    throw new StructuredRefusalError(
+      { status: 'argument_required', argument: 'release', agentMode: agentMode.source },
+      2,
+      {
+        operation: 'create release',
+        remediation:
+          'pass "releases" explicitly, or call from a client that can render the argument form (omit "releases" and the human is asked)',
+        stderrExcerpt: 'no releases provided and no human to ask',
+      },
+    )
   }
 
   const interactive = await promptForReleasesInteractive(ensureKnown)
@@ -377,6 +383,10 @@ const logFinalSummary = (total: number, successCount: number, failureCount: numb
  * different bases (dev vs main), so mixed batches are rejected and must be
  * created separately.
  */
+// ONE provider instance for the MCP form and the agent-mode refusal, so an agent's `choices` are the
+// form an MCP client would have been offered.
+const releaseForm = createReleaseFormProvider()
+
 export const releaseCreate = async (args: ReleaseCreateArgs) => {
   const { releases: inputReleases, confirmedCommand } = args
 
@@ -385,6 +395,15 @@ export const releaseCreate = async (args: ReleaseCreateArgs) => {
   // a linked worktree, or with a dirty tree, is told before they type a version, a type and a
   // description rather than after.
   await assertManagementContext({ operation: 'create release' })
+
+  // Before the wizard: an agent / `--json` run without `--release` gets the form (type, version hint,
+  // description) as `choices`. All four fields fold into the one `--release <spec>` flag.
+  await refuseMissingArguments({
+    provider: releaseForm,
+    params: args,
+    operation: 'create release',
+    argument: 'release',
+  })
 
   const jiraConfig = await loadJiraConfig()
 
@@ -453,7 +472,7 @@ export const releaseCreate = async (args: ReleaseCreateArgs) => {
 export const releaseCreateMcpTool = defineMcpTool({
   name: 'release-create',
   requiresHumanConfirm: true,
-  formProvider: createReleaseFormProvider(),
+  formProvider: releaseForm,
   description:
     'Create one or more releases in a single call. Each entry in "releases" carries EITHER a "version" (semver or the literal token "next") OR a "name" (free-form kebab-case identifier) — exactly one is required and they are mutually exclusive. Each entry also has its own type (regular|hotfix, default regular) and optional description; all entries in one call must share the same type — mixed regular+hotfix batches are rejected (create them in separate invocations). For each release this tool switches to the appropriate base branch (dev for regular, main for hotfix), cuts the release branch (release/v<semver> for versions, release/<name> for names), opens a GitHub release PR, and creates the matching Jira fix version (v<semver> for versions, <name> for names). The literal token "next" auto-increments from the union of remote release branches and Jira fix versions (regular bumps minor + resets patch; hotfix bumps patch on the highest minor); multiple "next" tokens advance sequentially. Named releases never auto-bump and "next" is version-only. Must be run from the main repository checkout (not a linked worktree) on the matching base branch with a clean working tree. Omit "releases" and this server offers the human a form for ONE release (type, version/next/name, description); the accepted form feeds the confirm gate. A client that cannot render a form gets a gate with no releases — confirming it is refused, never guessed. Pass "releases" explicitly for a batch or when the human already named the release. Continues on per-release failure and reports successes/failures.',
   inputSchema: {

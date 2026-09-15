@@ -1,9 +1,9 @@
 import select from '@inquirer/select'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
-import { mcpMode } from 'src/lib/mcp-mode'
 
 import { releaseCreate } from '../release-create'
 
@@ -169,11 +169,11 @@ describe('releaseCreate — batch behaviour around the per-entry guard', () => {
 
 describe('releaseCreate — headless over MCP, no releases', () => {
   beforeEach(() => {
-    mcpMode.enabled = true
+    agentMode.source = 'mcp'
   })
 
   afterEach(() => {
-    mcpMode.enabled = false
+    agentMode.source = null
     vi.restoreAllMocks()
   })
 

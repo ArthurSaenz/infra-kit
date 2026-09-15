@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { agentMode } from 'src/lib/agent-mode'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { jsonOutput } from 'src/lib/json-output'
-import { mcpMode } from 'src/lib/mcp-mode'
 
 import type { BranchPickerItem } from '../types'
 
@@ -25,7 +26,7 @@ const originalIsTTY = process.stdin.isTTY
 afterEach(() => {
   process.stdin.isTTY = originalIsTTY
   jsonOutput.enabled = false
-  mcpMode.enabled = false
+  agentMode.source = null
   runBranchPicker.mockReset()
   runBranchMultiPicker.mockReset()
 })
@@ -48,7 +49,7 @@ describe('release-picker interactive guard', () => {
     // JSON-RPC stream — `worktrees-add` and `gh-merge-dev` are mcpExposed with all
     // branch inputs optional, so that path is reachable.
     process.stdin.isTTY = true
-    mcpMode.enabled = true
+    agentMode.source = 'mcp'
 
     await expect(pickReleaseBranch(items)).rejects.toBeInstanceOf(OperationError)
     await expect(pickReleaseBranches(items)).rejects.toBeInstanceOf(OperationError)
@@ -100,5 +101,53 @@ describe('pickReleaseBranches', () => {
     runBranchMultiPicker.mockResolvedValue(['release/1.2.3'])
 
     expect(await pickReleaseBranches(items)).toStrictEqual(['release/1.2.3'])
+  })
+})
+
+describe('release-picker — argument_required for an agent, with NO choices', () => {
+  // No `choices` on purpose (plan §3.4): the candidates are what `release list --json` and
+  // `worktrees list --json` already return, and no picker invents a row shape of its own.
+  it.each([
+    { source: 'flag' as const, json: false },
+    { source: 'env' as const, json: false },
+    { source: null, json: true },
+  ])('source $source / --json $json: names version / versions', async ({ source, json }) => {
+    process.stdin.isTTY = true
+    agentMode.source = source
+    jsonOutput.enabled = json
+
+    const single = await pickReleaseBranch(items).catch((e: unknown) => {
+      return e
+    })
+    const multi = await pickReleaseBranches(items).catch((e: unknown) => {
+      return e
+    })
+
+    expect(single).toBeInstanceOf(StructuredRefusalError)
+    expect(multi).toBeInstanceOf(StructuredRefusalError)
+    expect((single as StructuredRefusalError).structuredContent).toEqual({
+      status: 'argument_required',
+      argument: 'version',
+      agentMode: source,
+    })
+    expect((multi as StructuredRefusalError).structuredContent).toEqual({
+      status: 'argument_required',
+      argument: 'versions',
+      agentMode: source,
+    })
+    expect((single as StructuredRefusalError).exitCode).toBe(2)
+    expect(runBranchPicker).not.toHaveBeenCalled()
+    expect(runBranchMultiPicker).not.toHaveBeenCalled()
+  })
+
+  it('a plain non-TTY human run keeps the OperationError — nothing is parsing its stdout', async () => {
+    process.stdin.isTTY = false
+
+    const error = await pickReleaseBranch(items).catch((e: unknown) => {
+      return e
+    })
+
+    expect(error).toBeInstanceOf(OperationError)
+    expect(error).not.toBeInstanceOf(StructuredRefusalError)
   })
 })

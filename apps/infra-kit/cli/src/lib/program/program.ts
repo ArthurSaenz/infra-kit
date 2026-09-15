@@ -1,5 +1,7 @@
 import { Command } from 'commander'
+import { resolve } from 'node:path'
 import process from 'node:process'
+import { cd } from 'zx'
 
 import { audit } from 'src/commands/audit'
 import { configEdit, configPath } from 'src/commands/config'
@@ -34,6 +36,7 @@ import { worktreesRemove } from 'src/commands/worktrees-remove'
 import { worktreesSync } from 'src/commands/worktrees-sync'
 import { IDE_MODES } from 'src/integrations/ide'
 import type { IdeMode } from 'src/integrations/ide'
+import { agentMode, resolveAgentModeSource } from 'src/lib/agent-mode'
 import { isLongRunningCommand } from 'src/lib/command-catalog'
 import { commandEcho } from 'src/lib/command-echo'
 import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
@@ -53,6 +56,7 @@ import type { ReleaseInput } from 'src/lib/version-utils'
  * triggering those boot side effects. `cli.ts` calls `buildProgram()` once and owns everything else.
  */
 
+import { addAgentOption } from './agent-option'
 import { addDebugOption } from './debug-option'
 
 const collectReleaseSpec = (value: string, prev: string[]): string[] => {
@@ -445,7 +449,14 @@ export const commandPath = (leaf: Command): string => {
  * program.commands.some((c) => c.name() === 'doctor') // => true
  */
 export const buildProgram = (): Command => {
-  const program = new Command()
+  // `-C` is git's spelling and, like git's, it is ROOT-ONLY: `infra-kit -C <dir> release list`. It is
+  // applied by `process.chdir` in the preAction hook below, FIRST, so every cwd reader downstream
+  // (`getProjectRoot`, the layer-3 seed, `commandEcho`) sees one directory. Capital `-C` so it never
+  // collides with the `-c <config>` leaf option on `env-load`; Commander keeps them apart regardless.
+  const program = new Command().option(
+    '-C <dir>',
+    'Run as if infra-kit was started in <dir> instead of the current working directory',
+  )
 
   // --- Grouped command surface (preferred form) ---
   const releaseGroup = program.command('release').description('Release management commands')
@@ -675,7 +686,9 @@ export const buildProgram = (): Command => {
   // acts on a set they did not choose (`setup.ts` SKIP_TOOLS_CONFLICT).
   program
     .command('setup')
-    .description('Set this machine up: shell integration, agent files, MCP server, then the external tools')
+    .description(
+      'Set this machine up: shell integration, agent files, the Claude Code skills plugin, then the external tools',
+    )
     .option('--tools <ids...>', 'Limit to these tools (brew, aws, gh, doppler, portless)')
     .option('--update [ids...]', 'Update what is already installed; never install a missing tool')
     .option('--skip-tools', 'Do the local setup only, then REPORT what each tool needs — installs nothing')
@@ -786,12 +799,29 @@ export const buildProgram = (): Command => {
   // payload is written to stdout by `emit`. No handler logic is affected.
   program.commands.forEach(addJsonOption)
 
+  // `--agent` rides the same recursion as `--json`, on the root too, so a skill can put it anywhere in
+  // the line. Read in the hook below, never off `process.argv`.
+  addAgentOption(program)
+
   // Register `--debug` on the root AND every subcommand. The logger already reads the flag off
   // `process.argv` at module load; this only stops Commander rejecting it as unknown first, which
   // is what made the log level unreachable from the command line.
   addDebugOption(program)
 
   program.hook('preAction', async (_thisCommand, actionCommand) => {
+    // `-C` FIRST — before the echo, before `--json`, before the seed and the auto-load — so nothing in
+    // this hook or the action ever sees the launch cwd. Relative to where the user typed it, which is
+    // what `process.cwd()` still is at this line. A bad dir throws here, before `--json` is resolved,
+    // so it reaches `entry/cli.ts` as a plain stderr line and exit 1 — stated, not structured.
+    //
+    // zx's `cd`, NOT `process.chdir`: zx snapshots its own cwd at import and every `$\`git …\`` in the
+    // tree would keep running in the launch dir (measured: after `process.chdir('/tmp')`, `$\`pwd\``
+    // still printed the launch dir — `-C <repo> version --json` reported `repoRoot: null`). `cd` sets
+    // both the zx cwd and `process.cwd()`.
+    const { C: changeDir } = program.opts<{ C?: string }>()
+
+    if (changeDir !== undefined) cd(resolve(process.cwd(), changeDir))
+
     // Bind the "📟 Equivalent command" line to the argv Commander just parsed. This is the only place
     // that knows it, so it is the only place that says it: when the commands named themselves, they
     // printed the flat `release-create`, which the grouped-only surface no longer parses — a replay line
@@ -806,6 +836,17 @@ export const buildProgram = (): Command => {
 
     if (jsonOutput.enabled) {
       logger.level = 'warn'
+    }
+
+    // The MCP server sets `'mcp'` itself and never runs this hook; the guard is belt-and-braces for a
+    // program built inside that process (tests do). Everything else — `--agent`, the environment —
+    // is resolved once, here, from the same `optsWithGlobals()` read `--json` needs.
+    if (agentMode.source !== 'mcp') {
+      agentMode.source = resolveAgentModeSource({
+        env: process.env,
+        stdinIsTTY: process.stdin.isTTY === true,
+        flag: Boolean(actionCommand.optsWithGlobals().agent),
+      })
     }
 
     // Layer-3 config auto-seed: ensure ~/.infra-kit/projects/<main-repo>/infra-kit.json exists (plus

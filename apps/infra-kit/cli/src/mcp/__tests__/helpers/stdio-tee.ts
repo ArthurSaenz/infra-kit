@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
  * WHY A PROXY AT ALL. The SDK v2 client hides the wire. Asserting that the server actually encodes
  * a result the modern way — rather than that the client's decoder happened to accept it — needs the
  * bytes as they crossed the pipe. Phase 6 already used this mechanism against real hosts
- * (`docs/mcp-stateless-migration-plan.md:612-613`); writing it once means the test lane and the
+ * (`docs/archive/mcp/mcp-stateless-migration-plan.md:612-613`); writing it once means the test lane and the
  * host measurements observe the wire the same way.
  *
  * WHY EVERY LINE CARRIES A PID. A negotiated stdio connection spawns a DISPOSABLE SIBLING (the

@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { fetchPRByHead } from 'src/integrations/gh/pr-status'
 import { removeJiraVersion } from 'src/integrations/jira/remove-version'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { deleteLocalBranch, deleteRemoteBranch } from 'src/lib/git-utils'
-import { isMcpMode } from 'src/lib/mcp-mode'
 import { removeReleaseWorktreeIfPresent } from 'src/lib/worktrees/remove-release-worktree'
 
 import { releaseRemove } from '../release-remove'
@@ -70,10 +70,6 @@ vi.mock('src/lib/git-utils', () => {
 
 vi.mock('src/lib/infra-kit-config', () => {
   return { getInfraKitConfig: vi.fn() }
-})
-
-vi.mock('src/lib/mcp-mode', () => {
-  return { isMcpMode: vi.fn() }
 })
 
 vi.mock('src/lib/prompts/release-picker', () => {
@@ -148,7 +144,7 @@ beforeEach(() => {
   zx.overrides = []
 
   installDefaults()
-  vi.mocked(isMcpMode).mockReturnValue(false)
+  agentMode.source = null
   vi.mocked(confirm).mockResolvedValue(true)
 })
 
@@ -207,7 +203,7 @@ describe('release remove — MERGED between preflight and step 3', () => {
     expect(removeJiraVersion).not.toHaveBeenCalled()
   })
 
-  it('reports the residue truthfully: the completed steps, and the fix version left in place', async () => {
+  it('reports the residue truthfully: the completed steps, and the fix version NOT removed', async () => {
     vi.mocked(fetchPRByHead)
       .mockResolvedValueOnce(releasePr({ state: 'OPEN' }))
       .mockResolvedValue(releasePr({ state: 'MERGED' }))
@@ -221,5 +217,25 @@ describe('release remove — MERGED between preflight and step 3', () => {
     expect(message).toContain('step 3 of 6 (close the PR)')
     expect(message).toContain('completed: worktree, ide-folders')
     expect(message).toContain('The Jira fix version v1.2.5 was NOT removed')
+    expect(message).toContain('Re-run `infra-kit release remove')
+  })
+
+  it('over MCP: the residue report names re-call, never the CLI command', async () => {
+    // The residue sentence is appended to EVERY step failure, so a step-3 failure is where a stale
+    // CLI command would surface for an MCP caller even with the Jira step untouched.
+    agentMode.source = 'mcp'
+    vi.mocked(fetchPRByHead)
+      .mockResolvedValueOnce(releasePr({ state: 'OPEN' }))
+      .mockResolvedValue(releasePr({ state: 'MERGED' }))
+
+    const error = await releaseRemove({ confirmedCommand: true, version: LABEL }).catch((e: unknown) => {
+      return e
+    })
+
+    const { message } = error as Error
+
+    expect(message).toContain('step 3 of 6 (close the PR)')
+    expect(message).toContain('Re-call release-remove with "version"')
+    expect(message).not.toContain('infra-kit release remove')
   })
 })
