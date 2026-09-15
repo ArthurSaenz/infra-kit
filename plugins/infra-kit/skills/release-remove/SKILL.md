@@ -30,13 +30,13 @@ call 2 with the old token.
   the merge and its fix version is delivered work. Undoing a delivery is a revert of the merge
   commit on the base branch and a new release, never a removal.
 - **Jira configured.** `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_PROJECT_ID` and `JIRA_TOKEN` (or
-  `JIRA_API_TOKEN`) must be in the environment the MCP server was launched with, even though the
-  tool never touches the fix version — it still has to find it and check its state. A server
-  spawned by a host does not inherit an `ik env-load`ed shell, so an unconfigured Jira is an
-  ordinary refusal here. The exit the refusal names, `infra-kit release remove --skip-jira`, is a
-  CLI flag a human runs from a configured shell; the tool has no equivalent. This check runs
-  before the existence check below, so with Jira unconfigured a mistyped version is refused with
-  the Jira message, not the typo message.
+  `JIRA_API_TOKEN`) must be loaded for this session (`/infra-kit:session <env>` or `ik env-load` in
+  the terminal that launched Claude Code); the server reads the session file before every tool, so
+  a load made a moment ago counts. The tool never touches the fix version — it still has to find
+  it and check its state. An unconfigured Jira is an ordinary refusal here. The exit the refusal
+  names, `infra-kit release remove --skip-jira`, is a CLI flag a human runs from a configured
+  shell; the tool has no equivalent. This check runs before the existence check below, so with
+  Jira unconfigured a mistyped version is refused with the Jira message, not the typo message.
 - **The fix version is neither released nor archived.** The same class of signal as a merged PR:
   the release is history, not scaffolding. The human un-releases it in Jira or leaves the release
   alone.

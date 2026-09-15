@@ -25,9 +25,10 @@ work around.
 - **No other worktree holding the base branch.** Regular releases branch off `dev`, hotfixes off
   `main`. If a linked worktree has that branch checked out, the tool refuses and names the path.
 - **Jira configured.** Every release gets a matching fix version, so `JIRA_BASE_URL`,
-  `JIRA_EMAIL`, `JIRA_PROJECT_ID` and `JIRA_TOKEN` (or `JIRA_API_TOKEN`) must be in the
-  environment — load them with `ik env-load` and source the file it returns. The check runs before
-  anything is cut.
+  `JIRA_EMAIL`, `JIRA_PROJECT_ID` and `JIRA_TOKEN` (or `JIRA_API_TOKEN`) must be loaded for this
+  session (`/infra-kit:session <env>` or `ik env-load` in the terminal that launched Claude Code);
+  the server reads the session file before every tool, so a load made a moment ago counts. The
+  check runs before anything is cut.
 
 **You do not have to already be on the base branch.** The tool runs `git fetch origin`,
 `git switch <base>` and `git pull --ff-only` itself. That is a real side effect on the human's
@@ -55,6 +56,9 @@ The gate payload carries two things you need:
 **Call 2** — repeat the **same arguments**, unchanged, plus `"confirm": true` and the
 `confirmToken` from call 1.
 
+After a form, "the same arguments" means the gate's `resolvedArgs` VERBATIM — they now carry
+`releases` you never sent, including `type`; sending anything else is `mismatch`.
+
 Change any argument between the two calls and round 2 comes back as
 `{"status": "confirmation_refused", "reason": "mismatch"}`. That is terminal — it is not a second
 gate. The other reasons are `absent`, `malformed`, `mac`, `expired` and `bind`, and every one of
@@ -73,6 +77,9 @@ arguments and reuse the token — that is exactly what `mismatch` refuses.
 
 They are mutually exclusive and one is required. An entry with both, or with neither, is rejected
 by the schema before the tool runs.
+
+A name that is not kebab-case, or is reserved, passes through the form and is refused on confirm
+with the kebab-case remediation — relay it and re-open the form.
 
 Each entry also carries `type` (`"regular"` or `"hotfix"`, default `"regular"`) and an optional
 `description`, which becomes the Jira fix version's description and feeds the PR body.
@@ -108,21 +115,24 @@ human can type the whole request on one line, and it is your job to translate th
 So `--hotfix --desc "Card expiry fix" 1.63.3` is one entry:
 `{version: "1.63.3", type: "hotfix", description: "Card expiry fix"}`.
 
-If `$ARGUMENTS` is empty, ask the human what to cut rather than guessing a version — and read the
-`"next"` caveats above before offering it.
+If `$ARGUMENTS` is empty, call the tool with NO `releases` — the server opens a form for the human
+(type, version/`next`/name, description).
 
-**Precedence, when a form is also involved.** If the server answers with an argument form and the
-human edits it, **the form wins field by field wherever the human supplied a value, and the values
-you parsed from `$ARGUMENTS` win everywhere else.** A human who typed `--hotfix` and then picked
-`regular` in the form gets `regular` — they saw the field and changed it. A human who typed
-`--hotfix` and left `type` untouched gets `hotfix`. Never rebuild the entry from the form alone: that
-converts every untouched field into a silent overwrite by a value the human never saw.
+**The empty-`resolvedArgs` gate has two causes and you must tell them apart — never confirm
+either:** `formDiscarded: true` → the human answered and the answer was discarded (a blank token);
+re-call with no `releases` to open a fresh form. `formDiscarded: false` → the client could not
+render a form; ask the human by chat and re-call with `releases`.
+
+**Precedence, when a form is also involved.** The form is offered only when you sent no
+`releases`, so there is nothing to precede: when the human typed the release on the `/` line, pass
+it as `releases` and no form appears; when they typed nothing, the form is the human's answer and
+you send nothing to override.
 
 ### Batches
 
 One call may create several releases, but **all entries must share the same `type`**. Regular and
 hotfix branch off different bases, so a mixed batch is rejected — cut them in separate
-invocations.
+invocations. Only `releases` can carry several entries; the form takes exactly one.
 
 A batch does not stop at the first failure. Each entry is attempted and the result reports
 `successCount`, `failureCount`, `createdBranches` and `failedReleases`. Read all four before

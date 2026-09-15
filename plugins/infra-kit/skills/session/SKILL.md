@@ -49,9 +49,11 @@ compare it with INFRA_KIT_SESSION at their own prompt. That comparison is the on
 reading of what has landed for this session id at invocation: `~/.zshenv`'s session-env block sources
 the file `env-load` wrote for the inherited `INFRA_KIT_SESSION`, so its `sessionConfig` is the last
 load that landed, not what the terminal shows yet. Nothing in this turn can read the post-load state —
-the human confirms at their own prompt. Never verify a load with `env-status` over MCP: it reads the
-long-lived server's own environment, frozen when Claude Code launched, and can flatly contradict a
-load you made moments ago.
+the human confirms at their own prompt. `env-status` over MCP reads the session file as of that
+call — the server re-applies it before every tool — so it is a truthful check that the load landed
+for THIS session id, though never of what the terminal prompt shows yet. This needs infra-kit CLI
+0.7.11 or newer; an older server's environment is frozen at launch, and `env-status` there can
+flatly contradict a load made moments ago.
 
 `{"error": …}` in the status block means stop before calling anything and tell the human to run
 `infra-kit setup --skip-tools`, then `source ~/.zshrc`. The same failure inside a tool result reads
@@ -134,4 +136,4 @@ where nothing interposes. Raise it when a clear closely follows a load, not on e
 - Do not supply a `config` the human did not name in order to skip the form.
 - Never send `inputResponses` yourself — that field is the human's answer, and the server cannot tell yours from theirs.
 - Do not read `isError: true` on a `confirmation_required` payload as a failure. See section 6.
-- Do not verify a load with `env-status` over MCP. See section 2.
+- `env-status` over MCP confirms the file the server will use; it does not confirm the terminal. See section 2.
