@@ -74,6 +74,12 @@ export const INFRA_KIT_ENV_CLEARED_VAR = 'INFRA_KIT_ENV_CLEARED'
 export const ENV_VAR_LINE_PATTERN = /^([A-Z_]\w*)=/i
 
 /**
+ * The `unset NAME` line env-clear.sh is made of and a manual env-load.sh ends with. Anchored at
+ * both ends so a value that merely starts with the word is not a match.
+ */
+const UNSET_LINE_PATTERN = /^unset ([A-Z_]\w*)$/i
+
+/**
  * Track whether a physical line leaves us inside an open single-quoted value,
  * mirroring how `shellSingleQuote` emits values (`'…'`, with literal quotes as
  * `'\''`). Outside a quote a backslash escapes the next char; inside a quote a
@@ -125,11 +131,16 @@ const readEnvFileContent = (filePath: string): string => {
 
 /**
  * Walk every assignment in an env-load.sh body, skipping the continuation lines of
- * multiline values. Both {@link parseVarNamesFromEnvFile} and
- * {@link parseVarsFromEnvFile} go through here, so the two can never disagree about
- * where a value ends.
+ * multiline values. {@link parseVarNamesFromEnvFile}, {@link parseVarsFromEnvFile}
+ * and {@link parseUnsetNamesFromEnvFile} all go through here, so they can never
+ * disagree about where a value ends — an `unset X` inside a quoted value is a
+ * continuation line to every one of them.
  */
-const forEachAssignment = (content: string, visit: (assignment: EnvAssignment) => void): void => {
+const forEachAssignment = (
+  content: string,
+  visit: (assignment: EnvAssignment) => void,
+  visitUnset?: (name: string) => void,
+): void => {
   // A trailing CR is stripped per line: a CRLF file would otherwise hand back values
   // ending in '\r' — a token that looks right in a diff and fails every request.
   const lines = content.split('\n').map((line) => {
@@ -152,6 +163,10 @@ const forEachAssignment = (content: string, visit: (assignment: EnvAssignment) =
     const match = ENV_VAR_LINE_PATTERN.exec(line)
 
     if (!match) {
+      const unset = UNSET_LINE_PATTERN.exec(line)
+
+      if (unset) visitUnset?.(unset[1]!)
+
       inQuote = advanceSingleQuoteState(line, false)
       index += 1
       continue
@@ -207,6 +222,24 @@ export const parseVarsFromEnvFile = (filePath: string): Record<string, string> =
   })
 
   return vars
+}
+
+/**
+ * The names the file `unset`s — everything env-clear.sh does, and the marker lines a
+ * manual env-load.sh ends with. Absent file → `[]`, like its siblings.
+ */
+export const parseUnsetNamesFromEnvFile = (filePath: string): string[] => {
+  const names: string[] = []
+
+  forEachAssignment(
+    readEnvFileContent(filePath),
+    () => {},
+    (name) => {
+      names.push(name)
+    },
+  )
+
+  return names
 }
 
 /**

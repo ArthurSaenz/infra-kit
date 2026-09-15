@@ -3,11 +3,15 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { buildEnvClearLines } from 'src/commands/env-clear/env-clear'
+import { buildEnvLoadFileLines } from 'src/commands/env-load'
+
 import {
   INFRA_KIT_SESSION_VAR,
   atomicWriteFileSync,
   getCacheRoot,
   getSessionCacheDir,
+  parseUnsetNamesFromEnvFile,
   parseVarNamesFromEnvFile,
 } from '../constants'
 
@@ -90,6 +94,93 @@ describe('parseVarNamesFromEnvFile', () => {
       // the following assignment is still detected.
       fs.writeFileSync(file, "GREETING='it'\\''s'\nNEXT=ok\n")
       expect(parseVarNamesFromEnvFile(file)).toEqual(['GREETING', 'NEXT'])
+    })
+  })
+})
+
+describe('parseUnsetNamesFromEnvFile', () => {
+  it('returns empty array when file does not exist', () => {
+    expect(parseUnsetNamesFromEnvFile('/nonexistent/path/env.sh')).toEqual([])
+  })
+
+  it('yields every name a real env-clear.sh unsets, and not the exported sentinel', () => {
+    withTmpDir((dir) => {
+      const file = path.join(dir, 'env-clear.sh')
+
+      fs.writeFileSync(file, `${buildEnvClearLines(['JIRA_TOKEN', 'JIRA_EMAIL']).join('\n')}\n`)
+      expect(parseUnsetNamesFromEnvFile(file)).toEqual([
+        'JIRA_TOKEN',
+        'JIRA_EMAIL',
+        'INFRA_KIT_ENV',
+        'INFRA_KIT_ENV_CONFIG',
+        'INFRA_KIT_ENV_PROJECT',
+        'INFRA_KIT_ENV_PROJECT_ROOT',
+        'INFRA_KIT_ENV_LOADED_AT',
+        'INFRA_KIT_ENV_AUTOLOADED',
+      ])
+      expect(parseVarNamesFromEnvFile(file)).toEqual([])
+    })
+  })
+
+  it('yields the two marker lines of a real manual env-load.sh, and none of its assignments', () => {
+    withTmpDir((dir) => {
+      const file = path.join(dir, 'env-load.sh')
+      const lines = buildEnvLoadFileLines({
+        pairs: [['JIRA_TOKEN', 'secret']],
+        config: 'dev',
+        project: 'proj',
+        projectRoot: dir,
+        loadedAt: '2026-09-15T00:00:00.000Z',
+        autoLoaded: false,
+      })
+
+      fs.writeFileSync(file, `${lines.join('\n')}\n`)
+      expect(parseUnsetNamesFromEnvFile(file)).toEqual(['INFRA_KIT_ENV_AUTOLOADED', 'INFRA_KIT_ENV_CLEARED'])
+    })
+  })
+
+  it('yields nothing for an auto-loaded env-load.sh', () => {
+    withTmpDir((dir) => {
+      const file = path.join(dir, 'env-load.sh')
+      const lines = buildEnvLoadFileLines({
+        pairs: [['JIRA_TOKEN', 'secret']],
+        config: 'dev',
+        project: 'proj',
+        projectRoot: dir,
+        loadedAt: '2026-09-15T00:00:00.000Z',
+        autoLoaded: true,
+      })
+
+      fs.writeFileSync(file, `${lines.join('\n')}\n`)
+      expect(parseUnsetNamesFromEnvFile(file)).toEqual([])
+    })
+  })
+
+  it('strips CRLF line endings', () => {
+    withTmpDir((dir) => {
+      const file = path.join(dir, 'env-clear.sh')
+
+      fs.writeFileSync(file, 'unset FOO\r\nunset BAR\r\n')
+      expect(parseUnsetNamesFromEnvFile(file)).toEqual(['FOO', 'BAR'])
+    })
+  })
+
+  it('does not match an `unset X` continuation line inside a single-quoted value', () => {
+    withTmpDir((dir) => {
+      const file = path.join(dir, 'env-load.sh')
+
+      fs.writeFileSync(file, "set -a\nNOTES='first line\nunset SHOULD_STAY\nlast line'\nunset REAL\nset +a\n")
+      expect(parseUnsetNamesFromEnvFile(file)).toEqual(['REAL'])
+      expect(parseVarNamesFromEnvFile(file)).toEqual(['NOTES'])
+    })
+  })
+
+  it('ignores lines that only start with the word', () => {
+    withTmpDir((dir) => {
+      const file = path.join(dir, 'env.sh')
+
+      fs.writeFileSync(file, 'unset FOO BAR\nunset\nunsettled=1\n# unset NOPE\nunset OK\n')
+      expect(parseUnsetNamesFromEnvFile(file)).toEqual(['OK'])
     })
   })
 })
