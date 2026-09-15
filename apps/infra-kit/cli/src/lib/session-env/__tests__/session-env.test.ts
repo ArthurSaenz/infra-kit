@@ -89,32 +89,33 @@ const setMtimeMs = (file: string, ms: number): void => {
   fs.utimesSync(file, ms / 1000, ms / 1000)
 }
 
-const infoLines = (): unknown[] => {
-  return info.mock.calls.map(([line]) => {
+const linesOf = (spy: MockInstance<typeof logger.info>): unknown[] => {
+  return spy.mock.calls.map(([line]) => {
     return line
   })
 }
 
-const warnLines = (): unknown[] => {
-  return warn.mock.calls.map(([line]) => {
-    return line
-  })
+/** Back to the launch environment: the sandboxed session, no Jira, no overlay state. */
+const resetToLaunchEnv = (): void => {
+  resetSessionEnvForTests()
+  restoreEnv(envSnapshot)
+  process.env.XDG_CACHE_HOME = cacheHome
+  process.env.INFRA_KIT_SESSION = SESSION
+
+  for (const name of JIRA_NAMES) delete process.env[name]
 }
 
 beforeEach(() => {
   envSnapshot = { ...process.env }
   cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'session-env-'))
   sessionDir = makeSessionDir(SESSION)
-  process.env.XDG_CACHE_HOME = cacheHome
-  process.env.INFRA_KIT_SESSION = SESSION
+  resetToLaunchEnv()
 
-  for (const name of JIRA_NAMES) delete process.env[name]
   for (const name of MANUAL_LOAD_UNSETS) delete process.env[name]
 
   info = vi.spyOn(logger, 'info').mockImplementation(() => {})
   warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
   vi.mocked(parseVarsFromEnvFile).mockClear()
-  resetSessionEnvForTests()
 })
 
 afterEach(() => {
@@ -194,8 +195,8 @@ describe('readSessionEnvState — the zshenv rule', () => {
     expect(readSessionEnvState()).toEqual({ kind: 'no-session' })
     expect(applySessionEnv()).toEqual({ set: [], unset: [], changed: false })
 
-    expect(warnLines()).toEqual(['session-env: INFRA_KIT_SESSION unset — no overlay'])
-    expect(infoLines()).toEqual([])
+    expect(linesOf(warn)).toEqual(['session-env: INFRA_KIT_SESSION unset — no overlay'])
+    expect(linesOf(info)).toEqual([])
     expect(stat).not.toHaveBeenCalled()
   })
 })
@@ -259,7 +260,7 @@ describe('applySessionEnv', () => {
     expect(applySessionEnv().changed).toBe(true)
     expect(applySessionEnv()).toEqual({ set: [], unset: [], changed: false })
     expect(vi.mocked(parseVarsFromEnvFile)).toHaveBeenCalledTimes(1)
-    expect(infoLines()).toHaveLength(1)
+    expect(linesOf(info)).toHaveLength(1)
 
     atomicWriteFileSync(file, content, 0o600)
     expect(fs.statSync(file).ino).not.toBe(ino)
@@ -324,7 +325,7 @@ describe('applySessionEnv', () => {
     expect(result.set).toEqual(['JIRA_TOKEN'])
     expect(process.env.PATH).toBe(originalPath)
     expect(process.env.INFRA_KIT_SESSION).toBe(SESSION)
-    expect(warnLines()).toEqual(['session-env: skipped protected names [PATH, INFRA_KIT_SESSION]'])
+    expect(linesOf(warn)).toEqual(['session-env: skipped protected names [PATH, INFRA_KIT_SESSION]'])
     expect(readSessionEnvState().kind).toBe('load')
 
     warn.mockClear()
@@ -342,7 +343,7 @@ describe('applySessionEnv', () => {
     ])
     expect(process.env.PATH).toBe(originalPath)
     expect(process.env.XDG_CACHE_HOME).toBe(cacheHome)
-    expect(warnLines()).toEqual(['session-env: skipped protected names [PATH, XDG_CACHE_HOME]'])
+    expect(linesOf(warn)).toEqual(['session-env: skipped protected names [PATH, XDG_CACHE_HOME]'])
   })
 
   it('aC9: flow 1 — a baseline that already holds the file’s vars is unchanged by the first apply', () => {
@@ -373,19 +374,11 @@ describe('applySessionEnv', () => {
     applySessionEnv(first)
     const firstResult = { ...process.env }
 
-    resetSessionEnvForTests()
-    restoreEnv(envSnapshot)
-    process.env.XDG_CACHE_HOME = cacheHome
-    process.env.INFRA_KIT_SESSION = SESSION
-    for (const name of JIRA_NAMES) delete process.env[name]
+    resetToLaunchEnv()
     applySessionEnv(second)
     const secondResult = { ...process.env }
 
-    resetSessionEnvForTests()
-    restoreEnv(envSnapshot)
-    process.env.XDG_CACHE_HOME = cacheHome
-    process.env.INFRA_KIT_SESSION = SESSION
-    for (const name of JIRA_NAMES) delete process.env[name]
+    resetToLaunchEnv()
     applySessionEnv(first)
     applySessionEnv(second)
 
@@ -425,7 +418,7 @@ describe('applySessionEnv', () => {
     fs.rmSync(path.join(sessionDir, 'env-clear.sh'))
     applySessionEnv()
 
-    expect(infoLines()).toEqual([
+    expect(linesOf(info)).toEqual([
       'session-env applied: set [JIRA_TOKEN, JIRA_EMAIL, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG, INFRA_KIT_ENV_PROJECT, INFRA_KIT_ENV_PROJECT_ROOT, INFRA_KIT_ENV_LOADED_AT] unset [INFRA_KIT_ENV_AUTOLOADED, INFRA_KIT_ENV_CLEARED] (load, 7 vars)',
       // env-clear lists the load file's marker assignments AND its own marker lines, so the
       // names repeat — the log mirrors the file rather than deduplicating it.

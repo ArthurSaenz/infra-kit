@@ -122,37 +122,33 @@ describe('parseUnsetNamesFromEnvFile', () => {
     })
   })
 
+  const writeRealLoadFile = (dir: string, autoLoaded: boolean): string => {
+    const file = path.join(dir, 'env-load.sh')
+    const lines = buildEnvLoadFileLines({
+      pairs: [['JIRA_TOKEN', 'secret']],
+      config: 'dev',
+      project: 'proj',
+      projectRoot: dir,
+      loadedAt: '2026-09-15T00:00:00.000Z',
+      autoLoaded,
+    })
+
+    fs.writeFileSync(file, `${lines.join('\n')}\n`)
+
+    return file
+  }
+
   it('yields the two marker lines of a real manual env-load.sh, and none of its assignments', () => {
     withTmpDir((dir) => {
-      const file = path.join(dir, 'env-load.sh')
-      const lines = buildEnvLoadFileLines({
-        pairs: [['JIRA_TOKEN', 'secret']],
-        config: 'dev',
-        project: 'proj',
-        projectRoot: dir,
-        loadedAt: '2026-09-15T00:00:00.000Z',
-        autoLoaded: false,
-      })
+      const file = writeRealLoadFile(dir, false)
 
-      fs.writeFileSync(file, `${lines.join('\n')}\n`)
       expect(parseUnsetNamesFromEnvFile(file)).toEqual(['INFRA_KIT_ENV_AUTOLOADED', 'INFRA_KIT_ENV_CLEARED'])
     })
   })
 
   it('yields nothing for an auto-loaded env-load.sh', () => {
     withTmpDir((dir) => {
-      const file = path.join(dir, 'env-load.sh')
-      const lines = buildEnvLoadFileLines({
-        pairs: [['JIRA_TOKEN', 'secret']],
-        config: 'dev',
-        project: 'proj',
-        projectRoot: dir,
-        loadedAt: '2026-09-15T00:00:00.000Z',
-        autoLoaded: true,
-      })
-
-      fs.writeFileSync(file, `${lines.join('\n')}\n`)
-      expect(parseUnsetNamesFromEnvFile(file)).toEqual([])
+      expect(parseUnsetNamesFromEnvFile(writeRealLoadFile(dir, true))).toEqual([])
     })
   })
 

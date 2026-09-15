@@ -5,16 +5,7 @@ import { Client as ClientV1 } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport as StdioClientTransportV1 } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -23,7 +14,7 @@ import { $ } from 'zx'
 import { buildEnvClearLines } from 'src/commands/env-clear/env-clear'
 import { buildEnvLoadFileLines } from 'src/commands/env-load'
 import { commandCatalog, getExposedMcpTools } from 'src/lib/command-catalog'
-import { parseVarNamesFromEnvFile, parseVarsFromEnvFile } from 'src/lib/constants'
+import { atomicWriteFileSync, parseVarNamesFromEnvFile, parseVarsFromEnvFile } from 'src/lib/constants'
 import { LOG_FILE_PATH } from 'src/lib/logger'
 import { deployableEnvs } from 'src/lib/workflow-envs'
 
@@ -2823,13 +2814,12 @@ describe('e-se — a mid-session load is visible to the next tool', () => {
     await git`git -c user.name=e2e -c user.email=e2e@example.com -c commit.gpgsign=false commit --quiet -m fixture`
   }
 
-  /** Temp + rename, as `atomicWriteFileSync` does: a NEW inode per write, so a rewrite can never alias the last signature. */
+  /** The real writer's temp + rename: a NEW inode per write, so a rewrite can never alias the last signature. */
   const writeSessionFile = (fixture: EnvPickerFixture, name: string, lines: string[]): string => {
     const file = join(fixture.sessionDir, name)
 
     mkdirSync(fixture.sessionDir, { recursive: true })
-    writeFileSync(`${file}.tmp`, `${lines.join('\n')}\n`)
-    renameSync(`${file}.tmp`, file)
+    atomicWriteFileSync(file, `${lines.join('\n')}\n`, 0o600)
 
     return file
   }
