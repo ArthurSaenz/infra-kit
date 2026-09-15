@@ -718,7 +718,7 @@ working tree and uncommitted**:
 
 `git log -S 'setup-deps-status'` over that directory returns **nothing** — the change exists only in
 the working tree. It adds a 24th exposed tool, `setup-deps-status` (almost certainly the in-flight
-`docs/mcp-setup-dependency-plan.md` work, which was already untracked at this session's start).
+`docs/archive/mcp/mcp-setup-dependency-plan.md` work, which was already untracked at this session's start).
 
 Measured both ways:
 

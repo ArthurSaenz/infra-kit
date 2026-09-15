@@ -1,3 +1,5 @@
+> Archived 2026-09-15 — the infra-kit MCP server is being retired; see .omc/plans/mcp-to-cli-skills-migration.md.
+
 # [DO] MCP via plugin — the migration (§8.2+ of the approved plan, re-planned on the measured facts)
 
 Status: approved ("роби", 2026-09-14) — steps 1–2 IMPLEMENTED on branches: `do/mcp-via-plugin-step0` (+ the PM-9 gate, = CLI 0.7.2 content)
@@ -8,7 +10,7 @@ Date: 2026-09-14
 Mode: ralplan (deliberate) — Planner draft
 Fact sheets: `scratchpad/facts2.md` (binding; cited as **F1–F17**, options **A–E**), `scratchpad/facts.md`
 (cited as **F-…** where a fact only lives there) and `scratchpad/s1/measurements.md` (**S1-1, S1-5, S1-6** —
-measured by the orchestrator on 2026-09-14, real travelist-monorepo; facts, not spikes). Parent: `docs/mcp-via-plugin-plan.md` rev 5.1 — §6.1 (spike),
+measured by the orchestrator on 2026-09-14, real travelist-monorepo; facts, not spikes). Parent: `docs/archive/mcp/mcp-via-plugin-plan.md` rev 5.1 — §6.1 (spike),
 §8.0 (step 0, DONE on `do/mcp-via-plugin-step0`, commits 3f7eabf/c30c5a2/a9ce8c6), §14 (settled dispositions,
 not re-opened here). This document REPLACES rev 5.1 §8.2–§8.7, §10, §11 for the migration itself.
 User decision being executed: "давай переносити" — move the server into the plugin despite S0-2 (F5).

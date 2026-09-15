@@ -162,7 +162,7 @@ commit in the usual lockstep flow).
 - `docs/release-deploy-command-plan.md:864-868` (§2.10 "`prompts/list` 1 → 2 … `argsSchema` stays omitted
   on both prompts") and `docs/session-command-plan.md:216` (invariant #5 "`prompts/list` still returns
   exactly `['release-create']`") — both read as live instructions to register or keep a prompt; add the
-  same one-liner directly beneath each. `docs/mcp-setup-dependency-plan.md:94` is a history table row —
+  same one-liner directly beneath each. `docs/archive/mcp/mcp-setup-dependency-plan.md:94` is a history table row —
   leave it. No other edits: plan docs are history, not living specs.
 
 ### 3.7 Memory (outside repo, my own)

@@ -1,3 +1,5 @@
+> Archived 2026-09-15 — the infra-kit MCP server is being retired; see .omc/plans/mcp-to-cli-skills-migration.md.
+
 # [DO] Deliver the infra-kit MCP server through the Claude Code plugin
 
 Status: approved 2026-09-14 ("do it") — spike S0 run, step 0 implemented on branch `do/mcp-via-plugin-step0`;

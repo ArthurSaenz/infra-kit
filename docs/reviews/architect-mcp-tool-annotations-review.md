@@ -1,4 +1,4 @@
-# Architect review — `docs/mcp-tool-annotations-plan.md` (§3 onward)
+# Architect review — `docs/archive/mcp/mcp-tool-annotations-plan.md` (§3 onward)
 
 **Verdict: NEEDS REVISION** — blocking items 1–5 in §8 below.
 Reviewer: Architect (read-only). Sections §1 (steelman antithesis) and §2 (tensions) were delivered

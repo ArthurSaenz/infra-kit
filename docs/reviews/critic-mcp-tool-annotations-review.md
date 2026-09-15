@@ -1,4 +1,4 @@
-# Critic review — `docs/mcp-tool-annotations-plan.md`
+# Critic review — `docs/archive/mcp/mcp-tool-annotations-plan.md`
 
 **Verdict: ITERATE**
 
@@ -69,7 +69,7 @@ Adopt this in place of Architect item 3 and item 5's S1 branch.
 
 ### C2 — HIGH. P4 is stated and then not applied. Three violations, all at decision points.
 
-P4 (`docs/mcp-tool-annotations-plan.md:50-53`): *"Where a hint is uncertain, keep the spec default …
+P4 (`docs/archive/mcp/mcp-tool-annotations-plan.md:50-53`): *"Where a hint is uncertain, keep the spec default …
 Under-claiming risk is the dangerous error."* Spec defaults: `destructiveHint` **true**,
 `readOnlyHint` **false**, `idempotentHint` **false**, `openWorldHint` **true**.
 

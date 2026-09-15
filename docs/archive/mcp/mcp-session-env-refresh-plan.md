@@ -1,3 +1,5 @@
+> Archived 2026-09-15 — the infra-kit MCP server is being retired; see .omc/plans/mcp-to-cli-skills-migration.md.
+
 # The MCP server sees the session's `env-load` — in-process session-env refresh at the tool chokepoint
 
 **Status: implemented** (2026-09-15, row (b) — the base design without §2.4-opt; the user said
@@ -6,8 +8,8 @@ landed first because it is independent), `b7e1cbc` (step 1), `aa668e7` (step 2),
 (step 3), `e8844ee` (step 4). Steps 5 (the gate) and 6 (publish + the exact-version global
 install) and V0 (§6.6) are NOT done. Deviations recorded in §12.
 Planned as RALPLAN-DR, deliberate mode — Planner revision 2; consensus reached, see §11 — after
-`docs/mcp-session-env-refresh-plan.architect-review.md` (rounds 1 and 1b) and
-`docs/mcp-session-env-refresh-plan.critic-review.md` (ITERATE, blocking 1–12). Every blocking item
+`docs/archive/mcp/mcp-session-env-refresh-plan.architect-review.md` (rounds 1 and 1b) and
+`docs/archive/mcp/mcp-session-env-refresh-plan.critic-review.md` (ITERATE, blocking 1–12). Every blocking item
 and every required Architect amendment is applied; §11 lists them by number.
 
 **The defect.** `/infra-kit:session dev` → MCP `env-load` writes 16 Doppler vars to
@@ -26,7 +28,7 @@ over MCP throws `INFRA_KIT_SESSION is not set` in the same situation (`constants
 
 Sibling of `docs/session-zshenv-plan.md` (which fixed the same class of problem for every zsh child
 of that terminal — the `Bash` tool included — and explicitly left the MCP server out, `:516`
-"No fix for the MCP `env-status` staleness") and of `docs/mcp-proxy-generalization-plan.md` (the
+"No fix for the MCP `env-status` staleness") and of `docs/archive/mcp/mcp-proxy-generalization-plan.md` (the
 `ik-mcp` shim the user asked about). Where they decided something this document does not re-decide it.
 
 All paths below are relative to `apps/infra-kit/cli/` unless they start with `plugins/` or `docs/`.

@@ -1,4 +1,4 @@
-> Status: architect review of docs/mcp-setup-dependency-plan.md — advisory, not authorization.
+> Status: architect review of docs/archive/mcp/mcp-setup-dependency-plan.md — advisory, not authorization.
 
 # Architect review — SetupDependency plan
 

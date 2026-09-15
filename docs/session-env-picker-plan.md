@@ -20,7 +20,7 @@ One document, two independently shippable phases:
   and the workflow-resource architecture leaves the CLI.
 
 Sibling of `docs/release-deploy-command-plan.md` (**RD §n**, the argument-form seam),
-`docs/session-command-plan.md` and `docs/mcp-via-plugin-migration-plan.md`. Where they decided
+`docs/session-command-plan.md` and `docs/archive/mcp/mcp-via-plugin-migration-plan.md`. Where they decided
 something this document does not re-decide it.
 
 **Δ2 (Critic #11): this plan supersedes `docs/infra-kit-setup-skill-plan.md` Phase 3.** That plan

@@ -1,3 +1,5 @@
+> Archived 2026-09-15 — the infra-kit MCP server is being retired; see .omc/plans/mcp-to-cli-skills-migration.md.
+
 # MCP proxy generalization — plan (RALPLAN-DR, deliberate)
 
 > Status: **pending approval** — planning artifact only, nothing implemented.

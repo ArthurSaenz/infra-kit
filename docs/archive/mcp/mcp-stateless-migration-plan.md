@@ -1,3 +1,5 @@
+> Archived 2026-09-15 — the infra-kit MCP server is being retired; see .omc/plans/mcp-to-cli-skills-migration.md.
+
 # MCP v1 → v2 migration & 2026-07-28 ("stateless") protocol adoption
 
 **STATUS: Release 1 shipped (2026-08-16, commit `d1924c0`). Release 2 — the Appendix B era flip —
@@ -1829,7 +1831,7 @@ dedicated ralplan pass.
 ## 9. Conditions C1–C8 — exit checks
 
 Each condition has a one-line, grep-checkable test against this document. All eight must pass for the
-plan to be considered finalized. Run from the repo root against `docs/mcp-stateless-migration-plan.md`.
+plan to be considered finalized. Run from the repo root against `docs/archive/mcp/mcp-stateless-migration-plan.md`.
 
 | # | Condition | Exit check |
 |---|---|---|

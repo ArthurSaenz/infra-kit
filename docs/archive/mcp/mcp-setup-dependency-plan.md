@@ -1,3 +1,5 @@
+> Archived 2026-09-15 — the infra-kit MCP server is being retired; see .omc/plans/mcp-to-cli-skills-migration.md.
+
 > Status: pending approval — planning artifact, not authorization to implement.
 
 # SetupDependency — installing and updating external developer tooling

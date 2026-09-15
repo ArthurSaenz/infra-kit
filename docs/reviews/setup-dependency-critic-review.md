@@ -2,7 +2,7 @@
 
 # Critic review — SetupDependency plan (as revised by the Architect)
 
-Read-only pass over `docs/mcp-setup-dependency-plan.md` and
+Read-only pass over `docs/archive/mcp/mcp-setup-dependency-plan.md` and
 `docs/reviews/setup-dependency-architect-review.md`. Nothing outside this file was edited. Every
 in-repo claim below was re-derived from the working tree at `/Users/arthur/projects/infra-kit`
 (branch `main`, dirty) — I took nothing from either document on trust. CLI paths are relative to
@@ -481,7 +481,7 @@ VERDICT (round 1): ITERATE
 
 # Round 2 — verdict pass on revision 2
 
-Re-read `docs/mcp-setup-dependency-plan.md` in full. This is a verdict pass, not a fresh review: I
+Re-read `docs/archive/mcp/mcp-setup-dependency-plan.md` in full. This is a verdict pass, not a fresh review: I
 checked whether my 14 items landed *in the text*, hunted for contradictions bred by three rounds of
 editing, judged §5.2's non-circularity argument on its own merits, and re-tested the deliberate-mode
 floor. Everything asserted below was re-derived from the working tree.

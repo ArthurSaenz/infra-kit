@@ -1,9 +1,11 @@
+> Archived 2026-09-15 — the infra-kit MCP server is being retired; see .omc/plans/mcp-to-cli-skills-migration.md.
+
 # Architect review — in-process session-env refresh at the MCP tool chokepoint
 
 Reviewer: architect pass of a ralplan `--deliberate` consensus loop. Read-only with respect to
-`docs/mcp-session-env-refresh-plan.md` and all source; this file is the only artefact written.
+`docs/archive/mcp/mcp-session-env-refresh-plan.md` and all source; this file is the only artefact written.
 
-Subject: `docs/mcp-session-env-refresh-plan.md` (504 lines, revision 1, Status: `pending approval`).
+Subject: `docs/archive/mcp/mcp-session-env-refresh-plan.md` (504 lines, revision 1, Status: `pending approval`).
 Tree: `main` @ `388ec26`, one untracked file (the plan). Every line number below was read from that
 tree. `«cli»` = `apps/infra-kit/cli/`.
 
