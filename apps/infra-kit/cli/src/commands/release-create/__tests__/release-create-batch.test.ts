@@ -1,6 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import select from '@inquirer/select'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { mcpMode } from 'src/lib/mcp-mode'
 
 import { releaseCreate } from '../release-create'
 
@@ -41,6 +44,10 @@ vi.mock('src/lib/logger', () => {
   return { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }
 })
 
+// The wizard's first prompt. Automocked so a headless refusal that FAILED to fire would surface as a
+// mock call, not as an inquirer prompt hanging on a stdin that is not there.
+vi.mock('@inquirer/select')
+
 const confirmMock = vi.hoisted(() => {
   return vi.fn()
 })
@@ -64,14 +71,17 @@ const dirtyTree = () => {
   })
 }
 
+beforeEach(() => {
+  vi.clearAllMocks()
+  mocks.loadJiraConfig.mockResolvedValue({ baseUrl: 'https://jira', token: 't', email: 'e', projectId: 1 })
+  mocks.assertManagementContext.mockResolvedValue(undefined)
+  mocks.assertBaseBranchSwitchable.mockResolvedValue(undefined)
+  mocks.assertCleanCheckout.mockResolvedValue(undefined)
+  confirmMock.mockResolvedValue(undefined)
+})
+
 describe('releaseCreate — batch behaviour around the per-entry guard', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-    mocks.loadJiraConfig.mockResolvedValue({ baseUrl: 'https://jira', token: 't', email: 'e', projectId: 1 })
-    mocks.assertManagementContext.mockResolvedValue(undefined)
-    mocks.assertBaseBranchSwitchable.mockResolvedValue(undefined)
-    mocks.assertCleanCheckout.mockResolvedValue(undefined)
-    confirmMock.mockResolvedValue(undefined)
     mocks.prepareGitForRelease.mockResolvedValue('a'.repeat(40))
     mocks.createSingleRelease.mockImplementation((args: { id: { raw: string } }) => {
       return Promise.resolve({
@@ -154,5 +164,44 @@ describe('releaseCreate — batch behaviour around the per-entry guard', () => {
     const result = await releaseCreate({ releases, confirmedCommand: true })
 
     expect(result.structuredContent.failedReleases[0]?.error).toContain('M src/foo.ts')
+  })
+})
+
+describe('releaseCreate — headless over MCP, no releases', () => {
+  beforeEach(() => {
+    mcpMode.enabled = true
+  })
+
+  afterEach(() => {
+    mcpMode.enabled = false
+    vi.restoreAllMocks()
+  })
+
+  // Reachable only on a round 2 whose token was minted over `{}`: the MCP seam offers a form first,
+  // and a client that cannot render one sees a gate with empty `resolvedArgs`. Confirming THAT must
+  // land on a refusal that names the field, never on the wizard writing into the JSON-RPC transport.
+  it('refuses with a remediation naming "releases" before the wizard has a side effect', async () => {
+    const setInteractive = vi.spyOn(commandEcho, 'setInteractive')
+
+    const outcome = releaseCreate({ confirmedCommand: true })
+
+    await expect(outcome).rejects.toBeInstanceOf(OperationError)
+    await expect(outcome).rejects.toMatchObject({ remediation: expect.stringContaining('"releases"') })
+    expect(vi.mocked(select)).not.toHaveBeenCalled()
+    expect(setInteractive).not.toHaveBeenCalled()
+    expect(mocks.prepareGitForRelease).not.toHaveBeenCalled()
+  })
+
+  // The form's `toArgs` lets a name the rule rejects through on purpose, so the refusal that names the
+  // rule comes from here — and it has to arrive before anything has touched git.
+  it('refuses a form-shaped bad name with the kebab-case remediation before any mutation', async () => {
+    const outcome = releaseCreate({
+      releases: [{ name: 'Checkout Redesign', type: 'regular' }],
+      confirmedCommand: true,
+    })
+
+    await expect(outcome).rejects.toBeInstanceOf(OperationError)
+    await expect(outcome).rejects.toMatchObject({ remediation: expect.stringContaining('use a kebab-case name') })
+    expect(mocks.prepareGitForRelease).not.toHaveBeenCalled()
   })
 })

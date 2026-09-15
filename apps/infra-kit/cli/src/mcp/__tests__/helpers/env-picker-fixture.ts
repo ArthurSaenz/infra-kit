@@ -119,6 +119,13 @@ export const makeEnvPickerFixture = async (): Promise<EnvPickerFixture> => {
 
   delete env.INFRA_KIT_ENV_TOKEN
   delete env.CLAUDE_PLUGIN_ROOT
+  // A developer's loaded Jira env would make release-create's `[next]` hint live (slow, non-deterministic)
+  // and could let its handler succeed against a real Jira; scrubbed so the lane's outcomes are fixed.
+  delete env.JIRA_BASE_URL
+  delete env.JIRA_EMAIL
+  delete env.JIRA_PROJECT_ID
+  delete env.JIRA_TOKEN
+  delete env.JIRA_API_TOKEN
 
   return {
     repo,

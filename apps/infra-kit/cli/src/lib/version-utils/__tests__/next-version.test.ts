@@ -4,12 +4,14 @@ import { InvalidReleaseNameError, formatBranchName, formatJiraName, formatPrTitl
 import type { ReleaseId } from '../../release-id'
 import {
   NoPriorVersionsError,
+  classifyReleaseToken,
   collectKnownVersions,
   computeNextVersion,
   formatReleaseSpec,
   hasNextToken,
   parseReleaseSpec,
   resolveReleaseEntries,
+  suggestNextVersion,
 } from '../next-version'
 import type { ReleaseEntry } from '../next-version'
 
@@ -82,6 +84,37 @@ describe('computeNextVersion', () => {
     expect(() => {
       return computeNextVersion([], 'regular')
     }).toThrow(NoPriorVersionsError)
+  })
+})
+
+describe('suggestNextVersion', () => {
+  it('returns null instead of throwing when there are no known versions', () => {
+    expect(suggestNextVersion([], 'regular')).toBeNull()
+    expect(suggestNextVersion([], 'hotfix')).toBeNull()
+  })
+
+  it('suggests the same numbers computeNextVersion produces', () => {
+    expect(suggestNextVersion([[1, 63, 2]], 'regular')).toBe('1.64.0')
+    expect(suggestNextVersion([[1, 63, 2]], 'hotfix')).toBe('1.63.3')
+  })
+
+  it('rethrows anything that is not NoPriorVersionsError', () => {
+    // A `known` that is not an array reaches `.length`/`.reduce` and blows up with a TypeError —
+    // the one foreign error reachable without mocking, and exactly the kind that must NOT read as
+    // "no suggestion".
+    expect(() => {
+      return suggestNextVersion(null as unknown as [number, number, number][], 'regular')
+    }).toThrow(TypeError)
+  })
+})
+
+describe('classifyReleaseToken', () => {
+  it.each(['1.2.3', 'v1.2.3', 'release/v1.2.3', 'next', 'NEXT'])('%s is a version, returned as typed', (token) => {
+    expect(classifyReleaseToken(token)).toEqual({ version: token })
+  })
+
+  it.each(['foo', 'Foo Bar', 'dev', 'refs/heads/release/foo'])('%s is a name, returned as typed', (token) => {
+    expect(classifyReleaseToken(token)).toEqual({ name: token })
   })
 })
 

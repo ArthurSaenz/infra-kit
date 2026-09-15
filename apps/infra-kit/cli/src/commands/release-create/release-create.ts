@@ -14,18 +14,20 @@ import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertBaseBranchSwitchable, assertCleanCheckout, assertManagementContext } from 'src/lib/git-guard'
 import { logger } from 'src/lib/logger'
+import { isMcpMode } from 'src/lib/mcp-mode'
 import { withEscape } from 'src/lib/prompts/escapable-context'
+import { createReleaseFormProvider } from 'src/lib/release-form'
 import { InvalidReleaseNameError, displayLabel, validateName } from 'src/lib/release-id'
 import { createSingleRelease, getBaseBranch, prepareGitForRelease } from 'src/lib/release-utils'
 import type { ReleaseCreationResult, ReleaseType } from 'src/lib/release-utils'
 import {
   NoPriorVersionsError,
-  computeNextVersion,
   formatReleaseSpec,
   hasNextToken,
   loadExistingVersions,
   parseVersion,
   resolveReleaseEntries,
+  suggestNextVersion,
 } from 'src/lib/version-utils'
 import type { ReleaseEntry, ReleaseInput, SemVer } from 'src/lib/version-utils'
 import { defineMcpTool, textContent } from 'src/types'
@@ -36,16 +38,6 @@ interface ReleaseCreateArgs extends RequiredConfirmedOptionArg {
 }
 
 const VERSION_PROMPT_HINT = '"1.2.5" or "next"'
-
-const trySuggestNext = (known: SemVer[], type: ReleaseType): string | null => {
-  try {
-    return computeNextVersion(known, type)
-  } catch (err) {
-    if (err instanceof NoPriorVersionsError) return null
-
-    throw err
-  }
-}
 
 const resolveOrExit = (entries: ReleaseInput[], known: SemVer[]): ReleaseEntry[] => {
   try {
@@ -72,7 +64,7 @@ const resolveOrExit = (entries: ReleaseInput[], known: SemVer[]): ReleaseEntry[]
 
 /** Exported for test only — the empty-answer fallback below is observable no other way. */
 export const promptForVersionInput = async (running: SemVer[], type: ReleaseType): Promise<string> => {
-  const suggestion = trySuggestNext(running, type)
+  const suggestion = suggestNextVersion(running, type)
   const defaultHint = suggestion ? ` [${suggestion}]` : ''
   // The suggestion stays in the MESSAGE and is applied by the empty-answer fallback below —
   // deliberately not inquirer's `default:`, which prefills the editable buffer and would change
@@ -82,8 +74,7 @@ export const promptForVersionInput = async (running: SemVer[], type: ReleaseType
       (context) => {
         return input({ message: `  Version (e.g. ${VERSION_PROMPT_HINT})${defaultHint}: ` }, context)
       },
-      // MCP-unreachable: `releases` is required (min 1) on the release-create tool, so this path is dead there.
-      { whenHeadless: 'unreachable' },
+      { whenHeadless: 'refuse' },
     )
   ).trim()
   const versionInput = versionAnswer === '' ? (suggestion ?? '') : versionAnswer
@@ -102,8 +93,7 @@ const promptForNameInput = async (): Promise<string> => {
       (context) => {
         return input({ message: '  Name (kebab-case, e.g. "checkout-redesign"): ' }, context)
       },
-      // MCP-unreachable: `releases` is required (min 1) on the release-create tool, so this path is dead there.
-      { whenHeadless: 'unreachable' },
+      { whenHeadless: 'refuse' },
     )
   ).trim()
 
@@ -124,6 +114,11 @@ const promptForNameInput = async (): Promise<string> => {
   return name
 }
 
+// Every prompt in this wizard (and the two input helpers above) refuses when headless, and refusing is
+// the only honest outcome: there is no safe default for "which release", so answering would cut a
+// branch nobody chose. An elicitation-capable client never gets here (the form supplies `releases`);
+// one that cannot render a form is refused by `collectEntries` before any prompt. These sites carried
+// the stronger claim while `releases` was required — `headless-policy-guards.test.ts` keeps that ledger.
 const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>): Promise<ReleaseEntry[]> => {
   commandEcho.setInteractive()
 
@@ -157,8 +152,7 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
           context,
         )
       },
-      // MCP-unreachable: `releases` is required (min 1) on the release-create tool, so this path is dead there.
-      { whenHeadless: 'unreachable' },
+      { whenHeadless: 'refuse' },
     )
 
     const type = await withEscape(
@@ -175,8 +169,7 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
           context,
         )
       },
-      // MCP-unreachable: `releases` is required (min 1) on the release-create tool, so this path is dead there.
-      { whenHeadless: 'unreachable' },
+      { whenHeadless: 'refuse' },
     )
 
     let resolved: ReleaseEntry
@@ -201,8 +194,7 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
         (context) => {
           return input({ message: '  Description (optional, press Enter to skip): ' }, context)
         },
-        // MCP-unreachable: `releases` is required (min 1) on the release-create tool, so this path is dead there.
-        { whenHeadless: 'unreachable' },
+        { whenHeadless: 'refuse' },
       )
     ).trim()
 
@@ -212,8 +204,7 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
       (context) => {
         return confirm({ message: 'Add another release?', default: false }, context)
       },
-      // MCP-unreachable: `releases` is required (min 1) on the release-create tool, so this path is dead there.
-      { whenHeadless: 'unreachable' },
+      { whenHeadless: 'refuse' },
     )
   }
 
@@ -254,6 +245,18 @@ const collectEntries = async (
     echoReleases(resolved)
 
     return resolved
+  }
+
+  // An agent that omits `releases` is offered a form by the MCP seam before this handler runs; landing
+  // here headless means the client could not render one (or confirmed the empty gate), and the
+  // refusal has to say so — the wizard below would otherwise hit its first `'refuse'` site nameless.
+  if (isMcpMode()) {
+    throw new OperationError(undefined, {
+      operation: 'create release',
+      remediation:
+        'pass "releases" explicitly, or call from a client that can render the argument form (omit "releases" and the human is asked)',
+      stderrExcerpt: 'no releases provided and no human to ask',
+    })
   }
 
   const interactive = await promptForReleasesInteractive(ensureKnown)
@@ -450,8 +453,9 @@ export const releaseCreate = async (args: ReleaseCreateArgs) => {
 export const releaseCreateMcpTool = defineMcpTool({
   name: 'release-create',
   requiresHumanConfirm: true,
+  formProvider: createReleaseFormProvider(),
   description:
-    'Create one or more releases in a single call. Each entry in "releases" carries EITHER a "version" (semver or the literal token "next") OR a "name" (free-form kebab-case identifier) — exactly one is required and they are mutually exclusive. Each entry also has its own type (regular|hotfix, default regular) and optional description; all entries in one call must share the same type — mixed regular+hotfix batches are rejected (create them in separate invocations). For each release this tool switches to the appropriate base branch (dev for regular, main for hotfix), cuts the release branch (release/v<semver> for versions, release/<name> for names), opens a GitHub release PR, and creates the matching Jira fix version (v<semver> for versions, <name> for names). The literal token "next" auto-increments from the union of remote release branches and Jira fix versions (regular bumps minor + resets patch; hotfix bumps patch on the highest minor); multiple "next" tokens advance sequentially. Named releases never auto-bump and "next" is version-only. Must be run from the main repository checkout (not a linked worktree) on the matching base branch with a clean working tree. Confirmation is auto-skipped for MCP calls, so the caller is responsible for gating. Continues on per-release failure and reports successes/failures.',
+    'Create one or more releases in a single call. Each entry in "releases" carries EITHER a "version" (semver or the literal token "next") OR a "name" (free-form kebab-case identifier) — exactly one is required and they are mutually exclusive. Each entry also has its own type (regular|hotfix, default regular) and optional description; all entries in one call must share the same type — mixed regular+hotfix batches are rejected (create them in separate invocations). For each release this tool switches to the appropriate base branch (dev for regular, main for hotfix), cuts the release branch (release/v<semver> for versions, release/<name> for names), opens a GitHub release PR, and creates the matching Jira fix version (v<semver> for versions, <name> for names). The literal token "next" auto-increments from the union of remote release branches and Jira fix versions (regular bumps minor + resets patch; hotfix bumps patch on the highest minor); multiple "next" tokens advance sequentially. Named releases never auto-bump and "next" is version-only. Must be run from the main repository checkout (not a linked worktree) on the matching base branch with a clean working tree. Omit "releases" and this server offers the human a form for ONE release (type, version/next/name, description); the accepted form feeds the confirm gate. A client that cannot render a form gets a gate with no releases — confirming it is refused, never guessed. Pass "releases" explicitly for a batch or when the human already named the release. Continues on per-release failure and reports successes/failures.',
   inputSchema: {
     releases: z
       .array(
@@ -496,8 +500,9 @@ export const releaseCreateMcpTool = defineMcpTool({
       )
       .min(1)
       .describe(
-        'One or more releases to create. Each entry has exactly one of "version" or "name", plus its own type and optional description.',
-      ),
+        'One or more releases to create. Each entry has exactly one of "version" or "name", plus its own type and optional description. Optional over MCP: omit it to have the human fill one release from a form.',
+      )
+      .optional(),
     confirm: z
       .boolean()
       .optional()

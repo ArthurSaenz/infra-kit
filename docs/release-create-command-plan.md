@@ -1351,6 +1351,9 @@ happens; (b) as a dated follow-up.** (a) is written into PR C's scope below.
 | **D** | `resources/workflow/release-create.md`, `src/mcp/workflow-bodies.ts`, resource + prompt registration (no `argsSchema`).                                                                                                                                                                                                                                                                                            | — (independent of A–C)                                     | a new resource and the server's first prompt                                                                  |
 | **E** | `plugins/infra-kit/commands/release-create.md` incl. the version floor; U13, U14, T1b; **the PM-C CI check**.                                                                                                                                                                                                                                                                                                      | **D, published** — enforced by that check, not by this row | `/infra-kit:release-create`                                                                                   |
 
+**PR C: Superseded 2026-09-15 by `docs/release-create-form-plan.md` — free-text token, `releases`
+optional, form only when absent.**
+
 Two independent chains — A→B→C and D — meeting only at E. Each of A, B and D is mergeable alone and
 green alone. E's dependency on D is on the **published** package, not the merged commit, and PM-C's CI
 check is what enforces it; this table row is documentation of that check, not a substitute for it.

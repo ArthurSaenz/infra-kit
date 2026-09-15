@@ -2,6 +2,7 @@ import { acceptedContent, inputRequired, inputResponse } from '@modelcontextprot
 import type { InputRequiredResult } from '@modelcontextprotocol/server'
 import type { z } from 'zod'
 
+import { withDeadline } from 'src/lib/deadline'
 import type { ArgumentFormProvider } from 'src/types'
 
 /**
@@ -67,32 +68,6 @@ export const readFormAction = (responses: Record<string, unknown> | undefined): 
   const view = inputResponse(responses, FORM_KEY)
 
   return view.kind === 'elicit' ? view.action : 'missing'
-}
-
-/**
- * Resolve `work`, or `null` if it rejects or outruns `ms`.
- *
- * Deliberately collapses rejection and timeout into the same value: the caller treats a provider
- * that failed and a provider that was too slow identically, because from the human's side both mean
- * "no usable candidates were offered".
- */
-const withDeadline = async <T>(work: Promise<T>, ms: number): Promise<T | null> => {
-  return new Promise<T | null>((resolve) => {
-    const timer = setTimeout(() => {
-      resolve(null)
-    }, ms)
-
-    work.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      () => {
-        clearTimeout(timer)
-        resolve(null)
-      },
-    )
-  })
 }
 
 /**

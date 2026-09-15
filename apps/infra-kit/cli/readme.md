@@ -109,6 +109,7 @@ When infra-kit runs as an MCP server (via `.mcp.json`), these commands are avail
 
 - `dev-status`
 - `gh-merge-dev`, `gh-release-list`, `release-create`, `release-remove`, `release-desc-edit`, `gh-release-deploy-all`, `gh-release-deploy-selected`
+- `release-create` offers an argument form when `releases` is omitted (one release; batches are arguments-only).
 - `local-deploy-all`, `local-deploy-selected`
 - `worktrees-add`, `worktrees-list`, `reopen`, `worktrees-remove`, `worktrees-sync`
 - `env-status`, `env-list`, `env-load`, `env-clear`, `env-token-list`

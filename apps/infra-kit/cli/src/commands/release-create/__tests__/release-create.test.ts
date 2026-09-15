@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import { OperationError } from 'src/lib/errors/operation-error'
 import type { ReleaseType } from 'src/lib/release-utils'
@@ -13,7 +13,19 @@ import { assertHomogeneousReleaseType, releaseCreateMcpTool } from '../release-c
  * shape. We exercise the schema directly (the array element) so we do not need
  * to run the full handler (which performs git/Jira side effects).
  */
-const entrySchema = (releaseCreateMcpTool.inputSchema.releases as z.ZodArray<z.ZodTypeAny>).element
+const entrySchema = (releaseCreateMcpTool.inputSchema.releases as z.ZodOptional<z.ZodArray<z.ZodTypeAny>>).unwrap()
+  .element
+
+describe('release-create MCP releases schema', () => {
+  it('releases is optional at the top level and still min(1) when present', () => {
+    // Optional so the MCP seam can offer the human a form; `.min(1)` kept so an explicit `[]` is
+    // still a schema error rather than a handler-level "no releases" refusal.
+    const schema = z.object(releaseCreateMcpTool.inputSchema)
+
+    expect(schema.safeParse({}).success).toBe(true)
+    expect(schema.safeParse({ releases: [] }).success).toBe(false)
+  })
+})
 
 describe('release-create MCP releases[] entry schema', () => {
   it('accepts a versioned entry and transforms it into a version ReleaseInput', () => {

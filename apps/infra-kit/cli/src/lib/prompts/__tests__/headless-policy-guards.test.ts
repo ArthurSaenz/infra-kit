@@ -32,32 +32,20 @@ import { exposedTools, promptSites, reachableSites } from './mcp-reachable-promp
  */
 const POLICY_SITES: Record<string, { policy: 'unreachable' | 'value'; tools: string[]; fields: string[] }> = {
   // NOT listed any more: `gh-release-deploy-selected#ghReleaseDeploySelected`,
-  // `lib/prompts/env-picker.ts#pickEnv` and `env-load.ts#envLoad`. The first two claimed `'unreachable'`
-  // until PR-1 relaxed `services` and `env` to `.optional()` so the form could offer real lists — at
-  // which point G8 named all five claims false in one run. `env-load` followed when `config` went
-  // `.optional()` for its own form. They now declare `'refuse'` at the call site, which this table does
-  // not track by design. That transition is what G8 is for, and it is the only time it has fired in anger.
+  // `lib/prompts/env-picker.ts#pickEnv`, `env-load.ts#envLoad`, and the three
+  // `release-create.ts#promptForVersionInput` / `#promptForNameInput` / `#promptForReleasesInteractive`
+  // sites. The first two claimed `'unreachable'` until PR-1 relaxed `services` and `env` to
+  // `.optional()` so the form could offer real lists — at which point G8 named all five claims false in
+  // one run. `env-load` followed when `config` went `.optional()` for its own form, and `release-create`
+  // when `releases` did — G8 named all six of its claims false in one run. They now declare `'refuse'`
+  // at the call site, which this table does not track by design. That transition is what G8 is for,
+  // and those are the only times it has fired in anger.
   // `local-deploy-all` never reaches `pickServices` — it takes the `selection === 'all'` branch
   // above it — so `local-deploy-selected` is the only owner, and `service` is the field.
   'commands/local-deploy/local-deploy.ts#pickServices': {
     policy: 'unreachable',
     tools: ['local-deploy-selected'],
     fields: ['service'],
-  },
-  'commands/release-create/release-create.ts#promptForNameInput': {
-    policy: 'unreachable',
-    tools: ['release-create'],
-    fields: ['releases'],
-  },
-  'commands/release-create/release-create.ts#promptForReleasesInteractive': {
-    policy: 'unreachable',
-    tools: ['release-create'],
-    fields: ['releases'],
-  },
-  'commands/release-create/release-create.ts#promptForVersionInput': {
-    policy: 'unreachable',
-    tools: ['release-create'],
-    fields: ['releases'],
   },
   'commands/release-desc-edit/release-desc-edit.ts#promptDescription': {
     policy: 'unreachable',
@@ -240,6 +228,12 @@ describe('g6 — a tool that promises a non-interactive answer must not refuse',
     // picker back under the "never refuse" assertion below and red it for the right tool with the
     // wrong reason.
     expect(promiseCarryingTools.has('env-load')).toBe(false)
+  })
+
+  it('keeps release-create off the promise list now that a form, not a required field, owns the headless answer', () => {
+    // Same shape as `env-load`: the description says "omit releases and a form is offered", a claim
+    // about the seam, not a promise of a value from the wizard's six `'refuse'` sites.
+    expect(promiseCarryingTools.has('release-create')).toBe(false)
   })
 
   it('never leaves a promised tool site on refuse', () => {

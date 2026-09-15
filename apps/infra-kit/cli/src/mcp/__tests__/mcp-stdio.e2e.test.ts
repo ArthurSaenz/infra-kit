@@ -1146,6 +1146,127 @@ describe('e-l1–e-l3 — the env-load form on a 2025-era connection', () => {
   }, 45_000)
 })
 
+describe('e-r1–e-r2 — the release-create form: accept → gate → confirm on a GATED, form-fed tool', () => {
+  /**
+   * The first lane that drives a form-fed GATED tool through all three rounds. `e-l1` runs an ungated
+   * handler, `e-d1m` stops at the form, and `assertConfirmedCallExecutes` gates a tool that has no
+   * form — so nothing else proves the token minted over the human's entry verifies on round 2.
+   *
+   * On the fixture the handler must FAIL: the repo is `git init` with no `origin` and the fixture
+   * scrubs every `JIRA_*` var, so `loadJiraConfig` throws before any git mutation.
+   *
+   * That failure is the witness: `Tool execution failed` on stderr means the token verified AND the
+   * handler was entered, where a `Tool execution refused (` line would mean the gate rejected the
+   * arguments the form produced. The result carries no `structuredContent` on that path, which is
+   * why round 2 is asserted on stderr, not on the payload.
+   */
+  let fixture: EnvPickerFixture
+  let form: CapturedConnection
+  let manual: CapturedConnection
+  const spy: FormSpy = { calls: [], answer: { action: 'cancel' } }
+
+  const assertReleaseForm = (requested: ElicitRequestFormParams['requestedSchema'] | undefined): void => {
+    // Property order is the wizard's; `description` is the one optional field. The hint branch is
+    // the no-origin, no-Jira one — deterministic on this fixture, and the proof the provider's own
+    // enumeration ran rather than a stub schema.
+    expect(Object.keys(requested?.properties ?? {})).toEqual(['type', 'release', 'description'])
+    expect(requested?.required).toStrictEqual(['type', 'release'])
+    expect(requested?.properties.release?.description).toContain('No prior version is known')
+  }
+
+  beforeAll(async () => {
+    fixture = await makeEnvPickerFixture()
+    tmpDirs.push(...fixture.dirs)
+
+    form = await connectLegacyFormClient(fixture, spy)
+    manual = await connectManualModern(fixture)
+
+    assertConnectionIsModern(manual.client)
+  }, 45_000)
+
+  it('e-r1: omitting `releases` draws ONE form; accepting gates on the entry; confirming enters the handler; declining is terminal', async () => {
+    const formMark = form.stderr().length
+
+    spy.calls.length = 0
+    spy.answer = { action: 'accept', content: { type: 'hotfix', release: '1.2.3' } }
+
+    const gate = await form.client.callTool({ name: 'release-create', arguments: {} })
+
+    // Delete the `formProvider` wiring on `releaseCreateMcpTool` → the spy is never called and the
+    // gate carries no `releases` (`command-catalog.test.ts` pins the same wiring from the catalog side).
+    expect(spy.calls).toHaveLength(1)
+    assertReleaseForm(spy.calls[0]?.requestedSchema)
+
+    // OBS: the provider's own hint line, in this child's stderr.
+    await expect
+      .poll(stderrSince(form, formMark), { timeout: 3_000 })
+      .toContain('Tool execution form hint unavailable (no prior versions): release-create')
+
+    // The gate signs exactly what the human entered, in the tool's own argument shape: `toArgs`
+    // classified `1.2.3` as a version and carried `type` through, and no `description` key appears
+    // because the field was left blank.
+    const structured = gate.structuredContent as
+      | { status?: string; tool?: string; formDiscarded?: boolean; resolvedArgs?: unknown; confirmToken?: string }
+      | undefined
+
+    expect(gate.isError).toBe(true)
+    expect(structured).toMatchObject({ status: 'confirmation_required', tool: 'release-create', formDiscarded: false })
+    expect(structured?.resolvedArgs).toStrictEqual({ releases: [{ version: '1.2.3', type: 'hotfix' }] })
+    expect(structured?.confirmToken, 'round 1 must hand out a confirmToken').toBeTypeOf('string')
+
+    const mark = form.stderr().length
+
+    spy.calls.length = 0
+
+    const round2 = await form.client.callTool({
+      name: 'release-create',
+      arguments: {
+        ...(structured?.resolvedArgs as Record<string, unknown>),
+        confirm: true,
+        confirmToken: structured?.confirmToken,
+      },
+    })
+
+    // Round 2 carries `releases`, so it is not formable and no second form is drawn.
+    expect(spy.calls).toHaveLength(0)
+    expect(round2.isError).toBe(true)
+    expect(round2.structuredContent).toBeUndefined()
+
+    // THE load-bearing pair. `failed` proves the handler was entered — the token minted over the
+    // form's arguments verified against what round 2 parsed. Change `toArgs` to emit a shape the
+    // tool's transform re-normalizes (drop `type`, say) → the canonical arguments differ, the gate
+    // answers `refused (mismatch)`, and this reddens on the first line.
+    await expect.poll(stderrSince(form, mark), { timeout: 3_000 }).toContain('Tool execution failed: release-create')
+    expect(form.stderr().slice(mark)).not.toContain('Tool execution refused (')
+
+    spy.calls.length = 0
+    spy.answer = { action: 'decline' }
+
+    const declined = await form.client.callTool({ name: 'release-create', arguments: {} })
+
+    expect(spy.calls).toHaveLength(1)
+    expect(declined.isError).toBe(true)
+    expect(declined.structuredContent).toMatchObject({
+      status: 'form_declined',
+      tool: 'release-create',
+      action: 'decline',
+    })
+  }, 45_000)
+
+  it('e-r2: the GATED release-create form is offered on the modern era too — `input_required` before any gate', async () => {
+    const round1 = await manual.client.callTool({ name: 'release-create', arguments: {} }, { allowInputRequired: true })
+    const offered = isInputRequiredResult(round1) ? round1 : undefined
+
+    expect(offered, `expected input_required, got: ${JSON.stringify(round1)}`).toBeDefined()
+
+    const request = offered?.inputRequests?.args as { method: string; params: ElicitRequestFormParams } | undefined
+
+    expect(Object.keys(offered?.inputRequests ?? {})).toEqual(['args'])
+    expect(request?.method).toBe('elicitation/create')
+    assertReleaseForm(request?.params.requestedSchema)
+  }, 45_000)
+})
+
 describe('e-m1–e-m3 — the env-load form on a PINNED MODERN connection, driven by hand', () => {
   let fixture: EnvPickerFixture
   let manual: CapturedConnection
@@ -1371,6 +1492,8 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   //   D17 env-load's `config` went optional — `required` vanished (AUTHORED, docs/session-env-picker-plan.md §2.4)  legacy + modern
   //   D18 env-load's description and `config` prose stopped calling the field MCP-required (AUTHORED)  legacy + modern
   //   D21 env-status's description says the server re-reads the session file before every tool (AUTHORED, docs/mcp-session-env-refresh-plan.md §2.7)  legacy + modern
+  //   D19 release-create's releases went optional — required vanished (AUTHORED, docs/release-create-form-plan.md §3.4)  legacy + modern
+  //   D20 release-create's description and `releases` prose stopped calling the gate auto-skipped (AUTHORED, docs/release-create-form-plan.md §3.4)  legacy + modern
   // Why UNNAMED differences must fail: a normalization broad enough to swallow a known delta is
   // the same hole an unnoticed one would slip through. Only the named deltas are normalized away
   // before the whole-object comparison, and each is asserted positively FIRST so the normalization
@@ -1422,7 +1545,8 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
    * environment.
    *
    * D17 — `env-load`'s `config`, relaxed for the session env picker — rides the same mechanism: one
-   * more entry here, one more in `w1c-pre-d12`.
+   * more entry here, one more in `w1c-pre-d12`. D19 — `release-create`'s `releases`, relaxed so the
+   * wizard's three questions can ride one form — rides it the same way.
    */
   // The expected post-change array is written out PER TOOL rather than blanket-emptied.
   // `local-deploy-selected` keeps `service` required — a services picker there needs an
@@ -1438,6 +1562,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     'local-deploy-all': undefined,
     'local-deploy-selected': ['service'],
     'env-load': undefined,
+    'release-create': undefined,
   }
 
   const findBaselineTool = (name: string): Record<string, any> | undefined => {
@@ -1698,6 +1823,40 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   }
 
   const d21Baseline = applyD21ToBaseline()
+
+  /**
+   * D20 — an AUTHORED delta in D14's shape: `release-create`'s description and its `releases` prose,
+   * rewritten when `releases` went `.optional()` for its form (D19). The description used to tell an
+   * MCP caller that "Confirmation is auto-skipped for MCP calls" — false since the confirm gate landed
+   * — and the field prose never said the field could be omitted.
+   *
+   * Does NOT ride D13: `w1c-pre-d13` requires every replaced string to have carried the "required for
+   * MCP" claim, and neither of these did.
+   */
+  // LITERAL post-change text, for D13's reason: a further edit fails `w1c` and must be re-declared.
+  const D20_RELEASE_CREATE_PROSE = {
+    description:
+      'Create one or more releases in a single call. Each entry in "releases" carries EITHER a "version" (semver or the literal token "next") OR a "name" (free-form kebab-case identifier) — exactly one is required and they are mutually exclusive. Each entry also has its own type (regular|hotfix, default regular) and optional description; all entries in one call must share the same type — mixed regular+hotfix batches are rejected (create them in separate invocations). For each release this tool switches to the appropriate base branch (dev for regular, main for hotfix), cuts the release branch (release/v<semver> for versions, release/<name> for names), opens a GitHub release PR, and creates the matching Jira fix version (v<semver> for versions, <name> for names). The literal token "next" auto-increments from the union of remote release branches and Jira fix versions (regular bumps minor + resets patch; hotfix bumps patch on the highest minor); multiple "next" tokens advance sequentially. Named releases never auto-bump and "next" is version-only. Must be run from the main repository checkout (not a linked worktree) on the matching base branch with a clean working tree. Omit "releases" and this server offers the human a form for ONE release (type, version/next/name, description); the accepted form feeds the confirm gate. A client that cannot render a form gets a gate with no releases — confirming it is refused, never guessed. Pass "releases" explicitly for a batch or when the human already named the release. Continues on per-release failure and reports successes/failures.',
+    releases:
+      'One or more releases to create. Each entry has exactly one of "version" or "name", plus its own type and optional description. Optional over MCP: omit it to have the human fill one release from a form.',
+  }
+
+  /**
+   * Rewrites the baseline's `release-create` description and `releases` prose in place and returns
+   * what they held BEFORE, for `w1c-pre-d20`.
+   */
+  const applyD20ToBaseline = (): { description: unknown; releases: unknown } => {
+    const tool = findBaselineTool('release-create')
+    const node = tool?.inputSchema?.properties?.releases as Record<string, any> | undefined
+    const captured = { description: tool?.description, releases: node?.description }
+
+    if (tool !== undefined) tool.description = D20_RELEASE_CREATE_PROSE.description
+    if (node !== undefined) node.description = D20_RELEASE_CREATE_PROSE.releases
+
+    return captured
+  }
+
+  const d20Baseline = applyD20ToBaseline()
 
   /**
    * D9 — an AUTHORED delta, handled like D4: the confirm gate now binds round 2 to round 1 with a
@@ -2241,7 +2400,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     ).toEqual(['local-deploy-all', 'local-deploy-selected'])
   })
 
-  it('w1c-pre-d12: D12 + D17 — the baseline really demanded the five fields that are now optional', () => {
+  it('w1c-pre-d12: D12 + D17 + D19 — the baseline really demanded the six fields that are now optional', () => {
     // The positive half of D12, held to the same bar as D4: the rewrite at load must never be what
     // makes w1c pass. If the fixture is ever re-captured against today's server these arrays arrive
     // already shrunken and this reds loudly, instead of the rewrite quietly guarding nothing.
@@ -2261,6 +2420,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
       'local-deploy-all': ['env'],
       'local-deploy-selected': ['env', 'service'],
       'env-load': ['config'],
+      'release-create': ['releases'],
     })
   })
 
@@ -2352,6 +2512,30 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     expect(String(d21Baseline)).not.toContain('re-reads it before every tool')
     expect(d21Baseline).not.toBe(D21_ENV_STATUS_DESCRIPTION)
     expect(D21_ENV_STATUS_DESCRIPTION.startsWith(String(d21Baseline))).toBe(true)
+  })
+
+  it('w1c-pre-d20: D20 — the baseline really called the gate auto-skipped and never said `releases` could be omitted', () => {
+    // The positive half of D20, on D14's model: the text replaced at load must be the text that made
+    // the false claim. A re-captured fixture already carries the new wording, so both captures would
+    // equal their replacements and this reds — at which point D19 and D20 are to be DELETED (the map
+    // entry, the literals, the rewrite, this test), never adjusted, so the whole-object comparison
+    // guards `release-create` directly again.
+    expect(d20Baseline.description, 'D20: no `release-create` description in the baseline to replace').toBeTypeOf(
+      'string',
+    )
+    expect(d20Baseline.releases, 'D20: no `release-create.releases` description in the baseline to replace').toBeTypeOf(
+      'string',
+    )
+    expect(
+      String(d20Baseline.description),
+      'D20: the baseline description never called the gate auto-skipped, so D20 is rewriting prose it was not created to rewrite. If the fixture was re-captured, delete D19/D20.',
+    ).toContain('Confirmation is auto-skipped for MCP calls')
+    expect(
+      String(d20Baseline.releases),
+      'D20: the baseline `releases` prose is not the one D20 was created to rewrite. If the fixture was re-captured, delete D19/D20.',
+    ).toContain('One or more releases to create')
+    expect(d20Baseline.description).not.toBe(D20_RELEASE_CREATE_PROSE.description)
+    expect(d20Baseline.releases).not.toBe(D20_RELEASE_CREATE_PROSE.releases)
   })
 
   it('w1c-pre-d9: D9 — the baseline carries `confirmToken` on no tool, and the gated set is non-empty', () => {

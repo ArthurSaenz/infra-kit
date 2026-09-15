@@ -95,8 +95,46 @@ export const computeNextVersion = (known: SemVer[], type: ReleaseType): string =
   return `${major}.${minor + 1}.0`
 }
 
+/**
+ * {@link computeNextVersion} for callers that only want to SUGGEST a version: no prior versions
+ * reads as `null` rather than a throw. Any other error is a defect and is rethrown.
+ *
+ * @example
+ * suggestNextVersion([[1, 63, 2]], 'regular') // => '1.64.0'
+ * suggestNextVersion([], 'regular')           // => null
+ */
+export const suggestNextVersion = (known: SemVer[], type: ReleaseType): string | null => {
+  try {
+    return computeNextVersion(known, type)
+  } catch (err) {
+    if (err instanceof NoPriorVersionsError) return null
+
+    throw err
+  }
+}
+
 const isNextToken = (token: string): boolean => {
   return token.trim().toLowerCase() === NEXT_TOKEN
+}
+
+/**
+ * Sort a raw release token into the versioned or the named half of a {@link ReleaseInput} — the ONE
+ * place that rule lives, shared by the `--release` flag and the MCP argument form.
+ *
+ * The token is returned AS TYPED: `resolveReleaseEntries` normalises a `v` prefix downstream, and
+ * `tryParse` already strips a leading `release/`, so `release/1.2.3` reads as the version 1.2.3 (a
+ * real name can never contain a slash anyway). A name is NOT validated here — `validateName` runs
+ * in `resolveReleaseEntries`, where the refusal can name the rule.
+ *
+ * @example
+ * classifyReleaseToken('v1.63.3')  // => { version: 'v1.63.3' }
+ * classifyReleaseToken('NEXT')     // => { version: 'NEXT' }
+ * classifyReleaseToken('checkout') // => { name: 'checkout' }
+ */
+export const classifyReleaseToken = (token: string): { version: string } | { name: string } => {
+  if (isNextToken(token) || tryParse(token) !== null) return { version: token }
+
+  return { name: token }
 }
 
 /**
@@ -178,19 +216,7 @@ export const parseReleaseSpec = (raw: string): ReleaseInput => {
     type = typeLower
   }
 
-  // A semver token or the "next" token is a versioned release; everything else
-  // is a named release. parseReleaseRef applies the same precedence downstream.
-  // Note: tryParse strips a leading "release/" prefix, so "release/1.2.3" reads
-  // as the version 1.2.3 (a real name can never contain a slash anyway).
-  if (isNextToken(token) || tryParse(token) !== null) {
-    const entry: ReleaseSpec = { version: token, type }
-
-    if (description !== '') entry.description = description
-
-    return entry
-  }
-
-  const entry: NamedReleaseInput = { name: token, type }
+  const entry: ReleaseInput = { ...classifyReleaseToken(token), type }
 
   if (description !== '') entry.description = description
 
