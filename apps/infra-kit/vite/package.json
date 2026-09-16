@@ -49,7 +49,7 @@
     "fix": "pnpm run prettier-fix && pnpm run eslint-fix && pnpm run qa"
   },
   "dependencies": {
-    "@slip-stream-kit/config": "^0.8.0"
+    "@slip-stream-kit/config": "^0.9.0"
   },
   "peerDependencies": {
     "vite": ">=8"
