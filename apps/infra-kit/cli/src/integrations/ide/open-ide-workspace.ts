@@ -28,7 +28,7 @@ interface OpenIdeWorkspaceArgs {
  * no worktrees, so `reopen` never pops a bare editor window. Returns
  * one outcome per configured provider (empty array when no IDE is configured).
  * Iterates sequentially — `reopen` already wraps this call in an outer
- * `Promise.all` with cmux, so a `Promise.all` here would compound editor-spawn
+ * `Promise.all` with Orca, so a `Promise.all` here would compound editor-spawn
  * concurrency. Best-effort — every provider swallows failures into a warning.
  */
 export const openIdeWorkspace = async (args: OpenIdeWorkspaceArgs): Promise<OpenIdeWorkspaceOutcome[]> => {

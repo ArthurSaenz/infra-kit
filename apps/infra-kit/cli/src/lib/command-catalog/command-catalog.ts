@@ -703,8 +703,8 @@ export const MCP_TOOL_PRESENTATION: Record<string, { title: string; openWorld: b
   'env-load': { title: 'Load environment variables', openWorld: true },
 
   // --- Not-read-only exception ---
-  // Spawns local editor and cmux processes on this machine; every output field (worktreePaths,
-  // ideProviders, cmuxOpened/Skipped/Closed) describes local window state and contacts no remote.
+  // Spawns local editor windows and Orca terminals on this machine; every output field (worktreePaths,
+  // ideProviders, orcaOpened/Skipped/Hidden) describes local window state and contacts no remote.
   reopen: { title: 'Reopen project windows', openWorld: false },
 }
 
@@ -713,9 +713,9 @@ export const MCP_TOOL_PRESENTATION: Record<string, { title: string; openWorld: b
  * excludes — it covers only git/remote/consumer-repo/Doppler-env/fs-outside-cache state.
  *
  * This array may ONLY ever TIGHTEN a hint toward the spec default of `readOnlyHint: false`; it can
- * never loosen one, because it is applied as a negation. `reopen` is `mutating: false` yet its
- * MCP-reachable `force` flag closes cmux workspaces ("Close each cmux workspace first, then reopen
- * (disruptive)") and reports them in `cmuxClosed`. Pinned by the T7 catalog test.
+ * never loosen one, because it is applied as a negation. `reopen` is `mutating: false` yet every
+ * MCP call spawns Orca terminal tabs and editor windows on this machine (reported in `orcaOpened`) —
+ * local window state, not something a read-only tool may touch. Pinned by the T7 catalog test.
  */
 export const NOT_READ_ONLY: readonly string[] = ['reopen']
 

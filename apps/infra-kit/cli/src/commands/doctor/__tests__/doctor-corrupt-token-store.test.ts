@@ -110,7 +110,7 @@ vi.mock('zx', () => {
 })
 
 vi.mock('src/lib/logger', () => {
-  return { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }
+  return { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }
 })
 
 describe('doctor with a corrupt tokens.json', () => {

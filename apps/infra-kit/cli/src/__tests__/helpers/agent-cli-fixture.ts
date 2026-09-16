@@ -132,7 +132,7 @@ export const makeAgentCliFixture = (): AgentCliFixture => {
 
   const env: Record<string, string> = {
     // Fixture binaries first; then only the system dirs `git`, `sh`, `bash` (zx), `cat` and `script`
-    // live in. The developer's `cmux`, `doppler`, real `gh` and real `pnpm` are all invisible.
+    // live in. The developer's `orca`, `doppler`, real `gh` and real `pnpm` are all invisible.
     PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
     HOME: homeDir,
     XDG_CACHE_HOME: join(homeDir, '.cache'),

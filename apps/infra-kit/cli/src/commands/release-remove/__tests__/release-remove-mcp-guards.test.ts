@@ -48,7 +48,7 @@ import {
  * assertions by accident; without "the flags are still accepted on the CLI", a guard that refused
  * `skipJira` unconditionally would too.
  *
- * Mocked: git, gh, cmux, Jira and zx. Real: `agentMode`, so each test sets its own source.
+ * Mocked: git, gh, Orca, Jira and zx. Real: `agentMode`, so each test sets its own source.
  */
 
 const zx = vi.hoisted(() => {
@@ -95,8 +95,8 @@ vi.mock('src/lib/worktrees/remove-release-worktree', () => {
   return { removeReleaseWorktreeIfPresent: vi.fn() }
 })
 
-vi.mock('src/integrations/cmux', () => {
-  return { listCmuxWorkspacesByCwd: vi.fn(), realpathForCmuxCwd: vi.fn() }
+vi.mock('src/integrations/orca', () => {
+  return { listOrcaTerminals: vi.fn(), orcaCallerInsideTargets: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {

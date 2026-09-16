@@ -293,8 +293,8 @@ const configureWorktreesAdd = (cmd: Command): Command => {
     .option('--no-cursor', 'Deprecated alias for --no-ide')
     .option('-g, --github-desktop', 'Open created worktrees in GitHub Desktop')
     .option('--no-github-desktop', 'Skip GitHub Desktop prompt')
-    .option('-m, --cmux', 'Open created worktrees in cmux (3-pane layout)')
-    .option('--no-cmux', 'Skip cmux prompt')
+    .option('--orca', 'Open created worktrees in Orca (pane layout from worktrees.orca.layout)')
+    .option('--no-orca', 'Skip the Orca prompt')
     .action(async (options) => {
       // `--ide` wins over the deprecated `--cursor` alias when both are provided.
       const ide = normalizeIdeMode(options.ide, '--ide') ?? normalizeIdeMode(options.cursor, '--cursor')
@@ -306,7 +306,7 @@ const configureWorktreesAdd = (cmd: Command): Command => {
           versions: options.versions,
           ide,
           githubDesktop: options.githubDesktop,
-          cmux: options.cmux,
+          orca: options.orca,
         }),
       )
     })
@@ -331,13 +331,12 @@ const configureWorktreesRemove = (cmd: Command): Command => {
 
 const configureReopen = (cmd: Command): Command => {
   return cmd
-    .description('Reopen editor + cmux windows for every active worktree in the current project (additive, idempotent)')
+    .description('Reopen editor + Orca windows for every active worktree in the current project (additive, idempotent)')
     .option('--all', 'Reopen across every discovered infra-kit project (Stage 3 — not yet implemented)')
     .option('--project <names...>', 'Restrict --all to these project names')
     .option('--root <paths...>', 'Discovery roots for --all (repeatable)')
     .option('--release-only', 'Restrict to release worktrees (reproduces the legacy worktrees-reload scope)')
-    .option('--force', 'Close each cmux workspace first, then reopen (the legacy worktrees-reload behaviour)')
-    .option('--dry-run', 'Print the plan (paths + cmux titles) and spawn nothing')
+    .option('--dry-run', 'Print the plan (folders + which worktrees would open in Orca) and spawn nothing')
     .action(async (options) => {
       emit(
         await reopen({
@@ -345,7 +344,6 @@ const configureReopen = (cmd: Command): Command => {
           project: options.project,
           root: options.root,
           releaseOnly: options.releaseOnly,
-          force: options.force,
           dryRun: options.dryRun,
         }),
       )
@@ -645,8 +643,8 @@ export const buildProgram = (): Command => {
       'Run exactly these <app>/api|<app>/ui packages (comma-separated); part-level, unlike --app',
     )
     .option(
-      '--cmux',
-      'Run each app in its own cmux pane (one workspace, N panes; falls back to single terminal if cmux is unavailable)',
+      '--orca',
+      'Run each app in its own Orca pane (one tab, N panes; falls back to single terminal when Orca is not running)',
     )
     .option('--self', 'Run only the app of the current directory (infer from cwd; use inside apps/<app>/…)')
     .option('-V, --verbose', 'Print full boot narration (default: quiet; full detail always in the session log)')

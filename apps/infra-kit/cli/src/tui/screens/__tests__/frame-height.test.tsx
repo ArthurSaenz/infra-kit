@@ -148,7 +148,7 @@ const paletteItems = (): PaletteItem[] => {
     ['worktrees-list', 'List all git worktrees with detailed information', 'Worktrees'],
     [
       'reopen',
-      'Reopen editor + cmux windows for every active worktree in the current project (additive, idempotent)',
+      'Reopen editor + Orca windows for every active worktree in the current project (additive, idempotent)',
       'Worktrees',
     ],
     ['worktrees-remove', 'Remove git worktrees for release branches', 'Worktrees'],

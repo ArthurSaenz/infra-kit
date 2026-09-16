@@ -24,7 +24,7 @@ import { LABEL, MOVE_TARGET_NAME, installDefaults } from './release-remove-mocks
  * renamed (or a `jira` value the enum does not list) fails at the client, not here. The zod
  * round-trip is the same one `worktrees-remove`’s report test performs.
  *
- * Mocked: git, gh, cmux, Jira and zx. Real: `commandEcho` itself, and the zod schema the tool declares.
+ * Mocked: git, gh, Orca, Jira and zx. Real: `commandEcho` itself, and the zod schema the tool declares.
  */
 
 const zx = vi.hoisted(() => {
@@ -71,8 +71,8 @@ vi.mock('src/lib/worktrees/remove-release-worktree', () => {
   return { removeReleaseWorktreeIfPresent: vi.fn() }
 })
 
-vi.mock('src/integrations/cmux', () => {
-  return { listCmuxWorkspacesByCwd: vi.fn(), realpathForCmuxCwd: vi.fn() }
+vi.mock('src/integrations/orca', () => {
+  return { listOrcaTerminals: vi.fn(), orcaCallerInsideTargets: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {

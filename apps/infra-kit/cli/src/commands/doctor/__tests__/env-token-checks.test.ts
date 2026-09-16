@@ -39,6 +39,7 @@ const configured = (autoLoadEnv?: string): DoctorConfig => {
       ...(autoLoadEnv === undefined ? {} : { envAutoLoad: { trigger: 'shell-startup', config: autoLoadEnv } }),
     } as unknown as InfraKitConfig,
     error: null,
+    legacyCmuxKeys: [],
   }
 }
 
@@ -188,7 +189,10 @@ describe('checkEnvTokensConfigured — which envs have a token, and is the load-
   })
 
   it('skips (passes) when the infra-kit config could not be read — doctor is the escape hatch for that', async () => {
-    const result = await checkEnvTokensConfigured({ config: null, error: new Error('bad config') }, depsFor({}))
+    const result = await checkEnvTokensConfigured(
+      { config: null, error: new Error('bad config'), legacyCmuxKeys: [] },
+      depsFor({}),
+    )
 
     expect(result.status).toBe('pass')
     expect(result.message).toContain('Skipped')
@@ -252,7 +256,10 @@ describe('checkEnvTokenValid — is the auto-load env token live and correctly s
   })
 
   it('skips when the infra-kit config could not be read', async () => {
-    const result = await checkEnvTokenValid({ config: null, error: new Error('bad config') }, depsFor({}))
+    const result = await checkEnvTokenValid(
+      { config: null, error: new Error('bad config'), legacyCmuxKeys: [] },
+      depsFor({}),
+    )
 
     expect(result.status).toBe('pass')
     expect(result.message).toContain('Skipped')

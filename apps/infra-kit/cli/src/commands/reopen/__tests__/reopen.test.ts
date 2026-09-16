@@ -1,14 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  closeCmuxWorkspaceByCwd,
-  createCmuxGroupFrom,
-  findCmuxGroupRefByName,
-  listCmuxWorkspacesByCwd,
-  openCmuxWorkspaceWithLayout,
-  realpathForCmuxCwd,
-} from 'src/integrations/cmux'
 import { openIdeWorkspace } from 'src/integrations/ide'
+import { isOrcaWorktreeListed, listOrcaTerminals, openOrcaWorktreeTerminals, probeOrca } from 'src/integrations/orca'
 import { getMainRepoRoot, getProjectRoot, listWorktrees } from 'src/lib/git-utils'
 import type { WorktreeEntry } from 'src/lib/git-utils'
 
@@ -25,7 +18,12 @@ vi.mock('src/lib/git-utils', () => {
 // reopenCurrentProject now reads project config before its work (fail-honestly guard). Mock it so
 // these behaviour tests exercise the reopen logic against a resolvable project, not config resolution.
 vi.mock('src/lib/infra-kit-config', () => {
-  return { getInfraKitConfig: vi.fn() }
+  return {
+    getInfraKitConfig: vi.fn(),
+    resolveOrcaLayout: vi.fn(() => {
+      return 'two-columns'
+    }),
+  }
 })
 
 vi.mock('src/integrations/ide', async (importActual) => {
@@ -37,27 +35,21 @@ vi.mock('src/integrations/ide', async (importActual) => {
   }
 })
 
-// Keep buildCmuxWorkspaceTitle real; mock the side-effects. realpathForCmuxCwd is
-// stubbed to identity so cwd dedup/close is a literal string match in tests.
-vi.mock('src/integrations/cmux', async (importActual) => {
-  const actual = await importActual<typeof import('src/integrations/cmux')>()
+// Keep buildOrcaTerminalTitle / OrcaError / the poll real; mock the spawning verbs.
+vi.mock('src/integrations/orca', async (importActual) => {
+  const actual = await importActual<typeof import('src/integrations/orca')>()
 
   return {
     ...actual,
-    listCmuxWorkspacesByCwd: vi.fn(),
-    closeCmuxWorkspaceByCwd: vi.fn(),
-    openCmuxWorkspaceWithLayout: vi.fn(),
-    findCmuxGroupRefByName: vi.fn(),
-    createCmuxGroupFrom: vi.fn(),
-    realpathForCmuxCwd: vi.fn((cwd: string) => {
-      return Promise.resolve(cwd)
-    }),
+    probeOrca: vi.fn(),
+    listOrcaTerminals: vi.fn(),
+    openOrcaWorktreeTerminals: vi.fn(),
+    isOrcaWorktreeListed: vi.fn(),
   }
 })
 
 const ROOT = '/repos/hulyo'
 const REPO = 'hulyo-monorepo'
-const GROUP = 'workspace_group:1'
 
 const entry = (over: Partial<WorktreeEntry> & Pick<WorktreeEntry, 'path' | 'branch'>): WorktreeEntry => {
   return { detached: false, bare: false, prunable: false, locked: false, ...over }
@@ -75,14 +67,10 @@ describe('reopen', () => {
     // (the stable main-repo name), decoupled from ROOT's leaf.
     vi.mocked(getMainRepoRoot).mockResolvedValue(`/repos/${REPO}`)
     vi.mocked(openIdeWorkspace).mockResolvedValue([])
-    vi.mocked(listCmuxWorkspacesByCwd).mockResolvedValue(new Map())
-    vi.mocked(openCmuxWorkspaceWithLayout).mockResolvedValue('workspace:9')
-    vi.mocked(closeCmuxWorkspaceByCwd).mockResolvedValue(undefined)
-    vi.mocked(findCmuxGroupRefByName).mockResolvedValue(GROUP)
-    vi.mocked(createCmuxGroupFrom).mockResolvedValue(GROUP)
-    vi.mocked(realpathForCmuxCwd).mockImplementation((cwd) => {
-      return Promise.resolve(cwd)
-    })
+    vi.mocked(probeOrca).mockResolvedValue('ready')
+    vi.mocked(listOrcaTerminals).mockResolvedValue({ terminals: [], truncated: false })
+    vi.mocked(openOrcaWorktreeTerminals).mockResolvedValue({ handles: ['h0', 'h1'], layout: 'full' })
+    vi.mocked(isOrcaWorktreeListed).mockResolvedValue(true)
   })
 
   it('includes the MAIN checkout in the IDE open set even with 0 release/feature worktrees (AC#4)', async () => {
@@ -100,7 +88,7 @@ describe('reopen', () => {
     expect(result.structuredContent?.worktreePaths).toEqual([ROOT])
   })
 
-  it('opens every active worktree into the repo group by default; Cursor branches stay release-only', async () => {
+  it('opens every active worktree in Orca by default, never with focus; Cursor branches stay release-only', async () => {
     vi.mocked(listWorktrees).mockResolvedValue([mainEntry, releaseEntry, featureEntry])
 
     const result = await reopenCurrentProject({})
@@ -112,10 +100,18 @@ describe('reopen', () => {
         currentBranches: ['release/v1.48.0'],
       }),
     )
-    // One cmux workspace opened per active worktree (none were already open), each into the group.
-    expect(openCmuxWorkspaceWithLayout).toHaveBeenCalledTimes(3)
-    expect(openCmuxWorkspaceWithLayout).toHaveBeenCalledWith(expect.objectContaining({ cwd: ROOT, group: GROUP }))
-    expect(result.structuredContent?.cmuxOpened).toHaveLength(3)
+    // One Orca tab per active worktree (none were already open), none stealing the window.
+    expect(openOrcaWorktreeTerminals).toHaveBeenCalledTimes(3)
+    expect(openOrcaWorktreeTerminals).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: ROOT, title: 'dev', focus: false, layout: 'full', panes: 'two-columns' }),
+    )
+    expect(result.structuredContent?.orcaOpened).toEqual([
+      { branch: 'dev', layout: 'full' },
+      { branch: 'release/v1.48.0', layout: 'full' },
+      { branch: 'feature/login', layout: 'full' },
+    ])
+    expect(result.structuredContent?.orcaSkipped).toEqual([])
+    expect(result.structuredContent?.orcaHidden).toEqual([])
   })
 
   it('--release-only restricts to release worktrees', async () => {
@@ -130,30 +126,44 @@ describe('reopen', () => {
       }),
     )
     expect(result.structuredContent?.releaseOnly).toBe(true)
-    expect(openCmuxWorkspaceWithLayout).toHaveBeenCalledTimes(1)
+    expect(openOrcaWorktreeTerminals).toHaveBeenCalledTimes(1)
+    expect(openOrcaWorktreeTerminals).toHaveBeenCalledWith(expect.objectContaining({ title: '1.48.0' }))
   })
 
-  it('--force closes the open cmux workspace (by cwd) first, then reopens it', async () => {
+  it('has no close path and no `force`: the result carries no closed-tabs field', async () => {
     vi.mocked(listWorktrees).mockResolvedValue([releaseEntry])
-    vi.mocked(listCmuxWorkspacesByCwd).mockResolvedValue(new Map([[releaseEntry.path, 'workspace:5']]))
 
-    const result = await reopenCurrentProject({ releaseOnly: true, force: true })
+    const result = await reopenCurrentProject({ releaseOnly: true })
 
-    expect(closeCmuxWorkspaceByCwd).toHaveBeenCalledWith(releaseEntry.path)
-    expect(openCmuxWorkspaceWithLayout).toHaveBeenCalledTimes(1)
-    // Title is unprefixed now (the group header carries the repo name).
-    expect(result.structuredContent?.cmuxClosed).toEqual(['1.48.0'])
+    expect(Object.keys(result.structuredContent ?? {})).toEqual([
+      'repo',
+      'dryRun',
+      'releaseOnly',
+      'worktreePaths',
+      'ideProviders',
+      'orcaOpened',
+      'orcaSkipped',
+      'orcaHidden',
+    ])
   })
 
-  it('--dry-run spawns nothing', async () => {
+  it('--dry-run spawns no terminal and partitions on the live terminal list', async () => {
     vi.mocked(listWorktrees).mockResolvedValue([mainEntry, releaseEntry])
+    vi.mocked(listOrcaTerminals).mockImplementation(async (cwd: string) => {
+      return {
+        terminals: cwd === ROOT ? [{ handle: 'h', title: 't', tabId: 'tab', connected: true, orphaned: false }] : [],
+        truncated: false,
+      }
+    })
 
     const result = await reopenCurrentProject({ dryRun: true })
 
     expect(openIdeWorkspace).not.toHaveBeenCalled()
-    expect(openCmuxWorkspaceWithLayout).not.toHaveBeenCalled()
-    expect(closeCmuxWorkspaceByCwd).not.toHaveBeenCalled()
+    expect(openOrcaWorktreeTerminals).not.toHaveBeenCalled()
     expect(result.structuredContent?.dryRun).toBe(true)
     expect(result.structuredContent?.worktreePaths).toEqual([ROOT, releaseEntry.path])
+    expect(result.structuredContent?.orcaOpened).toEqual([{ branch: 'release/v1.48.0', layout: 'full' }])
+    expect(result.structuredContent?.orcaSkipped).toEqual([{ branch: 'dev', reason: 'already_open' }])
+    expect(result.structuredContent?.orcaHidden).toEqual([])
   })
 })

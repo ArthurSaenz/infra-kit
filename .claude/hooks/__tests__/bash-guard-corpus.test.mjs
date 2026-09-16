@@ -16,7 +16,7 @@ const IDENTITY = [
   ['doppler', /doppler secrets/],
   ['destructive', /recursive force-remove|force push|destructive SQL/],
   ['package-manager', /pnpm workspace/],
-  ['cmux', /Dev servers must run in cmux/],
+  ['orca', /Dev servers must run in an Orca terminal/],
   ['worktree', /infra-kit worktrees add|infra-kit worktrees list/],
   ['style', /ripgrep|find -name/],
   ['agent-mode-demotion', /demotes agent mode/],

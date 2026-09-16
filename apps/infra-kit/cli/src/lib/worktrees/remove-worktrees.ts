@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises'
 import { $ } from 'zx'
 
-import { closeCmuxWorkspaceByCwd } from 'src/integrations/cmux'
+import { closeOrcaWorktreeTerminals, probeOrca } from 'src/integrations/orca'
+import type { OrcaProbe } from 'src/integrations/orca'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { listWorktrees } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
@@ -219,21 +220,27 @@ interface RemoveOneArgs {
   branch: string
   worktreeDir: string
   projectRoot: string
+  /** Probed ONCE per batch by {@link removeWorktrees}, never per branch under the `Promise.all`. */
+  orcaProbe: OrcaProbe
   sleep: (ms: number) => Promise<void>
 }
 
 const removeOne = async (args: RemoveOneArgs): Promise<RemovalOutcome> => {
-  const { branch, worktreeDir, projectRoot, sleep } = args
+  const { branch, worktreeDir, projectRoot, orcaProbe, sleep } = args
   const worktreePath = `${worktreeDir}/${branch}`
 
-  // Close the cmux workspace by its cwd (the worktree path still exists here —
-  // close runs before `git worktree remove`). Anchors are excluded, so a group
-  // header is never closed. Kept OUTSIDE the git try: a cmux failure means git never
-  // ran, so it must not enter the post-git recovery below.
-  try {
-    await closeCmuxWorkspaceByCwd(worktreePath)
-  } catch (error) {
-    return failedOutcome(branch, error, 'close the cmux workspace for this worktree manually and re-run')
+  // Close the worktree's Orca terminals before `git worktree remove` (the path must still exist for
+  // the selector). An Orca that is absent/unreachable, or a row Orca does not know, is a skip — a
+  // closed GUI is never a precondition for removing a worktree. Any other Orca refusal means git
+  // never ran, so it stays OUTSIDE the git try and never enters the post-git recovery below.
+  const closing = await closeOrcaWorktreeTerminals(worktreePath, orcaProbe)
+
+  if (!closing.closed && 'error' in closing) {
+    return failedOutcome(
+      branch,
+      closing.error,
+      'close the Orca terminals of this worktree manually (orca terminal close --terminal <handle>) and re-run',
+    )
   }
 
   try {
@@ -246,7 +253,7 @@ const removeOne = async (args: RemoveOneArgs): Promise<RemovalOutcome> => {
 }
 
 /**
- * Close any cmux workspace for each branch and run `git worktree remove`, returning the branches
+ * Close the Orca terminals of each branch and run `git worktree remove`, returning the branches
  * that were removed and, separately, the ones that were not (with the reason). Failures are
  * reported, never thrown, so a single bad worktree doesn't poison a batch removal — callers decide
  * how to surface `failed` (see `toRemovalToolResult`).
@@ -259,11 +266,13 @@ const removeOne = async (args: RemoveOneArgs): Promise<RemovalOutcome> => {
 export const removeWorktrees = async (args: RemoveWorktreesArgs): Promise<RemoveWorktreesResult> => {
   const { branches, worktreeDir, projectRoot, pruneFolder = false, sleep = defaultSleep } = args
 
+  const orcaProbe = branches.length > 0 ? await probeOrca() : 'unreachable'
+
   // removeOne never rejects (both of its steps catch), so a plain Promise.all keeps the
   // one-bad-branch-never-poisons-the-batch contract.
   const outcomes = await Promise.all(
     branches.map((branch) => {
-      return removeOne({ branch, worktreeDir, projectRoot, sleep })
+      return removeOne({ branch, worktreeDir, projectRoot, orcaProbe, sleep })
     }),
   )
 

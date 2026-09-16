@@ -11,7 +11,7 @@
 - **Git worktrees** add/list/open/remove/sync (`src/commands/worktrees-*`)
 - **GitHub releases** create/deliver/deploy/list + dev merges (`src/commands/gh-*`, `release-create`)
 
-The DX surface needs to be reliable for **parallel multi-agent workflows** — multiple Claude/Cursor/cmux sessions running side-by-side in worktrees, all going through the same MCP tools. This document scores the project against current harness-engineering practice (Anthropic "Writing tools for agents", MCP spec 2025-11-25, Cognition/Devin, Augment, recent Cursor/Replit incidents) and produces a prioritized backlog.
+The DX surface needs to be reliable for **parallel multi-agent workflows** — multiple Claude/Cursor/Orca sessions running side-by-side in worktrees, all going through the same MCP tools. This document scores the project against current harness-engineering practice (Anthropic "Writing tools for agents", MCP spec 2025-11-25, Cognition/Devin, Augment, recent Cursor/Replit incidents) and produces a prioritized backlog.
 
 **How to use this doc:** read the audit per subsystem to understand the WHY, then pick tickets off the backlog. Tickets are independent unless noted.
 
@@ -27,7 +27,7 @@ Worth naming up front so we don't regress these:
 - **Doppler subprocess hardening** — 30s timeout, 1MB output cap, KEY=VALUE format validation (`env-load.ts:116-189`). Refuses to write garbage to disk; error messages tell the agent exactly what was malformed.
 - **Atomic env-file writes** with pid-suffixed temp + rename (`src/lib/constants.ts:65-76`), 0o600 perms, session-scoped cache dir.
 - **Defense-in-depth Claude Code hooks** in `.claude/settings.local.json`:
-  - `PreToolUse`: `protect-files.sh`, `block-destructive.sh`, `cmux-check.sh`, `suggest-commands.py`
+  - `PreToolUse`: `protect-files.sh`, `block-destructive.sh`, `orca-check.sh`, `suggest-commands.py`
   - `PostToolUse`: `auto-format.sh`, `typecheck.sh` (30s), `run-tests-async.sh` (300s, async)
   - `TaskCompleted`: `quality-gate.sh` (120s)
   - `SessionStart`: `setup-env.sh`
@@ -60,7 +60,7 @@ The worktree *creation* is fine; the *runtime isolation* needed for multiple age
 |---|---|---|
 | Worktree path/name convention | Strong | `${PROJECT_ROOT}-worktrees/{release,feature}/<branch>` (`constants.ts:78`, `worktrees-add.ts:50-53`). Predictable, parseable. |
 | Concurrent `git worktree add` for same branch | Weak | No lockfile/registry. Two agents racing to create the same branch will both call `git worktree add`; one wins, the other gets a confusing git error. `Promise.allSettled` (`worktrees-add.ts:299`) hides which branch failed under what condition. |
-| Per-worktree port allocation | **Missing** | Multiple `pnpm dev` instances will collide on default ports. `cmux-check.sh` exists but doesn't allocate. |
+| Per-worktree port allocation | **Missing** | Multiple `pnpm dev` instances will collide on default ports. `orca-check.sh` exists but doesn't allocate. |
 | Per-worktree env / Doppler config | **Missing** | `env-load` writes to a single `~/.cache/infra-kit/<session>/env-load.sh`. Multiple agents in parallel worktrees may overwrite each other unless `<session>` truly differs per worktree (verify `getSessionCacheDir` in `src/lib/constants.ts`). All worktrees default to the *same* Doppler config (`dev`); no convention for `dev_<branch>`. |
 | Cleanup symmetry | OK | `worktrees-remove.ts` deletes dirs and prunes git, but does not free ports. When isolation lands, extend cleanup. |
 | Agent discoverability of own worktree | Missing | An agent has no easy way to ask "which worktree am I in, what ports/DB are mine?" — there's no `worktrees-info` / `worktrees-whoami` tool returning the current worktree's allocations. |
@@ -186,7 +186,7 @@ Every `release-create` / `gh-release-deploy-*` returns `{ revert_token: 'rt_...'
 Block `eslint-disable` and `@ts-ignore` in agent-touched code unless an exception is annotated. Closes a common escape hatch.
 
 #### P2.18 — [ROOT] `infra-kit doctor` enrichment
-You already have a `doctor/` command — extend it to verify: Doppler CLI present + authed, gh CLI present + authed, cmux installed, ports free, no stale worktree locks, `infra-kit.json` valid. Run from `SessionStart` hook.
+You already have a `doctor/` command — extend it to verify: Doppler CLI present + authed, gh CLI present + authed, Orca installed and its runtime reachable, ports free, no stale worktree locks, `infra-kit.json` valid. Run from `SessionStart` hook.
 
 #### P2.19 — [ROOT] Per-tool worked examples
 In each tool's `description`, include a one-line "Example call:" with a JSON snippet. Empirically improves agent picker accuracy.
@@ -215,7 +215,7 @@ For each P0/P1 ticket, the acceptance test is:
 - An integration test running the tool against a fixture worktree/Doppler config (use `nock` for gh, a Doppler mock for env).
 - For parallel-agent tickets (P0.1, P0.2): a stress test spawning N concurrent invocations and asserting no port collision / no race.
 - Run the full quality gate: `pnpm qa` (typecheck + eslint + tests).
-- Manual: open two cmux worktrees, run `pnpm dev` in both, verify they bind different ports.
+- Manual: open two Orca worktrees, run `pnpm dev` in both, verify they bind different ports.
 
 ---
 

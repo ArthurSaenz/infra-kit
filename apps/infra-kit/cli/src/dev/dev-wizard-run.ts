@@ -91,16 +91,16 @@ export const defaultPrompts: WizardPrompts = {
 export interface WizardResult {
   /** Named preset (preset branch) — passed through as `options.preset`. */
   preset?: string
-  /** In-memory preset (manual branch, non-cmux) — passed through as `options.presetDef`. */
+  /** In-memory preset (manual branch, non-Orca) — passed through as `options.presetDef`. */
   presetDef?: DevPreset
   /**
-   * App-name include list for the cmux path only: which discovered API apps get a pane. Paired with
+   * App-name include list for the Orca path only: which discovered API apps get a pane. Paired with
    * `presetDef`, which tells each pane the exact parts to run. An app selected UI-only gets no pane
-   * (cmux panes are opened per API app). Unset for the non-cmux manual path.
+   * (Orca panes are opened per API app). Unset for the non-Orca manual path.
    */
   include?: string[]
   watch: boolean
-  cmux: boolean
+  orca: boolean
 }
 
 /** Group one frontend's `dev.proxy.routes` into {@link ProxyBackend}s keyed by backend package. */
@@ -305,14 +305,14 @@ export const auditManualPlan = (presetDef: DevPreset, model: WizardModel): strin
 }
 
 /**
- * Opt back into the cmux question: set to exactly `'1'`. The prompt is temporarily off — the manual
- * branch always runs in-process — but the derivation below is kept whole for when it returns. `--cmux`
+ * Opt back into the Orca question: set to exactly `'1'`. The prompt is temporarily off — the manual
+ * branch always runs in-process — but the derivation below is kept whole for when it returns. `--orca`
  * on the command line is a separate path and stays live either way.
  */
-export const WIZARD_CMUX_VAR = 'INFRA_KIT_DEV_WIZARD_CMUX'
+export const WIZARD_ORCA_VAR = 'INFRA_KIT_DEV_WIZARD_ORCA'
 
-const asksCmux = (): boolean => {
-  return process.env[WIZARD_CMUX_VAR] === '1'
+const asksOrca = (): boolean => {
+  return process.env[WIZARD_ORCA_VAR] === '1'
 }
 
 /**
@@ -399,7 +399,7 @@ const recapSources = (plan: DerivedPlan, model: WizardModel): void => {
   }
 }
 
-/** The manual-branch flow: frontends + per-route source + env + watch + cmux → audited plan → recap → echo. */
+/** The manual-branch flow: frontends + per-route source + env + watch + orca → audited plan → recap → echo. */
 const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Promise<WizardResult | null> => {
   if (model.apps.length === 0) {
     logger.warn('No apps discovered to run.')
@@ -421,11 +421,11 @@ const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Prom
   const sources = await promptRouteSources(prompts, model, uiKeys)
 
   const watch = await prompts.confirm({ message: '👀 Rebuild & restart on save (watch)?', default: false })
-  const cmux = asksCmux()
-    ? await prompts.confirm({ message: '🧩 Run each app in its own cmux pane?', default: false })
+  const orca = asksOrca()
+    ? await prompts.confirm({ message: '🧩 Run each app in its own Orca pane?', default: false })
     : false
 
-  const selection: ManualSelection = { targets: selectedTargets, sources, watch, cmux }
+  const selection: ManualSelection = { targets: selectedTargets, sources, watch, orca }
   const plan = deriveManualPlan(selection, model)
 
   if (plan.anyCloudRoute) {
@@ -463,7 +463,7 @@ const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Prom
   recapSources(plan, model)
   echoManual(plan, selection)
 
-  // cmux opens one pane per selected API app. `include` picks WHICH apps get a pane; `presetDef` tells
+  // Orca opens one pane per selected API app. `include` picks WHICH apps get a pane; `presetDef` tells
   // each pane exactly which of its parts to run. Without the latter a pane runs `--app=<name>`, which
   // expands to every part the app has — silently starting a UI the user just unticked.
   const apiApps = plan.targetKeys
@@ -474,17 +474,17 @@ const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Prom
       return k.split('/')[0]!
     })
 
-  // An empty include would collapse to `null` in `normalizeAppInclude` and make cmux run EVERY api app,
-  // so a cmux run with no selected backends (e.g. an all-frontend selection) falls back to in-process.
-  if (cmux && apiApps.length > 0) {
-    return { include: apiApps, presetDef: plan.presetDef, watch, cmux: true }
+  // An empty include would collapse to `null` in `normalizeAppInclude` and make Orca run EVERY api app,
+  // so an Orca run with no selected backends (e.g. an all-frontend selection) falls back to in-process.
+  if (orca && apiApps.length > 0) {
+    return { include: apiApps, presetDef: plan.presetDef, watch, orca: true }
   }
 
-  if (cmux) {
-    logger.info('ℹ️  cmux needs at least one local backend (panes are backend-only) — running in-process instead.')
+  if (orca) {
+    logger.info('ℹ️  Orca needs at least one local backend (panes are backend-only) — running in-process instead.')
   }
 
-  return { presetDef: plan.presetDef, watch, cmux: false }
+  return { presetDef: plan.presetDef, watch, orca: false }
 }
 
 /** Print the equivalent (`--target=…`) flag command, plus a save-as-preset ergonomics hint. */
@@ -510,7 +510,7 @@ const runPresetBranch = async (prompts: WizardPrompts, preset: string): Promise<
   if (watch) commandEcho.addOption('--watch', true)
   commandEcho.print()
 
-  return { preset, watch, cmux: false }
+  return { preset, watch, orca: false }
 }
 
 /** Sentinel value for the "Manual (custom)" step-0 choice (a preset name can never be empty). */

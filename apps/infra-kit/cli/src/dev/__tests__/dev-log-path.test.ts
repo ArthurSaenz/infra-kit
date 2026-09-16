@@ -43,8 +43,8 @@ describe('dev-server — session log dir', () => {
     expect(resolveLogDir()).toBe(`${FAKE_CACHE_HOME}/infra-kit/no-session/dev/${process.pid}`)
   })
 
-  it('separates two processes that share one session id — the cmux case', () => {
-    // `--cmux` spawns one `infra-kit dev` per pane and every pane INHERITS the same INFRA_KIT_SESSION.
+  it('separates two processes that share one session id — the Orca case', () => {
+    // `--orca` spawns one `infra-kit dev` per pane and every pane INHERITS the same INFRA_KIT_SESSION.
     // Before the <pid> segment they all appended to one logs.txt, through two handles each.
     process.env.INFRA_KIT_SESSION = 'ab12cd34'
 

@@ -10,7 +10,7 @@ import {
   destructive,
   packageManager,
   style,
-  cmux,
+  orca,
   worktree,
   agentModeDemotion,
 } from '../bash-guard.mjs';
@@ -153,7 +153,7 @@ test('guard scope contracts are what the dispatcher expects', () => {
   assert.equal(packageManager.scope, 'segment');
   assert.equal(destructive.scope, 'segment');
   assert.equal(style.scope, undefined);
-  assert.equal(cmux.scope, undefined);
+  assert.equal(orca.scope, undefined);
   // agentModeDemotion walks segments itself to carry `unset CLAUDECODE` forward across `;`/`&&`.
   assert.equal(agentModeDemotion.scope, undefined);
 });
@@ -181,31 +181,31 @@ test('style: advises (never blocks) on grep/find, stays quiet on piped grep', ()
   assert.equal(action(style.check('rg foo')), null);
 });
 
-test('cmux: blocks bare dev server, allows cmux-wrapped', () => {
-  assert.equal(action(cmux.check('pnpm dev')), 'block');
-  assert.equal(action(cmux.check('pnpm run dev')), 'block');
-  assert.equal(action(cmux.check('cmux new-session -d -s dev "pnpm dev"')), null);
-  assert.equal(action(cmux.check('pnpm build')), null);
+test('orca: blocks bare dev server, allows orca-terminal-wrapped', () => {
+  assert.equal(action(orca.check('pnpm dev')), 'block');
+  assert.equal(action(orca.check('pnpm run dev')), 'block');
+  assert.equal(action(orca.check('orca terminal create --worktree active --title dev --command "pnpm dev"')), null);
+  assert.equal(action(orca.check('pnpm build')), null);
   // Still the command being RUN, once segmenting moved inside the guard.
-  assert.equal(action(cmux.check('cd apps/client && pnpm dev')), 'block');
+  assert.equal(action(orca.check('cd apps/client && pnpm dev')), 'block');
 });
 
-// Why cmux segments internally rather than exporting scope='segment': the splitter is quote-blind,
-// so this payload splits and the half holding `pnpm dev` cannot see the `cmux` authorising it.
-test('cmux: a compound payload inside a cmux session is still allowed', () => {
-  assert.equal(action(cmux.check('cmux new-session -d -s dev "cd apps/client && pnpm dev"')), null);
-  assert.equal(action(cmux.check('cmux new-session -d -s api "pnpm --filter api dev"')), null);
+// Why orca segments internally rather than exporting scope='segment': the splitter is quote-blind,
+// so this payload splits and the half holding `pnpm dev` cannot see the `orca terminal` authorising it.
+test('orca: a compound payload inside an Orca terminal is still allowed', () => {
+  assert.equal(action(orca.check('orca terminal create --worktree active --command "cd apps/client && pnpm dev"')), null);
+  assert.equal(action(orca.check('orca terminal split --direction horizontal --command "pnpm --filter api dev"')), null);
 });
 
 // The guard BLOCKS, so a false positive is a hard stop on ordinary work.
-test('cmux: does not fire on commands that merely mention the dev script', () => {
+test('orca: does not fire on commands that merely mention the dev script', () => {
   for (const command of [
     'rg "pnpm dev" docs/',
-    'echo "run pnpm dev in cmux"',
+    'echo "run pnpm dev in orca"',
     'git commit -m "docs: explain pnpm dev"',
     'cat notes-pnpm-dev.md',
   ]) {
-    assert.equal(action(cmux.check(command)), null, command);
+    assert.equal(action(orca.check(command)), null, command);
   }
 });
 
@@ -348,10 +348,13 @@ test('bash-guard advises rather than blocks on grep (exit 0 + additionalContext)
 });
 
 // Segmentation is opt-in per guard: whole-line guards must keep reading the whole line, or their
-// deliberate allowances (piped grep, cmux-wrapped dev) would flip to blocks.
+// deliberate allowances (piped grep, orca-terminal-wrapped dev) would flip to blocks.
 test('bash-guard does not segment whole-line guards', () => {
   assert.equal(runHook('bash-guard.mjs', bash('rg foo | grep bar')).status, 0);
-  assert.equal(runHook('bash-guard.mjs', bash('cmux new-session -d -s dev "pnpm dev"')).status, 0);
+  assert.equal(
+    runHook('bash-guard.mjs', bash('orca terminal create --worktree active --title dev --command "pnpm dev"')).status,
+    0,
+  );
 });
 
 test('bash-guard advises on git worktree list (exit 0 + additionalContext)', () => {

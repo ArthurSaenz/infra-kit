@@ -1,6 +1,5 @@
 import { vi } from 'vitest'
 
-import { listCmuxWorkspacesByCwd, realpathForCmuxCwd } from 'src/integrations/cmux'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 // LEAF paths, matching `release-remove.ts`'s own imports (`:11`, `:17`, `:49`). Mocking the barrels
 // instead would intercept nothing: a partial barrel mock does not reach a module that a consumer
@@ -11,6 +10,7 @@ import { removeIdeWorktreeFolders } from 'src/integrations/ide'
 import { findVersionByName, loadJiraConfigOptional } from 'src/integrations/jira'
 import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
 import { getVersionRelatedIssueCounts, removeJiraVersion } from 'src/integrations/jira/remove-version'
+import { listOrcaTerminals, orcaCallerInsideTargets } from 'src/integrations/orca'
 import { assertBaseBranchSwitchable, assertManagementContext } from 'src/lib/git-guard'
 import {
   branchExists,
@@ -103,7 +103,8 @@ export const findVersionByNameFake = (versions: JiraVersion[]) => {
 
 /**
  * The healthy baseline: worktree present and clean, an OPEN PR, both branch tips live, Jira
- * configured with an unreleased fix version carrying no issues, and no cmux window.
+ * configured with an unreleased fix version carrying no issues, no Orca terminal in the worktree, and
+ * a caller that is not inside it.
  *
  * `isAgentMode` is deliberately NOT wired here — `release-remove-guard.test.ts` reads the real
  * `agentMode` holder, and wiring a spy onto a real function would throw.
@@ -127,10 +128,8 @@ export const installDefaults = (): void => {
 
   vi.mocked(removeReleaseWorktreeIfPresent).mockResolvedValue([BRANCH])
   vi.mocked(removeIdeWorktreeFolders).mockResolvedValue([])
-  vi.mocked(listCmuxWorkspacesByCwd).mockResolvedValue(new Map<string, string>())
-  vi.mocked(realpathForCmuxCwd).mockImplementation(async (path: string) => {
-    return path
-  })
+  vi.mocked(listOrcaTerminals).mockResolvedValue({ terminals: [], truncated: false })
+  vi.mocked(orcaCallerInsideTargets).mockResolvedValue(null)
 
   vi.mocked(loadJiraConfigOptional).mockResolvedValue(JIRA_CONFIG)
   vi.mocked(findVersionByName).mockImplementation(findVersionByNameFake([jiraVersion(), moveTargetVersion()]))

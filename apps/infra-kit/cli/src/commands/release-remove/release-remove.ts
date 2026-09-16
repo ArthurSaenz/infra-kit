@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import { $ } from 'zx'
 
-import { listCmuxWorkspacesByCwd, realpathForCmuxCwd } from 'src/integrations/cmux'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 // Leaf module, not the `src/integrations/gh` barrel — and the same rule for the two freshly hoisted
 // collaborators below. A hoisted helper's barrel now re-exports a module that imports ITS siblings
@@ -15,6 +14,7 @@ import type { RemoveIdeWorktreeFoldersOutcome } from 'src/integrations/ide/types
 import { buildJiraVersionUrl, findVersionByName, loadJiraConfigOptional } from 'src/integrations/jira'
 import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
 import { getVersionRelatedIssueCounts, removeJiraVersion } from 'src/integrations/jira/remove-version'
+import { listOrcaTerminals, orcaCallerInsideTargets } from 'src/integrations/orca'
 import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
@@ -102,7 +102,8 @@ interface ReleaseRemovePlan {
   /** Every release worktree, needed by `removeIdeWorktreeFolders` to compute the remaining set. */
   currentWorktrees: string[]
   worktreePresent: boolean
-  cmuxWorkspacePresent: boolean
+  /** Connected Orca terminals in the worktree; the removal closes them. Informational only. */
+  orcaTerminalCount: number
   /** Porcelain paths inside the worktree, when one exists. */
   worktreeDirty: string[] | null
   /**
@@ -366,11 +367,43 @@ const probeWorktreeDirty = async (worktreePath: string): Promise<string[]> => {
     })
 }
 
-/** Best-effort, and only informational: it exists so the confirm text can warn that a window will close. */
-const probeCmuxWorkspace = async (worktreePath: string): Promise<boolean> => {
-  const byCwd = await listCmuxWorkspacesByCwd()
+/** Best-effort, and only informational: it exists so the confirm text can warn that terminals will close. */
+const probeOrcaTerminals = async (worktreePath: string): Promise<number> => {
+  try {
+    const { terminals } = await listOrcaTerminals(worktreePath)
 
-  return byCwd.has(await realpathForCmuxCwd(worktreePath))
+    return terminals.filter((terminal) => {
+      return terminal.connected
+    }).length
+  } catch (error) {
+    logger.debug({ error, worktreePath }, 'release remove: orca terminal probe failed')
+
+    return 0
+  }
+}
+
+/**
+ * The removal closes every Orca terminal of the worktree — including the one running this command,
+ * if it sits inside it. Env-keyed (`ORCA_WORKTREE_ID`), complementary to the cwd-keyed
+ * `assertManagementContext`: `cd` / `-C` change the cwd, never the terminal's identity, so the only
+ * remediation is another terminal.
+ */
+const assertCallerOutsideOrcaWorktree = async (worktreePath: string): Promise<void> => {
+  const inside = await orcaCallerInsideTargets([worktreePath])
+
+  if (inside === null) return
+
+  logger.warn({ operation: OPERATION }, `⛔ this command runs inside an Orca terminal of ${inside}`)
+
+  throw new StructuredRefusalError(
+    { status: 'refused', reason: 'orca_caller_inside_target', agentMode: agentMode.source },
+    2,
+    {
+      operation: OPERATION,
+      remediation: `re-run from a terminal that is not an Orca pane of ${inside} (a non-Orca terminal, or another worktree's row)`,
+      stderrExcerpt: `this command runs inside an Orca terminal of ${inside}, which the removal would close`,
+    },
+  )
 }
 
 interface JiraPreflight {
@@ -443,6 +476,9 @@ const buildPlan = async (branch: string, args: ReleaseRemoveArgs): Promise<Relea
   ])
 
   const worktreePresent = currentWorktrees.includes(branch)
+
+  if (worktreePresent) await assertCallerOutsideOrcaWorktree(worktreePath)
+
   const jiraPreflight = await buildJiraPreflight(id, args)
 
   return {
@@ -458,7 +494,7 @@ const buildPlan = async (branch: string, args: ReleaseRemoveArgs): Promise<Relea
     worktreePath,
     currentWorktrees,
     worktreePresent,
-    cmuxWorkspacePresent: worktreePresent ? await probeCmuxWorkspace(worktreePath) : false,
+    orcaTerminalCount: worktreePresent ? await probeOrcaTerminals(worktreePath) : 0,
     worktreeDirty: worktreePresent ? await probeWorktreeDirty(worktreePath) : null,
     localTipSha,
     remoteTipSha,
@@ -475,7 +511,7 @@ const describePlan = (plan: ReleaseRemovePlan): Record<string, unknown> => {
     worktreePath: plan.worktreePath,
     worktreePresent: plan.worktreePresent,
     worktreeDirty: plan.worktreeDirty,
-    cmuxWorkspacePresent: plan.cmuxWorkspacePresent,
+    orcaTerminalCount: plan.orcaTerminalCount,
     localTipSha: plan.localTipSha,
     remoteTipSha: plan.remoteTipSha,
     pr: plan.pr,
@@ -519,8 +555,8 @@ const buildConfirmMessage = (plan: ReleaseRemovePlan, skipJira: boolean): string
     `  • Jira version:  ${describeJiraLine(plan, skipJira)}`,
   ]
 
-  if (plan.cmuxWorkspacePresent) {
-    lines.push(`  • the cmux window rooted at ${plan.worktreePath} will close`)
+  if (plan.orcaTerminalCount > 0) {
+    lines.push(`  • ${plan.orcaTerminalCount} Orca terminal(s) in ${plan.worktreePath} will be closed`)
   }
 
   return lines.join('\n')
@@ -1048,7 +1084,7 @@ export const releaseRemove = async (options: ReleaseRemoveArgs) => {
 export const releaseRemoveMcpTool = defineMcpTool({
   name: 'release-remove',
   description:
-    'Tear down ONE release created by release-create: removes its git worktree (and the cmux window rooted there), strips the worktree from the Cursor workspace, closes its pull request with a comment, deletes the release branch locally and on origin, and REMOVES ITS JIRA FIX VERSION — the one irreversible step (new id, new URL, lost issue links), which is why every call is gated behind human confirmation. Omit "version" and this server offers the human a form listing the open release PRs; the accepted choice feeds the confirm gate. A client that cannot render a form gets a gate with no version — confirming it is refused, never guessed. Pass "version" when the human already named the release. One release per call — repeat the call for another; there is no "versions" field. Refuses before any mutation when the PR is MERGED (the release has shipped), when the fix version is released/archived, when the fix version still carries issues (pass "moveIssuesTo" to reassign them), or when nothing named that version exists. skipJira is CLI-only and has no field here: it would leave a live fix version behind with nothing in the result pointing at it. Resumable: every step is a verified no-op when its artefact is already gone, so a re-run finishes a partial teardown. What is lost with the worktree directory: gitignored contents including a hydrated .env of Doppler secrets (re-fetch with env-load) and node_modules/dist.',
+    'Tear down ONE release created by release-create: removes its git worktree (closing every Orca terminal open in it first — a call made from an Orca terminal inside that worktree is refused as orca_caller_inside_target before anything is touched), strips the worktree from the Cursor workspace, closes its pull request with a comment, deletes the release branch locally and on origin, and REMOVES ITS JIRA FIX VERSION — the one irreversible step (new id, new URL, lost issue links), which is why every call is gated behind human confirmation. Omit "version" and this server offers the human a form listing the open release PRs; the accepted choice feeds the confirm gate. A client that cannot render a form gets a gate with no version — confirming it is refused, never guessed. Pass "version" when the human already named the release. One release per call — repeat the call for another; there is no "versions" field. Refuses before any mutation when the PR is MERGED (the release has shipped), when the fix version is released/archived, when the fix version still carries issues (pass "moveIssuesTo" to reassign them), or when nothing named that version exists. skipJira is CLI-only and has no field here: it would leave a live fix version behind with nothing in the result pointing at it. Resumable: every step is a verified no-op when its artefact is already gone, so a re-run finishes a partial teardown. What is lost with the worktree directory: gitignored contents including a hydrated .env of Doppler secrets (re-fetch with env-load) and node_modules/dist.',
   requiresHumanConfirm: true,
   formProvider: releaseRemoveForm,
   inputSchema: {

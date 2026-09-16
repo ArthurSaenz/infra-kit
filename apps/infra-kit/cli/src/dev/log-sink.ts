@@ -3,7 +3,7 @@
  *
  * Replaces the single shared `<cacheRoot>/<session>/logs.txt`, which was written through TWO handles —
  * a buffered `fs.createWriteStream` (the turbo tee) and a sync `fs.appendFileSync` (everything else) —
- * so line order was never deterministic. Worse, `--cmux` spawns N `infra-kit dev` processes that all
+ * so line order was never deterministic. Worse, `--orca` spawns N `infra-kit dev` processes that all
  * INHERIT the same `INFRA_KIT_SESSION`, so N processes appended to one file through 2N handles. The
  * `<pid>` path segment makes that collision structurally impossible; one fd per service kills the rest.
  *
@@ -149,7 +149,7 @@ const safeSegment = (raw: string): string | null => {
 /**
  * Session log root: `<cacheRoot>/<INFRA_KIT_SESSION>/dev/<pid>/`.
  *
- * The `<pid>` segment is load-bearing, not cosmetic. `--cmux` spawns one `infra-kit dev` per pane and
+ * The `<pid>` segment is load-bearing, not cosmetic. `--orca` spawns one `infra-kit dev` per pane and
  * every pane inherits the SAME `INFRA_KIT_SESSION`, so without it N panes interleave into one file.
  * Falls back to a literal `no-session` folder when the shell exported no id, so dev logging never
  * depends on `infra-kit setup` having run.

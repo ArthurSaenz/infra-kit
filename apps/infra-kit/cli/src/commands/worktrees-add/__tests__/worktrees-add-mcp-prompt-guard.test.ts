@@ -4,13 +4,14 @@ import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
+import { findOrcaRepo, probeOrca } from 'src/integrations/orca'
 import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { zxCommandMock } from 'src/lib/git-utils/__tests__/zx-command-mock'
-import { getInfraKitConfig, resolveConfiguredIdes } from 'src/lib/infra-kit-config'
+import { getInfraKitConfig, resolveConfiguredIdes, resolveOrcaLayout } from 'src/lib/infra-kit-config'
 
 import { worktreesAdd } from '../worktrees-add'
 
@@ -45,12 +46,19 @@ import { worktreesAdd } from '../worktrees-add'
 // than `isAgentMode()` would silently stop `worktrees add --yes` prompting on a terminal —
 // fixing the MCP direction by breaking the CLI one.
 
+/** Every command line the `$` mock answered — the git tripwire for the order tests. */
+const shellCommands = vi.hoisted(() => {
+  return [] as string[]
+})
+
 vi.mock('zx', async (importOriginal) => {
   const actual = await importOriginal<typeof import('zx')>()
 
   return {
     ...actual,
-    $: zxCommandMock(() => {
+    $: zxCommandMock((command) => {
+      shellCommands.push(command)
+
       return { stdout: '' }
     }),
   }
@@ -65,7 +73,7 @@ vi.mock('src/lib/git-utils', () => {
 })
 
 vi.mock('src/lib/infra-kit-config', () => {
-  return { getInfraKitConfig: vi.fn(), resolveConfiguredIdes: vi.fn() }
+  return { getInfraKitConfig: vi.fn(), resolveConfiguredIdes: vi.fn(), resolveOrcaLayout: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {
@@ -79,16 +87,19 @@ vi.mock('src/integrations/ide', async (importOriginal) => {
   return { ...actual, addIdeWorktreeFolders: vi.fn() }
 })
 
-vi.mock('src/integrations/cmux', () => {
+// The Orca driver is mocked whole (no `importOriginal`: the real barrel pulls `zx` in before the
+// `$` mock's helper import is initialised). When `orca` resolves false NOTHING here may be called,
+// and the order test below asserts exactly that — a real `orca status` spawn would be the regression.
+vi.mock('src/integrations/orca', () => {
   return {
-    buildCmuxWorkspaceTitle: vi.fn().mockReturnValue('title'),
-    createCmuxGroupFrom: vi.fn(),
-    findCmuxGroupRefByName: vi.fn(),
-    listCmuxWorkspacesByCwd: vi.fn().mockResolvedValue(new Set<string>()),
-    openCmuxWorkspaceWithLayout: vi.fn(),
-    realpathForCmuxCwd: vi.fn(async (cwd: string) => {
-      return cwd
-    }),
+    OrcaError: class OrcaError extends Error {},
+    probeOrca: vi.fn(),
+    findOrcaRepo: vi.fn(),
+    addOrcaRepo: vi.fn(),
+    openOrcaWorktreeTerminals: vi.fn(),
+    isOrcaWorktreeListed: vi.fn(),
+    createOrcaOpenPoll: vi.fn(),
+    buildOrcaTerminalTitle: vi.fn().mockReturnValue('title'),
   }
 })
 
@@ -176,6 +187,7 @@ const addedOptions = () => {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  shellCommands.length = 0
   commandEcho.reset()
   vi.spyOn(commandEcho, 'addOption')
   vi.spyOn(commandEcho, 'setInteractive')
@@ -192,6 +204,9 @@ beforeEach(() => {
     envManagement: { provider: 'doppler', config: { name: 'test' } },
   })
   vi.mocked(resolveConfiguredIdes).mockReturnValue([])
+  vi.mocked(resolveOrcaLayout).mockReturnValue('two-columns')
+  vi.mocked(probeOrca).mockResolvedValue('ready')
+  vi.mocked(findOrcaRepo).mockResolvedValue({ registered: true, visibility: 'show' })
 
   captureStdout()
 })
@@ -230,7 +245,8 @@ describe('worktrees-add — the optional follow-up prompts under MCP', () => {
     expect(stdoutBytes.join('')).toBe('')
 
     expect(addedOptions()).toContainEqual(['--no-github-desktop', true])
-    expect(addedOptions()).toContainEqual(['--no-cmux', true])
+    expect(addedOptions()).toContainEqual(['--no-orca', true])
+    expect(probeOrca).not.toHaveBeenCalled()
   })
 
   it('records the resolved values, not merely the absence of a crash', async () => {
@@ -250,14 +266,19 @@ describe('worktrees-add — the optional follow-up prompts under MCP', () => {
     // The affirmative flags are what a fallen-through prompt answering "yes" (confirm's
     // default) would have recorded, so their absence is the second half of the claim.
     expect(addedOptions()).not.toContainEqual(['--github-desktop', true])
-    expect(addedOptions()).not.toContainEqual(['--cmux', true])
+    expect(addedOptions()).not.toContainEqual(['--orca', true])
   })
 })
 
-describe('worktrees-add — the confirm site propagates its refusal', () => {
+describe('worktrees-add — the confirm site propagates its refusal, in the pinned order', () => {
   // The site sits inside this handler's rewrapping `catch`; a `StructuredRefusalError` is an
   // `OperationError` and must come out intact, `confirmation_required` and all.
-  it('an unconfirmed agent run throws confirmation_required un-rewrapped, before the follow-ups', async () => {
+  //
+  // ORDER, pinned deliberately (docs/orca-migration-plan.md §2.4): the follow-ups resolve BEFORE the
+  // confirm (headless → false), then — only when Orca resolves true — `probeOrca` and `findOrcaRepo`,
+  // then `confirmation_required`, then git. The preview has to be able to name `orca repo add`, and an
+  // explicit `--orca` that cannot be honoured must refuse before the preview.
+  it('an unconfirmed agent run throws confirmation_required un-rewrapped, AFTER the follow-ups resolved false and with NO orca spawn', async () => {
     const stdin = new PassThrough()
 
     setStdin(stdin, true)
@@ -275,6 +296,59 @@ describe('worktrees-add — the confirm site propagates its refusal', () => {
     expect((error as StructuredRefusalError).exitCode).toBe(2)
     expect(stdoutBytes.join('')).toBe('')
     expect(addedOptions()).not.toContainEqual(['--yes', true])
+
+    // The follow-ups ran first and resolved headless-false…
+    expect(addedOptions()).toContainEqual(['--no-github-desktop', true])
+    expect(addedOptions()).toContainEqual(['--no-orca', true])
+    // …so the Orca leg was never entered: no `orca` process, not even the readiness probe.
+    expect(probeOrca).not.toHaveBeenCalled()
+    expect(findOrcaRepo).not.toHaveBeenCalled()
+    // And git never ran (the `$` mock records nothing for `git worktree add`).
+    expect(shellCommands).not.toContainEqual(expect.stringContaining('git worktree add'))
+  })
+
+  it('an unconfirmed agent run with orca=true probes and looks the repo up BEFORE confirmation_required', async () => {
+    const stdin = new PassThrough()
+
+    setStdin(stdin, true)
+    agentMode.source = 'flag'
+    vi.mocked(findOrcaRepo).mockResolvedValue({ registered: false })
+
+    const error = await worktreesAdd({ confirmedCommand: false, versions: '1.2.5', orca: true }).catch((e: unknown) => {
+      return e
+    })
+
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+    expect((error as StructuredRefusalError).structuredContent).toMatchObject({ status: 'confirmation_required' })
+    expect(probeOrca).toHaveBeenCalledTimes(1)
+    expect(findOrcaRepo).toHaveBeenCalledWith('/workspace/project-root')
+    // The preview the agent is refused with names the registration it would perform.
+    expect((error as StructuredRefusalError).structuredContent.message).toContain(
+      'will register project-root in Orca (orca repo add)',
+    )
+    expect(shellCommands).not.toContainEqual(expect.stringContaining('git worktree add'))
+  })
+
+  it('an explicit --orca against an Orca that is not running refuses orca_unreachable BEFORE the confirm and before git', async () => {
+    const stdin = new PassThrough()
+
+    setStdin(stdin, true)
+    agentMode.source = 'flag'
+    vi.mocked(probeOrca).mockResolvedValue('unreachable')
+
+    const error = await worktreesAdd({ confirmedCommand: false, versions: '1.2.5', orca: true }).catch((e: unknown) => {
+      return e
+    })
+
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+    expect((error as StructuredRefusalError).structuredContent).toMatchObject({
+      status: 'refused',
+      reason: 'orca_unreachable',
+      agentMode: 'flag',
+    })
+    expect((error as StructuredRefusalError).exitCode).toBe(2)
+    expect(findOrcaRepo).not.toHaveBeenCalled()
+    expect(shellCommands).not.toContainEqual(expect.stringContaining('git worktree add'))
   })
 })
 

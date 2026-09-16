@@ -8,7 +8,9 @@ import {
   getInfraKitConfigPaths,
   infraKitConfigSchema,
   infraKitOverrideConfigSchema,
+  renameCmuxKeys,
   resetInfraKitConfigCache,
+  resolveUserGlobalConfigPath,
 } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { fileExists, tildify } from 'src/lib/path-display'
@@ -375,5 +377,68 @@ export const normalizeLegacyIdeStructures = async (): Promise<void> => {
 
   if (normalized > 0) {
     resetInfraKitConfigCache()
+  }
+}
+
+/**
+ * Rewrite the legacy cmux config keys to their orca names in every `infra-kit.json` layer
+ * (`worktrees.openInCmux` → `openInOrca`, `worktrees.cmux` → `worktrees.orca`,
+ * `devServersPresets.<k>.cmux` → `.orca`). Same contract as {@link normalizeLegacyIdeStructures}:
+ * best-effort and non-fatal per layer, a file is rewritten only when a legacy key was found (clean
+ * configs stay byte-for-byte untouched), and the config cache is reset when anything changed.
+ *
+ * Unlike the ide normalization, the user-global layer is migrated even when `setup` runs OUTSIDE a
+ * project: it is the one layer that exists independent of any repo and the one most likely to carry
+ * `openInCmux`, so leaving it for the next in-project run would keep the loader's in-memory strip
+ * (and its warning) alive for no reason. Ordered AFTER `migrateUserGlobalConfigFilename` in
+ * `runConfigMigrations` because it addresses `~/.infra-kit/infra-kit.json` by that fixed name.
+ *
+ * @example
+ * await migrateCmuxConfigToOrca()
+ * // ✓ Migrated cmux → orca keys in ~/.infra-kit/infra-kit.json
+ * // (no output when no config carries a legacy cmux key)
+ */
+export const migrateCmuxConfigToOrca = async (): Promise<void> => {
+  const jsonPaths = await resolveCmuxMigrationTargets()
+
+  let migrated = 0
+
+  for (const jsonPath of jsonPaths) {
+    if (!(await fileExists(jsonPath))) continue
+
+    try {
+      const raw = await fs.readFile(jsonPath, 'utf-8')
+
+      if (raw.trim() === '') continue
+
+      const { changed, result } = renameCmuxKeys(JSON.parse(raw))
+
+      if (!changed) continue
+
+      await fs.writeFile(jsonPath, `${JSON.stringify(result, null, 2)}\n`, 'utf-8')
+
+      logger.info(`✓ Migrated cmux → orca keys in ${tildify(jsonPath)}`)
+      migrated++
+    } catch (err) {
+      logger.info(`⚠ Skipped migrating ${tildify(jsonPath)} — ${(err as Error).message}`)
+    }
+  }
+
+  if (migrated > 0) {
+    resetInfraKitConfigCache()
+  }
+}
+
+/**
+ * The layers {@link migrateCmuxConfigToOrca} may rewrite: all three inside a project, only the
+ * user-global file outside one (`getInfraKitConfigPaths` rejects there — it needs a git toplevel).
+ */
+const resolveCmuxMigrationTargets = async (): Promise<string[]> => {
+  try {
+    const paths = await getInfraKitConfigPaths()
+
+    return [paths.main, paths.userGlobal, paths.userProject]
+  } catch {
+    return [resolveUserGlobalConfigPath()]
   }
 }

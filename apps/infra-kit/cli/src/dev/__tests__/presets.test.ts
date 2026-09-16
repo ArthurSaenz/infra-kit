@@ -279,10 +279,10 @@ describe('resolvePreset — unmatched', () => {
   })
 })
 
-describe('resolvePreset — cmux', () => {
-  it('passes the cmux flag through, defaulting to false', () => {
-    expect(resolvePreset({ apps: { '*/api': {} }, cmux: true }, discovered).cmux).toBe(true)
-    expect(resolvePreset({ apps: { '*/api': {} } }, discovered).cmux).toBe(false)
+describe('resolvePreset — orca', () => {
+  it('passes the orca flag through, defaulting to false', () => {
+    expect(resolvePreset({ apps: { '*/api': {} }, orca: true }, discovered).orca).toBe(true)
+    expect(resolvePreset({ apps: { '*/api': {} } }, discovered).orca).toBe(false)
   })
 })
 

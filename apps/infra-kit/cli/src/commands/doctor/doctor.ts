@@ -38,6 +38,7 @@ import { portlessLinkCliPath, portlessLinkPath, serviceInstallCommand } from 'sr
 import type { ServiceInstallSeams } from 'src/dev/proxy/portless-link'
 import { INFRA_KIT_ENV_TOKEN_VAR, probeEnvToken, resolveEnvToken } from 'src/integrations/doppler'
 import type { EnvTokenProbe, EnvTokenSource, ResolvedEnvToken } from 'src/integrations/doppler'
+import { probeOrca } from 'src/integrations/orca'
 import { inspectPackageGuidance, readGuidanceFile } from 'src/lib/agent-guidance'
 import { agentMode, resolveAgentModeSource } from 'src/lib/agent-mode'
 import type { ResolveAgentModeInput } from 'src/lib/agent-mode'
@@ -61,6 +62,7 @@ import {
   getInfraKitConfigPaths,
   resetInfraKitConfigCache,
   resolveConfiguredIdes,
+  stripLegacyCmuxKeys,
 } from 'src/lib/infra-kit-config'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { isWithin, safeRealpath } from 'src/lib/install-manager'
@@ -168,6 +170,31 @@ const checkCommand = async (
   } catch {
     return { name, status: 'fail', message: failMsg }
   }
+}
+
+/**
+ * Three verdicts, not a binary probe: the Orca CLI can be on PATH while the desktop app is closed, and
+ * every reveal/teardown in `worktrees add|remove` degrades on exactly that state — so a green row must
+ * mean "the runtime will take a `terminal create`", which only `probeOrca` can answer.
+ */
+const checkOrca = async (): Promise<CheckResult> => {
+  const name = 'orca installed'
+  const probe = await probeOrca()
+
+  if (probe === 'absent') {
+    return {
+      name,
+      status: 'fail',
+      message:
+        'orca is not on PATH. Install with: brew install --cask stablyai/orca/orca, then register the CLI in Orca → Settings → Experimental → CLI',
+    }
+  }
+
+  if (probe === 'unreachable') {
+    return { name, status: 'warn', message: 'orca is installed but the app is not running — start it with: orca open' }
+  }
+
+  return { name, status: 'pass', message: 'Installed: orca (app running, runtime reachable)' }
 }
 
 /**
@@ -298,6 +325,32 @@ const checkPnpmWorkspaceVirtualStore = async (): Promise<CheckResult> => {
 export interface DoctorConfig {
   config: InfraKitConfig | null
   error: Error | null
+  /**
+   * Legacy `cmux` keys the loader stripped in memory, per layer file. The merged config parses clean
+   * with them present (that is the no-brick rule), so a green "config valid" row would hide the one
+   * thing `infra-kit setup` still has to rewrite — this is what turns the row yellow instead.
+   */
+  legacyCmuxKeys: { file: string; paths: string[] }[]
+}
+
+/** The three layer files, re-read raw: the loader strips the keys before doctor can see them. */
+const findLegacyCmuxKeys = async (): Promise<DoctorConfig['legacyCmuxKeys']> => {
+  const paths = await getInfraKitConfigPaths()
+  const found: DoctorConfig['legacyCmuxKeys'] = []
+
+  for (const file of [paths.main, paths.userGlobal, paths.userProject]) {
+    if (!fs.existsSync(file)) continue
+
+    try {
+      const { stripped } = stripLegacyCmuxKeys(JSON.parse(fs.readFileSync(file, 'utf8')))
+
+      if (stripped.length > 0) found.push({ file, paths: stripped })
+    } catch {
+      // Unparseable JSON is the "config valid" row's own failure to report, not this scan's.
+    }
+  }
+
+  return found
 }
 
 /**
@@ -314,16 +367,30 @@ export const readDoctorConfig = async (): Promise<DoctorConfig> => {
   try {
     resetInfraKitConfigCache()
 
-    return { config: await getInfraKitConfig(), error: null }
+    return { config: await getInfraKitConfig(), error: null, legacyCmuxKeys: await findLegacyCmuxKeys() }
   } catch (err) {
-    return { config: null, error: err as Error }
+    return { config: null, error: err as Error, legacyCmuxKeys: [] }
   }
 }
 
-const checkInfraKitConfigValid = (read: DoctorConfig): CheckResult => {
+export const checkInfraKitConfigValid = (read: DoctorConfig): CheckResult => {
   const name = 'infra-kit config valid'
 
   if (read.error) return { name, status: 'fail', message: read.error.message }
+
+  if (read.legacyCmuxKeys.length > 0) {
+    const where = read.legacyCmuxKeys
+      .map(({ file, paths }) => {
+        return `${paths.join(', ')} in ${tildify(file)}`
+      })
+      .join('; ')
+
+    return {
+      name,
+      status: 'warn',
+      message: `legacy cmux keys are ignored (${where}) — run \`infra-kit setup\` to migrate them to orca`,
+    }
+  }
 
   return {
     name,
@@ -1353,7 +1420,7 @@ const describeAgentModeInputs = ({ env, stdinIsTTY, flag }: ResolveAgentModeInpu
  * The `Agent mode` row: which source `resolveAgentModeSource` fires on for THIS shell, with the inputs
  * it read. Informational — always a pass — because neither answer is wrong: a human at a PTY and an
  * agent under Claude Code are both correct classifications, and what the row is for is the third case,
- * where someone expected one and got the other (a `!` shell reads as agent; a cmux window Claude Code
+ * where someone expected one and got the other (a `!` shell reads as agent; an Orca terminal Claude Code
  * spawned reads as human).
  *
  * Pure over its input so the precedence table (`agent-mode.ts`) is what the test drives, not the
@@ -2142,12 +2209,7 @@ export const doctor = async (options: { fix?: boolean; probeDeps?: ProbeDeps } =
       'typescript-language-server is installed',
       'typescript-language-server is not installed. Install from: https://github.com/typescript-language-server/typescript-language-server#installing',
     ),
-    checkCommand(
-      'terminal installed',
-      ['cmux', '--version'],
-      'Installed: cmux',
-      'cmux is not installed. Install from: https://cmux.com/',
-    ),
+    checkOrca(),
     Promise.resolve(checkZshrcInitialized()),
     Promise.resolve(checkZshenvInitialized()),
     checkWarmCache(),

@@ -749,9 +749,15 @@ describe('command catalog — MCP tool annotations & titles', () => {
     // 'reopen' and T7 loops zero times, T2 asserts a formula that moved with it, T4/T5 accept the
     // now-read-only tool, and T6 derives its expectation from the same source — nothing would red
     // while `reopen` silently started advertising `readOnlyHint: true`. `reopen` is `mutating: false`
-    // yet its MCP-reachable `force` flag closes cmux workspaces, which is the whole reason the
-    // exception exists.
-    expect(NOT_READ_ONLY, 'reopen must stay excepted — its MCP-reachable `force` closes workspaces').toContain('reopen')
+    // yet every MCP call spawns Orca terminal tabs and editor windows, which is the whole reason the
+    // exception exists. (It has no `force`: nothing is ever closed — the only by-worktree close verb would kill the caller too.)
+    expect(NOT_READ_ONLY, 'reopen must stay excepted — its MCP calls spawn Orca terminals').toContain('reopen')
+
+    const reopenInput = getExposedMcpTools().find((tool) => {
+      return tool.name === 'reopen'
+    })?.inputSchema
+
+    expect(Object.keys(reopenInput ?? {}), 'reopen has no close path, so no `force`').not.toContain('force')
 
     const reopen = getExposedMcpTools().find((tool) => {
       return tool.name === 'reopen'

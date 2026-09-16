@@ -3,7 +3,7 @@
  *
  * A preset (declared under `devServersPresets` in the per-project infra-kit.json) names
  * launch targets (`client/api`, `client/ui`, with `*` allowed in the app position), optional
- * per-target `watchDeps` (api + ui), per-route proxy-source overrides, and a `cmux` layout
+ * per-target `watchDeps` (api + ui), per-route proxy-source overrides, and an `orca` layout
  * flag. This module turns that declarative shape into a flat {@link ResolvedPreset}
  * the runner consumes. Side-effect free: the discovered app parts are passed in
  * (never read from disk here), so resolution is fully unit-testable.
@@ -44,8 +44,8 @@ export interface DiscoveredParts {
 export interface ResolvedPreset {
   /** Every (app, part) to launch, de-duplicated. */
   targets: ResolvedTarget[]
-  /** Run each target in its own cmux pane. */
-  cmux: boolean
+  /** Run each target in its own Orca pane. */
+  orca: boolean
   /**
    * app → (route path → source) overrides, as DECLARED by the preset.
    *
@@ -249,7 +249,7 @@ const addTarget = (
  * )
  * // => { targets: [{ app: 'client', part: 'ui', watchDeps: true },    // default participate
  * //                { app: 'client', part: 'api', watchDeps: false }], // explicit opt-out
- * //      cmux: false, proxy: {}, localApps: ['client'], unmatched: [] }
+ * //      orca: false, proxy: {}, localApps: ['client'], unmatched: [] }
  */
 export const resolvePreset = (preset: DevPreset, discovered: DiscoveredParts): ResolvedPreset => {
   const entries = Object.entries(preset.apps ?? ALL_TARGETS_KEYS)
@@ -284,7 +284,7 @@ export const resolvePreset = (preset: DevPreset, discovered: DiscoveredParts): R
     ),
   ]
 
-  return { targets, cmux: preset.cmux ?? false, proxy: state.proxy, localApps, unmatched: state.unmatched }
+  return { targets, orca: preset.orca ?? false, proxy: state.proxy, localApps, unmatched: state.unmatched }
 }
 
 /** What the run launched, as passed to {@link deriveTargetLabel}. */

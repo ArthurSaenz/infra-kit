@@ -258,11 +258,11 @@ export interface DevServerOptions {
    */
   presetDef?: DevPreset
   /**
-   * Run each discovered API app in its own cmux pane (one workspace, N panes), supervised by a
-   * resident process that closes the workspace on signal. Falls back to single-process dev when
-   * cmux is absent. Handled by `runCmuxDevServer`, not the in-process `DevServerRunner`.
+   * Run each discovered API app in its own Orca pane (one tab, N panes), supervised by a
+   * resident process that closes the tab on signal. Falls back to single-process dev when
+   * Orca cannot show the panes. Handled by `runOrcaDevServer`, not the in-process `DevServerRunner`.
    */
-  cmux?: boolean
+  orca?: boolean
   /**
    * Infer the single app to run from the current working directory (equivalent to
    * `--app=<that app>`), so every app can share the identical script
@@ -1999,7 +1999,7 @@ export class DevServerRunner {
    * Atomically write this runner's `.infra-kit/dev-context/<app>.json` fragment recording the
    * ACTUAL bound port (REV-5: serialize to a same-dir temp file, then `renameSync` into place, so a
    * concurrent reader — the vite helper's directory merge — never observes torn JSON). Each runner
-   * writes ONLY its own app's fragment, so cmux panes never clobber each other.
+   * writes ONLY its own app's fragment, so Orca panes never clobber each other.
    */
   private writeDevContextFragment(app: IApiAppConfig, boundPort: number, alias: string): void {
     const fragment: DevContextFragment = {

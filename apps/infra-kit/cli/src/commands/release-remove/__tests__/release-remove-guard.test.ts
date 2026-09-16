@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { loadJiraConfigOptional } from 'src/integrations/jira'
 import { removeJiraVersion } from 'src/integrations/jira/remove-version'
+import { orcaCallerInsideTargets } from 'src/integrations/orca'
 import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { CommandDeclinedError } from 'src/lib/errors/command-declined-error'
@@ -24,7 +25,7 @@ import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { removeReleaseWorktreeIfPresent } from 'src/lib/worktrees/remove-release-worktree'
 
 import { releaseRemove } from '../release-remove'
-import { LABEL, installDefaults } from './release-remove-mocks'
+import { BRANCH, LABEL, installDefaults } from './release-remove-mocks'
 
 /**
  * @fileoverview
@@ -90,8 +91,8 @@ vi.mock('src/lib/worktrees/remove-release-worktree', () => {
   return { removeReleaseWorktreeIfPresent: vi.fn() }
 })
 
-vi.mock('src/integrations/cmux', () => {
-  return { listCmuxWorkspacesByCwd: vi.fn(), realpathForCmuxCwd: vi.fn() }
+vi.mock('src/integrations/orca', () => {
+  return { listOrcaTerminals: vi.fn(), orcaCallerInsideTargets: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {
@@ -215,6 +216,47 @@ describe('release remove — guard prologue ordering', () => {
 
     expect(confirm).not.toHaveBeenCalled()
     expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
+  })
+})
+
+describe('release remove — the caller sits inside the release worktree in Orca', () => {
+  it('refuses orca_caller_inside_target before the confirm, with the other-terminal remediation, mutating nothing', async () => {
+    writeProjectConfig()
+
+    // This suite roots the project in a tmpdir (the config module is real), so the path is derived.
+    const worktreePath = `${tmp}-worktrees/${BRANCH}`
+
+    vi.mocked(orcaCallerInsideTargets).mockResolvedValue(worktreePath)
+
+    const error = await releaseRemove({ confirmedCommand: false, version: LABEL }).catch((e: unknown) => {
+      return e
+    })
+
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+    expect((error as StructuredRefusalError).structuredContent).toMatchObject({
+      status: 'refused',
+      reason: 'orca_caller_inside_target',
+    })
+    expect((error as StructuredRefusalError).exitCode).toBe(2)
+    expect((error as Error).message).toContain(`re-run from a terminal that is not an Orca pane of ${worktreePath}`)
+    // `cd` / `-C` cannot clear a per-terminal env, so the remediation never suggests them.
+    expect((error as Error).message).not.toMatch(/\bcd\b|-C\b/)
+
+    expect(orcaCallerInsideTargets).toHaveBeenCalledWith([worktreePath])
+    expect(confirm).not.toHaveBeenCalled()
+    expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
+    expect(deleteLocalBranch).not.toHaveBeenCalled()
+    expect(deleteRemoteBranch).not.toHaveBeenCalled()
+    expect(removeJiraVersion).not.toHaveBeenCalled()
+  })
+
+  it('skips the check when the release has no worktree — there is no terminal to close', async () => {
+    writeProjectConfig()
+    vi.mocked(getCurrentWorktrees).mockResolvedValue([])
+
+    await releaseRemove({ confirmedCommand: true, version: LABEL })
+
+    expect(orcaCallerInsideTargets).not.toHaveBeenCalled()
   })
 })
 

@@ -18,8 +18,15 @@ import { removeWorktrees } from '../remove-worktrees'
  * than report "not a working tree" as a failure.
  */
 
-vi.mock('src/integrations/cmux', () => {
-  return { closeCmuxWorkspaceByCwd: vi.fn(async () => {}) }
+vi.mock('src/integrations/orca', () => {
+  return {
+    probeOrca: vi.fn(async () => {
+      return 'unreachable'
+    }),
+    closeOrcaWorktreeTerminals: vi.fn(async () => {
+      return { closed: false, skipped: 'unreachable' }
+    }),
+  }
 })
 
 vi.mock('src/lib/logger', () => {

@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { removeIdeWorktreeFolders } from 'src/integrations/ide'
+import { orcaCallerInsideTargets } from 'src/integrations/orca'
 import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
@@ -96,6 +97,33 @@ const assertTargetsExist = (selected: string[], currentWorktrees: string[]): voi
 }
 
 /**
+ * The removal closes every Orca terminal of each target before `git worktree remove` — including the
+ * one running this command, if it sits inside a target. Checked ONCE for the whole batch, before the
+ * confirm and before any git call, because `removeWorktrees` runs branches under `Promise.all` and
+ * never rejects. `cd` / `-C` are not a remediation: `ORCA_WORKTREE_ID` is per-terminal env and does
+ * not follow the cwd.
+ */
+export const assertCallerOutsideOrcaTargets = async (worktreeDir: string, branches: string[]): Promise<void> => {
+  const inside = await orcaCallerInsideTargets(
+    branches.map((branch) => {
+      return `${worktreeDir}/${branch}`
+    }),
+  )
+
+  if (inside === null) return
+
+  throw new StructuredRefusalError(
+    { status: 'refused', reason: 'orca_caller_inside_target', agentMode: agentMode.source },
+    2,
+    {
+      operation: 'remove worktrees',
+      remediation: `re-run from a terminal that is not an Orca pane of ${inside} (a non-Orca terminal, or another worktree's row)`,
+      stderrExcerpt: `this command runs inside an Orca terminal of ${inside}, which the removal would close`,
+    },
+  )
+}
+
+/**
  * Manage git worktrees for release branches
  * Creates worktrees for active release branches and removes unused ones
  */
@@ -170,6 +198,8 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       commandEcho.addOption('--versions', releaseBranchLabels(selectedReleaseBranches))
     }
 
+    await assertCallerOutsideOrcaTargets(worktreeDir, selectedReleaseBranches)
+
     // Ask for confirmation
     await confirmOrExit(confirmedCommand, 'Are you sure you want to proceed with these worktree changes?')
 
@@ -225,7 +255,7 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
 export const worktreesRemoveMcpTool = defineMcpTool({
   name: 'worktrees-remove',
   description:
-    'Remove local git worktrees for the named release branches. Over MCP you MUST pass "versions" (comma-separated); bulk all=true removal is disabled here (it is a one-shot, unconfirmed wipe of every worktree) — the branch picker and confirmation are unavailable without a TTY. Every named version must be an active worktree, or the call errors without removing anything. What survives: the release branches/commits themselves are never deleted, and the worktrees directory plus its release/feature subfolders are left in place (recreate a worktree with worktrees-add). What is lost: git refuses to remove a worktree with modified tracked files or untracked files, BUT it DOES delete the worktree directory including gitignored contents — a hydrated .env of Doppler secrets (re-fetch with env-load) and build output such as node_modules/dist (needs reinstall/rebuild). When every worktree is removed it also runs "git worktree prune". A branch git refuses to remove is listed in failedWorktrees and the result carries isError; a leftover that git already unregistered and that holds only tool state (.omc/state, .omc/sessions, .DS_Store) is swept automatically.',
+    'Remove local git worktrees for the named release branches. Over MCP you MUST pass "versions" (comma-separated); bulk all=true removal is disabled here (it is a one-shot, unconfirmed wipe of every worktree) — the branch picker and confirmation are unavailable without a TTY. Every named version must be an active worktree, or the call errors without removing anything. What survives: the release branches/commits themselves are never deleted, and the worktrees directory plus its release/feature subfolders are left in place (recreate a worktree with worktrees-add). What is lost: git refuses to remove a worktree with modified tracked files or untracked files, BUT it DOES delete the worktree directory including gitignored contents — a hydrated .env of Doppler secrets (re-fetch with env-load) and build output such as node_modules/dist (needs reinstall/rebuild). When every worktree is removed it also runs "git worktree prune". A branch git refuses to remove is listed in failedWorktrees and the result carries isError; a leftover that git already unregistered and that holds only tool state (.omc/state, .omc/sessions, .DS_Store) is swept automatically. Every Orca terminal open in a removed worktree is closed first; a call made from an Orca terminal INSIDE one of the targets is refused (orca_caller_inside_target) before anything is removed — re-run it from a terminal that is not an Orca pane of that worktree.',
   requiresHumanConfirm: true,
   inputSchema: {
     versions: z

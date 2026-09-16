@@ -259,8 +259,8 @@ describe('inside a git repo that is not an infra-kit project', () => {
   }, 30_000)
 
   // I4c (MANDATORY) — reopen is the only false success that MUTATES external state. The read above the
-  // try must throw before openIdeWorkspace/runCmux, so no window opens.
-  it('i4c: reopen exits 1 with config message and opens no IDE/cmux window', async () => {
+  // try must throw before openIdeWorkspace/reopenOrca, so no window opens.
+  it('i4c: reopen exits 1 with config message and opens no IDE/Orca window', async () => {
     const cwd = makeNonProjectGitRepo()
 
     const result = await runCli(['reopen'], { cwd, env: cleanEnv() })
@@ -268,11 +268,11 @@ describe('inside a git repo that is not an infra-kit project', () => {
     expect(result.code, result.out).toBe(1)
     expect(result.out).toContain('infra-kit.json not found at')
     // Observable proxy from a spawned process: none of reopen's success markers appear because it
-    // fails at the hoisted read, before the Promise.all([openIdeWorkspace, runCmux]) side effects.
+    // fails at the hoisted read, before the Promise.all([openIdeWorkspace, reopenOrca]) side effects.
     // (The precise "getProjectRoot@:109 / listWorktrees never invoked" tripwire is the unit suite,
     // plan unit test 5, which module-mocks getInfraKitConfig.)
     expect(result.out).not.toContain('Opened editor workspace')
-    expect(result.out).not.toContain('Opened cmux workspaces')
+    expect(result.out).not.toContain('Opened in Orca')
     expect(result.out).not.toContain('Nothing to reopen')
   }, 30_000)
 })

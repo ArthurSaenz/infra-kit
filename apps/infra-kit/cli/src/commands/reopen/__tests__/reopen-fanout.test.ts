@@ -37,9 +37,9 @@ const cannedResult = (repo: string): Record<string, unknown> => {
     releaseOnly: false,
     worktreePaths: [`/repos/${repo}`],
     ideProviders: [],
-    cmuxOpened: [`${repo} ws`],
-    cmuxSkipped: [],
-    cmuxClosed: [],
+    orcaOpened: [{ branch: `${repo}-branch`, layout: 'full' }],
+    orcaSkipped: [],
+    orcaHidden: repo === 'bravo' ? [{ branch: 'hidden-branch', path: `/repos/${repo}-worktrees/x`, fix: 'Show' }] : [],
   }
 }
 
@@ -106,6 +106,23 @@ describe('reopen --all fan-out', () => {
     expect(allResultOf(result.structuredContent).results).toHaveLength(3)
   })
 
+  it("carries each child's orcaHidden through the aggregate", async () => {
+    installExecFileMock((repo) => {
+      return { stdout: JSON.stringify(cannedResult(repo)) }
+    }, [])
+
+    const result = await reopen({ all: true })
+
+    const bravo = allResultOf(result.structuredContent).results.find((entry) => {
+      return entry.repo === 'bravo'
+    })
+
+    expect(bravo?.ok).toBe(true)
+    expect(bravo && 'orcaHidden' in bravo ? bravo.orcaHidden : []).toEqual([
+      { branch: 'hidden-branch', path: '/repos/bravo-worktrees/x', fix: 'Show' },
+    ])
+  })
+
   it('passes --json and NEVER --all (and never --project/--root) to children', async () => {
     installExecFileMock((repo) => {
       return { stdout: JSON.stringify(cannedResult(repo)) }
@@ -121,6 +138,7 @@ describe('reopen --all fan-out', () => {
     expect(childArgs).toContain('--json')
     expect(childArgs).toContain('--dry-run')
     expect(childArgs).toContain('--release-only')
+    expect(childArgs).not.toContain('--force')
     expect(childArgs).not.toContain('--all')
     expect(childArgs).not.toContain('--project')
     expect(childArgs).not.toContain('--root')

@@ -1648,6 +1648,8 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   //   D21 env-status's description says the server re-reads the session file before every tool (AUTHORED, docs/archive/mcp/mcp-session-env-refresh-plan.md §2.7)  legacy + modern
   //   D19 release-create's releases went optional — required vanished (AUTHORED, docs/release-create-form-plan.md §3.4)  legacy + modern
   //   D20 release-create's description and `releases` prose stopped calling the gate auto-skipped (AUTHORED, docs/release-create-form-plan.md §3.4)  legacy + modern
+  //   D23 worktrees-add: `cmux` → `orca` input, Orca description, three `orca*` output arrays (AUTHORED, docs/orca-migration-plan.md §2.4)  legacy + modern
+  //   D24 reopen: `force` deleted, Orca description + dryRun prose, `cmux*` outputs → `orca*` object arrays + `orcaHidden` (AUTHORED, docs/orca-migration-plan.md §2.4)  legacy + modern
   // Why UNNAMED differences must fail: a normalization broad enough to swallow a known delta is
   // the same hole an unnoticed one would slip through. Only the named deltas are normalized away
   // before the whole-object comparison, and each is asserted positively FIRST so the normalization
@@ -2005,6 +2007,267 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   }
 
   const d22Baseline = applyD22ToBaseline()
+
+  /**
+   * D23 — an AUTHORED delta in D16's shape, from the cmux → Orca migration (docs/orca-migration-plan.md
+   * §2.4): `worktrees-add`'s `cmux` input became `orca`, its description names Orca, and its output
+   * gained three arrays (`orcaOpened`, `orcaSkipped`, `orcaHidden`). The fixture keeps the string
+   * `cmux` — it is evidence captured before any dependency change — so the rename is applied at load.
+   */
+  // LITERAL post-change shapes, for D13's reason: a further edit fails `w1c` and must be re-declared.
+  // Copied from a served tools/list in the 2020-12 / zod-4.5.2 rendering, never hand-written.
+  const D23_WORKTREES_ADD_DESCRIPTION =
+    'Create local git worktrees for release branches under the worktrees directory and run "pnpm install" in each. Mutates the local filesystem. When invoked via MCP, pass either "versions" (comma-separated) or all=true — the branch picker and "open in Cursor / GitHub Desktop / Orca" follow-up prompts are unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls. With "orca" true each created worktree gets an Orca terminal tab laid out per "worktrees.orca.layout"; the result reports orcaOpened, orcaSkipped (with a reason) and orcaHidden (a worktree Orca\'s sidebar hides, with the UI steps to reveal it). An unregistered repo is registered in Orca first (orca repo add).'
+
+  const D23_WORKTREES_ADD_ORCA_INPUT = {
+    description:
+      'Open each created worktree in Orca: one terminal tab per worktree, laid out per "worktrees.orca.layout" (default "two-columns": left | right; or "three-pane": left split top/bottom + full-height right). Resolution order: this flag → "worktrees.openInOrca" from infra-kit config → interactive prompt (CLI, default yes) / false (MCP, no TTY). Passed explicitly, an Orca that is absent or not running is refused before any worktree is created (orca_absent / orca_unreachable); resolved from config it degrades to orcaSkipped with that reason.',
+    type: 'boolean',
+  }
+
+  const D23_WORKTREES_ADD_OUTPUT_ADDED = {
+    orcaOpened: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          branch: {
+            type: 'string',
+          },
+          layout: {
+            type: 'string',
+            enum: ['full', 'single-pane'],
+          },
+        },
+        required: ['branch', 'layout'],
+        additionalProperties: false,
+      },
+      description:
+        'Created worktrees that got an Orca terminal tab on a row the sidebar shows, with the layout applied',
+    },
+    orcaSkipped: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          branch: {
+            type: 'string',
+          },
+          reason: {
+            type: 'string',
+            enum: ['already_open', 'orca_unreachable', 'orca_absent', 'orca_worktree_not_selectable', 'orca_error'],
+          },
+          code: {
+            type: 'string',
+          },
+        },
+        required: ['branch', 'reason'],
+        additionalProperties: false,
+      },
+      description:
+        'Created worktrees NOT opened in Orca and why: orca_absent / orca_unreachable (config-derived ask, Orca down), orca_worktree_not_selectable (Orca had not scanned the fresh worktree yet), orca_error (code carries the Orca error code)',
+    },
+    orcaHidden: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          branch: {
+            type: 'string',
+          },
+          path: {
+            type: 'string',
+          },
+          fix: {
+            type: 'string',
+          },
+        },
+        required: ['branch', 'path', 'fix'],
+        additionalProperties: false,
+      },
+      description:
+        'Created worktrees whose Orca terminals opened on a row the sidebar HIDES (the repo hides external worktrees); fix names the in-app steps to reveal it',
+    },
+  }
+
+  /** zod declaration order, which is what the served `required` follows. */
+  const D23_WORKTREES_ADD_OUTPUT_REQUIRED = ['createdWorktrees', 'count', 'orcaOpened', 'orcaSkipped', 'orcaHidden']
+
+  /** Rewrites the baseline's `worktrees-add` tool in place and returns what it held BEFORE. */
+  const applyD23ToBaseline = (): {
+    description: unknown
+    cmuxInput: unknown
+    orcaInput: unknown
+    outputProperties: unknown
+    required: unknown
+  } => {
+    const tool = findBaselineTool('worktrees-add')
+    const input = tool?.inputSchema as Record<string, any> | undefined
+    const output = tool?.outputSchema as Record<string, any> | undefined
+    const captured = {
+      description: tool?.description,
+      cmuxInput: input?.properties?.cmux,
+      orcaInput: input?.properties?.orca,
+      outputProperties: output?.properties,
+      required: output?.required,
+    }
+
+    if (tool !== undefined) tool.description = D23_WORKTREES_ADD_DESCRIPTION
+
+    if (input?.properties !== undefined) {
+      delete input.properties.cmux
+      input.properties.orca = structuredClone(D23_WORKTREES_ADD_ORCA_INPUT)
+    }
+
+    if (output !== undefined) {
+      output.properties = { ...output.properties, ...structuredClone(D23_WORKTREES_ADD_OUTPUT_ADDED) }
+      output.required = [...D23_WORKTREES_ADD_OUTPUT_REQUIRED]
+    }
+
+    return captured
+  }
+
+  const d23Baseline = applyD23ToBaseline()
+
+  /**
+   * D24 — an AUTHORED delta in D16's shape, from the same migration: `reopen` lost its `force` input
+   * (Orca's only by-worktree close verb would kill the caller's own session), its description and
+   * `dryRun` prose name Orca, and its output swapped the three `cmux*` string arrays for
+   * `orcaOpened` / `orcaSkipped` (object items) plus a new `orcaHidden`; `cmuxClosed` is gone.
+   */
+  // LITERAL post-change shapes, for D13's reason: a further edit fails `w1c` and must be re-declared.
+  const D24_REOPEN_DESCRIPTION =
+    "Reopen editor + Orca windows for every active worktree in the current project — the main checkout plus every linked worktree (release, feature, detached). Purely additive and idempotent: a worktree that already has a connected Orca terminal is skipped (orcaSkipped with reason already_open), so running twice does not double the tabs; nothing is ever closed. Zed opens the exact folder set; Cursor reconciles its release-branch-shaped workspace. Set releaseOnly to restrict to release worktrees (the legacy reload scope). Set dryRun to return the plan without spawning anything. When Orca is absent or not running every worktree lands in orcaSkipped with that reason; a worktree whose row Orca's sidebar hides is reported under orcaHidden with the UI steps. Non-destructive to git — only Orca/editor view state is touched."
+
+  const D24_REOPEN_DRY_RUN_DESCRIPTION =
+    'Return the plan (folders + which worktrees would open in Orca vs. are already open) without spawning anything'
+
+  const D24_REOPEN_OUTPUT_ORCA = {
+    orcaOpened: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          branch: {
+            type: 'string',
+          },
+          layout: {
+            type: 'string',
+            enum: ['full', 'single-pane'],
+          },
+        },
+        required: ['branch', 'layout'],
+        additionalProperties: false,
+      },
+      description: 'Worktrees that got an Orca terminal tab this run, with the layout applied',
+    },
+    orcaSkipped: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          branch: {
+            type: 'string',
+          },
+          reason: {
+            type: 'string',
+            enum: ['already_open', 'orca_unreachable', 'orca_absent', 'orca_worktree_not_selectable', 'orca_error'],
+          },
+          code: {
+            type: 'string',
+          },
+        },
+        required: ['branch', 'reason'],
+        additionalProperties: false,
+      },
+      description:
+        'Worktrees NOT opened in Orca and why: already_open (idempotent skip), orca_absent / orca_unreachable (Orca down), orca_worktree_not_selectable (Orca does not resolve the path), orca_error (code carries the Orca error code)',
+    },
+    orcaHidden: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          branch: {
+            type: 'string',
+          },
+          path: {
+            type: 'string',
+          },
+          fix: {
+            type: 'string',
+          },
+        },
+        required: ['branch', 'path', 'fix'],
+        additionalProperties: false,
+      },
+      description:
+        'Worktrees whose Orca terminals opened on a row the sidebar HIDES (the repo hides external worktrees); fix names the in-app steps to reveal it',
+    },
+  }
+
+  /** zod declaration order, which is what the served `required` follows. */
+  const D24_REOPEN_OUTPUT_REQUIRED = [
+    'repo',
+    'dryRun',
+    'releaseOnly',
+    'worktreePaths',
+    'ideProviders',
+    'orcaOpened',
+    'orcaSkipped',
+    'orcaHidden',
+  ]
+
+  /** Rewrites the baseline's `reopen` tool in place and returns what it held BEFORE. */
+  const applyD24ToBaseline = (): {
+    description: unknown
+    forceInput: unknown
+    inputRequired: unknown
+    dryRunDescription: unknown
+    outputProperties: unknown
+    required: unknown
+  } => {
+    const tool = findBaselineTool('reopen')
+    const input = tool?.inputSchema as Record<string, any> | undefined
+    const output = tool?.outputSchema as Record<string, any> | undefined
+    const captured = {
+      description: tool?.description,
+      forceInput: input?.properties?.force,
+      inputRequired: input?.required,
+      dryRunDescription: input?.properties?.dryRun?.description,
+      outputProperties: output?.properties,
+      required: output?.required,
+    }
+
+    if (tool !== undefined) tool.description = D24_REOPEN_DESCRIPTION
+
+    if (input?.properties !== undefined) {
+      delete input.properties.force
+
+      if (Array.isArray(input.required)) {
+        input.required = (input.required as string[]).filter((name) => {
+          return name !== 'force'
+        })
+      }
+
+      if (input.properties.dryRun !== undefined) input.properties.dryRun.description = D24_REOPEN_DRY_RUN_DESCRIPTION
+    }
+
+    if (output !== undefined) {
+      const kept = Object.fromEntries(
+        Object.entries(output.properties as Record<string, unknown>).filter(([name]) => {
+          return !name.startsWith('cmux')
+        }),
+      )
+
+      output.properties = { ...kept, ...structuredClone(D24_REOPEN_OUTPUT_ORCA) }
+      output.required = [...D24_REOPEN_OUTPUT_REQUIRED]
+    }
+
+    return captured
+  }
+
+  const d24Baseline = applyD24ToBaseline()
 
   /**
    * D20 — an AUTHORED delta in D14's shape: `release-create`'s description and its `releases` prose,
@@ -2703,6 +2966,62 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     // never adjusted, so the whole-object comparison guards `env-load` directly again.
     expect(d22Baseline.property).toBeUndefined()
     expect(d22Baseline.required).toEqual(['filePath', 'variableCount', 'project', 'config'])
+  })
+
+  it('w1c-pre-d23: D23 — the baseline `worktrees-add` really carried `cmux` and the two-field output', () => {
+    // The positive half of D23, on D16's model: what the rewrite replaced must be the pre-migration
+    // shape. A re-captured fixture already carries `orca`, so the overlay would be a no-op and this
+    // reds — at which point D23 is to be DELETED (the literals, the rewrite, this test), never
+    // adjusted, so the whole-object comparison guards `worktrees-add` directly again.
+    expect(d23Baseline.cmuxInput, 'D23: no `cmux` input in the baseline to rename').toBeDefined()
+    expect(d23Baseline.orcaInput).toBeUndefined()
+    expect(String(d23Baseline.description)).toContain('cmux')
+    expect(String(d23Baseline.description)).not.toContain('Orca')
+    expect(d23Baseline.description).not.toBe(D23_WORKTREES_ADD_DESCRIPTION)
+    expect(Object.keys(d23Baseline.outputProperties as Record<string, unknown>)).toEqual(['createdWorktrees', 'count'])
+    expect(d23Baseline.required).toEqual(['createdWorktrees', 'count'])
+    // D23 adds — the two fields the baseline had are carried over unchanged, and the new `required`
+    // is the old one followed by the three additions in declaration order.
+    expect(D23_WORKTREES_ADD_OUTPUT_REQUIRED).toEqual([
+      ...(d23Baseline.required as string[]),
+      ...Object.keys(D23_WORKTREES_ADD_OUTPUT_ADDED),
+    ])
+  })
+
+  it('w1c-pre-d24: D24 — the baseline `reopen` really carried `force`, `cmuxClosed` and string-array cmux outputs', () => {
+    // The positive half of D24, on D16's model. A re-captured fixture has no `force` and no `cmux*`
+    // output, so the capture would already equal its replacement and this reds — at which point D24
+    // is to be DELETED (the literals, the rewrite, this test), never adjusted.
+    expect(d24Baseline.forceInput, 'D24: no `force` input in the baseline to delete').toBeDefined()
+    expect(d24Baseline.inputRequired).toBeUndefined()
+    expect(String(d24Baseline.description)).toContain('cmux')
+    expect(d24Baseline.description).not.toBe(D24_REOPEN_DESCRIPTION)
+    expect(String(d24Baseline.dryRunDescription)).toContain('cmux titles')
+    expect(d24Baseline.dryRunDescription).not.toBe(D24_REOPEN_DRY_RUN_DESCRIPTION)
+
+    const before = d24Baseline.outputProperties as Record<string, any>
+
+    expect(Object.keys(before)).toEqual([
+      'repo',
+      'dryRun',
+      'releaseOnly',
+      'worktreePaths',
+      'ideProviders',
+      'cmuxOpened',
+      'cmuxSkipped',
+      'cmuxClosed',
+    ])
+    expect(before.cmuxOpened.items).toEqual({ type: 'string' })
+    expect(before.cmuxSkipped.items).toEqual({ type: 'string' })
+    expect(d24Baseline.required).toEqual(Object.keys(before))
+    // The five non-cmux fields are carried over unchanged; the new `required` keeps their order and
+    // ends with the Orca trio in declaration order.
+    expect(D24_REOPEN_OUTPUT_REQUIRED).toEqual([
+      ...(d24Baseline.required as string[]).filter((name) => {
+        return !name.startsWith('cmux')
+      }),
+      ...Object.keys(D24_REOPEN_OUTPUT_ORCA),
+    ])
   })
 
   it('w1c-pre-d20: D20 — the baseline really called the gate auto-skipped and never said `releases` could be omitted', () => {

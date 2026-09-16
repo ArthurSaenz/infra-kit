@@ -1231,7 +1231,7 @@ describe('devServerRunner — startup ready header', () => {
       // The redundant scheme legend is gone; the log link + separator rule close the calm header.
       expect(out).not.toContain('scheme')
       // The header points at the log DIRECTORY, not a file: there is one log per service now, so a
-      // single path would have to pick a favourite. The `<pid>` leaf is what keeps concurrent cmux
+      // single path would have to pick a favourite. The `<pid>` leaf is what keeps concurrent Orca
       // panes — which all inherit one INFRA_KIT_SESSION — out of each other's files.
       expect(out).toMatch(/logs → .*[/\\]dev[/\\]\d+/)
       expect(out).toContain('─'.repeat(60))

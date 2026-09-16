@@ -231,28 +231,28 @@
     "command": "pnpm dev",
     "blocked": true,
     "advised": false,
-    "signal": "block:cmux"
+    "signal": "block:orca"
   },
   {
     "command": "pnpm run dev",
     "blocked": true,
     "advised": false,
-    "signal": "block:cmux"
+    "signal": "block:orca"
   },
   {
     "command": "pnpm dev:client",
     "blocked": true,
     "advised": false,
-    "signal": "block:cmux"
+    "signal": "block:orca"
   },
   {
     "command": "cd apps/client && pnpm dev",
     "blocked": true,
     "advised": false,
-    "signal": "block:cmux"
+    "signal": "block:orca"
   },
   {
-    "command": "cmux new-session -d -s dev \"pnpm dev\"",
+    "command": "orca terminal create --worktree active --title dev --command \"pnpm dev\"",
     "blocked": false,
     "advised": false,
     "signal": ""

@@ -20,7 +20,7 @@ describe('shouldRunWizard', () => {
     ['preset', { preset: 'full' }],
     ['--app', { app: 'client' }],
     ['--self', { self: true }],
-    ['--cmux', { cmux: true }],
+    ['--orca', { orca: true }],
     ['--watch', { watch: true }],
     ['--verbose', { verbose: true }],
     ['--routes', { routes: true }],

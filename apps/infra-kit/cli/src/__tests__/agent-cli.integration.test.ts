@@ -215,7 +215,15 @@ describe('agent-mode refusals (spawned cli.js)', () => {
 
     expect(run.code).toBe(0)
     expect(existsSync(join(fixture.releaseWorktreeDir, 'infra-kit.json'))).toBe(true)
-    expect(json).toStrictEqual({ createdWorktrees: [FIXTURE_RELEASE.branch], count: 1 })
+    // The three `orca*` arrays are part of the wire shape even when nothing was opened: the fixture
+    // hides the developer's `orca` from PATH, so headless-false resolution leaves them empty.
+    expect(json).toStrictEqual({
+      createdWorktrees: [FIXTURE_RELEASE.branch],
+      count: 1,
+      orcaOpened: [],
+      orcaSkipped: [],
+      orcaHidden: [],
+    })
 
     // Same fixture state for the MCP half: the worktree the CLI just made is unregistered first, so
     // both surfaces perform the same creation rather than one creating and the other skipping.

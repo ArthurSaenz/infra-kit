@@ -43,7 +43,7 @@ import {
  * here rather than degrading to a warning, and only `--skip-jira` proceeds. That is exactly the
  * behaviour a later "make the Jira paths consistent" refactor would delete.
  *
- * Mocked: git, gh, cmux, the four Jira network calls, and zx. Real: `buildJiraVersionUrl`, the
+ * Mocked: git, gh, Orca, the four Jira network calls, and zx. Real: `buildJiraVersionUrl`, the
  * release-id parsing, and the guard order under test.
  */
 
@@ -91,8 +91,8 @@ vi.mock('src/lib/worktrees/remove-release-worktree', () => {
   return { removeReleaseWorktreeIfPresent: vi.fn() }
 })
 
-vi.mock('src/integrations/cmux', () => {
-  return { listCmuxWorkspacesByCwd: vi.fn(), realpathForCmuxCwd: vi.fn() }
+vi.mock('src/integrations/orca', () => {
+  return { listOrcaTerminals: vi.fn(), orcaCallerInsideTargets: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {

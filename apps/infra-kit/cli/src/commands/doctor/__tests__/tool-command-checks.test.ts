@@ -17,12 +17,27 @@ import type { CheckResult } from '../doctor'
 /** Command names the mocked `$` rejects for; empty means every probe succeeds. */
 const failing = new Set<string>()
 
+/** What `orca status --json` answers; tests flip `app.running` for the installed-but-closed row. */
+let orcaStatus: { ok: boolean; result: { app: { running: boolean }; runtime: { reachable: boolean } } } = {
+  ok: true,
+  result: { app: { running: true }, runtime: { reachable: true } },
+}
+
 vi.mock('zx', async () => {
   // Imported INSIDE the factory: `vi.mock` is hoisted above the imports, and `doctor.ts` pulls
   // in `zx` at module scope, so a top-level binding is still in its TDZ when this runs.
   const { zxShellMock } = await import('src/lib/quiet-shell/__tests__/zx-shell-mock')
 
-  return zxShellMock((_strings: TemplateStringsArray, command: string[]) => {
+  return zxShellMock((strings: TemplateStringsArray, command: string[]) => {
+    // `orca` speaks a JSON envelope and is probed through `nothrow`, so its absence is an exit-127
+    // resolution rather than a rejection, and its "installed but closed" state is a real envelope.
+    // Its template is `orca ${argv} --json`, so the binary sits in the literal part, not in `command`.
+    if (strings[0]?.trim() === 'orca') {
+      if (failing.has('orca')) return Promise.resolve({ stdout: '', stderr: '', exitCode: 127 })
+
+      return Promise.resolve({ stdout: JSON.stringify(orcaStatus), stderr: '', exitCode: 0 })
+    }
+
     if (failing.has(command[0] ?? '')) return Promise.reject(new Error('exit 127'))
 
     return Promise.resolve({ stdout: '' })
@@ -134,6 +149,7 @@ const runCheck = async (name: string): Promise<CheckResult> => {
 
 beforeEach(() => {
   failing.clear()
+  orcaStatus = { ok: true, result: { app: { running: true }, runtime: { reachable: true } } }
   resetZxFactoryArgs()
 })
 
@@ -145,8 +161,8 @@ beforeEach(() => {
  */
 describe('the binary probes capture their output instead of relaying it', () => {
   it('configures zx quiet before shelling out', async () => {
-    failing.add('cmux')
-    await runCheck('terminal installed')
+    failing.add('orca')
+    await runCheck('orca installed')
 
     expect(zxFactoryArgs).toContainEqual({ quiet: true })
   })
@@ -192,22 +208,33 @@ describe('package manager installed', () => {
   })
 })
 
-describe('terminal installed', () => {
-  it('passes naming the terminal when cmux --version succeeds', async () => {
-    await expect(runCheck('terminal installed')).resolves.toEqual({
-      name: 'terminal installed',
+describe('orca installed', () => {
+  it('passes when the app is running and the runtime is reachable', async () => {
+    await expect(runCheck('orca installed')).resolves.toEqual({
+      name: 'orca installed',
       status: 'pass',
-      message: 'Installed: cmux',
+      message: 'Installed: orca (app running, runtime reachable)',
       fixable: false,
     })
   })
 
-  it('fails with an install hint when cmux is absent', async () => {
-    failing.add('cmux')
+  it('warns, not fails, when the CLI answers but the app is closed', async () => {
+    orcaStatus = { ok: true, result: { app: { running: false }, runtime: { reachable: false } } }
 
-    const check = await runCheck('terminal installed')
+    const check = await runCheck('orca installed')
+
+    expect(check.status).toBe('warn')
+    expect(check.message).toBe('orca is installed but the app is not running — start it with: orca open')
+  })
+
+  it('fails with the cask + CLI-registration recipe when orca is absent', async () => {
+    failing.add('orca')
+
+    const check = await runCheck('orca installed')
 
     expect(check.status).toBe('fail')
-    expect(check.message).toBe('cmux is not installed. Install from: https://cmux.com/')
+    expect(check.message).toBe(
+      'orca is not on PATH. Install with: brew install --cask stablyai/orca/orca, then register the CLI in Orca → Settings → Experimental → CLI',
+    )
   })
 })

@@ -1,5 +1,6 @@
 export {
   DEFAULT_DEV_PROXY_PORT,
+  DEFAULT_ORCA_LAYOUT,
   getInfraKitConfig,
   getInfraKitConfigPaths,
   infraKitConfigObject,
@@ -7,12 +8,12 @@ export {
   infraKitOverrideConfigSchema,
   resetInfraKitConfigCache,
   resetMergedConfigCache,
-  resolveCmuxLayout,
   resolveConfiguredIdes,
+  resolveOrcaLayout,
+  resolveUserGlobalConfigPath,
   USER_CONFIG_DIR_NAME,
 } from './infra-kit-config'
 export type {
-  CmuxLayout,
   ConfiguredIde,
   DevAppConfig,
   DevConfig,
@@ -23,6 +24,8 @@ export type {
   InfraKitConfigPaths,
   McpProxies,
   McpProxySpec,
+  OrcaLayout,
   ProtectedEnvsSetting,
   ProxySource,
 } from './infra-kit-config'
+export { renameCmuxKeys, stripLegacyCmuxKeys } from './legacy-cmux-keys'

@@ -2,6 +2,8 @@ import fs from 'node:fs/promises'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { $ } from 'zx'
 
+// The leaf, not the (mocked) barrel: the real error class is what `failedOutcome` wraps.
+import { OrcaError } from 'src/integrations/orca/run-orca'
 import { listWorktrees } from 'src/lib/git-utils'
 import type { WorktreeEntry } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
@@ -19,10 +21,13 @@ vi.mock('zx', () => {
   }
 })
 
-vi.mock('src/integrations/cmux', () => {
+vi.mock('src/integrations/orca', () => {
   return {
-    closeCmuxWorkspaceByCwd: vi.fn(() => {
-      return Promise.resolve()
+    probeOrca: vi.fn(() => {
+      return Promise.resolve('ready')
+    }),
+    closeOrcaWorktreeTerminals: vi.fn(() => {
+      return Promise.resolve({ closed: true, count: 0 })
     }),
   }
 })
@@ -369,18 +374,45 @@ describe('removeWorktrees — a rejected `git worktree remove`', () => {
     expect(fs.rm).not.toHaveBeenCalled()
   })
 
-  it('reports a cmux close failure as failed WITHOUT running git or the post-git recovery', async () => {
-    const { closeCmuxWorkspaceByCwd } = await import('src/integrations/cmux')
+  it('reports an Orca close error as failed WITHOUT running git or the post-git recovery', async () => {
+    const { closeOrcaWorktreeTerminals } = await import('src/integrations/orca')
 
-    vi.mocked(closeCmuxWorkspaceByCwd).mockRejectedValueOnce(new Error('cmux: workspace busy'))
+    vi.mocked(closeOrcaWorktreeTerminals).mockResolvedValueOnce({
+      closed: false,
+      error: new OrcaError({ code: 'runtime_error', message: 'orca: runtime busy' }),
+    })
 
     const result = await remove([BRANCH])
 
     expect(result.removed).toEqual([])
     expect(result.failed[0]?.branch).toBe(BRANCH)
-    expect(result.failed[0]?.reason).toMatch(/close the cmux workspace/)
+    expect(result.failed[0]?.reason).toMatch(/close the Orca terminals of this worktree manually/)
     expect(recordedCalls().map(commandOf)).not.toContain(`git worktree remove ${BRANCH_PATH}`)
     expect(listWorktrees).not.toHaveBeenCalled()
     expect(fs.rm).not.toHaveBeenCalled()
+  })
+
+  it('proceeds to git when the Orca close is skipped (absent / unreachable / row unknown)', async () => {
+    const { closeOrcaWorktreeTerminals } = await import('src/integrations/orca')
+
+    vi.mocked(closeOrcaWorktreeTerminals).mockResolvedValueOnce({ closed: false, skipped: 'unreachable' })
+
+    const result = await remove([BRANCH])
+
+    expect(result.removed).toEqual([BRANCH])
+    expect(recordedCalls().map(commandOf)).toContain(`git worktree remove ${BRANCH_PATH}`)
+  })
+
+  it('probes Orca ONCE per batch and hands the same probe to every branch', async () => {
+    const { closeOrcaWorktreeTerminals, probeOrca } = await import('src/integrations/orca')
+
+    vi.mocked(probeOrca).mockResolvedValueOnce('absent')
+
+    await remove([BRANCH, 'release/v9.9.9'])
+
+    expect(probeOrca).toHaveBeenCalledTimes(1)
+    expect(closeOrcaWorktreeTerminals).toHaveBeenCalledTimes(2)
+    expect(closeOrcaWorktreeTerminals).toHaveBeenNthCalledWith(1, BRANCH_PATH, 'absent')
+    expect(closeOrcaWorktreeTerminals).toHaveBeenNthCalledWith(2, expect.stringContaining('release/v9.9.9'), 'absent')
   })
 })

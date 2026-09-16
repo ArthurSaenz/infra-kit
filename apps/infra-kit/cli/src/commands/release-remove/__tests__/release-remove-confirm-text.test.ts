@@ -1,8 +1,8 @@
 import confirm from '@inquirer/confirm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { listCmuxWorkspacesByCwd } from 'src/integrations/cmux'
 import { getVersionRelatedIssueCounts } from 'src/integrations/jira/remove-version'
+import { listOrcaTerminals } from 'src/integrations/orca'
 import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
@@ -37,7 +37,7 @@ import {
  * different fields and one issue can carry the version in both, so a summed total is not a
  * conservative simplification, it is a wrong number.
  *
- * Mocked: git, gh, cmux, Jira, zx, and `@inquirer/confirm` — whose recorded argument IS the assertion
+ * Mocked: git, gh, Orca, Jira, zx, and `@inquirer/confirm` — whose recorded argument IS the assertion
  * target. Real: `buildConfirmMessage` and every string it composes.
  */
 
@@ -85,8 +85,8 @@ vi.mock('src/lib/worktrees/remove-release-worktree', () => {
   return { removeReleaseWorktreeIfPresent: vi.fn() }
 })
 
-vi.mock('src/integrations/cmux', () => {
-  return { listCmuxWorkspacesByCwd: vi.fn(), realpathForCmuxCwd: vi.fn() }
+vi.mock('src/integrations/orca', () => {
+  return { listOrcaTerminals: vi.fn(), orcaCallerInsideTargets: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {
@@ -187,18 +187,27 @@ describe('release remove — the confirm text carries the whole inventory', () =
     expect(message).toContain(REMOTE_TIP)
   })
 
-  it('warns that the cmux window rooted at the worktree will close, when one is open', async () => {
-    vi.mocked(listCmuxWorkspacesByCwd).mockResolvedValue(new Map([[WORKTREE_PATH, 'workspace-ref']]))
+  it('warns how many Orca terminals in the worktree will be closed, counting only connected ones', async () => {
+    const terminal = { title: 't', tabId: 'tab', orphaned: false }
+
+    vi.mocked(listOrcaTerminals).mockResolvedValue({
+      terminals: [
+        { ...terminal, handle: 'h1', connected: true },
+        { ...terminal, handle: 'h2', connected: true },
+        { ...terminal, handle: 'h3', connected: false },
+      ],
+      truncated: false,
+    })
 
     await releaseRemove({ confirmedCommand: false, version: LABEL, moveIssuesTo: MOVE_TARGET_NAME })
 
-    expect(confirmMessage()).toContain(`the cmux window rooted at ${WORKTREE_PATH} will close`)
+    expect(confirmMessage()).toContain(`2 Orca terminal(s) in ${WORKTREE_PATH} will be closed`)
   })
 
-  it('omits the cmux warning when no window is rooted there', async () => {
+  it('omits the Orca line when no terminal is open there', async () => {
     await releaseRemove({ confirmedCommand: false, version: LABEL, moveIssuesTo: MOVE_TARGET_NAME })
 
-    expect(confirmMessage()).not.toContain('cmux window')
+    expect(confirmMessage()).not.toContain('Orca terminal')
   })
 })
 

@@ -9,7 +9,6 @@ import { Command } from 'commander'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
-import { runCmuxDevServer } from 'src/dev/cmux-dev'
 import { formatFault, registerCrashBarrier } from 'src/dev/crash-barrier'
 import { run } from 'src/dev/dev-server'
 import type { DevServerOptions, DevServerRunner } from 'src/dev/dev-server'
@@ -17,10 +16,10 @@ import type { WizardResult } from 'src/dev/dev-wizard-run'
 import { resolveSelfAppName } from 'src/dev/discovery'
 import { rawStdoutWrite } from 'src/dev/log-sink'
 import { killDescendantGroupsNow } from 'src/dev/managed-child'
+import { runOrcaDevServer } from 'src/dev/orca-dev'
 import { explainTargetKey } from 'src/dev/presets'
 import { exitCodeForSignal, registerSignalShutdown } from 'src/dev/signal-shutdown'
 import { installTerminalLiveness } from 'src/dev/terminal-liveness'
-import { isCmuxAvailable } from 'src/integrations/cmux'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import type { DevPreset } from 'src/lib/infra-kit-config'
 
@@ -50,7 +49,7 @@ export interface DevCliOptions {
   target?: string
   /** Named preset positional (`infra-kit dev <preset>`); selects launch targets from `devServersPresets`. */
   preset?: string
-  cmux?: boolean
+  orca?: boolean
   self?: boolean
   verbose?: boolean
   /** Print each app's registered routes at startup (opt-in; off keeps the calm default screen). */
@@ -112,7 +111,7 @@ export const toDevServerOptions = (raw: DevCliOptions): DevServerOptions => {
     include: splitList(raw.app),
     preset: raw.preset,
     presetDef: toPresetDef(splitList(raw.target)),
-    cmux: raw.cmux ?? false,
+    orca: raw.orca ?? false,
     self: raw.self ?? false,
     verbose: raw.verbose ?? false,
     routes: raw.routes ?? false,
@@ -360,17 +359,19 @@ export const installBootSignalGuard = ({
 export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> => {
   const options = resolveSelfOptions(rawOptions)
 
-  // `--cmux`: one workspace, one pane per app. `runCmuxDevServer` owns its own
-  // signal handling and never returns, so return before wiring the in-process
-  // handlers below. Fall through to single-process dev when cmux isn't installed.
-  if (options.cmux) {
-    if (await isCmuxAvailable()) {
-      await runCmuxDevServer(options)
+  // `--orca`: one tab, one pane per app. `runOrcaDevServer` owns its own signal
+  // handling and never returns once the tab is open, so return before wiring the
+  // in-process handlers below. It hands back a reason instead of opening anything
+  // when Orca cannot show the panes (not installed, not running, repo unregistered,
+  // worktree hidden) — then fall through to single-process dev.
+  if (options.orca) {
+    const outcome = await runOrcaDevServer(options)
 
+    if (outcome === 'ran') {
       return
     }
 
-    process.stdout.write('cmux not available; falling back to single-terminal dev\n')
+    process.stdout.write(`Orca: ${outcome.fallback}; falling back to single-terminal dev\n`)
   }
 
   // A settable target, not a `const`: liveness must be armed BEFORE `run()`, because all of boot happens
@@ -378,10 +379,10 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
   // walks away and closes the window. But `onDeath` can then fire with no runner to tear down, so the fatal
   // handler branches on it (and reads it LATE, through the getter).
   //
-  // Installed HERE — below the `--cmux` early return above, alongside `registerCrashBarrier`, which is
+  // Installed HERE — below the `--orca` early return above, alongside `registerCrashBarrier`, which is
   // deliberately on the same side of it (each pane is its own process). At the top of `runDevServer` the
-  // cmux PARENT would get a listener whose `runner` stays `null` forever, and its `onFatal` would take the
-  // boot branch: `killDescendantGroupsNow()` + exit, reaping the entire workspace.
+  // Orca PARENT would get a listener whose `runner` stays `null` forever, and its `onFatal` would take the
+  // boot branch: `killDescendantGroupsNow()` + exit, reaping the entire tab.
   let runner: DevServerRunner | null = null
 
   // Shared with `registerSignalShutdown` below — see `createSharedDeadlineTimer`'s doc block for why
@@ -426,7 +427,7 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
   }
 
   // In-process backends share this event loop; a handler's escaped async path would otherwise terminate
-  // the whole session. Installed only on the single-process path (the cmux path returned above, each pane
+  // the whole session. Installed only on the single-process path (the Orca path returned above, each pane
   // being its own process) and only after `run()` succeeds, so a boot failure still exits honestly.
   //
   // `onFault` is not optional decoration. The dev-server owns `process.stderr` for the life of a TTY
@@ -482,16 +483,16 @@ export const shouldRunWizard = (raw: DevCliOptions, tty: boolean, json: boolean)
   // `--no-ui-health` is deliberately NOT in this list. It selects a diagnostic, not a run plan, and a flag
   // that quietly turns the picker into "run the entire repo" is a far bigger surprise than the one it would
   // avoid. The wizard carries it through instead (see `wizardToOptions`), so the user gets both.
-  const bare = !raw.preset && !raw.app && !raw.self && !raw.cmux && !raw.watch && !raw.verbose && !raw.routes
+  const bare = !raw.preset && !raw.app && !raw.self && !raw.orca && !raw.watch && !raw.verbose && !raw.routes
 
   return bare && tty && !json
 }
 
-/** Map a wizard result to runner options: the cmux path uses `include`; otherwise the in-memory `presetDef`. */
+/** Map a wizard result to runner options: the Orca path uses `include`; otherwise the in-memory `presetDef`. */
 const wizardToOptions = (result: WizardResult, raw: DevCliOptions): DevServerOptions => {
   return {
     watch: result.watch,
-    cmux: result.cmux,
+    orca: result.orca,
     include: result.include ?? null,
     preset: result.preset,
     presetDef: result.presetDef,
@@ -573,8 +574,8 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
     .option('-w, --watch', 'Rebuild and restart on file save')
     .option('--app <names>', 'Further narrow to these app folder names (comma-separated)')
     .option(
-      '--cmux',
-      'Run each app in its own cmux pane (one workspace, N panes; falls back to single terminal if cmux is unavailable)',
+      '--orca',
+      'Run each app in its own Orca pane (one tab, N panes; falls back to single terminal when Orca is not running)',
     )
     .option('--self', 'Run only the app of the current directory (infer from cwd; use inside apps/<app>/…)')
     .option('-V, --verbose', 'Print full boot narration (default: quiet; full detail always in the session log)')

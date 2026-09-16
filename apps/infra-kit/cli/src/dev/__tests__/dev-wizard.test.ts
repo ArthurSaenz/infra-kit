@@ -26,7 +26,7 @@ const CLIENT_MODEL: WizardModel = {
 }
 
 const base = (over: Partial<ManualSelection>): ManualSelection => {
-  return { targets: [], sources: {}, watch: false, cmux: false, ...over }
+  return { targets: [], sources: {}, watch: false, orca: false, ...over }
 }
 
 describe('deriveManualPlan', () => {
@@ -165,13 +165,13 @@ describe('deriveManualPlan', () => {
     expect(plan.targetKeys).toEqual(['client/ui'])
   })
 
-  it('cmux flag flows into the preset def', () => {
+  it('orca flag flows into the preset def', () => {
     const plan = deriveManualPlan(
-      base({ targets: ['client/ui'], sources: { 'client/ui /api': 'local' }, cmux: true }),
+      base({ targets: ['client/ui'], sources: { 'client/ui /api': 'local' }, orca: true }),
       CLIENT_MODEL,
     )
 
-    expect(plan.presetDef.cmux).toBe(true)
+    expect(plan.presetDef.orca).toBe(true)
   })
 })
 
@@ -186,11 +186,11 @@ describe('equivalentCommand', () => {
   })
 
   it('emits --target with only the frontend for a cloud-only (no backend) selection', () => {
-    const selection = base({ targets: ['client/ui'], sources: { 'client/ui /api': 'cloud' }, cmux: true })
+    const selection = base({ targets: ['client/ui'], sources: { 'client/ui /api': 'cloud' }, orca: true })
     const plan = deriveManualPlan(selection, CLIENT_MODEL)
     const eq = equivalentCommand(plan, selection)
 
     // --target is part-level, so a UI-only pick round-trips exactly — no over-launch of client/api.
-    expect(eq.flags).toBe('--target=client/ui --cmux')
+    expect(eq.flags).toBe('--target=client/ui --orca')
   })
 })

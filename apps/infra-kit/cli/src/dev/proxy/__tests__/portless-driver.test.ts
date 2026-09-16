@@ -57,7 +57,7 @@ const recordingRun = (): { run: PortlessRun; calls: string[][] } => {
 describe('portless driver — binary resolution', () => {
   it('resolves the portless CLI from node_modules to a real file, independent of PATH', () => {
     // Regression: the driver used to shell out to a bare `portless` on PATH, which is only present when
-    // `dev` is launched via pnpm/npm — so a global bin / cmux / foreign-cwd launch never found it and the
+    // `dev` is launched via pnpm/npm — so a global bin / Orca pane / foreign-cwd launch never found it and the
     // proxy silently no-op'd. It's a normal dependency; we must resolve its own dist/cli.js from disk.
     const bin = resolvePortlessBin()
 

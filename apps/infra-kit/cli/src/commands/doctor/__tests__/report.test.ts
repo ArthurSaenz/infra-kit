@@ -258,7 +258,7 @@ describe('column alignment under colour', () => {
   const checks = [
     pass('gh installed', 'MESSAGE'),
     pass('typescript-language-server installed', 'MESSAGE'),
-    fail('terminal installed', 'MESSAGE'),
+    fail('orca installed', 'MESSAGE'),
   ]
 
   const messageOffsets = (color: boolean): number[] => {

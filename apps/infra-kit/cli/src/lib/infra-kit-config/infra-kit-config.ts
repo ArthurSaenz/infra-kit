@@ -7,7 +7,11 @@ import { z } from 'zod'
 import { isAgentMode } from 'src/lib/agent-mode'
 import { USER_CONFIG_DIR_NAME } from 'src/lib/constants'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
+import { logger } from 'src/lib/logger'
 import { PROTECTED_CHILD_ENV_NAMES } from 'src/lib/mcp-proxy/protected-env'
+import { tildify } from 'src/lib/path-display'
+
+import { stripLegacyCmuxKeys } from './legacy-cmux-keys'
 
 const INFRA_KIT_CONFIG_FILE = 'infra-kit.json'
 
@@ -79,23 +83,30 @@ const jiraTaskManagerSchema = z.object({
 
 const taskManagerSchema = z.discriminatedUnion('provider', [jiraTaskManagerSchema])
 
-// cmux pane layout for opened worktree workspaces. Named presets keep the config
+// Orca pane layout for opened worktree workspaces. Named presets keep the config
 // typo-proof (an enum, not a free string) and let the opener switch on a single
 // value; extend the enum + the opener's switch to add a layout.
 //   two-columns — left | right, both full-height (default)
 //   three-pane  — left split top/bottom + full-height right (legacy layout)
-const cmuxLayouts = ['two-columns', 'three-pane'] as const
+const orcaLayouts = ['two-columns', 'three-pane'] as const
 
-const cmuxConfigSchema = z.object({
-  layout: z.enum(cmuxLayouts).optional(),
-})
+const orcaConfigSchema = z
+  .object({
+    layout: z.enum(orcaLayouts).optional(),
+  })
+  .strict()
 
-// worktrees prompt defaults
-const worktreesConfigSchema = z.object({
-  openInGithubDesktop: z.boolean().optional(),
-  openInCmux: z.boolean().optional(),
-  cmux: cmuxConfigSchema.optional(),
-})
+// worktrees prompt defaults. `.strict()` like every other leaf: a non-strict object here let zod
+// SILENTLY drop a misspelt (or, after the cmux → orca rename, stale) key, turning "open in Orca"
+// off with no message. The legacy `openInCmux` / `cmux` keys never reach this schema — `loadLayer`
+// strips them first and says so.
+const worktreesConfigSchema = z
+  .object({
+    openInGithubDesktop: z.boolean().optional(),
+    openInOrca: z.boolean().optional(),
+    orca: orcaConfigSchema.optional(),
+  })
+  .strict()
 
 // dev-server per-app overrides. Maps an app folder name (e.g. `client`) to its
 // local dev port and/or URL prefix. Both keys optional. An app absent from the
@@ -115,7 +126,7 @@ const devConfigSchema = z.record(z.string().min(1), devAppConfigSchema)
 // devServersPresets: named local-dev sessions, declared in the per-project infra-kit.json
 // (team presets committed; personal ones layered via the user-project override).
 // Each preset names launch targets (apps/<app>/{api,ui}), optional per-backend
-// `watchDeps`, per-route proxy-source overrides, and a `cmux` layout flag; it is
+// `watchDeps`, per-route proxy-source overrides, and an `orca` layout flag; it is
 // consumed by `infra-kit dev <preset>` and resolved by src/dev/presets. Each target key
 // names exactly one workspace package (`<app>/api` or `<app>/ui`) — a bare `<app>` is a
 // folder, not a package, and is rejected. The SHAPE is strict (typos in a preset surface
@@ -137,8 +148,8 @@ const devPresetSchema = z
   .object({
     // Launch-target key — one package: `client/ui`, `client/api`, `*/api`. Omit `apps` = all.
     apps: z.record(z.string().min(1), devPresetAppSchema).optional(),
-    // Run each launched target in its own cmux pane (one workspace, N panes).
-    cmux: z.boolean().optional(),
+    // Run each launched target in its own Orca terminal (one worktree, N terminals).
+    orca: z.boolean().optional(),
   })
   .strict()
 
@@ -351,7 +362,7 @@ export type DevConfig = z.infer<typeof devConfigSchema>
 /** A proxy route's resolved source in a preset override (`'local' | 'cloud'`). */
 export type ProxySource = z.infer<typeof proxySourceSchema>
 
-/** A single dev preset (`{ apps?, cmux? }`) from the `devServersPresets` map. */
+/** A single dev preset (`{ apps?, orca? }`) from the `devServersPresets` map. */
 export type DevPreset = z.infer<typeof devPresetSchema>
 
 /** The `devServersPresets` map: preset name → {@link DevPreset}. */
@@ -378,23 +389,23 @@ export const resolveConfiguredIdes = (config: InfraKitConfig): ConfiguredIde[] =
   return Array.isArray(ide) ? ide : [ide]
 }
 
-/** A cmux pane layout preset (see {@link cmuxLayouts}). */
-export type CmuxLayout = (typeof cmuxLayouts)[number]
+/** An Orca pane layout preset (see {@link orcaLayouts}). */
+export type OrcaLayout = (typeof orcaLayouts)[number]
 
-/** The layout applied when `worktrees.cmux.layout` is left unset. */
-export const DEFAULT_CMUX_LAYOUT: CmuxLayout = 'two-columns'
+/** The layout applied when `worktrees.orca.layout` is left unset. */
+export const DEFAULT_ORCA_LAYOUT: OrcaLayout = 'two-columns'
 
 /**
- * Resolve the cmux pane layout for opened worktree workspaces, falling back to
- * {@link DEFAULT_CMUX_LAYOUT} when unconfigured. The one source of truth for
- * "which layout should the cmux opener build."
+ * Resolve the Orca pane layout for opened worktree workspaces, falling back to
+ * {@link DEFAULT_ORCA_LAYOUT} when unconfigured. The one source of truth for
+ * "which layout should the Orca opener build."
  *
  * @example
- * resolveCmuxLayout({ worktrees: { cmux: { layout: 'three-pane' } } }) // => 'three-pane'
- * resolveCmuxLayout({})                                                // => 'two-columns'
+ * resolveOrcaLayout({ worktrees: { orca: { layout: 'three-pane' } } }) // => 'three-pane'
+ * resolveOrcaLayout({})                                                // => 'two-columns'
  */
-export const resolveCmuxLayout = (config: InfraKitConfig): CmuxLayout => {
-  return config.worktrees?.cmux?.layout ?? DEFAULT_CMUX_LAYOUT
+export const resolveOrcaLayout = (config: InfraKitConfig): OrcaLayout => {
+  return config.worktrees?.orca?.layout ?? DEFAULT_ORCA_LAYOUT
 }
 
 export interface InfraKitConfigPaths {
@@ -446,6 +457,30 @@ const pathsCacheKey = (): string => {
 }
 
 /**
+ * `~/.infra-kit` — read `os.homedir()` on every call rather than at module load, because the tests
+ * swap the homedir per case and a memoized value would leak one test's temp home into the next.
+ *
+ * @example
+ * resolveUserConfigDir() // => '/Users/arthur/.infra-kit'
+ */
+const resolveUserConfigDir = (): string => {
+  return path.join(os.homedir(), USER_CONFIG_DIR_NAME)
+}
+
+/**
+ * The user-global config layer, `~/.infra-kit/infra-kit.json`, without going through
+ * {@link getInfraKitConfigPaths}. That resolver spawns `git rev-parse` and REJECTS outside a repo,
+ * but this file is the one merge layer that exists independent of any project — the setup
+ * migrations address it from wherever `infra-kit setup` was run.
+ *
+ * @example
+ * resolveUserGlobalConfigPath() // => '/Users/arthur/.infra-kit/infra-kit.json'
+ */
+export const resolveUserGlobalConfigPath = (): string => {
+  return path.join(resolveUserConfigDir(), USER_GLOBAL_CONFIG_FILE)
+}
+
+/**
  * Resolve every file path that participates in the config merge chain. Always
  * returns paths even for files that don't yet exist, so callers can use them
  * for "where would my override go?" prompts.
@@ -484,12 +519,11 @@ export const getInfraKitConfigPaths = async (): Promise<InfraKitConfigPaths> => 
   // second `git rev-parse` this costs is fine — the merged config is mtime-cached.
   const mainRepoRoot = await getMainRepoRoot(projectRoot)
   const projectName = path.basename(mainRepoRoot)
-  const userConfigDir = path.join(os.homedir(), USER_CONFIG_DIR_NAME)
 
   const value: InfraKitConfigPaths = {
     main: path.join(projectRoot, INFRA_KIT_CONFIG_FILE),
-    userGlobal: path.join(userConfigDir, USER_GLOBAL_CONFIG_FILE),
-    userProject: path.join(userConfigDir, USER_PROJECTS_DIR, projectName, INFRA_KIT_CONFIG_FILE),
+    userGlobal: resolveUserGlobalConfigPath(),
+    userProject: path.join(resolveUserConfigDir(), USER_PROJECTS_DIR, projectName, INFRA_KIT_CONFIG_FILE),
     projectName,
   }
 
@@ -680,6 +714,9 @@ interface ConfigLayer {
   required: boolean
 }
 
+/** Files already warned about for legacy cmux keys — the loader re-reads on every mtime change. */
+const warnedLegacyCmuxFiles = new Set<string>()
+
 /**
  * Read a single layer of the merge chain: parse the JSON if the file exists
  * and validate it against the override schema. Returns `null` if an optional
@@ -731,7 +768,22 @@ const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | 
     throw new Error(buildMcpLayerRejectionMessage(layer))
   }
 
-  const result = infraKitOverrideConfigSchema.safeParse(parsedRaw)
+  // The three cmux keys were renamed to orca and the override schema stays `.strict()`, so a file
+  // that still carries them would fail below and brick every command on a self-updated CLI. Strip
+  // them in memory (never written — `infra-kit setup` owns the rewrite) and say so once per file,
+  // not once per read: `getInfraKitConfig` runs on nearly every command and re-reads on any mtime
+  // change. Only here, per layer: the merged object is built from already-stripped layers, so a
+  // second strip there would have no file to name.
+  const { stripped, result: cleaned } = stripLegacyCmuxKeys(parsedRaw)
+
+  if (stripped.length > 0 && !warnedLegacyCmuxFiles.has(layer.path)) {
+    warnedLegacyCmuxFiles.add(layer.path)
+    logger.warn(
+      `legacy cmux keys (${stripped.join(', ')}) in ${tildify(layer.path)} are ignored — run \`infra-kit setup\` to migrate them to orca`,
+    )
+  }
+
+  const result = infraKitOverrideConfigSchema.safeParse(cleaned)
 
   if (!result.success) {
     throw new Error(`Invalid ${layer.label} at ${layer.path}: ${z.prettifyError(result.error)}`)

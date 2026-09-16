@@ -30,6 +30,7 @@ import { fetchLatestVersion, pluginStepWithheld, readUpdateCache } from 'src/lib
 import packageJson from '../../../package.json' with { type: 'json' }
 import { resolveGitRootForWrites, syncRepoGuidance } from './agent-files'
 import {
+  migrateCmuxConfigToOrca,
   migrateFactoryConfigToJson,
   migrateLegacyConfig,
   migrateUserGlobalConfigFilename,
@@ -127,11 +128,12 @@ export class InitStepError extends Error {
  */
 export const SHELL_ACTIVATION_REMINDER = 'Run `source ~/.zshrc` or open a new terminal to activate.'
 
-/** The four migrations announce their own conversions, so this step has nothing of its own to print. */
+/** The five migrations announce their own conversions, so this step has nothing of its own to print. */
 const MIGRATIONS_CHECKED: InitEntry = {
   step: 'migrations',
   outcome: 'skipped',
-  message: 'Config migrations checked (legacy yml layers, ide structure, user-global filename, factory config)',
+  message:
+    'Config migrations checked (legacy yml layers, ide structure, user-global filename, cmux → orca keys, factory config)',
   level: 'silent',
 }
 
@@ -316,7 +318,7 @@ const writeZshenvBlock = (): InitEntry => {
   }
 }
 
-/** The four config migrations, in the one order that works. */
+/** The five config migrations, in the one order that works. */
 const runConfigMigrations = async (): Promise<void> => {
   // Convert any legacy infra-kit.yml config layers to JSON before seeding, so a
   // migrated infra-kit.json is not re-seeded as an empty stub.
@@ -330,6 +332,10 @@ const runConfigMigrations = async (): Promise<void> => {
   // filename). MUST run before seeding: otherwise the seeder checks the new name,
   // doesn't find it, and writes an empty stub that shadows the user's real config.
   await migrateUserGlobalConfigFilename()
+
+  // Rewrite the legacy cmux keys to orca. AFTER the filename rename: outside a
+  // project it addresses ~/.infra-kit/infra-kit.json by that fixed name.
+  await migrateCmuxConfigToOrca()
 
   // Convert a legacy machine-local factory config from executable TS
   // (~/.infra-kit/vendor.config.ts) to static JSON (~/.infra-kit/vendor.json).

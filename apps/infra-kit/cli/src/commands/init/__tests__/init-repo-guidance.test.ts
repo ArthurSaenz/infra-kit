@@ -18,6 +18,7 @@ vi.mock('../migrate-config', () => {
   return {
     migrateFactoryConfigToJson: vi.fn(async () => {}),
     migrateLegacyConfig: vi.fn(async () => {}),
+    migrateCmuxConfigToOrca: vi.fn(async () => {}),
     migrateUserGlobalConfigFilename: vi.fn(async () => {}),
     normalizeLegacyIdeStructures: vi.fn(async () => {}),
   }

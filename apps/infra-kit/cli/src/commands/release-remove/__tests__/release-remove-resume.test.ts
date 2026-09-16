@@ -32,7 +32,7 @@ import { LABEL, findVersionByNameFake, installDefaults, releasePr } from './rele
  * The false-success pinned: an operator who typos a version, sees exit 0 and a report of six skipped
  * steps, and concludes the release was already cleaned up — while the real release is still live.
  *
- * Mocked: git, gh, cmux, Jira and zx. Real: the step control flow, the skip reasons it reports, and
+ * Mocked: git, gh, Orca, Jira and zx. Real: the step control flow, the skip reasons it reports, and
  * `assertSomethingExists`.
  */
 
@@ -80,8 +80,8 @@ vi.mock('src/lib/worktrees/remove-release-worktree', () => {
   return { removeReleaseWorktreeIfPresent: vi.fn() }
 })
 
-vi.mock('src/integrations/cmux', () => {
-  return { listCmuxWorkspacesByCwd: vi.fn(), realpathForCmuxCwd: vi.fn() }
+vi.mock('src/integrations/orca', () => {
+  return { listOrcaTerminals: vi.fn(), orcaCallerInsideTargets: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {

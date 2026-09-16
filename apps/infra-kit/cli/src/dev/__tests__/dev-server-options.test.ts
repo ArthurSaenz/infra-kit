@@ -48,7 +48,7 @@ describe('toDevServerOptions — CLI flag parsing', () => {
       watch: true,
       include: ['a', 'b'],
       preset: undefined,
-      cmux: false,
+      orca: false,
       self: false,
       verbose: false,
       routes: false,
@@ -64,12 +64,12 @@ describe('toDevServerOptions — CLI flag parsing', () => {
     expect(toDevServerOptions({} satisfies DevCliOptions).preset).toBeUndefined()
   })
 
-  it('defaults cmux to false when --cmux is absent', () => {
-    expect(toDevServerOptions({} satisfies DevCliOptions).cmux).toBe(false)
+  it('defaults orca to false when --orca is absent', () => {
+    expect(toDevServerOptions({} satisfies DevCliOptions).orca).toBe(false)
   })
 
-  it('passes --cmux through as true', () => {
-    expect(toDevServerOptions({ cmux: true } satisfies DevCliOptions).cmux).toBe(true)
+  it('passes --orca through as true', () => {
+    expect(toDevServerOptions({ orca: true } satisfies DevCliOptions).orca).toBe(true)
   })
 
   it('defaults self to false when --self is absent', () => {

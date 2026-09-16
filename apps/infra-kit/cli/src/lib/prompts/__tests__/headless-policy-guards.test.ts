@@ -54,12 +54,18 @@ const POLICY_SITES: Record<string, { policy: 'argument' | 'value'; tools: string
     tools: ['release-desc-edit'],
     fields: ['description'],
   },
-  // The one site whose answer is a VALUE rather than a claim, and the defect this file exists to
+  // The two sites whose answer is a VALUE rather than a claim, and the defect this file exists to
   // have caught: both `.describe()` strings promised "false (MCP, no TTY)" while the code prompted.
-  'commands/worktrees-add/worktrees-add.ts#worktreesAdd': {
+  // One helper per follow-up since the Orca migration moved them ahead of the confirm.
+  'commands/worktrees-add/worktrees-add.ts#resolveGithubDesktopFollowUp': {
     policy: 'value',
     tools: ['worktrees-add'],
-    fields: ['githubDesktop', 'cmux'],
+    fields: ['githubDesktop'],
+  },
+  'commands/worktrees-add/worktrees-add.ts#resolveOrcaFollowUp': {
+    policy: 'value',
+    tools: ['worktrees-add'],
+    fields: ['orca'],
   },
 }
 

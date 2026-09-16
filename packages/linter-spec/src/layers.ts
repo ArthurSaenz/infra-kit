@@ -88,7 +88,7 @@ export const infraKitSegmentModel: SegmentModel = {
   layers: [
     { name: 'entry', order: 0, description: 'CLI/MCP entrypoints (entry/, mcp/); parse args, dispatch.' },
     { name: 'commands', order: 1, description: 'One folder per command; orchestrates lib + integrations.' },
-    { name: 'integrations', order: 2, description: 'Adapters to external systems (cmux, gh, etc.).' },
+    { name: 'integrations', order: 2, description: 'Adapters to external systems (orca, gh, etc.).' },
     { name: 'lib', order: 3, description: 'Pure reusable utilities; the innermost layer.' },
   ],
 }

@@ -129,22 +129,23 @@ export const style = {
   },
 };
 
-// ------------------------------------------------------------------ cmux
+// ------------------------------------------------------------------ orca
 
 // Head-anchored or it blocks `rg "pnpm dev" docs/`. Segments internally rather than declaring
-// scope: the splitter would drop the `cmux` authorising `cmux new-session … "cd x && pnpm dev"`.
+// scope: the splitter would drop the `orca terminal` authorising `… --command "cd x && pnpm dev"`.
 const RE_DEV_SERVER = new RegExp(String.raw`${HEAD_PREFIX}pnpm\s+(run\s+)?dev`, 'i');
 
-export const cmux = {
-  name: 'cmux',
+export const orca = {
+  name: 'orca',
   check(command) {
-    if (command.includes('cmux')) return null;
+    if (command.includes('orca terminal')) return null;
 
     const startsDevServer = splitIntoSegments(command).some((segment) => RE_DEV_SERVER.test(segment));
     if (startsDevServer) {
       return {
         action: 'block',
-        message: 'Dev servers must run in cmux. Use: cmux new-session -d -s dev "pnpm dev"',
+        message:
+          'Dev servers must run in an Orca terminal. Use: orca terminal create --worktree active --title dev --command "pnpm dev"',
       };
     }
 
@@ -248,7 +249,7 @@ export const agentModeDemotion = {
 // ------------------------------------------------------------------ dispatcher
 
 // `doppler` first: when a command trips two guards, the one about secrets is worth showing.
-export const GUARDS = [doppler, destructive, packageManager, style, cmux, worktree, agentModeDemotion];
+export const GUARDS = [doppler, destructive, packageManager, style, orca, worktree, agentModeDemotion];
 
 const decide = (guard, command, segments) => {
   const inputs = guard.scope === 'segment' ? segments : [command];

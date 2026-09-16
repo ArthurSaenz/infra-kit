@@ -29,7 +29,7 @@ const PACKAGE_CONFIG_FILE = 'infra-kit.config.ts'
 
 /**
  * Repo-relative dev-context fragment DIRECTORY, searched upward from cwd. Each
- * runner (single-process or cmux pane) writes its OWN `<app>.json` fragment here
+ * runner (single-process or Orca pane) writes its OWN `<app>.json` fragment here
  * recording its real bound port + release; the helper merges them (see
  * {@link readLocalContext}). This is the current source of truth.
  */

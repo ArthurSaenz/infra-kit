@@ -10,8 +10,8 @@ import {
   getInfraKitConfig,
   getInfraKitConfigPaths,
   resetInfraKitConfigCache,
-  resolveCmuxLayout,
   resolveConfiguredIdes,
+  resolveOrcaLayout,
 } from '../infra-kit-config'
 import type { InfraKitConfig } from '../infra-kit-config'
 
@@ -233,14 +233,14 @@ describe('getInfraKitConfig', () => {
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
           envManagement: { provider: 'doppler', config: { name: 'p' } },
-          worktrees: { openInGithubDesktop: false, openInCmux: true },
+          worktrees: { openInGithubDesktop: false, openInOrca: true },
         }),
       )
 
       const cfg = await getInfraKitConfig()
 
       expect(cfg.worktrees?.openInGithubDesktop).toBe(false)
-      expect(cfg.worktrees?.openInCmux).toBe(true)
+      expect(cfg.worktrees?.openInOrca).toBe(true)
     })
   })
 
@@ -253,13 +253,13 @@ describe('getInfraKitConfig', () => {
       fs.mkdirSync(userGlobalDir, { recursive: true })
       fs.writeFileSync(
         path.join(userGlobalDir, 'infra-kit.json'),
-        JSON.stringify({ worktrees: { openInGithubDesktop: false, openInCmux: true } }),
+        JSON.stringify({ worktrees: { openInGithubDesktop: false, openInOrca: true } }),
       )
 
       const cfg = await getInfraKitConfig()
 
       expect(cfg.worktrees?.openInGithubDesktop).toBe(false)
-      expect(cfg.worktrees?.openInCmux).toBe(true)
+      expect(cfg.worktrees?.openInOrca).toBe(true)
     })
   })
 
@@ -687,58 +687,58 @@ describe('resolveConfiguredIdes', () => {
   })
 })
 
-describe('resolveCmuxLayout', () => {
+describe('resolveOrcaLayout', () => {
   const base = {
     envManagement: { provider: 'doppler', config: { name: 'p' } },
   } as InfraKitConfig
 
-  it('defaults to two-columns when worktrees.cmux is unset', () => {
-    expect(resolveCmuxLayout(base)).toBe('two-columns')
+  it('defaults to two-columns when worktrees.orca is unset', () => {
+    expect(resolveOrcaLayout(base)).toBe('two-columns')
   })
 
-  it('defaults to two-columns when worktrees is set but cmux.layout is unset', () => {
-    const cfg = { ...base, worktrees: { openInCmux: true } } as InfraKitConfig
+  it('defaults to two-columns when worktrees is set but orca.layout is unset', () => {
+    const cfg = { ...base, worktrees: { openInOrca: true } } as InfraKitConfig
 
-    expect(resolveCmuxLayout(cfg)).toBe('two-columns')
+    expect(resolveOrcaLayout(cfg)).toBe('two-columns')
   })
 
   it('returns the explicit two-columns layout', () => {
-    const cfg = { ...base, worktrees: { cmux: { layout: 'two-columns' } } } as InfraKitConfig
+    const cfg = { ...base, worktrees: { orca: { layout: 'two-columns' } } } as InfraKitConfig
 
-    expect(resolveCmuxLayout(cfg)).toBe('two-columns')
+    expect(resolveOrcaLayout(cfg)).toBe('two-columns')
   })
 
   it('returns the explicit three-pane layout', () => {
-    const cfg = { ...base, worktrees: { cmux: { layout: 'three-pane' } } } as InfraKitConfig
+    const cfg = { ...base, worktrees: { orca: { layout: 'three-pane' } } } as InfraKitConfig
 
-    expect(resolveCmuxLayout(cfg)).toBe('three-pane')
+    expect(resolveOrcaLayout(cfg)).toBe('three-pane')
   })
 })
 
-describe('worktrees.cmux schema validation', () => {
-  it('accepts a valid cmux.layout and round-trips it through getInfraKitConfig', async () => {
+describe('worktrees.orca schema validation', () => {
+  it('accepts a valid orca.layout and round-trips it through getInfraKitConfig', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
           envManagement: { provider: 'doppler', config: { name: 'p' } },
-          worktrees: { openInCmux: true, cmux: { layout: 'three-pane' } },
+          worktrees: { openInOrca: true, orca: { layout: 'three-pane' } },
         }),
       )
 
       const cfg = await getInfraKitConfig()
 
-      expect(resolveCmuxLayout(cfg)).toBe('three-pane')
+      expect(resolveOrcaLayout(cfg)).toBe('three-pane')
     })
   })
 
-  it('rejects an unknown cmux.layout value', async () => {
+  it('rejects an unknown orca.layout value', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
           envManagement: { provider: 'doppler', config: { name: 'p' } },
-          worktrees: { cmux: { layout: 'four-pane' } },
+          worktrees: { orca: { layout: 'four-pane' } },
         }),
       )
 

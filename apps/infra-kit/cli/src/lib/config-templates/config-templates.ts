@@ -51,10 +51,10 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   //
   // "worktrees": {
   //   "openInGithubDesktop": false,
-  //   "openInCmux": true,
-  //   // cmux pane layout for opened worktrees: "two-columns" (default, left | right)
+  //   "openInOrca": true,
+  //   // Orca pane layout for opened worktrees: "two-columns" (default, left | right)
   //   // or "three-pane" (left split top/bottom + full-height right).
-  //   "cmux": { "layout": "two-columns" }
+  //   "orca": { "layout": "two-columns" }
   // },
   //
   // // Auto-load Doppler env when working inside this project/worktree. Omit to
@@ -78,15 +78,15 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   // // "<app>/api" or "<app>/ui". A bare "<app>" is a FOLDER, not a package, and is
   // // REJECTED. Per target: "watchDeps" (api targets) rebuilds the shared-package
   // // dependency closure and restarts on change; "proxy" maps a route path to
-  // // "local" | "cloud" for this session only. "cmux": true runs each launched target
-  // // in its own cmux pane. Omit "apps" entirely to launch every discovered target.
+  // // "local" | "cloud" for this session only. "orca": true runs each launched target
+  // // in its own Orca terminal. Omit "apps" entirely to launch every discovered target.
   // "devServersPresets": {
   //   "backend": {
   //     "apps": {
   //       "client/api": { "watchDeps": true, "proxy": { "/api": "local", "/auth": "cloud" } },
   //       "client/ui": {}
   //     },
-  //     "cmux": true
+  //     "orca": true
   //   }
   // },
   //

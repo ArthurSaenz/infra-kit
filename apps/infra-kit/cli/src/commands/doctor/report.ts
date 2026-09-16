@@ -75,7 +75,7 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
       'aws installed',
       'package manager installed',
       'typescript-language-server installed',
-      'terminal installed',
+      'orca installed',
       'ide installed',
     ],
   ],

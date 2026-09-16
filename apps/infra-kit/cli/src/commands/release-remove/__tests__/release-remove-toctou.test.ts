@@ -29,7 +29,7 @@ import { JIRA_NAME, LABEL, LOCAL_TIP, installDefaults } from './release-remove-m
  * counts must abort BEFORE the delete, reporting steps 1-5 done and the version intact so the
  * re-run finishes the job with the guard re-evaluated against the new counts.
  *
- * Mocked: git, gh, cmux, Jira and zx; `getVersionRelatedIssueCounts` answers differently on its
+ * Mocked: git, gh, Orca, Jira and zx; `getVersionRelatedIssueCounts` answers differently on its
  * first and second call, which is what makes the two reads distinguishable at all. Real: the step
  * control flow and the residue report.
  */
@@ -78,8 +78,8 @@ vi.mock('src/lib/worktrees/remove-release-worktree', () => {
   return { removeReleaseWorktreeIfPresent: vi.fn() }
 })
 
-vi.mock('src/integrations/cmux', () => {
-  return { listCmuxWorkspacesByCwd: vi.fn(), realpathForCmuxCwd: vi.fn() }
+vi.mock('src/integrations/orca', () => {
+  return { listOrcaTerminals: vi.fn(), orcaCallerInsideTargets: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {

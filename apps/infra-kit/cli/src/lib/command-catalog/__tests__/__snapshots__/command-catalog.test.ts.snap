@@ -253,16 +253,15 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
   {
     "input": [
       "dryRun",
-      "force",
       "releaseOnly",
     ],
     "name": "reopen",
     "output": [
-      "cmuxClosed",
-      "cmuxOpened",
-      "cmuxSkipped",
       "dryRun",
       "ideProviders",
+      "orcaHidden",
+      "orcaOpened",
+      "orcaSkipped",
       "releaseOnly",
       "repo",
       "worktreePaths",
@@ -311,16 +310,19 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
   {
     "input": [
       "all",
-      "cmux",
       "cursor",
       "githubDesktop",
       "ide",
+      "orca",
       "versions",
     ],
     "name": "worktrees-add",
     "output": [
       "count",
       "createdWorktrees",
+      "orcaHidden",
+      "orcaOpened",
+      "orcaSkipped",
     ],
   },
   {

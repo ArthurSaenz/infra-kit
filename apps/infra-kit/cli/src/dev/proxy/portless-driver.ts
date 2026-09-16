@@ -11,7 +11,7 @@
  *
  * The binary is NOT resolved from `PATH`: `portless` is a normal npm dependency living in
  * `node_modules/.bin`, which is on `PATH` only when the process was launched via pnpm/npm. Since
- * `infra-kit dev` is often launched otherwise (a global bin, a cmux runner, a foreign cwd), we resolve
+ * `infra-kit dev` is often launched otherwise (a global bin, an Orca pane, a foreign cwd), we resolve
  * portless's own `dist/cli.js` by walking `node_modules` from this file (see {@link resolvePortlessBin})
  * and run it with the current `node` (`process.execPath`) — so it works regardless of how `dev` was
  * invoked. Args are fixed literals plus discovered release/package names + a numeric port, never

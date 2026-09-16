@@ -77,7 +77,7 @@ describe('the IDE probe captures its output instead of relaying it', () => {
 
 /** The already-read config every check is threaded, standing in for one `readDoctorConfig()` run. */
 const read = (value: unknown): DoctorConfig => {
-  return { config: value as InfraKitConfig, error: null }
+  return { config: value as InfraKitConfig, error: null, legacyCmuxKeys: [] }
 }
 
 describe('checkIdeInstalled', () => {
@@ -158,7 +158,7 @@ describe('checkIdeInstalled', () => {
   })
 
   it('passes informationally when the config could not be read', async () => {
-    const result = await checkIdeInstalled({ config: null, error: new Error('bad config') })
+    const result = await checkIdeInstalled({ config: null, error: new Error('bad config'), legacyCmuxKeys: [] })
 
     expect(result.status).toBe('pass')
     expect(result.message).toMatch(/Skipped/)

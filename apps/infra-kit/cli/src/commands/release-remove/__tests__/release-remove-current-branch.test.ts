@@ -27,7 +27,7 @@ import { BASE_BRANCH, BRANCH, LABEL, installDefaults } from './release-remove-mo
  * checked out and still present — after the worktree, the PR and the remote branch are already gone,
  * so the operator has no reason to look again.
  *
- * Mocked: git, gh, cmux, Jira, and zx’s `$` — the switch is a raw `$` call, so recording the
+ * Mocked: git, gh, Orca, Jira, and zx’s `$` — the switch is a raw `$` call, so recording the
  * command line is the only way to observe it. Real: the step control flow and the residue report.
  */
 
@@ -81,8 +81,8 @@ vi.mock('src/lib/worktrees/remove-release-worktree', () => {
   return { removeReleaseWorktreeIfPresent: vi.fn() }
 })
 
-vi.mock('src/integrations/cmux', () => {
-  return { listCmuxWorkspacesByCwd: vi.fn(), realpathForCmuxCwd: vi.fn() }
+vi.mock('src/integrations/orca', () => {
+  return { listOrcaTerminals: vi.fn(), orcaCallerInsideTargets: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {

@@ -3,22 +3,24 @@ import path from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
 
-import {
-  buildCmuxWorkspaceTitle,
-  closeCmuxWorkspaceByCwd,
-  createCmuxGroupFrom,
-  findCmuxGroupRefByName,
-  listCmuxWorkspacesByCwd,
-  openCmuxWorkspaceWithLayout,
-  realpathForCmuxCwd,
-} from 'src/integrations/cmux'
 import { ideProviderLabel, openIdeWorkspace } from 'src/integrations/ide'
+import {
+  OrcaError,
+  buildOrcaTerminalTitle,
+  createOrcaOpenPoll,
+  isOrcaWorktreeListed,
+  listOrcaTerminals,
+  openOrcaWorktreeTerminals,
+  probeOrca,
+} from 'src/integrations/orca'
+import type { OrcaOpenedLayout, OrcaProbe } from 'src/integrations/orca'
 import { commandEcho } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { getMainRepoRoot, getProjectRoot, listWorktrees } from 'src/lib/git-utils'
 import type { WorktreeEntry } from 'src/lib/git-utils'
-import { getInfraKitConfig } from 'src/lib/infra-kit-config'
+import { getInfraKitConfig, resolveOrcaLayout } from 'src/lib/infra-kit-config'
+import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { discoverInfraKitProjects } from 'src/lib/project-discovery'
 import type { DiscoveredProject } from 'src/lib/project-discovery'
@@ -35,10 +37,35 @@ interface ReopenArgs {
   root?: string[]
   /** Restrict to release worktrees (reproduces the legacy `worktrees reload` scope). */
   releaseOnly?: boolean
-  /** Close each cmux workspace first, then reopen (the legacy `worktrees reload` behaviour). */
-  force?: boolean
   /** Print the plan and spawn nothing. */
   dryRun?: boolean
+}
+
+const ORCA_SKIP_REASONS = [
+  'already_open',
+  'orca_unreachable',
+  'orca_absent',
+  'orca_worktree_not_selectable',
+  'orca_error',
+] as const
+
+type OrcaSkipReason = (typeof ORCA_SKIP_REASONS)[number]
+
+interface OrcaOpenedEntry {
+  branch: string
+  layout: OrcaOpenedLayout
+}
+
+interface OrcaSkippedEntry {
+  branch: string
+  reason: OrcaSkipReason
+  code?: string
+}
+
+interface OrcaHiddenEntry {
+  branch: string
+  path: string
+  fix: string
 }
 
 interface ReopenResult {
@@ -48,16 +75,17 @@ interface ReopenResult {
   /** Absolute folder set handed to the editor (root-first, exactly as opened). */
   worktreePaths: string[]
   ideProviders: string[]
-  /** cmux titles opened this run (additive mode: only the ones not already open). */
-  cmuxOpened: string[]
-  /** cmux titles skipped because their workspace was already open (additive mode). */
-  cmuxSkipped: string[]
-  /** cmux titles closed first (only in `--force` mode). */
-  cmuxClosed: string[]
+  /** Worktrees that got an Orca terminal tab this run (additive: only the ones not already open). */
+  orcaOpened: OrcaOpenedEntry[]
+  /** Worktrees NOT opened in Orca, with the reason (`already_open` is the idempotent case). */
+  orcaSkipped: OrcaSkippedEntry[]
+  /** Worktrees whose terminals opened on a row Orca's sidebar hides, with the UI steps. */
+  orcaHidden: OrcaHiddenEntry[]
 }
 
-/** One cmux workspace to (re)open: its canonical-friendly title and the cwd it runs in. */
-interface CmuxTarget {
+/** One worktree to (re)open in Orca: the tab title, the cwd it runs in, and the branch it is reported as. */
+interface OrcaTarget {
+  branch: string
   title: string
   cwd: string
 }
@@ -93,32 +121,31 @@ export const reopen = async (
 }
 
 /**
- * Reopen editor + cmux windows for every *active* worktree in the current
- * project. "Active" = a `git worktree list` record that is neither bare nor
- * prunable — the main checkout plus every linked worktree (release, feature,
- * detached), regardless of branch. Additive and idempotent by default: cmux
- * workspaces already open are skipped, so running twice does not double the
- * windows. `--force` closes each cmux workspace first (the legacy reload
- * behaviour); `--release-only` narrows the set to release worktrees.
+ * Reopen editor + Orca windows for every *active* worktree in the current project: the main
+ * checkout plus every linked worktree (release, feature, detached), regardless of branch.
+ * `--release-only` narrows the set to release worktrees.
  *
- * Non-destructive to git — only cmux/editor view state is touched.
+ * "Active" = a `git worktree list` record that is neither bare nor prunable. Purely additive and
+ * idempotent: a worktree with a connected Orca terminal is skipped as `already_open`, so running
+ * twice does not double the tabs. There is no close path — Orca's only by-worktree close verb
+ * kills every session in the directory, the caller's included. Non-destructive to git — only
+ * Orca/editor view state is touched.
  */
 export const reopenCurrentProject = async (options: ReopenArgs = {}): Promise<ToolsExecutionResult<ReopenResult>> => {
-  const { releaseOnly = false, force = false, dryRun = false } = options
+  const { releaseOnly = false, dryRun = false } = options
 
   // GUARD (placement is load-bearing): must stay ABOVE the `try` block below. Its catch rethrows only
   // OperationError; getInfraKitConfig's missing-config throw is a PLAIN Error, so a read inside the try
   // is rewrapped and its text is silently dropped by buildMessage — AC3b would fail green.
-  await getInfraKitConfig()
+  const config = await getInfraKitConfig()
 
   try {
     const projectRoot = await getProjectRoot()
     const worktreeDir = `${projectRoot}${WORKTREES_DIR_SUFFIX}`
-    // cmux titles are keyed on the STABLE main-repo name (the basename of the main
-    // checkout), not the worktree-local basename: running `reopen` from inside a
-    // linked worktree must produce the same titles `worktrees add` created from the
-    // main checkout, or dedup misses and every run duplicates the windows.
-    const repoName = path.basename(await getMainRepoRoot(projectRoot))
+    // Keyed on the STABLE main-repo root, not the worktree-local one: running `reopen` from
+    // inside a linked worktree must address the same Orca repo row as from the main checkout.
+    const mainRepoRoot = await getMainRepoRoot(projectRoot)
+    const repoName = path.basename(mainRepoRoot)
 
     const entries = await listWorktrees(projectRoot)
     const active = selectActive(entries, releaseOnly)
@@ -139,17 +166,16 @@ export const reopenCurrentProject = async (options: ReopenArgs = {}): Promise<To
         return isReleaseBranch(branch)
       })
 
-    const targets: CmuxTarget[] = active.map((entry) => {
-      return {
-        // Detached / branch-less worktrees have no branch to title from; fall back
-        // to the leaf directory so the title is still stable and meaningful.
-        title: buildCmuxWorkspaceTitle({ branch: entry.branch ?? path.basename(entry.path) }),
-        cwd: entry.path,
-      }
+    const targets: OrcaTarget[] = active.map((entry) => {
+      // Detached / branch-less worktrees have no branch to title from; fall back
+      // to the leaf directory so the title is still stable and meaningful.
+      const branch = entry.branch ?? path.basename(entry.path)
+
+      return { branch, title: buildOrcaTerminalTitle({ branch }), cwd: entry.path }
     })
 
     if (dryRun) {
-      const result = await planReopen({ repo: repoName, releaseOnly, force, worktreePaths, targets })
+      const result = await planReopen({ repo: repoName, releaseOnly, worktreePaths, targets })
 
       logDryRun(result, worktreeDir)
       commandEcho.print()
@@ -157,9 +183,9 @@ export const reopenCurrentProject = async (options: ReopenArgs = {}): Promise<To
       return { content: textContent(JSON.stringify(result, null, 2)), structuredContent: result }
     }
 
-    const [ideOutcomes, cmux] = await Promise.all([
+    const [ideOutcomes, orca] = await Promise.all([
       openIdeWorkspace({ projectRoot, worktreeDir, worktreePaths, currentBranches }),
-      runCmux({ targets, force, repoName }),
+      reopenOrca({ targets, mainRepoRoot, repoName, config }),
     ])
 
     const result: ReopenResult = {
@@ -174,9 +200,9 @@ export const reopenCurrentProject = async (options: ReopenArgs = {}): Promise<To
         .map((outcome) => {
           return outcome.provider
         }),
-      cmuxOpened: cmux.opened,
-      cmuxSkipped: cmux.skipped,
-      cmuxClosed: cmux.closed,
+      orcaOpened: orca.opened,
+      orcaSkipped: orca.skipped,
+      orcaHidden: orca.hidden,
     }
 
     logResults(result, {
@@ -217,106 +243,43 @@ const selectActive = (entries: WorktreeEntry[], releaseOnly: boolean): WorktreeE
   })
 }
 
-interface RunCmuxArgs {
-  targets: CmuxTarget[]
-  force: boolean
-  /** Stable repo name (basename of the main-repo root) → the sidebar group name. */
-  repoName: string
+interface OrcaOutcome {
+  opened: OrcaOpenedEntry[]
+  skipped: OrcaSkippedEntry[]
+  hidden: OrcaHiddenEntry[]
 }
 
-interface RunCmuxOutcome {
-  opened: string[]
-  skipped: string[]
-  closed: string[]
+const hiddenRowFix = (repoName: string): string => {
+  return `Orca → ${repoName} → "hidden worktrees" card → Show, or Settings → General → Workspace → external-worktree sources`
 }
 
-/**
- * Open a cmux workspace for every target, each inside the repo's sidebar group.
- * Default is ADDITIVE + DEDUPED by workspace cwd: a target whose worktree cwd is
- * already open is skipped, which makes `reopen` idempotent (running twice opens
- * nothing new — including the main checkout, whose cwd the group anchor shares but
- * which the cwd map excludes). `--force` closes each target first, then force-opens
- * with no dedup — the escape hatch that recovers the legacy reload behaviour and
- * doubles as the migration for pre-group ungrouped windows.
- */
-const runCmux = async (args: RunCmuxArgs): Promise<RunCmuxOutcome> => {
-  const { targets, force, repoName } = args
-
-  // Resolve the group ONCE, before the close loop — closing the last member of a
-  // group leaves it empty-but-pinned, and a later lookup must not race that.
-  const groupRef = await findCmuxGroupRefByName(repoName)
-
-  const closed = force ? await closeCmux({ targets }) : []
-
-  const { opened, skipped } = await reopenCmux({ targets, force, repoName, groupRef })
-
-  return { opened, skipped, closed }
+const probeSkipReason = (probe: Exclude<OrcaProbe, 'ready'>): OrcaSkipReason => {
+  return probe === 'absent' ? 'orca_absent' : 'orca_unreachable'
 }
 
-interface CloseCmuxArgs {
-  targets: CmuxTarget[]
+/** "Open" ≡ at least one connected terminal in the worktree — decided by `terminal list`, never by create. */
+const isOpenInOrca = async (cwd: string): Promise<boolean> => {
+  const { terminals } = await listOrcaTerminals(cwd)
+
+  return terminals.some((terminal) => {
+    return terminal.connected
+  })
 }
 
 /**
- * Close the cmux workspace for each target that is currently open, matched BY CWD
- * (never by title — titles are no longer unique across repos, and a cwd match
- * excludes group anchors so a group header can never be closed). Snapshots the
- * open set up front so the returned list reflects which were actually open; the
- * close itself is best-effort per target.
+ * Partition targets into those that need opening vs. those already open (≥ 1 connected Orca
+ * terminal in the cwd). Shared by {@link reopenOrca} and {@link planReopen}, so the dry-run plan
+ * and the real run agree on what "already open" means.
  */
-export const closeCmux = async (args: CloseCmuxArgs): Promise<string[]> => {
-  const { targets } = args
-
-  if (targets.length === 0) {
-    return []
-  }
-
-  const openByCwd = await listCmuxWorkspacesByCwd()
-
-  const closed: string[] = []
+const partitionOrcaTargets = async (
+  targets: OrcaTarget[],
+): Promise<{ toOpen: OrcaTarget[]; skipped: OrcaSkippedEntry[] }> => {
+  const toOpen: OrcaTarget[] = []
+  const skipped: OrcaSkippedEntry[] = []
 
   for (const target of targets) {
-    if (!openByCwd.has(await realpathForCmuxCwd(target.cwd))) {
-      continue
-    }
-
-    await closeCmuxWorkspaceByCwd(target.cwd)
-    closed.push(target.title)
-  }
-
-  return closed
-}
-
-interface ReopenCmuxArgs {
-  targets: CmuxTarget[]
-  force: boolean
-  repoName: string
-  /** Existing group ref, or null/undefined to bootstrap one from the first opened workspace. */
-  groupRef?: string | null
-}
-
-interface ReopenCmuxOutcome {
-  opened: string[]
-  skipped: string[]
-}
-
-/**
- * Partition targets into those that need opening vs. those already open, against a
- * set of open workspace cwds (realpath'd, anchors excluded). `force` bypasses dedup
- * entirely — every target lands in `toOpen`. Shared by {@link reopenCmux} and
- * {@link planReopen}.
- */
-const partitionCmuxTargets = async (
-  targets: CmuxTarget[],
-  openCwds: Set<string>,
-  force: boolean,
-): Promise<{ toOpen: CmuxTarget[]; skipped: string[] }> => {
-  const toOpen: CmuxTarget[] = []
-  const skipped: string[] = []
-
-  for (const target of targets) {
-    if (!force && openCwds.has(await realpathForCmuxCwd(target.cwd))) {
-      skipped.push(target.title)
+    if (await isOpenInOrca(target.cwd)) {
+      skipped.push({ branch: target.branch, reason: 'already_open' })
     } else {
       toOpen.push(target)
     }
@@ -325,69 +288,135 @@ const partitionCmuxTargets = async (
   return { toOpen, skipped }
 }
 
-/**
- * (Re)open a cmux workspace per target, inside the repo's sidebar group. Additive
- * by default — skips any target whose worktree cwd is already open, so a second run
- * opens 0 new workspaces. If no group exists yet, the FIRST opened workspace seeds
- * it via `--from` (capture-free); the rest open straight into it. Under `force`,
- * dedup is bypassed and every target is force-opened (callers close first).
- */
-export const reopenCmux = async (args: ReopenCmuxArgs): Promise<ReopenCmuxOutcome> => {
-  const { targets, force, repoName, groupRef = null } = args
+const skipEvery = (targets: OrcaTarget[], reason: OrcaSkipReason): OrcaOutcome => {
+  return {
+    opened: [],
+    skipped: targets.map((target) => {
+      return { branch: target.branch, reason }
+    }),
+    hidden: [],
+  }
+}
 
-  // `listCmuxWorkspacesByCwd` returns `∅` when cmux is down or unreadable; its
-  // contract says treat empty as "unknown, proceed as if nothing is open", which
-  // is exactly force-open behaviour — acceptable here.
-  const openCwds = force ? new Set<string>() : new Set((await listCmuxWorkspacesByCwd()).keys())
-  const { toOpen, skipped } = await partitionCmuxTargets(targets, openCwds, force)
+interface ReopenOrcaArgs {
+  targets: OrcaTarget[]
+  mainRepoRoot: string
+  repoName: string
+  config: InfraKitConfig
+}
 
-  const opened: string[] = []
-  let group = groupRef
-  let bootstrapAttempted = false
+type OpenOneOutcome = { opened: OrcaOpenedEntry } | { hidden: OrcaHiddenEntry } | { skipped: OrcaSkippedEntry }
 
-  for (const target of toOpen) {
-    try {
-      if (group) {
-        await openCmuxWorkspaceWithLayout({ cwd: target.cwd, title: target.title, group })
-      } else {
-        const workspaceRef = await openCmuxWorkspaceWithLayout({ cwd: target.cwd, title: target.title })
+interface OpenOneArgs {
+  target: OrcaTarget
+  mainRepoRoot: string
+  repoName: string
+  panes: ReturnType<typeof resolveOrcaLayout>
+  poll: ReturnType<typeof createOrcaOpenPoll>
+}
 
-        // Seed the group from the first workspace we open, once. `--from` makes
-        // creation capture-free; if it fails, remaining targets open ungrouped
-        // rather than spawning a second group per iteration.
-        if (!bootstrapAttempted) {
-          group = await createCmuxGroupFrom(repoName, [workspaceRef])
-          bootstrapAttempted = true
-        }
-      }
+/** One target's open + listing check; Orca failures become a skip entry, never a throw. */
+const openOneTarget = async (args: OpenOneArgs): Promise<OpenOneOutcome> => {
+  const { target, mainRepoRoot, repoName, panes, poll } = args
 
-      opened.push(target.title)
-    } catch (error) {
-      logger.warn({ error, title: target.title }, `⚠️ Failed to reopen cmux workspace ${target.title}`)
+  try {
+    const { layout } = await openOrcaWorktreeTerminals({
+      cwd: target.cwd,
+      title: target.title,
+      focus: false,
+      layout: 'full',
+      panes,
+      poll,
+    })
+
+    if (await isOrcaWorktreeListed(mainRepoRoot, target.cwd)) {
+      return { opened: { branch: target.branch, layout } }
+    }
+
+    return { hidden: { branch: target.branch, path: target.cwd, fix: hiddenRowFix(repoName) } }
+  } catch (error) {
+    logger.warn({ error, branch: target.branch }, `⚠️ Failed to reopen ${target.branch} in Orca`)
+
+    if (error instanceof OrcaError && error.code === 'orca_worktree_not_selectable') {
+      return { skipped: { branch: target.branch, reason: 'orca_worktree_not_selectable' } }
+    }
+
+    return {
+      skipped: {
+        branch: target.branch,
+        reason: 'orca_error',
+        code: error instanceof OrcaError ? error.code : undefined,
+      },
     }
   }
+}
 
-  return { opened, skipped }
+/**
+ * Open an Orca terminal tab per target that is not already open. Never `--focus`: a fan-out that
+ * steals the window on every tab is the mess this avoids, and a background handle lays out just as
+ * well (docs/orca-cli-findings.md, axis 2). An Orca that is not ready skips every target with the
+ * probe's reason — `reopen` mutates nothing, so it never refuses. Per-target Orca failures are
+ * reported, never thrown, so one bad row does not stop the rest.
+ */
+export const reopenOrca = async (args: ReopenOrcaArgs): Promise<OrcaOutcome> => {
+  const { targets, mainRepoRoot, repoName, config } = args
+
+  if (targets.length === 0) return { opened: [], skipped: [], hidden: [] }
+
+  const probe = await probeOrca()
+
+  if (probe !== 'ready') {
+    logger.warn(
+      `⚠️ ${probe === 'absent' ? 'the orca CLI is not installed' : 'Orca is not running'} — nothing opened in Orca`,
+    )
+
+    return skipEvery(targets, probeSkipReason(probe))
+  }
+
+  const { toOpen, skipped } = await partitionOrcaTargets(targets)
+  const outcome: OrcaOutcome = { opened: [], skipped, hidden: [] }
+  const panes = resolveOrcaLayout(config)
+  const poll = createOrcaOpenPoll()
+
+  for (const target of toOpen) {
+    const one = await openOneTarget({ target, mainRepoRoot, repoName, panes, poll })
+
+    if ('opened' in one) outcome.opened.push(one.opened)
+    else if ('hidden' in one) outcome.hidden.push(one.hidden)
+    else outcome.skipped.push(one.skipped)
+  }
+
+  return outcome
 }
 
 interface PlanReopenArgs {
   repo: string
   releaseOnly: boolean
-  force: boolean
   worktreePaths: string[]
-  targets: CmuxTarget[]
+  targets: OrcaTarget[]
 }
 
 /**
- * Build the dry-run plan: which folders would open in the editor and which cmux
- * titles would open vs. are already open. Reads the live cmux workspace list but
- * spawns nothing.
+ * Build the dry-run plan: which folders would open in the editor and which worktrees would open in
+ * Orca vs. are already open. Reads Orca's live terminal list but spawns no terminal. A layout is
+ * reported as `full` because that is what the real run asks for; `orcaHidden` is unknowable before
+ * opening and stays empty.
  */
 const planReopen = async (args: PlanReopenArgs): Promise<ReopenResult> => {
-  const { repo, releaseOnly, force, worktreePaths, targets } = args
+  const { repo, releaseOnly, worktreePaths, targets } = args
 
-  const openCwds = force ? new Set<string>() : new Set((await listCmuxWorkspacesByCwd()).keys())
-  const { toOpen, skipped } = await partitionCmuxTargets(targets, openCwds, force)
+  const probe = targets.length > 0 ? await probeOrca() : 'ready'
+  const orca =
+    probe === 'ready'
+      ? await partitionOrcaTargets(targets).then(({ toOpen, skipped }) => {
+          return {
+            opened: toOpen.map((target): OrcaOpenedEntry => {
+              return { branch: target.branch, layout: 'full' }
+            }),
+            skipped,
+          }
+        })
+      : skipEvery(targets, probeSkipReason(probe))
 
   return {
     repo,
@@ -395,11 +424,9 @@ const planReopen = async (args: PlanReopenArgs): Promise<ReopenResult> => {
     releaseOnly,
     worktreePaths,
     ideProviders: [],
-    cmuxOpened: toOpen.map((target) => {
-      return target.title
-    }),
-    cmuxSkipped: skipped,
-    cmuxClosed: [],
+    orcaOpened: orca.opened,
+    orcaSkipped: orca.skipped,
+    orcaHidden: [],
   }
 }
 
@@ -410,17 +437,17 @@ const logDryRun = (result: ReopenResult, worktreeDir: string): void => {
     logger.info(`  ${folder}`)
   }
 
-  if (result.cmuxOpened.length > 0) {
-    logger.info(`🪟 Would open ${result.cmuxOpened.length} cmux workspace(s):`)
-    for (const title of result.cmuxOpened) {
-      logger.info(`  ${title}`)
+  if (result.orcaOpened.length > 0) {
+    logger.info(`🪟 Would open ${result.orcaOpened.length} worktree(s) in Orca:`)
+    for (const entry of result.orcaOpened) {
+      logger.info(`  ${entry.branch}`)
     }
   }
 
-  if (result.cmuxSkipped.length > 0) {
-    logger.info(`↩️ Already open (would skip) ${result.cmuxSkipped.length} cmux workspace(s):`)
-    for (const title of result.cmuxSkipped) {
-      logger.info(`  ${title}`)
+  if (result.orcaSkipped.length > 0) {
+    logger.info(`↩️ Would skip ${result.orcaSkipped.length} worktree(s) in Orca:`)
+    for (const entry of result.orcaSkipped) {
+      logger.info(`  ${entry.branch} (${entry.reason})`)
     }
   }
 }
@@ -430,10 +457,6 @@ interface LogResultsContext {
 }
 
 const logResults = (result: ReopenResult, context: LogResultsContext): void => {
-  if (result.cmuxClosed.length > 0) {
-    logger.info(`🧹 Closed ${result.cmuxClosed.length} cmux workspace(s)`)
-  }
-
   if (context.ideRan) {
     const ideLabels = result.ideProviders
       .map((provider) => {
@@ -444,18 +467,34 @@ const logResults = (result: ReopenResult, context: LogResultsContext): void => {
     logger.info(`✅ Opened editor workspace(s): ${ideLabels}`)
   }
 
-  if (result.cmuxOpened.length > 0) {
-    logger.info('✅ Opened cmux workspaces:')
-    for (const title of result.cmuxOpened) {
-      logger.info(title)
+  if (result.orcaOpened.length > 0) {
+    logger.info('✅ Opened in Orca:')
+    for (const entry of result.orcaOpened) {
+      logger.info(`  ${entry.branch} (${entry.layout})`)
     }
   }
 
-  if (result.cmuxSkipped.length > 0) {
-    logger.info(`↩️ ${result.cmuxSkipped.length} cmux workspace(s) already open — skipped`)
+  for (const entry of result.orcaHidden) {
+    logger.info(`🙈 ${entry.branch} opened in Orca but its row is hidden (${entry.path}) — ${entry.fix}`)
   }
 
-  if (!context.ideRan && result.cmuxOpened.length === 0 && result.cmuxClosed.length === 0) {
+  const alreadyOpen = result.orcaSkipped.filter((entry) => {
+    return entry.reason === 'already_open'
+  })
+
+  if (alreadyOpen.length > 0) {
+    logger.info(`↩️ ${alreadyOpen.length} worktree(s) already open in Orca — skipped`)
+  }
+
+  for (const entry of result.orcaSkipped) {
+    if (entry.reason === 'already_open') continue
+
+    const code = entry.code ? ` (${entry.code})` : ''
+
+    logger.info(`↩️ ${entry.branch} not opened in Orca: ${entry.reason}${code}`)
+  }
+
+  if (!context.ideRan && result.orcaOpened.length === 0 && result.orcaHidden.length === 0) {
     logger.info('ℹ️ Nothing to reopen')
   }
 }
@@ -464,18 +503,18 @@ const logResults = (result: ReopenResult, context: LogResultsContext): void => {
  * Cross-project fan-out for `--all`. Discovers every live infra-kit project
  * (scanning `--root` or `dirname(getMainRepoRoot())`), then spawns ONE child
  * `reopen --json [flags]` per repo, SERIALLY. Serial is deliberate: concurrent
- * node procs racing the same cmux GUI is the focus-stealing mess serial avoids.
+ * node procs racing the same Orca GUI is the mess serial avoids.
  * Per-child failures are isolated — a repo that errors is recorded and the sweep
  * continues. Renders one aggregated summary and returns one combined result.
  */
 const reopenAll = async (options: ReopenArgs): Promise<ToolsExecutionResult<ReopenAllResult>> => {
-  const { project = [], root = [], releaseOnly = false, force = false, dryRun = false } = options
+  const { project = [], root = [], releaseOnly = false, dryRun = false } = options
 
   const discovered = await discoverInfraKitProjects({ roots: root })
   const projects = filterProjects(discovered, project)
-  const childFlags = buildChildFlags({ releaseOnly, force, dryRun })
+  const childFlags = buildChildFlags({ releaseOnly, dryRun })
 
-  // SERIAL. Not parallel — N node procs racing the cmux GUI is the mess this avoids.
+  // SERIAL. Not parallel — N node procs racing the Orca GUI is the mess this avoids.
   const results: ReopenAllRepoResult[] = []
 
   for (const proj of projects) {
@@ -519,12 +558,11 @@ const filterProjects = (discovered: DiscoveredProject[], names: string[]): Disco
  * infinitely); `--project` / `--root` are parent-only and NEVER passed to
  * children. `--json` is added by the spawn itself, not here.
  */
-const buildChildFlags = (args: { releaseOnly: boolean; force: boolean; dryRun: boolean }): string[] => {
+const buildChildFlags = (args: { releaseOnly: boolean; dryRun: boolean }): string[] => {
   const flags: string[] = []
 
   if (args.dryRun) flags.push('--dry-run')
   if (args.releaseOnly) flags.push('--release-only')
-  if (args.force) flags.push('--force')
 
   return flags
 }
@@ -586,16 +624,19 @@ const logReopenAll = (result: ReopenAllResult): void => {
 
   logger.info(`🌐 reopen --all${result.dryRun ? ' --dry-run' : ''}: ${result.projects.length} project(s)`)
 
+  const verb = result.dryRun ? 'planned' : 'opened'
   let totalOpened = 0
   let totalSkipped = 0
+  let totalHidden = 0
 
   for (const repo of result.results) {
     if (repo.ok) {
-      totalOpened += repo.cmuxOpened.length
-      totalSkipped += repo.cmuxSkipped.length
+      totalOpened += repo.orcaOpened.length
+      totalSkipped += repo.orcaSkipped.length
+      totalHidden += repo.orcaHidden.length
 
       logger.info(
-        `  ✅ ${repo.repo}: ${repo.worktreePaths.length} folder(s), ${repo.cmuxOpened.length} cmux ${result.dryRun ? 'planned' : 'opened'}, ${repo.cmuxSkipped.length} skipped`,
+        `  ✅ ${repo.repo}: ${repo.worktreePaths.length} folder(s), ${repo.orcaOpened.length} Orca ${verb}, ${repo.orcaSkipped.length} skipped, ${repo.orcaHidden.length} hidden`,
       )
     } else {
       logger.info(`  ❌ ${repo.repo}: ${repo.error}`)
@@ -603,7 +644,7 @@ const logReopenAll = (result: ReopenAllResult): void => {
   }
 
   logger.info(
-    `📊 ${okCount} ok, ${failedCount} failed — ${totalOpened} cmux ${result.dryRun ? 'planned' : 'opened'}, ${totalSkipped} already open`,
+    `📊 ${okCount} ok, ${failedCount} failed — ${totalOpened} Orca ${verb}, ${totalSkipped} skipped, ${totalHidden} hidden`,
   )
 }
 
@@ -611,14 +652,18 @@ const logReopenAll = (result: ReopenAllResult): void => {
 export const reopenMcpTool = defineMcpTool({
   name: 'reopen',
   description:
-    'Reopen editor + cmux windows for every active worktree in the current project — the main checkout plus every linked worktree (release, feature, detached). Additive and idempotent by default: cmux workspaces already open are skipped, so running twice does not double the windows. Zed opens the exact folder set; Cursor reconciles its release-branch-shaped workspace. Set releaseOnly to restrict to release worktrees (the legacy reload scope). Set force to close each cmux workspace first, then reopen (disruptive). Set dryRun to return the plan without spawning anything. Non-destructive to git — only cmux/editor view state is touched.',
+    "Reopen editor + Orca windows for every active worktree in the current project — the main checkout plus every linked worktree (release, feature, detached). Purely additive and idempotent: a worktree that already has a connected Orca terminal is skipped (orcaSkipped with reason already_open), so running twice does not double the tabs; nothing is ever closed. Zed opens the exact folder set; Cursor reconciles its release-branch-shaped workspace. Set releaseOnly to restrict to release worktrees (the legacy reload scope). Set dryRun to return the plan without spawning anything. When Orca is absent or not running every worktree lands in orcaSkipped with that reason; a worktree whose row Orca's sidebar hides is reported under orcaHidden with the UI steps. Non-destructive to git — only Orca/editor view state is touched.",
   inputSchema: {
     releaseOnly: z
       .boolean()
       .optional()
       .describe('Restrict to release worktrees (reproduces the legacy worktrees-reload scope)'),
-    force: z.boolean().optional().describe('Close each cmux workspace first, then reopen (disruptive)'),
-    dryRun: z.boolean().optional().describe('Return the plan (paths + cmux titles) without spawning anything'),
+    dryRun: z
+      .boolean()
+      .optional()
+      .describe(
+        'Return the plan (folders + which worktrees would open in Orca vs. are already open) without spawning anything',
+      ),
   },
   outputSchema: {
     repo: z.string().describe('Repository name the reopen ran for'),
@@ -626,9 +671,36 @@ export const reopenMcpTool = defineMcpTool({
     releaseOnly: z.boolean().describe('Whether the set was restricted to release worktrees'),
     worktreePaths: z.array(z.string()).describe('Absolute folder set handed to the editor (root-first)'),
     ideProviders: z.array(z.string()).describe('Configured IDE providers that opened (cursor | zed); empty in dry run'),
-    cmuxOpened: z.array(z.string()).describe('Titles of cmux workspaces opened this run'),
-    cmuxSkipped: z.array(z.string()).describe('Titles of cmux workspaces skipped because already open (additive mode)'),
-    cmuxClosed: z.array(z.string()).describe('Titles of cmux workspaces closed first (force mode only)'),
+    orcaOpened: z
+      .array(
+        z.object({
+          branch: z.string(),
+          layout: z.enum(['full', 'single-pane']),
+        }),
+      )
+      .describe('Worktrees that got an Orca terminal tab this run, with the layout applied'),
+    orcaSkipped: z
+      .array(
+        z.object({
+          branch: z.string(),
+          reason: z.enum(ORCA_SKIP_REASONS),
+          code: z.string().optional(),
+        }),
+      )
+      .describe(
+        'Worktrees NOT opened in Orca and why: already_open (idempotent skip), orca_absent / orca_unreachable (Orca down), orca_worktree_not_selectable (Orca does not resolve the path), orca_error (code carries the Orca error code)',
+      ),
+    orcaHidden: z
+      .array(
+        z.object({
+          branch: z.string(),
+          path: z.string(),
+          fix: z.string(),
+        }),
+      )
+      .describe(
+        'Worktrees whose Orca terminals opened on a row the sidebar HIDES (the repo hides external worktrees); fix names the in-app steps to reveal it',
+      ),
   },
   handler: reopenCurrentProject,
 })

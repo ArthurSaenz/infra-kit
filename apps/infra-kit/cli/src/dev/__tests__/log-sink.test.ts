@@ -52,8 +52,8 @@ describe('logFileName', () => {
 })
 
 describe('resolveLogDir', () => {
-  it('scopes the dir by pid, so concurrent cmux panes sharing one session id cannot collide', () => {
-    // The whole reason the <pid> segment exists: `--cmux` spawns one `infra-kit dev` per pane and
+  it('scopes the dir by pid, so concurrent Orca panes sharing one session id cannot collide', () => {
+    // The whole reason the <pid> segment exists: `--orca` spawns one `infra-kit dev` per pane and
     // every pane INHERITS the same INFRA_KIT_SESSION.
     expect(resolveLogDir().split(path.sep).at(-1)).toBe(String(process.pid))
     expect(resolveLogDir().split(path.sep).at(-2)).toBe('dev')

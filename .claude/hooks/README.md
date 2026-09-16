@@ -85,12 +85,12 @@ command trips two guards, the one about secrets is worth showing).
 | `destructive` | block | `rm -rf`, bare `git push --force`, SQL `drop`/`truncate` |
 | `package-manager` | block | `npm` / `yarn` / `npx` in a pnpm workspace |
 | `style` | advise | prefer `rg` over `grep`, over `find -name` |
-| `cmux` | block | `pnpm dev` outside a cmux session |
+| `orca` | block | `pnpm dev` outside an Orca terminal (`orca terminal create … --command`) |
 | `worktree` | block / advise | raw `git worktree add\|remove`; advises on `list` |
 
 A guard may declare `scope = 'segment'` to be run per shell segment, so its `^`-anchored regex still
-matches in `cd apps/client && npm install`. `style` and `cmux` deliberately read the whole line —
-segmenting would strip the pipe that makes `grep foo | wc -l` acceptable, and the `cmux` that
+matches in `cd apps/client && npm install`. `style` and `orca` deliberately read the whole line —
+segmenting would strip the pipe that makes `grep foo | wc -l` acceptable, and the `orca terminal` that
 authorises a wrapped `pnpm dev`.
 
 The dispatcher sits behind `invokedDirectly()`, so the unit tests import the guards directly without

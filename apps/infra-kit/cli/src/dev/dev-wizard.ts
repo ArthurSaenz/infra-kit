@@ -93,8 +93,8 @@ export interface ManualSelection {
   env?: string
   /** Rebuild + restart on save. */
   watch: boolean
-  /** One cmux pane per app. */
-  cmux: boolean
+  /** One Orca pane per app. */
+  orca: boolean
 }
 
 /** The resolved run plan derived from a {@link ManualSelection}. */
@@ -208,7 +208,7 @@ const frontendOverrides = (
  * @example
  * // client frontend, its /api answered local → launches client/api + client/ui, /api resolves local:
  * deriveManualPlan(
- *   { targets: ['client/ui'], sources: { 'client/ui /api': 'local' }, watch: false, cmux: false },
+ *   { targets: ['client/ui'], sources: { 'client/ui /api': 'local' }, watch: false, orca: false },
  *   { apps: [{ name: 'client', hasApi: true, hasUi: true, backends: [{ packageName: 'client-api',
  *              cloudCapable: true, localCapable: true, ownerApp: 'client',
  *              routes: [{ path: '/api', localCapable: true, cloudCapable: true }] }] }],
@@ -249,7 +249,7 @@ export const deriveManualPlan = (selection: ManualSelection, model: WizardModel)
   }
 
   return {
-    presetDef: { apps: presetApps, cmux: selection.cmux },
+    presetDef: { apps: presetApps, orca: selection.orca },
     anyCloudRoute: anyCloud,
     targetKeys: Object.keys(presetApps).sort(),
   }
@@ -262,7 +262,7 @@ export interface EquivalentCommand {
 }
 
 /**
- * Build the equivalent `infra-kit dev --target=… [--watch] [--cmux]` flag string for a derived plan.
+ * Build the equivalent `infra-kit dev --target=… [--watch] [--orca]` flag string for a derived plan.
  * Always exact: `--target` names packages at `<app>/<part>` granularity — the same grammar the plan's
  * `targetKeys` already use — so every wizard selection, whole-app or part-level, round-trips into a
  * pasteable command. (`--app` is deliberately NOT used here: its app-name granularity over-launches a
@@ -272,7 +272,7 @@ export const equivalentCommand = (plan: DerivedPlan, selection: ManualSelection)
   const parts = [`--target=${plan.targetKeys.join(',')}`]
 
   if (selection.watch) parts.push('--watch')
-  if (selection.cmux) parts.push('--cmux')
+  if (selection.orca) parts.push('--orca')
 
   return { flags: parts.join(' ') }
 }

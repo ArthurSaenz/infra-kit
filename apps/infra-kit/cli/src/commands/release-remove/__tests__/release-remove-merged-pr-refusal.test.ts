@@ -32,7 +32,7 @@ import { ranCommand } from './release-remove-zx'
  * therefore answers OPEN once and MERGED on the re-probe, and the test asserts both that the refusal
  * carries D3's own text and that `gh pr close` never ran.
  *
- * Mocked: every collaborator that touches git, gh, cmux or Jira, plus zx's `$` — which RECORDS the
+ * Mocked: every collaborator that touches git, gh, Orca or Jira, plus zx's `$` — which RECORDS the
  * command line, which is what makes "no `gh pr close`" assertable at all. Real: `release-id`, the
  * pure half of `release-utils`, `buildJiraVersionUrl`, `commandEcho`, and the entire guard/step
  * control flow under test.
@@ -82,8 +82,8 @@ vi.mock('src/lib/worktrees/remove-release-worktree', () => {
   return { removeReleaseWorktreeIfPresent: vi.fn() }
 })
 
-vi.mock('src/integrations/cmux', () => {
-  return { listCmuxWorkspacesByCwd: vi.fn(), realpathForCmuxCwd: vi.fn() }
+vi.mock('src/integrations/orca', () => {
+  return { listOrcaTerminals: vi.fn(), orcaCallerInsideTargets: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {

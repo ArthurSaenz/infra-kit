@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { logger } from 'src/lib/logger'
 
-import { MANUAL_CHOICE, WIZARD_CMUX_VAR, auditManualPlan, loadBackends, runWizardFlow } from '../dev-wizard-run.js'
+import { MANUAL_CHOICE, WIZARD_ORCA_VAR, auditManualPlan, loadBackends, runWizardFlow } from '../dev-wizard-run.js'
 import type { WizardChoice, WizardPrompts } from '../dev-wizard-run.js'
 import type { WizardModel } from '../dev-wizard.js'
 
@@ -73,36 +73,36 @@ const scripted = (script: {
 }
 
 /**
- * Scrub the cmux opt-in before every case: it is a real shell escape hatch, so a developer running the
- * suite with it exported would otherwise push the wizard down the cmux branch and throw on the prompt
+ * Scrub the Orca opt-in before every case: it is a real shell escape hatch, so a developer running the
+ * suite with it exported would otherwise push the wizard down the Orca branch and throw on the prompt
  * these scripts deliberately do not answer. Forced absent, never merely unset.
  */
 beforeEach(() => {
-  vi.stubEnv(WIZARD_CMUX_VAR, undefined)
+  vi.stubEnv(WIZARD_ORCA_VAR, undefined)
 })
 
 afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-/** Opt back in, for the cases that exercise the (currently disabled) cmux derivation. */
-const enableCmuxPrompt = (): void => {
-  vi.stubEnv(WIZARD_CMUX_VAR, '1')
+/** Opt back in, for the cases that exercise the (currently disabled) Orca derivation. */
+const enableOrcaPrompt = (): void => {
+  vi.stubEnv(WIZARD_ORCA_VAR, '1')
 }
 
 describe('runWizardFlow — manual branch', () => {
-  it('cmux prompt disabled by default: the question is never asked and the plan stays in-process', async () => {
+  it('orca prompt disabled by default: the question is never asked and the plan stays in-process', async () => {
     const result = await runWizardFlow(
       scripted({
         checkbox: [['Which packages', ['client/ui']]],
         select: [['local or cloud', 'local']],
-        // No 'cmux' entry: `scripted` throws on an unscripted prompt, so asking at all fails here.
+        // No 'Orca' entry: `scripted` throws on an unscripted prompt, so asking at all fails here.
         confirm: [['watch', false]],
       }),
       model(),
     )
 
-    expect(result?.cmux).toBe(false)
+    expect(result?.orca).toBe(false)
     expect(result?.include).toBeUndefined()
   })
 
@@ -118,7 +118,7 @@ describe('runWizardFlow — manual branch', () => {
 
     expect(result?.presetDef?.apps).toEqual({ 'client/ui': { proxy: { '/api': 'local' } }, 'client/api': {} })
     expect(result?.watch).toBe(false)
-    expect(result?.cmux).toBe(false)
+    expect(result?.orca).toBe(false)
   })
 
   it('frontend cloud: /api answered cloud → cloud env prompt, presetDef drops the backend', async () => {
@@ -139,8 +139,8 @@ describe('runWizardFlow — manual branch', () => {
     expect(process.env.INFRA_KIT_ENV).toBe('staging')
   })
 
-  it('cmux: returns an include of the launched API apps, PLUS the presetDef that pins the parts of each pane', async () => {
-    enableCmuxPrompt()
+  it('orca: returns an include of the launched API apps, PLUS the presetDef that pins the parts of each pane', async () => {
+    enableOrcaPrompt()
 
     const result = await runWizardFlow(
       scripted({
@@ -148,7 +148,7 @@ describe('runWizardFlow — manual branch', () => {
         select: [['local or cloud', 'local']],
         confirm: [
           ['watch', false],
-          ['cmux', true],
+          ['Orca', true],
         ],
       }),
       model(),
@@ -156,21 +156,21 @@ describe('runWizardFlow — manual branch', () => {
 
     // `include` chooses which apps get a pane; `presetDef` pins the parts each pane runs.
     expect(result?.include).toEqual(['client'])
-    expect(result?.cmux).toBe(true)
+    expect(result?.orca).toBe(true)
     expect(Object.keys(result?.presetDef?.apps ?? {}).sort()).toEqual(['client/api', 'client/ui'])
   })
 
-  it('cmux: a standalone api-only selection carries only that backend, so no unticked ui can start', async () => {
+  it('orca: a standalone api-only selection carries only that backend, so no unticked ui can start', async () => {
     // The bug this pins: without `presetDef` the pane ran `--app=worker`, which resolves to the default
     // star preset (every app, every part) narrowed by app NAME — silently starting parts not ticked here.
-    enableCmuxPrompt()
+    enableOrcaPrompt()
 
     const result = await runWizardFlow(
       scripted({
         checkbox: [['Which packages', ['worker/api']]],
         confirm: [
           ['watch', false],
-          ['cmux', true],
+          ['Orca', true],
         ],
       }),
       apiOnlyModel(),
@@ -180,8 +180,8 @@ describe('runWizardFlow — manual branch', () => {
     expect(Object.keys(result?.presetDef?.apps ?? {})).toEqual(['worker/api'])
   })
 
-  it('cmux with no local backends falls back to in-process (never runs all api apps)', async () => {
-    enableCmuxPrompt()
+  it('orca with no local backends falls back to in-process (never runs all api apps)', async () => {
+    enableOrcaPrompt()
 
     const result = await runWizardFlow(
       scripted({
@@ -192,14 +192,14 @@ describe('runWizardFlow — manual branch', () => {
         ],
         confirm: [
           ['watch', false],
-          ['cmux', true],
+          ['Orca', true],
         ],
       }),
       model(),
     )
 
-    // frontend-only + cmux → no backend panes → in-process presetDef, cmux disabled, no empty include.
-    expect(result?.cmux).toBe(false)
+    // frontend-only + orca → no backend panes → in-process presetDef, orca disabled, no empty include.
+    expect(result?.orca).toBe(false)
     expect(result?.include).toBeUndefined()
     expect(Object.keys(result?.presetDef?.apps ?? {})).toEqual(['client/ui'])
   })
@@ -278,7 +278,7 @@ describe('runWizardFlow — step-0 + preset branch', () => {
       model(['full']),
     )
 
-    expect(result).toEqual({ preset: 'full', watch: true, cmux: false })
+    expect(result).toEqual({ preset: 'full', watch: true, orca: false })
   })
 
   it('choosing Manual at step-0 enters the manual matrix', async () => {

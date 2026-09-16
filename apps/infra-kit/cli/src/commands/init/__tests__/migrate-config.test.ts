@@ -149,7 +149,7 @@ describe('migrateLegacyConfig', () => {
       const userProjectYml = path.join(tmp, '.infra-kit', 'projects', projectName, 'infra-kit.yml')
 
       writeFile(mainYml, MAIN_YML)
-      writeFile(userGlobalYml, 'worktrees:\n  openInCmux: true\n')
+      writeFile(userGlobalYml, 'worktrees:\n  openInOrca: true\n')
       writeFile(userProjectYml, 'worktrees:\n  openInGithubDesktop: false\n')
 
       await migrateLegacyConfig()
@@ -324,7 +324,7 @@ describe('migrateUserGlobalConfigFilename', () => {
   it('renames config.json → infra-kit.json (and the example) preserving content', async () => {
     await withTmpRepo(async (tmp) => {
       const p = userGlobalPaths(tmp)
-      const configBody = JSON.stringify({ worktrees: { openInCmux: true } })
+      const configBody = JSON.stringify({ worktrees: { openInOrca: true } })
       const exampleBody = '// example\n{}\n'
 
       writeFile(p.legacyConfig, configBody)
@@ -353,8 +353,8 @@ describe('migrateUserGlobalConfigFilename', () => {
   it('never overwrites an existing infra-kit.json; leaves the stale config.json in place', async () => {
     await withTmpRepo(async (tmp) => {
       const p = userGlobalPaths(tmp)
-      const legacyBody = JSON.stringify({ worktrees: { openInCmux: false } })
-      const activeBody = JSON.stringify({ worktrees: { openInCmux: true } })
+      const legacyBody = JSON.stringify({ worktrees: { openInOrca: false } })
+      const activeBody = JSON.stringify({ worktrees: { openInOrca: true } })
 
       writeFile(p.legacyConfig, legacyBody)
       writeFile(p.newConfig, activeBody)
@@ -388,7 +388,7 @@ describe('migrateUserGlobalConfigFilename', () => {
       const p = userGlobalPaths(tmp)
       const legacyYml = path.join(tmp, '.infra-kit', 'config.yml')
 
-      writeFile(legacyYml, 'worktrees:\n  openInCmux: true\n')
+      writeFile(legacyYml, 'worktrees:\n  openInOrca: true\n')
 
       // migrateLegacyConfig converts the pinned config.yml source → infra-kit.json;
       // the rename then has nothing left to do for the user-global config.
@@ -397,7 +397,7 @@ describe('migrateUserGlobalConfigFilename', () => {
 
       expect(fs.existsSync(legacyYml)).toBe(false)
       expect(fs.existsSync(p.legacyConfig)).toBe(false)
-      expect(JSON.parse(fs.readFileSync(p.newConfig, 'utf-8')).worktrees.openInCmux).toBe(true)
+      expect(JSON.parse(fs.readFileSync(p.newConfig, 'utf-8')).worktrees.openInOrca).toBe(true)
     })
   })
 
@@ -405,9 +405,9 @@ describe('migrateUserGlobalConfigFilename', () => {
     await withTmpRepo(async (tmp) => {
       const p = userGlobalPaths(tmp)
       const legacyYml = path.join(tmp, '.infra-kit', 'config.yml')
-      const jsonBody = JSON.stringify({ worktrees: { openInCmux: false } })
+      const jsonBody = JSON.stringify({ worktrees: { openInOrca: false } })
 
-      writeFile(legacyYml, 'worktrees:\n  openInCmux: true\n')
+      writeFile(legacyYml, 'worktrees:\n  openInOrca: true\n')
       writeFile(p.legacyConfig, jsonBody)
 
       // init() order: migrateLegacyConfig (yml→infra-kit.json) then the rename.
@@ -416,7 +416,7 @@ describe('migrateUserGlobalConfigFilename', () => {
 
       // YAML content won at infra-kit.json; the rename's no-overwrite guard then
       // skipped config.json, leaving it untouched (no data loss).
-      expect(JSON.parse(fs.readFileSync(p.newConfig, 'utf-8')).worktrees.openInCmux).toBe(true)
+      expect(JSON.parse(fs.readFileSync(p.newConfig, 'utf-8')).worktrees.openInOrca).toBe(true)
       expect(fs.readFileSync(p.legacyConfig, 'utf-8')).toBe(jsonBody)
     })
   })

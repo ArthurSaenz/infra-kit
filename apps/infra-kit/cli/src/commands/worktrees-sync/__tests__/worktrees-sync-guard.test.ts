@@ -12,7 +12,7 @@ import { worktreesSync } from '../worktrees-sync'
 
 // Real `getInfraKitConfig`: git-utils points at a config-less tmpdir so the hoisted read throws the
 // REAL Step 4 message. The destructive path (git worktree remove) is reached only via
-// getCurrentWorktrees + getReleasePRs + closeCmuxWorkspaceByCwd — all spied as tripwires.
+// getCurrentWorktrees + getReleasePRs + closeOrcaWorktreeTerminals — all spied as tripwires.
 vi.mock('src/lib/git-guard', () => {
   return { assertManagementContext: vi.fn() }
 })
@@ -31,8 +31,8 @@ vi.mock('src/integrations/gh', () => {
   return { getReleasePRs: vi.fn() }
 })
 
-vi.mock('src/integrations/cmux', () => {
-  return { closeCmuxWorkspaceByCwd: vi.fn() }
+vi.mock('src/integrations/orca', () => {
+  return { probeOrca: vi.fn(), closeOrcaWorktreeTerminals: vi.fn() }
 })
 
 vi.mock('src/integrations/ide', () => {

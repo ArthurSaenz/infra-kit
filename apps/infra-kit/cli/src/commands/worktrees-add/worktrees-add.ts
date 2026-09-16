@@ -4,17 +4,21 @@ import path from 'node:path'
 import { z } from 'zod'
 import { $ } from 'zx'
 
-import {
-  buildCmuxWorkspaceTitle,
-  createCmuxGroupFrom,
-  findCmuxGroupRefByName,
-  listCmuxWorkspacesByCwd,
-  openCmuxWorkspaceWithLayout,
-  realpathForCmuxCwd,
-} from 'src/integrations/cmux'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { IDE_MODES, addIdeWorktreeFolders } from 'src/integrations/ide'
 import type { IdeMode } from 'src/integrations/ide'
+import {
+  OrcaError,
+  addOrcaRepo,
+  buildOrcaTerminalTitle,
+  createOrcaOpenPoll,
+  findOrcaRepo,
+  isOrcaWorktreeListed,
+  openOrcaWorktreeTerminals,
+  probeOrca,
+} from 'src/integrations/orca'
+import type { OrcaOpenedLayout, OrcaProbe, OrcaRepoVisibility } from 'src/integrations/orca'
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
@@ -22,7 +26,8 @@ import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
-import { getInfraKitConfig, resolveConfiguredIdes } from 'src/lib/infra-kit-config'
+import { getInfraKitConfig, resolveConfiguredIdes, resolveOrcaLayout } from 'src/lib/infra-kit-config'
+import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
@@ -41,8 +46,10 @@ import type { RequiredConfirmedOptionArg } from 'src/types'
 const FEATURE_DIR = 'feature'
 const RELEASE_DIR = 'release'
 
+const OPERATION = 'create worktrees'
+
 // The two optional follow-ups below declare `whenHeadless: { value: false }`, and that value is not
-// a convenience — it is what `githubDesktop`/`cmux`'s own `.describe()` text already promises:
+// a convenience — it is what `githubDesktop`/`orca`'s own `.describe()` text already promises:
 // "interactive prompt (CLI) / false (MCP, no TTY)". It was documented and never implemented. With
 // neither the flag nor the config key set, an MCP call fell through to a real `@inquirer/confirm`,
 // which writes to `process.stdout` — the JSON-RPC transport under MCP — corrupting the stream rather
@@ -60,6 +67,11 @@ const RELEASE_DIR = 'release'
 // `confirmedCommand`, which carries the CLI's `--yes` (`program.ts:109`): keying on that would stop
 // `worktrees add --yes` prompting on a terminal, breaking the documented order in the CLI direction
 // in order to fix it in the MCP one.
+//
+// ORDER (load-bearing, docs/orca-migration-plan.md §2.4): both follow-ups resolve BEFORE the confirm,
+// and — only when Orca resolves true — so do `probeOrca` and `findOrcaRepo`. The confirm preview must
+// be able to say "will register <repo> in Orca", and an explicit `--orca` against an Orca that cannot
+// honour it must refuse before any git call. When Orca resolves false no `orca` process is spawned.
 
 interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
   all?: boolean
@@ -68,7 +80,54 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
   /** @deprecated Alias for `ide`, kept for back-compat. Ignored when `ide` is set. */
   cursor?: IdeMode
   githubDesktop?: boolean
-  cmux?: boolean
+  orca?: boolean
+}
+
+const ORCA_SKIP_REASONS = [
+  'already_open',
+  'orca_unreachable',
+  'orca_absent',
+  'orca_worktree_not_selectable',
+  'orca_error',
+] as const
+
+type OrcaSkipReason = (typeof ORCA_SKIP_REASONS)[number]
+
+interface OrcaOpenedEntry {
+  branch: string
+  layout: OrcaOpenedLayout
+}
+
+interface OrcaSkippedEntry {
+  branch: string
+  reason: OrcaSkipReason
+  code?: string
+}
+
+interface OrcaHiddenEntry {
+  branch: string
+  path: string
+  fix: string
+}
+
+interface OrcaOutcomes {
+  orcaOpened: OrcaOpenedEntry[]
+  orcaSkipped: OrcaSkippedEntry[]
+  orcaHidden: OrcaHiddenEntry[]
+}
+
+const emptyOrcaOutcomes = (): OrcaOutcomes => {
+  return { orcaOpened: [], orcaSkipped: [], orcaHidden: [] }
+}
+
+/**
+ * What the pre-confirm Orca leg found. `probe !== 'ready'` with a config-derived ask is not a
+ * failure: the worktrees are still created and every branch is reported as skipped.
+ */
+interface OrcaPreflight {
+  probe: OrcaProbe
+  registered: boolean
+  visibility: OrcaRepoVisibility | undefined
 }
 
 /**
@@ -76,13 +135,13 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
  * Creates worktrees for active release branches and removes unused ones
  */
 export const worktreesAdd = async (options: WorktreeManagementArgs) => {
-  const { confirmedCommand, all, versions, githubDesktop, cmux } = options
+  const { confirmedCommand, all, versions, githubDesktop, orca } = options
   // `cursor` is the deprecated alias for `ide`; `ide` wins when both are present.
   const ide = options.ide ?? options.cursor
 
   // Branch-agnostic: `git worktree add` addresses branches by name and never
   // reads HEAD, so only the worktree + clean-tree legs apply.
-  await assertManagementContext({ operation: 'create worktrees' })
+  await assertManagementContext({ operation: OPERATION })
 
   try {
     const currentWorktrees = await getCurrentWorktrees('release')
@@ -111,9 +170,11 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
 
         commandEcho.print()
 
+        const empty = { createdWorktrees: [], count: 0, ...emptyOrcaOutcomes() }
+
         return {
-          content: textContent(JSON.stringify({ createdWorktrees: [], count: 0 }, null, 2)),
-          structuredContent: { createdWorktrees: [], count: 0 },
+          content: textContent(JSON.stringify(empty, null, 2)),
+          structuredContent: empty,
         }
       }
 
@@ -144,14 +205,6 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
       commandEcho.addOption('--versions', releaseBranchLabels(selectedReleaseBranches))
     }
 
-    // Ask for confirmation
-    await confirmOrExit(confirmedCommand, 'Are you sure you want to proceed with these worktree changes?')
-
-    // Track --yes flag if confirmation was interactive (user confirmed)
-    if (!confirmedCommand) {
-      commandEcho.addOption('--yes', true)
-    }
-
     const config = await getInfraKitConfig()
 
     // One attach style: every configured editor gets the worktrees added to its
@@ -161,45 +214,25 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
 
     commandEcho.addOption('--ide', ideMode)
 
-    const openInGithubDesktop =
-      githubDesktop ??
-      config.worktrees?.openInGithubDesktop ??
-      (await withEscape(
-        (context) => {
-          return confirm({ message: 'Open created worktrees in GitHub Desktop?' }, context)
-        },
-        { whenHeadless: { value: false } },
-      ))
+    const openInGithubDesktop = await resolveGithubDesktopFollowUp(githubDesktop, config)
+    const openInOrca = await resolveOrcaFollowUp(orca, config)
 
-    if (typeof githubDesktop === 'undefined' && config.worktrees?.openInGithubDesktop === undefined) {
-      commandEcho.setInteractive()
+    const mainRepoRoot = await getMainRepoRoot(projectRoot)
+    const repoName = path.basename(mainRepoRoot)
+
+    const orcaPreflight = openInOrca ? await preflightOrca({ explicit: orca !== undefined, mainRepoRoot }) : null
+
+    // Ask for confirmation
+    await confirmOrExit(confirmedCommand, buildConfirmMessage(orcaPreflight, repoName))
+
+    // Track --yes flag if confirmation was interactive (user confirmed)
+    if (!confirmedCommand) {
+      commandEcho.addOption('--yes', true)
     }
 
-    if (openInGithubDesktop) {
-      commandEcho.addOption('--github-desktop', true)
-    } else {
-      commandEcho.addOption('--no-github-desktop', true)
-    }
-
-    const openInCmux =
-      cmux ??
-      config.worktrees?.openInCmux ??
-      (await withEscape(
-        (context) => {
-          return confirm({ message: 'Open created worktrees in cmux?' }, context)
-        },
-        { whenHeadless: { value: false } },
-      ))
-
-    if (typeof cmux === 'undefined' && config.worktrees?.openInCmux === undefined) {
-      commandEcho.setInteractive()
-    }
-
-    if (openInCmux) {
-      commandEcho.addOption('--cmux', true)
-    } else {
-      commandEcho.addOption('--no-cmux', true)
-    }
+    // After the confirm (the preview named it) and before `git worktree add` (so the fresh-worktree
+    // poll always sees a registered repo).
+    const registration = orcaPreflight ? await registerOrcaRepo(orcaPreflight, mainRepoRoot) : null
 
     const { branchesToCreate } = categorizeWorktrees({
       selectedReleaseBranches,
@@ -221,52 +254,25 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
       }
     }
 
-    if (openInCmux) {
-      // Group name keys on the STABLE main-repo basename (not the worktree-local
-      // toplevel basename), so every worktree of a repo lands in the same sidebar
-      // group regardless of which checkout this runs from.
-      const repoName = path.basename(await getMainRepoRoot(projectRoot))
-      const openByCwd = await listCmuxWorkspacesByCwd()
+    const orcaOutcomes = registration
+      ? await openCreatedWorktreesInOrca({
+          registration,
+          createdWorktrees,
+          worktreeDir,
+          mainRepoRoot,
+          repoName,
+          config,
+        })
+      : emptyOrcaOutcomes()
 
-      let groupRef = await findCmuxGroupRefByName(repoName)
-      let bootstrapAttempted = false
-
-      for (const branch of createdWorktrees) {
-        const cwd = `${worktreeDir}/${branch}`
-
-        // Skip branches whose cmux workspace is already open (matched by cwd, not
-        // title), so re-running worktrees-add never duplicates an existing workspace.
-        if (openByCwd.has(await realpathForCmuxCwd(cwd))) {
-          continue
-        }
-
-        const title = buildCmuxWorkspaceTitle({ branch })
-
-        try {
-          if (groupRef) {
-            await openCmuxWorkspaceWithLayout({ cwd, title, group: groupRef })
-          } else {
-            // No group yet: open ungrouped, then seed the group from this first
-            // workspace via `--from` (capture-free). Attempt the seed once, so a
-            // failed create doesn't spawn a group per iteration.
-            const workspaceRef = await openCmuxWorkspaceWithLayout({ cwd, title })
-
-            if (!bootstrapAttempted) {
-              groupRef = await createCmuxGroupFrom(repoName, [workspaceRef])
-              bootstrapAttempted = true
-            }
-          }
-        } catch (error) {
-          logger.warn({ error, branch }, `⚠️ Failed to open cmux workspace for ${branch}`)
-        }
-      }
-    }
+    logOrcaOutcomes(orcaOutcomes)
 
     commandEcho.print()
 
     const structuredContent = {
       createdWorktrees,
       count: createdWorktrees.length,
+      ...orcaOutcomes,
     }
 
     return {
@@ -279,9 +285,10 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     // logged as an error with a misleading "branches already exist" remediation.
     if (isPromptCancellation(error)) throw error
 
-    // A refusal with a payload (the confirm site's `confirmation_required`) must reach the boundary
-    // intact: rewrapped, its `structuredContent` and exit code would be lost under a remediation
-    // about branches that already exist. Only this class passes; every other wrap is unchanged.
+    // A refusal with a payload (the confirm site's `confirmation_required`, the explicit-`--orca`
+    // refusals) must reach the boundary intact: rewrapped, its `structuredContent` and exit code
+    // would be lost under a remediation about branches that already exist. Only this class passes;
+    // every other wrap is unchanged.
     if (error instanceof StructuredRefusalError) throw error
 
     // `debug`, not `error`: this rethrows as an OperationError, and `entry/cli.ts` logs any
@@ -290,9 +297,229 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     // and remediation; the cause's stack survives here and is reachable with `--debug`.
     logger.debug({ err: error }, 'Error managing worktrees')
     throw new OperationError(error, {
-      operation: 'create worktrees',
+      operation: OPERATION,
       remediation: "verify branches don't already exist as worktrees: 'git worktree list'",
     })
+  }
+}
+
+const resolveGithubDesktopFollowUp = async (flag: boolean | undefined, config: InfraKitConfig): Promise<boolean> => {
+  const configured = config.worktrees?.openInGithubDesktop
+
+  const open =
+    flag ??
+    configured ??
+    (await withEscape(
+      (context) => {
+        return confirm({ message: 'Open created worktrees in GitHub Desktop?' }, context)
+      },
+      { whenHeadless: { value: false } },
+    ))
+
+  if (flag === undefined && configured === undefined) {
+    commandEcho.setInteractive()
+  }
+
+  commandEcho.addOption(open ? '--github-desktop' : '--no-github-desktop', true)
+
+  return open
+}
+
+const resolveOrcaFollowUp = async (flag: boolean | undefined, config: InfraKitConfig): Promise<boolean> => {
+  const configured = config.worktrees?.openInOrca
+
+  const open =
+    flag ??
+    configured ??
+    (await withEscape(
+      (context) => {
+        return confirm({ message: 'Open created worktrees in Orca?', default: true }, context)
+      },
+      { whenHeadless: { value: false } },
+    ))
+
+  if (flag === undefined && configured === undefined) {
+    commandEcho.setInteractive()
+  }
+
+  commandEcho.addOption(open ? '--orca' : '--no-orca', true)
+
+  return open
+}
+
+const describeProbe = (
+  probe: Exclude<OrcaProbe, 'ready'>,
+): { reason: 'orca_absent' | 'orca_unreachable'; text: string } => {
+  return probe === 'absent'
+    ? { reason: 'orca_absent', text: 'the orca CLI is not installed (Orca → Settings → Experimental → CLI)' }
+    : { reason: 'orca_unreachable', text: 'Orca is not running' }
+}
+
+interface PreflightOrcaArgs {
+  /** `--orca` was passed, as opposed to resolved from config or the prompt. */
+  explicit: boolean
+  mainRepoRoot: string
+}
+
+/**
+ * Refuse only what the operator explicitly asked for; degrade what config merely enabled
+ * (docs/orca-migration-plan.md §1, principle 5). A pre-mutation refusal here would otherwise make
+ * the GUI's state a precondition for creating git worktrees on every agent run with a layer-2
+ * `openInOrca: true`.
+ */
+const preflightOrca = async (args: PreflightOrcaArgs): Promise<OrcaPreflight> => {
+  const { explicit, mainRepoRoot } = args
+  const probe = await probeOrca()
+
+  if (probe !== 'ready') {
+    const { reason, text } = describeProbe(probe)
+
+    if (explicit) {
+      logger.warn({ operation: OPERATION }, `⛔ --orca was passed but ${text}`)
+
+      throw new StructuredRefusalError({ status: 'refused', reason, agentMode: agentMode.source }, 2, {
+        operation: OPERATION,
+        remediation:
+          probe === 'absent'
+            ? 'install Orca (brew install --cask stablyai/orca/orca) and register its CLI from Settings → Experimental → CLI, or re-run with --no-orca'
+            : 'open Orca (`orca open`) and re-run, or re-run with --no-orca',
+        stderrExcerpt: `--orca was passed but ${text}; no worktree was created`,
+      })
+    }
+
+    logger.warn(`⚠️ ${text} — worktrees will be created but not opened in Orca`)
+
+    return { probe, registered: false, visibility: undefined }
+  }
+
+  const repo = await findOrcaRepo(mainRepoRoot)
+
+  return { probe, registered: repo.registered, visibility: repo.visibility }
+}
+
+const buildConfirmMessage = (preflight: OrcaPreflight | null, repoName: string): string => {
+  const lines = ['Are you sure you want to proceed with these worktree changes?']
+
+  if (preflight?.probe === 'ready' && !preflight.registered) {
+    lines.push(
+      `  • will register ${repoName} in Orca (orca repo add); its worktrees start hidden in Orca's sidebar until you choose Show`,
+    )
+  }
+
+  return lines.join('\n')
+}
+
+/** The post-confirm state the open loop keys on: a skip reason for the whole batch, or the row visibility. */
+type OrcaRegistration =
+  | { kind: 'skip'; reason: OrcaSkipReason; code?: string }
+  | { kind: 'ready'; visibility: OrcaRepoVisibility | undefined }
+
+const registerOrcaRepo = async (preflight: OrcaPreflight, mainRepoRoot: string): Promise<OrcaRegistration> => {
+  if (preflight.probe !== 'ready') {
+    return { kind: 'skip', reason: describeProbe(preflight.probe).reason }
+  }
+
+  if (preflight.registered) {
+    return { kind: 'ready', visibility: preflight.visibility }
+  }
+
+  try {
+    const { visibility } = await addOrcaRepo(mainRepoRoot)
+
+    return { kind: 'ready', visibility }
+  } catch (error) {
+    // A GUI registration failure never blocks git (the same rule as an unreachable Orca).
+    logger.warn({ error }, '⚠️ orca repo add failed — worktrees will be created but not opened in Orca')
+
+    return { kind: 'skip', reason: 'orca_error', code: error instanceof OrcaError ? error.code : undefined }
+  }
+}
+
+interface OpenCreatedWorktreesInOrcaArgs {
+  registration: OrcaRegistration
+  createdWorktrees: string[]
+  worktreeDir: string
+  mainRepoRoot: string
+  repoName: string
+  config: InfraKitConfig
+}
+
+const hiddenRowFix = (repoName: string): string => {
+  return `Orca → ${repoName} → "hidden worktrees" card → Show, or Settings → General → Workspace → external-worktree sources`
+}
+
+/**
+ * Lay out every created worktree — no already-open check, because `createWorktrees` only returns
+ * worktrees that did not exist a moment ago (a terminal Orca's own hooks might auto-start there is
+ * additive). `--focus` only for a single target on a row the sidebar shows: on a hidden row it times
+ * out (docs/orca-cli-findings.md, axis 1), so hidden repos open in the background and are reported
+ * under `orcaHidden` with the UI steps.
+ */
+const openCreatedWorktreesInOrca = async (args: OpenCreatedWorktreesInOrcaArgs): Promise<OrcaOutcomes> => {
+  const { registration, createdWorktrees, worktreeDir, mainRepoRoot, repoName, config } = args
+  const outcomes = emptyOrcaOutcomes()
+
+  if (registration.kind === 'skip') {
+    for (const branch of createdWorktrees) {
+      outcomes.orcaSkipped.push({ branch, reason: registration.reason, code: registration.code })
+    }
+
+    return outcomes
+  }
+
+  const panes = resolveOrcaLayout(config)
+  const focus = createdWorktrees.length === 1 && registration.visibility !== 'hide'
+  const poll = createOrcaOpenPoll()
+
+  for (const branch of createdWorktrees) {
+    const cwd = `${worktreeDir}/${branch}`
+
+    try {
+      const { layout } = await openOrcaWorktreeTerminals({
+        cwd,
+        title: buildOrcaTerminalTitle({ branch }),
+        focus,
+        layout: 'full',
+        panes,
+        poll,
+      })
+
+      if (await isOrcaWorktreeListed(mainRepoRoot, cwd)) {
+        outcomes.orcaOpened.push({ branch, layout })
+      } else {
+        outcomes.orcaHidden.push({ branch, path: cwd, fix: hiddenRowFix(repoName) })
+      }
+    } catch (error) {
+      logger.warn({ error, branch }, `⚠️ Failed to open Orca terminals for ${branch}`)
+
+      if (error instanceof OrcaError && error.code === 'orca_worktree_not_selectable') {
+        outcomes.orcaSkipped.push({ branch, reason: 'orca_worktree_not_selectable' })
+      } else {
+        outcomes.orcaSkipped.push({
+          branch,
+          reason: 'orca_error',
+          code: error instanceof OrcaError ? error.code : undefined,
+        })
+      }
+    }
+  }
+
+  return outcomes
+}
+
+const logOrcaOutcomes = (outcomes: OrcaOutcomes): void => {
+  for (const entry of outcomes.orcaOpened) {
+    logger.info(`🪟 Opened ${entry.branch} in Orca (${entry.layout})`)
+  }
+
+  for (const entry of outcomes.orcaHidden) {
+    logger.info(`🙈 ${entry.branch} opened in Orca but its row is hidden (${entry.path}) — ${entry.fix}`)
+  }
+
+  for (const entry of outcomes.orcaSkipped) {
+    const code = entry.code ? ` (${entry.code})` : ''
+
+    logger.info(`↩️ ${entry.branch} not opened in Orca: ${entry.reason}${code}`)
   }
 }
 
@@ -378,7 +605,7 @@ const logResults = (created: string[]): void => {
 export const worktreesAddMcpTool = defineMcpTool({
   name: 'worktrees-add',
   description:
-    'Create local git worktrees for release branches under the worktrees directory and run "pnpm install" in each. Mutates the local filesystem. When invoked via MCP, pass either "versions" (comma-separated) or all=true — the branch picker and "open in Cursor / GitHub Desktop / cmux" follow-up prompts are unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls.',
+    'Create local git worktrees for release branches under the worktrees directory and run "pnpm install" in each. Mutates the local filesystem. When invoked via MCP, pass either "versions" (comma-separated) or all=true — the branch picker and "open in Cursor / GitHub Desktop / Orca" follow-up prompts are unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls. With "orca" true each created worktree gets an Orca terminal tab laid out per "worktrees.orca.layout"; the result reports orcaOpened, orcaSkipped (with a reason) and orcaHidden (a worktree Orca\'s sidebar hides, with the UI steps to reveal it). An unregistered repo is registered in Orca first (orca repo add).',
   inputSchema: {
     all: z
       .boolean()
@@ -408,16 +635,46 @@ export const worktreesAddMcpTool = defineMcpTool({
       .describe(
         'Open each created worktree in GitHub Desktop. Resolution order: this flag → "worktrees.openInGithubDesktop" from infra-kit config → interactive prompt (CLI) / false (MCP, no TTY).',
       ),
-    cmux: z
+    orca: z
       .boolean()
       .optional()
       .describe(
-        'Open each created worktree in a new cmux workspace, all rooted at the worktree directory. Pane layout follows "worktrees.cmux.layout" (default "two-columns": left | right; or "three-pane": left split top/bottom + full-height right). Resolution order: this flag → "worktrees.openInCmux" from infra-kit config → interactive prompt (CLI) / false (MCP, no TTY).',
+        'Open each created worktree in Orca: one terminal tab per worktree, laid out per "worktrees.orca.layout" (default "two-columns": left | right; or "three-pane": left split top/bottom + full-height right). Resolution order: this flag → "worktrees.openInOrca" from infra-kit config → interactive prompt (CLI, default yes) / false (MCP, no TTY). Passed explicitly, an Orca that is absent or not running is refused before any worktree is created (orca_absent / orca_unreachable); resolved from config it degrades to orcaSkipped with that reason.',
       ),
   },
   outputSchema: {
     createdWorktrees: z.array(z.string()).describe('List of created git worktree branches'),
     count: z.number().describe('Number of git worktrees created'),
+    orcaOpened: z
+      .array(
+        z.object({
+          branch: z.string(),
+          layout: z.enum(['full', 'single-pane']),
+        }),
+      )
+      .describe('Created worktrees that got an Orca terminal tab on a row the sidebar shows, with the layout applied'),
+    orcaSkipped: z
+      .array(
+        z.object({
+          branch: z.string(),
+          reason: z.enum(ORCA_SKIP_REASONS),
+          code: z.string().optional(),
+        }),
+      )
+      .describe(
+        'Created worktrees NOT opened in Orca and why: orca_absent / orca_unreachable (config-derived ask, Orca down), orca_worktree_not_selectable (Orca had not scanned the fresh worktree yet), orca_error (code carries the Orca error code)',
+      ),
+    orcaHidden: z
+      .array(
+        z.object({
+          branch: z.string(),
+          path: z.string(),
+          fix: z.string(),
+        }),
+      )
+      .describe(
+        'Created worktrees whose Orca terminals opened on a row the sidebar HIDES (the repo hides external worktrees); fix names the in-app steps to reveal it',
+      ),
   },
   handler: worktreesAdd,
 })
