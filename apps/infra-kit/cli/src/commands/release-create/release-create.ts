@@ -249,9 +249,10 @@ const collectEntries = async (
     return resolved
   }
 
-  // An agent that omits `releases` is offered a form by the MCP seam before this handler runs; landing
-  // here headless means the client could not render one (or confirmed the empty gate), and the
-  // refusal has to say so — the wizard below would otherwise hit its first `'refuse'` site nameless.
+  // An agent that omits `releases` is refused with `choices` by `refuseMissingArguments` above; landing
+  // here headless means the provider judged the arguments unformable (or the empty gate was confirmed),
+  // and the refusal has to say so — the wizard below would otherwise hit its first `'refuse'` site
+  // nameless.
   if (isAgentMode()) {
     throw new StructuredRefusalError(
       { status: 'argument_required', argument: 'release', agentMode: agentMode.source },
@@ -383,8 +384,8 @@ const logFinalSummary = (total: number, successCount: number, failureCount: numb
  * different bases (dev vs main), so mixed batches are rejected and must be
  * created separately.
  */
-// ONE provider instance for the MCP form and the agent-mode refusal, so an agent's `choices` are the
-// form an MCP client would have been offered.
+// ONE provider instance for the tool definition and the agent-mode refusal, so an agent's `choices`
+// are the form the schema describes.
 const releaseForm = createReleaseFormProvider()
 
 export const releaseCreate = async (args: ReleaseCreateArgs) => {

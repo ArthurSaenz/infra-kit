@@ -22,8 +22,9 @@ export const getFactoryConfigPath = (): string => {
 
 /**
  * Expand a leading `~` to the home dir. Absolute paths pass through unchanged.
- * A non-absolute, non-`~` value throws — cwd-relative resolution is ambiguous
- * across CLI vs long-running MCP-server invocations, so we reject it loudly.
+ * A non-absolute, non-`~` value throws — cwd-relative resolution would silently
+ * point at a different file from every package dir the CLI is run in, so we
+ * reject it loudly.
  *
  * @example
  * expandTilde('~')          // => '/Users/arthur'
@@ -47,7 +48,7 @@ export const expandTilde = (p: string): string => {
  * Reads the file on every call (no module cache to bust — unlike a `.ts`
  * `import()`, `JSON.parse` always sees the current bytes), so an absent → present
  * transition works within one process: a `--init` scaffold followed by a load
- * succeeds, and a long-running MCP server picks up edits without a restart.
+ * succeeds, and a second load in the same process sees the edit.
  * Throws an actionable error pointing at `infra-kit vendor config --init` when the
  * file is absent.
  *

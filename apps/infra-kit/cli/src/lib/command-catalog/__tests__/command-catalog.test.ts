@@ -7,10 +7,8 @@ import { buildProgram, commandPath } from 'src/lib/program'
 
 import {
   LOW_RISK_MUTATING_ALLOWLIST,
-  MCP_TOOL_PRESENTATION,
   MENU_GROUPS,
   commandCatalog,
-  getExposedMcpTools,
   getMenuGroupEntries,
   isLongRunningCommand,
 } from '../command-catalog'
@@ -70,26 +68,28 @@ const EXPECTED_EXPOSED_TOOLS = [
   'doctor',
 ]
 
-// Deliberately NOT exposed as MCP tools (mutating / irreversible).
-// release-deliver (prod delivery + admin-merge) is CLI-only by design.
-// worktrees-remove IS exposed — git protects tracked work and its own invariants (no MCP all=true,
-// error on unmatched target) contain the residual risk.
+// Has a tool but was never listed on the server: prod delivery + admin-merge is irreversible, so it
+// stayed CLI-only. worktrees-remove WAS listed — git protects tracked work and its own invariants (no
+// agent `all: true`, error on an unmatched target) contain the residual risk.
 const EXPECTED_UNEXPOSED_WITH_TOOL = ['gh-release-deliver']
 
 /**
- * Credential commands that must carry NO MCP tool at all — not merely `mcpExposed: false`. The MCP
- * boundary injects `confirmedCommand: true` into every handler, so an agent must never be one call
- * away from writing or destroying a service token.
+ * Credential commands that must carry NO tool definition at all — not merely `mcpExposed: false` — so
+ * no agent-facing seam (form provider, `argument_required` refusal, confirm gate) can ever be wired to
+ * writing or destroying a service token.
  */
 const CREDENTIAL_WRITE_COMMANDS = ['env-token-set', 'env-token-remove']
 
-describe('command catalog — MCP exposure policy', () => {
-  it('exposes exactly the expected 25 MCP tools (set-equal, order-independent)', () => {
-    const exposedNames = getExposedMcpTools()
-      .map((tool) => {
-        return tool.name
-      })
-      .sort()
+/** Tool names of the rows flagged `mcpExposed` — the historical registration set, pinned. */
+const exposedToolNames = (): string[] => {
+  return commandCatalog.flatMap((entry) => {
+    return entry.mcpExposed && entry.mcpTool ? [entry.mcpTool.name] : []
+  })
+}
+
+describe('command catalog — mcpExposed values (historical, pinned)', () => {
+  it('flags exactly the expected 25 rows mcpExposed (set-equal, order-independent)', () => {
+    const exposedNames = exposedToolNames().sort()
 
     expect(exposedNames).toEqual([...EXPECTED_EXPOSED_TOOLS].sort())
     // 25: `setup-dependency` and `setup-dependency-status` folded into the single `setup` tool
@@ -97,46 +97,19 @@ describe('command catalog — MCP exposure policy', () => {
     expect(exposedNames).toHaveLength(25)
   })
 
-  it('keeps env-token-set / env-token-remove off MCP entirely (no tool object to flip on)', () => {
-    const exposedNames = new Set(
-      getExposedMcpTools().map((tool) => {
-        return tool.name
-      }),
-    )
-
+  it('keeps env-token-set / env-token-remove without a tool entirely (no tool object to flip on)', () => {
     for (const cliName of CREDENTIAL_WRITE_COMMANDS) {
       const entry = commandCatalog.find((candidate) => {
         return candidate.cliName === cliName
       })
 
       expect(entry, `${cliName} must be in the catalog`).toBeDefined()
-      expect(entry?.mcpTool, `${cliName} must carry no MCP tool`).toBeNull()
+      expect(entry?.mcpTool, `${cliName} must carry no tool`).toBeNull()
       expect(entry?.mcpExposed).toBe(false)
-      expect(exposedNames.has(cliName)).toBe(false)
     }
   })
 
-  it('never exposes the irreversible release-deliver tool, but does expose worktrees-remove', () => {
-    const exposedNames = new Set(
-      getExposedMcpTools().map((tool) => {
-        return tool.name
-      }),
-    )
-
-    // release-deliver is genuinely irreversible (prod deploy + admin-merge) — stays CLI-only.
-    expect(exposedNames.has('gh-release-deliver')).toBe(false)
-    // worktrees-remove is exposed: git protects tracked work and the tool's own invariants (no MCP
-    // all=true, error on unmatched target) contain the residual gitignored-deletion risk.
-    expect(exposedNames.has('worktrees-remove')).toBe(true)
-  })
-
-  it('keeps release-deliver UNEXPOSED even though it has a tool', () => {
-    const exposedNames = new Set(
-      getExposedMcpTools().map((tool) => {
-        return tool.name
-      }),
-    )
-
+  it('keeps release-deliver mcpExposed: false even though it has a tool', () => {
     for (const unexposed of EXPECTED_UNEXPOSED_WITH_TOOL) {
       const entry = commandCatalog.find((candidate) => {
         return candidate.mcpTool?.name === unexposed
@@ -144,11 +117,10 @@ describe('command catalog — MCP exposure policy', () => {
 
       expect(entry, `catalog should carry a tool for ${unexposed}`).toBeDefined()
       expect(entry?.mcpExposed, `${unexposed} must stay unexposed`).toBe(false)
-      expect(exposedNames.has(unexposed), `${unexposed} must not be registered`).toBe(false)
     }
   })
 
-  it('every exposed entry carries a tool, and every entry with mcpExposed=true has one', () => {
+  it('every entry with mcpExposed=true carries a tool', () => {
     for (const entry of commandCatalog) {
       if (entry.mcpExposed) {
         expect(entry.mcpTool, `${entry.cliName} is exposed but has no tool`).not.toBeNull()
@@ -156,31 +128,12 @@ describe('command catalog — MCP exposure policy', () => {
     }
   })
 
-  it('mcpTool name matches a stable identifier (no duplicate registrations)', () => {
-    const names = getExposedMcpTools().map((tool) => {
-      return tool.name
+  it('tool names are unique across the catalog (no two rows answer to one name)', () => {
+    const names = commandCatalog.flatMap((entry) => {
+      return entry.mcpTool ? [entry.mcpTool.name] : []
     })
 
     expect(new Set(names).size).toBe(names.length)
-  })
-
-  // Golden snapshot of the registered MCP surface: tool name + input/output
-  // schema field names. Locks names AND schema shape so any accidental change to
-  // the exposed tools/list fails CI (the "tools/list identical" guardrail).
-  it('matches the golden MCP tools/list surface (names + schema shape)', () => {
-    const surface = getExposedMcpTools()
-      .map((tool) => {
-        return {
-          name: tool.name,
-          input: Object.keys(tool.inputSchema).sort(),
-          output: Object.keys(tool.outputSchema).sort(),
-        }
-      })
-      .sort((a, b) => {
-        return a.name.localeCompare(b.name)
-      })
-
-    expect(surface).toMatchSnapshot()
   })
 })
 
@@ -353,8 +306,9 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
    * `--fix`. Adding any key here, however harmless it looks, is the change that makes the catalog's
    * claim false, and the ungated-mutating gate above cannot see it.
    *
-   * The behavioural half — that the handler actually reaches zero `chmodSync` calls — is U-D2(b) in
-   * `commands/doctor/__tests__/doctor-mcp-surface.test.ts`. This half is the declaration.
+   * The other half lives on the skill side: U15 in `plugins/infra-kit/__tests__/manifest.test.mjs`
+   * keeps `--fix` out of every fence in the doctor SKILL.md, so no standing grant ever covers it. This
+   * half is the declaration.
    */
   it('keeps `doctor` exposed, non-mutating, and inputless despite the CLI-only --fix flag', () => {
     const entry = commandCatalog.find((candidate) => {
@@ -387,6 +341,19 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
     })
 
     expect(removed, `catalog still carries removed setup-surface names: ${removed.join(', ')}`).toEqual([])
+  })
+
+  /**
+   * The converse of the default-deny invariant. `requiresHumanConfirm` is written per-command under
+   * `src/commands/`, while `mutating` is declared here; a tool gated in one artifact but read-only in
+   * the other means one of the two is lying, and this fires.
+   */
+  it('gates only mutating entries', () => {
+    for (const entry of commandCatalog) {
+      if (entry.mcpTool?.requiresHumanConfirm === true) {
+        expect(entry.mutating, `gated ${entry.cliName} must be mutating`).toBe(true)
+      }
+    }
   })
 
   // The allowlist is a safety escape hatch, not a dumping ground: every member must actually be a
@@ -596,113 +563,6 @@ describe('command catalog — menu grouping', () => {
     for (const entry of commandCatalog) {
       expect(entry.groupPath.length, `${entry.cliName} groupPath must be non-empty`).toBeGreaterThan(0)
       expect(topLevel.has(entry.groupPath[0]!), `${entry.cliName} groupPath[0] must be a top-level command`).toBe(true)
-    }
-  })
-})
-
-describe('command catalog — MCP tool annotations & titles', () => {
-  /**
-   * The catalog entry behind each exposed tool, keyed by MCP tool NAME (which is not always the
-   * `cliName` — `merge-dev` registers as `gh-merge-dev`). The annotation derivation reads
-   * `entry.mutating`, so the tests need the same join the derivation makes.
-   */
-  const entryByToolName = new Map(
-    commandCatalog.flatMap((entry) => {
-      return entry.mcpExposed && entry.mcpTool ? [[entry.mcpTool.name, entry] as const] : []
-    }),
-  )
-
-  /**
-   * T1 — REAL CONTENT. Catches a missing presentation row and an implementer setting
-   * `annotations.title`. Cannot catch a title or hint that is merely WRONG.
-   */
-  it('t1: gives every exposed tool a display title and boolean hints, and never sets annotations.title', () => {
-    for (const tool of getExposedMcpTools()) {
-      expect(tool.title, `${tool.name} must carry a title`).toBeTruthy()
-      expect(tool.title, `${tool.name}'s title must not restate its name`).not.toBe(tool.name)
-      expect(typeof tool.annotations.readOnlyHint, `${tool.name}.readOnlyHint`).toBe('boolean')
-      expect(typeof tool.annotations.openWorldHint, `${tool.name}.openWorldHint`).toBe('boolean')
-      // Top-level `title` is the modern field; some hosts prefer `annotations.title` when present, so
-      // setting both is a divergence waiting to happen.
-      expect(tool.annotations, `${tool.name} must not carry annotations.title`).not.toHaveProperty('title')
-    }
-  })
-
-  /**
-   * T2 — REFACTOR DETECTOR, not a correctness test: it asserts the very formula that produced the
-   * value. It fails when the derivation is replaced by hand-typed literals, which is the regression
-   * worth catching here. Correctness for `readOnlyHint` comes from T5's cross-artifact check.
-   */
-  it('t2: derives readOnlyHint from `mutating`', () => {
-    for (const tool of getExposedMcpTools()) {
-      const entry = entryByToolName.get(tool.name)!
-
-      expect(tool.annotations.readOnlyHint, `${tool.name}.readOnlyHint`).toBe(!entry.mutating)
-    }
-  })
-
-  /**
-   * T3 — REAL CONTENT, and the strongest unit test of the set: it fails in BOTH directions, so a new
-   * exposed tool with no row and a stale row for a tool that was renamed or unexposed are each red.
-   * It cannot judge whether an `openWorld` VALUE is right — nothing mechanical can; see the citation
-   * discipline on MCP_TOOL_PRESENTATION.
-   */
-  it('t3: keeps MCP_TOOL_PRESENTATION and the exposed tool set in exact correspondence', () => {
-    const exposed = getExposedMcpTools()
-      .map((tool) => {
-        return tool.name
-      })
-      .sort()
-
-    expect(Object.keys(MCP_TOOL_PRESENTATION).sort()).toEqual(exposed)
-  })
-
-  /**
-   * T4 — the omission halves are REAL CONTENT (they catch a meaningless hint leaking onto a read-only
-   * tool, and `idempotentHint` being reintroduced without the argument that removed it). The
-   * destructive half is a theorem given the derivation, and is asserted to pin it.
-   */
-  it('t4: omits destructiveHint on read-only tools, sets it on every write tool, and never ships idempotentHint', () => {
-    for (const tool of getExposedMcpTools()) {
-      if (tool.annotations.readOnlyHint) {
-        expect(tool.annotations, `${tool.name} is read-only, so destructiveHint is meaningless`).not.toHaveProperty(
-          'destructiveHint',
-        )
-      } else {
-        expect(tool.annotations.destructiveHint, `${tool.name} is not read-only`).toBe(true)
-      }
-
-      expect(tool.annotations, `${tool.name} must not ship idempotentHint`).not.toHaveProperty('idempotentHint')
-    }
-  })
-
-  /**
-   * T5 — REAL CONTENT, and the only unit check that crosses to independently-authored data:
-   * `requiresHumanConfirm` is written per-command under `src/commands/`, while `readOnlyHint` is
-   * derived from the catalog's `mutating`. A tool gated in one artifact but read-only in the other
-   * makes the two disagree, and this fires. Note the coverage limit: this independence holds for the
-   * gated subset only, not for all thirteen write tools.
-   */
-  it('t5: makes every gated tool destructive without collapsing the two sets', () => {
-    const tools = getExposedMcpTools()
-
-    for (const tool of tools) {
-      if (tool.requiresHumanConfirm === true) {
-        expect(tool.annotations.destructiveHint, `gated ${tool.name} must read destructive`).toBe(true)
-        expect(tool.annotations.readOnlyHint, `gated ${tool.name} must not read read-only`).toBe(false)
-      }
-    }
-
-    // The converse must NOT hold. Allowlist membership is a gate decision ("is a confirm prompt
-    // warranted?"); destructiveHint answers "does this perform destructive updates?". These two are
-    // destructive yet deliberately ungated — if a future reader collapses the sets, this reds.
-    for (const name of ['release-desc-edit', 'worktrees-sync']) {
-      const tool = tools.find((candidate) => {
-        return candidate.name === name
-      })
-
-      expect(tool?.annotations.destructiveHint, `${name} must read destructive`).toBe(true)
-      expect(tool?.requiresHumanConfirm, `${name} must stay ungated`).not.toBe(true)
     }
   })
 })

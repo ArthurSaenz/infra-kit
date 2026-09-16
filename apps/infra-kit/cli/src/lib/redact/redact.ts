@@ -1,7 +1,7 @@
 /**
  * The single redaction primitive for the CLI. Before this module there was none: every place that
  * wanted to show "which token is this" hand-rolled a slice, and a hand-rolled slice is exactly how a
- * credential ends up on a terminal (or in `/tmp/mcp-infra-kit.log`) in full.
+ * credential ends up on a terminal in full.
  *
  * The rule it encodes: a rendered token shows AT MOST its last 4 characters, and never enough to
  * reconstruct it. Everything user-facing that names a token — `env-token-set`, `env-token-list`,

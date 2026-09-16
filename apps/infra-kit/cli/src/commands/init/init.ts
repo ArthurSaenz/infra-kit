@@ -68,9 +68,8 @@ export type InitOutcome = 'skipped' | 'unchanged' | 'warned' | 'written'
 /**
  * One reportable thing `initCore` did, in the order it did it.
  *
- * Required rather than cosmetic: `logger` writes to `/tmp/mcp-infra-kit.log` and never to the caller, so
- * a `setup` tool reporting only through it performs ~8 local writes and tells the agent nothing about any
- * of them.
+ * Required rather than cosmetic: a `--json` caller reads stdout alone, so a `setup` reporting only
+ * through `logger` (stderr) would perform ~8 local writes and hand the agent nothing about any of them.
  */
 export interface InitStep {
   step: InitStepName
@@ -85,8 +84,8 @@ export interface InitStep {
  * move one of those lines to another stream, which is exactly the byte difference this refactor may
  * not introduce.
  *
- * `silent` reports to MCP and prints nothing, because the library that performed the step already
- * printed its own line — printing here would double every one of them.
+ * `silent` lands in the `--json` report and prints nothing, because the library that performed the
+ * step already printed its own line — printing here would double every one of them.
  */
 type InitLevel = 'debug' | 'info' | 'silent' | 'warn'
 
@@ -166,7 +165,7 @@ const withStep = async <T>(step: InitStepName, body: () => Promise<T> | T): Prom
  * // INFO: Wrote user-global config to /Users/me/.infra-kit/infra-kit.json (see …/infra-kit.example.jsonc …)
  * // INFO: Run `source ~/.zshrc` or open a new terminal to activate.
  */
-// Why both a return value AND a sink: the return value is what an MCP caller reads, and the streaming
+// Why both a return value AND a sink: the return value is what a `--json` caller reads, and the streaming
 // sink is what keeps the CLI's lines interleaved with the ones its libraries print (`✓ Migrated …`, the
 // two skip announcements) exactly where they have always been. A trailing replay would reorder them.
 export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
@@ -211,7 +210,7 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
   // drive `claude plugin install` and read `.mcp.json`, and none of the three reads
   // `infra-kit.json` — so gating them on it was incidental coupling that made a fresh
   // repo impossible to set up. One `resolveGitRootForWrites` for all three, because
-  // `syncPluginPointer`'s contract binds pointer ↔ installation ↔ MCP verdict to ONE
+  // `syncPluginPointer`'s contract binds pointer ↔ installation ↔ leftover-key verdict to ONE
   // project: `--scope project` must record exactly what the pointer names.
   //
   // The announcing variant, and this is the ONLY call to it: the four-step skip is `initCore`'s line

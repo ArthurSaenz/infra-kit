@@ -195,9 +195,9 @@ const resolveProjectRootSafe = async (): Promise<string> => {
 
 /**
  * Download Doppler secrets for a resolved config and atomically write env-load.sh
- * to the session cache dir. Does NOT print to stdout — shared by the CLI/MCP
- * `envLoad` entry (which prints the path) and the auto-load path (which lets the
- * shell precmd hook source the file).
+ * to the session cache dir. Does NOT print to stdout — shared by the `envLoad`
+ * entry (which prints the path) and the auto-load path (which lets the shell
+ * precmd hook source the file).
  */
 export const writeEnvLoadFile = async ({
   config,
@@ -247,9 +247,8 @@ export const writeEnvLoadFile = async ({
 /**
  * Load environment variables from Doppler for the given config
  */
-// ONE provider instance for the MCP form (`envLoadMcpTool.formProvider`) and the agent-mode
-// refusal below, so the rows an agent is handed as `choices` are byte-for-byte the form an MCP
-// client would have been offered.
+// ONE provider instance for the tool definition (`envLoadMcpTool.formProvider`) and the agent-mode
+// refusal below, so the rows an agent is handed as `choices` are the form the schema describes.
 const envLoadForm = createEnvLoadFormProvider()
 
 export const envLoad = async (args: EnvLoadArgs) => {
@@ -272,8 +271,9 @@ export const envLoad = async (args: EnvLoadArgs) => {
     // yet load is exactly the one you need to SEE, so that picking it tells you to run
     // `infra-kit env-token-set <env>` rather than leaving you to wonder where it went.
     //
-    // An agent that omits `config` is offered a form by the MCP seam before this handler runs; landing
-    // here headless means the client could not render one, and the refusal has to name the source.
+    // An agent that omits `config` is refused with `choices` by `refuseMissingArguments` above; landing
+    // here headless means the provider judged the arguments unformable, and the refusal has to name the
+    // source.
     if (isAgentMode()) {
       throw new StructuredRefusalError(
         { status: 'argument_required', argument: 'config', agentMode: agentMode.source },
@@ -346,8 +346,8 @@ export const DOPPLER_MAX_OUTPUT_BYTES = 1024 * 1024
 
 /**
  * Hard upper bound for the Doppler subprocess. Well under zx's default so a
- * hung call surfaces quickly instead of blocking an interactive shell or an
- * MCP tool handler.
+ * hung call surfaces quickly instead of blocking an interactive shell or the
+ * backgrounded autoload.
  */
 const DOPPLER_DOWNLOAD_TIMEOUT_MS = 30_000
 

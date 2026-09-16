@@ -37,8 +37,8 @@ export interface AutoUpdateDeps {
 /**
  * The refresh runs as `node dist/update-check.js --parent-pid <pid>`: a DEDICATED entry, never
  * `cli.js`. Re-invoking `cli.js` would re-run this very function (plus commander, the catalog, and
- * every top-level side effect) in the child. The `mcp` command already spawns a sibling bundle for the
- * same reason.
+ * every top-level side effect) in the child. `ik-mcp` (`dist/mcp-proxy.js`) is a sibling bundle for
+ * the same reason.
  *
  * `detached` + `unref` + `stdio: 'ignore'` is what lets the child outlive us: a `ik version` exits in
  * ~50ms, far sooner than any registry round-trip. `windowsHide` keeps a console window from flashing.
@@ -53,7 +53,7 @@ const defaultSpawnChild = (childPath: string): void => {
   child.unref()
 }
 
-/** `dist/update-check.js`, resolved beside this bundle exactly as `mcp.ts` resolves `dist/mcp.js`. */
+/** `dist/update-check.js`, resolved beside this bundle — the two are emitted side by side. */
 const defaultChildPath = (): string => {
   return fileURLToPath(new URL('./update-check.js', import.meta.url))
 }

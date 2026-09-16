@@ -21,8 +21,8 @@ const PLACEHOLDER_WORKSPACE_DIR = '~/projects'
 
 /**
  * Surface or scaffold the machine-local factory config
- * (`~/.infra-kit/vendor.json`). CLI-only — NOT an MCP tool; returns nothing
- * and signals problems via `process.exitCode`.
+ * (`~/.infra-kit/vendor.json`). No tool definition and no `--json` payload:
+ * returns nothing and signals problems via `process.exitCode`.
  *
  * Without `--init`: prints the factory file path + existence, the resolved
  * `workspaceDir` + existence, and per-target reachability (`[✓]`/`[ ]`). Exits

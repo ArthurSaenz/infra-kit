@@ -100,8 +100,9 @@ export const formatEnvTokenTable = (rows: EnvTokenRow[], checked: boolean): stri
  * Show which environments have a service token, where it came from, and (with `--check`) whether
  * Doppler still accepts it for that config.
  *
- * The ONLY env-token command exposed over MCP, and it can only ever emit redacted values — the raw
- * token is read here and never rendered, logged, or returned.
+ * The ONLY env-token command that carries a tool definition (so the only one with a published output
+ * schema), and it can only ever emit redacted values — the raw token is read here and never rendered,
+ * logged, or returned.
  */
 export const envTokenList = async ({ check }: EnvTokenListArgs = {}) => {
   // Every env the project has, not just the ones with a token — a missing token is the row worth

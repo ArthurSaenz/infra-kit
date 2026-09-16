@@ -174,8 +174,10 @@ const buildUnverifiableScopeMessage = (env: string): string => {
  * to that environment's config. The write is the last thing that happens; every refusal above leaves
  * `tokens.json` untouched.
  *
- * Not an MCP tool — see the comment on the catalog entry. The MCP boundary auto-confirms every call,
- * and an agent must never be one tool call away from writing a credential.
+ * No confirm step, under --agent included (LOW_RISK_MUTATING_ALLOWLIST): the guard is the host's
+ * permission prompt on the argv plus the two scope checks below — Doppler refusing the download for a
+ * mis-scoped token, and the payload having to name this config. `--force` skips neither: it only
+ * accepts an UNVERIFIABLE scope, never a wrong one.
  */
 export const envTokenSet = async ({ env, stdin, fromEnv, force }: EnvTokenSetArgs) => {
   // No declared-list check. Doppler is the authority on whether `env` is a real config, and it is

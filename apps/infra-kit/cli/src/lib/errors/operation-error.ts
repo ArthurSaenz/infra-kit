@@ -21,7 +21,7 @@ export const extractStderr = (cause: unknown): string | undefined => {
   // wrapped in another OperationError — which is what `executeOne` does to every per-entry
   // failure — carries no `.stderr` of its own. Reading one level there returns undefined, so
   // the inner refusal's evidence would be silently dropped from the message the operator and
-  // the MCP client actually see.
+  // the agent actually see.
   const seen = new Set<unknown>()
   let current = cause
 
@@ -58,9 +58,9 @@ const buildMessage = (cause: unknown, ctx: OperationErrorContext): string => {
 
 /**
  * Error type for any handler-level failure that should surface to the caller
- * (CLI user or MCP-connected agent) with a remediation hint. Wraps an
- * underlying cause and renders a single-line, structured message so logs and
- * agent tool-result text stay scannable.
+ * (a human or a `--agent` run) with a remediation hint. Wraps an underlying
+ * cause and renders a single-line, structured message so logs and the stderr
+ * an agent reads stay scannable.
  *
  * Pattern modeled on the exemplary Doppler errors in
  * `src/integrations/doppler/doppler-errors.ts`.

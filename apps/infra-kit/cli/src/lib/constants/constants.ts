@@ -307,5 +307,3 @@ export const atomicWriteFileSync = (filePath: string, content: string, mode: num
 }
 
 export const WORKTREES_DIR_SUFFIX = '-worktrees'
-// eslint-disable-next-line sonarjs/publicly-writable-directories
-export const LOG_FILE_PATH = '/tmp/mcp-infra-kit.log'

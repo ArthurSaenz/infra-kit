@@ -129,7 +129,7 @@ export const assertBaseBranchSwitchable = async (args: AssertBaseBranchSwitchabl
 /**
  * Guard release- and worktree-management commands so they run only from the main repository
  * checkout, with a clean working tree. Both refusals throw {@link OperationError}, which surfaces
- * uniformly to CLI users and MCP-connected agents.
+ * uniformly to humans and `--agent` runs.
  *
  * Deliberately says nothing about which branch you are on.
  */

@@ -86,15 +86,15 @@ export const createReleaseFormProvider = (options: { hintBudgetMs?: number } = {
       'Choose the release to cut. Nothing runs yet: the confirm gate follows, and the agent will show you the resolved arguments to approve.',
 
     isFormable: (params: unknown): boolean => {
-      // `[]` cannot arrive over the wire — the tool's `.min(1)` rejects it at the SDK parse — so the
-      // empty-array clause serves unit tests and non-MCP callers only.
+      // The CLI action collapses an empty input list to `undefined` (program.ts), so the empty-array
+      // clause serves unit tests and direct callers only.
       return (
         isRecord(params) &&
         (params.releases === undefined || (Array.isArray(params.releases) && params.releases.length === 0))
       )
     },
 
-    // No provider-level try/catch: `trySchema` already wraps this call on the MCP path, and a second
+    // No provider-level try/catch: `refuseMissingArguments` already wraps this call, and a second
     // wrap would only hide a programming error from the unit lane that calls this directly.
     buildRequestedSchema: async (): Promise<z.ZodObject<z.ZodRawShape> | null> => {
       // The ONLY collapse to `null` on this path; it abandons the git child rather than cancelling it.

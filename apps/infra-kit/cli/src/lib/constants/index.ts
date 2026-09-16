@@ -16,7 +16,6 @@ export {
   INFRA_KIT_ENV_PROJECT_VAR,
   INFRA_KIT_ENV_VAR,
   INFRA_KIT_SESSION_VAR,
-  LOG_FILE_PATH,
   parseUnsetNamesFromEnvFile,
   parseVarNamesFromEnvFile,
   parseVarsFromEnvFile,

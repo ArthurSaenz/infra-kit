@@ -1,6 +1,6 @@
 /**
  * The terminal-UI contract for `infra-kit dev`. Both the plain-print {@link DevRenderer} (non-TTY,
- * `--json`, MCP) and the persistent Ink status panel (`PersistentInkDevUi`, under `src/tui/dev-ui/`)
+ * `--json`, `--agent`) and the persistent Ink status panel (`PersistentInkDevUi`, under `src/tui/dev-ui/`)
  * implement it, so the runner drives either through the same seams and never learns which is live.
  *
  * The seams mirror {@link DevRenderer} exactly, plus one extra: `dispose()`. Ink needs it to unmount

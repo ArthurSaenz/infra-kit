@@ -63,8 +63,8 @@ export interface ReleaseCreationResult {
  */
 // Quiet is scoped per invocation rather than set on the global `$`. The old form assigned
 // `$.quiet = true` and cleared it only after the last successful statement, so any throw in
-// between left the whole process silent — and this process is also a long-lived MCP server,
-// so the leak outlived the failing tool call and muted every command after it.
+// between left every later `$` call in the process silent — including the ones whose stderr the
+// failure report is built from.
 export const prepareGitForRelease = async (type: ReleaseType = 'regular'): Promise<string> => {
   const baseBranch = getBaseBranch(type)
   const git = $({ quiet: true })

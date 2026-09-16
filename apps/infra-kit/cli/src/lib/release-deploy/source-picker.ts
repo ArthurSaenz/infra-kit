@@ -10,8 +10,8 @@ import type { DeploySource } from './deploy-source'
 /**
  * Whether `--from` may be asked for rather than demanded.
  *
- * Mirrors the gate in `prompts/release-picker`: MCP and `--json` runs must never render a prompt into
- * a structured stream, and a non-TTY run has nobody to answer it. In all three the missing `--from` has
+ * Mirrors the gate in `prompts/release-picker`: `--agent` and `--json` runs must never render a prompt
+ * into a structured stream, and a non-TTY run has nobody to answer it. In all three the missing `--from` has
  * to stay a hard error, which is what keeps the strict contract for scripts, `--yes` and CI.
  */
 export const canPromptForDeploySource = (): boolean => {
@@ -48,8 +48,8 @@ export const pickDeploySource = async (): Promise<DeploySource> => {
         context,
       )
     },
-    // Refuse is the ANSWER, not an oversight: this is barrel-reachable from the exposed deploy tools,
-    // but only the merged `release-deploy` CLI command calls it, and that command is not an MCP tool.
+    // Refuse is the ANSWER, not an oversight: a headless run without `--from` must stay a hard error
+    // (see `canPromptForDeploySource`), and only the merged `release-deploy` command calls this.
     { whenHeadless: 'refuse' },
   )
 }

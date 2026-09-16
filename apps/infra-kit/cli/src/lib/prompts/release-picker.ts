@@ -21,9 +21,9 @@ import type { BranchPickerItem } from './types'
 // `worktrees-remove > log.txt`) must still prompt; requiring `stdout.isTTY` would regress that.
 // Input-side interactivity is what the picker actually needs.
 //
-// The agent clause is not defensive: `worktrees-add` and `gh-merge-dev` are `mcpExposed: true` with
-// ALL of their branch inputs `.optional()`, so an MCP call with those args omitted DOES enter the
-// interactive branch, and without a guard it would render an Ink picker into the JSON-RPC stream.
+// The agent clause is not defensive: `worktrees-add` and `gh-merge-dev` take ALL of their branch
+// inputs as optional, so an `--agent` call with those args omitted DOES enter the interactive branch,
+// and without a guard it would render an Ink picker into the stdout a `--json` caller is parsing.
 // `!isTTY` alone cannot catch it — see lib/agent-mode for why `stdio: 'inherit'` defeats it — and
 // stays only for genuinely non-interactive human runs (pipes, CI).
 //
@@ -35,7 +35,7 @@ const assertInteractive = (argument: 'version' | 'versions') => {
   const context = {
     operation: 'interactive branch selection',
     remediation:
-      'pass the branch selection explicitly (CLI: `--version`/`--versions`/`--all`; MCP: the `version`/`versions`/`all` fields) for non-interactive, --json, or MCP runs',
+      'pass the branch selection explicitly (`--version`/`--versions`/`--all`) for non-interactive, --json, or --agent runs',
   }
 
   if (isHeadless()) {
@@ -47,7 +47,7 @@ const assertInteractive = (argument: 'version' | 'versions') => {
 
 /**
  * Prompt for a single release branch via the searchable Ink picker. Throws an
- * `OperationError` on non-interactive/`--json`/MCP runs (see `assertInteractive`)
+ * `OperationError` on non-interactive/`--json`/`--agent` runs (see `assertInteractive`)
  * and a `PromptCancelledError` if the user backs out with Esc/Ctrl-C. The Ink
  * TUI is reached only through a dynamic import so React never loads on the
  * bail paths.

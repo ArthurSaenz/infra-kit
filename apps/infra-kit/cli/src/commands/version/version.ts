@@ -23,19 +23,18 @@ const rootOrNull = async (resolve: () => Promise<string>): Promise<string | null
 }
 
 /**
- * Print the infra-kit CLI version, and — for the MCP caller — where this server process stands.
+ * Print the infra-kit CLI version, and — for a `--json` caller — where this process stands.
  *
  * The location fields exist for the doctor skill (plan docs/archive/mcp/mcp-via-plugin-migration-plan.md §4
- * PM-4): a plugin-spawned server runs in `${CLAUDE_PROJECT_DIR}`, so `cwd`, `repoRoot` and
- * `projectDir` are expected equal, and a worktree session must see ITS checkout as `repoRoot`
- * (worktree-local by construction — `git rev-parse --show-toplevel` of `cwd`) while `mainRepoRoot`
- * names the main checkout. `launch` / `toolPrefix` say which route spawned the server, so the skill
- * can tell a shadowed legacy session from a plugin one without guessing from tool names (§3.3).
+ * PM-4), which runs this over Bash from `${CLAUDE_PROJECT_DIR}`: `cwd`, `repoRoot` and `projectDir`
+ * are expected equal, and a worktree session must see ITS checkout as `repoRoot` (worktree-local by
+ * construction — `git rev-parse --show-toplevel` of `cwd`) while `mainRepoRoot` names the main
+ * checkout.
  *
  * @example
  * await version()
  * // => structuredContent: { version: '0.8.0', cwd: '/repo', repoRoot: '/repo', mainRepoRoot: '/repo',
- * //      projectDir: '/repo', launch: 'plugin', toolPrefix: MCP_TOOL_PREFIX }
+ * //      projectDir: '/repo' }
  */
 export const version = async () => {
   const cliVersion = packageJson.version

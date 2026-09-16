@@ -194,7 +194,7 @@ describe('ensureUserProjectConfig', () => {
     expect(process.exitCode).toBe(exitCodeBefore)
   })
 
-  it('resolves the paths only once per process (long-lived MCP server)', async () => {
+  it('resolves the paths only once per process', async () => {
     writeMainConfig()
 
     await ensureUserProjectConfig()

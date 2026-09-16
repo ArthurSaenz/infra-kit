@@ -2,9 +2,8 @@
  * @fileoverview
  * Shared interactive-confirmation gate for mutating commands.
  *
- * When `confirmedCommand` is truthy (CLI `--yes` or an MCP call, which always
- * injects `confirmedCommand: true`) the prompt is skipped and execution
- * proceeds. Otherwise, with no human to ask — agent mode, or `--json`, whose
+ * When `confirmedCommand` is truthy (`--yes`, the argv a `confirmation_required`
+ * refusal hands back) the prompt is skipped and execution proceeds. Otherwise, with no human to ask — agent mode, or `--json`, whose
  * stdout a machine is parsing — it throws a `confirmation_required` refusal
  * carrying the argv that confirms (preview-then-execute, no new flag). Otherwise
  * it prompts the user, marks the echo as interactive, and exits cleanly if the
@@ -20,8 +19,8 @@
  * left as-is, since changing it would move confirmation text out of the stream
  * callers have always read it from.
  *
- * The `process.exit(0)` only runs on the interactive-decline path, which is
- * unreachable under MCP — so this stays safe for the long-lived MCP server.
+ * The `process.exit(0)` only runs on the interactive-decline path: headless
+ * callers refuse above it, so a `--json` document is never cut short by it.
  *
  * Callers remain responsible for their own `commandEcho.addOption('--yes', …)`
  * bookkeeping, which varies between commands.
@@ -70,8 +69,8 @@ export interface ConfirmOrExitOptions {
  */
 // Thrown from HERE, not from `withEscape`'s headless branch, because it needs what only a confirm
 // site has: the message, the plan, and the knowledge that `--yes` is the answer. Callers key it on
-// `isHeadless()`, never on `confirmedCommand`, so their short-circuit for the MCP chokepoint and
-// every `--yes` human stays as it was.
+// `isHeadless()`, never on `confirmedCommand`, so their `--yes` short-circuit stays as it was for
+// agent and human alike.
 export const refuseUnconfirmed = (message: string, plan?: unknown): never => {
   const { source } = agentMode
   const rerun = rerunArgv()

@@ -30,8 +30,8 @@ export interface PromptContext {
  *   its dashes; G8 (`headless-policy-guards`) checks it exists on every owning tool's schema.
  * - `{ value: T }` — answer with `value`, no throw.
  *
- * There is no `'unreachable'` any more: that was a claim about an MCP schema making a field
- * required, and no schema stands between a Bash-driven agent and this prompt.
+ * There is no `'unreachable'` any more: that was a claim about the retired server's schema making a
+ * field required, and no schema stands between a Bash-driven agent and this prompt.
  */
 export type HeadlessPolicy<T> = 'refuse' | { refuse: string } | { value: T }
 

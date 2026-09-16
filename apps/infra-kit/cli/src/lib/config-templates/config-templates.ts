@@ -108,9 +108,10 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   // //   "disallow"  — the DEFAULT when the key is absent. Filtered out of every deploy picker and
   // //                 refused, on both \`--from local\` and \`--from ci\`. Use
   // //                 \`infra-kit release deliver\`, which also does the RC PR and the Jira version.
-  // //   "allow"     — reachable from the CLI and from an MCP agent alike.
-  // //   "cli-only"  — reachable from a terminal, but NOT over MCP: an agent's tool call carries no
-  // //                 human keystroke, so agents keep the refusal.
+  // //   "allow"     — reachable from a human's terminal and from an agent's \`infra-kit --agent\` alike.
+  // //   "cli-only"  — reachable from a human's terminal, but NOT under \`--agent\` (or a Claude Code
+  // //                 shell): an agent's Bash call carries no human keystroke, so agents keep the
+  // //                 refusal.
   // // Allowing it does not remove the other gates: a local deploy still requires the AWS account to
   // // report that environment, and still refuses a dirty tree — unconditionally, with nothing to pass
   // // that waives it. A \`--from ci\` dispatch has no such second gate and prints a warning naming

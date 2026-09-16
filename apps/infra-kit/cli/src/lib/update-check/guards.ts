@@ -24,28 +24,7 @@ export interface AutoUpdateGuardInput {
  * Reasons to skip, in the order checked. Returned (rather than a bare boolean) so tests assert WHICH
  * guard fired — a test that only sees `true` cannot tell a working `--json` guard from a working `CI` one.
  */
-export type SkipReason = 'opt-out' | 'json' | 'own-command' | 'not-a-tty' | 'local-install'
-
-/**
- * Commands that must never trigger the background updater. Empty today; the seam outlives its members:
- * it held `self-update` until that command was retired in favour of the background updater alone, and
- * any future command that performs the update itself belongs here for the same reason it did —
- * otherwise it would install once in the foreground AND leave a detached worker to install the same
- * `@latest` again.
- */
-const SELF_MANAGING_COMMANDS = new Set<string>([])
-
-/**
- * Positional `argv[2]` mirrors the existing `warnIfLocalInstall` guard and is correct today because the
- * program registers no global options before the subcommand. It is defence-in-depth regardless: the
- * notice goes to stderr, and the `isTty` guard already rejects any piped stdout.
- *
- * NOTE: adding a global `program.option()` would let a flag occupy argv[2] and silently defeat this arm.
- * The stderr + isTty arms are what actually guarantee framing safety.
- */
-const isSelfManagingCommand = (argv: string[]): boolean => {
-  return argv[2] != null && SELF_MANAGING_COMMANDS.has(argv[2])
-}
+export type SkipReason = 'opt-out' | 'json' | 'not-a-tty' | 'local-install'
 
 /**
  * Why this invocation must not auto-update, or null when it may.
@@ -69,7 +48,6 @@ export const autoUpdateSkipReason = (input: AutoUpdateGuardInput): SkipReason | 
 
   if (optedOut) return 'opt-out'
   if (argv.includes('--json')) return 'json'
-  if (isSelfManagingCommand(argv)) return 'own-command'
   // Never nag or mutate for piped/scripted runs; a human must be present to see the outcome.
   if (!isTty) return 'not-a-tty'
   if (isLocalNodeModulesInstall(selfRealPath, cwd, realpath)) return 'local-install'

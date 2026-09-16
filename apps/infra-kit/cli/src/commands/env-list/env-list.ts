@@ -42,7 +42,7 @@ const ENV_TABLE_HEADERS = ['Environment', 'Source', 'Token'] as const
 
 /**
  * Render the environments as an aligned, vertical-bar-separated table — the same columnar shape as
- * `gh-release-list`, with explicit `|` column rules. Display only: the structured/MCP payload is built
+ * `gh-release-list`, with explicit `|` column rules. Display only: the `--json` payload is built
  * separately in {@link buildResult} from the same rows, so the machine contract never depends on this
  * formatting. Deliberately prints no fix command — setting a token is a manual `env-token-set` step,
  * not something this read-only listing spells out.

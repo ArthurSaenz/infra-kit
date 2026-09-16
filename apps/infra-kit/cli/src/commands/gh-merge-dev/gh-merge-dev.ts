@@ -22,7 +22,7 @@ import { registerRunCleanup } from './run-cleanup'
 interface GhMergeDevArgs extends RequiredConfirmedOptionArg {
   all?: boolean
   /**
-   * Comma string (CLI) or array (MCP) of release selectors. Each entry may be a
+   * Comma string (the flag) or array (a direct call) of release selectors. Each entry may be a
    * version label (`1.2.5`) or a raw branch name (`release/v1.2.5`).
    */
   versions?: string | string[]
@@ -569,8 +569,8 @@ const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]
 
   commandEcho.print()
 
-  // A dry run must not claim merges: `--json` is wired globally, so this reaches
-  // CLI scripts today, not only MCP agents.
+  // A dry run must not claim merges: `--json` is wired globally, so scripts read
+  // this payload, not only agents.
   const reportable = dryRun || declined
 
   return toResponse({

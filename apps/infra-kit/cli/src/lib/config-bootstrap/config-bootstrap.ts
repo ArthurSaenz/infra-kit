@@ -22,8 +22,8 @@ export interface SeedUserProjectResult {
 }
 
 /**
- * Once-per-process guard for {@link ensureUserProjectConfig}. The MCP server is long-lived and
- * handles N tool calls in one process — without this it would re-stat the config on every call.
+ * Once-per-process guard for {@link ensureUserProjectConfig}: the bootstrap is idempotent, so a second
+ * caller in the same process (a test, an in-process re-entry) short-circuits instead of re-statting.
  */
 let seeded = false
 
@@ -122,7 +122,7 @@ export const seedCreatedMessage = (result: SeedUserProjectResult): string => {
 
 /**
  * Entry-boundary bootstrap: gate, seed, swallow. NEVER throws and NEVER changes the exit code, so it
- * is safe to await from a CLI preAction hook or an MCP tool-call boundary.
+ * is safe to await from the CLI preAction hook, ahead of every command.
  *
  * Order: the `INFRA_KIT_NO_SEED` kill switch (truthiness, so `vi.stubEnv(…, '')` disarms it), the
  * once-per-process guard, path resolution (throws outside a git repo → silent no-op), then the D2
@@ -135,7 +135,7 @@ export const seedCreatedMessage = (result: SeedUserProjectResult): string => {
  * Steady state is completely silent.
  *
  * @example
- * // CLI preAction / MCP tool boundary
+ * // CLI preAction
  * await ensureUserProjectConfig()
  * // first run in an infra-kit repo — INFO: Created ~/.infra-kit/projects/api/infra-kit.json — …
  * // every later run — silent, zero writes

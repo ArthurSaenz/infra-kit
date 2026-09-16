@@ -83,8 +83,8 @@ const pickServices = async (services: DeployService[], env: string): Promise<str
     (context) => {
       return checkbox({ message: `Deploy which services to ${env}?`, choices, pageSize: 20 }, context)
     },
-    // Over MCP `service` is required (min 1) on local-deploy-selected and local-deploy-all takes the
-    // "all" branch, so this is only ever reached by a Bash-driven agent — which is told the flag to pass.
+    // Only local-deploy-selected gets here (local-deploy-all takes the "all" branch), so a headless run
+    // without `--services` is told the flag to pass.
     { whenHeadless: { refuse: 'service' } },
   )
 
@@ -127,8 +127,8 @@ const confirmTarget = async (args: {
       (context) => {
         return confirm({ message, default: false }, context)
       },
-      // Refuse is the ANSWER, not an oversight: the caller gates this on `!confirmedCommand`, which the
-      // MCP chokepoint always injects. That is a gate, not a schema fact, so it is no `'unreachable'` claim.
+      // Refuse is the ANSWER, not an oversight: the caller gates this on `!confirmedCommand`, and an
+      // agent's re-run carries `--yes`. That is a gate, not a schema fact, so it is no `'unreachable'` claim.
       { whenHeadless: 'refuse' },
     )
   }
@@ -146,8 +146,8 @@ const confirmTarget = async (args: {
         context,
       )
     },
-    // Refuse is the ANSWER, not an oversight: the caller gates this on `!confirmedCommand`, which the
-    // MCP chokepoint always injects. That is a gate, not a schema fact, so it is no `'unreachable'` claim.
+    // Refuse is the ANSWER, not an oversight: the caller gates this on `!confirmedCommand`, and an
+    // agent's re-run carries `--yes`. That is a gate, not a schema fact, so it is no `'unreachable'` claim.
     { whenHeadless: 'refuse' },
   )
 }
@@ -251,7 +251,7 @@ const assertServicesUsable = (args: { names: string[]; services: DeployService[]
   })
 }
 
-/** Shape returned to both the CLI and MCP. */
+/** Shape returned to the CLI action and serialised under `--json`. */
 const buildResult = (args: {
   env: string
   accountId: string
@@ -337,7 +337,7 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
   const project = resolveSsmPrefix(services)
 
   // Before the env picker: an agent / `--json` run without `--env` gets this workflow's environments
-  // as `choices` — the same `env`-only form both local tools offer over MCP.
+  // as `choices` — the same `env`-only form both local commands describe.
   await refuseMissingArguments({
     provider: localDeployForms[selection],
     params: args,
@@ -537,7 +537,7 @@ const localDeployForm = (toolName: string) => {
   return createDeployFormProvider({ workflowFile: DEPLOY_ALL_WORKFLOW, fields: ['env'], toolName })
 }
 
-// ONE instance per tool, shared by the MCP registration below and the agent-mode refusal in
+// ONE instance per tool, shared by the tool definition below and the agent-mode refusal in
 // `runLocalDeploy`, keyed by the selection the handler already carries.
 const localDeployForms: Record<Selection, ArgumentFormProvider> = {
   all: localDeployForm('local-deploy-all'),

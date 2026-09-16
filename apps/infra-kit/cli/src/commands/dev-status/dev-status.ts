@@ -31,8 +31,8 @@ export interface DevStatusDeps {
  * writes to `.infra-kit/dev-context/`. Strictly advisory and strictly read-only: it starts no server and
  * only inspects on-disk state plus a bounded TCP probe.
  *
- * The fragment directory is located by {@link readDevContext}, the SAME reader the MCP
- * `infra-kit://dev-context` resource uses, which searches UPWARD from `cwd`.
+ * The fragment directory is located by {@link readDevContext}, the one shared reader, which
+ * searches UPWARD from `cwd`.
  *
  * Three facts an agent must not conflate are surfaced separately: PRESENCE + FRESHNESS
  * (`fragmentMtime` / `ageSeconds`, from the file's mtime), LIVENESS (`live` — does the port answer
@@ -41,8 +41,8 @@ export interface DevStatusDeps {
  * `{ active: false, apps: [] }` — a clean empty result, not an error.
  */
 // Sharing the reader is the fix for a shipped bug: this command used to carry its own reader that
-// did a plain `path.join(cwd, …)`, so from any subdirectory the MCP resource reported a live
-// session while this tool reported none — one server, one question, two answers.
+// did a plain `path.join(cwd, …)`, so from any subdirectory the retired server's dev-context resource
+// reported a live session while this command reported none — one question, two answers.
 //
 // Why the three facts stay separate:
 //   - a STALE fragment is a strong hint a server died without cleaning up, which is why mtime is

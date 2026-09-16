@@ -9,7 +9,7 @@ import type { EquivalentLine } from './equivalent'
  * Session-private side channel from a spawned command child back to the session-shell parent. The
  * child writes a small JSON record at the path in `INFRA_KIT_SESSION_REPORT`; the parent reads it to
  * derive the transcript entry. The record is NOT `ToolsExecutionResult` and never touches the `--json`
- * / MCP machine contract — it exists only so the parent can show a rich `equivalent + report` block.
+ * machine contract — it exists only so the parent can show a rich `equivalent + report` block.
  *
  * The file's PRESENCE is load-bearing: a decline/cancel path exits before the write, so an absent file
  * (with exit 0) is how the parent tells "cancelled" from "ok". See `classifyOutcome`.

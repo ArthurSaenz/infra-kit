@@ -75,7 +75,7 @@ const warnIfTruncated = (prs: ReleasePR[], source: string): void => {
  */
 const fetchAllReleasePRs = async (): Promise<ReleasePR[]> => {
   // Issued together, not awaited in turn: one search runs 0.8–1.5 s on a consumer repo, and the
-  // MCP argument form that enumerates through here has 2.5 s for the pair (`lib/release-remove-form`).
+  // argument form that enumerates through here has 2.5 s for the pair (`lib/release-remove-form`).
   const [releasePRs, hotfixPRs] = await Promise.all([
     $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --search "Release in:title" --base dev --json number,title,headRefName,state,baseRefName,createdAt`,
     $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --search "Hotfix in:title" --base main --json number,title,headRefName,state,baseRefName,createdAt`,

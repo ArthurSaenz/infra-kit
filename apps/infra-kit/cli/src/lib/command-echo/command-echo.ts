@@ -82,8 +82,9 @@ const createCommandEcho = () => {
      * Print the equivalent CLI command if there was interactive input.
      *
      * Silent without a bound `cliPath`: the only caller that binds one is Commander's `preAction`, so an
-     * unbound echo means the command ran off the CLI (an MCP tool), where a `pnpm exec` line would be
-     * nonsense. Printing a path-less `pnpm exec infra-kit --yes` would be worse than printing nothing.
+     * unbound echo means the handler was called off the CLI (a test, an in-process caller), where a
+     * `pnpm exec` line would be nonsense. Printing a path-less `pnpm exec infra-kit --yes` would be
+     * worse than printing nothing.
      */
     print(): void {
       if (!isInteractive || options.length === 0 || !cliPath) {

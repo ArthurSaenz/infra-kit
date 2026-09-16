@@ -20,8 +20,7 @@ interface ConfirmDeployArgs {
  * honest about it. The local path has always named its runner (`local-deploy.ts`, "from this machine").
  *
  * SCOPE LIMIT — this is a courtesy for the interactive human, NOT a control. `--yes` returns early,
- * and every MCP call arrives with `confirmedCommand: true` already set by the tool handler, so no
- * MCP-initiated deploy ever sees this string. A Bash-driven agent without `--yes` gets the same
+ * so an agent's confirmed re-run never sees this string. An agent without `--yes` gets the same
  * `confirmation_required` refusal `confirmOrExit` throws (the 9th confirm site speaks the shared
  * shape, plan `{ branch, env }`), and re-runs with `--yes` to dispatch.
  */

@@ -239,10 +239,11 @@ describe('no raw readline outside the prompts module', () => {
 //
 // SCOPE — agent-reachable sites, and what an agent reaches is the Bash surface, not a tool list: every
 // command is one `Bash(infra-kit …)` away, so a prompt in a command that never carried a tool
-// (`env-token-set`) or that a command's import closure drags in (the dev wizard) must declare its
-// answer like any other. The one prompt outside the rule is `entry/cli.ts`'s palette — not a command,
-// and a human typed the bare `infra-kit` that opens it. Reachability, and the ways it
-// over-approximates, are documented in `./agent-reachable-prompt-sites`.
+// (`env-token-set`) or in a command with no `commands/<cmd>/<cmd>.ts` at all (`dev`, wired inline in
+// `program.ts` off `entry/dev-server.ts`, whose closure holds the wizard) must declare its answer like
+// any other. The one prompt outside the rule is `entry/cli.ts`'s palette — not a command, and a human
+// typed the bare `infra-kit` that opens it. Reachability, and the ways it over-approximates, are
+// documented in `./agent-reachable-prompt-sites`.
 describe('every agent-reachable withEscape site declares its headless policy', () => {
   it('computes a real reachability graph (guards against a vacuous pass)', () => {
     // Every assertion below is a filter over these three; if the graph collapsed, they would all
@@ -271,6 +272,10 @@ describe('every agent-reachable withEscape site declares its headless policy', (
     for (const command of ['env-token-set', 'env-token-remove', 'env-autoload']) {
       expect(reachableModules.has(path.join(SRC, 'commands', command, `${command}.ts`))).toBe(true)
     }
+
+    // `dev` has no command module; while the roots were the directory convention alone, the wizard's
+    // three sites sat on the implicit default unseen.
+    expect(reachableModules.has(path.join(SRC, 'dev', 'dev-wizard-run.ts'))).toBe(true)
   })
 
   it('still reaches every catalog tool from its own defineMcpTool declaration', () => {

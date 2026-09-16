@@ -22,12 +22,12 @@ import { defineMcpTool, textContent } from 'src/types'
 const DEPLOY_ALL_WORKFLOW = 'deploy-all.yml'
 
 interface GhReleaseDeployAllArgs {
-  // Both used to be REQUIRED in the MCP schema, and these comments used to say so. PR-1 relaxed them
+  // Both used to be REQUIRED in the tool schema, and these comments used to say so. PR-1 relaxed them
   // to `.optional()` so an argument form could offer real values — `narrowsArgs` only lets a form add
   // a key round 1 omitted. The guard that replaced the required field is `whenHeadless` at the picker.
-  /** Omitted on the CLI offers the open release PRs; omitted over MCP offers them in a form. */
+  /** Omitted on the CLI offers the open release PRs; omitted under `--agent` lists them as `choices`. */
   version?: string
-  /** Omitted on the CLI offers this workflow's own environments; over MCP the form offers them. */
+  /** Omitted on the CLI offers this workflow's own environments; under `--agent` they are the `choices`. */
   env?: string
   skipTerraform?: boolean
   confirmedCommand?: boolean
@@ -36,8 +36,8 @@ interface GhReleaseDeployAllArgs {
 /**
  * Deploy a release branch to an environment
  */
-// ONE provider instance for the MCP form and the agent-mode refusal, so an agent's `choices` are the
-// form an MCP client would have been offered: the open releases and this workflow's environments.
+// ONE provider instance for the tool definition and the agent-mode refusal, so an agent's `choices`
+// are the form the schema describes: the open releases and this workflow's environments.
 const deployAllForm = createDeployFormProvider({
   workflowFile: DEPLOY_ALL_WORKFLOW,
   fields: ['version', 'env'],

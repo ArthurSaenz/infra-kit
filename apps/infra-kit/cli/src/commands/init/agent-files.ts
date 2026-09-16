@@ -127,7 +127,7 @@ export const resolveGitRootForWrites = async (): Promise<string | null> => {
  * at that root — or `null`.
  *
  * Gates the guidance writers only. They render config-derived content, so the config file
- * is a real precondition for them; the plugin and MCP steps never read it.
+ * is a real precondition for them; the plugin and proxy steps never read it.
  *
  * Announces its OWN predicate only. A refused git gate returns `null` silently here, because
  * `initCore` calls {@link resolveGitRootForWrites} for the same refusal — one gate, one line, rather

@@ -26,9 +26,9 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
   const { confirmedCommand } = options
 
   // Branch-agnostic: reconciles worktrees by name/path and never reads HEAD, so
-  // only the worktree + clean-tree legs apply. Load-bearing on the MCP path,
-  // which runs this unattended — a branch requirement there would refuse a
-  // cleanup that has no quarrel with the caller's checkout.
+  // only the worktree + clean-tree legs apply. Load-bearing for an agent's
+  // unattended `--yes` run — a branch requirement there would refuse a cleanup
+  // that has no quarrel with the caller's checkout.
   await assertManagementContext({ operation: 'sync worktrees' })
 
   // GUARD (placement is load-bearing): must stay ABOVE the `try` block below — its catch rewraps, and
@@ -66,7 +66,7 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
       projectRoot,
     })
 
-    // Hard `false`: sync is background/stale-cleanup (predominantly the MCP path) — it must never
+    // Hard `false`: sync is background/stale-cleanup, often an agent's unattended run — it must never
     // relaunch and overwrite a focused Zed window. Zed removal stays a no-op here.
     await removeIdeWorktreeFolders({
       projectRoot,
@@ -81,7 +81,7 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
     commandEcho.print()
 
     // Ordering is load-bearing: IDE cleanup and the echo line run first; only then does a failed
-    // branch throw (CLI) or become an isError result (MCP).
+    // branch throw (human) or become a `partial_failure` refusal (`--agent`).
     return toRemovalToolResult({ result: removal, operation: 'sync worktrees' })
   } catch (error) {
     // A cancelled prompt (Ctrl-C / Esc) is a user back-out, not a failure: let it

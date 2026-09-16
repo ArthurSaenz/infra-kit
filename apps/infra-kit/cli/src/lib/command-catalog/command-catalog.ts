@@ -60,39 +60,15 @@ export interface CatalogMcpTool {
 }
 
 /**
- * Structural, not imported from any MCP SDK: this module is on every CLI command path and
- * `dependency-guards.test.ts` pins the tree SDK-free.
- *
- * These are ADVISORY hints — the MCP spec states a client must not make security decisions from them.
- * The authority for destructive operations remains `requiresHumanConfirm` plus `confirmOrExit`; nothing
- * in that gate reads these fields.
- *
- * `idempotentHint` is deliberately absent: with no tool claiming `true`, an explicit `false` is
- * indistinguishable from omission under both host-reading conventions, and the hint licenses retry —
- * the one place where over-claiming is dangerous rather than merely noisy.
- */
-export interface McpToolAnnotations {
-  readOnlyHint: boolean
-  /** Present iff `readOnlyHint` is false — the spec makes it meaningless on a read-only tool. */
-  destructiveHint?: boolean
-  openWorldHint: boolean
-}
-
-/** A catalog tool plus the registration-facing metadata {@link getExposedMcpTools} derives for it. */
-export interface RegistrableMcpTool extends CatalogMcpTool {
-  title: string
-  annotations: McpToolAnnotations
-}
-
-/**
  * Single source of truth for the CLI command surface. It consolidates what used
- * to live in three hand-maintained places (the MCP `tools[]` array and the
+ * to live in hand-maintained places (the retired server's `tools[]` array and the
  * three no-arg-menu name arrays) into one list, so they can no longer drift.
  *
  * It does NOT replace Commander's `.command().option()` wiring in entry/cli.ts —
  * that stays the source of truth for argument parsing. This catalog only carries
  * cross-surface metadata: the canonical names, which menu group a command shows
- * in, and whether the command is exposed as an MCP tool.
+ * in, the tool definition whose schema shapes an agent's `argument_required`
+ * refusal, and the `mutating` flag the confirm gate keys off.
  */
 
 /**
@@ -120,8 +96,8 @@ export type MenuGroup = (typeof MENU_GROUPS)[number]['key']
 
 export interface CommandCatalogEntry {
   /**
-   * Stable flat id for the command (`release-create`), and the name its MCP tool registers under — MCP
-   * tool names cannot contain a space, so the grouped path cannot serve as one.
+   * Stable flat id for the command (`release-create`), and its tool definition's `name` — a tool name
+   * cannot contain a space, so the grouped path cannot serve as one.
    *
    * NOT a CLI surface: the CLI registers only the grouped form ({@link groupPath}). Flat Commander
    * commands were removed once every menu surface learned to address a command by its group path.
@@ -129,7 +105,10 @@ export interface CommandCatalogEntry {
   cliName: string
   /** Menu group, or null for subcommands not shown at the top level. */
   menuGroup: MenuGroup | null
-  /** The co-located MCP tool, or null for CLI-only commands (init/config/vendor group). */
+  /**
+   * The co-located tool definition (input/output schema, confirm and form metadata), or null for the
+   * commands that never had one (setup/config/vendor group, env-token-set/remove).
+   */
   mcpTool: CatalogMcpTool | null
   /**
    * Historical: whether the command was listed on the retired MCP server. NOT "agent-reachable" — every
@@ -138,7 +117,8 @@ export interface CommandCatalogEntry {
   mcpExposed: boolean
   /**
    * Whether running this command writes git/remote/consumer-repo/Doppler-env/fs-outside-cache state.
-   * Drives the MCP destructive-op gate (Phase 4).
+   * Drives the destructive-op gate: a mutating command must set `requiresHumanConfirm` or sit in
+   * {@link LOW_RISK_MUTATING_ALLOWLIST}.
    */
   mutating: boolean
   /**
@@ -179,9 +159,8 @@ export interface CommandCatalogEntry {
 
 /**
  * Authored in no-arg-menu display order so the interactive picker derives
- * directly from this list (see entry/cli.ts). MCP registration filters this
- * list by `mcpExposed`; MCP tool order is not contractual (clients address
- * tools by name), so the registration order need not match the array order.
+ * directly from this list (see entry/cli.ts). Nothing else reads the order:
+ * every other consumer addresses an entry by `cliName` or `groupPath`.
  */
 export const commandCatalog: CommandCatalogEntry[] = [
   // --- Develop (menu group) ---
@@ -196,7 +175,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
   // Spawning the BARE `['dev']` path is deliberate: `shouldRunWizard` fires on exactly bare + TTY +
   // non-json, so a menu pick lands in the interactive wizard — the wizard IS the flag picker.
   //
-  // Not an MCP tool: it never returns a result, so it cannot fit the request/response tool contract.
+  // No tool definition: it never returns a result, so it cannot fit the request/response tool contract.
   {
     cliName: 'dev',
     menuGroup: 'develop',
@@ -269,7 +248,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
     groupPath: ['release', 'deploy-selected'],
   },
   // release-deliver does prod delivery + admin-merge — genuinely irreversible,
-  // so it is CLI-only by design.
+  // so it is human-only: refused under `--agent`, `--yes` included.
   {
     cliName: 'release-deliver',
     menuGroup: 'release',
@@ -278,12 +257,12 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mutating: true,
     groupPath: ['release', 'deliver'],
   },
-  // Exposed, unlike its neighbour `release-deliver`. Exposure here is governed by the allowlist-or-gate
-  // rule, not by whether the verb sounds destructive: `requiresHumanConfirm` puts it behind the
+  // Gated, not refused, unlike its neighbour `release-deliver`. What an agent may run is governed by
+  // the allowlist-or-gate rule, not by whether the verb sounds destructive: `requiresHumanConfirm` puts it behind the
   // two-phase gate, `version` is optional so the human picks from a form, `skipJira` is refused,
   // `moveIssuesTo` is accepted and shown in the gate, and the one irreversible step (the Jira fix
   // version) runs behind that gate. The asymmetry that would otherwise exist is the argument for
-  // exposing it: `release-create` IS exposed, so an agent can create a release it could never clean up.
+  // gating rather than refusing it: an agent can create a release, so it must be able to clean one up.
   {
     cliName: 'release-remove',
     menuGroup: 'release',
@@ -338,9 +317,9 @@ export const commandCatalog: CommandCatalogEntry[] = [
   // worktrees scaffold survives, and worktrees-add recreates a removed worktree. git also
   // refuses to remove a worktree with modified-tracked or untracked files. The residual risk —
   // deletion of gitignored local state (a hydrated `.env` of Doppler secrets, node_modules/dist) — is
-  // contained by the tool's own invariants rather than by withholding it: over MCP it rejects
+  // contained by the command's own invariants rather than by withholding it: under `--agent` it rejects
   // all=true (no one-shot wipe) and errors on any unmatched target before removing anything. So it is
-  // exposed, unlike the genuinely-irreversible release-deliver. After a refused removal it sweeps
+  // gated, not refused, unlike the genuinely-irreversible release-deliver. After a refused removal it sweeps
   // ONLY a leftover git has already unregistered and that holds nothing but `.omc/{state,sessions}`
   // and `.DS_Store` (a post-exit hook re-creating tool state mid-deletion); everything else is
   // reported in failedWorktrees with isError.
@@ -536,7 +515,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
   // Bare groups: help + non-zero exit, so they never belong in the leaf-only menu.
   { cliName: 'vendor', menuGroup: null, mcpTool: null, mcpExposed: false, mutating: false, groupPath: ['vendor'] },
   { cliName: 'config', menuGroup: null, mcpTool: null, mcpExposed: false, mutating: false, groupPath: ['config'] },
-  // Internal shell-startup trigger; hidden from the menu and never an MCP tool
+  // Internal shell-startup trigger; hidden from the menu and carries no tool definition
   // (it can't apply env to a shell — only the zsh integration sources the file).
   {
     cliName: 'env-autoload',
@@ -546,9 +525,12 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mutating: true,
     groupPath: ['env-autoload'],
   },
-  // env-token-set / env-token-remove carry NO tool definition at all — not merely `mcpExposed: false`,
-  // so there is nothing to accidentally flip on: an agent must never be one call away from WRITING a
-  // credential or DESTROYING one. Same argument that keeps `doctor --fix` CLI-only.
+  // env-token-set / env-token-remove carry NO tool definition (no schema to publish, no
+  // `argument_required` payload to shape) and sit in LOW_RISK_MUTATING_ALLOWLIST below, so under
+  // --agent they are ungated. The guard on the write is not a confirm: the host's permission prompt on
+  // the argv, then `probeToken` (Doppler itself refuses a cross-config download) and `assertTokenScope`
+  // (the payload must name this config) before `tokens.json` is touched. Removal is local-only — the
+  // Doppler token survives and the next set puts it back.
   // menuGroup is null because both take a required `<env>` argument the no-arg menu cannot supply.
   {
     cliName: 'env-token-set',
@@ -606,148 +588,12 @@ export const LOW_RISK_MUTATING_ALLOWLIST: readonly string[] = [
   'dev',
 ]
 
-// `openWorld` is DECLARED rather than derived because neither candidate derivation is sound. An
-// import-graph check produces false NEGATIVES on the four deploy tools (they reach GitHub/AWS through
-// `zx` with no `src/integrations/*` import at all — an error in the dangerous direction on the most
-// dangerous tools in the catalog) and false POSITIVES on `env-list` and `worktrees-remove` (which
-// import an integration module whose MCP-reachable path never calls out). The per-row call-site
-// citation IS the control: nobody can write "never calls Doppler" next to `env-token-list.ts:115-131`.
-//
-// Allowlist membership and `destructiveHint` are independent — all four LOW_RISK_MUTATING_ALLOWLIST
-// members read destructive. The allowlist answers "is a confirm prompt warranted?"; the hint answers
-// "does this perform destructive updates?".
-/** Display title and the one annotation nothing derives (`openWorld`), per exposed tool. */
-export const MCP_TOOL_PRESENTATION: Record<string, { title: string; openWorld: boolean }> = {
-  // --- Read-only ---
-  // Reads on-disk dev-context fragments; the TCP liveness probe is loopback-only (dev-status.ts:178).
-  'dev-status': { title: 'Dev server status', openWorld: false },
-  // gh-release-list.ts:13 getReleasePRsWithInfo(); getJiraDescriptions imported :6.
-  'gh-release-list': { title: 'Open releases', openWorld: true },
-  // worktrees-list.ts:38 Promise.all([getReleasePRsWithInfo(), getJiraDescriptions()]).
-  'worktrees-list': { title: 'Release worktrees', openWorld: true },
-  // env-status.ts:94 — "Pure local introspection — makes NO Doppler call".
-  'env-status': { title: 'Loaded environment', openWorld: false },
-  // env-list.ts:147 — "never a live Doppler probe". The :4 doppler import is getDopplerProject, which
-  // reads getInfraKitConfig() and returns a name (doppler-project.ts:23-27) — no network.
-  'env-list': { title: 'Available environments', openWorld: false },
-  // env-token-list.ts:115-131 probeEnvToken per environment, and `check` is in the MCP inputSchema
-  // (:173-176), so the probe is agent-reachable.
-  'env-token-list': { title: 'Doppler service tokens', openWorld: true },
-  // config-get.ts:58 — "Read-only introspection … use `config edit` (CLI-only) to modify".
-  'config-get': { title: 'Merged infra-kit config', openWorld: false },
-  // vendor-check.ts:120 — "Self-contained (no source repo or config needed)".
-  'vendor-check': { title: 'Vendor checksum check', openWorld: false },
-  // audit.ts:242-255 reads workspace manifests; --fix/--design are unreachable through the MCP schema.
-  audit: { title: 'Package audit', openWorld: false },
-  // Reads packageJson.version; no registry check.
-  version: { title: 'CLI version', openWorld: false },
-  // doctor.ts spawns `gh auth status`, and the `gh` / `doppler` / `aws` rows shell out to binaries that
-  // reach their own services. openWorld is TRUE for that reason. DECLARED, never derived: the network
-  // is reached through third-party binaries, so no import-graph rule could have spotted it.
-  doctor: { title: 'Diagnose this machine', openWorld: true },
-
-  // --- Mutating, gated ---
-  // setup.ts — the init half writes locally, then `converge.ts` reaches `runRecipe`, which spawns
-  // `brew install` / `npm install -g`; both fetch from a remote registry. openWorld is TRUE for that
-  // reason, even though the argv are registry literals. It stays TRUE under `skipTools:true` as well:
-  // the annotation describes the tool, not the arguments of one call.
-  setup: { title: 'Set up this machine', openWorld: true },
-  // gh-merge-dev.ts:355 getReleasePRsWithInfo(); pushes to remote release branches.
-  'gh-merge-dev': { title: 'Merge dev into release branches', openWorld: true },
-  // release-create.ts:7 loadJiraConfig from src/integrations/jira; creates branches and PRs.
-  'release-create': { title: 'Create releases', openWorld: true },
-  // release-remove.ts:5 fetchPRByHead from src/integrations/gh and :9-15 the Jira barrel; closes the
-  // PR via the gh CLI and deletes the remote branch. Reaches Jira to read AND remove the fix version
-  // under MCP; `openWorld` holds either way.
-  'release-remove': { title: 'Remove a release', openWorld: true },
-  // gh-release-deploy-all.ts:2 `import { $ } from 'zx'` — dispatches deploy-all.yml via the gh CLI.
-  // Imports NO src/integrations/*, which is why the import-graph derivation was rejected.
-  'gh-release-deploy-all': { title: 'Deploy all services (CI)', openWorld: true },
-  // gh-release-deploy-selected.ts:6 `import { $ } from 'zx'` — dispatches deploy-selected-services.yml
-  // via the gh CLI. Same import shape as deploy-all: no src/integrations/* to spot.
-  'gh-release-deploy-selected': { title: 'Deploy selected services (CI)', openWorld: true },
-  // local-deploy.ts runs devops/scripts/deploy-*.sh against AWS via zx; no src/integrations/* import.
-  'local-deploy-all': { title: 'Deploy all services from this machine', openWorld: true },
-  // local-deploy.ts:503 shares the same body as local-deploy-all (:304-321), running
-  // devops/scripts/deploy-<name>.sh against the authenticated AWS account via zx.
-  'local-deploy-selected': { title: 'Deploy selected services from this machine', openWorld: true },
-  // The only network path is worktrees-remove.ts:130, inside the picker `else` branch at :129-141.
-  // That branch is unreachable for an agent twice over: the inputSchema declares `versions` REQUIRED
-  // and omits `all` entirely, and assertAgentRemovalInput throws under isAgentMode() on `all` and on
-  // missing `versions`.
-  'worktrees-remove': { title: 'Remove release worktrees', openWorld: false },
-  // Emits `unset` statements into a local shell script and returns its path; the whole output surface
-  // (filePath, unsetStatements, variableCount, purged) is local-file shaped, with no remote to contact.
-  'env-clear': { title: 'Clear environment variables', openWorld: false },
-
-  // --- Mutating, ungated (LOW_RISK_MUTATING_ALLOWLIST members — still destructive) ---
-  // release-desc-edit.ts:180 updateJiraVersion, :185 updateReleasePRBody. Overwrites existing text in
-  // two systems.
-  'release-desc-edit': { title: 'Edit release description', openWorld: true },
-  // worktrees-add.ts:82 getReleasePRsWithInfo(); :301 `pnpm install`. Additive in fact (existing
-  // worktrees are skipped, not errored) — reads destructive under the uniform derivation, the single
-  // accepted over-claim.
-  'worktrees-add': { title: 'Add release worktrees', openWorld: true },
-  // worktrees-sync.ts:45 getReleasePRs(). "Only removes — never creates".
-  'worktrees-sync': { title: 'Prune stale worktrees', openWorld: true },
-  // env-load.ts:17 imports src/integrations/doppler and downloads secrets. Destructive: :192
-  // "atomically write env-load.sh" into getSessionCacheDir() (:212) — a path deterministic per
-  // terminal session, so loading `dev` after `prod` OVERWRITES.
-  'env-load': { title: 'Load environment variables', openWorld: true },
-}
-
-/**
- * The MCP tools to register: catalog entries that are exposed and carry a tool, each widened with the
- * display title and the protocol annotations derived from the catalog's own fields.
- *
- * `readOnlyHint` is DERIVED from `mutating` rather than hand-typed, so it cannot silently disagree
- * with the field the confirm gate keys off. `destructiveHint` follows from it: present as `true` on
- * every write tool, absent on every read tool (the spec makes it meaningless there). Only `title` and
- * `openWorldHint` are declared, in {@link MCP_TOOL_PRESENTATION}.
- *
- * The returned objects are SPREAD COPIES — `{ ...entry.mcpTool, title, annotations }` — not the
- * catalog's `mcpTool` object identities. `handler` survives as a reference, so dispatch is unaffected,
- * but never write an identity comparison against `entry.mcpTool` on the strength of this return value.
- */
-export const getExposedMcpTools = (): RegistrableMcpTool[] => {
-  return commandCatalog.flatMap((entry) => {
-    if (!entry.mcpExposed || !entry.mcpTool) {
-      return []
-    }
-
-    const presentation = MCP_TOOL_PRESENTATION[entry.mcpTool.name]
-
-    // Scoped HERE rather than at module scope on purpose: this module is imported by every CLI command
-    // path, so a module-scope throw on a table typo would take down every command instead of only MCP
-    // registration. The T1/T3 catalog tests already red CI for a missing row.
-    if (!presentation) {
-      throw new Error(
-        `No MCP_TOOL_PRESENTATION entry for exposed tool "${entry.mcpTool.name}" — add a title and an evidence-cited openWorld value in command-catalog.ts.`,
-      )
-    }
-
-    const readOnlyHint = !entry.mutating
-
-    return [
-      {
-        ...entry.mcpTool,
-        title: presentation.title,
-        annotations: {
-          readOnlyHint,
-          ...(readOnlyHint ? {} : { destructiveHint: true }),
-          openWorldHint: presentation.openWorld,
-        },
-      },
-    ]
-  })
-}
-
 /**
  * Catalog entries for a menu group, in catalog (display) order.
  *
  * Yields ENTRIES, not names: every menu surface addresses a command by its {@link
  * CommandCatalogEntry.groupPath} (`['release','create']`), which is both what it renders and what it
- * spawns. `cliName` is an id — the MCP tool name, which cannot hold a space — and is not a CLI surface.
+ * spawns. `cliName` is an id — the tool name, which cannot hold a space — and is not a CLI surface.
  *
  * @example
  * getMenuGroupEntries('vendor').map((entry) => entry.groupPath.join(' ')) // => ['vendor check', …]

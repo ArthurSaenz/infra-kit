@@ -27,15 +27,15 @@ import { defineMcpTool, textContent } from 'src/types'
 const DEPLOY_SELECTED_WORKFLOW = 'deploy-selected-services.yml'
 
 interface GhReleaseDeploySelectedArgs {
-  // All three used to be REQUIRED in the MCP schema, and these comments used to say so. PR-1 relaxed
+  // All three used to be REQUIRED in the tool schema, and these comments used to say so. PR-1 relaxed
   // them to `.optional()` so an argument form could offer real values, because `narrowsArgs` only
   // lets a form add a key round 1 omitted. What replaced the required field as the guard is
   // `whenHeadless` at each picker below, not the schema.
-  /** Omitted on the CLI offers the open release PRs; omitted over MCP offers them in a form. */
+  /** Omitted on the CLI offers the open release PRs; omitted under `--agent` lists them as `choices`. */
   version?: string
-  /** Omitted on the CLI offers this workflow's own environments; over MCP the form offers them. */
+  /** Omitted on the CLI offers this workflow's own environments; under `--agent` they are the `choices`. */
   env?: string
-  /** Omitted on the CLI opens the service checkbox; over MCP the form offers the declared services. */
+  /** Omitted on the CLI opens the service checkbox; under `--agent` the declared services are the `choices`. */
   services?: string[]
   skipTerraform?: boolean
   confirmedCommand?: boolean
@@ -44,8 +44,8 @@ interface GhReleaseDeploySelectedArgs {
 /**
  * Deploy selected services from a release branch to an environment
  */
-// ONE provider instance for the MCP form and the agent-mode refusal, so an agent's `choices` are the
-// form an MCP client would have been offered.
+// ONE provider instance for the tool definition and the agent-mode refusal, so an agent's `choices`
+// are the form the schema describes.
 const deploySelectedForm = createDeployFormProvider({
   workflowFile: DEPLOY_SELECTED_WORKFLOW,
   fields: ['version', 'env', 'services'],

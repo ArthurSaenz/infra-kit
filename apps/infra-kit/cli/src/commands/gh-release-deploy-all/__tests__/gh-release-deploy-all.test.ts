@@ -69,7 +69,7 @@ describe('ghReleaseDeployAll — protected environments', () => {
     expect(dispatched.commands).toEqual([])
   })
 
-  it('refuses prod over MCP when the project allows it CLI-only, and dispatches nothing', async () => {
+  it('refuses prod under --agent when the project allows it CLI-only, and dispatches nothing', async () => {
     await expect(deployProd(MCP_BLOCKED)).rejects.toThrow(/cli-only/)
 
     expect(dispatched.commands).toEqual([])

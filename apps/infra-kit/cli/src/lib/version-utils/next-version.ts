@@ -119,7 +119,7 @@ const isNextToken = (token: string): boolean => {
 
 /**
  * Sort a raw release token into the versioned or the named half of a {@link ReleaseInput} — the ONE
- * place that rule lives, shared by the `--release` flag and the MCP argument form.
+ * place that rule lives, shared by the `--release` flag and the argument form.
  *
  * The token is returned AS TYPED: `resolveReleaseEntries` normalises a `v` prefix downstream, and
  * `tryParse` already strips a leading `release/`, so `release/1.2.3` reads as the version 1.2.3 (a

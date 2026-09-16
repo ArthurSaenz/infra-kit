@@ -29,8 +29,9 @@ const buildRevokeNotice = (project: string, env: string): string[] => {
  * Drop one environment's service token from the local store, purge the warm caches it may have
  * populated, and tell the user where to actually revoke it.
  *
- * Not an MCP tool — see the comment on the catalog entry. The MCP boundary auto-confirms every call,
- * so an agent must never be one call away from destroying a credential.
+ * No confirm step, under --agent included (LOW_RISK_MUTATING_ALLOWLIST): the host's permission prompt
+ * on the argv is the gate, and the loss is local — the Doppler token survives and `env-token-set` puts
+ * it back.
  */
 export const envTokenRemove = async ({ env }: EnvTokenRemoveArgs) => {
   const store = await readTokenStore()

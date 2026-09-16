@@ -13,11 +13,11 @@ import { ghMergeDev } from '../gh-merge-dev'
  * @fileoverview
  *
  * Regression guard for the load-bearing `!process.stdin.isTTY` clause in
- * `src/lib/prompts/release-picker.ts`. `gh-merge-dev` is `mcpExposed: true` with
- * its sole input (`all`) `.optional()`, so an MCP call with `{}` genuinely enters
- * the interactive `else` branch — the ONLY thing stopping a picker (and a React
- * load) on the MCP server is that non-TTY clause. This test proves the wiring in
- * front of that clause is real: an omitted-arg call reaches `pickReleaseBranches`.
+ * `src/lib/prompts/release-picker.ts`. `gh-merge-dev`'s sole input (`all`) is
+ * optional, so a Bash call under `--agent` that omits it genuinely enters the
+ * interactive `else` branch — the ONLY thing stopping a picker (and a React load)
+ * on a non-TTY stdin is that clause. This test proves the wiring in front of that
+ * clause is real: an omitted-arg call reaches `pickReleaseBranches`.
  *
  * FALSIFIABILITY: `ghMergeDev({})` runs `assertManagementContext` and an
  * empty-list early-return BEFORE the `else`, either of which would make a naive
@@ -29,7 +29,7 @@ import { ghMergeDev } from '../gh-merge-dev'
  */
 
 // Boot: hoisted spies so we can assert the TUI is NEVER imported/called (React
-// must not load on the MCP path) WITHOUT a static `import 'src/tui/boot'`, which
+// must not load under --agent) WITHOUT a static `import 'src/tui/boot'`, which
 // the no-react boundary lint rule forbids in command code.
 const boot = vi.hoisted(() => {
   return { runCommandPalette: vi.fn(), runBranchPicker: vi.fn(), runBranchMultiPicker: vi.fn() }
@@ -117,7 +117,7 @@ const originalIsTTY = process.stdin.isTTY
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // Simulate the MCP server's non-interactive stdin. The REAL shim would bail on
+  // Simulate an agent's non-interactive stdin. The REAL shim would bail on
   // this; our mock stands in for that bail while proving the `else` reached it.
   process.stdin.isTTY = false
   vi.mocked(assertRepoWithOrigin).mockResolvedValue(undefined)
@@ -139,10 +139,10 @@ afterEach(() => {
   agentMode.source = null
 })
 
-describe('gh-merge-dev MCP omitted-arg guard', () => {
+describe('gh-merge-dev omitted-arg guard under --agent', () => {
   it('reaches the interactive shim (pickReleaseBranches) with the branch arg omitted and never loads the TUI', async () => {
-    // `confirmedCommand: true` mirrors the MCP boundary (which auto-confirms every
-    // tool); the branch arg `all` is OMITTED, so execution must enter the `else`.
+    // `confirmedCommand: true` mirrors a `--yes` re-run, the shape an agent's second
+    // call takes; the branch arg `all` is OMITTED, so execution must enter the `else`.
     // `rejects.toThrow(OperationError)` alone is NOT sufficient — it passes on the
     // upstream gates too. The `toHaveBeenCalled` assertions below are the real proof.
     await expect(ghMergeDev({ confirmedCommand: true })).rejects.toBeInstanceOf(OperationError)

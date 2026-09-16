@@ -566,7 +566,7 @@ const outcomeOf = (result: StepResult): string => {
 /** Abort on failure. Continuing past an unseen failure can reach the unrecoverable step on a state nobody inspected. */
 // A `function` declaration, not the file's usual `const` arrow, and deliberately. The agent-reachable
 // prompt sweep parses every source with `ScriptKind.TSX`
-// (lib/prompts/__tests__/mcp-reachable-prompt-sites.ts:61), where the `<T>` of a generic ARROW opens a
+// (lib/prompts/__tests__/agent-reachable-prompt-sites.ts, `scriptKindOf`), where the `<T>` of a generic ARROW opens a
 // JSX tag: the file then fails to parse, contributes no modules to the graph, and is silently exempted
 // from the Esc contract. `<T,>` fixes the parse but prettier strips the comma straight back out, so the
 // declaration form is the only stable shape. The fail-open is invisible for a non-root module — ten

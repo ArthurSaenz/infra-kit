@@ -2,13 +2,10 @@ import process from 'node:process'
 import pino from 'pino'
 import pretty from 'pino-pretty'
 
-// eslint-disable-next-line sonarjs/publicly-writable-directories
-export const LOG_FILE_PATH = '/tmp/mcp-infra-kit.log'
-
 /**
  * Key paths pino censors before anything reaches a destination. The load-bearing case is a handler
- * that logs its `params` object into the WORLD-READABLE `/tmp/mcp-infra-kit.log`: a token-carrying
- * key in that object would be written to a file every user on the box can read.
+ * that logs its `params` object: a token-carrying key in that object would land on stderr verbatim,
+ * and stderr is captured by CI logs and terminal scrollback alike.
  *
  * The wildcard forms cover the nesting we actually produce: `{ params: { … } }` and `{ err: { … } }`
  * are both one level deep, so `*.token` catches `params.token` without enumerating every wrapper.
@@ -28,16 +25,6 @@ const REDACT_PATHS = [
   'INFRA_KIT_ENV_TOKEN',
   '*.INFRA_KIT_ENV_TOKEN',
 ]
-
-export const initLoggerMcp = () => {
-  const logLevel = process.argv.includes('--debug') ? 'debug' : 'info'
-
-  const logger = pino({ level: logLevel, redact: REDACT_PATHS }, pino.destination({ dest: LOG_FILE_PATH }))
-
-  logger.info(`Logger initialized with level: ${logLevel}. Logging to: ${LOG_FILE_PATH}`)
-
-  return logger
-}
 
 export const initLoggerCLI = () => {
   const logLevel = process.argv.includes('--debug') ? 'debug' : 'info'

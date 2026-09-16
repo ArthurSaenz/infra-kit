@@ -201,8 +201,8 @@ vi.mock('zx', () => {
 /**
  * `logger.info` for the run under test.
  *
- * Spied, not module-mocked: `src/lib/logger` also exports `LOG_FILE_PATH`, which other modules in
- * `doctor`'s import graph read, so replacing the whole module would blank it.
+ * Spied, not module-mocked, so the rest of `src/lib/logger` stays real for the other modules in
+ * `doctor`'s import graph.
  */
 const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {})
 

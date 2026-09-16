@@ -112,8 +112,8 @@ export interface DependencyDetail {
 }
 
 /**
- * One diagnosis. `name` is a stable public identifier — it is returned over MCP, keyed by the report's
- * section map (`report.ts`), and pasted into bug reports — so renaming one is a breaking change.
+ * One diagnosis. `name` is a stable public identifier — it is returned under `--json`, keyed by the
+ * report's section map (`report.ts`), and pasted into bug reports — so renaming one is a breaking change.
  *
  * `detail` is OPTIONAL and carried by the four dependency rows alone, which is what keeps the ~23 other
  * check functions untouched. `portless installed` deliberately has none: it resolves out of
@@ -433,8 +433,8 @@ interface EnvTokenEntry {
 
 /**
  * `env <name>: token (store)` / `env <name>: no token`, for every configured environment. The source
- * ONLY — a doctor line is printed to a terminal, pasted into a bug report, and returned over MCP, so
- * the one thing it can never carry is the token itself.
+ * ONLY — a doctor line is printed to a terminal, pasted into a bug report, and returned under `--json`,
+ * so the one thing it can never carry is the token itself.
  *
  * @example
  * describeEntries([{ env: 'dev', source: 'store' }, { env: 'prod', source: null }])
@@ -1127,8 +1127,9 @@ const MAX_LISTED_PROJECTS = 3
  * A project-scope plugin and the repo's `.claude/settings.json` hooks load from the directory Claude
  * Code was LAUNCHED in, and only from there (measured, plan §3.2 F5 / §12 S1-6); a session started in
  * `apps/` has neither. `doctor` cannot see the launch directory, so it reads two proxies for it:
- * `projectDir` (`CLAUDE_PROJECT_DIR`, which only the MCP-served tool has — set by Claude Code to the
- * launch directory, so `≠ gitRoot` is the PRECISE test) and `cwd` (all the typed CLI has — a hint,
+ * `projectDir` (`CLAUDE_PROJECT_DIR`, which Claude Code sets to the launch directory for hooks and
+ * set for the retired served tool, never for a Bash call — when present, `≠ gitRoot` is the PRECISE
+ * test) and `cwd` (all the typed CLI has — a hint,
  * since a root-launched session whose model `cd`s into `apps/` and types `doctor` is not a
  * subdirectory session, hence the hedged wording).
  */
@@ -2265,9 +2266,8 @@ export const doctor = async (options: { fix?: boolean; probeDeps?: ProbeDeps } =
 
   const checks: CheckResult[] = [...baseChecks, ...portlessChecks, ...(await checkAgentFiles()), ...pluginChecks]
 
-  // NO rendering here, deliberately. `doctor()` has two callers — the CLI action and the MCP tool —
-  // and only one of them has a terminal. Printing from inside would emit a human report into an MCP
-  // server's stderr on every agent call; the CLI action owns presentation instead (see `report.ts`).
+  // NO rendering here, deliberately. `--json` must be one document on stdout with nothing human mixed
+  // in, so the handler returns the payload and the CLI action owns presentation (see `report.ts`).
   //
   // `fixable` and `cliVersion` are here because this payload is what a non-terminal caller reads, and
   // neither is recoverable from it otherwise. The `--fix` hint lives in `report.ts`, which `--json`
@@ -2334,8 +2334,8 @@ export const doctorMcpTool = defineMcpTool({
     allPassed: z.boolean().describe('Whether no check failed (warnings are advisory and do not count)'),
     cliVersion: z.string().describe('Version of the infra-kit CLI that produced this report'),
   },
-  // Read-only on purpose: `--fix` is NOT reachable here. The MCP boundary auto-confirms every tool call,
-  // so a state-mutating flag must never be one `handler: doctor` away from an agent invoking it.
+  // Read-only on purpose: `--fix` is NOT reachable through this handler, and that is what keeps the
+  // catalog's `mutating: false` honest — the ungated-mutating gate reads the flag, not this code.
   handler: () => {
     return doctor()
   },

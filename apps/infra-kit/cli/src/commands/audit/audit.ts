@@ -28,8 +28,9 @@ interface AuditOptions {
   /** Directory to resolve the current package from. Defaults to `process.cwd()`. */
   cwd?: string
   /**
-   * Write the guidance block for the audited scope BEFORE checking it. CLI-only — the MCP
-   * input schema has no `fix` key, so an agent cannot reach this (see `auditMcpTool`).
+   * Write the guidance block for the audited scope BEFORE checking it. Reachable only as the
+   * `--fix` flag: the tool input schema has no `fix` key, which is what keeps the catalog's
+   * `mutating: false` honest (see `auditMcpTool`).
    */
   fix?: boolean
   /** With `fix`: scaffold `DESIGN.md` for `frontend`/`mobile` packages that lack one. CLI-only. */
@@ -43,7 +44,7 @@ interface AuditStructuredContent {
   /**
    * Present only on a `--fix` run, which is why it is optional rather than conditionally
    * spread: `program.ts` destructures it, so the property has to exist on the type even
-   * though it is absent from every response an MCP client can elicit.
+   * though the tool `outputSchema` never documents it.
    */
   fixed?: FixedEntry[]
 }
@@ -248,8 +249,8 @@ export const audit = async (options: AuditOptions = {}) => {
   }
 
   // Assigned rather than spread so the key is ABSENT on a non-fix run: `outputSchema` does not
-  // document `fixed`, and it stays accurate for every response an MCP client can elicit only
-  // while no MCP-reachable call produces one.
+  // document `fixed`, and it stays accurate for the handler's own result only while a fix-less
+  // call never produces one.
   if (fixed) structuredContent.fixed = fixed
 
   return {
@@ -289,9 +290,8 @@ export const auditMcpTool = defineMcpTool({
     'Audit packages against infra-kit.config.ts rules (config present and valid, required scripts, required files, and turbo tasks for the root). Defaults to the current package; all=true audits every non-vendor workspace package; root=true audits the monorepo root.',
   inputSchema: auditInputSchema,
   outputSchema: auditOutputSchema,
-  // Read-only on purpose: `--fix` and `--design` are NOT reachable here. The MCP boundary
-  // auto-confirms every tool call, so a flag that writes into the repo must never be one
-  // `handler: audit` away from an agent invoking it.
+  // Read-only on purpose: `--fix` and `--design` are NOT reachable through this handler, and that is
+  // what keeps the catalog's `mutating: false` honest.
   //
   // The catalog's `mutating: false` for `audit` stays accurate ONLY while this handler forwards
   // `params.all` / `params.root` BY FIELD and `auditInputSchema` carries no `fix` key. Either a

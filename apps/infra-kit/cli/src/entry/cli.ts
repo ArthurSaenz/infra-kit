@@ -115,7 +115,7 @@ maybeAutoUpdate(packageJson.version)
  * Bare-invocation interactive menu: build the grouped command palette from the single command
  * catalog and let the user pick one command (returns its name, or null when nothing is picked).
  * Interactive TTY → Ink command palette, loaded lazily via dynamic import so React/Ink never touch
- * the MCP / `--json` / non-TTY code paths. Otherwise falls back to the Inquirer menu (scripts, pipes,
+ * the `--agent` / `--json` / non-TTY code paths. Otherwise falls back to the Inquirer menu (scripts, pipes,
  * CI). Ctrl-C / Esc at the menu backs out cleanly (returns null).
  */
 /**

@@ -205,9 +205,16 @@ const commandEntryFiles = (): string[] => {
   })
 }
 
+/**
+ * `dev` has no `commands/dev/dev.ts`: `program.ts` wires it inline through a dynamic import of this
+ * entry, so its whole graph (the wizard included) hangs off a file the directory convention never
+ * sees. It is still one `Bash(infra-kit dev)` away.
+ */
+const inlineEntryFiles = [path.join(SRC, 'entry', 'dev-server.ts')]
+
 export const reachableModules = ((): Set<string> => {
   const seen = new Set<string>()
-  const pending = [...toolFiles.values(), ...commandEntryFiles()]
+  const pending = [...toolFiles.values(), ...commandEntryFiles(), ...inlineEntryFiles]
 
   while (pending.length > 0) {
     const file = pending.pop() as string

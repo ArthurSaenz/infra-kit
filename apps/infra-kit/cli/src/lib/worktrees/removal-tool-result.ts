@@ -22,9 +22,9 @@ interface ToRemovalToolResultArgs {
  * Turn a batch removal into the command's return value, surfacing failures on whichever surface the
  * command runs on:
  *
- * - **agent** (MCP, `--agent`, env): a `StructuredRefusalError` with `status: 'partial_failure'` and
- *   the schema-valid `removedWorktrees`/`failedWorktrees` payload, exit 1 — the tool handler renders
- *   it as an `isError` result with that `structuredContent`, `entry/cli.ts` emits it under `--json`.
+ * - **agent** (`--agent`, env): a `StructuredRefusalError` with `status: 'partial_failure'` and
+ *   the schema-valid `removedWorktrees`/`failedWorktrees` payload, exit 1 — `entry/cli.ts` emits it
+ *   under `--json`.
  * - **CLI**: an `OperationError` so the process exits non-zero and names what was not removed.
  *
  * Callers run their IDE cleanup and `commandEcho.print()` BEFORE calling this, so the successful

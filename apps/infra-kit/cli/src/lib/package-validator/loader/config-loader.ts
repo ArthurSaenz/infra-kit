@@ -44,9 +44,9 @@ export const readPackageJson = async (packageDir: string): Promise<PackageJsonSh
 
 /** Dynamic-import a config file and resolve its Vite-style factory-or-object default export. */
 const importConfigExport = async (configPath: string): Promise<unknown> => {
-  // Cache-bust with the file mtime so repeated loads (long-running MCP server)
-  // pick up edits without a process restart. `.ts` configs load via Node's
-  // native type stripping (the repo requires Node >= 24).
+  // Cache-bust with the file mtime: `import()` memoises by URL, so a second load in the same process
+  // (a test that rewrites the config, a watch loop) would otherwise see the first bytes forever.
+  // `.ts` configs load via Node's native type stripping (the repo requires Node >= 24).
   const stat = await fs.stat(configPath)
   const moduleUrl = `${pathToFileURL(configPath).href}?mtime=${Number(stat.mtimeMs)}`
 

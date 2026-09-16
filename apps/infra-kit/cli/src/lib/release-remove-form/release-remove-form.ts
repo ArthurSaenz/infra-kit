@@ -153,7 +153,7 @@ export const createReleaseRemoveFormProvider = (options: { fetchBudgetMs?: numbe
       return isRecord(params) && versionAbsent(params)
     },
 
-    // No provider-level try/catch: `trySchema` already wraps this call on the MCP path, and a second
+    // No provider-level try/catch: `refuseMissingArguments` already wraps this call, and a second
     // wrap would only hide a programming error from the unit lane that calls this directly.
     buildRequestedSchema: async (): Promise<z.ZodObject<z.ZodRawShape> | null> => {
       // Both bounded, both abandoned rather than cancelled on timeout. `enumerate` never rejects, so

@@ -52,9 +52,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
 /**
  * Whether round 1 left this field for the human to supply.
  *
- * A JSON-RPC request cannot carry `undefined`, so an explicitly-`undefined` key can only come from
- * a hand-built call; treating it as absent is the reading that lets the form fill it, and it stays
- * safe because `narrowsArgs` only checks that the key is PRESENT afterwards.
+ * Commander leaves an omitted option `undefined` and a hand-built call may set the key to `undefined`
+ * explicitly; treating both as absent is the reading that lets the form fill it, and it stays safe
+ * because `narrowsArgs` only checks that the key is PRESENT afterwards.
  */
 const isAbsent = (params: Record<string, unknown>, field: DeployFormField): boolean => {
   return params[field] === undefined

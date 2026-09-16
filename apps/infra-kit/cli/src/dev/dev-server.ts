@@ -289,7 +289,7 @@ export interface DevServerOptions {
    */
   tty?: boolean
   /**
-   * Structured `--json` / MCP mode. When true, {@link run} forces the plain {@link DevRenderer} — Ink
+   * Structured `--json` / `--agent` mode. When true, {@link run} forces the plain {@link DevRenderer} — Ink
    * must never seize a machine-readable stream. The runner itself never reads it.
    */
   json?: boolean
@@ -814,8 +814,8 @@ export class DevServerRunner {
   private readonly monorepoRoot: string
   /**
    * `<cwd>/.infra-kit/dev-context` — the fragment directory this runner writes its own
-   * per-app `<app>.json` into (mirrors {@link LOG_FILE_PATH}'s cwd-relative resolution). The
-   * `infra-kit/vite` helper searches up-tree for this dir and merges the fragments.
+   * per-app `<app>.json` into. The `infra-kit/vite` helper searches up-tree for this dir and merges
+   * the fragments.
    */
   private readonly devContextDir: string
   private readonly appServers: IAppServer[] = []
@@ -895,7 +895,7 @@ export class DevServerRunner {
   private readonly sink: DevLogSink
   /**
    * Owns `console` + the raw stream writes for the life of a TTY session, routing every line into its
-   * service's file. `null` on a `--json` / MCP / piped run, where stdout must stay byte-clean.
+   * service's file. `null` on a `--json` / `--agent` / piped run, where stdout must stay byte-clean.
    */
   private readonly intercept: OutputIntercept | null
   /** `turbo --dry` closure-source seam — real turbo (via {@link buildClosureMap}'s default) unless injected for tests. */
@@ -1528,7 +1528,7 @@ export class DevServerRunner {
    *
    * No consumer is wired this way today — this is a guard against future wiring drift, not a fix for
    * a live bug. Logged through the same `warn`-level path every other boot warning uses (e.g. the
-   * unmatched-preset-targets line in {@link resolveRunPlan}), so it is MCP/JSON-safe for free.
+   * unmatched-preset-targets line in {@link resolveRunPlan}), so it is `--json`/`--agent`-safe for free.
    */
   private warnUiMissingVitePlugin(uiApps: DiscoveredUiApp[]): void {
     for (const ui of uiApps) {
@@ -2886,9 +2886,10 @@ export class DevServerRunner {
 
     // Prune FIRST, unconditionally, and never inside the argument to `refresh?.()`: an optional call
     // does not evaluate its argument at all when the method is absent, and `DevRenderer` — the renderer
-    // on every `--json` / MCP / piped run — has no `refresh`. Pruning in there meant the window was never
+    // on every `--json` / piped run — has no `refresh`. Pruning in there meant the window was never
     // trimmed off the TTY path, so `reqTimes` grew without bound while `onRequestLog` copied the whole
-    // array on every request. Unbounded memory and O(n²) CPU, on the long-lived MCP path specifically.
+    // array on every request. Unbounded memory and O(n²) CPU, on the runs that live longest (a piped
+    // `dev --watch` left up all day) specifically.
     this.pruneRequestWindow(now)
 
     this.renderer.refresh?.({
@@ -3416,8 +3417,8 @@ export class DevServerRunner {
 
 /**
  * Select the terminal UI for this run: the persistent Ink UI on an interactive TTY (dynamically imported
- * so React never loads on the non-TTY / `--json` / MCP chunks), else the plain {@link DevRenderer}
- * (returned as `undefined` so the runner constructs its own default). `--json`/MCP always forces plain —
+ * so React never loads on the non-TTY / `--json` / `--agent` chunks), else the plain {@link DevRenderer}
+ * (returned as `undefined` so the runner constructs its own default). `--json`/`--agent` always forces plain —
  * Ink must never seize a machine-readable stream.
  *
  * {@link PersistentInkDevUi} covers both shapes of session, branching at {@link DevUi.ready} on whether a
@@ -3426,7 +3427,7 @@ export class DevServerRunner {
 /**
  * Whether this run owns the terminal — the single gate for BOTH the live UI and the output interception.
  *
- * Derived once and shared, never re-derived: a `--json` / MCP / piped run must keep a byte-clean stdout,
+ * Derived once and shared, never re-derived: a `--json` / `--agent` / piped run must keep a byte-clean stdout,
  * and interception there would file the machine-readable stream into a log and hand the caller nothing.
  */
 export const ownsTerminal = (options: DevServerOptions): boolean => {

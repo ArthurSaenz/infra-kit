@@ -2,7 +2,7 @@
  * Background auto-update worker. Spawned detached by `maybeAutoUpdate` as
  * `node dist/update-check.js --parent-pid <pid>`, and NEVER run by a human.
  *
- * This is a dedicated bundle, a sibling of `dist/cli.js`, for the same reason `dist/mcp.js` is: booting
+ * This is a dedicated bundle, a sibling of `dist/cli.js`, for the same reason `dist/mcp-proxy.js` is: booting
  * `cli.js` here would re-run commander, the command catalog, `warnIfLocalInstall()`, and
  * `maybeAutoUpdate()` itself as top-level side effects — the last of which would spawn another child,
  * and another. Importing nothing from `src/entry/cli.ts` is a hard invariant, guarded by a test.

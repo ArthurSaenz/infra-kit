@@ -39,7 +39,7 @@ const report = (label: string, list: string[]): void => {
  * `vendor/.sync-manifest.json`. Config-free and self-contained (no source repo,
  * no `vendor.config.ts`, no rsync) so it runs in any consumer's CI. Read-only —
  * never calls `process.exit`; the CLI action maps `structuredContent.ok` to the
- * exit code, and the MCP tool reuses the same handler.
+ * exit code, so the handler stays callable in-process.
  *
  * Exit-code contract (preserved from the legacy `vendor-check.mjs`):
  *   clean → ok; drift → not ok; missing `vendor/` → ok (skip);

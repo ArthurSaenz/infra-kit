@@ -76,7 +76,7 @@ const statOrNull = (file: string): fs.Stats | null => {
 
 /**
  * Unlike the proxy's `NO_SESSION` fallback this never reads a `no-session` dir:
- * `env-load` over MCP throws in the same situation, so nothing could have written one.
+ * `env-load` throws on a missing session id, so nothing could have written one.
  */
 const resolveSessionDir = (): string | null => {
   if (noSession) return null

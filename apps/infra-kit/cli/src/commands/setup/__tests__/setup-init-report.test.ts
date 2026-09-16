@@ -15,8 +15,8 @@ import { logger } from 'src/lib/logger'
  * the assertion is that the payload carries what the steps did. Against a mocked init half the same
  * assertions would only read back the fixture.
  *
- * `logger` writes to `/tmp/mcp-infra-kit.log`, never to the caller, so a `setup` tool whose init half
- * reported through it alone performed every local write and told the agent nothing.
+ * `logger` writes to stderr, never to the result payload, so a `setup` tool whose init half reported
+ * through it alone performed every local write and told the agent nothing.
  */
 
 vi.mock('../../init/migrate-config', () => {

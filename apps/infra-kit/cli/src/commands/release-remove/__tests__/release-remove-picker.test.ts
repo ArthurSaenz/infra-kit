@@ -154,7 +154,7 @@ describe('release remove — the picker path', () => {
       new OperationError(undefined, {
         operation: 'interactive branch selection',
         remediation:
-          'pass the branch selection explicitly (CLI: `--version`/`--versions`/`--all`; MCP: the `version`/`versions`/`all` fields) for non-interactive, --json, or MCP runs',
+          'pass the branch selection explicitly (`--version`/`--versions`/`--all`) for non-interactive, --json, or --agent runs',
       }),
     )
 

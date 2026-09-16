@@ -17,7 +17,7 @@ interface RemoveIdeWorktreeFoldersArgs {
    * Whether the caller is on an interactive path where firing Zed's destructive
    * `zed --reuse` is acceptable (a human is present and confirming). Interactive
    * `worktrees-remove` passes `!confirmedCommand`; `worktrees-sync` and every
-   * non-interactive/MCP run pass `false`.
+   * `--yes` run pass `false`.
    */
   allowEditorRelaunch: boolean
 }
@@ -29,9 +29,9 @@ interface RemoveIdeWorktreeFoldersArgs {
  * iterating sequentially.
  *
  * Cursor surgically edits the `.code-workspace` `folders` array. Zed's path is DESTRUCTIVE, so it
- * fires ONLY when `allowEditorRelaunch` is true (interactive `worktrees-remove`); on the
- * non-interactive/MCP path it is a deliberate no-op (`supported: true`, `removed: []`) with an
- * info message. Zed's `removed` is ALWAYS `[]`.
+ * fires ONLY when `allowEditorRelaunch` is true (interactive `worktrees-remove`); on a
+ * non-interactive or `--agent` run it is a deliberate no-op (`supported: true`, `removed: []`) with
+ * an info message. Zed's `removed` is ALWAYS `[]`.
  */
 // Zed has no surgical remove. The only mutation mechanism, `zed --reuse`, REPLACES the focused
 // window's entire folder set, so it can only re-state the release worktrees we know about and

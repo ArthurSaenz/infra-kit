@@ -13,10 +13,9 @@ export interface RefusalStructuredContent {
 }
 
 /**
- * A refusal that carries a payload for whichever agent surface is listening: `entry/cli.ts` emits
- * `structuredContent` under `--json` and exits with `exitCode`; the MCP tool handler renders it as an
- * `isError` result with the same `structuredContent`. The message is the ordinary `OperationError`
- * one (operation / stderr / remediation), so the human-readable line loses nothing.
+ * A refusal that carries a payload for an agent: `entry/cli.ts` emits `structuredContent` under
+ * `--json` and exits with `exitCode`. The message is the ordinary `OperationError` one
+ * (operation / stderr / remediation), so the human-readable line loses nothing.
  *
  * @example
  * throw new StructuredRefusalError(

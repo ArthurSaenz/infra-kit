@@ -210,10 +210,10 @@ const envAutoLoadSchema = z
 // protectedEnvs — may THIS project reach the delivery-shaped environments listed in
 // `DEFAULT_PROTECTED_ENVS` (lib/workflow-envs/protected-envs)? The list stays in code; only the
 // decision is per-project. "disallow" (the default) is today's behaviour: filtered from every deploy
-// picker and refused. "allow" reaches them from the CLI and over MCP alike. "cli-only" reaches them
-// from a terminal but not from an agent — over MCP it behaves exactly as "disallow", because
-// `createToolHandler` injects `confirmedCommand: true`, which is the very flag that skips every
-// interactive confirmation, so there is no human keystroke on that path.
+// picker and refused. "allow" reaches them from a human's terminal and under `--agent` alike.
+// "cli-only" reaches them from a terminal but not from an agent — under `--agent` (or a Claude Code
+// shell) it behaves exactly as "disallow", because an agent's `--yes` re-run skips every interactive
+// confirmation, so there is no human keystroke on that path.
 //
 // An ENUM rather than a boolean because the VALUE extends without touching the KEY, and a key rename
 // here is expensive: `.strict()` turns the old name into a parse error that bricks every command,
@@ -268,8 +268,10 @@ const mcpProxySchema = z
 /**
  * `mcp.<name>` → the proxy spec. The name is the `.mcp.json` key and the proxy's cache subdir.
  *
- * A name containing `infra-kit` is refused because `install-state.ts` recognises THE infra-kit MCP
- * server by that substring in `command args`, so `infra-kit-docs` would read as a misfiled copy of it.
+ * A name containing `infra-kit` is refused because `infra-kit` is the `.mcp.json` key the retired
+ * server sat under, and `doctor` still reads that key as the leftover registration to delete
+ * (`inspectLegacyMcpRegistration`) — a proxy filed there would be advised away. The whole substring is
+ * held so no proxy name reads as a copy of that entry.
  */
 const mcpProxiesSchema = z.record(
   z
@@ -279,7 +281,10 @@ const mcpProxiesSchema = z.record(
       (name) => {
         return !name.includes('infra-kit')
       },
-      { message: '"infra-kit" is reserved for the infra-kit MCP server itself' },
+      {
+        message:
+          '"infra-kit" is reserved: it is the .mcp.json key of the retired infra-kit MCP server — pick another name',
+      },
     ),
   mcpProxySchema,
 )
@@ -422,7 +427,7 @@ export interface InfraKitConfigPaths {
 interface CacheEntry {
   /** `cwd + homedir` — see {@link pathsCacheKey}. Required alongside `mtimes`: mtimes alone can
    * collide across two different repo roots (or two homedirs), which would serve one repo's config
-   * to a request for another inside a long-lived process (the MCP server). */
+   * to a request for another inside one process (a test suite, a `dev` session re-reading config). */
   key: string
   mtimes: Record<keyof Omit<InfraKitConfigPaths, 'projectName'>, number | null>
   value: InfraKitConfig
@@ -541,8 +546,8 @@ export const getInfraKitConfigPaths = async (): Promise<InfraKitConfigPaths> => 
  *   3. `~/.infra-kit/projects/<repo-name>/infra-kit.json`  — user-scope per-project overrides
  *
  * Top-level keys (entire capability sections like `ide`, `envManagement`)
- * replace wholesale. Results are cached per file mtimes so the long-running
- * MCP server picks up edits without a restart.
+ * replace wholesale. Results are cached per file mtimes, so repeated reads in one
+ * process are free and an edit is still picked up on the next call.
  *
  * @example
  * // infra-kit.json:           { "environments": ["dev"], "envManagement": { "provider": "doppler", "config": { "name": "p" } } }

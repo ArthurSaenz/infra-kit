@@ -51,15 +51,15 @@ const OPERATION = 'create worktrees'
 // The two optional follow-ups below declare `whenHeadless: { value: false }`, and that value is not
 // a convenience — it is what `githubDesktop`/`orca`'s own `.describe()` text already promises:
 // "interactive prompt (CLI) / false (MCP, no TTY)". It was documented and never implemented. With
-// neither the flag nor the config key set, an MCP call fell through to a real `@inquirer/confirm`,
-// which writes to `process.stdout` — the JSON-RPC transport under MCP — corrupting the stream rather
-// than hanging. This tool is ungated (`requiresHumanConfirm` is unset), so one call carrying
-// `versions` or `all` reached both prompts: the happy path was the defect path.
+// neither the flag nor the config key set, a headless call fell through to a real `@inquirer/confirm`,
+// which writes to `process.stdout` — under `--json` the one document a machine is parsing — corrupting
+// the stream rather than hanging. This command is ungated (`requiresHumanConfirm` is unset), so one
+// call carrying `versions` or `all` reached both prompts: the happy path was the defect path.
 //
 // `{ value: false }` rather than `withEscape`'s `'refuse'` default, and the difference is the whole
 // reason the policy is declared per site. Refusing here would be right-outcome-by-accident at best:
 // it keeps the bytes out of the stream, but turns a documented harmless default into a hard failure
-// and makes the tool unusable over MCP unless a caller passes both booleans explicitly.
+// and makes the command unusable under `--agent` unless a caller passes both booleans explicitly.
 //
 // The guard lives in `withEscape` keyed on `isAgentMode()`, never `process.stdin.isTTY`: the agent
 // signal is declared (`--agent`/env), and an isTTY key would misfire on the zsh wrappers' `$(…)`

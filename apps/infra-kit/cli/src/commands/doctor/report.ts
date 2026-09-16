@@ -524,7 +524,7 @@ export interface PrintDoctorReportDeps extends ReportCapabilityInput {
 
 /**
  * Write the report to stderr — humans on stderr, machines on stdout, which is what keeps
- * `doctor --json | jq` and the MCP stdio transport clean.
+ * `doctor --json | jq` clean.
  *
  * ONE write, deliberately: pino also targets fd 2, and emitting 30 separate writes would let any
  * concurrent `logger.*` call tear a line straight through the middle of the report.

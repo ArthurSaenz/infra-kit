@@ -239,7 +239,7 @@ const needsManualRun = (tool: ToolResult, skipTools: boolean): boolean => {
   return tool.action === 'refused' || (skipTools && tool.action === 'skipped')
 }
 
-/** The MCP payload carries the three declared keys and not the CLI's rendering hint. */
+/** The `--json` payload carries the three declared keys and not the CLI's rendering hint. */
 const toInitStep = (entry: InitEntry): InitStep => {
   return { step: entry.step, outcome: entry.outcome, message: entry.message }
 }

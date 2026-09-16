@@ -8,7 +8,7 @@ export interface DeployContract {
 }
 
 /**
- * The contract as a plain record, for the MCP `outputSchema`.
+ * The contract as a plain record, for the tool `outputSchema`.
  *
  * An `interface` has no implicit index signature, so it is not assignable to `Record<string, string>`
  * — hence the explicit widening here rather than at each call site.

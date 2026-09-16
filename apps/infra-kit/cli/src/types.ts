@@ -92,10 +92,11 @@ export interface McpTool<TIn extends z.ZodRawShape = z.ZodRawShape, TOut extends
 }
 
 /**
- * Build the dual-channel content array shared by every MCP tool. Narrows the
- * literal `type: 'text'` so handlers can use inferred return types without TS
- * widening `type` to `string` — which would otherwise break assignability
- * against the MCP SDK's content union.
+ * Build the `content` half of a handler result. Narrows the literal `type: 'text'`
+ * so handlers can use inferred return types without TS widening `type` to
+ * `string` — the shape is the retired server's, kept because every handler and
+ * every handler test is written against it and `--json` reads only
+ * `structuredContent`.
  *
  * @example
  * return {
@@ -110,8 +111,8 @@ export const textContent = (text: string): ToolsExecutionResult['content'] => {
 /**
  * Factory that ties the handler's return type to the declared `outputSchema`
  * so `structuredContent` is checked against the schema at compile time. If a
- * handler accidentally drops or renames a field, TS errors at the registration
- * site rather than at runtime in an MCP client.
+ * handler accidentally drops or renames a field, TS errors at the declaration
+ * site rather than in whatever parses the `--json` document.
  *
  * @example
  * export const envLoadMcpTool = defineMcpTool({

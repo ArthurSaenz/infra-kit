@@ -10,8 +10,8 @@ const STATE_DIR = '.infra-kit'
 
 /**
  * Search upward from `start` for `relative`, returning the first hit or `undefined`. Mirrors the
- * `infra-kit/vite` helper's own `findUp`, because the MCP server is long-lived and may be rooted at
- * any nested package dir — the fragments live at the repo root's `.infra-kit/dev-context`, not the cwd.
+ * `infra-kit/vite` helper's own `findUp`, because the CLI may be launched from any nested package dir
+ * — the fragments live at the repo root's `.infra-kit/dev-context`, not the cwd.
  */
 const findUp = (start: string, relative: string): string | undefined => {
   let dir = path.resolve(start)

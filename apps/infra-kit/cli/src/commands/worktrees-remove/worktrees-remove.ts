@@ -206,8 +206,8 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
     })
 
     // `!confirmedCommand` is the interactive path (a human used the picker/confirm). Only there
-    // do we let Zed's destructive `--reuse` relaunch fire; MCP/--yes runs (confirmedCommand=true)
-    // and worktrees-sync never relaunch an editor window.
+    // do we let Zed's destructive `--reuse` relaunch fire; `--yes` runs (confirmedCommand=true) and
+    // worktrees-sync never relaunch an editor window.
     await removeIdeWorktreeFolders({
       projectRoot,
       worktreeDir,
@@ -221,7 +221,8 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
     commandEcho.print()
 
     // Ordering is load-bearing: the echo line and the IDE cleanup for the branches that DID succeed
-    // run first; only then does a failed branch throw (CLI) or become an isError result (MCP).
+    // run first; only then does a failed branch throw (human) or become a `partial_failure` refusal
+    // (`--agent`).
     return toRemovalToolResult({ result: removal, operation: 'remove worktrees' })
   } catch (error) {
     // A cancelled prompt (Ctrl-C / Esc) is a user back-out, not a failure: let it
@@ -229,7 +230,8 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
     // logged as an error with a misleading remediation.
     if (isPromptCancellation(error)) throw error
 
-    // Our own guard failures (unmatched target, MCP misuse) already carry an actionable remediation;
+    // Our own guard failures (unmatched target, `--all` under `--agent`) already carry an actionable
+    // remediation;
     // surface them as-is instead of re-wrapping them with the generic message below.
     if (error instanceof OperationError) throw error
 

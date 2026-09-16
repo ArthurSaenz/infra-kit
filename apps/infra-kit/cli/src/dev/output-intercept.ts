@@ -94,7 +94,7 @@ export interface OutputIntercept {
  * terminal echo at any point. Call {@link OutputIntercept.uninstall} on every exit path, BEFORE
  * anything else prints.
  *
- * Never install this on a non-TTY / `--json` / MCP run: it would file the machine-readable stream into
+ * Never install this on a non-TTY / `--json` / `--agent` run: it would file the machine-readable stream into
  * a log and hand the caller an empty stdout. The caller owns that gate.
  */
 export const installOutputIntercept = ({

@@ -476,7 +476,7 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
 /**
  * True when `infra-kit dev` was invoked BARE — no preset and no selection/mode flag — in an interactive
  * TTY (both stdin and stdout) and not `--json`. This is the ONLY condition that launches the wizard;
- * every flagged, piped, non-TTY, `--json`, or MCP invocation runs directly from the parsed flags, so no
+ * every flagged, piped, non-TTY, `--json`, or `--agent` invocation runs directly from the parsed flags, so no
  * existing script path changes behaviour.
  */
 export const shouldRunWizard = (raw: DevCliOptions, tty: boolean, json: boolean): boolean => {

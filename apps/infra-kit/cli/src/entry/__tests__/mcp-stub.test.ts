@@ -8,7 +8,7 @@ import { KILL_SWITCHES, buildCliBundle } from 'src/__tests__/helpers/build-cli-b
 
 /**
  * The `mcp` stub in `entry/cli.ts` (plan .omc/plans/mcp-phase3-deletion-decision.md §5.2): a
- * `.mcp.json` entry left over from before 0.10.0 still spawns `infra-kit mcp`, and Claude Code
+ * `.mcp.json` entry left over from before 0.10.0 still spawns 'infra-kit mcp', and Claude Code
  * treats a server whose stdout carries anything but JSON-RPC as broken. So the stub answers on
  * stderr only, exits 0 at once, and never reads stdin — a host that had already started writing
  * frames must not find its process parked on them. Spawned against a fresh bundle, never `dist/`.

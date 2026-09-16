@@ -16,7 +16,7 @@ import type { PaletteItem } from './types'
  * Entry point for the Ink TUI. This module (and everything under `src/tui/`) is
  * the ONLY place allowed to import `ink`/`react`; it is reached exclusively via a
  * dynamic `await import('src/tui/boot')` from the TTY branch of entry/cli.ts, so
- * React never loads on the MCP / `--json` / non-TTY paths. Build splitting keeps
+ * React never loads on the `--agent` / `--json` / non-TTY paths. Build splitting keeps
  * it in a separate lazy chunk (see scripts/build.js).
  */
 

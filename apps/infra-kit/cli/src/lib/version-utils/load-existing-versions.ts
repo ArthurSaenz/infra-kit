@@ -35,9 +35,9 @@ export const extractVersionBranches = (lsRemoteStdout: string): string[] => {
 }
 
 // Quiet is scoped to the one invocation instead of toggling the global `$`. The save/restore form
-// leaked nothing, but it still made `$.quiet` globally true for the duration of a network call — and
-// this process is a long-lived MCP server, so a concurrent tool call would be silenced by a flag it
-// never set. `release-create` reaches this through both the wizard and any "next" token.
+// leaked nothing, but it still made `$.quiet` globally true for the duration of a network call, so
+// anything else awaiting a `$` in that window was silenced by a flag it never set. `release-create`
+// reaches this through both the wizard and any "next" token.
 const parseRemoteRefs = async (): Promise<string[]> => {
   const result = await $({ quiet: true })`git ls-remote --heads origin 'release/v*'`
 

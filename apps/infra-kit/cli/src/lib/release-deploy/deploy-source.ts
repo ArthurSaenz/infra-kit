@@ -104,7 +104,7 @@ export const assertFlagsMatchSource = (source: DeploySource, present: Record<str
  * Resolve `--from`, asking for it when the run can be asked.
  *
  * Still no default and still stated on every invocation — the interactive path answers the question
- * rather than assuming it. Non-TTY, `--json` and MCP runs fall through to {@link parseDeploySource}'s
+ * rather than assuming it. Non-TTY, `--json` and `--agent` runs fall through to {@link parseDeploySource}'s
  * hard error, so scripts, `--yes` and CI keep the strict contract where a wrong guess is unattended.
  */
 export const resolveDeploySource = async (from: string | undefined): Promise<DeploySource> => {

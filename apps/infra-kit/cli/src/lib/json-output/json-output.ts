@@ -3,9 +3,9 @@ import process from 'node:process'
 
 /**
  * `--json` output mode for the CLI. This is a presentation concern only: every
- * command handler already returns a `structuredContent` payload (the same one
- * the MCP surface consumes). Human/log output goes to stderr (see lib/logger),
- * so writing the structured payload to stdout never collides with it.
+ * command handler already returns a `structuredContent` payload. Human/log
+ * output goes to stderr (see lib/logger), so writing the structured payload to
+ * stdout never collides with it.
  */
 
 export interface CommandResult {

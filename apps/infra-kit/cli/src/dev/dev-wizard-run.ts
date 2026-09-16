@@ -5,7 +5,7 @@
  *
  * Prompts are behind the injectable {@link WizardPrompts} seam so the flow is testable without a TTY.
  * This module is reached ONLY from the bare-invocation TTY branch of the entry point; every flagged /
- * non-TTY / `--json` / MCP invocation bypasses it entirely.
+ * non-TTY / `--json` / `--agent` invocation bypasses it entirely.
  */
 import inquirerCheckbox from '@inquirer/checkbox'
 import inquirerConfirm from '@inquirer/confirm'
@@ -71,19 +71,30 @@ const promptContext = { output: process.stderr, clearPromptOnDone: true }
  */
 export const defaultPrompts: WizardPrompts = {
   select: (cfg) => {
-    return withEscape((context) => {
-      return inquirerSelect({ message: cfg.message, choices: cfg.choices, default: cfg.default }, context)
-    }, promptContext)
+    // The wizard is TTY-only by construction (`shouldRunWizard`); the declaration is for the sweep,
+    // which roots `entry/dev-server.ts` and reads the policy off the literal.
+    return withEscape(
+      (context) => {
+        return inquirerSelect({ message: cfg.message, choices: cfg.choices, default: cfg.default }, context)
+      },
+      { ...promptContext, whenHeadless: 'refuse' },
+    )
   },
   checkbox: (cfg) => {
-    return withEscape((context) => {
-      return inquirerCheckbox({ message: cfg.message, choices: cfg.choices }, context)
-    }, promptContext)
+    return withEscape(
+      (context) => {
+        return inquirerCheckbox({ message: cfg.message, choices: cfg.choices }, context)
+      },
+      { ...promptContext, whenHeadless: 'refuse' },
+    )
   },
   confirm: (cfg) => {
-    return withEscape((context) => {
-      return inquirerConfirm({ message: cfg.message, default: cfg.default }, context)
-    }, promptContext)
+    return withEscape(
+      (context) => {
+        return inquirerConfirm({ message: cfg.message, default: cfg.default }, context)
+      },
+      { ...promptContext, whenHeadless: 'refuse' },
+    )
   },
 }
 

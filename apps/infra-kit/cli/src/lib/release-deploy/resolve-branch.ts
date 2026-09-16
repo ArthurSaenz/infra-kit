@@ -14,8 +14,8 @@ import type { ReleaseType } from 'src/lib/release-utils'
  *
  * `version` accepts a version (`1.2.5`), a release name (`checkout-redesign`), or the literal `dev`.
  * When it is omitted the open release PRs are offered in the searchable picker, annotated with their
- * Jira descriptions and release types — so `--version` stays optional on the CLI even though the MCP
- * schemas require it (interactive pickers are unavailable without a TTY).
+ * Jira descriptions and release types — so `--version` stays optional for a human while a headless
+ * run without it is refused (interactive pickers are unavailable without a TTY).
  *
  * Shared by `deploy-all` and `deploy-selected`, which carried byte-identical copies of this block.
  */
