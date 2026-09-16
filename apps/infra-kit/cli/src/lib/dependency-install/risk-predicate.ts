@@ -2,8 +2,7 @@
  * Which recipes may run unattended, decided by computation rather than by a hand-set flag per recipe.
  *
  * This is the control that ships INSIDE the CLI, so it is the one that still holds on a machine with no
- * `.claude/settings.json`, on a Claude Code older than v2.1.199, and on any host that is not Claude Code
- * at all — every place where the `anthropic/requiresUserInteraction` prompt is silently ignored.
+ * `.claude/settings.json` and under any host that runs the CLI without a permission prompt of its own.
  */
 import type { DependencyManager, Recipe } from 'src/lib/dependency-registry'
 import { shellLine } from 'src/lib/shell-quote'

@@ -14,10 +14,10 @@ export interface RequiredConfirmedOptionArg {
 }
 
 /**
- * The per-tool seam that lets the domain-blind confirm chokepoint in `lib/tool-handler` collect a
- * tool's arguments from a HUMAN via an MCP elicitation form, without learning anything about the
- * tool's domain. The chokepoint asks only "is there a provider?" and "can this client render a
- * form?"; every domain-specific answer lives behind these three members.
+ * The per-tool seam that lets the domain-blind `refuseMissingArguments` describe a tool's arguments
+ * as a form — the `choices` an agent's refusal carries — without learning anything about the tool's
+ * domain. It asks only "is there a provider?" and "is this input formable?"; every domain-specific
+ * answer lives behind these three members.
  */
 export interface ArgumentFormProvider {
   /** Human-facing prompt rendered above the form. */
@@ -72,35 +72,20 @@ export interface McpTool<TIn extends z.ZodRawShape = z.ZodRawShape, TOut extends
   inputSchema: TIn
   outputSchema: TOut
   /**
-   * When true, this tool is gated by the MCP destructive-op confirm gate (see `lib/tool-handler`):
-   * a first call WITHOUT `confirm:true` returns a resolved-args gate response instead of running,
-   * and only a second call carrying `confirm:true` executes. This is ORTHOGONAL to the
-   * `confirmedCommand:true` the boundary always injects (a prompt-skip discriminator, not a gate).
-   * Set only on genuinely destructive tools; the default-deny catalog test enforces coverage.
+   * The catalog's own "this mutation is gated by `confirmOrExit`" declaration — the only machine-readable
+   * link between the catalog's `mutating` flag and `confirmOrExit`: a run without `--yes` previews its
+   * plan and exits, and only a re-run carrying `--yes` executes. Set only on genuinely destructive
+   * tools; the default-deny catalog test enforces coverage.
    */
   requiresHumanConfirm?: boolean
   /**
-   * Optional per-tool {@link ArgumentFormProvider}. Present means "this tool can offer the human a
-   * form for its arguments"; absent means the chokepoint behaves exactly as it always has. It is
-   * ORTHOGONAL to `requiresHumanConfirm`, and the two compose differently.
-   *
-   * On a gated tool the form feeds the gate: the merged arguments are what round 2 must confirm,
-   * token-bound, never a substitute for it. On an ungated tool the accepted form's merged arguments
-   * run directly — the human's answer is an ARGUMENT, not consent. The authority to run is the
-   * tool's allowlist, and the form path can execute nothing a direct call with the same arguments
+   * Optional per-tool {@link ArgumentFormProvider}. Present means "this command can describe a form for
+   * its arguments", which `refuseMissingArguments` renders as the `choices` of an agent's refusal. It is
+   * ORTHOGONAL to `requiresHumanConfirm`: a form answer is an ARGUMENT, not consent — the re-run still
+   * meets `confirmOrExit`, and the form path can execute nothing a direct call with the same arguments
    * could not.
    */
   formProvider?: ArgumentFormProvider
-  /**
-   * Host-facing `_meta` for this tool's `tools/list` entry.
-   *
-   * The one key used today is `anthropic/requiresUserInteraction: true`, which makes Claude Code prompt
-   * a human on EVERY call — including in `acceptEdits`, `auto` and `bypassPermissions`, and with allow
-   * rules unable to skip it. It is a Claude Code extension rather than MCP spec, so any other host, and
-   * any Claude Code below v2.1.199, ignores it silently: it is a gate where honoured and a no-op
-   * elsewhere, never a substitute for a refusal computed inside the CLI.
-   */
-  meta?: Record<string, unknown>
   handler: (
     params: z.infer<z.ZodObject<TIn>> & RequiredConfirmedOptionArg,
   ) => Promise<ToolsExecutionResult<z.infer<z.ZodObject<TOut>>>>

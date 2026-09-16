@@ -15,15 +15,15 @@ import type { ProtectedEnvAccess } from './protected-envs'
  * @example
  * await resolveProtectedEnvAccess() // no `protectedEnvs` key => { allowed: false, reason: 'disallow' }
  */
-// The only impure member of the protected-env pair: it reads the merged config and the MCP-mode
+// The only impure member of the protected-env pair: it reads the merged config and the agent-mode
 // flag, so `protected-envs.ts` stays a dependency-free policy leaf with a mock-free unit test.
 //
 // Refusing a protected env on a config we cannot read is correct; turning every deploy into a
 // config-parse error is not — and `getInfraKitConfig` genuinely throws for a missing file.
 //
 // `isAgentMode()` is called INSIDE this function on purpose. `agentMode` is a mutable object read at
-// call time, and the source is assigned during MCP server bootstrap (`mcp/server.ts`) or in the CLI's
-// `preAction` hook, both of which happen after this module is imported. Hoisting the read to module
+// call time, and the source is assigned in the CLI's `preAction` hook, which runs after this module
+// is imported. Hoisting the read to module
 // scope — `const inAgent = agentMode.source !== null` at the top — would freeze `false` and silently
 // degrade `'cli-only'` into `'allow'` for every agent.
 export const resolveProtectedEnvAccess = async (): Promise<ProtectedEnvAccess> => {

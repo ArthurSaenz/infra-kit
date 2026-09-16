@@ -50,18 +50,13 @@ export interface RunCleanupDeps {
  * Run `fn` with a SIGINT/SIGTERM guard that releases registered resources and
  * exits `128 + signo`, then always detaches the guard.
  *
- * **Install this on the CLI path ONLY**, never under MCP. `exit` is injectable purely as a test
+ * **Install this on the CLI path ONLY**, never inside a handler. `exit` is injectable purely as a test
  * seam, so a unit test can assert 130/143 without killing the runner; it is not a second
  * production mode.
  */
 // Why CLI-only: the precedent this copies (`installBootSignalGuard`) lives at an entry point,
-// which owns the process. `ghMergeDev` does not — it is also the MCP tool handler inside a
-// long-lived server, where a per-invocation handler calling `process.exit(130)` would preempt the
-// host's shutdown semantics and, on a stray signal, take the whole server down mid-session.
-//
-// Under MCP nothing is installed and ordinary unwinding suffices, because neither non-unwinding
-// exit exists there: the boundary always injects `confirmedCommand: true`, so the decline branch
-// is unreachable, and the server owns signal handling.
+// which owns the process. `ghMergeDev` does not — it is a handler returning a structured result,
+// and a `process.exit(130)` inside it would preempt whatever host embeds it.
 export const withRunCleanup = async <T>(fn: () => Promise<T>, deps: RunCleanupDeps = {}): Promise<T> => {
   const {
     register = (signal, handler): void => {

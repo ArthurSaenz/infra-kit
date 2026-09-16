@@ -66,7 +66,10 @@ const readCandidateToken = async ({
     // stderr, like env-load's picker: some env commands are invoked inside `$(…)` by the shell
     // wrapper, which captures stdout. A prompt rendered to stdout would be swallowed there — the user
     // would face a blank, silent terminal and type a credential into the void.
-    { output: process.stderr },
+    //
+    // Headless (`--agent`/`--json`): refuse and name `stdin` — an agent has a real exit in `--stdin`
+    // (or `--from-env`), and a masked prompt into a stream nobody is typing at would hang forever.
+    { output: process.stderr, whenHeadless: { refuse: 'stdin' } },
   )
 
   return { token: token.trim(), source: 'prompt' }

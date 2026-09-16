@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { getExposedMcpTools } from 'src/lib/command-catalog'
+import { commandCatalog } from 'src/lib/command-catalog'
 import { buildPaletteItems, resolveLeaf } from 'src/lib/command-catalog/palette'
 import { buildProgram } from 'src/lib/program/program'
 import { canPromptForDeploySource, resolveDeploySource } from 'src/lib/release-deploy'
@@ -69,9 +69,16 @@ describe('deprecated local aliases', () => {
   })
 })
 
-describe('mCP surface is untouched by the CLI merge', () => {
-  it('still advertises all four deploy tools under their original names', () => {
-    const names = getExposedMcpTools().map((tool) => {
+// Every catalog row with a tool definition — not the retired server's `mcpExposed` subset. The schema
+// is what `--json`/`--agent` callers and the argument-form refusals still read, so its shape is a
+// contract whether or not the row was ever registered anywhere.
+const catalogTools = commandCatalog.flatMap((entry) => {
+  return entry.mcpTool ? [entry.mcpTool] : []
+})
+
+describe('tool schemas are untouched by the CLI merge', () => {
+  it('still declares all four deploy tools under their original names', () => {
+    const names = catalogTools.map((tool) => {
       return tool.name
     })
 
@@ -86,7 +93,7 @@ describe('mCP surface is untouched by the CLI merge', () => {
   })
 
   it('keeps every deploy tool behind the two-phase confirm gate', () => {
-    const deployTools = getExposedMcpTools().filter((tool) => {
+    const deployTools = catalogTools.filter((tool) => {
       return tool.name.includes('deploy-')
     })
 
@@ -98,9 +105,9 @@ describe('mCP surface is untouched by the CLI merge', () => {
   })
 
   it('does not leak --from into any deploy tool’s input schema', () => {
-    // The merge is a CLI-layer change on purpose: the MCP boundary auto-confirms every call, so a
-    // source argument there would be chosen by an agent and confirmed by nobody.
-    for (const tool of getExposedMcpTools()) {
+    // The merge is a CLI-layer change on purpose: a source argument in the schema would be chosen by
+    // an agent and confirmed by nobody — the CLI picker is where a human decides.
+    for (const tool of catalogTools) {
       if (!tool.name.includes('deploy-')) continue
 
       expect(Object.keys(tool.inputSchema)).not.toContain('from')

@@ -91,29 +91,28 @@ describe('with project access granted', () => {
 })
 
 describe('with access withheld from agents (cli-only)', () => {
-  const mcpBlocked = { allowed: false, reason: 'agent-blocked' } as const
+  const agentBlocked = { allowed: false, reason: 'agent-blocked' } as const
 
   // The whole reason `reason` exists. Under a bare boolean this case would emit the delivery message
   // and send an agent off to run `release deliver` — the one flow it must NOT reach — or to report
   // that prod is unconfigured, when in fact the project allows it on the CLI.
   it('names the CLI as the fix and NOT the delivery flow', () => {
     expect(() => {
-      assertDeployable('prod', 'launch deploy-all workflow', mcpBlocked)
+      assertDeployable('prod', 'launch deploy-all workflow', agentBlocked)
     }).toThrow(/cli-only/)
 
     expect(() => {
-      assertDeployable('prod', 'launch deploy-all workflow', mcpBlocked)
+      assertDeployable('prod', 'launch deploy-all workflow', agentBlocked)
     }).not.toThrow(/release deliver/)
   })
 
   it('still strips prod from the picker', () => {
-    expect(deployableEnvs(['dev', 'prod'], mcpBlocked)).toEqual(['dev'])
+    expect(deployableEnvs(['dev', 'prod'], agentBlocked)).toEqual(['dev'])
   })
 
-  // The refusal is structured (an agent reads it) and worded for the caller it has: "over MCP" is
-  // true of exactly one source; a Bash-driven agent is told the withholding is agent-side.
+  // The refusal is structured (an agent reads it): a Bash-driven agent is told the withholding is
+  // agent-side, never that a transport it does not use refused it.
   it.each([
-    { source: 'mcp' as const, says: /not reachable over MCP/, never: /withheld from agents in this project/ },
     {
       source: 'flag' as const,
       says: /withheld from agents in this project \(protectedEnvs: "cli-only"\)/,
@@ -127,7 +126,7 @@ describe('with access withheld from agents (cli-only)', () => {
       let thrown: unknown
 
       try {
-        assertDeployable('prod', 'launch deploy-all workflow', mcpBlocked)
+        assertDeployable('prod', 'launch deploy-all workflow', agentBlocked)
       } catch (error) {
         thrown = error
       }

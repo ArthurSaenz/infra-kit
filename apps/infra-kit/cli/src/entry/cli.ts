@@ -62,14 +62,13 @@ const runProgram = async (argv: string[] = process.argv): Promise<void> => {
  * `$HOME`, so `cd ~ && infra-kit version` nagged the pnpm-global install. `isGlobalInstall` reads the
  * tree instead (a named manager, no `.git` above the outermost `node_modules`) and vetoes the advisory.
  *
- * `logger` is pino-pretty with `destination: 2`, i.e. stderr — never stdout, so `--json` payloads and the
- * MCP child's stdio framing stay clean. It is still suppressed for `--json` (machine consumers want no
- * chatter) and for `mcp` (that child's stdio should carry nothing but the transport).
+ * `logger` is pino-pretty with `destination: 2`, i.e. stderr — never stdout, so `--json` payloads stay
+ * clean. It is still suppressed for `--json` (machine consumers want no chatter).
  */
 const warnIfLocalInstall = (): void => {
   try {
     if (process.env.INFRA_KIT_NO_LOCATION_WARN) return
-    if (process.argv.includes('--json') || process.argv[2] === 'mcp') return
+    if (process.argv.includes('--json')) return
 
     const shouldWarn = shouldWarnLocalInstall({
       selfRealPath: realpathSync(fileURLToPath(import.meta.url)),
@@ -88,9 +87,18 @@ const warnIfLocalInstall = (): void => {
   }
 }
 
+// The "mcp" subcommand was retired in 0.10.0 (plan: .omc/plans/mcp-phase3-deletion-decision.md). Answered
+// here, before Commander, so no preAction hook (agent-mode, autoload, layer-3 seed) or updater runs for it.
+if (process.argv[2] === 'mcp') {
+  process.stderr.write(
+    'The "mcp" subcommand was retired in infra-kit 0.10.0: the Claude Code plugin\'s skills drive the CLI directly. Delete the "infra-kit" entry from .mcp.json (infra-kit doctor names the key).\n',
+  )
+  process.exit(0)
+}
+
 warnIfLocalInstall()
 
-// Deliberately NOT inside `warnIfLocalInstall`: its `--json` / `mcp` early return would skip exactly the
+// Deliberately NOT inside `warnIfLocalInstall`: its `--json` early return would skip exactly the
 // invocation that matters — the updater verifies a fresh install with `version --json`, and that run is
 // what re-points `~/.infra-kit/portless` after a silent update (see the portless-link header). fs-only,
 // never throws, never touches stdout; the outcome is a debug line on stderr under `--debug`.

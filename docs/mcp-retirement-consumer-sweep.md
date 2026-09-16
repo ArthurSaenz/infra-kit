@@ -7,6 +7,23 @@ of its retirement in favor of the CLI + skills. Swept 2026-09-15.
 Any fix below is a **separate PR in that repo**, on no particular deadline — this
 document only records what each repo needs, it does not make the edits.
 
+## Executed 2026-09-17 (Phase 3 pre-step, `.omc/plans/mcp-phase3-deletion-decision.md` §4)
+
+Re-checked against each repo's **remote** branches, not the local checkouts the 09-15 sweep read —
+two of the seven "live" rows were already dead upstream.
+
+| Repo / branch                                                                                                    | State on 09-17                                                                                                           | Action                                                                                              |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| hulyo-monorepo `main`                                                                                            | key live (arrived via release PRs #1361, #1366; `dev` never had it, so every release branch cut from `main` inherits it) | PR [#1372](https://github.com/Gulliver-GRP/hulyo-monorepo/pull/1372) — **gates the 0.10.0 publish** |
+| hulyo `release/alp-show-slug-map-fix`                                                                            | key live                                                                                                                 | direct commit `e0d24af` on the branch                                                               |
+| hulyo `release/v1.94.0`                                                                                          | remote branch gone (merged via #1361)                                                                                    | nothing — the local worktree is stale; remove it with `ik worktrees remove`                         |
+| sandbox-workspace `main`                                                                                         | key live                                                                                                                 | direct commit `17895bb`                                                                             |
+| nomadream `main`                                                                                                 | already clean; the key lives only on `feat/ota-n-level-benchmark` (in-flight, unpushed work)                             | left alone — dies when the branch merges `main`                                                     |
+| travelist `dev` / `main` (the `GLV-Backend` dir is a stale `release/v1.49.49` checkout pinning infra-kit 0.1.45) | already clean                                                                                                            | nothing — a 0.1.45 pin never reaches 0.10.0                                                         |
+
+The 8 `.claude/settings.local.json` files listing `infra-kit` in `enabledMcpjsonServers` are untracked and
+inert (no server to enable); left as-is.
+
 Scope: every directory directly under `/Users/arthur/projects` that is a git repo
 (`.git` dir or file), plus the release-worktree children of
 `hulyo-monorepo-worktrees`. `hulyo-monorepo-worktrees/feature/` is empty. A sibling

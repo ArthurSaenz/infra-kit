@@ -3,7 +3,6 @@ import { z } from 'zod'
 
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
-import { prefixFor, resolveLaunch } from 'src/mcp/tool-prefix'
 import { defineMcpTool, textContent } from 'src/types'
 
 import packageJson from '../../../package.json' with { type: 'json' }
@@ -43,7 +42,6 @@ export const version = async () => {
 
   logger.info(cliVersion)
 
-  const launch = resolveLaunch(process.env)
   const repoRoot = await rootOrNull(getProjectRoot)
   // Keyed off the resolved root so a `null` there is a `null` here too, not a second git failure.
   const mainRepoRoot =
@@ -59,8 +57,6 @@ export const version = async () => {
     repoRoot,
     mainRepoRoot,
     projectDir: process.env.CLAUDE_PROJECT_DIR || null,
-    launch,
-    toolPrefix: prefixFor(launch),
   }
 
   return {
@@ -73,11 +69,11 @@ export const version = async () => {
 export const versionMcpTool = defineMcpTool({
   name: 'version',
   description:
-    'Print the installed infra-kit CLI version, where this server process runs (cwd, repo root, main repo root, CLAUDE_PROJECT_DIR) and which route spawned it (plugin or a repo .mcp.json entry) with the tool prefix that route produces',
+    'Print the installed infra-kit CLI version and where this process runs (cwd, repo root, main repo root, CLAUDE_PROJECT_DIR)',
   inputSchema: {},
   outputSchema: {
     version: z.string().describe('Installed infra-kit CLI version (from package.json)'),
-    cwd: z.string().describe('The working directory of this server process'),
+    cwd: z.string().describe('The working directory of this process'),
     repoRoot: z
       .string()
       .nullable()
@@ -88,11 +84,7 @@ export const versionMcpTool = defineMcpTool({
       .describe(
         'The main checkout a linked worktree belongs to (equals repoRoot outside worktrees); null with repoRoot',
       ),
-    projectDir: z.string().nullable().describe('CLAUDE_PROJECT_DIR as Claude Code set it for this server, or null'),
-    launch: z
-      .enum(['plugin', 'legacy'])
-      .describe('Which route spawned this server: the Claude Code plugin, or a repo .mcp.json entry (legacy)'),
-    toolPrefix: z.string().describe('The prefix every tool of this server carries in this session'),
+    projectDir: z.string().nullable().describe('CLAUDE_PROJECT_DIR as Claude Code set it for this process, or null'),
   },
   handler: version,
 })

@@ -3,7 +3,14 @@ import path from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
-import { exposedTools, reachableModules, reachableSites, toolFiles, walkSources } from './mcp-reachable-prompt-sites'
+import {
+  catalogTools,
+  reachableModules,
+  reachableSites,
+  scriptKindOf,
+  toolFiles,
+  walkSources,
+} from './agent-reachable-prompt-sites'
 
 /**
  * @fileoverview
@@ -46,7 +53,7 @@ import { exposedTools, reachableModules, reachableSites, toolFiles, walkSources 
 const SRC = path.resolve(__dirname, '../../..')
 
 // Shared with the reachability helper rather than copied. Both sweeps must walk EXACTLY the same
-// set — this one asserts every prompt is wrapped, that one decides which of those are MCP-reachable —
+// set — this one asserts every prompt is wrapped, that one decides which of those are agent-reachable —
 // so two implementations that drift would silently disagree about which files exist to check.
 const walk = walkSources
 
@@ -125,8 +132,9 @@ const promptCalls = (source: ts.SourceFile, names: Set<string>): { line: number;
 const sites = walk(SRC).flatMap((file) => {
   const text = readFileSync(file, 'utf8')
 
-  // `setParentNodes: true` — `insideWithEscape` walks `node.parent` upwards.
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  // `setParentNodes: true` — `insideWithEscape` walks `node.parent` upwards. Script kind by extension,
+  // never a blanket TSX: see `scriptKindOf` for the generic-arrow parse that would otherwise fail open.
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKindOf(file))
   const names = promptNames(source)
 
   if (names.size === 0) return []
@@ -220,7 +228,7 @@ describe('no raw readline outside the prompts module', () => {
 //
 // `whenHeadless` is OPTIONAL and defaults to `'refuse'`, so a site that omits it is byte-identical
 // to a site whose author never considered the question. `tsc` cannot tell them apart, and neither
-// can a reader. THE RULE closes that gap the only way that leaves no ambiguity: on an MCP-reachable
+// can a reader. THE RULE closes that gap the only way that leaves no ambiguity: on an agent-reachable
 // path the answer must be WRITTEN — `'refuse'` included. Omission stops being a silence and starts
 // being a failure.
 //
@@ -229,15 +237,17 @@ describe('no raw readline outside the prompts module', () => {
 // editing `confirm-deploy.ts` will never look. An explicit `'refuse'` costs one line and sits next
 // to the prompt it governs.
 //
-// SCOPE — MCP-reachable sites only. A CLI-only prompt (`entry/cli.ts`'s palette, the dev wizard,
-// `env-token-set`) faces a real human and keeps the default, because forcing a declaration there
-// would assert something about a tool that does not exist. Reachability, and the ways it
-// over-approximates, are documented in `./mcp-reachable-prompt-sites`.
-describe('every MCP-reachable withEscape site declares its headless policy', () => {
+// SCOPE — agent-reachable sites, and what an agent reaches is the Bash surface, not a tool list: every
+// command is one `Bash(infra-kit …)` away, so a prompt in a command that never carried a tool
+// (`env-token-set`) or that a command's import closure drags in (the dev wizard) must declare its
+// answer like any other. The one prompt outside the rule is `entry/cli.ts`'s palette — not a command,
+// and a human typed the bare `infra-kit` that opens it. Reachability, and the ways it
+// over-approximates, are documented in `./agent-reachable-prompt-sites`.
+describe('every agent-reachable withEscape site declares its headless policy', () => {
   it('computes a real reachability graph (guards against a vacuous pass)', () => {
     // Every assertion below is a filter over these three; if the graph collapsed, they would all
     // pass by finding nothing to check.
-    expect(exposedTools.length).toBeGreaterThan(20)
+    expect(catalogTools.length).toBeGreaterThan(20)
     expect(reachableModules.size).toBeGreaterThan(100)
     expect(reachableSites.length).toBeGreaterThanOrEqual(15)
   })
@@ -254,10 +264,19 @@ describe('every MCP-reachable withEscape site declares its headless policy', () 
     expect(undeclared).toEqual([])
   })
 
-  it('still reaches every exposed tool from its own defineMcpTool declaration', () => {
+  it('roots the commands that never carried a tool, not only the defineMcpTool declarers', () => {
+    // The gap the re-root closed: these three are `mutating: true` and were invisible to every guard
+    // here while the roots were the registered tool set. If a refactor narrowed the roots back to the
+    // declarers, the rule above would pass by no longer looking.
+    for (const command of ['env-token-set', 'env-token-remove', 'env-autoload']) {
+      expect(reachableModules.has(path.join(SRC, 'commands', command, `${command}.ts`))).toBe(true)
+    }
+  })
+
+  it('still reaches every catalog tool from its own defineMcpTool declaration', () => {
     // The roots. A tool whose declaring file cannot be found contributes NO reachable modules, so
     // its prompts would silently drop out of the rule above.
-    const rootless = exposedTools
+    const rootless = catalogTools
       .filter((tool) => {
         return !toolFiles.has(tool.name)
       })

@@ -132,7 +132,7 @@ describe('getProjectRoot — honest typed error (Step 1)', () => {
   })
 
   it('agent remediation names `-C <dir>` and neither `cd ` nor `--project` (Step 3)', async () => {
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
     rejectWith({ stderr: 'fatal: not a git repository (or any of the parent directories): .git' })
 
     const err = await getProjectRoot().catch((e: unknown) => {

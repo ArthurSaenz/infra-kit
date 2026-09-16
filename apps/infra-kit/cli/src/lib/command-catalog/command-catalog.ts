@@ -28,11 +28,11 @@ import { worktreesSyncMcpTool } from 'src/commands/worktrees-sync'
 import type { ArgumentFormProvider, ToolsExecutionResult } from 'src/types'
 
 /**
- * Registration-facing shape of an MCP tool. The concrete `*McpTool` definitions
+ * Catalog-facing shape of a command's tool definition. The concrete `*McpTool` definitions
  * are generic over their Zod input/output shapes (and invariant), so they cannot
  * share one precise `McpTool<...>` element type in an array. This widened, non-
- * generic view exposes exactly what registration needs and every concrete tool
- * assigns to it. Matches the loose handler typing already used in tool-handler.
+ * generic view exposes exactly what the catalog's readers need and every concrete tool
+ * assigns to it.
  */
 export interface CatalogMcpTool {
   name: string
@@ -40,40 +40,32 @@ export interface CatalogMcpTool {
   inputSchema: z.ZodRawShape
   outputSchema: z.ZodRawShape
   /**
-   * Marks a destructive tool for the orthogonal MCP confirm gate in `lib/tool-handler`. Widened,
-   * non-generic mirror of {@link McpTool.requiresHumanConfirm} so registration (`mcp/tools/index.ts`)
-   * can forward it to `createToolHandler` without reaching into the concrete generic tool type.
+   * The catalog's own "this mutation is gated by `confirmOrExit`" declaration — the only
+   * machine-readable link between {@link CommandCatalogEntry.mutating} and `confirmOrExit`. Widened,
+   * non-generic mirror of {@link McpTool.requiresHumanConfirm} so the catalog tests can read it without
+   * reaching into the concrete generic tool type.
    */
   requiresHumanConfirm?: boolean
   /**
-   * Optional per-tool argument-form seam consumed by `lib/tool-handler`. Widened, non-generic mirror
-   * of {@link McpTool.formProvider} for the same reason `requiresHumanConfirm` is mirrored above:
-   * registration (`mcp/tools/index.ts`) forwards it to `createToolHandler` without reaching into the
-   * concrete generic tool type.
+   * Optional per-tool argument-form seam consumed by `refuse-missing-arguments.ts`, which builds the
+   * refusal's `choices` from it. Widened, non-generic mirror of {@link McpTool.formProvider} for the
+   * same reason `requiresHumanConfirm` is mirrored above.
    *
    * {@link ArgumentFormProvider} is itself non-generic and lives in `src/types`, which this module
-   * already imports from — so mirroring it costs no new dependency and, in particular, no MCP SDK
-   * import.
+   * already imports from — so mirroring it costs no new dependency.
    */
   formProvider?: ArgumentFormProvider
-  /**
-   * Host-facing `_meta` for the tool's `tools/list` entry. Widened, non-generic mirror of
-   * {@link McpTool.meta}, mirrored here for the same reason `requiresHumanConfirm` is: registration
-   * forwards it without reaching into the concrete generic tool type.
-   */
-  meta?: Record<string, unknown>
-  // Heterogeneous tool params; loose `any` mirrors the existing tool-handler typing.
+  // Heterogeneous tool params; loose `any` keeps the array element type assignable from every tool.
   handler: (params: any) => Promise<ToolsExecutionResult>
 }
 
 /**
- * Structural mirror of the SDK's `ToolAnnotations`. Deliberately NOT imported from
- * `@modelcontextprotocol/server`: this module is on every CLI command path, and the `u6`/`u7` bundle
- * guards depend on the catalog staying free of MCP SDK imports.
+ * Structural, not imported from any MCP SDK: this module is on every CLI command path and
+ * `dependency-guards.test.ts` pins the tree SDK-free.
  *
  * These are ADVISORY hints — the MCP spec states a client must not make security decisions from them.
- * The authority for destructive operations remains `requiresHumanConfirm` plus the confirm gate in
- * `lib/tool-handler`; nothing in that gate reads these fields.
+ * The authority for destructive operations remains `requiresHumanConfirm` plus `confirmOrExit`; nothing
+ * in that gate reads these fields.
  *
  * `idempotentHint` is deliberately absent: with no tool claiming `true`, an explicit `false` is
  * indistinguishable from omission under both host-reading conventions, and the hint licenses retry —
@@ -140,9 +132,8 @@ export interface CommandCatalogEntry {
   /** The co-located MCP tool, or null for CLI-only commands (init/config/vendor group). */
   mcpTool: CatalogMcpTool | null
   /**
-   * Whether the command is registered as an MCP tool. Explicit allowlist:
-   * `doctor` is deliberately UNEXPOSED (host-inspecting), so it must never become
-   * agent-callable by accident.
+   * Historical: whether the command was listed on the retired MCP server. NOT "agent-reachable" — every
+   * command is one `Bash(infra-kit …)` away; unread at runtime.
    */
   mcpExposed: boolean
   /**
@@ -303,10 +294,9 @@ export const commandCatalog: CommandCatalogEntry[] = [
   },
   // The CLI commands behind these two are DEPRECATED aliases of `release deploy-* --from local`,
   // so `menuGroup: null` keeps them out of the palette while they still resolve for anyone who types
-  // them. The MCP tools are deliberately NOT folded into the release pair: the MCP boundary
-  // auto-confirms every call (`tool-handler`), and `local-deploy-selected` requires `service` with
-  // `.min(1)` — a merged tool would have to relax that, and an agent omitting it would deploy
-  // everything. Agent-reachable while human-unbrowsable is the intended end state here.
+  // them. The tools are deliberately NOT folded into the release pair: `local-deploy-selected`
+  // requires `service` with `.min(1)` — a merged tool would have to relax that, and an agent omitting
+  // it would deploy everything. Agent-reachable while human-unbrowsable is the intended end state here.
   {
     cliName: 'local-deploy-all',
     menuGroup: null,
@@ -476,17 +466,16 @@ export const commandCatalog: CommandCatalogEntry[] = [
   // group rather than sitting outside it.
   //
   // Sets the machine up in one pass: the local `initCore` writes, then install-or-update for the five
-  // external tools. Exposed — over MCP and in the menu — despite mutating, on the rule the catalog
+  // external tools. Exposed in the menu despite mutating, on the rule the catalog
   // already enforces: exposure is bounded by a tool's own invariants, not by the verb (`worktrees-add`
   // is exposed, ungated, and runs `pnpm install`). Here the invariant is computed —
   // `lib/dependency-install/risk-predicate` refuses any recipe needing sudo or piping a network-fetched
   // script, which is both bootstrap recipes, on every host regardless of configuration.
   //
   // `requiresHumanConfirm` rather than LOW_RISK_MUTATING_ALLOWLIST membership: the allowlist ASSERTS low
-  // risk, and that would be a false claim for a command that installs software. It also carries
-  // `_meta['anthropic/requiresUserInteraction']` (setup.ts), the only gate that puts a human on the MCP
-  // path. Both fire unconditionally — `skipTools` included — because the read path that raises no prompt
-  // is `doctor`, a separate tool name and therefore a separate permission identity.
+  // risk, and that would be a false claim for a command that installs software. It fires unconditionally
+  // — `skipTools` included — because the read path that raises no prompt is `doctor`, a separate command
+  // and therefore a separate permission identity.
   //
   // `menuGroup: 'setup'` REVERSES an earlier decision to hide the row, and the two reasons it rested on
   // are recorded here so they are not silently re-adopted:
@@ -516,12 +505,13 @@ export const commandCatalog: CommandCatalogEntry[] = [
     menuGroup: 'setup',
     mcpTool: doctorMcpTool,
     mcpExposed: true,
-    // `mutating: false` is a statement about the EXPOSED TOOL, not about the CLI command. `--fix`
-    // chmods the token store and prunes stale portless routes, and it is unreachable from here:
-    // `doctorMcpTool.inputSchema` is `{}` and its handler is parameterless, so an agent has no way to
-    // ask for it. Exactly the `audit` precedent (`mutating: false` beside a CLI-only `--fix`), and
-    // pinned the same way — plus U-D2(b), which drives the real `doctor()` and asserts the handler
-    // reaches zero `chmodSync` calls on a fixture the CLI path demonstrably chmods.
+    // `mutating: false` is a statement about the FLAGLESS invocation the plugin grants
+    // (`Bash(infra-kit doctor)`), not about every argv the command accepts. `--fix` chmods the token
+    // store and prunes stale portless routes, and it is fenced by manifest U15: the grant is the bare
+    // command, so an agent cannot reach `--fix` without a fresh permission prompt. Exactly the `audit`
+    // precedent (`mutating: false` beside a CLI-only `--fix`), and pinned the same way — plus U-D2(b),
+    // which drives the real `doctor()` and asserts the handler reaches zero `chmodSync` calls on a
+    // fixture the CLI path demonstrably chmods.
     mutating: false,
     groupPath: ['doctor'],
   },
@@ -556,10 +546,9 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mutating: true,
     groupPath: ['env-autoload'],
   },
-  // env-token-set / env-token-remove carry NO MCP tool at all — not merely `mcpExposed: false`, so
-  // there is nothing to accidentally flip on. `lib/tool-handler` injects `confirmedCommand: true` into
-  // EVERY tool call, so the MCP boundary auto-confirms by construction: an agent must never be one call
-  // away from WRITING a credential or DESTROYING one. Same argument that keeps `doctor --fix` CLI-only.
+  // env-token-set / env-token-remove carry NO tool definition at all — not merely `mcpExposed: false`,
+  // so there is nothing to accidentally flip on: an agent must never be one call away from WRITING a
+  // credential or DESTROYING one. Same argument that keeps `doctor --fix` CLI-only.
   // menuGroup is null because both take a required `<env>` argument the no-arg menu cannot supply.
   {
     cliName: 'env-token-set',
@@ -577,17 +566,17 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mutating: true,
     groupPath: ['env-token-remove'],
   },
-  // Launcher for the MCP server itself; it blocks on a stdio transport, so it is neither a one-shot menu
-  // command nor expressible as a request/response tool.
-  { cliName: 'mcp', menuGroup: null, mcpTool: null, mcpExposed: false, mutating: false, groupPath: ['mcp'] },
 ]
 
 /**
- * Mutating, MCP-exposed tools that are DELIBERATELY exempt from the destructive-op confirm gate
- * (`mcpTool.requiresHumanConfirm`) because each is low-risk / reversible. Hand-maintained: adding a
- * name here is the ONLY sanctioned way to opt a mutating exposed tool out of the gate, and the
- * default-deny test (`command-catalog.test.ts`) reds CI for any mutating+exposed tool that is neither
- * gated nor listed here. Every member carries a one-line justification so an audit reads at a glance.
+ * Mutating commands that are DELIBERATELY exempt from the destructive-op confirm gate
+ * (`mcpTool.requiresHumanConfirm`) because each is low-risk / reversible.
+ *
+ * Every command is agent-reachable over `Bash(infra-kit …)`, so the set this guards is `mutating`
+ * alone — `mcpExposed` is historical and buys no exemption. Hand-maintained: adding a name here is
+ * the ONLY sanctioned way to opt a mutating command out of the gate, and the default-deny test
+ * (`command-catalog.test.ts`) reds CI for any mutating command that is neither gated nor listed here.
+ * Every member carries a one-line justification so an audit reads at a glance.
  */
 export const LOW_RISK_MUTATING_ALLOWLIST: readonly string[] = [
   // Overwrites the Jira fix-version description and the release PR body — reversible by re-editing;
@@ -599,6 +588,22 @@ export const LOW_RISK_MUTATING_ALLOWLIST: readonly string[] = [
   'worktrees-sync',
   // Writes a load file under the infra-kit cache dir; cleared by env-clear, no remote/git effect.
   'env-load',
+  // Writes the same session load file as env-load, fired backgrounded by the precmd hook; no
+  // remote/git effect.
+  'env-autoload',
+  // Writes one token into the local store; overwritten by the next set; no remote/git effect.
+  'env-token-set',
+  // Deletes one token from the local store; the Doppler token itself survives and env-token-set puts
+  // it back; no remote/git effect.
+  'env-token-remove',
+  // Opens $EDITOR on the per-machine config override under ~/.infra-kit — a human is in the editor;
+  // no remote/git effect.
+  'config-edit',
+  // Scaffolds the vendor config factory under ~/.infra-kit locally; no remote/git effect.
+  'vendor-config',
+  // Writes dev-context fragments and portless routes under ~/.infra-kit and runs local servers in the
+  // foreground until Ctrl-C; no remote/git effect.
+  'dev',
 ]
 
 // `openWorld` is DECLARED rather than derived because neither candidate derivation is sound. An
@@ -667,9 +672,9 @@ export const MCP_TOOL_PRESENTATION: Record<string, { title: string; openWorld: b
   // devops/scripts/deploy-<name>.sh against the authenticated AWS account via zx.
   'local-deploy-selected': { title: 'Deploy selected services from this machine', openWorld: true },
   // The only network path is worktrees-remove.ts:130, inside the picker `else` branch at :129-141.
-  // That branch is unreachable via MCP twice over: the inputSchema declares `versions` REQUIRED and
-  // omits `all` entirely, and assertMcpRemovalInput (:39-57, called at :97) throws under isAgentMode()
-  // on `all` and on missing `versions`.
+  // That branch is unreachable for an agent twice over: the inputSchema declares `versions` REQUIRED
+  // and omits `all` entirely, and assertAgentRemovalInput throws under isAgentMode() on `all` and on
+  // missing `versions`.
   'worktrees-remove': { title: 'Remove release worktrees', openWorld: false },
   // Emits `unset` statements into a local shell script and returns its path; the whole output surface
   // (filePath, unsetStatements, variableCount, purged) is local-file shaped, with no remote to contact.

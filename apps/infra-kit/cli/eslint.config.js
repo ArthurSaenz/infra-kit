@@ -3,14 +3,13 @@ import ikPlugin from '@slip-stream-kit/eslint-plugin'
 import config from '@wl/eslint-config'
 
 /**
- * No-React boundary: the entry/MCP/command code must never STATICALLY import the
+ * No-React boundary: the entry/command code must never STATICALLY import the
  * Ink TUI (or ink/react). The TUI is reached only via dynamic `await import()`
- * from the TTY branch, so React stays off the MCP / `--json` / non-TTY paths.
+ * from the TTY branch, so React stays off the `--json` / non-TTY paths.
  * `no-restricted-imports` only flags static imports — dynamic import() is allowed.
  */
 const MACHINE_PATH_GLOBS = [
   'src/entry/cli.ts',
-  'src/entry/mcp.ts',
   'src/commands/**/*.ts',
   'src/commands/**/*.tsx',
   // The release-picker shim is the one lib module that legally reaches the TUI —

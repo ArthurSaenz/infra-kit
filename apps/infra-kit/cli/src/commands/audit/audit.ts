@@ -156,9 +156,9 @@ const applyFix = async (options: AuditOptions, workspaceRoot: string | null): Pr
  * one info line; the audit cannot go red on it and `--fix` never touches it.
  *
  * The plugin is skills-only and the skills drive the CLI over Bash, so the key serves nothing any
- * more — it spawns `infra-kit mcp`, kept alive as a compatibility stub for exactly this leftover
- * (`.omc/plans/mcp-to-cli-skills-migration.md` §3.10). Not fixable here because the file is
- * hand-maintained and holds other people's servers; the deletion is a repo PR.
+ * more — it spawns the retired `mcp` stub, which exits at once, so the session shows one failed MCP
+ * row. Not fixable here because the file is hand-maintained and holds other people's servers; the
+ * deletion is a repo PR.
  *
  * `logResults` prints failures only, so the pass row would be invisible from a terminal; the line
  * is logged here so a human running `ik audit --root` sees the chore, while the row carries it to
@@ -167,7 +167,7 @@ const applyFix = async (options: AuditOptions, workspaceRoot: string | null): Pr
 const reportLegacyMcpKey = (root: string): PackageValidationResult | null => {
   if (inspectLegacyMcpRegistration(root).kind !== 'stale') return null
 
-  const message = `${MCP_FILE_NAME} still registers "${MARKETPLACE_NAME}" — the plugin no longer serves an MCP server, so this entry only spawns a compatibility stub (\`infra-kit mcp\`). Delete the "${MARKETPLACE_NAME}" entry by hand in a PR, keeping its siblings`
+  const message = `${MCP_FILE_NAME} still registers "${MARKETPLACE_NAME}" — delete this key: the plugin no longer serves an MCP server and the entry spawns a retired subcommand that exits immediately (Claude Code lists it as failed). Delete the "${MARKETPLACE_NAME}" entry by hand in a PR, keeping its siblings`
 
   logger.info(`[INFO] mcp mcp:legacy-key: ${message}`)
 
@@ -184,8 +184,7 @@ const reportLegacyMcpKey = (root: string): PackageValidationResult | null => {
  * or the package resolved by walking up from the working directory (default —
  * the shape used by a package's `"infra-kit-check": "pnpm exec infra-kit audit"` script). The
  * returned `structuredContent.allPassed` lets the CLI set a non-zero exit code so
- * the audit fails CI; this function never calls `process.exit` so the MCP tool
- * can reuse it.
+ * the audit fails CI; this function never calls `process.exit`, it returns a result.
  *
  * @example
  * // CLI inside packages/serverless-config: `infra-kit audit`

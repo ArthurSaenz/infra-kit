@@ -153,7 +153,7 @@ describe('release remove — commandEcho parity', () => {
   })
 })
 
-describe('release remove — MCP output schema round-trip', () => {
+describe('release remove — --json output schema round-trip', () => {
   it('accepts the structuredContent a CLI run returns', async () => {
     const result = await releaseRemove({ confirmedCommand: true, version: LABEL })
 
@@ -162,8 +162,8 @@ describe('release remove — MCP output schema round-trip', () => {
     }).not.toThrow()
   })
 
-  it('accepts the structuredContent an MCP run returns, including jira: "removed"', async () => {
-    agentMode.source = 'mcp'
+  it('accepts the structuredContent an --agent run returns, including jira: "removed"', async () => {
+    agentMode.source = 'flag'
 
     const result = await releaseRemove({ confirmedCommand: true, version: LABEL })
 

@@ -1358,7 +1358,7 @@ export const checkClaudePlugin = (root: string | null, origin?: DoctorOrigin): C
 
 /** The chore text for a leftover entry under `key`: what it spawns today, and the hand deletion that retires it. */
 const deleteKeyAdvisory = (key: string): string => {
-  return `${MCP_FILE_NAME} still registers "${key}" — delete this key: the plugin no longer serves an MCP server, and the entry only spawns \`infra-kit mcp\`, a compatibility stub kept alive for repos that have not deleted it yet. Delete the "${key}" entry from ${MCP_FILE_NAME} by hand in a PR, keeping its siblings (\`claude mcp remove ${key} --scope project\` also works but re-indents the file)`
+  return `${MCP_FILE_NAME} still registers "${key}" — delete this key: the plugin no longer serves an MCP server and the entry spawns a retired subcommand that exits immediately (Claude Code lists it as failed). Delete the "${key}" entry from ${MCP_FILE_NAME} by hand in a PR, keeping its siblings (\`claude mcp remove ${key} --scope project\` also works but re-indents the file)`
 }
 
 /**

@@ -56,7 +56,7 @@ afterEach(() => {
 
 // `@inquirer/core`'s `create-prompt.js` does `output.pipe(context.output ?? process.stdout)`, and no
 // production call site passes `output`. So `process.stdout` is where an unguarded prompt's bytes
-// land — and under MCP that stream IS the JSON-RPC transport. Measured: a fully piped child (stdin
+// land — and under `--json` that stream is what the skill parses. Measured: a fully piped child (stdin
 // from /dev/null, stdout redirected, no TTY either side) still writes ~54 bytes. Piping removes the
 // TTY; it does not remove the write.
 /** Capture everything written to `process.stdout` until `restore()`. */
@@ -284,26 +284,25 @@ const listenersDuringRun = async (): Promise<number> => {
   return observed
 }
 
-describe('withEscape — the MCP/TTY guard', () => {
+describe('withEscape — the agent/TTY guard', () => {
   // G0a. Both flags must be true. With `isTTY: false` the non-TTY branch would keep the prompt out
-  // of the stream anyway and this row would stay green against a version with the MCP check deleted —
+  // of the stream anyway and this row would stay green against a version with the agent check deleted —
   // vacuous on exactly the mutation it exists to catch.
-  it('g0a: refuses under MCP on a TTY, attaching nothing and writing nothing', async () => {
+  it('g0a: refuses under --agent on a TTY, attaching nothing and writing nothing', async () => {
     const stdin = new PassThrough()
 
-    // The `stdio: 'inherit'` shape: a terminal-launched `infra-kit mcp` really does
-    // have a TTY stdin. An isTTY-ONLY guard passes this precondition and attaches a
-    // raw listener to the JSON-RPC stream — so it MUST fail this test. That is the
-    // entire reason the test exists.
+    // A skill's `infra-kit … --agent` run from a terminal really does have a TTY stdin.
+    // An isTTY-ONLY guard passes this precondition and opens a prompt nobody will
+    // answer — so it MUST fail this test. That is the entire reason the test exists.
     setStdin(stdin, true)
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
 
     const before = stdin.listenerCount('data')
     const stdout = captureStdout()
 
     // A REAL `@inquirer/select` with NO `output` in its context, so its bytes go where production's
     // would: `process.stdout`. A stub callback would make the byte assertion vacuous — it would pass
-    // against a version with the MCP check deleted, because a stub renders nothing.
+    // against a version with the agent check deleted, because a stub renders nothing.
     //
     // Settled rather than awaited: with the guard deleted the prompt OPENS and never resolves, so a
     // bare `await` reports a 5s vitest timeout instead of the corruption. This bound lets the byte
@@ -317,25 +316,23 @@ describe('withEscape — the MCP/TTY guard', () => {
 
     stdout.restore()
 
-    expect(stdout.written(), `prompt bytes reached the JSON-RPC transport: ${JSON.stringify(stdout.written())}`).toBe(
-      '',
-    )
+    expect(stdout.written(), `prompt bytes reached the agent's stdout: ${JSON.stringify(stdout.written())}`).toBe('')
     expect(outcome.state, 'the guard let the prompt open instead of refusing').toBe('rejected')
     expect(String(outcome.reason)).toMatch(/interactive prompt/i)
 
-    // The bytes are the actual invariant, not the error text: under MCP `process.stdout` IS the
-    // JSON-RPC transport, so anything written there desynchronises the session.
+    // The bytes are the actual invariant, not the error text: an agent parses `process.stdout`
+    // (`--json`), so anything written there corrupts what it reads.
     expect(stdout.written()).toBe('')
     expect(stdin.listenerCount('data')).toBe(before)
   })
 
   // G0b — the row the blanket-refusal design would have failed. `worktrees-add` documents a `false`
-  // fallback for MCP in its own schema, so refusing there is a regression, not a safe default.
-  it('g0b: a { value } site returns that value under MCP and does NOT throw', async () => {
+  // fallback for agents in its own schema, so refusing there is a regression, not a safe default.
+  it('g0b: a { value } site returns that value under --agent and does NOT throw', async () => {
     const stdin = new PassThrough()
 
     setStdin(stdin, true)
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
 
     const stdout = captureStdout()
     let resolved: boolean | undefined
@@ -358,7 +355,7 @@ describe('withEscape — the MCP/TTY guard', () => {
   })
 
   // G0a2 — `--json` is a machine reader on stdout; a prompt there is stream corruption exactly as it
-  // is under MCP, and `release-picker`/`source-picker` already refuse on it. Source stays null, so the
+  // is under --agent, and `release-picker`/`source-picker` already refuse on it. Source stays null, so the
   // payload says so and the wording never invents an agent.
   it('g0a2: refuses under --json with no agent source, and a { value } site still answers', async () => {
     const stdin = new PassThrough()
@@ -387,7 +384,7 @@ describe('withEscape — the MCP/TTY guard', () => {
     ).resolves.toBe(false)
   })
 
-  it('attaches nothing when stdin is not a TTY and MCP is off', async () => {
+  it('attaches nothing when stdin is not a TTY and agent mode is off', async () => {
     const stdin = new PassThrough()
 
     setStdin(stdin, false)
@@ -404,12 +401,12 @@ describe('withEscape — the MCP/TTY guard', () => {
   })
 
   // G0e — the row that separates the two readings of the guard, and the one revision 1 lacked.
-  // `!isTTY` must NOT ride along with the MCP check: a piped-but-human run (`infra-kit … > log.txt`)
+  // `!isTTY` must NOT ride along with the agent check: a piped-but-human run (`infra-kit … > log.txt`)
   // has no TTY and still deserves its prompt. Before this branch decided an ANSWER the two were
   // interchangeable, because both merely skipped the Esc listener; now conflating them would refuse
-  // prompts no MCP server is waiting on. The mutation is adding `|| !process.stdin.isTTY` back to the
+  // prompts no agent is waiting on. The mutation is adding `|| !process.stdin.isTTY` back to the
   // headless branch.
-  it('g0e: non-TTY with MCP off still RUNS the callback rather than refusing', async () => {
+  it('g0e: non-TTY with agent mode off still RUNS the callback rather than refusing', async () => {
     const stdin = new PassThrough()
 
     setStdin(stdin, false)
@@ -590,7 +587,7 @@ describe('withEscape — the refusal payload (lib/errors/structured-refusal-erro
   })
 
   // The wording is the contract a Bash-driven skill reads. "stdin carries JSON-RPC" would send it
-  // looking for a server that does not exist; only the `'mcp'` source may say it.
+  // looking for a server that no longer exists.
   it.each([
     { source: 'flag' as const, names: /--agent/ },
     { source: 'env' as const, names: /INFRA_KIT_AGENT|CLAUDECODE/ },
@@ -609,17 +606,18 @@ describe('withEscape — the refusal payload (lib/errors/structured-refusal-erro
     expect(named.message).toContain('pass --description')
   })
 
-  it("under 'mcp' the wording keeps today's JSON-RPC text and names the field, not a flag", async () => {
+  // The retired server named the tool FIELD (`pass "description"`); a Bash-driven skill needs the
+  // FLAG, and a bare quoted field name would send it editing a payload that no longer exists.
+  it("under 'flag' the wording names the flag, never the bare field", async () => {
     setStdin(new PassThrough(), true)
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
 
     const plain = await refusalFrom('refuse')
     const named = await refusalFrom({ refuse: 'description' })
 
-    expect(plain.message).toContain('stdin carries JSON-RPC')
-    expect(plain.message).toContain('MCP runs have no human to answer it')
-    expect(named.message).toContain('pass "description"')
-    expect(named.message).not.toContain('--description')
-    expect(named.structuredContent).toEqual({ status: 'argument_required', argument: 'description', agentMode: 'mcp' })
+    expect(plain.message).toContain('no human to answer it')
+    expect(named.message).toContain('pass --description')
+    expect(named.message).not.toContain('pass "description"')
+    expect(named.structuredContent).toEqual({ status: 'argument_required', argument: 'description', agentMode: 'flag' })
   })
 })

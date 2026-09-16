@@ -10,6 +10,9 @@ const buildServerEntry = (): Record<string, unknown> => {
   return { type: 'stdio', command: 'infra-kit', args: ['mcp'] }
 }
 
+/** The dep-install spelling a repo that pinned infra-kit wrote by hand — the predicate's other half. */
+const DIST_LAUNCHER = { command: 'node', args: ['./node_modules/infra-kit/dist/mcp.js'] }
+
 /**
  * The writer-free reader of a consumer repo's `.mcp.json` (archived plan docs/archive/mcp/mcp-via-plugin-migration-plan.md
  * §3.3, "What `ensureMcpRegistration` becomes").
@@ -150,6 +153,15 @@ describe('inspectLegacyMcpRegistration — verdicts', () => {
     expectUntouched(before)
   })
 
+  // AC7 (ii): the widened predicate reaches this caller — the dep-install launcher under a key of the
+  // repo's choosing is the same failed row, and the advisory must name that key.
+  it('reports the dist launcher under another key as wrong-key, naming the key, and writes nothing', () => {
+    const before = writeAged(JSON.stringify({ mcpServers: { ik: DIST_LAUNCHER } }))
+
+    expect(inspectLegacyMcpRegistration(root)).toEqual({ kind: 'wrong-key', key: 'ik' })
+    expectUntouched(before)
+  })
+
   /** Edit 8: a proxy whose args mention infra-kit is NOT a misfiled server. */
   it('does not misread an ik-mcp proxy named like us as a misfiled server', () => {
     const before = writeAged(PROXY_NAMED_LIKE_US)
@@ -187,9 +199,20 @@ describe('isInfraKitServerEntry', () => {
     ['our command with another subcommand', { command: 'infra-kit', args: ['dev'] }, false],
     ['our command with no args', { command: 'infra-kit' }, false],
     ['a proxy whose args mention us', { command: 'ik-mcp', args: ['--name', 'infra-kit-x'] }, false],
+    ['a node launcher pointing at our dist', DIST_LAUNCHER, true],
     [
-      'a node launcher pointing at our dist',
-      { command: 'node', args: ['./node_modules/infra-kit/dist/mcp.js'] },
+      'an absolute launcher path to our dist',
+      { command: 'node', args: ['/repo/node_modules/infra-kit/dist/mcp.js'] },
+      true,
+    ],
+    [
+      "a node launcher pointing at another package's mcp.js",
+      { command: 'node', args: ['./node_modules/other/dist/mcp.js'] },
+      false,
+    ],
+    [
+      'a node launcher pointing at our proxy, not the server',
+      { command: 'node', args: ['./node_modules/infra-kit/dist/mcp-proxy.js'] },
       false,
     ],
     ['an http server', { type: 'http', url: 'https://mcp.linear.app/mcp' }, false],

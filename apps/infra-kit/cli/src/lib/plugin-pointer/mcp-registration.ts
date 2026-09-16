@@ -13,16 +13,15 @@ import { MARKETPLACE_NAME } from './names'
  * at: the Claude Code plugin is skills-only and the skills drive the CLI over Bash
  * (`.omc/plans/mcp-to-cli-skills-migration.md`), so no repo needs an entry to have the tools.
  *
- * WHY A LEFTOVER KEY IS A CHORE, NOT A FAULT. An `infra-kit` entry still spawns `infra-kit mcp`, which
- * stays alive as a compatibility stub for exactly this case (Phases 1–2), so a session in such a repo
- * keeps a working — if redundant — server until the key is deleted. What remains is a repo PR that
- * deletes the key by hand — a chore with no deadline, which is why the verdict is `stale`, reported as
- * a pass with an advisory, and never repaired by this CLI: `.mcp.json` is hand-maintained and holds
- * other people's servers (archived plan docs/archive/mcp/mcp-via-plugin-migration-plan.md §3.4: no
- * confirm-gated deletion).
+ * WHY A LEFTOVER KEY IS A CHORE, NOT A FAULT. An `infra-kit` entry spawns the retired `mcp` subcommand,
+ * which since 0.10.0 prints one stderr line and exits 0 — Claude Code shows a failed server row and
+ * nothing else changes. What remains is a repo PR that deletes the key by hand — a chore with no
+ * deadline, which is why the verdict is `stale`, reported as a pass with an advisory, and never repaired
+ * by this CLI: `.mcp.json` is hand-maintained and holds other people's servers (archived plan
+ * docs/archive/mcp/mcp-via-plugin-migration-plan.md §3.4: no confirm-gated deletion).
  *
- * `wrong-key` is the same chore under another key: our stub under `ik` is one more server process to
- * delete, not a different fault. It is kept as its own verdict so the advisory can name the key.
+ * `wrong-key` is the same chore under another key: the same failed row under `ik`, not a different
+ * fault. It is kept as its own verdict so the advisory can name the key.
  */
 
 /** The project-scoped MCP manifest Claude Code reads, at the repo root. */
@@ -38,8 +37,11 @@ export const SERVERS_KEY = 'mcpServers'
  */
 const SERVER_COMMAND = 'infra-kit'
 
-/** The subcommand that runs the server; `SERVER_COMMAND` + this is the whole "ours" predicate. */
+/** The retired subcommand; `SERVER_COMMAND` + this is the global-install half of the "ours" predicate. */
 const SERVER_ARGS: readonly string[] = ['mcp']
+
+/** The dep-install shape (`node ./node_modules/infra-kit/dist/mcp.js`): the other half of the predicate. */
+const SERVER_ENTRY_SUFFIX = '/infra-kit/dist/mcp.js'
 
 /** Indentation for a file the proxy writer creates, and the fallback when detection finds none. */
 export const DEFAULT_INDENT = '  '
@@ -51,8 +53,8 @@ export const isPlainObject = (value: unknown): value is JsonObject => {
 }
 
 /**
- * Is this server entry infra-kit's own — `command: infra-kit`, `args[0]: mcp` — whatever key it sits
- * under?
+ * Is this server entry infra-kit's own — `command: infra-kit`, `args[0]: mcp`, or any arg ending in
+ * `/infra-kit/dist/mcp.js` — whatever key it sits under?
  *
  * Exact fields, not a substring: the previous `"<command> <args>".includes('infra-kit')` read a
  * `grafana`-style proxy (`ik-mcp --name infra-kit-x …`) as a misfiled server and turned a correct
@@ -61,6 +63,7 @@ export const isPlainObject = (value: unknown): value is JsonObject => {
  *
  * @example
  * isInfraKitServerEntry({ command: 'infra-kit', args: ['mcp'] }) // => true
+ * isInfraKitServerEntry({ command: 'node', args: ['./node_modules/infra-kit/dist/mcp.js'] }) // => true
  * isInfraKitServerEntry({ command: 'ik-mcp', args: ['--name', 'infra-kit-x'] }) // => false
  */
 export const isInfraKitServerEntry = (value: unknown): boolean => {
@@ -68,7 +71,14 @@ export const isInfraKitServerEntry = (value: unknown): boolean => {
 
   const { command, args } = value
 
-  return command === SERVER_COMMAND && Array.isArray(args) && args[0] === SERVER_ARGS[0]
+  if (!Array.isArray(args)) return false
+  if (command === SERVER_COMMAND && args[0] === SERVER_ARGS[0]) return true
+
+  // A repo that pinned infra-kit as a dep registered the dist file directly, under whatever key it
+  // chose; that entry is the same failed row and deserves the same advisory.
+  return args.some((arg) => {
+    return typeof arg === 'string' && arg.endsWith(SERVER_ENTRY_SUFFIX)
+  })
 }
 
 /**

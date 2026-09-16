@@ -3,12 +3,10 @@ import { z } from 'zod'
 
 import { releaseCreateMcpTool } from 'src/commands/release-create'
 import { logger } from 'src/lib/logger'
-import { FORM_DEADLINE_MS, buildArgumentForm, narrowsArgs } from 'src/lib/tool-handler/argument-form'
-import { canonicalArgs, stripGateKeys } from 'src/lib/tool-handler/confirm-token'
 import type { SemVer } from 'src/lib/version-utils'
 import { loadExistingVersions } from 'src/lib/version-utils/load-existing-versions'
 
-import { HINT_BUDGET_MS, createReleaseFormProvider } from '../release-form'
+import { createReleaseFormProvider } from '../release-form'
 
 vi.mock('src/lib/version-utils/load-existing-versions', async (importOriginal) => {
   return { ...(await importOriginal<object>()), loadExistingVersions: vi.fn() }
@@ -37,18 +35,15 @@ interface RenderedSchema {
 }
 
 /**
- * Send the provider's schema through `inputRequired.elicit()` and return the WIRE shape. Asserted
- * here rather than on the zod object because `elicit()` throws on anything it cannot express and
- * `buildArgumentForm` swallows that into the same `null` a form-less client produces.
+ * Render the provider's schema the way `refuseMissingArguments` ships it in `choices`: JSON Schema,
+ * asserted here rather than on the zod object because that is the shape a skill actually reads.
  */
 const render = async (provider = createReleaseFormProvider()): Promise<RenderedSchema> => {
-  const form = await buildArgumentForm(provider, {}, FORM_DEADLINE_MS)
+  const schema = await provider.buildRequestedSchema({})
 
-  expect(form).not.toBeNull()
+  expect(schema).not.toBeNull()
 
-  const request = form?.inputRequests?.args as { params?: { requestedSchema?: RenderedSchema } } | undefined
-
-  return request?.params?.requestedSchema ?? {}
+  return schema === null ? {} : (z.toJSONSchema(schema) as RenderedSchema)
 }
 
 const releaseDescription = async (provider?: ReturnType<typeof createReleaseFormProvider>): Promise<string> => {
@@ -75,9 +70,8 @@ describe('r1 — isFormable', () => {
   })
 })
 
-// R2. The assertion that separates "a form was offered" from "the provider silently broke": every
-// other test in this file would pass against a provider whose schema `elicit()` refuses, because the
-// refusal is flattened into the same `null` a non-elicitation client produces.
+// R2. The assertion that separates "a form was offered" from "the provider silently broke": a
+// provider returning `null` reads as "nothing to offer" and the refusal ships without `choices`.
 describe("r2 — the form is OFFERED, in the wizard's order", () => {
   it('renders type and release required, description optional, no default anywhere', async () => {
     known(KNOWN)
@@ -110,7 +104,7 @@ describe('r3 — the [next] hint', () => {
     expect(await releaseDescription()).toContain('will be REFUSED')
   })
 
-  it("degrades to the timeout prose within its own budget, not the chokepoint's", async () => {
+  it('degrades to the timeout prose within its own budget', async () => {
     vi.mocked(loadExistingVersions).mockReturnValue(new Promise(() => {}))
     silenceInfo()
 
@@ -131,11 +125,6 @@ describe('r3 — the [next] hint', () => {
     expect(raced).not.toBeNull()
 
     expect(await releaseDescription(provider)).toContain('could not be computed')
-  })
-
-  it('keeps the exported budget strictly inside the chokepoint deadline', () => {
-    expect(HINT_BUDGET_MS).toBe(2_500)
-    expect(HINT_BUDGET_MS).toBeLessThan(FORM_DEADLINE_MS)
   })
 })
 
@@ -170,7 +159,7 @@ describe('r4 — observability', () => {
   })
 })
 
-/** Every `toArgs` row R7 and R8 replay: the content the human sent, and the merged output owed. */
+/** Every `toArgs` row R7 replays: the content the human sent, and the merged output owed. */
 const CLASSIFIED: [Record<string, unknown>, Record<string, unknown>][] = [
   [{ type: 'regular', release: '1.63.3' }, { releases: [{ version: '1.63.3', type: 'regular' }] }],
   [{ type: 'regular', release: 'v1.63.3' }, { releases: [{ version: 'v1.63.3', type: 'regular' }] }],
@@ -227,30 +216,17 @@ describe('r6 — merge over round 1', () => {
   })
 })
 
-// R7. The fixed point under the WIRE's comparator: round 2 re-parses the merged arguments through
-// the tool's inputSchema (whose transform defaults `type` and drops a blank description) and the
-// gate compares `canonicalArgs` of the result against what round 1 signed. Any drift here is a
-// `mismatch` refusal on every form-fed confirmation.
-describe('r7 — every toArgs output is a fixed point of the tool schema', () => {
+// R7. The merged output is what the re-run hands the handler, so it must parse under the tool's own
+// inputSchema (whose transform defaults `type` and drops a blank description).
+describe('r7 — every toArgs output is a valid release-create call', () => {
   const provider = createReleaseFormProvider()
   const inputSchema = z.object(releaseCreateMcpTool.inputSchema)
 
-  it.each(CLASSIFIED)('%j survives the round-2 parse unchanged', (content) => {
-    const m = provider.toArgs(content, {})
+  it.each(CLASSIFIED)('%j parses under the tool inputSchema', (content) => {
+    const merged = provider.toArgs(content, {})
 
-    expect(m).not.toBeNull()
-
-    const parsed = inputSchema.parse({ ...m, confirm: true })
-
-    expect(canonicalArgs(stripGateKeys(parsed))).toBe(canonicalArgs(m))
-  })
-})
-
-describe('r8 — the chokepoint accepts the merge', () => {
-  const provider = createReleaseFormProvider()
-
-  it.each(CLASSIFIED)('%j does not narrow the empty round 1', (content) => {
-    expect(narrowsArgs(stripGateKeys({}), provider.toArgs(content, {}))).toBe(false)
+    expect(merged).not.toBeNull()
+    expect(inputSchema.safeParse(merged).success).toBe(true)
   })
 })
 

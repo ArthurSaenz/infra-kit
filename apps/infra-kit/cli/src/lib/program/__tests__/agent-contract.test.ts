@@ -19,7 +19,7 @@ import { buildProgram } from '../program'
  * @fileoverview
  * The preAction hook's agent contract: `-C <dir>` is applied FIRST (before the layer-3 seed, which
  * keys off the cwd), and `agentMode.source` is resolved from `--agent` and the environment on every
- * run that is not already the MCP server's. The seed and the auto-load are mocked for the same
+ * run. The seed and the auto-load are mocked for the same
  * reason program.test.ts mocks them — they touch $HOME and Doppler.
  */
 
@@ -237,14 +237,5 @@ describe('--agent and the environment resolve agentMode.source in preAction', ()
       if (descriptor) Object.defineProperty(process.stdin, 'isTTY', descriptor)
       else delete (process.stdin as { isTTY?: boolean }).isTTY
     }
-  })
-
-  it("never overwrites the MCP server's own 'mcp' source", async () => {
-    scrub()
-    agentMode.source = 'mcp'
-
-    await parseInert(SEEDING_LEAF, ['--agent'])
-
-    expect(agentMode.source).toBe('mcp')
   })
 })

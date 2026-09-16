@@ -1,17 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
-import { LEGACY_MCP_TOOL_PREFIX, MCP_TOOL_PREFIX } from 'src/mcp/tool-prefix'
 
 import packageJson from '../../../../package.json' with { type: 'json' }
 import { version, versionMcpTool } from '../version'
 
 /**
- * The `version` tool's location and route fields (plan docs/archive/mcp/mcp-via-plugin-migration-plan.md §4
- * PM-4, §3.3): what the doctor skill reads to tell a worktree session from the main checkout and a
- * plugin-spawned server from a legacy one. Git is mocked at the seam: the fields are the seam's
- * answers passed through (or `null`), and a real `git` here would make the verdict depend on where
- * vitest was launched.
+ * The `version` command's location fields (plan docs/archive/mcp/mcp-via-plugin-migration-plan.md §4
+ * PM-4): what the doctor skill reads to tell a worktree session from the main checkout. Git is mocked
+ * at the seam: the fields are the seam's answers passed through (or `null`), and a real `git` here
+ * would make the verdict depend on where vitest was launched.
  */
 
 vi.mock('src/lib/git-utils', () => {
@@ -25,7 +23,6 @@ vi.mock('src/lib/logger', () => {
 beforeEach(() => {
   vi.mocked(getProjectRoot).mockResolvedValue('/repo/wt/feature')
   vi.mocked(getMainRepoRoot).mockResolvedValue('/repo')
-  vi.stubEnv('CLAUDE_PLUGIN_ROOT', '')
   vi.stubEnv('CLAUDE_PROJECT_DIR', '')
 })
 
@@ -52,22 +49,6 @@ describe('version — structuredContent', () => {
     vi.stubEnv('CLAUDE_PROJECT_DIR', '/repo')
 
     expect((await version()).structuredContent.projectDir).toBe('/repo')
-  })
-
-  it('reports the plugin route and prefix when CLAUDE_PLUGIN_ROOT is set', async () => {
-    vi.stubEnv('CLAUDE_PLUGIN_ROOT', '/home/me/.claude/plugins/cache/infra-kit/infra-kit/0.8.0')
-
-    const { structuredContent } = await version()
-
-    expect(structuredContent.launch).toBe('plugin')
-    expect(structuredContent.toolPrefix).toBe(MCP_TOOL_PREFIX)
-  })
-
-  it('reports the legacy route and prefix when CLAUDE_PLUGIN_ROOT is unset', async () => {
-    const { structuredContent } = await version()
-
-    expect(structuredContent.launch).toBe('legacy')
-    expect(structuredContent.toolPrefix).toBe(LEGACY_MCP_TOOL_PREFIX)
   })
 
   it('answers repoRoot: null (and mainRepoRoot: null) when git cannot resolve, without throwing', async () => {

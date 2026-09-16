@@ -282,11 +282,9 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
     "name": "version",
     "output": [
       "cwd",
-      "launch",
       "mainRepoRoot",
       "projectDir",
       "repoRoot",
-      "toolPrefix",
       "version",
     ],
   },

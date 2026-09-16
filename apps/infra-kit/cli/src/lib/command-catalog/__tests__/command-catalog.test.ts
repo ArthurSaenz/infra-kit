@@ -36,8 +36,10 @@ const allMenuPaths = (): string[] => {
   })
 }
 
-// The exact MCP tool surface that was hand-listed in src/mcp/tools/index.ts
-// before the catalog refactor. The catalog must keep this byte-for-byte.
+// The rows flagged `mcpExposed` — the set the retired MCP server registered. The field is historical
+// and unread at runtime (an agent reaches every command over Bash), so this list pins the VALUES until
+// the field is removed: a flip has to be a deliberate edit here, never a silent side effect of a
+// catalog change.
 const EXPECTED_EXPOSED_TOOLS = [
   'setup',
   'env-status',
@@ -151,31 +153,6 @@ describe('command catalog — MCP exposure policy', () => {
       if (entry.mcpExposed) {
         expect(entry.mcpTool, `${entry.cliName} is exposed but has no tool`).not.toBeNull()
       }
-    }
-  })
-
-  // The MCP boundary auto-confirms every tool, so the server must never be able to recursively launch
-  // the server it is already talking to. `mcp` is also not a one-shot menu command: it blocks on a stdio
-  // transport, so a palette row would hang the picker on the frame it was picked from.
-  it('keeps mcp off the MCP surface and out of every menu group', () => {
-    const exposedNames = new Set(
-      getExposedMcpTools().map((tool) => {
-        return tool.name
-      }),
-    )
-    const menuNames = new Set(allMenuPaths())
-
-    for (const cliName of ['mcp']) {
-      const entry = commandCatalog.find((candidate) => {
-        return candidate.cliName === cliName
-      })
-
-      expect(entry, `${cliName} must be in the catalog`).toBeDefined()
-      expect(entry?.mcpTool).toBeNull()
-      expect(entry?.mcpExposed).toBe(false)
-      expect(entry?.menuGroup).toBeNull()
-      expect(exposedNames.has(cliName)).toBe(false)
-      expect(menuNames.has(cliName)).toBe(false)
     }
   })
 
@@ -331,15 +308,18 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
   })
 
   /**
-   * The P1 invariant, fail-closed. Every mutating, MCP-exposed tool must EITHER carry
-   * `requiresHumanConfirm` OR be an explicit, one-line-justified member of LOW_RISK_MUTATING_ALLOWLIST.
-   * A future `mcpExposed: true` on a new mutating tool that sets neither reds CI — opting out of the
-   * gate becomes a deliberate, greppable allowlist edit, never a silently-typed `false`.
+   * The P1 invariant, fail-closed. Every mutating command must EITHER carry `requiresHumanConfirm` OR
+   * be an explicit, one-line-justified member of LOW_RISK_MUTATING_ALLOWLIST.
+   *
+   * Keyed on `mutating` alone: every command is one `Bash(infra-kit …)` away, and `mcpExposed` is
+   * historical ("was listed on the retired server"), so keying on it left `env-token-set` and
+   * `env-autoload` outside the invariant. A new mutating command that sets neither reds CI — opting out
+   * of the gate becomes a deliberate, greppable allowlist edit, never a silently-typed `false`.
    */
-  it('leaves no mutating, exposed tool ungated unless it is on the low-risk allowlist', () => {
+  it('leaves no mutating command ungated unless it is on the low-risk allowlist', () => {
     const offenders = commandCatalog
       .filter((entry) => {
-        return entry.mutating && entry.mcpExposed && entry.mcpTool?.requiresHumanConfirm !== true
+        return entry.mutating && entry.mcpTool?.requiresHumanConfirm !== true
       })
       .map((entry) => {
         return entry.cliName
@@ -348,7 +328,7 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
         return !LOW_RISK_MUTATING_ALLOWLIST.includes(cliName)
       })
 
-    expect(offenders, `ungated mutating+exposed tools not on the allowlist: ${offenders.join(', ')}`).toEqual([])
+    expect(offenders, `ungated mutating commands not on the allowlist: ${offenders.join(', ')}`).toEqual([])
   })
 
   /**
@@ -410,9 +390,11 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
   })
 
   // The allowlist is a safety escape hatch, not a dumping ground: every member must actually be a
-  // mutating, MCP-exposed catalog entry that is NOT gated. A stale name (e.g. a tool that was later
-  // gated or removed) would silently widen the escape hatch, so pin it.
-  it('keeps every allowlist member a real, ungated, mutating, exposed entry', () => {
+  // mutating catalog entry that is NOT gated. A stale name (e.g. a tool that was later gated or
+  // removed) would silently widen the escape hatch, so pin it. `mcpExposed` is deliberately NOT
+  // required — it is historical, and the members that motivated dropping it (`env-autoload`,
+  // `env-token-set`) never carried a tool at all.
+  it('keeps every allowlist member a real, ungated, mutating entry', () => {
     for (const cliName of LOW_RISK_MUTATING_ALLOWLIST) {
       const entry = commandCatalog.find((candidate) => {
         return candidate.cliName === cliName
@@ -420,7 +402,6 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
 
       expect(entry, `${cliName} on the allowlist must exist in the catalog`).toBeDefined()
       expect(entry?.mutating, `${cliName} must be mutating to warrant allowlisting`).toBe(true)
-      expect(entry?.mcpExposed, `${cliName} must be MCP-exposed to warrant allowlisting`).toBe(true)
       expect(
         entry?.mcpTool?.requiresHumanConfirm ?? false,
         `${cliName} is gated, so it should not be allowlisted`,

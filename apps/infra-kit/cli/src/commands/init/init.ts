@@ -590,9 +590,9 @@ const pointerEntry = (root: string, result: PluginPointerResult): InitEntry => {
  * One line per `.mcp.json` verdict — a READ, never a write. The plugin is skills-only and the skills
  * drive the CLI over Bash, so `setup` registers no server; it reports what the repo's own file says.
  *
- * `stale` is `unchanged` at `info`, not `warned`: the leftover key spawns `infra-kit mcp`, which stays
- * alive as a compatibility stub for exactly this case, so the session keeps a working — if redundant —
- * server. A pending repo chore with no deadline: the line names it and says what to delete. `wrong-key`
+ * `stale` is `unchanged` at `info`, not `warned`: the leftover key spawns the retired `mcp` stub, which
+ * exits at once, so the session shows one failed MCP row — a pending repo chore with no deadline: the
+ * line names it and says what to delete. `wrong-key`
  * is the same chore under another key, at `info` too, naming the key. `absent` / `missing-file` are
  * the steady state and say so, so a reader who knew the old "created .mcp.json" line learns the entry
  * is not wanted any more. `unparseable` is the one fault and WARNS with the fix: the lib no longer

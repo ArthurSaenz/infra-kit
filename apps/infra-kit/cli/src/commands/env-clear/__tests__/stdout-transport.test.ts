@@ -13,11 +13,10 @@ import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { envClear } from '../env-clear'
 
 /**
- * `envLoad` and `envClear` are the handlers behind BOTH `infra-kit env-load` and the MCP tools of the
- * same name. Over `infra-kit mcp`, stdout is the JSON-RPC transport: a bare path line between frames
- * is a corrupt message that only a tolerant client survives (the v1 SDK routes it to `onerror` and
- * reads on; a strict host drops the connection). The path the zsh wrapper captures is therefore the
- * CLI action's to print, and these tests pin that the handlers never touch stdout themselves.
+ * `envLoad` and `envClear` are handlers, not printers: under `--agent --json`, stdout is the JSON
+ * result the skill parses, and a bare path line ahead of it is a corrupt document. The path the zsh
+ * wrapper captures is therefore the CLI action's to print, and these tests pin that the handlers
+ * never touch stdout themselves.
  */
 
 const { download } = vi.hoisted(() => {

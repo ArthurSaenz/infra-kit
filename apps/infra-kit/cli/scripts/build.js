@@ -44,7 +44,7 @@ export const buildOptions = {
   minify: true,
   // `splitting` is required so the dynamically-imported Ink TUI (src/tui/*) lands
   // in a separate lazy chunk. Without it, the auto-injected `react/jsx-runtime`
-  // import would be hoisted into the eager cli.js/mcp.js bundle and load React on
+  // import would be hoisted into the eager cli.js bundle and load React on
   // every invocation — breaking the "no React on machine paths" guarantee.
   splitting: true,
   // Automatic JSX runtime so .tsx needs no `import React`. Pairs with
@@ -61,16 +61,15 @@ export const buildOptions = {
   loader: { '.md': 'text' },
   // Externalize every runtime dependency, plus the React JSX runtime subpaths.
   //
-  // A package key DOES cover its own subpaths: `@modelcontextprotocol/server` in this list
-  // externalizes `@modelcontextprotocol/server/stdio` too (asserted by guard B2 in
-  // src/mcp/__tests__/dependency-and-bundle-guards.test.ts). The React entries are NOT here to
-  // work around that — `react` is a dependency and is already covered. They are here because
+  // A package key DOES cover its own subpaths (`pkg` externalizes `pkg/sub` too), so the React
+  // entries are NOT here to work around that — `react` is a dependency and is already covered. They
+  // are here because
   // `jsx: 'automatic'` makes esbuild AUTO-INJECT `react/jsx-runtime` imports that were never
   // written in the source, and those injected specifiers have to be named explicitly.
   //
   // Note this list is derived from `dependencies`: a package imported by shipped source but
   // declared only in `devDependencies` is NOT externalized — esbuild silently INLINES it and the
-  // build still succeeds. Guards U6/U7 in the same test file exist to catch exactly that.
+  // build still succeeds. Guards U6/U7 in src/__tests__/dependency-guards.test.ts catch exactly that.
   external: [...Object.keys(packageJson.dependencies), 'react/jsx-runtime', 'react/jsx-dev-runtime'],
 }
 

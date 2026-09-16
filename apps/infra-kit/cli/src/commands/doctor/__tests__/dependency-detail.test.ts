@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { getExposedMcpTools } from 'src/lib/command-catalog'
+import { commandCatalog } from 'src/lib/command-catalog'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
 import { DEPENDENCY_IDS } from 'src/lib/dependency-registry'
 import type { DependencyId } from 'src/lib/dependency-registry'
@@ -211,9 +211,14 @@ describe('dependency rows carry the probe payload as `detail`', () => {
  * the property the whole surface rests on: a read path that prompts is a read path users learn to
  * click through.
  */
-describe('the setup surface an MCP agent sees', () => {
+describe('the setup surface an agent sees', () => {
+  // Every catalog row with a tool definition — `mcpExposed` is historical and an agent reaches every
+  // command over Bash, so the subset the retired server registered is not the surface any more.
   const exposed = () => {
-    return getExposedMcpTools()
+    return commandCatalog
+      .flatMap((entry) => {
+        return entry.mcpTool ? [entry.mcpTool] : []
+      })
       .filter((tool) => {
         return tool.name === 'setup' || tool.name === 'doctor'
       })

@@ -19,8 +19,8 @@ import { worktreesRemove, worktreesRemoveMcpTool } from '../worktrees-remove'
  * report on both surfaces.
  *
  *   - CLI: an OperationError naming the branch, thrown AFTER the IDE cleanup and the echo line
- *   - agent (MCP, `--agent`, env): a thrown `StructuredRefusalError` (`partial_failure`, exit 1) with a
- *     schema-valid `failedWorktrees` — rendered as `isError: true` by the tool handler over MCP
+ *   - agent (`--agent`, env): a thrown `StructuredRefusalError` (`partial_failure`, exit 1) with a
+ *     schema-valid `failedWorktrees` — emitted by `entry/cli.ts` under `--json`
  *
  * `removeWorktrees` is mocked (its recovery logic has its own unit tests); the reporting helpers
  * from src/lib/worktrees stay real.
@@ -145,11 +145,11 @@ describe('worktrees-remove failure report — CLI path', () => {
 })
 
 describe('worktrees-remove failure report — agent path', () => {
-  // The throw, not a returned `isError`: one refusal class for both surfaces, rendered by the tool
-  // handler over MCP and emitted by `entry/cli.ts` under `--json`. It must be an `OperationError`
-  // subclass to survive this handler's rewrapping `catch`, and it must still run AFTER the IDE cleanup.
+  // The throw, not a returned `isError`: one refusal class for both surfaces, emitted by `entry/cli.ts`
+  // under `--json`. It must be an `OperationError` subclass to survive this handler's rewrapping
+  // `catch`, and it must still run AFTER the IDE cleanup.
   it('throws a partial_failure refusal with a schema-valid failedWorktrees, after the IDE cleanup', async () => {
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
     vi.mocked(removeWorktrees).mockResolvedValue(PARTIAL_FAILURE)
 
     const thrown = await worktreesRemove({ confirmedCommand: true, versions: '1.2.5, 1.2.6' }).catch(
@@ -183,7 +183,7 @@ describe('worktrees-remove failure report — agent path', () => {
   // Same handler, same rewrapping `catch`: the confirm site's `confirmation_required` must come out
   // intact and BEFORE any removal.
   it('an unconfirmed agent run throws confirmation_required un-rewrapped and removes nothing', async () => {
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
 
     const thrown = await worktreesRemove({ confirmedCommand: false, versions: '1.2.5' }).catch((error: unknown) => {
       return error
@@ -193,5 +193,17 @@ describe('worktrees-remove failure report — agent path', () => {
     expect((thrown as StructuredRefusalError).structuredContent).toMatchObject({ status: 'confirmation_required' })
     expect((thrown as StructuredRefusalError).exitCode).toBe(2)
     expect(removeWorktrees).not.toHaveBeenCalled()
+  })
+
+  // `allowEditorRelaunch === !confirmedCommand`: the `--yes` re-run is the confirmed call, so the
+  // destructive Zed `--reuse` relaunch must stay off for an agent even after it confirms.
+  it('a confirmed agent run keeps allowEditorRelaunch false', async () => {
+    agentMode.source = 'flag'
+    vi.mocked(removeWorktrees).mockResolvedValue({ removed: ['release/v1.2.5'], failed: [] })
+
+    await worktreesRemove({ confirmedCommand: true, versions: '1.2.5' })
+
+    expect(removeIdeWorktreeFolders).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(removeIdeWorktreeFolders).mock.calls[0]?.[0].allowEditorRelaunch).toBe(false)
   })
 })

@@ -48,40 +48,29 @@ const ESC_BYTE = 0x1b
 // forced every one of them to grow a positional `undefined`.
 //
 // Optional, and the default is `'refuse'`. That default is safe for the same reason the guard exists
-// at all: under `isAgentMode()` nobody is at the keyboard (and under `'mcp'` `process.stdin` IS the
-// JSON-RPC transport), so no prompt at any site can return a usable answer, and refusing removes no
+// at all: under `isAgentMode()` nobody is at the keyboard, so no prompt at any site can return a
+// usable answer, and refusing removes no
 // capability that exists. It is what CLI-only sites (the palette, the dev wizard, `env-token-set`)
 // keep, because they face a real human.
 //
-// It is NOT what an MCP-reachable site may keep. There, omitting `whenHeadless` is indistinguishable
+// It is NOT what an agent-reachable site may keep. There, omitting `whenHeadless` is indistinguishable
 // from never having considered the question, so G7 (`every-inquirer-site-is-escapable`) requires the
 // answer to be written out — `'refuse'` included.
 //
 // What the default is NOT is *correct* everywhere — that distinction is the whole point of the
-// parameter. `worktrees-add` documents a `false` fallback for MCP in its own schema, so a refusal
+// parameter. `worktrees-add` documents a `false` fallback for agents in its own schema, so a refusal
 // there is right-outcome-by-accident at best and a regression at worst. The type cannot tell those
 // apart; G6 (description-to-policy) and G8 (argument-to-schema) are what check the answers,
 // because a wrong answer here compiles and can never fail a test on its own.
-//
-// WORDING IS SOURCE-AWARE. "stdin carries JSON-RPC" is true of exactly one caller; a skill driving
-// the CLI over Bash that reads it would go looking for a server that does not exist. Only the
-// `'mcp'` source keeps that text.
 const headlessExcerpt = (source: AgentModeSource): string => {
-  if (source === 'mcp') return 'an interactive prompt was reached under MCP, where stdin carries JSON-RPC'
   if (source === null) return 'an interactive prompt was reached under --json, which never prompts'
 
   return `an interactive prompt was reached in agent mode (${source === 'flag' ? '--agent' : 'INFRA_KIT_AGENT / CLAUDECODE'}), where there is no human to answer it`
 }
 
-const headlessRemediation = (source: AgentModeSource, argument: string | undefined): string => {
+const headlessRemediation = (argument: string | undefined): string => {
   const passIt =
     argument === undefined ? 'pass the value explicitly instead of relying on the prompt' : `pass --${argument}`
-
-  if (source === 'mcp') {
-    return argument === undefined
-      ? `${passIt} — MCP runs have no human to answer it`
-      : `pass "${argument}" — MCP runs have no human to answer it`
-  }
 
   return `${passIt} on the re-run`
 }
@@ -99,7 +88,7 @@ const resolveHeadless = <T>(policy: HeadlessPolicy<T>): T => {
     2,
     {
       operation: 'interactive prompt',
-      remediation: headlessRemediation(source, argument),
+      remediation: headlessRemediation(argument),
       stderrExcerpt: headlessExcerpt(source),
     },
   )

@@ -6,10 +6,8 @@ import { NO_OPEN_RELEASE_PRS_OPERATION, getReleasePRsWithInfo } from 'src/integr
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { getJiraDescriptions } from 'src/lib/release-utils'
-import { FORM_DEADLINE_MS, buildArgumentForm, narrowsArgs } from 'src/lib/tool-handler/argument-form'
-import { stripGateKeys } from 'src/lib/tool-handler/confirm-token'
 
-import { FETCH_BUDGET_MS, createReleaseRemoveFormProvider } from '../release-remove-form'
+import { createReleaseRemoveFormProvider } from '../release-remove-form'
 
 vi.mock('src/integrations/gh', async (importOriginal) => {
   return { ...(await importOriginal<object>()), getReleasePRsWithInfo: vi.fn() }
@@ -68,18 +66,15 @@ interface RenderedSchema {
 }
 
 /**
- * Send the provider's schema through `inputRequired.elicit()` and return the WIRE shape. Asserted
- * here rather than on the zod object because `elicit()` throws on anything it cannot express and
- * `buildArgumentForm` swallows that into the same `null` a form-less client produces.
+ * Render the provider's schema the way `refuseMissingArguments` ships it in `choices`: JSON Schema,
+ * asserted here rather than on the zod object because that is the shape a skill actually reads.
  */
 const render = async (provider = createReleaseRemoveFormProvider()): Promise<RenderedSchema> => {
-  const form = await buildArgumentForm(provider, {}, FORM_DEADLINE_MS)
+  const schema = await provider.buildRequestedSchema({})
 
-  expect(form).not.toBeNull()
+  expect(schema).not.toBeNull()
 
-  const request = form?.inputRequests?.args as { params?: { requestedSchema?: RenderedSchema } } | undefined
-
-  return request?.params?.requestedSchema ?? {}
+  return schema === null ? {} : (z.toJSONSchema(schema) as RenderedSchema)
 }
 
 /** The provider's own answer, raced so a missing deadline fails as an assertion instead of hanging. */
@@ -120,8 +115,8 @@ describe('f1 — isFormable', () => {
   })
 })
 
-// f2. The assertion that separates "a form was offered" from "the provider silently broke": every
-// other test in this file would pass against a provider whose schema `elicit()` refuses.
+// f2. The assertion that separates "a form was offered" from "the provider silently broke": a
+// provider returning `null` reads as "nothing to offer" and the refusal ships without `choices`.
 describe('f2 — the form is OFFERED, as the CLI picker would draw it', () => {
   it('renders version as a required enum of the open release labels, with type and description rows', async () => {
     prs([REGULAR, HOTFIX])
@@ -202,21 +197,15 @@ describe('f6 — the descriptions outran their budget', () => {
     expect(prose).toContain('1.2.5 [regular]')
     expect(infoLines()).toContain('Tool execution form descriptions unavailable (timeout): release-remove')
   })
-
-  it('keeps the exported budget strictly inside the chokepoint deadline', () => {
-    expect(FETCH_BUDGET_MS).toBe(2_500)
-    expect(FETCH_BUDGET_MS).toBeLessThan(FORM_DEADLINE_MS)
-  })
 })
 
-// f7. Round 2 re-parses the merged arguments through the tool's inputSchema and the gate compares
-// canonical arguments against what round 1 signed; any drift here is a `mismatch` refusal on every
-// form-fed confirmation.
+// f7. The merged output is what the re-run hands the handler, so it must parse under the tool's own
+// inputSchema and come out unchanged.
 describe('f7 — every toArgs output is a fixed point of the tool schema', () => {
   const provider = createReleaseRemoveFormProvider()
   const inputSchema = z.object(releaseRemoveMcpTool.inputSchema)
 
-  it.each(LABELS)('{ version: %j } survives the round-2 parse unchanged', (label) => {
+  it.each(LABELS)('{ version: %j } parses under the tool inputSchema unchanged', (label) => {
     const merged = provider.toArgs({ version: label }, {})
 
     expect(merged).toStrictEqual({ version: label })
@@ -252,14 +241,6 @@ describe('f8 — merge over round 1', () => {
 
   it.each([[{ version: 42 }], [{ version: undefined }], [{}]])('returns null for %j — the only null', (content) => {
     expect(provider.toArgs(content, {})).toBeNull()
-  })
-})
-
-describe('f9 — the chokepoint accepts the merge', () => {
-  const provider = createReleaseRemoveFormProvider()
-
-  it.each([[{}], [{ version: '' }], [{ moveIssuesTo: 'x' }]])('does not narrow round 1 %j', (round1) => {
-    expect(narrowsArgs(stripGateKeys(round1), provider.toArgs({ version: '1.2.5' }, round1))).toBe(false)
   })
 })
 

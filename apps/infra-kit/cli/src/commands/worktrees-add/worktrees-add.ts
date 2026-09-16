@@ -61,12 +61,11 @@ const OPERATION = 'create worktrees'
 // it keeps the bytes out of the stream, but turns a documented harmless default into a hard failure
 // and makes the tool unusable over MCP unless a caller passes both booleans explicitly.
 //
-// The guard lives in `withEscape` keyed on `isAgentMode()`, never `process.stdin.isTTY` —
-// `commands/mcp/mcp.ts` spawns the server with `stdio: 'inherit'`, so a terminal-launched
-// `infra-kit mcp` has a real TTY stdin and an isTTY-keyed guard would not fire. And never on
-// `confirmedCommand`, which carries the CLI's `--yes` (`program.ts:109`): keying on that would stop
-// `worktrees add --yes` prompting on a terminal, breaking the documented order in the CLI direction
-// in order to fix it in the MCP one.
+// The guard lives in `withEscape` keyed on `isAgentMode()`, never `process.stdin.isTTY`: the agent
+// signal is declared (`--agent`/env), and an isTTY key would misfire on the zsh wrappers' `$(…)`
+// captures. And never on `confirmedCommand`, which carries the CLI's `--yes` (`program.ts:109`): keying
+// on that would stop `worktrees add --yes` prompting on a terminal, breaking the documented order for
+// a human in order to fix it for an agent.
 //
 // ORDER (load-bearing, docs/orca-migration-plan.md §2.4): both follow-ups resolve BEFORE the confirm,
 // and — only when Orca resolves true — so do `probeOrca` and `findOrcaRepo`. The confirm preview must

@@ -4,12 +4,8 @@
  * keystrokes (raw `data` listeners, Ink screens, `@inquirer` prompts) must be gated off, and any
  * guard that exists because an agent needs a human's say-so keys on it.
  *
- * Three sources, and they are not interchangeable — the source is kept, not just the boolean, so a
+ * Two sources, and they are not interchangeable — the source is kept, not just the boolean, so a
  * refusal can word itself for the caller it actually has:
- * - `'mcp'`: this process is serving MCP and `process.stdin` IS the JSON-RPC transport. Set in
- *   `createMcpServer()` (the importable, transport-free entry every MCP launch goes through), not in
- *   `entry/mcp.ts`, which starts a server at module scope and so can never assert the flag was set.
- *   The MCP path never runs Commander's `preAction`, so no flag or variable can reach this source.
  * - `'flag'`: the global `--agent` option. Beats every environment value, `INFRA_KIT_AGENT=0`
  *   included — a skill that passes `--agent` must never be silently demoted by a variable in
  *   someone's `.zshenv`.
@@ -18,14 +14,13 @@
  *   Zed terminals `worktrees add` opens, and those are humans at a PTY. `INFRA_KIT_AGENT=0` suppresses
  *   only that heuristic; any other value is ignored as if unset.
  *
- * `process.stdin.isTTY` alone CANNOT answer the MCP case: `commands/mcp/mcp.ts` spawns the server
- * with `stdio: 'inherit'`, so a terminal-launched `infra-kit mcp` hands the child a real TTY stdin
- * and an isTTY-keyed guard does not fire. Piped stdio (how Claude Code spawns it) only makes isTTY
- * look sufficient by coincidence.
+ * `process.stdin.isTTY` alone is not the agent signal: a non-TTY stdin is also every zsh `$(…)`
+ * capture and CI job, and `--agent` from a terminal has a TTY — hence the declared flag plus the
+ * `CLAUDECODE` ∧ non-TTY conjunction.
  */
 import { jsonOutput } from 'src/lib/json-output'
 
-export type AgentModeSource = 'mcp' | 'flag' | 'env' | null
+export type AgentModeSource = 'flag' | 'env' | null
 
 /** Mutable holder (object so `prefer-const` holds while the source toggles per run). */
 export const agentMode = { source: null as AgentModeSource }
@@ -52,8 +47,7 @@ export interface ResolveAgentModeInput {
 }
 
 /**
- * Pure precedence over the two non-MCP sources; `'mcp'` is set directly by the server and never
- * produced here. Called once per run from `program.hook('preAction')`.
+ * Pure precedence over the two sources. Called once per run from `program.hook('preAction')`.
  *
  * @example
  * resolveAgentModeSource({ env: { INFRA_KIT_AGENT: '0' }, stdinIsTTY: true, flag: true }) // 'flag'

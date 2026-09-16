@@ -52,7 +52,7 @@ describe('getInfraKitConfig — missing layer-1 config (Step 4 prefix stability)
   })
 
   it('agent channel: message STARTS WITH the same prefix, names `-C <dir>` and neither `cd ` nor `--project` (Step 3)', async () => {
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
 
     const err = await getInfraKitConfig().catch((e: unknown) => {
       return e

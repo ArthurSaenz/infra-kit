@@ -315,8 +315,9 @@ describe('audit --root — agent-guidance regression', () => {
 
 /**
  * The leftover-key line (plan §3.3, `ik audit --root`): report-only. A `.mcp.json` that still carries
- * the `infra-kit` key that now only spawns the compatibility stub is a chore, not a fault — a pass row, one info line, and
- * the audit's verdict untouched. It is also never a `--fix`: the deletion is a repo PR by hand.
+ * the `infra-kit` key, whose entry now spawns a retired subcommand that exits at once, is a chore, not
+ * a fault — a pass row, one info line, and the audit's verdict untouched. It is also never a `--fix`:
+ * the deletion is a repo PR by hand.
  */
 describe('audit --root — leftover .mcp.json key', () => {
   beforeEach(() => {
@@ -350,6 +351,7 @@ describe('audit --root — leftover .mcp.json key', () => {
     expect(legacyChecks(result!)).toHaveLength(1)
     expect(legacyChecks(result!)[0]?.status).toBe('pass')
     expect(legacyChecks(result!)[0]?.message).toContain('no longer serves an MCP server')
+    expect(legacyChecks(result!)[0]?.message).toContain('spawns a retired subcommand that exits immediately')
     expect(legacyChecks(result!)[0]?.message).toContain('Delete the "infra-kit" entry by hand')
     expect(
       lines.filter((line) => {

@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
-import { exposedTools, promptSites, reachableSites } from './mcp-reachable-prompt-sites'
+import { commandCatalog } from 'src/lib/command-catalog'
+import { resolveLeaf } from 'src/lib/command-catalog/palette'
+import { buildProgram } from 'src/lib/program/program'
+
+import { catalogTools, promptSites, reachableSites } from './agent-reachable-prompt-sites'
 
 /**
  * @fileoverview
  * G8 and G6 — the two checks that make a `whenHeadless` answer TRUE rather than merely well-typed.
  *
- * A sibling guard in `every-inquirer-site-is-escapable.test.ts` requires every MCP-reachable
+ * A sibling guard in `every-inquirer-site-is-escapable.test.ts` requires every agent-reachable
  * `withEscape` site to WRITE an answer. Writing one does not make it right, and neither of the two
  * wrong answers can fail anything on its own:
  *
@@ -20,19 +24,25 @@ import { exposedTools, promptSites, reachableSites } from './mcp-reachable-promp
  *   a headless call gets. `worktrees-add` promised `false` for two years while the code fell through
  *   to a `confirm()` writing into the JSON-RPC transport. This compares the prose to the code.
  *
- * Both read the LIVE tool objects (`getExposedMcpTools()`), never a transcription of them.
+ * Both read the LIVE tool objects (every catalog row's `mcpTool`), never a transcription of them. A
+ * command that never carried a tool (`env-token-set`) has no schema to read, so its claim is checked
+ * against the Commander leaf's flags instead — the surface an agent actually passes arguments through.
  */
 
 /**
  * Reachable sites whose answer is something other than the refuse default, keyed
  * `<file>#<enclosing fn>` — a key that survives the edits a line number does not.
  *
- * `tools` are the exposed MCP tools that can reach the site; `fields` are the input fields the
- * answer's truth rests on. G8 re-derives each field from the site's own `{ refuse: '<name>' }`
+ * `tools` are the catalog tools that can reach the site (empty for a command with no tool definition,
+ * where `commands` names the Commander leaf instead); `fields` are the input fields the answer's truth
+ * rests on. G8 re-derives each field from the site's own `{ refuse: '<name>' }`
  * literal and cross-checks it here, so the table and the source have to agree with each other
  * before either is compared to the schema.
  */
-const POLICY_SITES: Record<string, { policy: 'argument' | 'value'; tools: string[]; fields: string[] }> = {
+const POLICY_SITES: Record<
+  string,
+  { policy: 'argument' | 'value'; tools: string[]; commands?: string[]; fields: string[] }
+> = {
   // NOT listed any more: `gh-release-deploy-selected#ghReleaseDeploySelected`,
   // `lib/prompts/env-picker.ts#pickEnv`, `env-load.ts#envLoad`, and the three
   // `release-create.ts#promptForVersionInput` / `#promptForNameInput` / `#promptForReleasesInteractive`
@@ -54,6 +64,17 @@ const POLICY_SITES: Record<string, { policy: 'argument' | 'value'; tools: string
     tools: ['release-desc-edit'],
     fields: ['description'],
   },
+  // Reachable since the guards re-rooted on the Bash surface. `tools: []` because the command has NO
+  // `mcpTool` (a credential write must never be one call away), so G8's schema check is VACUOUS for
+  // this site; the real escape hatches are the `--stdin` / `--from-env` options (`EnvTokenSetArgs:20-23`),
+  // and `commands` routes G8 to the Commander leaf instead, where both are checked as registered flags.
+  // The refusal names `stdin` — the CI / password-manager channel; `fromEnv` is the other.
+  'commands/env-token-set/env-token-set.ts#readCandidateToken': {
+    policy: 'argument',
+    tools: [],
+    commands: ['env-token-set'],
+    fields: ['stdin', 'fromEnv'],
+  },
   // The two sites whose answer is a VALUE rather than a claim, and the defect this file exists to
   // have caught: both `.describe()` strings promised "false (MCP, no TTY)" while the code prompted.
   // One helper per follow-up since the Orca migration moved them ahead of the confirm.
@@ -74,11 +95,28 @@ const PROMISE = /without a TTY|no TTY|required for MCP|required when invoked via
 
 /** Every input field the tool declares — the names a refusal may legitimately tell an agent to pass. */
 const declaredFields = (name: string): Set<string> => {
-  const tool = exposedTools.find((candidate) => {
+  const tool = catalogTools.find((candidate) => {
     return candidate.name === name
   })
 
   return new Set(tool ? Object.keys(z.object(tool.inputSchema).shape) : [])
+}
+
+/**
+ * The same question for a command with no tool: the long flags its Commander leaf registers, as
+ * camel-cased names (`--from-env` → `fromEnv`), which is the spelling `{ refuse: '<name>' }` uses.
+ */
+const declaredFlags = (cliName: string): Set<string> => {
+  const entry = commandCatalog.find((candidate) => {
+    return candidate.cliName === cliName
+  })
+  const leaf = entry ? resolveLeaf(buildProgram().commands, entry.groupPath) : undefined
+
+  return new Set(
+    (leaf?.options ?? []).flatMap((option) => {
+      return option.long ? [option.attributeName()] : []
+    }),
+  )
 }
 
 /**
@@ -88,7 +126,7 @@ const declaredFields = (name: string): Set<string> => {
  * from a description changes what this guard asserts instead of leaving it asserting a fiction.
  */
 const promiseCarryingTools = new Set(
-  exposedTools
+  catalogTools
     .filter((tool) => {
       const described = Object.values(tool.inputSchema).map((field) => {
         return (field as { description?: string }).description ?? ''
@@ -186,6 +224,55 @@ describe('g8 — every `{ refuse: <argument> }` names a field the owning tool de
       })
 
     expect(broken).toEqual([])
+  })
+
+  it('finds that field REGISTERED as a flag on every owning tool-less command', () => {
+    // Same claim, other surface: a command with no tool has no `inputSchema`, so the only thing that
+    // makes "pass `stdin`" true is the `--stdin` option in `lib/program/program.ts` — a file that,
+    // again, never mentions prompts.
+    const broken = promptSites
+      .filter((site) => {
+        return site.policy === 'argument' && site.field !== null
+      })
+      .flatMap((site) => {
+        const entry = POLICY_SITES[site.key]
+        const field = site.field as string
+
+        return (entry?.commands ?? []).flatMap((command) => {
+          return declaredFlags(command).has(field)
+            ? []
+            : [`${site.where}: \`--${field}\` is not registered on ${command}`]
+        })
+      })
+
+    expect(broken).toEqual([])
+  })
+
+  it('finds every escape hatch the table lists REGISTERED on its tool-less command', () => {
+    // The row lists both channels, and the refusal names only one — so this is what keeps the second
+    // (`--from-env`) honest: the remediation text tells an agent about it, and nothing else compares
+    // that text to the flags the leaf actually registers.
+    const missing = Object.entries(POLICY_SITES).flatMap(([key, entry]) => {
+      return (entry.commands ?? []).flatMap((command) => {
+        const flags = declaredFlags(command)
+
+        return entry.fields.flatMap((field) => {
+          return flags.has(field) ? [] : [`${key}: \`--${field}\` is not registered on ${command}`]
+        })
+      })
+    })
+
+    expect(missing).toEqual([])
+  })
+
+  it('checks every argument-naming site against at least one surface', () => {
+    // `tools: []` is legitimate for a tool-less command, but `tools: []` AND no `commands` would make
+    // both checks above pass by having nothing to compare — the vacuous-pass shape this file is about.
+    const unchecked = Object.entries(POLICY_SITES).flatMap(([key, entry]) => {
+      return entry.policy === 'argument' && entry.tools.length === 0 && (entry.commands ?? []).length === 0 ? [key] : []
+    })
+
+    expect(unchecked).toEqual([])
   })
 })
 

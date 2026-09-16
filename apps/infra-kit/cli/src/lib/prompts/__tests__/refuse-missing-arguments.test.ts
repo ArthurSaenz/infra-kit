@@ -76,14 +76,6 @@ describe('refuseMissingArguments', () => {
     expect(error.structuredContent.choices).toEqual(z.toJSONSchema(SCHEMA))
   })
 
-  it("is inert under 'mcp' — the chokepoint already ran the form before the handler", async () => {
-    agentMode.source = 'mcp'
-
-    await expect(
-      refuseMissingArguments({ provider: provider(), params: {}, operation: 'deploy', argument: 'env' }),
-    ).resolves.toBeUndefined()
-  })
-
   it('is inert for a human at a TTY, and for complete arguments in any mode', async () => {
     await expect(
       refuseMissingArguments({ provider: provider(), params: {}, operation: 'deploy', argument: 'env' }),

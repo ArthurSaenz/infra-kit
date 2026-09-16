@@ -20,7 +20,6 @@ import { ghMergeDev } from 'src/commands/gh-merge-dev'
 import { withRunCleanup } from 'src/commands/gh-merge-dev/run-cleanup'
 import { ghReleaseDeliver } from 'src/commands/gh-release-deliver'
 import { ghReleaseList } from 'src/commands/gh-release-list'
-import { runMcp } from 'src/commands/mcp'
 import { releaseCreate } from 'src/commands/release-create'
 import { deprecatedLocalDeploy, releaseDeployAll, releaseDeploySelected } from 'src/commands/release-deploy'
 import { releaseDescEdit } from 'src/commands/release-desc-edit'
@@ -100,9 +99,8 @@ const configureMergeDev = (cmd: Command): Command => {
     )
     .action(async (options) => {
       // The signal guard is installed HERE, on the CLI path, and nowhere else:
-      // `ghMergeDev` is also the MCP tool handler inside a long-lived server,
-      // where a per-invocation handler calling process.exit would preempt the
-      // host's shutdown and take the server down on a stray signal.
+      // `ghMergeDev` is a pure handler that returns a structured result, so a
+      // process.exit inside it would preempt any host that embeds it.
       const result = await withRunCleanup(() => {
         return ghMergeDev({
           all: options.all,
@@ -127,9 +125,9 @@ const configureMergeDev = (cmd: Command): Command => {
 
 /**
  * The zsh wrappers capture stdout as the file to source — `f=$(infra-kit env-load …); source "$f"` —
- * so the bare path is the CLI's stdout contract, and the CLI's only: the same handlers serve
- * `infra-kit mcp`, where stdout is the JSON-RPC transport. Printed BEFORE `emit` so `--json` keeps its
- * historical shape (path line, then the payload).
+ * so the bare path is the CLI's stdout contract. It is printed by the CLI action, not the handler, so
+ * the handler's return stays a pure structured result that `--json`/`--agent` callers serialise
+ * themselves. Printed BEFORE `emit` so `--json` keeps its historical shape (path line, then the payload).
  */
 const emitSourcePath = <T extends { structuredContent: { filePath: string } }>(result: T): T => {
   process.stdout.write(`${result.structuredContent.filePath}\n`)
@@ -368,7 +366,7 @@ const configureConfigEdit = (cmd: Command): Command => {
 // host-inspecting / meta commands where priming Doppler env would be surprising
 // (`setup` bootstraps the shell block AND installs doppler itself, `doctor`
 // inspects auth, `version` prints a string, `dev` is a long-running server that
-// manages its own env, and `mcp` hands its stdio to a child).
+// manages its own env).
 // `--help`/`--version`/the bare-arg menu don't fire preAction at all.
 //
 // `setup` is the member that carries the machine-bootstrap case, and it carries it under BOTH its
@@ -377,7 +375,7 @@ const configureConfigEdit = (cmd: Command): Command => {
 // form a user runs BEFORE doppler is installed, where there is nothing to prime from — priming there
 // would write a Doppler env-load file into the session cache off a command that exists to install the
 // tool it would be priming from.
-const AUTO_LOAD_EXCLUDED = new Set(['setup', 'doctor', 'version', 'dev', 'mcp'])
+const AUTO_LOAD_EXCLUDED = new Set(['setup', 'doctor', 'version', 'dev'])
 
 const isAutoLoadExcludedCommand = (name: string): boolean => {
   return name.startsWith('env-') || AUTO_LOAD_EXCLUDED.has(name)
@@ -387,8 +385,6 @@ const isAutoLoadExcludedCommand = (name: string): boolean => {
 // AUTO_LOAD_EXCLUDED above — the asymmetry is intentional, not an oversight:
 //   - `env-autoload` is the hidden command the zsh precmd hook fires BACKGROUNDED on every prompt
 //     (see the shell body in init.ts). It runs constantly; the seed has no business on that path.
-//   - `mcp` is excluded for LAZINESS, not cwd: the MCP server seeds at its first TOOL INVOCATION
-//     (lib/tool-handler), so a server that never receives a tool call never writes to $HOME.
 //   - `version` touches config ZERO times today, so seeding is pure new cost on the fastest path.
 // Everything else DOES seed — `doctor`, `config path`, `dev` and `setup` included (they are all in
 // AUTO_LOAD_EXCLUDED, but that set answers a different question), as does the whole `env-*` family
@@ -398,7 +394,7 @@ const isAutoLoadExcludedCommand = (name: string): boolean => {
 // establishes this project's layer-3 override file, so excluding it would mean the setup command is the
 // one command that does not set up the config. That holds for `setup --skip-tools` too — the seed is a
 // local write, not a tool install, so the additive form has exactly the same business here.
-const SEED_EXCLUDED = new Set(['env-autoload', 'mcp', 'version'])
+const SEED_EXCLUDED = new Set(['env-autoload', 'version'])
 
 /**
  * Canonical space-joined command path for a leaf (e.g. the `check` leaf of `vendor` → "vendor check").
@@ -548,7 +544,7 @@ export const buildProgram = (): Command => {
       emit(result)
 
       // This action is the SOLE carrier of the fix-write-failure signal: `audit()` never touches
-      // the exit code, so the MCP tool can reuse it. The second clause is not redundant — before
+      // the exit code, it returns a structured result. The second clause is not redundant — before
       // adoption a `missing` block PASSES, so a fix run whose only write failed would otherwise
       // report a green audit and exit 0.
       const { allPassed, fixed } = result.structuredContent
@@ -578,8 +574,8 @@ export const buildProgram = (): Command => {
     .action(async (options) => {
       const result = await doctor({ fix: Boolean(options.fix) })
 
-      // Presentation lives here, not in `doctor()`: the MCP tool shares that function and has no
-      // terminal. Skipped entirely under `--json` so stdout carries the payload and nothing else.
+      // Presentation lives here, not in `doctor()`: that function returns a structured result and
+      // owns no terminal. Skipped entirely under `--json` so stdout carries the payload and nothing else.
       if (!jsonOutput.enabled) {
         printDoctorReport(result.structuredContent.checks, { ascii: Boolean(options.ascii) })
       }
@@ -596,13 +592,6 @@ export const buildProgram = (): Command => {
       if (pluginMissing) process.exitCode = 1
 
       emit(result)
-    })
-
-  program
-    .command('mcp')
-    .description('Run the infra-kit MCP server (stdio transport)')
-    .action(() => {
-      runMcp()
     })
 
   program
@@ -809,16 +798,12 @@ export const buildProgram = (): Command => {
       logger.level = 'warn'
     }
 
-    // The MCP server sets `'mcp'` itself and never runs this hook; the guard is belt-and-braces for a
-    // program built inside that process (tests do). Everything else — `--agent`, the environment —
-    // is resolved once, here, from the same `optsWithGlobals()` read `--json` needs.
-    if (agentMode.source !== 'mcp') {
-      agentMode.source = resolveAgentModeSource({
-        env: process.env,
-        stdinIsTTY: process.stdin.isTTY === true,
-        flag: Boolean(actionCommand.optsWithGlobals().agent),
-      })
-    }
+    // Resolved once, here, from the same `optsWithGlobals()` read `--json` needs.
+    agentMode.source = resolveAgentModeSource({
+      env: process.env,
+      stdinIsTTY: process.stdin.isTTY === true,
+      flag: Boolean(actionCommand.optsWithGlobals().agent),
+    })
 
     // Layer-3 config auto-seed: ensure ~/.infra-kit/projects/<main-repo>/infra-kit.json exists (plus
     // its annotated .example.jsonc sibling) so a user always has a per-project override file to edit.
@@ -860,7 +845,7 @@ export const buildProgram = (): Command => {
   // Session-shell side channel: after a leaf action RESOLVES (Commander runs postAction only on
   // success — never when the action throws or calls process.exit), write the report file the parent
   // reads. Its presence is what lets the parent tell a completed run from a cancel. A no-op outside a
-  // session (no captured report path) and never on the MCP path (that never builds this program).
+  // session (no captured report path).
   program.hook('postAction', (_thisCommand, actionCommand) => {
     const path = commandPath(actionCommand)
 

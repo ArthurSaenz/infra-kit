@@ -37,15 +37,13 @@ interface LocalDeployArgs {
   /**
    * Consent already given — skip {@link confirmTarget}.
    *
-   * The name is not cosmetic and must match `confirmDeploy`'s (`confirm-deploy.ts:27`): the MCP
-   * chokepoint injects `confirmedCommand: true` into every handler call it lets through
-   * (`tool-handler.ts:466`), and nothing injects `yes`. This field was previously spelled `yes`, so
-   * on an MCP call it was `undefined`, `!yes` was true, and `confirmTarget` at the guard below
-   * rendered an inquirer prompt into the JSON-RPC stream — `@inquirer` writes to `process.stdout`
-   * (its `create-prompt.js` pipes to `context.output ?? process.stdout`, and no call site here
-   * passes `output`), which under MCP stdio IS the transport. That is stream corruption, not a hang.
-   * The CLI's `--yes` reaches this field through `release-deploy.ts`, exactly as it does for the two
-   * `gh-release-deploy-*` commands.
+   * The name is not cosmetic and must match `confirmDeploy`'s (`confirm-deploy.ts:27`): every caller
+   * spells consent `confirmedCommand`, and nothing sets `yes`. This field was previously spelled
+   * `yes`, so a headless call left it `undefined`, `!yes` was true, and `confirmTarget` at the guard
+   * below rendered an inquirer prompt into a stream nobody was reading — `@inquirer` writes to
+   * `process.stdout` (its `create-prompt.js` pipes to `context.output ?? process.stdout`, and no call
+   * site here passes `output`). The CLI's `--yes` reaches this field through `release-deploy.ts`,
+   * exactly as it does for the two `gh-release-deploy-*` commands.
    */
   confirmedCommand?: boolean
   dryRun?: boolean

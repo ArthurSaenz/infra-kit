@@ -18,7 +18,7 @@ const withConfig = (protectedEnvs?: string): void => {
 
 afterEach(() => {
   // `agentMode.source` is mutable module state shared across every test FILE in the run, not just this
-  // one. Leaving it true here would silently flip unrelated suites into MCP behaviour.
+  // one. Leaving it true here would silently flip unrelated suites into agent behaviour.
   agentMode.source = null
   vi.restoreAllMocks()
 })
@@ -62,16 +62,19 @@ describe('resolveProtectedEnvAccess', () => {
     // The branch the whole third enum value exists for. Note it asserts the REASON too: a bare boolean
     // here would make an agent's refusal read as "prod is delivered, not deployed", sending it off to
     // run the delivery flow instead of telling the human to run it in a terminal.
-    it('denies over MCP, with a reason distinct from a plain disallow', async () => {
-      withConfig('cli-only')
-      agentMode.source = 'mcp'
+    it.each(['flag', 'env'] as const)(
+      'denies under agent source %s, with a reason distinct from a plain disallow',
+      async (source) => {
+        withConfig('cli-only')
+        agentMode.source = source
 
-      expect(await resolveProtectedEnvAccess()).toEqual({ allowed: false, reason: 'agent-blocked' })
-    })
+        expect(await resolveProtectedEnvAccess()).toEqual({ allowed: false, reason: 'agent-blocked' })
+      },
+    )
 
-    it('is unaffected by MCP mode when the project says "allow"', async () => {
+    it('is unaffected by agent mode when the project says "allow"', async () => {
       withConfig('allow')
-      agentMode.source = 'mcp'
+      agentMode.source = 'flag'
 
       expect(await resolveProtectedEnvAccess()).toEqual({ allowed: true, reason: 'allowed' })
     })

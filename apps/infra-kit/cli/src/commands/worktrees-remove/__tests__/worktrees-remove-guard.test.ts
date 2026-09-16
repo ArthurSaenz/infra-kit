@@ -94,10 +94,10 @@ describe('worktrees remove — config-read guard', () => {
     expect(getCurrentWorktrees).not.toHaveBeenCalled()
   })
 
-  // Test 7 (pin) — the config read runs BEFORE assertMcpRemovalInput: in MCP mode with no `versions`,
+  // Test 7 (pin) — the config read runs BEFORE assertAgentRemovalInput: under --agent with no `versions`,
   // "not an infra-kit project" wins over "versions is required".
-  it('reports the missing config before the MCP versions-required validation', async () => {
-    agentMode.source = 'mcp'
+  it('reports the missing config before the agent versions-required validation', async () => {
+    agentMode.source = 'flag'
 
     const err = await worktreesRemove({ confirmedCommand: true }).catch((e: unknown) => {
       return e
@@ -117,9 +117,8 @@ const writeProjectConfig = (): void => {
   resetInfraKitConfigCache()
 }
 
-describe('worktrees remove — a Bash-driven agent reads CLI wording, not MCP wording', () => {
-  // Same guard as the MCP suite pins; only the wording forks on `agentMode.source === 'mcp'`. The
-  // config read wins first, so the refusal here is asserted THROUGH a present config.
+describe('worktrees remove — a Bash-driven agent reads CLI wording', () => {
+  // The config read wins first, so the refusal here is asserted THROUGH a present config.
   it('--all under --agent: refused, naming --versions and "under agent mode"', async () => {
     writeProjectConfig()
     agentMode.source = 'flag'

@@ -1,6 +1,4 @@
 /* eslint-disable sonarjs/no-os-command-from-path */
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import * as esbuild from 'esbuild'
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -18,10 +16,10 @@ import { buildOptions } from '../../../scripts/build.js'
  * @fileoverview
  *
  * INTEGRATION tests for the "fail honestly outside an infra-kit project" plan
- * (plan-fail-honestly-v4.md, Test strategy → Integration, I1–I10). These are the
- * cases table/unit tests structurally cannot catch: they need the REAL bundled CLI
- * spawned with an explicit cwd + child env, a real git repo / worktree fixture, and
- * the real MCP transport.
+ * (plan-fail-honestly-v4.md, Test strategy → Integration, I1–I10; I9 went with the
+ * MCP server in 0.10.0). These are the cases table/unit tests structurally cannot
+ * catch: they need the REAL bundled CLI spawned with an explicit cwd + child env and
+ * a real git repo / worktree fixture.
  *
  * HERMETIC BUILD — repo memory "dist-reading tests are vacuous": `qa` has no build
  * step, turbo `test` depends on `^build` (deps, not self), and the `dist` dir is
@@ -58,7 +56,6 @@ interface CliResult {
 }
 
 let cliPath = ''
-let mcpPath = ''
 const tmpDirs: string[] = []
 
 /**
@@ -68,8 +65,7 @@ const tmpDirs: string[] = []
  */
 // `CLAUDECODE` / `INFRA_KIT_AGENT` are scrubbed: the child's stdin is a pipe, so under Claude Code's
 // runner the inherited `CLAUDECODE=1` would put it in agent mode (lib/agent-mode) and every
-// human-channel remediation here would render its agent wording instead. The MCP block below
-// exercises the agent channel on its own.
+// human-channel remediation here would render its agent wording instead.
 const cleanEnv = (overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...process.env, ...KILL_SWITCHES }
 
@@ -165,7 +161,6 @@ beforeAll(async () => {
   await esbuild.build({ ...buildOptions, outdir: outDir })
 
   cliPath = join(outDir, 'cli.js')
-  mcpPath = join(outDir, 'mcp.js')
 }, 120_000)
 
 afterAll(() => {
@@ -293,57 +288,6 @@ describe('audit stays soft', () => {
     expect(result.code, result.out).toBe(0)
     expect(result.out).not.toContain('fatal:')
   }, 30_000)
-})
-
-describe('mCP server survives a non-project tool call', () => {
-  // I9 (AC8) — a worktrees-list tool call in a non-project cwd returns a TOOL ERROR (not a crash), the
-  // server accepts a subsequent call, and the error text advises the OPERATOR — it contains neither
-  // `cd ` nor `--project`. We spawn the REAL built MCP server (`mcp.js`) over the SDK's stdio transport
-  // with an explicit cwd, exactly as an MCP host would, rather than in-process: the server resolves its
-  // project from its launch cwd, and zx's git spawns follow the child's real cwd (an in-process
-  // `process.chdir` does NOT propagate to the config resolution — it resolved against the test runner's
-  // own cwd, the real infra-kit repo, and the guard never fired). `tool-handler.ts:39-48` catches →
-  // logs → rethrows, so the long-lived server degrades to an ordinary tool error.
-  it('i9: returns a tool error, stays up, and never says "cd " or "--project"', async () => {
-    const repo = makeNonProjectGitRepo()
-
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [mcpPath],
-      cwd: repo,
-      env: cleanEnv() as Record<string, string>,
-    })
-
-    const client = new Client({ name: 'integration-test', version: '0.0.0' })
-
-    await client.connect(transport)
-
-    try {
-      const errored = (await client.callTool({ name: 'worktrees-list', arguments: {} })) as {
-        isError?: boolean
-        content: Array<{ type: string; text?: string }>
-      }
-
-      expect(errored.isError).toBe(true)
-
-      const errorText = errored.content
-        .map((part) => {
-          return part.text ?? ''
-        })
-        .join('\n')
-
-      expect(errorText).not.toContain('cd ')
-      expect(errorText).not.toContain('--project')
-      expect(errorText).toContain('not an infra-kit project')
-
-      // The server stays up and answers a subsequent call that needs no project.
-      const survived = (await client.callTool({ name: 'version', arguments: {} })) as { isError?: boolean }
-
-      expect(survived.isError).toBeFalsy()
-    } finally {
-      await client.close()
-    }
-  }, 45_000)
 })
 
 const ANSI = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*m`, 'g')

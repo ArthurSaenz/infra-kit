@@ -2,7 +2,6 @@ import confirm from '@inquirer/confirm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getVersionRelatedIssueCounts, removeJiraVersion } from 'src/integrations/jira/remove-version'
-import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { deleteLocalBranch, deleteRemoteBranch } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
@@ -132,7 +131,6 @@ beforeEach(() => {
   zx.overrides = []
 
   installDefaults()
-  agentMode.source = null
   vi.mocked(confirm).mockResolvedValue(true)
 })
 
@@ -191,27 +189,5 @@ describe('release remove — issue counts changed since preflight', () => {
     expect(removeReleaseWorktreeIfPresent).toHaveBeenCalledTimes(1)
     expect(deleteLocalBranch).toHaveBeenCalledTimes(1)
     expect(deleteRemoteBranch).toHaveBeenCalledTimes(1)
-  })
-
-  it('over MCP: aborts the same way, and the WHOLE remediation says re-call, never the CLI command', async () => {
-    agentMode.source = 'mcp'
-    vi.mocked(getVersionRelatedIssueCounts)
-      .mockResolvedValueOnce({ issuesFixedCount: 0, issuesAffectedCount: 0 })
-      .mockResolvedValue({ issuesFixedCount: 1, issuesAffectedCount: 0 })
-
-    const error = await releaseRemove({ confirmedCommand: true, version: LABEL }).catch((e: unknown) => {
-      return e
-    })
-
-    expect(removeJiraVersion).not.toHaveBeenCalled()
-
-    // The message is TWO halves — the refusal's remediation, then the residue report's re-run
-    // sentence — and both are forked: one CLI command surviving in either would tell an agent to do
-    // two contradictory things in one sentence.
-    const { message } = error as Error
-
-    expect(message).toContain('issue counts changed')
-    expect(message).toContain('re-call release-remove')
-    expect(message).not.toContain('infra-kit release remove')
   })
 })

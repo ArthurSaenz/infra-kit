@@ -167,9 +167,9 @@ describe('releaseCreate — batch behaviour around the per-entry guard', () => {
   })
 })
 
-describe('releaseCreate — headless over MCP, no releases', () => {
+describe('releaseCreate — headless under --agent, no releases', () => {
   beforeEach(() => {
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
   })
 
   afterEach(() => {
@@ -177,16 +177,18 @@ describe('releaseCreate — headless over MCP, no releases', () => {
     vi.restoreAllMocks()
   })
 
-  // Reachable only on a round 2 whose token was minted over `{}`: the MCP seam offers a form first,
-  // and a client that cannot render one sees a gate with empty `resolvedArgs`. Confirming THAT must
-  // land on a refusal that names the field, never on the wizard writing into the JSON-RPC transport.
-  it('refuses with a remediation naming "releases" before the wizard has a side effect', async () => {
+  // A bare `--yes` call: `refuseMissingArguments` must answer with `argument_required` naming
+  // `--release`, never the wizard writing its picker into an agent's stdout.
+  it('refuses with a remediation naming --release before the wizard has a side effect', async () => {
     const setInteractive = vi.spyOn(commandEcho, 'setInteractive')
 
     const outcome = releaseCreate({ confirmedCommand: true })
 
     await expect(outcome).rejects.toBeInstanceOf(OperationError)
-    await expect(outcome).rejects.toMatchObject({ remediation: expect.stringContaining('"releases"') })
+    await expect(outcome).rejects.toMatchObject({
+      structuredContent: { status: 'argument_required', argument: 'release' },
+      remediation: expect.stringContaining('--release'),
+    })
     expect(vi.mocked(select)).not.toHaveBeenCalled()
     expect(setInteractive).not.toHaveBeenCalled()
     expect(mocks.prepareGitForRelease).not.toHaveBeenCalled()

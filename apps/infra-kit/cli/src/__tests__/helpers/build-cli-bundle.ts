@@ -4,15 +4,10 @@ import { join, resolve } from 'node:path'
 
 import { buildOptions } from '../../../scripts/build.js'
 
-/**
- * `buildOptions` builds every `src/entry/*.ts`, not just `mcp.ts` — `cli.js` included — so this
- * lives outside `src/mcp` and is named for what it actually builds.
- */
-
 const CLI_ROOT = resolve(__dirname, '../../..')
 
 /**
- * Env switches every spawned CLI/MCP process needs: no `$HOME` seeding, no self-update, no location
+ * Env switches every spawned CLI process needs: no `$HOME` seeding, no self-update, no location
  * warning. Without these a test run mutates the developer's real `~/.infra-kit`.
  */
 export const KILL_SWITCHES = {
@@ -22,7 +17,8 @@ export const KILL_SWITCHES = {
 } as const
 
 /**
- * Builds the real bundle from the EXPORTED `buildOptions` and returns the path to `mcp.js`.
+ * Builds the real bundle (every `src/entry/*.ts`) from the EXPORTED `buildOptions` and returns the
+ * path to `cli.js`.
  *
  * Two invariants live here:
  *  1. Never read a checked-out `dist/`. `dist` is gitignored, `qa` has no build step, and turbo's
@@ -38,7 +34,7 @@ export const KILL_SWITCHES = {
 export const buildCliBundle = async (
   prefix: string,
   plugins: esbuild.Plugin[] = [],
-): Promise<{ outDir: string; mcpPath: string }> => {
+): Promise<{ outDir: string; cliPath: string }> => {
   const cache = resolve(CLI_ROOT, 'node_modules', '.cache')
 
   mkdirSync(cache, { recursive: true })
@@ -51,5 +47,5 @@ export const buildCliBundle = async (
     plugins: [...(buildOptions.plugins ?? []), ...plugins],
   })
 
-  return { outDir, mcpPath: join(outDir, 'mcp.js') }
+  return { outDir, cliPath: join(outDir, 'cli.js') }
 }

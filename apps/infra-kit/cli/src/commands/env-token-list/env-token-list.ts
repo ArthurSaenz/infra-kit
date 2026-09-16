@@ -160,11 +160,10 @@ export const envTokenList = async ({ check }: EnvTokenListArgs = {}) => {
 
 // MCP Tool Registration
 //
-// The ONLY env-token command that is an MCP tool, and the reason is the same one that keeps
-// `doctor --fix` CLI-only: `lib/tool-handler` injects `confirmedCommand: true` into EVERY tool call,
-// so the MCP boundary auto-confirms by construction. An agent must never be one call away from
-// writing a credential (`env-token-set`) or destroying one (`env-token-remove`). This command only
-// READS, and only ever emits redacted values. Do not "fix" this by exposing the other two.
+// The ONLY env-token command with a tool definition, and the reason is the same one that keeps
+// `doctor --fix` CLI-only: an agent must never be one call away from writing a credential
+// (`env-token-set`) or destroying one (`env-token-remove`). This command only READS, and only ever
+// emits redacted values. Do not "fix" this by exposing the other two.
 export const envTokenListMcpTool = defineMcpTool({
   name: 'env-token-list',
   description:

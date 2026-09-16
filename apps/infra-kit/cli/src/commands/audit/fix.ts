@@ -148,7 +148,7 @@ const toFixedEntry = (file: GuidanceWrite): FixedEntry => {
  * `eslint --fix` model), so a block this call just created reports `ok` in the same invocation.
  *
  * Sets no exit code — `audit()`'s standing invariant is that it never touches `process.exitCode`,
- * so the MCP tool can reuse it. The `fixed` entries carrying `action: 'failed'` are the signal;
+ * it returns a result. The `fixed` entries carrying `action: 'failed'` are the signal;
  * `program.ts` turns them into an exit code.
  *
  * The adoption cache is dropped on both sides of the sync: before, so the pre-fix verdict is the

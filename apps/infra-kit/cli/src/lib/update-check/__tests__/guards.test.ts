@@ -35,10 +35,6 @@ describe('autoUpdateSkipReason', () => {
     expect(autoUpdateSkipReason(allowed({ argv: ['node', 'cli.js', 'version', '--json'] }))).toBe('json')
   })
 
-  it('skips the mcp subcommand, whose stdio carries JSON-RPC framing', () => {
-    expect(autoUpdateSkipReason(allowed({ argv: ['node', 'cli.js', 'mcp'] }))).toBe('own-command')
-  })
-
   it('skips when stdout is not a TTY (piped or scripted)', () => {
     expect(autoUpdateSkipReason(allowed({ isTty: false }))).toBe('not-a-tty')
   })
@@ -66,7 +62,7 @@ describe('autoUpdateSkipReason', () => {
   })
 
   it('checks opt-out before everything else, so the env var disables the feature outright', () => {
-    const input = allowed({ env: { CI: '1' }, argv: ['node', 'cli.js', 'mcp'], isTty: false })
+    const input = allowed({ env: { CI: '1' }, argv: ['node', 'cli.js', 'version', '--json'], isTty: false })
 
     expect(autoUpdateSkipReason(input)).toBe('opt-out')
   })

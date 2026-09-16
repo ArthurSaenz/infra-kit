@@ -109,7 +109,7 @@ describe('worktrees-sync failure report', () => {
   // What must hold here is that the throw carries the schema-valid payload and survives this
   // handler's own `catch` — which rewraps anything that is not an `OperationError`.
   it('agent: throws a partial_failure refusal carrying a schema-valid failedWorktrees', async () => {
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
     vi.mocked(removeWorktrees).mockResolvedValue(STALE_FAILURE)
 
     const thrown = await worktreesSync({ confirmedCommand: true }).catch((error: unknown) => {
@@ -139,7 +139,7 @@ describe('worktrees-sync failure report', () => {
   // Same handler, same rewrapping `catch`: the confirm site's `confirmation_required` must come out
   // intact and BEFORE any removal.
   it('an unconfirmed agent run throws confirmation_required un-rewrapped and removes nothing', async () => {
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
 
     const thrown = await worktreesSync({ confirmedCommand: false }).catch((error: unknown) => {
       return error

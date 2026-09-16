@@ -20,17 +20,17 @@ import { worktreesAdd } from '../worktrees-add'
  * exported command.
  *
  * @example
- * // MCP, no flags, no config keys => both resolve false, stdout stays byte-for-byte empty
+ * // --agent, no flags, no config keys => both resolve false, stdout stays byte-for-byte empty
  * await worktreesAdd({ confirmedCommand: true, versions: '1.2.5' })
  */
 
-// WHAT THIS GUARDS — `worktrees-add` is an exposed MCP tool and is UNGATED
-// (`requiresHumanConfirm` is unset), so a single call carrying `versions` or `all` runs
-// end to end. With neither the flag nor the config key set, both follow-ups used to fall
-// through to `withEscape(confirm(…))`, and `@inquirer` renders to `process.stdout` —
-// which under MCP stdio IS the JSON-RPC transport. Two prompts, a corrupted stream. The
-// tool's own `.describe()` already promised "interactive prompt (CLI) / false (MCP, no
-// TTY)", so this was documented behaviour that had never been implemented.
+// WHAT THIS GUARDS — under `--agent --json` a `worktrees add --yes` carrying `versions` or
+// `all` runs end to end, and stdout is the JSON result the skill parses. With neither the
+// flag nor the config key set, both follow-ups used to fall through to
+// `withEscape(confirm(…))`, and `@inquirer` renders to `process.stdout`: two prompts, a
+// corrupted result and a run parked on a question nobody will answer. The command's own
+// `.describe()` already promised "interactive prompt (CLI) / false (agent, no TTY)", so
+// this was documented behaviour that had never been implemented.
 //
 // CALL-SITE, NOT PREDICATE — `resolveOptionalPrompt` is deliberately NOT exported and is
 // deliberately NOT mocked here. A predicate test proves the predicate works and says
@@ -44,7 +44,7 @@ import { worktreesAdd } from '../worktrees-add'
 // The third test is the counterweight, and it is load-bearing. `program.ts` maps the
 // CLI's `--yes` onto `confirmedCommand`, so a guard keyed on `confirmedCommand` rather
 // than `isAgentMode()` would silently stop `worktrees add --yes` prompting on a terminal —
-// fixing the MCP direction by breaking the CLI one.
+// fixing the agent direction by breaking the CLI one.
 
 /** Every command line the `$` mock answered — the git tripwire for the order tests. */
 const shellCommands = vi.hoisted(() => {
@@ -218,15 +218,15 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('worktrees-add — the optional follow-up prompts under MCP', () => {
-  it('writes ZERO bytes to the JSON-RPC transport and resolves both follow-ups to false', async () => {
+describe('worktrees-add — the optional follow-up prompts under --agent', () => {
+  it('writes ZERO bytes to stdout under --agent and resolves both follow-ups to false', async () => {
     const stdin = new PassThrough()
 
-    // `stdio: 'inherit'` is how `commands/mcp/mcp.ts` spawns the server, so a
-    // terminal-launched `infra-kit mcp` really does have a TTY stdin. Setting isTTY here
-    // means an isTTY-keyed guard would NOT fire — the guard has to key on `isAgentMode()`.
+    // An agent's Bash tool can hand the CLI a TTY stdin (a pty-backed shell), so setting
+    // isTTY here means an isTTY-keyed guard would NOT fire — the guard has to key on
+    // `isAgentMode()`.
     setStdin(stdin, true)
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
 
     const cancelRescue = rescue(stdin)
 
@@ -240,8 +240,8 @@ describe('worktrees-add — the optional follow-up prompts under MCP', () => {
       cancelRescue()
     }
 
-    // Not "valid JSON-RPC" — EMPTY. The command's own output travels as the tool's return
-    // value; anything on stdout here is prompt rendering, i.e. transport corruption.
+    // Not "valid JSON" — EMPTY. The command's own output travels as its return value that
+    // `entry/cli.ts` prints under `--json`; anything on stdout here is prompt rendering.
     expect(stdoutBytes.join('')).toBe('')
 
     expect(addedOptions()).toContainEqual(['--no-github-desktop', true])
@@ -253,7 +253,7 @@ describe('worktrees-add — the optional follow-up prompts under MCP', () => {
     const stdin = new PassThrough()
 
     setStdin(stdin, true)
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
 
     const cancelRescue = rescue(stdin)
 

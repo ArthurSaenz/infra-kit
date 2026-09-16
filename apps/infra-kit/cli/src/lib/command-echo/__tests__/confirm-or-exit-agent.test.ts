@@ -92,8 +92,8 @@ describe('confirmOrExit — confirmation_required for an agent', () => {
     expect(error.message).toContain('pass `--yes` to confirm, or drop `--json` to be prompted')
   })
 
-  it('short-circuits on confirmedCommand exactly as before — the MCP chokepoint and every --yes human', async () => {
-    agentMode.source = 'mcp'
+  it('short-circuits on confirmedCommand exactly as before — every --yes agent and human', async () => {
+    agentMode.source = 'flag'
     jsonOutput.enabled = true
 
     await expect(confirmOrExit(true, 'Proceed?')).resolves.toBeUndefined()

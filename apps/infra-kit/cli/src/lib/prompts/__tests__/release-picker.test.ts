@@ -42,14 +42,13 @@ describe('release-picker interactive guard', () => {
     expect(runBranchMultiPicker).not.toHaveBeenCalled()
   })
 
-  it('throws OperationError and never imports the TUI when serving MCP, even though stdin IS a TTY', async () => {
-    // `commands/mcp/mcp.ts` spawns the server with `stdio: 'inherit'`, so a
-    // terminal-launched `infra-kit mcp` really does have a TTY stdin. The old
-    // `!isTTY`-only guard does not fire here and would render an Ink picker into the
-    // JSON-RPC stream — `worktrees-add` and `gh-merge-dev` are mcpExposed with all
+  it('throws OperationError and never imports the TUI under --agent, even though stdin IS a TTY', async () => {
+    // A skill's `infra-kit … --agent` run from a terminal really does have a TTY stdin.
+    // The old `!isTTY`-only guard does not fire here and would render an Ink picker
+    // nobody answers — `worktrees add` and `gh-merge-dev` are agent-reachable with all
     // branch inputs optional, so that path is reachable.
     process.stdin.isTTY = true
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
 
     await expect(pickReleaseBranch(items)).rejects.toBeInstanceOf(OperationError)
     await expect(pickReleaseBranches(items)).rejects.toBeInstanceOf(OperationError)

@@ -22,27 +22,23 @@ export interface AutoUpdateGuardInput {
 
 /**
  * Reasons to skip, in the order checked. Returned (rather than a bare boolean) so tests assert WHICH
- * guard fired — a test that only sees `true` cannot tell a working `mcp` guard from a working `CI` one.
+ * guard fired — a test that only sees `true` cannot tell a working `--json` guard from a working `CI` one.
  */
 export type SkipReason = 'opt-out' | 'json' | 'own-command' | 'not-a-tty' | 'local-install'
 
 /**
- * Commands that must never trigger the background updater.
- *
- * `mcp` hands its stdio to a child speaking JSON-RPC, and a spawned worker on that path races the
- * transport the server is mid-conversation on.
- *
- * A set rather than an `=== 'mcp'` because the membership rule outlives its members: it held
- * `self-update` until that command was retired in favour of the background updater alone, and any
- * future command that performs the update itself belongs here for the same reason it did — otherwise it
- * would install once in the foreground AND leave a detached worker to install the same `@latest` again.
+ * Commands that must never trigger the background updater. Empty today; the seam outlives its members:
+ * it held `self-update` until that command was retired in favour of the background updater alone, and
+ * any future command that performs the update itself belongs here for the same reason it did —
+ * otherwise it would install once in the foreground AND leave a detached worker to install the same
+ * `@latest` again.
  */
-const SELF_MANAGING_COMMANDS = new Set(['mcp'])
+const SELF_MANAGING_COMMANDS = new Set<string>([])
 
 /**
  * Positional `argv[2]` mirrors the existing `warnIfLocalInstall` guard and is correct today because the
  * program registers no global options before the subcommand. It is defence-in-depth regardless: the
- * notice goes to stderr, and the `isTty` guard already rejects the MCP server (its stdout is a pipe).
+ * notice goes to stderr, and the `isTty` guard already rejects any piped stdout.
  *
  * NOTE: adding a global `program.option()` would let a flag occupy argv[2] and silently defeat this arm.
  * The stderr + isTty arms are what actually guarantee framing safety.
@@ -59,8 +55,8 @@ const isSelfManagingCommand = (argv: string[]): boolean => {
  * would be both useless (the project keeps using its pinned copy) and rude.
  *
  * @example
- * autoUpdateSkipReason({ argv: ['node', 'cli.js', 'mcp'], env: {}, isTty: true, selfRealPath: '/g/cli.js', cwd: '/p', realpath: (p) => p })
- * // => 'own-command'
+ * autoUpdateSkipReason({ argv: ['node', 'cli.js', 'version', '--json'], env: {}, isTty: true, selfRealPath: '/g/cli.js', cwd: '/p', realpath: (p) => p })
+ * // => 'json'
  */
 export const autoUpdateSkipReason = (input: AutoUpdateGuardInput): SkipReason | null => {
   const { argv, env, isTty, selfRealPath, cwd, realpath } = input

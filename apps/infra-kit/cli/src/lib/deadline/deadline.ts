@@ -1,9 +1,9 @@
 /**
  * @fileoverview
  *
- * "Resolve, or `null` after `ms`" — the deadline the MCP argument-form path runs on, shared by the
- * chokepoint (`lib/tool-handler/argument-form.ts`) and any provider that bounds its own slow work
- * inside that chokepoint's budget.
+ * "Resolve, or `null` after `ms`" — the deadline the argument-form providers run their slow
+ * enumerations on (`release-form`, `release-remove-form`), so a hung `gh` yields an empty form rather
+ * than a hung refusal.
  *
  * NOT the same contract as the `withDeadline` in `lib/mcp-proxy/upstream.ts`, and deliberately not
  * unified with it: that one REJECTS on timeout, because a proxy that never got `initialize` back

@@ -79,7 +79,6 @@ check_sh "dist/update-check.js has no hashbang" \
   "! head -1 '$INSTALLED/dist/update-check.js' | grep -q '^#!'"
 
 check "dist/update-check.js was published" test -f "$INSTALLED/dist/update-check.js"
-check "dist/mcp.js was published"          test -f "$INSTALLED/dist/mcp.js"
 
 # The real proof the hashbang works: exec the symlinked bin directly, as a shell would.
 if VERSION_OUT="$("$PREFIX/bin/ik" version 2>&1)"; then
@@ -89,20 +88,16 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 
-# `infra-kit mcp` spawns dist/mcp.js resolved via `new URL('./mcp.js', import.meta.url)`. Under a global
-# install the bin is a SYMLINK, so this only works because Node resolves import.meta.url to the realpath.
-# That is exactly the realpath-asymmetry class of bug, so assert it rather than assume it.
-MCP_OUT="$("$PREFIX/bin/infra-kit" mcp </dev/null 2>&1 &
-  MCP_PID=$!
-  sleep 2
-  kill "$MCP_PID" 2>/dev/null || true
-  wait "$MCP_PID" 2>/dev/null || true)"
+# The retired "mcp" subcommand is answered before Commander: one stderr line, exit 0, nothing on
+# stdout. A leftover .mcp.json entry in a consumer repo spawns exactly this, so pin the shape.
+MCP_OUT="$("$PREFIX/bin/infra-kit" mcp </dev/null 2>/dev/null)"
+MCP_STATUS=$?
 
-if printf '%s' "$MCP_OUT" | grep -qi 'cannot find module'; then
-  echo "  FAIL  \`infra-kit mcp\` could not resolve its sibling bundle: $MCP_OUT"
-  FAILURES=$((FAILURES + 1))
+if [ "$MCP_STATUS" -eq 0 ] && [ -z "$MCP_OUT" ]; then
+  echo "  ok    the retired mcp subcommand exits 0 with an empty stdout"
 else
-  echo "  ok    \`infra-kit mcp\` resolves dist/mcp.js through the symlinked global bin"
+  echo "  FAIL  the retired mcp subcommand exited $MCP_STATUS with stdout: $MCP_OUT"
+  FAILURES=$((FAILURES + 1))
 fi
 
 rm -f "$TARBALL"

@@ -2,10 +2,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { getProjectRoot } from 'src/lib/git-utils'
-import { FORM_DEADLINE_MS, buildArgumentForm } from 'src/lib/tool-handler/argument-form'
 import type { ArgumentFormProvider } from 'src/types'
 
 import { createDeployFormProvider } from '../deploy-form'
@@ -153,21 +153,18 @@ interface RenderedSchema {
 }
 
 /**
- * Send the provider's schema through `inputRequired.elicit()` and return the WIRE shape.
+ * Render the provider's schema the way `refuseMissingArguments` ships it in `choices`: JSON Schema.
  *
- * Asserting here rather than on the returned zod object is the whole point: `elicit()` throws on a
- * schema it cannot express as flat primitives, `buildArgumentForm` swallows that into `null`, and
- * the handler then behaves exactly as it does for a client that cannot render forms. A test that
- * only inspected the zod object would stay green through that.
+ * Asserting here rather than on the returned zod object is the point: a skill reads the rendered
+ * shape, so a schema that renders to something other than flat enums would go unnoticed by a test
+ * that only inspected the zod object.
  */
 const render = async (provider: ArgumentFormProvider, params: unknown): Promise<RenderedSchema> => {
-  const form = await buildArgumentForm(provider, params, FORM_DEADLINE_MS)
+  const schema = await provider.buildRequestedSchema(params)
 
-  expect(form).not.toBeNull()
+  expect(schema).not.toBeNull()
 
-  const request = form?.inputRequests?.args as { params?: { requestedSchema?: RenderedSchema } } | undefined
-
-  return request?.params?.requestedSchema ?? {}
+  return schema === null ? {} : (z.toJSONSchema(schema) as RenderedSchema)
 }
 
 describe('isFormable', () => {
@@ -193,10 +190,9 @@ describe('isFormable', () => {
   })
 })
 
-// P10. The assertion that separates "a form was offered" from "the provider silently broke": every
-// other test in this file would pass against a provider whose schema `elicit()` refuses, because the
-// refusal is flattened into the same `null` a non-elicitation client produces.
-describe('p10 — every provider builds a SENDABLE form', () => {
+// P10. The assertion that separates "a form was offered" from "the provider silently broke": a
+// provider returning `null` reads as "nothing to offer" and the refusal ships without `choices`.
+describe('p10 — every provider builds a RENDERABLE form', () => {
   it('renders all four, including the services-bearing shape', async () => {
     populated()
 
@@ -217,7 +213,7 @@ describe('p10 — every provider builds a SENDABLE form', () => {
     const schema = await render(deploySelectedProvider(), {})
 
     // `z.array(z.string())` — the spelling `gh-release-deploy-selected`'s own `inputSchema` uses —
-    // throws inside `elicit()` before a byte is sent, so `render`'s `not.toBeNull()` reddens.
+    // would render no enum, leaving the skill nothing to pick from.
     expect(schema.properties?.services?.type).toBe('array')
     expect(schema.properties?.services?.items?.enum).toStrictEqual(['mobile', 'docs-fe', 'client-be'])
   })
@@ -231,9 +227,8 @@ describe('p10 — every provider builds a SENDABLE form', () => {
   })
 })
 
-// P4. Offering `services` unconditionally reinstates the silent discard: `narrowsArgs` sees an array
-// whose length changed, throws the whole merge away, and the gate shows the AGENT's list while the
-// human's selection vanishes with no message anywhere.
+// P4. Offering `services` unconditionally would re-ask for a list round 1 already carried, and
+// `toArgs` would then overwrite the caller's selection with the re-pick.
 describe('p4 — the conditional services offer, both directions', () => {
   it('offers services when round 1 omitted them', async () => {
     populated()
@@ -268,9 +263,8 @@ describe('p4 — the conditional services offer, both directions', () => {
   })
 })
 
-// P4b. An env-filtered enum would be rebuilt on round 2 from the ROUND-1 params
-// (`argument-form.ts` re-derives from them), i.e. against an env the human has just changed in the
-// same form — so it would validate their selection against the wrong list.
+// P4b. An env-filtered enum would be derived from the ROUND-1 params, i.e. against an env the human
+// may change on the same re-run — so it would validate their selection against the wrong list.
 describe('p4b — the services enum is the full declared set', () => {
   it('is not filtered by the round-1 env, even one that gates two of the three services out', async () => {
     populated()
@@ -312,9 +306,8 @@ describe('the descriptions that carry what the wire cannot', () => {
   })
 })
 
-// M4. `z.enum([])` is not an empty dropdown — it is a `TypeError` thrown inside `elicit()` and
-// flattened into the same `null` a client that cannot render forms produces. Refusing early is what
-// makes "nothing to offer" a decision with a reason rather than a swallowed error.
+// M4. `z.enum([])` is not an empty dropdown — it is a `TypeError` at construction. Refusing early
+// is what makes "nothing to offer" a decision with a reason rather than a swallowed error.
 describe('an empty candidate list returns null explicitly, for each of the three sources', () => {
   it('returns null when there are no open releases', async () => {
     populated()
@@ -391,9 +384,8 @@ describe('p12 — toArgs merges, and an empty services selection is a named disc
     expect(merged).toStrictEqual({ version: '1.2.5', env: 'arthur' })
   })
 
-  // `narrowsArgs` cannot catch this one: `services` is absent from round 1, so an auto-filled `[]` is
-  // a legal ADDITION and would reach the tool as "deploy nothing" — a dispatch that reports success
-  // and ships nothing. `null` routes it onto the existing `formDiscarded` path instead.
+  // `services` is absent from round 1, so an auto-filled `[]` would reach the tool as "deploy
+  // nothing" — a dispatch that reports success and ships nothing. `null` names the discard instead.
   it('returns null for an empty services selection', () => {
     expect(deploySelectedProvider().toArgs({ services: [] }, { env: 'dev' })).toBeNull()
   })

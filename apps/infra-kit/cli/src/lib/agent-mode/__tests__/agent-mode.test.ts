@@ -144,21 +144,13 @@ describe('resolveAgentModeSource — the §3.1 precedence table', () => {
       ).toBe('env')
     }
   })
-
-  it('never produces "mcp" — that source is set by the server, not resolved', () => {
-    for (const row of TABLE) {
-      const env: NodeJS.ProcessEnv = { INFRA_KIT_AGENT: row.agentVar, CLAUDECODE: row.claudeCode }
-
-      expect(resolveAgentModeSource({ env, stdinIsTTY: row.stdinIsTTY, flag: row.flag })).not.toBe('mcp')
-    }
-  })
 })
 
 describe('agentMode holder', () => {
   it('isAgentMode is true for every non-null source and false for null', () => {
     expect(isAgentMode()).toBe(false)
 
-    for (const source of ['mcp', 'flag', 'env'] as const) {
+    for (const source of ['flag', 'env'] as const) {
       agentMode.source = source
 
       expect(isAgentMode()).toBe(true)

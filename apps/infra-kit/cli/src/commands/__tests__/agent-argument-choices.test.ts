@@ -25,8 +25,8 @@ import type { ArgumentFormProvider } from 'src/types'
  * @fileoverview
  * Choices parity (plan §3.4): a Bash-driven agent that omits a picker argument at one of the five
  * gh/Jira form-backed commands is refused with `argument_required` whose `choices` are the tool's
- * OWN form provider's requested schema, rendered as JSON Schema — the rows an MCP client would have
- * been offered, byte for byte. The oracle is the live `formProvider` on each `*McpTool`, so a
+ * OWN form provider's requested schema, rendered as JSON Schema — the rows a human's picker would
+ * have offered, byte for byte. The oracle is the live `formProvider` on each `*McpTool`, so a
  * command that grew a private row shape, or a guard that reached for a different provider, reds
  * here. (`local-deploy`'s pair is pinned in its own guard suite, whose fixture it needs.)
  *
@@ -144,7 +144,7 @@ afterAll(() => {
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
-/** What the MCP client would have been offered: the tool's own provider, rendered the same way. */
+/** What the human's picker would have offered: the tool's own provider, rendered the same way. */
 const expectedChoices = async (provider: ArgumentFormProvider | undefined, params: unknown): Promise<unknown> => {
   const schema = await provider!.buildRequestedSchema(params)
 
@@ -234,14 +234,5 @@ describe('argument_required + choices at the form-backed guards', () => {
     const error = await refusalFrom(envLoad({}))
 
     expect(error.structuredContent).toMatchObject({ status: 'argument_required', argument: 'config', agentMode: null })
-  })
-
-  it("is inert under the 'mcp' source: the MCP-worded guard answers instead, with no choices", async () => {
-    agentMode.source = 'mcp'
-
-    const error = await refusalFrom(envLoad({}))
-
-    expect(error.structuredContent).toEqual({ status: 'argument_required', argument: 'config', agentMode: 'mcp' })
-    expect(error.remediation).toContain('env-list')
   })
 })

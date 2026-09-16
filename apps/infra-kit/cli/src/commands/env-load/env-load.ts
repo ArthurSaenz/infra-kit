@@ -315,9 +315,9 @@ export const envLoad = async (args: EnvLoadArgs) => {
   // invariant (and narrows the nullable result) rather than handling a real path.
   if (!result) throw new Error('env-load: write was unexpectedly aborted')
 
-  // The path the zsh wrapper captures is printed by the CLI action in `lib/program`, not here: this
-  // handler also serves `infra-kit mcp`, where stdout is the JSON-RPC transport and a bare line is a
-  // corrupt frame. Logs go to stderr (pino → pretty-print) for the same reason.
+  // The path the zsh wrapper captures is printed by the CLI action in `lib/program`, not here: the
+  // handler's stdout stays empty so a `--json` caller gets exactly one document; `emitSourcePath` in
+  // `lib/program` owns the path line and its ordering. Logs go to stderr for the same reason.
   commandEcho.print()
 
   const structuredContent = {

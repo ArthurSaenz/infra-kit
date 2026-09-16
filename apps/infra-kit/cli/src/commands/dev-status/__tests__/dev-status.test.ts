@@ -3,11 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { readDevContext } from 'src/lib/dev-context'
 import { logger } from 'src/lib/logger'
-// Imported through the MCP resource's OWN specifier, not from `src/lib/dev-context` directly. That is
-// the path `mcp/resources/index.ts` uses, so if the shim is ever replaced by a fresh implementation the
-// agreement test below breaks — which is the whole point of it.
-import { readDevContext } from 'src/mcp/resources/dev-context'
 
 import { devStatus } from '../dev-status'
 

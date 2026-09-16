@@ -2,24 +2,32 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 
-import { getExposedMcpTools } from 'src/lib/command-catalog'
+import { commandCatalog } from 'src/lib/command-catalog'
+import type { CatalogMcpTool } from 'src/lib/command-catalog/command-catalog'
 
 /**
  * @fileoverview
- * Shared machinery for the two guards that need to know WHICH `withEscape` call sites an MCP
- * agent can actually reach: the headless-policy sweep in
- * `every-inquirer-site-is-escapable.test.ts` and the G6/G8 claim checks in
- * `headless-policy-guards.test.ts`.
+ * Shared machinery for the two guards that need to know WHICH `withEscape` call sites an agent
+ * can actually reach: the headless-policy sweep in `every-inquirer-site-is-escapable.test.ts` and
+ * the G6/G8 claim checks in `headless-policy-guards.test.ts`.
  *
  * Not a `.test.ts`, so vitest's default include glob does not collect it, and it sits under
  * `__tests__/` so both sweeps' walkers skip it — this file can never become its own subject.
  *
- * REACHABILITY IS MODULE-LEVEL, and deliberately so: roots are the files that declare an exposed
- * tool via `defineMcpTool({ name })`, and the closure follows value imports, re-exports and dynamic
- * `import(…)`. It is an OVER-approximation — a barrel drags in siblings the command never calls, so
- * `lib/release-deploy/source-picker.ts` counts as reachable through `lib/release-deploy/index.ts`
- * even though only the unexposed merged `release-deploy` command calls it. Over-approximating is the
- * safe direction: it can demand an annotation nobody needed, never miss one that was.
+ * THE SURFACE IS BASH, NOT A TOOL LIST. An agent drives this CLI as `Bash(infra-kit …)`, so every
+ * command is reachable whether or not it ever carried a `defineMcpTool`; the catalog's `mcpExposed`
+ * is historical ("was listed on the retired server") and filtering on it left `env-token-set` and
+ * `env-autoload` — both `mutating: true, mcpExposed: false` — outside every guard here. Roots are
+ * therefore every file declaring a `defineMcpTool({ name })` PLUS every `src/commands/<cmd>/<cmd>.ts`
+ * that declares none. Only `entry/cli.ts`'s palette stays out: it is not a command, and a human typed
+ * the bare `infra-kit` that opens it.
+ *
+ * REACHABILITY IS MODULE-LEVEL, and deliberately so: the closure follows value imports, re-exports
+ * and dynamic `import(…)`. It is an OVER-approximation — a barrel drags in siblings the command never
+ * calls, so `lib/release-deploy/source-picker.ts` counts as reachable through
+ * `lib/release-deploy/index.ts` even though only the merged `release-deploy` command calls it, and
+ * `dev/dev-wizard-run.ts` counts although the wizard runs only on a bare TTY `dev`. Over-approximating
+ * is the safe direction: it can demand an annotation nobody needed, never miss one that was.
  *
  * KNOWN HOLES, named rather than closed blind (same convention as the sweep next door):
  * - Type-only imports are skipped. They erase, so they open no runtime path — but a value import
@@ -52,13 +60,28 @@ export const walkSources = (dir: string): string[] => {
 const files = walkSources(SRC)
 const parsed = new Map<string, ts.SourceFile>()
 
+/**
+ * `.ts` MUST parse as TS, not TSX: under TSX a generic arrow like `async <T>(…) =>` reads as an
+ * unclosed JSX tag and the parser fails OPEN — the rest of the file becomes garbage and every
+ * `defineMcpTool`/`withEscape` below it disappears. `gh-release-deliver.ts:44` is exactly that shape.
+ */
+export const scriptKindOf = (file: string): ts.ScriptKind => {
+  return file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+}
+
 // `setParentNodes: true` — the enclosing-function and leading-comment lookups walk upwards.
 export const sourceOf = (file: string): ts.SourceFile => {
   const cached = parsed.get(file)
 
   if (cached) return cached
 
-  const created = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const created = ts.createSourceFile(
+    file,
+    readFileSync(file, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKindOf(file),
+  )
 
   parsed.set(file, created)
 
@@ -154,18 +177,37 @@ const declaringFiles = (): Map<string, string> => {
   return found
 }
 
-/** The live registration set — `mcpExposed` filtered, so `doctor` is absent by construction. */
-export const exposedTools = getExposedMcpTools()
+/**
+ * Every catalog row that carries a tool definition — `mcpExposed` deliberately NOT consulted, so
+ * `doctor` and `release-deliver` are in. G8 reads input schemas off these, and an agent can pass any
+ * of those fields to the CLI whether or not the row was ever registered anywhere.
+ */
+export const catalogTools: CatalogMcpTool[] = commandCatalog.flatMap((entry) => {
+  return entry.mcpTool ? [entry.mcpTool] : []
+})
 
 export const toolFiles = declaringFiles()
 
+/**
+ * `src/commands/<cmd>/<cmd>.ts` for every command directory. The catalog is not the source here on
+ * purpose: `groupPath`/`cliName` do not name files (`merge-dev` lives in `gh-merge-dev/`), and a
+ * command added to the tree but not yet to the catalog must still be swept.
+ */
+const commandEntryFiles = (): string[] => {
+  const commandsDir = path.join(SRC, 'commands')
+
+  return readdirSync(commandsDir, { withFileTypes: true }).flatMap((entry) => {
+    if (!entry.isDirectory()) return []
+
+    const candidate = path.join(commandsDir, entry.name, `${entry.name}.ts`)
+
+    return existsSync(candidate) ? [candidate] : []
+  })
+}
+
 export const reachableModules = ((): Set<string> => {
   const seen = new Set<string>()
-  const pending = exposedTools.flatMap((tool) => {
-    const file = toolFiles.get(tool.name)
-
-    return file ? [file] : []
-  })
+  const pending = [...toolFiles.values(), ...commandEntryFiles()]
 
   while (pending.length > 0) {
     const file = pending.pop() as string
@@ -254,7 +296,7 @@ const readPolicy = (
   return { policy: 'default', field: null }
 }
 
-/** Every `withEscape(…)` call in the tree, with the policy it declares and whether MCP reaches it. */
+/** Every `withEscape(…)` call in the tree, with the policy it declares and whether an agent reaches it. */
 export const promptSites: PromptSite[] = files.flatMap((file) => {
   const source = sourceOf(file)
   const found: PromptSite[] = []

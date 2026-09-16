@@ -6,10 +6,9 @@ import pretty from 'pino-pretty'
 export const LOG_FILE_PATH = '/tmp/mcp-infra-kit.log'
 
 /**
- * Key paths pino censors before anything reaches a destination. The load-bearing case is the MCP
- * tool-handler, which logs every tool's `params` object — twice (at entry, and again in its catch) —
- * into a WORLD-READABLE `/tmp/mcp-infra-kit.log`. A token-carrying key in that object would be
- * written to a file every user on the box can read.
+ * Key paths pino censors before anything reaches a destination. The load-bearing case is a handler
+ * that logs its `params` object into the WORLD-READABLE `/tmp/mcp-infra-kit.log`: a token-carrying
+ * key in that object would be written to a file every user on the box can read.
  *
  * The wildcard forms cover the nesting we actually produce: `{ params: { … } }` and `{ err: { … } }`
  * are both one level deep, so `*.token` catches `params.token` without enumerating every wrapper.

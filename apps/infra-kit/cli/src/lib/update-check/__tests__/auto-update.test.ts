@@ -102,7 +102,6 @@ describe('maybeAutoUpdate', () => {
   it.each([
     ['opt-out', { env: { INFRA_KIT_NO_AUTO_UPDATE: '1' } }],
     ['--json', { argv: ['node', 'cli.js', 'version', '--json'] }],
-    ['mcp', { argv: ['node', 'cli.js', 'mcp'] }],
     ['non-tty', { isTty: false }],
     ['local install', { selfRealPath: '/repo/node_modules/infra-kit/dist/cli.js', cwd: '/repo' }],
   ] as const)('never spawns nor notifies for a %s invocation', (_label, overrides) => {

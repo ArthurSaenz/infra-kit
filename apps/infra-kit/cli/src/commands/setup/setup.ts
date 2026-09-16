@@ -337,23 +337,10 @@ const inputSchema = {
     .describe('Read-only: run the init half, then REPORT what each tool needs without installing anything.'),
 }
 
-/**
- * Two gates fire in series on an MCP call, and that is intended rather than redundant.
- *
- * `_meta["anthropic/requiresUserInteraction"]` makes the HOST prompt a human on every call — in
- * `acceptEdits`, `auto` and `bypassPermissions` alike, with allow rules unable to skip it. The confirm
- * gate in `lib/tool-handler` then makes the AGENT re-call with a token bound to these arguments, which
- * raises the host prompt a second time. One successful install therefore costs the human two prompts.
- *
- * Neither substitutes for the other: `requiresHumanConfirm` is required for every exposed mutating tool
- * (`command-catalog.test.ts`) and is the only gate left on a host that ignores the annotation — anything
- * below Claude Code v2.1.199, and anything that is not Claude Code. Neither substitutes for the computed
- * refusal in `lib/dependency-install/risk-predicate`, which is the only control shipping inside the CLI.
- */
-// Both fire UNCONDITIONALLY, `skipTools` included. The read path that raises no prompt is `doctor` — a
-// separate tool name, therefore a separate permission identity, which is why the two are not one tool.
-const REQUIRES_USER_INTERACTION = { 'anthropic/requiresUserInteraction': true } as const
-
+// `requiresHumanConfirm` is required for every mutating tool (`command-catalog.test.ts`) and does not
+// substitute for the computed refusal in `lib/dependency-install/risk-predicate`, the only control that
+// holds regardless of how the CLI is invoked. The read path that raises no prompt is `doctor` — a
+// separate command, therefore a separate permission identity, which is why the two are not one tool.
 export const setupMcpTool = defineMcpTool({
   name: 'setup',
   description:
@@ -361,7 +348,6 @@ export const setupMcpTool = defineMcpTool({
   inputSchema,
   outputSchema,
   requiresHumanConfirm: true,
-  meta: REQUIRES_USER_INTERACTION,
   handler: (params: { tools?: DependencyId[]; mode?: SetupMode; skipTools?: boolean }) => {
     return setup({ tools: params.tools, update: params.mode === 'update', skipTools: params.skipTools })
   },

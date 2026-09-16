@@ -15,13 +15,13 @@ import type { ArgumentFormProvider } from 'src/types'
  * The argument form the four deploy tools offer: pick a release, an environment, and — on
  * `gh-release-deploy-selected` — the services, from the values this repo actually declares.
  *
- * This is the FIRST live `formProvider` in the codebase. The seam (`types.ts`, `argument-form.ts`,
- * `tool-handler.ts`) was built before anything registered one, and every failure mode on this path
- * is SILENT: `buildArgumentForm` catches whatever `elicit()` throws and returns `null`, which the
- * handler reads as "this client cannot render forms" and gates instead. A provider that is simply
- * WRONG is therefore indistinguishable, from the outside, from a provider that correctly decided it
- * had nothing to offer — so the constraints below are load-bearing, and each is pinned by a test
- * that asserts `buildArgumentForm(...) !== null` rather than "a gate came back".
+ * This is the FIRST live `formProvider` in the codebase. The seam (`types.ts`,
+ * `refuse-missing-arguments.ts`) was built before anything registered one, and every failure mode on
+ * this path is SILENT: `requestedSchema` catches whatever the provider throws and refuses without
+ * `choices`. A provider that is simply WRONG is therefore indistinguishable, from the outside, from a
+ * provider that correctly decided it had nothing to offer — so the constraints below are
+ * load-bearing, and each is pinned by a test that asserts a non-null schema rather than "a refusal
+ * came back".
  */
 
 /** The literal `resolveDeployBranch` accepts for "deploy from the dev branch, not a release". */

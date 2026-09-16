@@ -216,7 +216,7 @@ describe('release remove — the confirm site propagates its refusal with the pl
   // `OperationError` into "check `gh auth status`…". The refusal is one, and must come out intact —
   // with the same inventory the confirm text renders, as data this time.
   it('an unconfirmed agent run throws confirmation_required carrying the structured plan, before any step', async () => {
-    agentMode.source = 'mcp'
+    agentMode.source = 'flag'
 
     const thrown = await releaseRemove({
       confirmedCommand: false,

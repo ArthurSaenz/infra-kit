@@ -151,3 +151,9 @@ catalogs:
     zod: ^4.5.4
   conflicts_conflicts_esbuild_h0_28_1_h0_28_2:
     esbuild: ^0.28.2
+  conflicts_@slip-stream-kit/config_h0_9_0:
+    '@slip-stream-kit/config': ^0.9.0
+  conflicts_conflicts_fastify_h5_12_3_h5_12_4:
+    fastify: ^5.12.4
+  conflicts_conflicts_zod_h4_4_3_h4_6_2:
+    zod: ^4.6.2

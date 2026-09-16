@@ -8,7 +8,6 @@ import { readTokenStore } from 'src/lib/env-tokens'
 import { logger } from 'src/lib/logger'
 import type { ProjectEnv } from 'src/lib/project-envs'
 import { listProjectEnvs } from 'src/lib/project-envs'
-import { FORM_DEADLINE_MS, buildArgumentForm } from 'src/lib/tool-handler/argument-form'
 
 import { createEnvLoadFormProvider } from '../env-load-form'
 
@@ -49,18 +48,15 @@ interface RenderedSchema {
 }
 
 /**
- * Send the provider's schema through `inputRequired.elicit()` and return the WIRE shape. Asserted
- * here rather than on the zod object because `elicit()` throws on anything it cannot express and
- * `buildArgumentForm` swallows that into the same `null` a form-less client produces.
+ * Render the provider's schema the way `refuseMissingArguments` ships it in `choices`: JSON Schema,
+ * asserted here rather than on the zod object because that is the shape a skill actually reads.
  */
 const render = async (params: unknown): Promise<RenderedSchema> => {
-  const form = await buildArgumentForm(createEnvLoadFormProvider(), params, FORM_DEADLINE_MS)
+  const schema = await createEnvLoadFormProvider().buildRequestedSchema(params)
 
-  expect(form).not.toBeNull()
+  expect(schema).not.toBeNull()
 
-  const request = form?.inputRequests?.args as { params?: { requestedSchema?: RenderedSchema } } | undefined
-
-  return request?.params?.requestedSchema ?? {}
+  return schema === null ? {} : (z.toJSONSchema(schema) as RenderedSchema)
 }
 
 const sessionBefore = process.env[INFRA_KIT_SESSION_VAR]
@@ -115,9 +111,7 @@ describe('p3 — nothing to offer', () => {
     vi.mocked(readTokenStore).mockResolvedValue(null)
     const info = vi.spyOn(logger, 'info').mockImplementation(() => {})
 
-    const form = await buildArgumentForm(createEnvLoadFormProvider(), {}, FORM_DEADLINE_MS)
-
-    expect(form).toBeNull()
+    await expect(createEnvLoadFormProvider().buildRequestedSchema({})).resolves.toBeNull()
     expect(info).toHaveBeenCalledWith({ msg: 'Tool execution form options empty: env-load' })
   })
 })

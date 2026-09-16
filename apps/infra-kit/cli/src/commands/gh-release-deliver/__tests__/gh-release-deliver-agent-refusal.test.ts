@@ -65,21 +65,18 @@ afterEach(() => {
 })
 
 describe('gh-release-deliver — CLI-only under agent mode', () => {
-  it.each(['mcp', 'flag', 'env'] as const)(
-    'refuses under source %s even WITH --yes, and touches nothing',
-    async (source) => {
-      agentMode.source = source
+  it.each(['flag', 'env'] as const)('refuses under source %s even WITH --yes, and touches nothing', async (source) => {
+    agentMode.source = source
 
-      const error = await deliver(true)
+    const error = await deliver(true)
 
-      expect(error).toBeInstanceOf(StructuredRefusalError)
-      expect((error as StructuredRefusalError).structuredContent).toEqual({ status: 'refused', agentMode: source })
-      expect((error as StructuredRefusalError).exitCode).toBe(2)
-      // The remediation is a hand-off, never an action the agent could take itself.
-      expect((error as StructuredRefusalError).remediation).toContain('ask a human to run')
-      expect((error as StructuredRefusalError).remediation).not.toContain('--yes')
-    },
-  )
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+    expect((error as StructuredRefusalError).structuredContent).toEqual({ status: 'refused', agentMode: source })
+    expect((error as StructuredRefusalError).exitCode).toBe(2)
+    // The remediation is a hand-off, never an action the agent could take itself.
+    expect((error as StructuredRefusalError).remediation).toContain('ask a human to run')
+    expect((error as StructuredRefusalError).remediation).not.toContain('--yes')
+  })
 
   it('the refusal sits BEFORE the confirm: a --json human without --yes gets confirmation_required instead', async () => {
     jsonOutput.enabled = true

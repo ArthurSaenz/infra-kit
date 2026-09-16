@@ -44,7 +44,7 @@ describe('dist hashbang', () => {
     ).toBe(SHEBANG)
   })
 
-  it.each(['dev-server.js', 'mcp.js'])('keeps the hashbang off the spawned entry %s', (fileName) => {
+  it.each(['dev-server.js'])('keeps the hashbang off the spawned entry %s', (fileName) => {
     expect(
       read(fileName).startsWith('#!'),
       `dist/${fileName} is spawned as \`node dist/${fileName}\`, never exec’d; a hashbang would imply it is a bin`,

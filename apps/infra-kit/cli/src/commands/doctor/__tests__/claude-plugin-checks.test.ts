@@ -428,7 +428,7 @@ describe('checkMcpServerKey', () => {
     expect(check.status).toBe('pass')
     expect(check.message).toContain('still registers "infra-kit" — delete this key')
     expect(check.message).toContain('the plugin no longer serves an MCP server')
-    expect(check.message).toContain('compatibility stub')
+    expect(check.message).toContain('spawns a retired subcommand that exits immediately')
     expect(check.message).toContain('Delete the "infra-kit" entry from .mcp.json by hand')
   })
 
@@ -459,6 +459,17 @@ describe('checkMcpServerKey', () => {
     expect(check.status).toBe('pass')
     expect(check.message).toContain('still registers "ik" — delete this key')
     expect(check.message).toContain('Delete the "ik" entry from .mcp.json by hand')
+  })
+
+  /** The pre-plugin shape spawned the deleted bundle by path; it is the same leftover, under whatever key. */
+  it('names the key for a `node …/dist/mcp.js` entry too (wrong-key by the args path)', () => {
+    writeMcp({ mcpServers: { ik: { type: 'stdio', command: 'node', args: ['./node_modules/infra-kit/dist/mcp.js'] } } })
+
+    const check = checkMcpServerKey(repo)
+
+    expect(check.status).toBe('pass')
+    expect(check.message).toContain('still registers "ik" — delete this key')
+    expect(check.message).toContain('spawns a retired subcommand that exits immediately')
   })
 
   it('fails on a file it cannot read', () => {

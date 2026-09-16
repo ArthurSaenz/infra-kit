@@ -33,28 +33,21 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
 }
 
 /**
- * MCP has no TTY (JSON-RPC owns stdin) and the boundary auto-confirms, so the branch picker is
- * unreachable and a bulk removal would run without any human gate. `all` is intentionally absent from
- * this tool's MCP inputSchema; guard the shared handler too so a direct/agent call can never fan out to
- * every worktree. Require MCP callers to name targets explicitly via `versions`. No-op on the CLI path.
+ * Under agent mode the branch picker is unreachable, so a bulk removal would run without any human
+ * gate. `all` is intentionally absent from this tool's inputSchema; guard the shared handler too so a
+ * direct/agent call can never fan out to every worktree. Require agent callers to name targets
+ * explicitly via `versions`. No-op for a human at a TTY.
  */
-const assertMcpRemovalInput = (input: { all?: boolean; versions?: string }): void => {
+const assertAgentRemovalInput = (input: { all?: boolean; versions?: string }): void => {
   if (!isAgentMode()) return
 
   // Structured (exit 2, nothing ran): an agent reads `refused` as "this door is closed here" and
-  // `argument_required` as "re-run with --versions". Wording keyed on the source: over MCP `all` has
-  // no field and `versions` is the field; a Bash-driven agent reads the flags it can actually pass.
-  const overMcp = agentMode.source === 'mcp'
-
+  // `argument_required` as "re-run with --versions".
   if (input.all) {
     throw new StructuredRefusalError({ status: 'refused', agentMode: agentMode.source }, 2, {
       operation: 'remove worktrees',
-      remediation: overMcp
-        ? 'name targets explicitly via "versions"; bulk all=true removal is disabled over MCP'
-        : 'name targets explicitly via --versions <refs>; bulk --all removal is disabled under agent mode',
-      stderrExcerpt: overMcp
-        ? 'all=true is not permitted for worktrees-remove over MCP'
-        : '--all is not permitted for worktrees remove under agent mode',
+      remediation: 'name targets explicitly via --versions <refs>; bulk --all removal is disabled under agent mode',
+      stderrExcerpt: '--all is not permitted for worktrees remove under agent mode',
     })
   }
 
@@ -64,12 +57,9 @@ const assertMcpRemovalInput = (input: { all?: boolean; versions?: string }): voi
       2,
       {
         operation: 'remove worktrees',
-        remediation: overMcp
-          ? 'pass "versions" (comma-separated release versions/names); the interactive picker needs a TTY'
-          : 'pass --versions <refs> (comma-separated release versions/names) on the re-run — `infra-kit worktrees list --json` lists them',
-        stderrExcerpt: overMcp
-          ? 'worktrees-remove over MCP requires "versions"'
-          : 'worktrees remove under agent mode requires --versions',
+        remediation:
+          'pass --versions <refs> (comma-separated release versions/names) on the re-run — `infra-kit worktrees list --json` lists them',
+        stderrExcerpt: 'worktrees remove under agent mode requires --versions',
       },
     )
   }
@@ -79,7 +69,7 @@ const assertMcpRemovalInput = (input: { all?: boolean; versions?: string }): voi
  * Every named target must be an active release worktree. Without this an unmatched version builds a
  * path that does not exist; `removeWorktrees` (Promise.allSettled) swallows the failure and reports a
  * no-op as success. Validate all-or-nothing BEFORE removing anything so a typo or a feature-worktree
- * name fails loudly on both the CLI `--versions` and the MCP path. The `all` and interactive-picker
+ * name fails loudly on the `--versions` path. The `all` and interactive-picker
  * paths select from `currentWorktrees`, so this is a no-op for them.
  */
 const assertTargetsExist = (selected: string[], currentWorktrees: string[]): void => {
@@ -137,10 +127,10 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
   // GUARD (placement is load-bearing): must stay ABOVE the `try` block below — its catch rewraps, and
   // getInfraKitConfig's missing-config throw is a PLAIN Error whose text buildMessage would drop.
   // Must stay BELOW assertManagementContext so a linked-worktree caller still gets the worktree advice.
-  // Kept ABOVE assertMcpRemovalInput: "not an infra-kit project" is the more fundamental failure.
+  // Kept ABOVE assertAgentRemovalInput: "not an infra-kit project" is the more fundamental failure.
   await getInfraKitConfig()
 
-  assertMcpRemovalInput({ all, versions })
+  assertAgentRemovalInput({ all, versions })
 
   try {
     const currentWorktrees = await getCurrentWorktrees('release')
