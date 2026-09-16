@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 
-import { KILL_SWITCHES } from 'src/mcp/__tests__/helpers/mcp-harness'
+import { KILL_SWITCHES } from 'src/__tests__/helpers/build-cli-bundle'
 
 /**
  * @fileoverview

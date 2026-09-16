@@ -90,17 +90,8 @@ describe('u7 — the manifest matches what the source actually imports', () => {
     }
   })
 
-  it('u7c: no `catalog:` protocol appears in runtime dependencies', () => {
-    const catalogged = Object.entries(deps)
-      .filter(([, range]) => {
-        return range.startsWith('catalog:')
-      })
-      .map(([name]) => {
-        return name
-      })
-
-    expect(catalogged, 'catalog: in runtime deps breaks install on npm AND pnpm').toEqual([])
-  })
+  // u7c (no `catalog:` in runtime deps) moved to src/__tests__/dependency-guards.test.ts — it
+  // guards a bug unrelated to the SDK migration and needs to survive this file's deletion.
 })
 
 /**

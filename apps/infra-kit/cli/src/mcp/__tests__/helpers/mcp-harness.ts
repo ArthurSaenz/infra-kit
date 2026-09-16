@@ -1,66 +1,20 @@
-import * as esbuild from 'esbuild'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 
-import { buildOptions } from '../../../../scripts/build.js'
+import { KILL_SWITCHES } from 'src/__tests__/helpers/build-cli-bundle'
+
+export { buildCliBundle as buildMcpBundle, KILL_SWITCHES } from 'src/__tests__/helpers/build-cli-bundle'
 
 /**
  * Shared fixtures for the MCP protocol tests.
  *
- * This exists for ONE reason: the three things below each encode a non-obvious invariant that was
- * duplicated across `mcp-stdio.e2e.test.ts` and `mcp-confirm-gate-mutation.test.ts`. Duplicating a
- * subtle invariant is how one copy silently drifts and the guard it protects quietly stops working.
- * It is deliberately three small functions, not a harness framework — if a fourth consumer never
- * appears, this file should stay exactly this size.
+ * `KILL_SWITCHES` and the bundle builder moved to `src/__tests__/helpers/build-cli-bundle` (they
+ * were never MCP-specific) and are re-exported here so the rest of this directory's imports stay
+ * unchanged. `makeDisposableSession` below is the one fixture that IS MCP-specific.
  *
  * Not a `*.test.ts` file, so vitest's default `include` never collects it as an empty suite.
  */
-
-const CLI_ROOT = resolve(__dirname, '../../../..')
-
-/**
- * Env switches every spawned MCP server needs: no `$HOME` seeding, no self-update, no location
- * warning. Without these a test run mutates the developer's real `~/.infra-kit`.
- */
-export const KILL_SWITCHES = {
-  INFRA_KIT_NO_SEED: '1',
-  INFRA_KIT_NO_AUTO_UPDATE: '1',
-  INFRA_KIT_NO_LOCATION_WARN: '1',
-} as const
-
-/**
- * Builds the real bundle from the EXPORTED `buildOptions` and returns the path to `mcp.js`.
- *
- * Two invariants live here:
- *  1. Never read a checked-out `dist/`. `dist` is gitignored, `qa` has no build step, and turbo's
- *     `test` depends on `^build` (dependencies, not self) — so a committed `dist/` would make every
- *     assertion downstream vacuous.
- *  2. Output MUST land under this package's `node_modules/.cache`, never `os.tmpdir()`.
- *     `buildOptions` leaves dependencies external, so the bundle only resolves them by walking up
- *     to a `node_modules` that exists ABOVE it. Built into tmpdir it dies on ERR_MODULE_NOT_FOUND
- *     before running a single line.
- *
- * Push the returned `outDir` onto the caller's cleanup list.
- */
-export const buildMcpBundle = async (
-  prefix: string,
-  plugins: esbuild.Plugin[] = [],
-): Promise<{ outDir: string; mcpPath: string }> => {
-  const cache = resolve(CLI_ROOT, 'node_modules', '.cache')
-
-  mkdirSync(cache, { recursive: true })
-
-  const outDir = mkdtempSync(join(cache, prefix))
-
-  await esbuild.build({
-    ...buildOptions,
-    outdir: outDir,
-    plugins: [...(buildOptions.plugins ?? []), ...plugins],
-  })
-
-  return { outDir, mcpPath: join(outDir, 'mcp.js') }
-}
 
 /**
  * A throwaway session cache for the confirm-gate tests, seeded so `env-clear` has something to

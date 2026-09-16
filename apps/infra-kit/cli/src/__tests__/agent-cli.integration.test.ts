@@ -8,8 +8,8 @@ import process from 'node:process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
+import { buildCliBundle } from 'src/__tests__/helpers/build-cli-bundle'
 import { createReleaseRemoveFormProvider } from 'src/lib/release-remove-form'
-import { buildMcpBundle } from 'src/mcp/__tests__/helpers/mcp-harness'
 
 import {
   FIXTURE_RELEASE,
@@ -36,7 +36,7 @@ import type { AgentCliFixture, PtyRun, SpawnedRun } from './helpers/agent-cli-fi
  * spawns a node process against ONE shared fixture whose worktree state the cases hand to each other
  * (AC2 creates, AC14 refuses to touch, AC10 dirties). One file = one fork = one ordered story.
  *
- * WHERE WE BUILD. `buildMcpBundle` builds every `src/entry/*.ts` — `cli.js` included — into this
+ * WHERE WE BUILD. `buildCliBundle` builds every `src/entry/*.ts` — `cli.js` included — into this
  * package's `node_modules/.cache`, for the reason its own header gives (externalized deps resolve by
  * walking UP to a `node_modules`; tmpdir has none).
  *
@@ -154,7 +154,7 @@ const cli = (args: string[], env?: Record<string, string | undefined>): Promise<
 }
 
 beforeAll(async () => {
-  const built = await buildMcpBundle('agent-cli-')
+  const built = await buildCliBundle('agent-cli-')
 
   outDir = built.outDir
   mcpPath = built.mcpPath
