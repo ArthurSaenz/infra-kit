@@ -252,23 +252,6 @@ exports[`command catalog — MCP exposure policy > matches the golden MCP tools/
   },
   {
     "input": [
-      "dryRun",
-      "releaseOnly",
-    ],
-    "name": "reopen",
-    "output": [
-      "dryRun",
-      "ideProviders",
-      "orcaHidden",
-      "orcaOpened",
-      "orcaSkipped",
-      "releaseOnly",
-      "repo",
-      "worktreePaths",
-    ],
-  },
-  {
-    "input": [
       "mode",
       "skipTools",
       "tools",

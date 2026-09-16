@@ -5,7 +5,7 @@ import * as esbuild from 'esbuild'
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -46,10 +46,6 @@ const KILL_SWITCHES = {
 const VALID_CONFIG = JSON.stringify({
   envManagement: { provider: 'doppler', config: { name: 'test' } },
 })
-
-// Valid JSON, zod-invalid (unknown key + missing required `envManagement`): it EXISTS on disk (so
-// project-discovery keeps it) but its `getInfraKitConfig()` REJECTS — the only reachable child failure.
-const MALFORMED_CONFIG = JSON.stringify({ environments: 42 })
 
 const NO_STACK = /\n[ \t]+at\s/
 const GIT_FATAL = 'fatal: not a git repository'
@@ -257,35 +253,14 @@ describe('inside a git repo that is not an infra-kit project', () => {
     expect(result.out).toContain('infra-kit.json not found at')
     expect(result.out).not.toContain('No unused worktrees to remove')
   }, 30_000)
-
-  // I4c (MANDATORY) — reopen is the only false success that MUTATES external state. The read above the
-  // try must throw before openIdeWorkspace/reopenOrca, so no window opens.
-  it('i4c: reopen exits 1 with config message and opens no IDE/Orca window', async () => {
-    const cwd = makeNonProjectGitRepo()
-
-    const result = await runCli(['reopen'], { cwd, env: cleanEnv() })
-
-    expect(result.code, result.out).toBe(1)
-    expect(result.out).toContain('infra-kit.json not found at')
-    // Observable proxy from a spawned process: none of reopen's success markers appear because it
-    // fails at the hoisted read, before the Promise.all([openIdeWorkspace, reopenOrca]) side effects.
-    // (The precise "getProjectRoot@:109 / listWorktrees never invoked" tripwire is the unit suite,
-    // plan unit test 5, which module-mocks getInfraKitConfig.)
-    expect(result.out).not.toContain('Opened editor workspace')
-    expect(result.out).not.toContain('Opened in Orca')
-    expect(result.out).not.toContain('Nothing to reopen')
-  }, 30_000)
 })
 
 describe('non-regression: real project and its linked worktree', () => {
-  // I5 (AC4) — from inside a LINKED WORKTREE of a real project, both commands still succeed AND the
-  // reported repo name is the MAIN repo's basename, not the worktree leaf. This is the only
-  // integration tripwire for the §1.5 `getMainRepoRoot($({ cwd: root, quiet: true }))` merge — the
+  // I5 (AC4) — from inside a LINKED WORKTREE of a real project, `worktrees list` still succeeds. The
   // regression is invisible in a main checkout.
-  it('i5: worktrees list + reopen --dry-run succeed and resolve the MAIN repo name', async () => {
+  it('i5: worktrees list succeeds from inside a linked worktree', async () => {
     const base = mkTmp('worktree-base')
     const mainRepo = makeProject(base, 'main-repo', VALID_CONFIG)
-    const mainName = basename(mainRepo)
     const worktreeDir = join(base, 'wt-feature')
 
     git(mainRepo, 'worktree', 'add', '-q', '-b', 'feature-x', worktreeDir)
@@ -293,62 +268,7 @@ describe('non-regression: real project and its linked worktree', () => {
     const list = await runCli(['worktrees', 'list'], { cwd: worktreeDir, env: cleanEnv() })
 
     expect(list.code, list.out).toBe(0)
-
-    const dryRun = await runCli(['reopen', '--dry-run', '--json'], { cwd: worktreeDir, env: cleanEnv() })
-
-    expect(dryRun.code, dryRun.out).toBe(0)
-
-    const parsed = JSON.parse(dryRun.stdout) as { repo: string }
-
-    expect(parsed.repo).toBe(mainName)
-    expect(parsed.repo).not.toBe('wt-feature')
   }, 45_000)
-
-  // I6 (AC5) — reopen --all --root <tmpdir> from a NON-git cwd exits 0 and reports zero projects.
-  it('i6: reopen --all --root <empty> from a non-git cwd exits 0 with 0 projects', async () => {
-    const cwd = mkTmp('no-git-all')
-    const root = mkTmp('empty-root')
-
-    const result = await runCli(['reopen', '--all', '--root', root, '--json'], { cwd, env: cleanEnv() })
-
-    expect(result.code, result.out).toBe(0)
-
-    const parsed = JSON.parse(result.stdout) as { projects: unknown[] }
-
-    expect(parsed.projects).toEqual([])
-  }, 30_000)
-
-  // I7 (RESPECIFIED) — the fan-out's only REACHABLE child failure is a config that EXISTS but does
-  // not load (zod-invalid). A plain-git repo is filtered by project-discovery (:78) and never
-  // spawned, so it would be a vacuous fixture. Assert: parent exit 0; the good project succeeded; the
-  // bad child's failure is recorded & ISOLATED without failing the sweep. --dry-run keeps the good
-  // child side-effect free.
-  it('i7: reopen --all isolates a zod-invalid child while the valid project succeeds', async () => {
-    const home = mkTmp('home-all')
-    const root = mkTmp('fanout-root')
-
-    makeProject(root, 'good', VALID_CONFIG)
-    makeProject(root, 'bad', MALFORMED_CONFIG)
-
-    const result = await runCli(['reopen', '--all', '--root', root, '--dry-run', '--json'], {
-      cwd: root,
-      env: cleanEnv({ HOME: home }),
-    })
-
-    expect(result.code, result.out).toBe(0)
-
-    const parsed = JSON.parse(result.stdout) as { results: Array<{ repo: string; ok: boolean }> }
-
-    const good = parsed.results.find((entry) => {
-      return entry.repo === 'good'
-    })
-    const bad = parsed.results.find((entry) => {
-      return entry.repo === 'bad'
-    })
-
-    expect(good?.ok, `good project result: ${JSON.stringify(good)}`).toBe(true)
-    expect(bad?.ok, `bad project result: ${JSON.stringify(bad)}`).toBe(false)
-  }, 60_000)
 })
 
 describe('audit stays soft', () => {

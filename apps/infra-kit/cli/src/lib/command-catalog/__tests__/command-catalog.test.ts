@@ -9,7 +9,6 @@ import {
   LOW_RISK_MUTATING_ALLOWLIST,
   MCP_TOOL_PRESENTATION,
   MENU_GROUPS,
-  NOT_READ_ONLY,
   commandCatalog,
   getExposedMcpTools,
   getMenuGroupEntries,
@@ -57,7 +56,6 @@ const EXPECTED_EXPOSED_TOOLS = [
   'version',
   'worktrees-add',
   'worktrees-list',
-  'reopen',
   'worktrees-remove',
   'worktrees-sync',
   'config-get',
@@ -84,7 +82,7 @@ const EXPECTED_UNEXPOSED_WITH_TOOL = ['gh-release-deliver']
 const CREDENTIAL_WRITE_COMMANDS = ['env-token-set', 'env-token-remove']
 
 describe('command catalog — MCP exposure policy', () => {
-  it('exposes exactly the expected 26 MCP tools (set-equal, order-independent)', () => {
+  it('exposes exactly the expected 25 MCP tools (set-equal, order-independent)', () => {
     const exposedNames = getExposedMcpTools()
       .map((tool) => {
         return tool.name
@@ -92,9 +90,9 @@ describe('command catalog — MCP exposure policy', () => {
       .sort()
 
     expect(exposedNames).toEqual([...EXPECTED_EXPOSED_TOOLS].sort())
-    // 26: `setup-dependency` and `setup-dependency-status` folded into the single `setup` tool
-    // (26 → 25), then `doctor` was exposed (25 → 26).
-    expect(exposedNames).toHaveLength(26)
+    // 25: `setup-dependency` and `setup-dependency-status` folded into the single `setup` tool
+    // (26 → 25), then `doctor` was exposed (25 → 26), then `reopen` was removed (26 → 25).
+    expect(exposedNames).toHaveLength(25)
   })
 
   it('keeps env-token-set / env-token-remove off MCP entirely (no tool object to flip on)', () => {
@@ -448,7 +446,6 @@ describe('command catalog — CLI/MCP name parity', () => {
     'release-deliver': 'gh-release-deliver',
     'worktrees-add': 'worktrees-add',
     'worktrees-list': 'worktrees-list',
-    reopen: 'reopen',
     'worktrees-remove': 'worktrees-remove',
     'worktrees-sync': 'worktrees-sync',
     audit: 'audit',
@@ -502,15 +499,7 @@ describe('command catalog — menu grouping', () => {
       // the merged commands. They remain in the catalog (and as MCP tools) and still resolve if typed.
     ])
 
-    // `reopen` is top-level (groupPath ['reopen']) but carries menuGroup 'worktrees', so it renders in
-    // this group between list and remove — exactly like env-status sits in the environment group.
-    expect(groupPaths('worktrees')).toEqual([
-      'worktrees add',
-      'worktrees list',
-      'reopen',
-      'worktrees remove',
-      'worktrees sync',
-    ])
+    expect(groupPaths('worktrees')).toEqual(['worktrees add', 'worktrees list', 'worktrees remove', 'worktrees sync'])
 
     // `Environment` is the Doppler env commands and nothing else. It used to be a 13-entry drawer that
     // also held config, vendor, and setup commands — the four groups below are what came out of it.
@@ -663,13 +652,11 @@ describe('command catalog — MCP tool annotations & titles', () => {
    * value. It fails when the derivation is replaced by hand-typed literals, which is the regression
    * worth catching here. Correctness for `readOnlyHint` comes from T5's cross-artifact check.
    */
-  it('t2: derives readOnlyHint from `mutating`, tightened by NOT_READ_ONLY', () => {
+  it('t2: derives readOnlyHint from `mutating`', () => {
     for (const tool of getExposedMcpTools()) {
       const entry = entryByToolName.get(tool.name)!
 
-      expect(tool.annotations.readOnlyHint, `${tool.name}.readOnlyHint`).toBe(
-        !entry.mutating && !NOT_READ_ONLY.includes(tool.name),
-      )
+      expect(tool.annotations.readOnlyHint, `${tool.name}.readOnlyHint`).toBe(!entry.mutating)
     }
   })
 
@@ -735,41 +722,6 @@ describe('command catalog — MCP tool annotations & titles', () => {
 
       expect(tool?.annotations.destructiveHint, `${name} must read destructive`).toBe(true)
       expect(tool?.requiresHumanConfirm, `${name} must stay ungated`).not.toBe(true)
-    }
-  })
-
-  /**
-   * T7 — REAL CONTENT. Catches a stale name, and catches the array being used to LOOSEN a hint: a
-   * member that is already `mutating: true` would be doing nothing, and a member that is not exposed
-   * would be unreachable. The array may only ever tighten toward the spec default of
-   * `readOnlyHint: false`.
-   */
-  it('t7: keeps every NOT_READ_ONLY member a real, exposed, non-mutating entry', () => {
-    // Pinned BY NAME, because a `for…of` over the array cannot see the array shrinking: delete
-    // 'reopen' and T7 loops zero times, T2 asserts a formula that moved with it, T4/T5 accept the
-    // now-read-only tool, and T6 derives its expectation from the same source — nothing would red
-    // while `reopen` silently started advertising `readOnlyHint: true`. `reopen` is `mutating: false`
-    // yet every MCP call spawns Orca terminal tabs and editor windows, which is the whole reason the
-    // exception exists. (It has no `force`: nothing is ever closed — the only by-worktree close verb would kill the caller too.)
-    expect(NOT_READ_ONLY, 'reopen must stay excepted — its MCP calls spawn Orca terminals').toContain('reopen')
-
-    const reopenInput = getExposedMcpTools().find((tool) => {
-      return tool.name === 'reopen'
-    })?.inputSchema
-
-    expect(Object.keys(reopenInput ?? {}), 'reopen has no close path, so no `force`').not.toContain('force')
-
-    const reopen = getExposedMcpTools().find((tool) => {
-      return tool.name === 'reopen'
-    })
-
-    expect(reopen?.annotations.readOnlyHint, 'reopen must never advertise itself as read-only').toBe(false)
-
-    for (const name of NOT_READ_ONLY) {
-      const entry = entryByToolName.get(name)
-
-      expect(entry, `${name} in NOT_READ_ONLY must be an exposed catalog tool`).toBeDefined()
-      expect(entry?.mutating, `${name} is already mutating, so NOT_READ_ONLY does nothing for it`).toBe(false)
     }
   })
 })

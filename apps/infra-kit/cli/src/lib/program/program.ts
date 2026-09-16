@@ -25,7 +25,6 @@ import { releaseCreate } from 'src/commands/release-create'
 import { deprecatedLocalDeploy, releaseDeployAll, releaseDeploySelected } from 'src/commands/release-deploy'
 import { releaseDescEdit } from 'src/commands/release-desc-edit'
 import { releaseRemove } from 'src/commands/release-remove'
-import { reopen } from 'src/commands/reopen'
 import { setup } from 'src/commands/setup'
 import { vendorCheck } from 'src/commands/vendor-check'
 import { vendorConfig } from 'src/commands/vendor-config'
@@ -329,27 +328,6 @@ const configureWorktreesRemove = (cmd: Command): Command => {
     })
 }
 
-const configureReopen = (cmd: Command): Command => {
-  return cmd
-    .description('Reopen editor + Orca windows for every active worktree in the current project (additive, idempotent)')
-    .option('--all', 'Reopen across every discovered infra-kit project (Stage 3 — not yet implemented)')
-    .option('--project <names...>', 'Restrict --all to these project names')
-    .option('--root <paths...>', 'Discovery roots for --all (repeatable)')
-    .option('--release-only', 'Restrict to release worktrees (reproduces the legacy worktrees-reload scope)')
-    .option('--dry-run', 'Print the plan (folders + which worktrees would open in Orca) and spawn nothing')
-    .action(async (options) => {
-      emit(
-        await reopen({
-          all: options.all,
-          project: options.project,
-          root: options.root,
-          releaseOnly: options.releaseOnly,
-          dryRun: options.dryRun,
-        }),
-      )
-    })
-}
-
 const configureVendorConfig = (cmd: Command): Command => {
   return cmd
     .description('Show the machine-local factory config (~/.infra-kit/vendor.json) or scaffold it with --init')
@@ -474,11 +452,6 @@ export const buildProgram = (): Command => {
   configureWorktreesList(worktreesGroup.command('list'))
   configureWorktreesRemove(worktreesGroup.command('remove'))
   configureWorktreesSync(worktreesGroup.command('sync'))
-
-  // Top-level (`infra-kit reopen`), not under the worktrees group — house rule: new commands go
-  // top-level with related names, not nested under a group. It still renders in the Worktrees palette
-  // group via its catalog menuGroup.
-  configureReopen(program.command('reopen'))
 
   const configCmd = program.command('config').description('Manage infra-kit configuration files')
 

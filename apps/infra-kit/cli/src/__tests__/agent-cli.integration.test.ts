@@ -242,7 +242,6 @@ describe('golden parity: `<cmd> --json --agent` stdout equals the MCP tool struc
     { argv: ['dev-status'], tool: 'dev-status' },
     { argv: ['release', 'list'], tool: 'gh-release-list' },
     { argv: ['worktrees', 'list'], tool: 'worktrees-list' },
-    { argv: ['reopen', '--dry-run'], tool: 'reopen', args: { dryRun: true } },
     { argv: ['env-status'], tool: 'env-status' },
     { argv: ['config-get'], tool: 'config-get' },
     { argv: ['version'], tool: 'version' },

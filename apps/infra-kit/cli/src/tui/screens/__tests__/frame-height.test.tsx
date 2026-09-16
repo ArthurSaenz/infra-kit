@@ -146,11 +146,6 @@ const paletteItems = (): PaletteItem[] => {
     ['release-deliver', 'Release a new version to production', 'Release Management'],
     ['worktrees-add', 'Add git worktrees for release branches', 'Worktrees'],
     ['worktrees-list', 'List all git worktrees with detailed information', 'Worktrees'],
-    [
-      'reopen',
-      'Reopen editor + Orca windows for every active worktree in the current project (additive, idempotent)',
-      'Worktrees',
-    ],
     ['worktrees-remove', 'Remove git worktrees for release branches', 'Worktrees'],
     ['worktrees-sync', 'Remove release worktrees whose PRs are no longer open', 'Worktrees'],
     [

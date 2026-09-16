@@ -399,10 +399,9 @@ const assertEveryReadOnlyToolRoundTrips = async (client: Client): Promise<void> 
   // proves the serialization round-trip. What it must never do is return a malformed result.
   //
   // Excluded on purpose (side effects / non-determinism, not shape concerns):
-  //   reopen       — can launch an editor
   //   release-list — hits the GitHub API
   //   audit        — long-running whole-repo scan
-  const EXCLUDED = new Set(['reopen', 'release-list', 'audit'])
+  const EXCLUDED = new Set(['release-list', 'audit'])
 
   const readOnly = commandCatalog
     .filter((entry) => {
@@ -1649,7 +1648,7 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   //   D19 release-create's releases went optional — required vanished (AUTHORED, docs/release-create-form-plan.md §3.4)  legacy + modern
   //   D20 release-create's description and `releases` prose stopped calling the gate auto-skipped (AUTHORED, docs/release-create-form-plan.md §3.4)  legacy + modern
   //   D23 worktrees-add: `cmux` → `orca` input, Orca description, three `orca*` output arrays (AUTHORED, docs/orca-migration-plan.md §2.4)  legacy + modern
-  //   D24 reopen: `force` deleted, Orca description + dryRun prose, `cmux*` outputs → `orca*` object arrays + `orcaHidden` (AUTHORED, docs/orca-migration-plan.md §2.4)  legacy + modern
+  //   D25 `reopen` tool removed — the baseline entry is dropped at load (AUTHORED: Orca's sidebar lists every worktree, so the command had no job left)  legacy + modern
   // Why UNNAMED differences must fail: a normalization broad enough to swallow a known delta is
   // the same hole an unnoticed one would slip through. Only the named deltas are normalized away
   // before the whole-object comparison, and each is asserted positively FIRST so the normalization
@@ -1677,8 +1676,8 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   //    dependency change (see the file header) and is the reference the confirm-gate defect is
   //    proven against.
   //  - Adding the two tools to SOURCE_CHANGED_DURING_MIGRATION would leave the two most
-  //    destructive tools in the catalog permanently unguarded by W1, and 23 − 3 = 20 comparable
-  //    also trips the `toBeGreaterThan(20)` suite-swallowing guard below.
+  //    destructive tools in the catalog permanently unguarded by W1, and 22 − 3 = 19 comparable
+  //    also trips the `toBeGreaterThanOrEqual(19)` suite-swallowing guard below.
   //  - Normalizing one known, named field keeps the whole-object comparison intact for everything
   //    else about those tools, which is exactly the contract D2 and D3 already operate under.
   // Names captured BEFORE the delete, so the positive assertion in `w1c-pre` below has something to
@@ -2130,144 +2129,28 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
   const d23Baseline = applyD23ToBaseline()
 
   /**
-   * D24 — an AUTHORED delta in D16's shape, from the same migration: `reopen` lost its `force` input
-   * (Orca's only by-worktree close verb would kill the caller's own session), its description and
-   * `dryRun` prose name Orca, and its output swapped the three `cmux*` string arrays for
-   * `orcaOpened` / `orcaSkipped` (object items) plus a new `orcaHidden`; `cmuxClosed` is gone.
+   * D25 — an AUTHORED delta: the `reopen` tool was REMOVED. Orca lists every worktree in its
+   * sidebar and a terminal is one click, so the "re-open windows for every worktree" command had no
+   * job left; its IDE half is what `worktrees add` already does at creation time.
+   *
+   * Normalized on the BASELINE side at load like D4: the fixture is evidence captured before any
+   * dependency change and must not be re-captured, so its `reopen` entry is dropped rather than
+   * compared. The whole entry is captured BEFORE the delete so `w1c-pre-d25` can assert it was really
+   * there; a re-captured fixture would have no entry, that assertion reds, and D25 is to be DELETED
+   * (this rewrite, this test), never adjusted.
    */
-  // LITERAL post-change shapes, for D13's reason: a further edit fails `w1c` and must be re-declared.
-  const D24_REOPEN_DESCRIPTION =
-    "Reopen editor + Orca windows for every active worktree in the current project — the main checkout plus every linked worktree (release, feature, detached). Purely additive and idempotent: a worktree that already has a connected Orca terminal is skipped (orcaSkipped with reason already_open), so running twice does not double the tabs; nothing is ever closed. Zed opens the exact folder set; Cursor reconciles its release-branch-shaped workspace. Set releaseOnly to restrict to release worktrees (the legacy reload scope). Set dryRun to return the plan without spawning anything. When Orca is absent or not running every worktree lands in orcaSkipped with that reason; a worktree whose row Orca's sidebar hides is reported under orcaHidden with the UI steps. Non-destructive to git — only Orca/editor view state is touched."
+  const applyD25ToBaseline = (): Record<string, any> | undefined => {
+    const tools = v1Tools.tools as Record<string, any>[]
+    const index = tools.findIndex((tool) => {
+      return tool.name === 'reopen'
+    })
 
-  const D24_REOPEN_DRY_RUN_DESCRIPTION =
-    'Return the plan (folders + which worktrees would open in Orca vs. are already open) without spawning anything'
+    if (index === -1) return undefined
 
-  const D24_REOPEN_OUTPUT_ORCA = {
-    orcaOpened: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          branch: {
-            type: 'string',
-          },
-          layout: {
-            type: 'string',
-            enum: ['full', 'single-pane'],
-          },
-        },
-        required: ['branch', 'layout'],
-        additionalProperties: false,
-      },
-      description: 'Worktrees that got an Orca terminal tab this run, with the layout applied',
-    },
-    orcaSkipped: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          branch: {
-            type: 'string',
-          },
-          reason: {
-            type: 'string',
-            enum: ['already_open', 'orca_unreachable', 'orca_absent', 'orca_worktree_not_selectable', 'orca_error'],
-          },
-          code: {
-            type: 'string',
-          },
-        },
-        required: ['branch', 'reason'],
-        additionalProperties: false,
-      },
-      description:
-        'Worktrees NOT opened in Orca and why: already_open (idempotent skip), orca_absent / orca_unreachable (Orca down), orca_worktree_not_selectable (Orca does not resolve the path), orca_error (code carries the Orca error code)',
-    },
-    orcaHidden: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          branch: {
-            type: 'string',
-          },
-          path: {
-            type: 'string',
-          },
-          fix: {
-            type: 'string',
-          },
-        },
-        required: ['branch', 'path', 'fix'],
-        additionalProperties: false,
-      },
-      description:
-        'Worktrees whose Orca terminals opened on a row the sidebar HIDES (the repo hides external worktrees); fix names the in-app steps to reveal it',
-    },
+    return tools.splice(index, 1)[0]
   }
 
-  /** zod declaration order, which is what the served `required` follows. */
-  const D24_REOPEN_OUTPUT_REQUIRED = [
-    'repo',
-    'dryRun',
-    'releaseOnly',
-    'worktreePaths',
-    'ideProviders',
-    'orcaOpened',
-    'orcaSkipped',
-    'orcaHidden',
-  ]
-
-  /** Rewrites the baseline's `reopen` tool in place and returns what it held BEFORE. */
-  const applyD24ToBaseline = (): {
-    description: unknown
-    forceInput: unknown
-    inputRequired: unknown
-    dryRunDescription: unknown
-    outputProperties: unknown
-    required: unknown
-  } => {
-    const tool = findBaselineTool('reopen')
-    const input = tool?.inputSchema as Record<string, any> | undefined
-    const output = tool?.outputSchema as Record<string, any> | undefined
-    const captured = {
-      description: tool?.description,
-      forceInput: input?.properties?.force,
-      inputRequired: input?.required,
-      dryRunDescription: input?.properties?.dryRun?.description,
-      outputProperties: output?.properties,
-      required: output?.required,
-    }
-
-    if (tool !== undefined) tool.description = D24_REOPEN_DESCRIPTION
-
-    if (input?.properties !== undefined) {
-      delete input.properties.force
-
-      if (Array.isArray(input.required)) {
-        input.required = (input.required as string[]).filter((name) => {
-          return name !== 'force'
-        })
-      }
-
-      if (input.properties.dryRun !== undefined) input.properties.dryRun.description = D24_REOPEN_DRY_RUN_DESCRIPTION
-    }
-
-    if (output !== undefined) {
-      const kept = Object.fromEntries(
-        Object.entries(output.properties as Record<string, unknown>).filter(([name]) => {
-          return !name.startsWith('cmux')
-        }),
-      )
-
-      output.properties = { ...kept, ...structuredClone(D24_REOPEN_OUTPUT_ORCA) }
-      output.required = [...D24_REOPEN_OUTPUT_REQUIRED]
-    }
-
-    return captured
-  }
-
-  const d24Baseline = applyD24ToBaseline()
+  const d25Baseline = applyD25ToBaseline()
 
   /**
    * D20 — an AUTHORED delta in D14's shape: `release-create`'s description and its `releases` prose,
@@ -2988,40 +2871,20 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
     ])
   })
 
-  it('w1c-pre-d24: D24 — the baseline `reopen` really carried `force`, `cmuxClosed` and string-array cmux outputs', () => {
-    // The positive half of D24, on D16's model. A re-captured fixture has no `force` and no `cmux*`
-    // output, so the capture would already equal its replacement and this reds — at which point D24
-    // is to be DELETED (the literals, the rewrite, this test), never adjusted.
-    expect(d24Baseline.forceInput, 'D24: no `force` input in the baseline to delete').toBeDefined()
-    expect(d24Baseline.inputRequired).toBeUndefined()
-    expect(String(d24Baseline.description)).toContain('cmux')
-    expect(d24Baseline.description).not.toBe(D24_REOPEN_DESCRIPTION)
-    expect(String(d24Baseline.dryRunDescription)).toContain('cmux titles')
-    expect(d24Baseline.dryRunDescription).not.toBe(D24_REOPEN_DRY_RUN_DESCRIPTION)
-
-    const before = d24Baseline.outputProperties as Record<string, any>
-
-    expect(Object.keys(before)).toEqual([
-      'repo',
-      'dryRun',
-      'releaseOnly',
-      'worktreePaths',
-      'ideProviders',
-      'cmuxOpened',
-      'cmuxSkipped',
-      'cmuxClosed',
-    ])
-    expect(before.cmuxOpened.items).toEqual({ type: 'string' })
-    expect(before.cmuxSkipped.items).toEqual({ type: 'string' })
-    expect(d24Baseline.required).toEqual(Object.keys(before))
-    // The five non-cmux fields are carried over unchanged; the new `required` keeps their order and
-    // ends with the Orca trio in declaration order.
-    expect(D24_REOPEN_OUTPUT_REQUIRED).toEqual([
-      ...(d24Baseline.required as string[]).filter((name) => {
-        return !name.startsWith('cmux')
+  it('w1c-pre-d25: D25 — the baseline really carried a `reopen` tool, and the load-time splice dropped it', () => {
+    // The positive half of D25, on D4's model: the entry dropped at load must have existed in the
+    // capture, still in its pre-migration cmux shape. A re-captured fixture has no `reopen`, so the
+    // splice is a no-op and this reds — at which point D25 is to be DELETED (the rewrite, this test),
+    // never adjusted.
+    expect(d25Baseline, 'D25: no `reopen` tool in the baseline to drop').toBeDefined()
+    expect(d25Baseline?.name).toBe('reopen')
+    expect(String(d25Baseline?.description)).toContain('cmux')
+    expect(d25Baseline?.inputSchema?.properties?.force).toBeDefined()
+    expect(
+      (v1Tools.tools as Record<string, any>[]).some((tool) => {
+        return tool.name === 'reopen'
       }),
-      ...Object.keys(D24_REOPEN_OUTPUT_ORCA),
-    ])
+    ).toBe(false)
   })
 
   it('w1c-pre-d20: D20 — the baseline really called the gate auto-skipped and never said `releases` could be omitted', () => {
@@ -3282,8 +3145,9 @@ describe('w1 — differential wire compatibility against the pre-migration v1 ba
       return !SOURCE_CHANGED_DURING_MIGRATION.includes(t.name)
     })
 
-    // Guard against the exclusion list quietly swallowing the whole suite (23 tools, ≤ 3 excluded).
-    expect(comparable.length).toBeGreaterThanOrEqual(20)
+    // Guard against the exclusion list quietly swallowing the whole suite (22 tools after D25 dropped
+    // `reopen`, ≤ 3 excluded).
+    expect(comparable.length).toBeGreaterThanOrEqual(19)
 
     for (const before of comparable) {
       const after = (servedTools.tools as Record<string, any>[]).find((t) => {

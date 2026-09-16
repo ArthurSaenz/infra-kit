@@ -43,12 +43,8 @@ const overrideExitDeep = (cmd: Command): void => {
   cmd.commands.forEach(overrideExitDeep)
 }
 
-/**
- * Parse `userArgs` against a fresh program whose target leaf records what it was handed. `withYes`
- * registers `--yes` on a leaf that has none — `reopen` carries the tree's only variadic option and no
- * confirm site, so proving "the variadic stops at `--yes`" needs the flag grafted on for the test.
- */
-const parseLeaf = async (groupPath: string[], userArgs: string[], withYes = false): Promise<Parsed> => {
+/** Parse `userArgs` against a fresh program whose target leaf records what it was handed. */
+const parseLeaf = async (groupPath: string[], userArgs: string[]): Promise<Parsed> => {
   const program = buildProgram()
 
   overrideExitDeep(program)
@@ -59,8 +55,6 @@ const parseLeaf = async (groupPath: string[], userArgs: string[], withYes = fals
       return candidate.name() === name
     })!
   }, program)
-
-  if (withYes) leaf.option('-y, --yes', 'grafted for the variadic row')
 
   leaf.action((...actionArgs: unknown[]) => {
     const command = actionArgs.at(-1) as Command
@@ -95,32 +89,28 @@ describe('rerunArgv round-trips through the program', () => {
       label: 'grouped leaf with flags',
       path: ['release', 'remove'],
       argv: ['release', 'remove', '--version', '1.2.3', '--agent', '--json'],
-      withYes: false,
     },
     {
       label: 'string options with spaces in their values',
       path: ['release', 'desc-edit'],
       argv: ['release', 'desc-edit', '--version', '1.2.3', '--description', 'x y'],
-      withYes: false,
     },
     {
-      label: 'the only variadic option (--project <names...>) stops at --yes',
-      path: ['reopen'],
-      argv: ['reopen', '--all', '--project', 'api', 'ui', '--agent'],
-      withYes: true,
+      label: 'a variadic option (--services <services...>) stops at --yes',
+      path: ['release', 'deploy-selected'],
+      argv: ['release', 'deploy-selected', '--from', 'ci', '--services', 'api', 'ui', '--agent'],
     },
     {
       label: 'absolute -C is kept',
       path: ['worktrees', 'sync'],
       argv: ['-C', '/tmp', 'worktrees', 'sync', '--json'],
-      withYes: false,
     },
-  ])('$label', async ({ path: groupPath, argv, withYes }) => {
+  ])('$label', async ({ path: groupPath, argv }) => {
     setParsedArgv(['node', 'infra-kit', ...argv])
 
-    const refused = await parseLeaf(groupPath, argv, withYes)
+    const refused = await parseLeaf(groupPath, argv)
     const rerun = rerunArgv()
-    const confirmed = await parseLeaf(groupPath, rerun, withYes)
+    const confirmed = await parseLeaf(groupPath, rerun)
 
     expect(rerun.at(-1)).toBe('--yes')
     expect(confirmed.args).toEqual(refused.args)

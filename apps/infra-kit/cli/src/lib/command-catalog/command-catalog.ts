@@ -18,7 +18,6 @@ import { localDeployAllMcpTool, localDeploySelectedMcpTool } from 'src/commands/
 import { releaseCreateMcpTool } from 'src/commands/release-create'
 import { releaseDescEditMcpTool } from 'src/commands/release-desc-edit'
 import { releaseRemoveMcpTool } from 'src/commands/release-remove'
-import { reopenMcpTool } from 'src/commands/reopen'
 import { setupMcpTool } from 'src/commands/setup'
 import { vendorCheckMcpTool } from 'src/commands/vendor-check'
 import { versionMcpTool } from 'src/commands/version'
@@ -219,7 +218,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
   // Read-only companion to `dev`: reports what `infra-kit dev` currently has running by reading the
   // on-disk dev-context fragments (never starts a server). Top-level (`infra-kit dev-status`) per the
   // house rule — new commands go top-level with related names, not nested under a group — but carries
-  // menuGroup 'develop' so it renders beside `dev` in the palette (same shape as reopen/env-status).
+  // menuGroup 'develop' so it renders beside `dev` in the palette (same shape as env-status).
   {
     cliName: 'dev-status',
     menuGroup: 'develop',
@@ -343,17 +342,6 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mcpExposed: true,
     mutating: false,
     groupPath: ['worktrees', 'list'],
-  },
-  // `reopen` is a top-level command (`infra-kit reopen`, groupPath ['reopen']) but carries
-  // menuGroup 'worktrees' so it renders alongside its kin in the palette — the same single-segment
-  // top-level + non-matching-menuGroup shape as env-status/env-load (['env-status'] + 'environment').
-  {
-    cliName: 'reopen',
-    menuGroup: 'worktrees',
-    mcpTool: reopenMcpTool,
-    mcpExposed: true,
-    mutating: false,
-    groupPath: ['reopen'],
   },
   // worktrees-remove runs `git worktree remove` (no --force) on the named leaf worktrees. It is NOT
   // irreversible in the way release-deliver is: the release branches/commits survive, the
@@ -701,23 +689,7 @@ export const MCP_TOOL_PRESENTATION: Record<string, { title: string; openWorld: b
   // "atomically write env-load.sh" into getSessionCacheDir() (:212) — a path deterministic per
   // terminal session, so loading `dev` after `prod` OVERWRITES.
   'env-load': { title: 'Load environment variables', openWorld: true },
-
-  // --- Not-read-only exception ---
-  // Spawns local editor windows and Orca terminals on this machine; every output field (worktreePaths,
-  // ideProviders, orcaOpened/Skipped/Hidden) describes local window state and contacts no remote.
-  reopen: { title: 'Reopen project windows', openWorld: false },
 }
-
-/**
- * Tools that modify machine state the {@link CommandCatalogEntry.mutating} predicate deliberately
- * excludes — it covers only git/remote/consumer-repo/Doppler-env/fs-outside-cache state.
- *
- * This array may ONLY ever TIGHTEN a hint toward the spec default of `readOnlyHint: false`; it can
- * never loosen one, because it is applied as a negation. `reopen` is `mutating: false` yet every
- * MCP call spawns Orca terminal tabs and editor windows on this machine (reported in `orcaOpened`) —
- * local window state, not something a read-only tool may touch. Pinned by the T7 catalog test.
- */
-export const NOT_READ_ONLY: readonly string[] = ['reopen']
 
 /**
  * The MCP tools to register: catalog entries that are exposed and carry a tool, each widened with the
@@ -749,7 +721,7 @@ export const getExposedMcpTools = (): RegistrableMcpTool[] => {
       )
     }
 
-    const readOnlyHint = !entry.mutating && !NOT_READ_ONLY.includes(entry.mcpTool.name)
+    const readOnlyHint = !entry.mutating
 
     return [
       {

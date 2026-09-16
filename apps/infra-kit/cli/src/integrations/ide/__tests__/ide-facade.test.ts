@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { addIdeWorktreeFolders } from '../add-ide-worktree-folders'
-import { openIdeWorkspace } from '../open-ide-workspace'
 import { removeIdeWorktreeFolders } from '../remove-ide-worktree-folders'
 
 const config = vi.hoisted(() => {
@@ -30,7 +29,6 @@ vi.mock('src/lib/logger', () => {
 
 const cursor = vi.hoisted(() => {
   return {
-    openCursorWorkspace: vi.fn(),
     addFoldersToCursorWorkspace: vi.fn(),
     removeFoldersFromCursorWorkspace: vi.fn(),
     launchCursor: vi.fn(),
@@ -53,7 +51,6 @@ vi.mock('zx', () => {
 
 const zed = vi.hoisted(() => {
   return {
-    openZedWorkspace: vi.fn(),
     addFoldersToZedWorkspace: vi.fn(),
     reuseZedWorkspace: vi.fn(),
   }
@@ -70,76 +67,10 @@ const zedConfig = { ide: zedEntry }
 const bothConfig = { ide: [cursorEntry, zedEntry] }
 const unconfigured = { ide: undefined }
 
-const baseOpenArgs = {
-  projectRoot: '/repo',
-  worktreeDir: '/repo.worktrees',
-  worktreePaths: ['/repo', '/repo.worktrees/release/v1.0.0'],
-  currentBranches: ['release/v1.0.0'],
-}
-
-// Cursor stays branch-based; the facade hands it everything EXCEPT worktreePaths.
-const cursorArgs = {
-  projectRoot: '/repo',
-  worktreeDir: '/repo.worktrees',
-  currentBranches: ['release/v1.0.0'],
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
   cursor.resolveCursorWorkspacePath.mockImplementation((value: string) => {
     return `/abs/${value}`
-  })
-})
-
-describe('openIdeWorkspace', () => {
-  it('routes to Cursor and tags the provider (passing the cursor config down)', async () => {
-    config.value = cursorConfig
-    cursor.openCursorWorkspace.mockResolvedValue({ ran: true, added: 1, removed: 0 })
-
-    const outcomes = await openIdeWorkspace(baseOpenArgs)
-
-    expect(cursor.openCursorWorkspace).toHaveBeenCalledWith({
-      ...cursorArgs,
-      cursorConfig: { workspaceConfigPath: 'ws' },
-    })
-    expect(zed.openZedWorkspace).not.toHaveBeenCalled()
-    expect(outcomes).toEqual([{ ran: true, added: 1, removed: 0, provider: 'cursor' }])
-  })
-
-  it('routes to Zed and tags the provider', async () => {
-    config.value = zedConfig
-    zed.openZedWorkspace.mockResolvedValue({ ran: true, added: 2, removed: 0 })
-
-    const outcomes = await openIdeWorkspace(baseOpenArgs)
-
-    expect(zed.openZedWorkspace).toHaveBeenCalledWith({ worktreePaths: baseOpenArgs.worktreePaths })
-    expect(cursor.openCursorWorkspace).not.toHaveBeenCalled()
-    expect(outcomes).toEqual([{ ran: true, added: 2, removed: 0, provider: 'zed' }])
-  })
-
-  it('opens BOTH editors when both are configured (one outcome per provider)', async () => {
-    config.value = bothConfig
-    cursor.openCursorWorkspace.mockResolvedValue({ ran: true, added: 1, removed: 0 })
-    zed.openZedWorkspace.mockResolvedValue({ ran: true, added: 2, removed: 0 })
-
-    const outcomes = await openIdeWorkspace(baseOpenArgs)
-
-    expect(cursor.openCursorWorkspace).toHaveBeenCalledTimes(1)
-    expect(zed.openZedWorkspace).toHaveBeenCalledTimes(1)
-    expect(outcomes).toEqual([
-      { ran: true, added: 1, removed: 0, provider: 'cursor' },
-      { ran: true, added: 2, removed: 0, provider: 'zed' },
-    ])
-  })
-
-  it('returns an empty array when no IDE is configured', async () => {
-    config.value = unconfigured
-
-    const outcomes = await openIdeWorkspace(baseOpenArgs)
-
-    expect(cursor.openCursorWorkspace).not.toHaveBeenCalled()
-    expect(zed.openZedWorkspace).not.toHaveBeenCalled()
-    expect(outcomes).toEqual([])
   })
 })
 

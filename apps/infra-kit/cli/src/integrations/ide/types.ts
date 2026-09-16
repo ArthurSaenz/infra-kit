@@ -10,13 +10,6 @@ export type IdeMode = (typeof IDE_MODES)[number]
 
 // Each facade returns one outcome PER configured provider (an array), so every
 // outcome is tagged with its `provider`.
-export interface OpenIdeWorkspaceOutcome {
-  ran: boolean
-  provider: IdeProvider
-  added: number
-  removed: number
-}
-
 export interface AddIdeWorktreeFoldersOutcome {
   ran: boolean
   provider: IdeProvider

@@ -6,7 +6,7 @@ export type OrcaPanes = 'two-columns' | 'three-pane'
 export type OrcaOpenedLayout = 'full' | 'single-pane'
 
 /**
- * Shared per batch (one `worktrees add --all`, one `reopen`): a fresh worktree
+ * Shared per batch (one `worktrees add --all`): a fresh worktree
  * that `git worktree add` created milliseconds ago may not be selectable yet, so
  * `terminal create` is retried on `selector_not_found`. The cause of an
  * exhaustion (Orca not scanning the repo) is per-repo, so after the first one the
@@ -35,9 +35,9 @@ interface OpenOrcaWorktreeTerminalsArgs {
   cwd: string
   title: string
   /**
-   * `--focus` steals the window; callers pass `false` on every fan-out and from
-   * `reopen`. It must also stay `false` on a row the sidebar hides — there
-   * `--focus` times out after ~10 s (docs/orca-cli-findings.md, axis 1).
+   * `--focus` steals the window; callers pass `false` on every multi-branch
+   * `worktrees add` fan-out. It must also stay `false` on a row the sidebar hides —
+   * there `--focus` times out after ~10 s (docs/orca-cli-findings.md, axis 1).
    */
   focus: boolean
   layout: OrcaOpenedLayout

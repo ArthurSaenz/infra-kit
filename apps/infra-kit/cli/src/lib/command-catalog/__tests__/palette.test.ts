@@ -52,7 +52,7 @@ describe('command palette', () => {
           'release remove',
         ],
       ],
-      ['Worktrees', ['worktrees add', 'worktrees list', 'reopen', 'worktrees remove', 'worktrees sync']],
+      ['Worktrees', ['worktrees add', 'worktrees list', 'worktrees remove', 'worktrees sync']],
       ['Environment', ['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list']],
       ['Configuration', ['config-get', 'config path', 'config edit']],
       ['Vendor', ['vendor check', 'vendor config']],
