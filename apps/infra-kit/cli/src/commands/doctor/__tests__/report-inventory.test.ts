@@ -1,8 +1,10 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import process from 'node:process'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
+import { fakeNodeFs } from 'src/dev/proxy/__tests__/portless-link-fixtures'
 import { logger } from 'src/lib/logger'
 
 import packageJson from '../../../../package.json' with { type: 'json' }
@@ -229,8 +231,27 @@ afterAll(() => {
   if (gitOnlyDir !== null) fs.rmSync(gitOnlyDir, { recursive: true, force: true })
 })
 
+/**
+ * The `portless node` row's seams, pinned so the inventory reconciles N2 deterministically from this
+ * checkout: `isGlobal` false (the row is the skip), an EMPTY fake fs (the health resolution behind the
+ * skip must never `lstat` the author's real `~/.infra-kit/node`), and a `nodeVersionOf` that never spawns.
+ */
+const runDoctor = () => {
+  return doctor({
+    portlessDeps: {
+      isGlobal: () => {
+        return false
+      },
+      nodeFs: fakeNodeFs(),
+      nodeVersionOf: () => {
+        return { version: process.version, status: 0, signal: null }
+      },
+    },
+  })
+}
+
 const producedNames = async (): Promise<string[]> => {
-  const { checks } = (await doctor()).structuredContent
+  const { checks } = (await runDoctor()).structuredContent
 
   return checks.map((check) => {
     return check.name
@@ -239,7 +260,7 @@ const producedNames = async (): Promise<string[]> => {
 
 describe('doctor check inventory', () => {
   it('produces exactly the names the section map is built from', async () => {
-    const produced = (await doctor()).structuredContent.checks.map((check) => {
+    const produced = (await runDoctor()).structuredContent.checks.map((check) => {
       return check.name
     })
 
@@ -247,7 +268,7 @@ describe('doctor check inventory', () => {
   })
 
   it('emits each check exactly once', async () => {
-    const produced = (await doctor()).structuredContent.checks.map((check) => {
+    const produced = (await runDoctor()).structuredContent.checks.map((check) => {
       return check.name
     })
 
@@ -263,7 +284,7 @@ describe('doctor check inventory', () => {
  */
 describe('doctor --json payload', () => {
   it('marks exactly the FIXABLE_NAMES rows fixable', async () => {
-    const { checks } = (await doctor()).structuredContent
+    const { checks } = (await runDoctor()).structuredContent
     const fixable = checks
       .filter((check) => {
         return check.fixable
@@ -276,7 +297,7 @@ describe('doctor --json payload', () => {
   })
 
   it('reports the CLI version as a top-level field', async () => {
-    expect((await doctor()).structuredContent.cliVersion).toBe(packageJson.version)
+    expect((await runDoctor()).structuredContent.cliVersion).toBe(packageJson.version)
   })
 })
 
@@ -304,7 +325,7 @@ describe('the MCP server key and Agent allowlist rows are gated on the git root'
   it('answers against the mocked root, not the directory vitest was launched from', async () => {
     gitTopLevel = ensureGitOnlyFixture()
 
-    const { checks } = (await doctor()).structuredContent
+    const { checks } = (await runDoctor()).structuredContent
     const row = checks.find((check) => {
       return check.name === 'MCP server key'
     })

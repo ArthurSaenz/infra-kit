@@ -1,6 +1,9 @@
 import path from 'node:path'
+import process from 'node:process'
 import { describe, expect, it } from 'vitest'
 
+import { fakeNodeFs, hardlinkNodeFs } from 'src/dev/proxy/__tests__/portless-link-fixtures'
+import type { FakeNodeFs } from 'src/dev/proxy/__tests__/portless-link-fixtures'
 import { DARWIN_SERVICE_PLIST_PATH, LINUX_SERVICE_UNIT_PATH } from 'src/dev/proxy/portless-driver'
 import type { HandshakeResult, PortlessRoute } from 'src/dev/proxy/portless-driver'
 
@@ -25,6 +28,19 @@ const GLOBAL_TARGET = '/Users/x/Library/pnpm/global/v11/abc-0/node_modules/.pnpm
 const CHECKOUT_BIN = '/Users/x/work/api/node_modules/portless/dist/cli.js'
 const EXEC_PATH = '/opt/node/24.21.0/bin/node'
 const OLD_NODE = '/opt/node/24.18.0/bin/node'
+const STABLE_NODE = path.join(HOME, '.infra-kit', 'node')
+/** The two sidecar clocks on a converged machine: the Node changed once, the file was re-minted later. */
+const VERSION_CHANGED_AT = '2026-09-01T00:00:00.000Z'
+const REFRESHED_AT = '2026-09-10T00:00:00.000Z'
+
+/** The N8 shape under `HOME`, so the service-target row sees a HEALTHY `stableNode`; the clocks are the T7 tests' reference points. */
+const stableNodeFs = (home = HOME, platform = 'darwin'): FakeNodeFs => {
+  return hardlinkNodeFs({
+    home,
+    execPath: EXEC_PATH,
+    sidecar: { platform, refreshedAt: REFRESHED_AT, versionChangedAt: VERSION_CHANGED_AT },
+  })
+}
 
 const PACKAGE_JSON = JSON.stringify({ name: 'portless', version: '1.2.3' })
 
@@ -44,6 +60,8 @@ interface Machine {
   execPath?: string
   daemonStartedAt?: Date | null
   packageJsonMtime?: Date | null
+  /** The fs behind `~/.infra-kit/node`; empty (no file → `stableNode: null`) unless a case is about the node. */
+  nodeFs?: FakeNodeFs
 }
 
 const depsFor = (machine: Machine): PortlessCheckDeps => {
@@ -104,6 +122,13 @@ const depsFor = (machine: Machine): PortlessCheckDeps => {
     processStartTime: () => {
       return machine.daemonStartedAt ?? null
     },
+    isGlobal: () => {
+      return true
+    },
+    nodeFs: machine.nodeFs ?? fakeNodeFs(),
+    nodeVersionOf: () => {
+      return { version: process.version, status: 0, signal: null }
+    },
   }
 }
 
@@ -158,8 +183,9 @@ describe('portless service target', () => {
     const row = await serviceTargetRow(machine)
 
     expect(row.status).toBe('fail')
-    expect(row.message).toContain(`The service runs \`${OLD_NODE}\`, which no longer exists`)
-    expect(row.message).toContain(INSTALL_THROUGH_LINK)
+    expect(row.message).toContain(
+      `The service runs \`${OLD_NODE}\`, which no longer exists (Node was upgraded, or its package dir was re-created). Re-run: \`${INSTALL_THROUGH_LINK}\``,
+    )
   })
 
   it('warns when the service runs an older node that still exists', async () => {
@@ -339,7 +365,7 @@ describe('portless service target', () => {
     expect(row).toEqual({
       name: 'portless service target',
       status: 'pass',
-      message: `service runs \`${EXEC_PATH}\` + stable link → portless 1.2.3`,
+      message: `service runs \`${EXEC_PATH}\` (Node ${process.version}) + stable link → portless 1.2.3`,
     })
   })
 
@@ -353,7 +379,7 @@ describe('portless service target', () => {
     expect(row).toEqual({
       name: 'portless service target',
       status: 'pass',
-      message: `service runs \`${EXEC_PATH}\` + stable link → portless ?`,
+      message: `service runs \`${EXEC_PATH}\` (Node ${process.version}) + stable link → portless ?`,
     })
   })
 
@@ -413,6 +439,150 @@ describe('portless service target', () => {
 
     expect(row.status).toBe('pass')
     expect(row.message).toContain(`Warning — could not parse ${DARWIN_SERVICE_PLIST_PATH}`)
+  })
+})
+
+/**
+ * The rows that exist because of `~/.infra-kit/node` (§5.5 T5–T8). `stableNodeFs()` makes the node row
+ * N8, so `stableNode` is the string every remediation renders through; the plist under test names either
+ * the deep `EXEC_PATH` (not yet switched) or the stable node (converged).
+ */
+describe('portless service target — stable node', () => {
+  const INSTALL_THROUGH_STABLE_NODE = `sudo ${STABLE_NODE} ${LINK_CLI} service install`
+
+  const stable = (overrides: Partial<Machine> = {}): Machine => {
+    const machine = converged({ nodeFs: stableNodeFs(), ...overrides })
+
+    machine.files[DARWIN_SERVICE_PLIST_PATH] = launchdPlist([STABLE_NODE, LINK_CLI, 'proxy', '--port', '443'])
+    machine.files[STABLE_NODE] = 'ELF'
+
+    return machine
+  }
+
+  it('t5: warns when the plist still names the deep node although the stable node is healthy, and renders the switch through it', async () => {
+    const row = await serviceTargetRow(converged({ nodeFs: stableNodeFs() }))
+
+    expect(row.status).toBe('pass')
+    expect(row.message).toBe(
+      `Warning — The service runs \`${EXEC_PATH}\`, a path its package manager will remove. Re-run once to switch it to the stable node: \`${INSTALL_THROUGH_STABLE_NODE}\``,
+    )
+  })
+
+  it('t6: falls back to the execPath advisory and command when the node row failed (stableNode null)', async () => {
+    const machine = converged()
+
+    machine.files[DARWIN_SERVICE_PLIST_PATH] = launchdPlist([OLD_NODE, LINK_CLI, 'proxy'])
+    machine.files[OLD_NODE] = 'ELF'
+
+    const row = await serviceTargetRow(machine)
+
+    expect(row.message).toBe(
+      `Warning — The service runs \`${OLD_NODE}\`; infra-kit runs \`${EXEC_PATH}\`. Works until the old Node is removed. Re-run when convenient: \`${INSTALL_THROUGH_LINK}\``,
+    )
+  })
+
+  it("t7: warns 'predates Node v…' when the daemon started before the sidecar's versionChangedAt", async () => {
+    const machine = stable({
+      daemonStartedAt: new Date('2026-08-30T00:00:00Z'),
+      packageJsonMtime: new Date('2026-08-01T00:00:00Z'),
+    })
+
+    machine.files['/Users/x/.portless/proxy.pid'] = '4242'
+
+    const row = await serviceTargetRow(machine)
+
+    expect(row.message).toBe(
+      `Warning — The running daemon predates Node ${process.version} that \`dev\` will talk to. Restart it: \`sudo launchctl kickstart -k system/sh.portless.proxy\` (or reboot).`,
+    )
+  })
+
+  it('t7 reads versionChangedAt, never refreshedAt: a daemon started after the Node changed but before a same-version relink is current (T8)', async () => {
+    const machine = stable({
+      daemonStartedAt: new Date('2026-09-05T00:00:00Z'),
+      packageJsonMtime: new Date('2026-08-01T00:00:00Z'),
+    })
+
+    machine.files['/Users/x/.portless/proxy.pid'] = '4242'
+
+    const row = await serviceTargetRow(machine)
+
+    expect(row.message).not.toContain('Warning')
+    expect(row.message).toBe(`service runs \`${STABLE_NODE}\` (Node ${process.version}) + stable link → portless 1.2.3`)
+  })
+
+  it('t7 names both when the daemon predates the Node AND the link target', async () => {
+    const machine = stable({
+      daemonStartedAt: new Date('2026-08-30T00:00:00Z'),
+      packageJsonMtime: new Date('2026-09-02T00:00:00Z'),
+    })
+
+    machine.files['/Users/x/.portless/proxy.pid'] = '4242'
+
+    const row = await serviceTargetRow(machine)
+
+    expect(row.message).toContain(`predates Node ${process.version} and portless 1.2.3 that`)
+  })
+
+  it('t7 names portless alone when only the link target is newer than the daemon', async () => {
+    const machine = stable({
+      daemonStartedAt: new Date('2026-09-01T12:00:00Z'),
+      packageJsonMtime: new Date('2026-09-02T00:00:00Z'),
+    })
+
+    machine.files['/Users/x/.portless/proxy.pid'] = '4242'
+
+    const row = await serviceTargetRow(machine)
+
+    expect(row.message).toContain('predates portless 1.2.3 that')
+    expect(row.message).not.toContain('Node')
+  })
+
+  it("t8: passes on a converged machine whose plist names the stable node, interpolating the plist's own path", async () => {
+    const row = await serviceTargetRow(stable())
+
+    expect(row).toEqual({
+      name: 'portless service target',
+      status: 'pass',
+      message: `service runs \`${STABLE_NODE}\` (Node ${process.version}) + stable link → portless 1.2.3`,
+    })
+  })
+
+  it('t8 on linux: a unit whose ExecStart runs the stable node passes', async () => {
+    const home = '/home/u'
+    const stableNode = path.join(home, '.infra-kit', 'node')
+    const linkCli = path.join(home, '.infra-kit', 'portless', 'dist', 'cli.js')
+    const target = '/home/u/.local/share/pnpm/global/5/node_modules/portless'
+    const nodeFs = stableNodeFs(home, 'linux')
+    const files = {
+      [LINUX_SERVICE_UNIT_PATH]: systemdUnit([stableNode, linkCli, 'proxy', 'start', '--port', '443']),
+      [stableNode]: 'ELF',
+      [path.join(target, 'dist', 'cli.js')]: 'js',
+      [path.join(target, 'package.json')]: PACKAGE_JSON,
+    }
+    const realpath = (p: string): string => {
+      return p.startsWith(`${home}/.infra-kit/portless`) ? target + p.slice(`${home}/.infra-kit/portless`.length) : p
+    }
+    const checks = await checkPortless({
+      ...depsFor({ platform: 'linux', files, nodeFs }),
+      home,
+      cwd: '/home/u/work',
+      realpath,
+      exists: (p) => {
+        return realpath(p) in files
+      },
+      readFile: (p) => {
+        return files[realpath(p)] ?? null
+      },
+    })
+    const row = checks.find((check) => {
+      return check.name === 'portless service target'
+    })
+
+    expect(row).toEqual({
+      name: 'portless service target',
+      status: 'pass',
+      message: `service runs \`${stableNode}\` (Node ${process.version}) + stable link → portless 1.2.3`,
+    })
   })
 })
 

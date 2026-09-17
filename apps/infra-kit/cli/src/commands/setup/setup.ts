@@ -21,10 +21,12 @@ import type { InitEntry, InitStep, InitStepName } from 'src/commands/init'
 import {
   ensurePortlessLink,
   portlessLinkCliPath,
-  realPortlessLinkDeps,
+  realPortlessStableDeps,
   serviceInstallCommand,
 } from 'src/dev/proxy/portless-link'
 import type { EnsurePortlessLinkDeps, PortlessLinkOutcome } from 'src/dev/proxy/portless-link'
+import { ensurePortlessNode } from 'src/dev/proxy/portless-node'
+import type { EnsurePortlessNodeDeps, PortlessNodeResult } from 'src/dev/proxy/portless-node'
 import { assertNever } from 'src/lib/assert-never'
 import type { runRecipe } from 'src/lib/dependency-install'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
@@ -53,28 +55,36 @@ export interface SetupOptions {
 
 /**
  * Everything the portless-service step (§5.6 of the stable-path plan) needs: the `ensurePortlessLink`
- * seams to converge `~/.infra-kit/portless`, and doctor's `portless service target` seams to decide
- * whether the installed system service has caught up to it. The verdict is doctor's own
- * ({@link portlessServiceTargetState}), not a second reading of the plist: two readers of one file can
- * only ever disagree, and the sudo line is printed exactly when doctor's row would not be a clean pass.
+ * seams to converge `~/.infra-kit/portless`, the `ensurePortlessNode` seams to converge `~/.infra-kit/node`
+ * beside it, and doctor's `portless service target` seams to decide whether the installed system service
+ * has caught up to both.
+ *
+ * The verdict is doctor's own ({@link portlessServiceTargetState}), not a second reading of the plist or
+ * of the node file: two readers of one file can only ever disagree, and the sudo line is printed exactly
+ * when doctor's row would not be a clean pass, through exactly the node doctor's row vouches for.
  */
 export interface PortlessServiceDeps {
   link: EnsurePortlessLinkDeps
+  node: EnsurePortlessNodeDeps
   target: ServiceTargetDeps
 }
 
 /**
- * The real seams: the link's own, plus doctor's defaults for the service-target row — all but one. The
- * daemon-age seam is a no-op: that row is doctor's restart advisory, never a `service install` verdict,
- * and answering it spawns `ps`. `setup` asks the file, not the process table.
+ * The real seams: the link's and the node's from one `realPortlessStableDeps()` (a second evaluation of
+ * `isGlobal` after the boot hook's — one `realpath` and one `.git` walk, nothing for a converge command),
+ * plus doctor's defaults for the service-target row — all but one. The daemon-age seam is a no-op: that
+ * row is doctor's restart advisory, never a `service install` verdict, and answering it spawns `ps`.
+ * `setup` asks the file, not the process table.
  */
 const realPortlessServiceDeps = (): PortlessServiceDeps => {
-  const link = realPortlessLinkDeps()
+  const { link, node } = realPortlessStableDeps()
 
   return {
     link,
+    node,
     target: {
       home: link.home,
+      isGlobal: link.isGlobal,
       processStartTime: () => {
         return null
       },
@@ -109,25 +119,72 @@ const portlessLinkDetail = (outcome: PortlessLinkOutcome): string => {
   }
 }
 
+/** The node step's line, in the same `<outcome> <name> — <detail>` shape. */
+const portlessNodeDetail = (result: PortlessNodeResult): string => {
+  const verb = result.method === 'copy' ? 'copied' : 'linked'
+
+  switch (result.outcome) {
+    case 'created': {
+      return `${verb} Node ${result.version} to ~/.infra-kit/node`
+    }
+    case 'refreshed': {
+      return `re-${verb} Node ${result.version} to ~/.infra-kit/node`
+    }
+    case 'unchanged': {
+      return `~/.infra-kit/node is already Node ${result.version}`
+    }
+    case 'skipped-local': {
+      return 'skipped — this install is not global'
+    }
+    case 'skipped-platform': {
+      return 'skipped — no portless OS service on this platform'
+    }
+    case 'failed': {
+      return 'could not write ~/.infra-kit/node — see the debug log'
+    }
+    default: {
+      return assertNever(result.outcome)
+    }
+  }
+}
+
 /**
- * Converge `~/.infra-kit/portless` and, when the installed system service (if any) has not caught up to
- * it, print the single `service install` command a human has to run — sudo is never run here. This is its
- * own step, run unconditionally like the init half rather than gated on `--skip-tools`/`--tools`: it is
- * local and idempotent, not a network install of one of the five tracked tools.
+ * Converge `~/.infra-kit/portless` and `~/.infra-kit/node` and, when the installed system service (if
+ * any) has not caught up to them, print the single `service install` command a human has to run — sudo
+ * is never run here. This is its own step, run unconditionally like the init half rather than gated on
+ * `--skip-tools`/`--tools`: it is local and idempotent, not a network install of one of the five tracked
+ * tools.
+ *
+ * The line renders through the stable node only on doctor's health verdict (§5.4 N8 — resolved after
+ * the converge, and from `execPath` even on a checkout's `'skipped-local'`, so the global's node still
+ * shortens the line when it is the same inode): that verdict is the one surface that pays the spawn, so
+ * a copy that does not run is never handed to root.
  */
 const convergePortlessService = async (deps: PortlessServiceDeps): Promise<void> => {
-  const result = ensurePortlessLink(deps.link)
+  const link = ensurePortlessLink(deps.link)
 
-  logger.info(`  ${result.outcome.padEnd(9)} portless link — ${portlessLinkDetail(result.outcome)}`)
+  logger.info(`  ${link.outcome.padEnd(9)} portless link — ${portlessLinkDetail(link.outcome)}`)
+
+  const node = ensurePortlessNode(deps.node)
+
+  logger.info(`  ${node.outcome.padEnd(9)} portless node — ${portlessNodeDetail(node)}`)
 
   const bin = portlessLinkCliPath(deps.link.home, deps.target.exists) ?? deps.link.resolveBin()
 
   if (bin === null) return
-  if ((await portlessServiceTargetState(deps.target, bin)) === 'converged') return
+
+  const { state, stableNode } = await portlessServiceTargetState(deps.target, bin)
+
+  if (state === 'converged') return
 
   logger.info('Run this yourself to finish the portless service:')
   logger.info(
-    `  ${serviceInstallCommand(bin, { home: deps.link.home, exists: deps.target.exists, execPath: deps.target.execPath })}`,
+    `  ${serviceInstallCommand(bin, {
+      home: deps.link.home,
+      exists: deps.target.exists,
+      execPath: deps.target.execPath,
+      stableNode,
+    })}`,
   )
 }
 

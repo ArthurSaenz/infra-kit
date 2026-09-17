@@ -1483,6 +1483,9 @@ describe('devServerRunner — Layer B portless aliases', () => {
     // lives in node_modules and is not on PATH, and sudo swaps PATH for secure_path — so the bare form dies
     // with `sudo: portless: command not found`, which is exactly what a user hit. Asserting the bare string
     // is what let that ship, so the bare form is asserted ABSENT here.
+    //
+    // The seam is an EXPLICIT empty home: with no `~/.infra-kit/node` there the inode-only stable-node
+    // candidate is false, so the line stays on `process.execPath` whatever the author's real home holds.
     const { runner, ensuredPorts } = await setupProxyRunner(
       temp,
       'client',
@@ -1490,6 +1493,8 @@ describe('devServerRunner — Layer B portless aliases', () => {
       true,
       undefined,
       daemonNeverStarts,
+      undefined,
+      { portlessLink: { home: NO_LINK_HOME } },
     )
 
     const error = await runner.start().then(
@@ -1526,6 +1531,8 @@ describe('devServerRunner — Layer B portless aliases', () => {
       undefined,
       daemonNeverStarts,
       { serviceInstalled: 'yes' },
+      // The same explicit empty home as above: no link, no stable-node candidate, so `process.execPath` it is.
+      { portlessLink: { home: NO_LINK_HOME } },
     )
 
     const error = await runner.start().then(
@@ -1615,6 +1622,76 @@ describe('devServerRunner — Layer B portless aliases', () => {
           sudo <node> /Users/dev/.infra-kit/portless/dist/cli.js service install
       \`infra-kit doctor\` checks the daemon and CA trust state."
     `)
+  }, 15000)
+
+  it('renders BOTH daemon-down `service install` lines through ~/.infra-kit/node when a hardlink of this process is there — without spawning', async () => {
+    // A real temp home is the only honest way to make the inode-only candidate true: a hardlink of the
+    // running node. Adding a hardlink adds a NAME to the inode and removing the temp dir removes that
+    // name — neither writes through to the binary (T-1). No `copyFileSync` onto anything here.
+    //
+    // `dev` never spawns to vouch for the file: the seam carries no `stableNode` verdict and no probe,
+    // so the short line is proof by inode alone. A `spawnSync` spy would be the wrong witness — the
+    // fake driver's own calls are spawns — so the absence of a probe seam IS the assertion.
+    const home = temp.register(fs.mkdtempSync(path.join(os.tmpdir(), 'ik-stable-node-home-')))
+    const linkCli = path.join(home, '.infra-kit', 'portless', 'dist', 'cli.js')
+    const stableNode = path.join(home, '.infra-kit', 'node')
+
+    fs.mkdirSync(path.join(home, '.infra-kit'))
+    fs.linkSync(process.execPath, stableNode)
+
+    const portlessLink = {
+      home,
+      exists: (target: string): boolean => {
+        return target === linkCli
+      },
+    }
+    const expectedLine = `sudo ${stableNode} ${linkCli} service install`
+
+    const neverInstalled = await setupProxyRunner(
+      temp,
+      'client',
+      'feat-x',
+      true,
+      undefined,
+      daemonNeverStarts,
+      undefined,
+      { portlessLink },
+    )
+    const notInstalledError = await neverInstalled.runner.start().then(
+      () => {
+        return new Error('start() resolved, but an un-provisioned machine must refuse to boot')
+      },
+      (err: unknown) => {
+        return err as Error
+      },
+    )
+
+    expect(notInstalledError.message).toContain(`\n    ${expectedLine}\n`)
+    expect(notInstalledError.message).not.toContain(`sudo ${process.execPath}`)
+    // `trust` stays on the driver's real bin under the node running now — only the ROOT line is stable.
+    expect(notInstalledError.message).toContain(`${process.execPath} '${FAKE_PORTLESS_BIN}' trust`)
+
+    const stopped = await setupProxyRunner(
+      temp,
+      'client',
+      'feat-y',
+      true,
+      undefined,
+      daemonNeverStarts,
+      { serviceInstalled: 'yes' },
+      { portlessLink },
+    )
+    const stoppedError = await stopped.runner.start().then(
+      () => {
+        return new Error('start() resolved, but a dead daemon must refuse to boot')
+      },
+      (err: unknown) => {
+        return err as Error
+      },
+    )
+
+    expect(stoppedError.message).toContain(`\n    ${expectedLine}\n`)
+    expect(stoppedError.message).not.toContain(`sudo ${process.execPath}`)
   }, 15000)
 
   it('renders the daemon-down `service install` line from the real bin when no link resolves', async () => {

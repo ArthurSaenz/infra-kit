@@ -5,6 +5,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { hardlinkNodeFs } from 'src/dev/proxy/__tests__/portless-link-fixtures'
 import { caFingerprintMatches, listRoutes, readCaPath } from 'src/dev/proxy/portless-driver'
 import type { HandshakeResult, PortlessRoute } from 'src/dev/proxy/portless-driver'
 
@@ -42,7 +43,10 @@ const statusOf = (checks: { name: string; status: string }[], name: string): str
   })?.status
 }
 
-/** A machine where everything is right: portless present, serving TLS on :443, valid chain, trusted CA. */
+const HOME = '/nowhere/home'
+const EXEC_PATH = '/nowhere/node/bin/node'
+
+/** A machine where everything is right: portless present, serving TLS on :443, valid chain, trusted CA, stable node. */
 const healthyDeps = (overrides: PortlessCheckDeps = {}): PortlessCheckDeps => {
   return {
     resolveBin: () => {
@@ -75,7 +79,16 @@ const healthyDeps = (overrides: PortlessCheckDeps = {}): PortlessCheckDeps => {
     exists: () => {
       return false
     },
-    home: '/nowhere/home',
+    home: HOME,
+    platform: 'darwin',
+    execPath: EXEC_PATH,
+    isGlobal: () => {
+      return true
+    },
+    nodeFs: hardlinkNodeFs({ home: HOME, execPath: EXEC_PATH }),
+    nodeVersionOf: () => {
+      return { version: process.version, status: 0, signal: null }
+    },
     ...overrides,
   }
 }
@@ -107,10 +120,10 @@ afterEach(() => {
 })
 
 describe('checkPortless', () => {
-  it('reports six passes and NOT ONE remediation on a healthy, correctly-trusted machine', async () => {
+  it('reports seven passes and NOT ONE remediation on a healthy, correctly-trusted machine', async () => {
     const checks = await checkPortless(healthyDeps())
 
-    expect(checks).toHaveLength(6)
+    expect(checks).toHaveLength(7)
     expect(
       checks.filter((check) => {
         return check.status !== 'pass'
@@ -314,8 +327,9 @@ describe('checkPortless', () => {
     }
 
     // The install is the one command that needs root, and it is elevated as `sudo <node> <cli.js> …` —
-    // sudo resolving an absolute interpreter, not a name it would have to look up on a PATH it just discarded.
-    expect(printed).toContain(`sudo ${process.execPath} ${BIN} service install`)
+    // sudo resolving an absolute interpreter, not a name it would have to look up on a PATH it just
+    // discarded. The interpreter is the healthy stable node (§5.4), an absolute path — never `~`.
+    expect(printed).toContain(`sudo ${path.join(HOME, '.infra-kit', 'node')} ${BIN} service install`)
     expect(printed).toContain(`${BIN} trust`)
     expect(printed).toContain(`${BIN} alias --remove`)
   })

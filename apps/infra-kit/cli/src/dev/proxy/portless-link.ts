@@ -41,6 +41,8 @@ import { isGlobalInstall, safeRealpath } from 'src/lib/install-manager'
 
 import { formatPortlessCommand, resolvePortlessBin } from './portless-driver'
 import type { ExistsCheck } from './portless-driver'
+import { ensurePortlessNode, stableNodeCandidate } from './portless-node'
+import type { EnsurePortlessNodeDeps, PortlessNodeResult } from './portless-node'
 
 /** `<home>/.infra-kit/portless` — the link path; the same `home` seam the rest of the config layer uses. */
 export const portlessLinkPath = (home: string): string => {
@@ -66,6 +68,13 @@ export interface ServiceInstallSeams {
   home: string
   exists?: ExistsCheck
   execPath?: string
+  /**
+   * `~/.infra-kit/node` as a health verdict: a string is "resolved and healthy — render through it"
+   * (doctor/setup after their node row), `null` is "resolved and unhealthy or absent — render through
+   * `execPath`, the node that provably runs", `undefined` is "not resolved" and the inode-only candidate
+   * is checked here instead (`dev`, which never spawns on its hot path).
+   */
+  stableNode?: string | null
 }
 
 /**
@@ -81,10 +90,17 @@ export interface ServiceInstallSeams {
  * link yet.
  */
 export const serviceInstallCommand = (bin: string, seams: ServiceInstallSeams): string => {
+  // Resolved before the candidate check: `dev` passes `{ home }` only, and the candidate must never stat `undefined`.
+  const execPath = seams.execPath ?? process.execPath
+  // Written out rather than `??`-chained: a `null` verdict ("resolved, unhealthy") must reach `execPath`
+  // directly and never fall through to a candidate check that would contradict doctor's spawn.
+  const stableNode =
+    seams.stableNode === undefined ? stableNodeCandidate({ home: seams.home, execPath }) : seams.stableNode
+
   return formatPortlessCommand(['service', 'install'], {
     sudo: true,
     bin: portlessLinkCliPath(seams.home, seams.exists) ?? bin,
-    execPath: seams.execPath,
+    execPath: stableNode ?? execPath,
   })
 }
 
@@ -92,6 +108,7 @@ export type PortlessLinkOutcome =
   'created' | 'repointed' | 'unchanged' | 'skipped-local' | 'skipped-unresolved' | 'failed'
 
 export interface PortlessLinkResult {
+  kind: 'link'
   outcome: PortlessLinkOutcome
   /** The portless package dir the link should point at; `null` only for `'skipped-unresolved'`. */
   target: string | null
@@ -175,69 +192,103 @@ const writeLink = (target: string, link: string, linkFs: PortlessLinkFs): void =
  *
  * @example
  * ensurePortlessLink({ resolveBin: () => '/g/node_modules/portless/dist/cli.js', isGlobal: () => true, home: '/Users/x' })
- * // => { outcome: 'created', target: '/g/node_modules/portless', link: '/Users/x/.infra-kit/portless' }
+ * // => { kind: 'link', outcome: 'created', target: '/g/node_modules/portless', link: '/Users/x/.infra-kit/portless' }
  */
 export const ensurePortlessLink = (deps: EnsurePortlessLinkDeps): PortlessLinkResult => {
   const { resolveBin, isGlobal, home, fs: linkFs = fs } = deps
   const link = portlessLinkPath(home)
   const bin = resolveBin()
 
-  if (bin === null) return { outcome: 'skipped-unresolved', target: null, link }
+  if (bin === null) return { kind: 'link', outcome: 'skipped-unresolved', target: null, link }
 
   const target = dirname(dirname(bin))
 
-  if (!isGlobal()) return { outcome: 'skipped-local', target, link }
+  if (!isGlobal()) return { kind: 'link', outcome: 'skipped-local', target, link }
 
   try {
     linkFs.mkdirSync(dirname(link), { recursive: true })
 
     const current = readCurrentLink(link, linkFs)
 
-    if (current === target) return { outcome: 'unchanged', target, link }
-    if (current === NOT_A_SYMLINK) return { outcome: 'failed', target, link }
+    if (current === target) return { kind: 'link', outcome: 'unchanged', target, link }
+    if (current === NOT_A_SYMLINK) return { kind: 'link', outcome: 'failed', target, link }
 
     writeLink(target, link, linkFs)
 
-    return { outcome: current === ABSENT ? 'created' : 'repointed', target, link }
+    return { kind: 'link', outcome: current === ABSENT ? 'created' : 'repointed', target, link }
   } catch {
-    return { outcome: 'failed', target, link }
+    return { kind: 'link', outcome: 'failed', target, link }
   }
 }
 
-/** `(fields, message)` — the shape of `logger.debug`, so the CLI can pass it straight through. */
-type PortlessLinkLog = (result: PortlessLinkResult, message: string) => void
+/**
+ * `(fields, message)` — the shape of `logger.debug`, so the CLI can pass it straight through. The two
+ * boot results are a union on `kind`: a caller that reads `link`/`target` (the `ik-mcp` stderr line)
+ * narrows first.
+ */
+export type PortlessLinkLog = (result: PortlessLinkResult | PortlessNodeResult, message: string) => void
+
+/** The link's seams and the node's, sharing ONE `isGlobal` — the two are converged together at every boot. */
+export interface PortlessStableDeps {
+  link: EnsurePortlessLinkDeps
+  node: EnsurePortlessNodeDeps
+}
 
 /**
- * The real seams. Shared with `setup`, which needs the RESULT back to report its step, so the two
- * writers can never disagree about which install is "global" or where the link goes.
+ * The real seams. Shared with `setup`, which needs the RESULTS back to report its steps, so the writers
+ * can never disagree about which install is "global" or where the files go. `isGlobal` is memoised
+ * per deps object: it costs a `realpathSync` plus the `.git` walk, and both steps ask it.
  */
-export const realPortlessLinkDeps = (): EnsurePortlessLinkDeps => {
+export const realPortlessStableDeps = (): PortlessStableDeps => {
   const home = homedir()
+  let global: boolean | undefined
+
+  const isGlobal = (): boolean => {
+    global ??= isGlobalInstall({
+      selfRealPath: fs.realpathSync(fileURLToPath(import.meta.url)),
+      env: process.env,
+      realpath: safeRealpath,
+      home,
+      exists: fs.existsSync,
+    })
+
+    return global
+  }
 
   return {
-    resolveBin: resolvePortlessBin,
-    isGlobal: () => {
-      return isGlobalInstall({
-        selfRealPath: fs.realpathSync(fileURLToPath(import.meta.url)),
-        env: process.env,
-        realpath: safeRealpath,
-        home,
-        exists: fs.existsSync,
-      })
+    link: { resolveBin: resolvePortlessBin, isGlobal, home },
+    node: {
+      isGlobal,
+      home,
+      execPath: process.execPath,
+      version: process.version,
+      arch: process.arch,
+      platform: process.platform,
     },
-    home,
+  }
+}
+
+const logStep = (log: PortlessLinkLog, message: string, run: () => PortlessLinkResult | PortlessNodeResult): void => {
+  try {
+    log(run(), message)
+  } catch {
+    // A file that could not be converged is `doctor`'s to report; it must never be a boot failure.
   }
 }
 
 /**
- * The process-boot entry for both bins. fs-only, no subprocess, never throws, never exits, never
- * writes to stdout; the outcome goes to `log` and nowhere else. `deps` is injectable so the "`'failed'`
- * is logged" contract is testable without a real disk.
+ * The process-boot entry for both bins: the link, then the node — independent state, so the node step
+ * runs whatever the link reported. fs-only, no subprocess, never throws, never exits, never writes to
+ * stdout; each outcome goes to `log` and nowhere else. `deps` is injectable so the "`'failed'` is
+ * logged" contract is testable without a real disk.
  */
-export const bootPortlessLink = (log: PortlessLinkLog, deps?: EnsurePortlessLinkDeps): void => {
-  try {
-    log(ensurePortlessLink(deps ?? realPortlessLinkDeps()), 'portless link')
-  } catch {
-    // A link that could not be converged is `doctor`'s to report; it must never be a boot failure.
-  }
+export const bootPortlessLink = (log: PortlessLinkLog, deps?: PortlessStableDeps): void => {
+  const stable = deps ?? realPortlessStableDeps()
+
+  logStep(log, 'portless link', () => {
+    return ensurePortlessLink(stable.link)
+  })
+  logStep(log, 'portless node', () => {
+    return ensurePortlessNode(stable.node)
+  })
 }

@@ -86,10 +86,11 @@ describe('section coverage', () => {
     expect(unmapped).toEqual([])
   })
 
-  it('covers exactly 36 checks', () => {
+  it('covers exactly 37 checks', () => {
     // 36, up from 34: the two agent rows (`Agent mode`, `Agent allowlist`) joined the plugin section.
-    expect(DOCTOR_CHECK_NAMES).toHaveLength(36)
-    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(36)
+    // 37: `portless node` joined the proxy section.
+    expect(DOCTOR_CHECK_NAMES).toHaveLength(37)
+    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(37)
   })
 
   it('keeps the Claude Code plugin rows adjacent, in order, followed by the MCP key and agent rows (O3)', () => {

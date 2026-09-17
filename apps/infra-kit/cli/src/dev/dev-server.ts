@@ -1847,10 +1847,13 @@ export class DevServerRunner {
       )
     }
 
-    // The one exception is the ROOT install line: portless bakes the script path it is invoked with into the
-    // plist, so that line carries the stable `~/.infra-kit/portless/dist/cli.js` whenever the link resolves —
-    // the version-specific path would dangle at the next `pnpm add -g infra-kit`. `status` and `trust` run
-    // now, against this driver's bin, and stay on it.
+    // The one exception is the ROOT install line: portless bakes the script path AND the node it is invoked
+    // with into the plist, so that line carries the stable `~/.infra-kit/portless/dist/cli.js` whenever the
+    // link resolves, and the stable `~/.infra-kit/node` whenever that file is this process's own inode —
+    // both version-specific paths would dangle at the next `pnpm add -g infra-kit`. The seam is `{ home }`
+    // only (no `stableNode` verdict): this is a hot startup path that never spawns, so the inode check is
+    // all it pays; a copy of Node is `doctor`'s to vouch for. `status` and `trust` run now, against this
+    // driver's bin, and stay on it.
     const install = serviceInstallCommand(bin, this.options.portlessLink ?? { home: os.homedir() })
 
     const outcome = await this.proxy.probeProxy(this.proxyPort, true)

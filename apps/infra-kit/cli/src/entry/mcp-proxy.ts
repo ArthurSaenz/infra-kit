@@ -38,7 +38,12 @@ const write = (payload: JsonRpcMessage): void => {
 // handshake — and stdout is the transport, so only a failure earns a stderr line; the ordinary outcomes
 // are `doctor`'s to show.
 bootPortlessLink((result, message) => {
-  if (result.outcome === 'failed') log(`${message} failed: ${result.link} -> ${result.target}`)
+  if (result.outcome === 'failed')
+    log(
+      result.kind === 'link'
+        ? `${message} failed: ${result.link} -> ${result.target}`
+        : `${message} failed: ${result.node} <- ${result.source}`,
+    )
 })
 
 const parsed = parseProxyArgv(process.argv.slice(2))

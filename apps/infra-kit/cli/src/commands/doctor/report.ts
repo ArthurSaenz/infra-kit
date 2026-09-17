@@ -89,6 +89,7 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
     SECTION_PROXY,
     [
       'portless installed',
+      'portless node',
       'portless service target',
       PORTLESS_SERVING_NAME,
       'portless CA chain valid',
