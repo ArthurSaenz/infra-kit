@@ -48,6 +48,7 @@ const resultWith = (failedBranches: string[], total: number) => {
       dryRun: false,
       atomicPush: { attempted: true, aborted: failedBranches.length > 0 },
       results: [],
+      skipped: [],
     },
   }
 }

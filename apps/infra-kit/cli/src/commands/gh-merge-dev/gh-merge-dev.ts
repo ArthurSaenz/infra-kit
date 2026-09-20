@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
+import type { ReleasePRInfo } from 'src/integrations/gh'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { isCommandDeclined } from 'src/lib/errors/command-declined-error'
 import { OperationError } from 'src/lib/errors/operation-error'
@@ -11,7 +12,7 @@ import type { WorktreeEntry } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 import { formatBranchName, formatJiraName, parseBranchName, parseReleaseRef } from 'src/lib/release-id'
-import { detectReleaseType, formatBranchPickerItems } from 'src/lib/release-utils'
+import { formatBranchPickerItems } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
@@ -46,6 +47,14 @@ interface MergeDevResultEntry {
   reason?: string
 }
 
+type SkipReason = 'hotfix (targets main)' | 'title/base mismatch' | 'open PRs to both dev and main'
+
+/** A discovered release PR that is not a merge-dev candidate, and why. */
+interface SkippedEntry {
+  branch: string
+  reason: SkipReason
+}
+
 interface MergeDevResult {
   successfulMerges: number
   failedMerges: number
@@ -54,9 +63,10 @@ interface MergeDevResult {
   dryRun: boolean
   atomicPush: { attempted: boolean; aborted: boolean; abortedBy?: string }
   results: MergeDevResultEntry[]
+  skipped: SkippedEntry[]
 }
 
-const emptyResult = (dryRun: boolean): MergeDevResult => {
+const emptyResult = (dryRun: boolean, skipped: SkippedEntry[]): MergeDevResult => {
   return {
     successfulMerges: 0,
     failedMerges: 0,
@@ -65,7 +75,38 @@ const emptyResult = (dryRun: boolean): MergeDevResult => {
     dryRun,
     atomicPush: { attempted: false, aborted: false },
     results: [],
+    skipped,
   }
+}
+
+/**
+ * Why a discovered PR is excluded from the merge, or `null` when it is a candidate.
+ *
+ * Most specific first: discovery keeps the `main` record for a dual-base head, so such a row
+ * also reads as a hotfix, and a retitled hotfix also reads as a hotfix — naming the generic
+ * reason would hide the anomaly the operator actually needs to fix.
+ */
+const skipReason = (pr: ReleasePRInfo): SkipReason | null => {
+  if (pr.dualBase) return 'open PRs to both dev and main'
+  if (pr.titleMismatch) return 'title/base mismatch'
+  if (pr.type === 'hotfix') return 'hotfix (targets main)'
+
+  return null
+}
+
+/** `hotfix (targets main) ×2, title/base mismatch ×1` — for the one-line no-candidates report. */
+const summariseSkipped = (skipped: SkippedEntry[]): string => {
+  const counts = new Map<SkipReason, number>()
+
+  for (const entry of skipped) {
+    counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1)
+  }
+
+  return [...counts]
+    .map(([reason, count]) => {
+      return `${reason} ×${count}`
+    })
+    .join(', ')
 }
 
 const toResponse = (structuredContent: MergeDevResult) => {
@@ -81,19 +122,25 @@ const SUCCESS_STATUSES = new Set<ResultStatus>(['up-to-date', 'fast-forward', 'm
 /**
  * Resolve `--versions` selectors against the open **regular** release branches.
  *
- * Selects from `available` — the already-filtered list — rather than parsing tokens in
- * isolation, and never round-trips through `releaseBranchLabels`.
+ * Selects from `available` — the already-filtered candidate list — rather than parsing tokens
+ * in isolation, and never round-trips through `releaseBranchLabels`. A selector that names a
+ * discovered-but-skipped branch fails with that row's reason, so the operator learns why it is
+ * out instead of being told it does not exist.
  */
 // Both properties above have already been shipped as bugs elsewhere in this CLI:
 //
 // 1. `worktrees-add` skips the PR lookup entirely when `versions` is given — correct there,
-//    because it *wants* hotfix worktrees. Copying that shape here would bypass the
-//    `detectReleaseType(pr.title) === 'regular'` filter, and since hotfix PRs carry ordinary
-//    `release/v…` head refs (only their *title* marks them), `--versions 1.2.5` would happily
-//    merge `dev` into a branch that targets `main`.
+//    because it *wants* hotfix worktrees. Copying that shape here would bypass the candidate
+//    filter, and since a hotfix PR carries an ordinary `release/v…` head ref (only its
+//    `baseRefName` of `main` marks it), `--versions 1.2.5` would happily merge `dev` into a
+//    branch that targets `main`.
 // 2. `releaseBranchLabels`'s `flatMap` drops any branch that fails `parseBranchName`, so routing
 //    selectors through it is a silent selector loss.
-const resolveRequestedBranches = (versions: string | string[], available: string[]): string[] => {
+const resolveRequestedBranches = (
+  versions: string | string[],
+  available: string[],
+  skipped: SkippedEntry[],
+): string[] => {
   const tokens = (Array.isArray(versions) ? versions : versions.split(','))
     .map((token) => {
       return token.trim()
@@ -103,6 +150,11 @@ const resolveRequestedBranches = (versions: string | string[], available: string
     })
 
   const availableSet = new Set(available)
+  const skippedReasons = new Map(
+    skipped.map((entry) => {
+      return [entry.branch, entry.reason] as const
+    }),
+  )
   const selected = new Set<string>()
 
   for (const token of tokens) {
@@ -118,9 +170,11 @@ const resolveRequestedBranches = (versions: string | string[], available: string
     }
 
     if (!availableSet.has(branch)) {
+      const reason = skippedReasons.get(branch)
+
       throw new OperationError(undefined, {
         operation: `select release branch for "${token}"`,
-        stderrExcerpt: `${branch} is not an open regular release branch`,
+        stderrExcerpt: reason ? `${branch} is skipped: ${reason}` : `${branch} is not an open regular release branch`,
         remediation: `pass one of: ${available.join(', ')}`,
       })
     }
@@ -164,11 +218,15 @@ const describeEntry = (entry: MergePlanEntry): string => {
  * literally the thing that will be pushed, because the plan and the apply are the
  * same operation rather than a prediction and an application that can disagree.
  */
-const renderPlan = (entries: MergePlanEntry[]): void => {
+const renderPlan = (entries: MergePlanEntry[], skipped: SkippedEntry[]): void => {
   logger.info('\n📋 Merge plan:')
 
   for (const entry of entries) {
     logger.info(`  ${entry.branch} — ${describeEntry(entry)}`)
+  }
+
+  for (const entry of skipped) {
+    logger.info(`  ${entry.branch} — skipped: ${entry.reason}`)
   }
 }
 
@@ -351,22 +409,31 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
   // linked worktree would only refuse work that is about to succeed.
   await assertRepoWithOrigin({ operation: 'merge dev into release branches' })
 
-  // Only merge dev into regular releases (not hotfixes, which target main)
-  const allPRs = await getReleasePRsWithInfo()
-  const candidates = allPRs
-    .filter((pr) => {
-      return detectReleaseType(pr.title) === 'regular'
-    })
-    .map((pr) => {
-      return pr.branch
-    })
+  // Per-row exclusion, never a run-level throw: one retitled or dual-base PR must not block
+  // merging dev into every other release.
+  const candidates: string[] = []
+  const skipped: SkippedEntry[] = []
+
+  for (const pr of await getReleasePRsWithInfo()) {
+    const reason = skipReason(pr)
+
+    if (reason) {
+      skipped.push({ branch: pr.branch, reason })
+    } else {
+      candidates.push(pr.branch)
+    }
+  }
 
   if (candidates.length === 0) {
-    logger.info('ℹ️ No open release branches found')
+    logger.info(
+      skipped.length === 0
+        ? 'ℹ️ No open release branches found'
+        : `ℹ️ No open regular release branches — ${skipped.length} skipped (${summariseSkipped(skipped)})`,
+    )
 
     commandEcho.print()
 
-    return toResponse(emptyResult(dryRun))
+    return toResponse(emptyResult(dryRun, skipped))
   }
 
   const cwd = await getMainRepoRoot()
@@ -380,7 +447,7 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
     })
   }
 
-  const toPlan = versions === undefined ? candidates : resolveRequestedBranches(versions, candidates)
+  const toPlan = versions === undefined ? candidates : resolveRequestedBranches(versions, candidates, skipped)
 
   const outcome = await withScratchWorktree({ cwd }, async (worktree): Promise<RunOutcome> => {
     // The worktree exists from here until the push completes, which spans the
@@ -396,6 +463,7 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
         worktree,
         toPlan,
         candidates,
+        skipped,
         all,
         versions,
         dryRun,
@@ -415,7 +483,18 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
     return [] as WorktreeEntry[]
   })
 
-  return report({ entries, selected, pushed, pushAborted, abortedBy, declined, verifyFailed, dryRun, worktrees })
+  return report({
+    entries,
+    selected,
+    pushed,
+    pushAborted,
+    abortedBy,
+    declined,
+    verifyFailed,
+    dryRun,
+    worktrees,
+    skipped,
+  })
 }
 
 const planConfirmAndPush = async (args: {
@@ -423,18 +502,19 @@ const planConfirmAndPush = async (args: {
   worktree: { path: string }
   toPlan: string[]
   candidates: string[]
+  skipped: SkippedEntry[]
   all?: boolean
   versions?: string | string[]
   dryRun: boolean
   verify?: string
   confirmedCommand: boolean | undefined
 }): Promise<RunOutcome> => {
-  const { cwd, worktree, toPlan, candidates, all, versions, dryRun, verify, confirmedCommand } = args
+  const { cwd, worktree, toPlan, candidates, skipped, all, versions, dryRun, verify, confirmedCommand } = args
 
   const entries = await planMergeRun({ cwd, worktreePath: worktree.path, branches: toPlan })
   const idle = { entries, pushed: false, pushAborted: false, declined: false }
 
-  renderPlan(entries)
+  renderPlan(entries, skipped)
 
   if (dryRun) return { ...idle, selected: toPlan }
 
@@ -492,8 +572,8 @@ const planConfirmAndPush = async (args: {
 }
 
 /** Turn the run's outcome into the printed report and the structured result. */
-const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[] }) => {
-  const { entries, selected, pushed, pushAborted, abortedBy, declined, dryRun, worktrees, verifyFailed } = args
+const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]; skipped: SkippedEntry[] }) => {
+  const { entries, selected, pushed, pushAborted, abortedBy, declined, dryRun, worktrees, verifyFailed, skipped } = args
 
   const pushedBranches = new Set(
     pushed
@@ -591,6 +671,7 @@ const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]
     results: results.map((entry) => {
       return reportable ? { ...entry, pushed: false } : entry
     }),
+    skipped,
   })
 }
 
@@ -598,7 +679,7 @@ const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]
 export const ghMergeDevMcpTool = defineMcpTool({
   name: 'gh-merge-dev',
   description:
-    'Merge origin/dev into open regular (non-hotfix) release branches and push them in one atomic push. Merges happen in a disposable scratch worktree, so no existing checkout is touched and the branches may be checked out elsewhere. When invoked via MCP, pass all=true or an explicit versions list — the branch picker is unreachable without a TTY, and the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. Irreversible once pushed.',
+    'Merge origin/dev into open regular release branches and push them in one atomic push. A release PR is classified by its base branch, not its title: a PR to main is a hotfix and is skipped, as is any row whose title disagrees with its base or whose head has open PRs to both dev and main — every skipped row is reported in `skipped` with its reason. Merges happen in a disposable scratch worktree, so no existing checkout is touched and the branches may be checked out elsewhere. When invoked via MCP, pass all=true or an explicit versions list — the branch picker is unreachable without a TTY, and the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. Irreversible once pushed.',
   requiresHumanConfirm: true,
   inputSchema: {
     all: z
@@ -611,7 +692,7 @@ export const ghMergeDevMcpTool = defineMcpTool({
       .union([z.string(), z.array(z.string())])
       .optional()
       .describe(
-        'Target a subset of the open regular release branches. Each entry may be a version label ("1.2.5") or a raw branch name ("release/v1.2.5"). A selector that is not an open regular release is an error — hotfix branches cannot be selected. Takes precedence over `all`.',
+        'Target a subset of the open regular release branches. Each entry may be a version label ("1.2.5") or a raw branch name ("release/v1.2.5"). A selector that is not an open regular release is an error; one that names a skipped row (hotfix, title/base mismatch, dual-base) quotes that reason. Takes precedence over `all`.',
       ),
     dryRun: z.boolean().optional().describe('Compute and print the merge plan without pushing anything.'),
     verify: z
@@ -650,6 +731,16 @@ export const ghMergeDevMcpTool = defineMcpTool({
         }),
       )
       .describe('Per-branch terminal state'),
+    skipped: z
+      .array(
+        z.object({
+          branch: z.string(),
+          reason: z.enum(['hotfix (targets main)', 'title/base mismatch', 'open PRs to both dev and main']),
+        }),
+      )
+      .describe(
+        'Every discovered release PR that was not a merge candidate, with why. Empty only when nothing was discovered.',
+      ),
   },
   handler: ghMergeDev,
 })

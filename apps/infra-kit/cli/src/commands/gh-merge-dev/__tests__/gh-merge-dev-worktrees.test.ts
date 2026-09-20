@@ -108,7 +108,16 @@ beforeEach(() => {
   vi.mocked(assertRepoWithOrigin).mockResolvedValue(undefined)
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue(
     RELEASES.map((branch, index) => {
-      return { branch, title: `Release ${branch}`, createdAt: `2024-01-0${index + 1}T00:00:00Z` }
+      return {
+        branch,
+        number: index + 1,
+        title: `Release ${branch}`,
+        createdAt: `2024-01-0${index + 1}T00:00:00Z`,
+        baseRefName: 'dev',
+        type: 'regular' as const,
+        titleMismatch: false,
+        dualBase: false,
+      }
     }),
   )
 })

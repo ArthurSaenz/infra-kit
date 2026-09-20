@@ -5,7 +5,7 @@ import { getCurrentWorktrees } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
-import { detectReleaseType, formatVersionLabel, getJiraDescriptions } from 'src/lib/release-utils'
+import { formatVersionLabel, getJiraDescriptions } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 
@@ -39,7 +39,7 @@ export const worktreesList = async () => {
 
   const releaseTypes = new Map<string, ReleaseType>(
     releasePRsInfo.map((pr) => {
-      return [pr.branch, detectReleaseType(pr.title)]
+      return [pr.branch, pr.type]
     }),
   )
 

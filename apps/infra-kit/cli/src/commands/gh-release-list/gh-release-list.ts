@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { logger } from 'src/lib/logger'
 import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
-import { detectReleaseType, formatVersionLabel, getJiraDescriptions } from 'src/lib/release-utils'
+import { formatVersionLabel, getJiraDescriptions } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 
 /**
@@ -24,7 +24,8 @@ export const ghReleaseList = async () => {
         version: displayLabel(id),
         // Jira-descriptions map is keyed by the Jira version NAME (`v1.2.3` | `<name>`).
         jiraKey: formatJiraName(id),
-        type: detectReleaseType(pr.title),
+        type: pr.type,
+        titleMismatch: pr.titleMismatch,
       },
     ]
   })
@@ -40,12 +41,15 @@ export const ghReleaseList = async () => {
   const formattedLines = releases.map((release) => {
     const label = formatVersionLabel(release.version, release.type, maxVersionLength)
     const description = jiraDescriptions.get(release.jiraKey)
+    // The title lied about the type at least once (`releaseTypeFromBase` won); flag it so a human
+    // reading the list catches the same retitle a machine caller sees in `titleMismatch`.
+    const mismatchMarker = release.titleMismatch ? ' ⚠ title/base mismatch' : ''
 
     if (description) {
-      return `${label}  ${description}`
+      return `${label}  ${description}${mismatchMarker}`
     }
 
-    return label
+    return `${label}${mismatchMarker}`
   })
 
   logger.info('All release branches: \n')
@@ -57,6 +61,7 @@ export const ghReleaseList = async () => {
         version: release.version,
         type: release.type,
         description: jiraDescriptions.get(release.jiraKey) || null,
+        titleMismatch: release.titleMismatch,
       }
     }),
     count: releases.length,
@@ -81,6 +86,7 @@ export const ghReleaseListMcpTool = defineMcpTool({
           version: z.string().describe('Release version'),
           type: z.enum(['regular', 'hotfix']).describe('Release type'),
           description: z.string().nullable().describe('Jira version description'),
+          titleMismatch: z.boolean().describe('The PR title names a different release type than its base branch'),
         }),
       )
       .describe('List of all release branches'),

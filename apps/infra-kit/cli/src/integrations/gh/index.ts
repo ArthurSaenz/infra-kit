@@ -7,5 +7,5 @@ export {
   updateReleasePRBody,
 } from './gh-release-prs'
 export type { ReleasePRInfo } from './gh-release-prs'
-export { fetchPRByHead } from './pr-status'
+export { fetchOpenPRsByHead, fetchPRByHead, fetchPRByNumber } from './pr-status'
 export type { PRStatus } from './pr-status'

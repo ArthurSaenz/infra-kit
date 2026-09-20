@@ -32,12 +32,7 @@ import { logger } from 'src/lib/logger'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 import { formatBranchName, isReleaseBranch, parseReleaseRef } from 'src/lib/release-id'
-import {
-  detectReleaseType,
-  formatBranchPickerItems,
-  getJiraDescriptions,
-  releaseBranchLabels,
-} from 'src/lib/release-utils'
+import { formatBranchPickerItems, getJiraDescriptions, releaseBranchLabels } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
@@ -184,7 +179,7 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
 
         const releaseTypes = new Map<string, ReleaseType>(
           releasePRsInfo.map((pr) => {
-            return [pr.branch, detectReleaseType(pr.title)]
+            return [pr.branch, pr.type]
           }),
         )
 

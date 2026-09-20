@@ -46,7 +46,16 @@ beforeEach(() => {
     projectId: 1,
   } as never)
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue([
-    { branch: 'release/v1.2.5', title: 'Release v1.2.5', createdAt: '2024-01-01T00:00:00Z' },
+    {
+      branch: 'release/v1.2.5',
+      number: 1,
+      title: 'Release v1.2.5',
+      createdAt: '2024-01-01T00:00:00Z',
+      baseRefName: 'dev',
+      type: 'regular',
+      titleMismatch: false,
+      dualBase: false,
+    },
   ])
   vi.mocked(findVersionByName).mockResolvedValue({ id: '1', name: 'v1.2.5', description: 'old' } as never)
 })

@@ -43,7 +43,6 @@ import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-i
 import type { ReleaseId } from 'src/lib/release-id'
 import { createReleaseRemoveFormProvider } from 'src/lib/release-remove-form'
 import {
-  detectReleaseType,
   formatBranchPickerItems,
   getBaseBranch,
   getJiraDescriptions,
@@ -454,9 +453,12 @@ const buildPlan = async (branch: string, args: ReleaseRemoveArgs): Promise<Relea
     branch,
     id,
     label: displayLabel(id),
-    // A release with no PR falls to `dev`: `detectReleaseType` reads "hotfix" off the PR title and
-    // returns 'regular' for everything else, which is the derivation `release create` used.
-    baseBranch: getBaseBranch(detectReleaseType(pr?.title ?? '')),
+    // A release with no PR falls to `dev`. A PR carries its own baseRefName (the fact `gh pr merge`
+    // acts on); the `?? getBaseBranch('regular')` fallback fires only when there is no PR at all.
+    // A stale MERGED/CLOSED PR to `main` under a reused branch name can still set `baseBranch` to
+    // `main` here — the same exposure this had via title before, not a regression — and an
+    // out-of-set base flows through to `git switch`, guarded there by `assertBaseBranchSwitchable`.
+    baseBranch: pr?.baseRefName ?? getBaseBranch('regular'),
     projectRoot,
     worktreeDir,
     worktreePath,
@@ -937,7 +939,7 @@ const resolveTargetBranch = async (version?: string): Promise<string> => {
 
   const types = new Map(
     prInfo.map((pr) => {
-      return [pr.branch, detectReleaseType(pr.title)] as const
+      return [pr.branch, pr.type] as const
     }),
   )
 

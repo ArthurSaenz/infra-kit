@@ -115,8 +115,26 @@ afterAll(() => {
 const populated = (root: string = repo): void => {
   vi.mocked(getProjectRoot).mockResolvedValue(root)
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue([
-    { branch: 'release/v1.2.5', title: 'Release v1.2.5', createdAt: '2026-01-01T00:00:00Z' },
-    { branch: 'release/checkout-redesign', title: 'Release checkout-redesign', createdAt: '2026-01-02T00:00:00Z' },
+    {
+      branch: 'release/v1.2.5',
+      number: 1,
+      title: 'Release v1.2.5',
+      createdAt: '2026-01-01T00:00:00Z',
+      baseRefName: 'dev',
+      type: 'regular',
+      titleMismatch: false,
+      dualBase: false,
+    },
+    {
+      branch: 'release/checkout-redesign',
+      number: 2,
+      title: 'Release checkout-redesign',
+      createdAt: '2026-01-02T00:00:00Z',
+      baseRefName: 'dev',
+      type: 'regular',
+      titleMismatch: false,
+      dualBase: false,
+    },
   ])
 }
 

@@ -85,7 +85,7 @@ case "$*" in
     echo '[]'
     ;;
   'pr list --head ${FIXTURE_RELEASE.branch} '*)
-    printf '%s\\n' '[{"number":1,"state":"OPEN","title":"${FIXTURE_RELEASE.prTitle}"}]'
+    printf '%s\\n' '[{"number":1,"state":"OPEN","title":"${FIXTURE_RELEASE.prTitle}","baseRefName":"dev","headRefName":"${FIXTURE_RELEASE.branch}"}]'
     ;;
   'pr list --head '*)
     echo '[]'

@@ -11,7 +11,6 @@ import { pickReleaseBranch as pickReleaseBranchPrompt } from 'src/lib/prompts/re
 import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
 import {
   buildReleasePrBody,
-  detectReleaseType,
   formatBranchPickerItems,
   getJiraDescriptions,
   resolveReleaseBranch,
@@ -32,7 +31,7 @@ const pickReleaseBranch = async (): Promise<{ branch: string; type: ReleaseType 
   })
   const types = new Map<string, ReleaseType>(
     releasePRsInfo.map((pr) => {
-      return [pr.branch, detectReleaseType(pr.title)]
+      return [pr.branch, pr.type]
     }),
   )
   const descriptions = await getJiraDescriptions()
@@ -55,7 +54,7 @@ const verifyReleasePRExists = async (selectedBranch: string): Promise<ReleaseTyp
     })
   }
 
-  return detectReleaseType(prInfo.title)
+  return prInfo.type
 }
 
 /**

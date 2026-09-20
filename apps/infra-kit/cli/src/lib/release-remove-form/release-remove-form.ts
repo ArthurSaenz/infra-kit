@@ -6,7 +6,7 @@ import { withDeadline } from 'src/lib/deadline'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { formatJiraName } from 'src/lib/release-id'
-import { detectReleaseType, getJiraDescriptions, parseBranchChoices } from 'src/lib/release-utils'
+import { getJiraDescriptions, parseBranchChoices } from 'src/lib/release-utils'
 import type { ArgumentFormProvider } from 'src/types'
 
 /**
@@ -103,7 +103,7 @@ interface PickerRow {
 const pickerRows = (prs: ReleasePRInfo[], descriptions: Map<string, string> | null): PickerRow[] => {
   const types = new Map(
     prs.map((pr) => {
-      return [pr.branch, detectReleaseType(pr.title)] as const
+      return [pr.branch, pr.type] as const
     }),
   )
 

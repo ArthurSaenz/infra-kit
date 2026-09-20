@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { $ } from 'zx'
 
-import { fetchPRByHead, getReleasePRsWithInfo } from 'src/integrations/gh'
+import { fetchOpenPRsByHead, fetchPRByHead, fetchPRByNumber, getReleasePRsWithInfo } from 'src/integrations/gh'
 import type { PRStatus } from 'src/integrations/gh'
 import { deliverJiraRelease, loadJiraConfigOptional } from 'src/integrations/jira'
 // Imported from the leaf module, not the `src/integrations/jira` barrel, and deliberately so:
@@ -22,9 +22,10 @@ import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import { displayLabel, formatJiraName, formatRcTitle, parseBranchName } from 'src/lib/release-id'
 import type { ReleaseId } from 'src/lib/release-id'
 import {
-  detectReleaseType,
   formatBranchPickerItems,
+  getBaseBranch,
   getJiraDescriptions,
+  releaseTypeFromBase,
   resolveReleaseBranch,
 } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
@@ -86,12 +87,32 @@ const fetchOpenDevToMainPR = async (): Promise<PRStatus | null> => {
 
 interface ResolvedTarget {
   selectedReleaseBranch: string
-  releasePrTitle: string
+  /** From the PR's base branch — the title is only a label (plan: merge-dev-hotfix-guard, principle 1). */
+  releaseType: ReleaseType
+  /** Bound here so the merge below acts on this PR, not on whatever gh finds on the head later. */
+  prNumber: number
 }
 
 const resolveTargetFromVersion = async (version: string): Promise<ResolvedTarget> => {
   const selectedReleaseBranch = resolveReleaseBranch(version)
-  const pr = await fetchPRByHead(selectedReleaseBranch)
+  const open = await fetchOpenPRsByHead(selectedReleaseBranch)
+
+  if (open.length > 1) {
+    const numbers = open
+      .map((pr) => {
+        return `#${pr.number} → ${pr.baseRefName}`
+      })
+      .join(', ')
+
+    throw new OperationError(undefined, {
+      operation: `deliver release ${selectedReleaseBranch}`,
+      remediation: `the branch has open PRs to both dev and main (${numbers}); close the one that should not be delivered`,
+    })
+  }
+
+  // Resume: a prior attempt merged the release PR with --delete-branch, so the head has no open
+  // PR and only the any-state lookup still finds the MERGED record.
+  const pr = open[0] ?? (await fetchPRByHead(selectedReleaseBranch))
 
   if (!pr) {
     logger.error(`❌ No PR found for branch ${selectedReleaseBranch}.`)
@@ -101,7 +122,16 @@ const resolveTargetFromVersion = async (version: string): Promise<ResolvedTarget
     })
   }
 
-  return { selectedReleaseBranch, releasePrTitle: pr.title }
+  const releaseType = releaseTypeFromBase(pr.baseRefName)
+
+  if (!releaseType) {
+    throw new OperationError(undefined, {
+      operation: `deliver release ${selectedReleaseBranch}`,
+      remediation: `PR #${pr.number} targets '${pr.baseRefName}', which is neither dev nor main; retarget it ('gh pr edit ${pr.number} --base <dev|main>')`,
+    })
+  }
+
+  return { selectedReleaseBranch, releaseType, prNumber: pr.number }
 }
 
 const resolveTargetInteractively = async (): Promise<ResolvedTarget> => {
@@ -113,7 +143,7 @@ const resolveTargetInteractively = async (): Promise<ResolvedTarget> => {
 
   const releaseTypes = new Map<string, ReleaseType>(
     releasePRsInfo.map((pr) => {
-      return [pr.branch, detectReleaseType(pr.title)]
+      return [pr.branch, pr.type]
     }),
   )
 
@@ -137,27 +167,31 @@ const resolveTargetInteractively = async (): Promise<ResolvedTarget> => {
     })
   }
 
-  return { selectedReleaseBranch, releasePrTitle: prInfo.title }
+  if (prInfo.dualBase) {
+    throw new OperationError(undefined, {
+      operation: `deliver release ${selectedReleaseBranch}`,
+      remediation: `the branch has open PRs to both dev and main; close the one that should not be delivered`,
+    })
+  }
+
+  return { selectedReleaseBranch, releaseType: prInfo.type, prNumber: prInfo.number }
 }
 
 interface MergeReleasePRArgs {
   selectedReleaseBranch: string
   releaseType: ReleaseType
+  prNumber: number
 }
 
 const mergeReleasePR = async (args: MergeReleasePRArgs): Promise<void> => {
-  const { selectedReleaseBranch, releaseType } = args
+  const { selectedReleaseBranch, releaseType, prNumber } = args
 
-  const mergeTarget = releaseType === 'hotfix' ? 'main' : 'dev'
+  const mergeTarget = getBaseBranch(releaseType)
 
-  const releasePr = await fetchPRByHead(selectedReleaseBranch)
-
-  if (!releasePr) {
-    throw new OperationError(undefined, {
-      operation: `look up release PR for ${selectedReleaseBranch}`,
-      remediation: `verify the PR exists in GitHub`,
-    })
-  }
+  // Re-probed by number, and merged by number below: the target was resolved before an
+  // interactive confirm of unbounded duration, and `gh pr merge <branch>` would run its own
+  // head lookup — so a PR opened or retargeted meanwhile could be the one that merges.
+  const releasePr = await fetchPRByNumber(prNumber)
 
   if (releasePr.state === 'MERGED') {
     logger.info(`✓ Release PR ${selectedReleaseBranch} already merged — skipping`)
@@ -172,11 +206,18 @@ const mergeReleasePR = async (args: MergeReleasePRArgs): Promise<void> => {
     })
   }
 
+  if (releasePr.baseRefName !== mergeTarget || releasePr.headRefName !== selectedReleaseBranch) {
+    throw new OperationError(undefined, {
+      operation: `merge release PR #${prNumber} ${selectedReleaseBranch} into ${mergeTarget}`,
+      remediation: `PR #${prNumber} now reads ${releasePr.headRefName} → ${releasePr.baseRefName}; it changed since it was resolved — re-run the command`,
+    })
+  }
+
   await runStep(
-    `merge release PR ${selectedReleaseBranch} into ${mergeTarget}`,
-    `check 'gh pr view ${selectedReleaseBranch}' for mergeability and required reviews`,
+    `merge release PR #${prNumber} ${selectedReleaseBranch} into ${mergeTarget}`,
+    `check 'gh pr view ${prNumber}' for mergeability and required reviews`,
     async () => {
-      await $`gh pr merge ${selectedReleaseBranch} --squash --admin --delete-branch`
+      await $`gh pr merge ${prNumber} --squash --admin --delete-branch`
     },
   )
 }
@@ -338,7 +379,7 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
   // only the worktree + clean-tree legs apply.
   await assertManagementContext({ operation: 'deliver release' })
 
-  const { selectedReleaseBranch, releasePrTitle } = version
+  const { selectedReleaseBranch, releaseType, prNumber } = version
     ? await resolveTargetFromVersion(version)
     : await resolveTargetInteractively()
 
@@ -357,8 +398,6 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
 
   commandEcho.addOption('--version', selectedVersion)
   logger.info(`Delivering ${releaseId.kind === 'name' ? 'named release' : 'version'} ${selectedReleaseBranch}`)
-
-  const releaseType: ReleaseType = detectReleaseType(releasePrTitle)
 
   // CLI-only, decided per site rather than in the shared helper: `confirmOrExit` short-circuits on
   // `confirmedCommand` and must keep doing so for every other command's `--yes`. Delivering to
@@ -393,7 +432,7 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
     operation: `remove worktree for ${selectedReleaseBranch} before merge`,
     remediation: `run manually: git worktree remove ${deliverWorktreeDir}/${selectedReleaseBranch} (use --force if uncommitted changes)`,
   })
-  await mergeReleasePR({ selectedReleaseBranch, releaseType })
+  await mergeReleasePR({ selectedReleaseBranch, releaseType, prNumber })
 
   if (releaseType !== 'hotfix') {
     await ensureRcPRMerged(releaseId)

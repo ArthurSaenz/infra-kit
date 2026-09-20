@@ -1,12 +1,7 @@
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
 import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
-import {
-  detectReleaseType,
-  formatBranchPickerItems,
-  getJiraDescriptions,
-  resolveReleaseBranch,
-} from 'src/lib/release-utils'
+import { formatBranchPickerItems, getJiraDescriptions, resolveReleaseBranch } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 
 /**
@@ -32,7 +27,7 @@ export const resolveDeployBranch = async (version?: string): Promise<string> => 
 
   const releaseTypes = new Map<string, ReleaseType>(
     releasePRsInfo.map((pr) => {
-      return [pr.branch, detectReleaseType(pr.title)]
+      return [pr.branch, pr.type]
     }),
   )
 

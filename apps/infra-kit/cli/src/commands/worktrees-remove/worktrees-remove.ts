@@ -15,12 +15,7 @@ import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 import { formatBranchName, parseReleaseRef } from 'src/lib/release-id'
-import {
-  detectReleaseType,
-  formatBranchPickerItems,
-  getJiraDescriptions,
-  releaseBranchLabels,
-} from 'src/lib/release-utils'
+import { formatBranchPickerItems, getJiraDescriptions, releaseBranchLabels } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 import { logRemovalResults, removeWorktrees, toRemovalToolResult } from 'src/lib/worktrees'
 import { defineMcpTool, textContent } from 'src/types'
@@ -167,7 +162,7 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
 
       const releaseTypes = new Map<string, ReleaseType>(
         prInfo.map((pr) => {
-          return [pr.branch, detectReleaseType(pr.title)]
+          return [pr.branch, pr.type]
         }),
       )
 

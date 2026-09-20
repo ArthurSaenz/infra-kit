@@ -170,9 +170,154 @@ describe('getReleasePRsWithInfo (discovery + sort)', () => {
     ]
 
     await expect(getReleasePRsWithInfo()).resolves.toEqual([
-      { branch: 'release/v3.1.0', title: 'Release v3.1.0', createdAt: '2026-02-01T00:00:00Z' },
-      { branch: 'release/beta-feature', title: 'Release beta-feature', createdAt: '2026-02-02T00:00:00Z' },
+      {
+        branch: 'release/v3.1.0',
+        number: 1,
+        title: 'Release v3.1.0',
+        createdAt: '2026-02-01T00:00:00Z',
+        baseRefName: 'dev',
+        type: 'regular',
+        titleMismatch: false,
+        dualBase: false,
+      },
+      {
+        branch: 'release/beta-feature',
+        number: 1,
+        title: 'Release beta-feature',
+        createdAt: '2026-02-02T00:00:00Z',
+        baseRefName: 'dev',
+        type: 'regular',
+        titleMismatch: false,
+        dualBase: false,
+      },
     ])
+  })
+})
+
+describe('getReleasePRsWithInfo (classification by base branch)', () => {
+  beforeEach(() => {
+    responses.release = []
+    responses.hotfix = []
+    vi.mocked(logger.warn).mockClear()
+  })
+
+  const only = async () => {
+    const infos = await getReleasePRsWithInfo()
+
+    expect(infos).toHaveLength(1)
+
+    return infos[0]!
+  }
+
+  // The base branch is what `gh pr merge` merges into; the title is a label the GitHub UI lets
+  // anyone edit. Each row is (base, title) → (type, titleMismatch), and the warn fires only on
+  // disagreement so a clean repo stays quiet.
+  it.each([
+    { base: 'main', title: 'Hotfix v1.0.0', type: 'hotfix', titleMismatch: false },
+    { base: 'dev', title: 'Release v1.0.0', type: 'regular', titleMismatch: false },
+    { base: 'main', title: '🔥 Hotfix v1.0.0', type: 'hotfix', titleMismatch: true },
+    { base: 'dev', title: 'Hotfix v1.0.0', type: 'regular', titleMismatch: true },
+  ])('($base, "$title") → $type, titleMismatch=$titleMismatch', async ({ base, title, type, titleMismatch }) => {
+    const row = pr({ headRefName: 'release/v1.0.0', createdAt: '2026-01-01T00:00:00Z', title, baseRefName: base })
+
+    if (base === 'main') responses.hotfix = [row]
+    else responses.release = [row]
+
+    const info = await only()
+
+    expect(info).toMatchObject({
+      branch: 'release/v1.0.0',
+      number: 1,
+      baseRefName: base,
+      type,
+      titleMismatch,
+      dualBase: false,
+    })
+
+    if (titleMismatch) {
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(logger.warn).mock.calls[0]?.[0]).toEqual({
+        branch: 'release/v1.0.0',
+        title,
+        baseRefName: base,
+      })
+    } else {
+      expect(vi.mocked(logger.warn)).not.toHaveBeenCalled()
+    }
+  })
+
+  // GitHub allows one open PR per head/base pair, so one head can appear in both lists. The old
+  // dedup kept whichever came first (the dev record), so merge-dev pushed dev onto a branch that
+  // also targeted main. The main record is the one that has to surface.
+  it('keeps the main record for a head open against both dev and main, typed hotfix and flagged dualBase', async () => {
+    responses.release = [
+      pr({ headRefName: 'release/v2.0.0', createdAt: '2026-01-01T00:00:00Z', title: 'Release v2.0.0', number: 10 }),
+    ]
+    responses.hotfix = [
+      pr({
+        headRefName: 'release/v2.0.0',
+        createdAt: '2026-01-02T00:00:00Z',
+        title: 'Hotfix v2.0.0',
+        baseRefName: 'main',
+        number: 11,
+      }),
+    ]
+
+    const info = await only()
+
+    expect(info).toEqual({
+      branch: 'release/v2.0.0',
+      number: 11,
+      title: 'Hotfix v2.0.0',
+      createdAt: '2026-01-02T00:00:00Z',
+      baseRefName: 'main',
+      type: 'hotfix',
+      titleMismatch: false,
+      dualBase: true,
+    })
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(logger.warn).mock.calls[0]?.[0]).toEqual({
+      branch: 'release/v2.0.0',
+      title: 'Hotfix v2.0.0',
+      baseRefName: 'main',
+    })
+  })
+
+  it('does not flag dualBase when the two lists hold different heads', async () => {
+    responses.release = [pr({ headRefName: 'release/v2.0.0', createdAt: '2026-01-01T00:00:00Z' })]
+    responses.hotfix = [
+      pr({
+        headRefName: 'release/v1.9.9',
+        createdAt: '2026-01-02T00:00:00Z',
+        title: 'Hotfix v1.9.9',
+        baseRefName: 'main',
+      }),
+    ]
+
+    const infos = await getReleasePRsWithInfo()
+
+    expect(
+      infos.map((info) => {
+        return [info.branch, info.type, info.dualBase]
+      }),
+    ).toEqual([
+      ['release/v1.9.9', 'hotfix', false],
+      ['release/v2.0.0', 'regular', false],
+    ])
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalled()
+  })
+
+  // Both discovery queries pin `--base`, so a base outside dev/main can only mean the query and
+  // the base↔type mapping drifted apart — a guessed type would let a writer act on the wrong branch.
+  it('throws an OperationError instead of guessing when a discovered base is outside dev/main', async () => {
+    responses.release = [
+      pr({ headRefName: 'release/v1.0.0', createdAt: '2026-01-01T00:00:00Z', baseRefName: 'develop' }),
+    ]
+
+    await expect(getReleasePRsWithInfo()).rejects.toMatchObject({
+      name: 'OperationError',
+      operation: 'classify release PRs',
+    })
   })
 })
 

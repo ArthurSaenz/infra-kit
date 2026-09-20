@@ -5,7 +5,7 @@ import { assertCleanCheckout } from 'src/lib/git-guard'
 import { logger } from 'src/lib/logger'
 import { compareReleaseIds, formatBranchName, formatPrTitle, parseBranchName } from 'src/lib/release-id'
 import type { ReleaseId } from 'src/lib/release-id'
-import { buildReleasePrBody, getBaseBranch } from 'src/lib/release-utils'
+import { buildReleasePrBody, detectReleaseType, getBaseBranch, releaseTypeFromBase } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
 
 interface ReleasePR {
@@ -17,10 +17,26 @@ interface ReleasePR {
   createdAt: string
 }
 
+/**
+ * A discovery row after dedup. `dualBase` is decided where both gh lists are still in hand and
+ * rides on the record from there, because sorting keeps the objects and only reorders them.
+ */
+interface DiscoveredPR extends ReleasePR {
+  dualBase: boolean
+}
+
 export interface ReleasePRInfo {
   branch: string
+  number: number
   title: string
   createdAt: string
+  baseRefName: string
+  /** From the base branch, which is what `gh pr merge` merges into — the title is only a label. */
+  type: ReleaseType
+  /** The title says one type, the base another: a retitled PR, or one opened against the wrong base. */
+  titleMismatch: boolean
+  /** The head has open PRs to both `dev` and `main`; this record is the `main` one. */
+  dualBase: boolean
 }
 
 /**
@@ -30,12 +46,12 @@ export interface ReleasePRInfo {
  * rather than throwing or NaN-sorting, so a stray junk branch can never break
  * discovery. Carries each PR's createdAt for name ordering.
  */
-const sortReleasePRs = (prs: ReleasePR[]): ReleasePR[] => {
+const sortReleasePRs = <T extends ReleasePR>(prs: T[]): T[] => {
   return prs
     .map((pr) => {
       return { pr, id: parseBranchName(pr.headRefName) }
     })
-    .filter((entry): entry is { pr: ReleasePR; id: NonNullable<typeof entry.id> } => {
+    .filter((entry): entry is { pr: T; id: NonNullable<typeof entry.id> } => {
       return entry.id !== null
     })
     .sort((a, b) => {
@@ -73,7 +89,7 @@ const warnIfTruncated = (prs: ReleasePR[], source: string): void => {
  * Searches both dev (regular) and main (hotfix) base branches.
  * Returns deduplicated ReleasePR objects.
  */
-const fetchAllReleasePRs = async (): Promise<ReleasePR[]> => {
+const fetchAllReleasePRs = async (): Promise<DiscoveredPR[]> => {
   // Issued together, not awaited in turn: one search runs 0.8–1.5 s on a consumer repo, and the
   // argument form that enumerates through here has 2.5 s for the pair (`lib/release-remove-form`).
   const [releasePRs, hotfixPRs] = await Promise.all([
@@ -87,18 +103,39 @@ const fetchAllReleasePRs = async (): Promise<ReleasePR[]> => {
   warnIfTruncated(releaseList, 'release PR discovery (base dev)')
   warnIfTruncated(hotfixList, 'hotfix PR discovery (base main)')
 
-  const all: ReleasePR[] = [...releaseList, ...hotfixList]
+  // GitHub allows one open PR per head/base *pair*, so a head can be in both lists. Such a head
+  // must not read as a plain regular release: merge-dev would push `dev` onto a branch that also
+  // targets `main`. The `main` record is the one kept — the dangerous side is the one to surface.
+  const devHeads = new Set(
+    releaseList.map((pr) => {
+      return pr.headRefName
+    }),
+  )
+  const dualHeads = new Set(
+    hotfixList
+      .filter((pr) => {
+        return devHeads.has(pr.headRefName)
+      })
+      .map((pr) => {
+        return pr.headRefName
+      }),
+  )
 
-  // Deduplicate by headRefName
+  // main-first so the dedup below keeps the `main` record of a dual head.
+  const all: ReleasePR[] = [...hotfixList, ...releaseList]
   const seen = new Set<string>()
 
-  return all.filter((pr) => {
-    if (seen.has(pr.headRefName)) return false
+  return all
+    .filter((pr) => {
+      if (seen.has(pr.headRefName)) return false
 
-    seen.add(pr.headRefName)
+      seen.add(pr.headRefName)
 
-    return true
-  })
+      return true
+    })
+    .map((pr) => {
+      return { ...pr, dualBase: dualHeads.has(pr.headRefName) }
+    })
 }
 
 /**
@@ -113,7 +150,7 @@ export const NO_OPEN_RELEASE_PRS_OPERATION = 'find open release PRs'
  * deterministic order. Shared core of the two public variants below; wraps the
  * gh calls so a fetch failure surfaces as an OperationError.
  */
-const loadSortedReleasePRs = async (): Promise<ReleasePR[]> => {
+const loadSortedReleasePRs = async (): Promise<DiscoveredPR[]> => {
   try {
     const prs = await fetchAllReleasePRs()
 
@@ -155,21 +192,56 @@ export const getReleasePRs = async (): Promise<string[]> => {
 }
 
 /**
- * Fetch open release PRs with title info (for detecting release type).
- * Returns ReleasePRInfo objects in the locked deterministic order (version
- * branches first by semver ascending, then named branches by PR creation
- * date). Unparseable head refs are filtered out.
+ * The one place a discovered PR gets its type. The base branch is what `gh pr merge` merges into,
+ * so it decides; the title is cross-checked and a disagreement is flagged, never resolved here —
+ * the writers (merge-dev, deliver) decide what a flag means for them.
+ */
+const classifyReleasePR = (pr: DiscoveredPR): ReleasePRInfo => {
+  const type = releaseTypeFromBase(pr.baseRefName)
+
+  // Both discovery queries pin `--base`, so an unmapped base can only mean the query and the
+  // mapping drifted apart. Guessing a type would let the writers act on the wrong branch.
+  if (type === null) {
+    throw new OperationError(undefined, {
+      operation: 'classify release PRs',
+      remediation: 'discovery returned a PR outside the dev/main base set — this is an infra-kit bug, please report it',
+      stderrExcerpt: `${pr.headRefName} (#${pr.number}) targets ${pr.baseRefName}`,
+    })
+  }
+
+  const titleMismatch = detectReleaseType(pr.title) !== type
+
+  if (titleMismatch || pr.dualBase) {
+    logger.warn(
+      { branch: pr.headRefName, title: pr.title, baseRefName: pr.baseRefName },
+      pr.dualBase
+        ? `⚠️ ${pr.headRefName} has open PRs to both dev and main — treated as a hotfix (base main)`
+        : `⚠️ ${pr.headRefName} is titled "${pr.title}" but targets ${pr.baseRefName} — treated as ${type} by its base`,
+    )
+  }
+
+  return {
+    branch: pr.headRefName,
+    number: pr.number,
+    title: pr.title,
+    createdAt: pr.createdAt,
+    baseRefName: pr.baseRefName,
+    type,
+    titleMismatch,
+    dualBase: pr.dualBase,
+  }
+}
+
+/**
+ * Fetch open release PRs classified by base branch, with the title cross-check
+ * and dual-base flags. Returns ReleasePRInfo objects in the locked deterministic
+ * order (version branches first by semver ascending, then named branches by PR
+ * creation date). Unparseable head refs are filtered out.
  */
 export const getReleasePRsWithInfo = async (): Promise<ReleasePRInfo[]> => {
   const prs = await loadSortedReleasePRs()
 
-  return prs.map((pr) => {
-    return {
-      branch: pr.headRefName,
-      title: pr.title,
-      createdAt: pr.createdAt,
-    }
-  })
+  return prs.map(classifyReleasePR)
 }
 
 interface UpdateReleasePRBodyArgs {

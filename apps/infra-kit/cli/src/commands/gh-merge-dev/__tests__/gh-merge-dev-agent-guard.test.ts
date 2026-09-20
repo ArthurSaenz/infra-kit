@@ -101,7 +101,7 @@ vi.mock('src/lib/prompts/release-picker', () => {
   return { pickReleaseBranch: vi.fn(), pickReleaseBranches: vi.fn() }
 })
 
-// `detectReleaseType`/`formatBranchPickerItems`/`releaseBranchLabels` stay REAL
+// `formatBranchPickerItems`/`releaseBranchLabels` stay REAL
 // (via importActual); only the Jira lookup is stubbed.
 vi.mock('src/lib/release-utils', async (importOriginal) => {
   const actual = await importOriginal<typeof import('src/lib/release-utils')>()
@@ -122,7 +122,16 @@ beforeEach(() => {
   process.stdin.isTTY = false
   vi.mocked(assertRepoWithOrigin).mockResolvedValue(undefined)
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue([
-    { branch: 'release/v1.2.5', title: 'Release v1.2.5', createdAt: '2024-01-01T00:00:00Z' },
+    {
+      branch: 'release/v1.2.5',
+      number: 1,
+      title: 'Release v1.2.5',
+      createdAt: '2024-01-01T00:00:00Z',
+      baseRefName: 'dev',
+      type: 'regular',
+      titleMismatch: false,
+      dualBase: false,
+    },
   ])
   // Stand in for the real shim's non-TTY bail: throw the same OperationError,
   // halting execution before any git side effect.

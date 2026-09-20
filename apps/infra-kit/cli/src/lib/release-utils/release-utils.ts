@@ -25,11 +25,34 @@ export const DEV_REF = 'dev'
 export type ReleaseType = 'regular' | 'hotfix'
 
 /**
+ * The one home of the base↔type mapping: `getBaseBranch` reads it forward, `releaseTypeFromBase`
+ * reads it backward, so the two directions cannot drift apart.
+ */
+const BASE_BRANCH_BY_TYPE: Record<ReleaseType, string> = {
+  regular: 'dev',
+  hotfix: 'main',
+}
+
+/**
  * Get the base branch for a release type.
  * Regular releases branch from/to dev, hotfixes branch from/to main.
  */
 export const getBaseBranch = (type: ReleaseType): string => {
-  return type === 'hotfix' ? 'main' : 'dev'
+  return BASE_BRANCH_BY_TYPE[type]
+}
+
+/**
+ * Classify a PR by the branch it will actually merge into — the fact, where the title is only a
+ * label (`detectReleaseType`). `null` for a base outside the release set: discovery is
+ * base-constrained so it treats that as impossible, while a caller that fetched by head has no
+ * such constraint and must refuse rather than guess.
+ */
+export const releaseTypeFromBase = (base: string): ReleaseType | null => {
+  const entry = Object.entries(BASE_BRANCH_BY_TYPE).find(([, branch]) => {
+    return branch === base
+  })
+
+  return entry ? (entry[0] as ReleaseType) : null
 }
 
 /**

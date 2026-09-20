@@ -3,6 +3,7 @@ import { z } from 'zod'
 
 import { releaseRemoveMcpTool } from 'src/commands/release-remove'
 import { NO_OPEN_RELEASE_PRS_OPERATION, getReleasePRsWithInfo } from 'src/integrations/gh'
+import type { ReleasePRInfo } from 'src/integrations/gh'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { getJiraDescriptions } from 'src/lib/release-utils'
@@ -23,9 +24,36 @@ vi.mock('src/lib/logger', () => {
   return { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }
 })
 
-const REGULAR = { branch: 'release/v1.2.5', title: 'Release v1.2.5', createdAt: '2026-01-01T00:00:00Z' }
-const HOTFIX = { branch: 'release/v1.2.6', title: 'Hotfix v1.2.6', createdAt: '2026-01-02T00:00:00Z' }
-const JUNK = { branch: 'release/Bad_Name', title: 'Release Bad_Name', createdAt: '2026-01-03T00:00:00Z' }
+const REGULAR: ReleasePRInfo = {
+  branch: 'release/v1.2.5',
+  number: 1,
+  title: 'Release v1.2.5',
+  createdAt: '2026-01-01T00:00:00Z',
+  baseRefName: 'dev',
+  type: 'regular',
+  titleMismatch: false,
+  dualBase: false,
+}
+const HOTFIX: ReleasePRInfo = {
+  branch: 'release/v1.2.6',
+  number: 2,
+  title: 'Hotfix v1.2.6',
+  createdAt: '2026-01-02T00:00:00Z',
+  baseRefName: 'main',
+  type: 'hotfix',
+  titleMismatch: false,
+  dualBase: false,
+}
+const JUNK: ReleasePRInfo = {
+  branch: 'release/Bad_Name',
+  number: 3,
+  title: 'Release Bad_Name',
+  createdAt: '2026-01-03T00:00:00Z',
+  baseRefName: 'dev',
+  type: 'regular',
+  titleMismatch: false,
+  dualBase: false,
+}
 const DESCRIPTION = 'Checkout redesign, phase one'
 
 const LABELS = ['1.2.5', '1.2.6']
@@ -36,7 +64,7 @@ const timedOutLine = (budgetMs: number): string => {
   return `Tool execution form enumeration timed out (gh pr list, ${budgetMs / 1000} s): release-remove`
 }
 
-const prs = (list: (typeof REGULAR)[]): void => {
+const prs = (list: ReleasePRInfo[]): void => {
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue(list)
 }
 

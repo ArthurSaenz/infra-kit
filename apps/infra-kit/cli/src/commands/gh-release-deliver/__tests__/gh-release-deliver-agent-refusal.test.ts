@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchPRByHead } from 'src/integrations/gh'
+import { fetchOpenPRsByHead } from 'src/integrations/gh'
 import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
@@ -17,7 +17,12 @@ import { ghReleaseDeliver } from '../gh-release-deliver'
  */
 
 vi.mock('src/integrations/gh', () => {
-  return { fetchPRByHead: vi.fn(), getReleasePRsWithInfo: vi.fn() }
+  return {
+    fetchOpenPRsByHead: vi.fn(),
+    fetchPRByHead: vi.fn(),
+    fetchPRByNumber: vi.fn(),
+    getReleasePRsWithInfo: vi.fn(),
+  }
 })
 
 vi.mock('src/integrations/jira', () => {
@@ -56,7 +61,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   commandEcho.reset()
   vi.mocked(assertManagementContext).mockResolvedValue(undefined)
-  vi.mocked(fetchPRByHead).mockResolvedValue({ title: 'Release v1.2.5', state: 'OPEN' } as never)
+  vi.mocked(fetchOpenPRsByHead).mockResolvedValue([
+    { number: 42, state: 'OPEN', title: 'Release v1.2.5', baseRefName: 'dev', headRefName: 'release/v1.2.5' },
+  ])
 })
 
 afterEach(() => {

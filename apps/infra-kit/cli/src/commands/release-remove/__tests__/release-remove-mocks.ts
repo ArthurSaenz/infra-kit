@@ -83,7 +83,14 @@ export const moveTargetVersion = (): JiraVersion => {
 }
 
 export const releasePr = (overrides: Partial<PRStatus> = {}): PRStatus => {
-  return { number: PR_NUMBER, state: 'OPEN', title: 'Release v1.2.5', ...overrides }
+  return {
+    number: PR_NUMBER,
+    state: 'OPEN',
+    title: 'Release v1.2.5',
+    baseRefName: 'dev',
+    headRefName: BRANCH,
+    ...overrides,
+  }
 }
 
 /**

@@ -124,7 +124,16 @@ beforeEach(() => {
   agentMode.source = 'flag'
   vi.mocked(getProjectRoot).mockResolvedValue(repo)
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue([
-    { branch: 'release/v1.2.5', title: 'Release v1.2.5', createdAt: '2026-01-01T00:00:00Z' },
+    {
+      branch: 'release/v1.2.5',
+      number: 1,
+      title: 'Release v1.2.5',
+      createdAt: '2026-01-01T00:00:00Z',
+      baseRefName: 'dev',
+      type: 'regular',
+      titleMismatch: false,
+      dualBase: false,
+    },
   ])
   vi.mocked(getJiraDescriptions).mockResolvedValue(new Map([['v1.2.5', 'checkout']]))
   vi.mocked(listProjectEnvs).mockResolvedValue([

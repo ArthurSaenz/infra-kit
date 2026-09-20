@@ -3,6 +3,7 @@ import process from 'node:process'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
+import type { ReleasePRInfo } from 'src/integrations/gh'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { CommandDeclinedError } from 'src/lib/errors/command-declined-error'
 import { OperationError } from 'src/lib/errors/operation-error'
@@ -85,11 +86,74 @@ vi.mock('src/lib/logger', () => {
   return { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }
 })
 
-const PRS = [
-  { branch: 'release/v1.2.5', title: 'Release v1.2.5', createdAt: '2024-01-01T00:00:00Z' },
-  { branch: 'release/v1.2.6', title: 'Release v1.2.6', createdAt: '2024-01-02T00:00:00Z' },
-  { branch: 'release/v9.9.9', title: 'Hotfix v9.9.9', createdAt: '2024-01-03T00:00:00Z' },
+const PRS: ReleasePRInfo[] = [
+  {
+    branch: 'release/v1.2.5',
+    number: 1,
+    title: 'Release v1.2.5',
+    createdAt: '2024-01-01T00:00:00Z',
+    baseRefName: 'dev',
+    type: 'regular',
+    titleMismatch: false,
+    dualBase: false,
+  },
+  {
+    branch: 'release/v1.2.6',
+    number: 2,
+    title: 'Release v1.2.6',
+    createdAt: '2024-01-02T00:00:00Z',
+    baseRefName: 'dev',
+    type: 'regular',
+    titleMismatch: false,
+    dualBase: false,
+  },
+  {
+    branch: 'release/v9.9.9',
+    number: 3,
+    title: 'Hotfix v9.9.9',
+    createdAt: '2024-01-03T00:00:00Z',
+    baseRefName: 'main',
+    type: 'hotfix',
+    titleMismatch: false,
+    dualBase: false,
+  },
 ]
+
+// The three ways a discovered PR is NOT a merge-dev candidate, beyond a plain hotfix:
+// a hotfix retitled in the GitHub UI (the title detector no longer sees it, the base still
+// does), a dev-based PR wearing a hotfix title, and a head with open PRs to both bases.
+const RETITLED_HOTFIX: ReleasePRInfo = {
+  branch: 'release/v9.9.8',
+  number: 4,
+  title: '🔥 Hotfix v9.9.8',
+  createdAt: '2024-01-04T00:00:00Z',
+  baseRefName: 'main',
+  type: 'hotfix',
+  titleMismatch: true,
+  dualBase: false,
+}
+
+const MISLABELLED_REGULAR: ReleasePRInfo = {
+  branch: 'release/v1.2.7',
+  number: 5,
+  title: 'Hotfix v1.2.7',
+  createdAt: '2024-01-05T00:00:00Z',
+  baseRefName: 'dev',
+  type: 'regular',
+  titleMismatch: true,
+  dualBase: false,
+}
+
+const DUAL_BASE: ReleasePRInfo = {
+  branch: 'release/v1.2.8',
+  number: 6,
+  title: 'Release v1.2.8',
+  createdAt: '2024-01-06T00:00:00Z',
+  baseRefName: 'main',
+  type: 'hotfix',
+  titleMismatch: true,
+  dualBase: true,
+}
 
 const planned = (branches: string[]): MergePlanEntry[] => {
   return branches.map((branch, index) => {
@@ -150,16 +214,41 @@ describe('--versions resolution', () => {
   })
 
   it('rEFUSES a hotfix branch — it targets main, not dev', async () => {
-    // 9.9.9 is an open release branch, but its PR is titled "Hotfix", so it is
-    // absent from the regular-release set. Resolving selectors against branch
-    // names alone would merge dev straight into a branch that targets main.
-    await expect(ghMergeDev({ versions: '9.9.9', confirmedCommand: true })).rejects.toBeInstanceOf(OperationError)
+    // 9.9.9 is an open release branch, but its PR targets main, so it is absent
+    // from the regular-release set. Resolving selectors against branch names
+    // alone would merge dev straight into a branch that targets main.
+    await expect(ghMergeDev({ versions: '9.9.9', confirmedCommand: true })).rejects.toThrow(
+      'release/v9.9.9 is skipped: hotfix (targets main)',
+    )
 
     expect(planMergeRun).not.toHaveBeenCalled()
   })
 
+  it('refuses a retitled hotfix by its base, and names the reason', async () => {
+    // The title no longer starts with "Hotfix", so a title-based guard would
+    // classify it regular and merge dev into a branch that targets main.
+    vi.mocked(getReleasePRsWithInfo).mockResolvedValue([...PRS, RETITLED_HOTFIX])
+
+    const run = ghMergeDev({ versions: '9.9.8', confirmedCommand: true })
+
+    await expect(run).rejects.toBeInstanceOf(OperationError)
+    await expect(run).rejects.toThrow('release/v9.9.8 is skipped: title/base mismatch')
+    expect(planMergeRun).not.toHaveBeenCalled()
+  })
+
+  it('refuses a dual-base head with the dual reason, not the hotfix one', async () => {
+    vi.mocked(getReleasePRsWithInfo).mockResolvedValue([...PRS, DUAL_BASE])
+
+    await expect(ghMergeDev({ versions: '1.2.8', confirmedCommand: true })).rejects.toThrow(
+      'release/v1.2.8 is skipped: open PRs to both dev and main',
+    )
+  })
+
   it('refuses an unknown selector and names the valid set', async () => {
-    await expect(ghMergeDev({ versions: '4.5.6', confirmedCommand: true })).rejects.toThrow(/release\/v1\.2\.5/)
+    const run = ghMergeDev({ versions: '4.5.6', confirmedCommand: true })
+
+    await expect(run).rejects.toThrow(/release\/v1\.2\.5/)
+    await expect(run).rejects.toThrow('release/v4.5.6 is not an open regular release branch')
   })
 
   it('refuses an unparseable selector', async () => {
@@ -265,6 +354,92 @@ describe('ordering and lifecycle', () => {
 
     expect(result.structuredContent.totalBranches).toBe(0)
     expect(withScratchWorktree).not.toHaveBeenCalled()
+  })
+})
+
+describe('skipped — every non-candidate is reported with its reason', () => {
+  const skippedOf = (result: Awaited<ReturnType<typeof ghMergeDev>>) => {
+    return result.structuredContent.skipped
+  }
+
+  it('classifies a plain hotfix by its base and leaves it out of the --all plan', async () => {
+    const result = await ghMergeDev({ all: true, confirmedCommand: true })
+
+    expect(skippedOf(result)).toEqual([{ branch: 'release/v9.9.9', reason: 'hotfix (targets main)' }])
+    expect(planMergeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ branches: ['release/v1.2.5', 'release/v1.2.6'] }),
+    )
+  })
+
+  it('keeps a retitled hotfix out of the --all plan', async () => {
+    vi.mocked(getReleasePRsWithInfo).mockResolvedValue([...PRS, RETITLED_HOTFIX])
+
+    const result = await ghMergeDev({ all: true, confirmedCommand: true })
+
+    expect(planMergeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ branches: ['release/v1.2.5', 'release/v1.2.6'] }),
+    )
+    expect(skippedOf(result)).toContainEqual({ branch: 'release/v9.9.8', reason: 'title/base mismatch' })
+  })
+
+  it('skips a dev-based PR whose title says hotfix, and a dual-base head, without planning either', async () => {
+    vi.mocked(getReleasePRsWithInfo).mockResolvedValue([...PRS, MISLABELLED_REGULAR, DUAL_BASE])
+
+    const result = await ghMergeDev({ all: true, confirmedCommand: true })
+
+    // Precedence: a dual-base row is also a mismatched hotfix, and must say "dual".
+    expect(skippedOf(result)).toEqual([
+      { branch: 'release/v9.9.9', reason: 'hotfix (targets main)' },
+      { branch: 'release/v1.2.7', reason: 'title/base mismatch' },
+      { branch: 'release/v1.2.8', reason: 'open PRs to both dev and main' },
+    ])
+
+    const plannedBranches = vi.mocked(planMergeRun).mock.calls[0]?.[0].branches
+
+    expect(plannedBranches).not.toContain('release/v1.2.7')
+    expect(plannedBranches).not.toContain('release/v1.2.8')
+  })
+
+  it('lists the skipped rows with their reasons in the plan printout', async () => {
+    vi.mocked(getReleasePRsWithInfo).mockResolvedValue([...PRS, RETITLED_HOTFIX])
+
+    await ghMergeDev({ all: true, dryRun: true, confirmedCommand: true })
+
+    const printed = vi
+      .mocked(logger.info)
+      .mock.calls.flat()
+      .filter((line) => {
+        return typeof line === 'string'
+      })
+
+    expect(printed).toContain('  release/v9.9.9 — skipped: hotfix (targets main)')
+    expect(printed).toContain('  release/v9.9.8 — skipped: title/base mismatch')
+  })
+
+  it('carries the N skipped rows on the no-candidates early return', async () => {
+    vi.mocked(getReleasePRsWithInfo).mockResolvedValue([PRS[2]!, RETITLED_HOTFIX])
+
+    const result = await ghMergeDev({ all: true, confirmedCommand: true })
+
+    // An agent reading `--json` must see WHY nothing was merged, not an empty run
+    // indistinguishable from "no release PRs exist".
+    expect(result.structuredContent.totalBranches).toBe(0)
+    expect(skippedOf(result)).toEqual([
+      { branch: 'release/v9.9.9', reason: 'hotfix (targets main)' },
+      { branch: 'release/v9.9.8', reason: 'title/base mismatch' },
+    ])
+    expect(logger.info).toHaveBeenCalledWith(
+      'ℹ️ No open regular release branches — 2 skipped (hotfix (targets main) ×1, title/base mismatch ×1)',
+    )
+  })
+
+  it('is empty only when nothing was discovered', async () => {
+    vi.mocked(getReleasePRsWithInfo).mockResolvedValue([])
+
+    const result = await ghMergeDev({ all: true, confirmedCommand: true })
+
+    expect(skippedOf(result)).toEqual([])
+    expect(logger.info).toHaveBeenCalledWith('ℹ️ No open release branches found')
   })
 })
 
