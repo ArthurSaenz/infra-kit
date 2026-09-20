@@ -36,25 +36,25 @@ const Colors = {
 
 const printError = (msg) => {
   console.log(`${Colors.RED}✗ ERROR: ${msg}${Colors.RESET}`)
-};
+}
 
 const printWarning = (msg) => {
   console.log(`${Colors.YELLOW}⚠ WARNING: ${msg}${Colors.RESET}`)
-};
+}
 
 const printSuccess = (msg) => {
   console.log(`${Colors.GREEN}✓ ${msg}${Colors.RESET}`)
-};
+}
 
 const printInfo = (msg) => {
   console.log(`${Colors.CYAN}ℹ ${msg}${Colors.RESET}`)
-};
+}
 
 const printHeader = (msg) => {
   console.log(`\n${Colors.BOLD}${Colors.MAGENTA}${'='.repeat(60)}${Colors.RESET}`)
   console.log(`${Colors.BOLD}${Colors.MAGENTA}${msg}${Colors.RESET}`)
   console.log(`${Colors.BOLD}${Colors.MAGENTA}${'='.repeat(60)}${Colors.RESET}\n`)
-};
+}
 
 // Recursive file globbing helper
 async function* walkFiles(dir, pattern) {
@@ -80,7 +80,7 @@ const pathSegments = (filePath, rootPath) => {
   const relative = filePath.startsWith(rootPath) ? filePath.slice(rootPath.length) : filePath
 
   return relative.split(sep).filter(Boolean)
-};
+}
 
 /**
  * Walks forward from the end of an `atom` keyword to the `(` that opens its
@@ -115,7 +115,7 @@ const findCallParen = (content, searchFrom) => {
   }
 
   return content[i] === '(' ? i : -1
-};
+}
 
 /**
  * Returns the source text between a balanced pair of delimiters, starting at
@@ -182,7 +182,7 @@ const balancedSlice = (content, openIndex) => {
   }
 
   return null
-};
+}
 
 /**
  * Splits an argument list on the commas that sit at nesting depth zero, so that
@@ -216,7 +216,7 @@ const splitTopLevelArgs = (argText) => {
   if (tail) args.push(tail)
 
   return args
-};
+}
 
 /**
  * Classifies a single `atom(...)` call.
@@ -244,7 +244,7 @@ const classifyAtom = (content, keywordEnd) => {
   const writer = args[1]
 
   return { kind: 'write-only', isAsync: /^async\b/.test(writer), writer }
-};
+}
 
 /**
  * True when an import statement introduces no runtime dependency, covering both
@@ -267,7 +267,7 @@ const isTypeOnlyImport = (statement) => {
     .filter(Boolean)
 
   return specifiers.length > 0 && specifiers.every((specifier) => /^type\s+\S/.test(specifier))
-};
+}
 
 /**
  * Extracts the parameter list of a write-only atom's writer function.
@@ -280,7 +280,7 @@ const writerParams = (writer) => {
   const params = balancedSlice(writer, paren)
 
   return params === null ? [] : splitTopLevelArgs(params)
-};
+}
 
 class FeatureValidator {
   constructor(featurePath) {
@@ -456,14 +456,16 @@ class FeatureValidator {
     const words = fileNameWithoutExt.split('-')
     const expectedName = words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join('')
 
-    // Look for export const ComponentName
-    const exportRegex = new RegExp(`export\\s+const\\s+(${expectedName})\\s*=`)
-    const exportMatch = content.match(exportRegex)
+    // Case-insensitive match so conventional acronyms (AIChatContainer) aren't
+    // rejected in favor of the naive per-word capitalization (AiChatContainer).
+    const candidates = [...content.matchAll(/export\s+const\s+([A-Z][\w$]*)\s*=/g)].map((m) => m[1])
+    const match = candidates.find((name) => name.toLowerCase() === expectedName.toLowerCase())
 
-    if (!exportMatch) {
-      this.errors.push(`Component in ${basename(filePath)} should export '${expectedName}'`)
+    if (!match) {
+      const found = candidates.length > 0 ? ` (found: ${candidates.map((c) => `'${c}'`).join(', ')})` : ''
+      this.errors.push(`Component in ${basename(filePath)} should export '${expectedName}'${found}`)
     } else {
-      this.successes.push(`Component '${expectedName}' correctly named`)
+      this.successes.push(`Component '${match}' correctly named`)
     }
   }
 
@@ -744,6 +746,6 @@ const main = async () => {
   const success = await validator.validate()
 
   process.exit(success ? 0 : 1)
-};
+}
 
 main()
