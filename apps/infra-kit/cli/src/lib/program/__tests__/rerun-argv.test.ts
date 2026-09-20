@@ -96,6 +96,11 @@ describe('rerunArgv round-trips through the program', () => {
       argv: ['release', 'edit', '--version', '1.2.3', '--description', 'x y'],
     },
     {
+      label: 'a validated option value (--release-date runs an argParser)',
+      path: ['release', 'edit'],
+      argv: ['release', 'edit', '--version', '1.2.3', '--release-date', '2026-10-28'],
+    },
+    {
       // Canonical form on purpose: `formatReleaseSpec` is minimal, so the echo of
       // `1.2.5@2026-10-28:regular` would be `1.2.5@2026-10-28`; the description forces the full form.
       label: 'a dated release spec (-r token@yyyy-mm-dd:type:description)',
@@ -122,6 +127,41 @@ describe('rerunArgv round-trips through the program', () => {
     expect(rerun.at(-1)).toBe('--yes')
     expect(confirmed.args).toEqual(refused.args)
     expect(confirmed.opts).toEqual({ ...refused.opts, yes: true })
+  })
+
+  it('an invalid --release-date is refused by Commander in its standard argument-is-invalid line', async () => {
+    const program = buildProgram()
+    const errors: string[] = []
+
+    overrideExitDeep(program)
+    program.commands.forEach((group) => {
+      group.commands.forEach((leaf) => {
+        leaf.configureOutput({
+          writeErr: (text) => {
+            errors.push(text)
+          },
+        })
+      })
+    })
+
+    await expect(
+      program.parseAsync([
+        'node',
+        'infra-kit',
+        'release',
+        'edit',
+        '--version',
+        '1.2.3',
+        '--release-date',
+        '2026-02-30',
+      ]),
+    ).rejects.toMatchObject({ code: 'commander.invalidArgument' })
+
+    // Commander formats ONLY `InvalidArgumentError` this way; a raw validator error would surface
+    // as an unformatted stack from `entry/cli.ts` instead.
+    expect(errors.join('')).toContain(
+      "error: option '--release-date <yyyy-mm-dd>' argument '2026-02-30' is invalid. Release date \"2026-02-30\" is not a calendar date in yyyy-mm-dd form.",
+    )
   })
 
   it('a relative -C becomes absolute against the launch cwd, so the re-run parses from anywhere', async () => {

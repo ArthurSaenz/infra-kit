@@ -132,7 +132,11 @@ const paletteItems = (): PaletteItem[] => {
       'Create one or more release branches (each entry can mix regular/hotfix and its own description)',
       'Release Management',
     ],
-    ['release-edit', "Edit a release's description in Jira and in the matching GitHub PR body", 'Release Management'],
+    [
+      'release-edit',
+      "Edit a release's description and/or release date in Jira (description also in the matching GitHub PR body)",
+      'Release Management',
+    ],
     ['release-deploy-all', 'Deploy any release branch to any environment', 'Release Management'],
     [
       'release-deploy-selected',

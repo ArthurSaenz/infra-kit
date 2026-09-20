@@ -64,6 +64,11 @@ const POLICY_SITES: Record<
     tools: ['release-edit'],
     fields: ['description'],
   },
+  'commands/release-edit/release-edit.ts#promptReleaseDate': {
+    policy: 'argument',
+    tools: ['release-edit'],
+    fields: ['releaseDate'],
+  },
   // Reachable since the guards re-rooted on the Bash surface. `tools: []` because the command has NO
   // `mcpTool` (a credential write must never be one call away), so G8's schema check is VACUOUS for
   // this site; the real escape hatches are the `--stdin` / `--from-env` options (`EnvTokenSetArgs:20-23`),

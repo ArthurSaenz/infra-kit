@@ -1,4 +1,4 @@
-import { Command } from 'commander'
+import { Command, InvalidArgumentError } from 'commander'
 import { resolve } from 'node:path'
 import process from 'node:process'
 import { cd } from 'zx'
@@ -41,6 +41,7 @@ import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
 import { runEnvAutoLoad, surfaceStickyAuthFailure } from 'src/lib/env-autoload'
 import { addJsonOption, emit, jsonOutput } from 'src/lib/json-output'
 import { logger } from 'src/lib/logger'
+import { InvalidReleaseDateError, assertIsoDate } from 'src/lib/release-date'
 import { DEPLOY_SOURCES } from 'src/lib/release-deploy'
 import { equivalentLine } from 'src/lib/session/equivalent'
 import { writeSessionReport } from 'src/lib/session/report'
@@ -165,17 +166,39 @@ const configureReleaseCreate = (cmd: Command): Command => {
     })
 }
 
+/**
+ * Validated in the option's `argParser`, not in `.action` like `-r`: Commander formats ONLY an
+ * `InvalidArgumentError` thrown there into its standard
+ * `error: option '--release-date <yyyy-mm-dd>' argument '…' is invalid. <message>` line; a custom
+ * class propagates raw to `entry/cli.ts`. `""` passes through untouched — it is the clear intent.
+ */
+const parseReleaseDateOption = (raw: string): string => {
+  if (raw === '') return raw
+
+  try {
+    return assertIsoDate(raw)
+  } catch (err) {
+    if (err instanceof InvalidReleaseDateError) throw new InvalidArgumentError(err.message)
+
+    throw err
+  }
+}
+
 const configureReleaseEdit = (cmd: Command): Command => {
   return cmd
-    .description("Edit a release's description in Jira and in the matching GitHub PR body")
+    .description(
+      "Edit a release's description and/or release date in Jira (description also in the matching GitHub PR body)",
+    )
     .option('-v, --version <version>', 'Release version (e.g. 1.2.5) or release name (e.g. checkout-redesign)')
     .option('-d, --description <description>', 'New description (use "" to clear)')
+    .option('--release-date <yyyy-mm-dd>', 'New planned release date (use "" to clear)', parseReleaseDateOption)
     .option('-y, --yes', 'Skip confirmation prompt')
     .action(async (options) => {
       emit(
         await releaseEdit({
           version: options.version,
           description: options.description,
+          releaseDate: options.releaseDate,
           confirmedCommand: options.yes,
         }),
       )

@@ -118,6 +118,19 @@ describe('parseReleaseRef', () => {
     expect(parseReleaseRef('checkout-redesign')).toEqual(name('checkout-redesign'))
   })
 
+  it('points a `version@date` spec at release create, where the suffix belongs', () => {
+    expect(() => {
+      return parseReleaseRef('1.64.0@2026-10-28')
+    }).toThrow(InvalidReleaseRefError)
+    expect(() => {
+      return parseReleaseRef('1.64.0@2026-10-28')
+    }).toThrow(/`@date` suffix belongs to `release create`.*`--release-date` on `release edit`/)
+    // The hint is for the spec shape only — an ordinary bad name keeps its plain reason.
+    expect(() => {
+      return parseReleaseRef('Bad_Name')
+    }).not.toThrow(/release create/)
+  })
+
   it('throws on the next token (must be resolved before ref parsing)', () => {
     expect(() => {
       return parseReleaseRef('next')
