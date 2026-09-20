@@ -16,10 +16,9 @@ const IDENTITY = [
   ['doppler', /doppler secrets/],
   ['destructive', /recursive force-remove|force push|destructive SQL/],
   ['package-manager', /pnpm workspace/],
-  ['orca', /Dev servers must run in an Orca terminal/],
-  ['worktree', /infra-kit worktrees add|infra-kit worktrees list/],
+  ['cmux', /Dev servers must run in cmux/],
+  ['worktree', /worktrees-add|worktrees-list/],
   ['style', /ripgrep|find -name/],
-  ['agent-mode-demotion', /demotes agent mode/],
 ];
 
 const identify = (text) => IDENTITY.find(([, re]) => re.test(text))?.[0] ?? 'unrecognised';

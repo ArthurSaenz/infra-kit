@@ -87,15 +87,6 @@ const warnIfLocalInstall = (): void => {
   }
 }
 
-// The "mcp" subcommand was retired in 0.10.0 (plan: .omc/plans/mcp-phase3-deletion-decision.md). Answered
-// here, before Commander, so no preAction hook (agent-mode, autoload, layer-3 seed) or updater runs for it.
-if (process.argv[2] === 'mcp') {
-  process.stderr.write(
-    'The "mcp" subcommand was retired in infra-kit 0.10.0: the Claude Code plugin\'s skills drive the CLI directly. Delete the "infra-kit" entry from .mcp.json (infra-kit doctor names the key).\n',
-  )
-  process.exit(0)
-}
-
 warnIfLocalInstall()
 
 // Deliberately NOT inside `warnIfLocalInstall`: its `--json` early return would skip exactly the

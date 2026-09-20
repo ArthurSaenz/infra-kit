@@ -27,6 +27,10 @@
       "types": "./dist/entry/internal.d.ts",
       "import": "./dist/internal.js"
     },
+    "./package-type": {
+      "types": "./dist/entry/package-type.d.ts",
+      "import": "./dist/package-type.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

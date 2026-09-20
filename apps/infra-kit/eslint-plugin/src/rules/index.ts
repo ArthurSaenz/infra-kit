@@ -8,6 +8,7 @@ import { maxComponentsPerFile } from './max-components-per-file'
 import { maxJsdocLines } from './max-jsdoc-lines'
 import { maxJsdocSummaryLines } from './max-jsdoc-summary-lines'
 import { maxJsxReturnSize } from './max-jsx-return-size'
+import { packageStructure } from './package-structure'
 import { propsDestructuringBlankLine } from './props-destructuring-blank-line'
 import { propsDestructuringNewline } from './props-destructuring-newline'
 import { propsTypeName } from './props-type-name'
@@ -28,4 +29,5 @@ export const rules: Record<string, Rule.RuleModule> = {
   'max-jsdoc-summary-lines': maxJsdocSummaryLines,
   'require-component-stories': requireComponentStories,
   'require-jsdoc-example': requireJsdocExample,
+  'package-structure': packageStructure,
 }

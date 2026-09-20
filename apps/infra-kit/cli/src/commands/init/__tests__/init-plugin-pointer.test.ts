@@ -440,7 +440,7 @@ describe('setup --skip-tools — the MCP registration is read-only', () => {
 
     expect(advisories).toHaveLength(1)
     expect(advisories[0]).toContain('the plugin no longer serves one')
-    expect(advisories[0]).toContain('compatibility stub')
+    expect(advisories[0]).toContain('failed server row')
     expect(advisories[0]).toContain('Delete the "infra-kit" entry from .mcp.json by hand')
     expect(
       warnLines().filter((line) => {

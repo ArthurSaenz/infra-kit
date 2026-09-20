@@ -3,6 +3,26 @@
     "linear-server": {
       "type": "http",
       "url": "https://mcp.linear.app/mcp"
+},
+    "grafana": {
+      "type": "stdio",
+      "command": "ik-mcp",
+      "args": [
+        "--name",
+        "grafana",
+        "--env",
+        "GRAFANA_URL",
+        "--env",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN",
+        "--unset",
+        "GRAFANA_API_KEY",
+        "--unset",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE",
+        "--",
+        "mcp-grafana",
+        "-t",
+        "stdio"
+      ]
     }
   }
 }

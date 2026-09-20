@@ -95,6 +95,7 @@ if (isMain) {
     { file: 'dist/entry/index.d.ts', expected: ['defineConfig', 'InfraKitPackageConfig', 'defineVendorConfig'] },
     { file: 'dist/entry/vite.d.ts', expected: ['infraKitDev', 'InfraKitViteProxy'] },
     { file: 'dist/entry/internal.d.ts', expected: ['packageConfigSchema', 'slugifyHostLabel'] },
+    { file: 'dist/entry/package-type.d.ts', expected: ['detectPackageType', 'PACKAGE_TYPES'] },
   ]
 
   for (const { file, expected } of declarationGuards) {

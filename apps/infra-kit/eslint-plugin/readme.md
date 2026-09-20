@@ -526,6 +526,108 @@ story is satisfied when any candidate (`.tsx`, `.jsx`, `.ts`, `.js`) exists on d
 - **Unanchored globs.** `paths`/`ignore` patterns match anywhere in the path, so anchor them
   (e.g. start with `**/`) when you need precision.
 
+### `package-structure`
+
+Allowlist the **layers under a package's `src/`**, and the **segments inside them**, per package
+type. A file that sits in a directory the lists do not name is reported once, at the top of the
+file — every file under the offending directory carries the same message, which is how a "red
+folder" surfaces in the IDE explorer. The message names the skill that owns that layout, so the fix
+has an owner:
+
+```
+`core` is not an allowed `src/` layer for package type `frontend` (allowed: app, features, lib, components, pages, routes). See /infra-kit:fe-architect for the frontend layout.
+`hooks` is not an allowed segment of `features/user` for package type `frontend` (allowed: containers, components, services, __stories__, __tests__). See /infra-kit:fe-architect for the frontend layout.
+```
+
+Two levels are checked:
+
+- **Layers** — the first directory under `src/` must be in `layers`.
+- **Segments** — inside a layer that has a `segments` key, the next directory must be in that list.
+  `features/*` means "inside every folder of `features/`" (each folder is a unit of any name, e.g. a
+  feature or a service); `services` (no `/*`) would mean "directly inside `services/`". A layer
+  without a key is not inspected below its first level.
+
+Never reported: files — in `src/` itself, in a layer, in a unit (`features/user/index.ts`) — and
+anything deeper than a segment (`features/user/components/default/…`). A file not under
+`<package>/src/` at all is silent, so a shipped `dist/src/**` is too. A `__tests__` or
+`__stories__` folder is an ordinary name: allowed exactly where a list says so.
+
+```js
+{
+  rules: {
+    '@wl/package-structure': 'error',
+  },
+}
+```
+
+#### How the package type is resolved
+
+The package root is the nearest ancestor of the linted file holding an `infra-kit.config.ts` or a
+`package.json`. Its type is the `type` **literal** declared in `infra-kit.config.ts` when there is one
+(`type: 'backend'`); otherwise the same inference the `infra-kit` CLI uses — `apps/<app>/ui` →
+`frontend`, `apps/<app>/api` → `backend`, `apps/<app>/tests` → `e2e`, a `mobile-app` directory →
+`mobile`, then dependency signals (`@playwright/test` → `e2e`, `@capacitor/*` → `mobile`,
+`serverless` → `backend`), falling back to `lib`.
+
+The config file is read as **text** — it is never imported or executed — and re-read when its mtime
+changes, so an edit is picked up by the next lint of any file in that package, in CI and in the IDE
+language server alike. A computed `type` (`type: pickType()`) is not a literal and falls back to
+inference.
+
+#### Options
+
+One entry per package type. An **absent** key uses the built-in default below; a **present** key
+replaces the whole entry (`layers`, `segments` and `skill`) — there is no merging. A type with no
+entry is silent, which is why `mobile` and `lib` report nothing by default: their layouts are not
+settled.
+
+| Type       | Default `layers`                                                             | Default `segments`                                                                | Default `skill`            |
+| ---------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------- |
+| `frontend` | `app`, `features`, `lib`, `components`, `pages`, `routes`                    | `features/*` → `containers`, `components`, `services`, `__stories__`, `__tests__` | `/infra-kit:fe-architect`  |
+| `backend`  | `controllers`, `services`, `lib`, `config`                                   | `services/*` → `__tests__`                                                        | `/infra-kit:be-architect`  |
+| `e2e`      | `tests`, `pages`, `fixtures`, `mocks`, `data`, `config`, `lib`, `components` | —                                                                                 | `/infra-kit:e2e-architect` |
+| `mobile`   | — (silent)                                                                   | —                                                                                 | —                          |
+| `lib`      | — (silent)                                                                   | —                                                                                 | —                          |
+
+| Option            | Type                       | Description                                                                                                                                     |
+| ----------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<type>.layers`   | `string[]`                 | Allowed first-level `src/` directories for that type.                                                                                           |
+| `<type>.segments` | `Record<string, string[]>` | Allowed directories one level down, keyed by `<layer>/*` (inside each folder of the layer) or `<layer>`. A key must name a layer from `layers`. |
+| `<type>.skill`    | `string`                   | Appended as "See `<skill>` for the `<type>` layout."; `''` or absent drops the sentence.                                                        |
+| `ignore`          | `string[]`                 | Skip files matching these globs.                                                                                                                |
+
+```js
+// Override one type wholesale; the other types keep their defaults.
+export default config({
+  rules: {
+    '@wl/package-structure': [
+      'error',
+      {
+        backend: {
+          layers: ['lambda_controllers', 'services', 'libs', 'local'],
+          segments: { 'services/*': ['__tests__', 'fixtures'] },
+          skill: '/infra-kit:be-architect',
+        },
+      },
+    ],
+  },
+})
+```
+
+Flat config **replaces** rule options across matching blocks (it does not merge), so a consumer
+override restates every type it wants to change — and only those.
+
+#### Caveats
+
+- **Filesystem-coupled.** The rule stats the package's `infra-kit.config.ts` once per linted file
+  (microseconds) and reads it only when the mtime changed. `package.json` dependency signals are
+  read once per lint process; adding `@playwright/test` mid-session is a `pnpm install` event, not an
+  edit-lint loop, and is seen by the next process.
+- **`--cache`.** Renaming a directory changes every file path under it, so ESLint's cache already
+  misses; editing `infra-kit.config.ts` does not touch the linted files, so a cached result can go
+  stale until those files change. Run without `--cache` in CI if you rely on this rule as a gate.
+- **The backend skill is a forward reference.** `/infra-kit:be-architect` is named in the default
+  message ahead of the skill shipping; override `backend.skill` if the pointer should go elsewhere.
 ### `max-jsdoc-lines`
 
 Cap the height of a JSDoc block. The block's **prose** and its **`@example` bodies**
@@ -731,3 +833,42 @@ Module-level rationale is exempted the same way: tag the block `@fileoverview`
 (or `@module` / `@packageDocumentation`). There is no positional exemption, and
 the message names the tag inline so the escape hatch is visible at the point of
 failure.
+
+### `require-jsdoc-example`
+
+Graduated JSDoc requirement driven by **cognitive complexity**: at or above `minComplexity` a named
+top-level function must carry a leading JSDoc block, and at or above `exampleComplexity` that block
+must also include an `@example` tag. Functions below the first threshold are left alone — the rule
+asks for documentation where a reader needs it, not everywhere.
+
+```ts
+// ❌ Incorrect — complexity 13, no JSDoc at all
+export const resolveRoute = (ctx: Ctx) => { /* nested branches, loops, early returns … */ }
+
+// ✅ Correct — a block, and because 13 ≥ 12, a worked `@example`
+/**
+ * Pick the route for a request, honouring locale, redirects and the fallback page.
+ *
+ * @example
+ * resolveRoute({ path: '/he/deals', locale: 'he' }) // → { page: 'deals', locale: 'he' }
+ */
+export const resolveRoute = (ctx: Ctx) => { … }
+```
+
+Targets are named `function` declarations and `const name = () => …` / `function` expressions at the
+top level, with or without an `export` wrapper; the JSDoc may sit on the declaration or on the
+`export` statement. Complexity is the same cognitive-complexity metric `sonarjs` uses. The
+recommended preset ships this rule at `warn` in its own `**/*.{ts,tsx}` block, because the functions
+it targets overwhelmingly live in plain `.ts` modules.
+
+#### Options (all optional)
+
+| Option              | Default | Description                                                                         |
+| ------------------- | ------- | ----------------------------------------------------------------------------------- |
+| `minComplexity`     | `8`     | Cognitive complexity at or above which a function must carry a leading JSDoc block. |
+| `exampleComplexity` | `12`    | Cognitive complexity at or above which that block must also include an `@example`.  |
+| `paths`             | `[]`    | Restrict the rule to files matching these globs.                                    |
+| `ignore`            | `[]`    | Skip files matching these globs (takes precedence over `paths`).                    |
+
+The `@example` bodies this rule mandates are charged to their own budget by
+[`max-jsdoc-lines`](#max-jsdoc-lines), so satisfying one rule can never violate the other.

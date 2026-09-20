@@ -57,6 +57,3 @@ categories-data-manifest.json
 routeTree.gen.ts
 hulyo_key_store
 travelist-keystore
-
-## Test fixtures — extensionless shims the `*.*` block above never catches
-apps/infra-kit/cli/src/__fixtures__/bin/

@@ -606,7 +606,7 @@ const mcpEntry = (root: string, registration: McpRegistration): InitEntry => {
     return {
       step: 'mcp-server',
       outcome: 'unchanged',
-      message: `  ${relative} still registers the infra-kit MCP server under "${key}" — the plugin no longer serves one, so this entry only spawns a compatibility stub. Delete the "${key}" entry from ${relative} by hand in a PR, keeping its siblings`,
+      message: `  ${relative} still registers the infra-kit MCP server under "${key}" — the plugin no longer serves one, so this entry only spawns a failed server row. Delete the "${key}" entry from ${relative} by hand in a PR, keeping its siblings`,
       level: 'info',
     }
   }

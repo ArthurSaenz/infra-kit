@@ -13,9 +13,9 @@ import { MARKETPLACE_NAME } from './names'
  * at: the Claude Code plugin is skills-only and the skills drive the CLI over Bash
  * (`.omc/plans/mcp-to-cli-skills-migration.md`), so no repo needs an entry to have the tools.
  *
- * WHY A LEFTOVER KEY IS A CHORE, NOT A FAULT. An `infra-kit` entry spawns the retired `mcp` subcommand,
- * which since 0.10.0 prints one stderr line and exits 0 — Claude Code shows a failed server row and
- * nothing else changes. What remains is a repo PR that deletes the key by hand — a chore with no
+ * WHY A LEFTOVER KEY IS A CHORE, NOT A FAULT. An `infra-kit` entry spawns `infra-kit mcp`, which is an
+ * unknown subcommand since 0.11.0 (the 0.10.x stderr stub is gone too) — Claude Code shows a failed
+ * server row and nothing else changes. What remains is a repo PR that deletes the key by hand — a chore with no
  * deadline, which is why the verdict is `stale`, reported as a pass with an advisory, and never repaired
  * by this CLI: `.mcp.json` is hand-maintained and holds other people's servers (archived plan
  * docs/archive/mcp/mcp-via-plugin-migration-plan.md §3.4: no confirm-gated deletion).
@@ -58,7 +58,7 @@ export const isPlainObject = (value: unknown): value is JsonObject => {
  *
  * Exact fields, not a substring: the previous `"<command> <args>".includes('infra-kit')` read a
  * `grafana`-style proxy (`ik-mcp --name infra-kit-x …`) as a misfiled server and turned a correct
- * file into a red `wrong-key` row. The entry the CLI used to write — `{ type: 'stdio', command: 'infra-kit', args: ['mcp'] }`, the shape the stub still answers to — is the predicate; `type` is
+ * file into a red `wrong-key` row. The entry the CLI used to write — `{ type: 'stdio', command: 'infra-kit', args: ['mcp'] }` — is the predicate; `type` is
  * left out because Claude Code defaults it and a hand-written entry may omit it.
  *
  * @example
@@ -130,8 +130,8 @@ export const describeError = (error: unknown): string => {
 /**
  * How a repo's `.mcp.json` relates to the retired infra-kit server.
  *
- * `absent` is the healthy verdict: the repo carries no entry, so nothing spawns the compatibility
- * stub. `stale` is the pending chore (a leftover key, see the file header), `wrong-key` the same chore
+ * `absent` is the healthy verdict: the repo carries no entry, so nothing spawns the retired
+ * subcommand. `stale` is the pending chore (a leftover key, see the file header), `wrong-key` the same chore
  * under another key. `missing-file` is `absent` for a repo with no `.mcp.json` at all. `unparseable`
  * is the one fault: the file cannot be read, so no verdict about a key is honest.
  */

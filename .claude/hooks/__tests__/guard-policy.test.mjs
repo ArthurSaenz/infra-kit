@@ -1,4 +1,4 @@
-// The over-blocking policy, made executable. block-deploy treats a false deny as correct, orca as
+// The over-blocking policy, made executable. block-deploy treats a false deny as correct, cmux as
 // a defect — holding both with no boundary is what denied `pnpm exec rg deliver src/`.
 // I1: over-blocking is fine when the matched string has one purpose, not when it is vocabulary.
 // I2: a last-resort catch-all must not be nested in a conditional arm (asserted in block-deploy.test).

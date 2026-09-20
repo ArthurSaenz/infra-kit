@@ -94,6 +94,19 @@ plugin.configs.recommended = [
       [`${PLUGIN_NAME}/require-jsdoc-example`]: 'warn',
     },
   },
+  // `package-structure` judges a file by its directory, not its contents, so it must reach every
+  // source extension — the `**/*.tsx` block above would never see a `.ts` under `src/core/`. Its
+  // own block (like `require-jsdoc-example`) with `plugins` re-declared keeps it self-contained.
+  // `error` from day one: the per-type entries are overridable per package via `config({ rules })`.
+  {
+    files: ['**/*.{ts,tsx,js,jsx}'],
+    plugins: {
+      [PLUGIN_NAME]: plugin,
+    },
+    rules: {
+      [`${PLUGIN_NAME}/package-structure`]: 'error',
+    },
+  },
 ]
 
 export const meta: ESLint.Plugin['meta'] = plugin.meta

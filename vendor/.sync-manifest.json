@@ -1,7 +1,7 @@
 {
   "source": "starter-workspace",
-  "commit": "96a23bd0dc043128422ac2810c82ecaa8f94c8fc",
-  "syncedAt": "2026-09-13T21:19:27.271Z",
+  "commit": "c87d384a736ad482eb67d5547d9b3f3205102e32",
+  "syncedAt": "2026-09-17T08:51:05.015Z",
   "fileCount": 162,
   "files": {
     "README.md": "06b7aea87c83c143c72ce40d1cb8ecfcc7c28a3b61d879ea6839ae0f82570306",
@@ -20,7 +20,7 @@
     "configs/eslint-config/__tests__/props-destructuring.test.ts": "36b528fd6a2c367a0e1505d5d5a5f9faa492e0f81f9cba88bc65741de9b1ec2b",
     "configs/eslint-config/__tests__/root-alias-resolver.test.ts": "d54ae6b7efa95da93d4b1b014d68ee50e4620bc773cb574264ce1b1a78e94a57",
     "configs/eslint-config/infra-kit.config.ts": "027ce858f85a51e5672f840ea90f418fe65bf09882641df033fc941733220176",
-    "configs/eslint-config/package.json": "20572ed98423406bdc39f9ec255201d60347e33ef8b57c0d15ef8df24aed5665",
+    "configs/eslint-config/package.json": "8c5b8a0d89ddde72424baea223f421d4910091c9cac34166392f9a728aae773a",
     "configs/eslint-config/resolvers/root-alias.cjs": "e4a78e30fc3964310878c60f8ad2d04564474d044e2d198d0a6108c52cdd066a",
     "configs/eslint-config/src/configs/base.ts": "c16720f1549b07b2e6f8ffd5b1beeb1dec5ad1069667f23b91ee219af2c28c70",
     "configs/eslint-config/src/configs/boundaries.ts": "15c1cee041f76e627fa1ebbec58f206c450b7497003651c603535a1a4c0d5c4f",
@@ -53,7 +53,7 @@
     "packages/docs-ui/README.md": "aee32f59f513498e469b5759294e4a4096d4d6852eaf77c216e9f649ac55700d",
     "packages/docs-ui/eslint.config.js": "625973b0248c74bb6e6b7a0e199ef4b2af2f20c54d478802893c0256c89e7c0f",
     "packages/docs-ui/infra-kit.config.ts": "027ce858f85a51e5672f840ea90f418fe65bf09882641df033fc941733220176",
-    "packages/docs-ui/package.json": "ec9bf67768d14180fadfa70cce06c72ba4ca48203eefab70c5b14ee716b37c8a",
+    "packages/docs-ui/package.json": "f28555316ce195ca72553b806dcb1e5861625c0f1de4ddc75542d3b328051f20",
     "packages/docs-ui/source.config.ts": "02904f1e56a418c338b3dde85d871332058f8bf525998115ca277bedce356177",
     "packages/docs-ui/src/components/mdx.tsx": "253d1084e0f621d16e2fe738fee400bfe11ddff11cc094d9f1ddbb47a264db37",
     "packages/docs-ui/src/components/not-found.tsx": "b4f87a221905e94eedd7a6bc321bc86b0e98773a57f26c26d421be6ada95835c",

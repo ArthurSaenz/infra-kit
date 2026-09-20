@@ -1,4 +1,3 @@
-// Canonical copy: `@slip-stream-kit/config/package-type`. The CLI consumes the REGISTRY config, so it re-points its imports there (and deletes this file) only after the next publish.
 import path from 'node:path'
 
 /**
