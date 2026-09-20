@@ -453,11 +453,9 @@ const buildPlan = async (branch: string, args: ReleaseRemoveArgs): Promise<Relea
     branch,
     id,
     label: displayLabel(id),
-    // A release with no PR falls to `dev`. A PR carries its own baseRefName (the fact `gh pr merge`
-    // acts on); the `?? getBaseBranch('regular')` fallback fires only when there is no PR at all.
-    // A stale MERGED/CLOSED PR to `main` under a reused branch name can still set `baseBranch` to
-    // `main` here — the same exposure this had via title before, not a regression — and an
-    // out-of-set base flows through to `git switch`, guarded there by `assertBaseBranchSwitchable`.
+    // The base only has to get HEAD off the release branch, so a stale MERGED/CLOSED PR to `main`
+    // under a reused branch name (newest-first lookup) is tolerated here — the same exposure this
+    // had via the title, not a regression.
     baseBranch: pr?.baseRefName ?? getBaseBranch('regular'),
     projectRoot,
     worktreeDir,

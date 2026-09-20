@@ -63,7 +63,8 @@ const runStep = async <T>(operation: string, remediation: string, fn: () => Prom
  */
 const fetchMergedRcPRForVersion = async (id: ReleaseId): Promise<PRStatus | null> => {
   const expectedTitle = formatRcTitle(id)
-  const result = await $`gh pr list --head dev --base main --state merged --json number,state,title --limit 20`
+  const result =
+    await $`gh pr list --head dev --base main --state merged --json number,state,title,baseRefName,headRefName --limit 20`
   const prs = JSON.parse(result.stdout) as PRStatus[]
   const match = prs.find((pr) => {
     return pr.title === expectedTitle
@@ -79,7 +80,8 @@ const fetchMergedRcPRForVersion = async (id: ReleaseId): Promise<PRStatus | null
  * is what makes the flow recoverable after a mid-run failure.
  */
 const fetchOpenDevToMainPR = async (): Promise<PRStatus | null> => {
-  const result = await $`gh pr list --head dev --base main --state open --json number,state,title --limit 5`
+  const result =
+    await $`gh pr list --head dev --base main --state open --json number,state,title,baseRefName,headRefName --limit 5`
   const prs = JSON.parse(result.stdout) as PRStatus[]
 
   return prs[0] ?? null
@@ -87,7 +89,7 @@ const fetchOpenDevToMainPR = async (): Promise<PRStatus | null> => {
 
 interface ResolvedTarget {
   selectedReleaseBranch: string
-  /** From the PR's base branch — the title is only a label (plan: merge-dev-hotfix-guard, principle 1). */
+  /** From the PR's base branch — the title is only a label. */
   releaseType: ReleaseType
   /** Bound here so the merge below acts on this PR, not on whatever gh finds on the head later. */
   prNumber: number
