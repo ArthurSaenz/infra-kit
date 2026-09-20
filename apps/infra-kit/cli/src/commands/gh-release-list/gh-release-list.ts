@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { logger } from 'src/lib/logger'
 import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
-import { formatVersionLabel, getJiraDescriptions } from 'src/lib/release-utils'
+import { formatVersionLabel, getJiraVersionInfo } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 
 /**
@@ -22,7 +22,7 @@ export const ghReleaseList = async () => {
       {
         // Human display label: `1.2.3` | `<name>`.
         version: displayLabel(id),
-        // Jira-descriptions map is keyed by the Jira version NAME (`v1.2.3` | `<name>`).
+        // Jira version-info map is keyed by the Jira version NAME (`v1.2.3` | `<name>`).
         jiraKey: formatJiraName(id),
         type: pr.type,
         titleMismatch: pr.titleMismatch,
@@ -30,7 +30,7 @@ export const ghReleaseList = async () => {
     ]
   })
 
-  const jiraDescriptions = await getJiraDescriptions()
+  const jiraVersions = await getJiraVersionInfo()
 
   const maxVersionLength = Math.max(
     ...releases.map((r) => {
@@ -40,16 +40,14 @@ export const ghReleaseList = async () => {
 
   const formattedLines = releases.map((release) => {
     const label = formatVersionLabel(release.version, release.type, maxVersionLength)
-    const description = jiraDescriptions.get(release.jiraKey)
+    const jira = jiraVersions.get(release.jiraKey)
+    const description = jira?.description ? `  ${jira.description}` : ''
+    const shipsOn = jira?.releaseDate ? ` · ships ${jira.releaseDate}` : ''
     // The title lied about the type at least once (`releaseTypeFromBase` won); flag it so a human
     // reading the list catches the same retitle a machine caller sees in `titleMismatch`.
     const mismatchMarker = release.titleMismatch ? ' ⚠ title/base mismatch' : ''
 
-    if (description) {
-      return `${label}  ${description}${mismatchMarker}`
-    }
-
-    return `${label}${mismatchMarker}`
+    return `${label}${description}${shipsOn}${mismatchMarker}`
   })
 
   logger.info('All release branches: \n')
@@ -60,7 +58,8 @@ export const ghReleaseList = async () => {
       return {
         version: release.version,
         type: release.type,
-        description: jiraDescriptions.get(release.jiraKey) || null,
+        description: jiraVersions.get(release.jiraKey)?.description ?? null,
+        releaseDate: jiraVersions.get(release.jiraKey)?.releaseDate ?? null,
         titleMismatch: release.titleMismatch,
       }
     }),
@@ -77,7 +76,7 @@ export const ghReleaseList = async () => {
 export const ghReleaseListMcpTool = defineMcpTool({
   name: 'gh-release-list',
   description:
-    'List every open release PR with its version, type (regular / hotfix), and associated Jira fix-version description. Read-only; sourced from GitHub and Jira.',
+    'List every open release PR with its version, type (regular / hotfix), and the associated Jira fix version’s description and planned release date. Read-only; sourced from GitHub and Jira.',
   inputSchema: {},
   outputSchema: {
     releases: z
@@ -86,6 +85,7 @@ export const ghReleaseListMcpTool = defineMcpTool({
           version: z.string().describe('Release version'),
           type: z.enum(['regular', 'hotfix']).describe('Release type'),
           description: z.string().nullable().describe('Jira version description'),
+          releaseDate: z.string().nullable().describe('Planned release date of the Jira version (yyyy-mm-dd)'),
           titleMismatch: z.boolean().describe('The PR title names a different release type than its base branch'),
         }),
       )

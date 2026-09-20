@@ -6,6 +6,8 @@ export {
   formatVersionLabel,
   getBaseBranch,
   getJiraDescriptions,
+  getJiraVersionInfo,
+  type JiraVersionInfo,
   parseBranchChoices,
   prepareGitForRelease,
   releaseBranchLabels,

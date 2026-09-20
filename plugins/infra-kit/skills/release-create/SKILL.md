@@ -1,7 +1,7 @@
 ---
 name: release-create
 description: Cut one or more release branches through the infra-kit CLI, behind the preview-then-approve protocol.
-argument-hint: [--hotfix] [--desc <text>] [<version|next|name>]
+argument-hint: [--hotfix] [--desc <text>] [--date <yyyy-mm-dd>] [<version|next|name>]
 disable-model-invocation: true
 allowed-tools: Bash(infra-kit release list --json*)
 ---
@@ -78,13 +78,20 @@ crash: stop and show stderr.
 
 ## 3. What goes in `-r`
 
-Each `-r <spec>` is one release, `"<token>[:type[:description]]"`. The token is **exactly one** of:
+Each `-r <spec>` is one release, `"<token>[@yyyy-mm-dd][:type[:description]]"`. The token is
+**exactly one** of:
 
 - a semver string such as `1.64.0`, or the literal token `next` — a version;
 - a free-form kebab-case identifier such as `checkout-redesign` — a name.
 
 They are mutually exclusive and one is required. A name that is not kebab-case, or is reserved, is
 refused — relay the kebab-case remediation and ask again.
+
+`@yyyy-mm-dd`, glued to the token, is the planned release date: `1.64.0@2026-10-28`,
+`next@2026-10-28`, `checkout-redesign@2026-10-28:hotfix:Fix the cart`. It is written to the Jira fix
+version's release date, and delivery overwrites it with the actual date. Omit it when no date is
+planned; `release edit --release-date` sets or changes it later. The CLI accepts only ISO
+`yyyy-mm-dd` here — any other form is refused.
 
 `type` is `regular` or `hotfix` (default `regular`). Everything after the second colon is the
 `description` — it may itself contain colons — and becomes the Jira fix version's description and
@@ -111,17 +118,23 @@ the human approves, not the token.
 ### Reading `$ARGUMENTS`
 
 The `/infra-kit:release-create` skill hands you `$ARGUMENTS` verbatim, and its argument hint is
-`[--hotfix] [--desc <text>] [<version|next|name>]`. **Those two flags are conventions of this skill,
-not CLI flags** — `infra-kit release create` accepts neither. They exist so a human can type the
-whole request on one line, and it is your job to translate them into the `-r` spec:
+`[--hotfix] [--desc <text>] [--date <yyyy-mm-dd>] [<version|next|name>]`. **Those three flags are
+conventions of this skill, not CLI flags** — `infra-kit release create` accepts none of them. They
+exist so a human can type the whole request on one line, and it is your job to translate them into
+the `-r` spec:
 
 - `--hotfix` → `type: "hotfix"` — the `:hotfix` segment. Its absence means `regular`.
 - `--desc <text>` → `description` — the segment after the second colon. The text runs to the end of
   the argument string.
+- `--date <text>` → the `@yyyy-mm-dd` segment. The human may write it in prose — `28 October`,
+  `28.10`, `next Tuesday` — and **you** translate it to ISO, taking the year (and the month, when
+  only a day is given) from today's date; the CLI never parses prose. Put the resolved date in the
+  preview so the human checks it before the approved run. Ambiguous (`10/11`)? Ask.
 - The bare token → the first segment: a semver or the literal `next` for a version, kebab-case for a
   name.
 
-So `--hotfix --desc "Card expiry fix" 1.63.3` is `-r "1.63.3:hotfix:Card expiry fix"`.
+So `--hotfix --desc "Card expiry fix" --date "28 October" 1.63.3` is
+`-r "1.63.3@2026-10-28:hotfix:Card expiry fix"` (in 2026).
 
 If `$ARGUMENTS` is empty, ask the human in prose for the token, the type and the description, then
 build the spec. Do not pick a version for them; offer `next` when they have none in mind. Before
@@ -156,7 +169,8 @@ or `<name>`).
 Two consequences worth stating before the approved run:
 
 - An existing fix version is **reused**, and a `description` that differs is written through to it,
-  so the PR and the fix version cannot disagree.
+  so the PR and the fix version cannot disagree. A `@date` that differs is written through the same
+  way; a spec without one leaves the existing date alone.
 - A fix version that is already released or archived is **refused**, not reused. The human either
   picks a different version or un-releases it in Jira.
 

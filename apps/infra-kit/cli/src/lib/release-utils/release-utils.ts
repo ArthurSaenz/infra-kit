@@ -245,24 +245,27 @@ export const createSingleRelease = async (args: CreateSingleReleaseArgs): Promis
   }
 }
 
+export interface JiraVersionInfo {
+  description: string | null
+  releaseDate: string | null
+}
+
 /**
- * Fetch Jira version descriptions mapped by version name (e.g., "v1.2.5" → "Some description")
- * Gracefully returns empty map if Jira is unavailable
+ * Fetch every Jira fix version's description and planned release date, keyed by version name
+ * (`v1.2.5` | `<name>`). Gracefully returns an empty map if Jira is unavailable.
  */
-export const getJiraDescriptions = async (): Promise<Map<string, string>> => {
-  const descriptions = new Map<string, string>()
+export const getJiraVersionInfo = async (): Promise<Map<string, JiraVersionInfo>> => {
+  const info = new Map<string, JiraVersionInfo>()
 
   const jiraConfig = await loadJiraConfigOptional()
 
-  if (!jiraConfig) return descriptions
+  if (!jiraConfig) return info
 
   try {
     const versions = await getProjectVersions(jiraConfig)
 
     for (const version of versions) {
-      if (version.description) {
-        descriptions.set(version.name, version.description)
-      }
+      info.set(version.name, { description: version.description || null, releaseDate: version.releaseDate || null })
     }
   } catch (error) {
     // WARN, not ERROR: the only residue is cosmetic — release rows render without their Jira
@@ -275,7 +278,21 @@ export const getJiraDescriptions = async (): Promise<Map<string, string>> => {
     )
   }
 
-  return descriptions
+  return info
+}
+
+/**
+ * Jira version descriptions keyed by version name; versions without a description have no entry,
+ * so a `.get()` miss reads the same for "no description" and "Jira unavailable".
+ */
+export const getJiraDescriptions = async (): Promise<Map<string, string>> => {
+  const info = await getJiraVersionInfo()
+
+  return new Map(
+    [...info].flatMap(([name, { description }]) => {
+      return description ? [[name, description] as const] : []
+    }),
+  )
 }
 
 /**

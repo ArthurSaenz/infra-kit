@@ -41,6 +41,9 @@ skills or guards. The root `CLAUDE.md` block says so, and `infra-kit doctor` rep
   **`{"status": "partial_failure"}`** (exit 1) means something ran and part failed — relayed whole.
   Non-JSON stdout, or exit 1 with no JSON, is a crash: stop and show stderr.
 - **`release deliver` is human-only** and refused under agent mode always.
+- **A release's planned date** rides on `release create` as `-r <token>@yyyy-mm-dd` and is changed by
+  `release edit --release-date`; `release list --json` reports it per row as `releaseDate`. The skill
+  translates a prose date (`28 October`) to ISO and shows it in the preview — the CLI parses only ISO.
 - **cwd.** Every call runs from the directory Claude Code was launched in; a skill that finds the
   shell elsewhere `cd`s back first (the CLI also accepts `-C <dir>`).
 
