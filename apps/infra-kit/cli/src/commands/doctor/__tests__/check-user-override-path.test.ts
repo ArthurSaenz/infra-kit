@@ -89,7 +89,7 @@ describe('checkUserOverridePath', () => {
   })
 
   it('lists the raw top-level keys when the file carries real overrides', async () => {
-    fs.writeFileSync(cfg.userProject, JSON.stringify({ ide: { name: 'zed' }, dev: { api: { port: 3000 } } }))
+    fs.writeFileSync(cfg.userProject, JSON.stringify({ ide: { name: 'cursor' }, dev: { api: { port: 3000 } } }))
 
     const result = await checkUserOverridePath()
 

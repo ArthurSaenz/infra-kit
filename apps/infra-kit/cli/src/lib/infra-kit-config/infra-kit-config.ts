@@ -7,11 +7,7 @@ import { z } from 'zod'
 import { isAgentMode } from 'src/lib/agent-mode'
 import { USER_CONFIG_DIR_NAME } from 'src/lib/constants'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
-import { logger } from 'src/lib/logger'
 import { PROTECTED_CHILD_ENV_NAMES } from 'src/lib/mcp-proxy/protected-env'
-import { tildify } from 'src/lib/path-display'
-
-import { stripLegacyCmuxKeys } from './legacy-cmux-keys'
 
 const INFRA_KIT_CONFIG_FILE = 'infra-kit.json'
 
@@ -45,20 +41,13 @@ const cursorIdeSchema = z.object({
   config: cursorIdeConfigSchema,
 })
 
-// Zed has no portable workspace file (no `.code-workspace`) and no folder-remove
-// CLI: a multi-worktree workspace is realized by a single `zed <root> <wt...>`
-// invocation. So `config` carries no settings — there's no path to point at.
-const zedIdeConfigSchema = z.object({})
+// Cursor is the only provider: `zed` was retired (Zed has no workspace file, so its only mutation
+// was a destructive `zed --reuse` relaunch that could never report a diff). Because this schema is
+// `.strict()`, a config that still names it is refused — `infra-kit setup` drops the entry.
+const ideSchema = z.discriminatedUnion('provider', [cursorIdeSchema])
 
-const zedIdeSchema = z.object({
-  provider: z.literal('zed'),
-  config: zedIdeConfigSchema,
-})
-
-const ideSchema = z.discriminatedUnion('provider', [cursorIdeSchema, zedIdeSchema])
-
-// `ide` accepts a single provider (back-compat) OR an array to drive multiple
-// editors at once (e.g. Cursor + Zed). Normalized to an array everywhere via
+// `ide` accepts a single provider (back-compat) OR an array (the shape that
+// drove several editors at once). Normalized to an array everywhere via
 // `resolveConfiguredIdes`. Uniqueness-by-provider is enforced at parse time by a
 // `.superRefine` on the full config schema (see below) — not here, so the message
 // survives `z.union` error aggregation.
@@ -97,9 +86,7 @@ const orcaConfigSchema = z
   .strict()
 
 // worktrees prompt defaults. `.strict()` like every other leaf: a non-strict object here let zod
-// SILENTLY drop a misspelt (or, after the cmux → orca rename, stale) key, turning "open in Orca"
-// off with no message. The legacy `openInCmux` / `cmux` keys never reach this schema — `loadLayer`
-// strips them first and says so.
+// SILENTLY drop a misspelt key, turning "open in Orca" off with no message.
 const worktreesConfigSchema = z
   .object({
     openInGithubDesktop: z.boolean().optional(),
@@ -383,7 +370,7 @@ export type ConfiguredIde = z.infer<typeof ideSchema>
  *
  * @example
  * resolveConfiguredIdes({ ide: { provider: 'cursor', config: {...} } }) // => [cursor]
- * resolveConfiguredIdes({ ide: [cursor, zed] })                         // => [cursor, zed]
+ * resolveConfiguredIdes({ ide: [cursor] })                              // => [cursor]
  * resolveConfiguredIdes({})                                             // => []
  */
 export const resolveConfiguredIdes = (config: InfraKitConfig): ConfiguredIde[] => {
@@ -719,9 +706,6 @@ interface ConfigLayer {
   required: boolean
 }
 
-/** Files already warned about for legacy cmux keys — the loader re-reads on every mtime change. */
-const warnedLegacyCmuxFiles = new Set<string>()
-
 /**
  * Read a single layer of the merge chain: parse the JSON if the file exists
  * and validate it against the override schema. Returns `null` if an optional
@@ -773,22 +757,7 @@ const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | 
     throw new Error(buildMcpLayerRejectionMessage(layer))
   }
 
-  // The three cmux keys were renamed to orca and the override schema stays `.strict()`, so a file
-  // that still carries them would fail below and brick every command on a self-updated CLI. Strip
-  // them in memory (never written — `infra-kit setup` owns the rewrite) and say so once per file,
-  // not once per read: `getInfraKitConfig` runs on nearly every command and re-reads on any mtime
-  // change. Only here, per layer: the merged object is built from already-stripped layers, so a
-  // second strip there would have no file to name.
-  const { stripped, result: cleaned } = stripLegacyCmuxKeys(parsedRaw)
-
-  if (stripped.length > 0 && !warnedLegacyCmuxFiles.has(layer.path)) {
-    warnedLegacyCmuxFiles.add(layer.path)
-    logger.warn(
-      `legacy cmux keys (${stripped.join(', ')}) in ${tildify(layer.path)} are ignored — run \`infra-kit setup\` to migrate them to orca`,
-    )
-  }
-
-  const result = infraKitOverrideConfigSchema.safeParse(cleaned)
+  const result = infraKitOverrideConfigSchema.safeParse(parsedRaw)
 
   if (!result.success) {
     throw new Error(`Invalid ${layer.label} at ${layer.path}: ${z.prettifyError(result.error)}`)

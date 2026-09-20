@@ -175,28 +175,6 @@ describe('release remove — step order', () => {
 
     expect(state.order).toEqual(['worktree', 'ide-folders', 'pr', 'local-branch', 'remote-branch', 'jira'])
   })
-
-  /**
-   * `allowEditorRelaunch: false` is the whole of AC-9, and its entire content is one literal — so
-   * nothing else in this suite can catch a regression of it.
-   *
-   * The false-success it prevents: `removeFromZed` returns immediately when the flag is false
-   * (`integrations/ide/remove-ide-worktree-folders.ts:132`). Pass `!confirmedCommand` instead — which
-   * is what the sibling `worktrees-remove` passes at `:178`, so it is the natural thing for a future
-   * reader to "restore" — and the IDE step becomes a GUARANTEED no-op on every `--yes` run while
-   * still being reported as done. When it does fire, `zed --reuse` silently drops unrelated open
-   * folders, which is the other half of why the literal is false.
-   *
-   * Both invocation paths are asserted deliberately: a one-sided assertion on `confirmedCommand: true`
-   * alone is satisfied by `!confirmedCommand`, which is precisely the regression under test.
-   */
-  it.each([true, false])('passes allowEditorRelaunch: false with confirmedCommand %s', async (confirmed) => {
-    vi.mocked(confirm).mockResolvedValue(true)
-
-    await releaseRemove({ confirmedCommand: confirmed, version: LABEL })
-
-    expect(vi.mocked(removeIdeWorktreeFolders).mock.calls[0]?.[0]).toMatchObject({ allowEditorRelaunch: false })
-  })
 })
 
 describe('release remove — abort at step 5 stops before the unrecoverable step', () => {

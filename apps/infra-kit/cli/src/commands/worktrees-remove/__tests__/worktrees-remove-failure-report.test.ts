@@ -194,16 +194,4 @@ describe('worktrees-remove failure report — agent path', () => {
     expect((thrown as StructuredRefusalError).exitCode).toBe(2)
     expect(removeWorktrees).not.toHaveBeenCalled()
   })
-
-  // `allowEditorRelaunch === !confirmedCommand`: the `--yes` re-run is the confirmed call, so the
-  // destructive Zed `--reuse` relaunch must stay off for an agent even after it confirms.
-  it('a confirmed agent run keeps allowEditorRelaunch false', async () => {
-    agentMode.source = 'flag'
-    vi.mocked(removeWorktrees).mockResolvedValue({ removed: ['release/v1.2.5'], failed: [] })
-
-    await worktreesRemove({ confirmedCommand: true, versions: '1.2.5' })
-
-    expect(removeIdeWorktreeFolders).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(removeIdeWorktreeFolders).mock.calls[0]?.[0].allowEditorRelaunch).toBe(false)
-  })
 })

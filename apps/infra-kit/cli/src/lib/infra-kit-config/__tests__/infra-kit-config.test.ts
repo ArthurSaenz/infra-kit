@@ -119,7 +119,9 @@ describe('getInfraKitConfig', () => {
     })
   })
 
-  it('accepts a zed ide provider with no workspaceConfigPath', async () => {
+  // Retired outright, not accepted-and-ignored: `infra-kit setup` rewrites the file, and the
+  // refusal has to name the field so the user knows which command to run.
+  it('refuses the retired zed ide provider', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
@@ -129,9 +131,7 @@ describe('getInfraKitConfig', () => {
         }),
       )
 
-      const cfg = await getInfraKitConfig()
-
-      expect(resolveConfiguredIdes(cfg)[0]?.provider).toBe('zed')
+      await expect(getInfraKitConfig()).rejects.toThrow(/ide/)
     })
   })
 
@@ -141,7 +141,7 @@ describe('getInfraKitConfig', () => {
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
           envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: { provider: 'zed', config: { mode: 'windows' } },
+          ide: { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: './ws.code-workspace' } },
         }),
       )
 
@@ -153,22 +153,19 @@ describe('getInfraKitConfig', () => {
         throw new Error('expected one configured ide')
       }
 
-      expect(ide.provider).toBe('zed')
+      expect(ide.provider).toBe('cursor')
       // The now-removed `mode` field is silently stripped, not rejected.
       expect(ide.config).not.toHaveProperty('mode')
     })
   })
 
-  it('accepts an array of IDE providers (multi-editor)', async () => {
+  it('accepts the array form of the ide config', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
           envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: [
-            { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } },
-            { provider: 'zed', config: {} },
-          ],
+          ide: [{ provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } }],
         }),
       )
 
@@ -178,7 +175,7 @@ describe('getInfraKitConfig', () => {
         resolveConfiguredIdes(cfg).map((ide) => {
           return ide.provider
         }),
-      ).toEqual(['cursor', 'zed'])
+      ).toEqual(['cursor'])
     })
   })
 
@@ -669,17 +666,14 @@ describe('resolveConfiguredIdes', () => {
   it('returns an ide array as-is', () => {
     const cfg = {
       ...base,
-      ide: [
-        { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
-        { provider: 'zed', config: {} },
-      ],
+      ide: [{ provider: 'cursor', config: { workspaceConfigPath: 'ws' } }],
     } as InfraKitConfig
 
     expect(
       resolveConfiguredIdes(cfg).map((ide) => {
         return ide.provider
       }),
-    ).toEqual(['cursor', 'zed'])
+    ).toEqual(['cursor'])
   })
 
   it('returns an empty array when ide is unset', () => {

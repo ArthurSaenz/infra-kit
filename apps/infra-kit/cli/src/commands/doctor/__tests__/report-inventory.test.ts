@@ -95,7 +95,7 @@ vi.mock('src/lib/infra-kit-config', () => {
       })
     }),
     resolveConfiguredIdes: vi.fn(() => {
-      return [{ provider: 'zed' }]
+      return [{ provider: 'cursor', config: { workspaceConfigPath: 'ws' } }]
     }),
   }
 })

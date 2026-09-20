@@ -8,7 +8,6 @@ import {
   getInfraKitConfigPaths,
   infraKitConfigSchema,
   infraKitOverrideConfigSchema,
-  renameCmuxKeys,
   resetInfraKitConfigCache,
   resolveUserGlobalConfigPath,
 } from 'src/lib/infra-kit-config'
@@ -327,29 +326,69 @@ const stripLegacyIdeMode = (parsed: Record<string, unknown>): { changed: boolean
   return { changed: true, result: { ...parsed, ide: nextIde } }
 }
 
+const RETIRED_IDE_PROVIDER = 'zed'
+
+const isRetiredIdeEntry = (entry: unknown): boolean => {
+  return (
+    entry !== null && typeof entry === 'object' && (entry as { provider?: unknown }).provider === RETIRED_IDE_PROVIDER
+  )
+}
+
 /**
- * Normalize any existing `infra-kit.json` config layers (project, user-global,
- * user-project) from the old IDE structure to the new one by removing the
- * removed `ide.config.mode` field. Run by `infra-kit setup` after the YAML→JSON
- * migration. Best-effort and non-fatal per layer; only rewrites a file when its
- * `ide` config actually carries the dead key, so clean configs are left byte-for-
- * byte untouched (idempotent). Resets the config cache when anything changed.
+ * Drop every `ide` entry naming the retired `zed` provider from a parsed config object. An array
+ * that held only Zed loses the `ide` key outright: `ide: []` fails the schema's `.min(1)`, and it
+ * means "no editor" anyway. Same contract as {@link stripLegacyIdeMode}: nothing else is touched,
+ * and `changed: false` hands the input back untouched.
+ */
+const stripRetiredZedIde = (parsed: Record<string, unknown>): { changed: boolean; result: Record<string, unknown> } => {
+  const ide = parsed.ide
+
+  const withoutIde = (): Record<string, unknown> => {
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([key]) => {
+        return key !== 'ide'
+      }),
+    )
+  }
+
+  if (Array.isArray(ide)) {
+    const kept = ide.filter((entry) => {
+      return !isRetiredIdeEntry(entry)
+    })
+
+    if (kept.length === ide.length) return { changed: false, result: parsed }
+
+    return { changed: true, result: kept.length > 0 ? { ...parsed, ide: kept } : withoutIde() }
+  }
+
+  if (isRetiredIdeEntry(ide)) return { changed: true, result: withoutIde() }
+
+  return { changed: false, result: parsed }
+}
+
+/**
+ * Normalize the `infra-kit.json` config layers (project, user-global, user-project) from the old
+ * IDE structure to the new one: remove the dead `ide.config.mode` field and drop every entry naming
+ * the retired `zed` provider. Run by `infra-kit setup` after the YAML→JSON migration.
+ *
+ * Best-effort and non-fatal per layer; only rewrites a file when its `ide` config actually carries
+ * legacy structure, so clean configs are left byte-for-byte untouched (idempotent). Resets the
+ * config cache when anything changed.
+ *
+ * The user-global layer is normalized even when `setup` runs OUTSIDE a project: it is where a
+ * machine-wide `ide` choice lives, so it is the layer most likely to still name Zed — and the
+ * strict schema refuses that layer until it is rewritten, so `setup` has to be the way out.
+ * Ordered AFTER `migrateUserGlobalConfigFilename` in `runConfigMigrations` because it addresses
+ * `~/.infra-kit/infra-kit.json` by that fixed name.
  *
  * @example
  * await normalizeLegacyIdeStructures()
  * // ✓ Normalized ide config in infra-kit.json (removed legacy "mode")
- * // (no output when no config carries a legacy "mode")
+ * // ✓ Normalized ide config in ~/.infra-kit/infra-kit.json (removed the retired "zed" provider)
+ * // (no output when no config carries legacy ide structure)
  */
 export const normalizeLegacyIdeStructures = async (): Promise<void> => {
-  let paths: Awaited<ReturnType<typeof getInfraKitConfigPaths>>
-
-  try {
-    paths = await getInfraKitConfigPaths()
-  } catch {
-    return
-  }
-
-  const jsonPaths = [paths.main, paths.userGlobal, paths.userProject]
+  const jsonPaths = await resolveMigrationTargets()
 
   let normalized = 0
 
@@ -362,13 +401,19 @@ export const normalizeLegacyIdeStructures = async (): Promise<void> => {
       if (raw.trim() === '') continue
 
       const parsed = JSON.parse(raw) as Record<string, unknown>
-      const { changed, result } = stripLegacyIdeMode(parsed)
+      const mode = stripLegacyIdeMode(parsed)
+      const zed = stripRetiredZedIde(mode.result)
 
-      if (!changed) continue
+      const removed = [
+        ...(mode.changed ? ['legacy "mode"'] : []),
+        ...(zed.changed ? ['the retired "zed" provider'] : []),
+      ]
 
-      await fs.writeFile(jsonPath, `${JSON.stringify(result, null, 2)}\n`, 'utf-8')
+      if (removed.length === 0) continue
 
-      logger.info(`✓ Normalized ide config in ${tildify(jsonPath)} (removed legacy "mode")`)
+      await fs.writeFile(jsonPath, `${JSON.stringify(zed.result, null, 2)}\n`, 'utf-8')
+
+      logger.info(`✓ Normalized ide config in ${tildify(jsonPath)} (removed ${removed.join(' and ')})`)
       normalized++
     } catch (err) {
       logger.info(`⚠ Skipped normalizing ${tildify(jsonPath)} — ${(err as Error).message}`)
@@ -381,59 +426,10 @@ export const normalizeLegacyIdeStructures = async (): Promise<void> => {
 }
 
 /**
- * Rewrite the legacy cmux config keys to their orca names in every `infra-kit.json` layer
- * (`worktrees.openInCmux` → `openInOrca`, `worktrees.cmux` → `worktrees.orca`,
- * `devServersPresets.<k>.cmux` → `.orca`). Same contract as {@link normalizeLegacyIdeStructures}:
- * best-effort and non-fatal per layer, a file is rewritten only when a legacy key was found (clean
- * configs stay byte-for-byte untouched), and the config cache is reset when anything changed.
- *
- * Unlike the ide normalization, the user-global layer is migrated even when `setup` runs OUTSIDE a
- * project: it is the one layer that exists independent of any repo and the one most likely to carry
- * `openInCmux`, so leaving it for the next in-project run would keep the loader's in-memory strip
- * (and its warning) alive for no reason. Ordered AFTER `migrateUserGlobalConfigFilename` in
- * `runConfigMigrations` because it addresses `~/.infra-kit/infra-kit.json` by that fixed name.
- *
- * @example
- * await migrateCmuxConfigToOrca()
- * // ✓ Migrated cmux → orca keys in ~/.infra-kit/infra-kit.json
- * // (no output when no config carries a legacy cmux key)
- */
-export const migrateCmuxConfigToOrca = async (): Promise<void> => {
-  const jsonPaths = await resolveCmuxMigrationTargets()
-
-  let migrated = 0
-
-  for (const jsonPath of jsonPaths) {
-    if (!(await fileExists(jsonPath))) continue
-
-    try {
-      const raw = await fs.readFile(jsonPath, 'utf-8')
-
-      if (raw.trim() === '') continue
-
-      const { changed, result } = renameCmuxKeys(JSON.parse(raw))
-
-      if (!changed) continue
-
-      await fs.writeFile(jsonPath, `${JSON.stringify(result, null, 2)}\n`, 'utf-8')
-
-      logger.info(`✓ Migrated cmux → orca keys in ${tildify(jsonPath)}`)
-      migrated++
-    } catch (err) {
-      logger.info(`⚠ Skipped migrating ${tildify(jsonPath)} — ${(err as Error).message}`)
-    }
-  }
-
-  if (migrated > 0) {
-    resetInfraKitConfigCache()
-  }
-}
-
-/**
- * The layers {@link migrateCmuxConfigToOrca} may rewrite: all three inside a project, only the
+ * The layers {@link normalizeLegacyIdeStructures} may rewrite: all three inside a project, only the
  * user-global file outside one (`getInfraKitConfigPaths` rejects there — it needs a git toplevel).
  */
-const resolveCmuxMigrationTargets = async (): Promise<string[]> => {
+const resolveMigrationTargets = async (): Promise<string[]> => {
   try {
     const paths = await getInfraKitConfigPaths()
 

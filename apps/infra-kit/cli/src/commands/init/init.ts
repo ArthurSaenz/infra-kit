@@ -30,7 +30,6 @@ import { fetchLatestVersion, pluginStepWithheld, readUpdateCache } from 'src/lib
 import packageJson from '../../../package.json' with { type: 'json' }
 import { resolveGitRootForWrites, syncRepoGuidance } from './agent-files'
 import {
-  migrateCmuxConfigToOrca,
   migrateFactoryConfigToJson,
   migrateLegacyConfig,
   migrateUserGlobalConfigFilename,
@@ -127,12 +126,11 @@ export class InitStepError extends Error {
  */
 export const SHELL_ACTIVATION_REMINDER = 'Run `source ~/.zshrc` or open a new terminal to activate.'
 
-/** The five migrations announce their own conversions, so this step has nothing of its own to print. */
+/** The four migrations announce their own conversions, so this step has nothing of its own to print. */
 const MIGRATIONS_CHECKED: InitEntry = {
   step: 'migrations',
   outcome: 'skipped',
-  message:
-    'Config migrations checked (legacy yml layers, ide structure, user-global filename, cmux → orca keys, factory config)',
+  message: 'Config migrations checked (legacy yml layers, user-global filename, ide structure, factory config)',
   level: 'silent',
 }
 
@@ -317,24 +315,22 @@ const writeZshenvBlock = (): InitEntry => {
   }
 }
 
-/** The five config migrations, in the one order that works. */
+/** The four config migrations, in the one order that works. */
 const runConfigMigrations = async (): Promise<void> => {
   // Convert any legacy infra-kit.yml config layers to JSON before seeding, so a
   // migrated infra-kit.json is not re-seeded as an empty stub.
   await migrateLegacyConfig()
-
-  // Migrate existing JSON configs from the old IDE structure to the new one
-  // (strip the removed `ide.config.mode` field). No-op for already-clean configs.
-  await normalizeLegacyIdeStructures()
 
   // Rename a legacy user-global config.json → infra-kit.json (single canonical
   // filename). MUST run before seeding: otherwise the seeder checks the new name,
   // doesn't find it, and writes an empty stub that shadows the user's real config.
   await migrateUserGlobalConfigFilename()
 
-  // Rewrite the legacy cmux keys to orca. AFTER the filename rename: outside a
-  // project it addresses ~/.infra-kit/infra-kit.json by that fixed name.
-  await migrateCmuxConfigToOrca()
+  // Migrate existing JSON configs from the old IDE structure to the new one (strip
+  // the removed `ide.config.mode` field, drop the retired `zed` provider). No-op for
+  // already-clean configs. AFTER the filename rename: outside a project it addresses
+  // ~/.infra-kit/infra-kit.json by that fixed name.
+  await normalizeLegacyIdeStructures()
 
   // Convert a legacy machine-local factory config from executable TS
   // (~/.infra-kit/vendor.config.ts) to static JSON (~/.infra-kit/vendor.json).

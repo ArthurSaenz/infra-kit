@@ -1,4 +1,4 @@
-export type IdeProvider = 'cursor' | 'zed'
+export type IdeProvider = 'cursor'
 
 /**
  * CLI-level open modes for `worktrees-add` (`--ide`). `workspace` adds each
@@ -20,15 +20,10 @@ export interface AddIdeWorktreeFoldersOutcome {
 export interface RemoveIdeWorktreeFoldersOutcome {
   provider: IdeProvider
   /**
-   * True when the provider can reflect a removal. Both providers now report
-   * `true`; `false` is reserved for a future provider with no remove capability.
+   * True when the provider can reflect a removal. Cursor always reports `true`;
+   * `false` is reserved for a future provider with no remove capability.
    */
   supported: boolean
-  /**
-   * Folders confirmed removed. For Cursor this is the real diff of the
-   * `.code-workspace` `folders` array. For Zed it is ALWAYS `[]`: the only
-   * mechanism (`zed --reuse`) replaces the whole window without producing a
-   * diff, so it confirms no specific removal even when it refreshed the window.
-   */
+  /** Folders confirmed removed: the real diff of the `.code-workspace` `folders` array. */
   removed: string[]
 }

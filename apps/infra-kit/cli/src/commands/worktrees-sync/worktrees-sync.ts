@@ -66,15 +66,7 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
       projectRoot,
     })
 
-    // Hard `false`: sync is background/stale-cleanup, often an agent's unattended run — it must never
-    // relaunch and overwrite a focused Zed window. Zed removal stays a no-op here.
-    await removeIdeWorktreeFolders({
-      projectRoot,
-      worktreeDir,
-      currentWorktrees,
-      removedWorktrees: removal.removed,
-      allowEditorRelaunch: false,
-    })
+    await removeIdeWorktreeFolders({ projectRoot, worktreeDir, removedWorktrees: removal.removed })
 
     logRemovalResults(removal)
 

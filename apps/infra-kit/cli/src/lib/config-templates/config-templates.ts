@@ -33,13 +33,6 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   //   "provider": "cursor",
   //   "config": { "workspaceConfigPath": "/path/to/your.code-workspace" }
   // },
-  // // Or, for Zed (no workspace file — one window with all worktrees via "zed <root> <wt...>"):
-  // "ide": { "provider": "zed", "config": {} },
-  // // Or drive BOTH editors at once with an array (at most one entry per provider):
-  // "ide": [
-  //   { "provider": "cursor", "config": { "workspaceConfigPath": "/path/to/your.code-workspace" } },
-  //   { "provider": "zed", "config": {} }
-  // ],
   //
   // "taskManager": {
   //   "provider": "jira",

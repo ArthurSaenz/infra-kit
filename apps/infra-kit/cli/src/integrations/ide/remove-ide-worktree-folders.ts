@@ -1,6 +1,5 @@
 import { removeFoldersFromCursorWorkspace, resolveCursorWorkspacePath } from 'src/integrations/cursor'
-import { reuseZedWorkspace } from 'src/integrations/zed'
-import { assertNever } from 'src/lib/assert-never'
+import type { ConfiguredIde } from 'src/lib/infra-kit-config'
 import { getInfraKitConfig, resolveConfiguredIdes } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 
@@ -9,42 +8,23 @@ import type { RemoveIdeWorktreeFoldersOutcome } from './types'
 interface RemoveIdeWorktreeFoldersArgs {
   projectRoot: string
   worktreeDir: string
-  /** All release worktrees BEFORE removal (release-only — see Zed note below). */
-  currentWorktrees: string[]
-  /** The subset of `currentWorktrees` that was just removed. */
+  /** The worktrees that were just removed. */
   removedWorktrees: string[]
-  /**
-   * Whether the caller is on an interactive path where firing Zed's destructive
-   * `zed --reuse` is acceptable (a human is present and confirming). Interactive
-   * `worktrees-remove` passes `!confirmedCommand`; `worktrees-sync` and every
-   * `--yes` run pass `false`.
-   */
-  allowEditorRelaunch: boolean
 }
 
 /**
  * Strip removed worktrees from every configured editor's workspace (used by
- * `worktrees-remove` and `worktrees-sync`). Returns one outcome per configured
- * provider (empty array when no IDE is configured or no worktrees were removed),
- * iterating sequentially.
+ * `worktrees-remove`, `worktrees-sync` and `release-remove`). Returns one outcome
+ * per configured provider (empty array when no IDE is configured or no worktrees
+ * were removed), iterating sequentially.
  *
- * Cursor surgically edits the `.code-workspace` `folders` array. Zed's path is DESTRUCTIVE, so it
- * fires ONLY when `allowEditorRelaunch` is true (interactive `worktrees-remove`); on a
- * non-interactive or `--agent` run it is a deliberate no-op (`supported: true`, `removed: []`) with
- * an info message. Zed's `removed` is ALWAYS `[]`.
+ * Cursor surgically edits the `.code-workspace` `folders` array, so `removed` is
+ * the real diff and a write failure is reported as `removed: []`, never thrown.
  */
-// Zed has no surgical remove. The only mutation mechanism, `zed --reuse`, REPLACES the focused
-// window's entire folder set, so it can only re-state the release worktrees we know about and
-// silently drops any other open folder (`remaining` is built from release worktrees only). That is
-// why the no-op on the non-interactive path reports `supported: true`: the capability exists, and
-// skipping is a policy choice rather than a missing capability.
-//
-// `removed` stays empty because `--reuse` performs no diff — it confirms no specific removal, and
-// reporting intended-but-unverified paths would be a lie.
 export const removeIdeWorktreeFolders = async (
   args: RemoveIdeWorktreeFoldersArgs,
 ): Promise<RemoveIdeWorktreeFoldersOutcome[]> => {
-  const { projectRoot, worktreeDir, currentWorktrees, removedWorktrees, allowEditorRelaunch } = args
+  const { projectRoot, worktreeDir, removedWorktrees } = args
 
   if (removedWorktrees.length === 0) {
     return []
@@ -57,33 +37,17 @@ export const removeIdeWorktreeFolders = async (
     return `${worktreeDir}/${branch}`
   })
 
-  const remainingBranches = currentWorktrees.filter((branch) => {
-    return !removedWorktrees.includes(branch)
-  })
-
   const outcomes: RemoveIdeWorktreeFoldersOutcome[] = []
 
   for (const ide of ides) {
-    switch (ide.provider) {
-      case 'cursor': {
-        outcomes.push(await removeFromCursor({ ide, projectRoot, folderPaths }))
-        break
-      }
-      case 'zed': {
-        outcomes.push(await removeFromZed({ projectRoot, worktreeDir, remainingBranches, allowEditorRelaunch }))
-        break
-      }
-      default: {
-        assertNever(ide)
-      }
-    }
+    outcomes.push(await removeFromCursor({ ide, projectRoot, folderPaths }))
   }
 
   return outcomes
 }
 
 interface RemoveFromCursorArgs {
-  ide: Extract<ReturnType<typeof resolveConfiguredIdes>[number], { provider: 'cursor' }>
+  ide: ConfiguredIde
   projectRoot: string
   folderPaths: string[]
 }
@@ -111,33 +75,4 @@ const removeFromCursor = async (args: RemoveFromCursorArgs): Promise<RemoveIdeWo
 
     return { provider: 'cursor', supported: true, removed: [] }
   }
-}
-
-interface RemoveFromZedArgs {
-  projectRoot: string
-  worktreeDir: string
-  remainingBranches: string[]
-  allowEditorRelaunch: boolean
-}
-
-/**
- * Reflect the removal in Zed by relaunching the focused window onto the
- * remaining set — but ONLY on an interactive path (see the module doc for why
- * `zed --reuse` is destructive). Otherwise a deliberate no-op. `removed` is
- * always `[]` because `--reuse` performs no diff.
- */
-const removeFromZed = async (args: RemoveFromZedArgs): Promise<RemoveIdeWorktreeFoldersOutcome> => {
-  const { projectRoot, worktreeDir, remainingBranches, allowEditorRelaunch } = args
-
-  if (!allowEditorRelaunch) {
-    logger.info(
-      'ℹ️ Zed folder removal skipped (no interactive session); close removed worktree folders in Zed manually if needed.',
-    )
-
-    return { provider: 'zed', supported: true, removed: [] }
-  }
-
-  await reuseZedWorkspace({ projectRoot, worktreeDir, remainingBranches })
-
-  return { provider: 'zed', supported: true, removed: [] }
 }

@@ -77,7 +77,7 @@ describe('the IDE probe captures its output instead of relaying it', () => {
 
 /** The already-read config every check is threaded, standing in for one `readDoctorConfig()` run. */
 const read = (value: unknown): DoctorConfig => {
-  return { config: value as InfraKitConfig, error: null, legacyCmuxKeys: [] }
+  return { config: value as InfraKitConfig, error: null }
 }
 
 describe('checkIdeInstalled', () => {
@@ -111,54 +111,17 @@ describe('checkIdeInstalled', () => {
     expect(result.message).toMatch(/Cursor is not installed/)
   })
 
-  it('passes when the configured Zed binary is present', async () => {
-    const result = await checkIdeInstalled(read({ ide: { provider: 'zed', config: {} } }))
-
-    expect(result.status).toBe('pass')
-    expect(result.message).toMatch(/Installed: Zed/)
-  })
-
-  it('fails when the configured Zed binary is missing', async () => {
-    zx.shouldThrow = true
-
-    const result = await checkIdeInstalled(read({ ide: { provider: 'zed', config: {} } }))
-
-    expect(result.status).toBe('fail')
-    expect(result.message).toMatch(/Zed is not installed/)
-  })
-
-  it('passes listing all editors when multiple are configured and present', async () => {
+  it('accepts the array form of the ide config', async () => {
     const result = await checkIdeInstalled(
-      read({
-        ide: [
-          { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
-          { provider: 'zed', config: {} },
-        ],
-      }),
+      read({ ide: [{ provider: 'cursor', config: { workspaceConfigPath: 'ws' } }] }),
     )
 
     expect(result.status).toBe('pass')
-    expect(result.message).toMatch(/Installed: Cursor, Zed/)
-  })
-
-  it('fails when one of several configured editors is missing', async () => {
-    zx.shouldThrow = true
-
-    const result = await checkIdeInstalled(
-      read({
-        ide: [
-          { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
-          { provider: 'zed', config: {} },
-        ],
-      }),
-    )
-
-    expect(result.status).toBe('fail')
-    expect(result.message).toMatch(/Cursor is not installed/)
+    expect(result.message).toMatch(/Installed: Cursor/)
   })
 
   it('passes informationally when the config could not be read', async () => {
-    const result = await checkIdeInstalled({ config: null, error: new Error('bad config'), legacyCmuxKeys: [] })
+    const result = await checkIdeInstalled({ config: null, error: new Error('bad config') })
 
     expect(result.status).toBe('pass')
     expect(result.message).toMatch(/Skipped/)
@@ -170,7 +133,7 @@ describe('checkIdeInstalled', () => {
    * slot. The check now consumes an already-read config and must touch the cache not at all.
    */
   it('never resets the shared config cache — it consumes the config doctor already read', async () => {
-    await checkIdeInstalled(read({ ide: { provider: 'zed', config: {} } }))
+    await checkIdeInstalled(read({ ide: { provider: 'cursor', config: { workspaceConfigPath: 'ws' } } }))
 
     expect(vi.mocked(resetInfraKitConfigCache)).not.toHaveBeenCalled()
   })

@@ -98,8 +98,6 @@ interface ReleaseRemovePlan {
   projectRoot: string
   worktreeDir: string
   worktreePath: string
-  /** Every release worktree, needed by `removeIdeWorktreeFolders` to compute the remaining set. */
-  currentWorktrees: string[]
   worktreePresent: boolean
   /** Connected Orca terminals in the worktree; the removal closes them. Informational only. */
   orcaTerminalCount: number
@@ -460,7 +458,6 @@ const buildPlan = async (branch: string, args: ReleaseRemoveArgs): Promise<Relea
     projectRoot,
     worktreeDir,
     worktreePath,
-    currentWorktrees,
     worktreePresent,
     orcaTerminalCount: worktreePresent ? await probeOrcaTerminals(worktreePath) : 0,
     worktreeDirty: worktreePresent ? await probeWorktreeDirty(worktreePath) : null,
@@ -689,14 +686,10 @@ const summariseIdeOutcomes = (outcomes: RemoveIdeWorktreeFoldersOutcome[]): IdeF
 }
 
 /**
- * Zed is a declared skip on every path — `allowEditorRelaunch: false` means `removeFromZed` returns
- * before touching anything. Cursor is `verified` only with a non-empty `removed`, because an empty
- * array arrives from three different paths including a CAUGHT write failure, so it is evidence of
- * nothing.
+ * Cursor is `verified` only with a non-empty `removed`, because an empty array arrives from three
+ * different paths including a CAUGHT write failure, so it is evidence of nothing.
  */
 const describeIdeProvider = (outcome: RemoveIdeWorktreeFoldersOutcome): IdeStepOutcome => {
-  if (outcome.provider === 'zed') return 'skipped'
-
   return outcome.removed.length > 0 ? 'verified' : 'attempted'
 }
 
@@ -711,14 +704,7 @@ const runIdeFoldersStep = async (
     const outcomes = await removeIdeWorktreeFolders({
       projectRoot: plan.projectRoot,
       worktreeDir: plan.worktreeDir,
-      currentWorktrees: plan.currentWorktrees,
       removedWorktrees,
-      // `false` ALWAYS, never `!confirmedCommand`. `zed --reuse` replaces the focused window's whole
-      // folder set and silently drops folders opened for unrelated work, and it reports no diff — so
-      // on the `--yes` path `!confirmedCommand` would make this leg a guaranteed no-op reported as
-      // success, and on the interactive path it would destroy state nobody consented to losing.
-      // Cursor never reads the flag, so it still does its surgical, verifiable work either way.
-      allowEditorRelaunch: false,
     })
 
     report = summariseIdeOutcomes(outcomes)
@@ -1075,12 +1061,12 @@ export const releaseRemoveMcpTool = defineMcpTool({
       .object({
         outcome: z
           .enum(['verified', 'attempted', 'skipped'])
-          .describe('"verified" only when an editor reported a real diff; Zed is always a declared skip'),
+          .describe('"verified" only when an editor reported a real diff; "skipped" when no editor is configured'),
         providers: z.array(
           z.object({
             provider: z.string(),
             outcome: z.enum(['verified', 'attempted', 'skipped']),
-            removed: z.array(z.string()).describe('Folder paths confirmed removed; always empty for Zed'),
+            removed: z.array(z.string()).describe('Folder paths confirmed removed'),
           }),
         ),
       })

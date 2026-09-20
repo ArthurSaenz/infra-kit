@@ -10,8 +10,8 @@
  *   included — a skill that passes `--agent` must never be silently demoted by a variable in
  *   someone's `.zshenv`.
  * - `'env'`: `INFRA_KIT_AGENT=1`, or `CLAUDECODE` set with a non-TTY stdin. The TTY qualifier is the
- *   point: `CLAUDECODE=1` is inherited by every process Claude Code spawns, including the Orca and
- *   Zed terminals `worktrees add` opens, and those are humans at a PTY. `INFRA_KIT_AGENT=0` suppresses
+ *   point: `CLAUDECODE=1` is inherited by every process Claude Code spawns, including the Orca
+ *   terminals `worktrees add` opens, and those are humans at a PTY. `INFRA_KIT_AGENT=0` suppresses
  *   only that heuristic; any other value is ignored as if unset.
  *
  * `process.stdin.isTTY` alone is not the agent signal: a non-TTY stdin is also every zsh `$(…)`

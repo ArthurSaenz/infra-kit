@@ -28,4 +28,3 @@ export type {
   ProtectedEnvsSetting,
   ProxySource,
 } from './infra-kit-config'
-export { renameCmuxKeys, stripLegacyCmuxKeys } from './legacy-cmux-keys'

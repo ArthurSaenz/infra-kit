@@ -214,7 +214,7 @@ describe('normalizeLegacyIdeStructures', () => {
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           ide: [
             { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: 'ws' } },
-            { provider: 'zed', config: { mode: 'windows' } },
+            { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: 'ws2' } },
           ],
         }),
       )
@@ -225,7 +225,7 @@ describe('normalizeLegacyIdeStructures', () => {
 
       expect(result.ide).toEqual([
         { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
-        { provider: 'zed', config: {} },
+        { provider: 'cursor', config: { workspaceConfigPath: 'ws2' } },
       ])
     })
   })
@@ -234,11 +234,95 @@ describe('normalizeLegacyIdeStructures', () => {
     await withTmpRepo(async (tmp) => {
       const userGlobalJson = path.join(tmp, '.infra-kit', 'infra-kit.json')
 
-      writeFile(userGlobalJson, JSON.stringify({ ide: { provider: 'zed', config: { mode: 'windows' } } }))
+      writeFile(
+        userGlobalJson,
+        JSON.stringify({ ide: { provider: 'cursor', config: { mode: 'windows', workspaceConfigPath: 'ws' } } }),
+      )
 
       await normalizeLegacyIdeStructures()
 
-      expect(JSON.parse(fs.readFileSync(userGlobalJson, 'utf-8')).ide).toEqual({ provider: 'zed', config: {} })
+      expect(JSON.parse(fs.readFileSync(userGlobalJson, 'utf-8')).ide).toEqual({
+        provider: 'cursor',
+        config: { workspaceConfigPath: 'ws' },
+      })
+    })
+  })
+
+  // The `zed` provider is retired and the strict schema refuses it, so `setup` is the only way a
+  // machine whose user-global config still names it gets unstuck.
+  it('drops a single retired zed ide entirely, preserving every other key', async () => {
+    await withTmpRepo(async (tmp) => {
+      const jsonPath = path.join(tmp, 'infra-kit.json')
+
+      writeFile(
+        jsonPath,
+        JSON.stringify({
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: { provider: 'zed', config: {} },
+          worktrees: { openInOrca: true },
+        }),
+      )
+
+      await normalizeLegacyIdeStructures()
+
+      expect(JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))).toEqual({
+        envManagement: { provider: 'doppler', config: { name: 'p' } },
+        worktrees: { openInOrca: true },
+      })
+    })
+  })
+
+  it('filters zed out of an array ide and keeps the Cursor entry', async () => {
+    await withTmpRepo(async (tmp) => {
+      const jsonPath = path.join(tmp, 'infra-kit.json')
+
+      writeFile(
+        jsonPath,
+        JSON.stringify({
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: [
+            { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
+            { provider: 'zed', config: {} },
+          ],
+        }),
+      )
+
+      await normalizeLegacyIdeStructures()
+
+      expect(JSON.parse(fs.readFileSync(jsonPath, 'utf-8')).ide).toEqual([
+        { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
+      ])
+    })
+  })
+
+  it('drops the ide key when an array held only zed (an empty array fails the schema)', async () => {
+    await withTmpRepo(async (tmp) => {
+      const jsonPath = path.join(tmp, 'infra-kit.json')
+
+      writeFile(
+        jsonPath,
+        JSON.stringify({
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: [{ provider: 'zed', config: {} }],
+        }),
+      )
+
+      await normalizeLegacyIdeStructures()
+
+      expect(JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))).not.toHaveProperty('ide')
+    })
+  })
+
+  it('reaches the user-global layer even outside a project', async () => {
+    await withTmpRepo(async (tmp) => {
+      vi.mocked(getProjectRoot).mockRejectedValue(new Error('not a git repository'))
+      const userGlobalJson = path.join(tmp, '.infra-kit', 'infra-kit.json')
+
+      writeFile(userGlobalJson, JSON.stringify({ ide: { provider: 'zed', config: {} } }))
+
+      await normalizeLegacyIdeStructures()
+
+      expect(JSON.parse(fs.readFileSync(userGlobalJson, 'utf-8'))).toEqual({})
     })
   })
 
@@ -265,7 +349,7 @@ describe('normalizeLegacyIdeStructures', () => {
     await withTmpRepo(async (tmp) => {
       const jsonPath = path.join(tmp, 'infra-kit.json')
       const json =
-        '{"environments":["dev"],"envManagement":{"provider":"doppler","config":{"name":"p"}},"ide":{"provider":"zed","config":{}}}'
+        '{"environments":["dev"],"envManagement":{"provider":"doppler","config":{"name":"p"}},"ide":{"provider":"cursor","config":{"workspaceConfigPath":"ws"}}}'
 
       writeFile(jsonPath, json)
 

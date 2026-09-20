@@ -1,6 +1,5 @@
 import { addFoldersToCursorWorkspace, launchCursor, resolveCursorWorkspacePath } from 'src/integrations/cursor'
-import { addFoldersToZedWorkspace } from 'src/integrations/zed'
-import { assertNever } from 'src/lib/assert-never'
+import type { ConfiguredIde } from 'src/lib/infra-kit-config'
 import { getInfraKitConfig, resolveConfiguredIdes } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 
@@ -19,8 +18,7 @@ interface AddIdeWorktreeFoldersArgs {
  * sequentially.
  *
  * Cursor appends to the `.code-workspace` `folders` array (reporting `skipped`
- * for already-present entries) then runs `cursor <workspace>`. Zed has no
- * workspace file, so it `zed --add`s each folder (`skipped` is always 0).
+ * for already-present entries) then runs `cursor <workspace>`.
  */
 export const addIdeWorktreeFolders = async (
   args: AddIdeWorktreeFoldersArgs,
@@ -37,41 +35,36 @@ export const addIdeWorktreeFolders = async (
   const outcomes: AddIdeWorktreeFoldersOutcome[] = []
 
   for (const ide of ides) {
-    switch (ide.provider) {
-      case 'cursor': {
-        if (!ide.config.workspaceConfigPath) {
-          logger.warn('⚠️ Skipping Cursor: ide.config.workspaceConfigPath is not set in infra-kit config')
-
-          outcomes.push({ ran: false, provider: 'cursor', added: 0, skipped: 0 })
-          break
-        }
-
-        const workspacePath = resolveCursorWorkspacePath(ide.config.workspaceConfigPath, projectRoot)
-
-        const { added, skipped } = await addFoldersToCursorWorkspace({ workspacePath, folderPaths })
-
-        const skippedSuffix = skipped.length > 0 ? ` (${skipped.length} already present)` : ''
-
-        logger.info(`✅ Added ${added.length} folder(s) to ${workspacePath}${skippedSuffix}`)
-
-        await launchCursor(workspacePath)
-
-        outcomes.push({ ran: true, provider: 'cursor', added: added.length, skipped: skipped.length })
-        break
-      }
-      case 'zed': {
-        const { added } = await addFoldersToZedWorkspace({ folderPaths })
-
-        logger.info(`✅ Added ${added.length} folder(s) to Zed workspace`)
-
-        outcomes.push({ ran: true, provider: 'zed', added: added.length, skipped: 0 })
-        break
-      }
-      default: {
-        assertNever(ide)
-      }
-    }
+    outcomes.push(await addToCursor({ ide, projectRoot, folderPaths }))
   }
 
   return outcomes
+}
+
+interface AddToCursorArgs {
+  ide: ConfiguredIde
+  projectRoot: string
+  folderPaths: string[]
+}
+
+const addToCursor = async (args: AddToCursorArgs): Promise<AddIdeWorktreeFoldersOutcome> => {
+  const { ide, projectRoot, folderPaths } = args
+
+  if (!ide.config.workspaceConfigPath) {
+    logger.warn('⚠️ Skipping Cursor: ide.config.workspaceConfigPath is not set in infra-kit config')
+
+    return { ran: false, provider: 'cursor', added: 0, skipped: 0 }
+  }
+
+  const workspacePath = resolveCursorWorkspacePath(ide.config.workspaceConfigPath, projectRoot)
+
+  const { added, skipped } = await addFoldersToCursorWorkspace({ workspacePath, folderPaths })
+
+  const skippedSuffix = skipped.length > 0 ? ` (${skipped.length} already present)` : ''
+
+  logger.info(`✅ Added ${added.length} folder(s) to ${workspacePath}${skippedSuffix}`)
+
+  await launchCursor(workspacePath)
+
+  return { ran: true, provider: 'cursor', added: added.length, skipped: skipped.length }
 }

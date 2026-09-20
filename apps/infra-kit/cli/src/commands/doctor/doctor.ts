@@ -45,6 +45,7 @@ import { portlessNodePath, readPortlessNodeSidecar } from 'src/dev/proxy/portles
 import type { PortlessNodeFs, PortlessNodeSidecar, PortlessNodeStat } from 'src/dev/proxy/portless-node'
 import { INFRA_KIT_ENV_TOKEN_VAR, probeEnvToken, resolveEnvToken } from 'src/integrations/doppler'
 import type { EnvTokenProbe, EnvTokenSource, ResolvedEnvToken } from 'src/integrations/doppler'
+import type { IdeProvider } from 'src/integrations/ide'
 import { probeOrca } from 'src/integrations/orca'
 import { inspectPackageGuidance, readGuidanceFile } from 'src/lib/agent-guidance'
 import { agentMode, resolveAgentModeSource } from 'src/lib/agent-mode'
@@ -69,7 +70,6 @@ import {
   getInfraKitConfigPaths,
   resetInfraKitConfigCache,
   resolveConfiguredIdes,
-  stripLegacyCmuxKeys,
 } from 'src/lib/infra-kit-config'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { isWithin, safeRealpath } from 'src/lib/install-manager'
@@ -332,32 +332,6 @@ const checkPnpmWorkspaceVirtualStore = async (): Promise<CheckResult> => {
 export interface DoctorConfig {
   config: InfraKitConfig | null
   error: Error | null
-  /**
-   * Legacy `cmux` keys the loader stripped in memory, per layer file. The merged config parses clean
-   * with them present (that is the no-brick rule), so a green "config valid" row would hide the one
-   * thing `infra-kit setup` still has to rewrite — this is what turns the row yellow instead.
-   */
-  legacyCmuxKeys: { file: string; paths: string[] }[]
-}
-
-/** The three layer files, re-read raw: the loader strips the keys before doctor can see them. */
-const findLegacyCmuxKeys = async (): Promise<DoctorConfig['legacyCmuxKeys']> => {
-  const paths = await getInfraKitConfigPaths()
-  const found: DoctorConfig['legacyCmuxKeys'] = []
-
-  for (const file of [paths.main, paths.userGlobal, paths.userProject]) {
-    if (!fs.existsSync(file)) continue
-
-    try {
-      const { stripped } = stripLegacyCmuxKeys(JSON.parse(fs.readFileSync(file, 'utf8')))
-
-      if (stripped.length > 0) found.push({ file, paths: stripped })
-    } catch {
-      // Unparseable JSON is the "config valid" row's own failure to report, not this scan's.
-    }
-  }
-
-  return found
 }
 
 /**
@@ -374,9 +348,9 @@ export const readDoctorConfig = async (): Promise<DoctorConfig> => {
   try {
     resetInfraKitConfigCache()
 
-    return { config: await getInfraKitConfig(), error: null, legacyCmuxKeys: await findLegacyCmuxKeys() }
+    return { config: await getInfraKitConfig(), error: null }
   } catch (err) {
-    return { config: null, error: err as Error, legacyCmuxKeys: [] }
+    return { config: null, error: err as Error }
   }
 }
 
@@ -384,20 +358,6 @@ export const checkInfraKitConfigValid = (read: DoctorConfig): CheckResult => {
   const name = 'infra-kit config valid'
 
   if (read.error) return { name, status: 'fail', message: read.error.message }
-
-  if (read.legacyCmuxKeys.length > 0) {
-    const where = read.legacyCmuxKeys
-      .map(({ file, paths }) => {
-        return `${paths.join(', ')} in ${tildify(file)}`
-      })
-      .join('; ')
-
-    return {
-      name,
-      status: 'warn',
-      message: `legacy cmux keys are ignored (${where}) — run \`infra-kit setup\` to migrate them to orca`,
-    }
-  }
 
   return {
     name,
@@ -886,20 +846,15 @@ interface IdeProbe {
   failMsg: string
 }
 
-const IDE_PROBE_META: Record<'cursor' | 'zed', { command: string[]; label: string; failMsg: string }> = {
+const IDE_PROBE_META: Record<IdeProvider, { command: string[]; label: string; failMsg: string }> = {
   cursor: {
     command: ['cursor', '--version'],
     label: 'Cursor',
     failMsg: 'Cursor is not installed. Install from: https://cursor.com/',
   },
-  zed: {
-    command: ['zed', '--version'],
-    label: 'Zed',
-    failMsg: 'Zed is not installed. Install from: https://zed.dev/',
-  },
 }
 
-const probeIde = async (provider: 'cursor' | 'zed'): Promise<IdeProbe> => {
+const probeIde = async (provider: IdeProvider): Promise<IdeProbe> => {
   const meta = IDE_PROBE_META[provider]
 
   try {
@@ -912,7 +867,7 @@ const probeIde = async (provider: 'cursor' | 'zed'): Promise<IdeProbe> => {
 }
 
 /**
- * Check that every editor configured under `ide` is installed. Probes each binary (`cursor`/`zed`)
+ * Check that every editor configured under `ide` is installed. Probes each binary (`cursor`)
  * named by the ALREADY-READ config ({@link readDoctorConfig}). Passes only if all configured editors
  * are present; fails listing any that are missing. Informational pass when no IDE is configured or
  * the config can't be read — an unconfigured editor is a valid setup, and config validity is

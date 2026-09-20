@@ -4,10 +4,10 @@
  * `never`, so adding a new variant later turns this into a compile error.
  *
  * @example
- * switch (provider) {
- *   case 'cursor': return openCursor()
- *   case 'zed': return openZed()
- *   default: return assertNever(provider) // compile error if a provider is unhandled
+ * switch (source) {
+ *   case 'local': return resolveLocal()
+ *   case 'cloud': return resolveCloud()
+ *   default: return assertNever(source) // compile error if a source is unhandled
  * }
  */
 export const assertNever = (value: never): never => {

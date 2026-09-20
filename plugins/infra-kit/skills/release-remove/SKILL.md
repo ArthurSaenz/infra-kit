@@ -150,7 +150,7 @@ If `$ARGUMENTS` is empty, omit `-v` and let the picker do the asking (section 2)
 ## 4. What one removal does
 
 In order: remove the release worktree (and close its Orca terminals), strip the folder
-from the Cursor workspace (Zed is always a declared skip), close the PR with a comment, delete the
+from the Cursor workspace, close the PR with a comment, delete the
 local branch (switching the main checkout to the base branch first when it is on the release), and
 delete the branch on `origin`. The worktree goes first because git will not delete a branch that a
 worktree still has checked out; the rest follow in the order that leaves the most repairable

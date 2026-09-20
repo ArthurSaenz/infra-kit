@@ -118,7 +118,7 @@ describe('configPath', () => {
   })
 
   it('lists the raw top-level keys of a layer-3 that carries real overrides', async () => {
-    writeUserProject(JSON.stringify({ ide: { name: 'zed' }, dev: { api: { port: 3000 } } }))
+    writeUserProject(JSON.stringify({ ide: { name: 'cursor' }, dev: { api: { port: 3000 } } }))
 
     const content = await runConfigPath()
 

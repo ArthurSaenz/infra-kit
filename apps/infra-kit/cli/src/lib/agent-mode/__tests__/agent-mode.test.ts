@@ -95,7 +95,7 @@ const TABLE: {
     expected: 'env',
   },
   {
-    label: 'CLAUDECODE on a TTY is a human (Orca, Zed)',
+    label: 'CLAUDECODE on a TTY is a human (an Orca terminal)',
     flag: false,
     agentVar: undefined,
     claudeCode: '1',

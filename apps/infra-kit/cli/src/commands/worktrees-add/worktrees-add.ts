@@ -617,7 +617,7 @@ export const worktreesAddMcpTool = defineMcpTool({
       .enum(IDE_MODES)
       .optional()
       .describe(
-        'Editor open mode for created worktrees, applied to all configured editors (Cursor and/or Zed, per the "ide" config). "workspace" (the only attach style) adds each worktree to every configured editor workspace and opens it. "none" skips the editor. Resolution order: this flag → "workspace" when at least one "ide" is configured → "none" otherwise.',
+        'Editor open mode for created worktrees, applied to the configured editor (Cursor, per the "ide" config). "workspace" (the only attach style) adds each worktree to the Cursor workspace and opens it. "none" skips the editor. Resolution order: this flag → "workspace" when an "ide" is configured → "none" otherwise.',
       ),
     cursor: z
       .enum(IDE_MODES)
