@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { InvalidReleaseDateError, assertIsoDate, isIsoDate, isoDateSchema } from '../release-date'
+import {
+  InvalidReleaseDateError,
+  assertIsoDate,
+  isIsoDate,
+  isoDateOrClearSchema,
+  isoDateSchema,
+  validateOptionalIsoDate,
+} from '../release-date'
 
 /**
  * No `process.env.TZ` mutation anywhere in here: `TZ` is worker-global under vitest, and the
@@ -62,5 +69,27 @@ describe('isoDateSchema', () => {
   it('accepts a calendar date and refuses a shape-valid impossible one', () => {
     expect(isoDateSchema.safeParse('2026-10-28').success).toBe(true)
     expect(isoDateSchema.safeParse('2026-02-30').success).toBe(false)
+  })
+})
+
+describe('validateOptionalIsoDate (inquirer validate shape)', () => {
+  it('accepts blank as the skip / keep-current answer', () => {
+    expect(validateOptionalIsoDate('')).toBe(true)
+    expect(validateOptionalIsoDate('   ')).toBe(true)
+  })
+
+  it('accepts a calendar date and returns the message — not a throw — for anything else', () => {
+    expect(validateOptionalIsoDate(' 2026-10-28 ')).toBe(true)
+    expect(validateOptionalIsoDate('2026-02-30')).toBe(
+      'Release date "2026-02-30" is not a calendar date in yyyy-mm-dd form.',
+    )
+  })
+})
+
+describe('isoDateOrClearSchema', () => {
+  it('admits "" as the clear intent and keeps refusing an impossible date', () => {
+    expect(isoDateOrClearSchema.safeParse('').success).toBe(true)
+    expect(isoDateOrClearSchema.safeParse('2026-10-28').success).toBe(true)
+    expect(isoDateOrClearSchema.safeParse('2026-02-30').success).toBe(false)
   })
 })

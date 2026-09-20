@@ -18,7 +18,7 @@ import { assertBaseBranchSwitchable, assertCleanCheckout, assertManagementContex
 import { logger } from 'src/lib/logger'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { refuseMissingArguments } from 'src/lib/prompts/refuse-missing-arguments'
-import { InvalidReleaseDateError, assertIsoDate, isoDateSchema } from 'src/lib/release-date'
+import { isoDateSchema, validateOptionalIsoDate } from 'src/lib/release-date'
 import { createReleaseFormProvider } from 'src/lib/release-form'
 import { InvalidReleaseNameError, displayLabel, validateName } from 'src/lib/release-id'
 import { createSingleRelease, getBaseBranch, prepareGitForRelease } from 'src/lib/release-utils'
@@ -128,19 +128,7 @@ export const promptForReleaseDateInput = async (): Promise<string> => {
         return input(
           {
             message: '  Release date (yyyy-mm-dd, optional, press Enter to skip): ',
-            validate: (answer: string) => {
-              if (answer.trim() === '') return true
-
-              try {
-                assertIsoDate(answer)
-
-                return true
-              } catch (err) {
-                if (err instanceof InvalidReleaseDateError) return err.message
-
-                throw err
-              }
-            },
+            validate: validateOptionalIsoDate,
           },
           context,
         )

@@ -61,6 +61,16 @@ export const assertIsoDate = (raw: string): string => {
 }
 
 /**
+ * Inquirer's `validate` shape (`true` | message): blank is accepted because every prompt that uses
+ * this treats an empty answer as "skip" or "keep current", never as a date.
+ */
+export const validateOptionalIsoDate = (raw: string): true | string => {
+  const trimmed = raw.trim()
+
+  return trimmed === '' || isIsoDate(trimmed) ? true : describeInvalid(trimmed)
+}
+
+/**
  * The tool-schema form of the same rule. The agent form (`lib/release-form`) deliberately does NOT
  * use it: form fields carry no measured wire shape, and the re-run's `parseReleaseSpec` is where an
  * invalid date is refused.
@@ -68,3 +78,11 @@ export const assertIsoDate = (raw: string): string => {
 export const isoDateSchema = z.string().refine(isIsoDate, {
   message: 'Expected a calendar date in yyyy-mm-dd form.',
 })
+
+/** `isoDateSchema` that also admits `""` — the clear intent an editing tool accepts. */
+export const isoDateOrClearSchema = z.string().refine(
+  (value) => {
+    return value === '' || isIsoDate(value)
+  },
+  { message: 'Expected a calendar date in yyyy-mm-dd form, or "" to clear.' },
+)

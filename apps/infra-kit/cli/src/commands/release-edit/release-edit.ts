@@ -10,7 +10,7 @@ import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { logger } from 'src/lib/logger'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { pickReleaseBranch as pickReleaseBranchPrompt } from 'src/lib/prompts/release-picker'
-import { InvalidReleaseDateError, assertIsoDate, isoDateSchema } from 'src/lib/release-date'
+import { assertIsoDate, isoDateOrClearSchema, validateOptionalIsoDate } from 'src/lib/release-date'
 import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
 import {
   buildReleasePrBody,
@@ -108,22 +108,11 @@ export const promptReleaseDate = async (current: string | null): Promise<string 
       return input(
         {
           message: `  Release date yyyy-mm-dd ${hint} (press Enter to keep current): `,
-          validate: (raw) => {
-            if (raw.trim() === '') return true
-
-            try {
-              assertIsoDate(raw)
-
-              return true
-            } catch (err) {
-              return err instanceof InvalidReleaseDateError ? err.message : String(err)
-            }
-          },
+          validate: validateOptionalIsoDate,
         },
         context,
       )
     },
-    // A headless run without `--release-date` is told the flag to pass.
     { whenHeadless: { refuse: 'releaseDate' } },
   )
   const trimmed = answer.trim()
@@ -247,11 +236,13 @@ export const releaseEdit = async (args: ReleaseEditArgs) => {
   const descriptionChanged = changedFields.includes('description')
   const dateChanged = changedFields.includes('releaseDate')
 
+  const jiraVersionUrl = buildJiraVersionUrl(jiraConfig, jiraVersion)
+
   const buildResult = (changed: boolean) => {
     const structuredContent = {
       version: selectedVersion,
       branch: selectedBranch,
-      jiraVersionUrl: buildJiraVersionUrl(jiraConfig, jiraVersion),
+      jiraVersionUrl,
       previousDescription: previous.description,
       newDescription: next.description,
       previousReleaseDate: previous.releaseDate,
@@ -295,8 +286,6 @@ export const releaseEdit = async (args: ReleaseEditArgs) => {
     jiraConfig,
   )
 
-  const jiraVersionUrl = buildJiraVersionUrl(jiraConfig, jiraVersion)
-
   if (descriptionChanged) {
     await updateReleasePRBody({ branch: selectedBranch, body: buildReleasePrBody(jiraVersionUrl, next.description) })
   }
@@ -320,8 +309,7 @@ export const releaseEditMcpTool = defineMcpTool({
       .string()
       .describe('Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign").'),
     description: z.string().optional().describe('New description. Empty string clears the description.'),
-    releaseDate: z
-      .union([isoDateSchema, z.literal('')])
+    releaseDate: isoDateOrClearSchema
       .optional()
       .describe('New planned release date (yyyy-mm-dd). Empty string clears the date.'),
   },
