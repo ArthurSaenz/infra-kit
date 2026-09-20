@@ -13,8 +13,8 @@ import { MARKETPLACE_NAME } from './names'
  * at: the Claude Code plugin is skills-only and the skills drive the CLI over Bash
  * (`.omc/plans/mcp-to-cli-skills-migration.md`), so no repo needs an entry to have the tools.
  *
- * WHY A LEFTOVER KEY IS A CHORE, NOT A FAULT. An `infra-kit` entry spawns `infra-kit mcp`, which is an
- * unknown subcommand since 0.11.0 (the 0.10.x stderr stub is gone too) — Claude Code shows a failed
+ * WHY A LEFTOVER KEY IS A CHORE, NOT A FAULT. An `infra-kit` entry spawns the retired `mcp` subcommand,
+ * which the CLI no longer knows (the 0.10.x stderr stub is gone too) — Claude Code shows a failed
  * server row and nothing else changes. What remains is a repo PR that deletes the key by hand — a chore with no
  * deadline, which is why the verdict is `stale`, reported as a pass with an advisory, and never repaired
  * by this CLI: `.mcp.json` is hand-maintained and holds other people's servers (archived plan
