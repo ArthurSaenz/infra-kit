@@ -83,19 +83,6 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   //   }
   // },
   //
-  // // DEPRECATED — accepted but IGNORED; safe to delete. Remove it and this note in a
-  // // future release.
-  // //
-  // // The proxy port is no longer configurable. Every dev URL is now
-  // // https://<release>.<package>.localhost with NO port, and the only port that can
-  // // serve a port-free HTTPS URL is 443 — so a setting here could only put the port
-  // // back into the URL. Set up the daemon once (the install is the only step needing
-  // // root; trusting its local CA does not). Run \`infra-kit doctor\`: it checks both and
-  // // prints each fix as a command you can paste, with the paths filled in for your
-  // // machine. Do not type a bare \`portless\` — it lives in node_modules, not on PATH.
-  // // infra-kit itself never elevates.
-  // "devProxy": { "port": 443 },
-  //
   // // May this project deploy to the delivery-shaped environments ("prod")? The LIST lives in code
   // // (lib/workflow-envs/protected-envs); this decides only whether THIS project may reach it.
   // //   "disallow"  — the DEFAULT when the key is absent. Filtered out of every deploy picker and
@@ -162,7 +149,7 @@ export const buildUserGlobalExample = (): string => {
 // Merge is shallow: setting a top-level key replaces that whole section from
 // layer 1. Arrays do not concatenate. Top-level keys recognized:
 // envManagement, ide, taskManager, worktrees, envAutoLoad, dev,
-// devServersPresets, devProxy, protectedEnvs, mcp (project layer only). The schema is strict — an
+// devServersPresets, protectedEnvs, mcp (project layer only). The schema is strict — an
 // unrecognized top-level key is a parse error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real global
@@ -195,7 +182,7 @@ export const buildUserProjectExample = (projectName: string): string => {
 // <repo>/infra-kit.json (layer 1) and ~/.infra-kit/infra-kit.json (layer 2) — a
 // top-level key set here replaces that whole section wholesale; arrays do not
 // concatenate. Top-level keys recognized: envManagement, ide,
-// taskManager, worktrees, envAutoLoad, dev, devServersPresets, devProxy,
+// taskManager, worktrees, envAutoLoad, dev, devServersPresets,
 // protectedEnvs, mcp (project layer only — refused here). The schema is strict — an unrecognized top-level key is a parse
 // error, not a silently ignored one.
 //

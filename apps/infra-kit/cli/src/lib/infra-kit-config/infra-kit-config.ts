@@ -5,6 +5,8 @@ import process from 'node:process'
 import { z } from 'zod'
 
 import { isAgentMode } from 'src/lib/agent-mode'
+import { assertNever } from 'src/lib/assert-never'
+import { tryAutoMigrateLayer } from 'src/lib/config-migrations'
 import { USER_CONFIG_DIR_NAME } from 'src/lib/constants'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { PROTECTED_CHILD_ENV_NAMES } from 'src/lib/mcp-proxy/protected-env'
@@ -32,14 +34,21 @@ const envManagementSchema = z.discriminatedUnion('provider', [dopplerEnvManageme
 // There is one attach style: each worktree is added to the configured editor's
 // workspace and opened (no per-window mode). Cursor needs a `.code-workspace`
 // path to reconcile its `folders` array against.
-const cursorIdeConfigSchema = z.object({
-  workspaceConfigPath: z.string().min(1),
-})
+// `.strict()`: a non-strict object would drop the retired `mode` key in memory and leave it on
+// disk forever. Refusing it sends the layer through the loader's migration retry, which deletes
+// it from the file.
+const cursorIdeConfigSchema = z
+  .object({
+    workspaceConfigPath: z.string().min(1),
+  })
+  .strict()
 
-const cursorIdeSchema = z.object({
-  provider: z.literal('cursor'),
-  config: cursorIdeConfigSchema,
-})
+const cursorIdeSchema = z
+  .object({
+    provider: z.literal('cursor'),
+    config: cursorIdeConfigSchema,
+  })
+  .strict()
 
 // Cursor is the only provider: `zed` was retired (Zed has no workspace file, so its only mutation
 // was a destructive `zed --reuse` relaunch that could never report a diff). Because this schema is
@@ -142,22 +151,6 @@ const devPresetSchema = z
 
 const devPresetsSchema = z.record(z.string().min(1), devPresetSchema)
 
-// DEPRECATED (accepted and ignored). Layer-B local-dev proxy (portless).
-//
-// The proxy port is no longer negotiable: every dev URL is `https://<release>.<packageName>.localhost`
-// with NO port, and the only port that can serve a port-free HTTPS URL is 443. A configurable port would
-// put the port straight back into the URL — the exact thing this design removes.
-//
-// The key is still PARSED so it does not brick anything: `infraKitConfigObject` is `.strict()` and
-// `getInfraKitConfig` THROWS on an unknown key, so simply deleting it would hard-fail EVERY infra-kit
-// command (not just `dev`) on any machine whose config still carries it — arriving unannounced, because
-// the CLI self-updates. It is read by nothing and silently ignored. Remove one release from now.
-const devProxyConfigSchema = z
-  .object({
-    port: z.number().int().positive().optional(),
-  })
-  .strict()
-
 // env auto-load: opt-in convenience that primes Doppler env when you work inside
 // this project / a worktree. Absent => disabled. `trigger` selects the moment
 // (pick one):
@@ -203,8 +196,8 @@ const envAutoLoadSchema = z
 // confirmation, so there is no human keystroke on that path.
 //
 // An ENUM rather than a boolean because the VALUE extends without touching the KEY, and a key rename
-// here is expensive: `.strict()` turns the old name into a parse error that bricks every command,
-// which is why `devProxy` below is still parsed and ignored rather than deleted. "cli-only" is that
+// here is expensive: `.strict()` turns the old name into a parse error on every checkout that still
+// carries it, so retiring a key means a registry migration, not just a deletion. "cli-only" is that
 // extension already spent.
 //
 // NEVER give this field a `.default()`. `infraKitOverrideConfigSchema` is `.partial()` of this object,
@@ -285,7 +278,6 @@ export const infraKitConfigObject = z
     envAutoLoad: envAutoLoadSchema.optional(),
     dev: devConfigSchema.optional(),
     devServersPresets: devPresetsSchema.optional(),
-    devProxy: devProxyConfigSchema.optional(),
     protectedEnvs: protectedEnvsSchema.optional(),
     mcp: mcpProxiesSchema.optional(),
   })
@@ -537,12 +529,16 @@ export const getInfraKitConfigPaths = async (): Promise<InfraKitConfigPaths> => 
  * process are free and an edit is still picked up on the next call.
  *
  * @example
- * // infra-kit.json:           { "environments": ["dev"], "envManagement": { "provider": "doppler", "config": { "name": "p" } } }
+ * // infra-kit.json:           { "envManagement": { "provider": "doppler", "config": { "name": "p" } } }
  * // ~/.infra-kit/infra-kit.json: { "ide": { "provider": "cursor", "config": { "workspaceConfigPath": "./ws.code-workspace" } } }
  * const cfg = await getInfraKitConfig()
- * // => { environments: ['dev'], envManagement: {...}, ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } } }
+ * // => { envManagement: {...}, ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } } }
+ * @example
+ * // A reader whose stderr nobody watches: a retired key must fail as it does today, never be rewritten.
+ * await getInfraKitConfig({ autoMigrate: 'off' })
  */
-export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
+export const getInfraKitConfig = async (options: GetInfraKitConfigOptions = {}): Promise<InfraKitConfig> => {
+  const autoMigrate = options.autoMigrate ?? 'write'
   const key = pathsCacheKey()
   const paths = await getInfraKitConfigPaths()
 
@@ -586,12 +582,20 @@ export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
   }
 
   const layers: ConfigLayer[] = [
-    { label: 'infra-kit.json', path: paths.main, required: true },
-    { label: '~/.infra-kit/infra-kit.json', path: paths.userGlobal, required: false },
+    { label: 'infra-kit.json', path: paths.main, required: true, autoMigrate, mtimeMs: mtimes.main },
+    {
+      label: '~/.infra-kit/infra-kit.json',
+      path: paths.userGlobal,
+      required: false,
+      autoMigrate,
+      mtimeMs: mtimes.userGlobal,
+    },
     {
       label: `~/.infra-kit/projects/${paths.projectName}/infra-kit.json`,
       path: paths.userProject,
       required: false,
+      autoMigrate,
+      mtimeMs: mtimes.userProject,
     },
   ]
 
@@ -611,6 +615,8 @@ export const getInfraKitConfig = async (): Promise<InfraKitConfig> => {
     throw new Error(`Invalid merged infra-kit config: ${z.prettifyError(finalResult.error)}`)
   }
 
+  // No reset after an auto-migration: `mtimes` were stat'ed before `loadLayer` rewrote the file, so
+  // this entry's fingerprint is already stale and the next read is exactly one guaranteed miss.
   cached = { key, mtimes, value: finalResult.data }
 
   return finalResult.data
@@ -700,10 +706,39 @@ const shallowEqual = <T extends Record<string, unknown>>(a: T, b: T): boolean =>
   })
 }
 
+export interface GetInfraKitConfigOptions {
+  /**
+   * 'write' (default): a layer the strict schema refuses may be migrated and rewritten on disk.
+   * 'off': never write — throw today's strict error. For callers whose stderr nobody reads.
+   */
+  autoMigrate?: 'write' | 'off'
+}
+
 interface ConfigLayer {
   label: string
   path: string
   required: boolean
+  autoMigrate: 'write' | 'off'
+  /**
+   * The mtime stat'ed BEFORE the layer is read. A migration that rewrites the file compares against
+   * it so a concurrent editor's save between read and write is never clobbered; `null` when the
+   * optional layer did not exist at stat time.
+   */
+  mtimeMs: number | null
+}
+
+/**
+ * The CI wording for a required layer the strict schema refused: the checkout is ephemeral, so the
+ * fix has to land on the branch rather than on this machine.
+ *
+ * @example
+ * withSetupHint(new Error('Invalid infra-kit.json at /r/infra-kit.json: Unrecognized key: "environments"')).message
+ * // => 'Invalid infra-kit.json at /r/infra-kit.json: Unrecognized key: "environments"\nA retired key on this branch — run `infra-kit setup --skip-tools` in this checkout and commit infra-kit.json.'
+ */
+export const withSetupHint = (error: Error): Error => {
+  return new Error(
+    `${error.message}\nA retired key on this branch — run \`infra-kit setup --skip-tools\` in this checkout and commit infra-kit.json.`,
+  )
 }
 
 /**
@@ -712,12 +747,15 @@ interface ConfigLayer {
  * layer is missing; throws if the layer is required, malformed, or invalid.
  * An empty/whitespace-only file is treated as `{}` (JSON.parse would throw).
  *
+ * A strict-schema refusal is retried once through {@link tryAutoMigrateLayer}
+ * (retired keys deleted and the file rewritten) before the error is thrown.
+ *
  * @example
- * await loadLayer({ label: '~/.infra-kit/infra-kit.json', path: '/missing.json', required: false })
+ * await loadLayer({ label: '~/.infra-kit/infra-kit.json', path: '/missing.json', required: false, autoMigrate: 'write', mtimeMs: null })
  * // => null
  * @example
  * // /home/me/.infra-kit/infra-kit.json: '{ "ide": { "provider": "cursor", "config": { "workspaceConfigPath": "./ws.code-workspace" } } }'
- * await loadLayer({ label: '~/.infra-kit/infra-kit.json', path: '/home/me/.infra-kit/infra-kit.json', required: false })
+ * await loadLayer({ label: '~/.infra-kit/infra-kit.json', path: '/home/me/.infra-kit/infra-kit.json', required: false, autoMigrate: 'write', mtimeMs: 1700000000000 })
  * // => { ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } } }
  */
 const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | null> => {
@@ -759,11 +797,34 @@ const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | 
 
   const result = infraKitOverrideConfigSchema.safeParse(parsedRaw)
 
-  if (!result.success) {
-    throw new Error(`Invalid ${layer.label} at ${layer.path}: ${z.prettifyError(result.error)}`)
+  if (result.success) {
+    return result.data as Record<string, unknown>
   }
 
-  return result.data as Record<string, unknown>
+  const originalError = new Error(`Invalid ${layer.label} at ${layer.path}: ${z.prettifyError(result.error)}`)
+
+  // The retry needs an object to migrate and the pre-read mtime as the stale-write baseline. A
+  // `null` mtime here means the file did not exist when `getInfraKitConfig` stat'ed it and appeared
+  // before the read above — with no baseline the rewrite could clobber whoever just created it, so
+  // that race keeps the strict error.
+  if (!isRecord(parsedRaw) || layer.mtimeMs === null) {
+    throw originalError
+  }
+
+  const outcome = await tryAutoMigrateLayer({ ...layer, mtimeMs: layer.mtimeMs }, parsedRaw, raw, {
+    schema: infraKitOverrideConfigSchema,
+  })
+
+  switch (outcome.kind) {
+    case 'migrated':
+      return outcome.data
+    case 'ci-gated':
+      throw withSetupHint(originalError)
+    case 'not-applicable':
+      throw originalError
+    default:
+      return assertNever(outcome)
+  }
 }
 
 /**
@@ -771,7 +832,7 @@ const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | 
  * instead: the project file for a shared server, Claude Code's own local scope for a machine-only
  * override (which shadows the project entry by name and needs no infra-kit involvement).
  */
-export const buildMcpLayerRejectionMessage = (layer: ConfigLayer): string => {
+export const buildMcpLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>): string => {
   return [
     `"mcp" is not allowed in ${layer.label} (${layer.path}): it feeds the committed .mcp.json, so a per-machine copy would replace the project's servers for everyone.`,
     'Move the block to the project infra-kit.json and run `infra-kit setup`.',
@@ -803,7 +864,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
  * buildEnvTokensRejectionMessage({ label: 'infra-kit.json', path: '/r/infra-kit.json', required: true })
  * // => 'Refusing to load infra-kit.json — `envTokens` is not a config key. …'
  */
-const buildEnvTokensRejectionMessage = (layer: ConfigLayer): string => {
+const buildEnvTokensRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>): string => {
   return [
     `Refusing to load ${layer.label} — \`envTokens\` is not a config key.`,
     'A service token in a config file can be committed, backed up by your editor, or shared.',

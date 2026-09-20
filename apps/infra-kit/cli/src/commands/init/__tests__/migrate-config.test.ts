@@ -2,11 +2,15 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MockInstance } from 'vitest'
 
 // Import AFTER the mock is declared so the module picks up the mocked dep.
+import { ConfigFileChangedError, migrateConfigFile } from 'src/lib/config-migrations'
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
+import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
+import { logger } from 'src/lib/logger'
 
-import { migrateLegacyConfig, migrateUserGlobalConfigFilename, normalizeLegacyIdeStructures } from '../migrate-config'
+import { migrateConfigShapes, migrateLegacyConfig, migrateUserGlobalConfigFilename } from '../migrate-config'
 
 vi.mock('src/lib/git-utils', () => {
   return {
@@ -19,6 +23,12 @@ vi.mock('src/lib/git-utils', () => {
     }),
   }
 })
+
+// Spy mode keeps the real implementations; the spies are the seams that let the stale-read race
+// be injected and the cache reset be counted. A plain `vi.spyOn` on the namespace would not
+// intercept the module's own named imports (memory: vispy-cannot-intercept-named-fs-imports).
+vi.mock('src/lib/config-migrations', { spy: true })
+vi.mock('src/lib/infra-kit-config', { spy: true })
 
 const MAIN_YML = `envManagement:
   provider: doppler
@@ -170,67 +180,49 @@ describe('migrateLegacyConfig', () => {
   })
 })
 
-describe('normalizeLegacyIdeStructures', () => {
+describe('migrateConfigShapes', () => {
+  let info: MockInstance<typeof logger.info>
+
   beforeEach(() => {
     vi.clearAllMocks()
+    info = vi.spyOn(logger, 'info').mockImplementation(() => {})
   })
 
   afterEach(() => {
+    info.mockRestore()
     vi.clearAllMocks()
   })
 
-  it('strips a legacy ide.config.mode from infra-kit.json (single provider) and preserves the rest', async () => {
+  const loggedLines = (): string[] => {
+    return info.mock.calls.map(([line]) => {
+      return String(line)
+    })
+  }
+
+  it('rewrites infra-kit.json without the legacy ide.config.mode, preserves the rest, and logs the ✓ line', async () => {
     await withTmpRepo(async (tmp) => {
       const jsonPath = path.join(tmp, 'infra-kit.json')
 
       writeFile(
         jsonPath,
         JSON.stringify({
-          environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           ide: { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: './ws.code-workspace' } },
         }),
       )
 
-      await normalizeLegacyIdeStructures()
+      await migrateConfigShapes()
 
       const result = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))
 
       expect(result.ide).toEqual({ provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } })
-      // Everything else preserved verbatim.
-      expect(result.environments).toEqual(['dev'])
       expect(result.envManagement).toEqual({ provider: 'doppler', config: { name: 'p' } })
+      expect(loggedLines()).toEqual([expect.stringMatching(/^✓ Migrated .*infra-kit\.json \(removed legacy "mode"\)$/)])
+      expect(resetInfraKitConfigCache).toHaveBeenCalledTimes(1)
     })
   })
 
-  it('strips ide.config.mode from every entry of an array ide', async () => {
-    await withTmpRepo(async (tmp) => {
-      const jsonPath = path.join(tmp, 'infra-kit.json')
-
-      writeFile(
-        jsonPath,
-        JSON.stringify({
-          environments: ['dev'],
-          envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: [
-            { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: 'ws' } },
-            { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: 'ws2' } },
-          ],
-        }),
-      )
-
-      await normalizeLegacyIdeStructures()
-
-      const result = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))
-
-      expect(result.ide).toEqual([
-        { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
-        { provider: 'cursor', config: { workspaceConfigPath: 'ws2' } },
-      ])
-    })
-  })
-
-  it('normalizes the user-global config layer too', async () => {
+  it('migrates the user-global config layer too', async () => {
     await withTmpRepo(async (tmp) => {
       const userGlobalJson = path.join(tmp, '.infra-kit', 'infra-kit.json')
 
@@ -239,7 +231,7 @@ describe('normalizeLegacyIdeStructures', () => {
         JSON.stringify({ ide: { provider: 'cursor', config: { mode: 'windows', workspaceConfigPath: 'ws' } } }),
       )
 
-      await normalizeLegacyIdeStructures()
+      await migrateConfigShapes()
 
       expect(JSON.parse(fs.readFileSync(userGlobalJson, 'utf-8')).ide).toEqual({
         provider: 'cursor',
@@ -263,53 +255,13 @@ describe('normalizeLegacyIdeStructures', () => {
         }),
       )
 
-      await normalizeLegacyIdeStructures()
+      await migrateConfigShapes()
 
       expect(JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))).toEqual({
         envManagement: { provider: 'doppler', config: { name: 'p' } },
         worktrees: { openInOrca: true },
       })
-    })
-  })
-
-  it('filters zed out of an array ide and keeps the Cursor entry', async () => {
-    await withTmpRepo(async (tmp) => {
-      const jsonPath = path.join(tmp, 'infra-kit.json')
-
-      writeFile(
-        jsonPath,
-        JSON.stringify({
-          envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: [
-            { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
-            { provider: 'zed', config: {} },
-          ],
-        }),
-      )
-
-      await normalizeLegacyIdeStructures()
-
-      expect(JSON.parse(fs.readFileSync(jsonPath, 'utf-8')).ide).toEqual([
-        { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
-      ])
-    })
-  })
-
-  it('drops the ide key when an array held only zed (an empty array fails the schema)', async () => {
-    await withTmpRepo(async (tmp) => {
-      const jsonPath = path.join(tmp, 'infra-kit.json')
-
-      writeFile(
-        jsonPath,
-        JSON.stringify({
-          envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: [{ provider: 'zed', config: {} }],
-        }),
-      )
-
-      await normalizeLegacyIdeStructures()
-
-      expect(JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))).not.toHaveProperty('ide')
+      expect(loggedLines()).toEqual([expect.stringContaining('(removed the retired "zed" provider)')])
     })
   })
 
@@ -320,13 +272,13 @@ describe('normalizeLegacyIdeStructures', () => {
 
       writeFile(userGlobalJson, JSON.stringify({ ide: { provider: 'zed', config: {} } }))
 
-      await normalizeLegacyIdeStructures()
+      await migrateConfigShapes()
 
       expect(JSON.parse(fs.readFileSync(userGlobalJson, 'utf-8'))).toEqual({})
     })
   })
 
-  it('normalizes the user-project config layer too', async () => {
+  it('migrates the user-project config layer too', async () => {
     await withTmpRepo(async (tmp) => {
       const projectName = path.basename(tmp)
       const userProjectJson = path.join(tmp, '.infra-kit', 'projects', projectName, 'infra-kit.json')
@@ -336,7 +288,7 @@ describe('normalizeLegacyIdeStructures', () => {
         JSON.stringify({ ide: { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: 'ws' } } }),
       )
 
-      await normalizeLegacyIdeStructures()
+      await migrateConfigShapes()
 
       expect(JSON.parse(fs.readFileSync(userProjectJson, 'utf-8')).ide).toEqual({
         provider: 'cursor',
@@ -345,30 +297,81 @@ describe('normalizeLegacyIdeStructures', () => {
     })
   })
 
-  it('leaves an already-clean config byte-for-byte untouched (idempotent)', async () => {
+  it('drops the retired environments key and names it in the ✓ line', async () => {
     await withTmpRepo(async (tmp) => {
       const jsonPath = path.join(tmp, 'infra-kit.json')
-      const json =
-        '{"environments":["dev"],"envManagement":{"provider":"doppler","config":{"name":"p"}},"ide":{"provider":"cursor","config":{"workspaceConfigPath":"ws"}}}'
 
-      writeFile(jsonPath, json)
+      writeFile(
+        jsonPath,
+        JSON.stringify({ environments: ['dev'], envManagement: { provider: 'doppler', config: { name: 'p' } } }),
+      )
 
-      await normalizeLegacyIdeStructures()
+      await migrateConfigShapes()
 
-      expect(fs.readFileSync(jsonPath, 'utf-8')).toBe(json)
+      expect(JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))).toEqual({
+        envManagement: { provider: 'doppler', config: { name: 'p' } },
+      })
+      expect(loggedLines()).toEqual([expect.stringContaining('(removed the retired "environments" key')])
     })
   })
 
-  it('is a no-op when there is no ide config', async () => {
+  it('drops the retired devProxy key and names it in the ✓ line', async () => {
     await withTmpRepo(async (tmp) => {
       const jsonPath = path.join(tmp, 'infra-kit.json')
-      const json = '{"environments":["dev"],"envManagement":{"provider":"doppler","config":{"name":"p"}}}'
+
+      writeFile(
+        jsonPath,
+        JSON.stringify({
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          devProxy: { 'web/ui': 'https://web.localhost' },
+        }),
+      )
+
+      await migrateConfigShapes()
+
+      expect(JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))).toEqual({
+        envManagement: { provider: 'doppler', config: { name: 'p' } },
+      })
+      expect(loggedLines()).toEqual([expect.stringContaining('(removed the retired "devProxy" key')])
+    })
+  })
+
+  it('names every removed shape in one ✓ line, in registry order', async () => {
+    await withTmpRepo(async (tmp) => {
+      const jsonPath = path.join(tmp, 'infra-kit.json')
+
+      writeFile(
+        jsonPath,
+        JSON.stringify({
+          environments: ['dev'],
+          envManagement: { provider: 'doppler', config: { name: 'p' } },
+          ide: { provider: 'zed', config: { mode: 'workspace' } },
+        }),
+      )
+
+      await migrateConfigShapes()
+
+      expect(loggedLines()).toEqual([
+        expect.stringMatching(
+          /removed legacy "mode" and the retired "zed" provider and the retired "environments" key/,
+        ),
+      ])
+    })
+  })
+
+  it('leaves an already-clean config byte-for-byte untouched, logs nothing, and keeps the cache (idempotent)', async () => {
+    await withTmpRepo(async (tmp) => {
+      const jsonPath = path.join(tmp, 'infra-kit.json')
+      const json =
+        '{"envManagement":{"provider":"doppler","config":{"name":"p"}},"ide":{"provider":"cursor","config":{"workspaceConfigPath":"ws"}}}'
 
       writeFile(jsonPath, json)
 
-      await normalizeLegacyIdeStructures()
+      await migrateConfigShapes()
 
       expect(fs.readFileSync(jsonPath, 'utf-8')).toBe(json)
+      expect(info).not.toHaveBeenCalled()
+      expect(resetInfraKitConfigCache).not.toHaveBeenCalled()
     })
   })
 
@@ -378,9 +381,44 @@ describe('normalizeLegacyIdeStructures', () => {
 
       writeFile(jsonPath, '{ not valid json ')
 
-      await expect(normalizeLegacyIdeStructures()).resolves.toBeUndefined()
+      await expect(migrateConfigShapes()).resolves.toBeUndefined()
 
       expect(fs.readFileSync(jsonPath, 'utf-8')).toBe('{ not valid json ')
+      expect(loggedLines()).toEqual([expect.stringMatching(/^⚠ Skipped .*infra-kit\.json — /)])
+      expect(resetInfraKitConfigCache).not.toHaveBeenCalled()
+    })
+  })
+
+  // The helper's stale-read guard is internal to one call, so the race is injected at the seam:
+  // the outcome under test is the line, the untouched file, and that the run carries on.
+  it('warns "changed while migrating" and leaves the file when it moved on between read and write', async () => {
+    await withTmpRepo(async (tmp) => {
+      const jsonPath = path.join(tmp, 'infra-kit.json')
+      const json = '{"environments":["dev"]}'
+
+      writeFile(jsonPath, json)
+      vi.mocked(migrateConfigFile).mockRejectedValueOnce(new ConfigFileChangedError(jsonPath))
+
+      await expect(migrateConfigShapes()).resolves.toBeUndefined()
+
+      expect(fs.readFileSync(jsonPath, 'utf-8')).toBe(json)
+      expect(loggedLines()).toEqual([expect.stringMatching(/^⚠ Skipped .*infra-kit\.json — changed while migrating$/)])
+      expect(resetInfraKitConfigCache).not.toHaveBeenCalled()
+    })
+  })
+
+  it('skips a bad layer but still rewrites a clean sibling layer (non-fatal, per-layer)', async () => {
+    await withTmpRepo(async (tmp) => {
+      const mainJson = path.join(tmp, 'infra-kit.json')
+      const userGlobalJson = path.join(tmp, '.infra-kit', 'infra-kit.json')
+
+      writeFile(mainJson, '{ not valid json ')
+      writeFile(userGlobalJson, JSON.stringify({ devProxy: {} }))
+
+      await migrateConfigShapes()
+
+      expect(JSON.parse(fs.readFileSync(userGlobalJson, 'utf-8'))).toEqual({})
+      expect(resetInfraKitConfigCache).toHaveBeenCalledTimes(1)
     })
   })
 })

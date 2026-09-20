@@ -18,6 +18,8 @@
  * capture and CI job, and `--agent` from a terminal has a TTY — hence the declared flag plus the
  * `CLAUDECODE` ∧ non-TTY conjunction.
  */
+import process from 'node:process'
+
 import { jsonOutput } from 'src/lib/json-output'
 
 export type AgentModeSource = 'flag' | 'env' | null
@@ -37,6 +39,16 @@ export const isAgentMode = (): boolean => {
  */
 export const isHeadless = (): boolean => {
   return isAgentMode() || jsonOutput.enabled
+}
+
+/**
+ * True on a CI runner (every major one exports `CI`). The config loader withholds its layer-1
+ * rewrite there, because a tracked file changed on an ephemeral checkout is lost with the job —
+ * the fix has to be committed on the branch instead. Not an agent signal: CI has no human either,
+ * but `isAgentMode` keys on who is DRIVING, not where it runs.
+ */
+export const isCI = (): boolean => {
+  return Boolean(process.env.CI)
 }
 
 export interface ResolveAgentModeInput {

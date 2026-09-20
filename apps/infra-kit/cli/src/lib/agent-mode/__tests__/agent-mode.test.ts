@@ -1,12 +1,13 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { jsonOutput } from 'src/lib/json-output'
 
-import { agentMode, isAgentMode, isHeadless, resolveAgentModeSource } from '../agent-mode'
+import { agentMode, isAgentMode, isCI, isHeadless, resolveAgentModeSource } from '../agent-mode'
 import type { AgentModeSource } from '../agent-mode'
 
 afterEach(() => {
   agentMode.source = null
+  vi.unstubAllEnvs()
 })
 
 /**
@@ -172,5 +173,27 @@ describe('agentMode holder', () => {
     agentMode.source = 'env'
 
     expect(isHeadless()).toBe(true)
+  })
+})
+
+describe('isCI', () => {
+  // Stubbed both ways: a developer shell may export `CI` and the runner always does, so neither
+  // branch may lean on the inherited value.
+  it('is true for any non-empty CI value', () => {
+    for (const value of ['true', '1', 'github']) {
+      vi.stubEnv('CI', value)
+
+      expect(isCI()).toBe(true)
+    }
+  })
+
+  it('is false when CI is unset or empty', () => {
+    vi.stubEnv('CI', '')
+
+    expect(isCI()).toBe(false)
+
+    vi.stubEnv('CI', undefined)
+
+    expect(isCI()).toBe(false)
   })
 })

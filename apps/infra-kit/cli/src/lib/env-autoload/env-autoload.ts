@@ -79,8 +79,11 @@ export interface ResolvedEnvAutoLoad {
 export const resolveEnvAutoLoad = async (canWarn = true): Promise<ResolvedEnvAutoLoad | null> => {
   let config
 
+  // Never the migrating read: this sits behind the shell-startup spawn (stderr to /dev/null) and the
+  // preAction hook, so a rewrite from here would dirty a tracked file with nobody watching the one
+  // line that says so. The next interactive command performs the migration and prints it.
   try {
-    config = await getInfraKitConfig()
+    config = await getInfraKitConfig({ autoMigrate: 'off' })
   } catch {
     return null
   }

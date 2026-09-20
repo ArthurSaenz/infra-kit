@@ -54,7 +54,7 @@ describe('config templates', () => {
     expect(JSON.parse(CONFIG_STUB)).toEqual({})
   })
 
-  it('knows all ten top-level schema keys', () => {
+  it('knows all nine top-level schema keys', () => {
     expect(SCHEMA_KEYS).toEqual([
       'envManagement',
       'ide',
@@ -63,7 +63,6 @@ describe('config templates', () => {
       'envAutoLoad',
       'dev',
       'devServersPresets',
-      'devProxy',
       'protectedEnvs',
       'mcp',
     ])
@@ -87,24 +86,6 @@ describe('config templates', () => {
       for (const key of keys) {
         expect(key).toMatch(/^[^/]+\/(api|ui)$/)
       }
-    })
-
-    it('marks devProxy deprecated and never prints a setup command the user cannot run', () => {
-      // This template is seeded into the user's real `~/.infra-kit/*.example.jsonc`, so a stale instruction
-      // here is not cosmetic — it is a command they will actually run. `--no-tls` would stand up a
-      // plain-HTTP daemon on a stack whose every URL is now `https://`, breaking them at setup time. And
-      // `1355` was the zero-sudo fallback, which no longer exists: there is no port-carrying mode left.
-      //
-      // It must also not print `sudo portless service install`: portless is a node_modules dependency, not a
-      // PATH binary, so that command fails with `sudo: portless: command not found` (sudo's secure_path
-      // defeats even a global install). A static template cannot know the absolute path, so it defers to
-      // `infra-kit doctor`, which resolves it at runtime and prints the real command.
-      expect(template).toContain('DEPRECATED')
-      expect(template).toContain('infra-kit doctor')
-      expect(template).not.toContain('sudo portless service install')
-      expect(template).not.toContain('portless trust')
-      expect(template).not.toContain('--no-tls')
-      expect(template).not.toContain('1355')
     })
   })
 

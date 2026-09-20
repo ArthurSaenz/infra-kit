@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import yaml from 'yaml'
 import { z } from 'zod'
 
+import { ConfigFileChangedError, migrateConfigFile } from 'src/lib/config-migrations'
 import {
   getInfraKitConfigPaths,
   infraKitConfigSchema,
@@ -276,157 +277,54 @@ export const migrateFactoryConfigToJson = async (): Promise<void> => {
 }
 
 /**
- * Surgically strip the removed `ide.config.mode` field from a parsed config
- * object (single-provider or array form). The windows-removal made `mode` a dead
- * key — the loader already ignores it, so this only matters for keeping the
- * on-disk file clean. Returns `changed: false` (and the input untouched) when
- * there is no `mode` to remove, so callers can skip rewriting clean files.
+ * The explicit all-layers pass over the same registry the loader applies on read (see
+ * {@link migrateConfigFile}), so a shape is retired in one place; the loader rewrites only the layer
+ * it is reading, and only once the strict schema has refused it.
  *
- * Only `mode` is removed — every other key is preserved verbatim (no full-schema
- * re-validation), so a config that is otherwise invalid or carries forward-compat
- * keys is never altered beyond the dead field.
- */
-const stripLegacyIdeMode = (parsed: Record<string, unknown>): { changed: boolean; result: Record<string, unknown> } => {
-  const ide = parsed.ide
-
-  if (ide === null || typeof ide !== 'object') {
-    return { changed: false, result: parsed }
-  }
-
-  let changed = false
-
-  const stripEntry = (entry: unknown): unknown => {
-    if (entry === null || typeof entry !== 'object' || !('config' in entry)) {
-      return entry
-    }
-
-    const config = (entry as { config: unknown }).config
-
-    if (config === null || typeof config !== 'object' || !('mode' in config)) {
-      return entry
-    }
-
-    changed = true
-
-    const restConfig = Object.fromEntries(
-      Object.entries(config as Record<string, unknown>).filter(([key]) => {
-        return key !== 'mode'
-      }),
-    )
-
-    return { ...(entry as Record<string, unknown>), config: restConfig }
-  }
-
-  const nextIde = Array.isArray(ide) ? ide.map(stripEntry) : stripEntry(ide)
-
-  if (!changed) {
-    return { changed: false, result: parsed }
-  }
-
-  return { changed: true, result: { ...parsed, ide: nextIde } }
-}
-
-const RETIRED_IDE_PROVIDER = 'zed'
-
-const isRetiredIdeEntry = (entry: unknown): boolean => {
-  return (
-    entry !== null && typeof entry === 'object' && (entry as { provider?: unknown }).provider === RETIRED_IDE_PROVIDER
-  )
-}
-
-/**
- * Drop every `ide` entry naming the retired `zed` provider from a parsed config object. An array
- * that held only Zed loses the `ide` key outright: `ide: []` fails the schema's `.min(1)`, and it
- * means "no editor" anyway. Same contract as {@link stripLegacyIdeMode}: nothing else is touched,
- * and `changed: false` hands the input back untouched.
- */
-const stripRetiredZedIde = (parsed: Record<string, unknown>): { changed: boolean; result: Record<string, unknown> } => {
-  const ide = parsed.ide
-
-  const withoutIde = (): Record<string, unknown> => {
-    return Object.fromEntries(
-      Object.entries(parsed).filter(([key]) => {
-        return key !== 'ide'
-      }),
-    )
-  }
-
-  if (Array.isArray(ide)) {
-    const kept = ide.filter((entry) => {
-      return !isRetiredIdeEntry(entry)
-    })
-
-    if (kept.length === ide.length) return { changed: false, result: parsed }
-
-    return { changed: true, result: kept.length > 0 ? { ...parsed, ide: kept } : withoutIde() }
-  }
-
-  if (isRetiredIdeEntry(ide)) return { changed: true, result: withoutIde() }
-
-  return { changed: false, result: parsed }
-}
-
-/**
- * Normalize the `infra-kit.json` config layers (project, user-global, user-project) from the old
- * IDE structure to the new one: remove the dead `ide.config.mode` field and drop every entry naming
- * the retired `zed` provider. Run by `infra-kit setup` after the YAML→JSON migration.
+ * The user-global layer is included even when `setup` runs OUTSIDE a project: it holds the
+ * machine-wide `ide` choice, so it is the layer most likely to still carry a retired shape, and the
+ * strict schema refuses it until it is rewritten — `setup` has to be the way out.
  *
- * Best-effort and non-fatal per layer; only rewrites a file when its `ide` config actually carries
- * legacy structure, so clean configs are left byte-for-byte untouched (idempotent). Resets the
- * config cache when anything changed.
- *
- * The user-global layer is normalized even when `setup` runs OUTSIDE a project: it is where a
- * machine-wide `ide` choice lives, so it is the layer most likely to still name Zed — and the
- * strict schema refuses that layer until it is rewritten, so `setup` has to be the way out.
- * Ordered AFTER `migrateUserGlobalConfigFilename` in `runConfigMigrations` because it addresses
+ * Non-fatal per layer: a malformed file, an I/O error, or a file that changed between the read and
+ * the write warns and skips, and the next run retries from fresh bytes. Ordered AFTER
+ * `migrateUserGlobalConfigFilename` in `runConfigMigrations` because it addresses
  * `~/.infra-kit/infra-kit.json` by that fixed name.
  *
  * @example
- * await normalizeLegacyIdeStructures()
- * // ✓ Normalized ide config in infra-kit.json (removed legacy "mode")
- * // ✓ Normalized ide config in ~/.infra-kit/infra-kit.json (removed the retired "zed" provider)
- * // (no output when no config carries legacy ide structure)
+ * await migrateConfigShapes()
+ * // ✓ Migrated infra-kit.json (removed legacy "mode" and the retired "zed" provider)
+ * // (no output when every layer is already clean)
  */
-export const normalizeLegacyIdeStructures = async (): Promise<void> => {
+export const migrateConfigShapes = async (): Promise<void> => {
   const jsonPaths = await resolveMigrationTargets()
 
-  let normalized = 0
+  let changed = 0
 
   for (const jsonPath of jsonPaths) {
     if (!(await fileExists(jsonPath))) continue
 
     try {
-      const raw = await fs.readFile(jsonPath, 'utf-8')
+      const outcome = await migrateConfigFile(jsonPath)
 
-      if (raw.trim() === '') continue
+      if (!outcome.changed) continue
 
-      const parsed = JSON.parse(raw) as Record<string, unknown>
-      const mode = stripLegacyIdeMode(parsed)
-      const zed = stripRetiredZedIde(mode.result)
-
-      const removed = [
-        ...(mode.changed ? ['legacy "mode"'] : []),
-        ...(zed.changed ? ['the retired "zed" provider'] : []),
-      ]
-
-      if (removed.length === 0) continue
-
-      await fs.writeFile(jsonPath, `${JSON.stringify(zed.result, null, 2)}\n`, 'utf-8')
-
-      logger.info(`✓ Normalized ide config in ${tildify(jsonPath)} (removed ${removed.join(' and ')})`)
-      normalized++
+      logger.info(`✓ Migrated ${tildify(jsonPath)} (removed ${outcome.notes.join(' and ')})`)
+      changed++
     } catch (err) {
-      logger.info(`⚠ Skipped normalizing ${tildify(jsonPath)} — ${(err as Error).message}`)
+      // The stale-read error spells out the absolute path; the line already names the file.
+      const reason = err instanceof ConfigFileChangedError ? 'changed while migrating' : (err as Error).message
+
+      logger.info(`⚠ Skipped ${tildify(jsonPath)} — ${reason}`)
     }
   }
 
-  if (normalized > 0) {
+  if (changed > 0) {
     resetInfraKitConfigCache()
   }
 }
 
 /**
- * The layers {@link normalizeLegacyIdeStructures} may rewrite: all three inside a project, only the
+ * The layers {@link migrateConfigShapes} may rewrite: all three inside a project, only the
  * user-global file outside one (`getInfraKitConfigPaths` rejects there — it needs a git toplevel).
  */
 const resolveMigrationTargets = async (): Promise<string[]> => {

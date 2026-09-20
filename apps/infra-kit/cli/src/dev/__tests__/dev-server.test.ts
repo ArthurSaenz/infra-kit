@@ -1461,7 +1461,7 @@ describe('devServerRunner — Layer B portless aliases', () => {
 
   it('only ever checks :443 — the port is not negotiable', async () => {
     // A port-free `https://` URL can only be served from the implicit HTTPS port, so there is exactly one
-    // port to check. No `--proxy-port`, no `devProxy.port`, no unprivileged fallback: every one of those
+    // port to check. No `--proxy-port`, no port key in infra-kit.json, no unprivileged fallback: every one of those
     // would put the port straight back into the URL, which is the thing this design removes.
     const { runner, ensuredPorts } = await bootWithProxy(temp, 'client', 'feat-x', true)
 

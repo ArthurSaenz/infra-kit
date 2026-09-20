@@ -16,10 +16,10 @@ import { initCore, logInitEntry } from '../init'
 // bookkeeping between `initCore` and the agent-guidance step under test.
 vi.mock('../migrate-config', () => {
   return {
+    migrateConfigShapes: vi.fn(async () => {}),
     migrateFactoryConfigToJson: vi.fn(async () => {}),
     migrateLegacyConfig: vi.fn(async () => {}),
     migrateUserGlobalConfigFilename: vi.fn(async () => {}),
-    normalizeLegacyIdeStructures: vi.fn(async () => {}),
   }
 })
 

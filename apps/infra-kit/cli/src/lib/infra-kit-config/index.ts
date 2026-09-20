@@ -12,6 +12,7 @@ export {
   resolveOrcaLayout,
   resolveUserGlobalConfigPath,
   USER_CONFIG_DIR_NAME,
+  withSetupHint,
 } from './infra-kit-config'
 export type {
   ConfiguredIde,
@@ -20,6 +21,7 @@ export type {
   DevPreset,
   DevPresets,
   EnvAutoLoadConfig,
+  GetInfraKitConfigOptions,
   InfraKitConfig,
   InfraKitConfigPaths,
   McpProxies,

@@ -76,6 +76,8 @@ describe('getInfraKitConfig', () => {
     })
   })
 
+  // `autoMigrate: 'off'` in the refusal cases: with the default policy the loader would delete
+  // the retired key and rewrite the file instead of throwing — that path is auto-migrate-layer.test.ts.
   it('rejects a config that still carries the removed `environments` key', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
@@ -86,7 +88,7 @@ describe('getInfraKitConfig', () => {
         }),
       )
 
-      await expect(getInfraKitConfig()).rejects.toThrow(/Unrecognized key: "environments"/)
+      await expect(getInfraKitConfig({ autoMigrate: 'off' })).rejects.toThrow(/Unrecognized key: "environments"/)
     })
   })
 
@@ -131,11 +133,11 @@ describe('getInfraKitConfig', () => {
         }),
       )
 
-      await expect(getInfraKitConfig()).rejects.toThrow(/ide/)
+      await expect(getInfraKitConfig({ autoMigrate: 'off' })).rejects.toThrow(/ide/)
     })
   })
 
-  it('strips a legacy "mode" key (backward compat)', async () => {
+  it('refuses a legacy "mode" key rather than stripping it in memory', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
@@ -145,17 +147,7 @@ describe('getInfraKitConfig', () => {
         }),
       )
 
-      const cfg = await getInfraKitConfig()
-
-      const ide = resolveConfiguredIdes(cfg)[0]
-
-      if (!ide) {
-        throw new Error('expected one configured ide')
-      }
-
-      expect(ide.provider).toBe('cursor')
-      // The now-removed `mode` field is silently stripped, not rejected.
-      expect(ide.config).not.toHaveProperty('mode')
+      await expect(getInfraKitConfig({ autoMigrate: 'off' })).rejects.toThrow(/Unrecognized key: "mode"/)
     })
   })
 

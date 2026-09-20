@@ -1,0 +1,7 @@
+export { applyConfigMigrations } from './apply-config-migrations'
+export { tryAutoMigrateLayer } from './auto-migrate-layer'
+export type { AutoMigrateLayer, AutoMigrateOutcome } from './auto-migrate-layer'
+export { ConfigFileChangedError, migrateConfigFile, writeMigratedConfigFile } from './migrate-config-file'
+export type { FileMigrationResult, WriteMigratedConfigFileOptions } from './migrate-config-file'
+export { CONFIG_MIGRATIONS } from './registry'
+export type { ConfigMigration, MigrationResult } from './types'

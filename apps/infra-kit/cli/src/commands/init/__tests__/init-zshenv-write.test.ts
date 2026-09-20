@@ -9,10 +9,10 @@ import { MARKER_END, MARKER_START, buildZshenvBlock, initCore, logInitEntry } fr
 // the real upsertManagedBlock + writeFileSync path executes against a temp $HOME.
 vi.mock('../migrate-config', () => {
   return {
+    migrateConfigShapes: vi.fn(async () => {}),
     migrateFactoryConfigToJson: vi.fn(async () => {}),
     migrateLegacyConfig: vi.fn(async () => {}),
     migrateUserGlobalConfigFilename: vi.fn(async () => {}),
-    normalizeLegacyIdeStructures: vi.fn(async () => {}),
   }
 })
 

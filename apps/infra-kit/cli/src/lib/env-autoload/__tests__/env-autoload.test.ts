@@ -183,6 +183,25 @@ describe('resolveEnvAutoLoad', () => {
     expect(await resolveEnvAutoLoad()).toBeNull()
   })
 
+  it('reads the config with auto-migration OFF — this channel has no stderr to announce a rewrite on', async () => {
+    vi.mocked(getInfraKitConfig).mockResolvedValue(baseConfig as never)
+
+    await resolveEnvAutoLoad()
+
+    expect(getInfraKitConfig).toHaveBeenCalledTimes(1)
+    expect(getInfraKitConfig).toHaveBeenCalledWith({ autoMigrate: 'off' })
+  })
+
+  it('disables quietly on a layer the strict schema refuses — the strict error stands, nothing is rewritten', async () => {
+    vi.mocked(getInfraKitConfig).mockRejectedValue(
+      new Error('Invalid infra-kit.json at /r/infra-kit.json: Unrecognized key: "environments"'),
+    )
+
+    expect(await resolveEnvAutoLoad()).toBeNull()
+    expect(getInfraKitConfig).toHaveBeenCalledWith({ autoMigrate: 'off' })
+    expect(logger.warn).not.toHaveBeenCalled()
+  })
+
   it('returns null when envAutoLoad is absent (feature off)', async () => {
     vi.mocked(getInfraKitConfig).mockResolvedValue(baseConfig as never)
 

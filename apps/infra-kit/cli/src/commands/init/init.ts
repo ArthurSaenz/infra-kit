@@ -30,10 +30,10 @@ import { fetchLatestVersion, pluginStepWithheld, readUpdateCache } from 'src/lib
 import packageJson from '../../../package.json' with { type: 'json' }
 import { resolveGitRootForWrites, syncRepoGuidance } from './agent-files'
 import {
+  migrateConfigShapes,
   migrateFactoryConfigToJson,
   migrateLegacyConfig,
   migrateUserGlobalConfigFilename,
-  normalizeLegacyIdeStructures,
 } from './migrate-config'
 
 export const MARKER_START = '# -- infra-kit:begin --'
@@ -315,7 +315,9 @@ const writeZshenvBlock = (): InitEntry => {
   }
 }
 
-/** The four config migrations, in the one order that works. */
+/**
+ * Three file-existence one-shots, then the shared shape pipeline — in the one order that works.
+ */
 const runConfigMigrations = async (): Promise<void> => {
   // Convert any legacy infra-kit.yml config layers to JSON before seeding, so a
   // migrated infra-kit.json is not re-seeded as an empty stub.
@@ -326,11 +328,10 @@ const runConfigMigrations = async (): Promise<void> => {
   // doesn't find it, and writes an empty stub that shadows the user's real config.
   await migrateUserGlobalConfigFilename()
 
-  // Migrate existing JSON configs from the old IDE structure to the new one (strip
-  // the removed `ide.config.mode` field, drop the retired `zed` provider). No-op for
-  // already-clean configs. AFTER the filename rename: outside a project it addresses
-  // ~/.infra-kit/infra-kit.json by that fixed name.
-  await normalizeLegacyIdeStructures()
+  // Strip every retired shape from the JSON layers — the same registry the loader applies on
+  // read, run here across all layers at once. AFTER the filename rename: outside a project it
+  // addresses ~/.infra-kit/infra-kit.json by that fixed name.
+  await migrateConfigShapes()
 
   // Convert a legacy machine-local factory config from executable TS
   // (~/.infra-kit/vendor.config.ts) to static JSON (~/.infra-kit/vendor.json).

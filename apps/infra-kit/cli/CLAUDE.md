@@ -1,3 +1,9 @@
+## Config migration
+
+- `infra-kit.json` self-migrates on read: when a layer fails the strict schema, the registry in `src/lib/config-migrations/` deletes the retired keys, rewrites the file, and logs one `Migrated <file>: removed …` line on stderr. A `Migrated infra-kit.json` line means the tracked project file lost a retired key — commit that hunk (`release create|remove` and `worktrees remove` refuse a dirty tree).
+- Retiring a key = schema edit + one registry entry + one test. Never leave a retired key "accepted and ignored" in the schema; the loader's strict refusal is the safety net for anything the registry does not know.
+- The tracked project layer is not rewritten under `CI` (the strict error carries a setup hint instead). `INFRA_KIT_NO_AUTO_MIGRATE=1` turns the automatic rewrite off everywhere; `infra-kit setup` still runs the same registry explicitly.
+
 <!-- infra-kit:package:begin -->
 <!-- infra-kit:package:version 0.11.0 lib -->
 

@@ -7,7 +7,7 @@ import { $ } from 'zx'
 
 import { withScratchWorktree } from 'src/lib/git-utils'
 
-import { planMergeRun, pushableRefs, reclassify } from '../merge-run'
+import { planMergeRun, pushableRefs, reclassify, verifyMerges } from '../merge-run'
 
 /**
  * Real repositories. The claims under test are all claims about git — that a
@@ -250,6 +250,36 @@ describe('reclassify', () => {
 
     expect(nowUpToDate).toEqual([])
     expect(kept).toHaveLength(3)
+  })
+})
+
+describe('verifyMerges', () => {
+  it('runs the tier with auto-migration OFF, on top of the operator env — the scratch checkout is never rewritten', async () => {
+    const repo = await makeFixture()
+
+    process.env.IK_MERGE_RUN_PASSTHROUGH = 'yes'
+
+    try {
+      const outcome = await withScratchWorktree({ cwd: repo }, async (worktree) => {
+        const entries = await planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: ['release/v1.0.0'] })
+
+        // The tier itself is the assertion: it passes only when both variables reach the child.
+        return verifyMerges({
+          worktreePath: worktree.path,
+          refs: pushableRefs(entries),
+          command: 'test "$INFRA_KIT_NO_AUTO_MIGRATE" = 1 && test "$IK_MERGE_RUN_PASSTHROUGH" = yes',
+        })
+      })
+
+      expect([...outcome.failed.entries()]).toEqual([])
+      expect(
+        outcome.kept.map((ref) => {
+          return ref.branch
+        }),
+      ).toEqual(['release/v1.0.0'])
+    } finally {
+      delete process.env.IK_MERGE_RUN_PASSTHROUGH
+    }
   })
 })
 
