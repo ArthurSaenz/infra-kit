@@ -56,7 +56,7 @@ is a state only the human can clear. Once they have, start again from a fresh pr
   already tore down keeps a CLOSED PR, so a genuine re-run passes this check.
 - **No other worktree holding the base branch, and a clean release worktree.** When the main
   checkout is on the release branch the command switches it to the base branch (`dev`, or `main` for
-  a hotfix, read off the PR title) before the local delete, and refuses on modified or untracked
+  a hotfix, read off the PR's base branch) before the local delete, and refuses on modified or untracked
   files inside the release worktree — the main checkout's status cannot see in there. The human
   commits or stashes inside the worktree.
 
