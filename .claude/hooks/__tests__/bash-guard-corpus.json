@@ -231,28 +231,58 @@
     "command": "pnpm dev",
     "blocked": true,
     "advised": false,
-    "signal": "block:cmux"
+    "signal": "block:dev-server"
   },
   {
     "command": "pnpm run dev",
     "blocked": true,
     "advised": false,
-    "signal": "block:cmux"
+    "signal": "block:dev-server"
   },
   {
     "command": "pnpm dev:client",
     "blocked": true,
     "advised": false,
-    "signal": "block:cmux"
+    "signal": "block:dev-server"
   },
   {
     "command": "cd apps/client && pnpm dev",
     "blocked": true,
     "advised": false,
-    "signal": "block:cmux"
+    "signal": "block:dev-server"
   },
   {
-    "command": "cmux new-session -d -s dev \"pnpm dev\"",
+    "command": "ik dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:dev-server"
+  },
+  {
+    "command": "pnpm exec infra-kit dev --watch",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:dev-server"
+  },
+  {
+    "command": "pnpm infra-kit dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:dev-server"
+  },
+  {
+    "command": "cd apps/client && ik dev",
+    "blocked": true,
+    "advised": false,
+    "signal": "block:dev-server"
+  },
+  {
+    "command": "ik dev-status --json --agent",
+    "blocked": false,
+    "advised": false,
+    "signal": ""
+  },
+  {
+    "command": "pnpm dev-status",
     "blocked": false,
     "advised": false,
     "signal": ""

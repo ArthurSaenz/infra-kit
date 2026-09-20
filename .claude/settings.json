@@ -2,11 +2,11 @@
   "permissions": {
     "deny": [
       "Bash(doppler secrets:*)",
-      "Bash(pnpm exec infra-kit release-deliver:*)",
+      "Bash(infra-kit release deliver:*)",
+      "Bash(ik release deliver:*)",
       "Bash(pnpm exec infra-kit release deliver:*)",
-      "Bash(pnpm exec ik release-deliver:*)",
       "Bash(pnpm exec ik release deliver:*)",
-      "Bash(ik release deliver:*)"
+      "Bash(pnpm infra-kit release deliver:*)"
     ]
   },
   "hooks": {

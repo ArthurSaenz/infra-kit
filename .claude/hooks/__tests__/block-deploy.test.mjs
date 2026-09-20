@@ -405,8 +405,9 @@ test('block-deploy names the specific rule it denied on, not just "denied"', () 
 // The deny text is the only thing the agent sees, so it must carry the way out, not just the refusal.
 test('every deny message points at the sanctioned alternative', () => {
   const d = decision('gh run rerun 123');
-  assert.match(d.reason, /mcp__plugin_infra-kit_infra-kit__gh-release-deploy-all/, 'must name the MCP tool');
-  assert.match(d.reason, /pnpm exec infra-kit release-deploy-all/, 'and the CLI equivalent');
+  assert.match(d.reason, /ik release deploy-all --json --agent/, 'must name the CLI command');
+  assert.match(d.reason, /ik release deploy-selected --json --agent/, 'and the selective form');
+  assert.match(d.reason, /--yes/, 'and how the confirm gate is passed');
   assert.match(d.reason, /gh run list/, 'and say which reads stay allowed');
 });
 

@@ -16,8 +16,8 @@ const IDENTITY = [
   ['doppler', /doppler secrets/],
   ['destructive', /recursive force-remove|force push|destructive SQL/],
   ['package-manager', /pnpm workspace/],
-  ['cmux', /Dev servers must run in cmux/],
-  ['worktree', /worktrees-add|worktrees-list/],
+  ['dev-server', /Dev servers are started by the human/],
+  ['worktree', /ik worktrees (add|list)/],
   ['style', /ripgrep|find -name/],
 ];
 

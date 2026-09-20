@@ -5,7 +5,7 @@ import { runHook, bash } from './helpers.mjs';
 // Guards were six files under guards/ until they were inlined into bash-guard.mjs. They are still
 // named exports, so these unit tests reach each one directly; the file's dispatcher sits behind an
 // `import.meta.main` guard, so importing it here does not read fd 0.
-import { doppler, destructive, packageManager, style, cmux, worktree } from '../bash-guard.mjs';
+import { doppler, destructive, packageManager, style, devServer, worktree } from '../bash-guard.mjs';
 
 const action = (decision) => decision?.action ?? null;
 
@@ -145,7 +145,7 @@ test('guard scope contracts are what the dispatcher expects', () => {
   assert.equal(packageManager.scope, 'segment');
   assert.equal(destructive.scope, 'segment');
   assert.equal(style.scope, undefined);
-  assert.equal(cmux.scope, undefined);
+  assert.equal(devServer.scope, 'segment');
 });
 
 test('package-manager: does not fire on pnpm, or on the word npm inside another token', () => {
@@ -171,31 +171,42 @@ test('style: advises (never blocks) on grep/find, stays quiet on piped grep', ()
   assert.equal(action(style.check('rg foo')), null);
 });
 
-test('cmux: blocks bare dev server, allows cmux-wrapped', () => {
-  assert.equal(action(cmux.check('pnpm dev')), 'block');
-  assert.equal(action(cmux.check('pnpm run dev')), 'block');
-  assert.equal(action(cmux.check('cmux new-session -d -s dev "pnpm dev"')), null);
-  assert.equal(action(cmux.check('pnpm build')), null);
-  // Still the command being RUN, once segmenting moved inside the guard.
-  assert.equal(action(cmux.check('cd apps/client && pnpm dev')), 'block');
-});
+test('dev-server: blocks every spelling that starts servers, allows the status probe', () => {
+  for (const command of [
+    'pnpm dev',
+    'pnpm run dev',
+    'pnpm dev:client', // `:` lookahead: script variants are still servers
+    'ik dev',
+    'ik dev --watch',
+    'infra-kit dev api',
+    'pnpm exec infra-kit dev --orca',
+    'pnpm infra-kit dev', // every doctor INVOCATION spelling
+    'env FOO=1 ik dev', // wrapper words via HEAD_PREFIX
+  ]) {
+    assert.equal(action(devServer.check(command)), 'block', command);
+  }
 
-// Why cmux segments internally rather than exporting scope='segment': the splitter is quote-blind,
-// so this payload splits and the half holding `pnpm dev` cannot see the `cmux` authorising it.
-test('cmux: a compound payload inside a cmux session is still allowed', () => {
-  assert.equal(action(cmux.check('cmux new-session -d -s dev "cd apps/client && pnpm dev"')), null);
-  assert.equal(action(cmux.check('cmux new-session -d -s api "pnpm --filter api dev"')), null);
+  for (const command of [
+    'pnpm build',
+    'pnpm devtools',
+    'pnpm dev-status',
+    'ik dev-status --json --agent',
+    'pnpm exec infra-kit dev-status',
+    'infra-kit doctor',
+  ]) {
+    assert.equal(action(devServer.check(command)), null, command);
+  }
 });
 
 // The guard BLOCKS, so a false positive is a hard stop on ordinary work.
-test('cmux: does not fire on commands that merely mention the dev script', () => {
+test('dev-server: does not fire on commands that merely mention the dev script', () => {
   for (const command of [
     'rg "pnpm dev" docs/',
-    'echo "run pnpm dev in cmux"',
+    'echo "run ik dev in your terminal"',
     'git commit -m "docs: explain pnpm dev"',
     'cat notes-pnpm-dev.md',
   ]) {
-    assert.equal(action(cmux.check(command)), null, command);
+    assert.equal(action(devServer.check(command)), null, command);
   }
 });
 
@@ -219,6 +230,8 @@ test('bash-guard blocks when any guard blocks (exit 2)', () => {
     'git push origin main --force',
     'npm install',
     'pnpm dev',
+    'ik dev',
+    'cd apps/client && pnpm dev', // segment-scoped now: the guard no longer segments itself
     'git worktree add ../repo-worktrees/feat',
     'rm -rf /tmp/x && npm install', // multiple guards -> first block wins
     'cd /repo && git worktree add ../repo-worktrees/x', // segment-scoped: ^ anchor survives the &&
@@ -255,11 +268,10 @@ test('bash-guard advises rather than blocks on grep (exit 0 + additionalContext)
   assert.match(res.stdout, /ripgrep/);
 });
 
-// Segmentation is opt-in per guard: whole-line guards must keep reading the whole line, or their
-// deliberate allowances (piped grep, cmux-wrapped dev) would flip to blocks.
-test('bash-guard does not segment whole-line guards', () => {
+// Segmentation is opt-in per guard: style must keep reading the whole line, or its piped-grep
+// allowance would flip to a block.
+test('bash-guard does not segment the whole-line style guard', () => {
   assert.equal(runHook('bash-guard.mjs', bash('rg foo | grep bar')).status, 0);
-  assert.equal(runHook('bash-guard.mjs', bash('cmux new-session -d -s dev "pnpm dev"')).status, 0);
 });
 
 test('bash-guard advises on git worktree list (exit 0 + additionalContext)', () => {

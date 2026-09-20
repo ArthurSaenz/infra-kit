@@ -129,23 +129,28 @@ export const style = {
   },
 };
 
-// ------------------------------------------------------------------ cmux
+// ------------------------------------------------------------------ dev-server
 
-// Head-anchored or it blocks `rg "pnpm dev" docs/`. Segments internally rather than declaring
-// scope: the splitter would drop the `cmux` authorising `cmux new-session … "cd x && pnpm dev"`.
-const RE_DEV_SERVER = new RegExp(String.raw`${HEAD_PREFIX}pnpm\s+(run\s+)?dev`, 'i');
+// `ik dev` is a TTY product: from an agent's non-TTY Bash it skips the wizard and starts real
+// servers nobody is watching — and consumers wire `pnpm dev` to it, so both spellings are one action.
+// `(?=[\s:]|$)` keeps `dev-status` (the read-only probe) and `devtools` out while `dev:client` stays in.
+// Known limits, carried over from the guard this replaced: `pnpm --filter x dev`, `turbo run dev` and
+// `./node_modules/.bin/ik dev` are not head-matched; and the quote-blind splitter makes
+// `echo "a; pnpm dev --watch"` a block (same trade the package-manager guard accepts).
+const RE_PNPM_DEV = new RegExp(String.raw`${HEAD_PREFIX}pnpm\s+(run\s+)?dev(?=[\s:]|$)`, 'i');
+const RE_IK_DEV = new RegExp(String.raw`${HEAD_PREFIX}(pnpm\s+(exec\s+)?)?(infra-kit|ik)\s+dev(?=[\s:]|$)`, 'i');
 
-export const cmux = {
-  name: 'cmux',
+const DEV_SERVER_MESSAGE = [
+  'Dev servers are started by the human, in their own terminal: `ik dev` (TUI; `--orca` for a pane per app).',
+  'From here, read the running session instead: `ik dev-status --json --agent`.',
+].join('\n');
+
+export const devServer = {
+  name: 'dev-server',
+  scope: 'segment',
   check(command) {
-    if (command.includes('cmux')) return null;
-
-    const startsDevServer = splitIntoSegments(command).some((segment) => RE_DEV_SERVER.test(segment));
-    if (startsDevServer) {
-      return {
-        action: 'block',
-        message: 'Dev servers must run in cmux. Use: cmux new-session -d -s dev "pnpm dev"',
-      };
+    if (RE_PNPM_DEV.test(command) || RE_IK_DEV.test(command)) {
+      return { action: 'block', message: DEV_SERVER_MESSAGE };
     }
 
     return null;
@@ -162,10 +167,10 @@ const RE_MANAGED = new RegExp(`${GIT_PREFIX}(add|remove)\\b`);
 const RE_LIST = new RegExp(`${GIT_PREFIX}list\\b`);
 
 const WORKTREE_BLOCK_MSG =
-  "Use infra-kit's MCP worktree tools instead of raw 'git worktree add/remove': 'worktrees-add' / 'worktrees-remove'. Raw git skips infra-kit's setup (pnpm install, IDE open, release description), which is why the branch works but the worktree is half-configured. If you are inside a linked worktree, cd to the main checkout first — both raw git and the MCP tool refuse worktree management from within a linked worktree. If you truly want an unmanaged throwaway worktree, ask the user to run the git command themselves.";
+  "Use infra-kit instead of raw 'git worktree add/remove': `ik worktrees add --json --agent` / `ik worktrees remove --json --agent`. Both are confirm-gated — the first run previews the plan and exits; re-run the same argv with `--yes` to execute. Raw git skips infra-kit's setup (pnpm install, IDE open, release description), which is why the branch works but the worktree is half-configured. If you are inside a linked worktree, cd to the main checkout first. If you truly want an unmanaged throwaway worktree, ask the user to run the git command themselves.";
 
 const WORKTREE_ADVISE_MSG =
-  "There is also an infra-kit 'worktrees-list' MCP tool that returns a structured release-worktree summary (version, release type, Jira description). Prefer it for release-worktree info; keep using 'git worktree list' when you need the full inventory (feature/ad-hoc worktrees, the main checkout, paths or HEADs), which the MCP tool does not cover.";
+  '`ik worktrees list --json --agent` returns a structured release-worktree summary (version, release type, Jira description). Prefer it for release-worktree info; keep using `git worktree list` when you need the full inventory (feature/ad-hoc worktrees, the main checkout, paths or HEADs), which infra-kit does not cover.';
 
 export const worktree = {
   name: 'worktree',
@@ -180,7 +185,7 @@ export const worktree = {
 // ------------------------------------------------------------------ dispatcher
 
 // `doppler` first: when a command trips two guards, the one about secrets is worth showing.
-export const GUARDS = [doppler, destructive, packageManager, style, cmux, worktree];
+export const GUARDS = [doppler, destructive, packageManager, style, devServer, worktree];
 
 const decide = (guard, command, segments) => {
   const inputs = guard.scope === 'segment' ? segments : [command];

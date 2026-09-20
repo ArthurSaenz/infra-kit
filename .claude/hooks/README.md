@@ -65,8 +65,8 @@ line, so no line opens prod.
 Delivery (`ik release deliver`, `dx-release-deliver`, and every spelling) is refused unconditionally,
 with no switch: it merges the release PR into `main` with `--admin` and deploys prod.
 
-**Allowed and expected:** deploying to non-prod through infra-kit — `mcp__plugin_infra-kit_infra-kit__gh-release-deploy-all`
-/ `-selected`, or the CLI equivalents. infra-kit refuses prod itself. All reads are allowed:
+**Allowed and expected:** deploying to non-prod through infra-kit — `ik release deploy-all --json --agent`
+/ `deploy-selected` (preview, then re-run with `--yes`). infra-kit refuses prod itself. All reads are allowed:
 `gh run list` / `view` / `watch`, `gh workflow view`, `gh api` GETs.
 
 `.claude/settings.json` also carries `permissions.deny` entries for delivery and `doppler secrets`.
@@ -85,13 +85,12 @@ command trips two guards, the one about secrets is worth showing).
 | `destructive` | block | `rm -rf`, bare `git push --force`, SQL `drop`/`truncate` |
 | `package-manager` | block | `npm` / `yarn` / `npx` in a pnpm workspace |
 | `style` | advise | prefer `rg` over `grep`, over `find -name` |
-| `cmux` | block | `pnpm dev` outside a cmux session |
+| `dev-server` | block | `pnpm dev` / `ik dev` — servers are the human's to start; agents read `ik dev-status` |
 | `worktree` | block / advise | raw `git worktree add\|remove`; advises on `list` |
 
 A guard may declare `scope = 'segment'` to be run per shell segment, so its `^`-anchored regex still
-matches in `cd apps/client && npm install`. `style` and `cmux` deliberately read the whole line —
-segmenting would strip the pipe that makes `grep foo | wc -l` acceptable, and the `cmux` that
-authorises a wrapped `pnpm dev`.
+matches in `cd apps/client && npm install`. `style` deliberately reads the whole line — segmenting
+would strip the pipe that makes `grep foo | wc -l` acceptable.
 
 The dispatcher sits behind `invokedDirectly()`, so the unit tests import the guards directly without
 the file reading stdin. Deliberately not `import.meta.main`, which only exists from Node 24.2 and is
