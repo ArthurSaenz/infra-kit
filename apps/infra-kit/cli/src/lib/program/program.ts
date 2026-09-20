@@ -146,7 +146,7 @@ const configureReleaseCreate = (cmd: Command): Command => {
     .description('Create one or more release branches (each entry can mix regular/hotfix and its own description)')
     .option(
       '-r, --release <spec>',
-      'Release spec "<version|next|name>[:type[:description]]" (repeatable). The token is a semver ("1.2.5"), the literal "next", or a kebab-case name ("checkout-redesign"). Type is regular|hotfix (default regular). Examples: "1.2.5", "1.2.5:hotfix", "next:regular:Holiday backend", "checkout-redesign:regular:Q3 redesign".',
+      'Release spec "<version|next|name>[@yyyy-mm-dd][:type[:description]]" (repeatable). The token is a semver ("1.2.5"), the literal "next", or a kebab-case name ("checkout-redesign"); "@yyyy-mm-dd" is the planned release date, written to the Jira fix version. Type is regular|hotfix (default regular). Examples: "1.2.5", "1.2.5:hotfix", "1.64.0@2026-10-28", "next:regular:Holiday backend", "checkout-redesign:regular:Q3 redesign".',
       collectReleaseSpec,
       [],
     )

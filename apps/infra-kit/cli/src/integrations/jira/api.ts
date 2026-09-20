@@ -76,6 +76,7 @@ export const createJiraVersion = async (
     description: params.description || '',
     released: params.released || false,
     archived: params.archived || false,
+    ...(params.releaseDate === undefined ? {} : { releaseDate: params.releaseDate }),
   }
 
   const url = `${baseUrl}/rest/api/3/version`
@@ -149,6 +150,12 @@ export const findVersionByName = async (versionName: string, config: JiraConfig)
 /**
  * Updates an existing Jira version
  *
+ * Callers express a cleared release date as `releaseDate: null` and never learn the wire form: it
+ * is translated here, once. `null` on the PUT is the first attempt at that form — the "Update
+ * version" doc (https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-project-versions/#api-rest-api-3-version-id-put)
+ * does not state how a set date is unset, and community reports split between `null` and `""`. The
+ * echo check below is what makes a wrong guess loud rather than silent.
+ *
  * @param params - Update parameters
  * @param config - Jira configuration
  * @returns Result containing updated version or error
@@ -184,6 +191,16 @@ export const updateJiraVersion = async (
 
   const version = (await response.json()) as JiraVersion
 
+  // Scoped to the clear intent only. A 200 does not prove Jira honoured the payload — an ignored
+  // field still answers 200 with the old value — so the echo is the only evidence. Ordinary sets are
+  // deliberately NOT compared: Jira may normalise a date it accepted, and `deliverJiraRelease`
+  // (`released: true, releaseDate: today`) must never be second-guessed here.
+  if (params.releaseDate === null && (version.releaseDate || null) !== null) {
+    throw new Error(
+      `Jira accepted the update (the write happened) but still reports releaseDate=${version.releaseDate}; the clear payload in updateJiraVersion needs revisiting`,
+    )
+  }
+
   return {
     success: true,
     version,
@@ -192,6 +209,9 @@ export const updateJiraVersion = async (
 
 /**
  * Delivers a Jira release by marking it as released with the current date
+ *
+ * Overwriting a planned `releaseDate` with today's is Jira's own meaning of a released version's
+ * date — the day it shipped — so the planned date set by `release create` is meant to be replaced.
  *
  * @param params - Parameters containing the version name
  * @param config - Jira configuration

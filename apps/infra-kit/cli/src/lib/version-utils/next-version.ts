@@ -1,3 +1,4 @@
+import { assertIsoDate } from 'src/lib/release-date'
 import { parseReleaseRef, validateName } from 'src/lib/release-id'
 import type { ReleaseId } from 'src/lib/release-id'
 import type { ReleaseType } from 'src/lib/release-utils'
@@ -139,24 +140,28 @@ export const classifyReleaseToken = (token: string): { version: string } | { nam
 
 /**
  * A release spec is the parsed form of a versioned release request: a raw
- * version token (`"1.2.5"` or `"next"`) plus its type and optional
- * description. This is the unchanged output of {@link parseReleaseSpec} and the
- * versioned-input shape consumed by {@link resolveReleaseEntries}.
+ * version token (`"1.2.5"` or `"next"`) plus its type, optional description and
+ * optional planned release date (`yyyy-mm-dd`). This is the unchanged output of
+ * {@link parseReleaseSpec} and the versioned-input shape consumed by
+ * {@link resolveReleaseEntries}.
  */
 export interface ReleaseSpec {
   version: string
   type: ReleaseType
   description?: string
+  releaseDate?: string
 }
 
 /**
- * A named release request: a bare kebab-case name plus its type and optional
- * description. Named releases never auto-bump; `"next"` is version-only.
+ * A named release request: a bare kebab-case name plus its type, optional
+ * description and optional release date. Named releases never auto-bump;
+ * `"next"` is version-only.
  */
 export interface NamedReleaseInput {
   name: string
   type: ReleaseType
   description?: string
+  releaseDate?: string
 }
 
 /** Either a versioned spec or a named release request. */
@@ -171,6 +176,7 @@ export interface ReleaseEntry {
   id: ReleaseId
   type: ReleaseType
   description?: string
+  releaseDate?: string
 }
 
 const isReleaseType = (value: string): value is ReleaseType => {
@@ -182,13 +188,43 @@ const isNamedReleaseInput = (input: ReleaseInput): input is NamedReleaseInput =>
 }
 
 /**
- * Parse a CLI release spec of the form `<token>[:type[:description]]` into a
- * {@link ReleaseInput}. The token determines the kind: a semver (`"1.2.5"`) or
- * the literal `"next"` yields a versioned {@link ReleaseSpec}; anything else is
- * treated as a named release ({@link NamedReleaseInput}) — the name is not
- * validated here, {@link resolveReleaseEntries} runs `validateName` later. Type
- * defaults to "regular". Description is everything after the second colon, so
- * colons inside descriptions are preserved.
+ * Split the first colon-segment of a spec into its token and optional `@date`.
+ *
+ * Sound only while `@` is illegal in every token form — `VERSION_RE`, the literal `next`, and
+ * `validateName`'s kebab-case rule (`release-id.ts`) all exclude it — so the first `@` can only be
+ * the date separator. Any future token grammar must keep `@` out.
+ */
+const splitTokenAndDate = (segment: string): { token: string; releaseDate?: string } => {
+  const at = segment.indexOf('@')
+
+  if (at === -1) return { token: segment.trim() }
+
+  const token = segment.slice(0, at).trim()
+  const dateRaw = segment.slice(at + 1)
+
+  if (dateRaw.includes('@')) {
+    throw new Error(`Release spec "${segment}" has more than one "@". Expected "<token>@yyyy-mm-dd".`)
+  }
+
+  if (dateRaw.trim() === '') {
+    throw new Error(`Release spec "${segment}" has an empty release date after "@". Expected "<token>@yyyy-mm-dd".`)
+  }
+
+  return { token, releaseDate: assertIsoDate(dateRaw) }
+}
+
+/**
+ * Parse a CLI release spec of the form `<token>[@yyyy-mm-dd][:type[:description]]`
+ * into a {@link ReleaseInput}.
+ *
+ * The token determines the kind: a semver (`"1.2.5"`) or the literal `"next"`
+ * yields a versioned {@link ReleaseSpec}; anything else is treated as a named
+ * release ({@link NamedReleaseInput}) — the name is not validated here,
+ * {@link resolveReleaseEntries} runs `validateName` later. The `@date` split is
+ * only on the first colon-segment (see {@link splitTokenAndDate} for the grammar
+ * invariant it rests on). Type defaults to "regular". Description is everything
+ * after the second colon, so colons inside descriptions are preserved and a
+ * description that starts with a date is still a description.
  */
 export const parseReleaseSpec = (raw: string): ReleaseInput => {
   const spec = raw.trim()
@@ -196,12 +232,11 @@ export const parseReleaseSpec = (raw: string): ReleaseInput => {
   if (spec === '') throw new Error('Release spec is empty')
 
   const firstColon = spec.indexOf(':')
-  let token = spec
+  const { token, releaseDate } = splitTokenAndDate(firstColon === -1 ? spec : spec.slice(0, firstColon))
   let type: ReleaseType = 'regular'
   let description = ''
 
   if (firstColon !== -1) {
-    token = spec.slice(0, firstColon).trim()
     const rest = spec.slice(firstColon + 1)
     const secondColon = rest.indexOf(':')
     const typeRaw = secondColon === -1 ? rest.trim() : rest.slice(0, secondColon).trim()
@@ -216,25 +251,25 @@ export const parseReleaseSpec = (raw: string): ReleaseInput => {
     type = typeLower
   }
 
-  const entry: ReleaseInput = { ...classifyReleaseToken(token), type }
-
-  if (description !== '') entry.description = description
-
-  return entry
+  return withOptionalFields({ ...classifyReleaseToken(token), type }, { description, releaseDate })
 }
 
 /**
  * Render a resolved {@link ReleaseEntry} as the canonical `--release` spec that
  * reproduces it — the inverse of {@link parseReleaseSpec} composed with
- * {@link resolveReleaseEntries}. The form is minimal: the bare token when the
- * release is `regular` with no description, `token:hotfix` for a hotfix with no
- * description, and `token:type:description` whenever a description is present
- * (the type segment is required to reach the description segment). The token is
- * the resolved {@link ReleaseId.raw} — a concrete semver for versions (so a
- * resolved `"next"` pins its computed version) or the name for named releases.
+ * {@link resolveReleaseEntries}.
+ *
+ * The form is minimal: the bare token when the release is `regular` with no
+ * description, `token:hotfix` for a hotfix with no description, and
+ * `token:type:description` whenever a description is present (the type segment
+ * is required to reach the description segment); a release date rides on the
+ * token as `token@yyyy-mm-dd` and never forces a type segment
+ * (`1.2.5@2026-10-28:regular` formats as `1.2.5@2026-10-28`). The token is the
+ * resolved {@link ReleaseId.raw} — a concrete semver for versions (so a resolved
+ * `"next"` pins its computed version) or the name for named releases.
  */
 export const formatReleaseSpec = (entry: ReleaseEntry): string => {
-  const token = entry.id.raw
+  const token = entry.releaseDate === undefined ? entry.id.raw : `${entry.id.raw}@${entry.releaseDate}`
 
   if (entry.description !== undefined && entry.description !== '') {
     return `${token}:${entry.type}:${entry.description}`
@@ -245,8 +280,21 @@ export const formatReleaseSpec = (entry: ReleaseEntry): string => {
   return token
 }
 
-const withDescription = (base: { id: ReleaseId; type: ReleaseType }, description?: string): ReleaseEntry => {
-  return description !== undefined && description !== '' ? { ...base, description } : base
+interface OptionalReleaseFields {
+  description?: string
+  releaseDate?: string
+}
+
+// Conditional spreads, never `key: undefined`: downstream tests assert the objects exactly, and the
+// agent form's round-1 arguments must equal what round 2 parses.
+const withOptionalFields = <T extends object>(base: T, fields: OptionalReleaseFields): T & OptionalReleaseFields => {
+  const { description, releaseDate } = fields
+
+  return {
+    ...base,
+    ...(description !== undefined && description !== '' ? { description } : {}),
+    ...(releaseDate === undefined ? {} : { releaseDate }),
+  }
 }
 
 const resolveNamedInput = (input: NamedReleaseInput): ReleaseEntry => {
@@ -255,7 +303,7 @@ const resolveNamedInput = (input: NamedReleaseInput): ReleaseEntry => {
   // validateName throws InvalidReleaseNameError with a specific message.
   validateName(name)
 
-  return withDescription({ id: { kind: 'name', name, raw: name }, type: input.type }, input.description)
+  return withOptionalFields({ id: { kind: 'name', name, raw: name }, type: input.type }, input)
 }
 
 /**
@@ -285,7 +333,7 @@ export const resolveReleaseEntries = (entries: ReleaseInput[], known: SemVer[]):
 
       running.push(parseVersion(`v${next}`))
 
-      return withDescription({ id: parseReleaseRef(next), type: entry.type }, entry.description)
+      return withOptionalFields({ id: parseReleaseRef(next), type: entry.type }, entry)
     }
 
     const parsed = tryParse(trimmed)
@@ -298,7 +346,7 @@ export const resolveReleaseEntries = (entries: ReleaseInput[], known: SemVer[]):
 
     running.push(parsed)
 
-    return withDescription({ id: parseReleaseRef(explicit), type: entry.type }, entry.description)
+    return withOptionalFields({ id: parseReleaseRef(explicit), type: entry.type }, entry)
   })
 }
 

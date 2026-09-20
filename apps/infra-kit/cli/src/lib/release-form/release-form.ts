@@ -8,8 +8,8 @@ import type { ArgumentFormProvider } from 'src/types'
 /**
  * @fileoverview
  *
- * The argument form `release-create` offers when `releases` is omitted: the wizard's three questions
- * (type, version-or-name, description) for ONE release, feeding the confirm gate.
+ * The argument form `release-create` offers when `releases` is omitted: the wizard's four questions
+ * (type, version-or-name, description, release date) for ONE release, feeding the confirm gate.
  *
  * Same seam as `lib/deploy-form`, same silent failure modes — the tests assert `!== null` on the
  * wire shape for that reason. Unlike the deploy and env-load providers there is NO enumeration here
@@ -37,6 +37,11 @@ export const HINT_BUDGET_MS = 2_500
 /** A plain object — not an array, not `null`, not a primitive. */
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** The trimmed string, or `undefined` for anything blank or non-string — so the key can be left out. */
+const nonBlank = (value: unknown): string | undefined => {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 }
 
 interface NextHint {
@@ -113,12 +118,21 @@ export const createReleaseFormProvider = (options: { hintBudgetMs?: number } = {
         release: z
           .string()
           .describe(
-            `A semver such as "1.64.0", the literal "next", or a kebab-case name such as "checkout-redesign". ${hintProse(hint, hintBudgetMs)}`,
+            `A semver such as "1.64.0", the literal "next", or a kebab-case name such as "checkout-redesign" — no "@" here, the date has its own field. ${hintProse(hint, hintBudgetMs)}`,
           ),
         description: z
           .string()
           .optional()
           .describe('Optional. Becomes the Jira fix version description and feeds the PR body. Blank means none.'),
+        // Not `isoDateSchema`: the same no-measured-wire-shape rule as `release`. Nothing parses this
+        // schema at runtime anyway — the refusal for a bad date is `parseReleaseSpec` on the re-run,
+        // which is why the prose says where the value goes.
+        releaseDate: z
+          .string()
+          .optional()
+          .describe(
+            "Optional. Planned production date, yyyy-mm-dd. Becomes the Jira fix version's release date; delivery overwrites it with the actual date. On the re-run it is passed as <token>@yyyy-mm-dd inside -r.",
+          ),
       })
     },
 
@@ -132,10 +146,10 @@ export const createReleaseFormProvider = (options: { hintBudgetMs?: number } = {
       // Total, and always PRESENT: the tool's transform defaults `type`, so the merged object must
       // already carry it or the gate would sign arguments that differ from what round 2 parses.
       const type = content.type === 'hotfix' ? 'hotfix' : 'regular'
-      const description =
-        typeof content.description === 'string' && content.description.trim() !== ''
-          ? content.description.trim()
-          : undefined
+      const description = nonBlank(content.description)
+      // Not validated here for the same reason as the name below: `parseReleaseSpec` refuses a bad
+      // date on the re-run with a message that names it.
+      const releaseDate = nonBlank(content.releaseDate)
 
       // A name the rule rejects still goes through: `resolveReleaseEntries` refuses it on round 2 with
       // the kebab-case remediation, before anything has mutated — a refusal that names the rule, where
@@ -144,7 +158,14 @@ export const createReleaseFormProvider = (options: { hintBudgetMs?: number } = {
 
       return {
         ...(isRecord(params) ? params : {}),
-        releases: [{ ...id, type, ...(description === undefined ? {} : { description }) }],
+        releases: [
+          {
+            ...id,
+            type,
+            ...(description === undefined ? {} : { description }),
+            ...(releaseDate === undefined ? {} : { releaseDate }),
+          },
+        ],
       }
     },
   }

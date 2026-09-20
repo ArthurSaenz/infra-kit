@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { parseReleaseSpec } from 'src/lib/version-utils'
 
 import { releaseCreate } from '../release-create'
 
@@ -164,6 +165,26 @@ describe('releaseCreate — batch behaviour around the per-entry guard', () => {
     const result = await releaseCreate({ releases, confirmedCommand: true })
 
     expect(result.structuredContent.failedReleases[0]?.error).toContain('M src/foo.ts')
+  })
+
+  // One spec string carries the whole release: the date has to reach Jira AND the `--yes` echo, or
+  // the re-run an agent is handed would silently drop it.
+  it('passes an explicit -r 1.2.5@2026-10-28 date to createSingleRelease and echoes the canonical spec', async () => {
+    const addOption = vi.spyOn(commandEcho, 'addOption')
+
+    await releaseCreate({
+      releases: [parseReleaseSpec('1.2.5@2026-10-28:regular')],
+      confirmedCommand: true,
+    })
+
+    expect(mocks.createSingleRelease).toHaveBeenCalledWith(expect.objectContaining({ releaseDate: '2026-10-28' }))
+    expect(addOption).toHaveBeenCalledWith('--release', '1.2.5@2026-10-28')
+  })
+
+  it('never hands createSingleRelease a releaseDate key when the spec carries no date', async () => {
+    await releaseCreate({ releases: [parseReleaseSpec('1.2.5')], confirmedCommand: true })
+
+    expect(mocks.createSingleRelease.mock.calls[0]?.[0]).not.toHaveProperty('releaseDate')
   })
 })
 

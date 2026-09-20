@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { InvalidReleaseDateError } from '../../release-date'
 import { InvalidReleaseNameError, formatBranchName, formatJiraName, formatPrTitle } from '../../release-id'
 import type { ReleaseId } from '../../release-id'
 import {
@@ -186,6 +187,67 @@ describe('parseReleaseSpec', () => {
   it('treats a v-prefixed semver as a version, not a name', () => {
     expect(parseReleaseSpec('v1.2.5')).toEqual({ version: 'v1.2.5', type: 'regular' })
   })
+
+  describe('the @date segment', () => {
+    it('parses version@date', () => {
+      expect(parseReleaseSpec('1.64.0@2026-10-28')).toStrictEqual({
+        version: '1.64.0',
+        type: 'regular',
+        releaseDate: '2026-10-28',
+      })
+    })
+
+    it('parses next@date', () => {
+      expect(parseReleaseSpec('next@2026-10-28')).toStrictEqual({
+        version: 'next',
+        type: 'regular',
+        releaseDate: '2026-10-28',
+      })
+    })
+
+    it('parses name@date:type:description, keeping colons in the description', () => {
+      expect(parseReleaseSpec('checkout-redesign@2026-10-28:hotfix:desc with: colons')).toStrictEqual({
+        name: 'checkout-redesign',
+        type: 'hotfix',
+        description: 'desc with: colons',
+        releaseDate: '2026-10-28',
+      })
+    })
+
+    it('surfaces InvalidReleaseDateError for a date that is not a calendar date', () => {
+      expect(() => {
+        return parseReleaseSpec('1.64.0@2026-02-30')
+      }).toThrow(InvalidReleaseDateError)
+      expect(() => {
+        return parseReleaseSpec('1.64.0@28-10-2026')
+      }).toThrow('Release date "28-10-2026" is not a calendar date in yyyy-mm-dd form.')
+    })
+
+    it('refuses an empty date after @', () => {
+      expect(() => {
+        return parseReleaseSpec('1.64.0@')
+      }).toThrow(/empty release date.*<token>@yyyy-mm-dd/)
+    })
+
+    it('refuses more than one @', () => {
+      expect(() => {
+        return parseReleaseSpec('a@b@c')
+      }).toThrow(/more than one "@".*<token>@yyyy-mm-dd/)
+    })
+
+    // Only the first colon-segment is split on `@`: a date-shaped description is still a description.
+    it('keeps a description that starts with a date as a description', () => {
+      expect(parseReleaseSpec('1.64.0:regular:2026-10-28 is the day')).toStrictEqual({
+        version: '1.64.0',
+        type: 'regular',
+        description: '2026-10-28 is the day',
+      })
+    })
+
+    it('never emits a releaseDate key when no date was given', () => {
+      expect(parseReleaseSpec('1.64.0:hotfix:x')).not.toHaveProperty('releaseDate')
+    })
+  })
 })
 
 describe('formatReleaseSpec', () => {
@@ -228,26 +290,69 @@ describe('formatReleaseSpec', () => {
   it('treats an empty description as absent', () => {
     expect(formatReleaseSpec(entry(versionId('1.2.5'), 'regular', ''))).toBe('1.2.5')
   })
+
+  it('attaches the release date to the token without forcing a type segment', () => {
+    expect(formatReleaseSpec({ id: versionId('1.2.5'), type: 'regular', releaseDate: '2026-10-28' })).toBe(
+      '1.2.5@2026-10-28',
+    )
+    expect(formatReleaseSpec({ id: versionId('1.2.5'), type: 'hotfix', releaseDate: '2026-10-28' })).toBe(
+      '1.2.5@2026-10-28:hotfix',
+    )
+    expect(
+      formatReleaseSpec({
+        id: nameId('checkout-redesign'),
+        type: 'regular',
+        description: 'Q3',
+        releaseDate: '2026-10-28',
+      }),
+    ).toBe('checkout-redesign@2026-10-28:regular:Q3')
+  })
 })
 
 describe('formatReleaseSpec round-trips through parseReleaseSpec + resolveReleaseEntries', () => {
   const known = collectKnownVersions({ remoteBranches: ['release/v1.63.0'] })
 
-  const roundTrip = (entry: ReleaseEntry): ReleaseEntry => {
-    return resolveReleaseEntries([parseReleaseSpec(formatReleaseSpec(entry))], known)[0] as ReleaseEntry
+  const resolve = (spec: string): ReleaseEntry => {
+    return resolveReleaseEntries([parseReleaseSpec(spec)], known)[0] as ReleaseEntry
   }
 
-  const cases: ReleaseEntry[] = [
-    { id: versionId('1.2.5'), type: 'regular' },
-    { id: versionId('1.2.5'), type: 'hotfix' },
-    { id: versionId('1.2.5'), type: 'regular', description: 'Holiday: backend' },
-    { id: nameId('checkout-redesign'), type: 'regular' },
-    { id: nameId('checkout-redesign'), type: 'hotfix' },
-    { id: nameId('checkout-redesign'), type: 'regular', description: 'Q3 work' },
-  ]
+  const roundTrip = (entry: ReleaseEntry): ReleaseEntry => {
+    return resolve(formatReleaseSpec(entry))
+  }
+
+  // Every {id kind} × {type} × {description?} × {date?} combination: the `--yes` re-run is built from
+  // `formatReleaseSpec`, so a field that does not survive this trip is silently lost by the re-run.
+  const cases: ReleaseEntry[] = [versionId('1.2.5'), nameId('checkout-redesign')].flatMap((id) => {
+    return (['regular', 'hotfix'] as const).flatMap((type) => {
+      return [undefined, 'Holiday: backend'].flatMap((description) => {
+        return [undefined, '2026-10-28'].map((releaseDate): ReleaseEntry => {
+          return {
+            id,
+            type,
+            ...(description === undefined ? {} : { description }),
+            ...(releaseDate === undefined ? {} : { releaseDate }),
+          }
+        })
+      })
+    })
+  })
 
   it.each(cases)('reconstructs %o', (entry) => {
-    expect(roundTrip(entry)).toEqual(entry)
+    expect(roundTrip(entry)).toStrictEqual(entry)
+  })
+
+  // Canonical form: one parse→format settles the spec, so a re-run's argv equals its own re-run's.
+  it.each(['1.2.5@2026-10-28:regular', '1.2.5@2026-10-28:regular:', 'checkout-redesign:regular', 'next@2026-10-28'])(
+    'formatReleaseSpec is idempotent after one parse of %s',
+    (spec) => {
+      const once = formatReleaseSpec(resolve(spec))
+
+      expect(formatReleaseSpec(resolve(once))).toBe(once)
+    },
+  )
+
+  it('renders 1.2.5@2026-10-28:regular minimally as 1.2.5@2026-10-28', () => {
+    expect(formatReleaseSpec(resolve('1.2.5@2026-10-28:regular'))).toBe('1.2.5@2026-10-28')
   })
 })
 

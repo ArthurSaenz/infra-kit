@@ -3,7 +3,9 @@ import { z } from 'zod'
 
 import { releaseCreateMcpTool } from 'src/commands/release-create'
 import { logger } from 'src/lib/logger'
-import type { SemVer } from 'src/lib/version-utils'
+import { InvalidReleaseDateError } from 'src/lib/release-date'
+import { formatReleaseSpec, parseReleaseSpec } from 'src/lib/version-utils'
+import type { ReleaseInput, SemVer } from 'src/lib/version-utils'
 import { loadExistingVersions } from 'src/lib/version-utils/load-existing-versions'
 
 import { createReleaseFormProvider } from '../release-form'
@@ -73,13 +75,13 @@ describe('r1 — isFormable', () => {
 // R2. The assertion that separates "a form was offered" from "the provider silently broke": a
 // provider returning `null` reads as "nothing to offer" and the refusal ships without `choices`.
 describe("r2 — the form is OFFERED, in the wizard's order", () => {
-  it('renders type and release required, description optional, no default anywhere', async () => {
+  it('renders type and release required, description and releaseDate optional, no default anywhere', async () => {
     known(KNOWN)
     silenceInfo()
 
     const schema = await render()
 
-    expect(Object.keys(schema.properties ?? {})).toStrictEqual(['type', 'release', 'description'])
+    expect(Object.keys(schema.properties ?? {})).toStrictEqual(['type', 'release', 'description', 'releaseDate'])
     expect(schema.required).toStrictEqual(['type', 'release'])
     expect(schema.properties?.type?.enum).toStrictEqual(['regular', 'hotfix'])
     expect(schema.properties?.release?.type).toBe('string')
@@ -87,6 +89,22 @@ describe("r2 — the form is OFFERED, in the wizard's order", () => {
     for (const field of Object.values(schema.properties ?? {})) {
       expect(field).not.toHaveProperty('default')
     }
+  })
+
+  // The prose is the agent's only instruction for where the date goes on the re-run, and the only
+  // thing that stops `1.64.0@2026-10-28` being typed into `release` (where round 2 would refuse it
+  // as "not kebab-case").
+  it('tells the agent the date rides in -r as <token>@yyyy-mm-dd and keeps @ out of release', async () => {
+    known(KNOWN)
+
+    const schema = await render()
+
+    expect(schema.properties?.releaseDate?.type).toBe('string')
+    expect(schema.properties?.releaseDate?.description).toContain('yyyy-mm-dd')
+    expect(schema.properties?.releaseDate?.description).toContain(
+      'On the re-run it is passed as <token>@yyyy-mm-dd inside -r',
+    )
+    expect(schema.properties?.release?.description).toContain('no "@" here')
   })
 })
 
@@ -177,6 +195,13 @@ const CLASSIFIED: [Record<string, unknown>, Record<string, unknown>][] = [
     { releases: [{ version: 'next', type: 'regular', description: 'x' }] },
   ],
   [{ type: 'regular', release: 'next', description: '' }, { releases: [{ version: 'next', type: 'regular' }] }],
+  [
+    { type: 'regular', release: '1.64.0', releaseDate: ' 2026-10-28 ' },
+    { releases: [{ version: '1.64.0', type: 'regular', releaseDate: '2026-10-28' }] },
+  ],
+  // Blank → key ABSENT, not `releaseDate: undefined`: the gate compares round-1 and round-2 objects.
+  [{ type: 'regular', release: '1.64.0', releaseDate: '' }, { releases: [{ version: '1.64.0', type: 'regular' }] }],
+  [{ type: 'regular', release: '1.64.0', releaseDate: '   ' }, { releases: [{ version: '1.64.0', type: 'regular' }] }],
 ]
 
 describe('r5 — toArgs classifies through the one shared classifier', () => {
@@ -193,6 +218,35 @@ describe('r5 — toArgs classifies through the one shared classifier', () => {
     [{ type: 'regular' }],
   ])('returns null for %j — the only null', (content) => {
     expect(provider.toArgs(content, {})).toBeNull()
+  })
+})
+
+// The form does not validate the date (no measured wire shape on form fields, and nothing parses
+// `inputSchema` at runtime). The real refusal is the re-run: the agent passes `-r <token>@<date>`,
+// and `parseReleaseSpec` names the date.
+describe('r5b — an invalid date passes the form and is refused on the re-run by name', () => {
+  it('lets 2026-02-30 through toArgs, then parseReleaseSpec throws InvalidReleaseDateError naming it', () => {
+    const merged = createReleaseFormProvider().toArgs(
+      { type: 'regular', release: '1.64.0', releaseDate: '2026-02-30' },
+      {},
+    )
+
+    expect(merged).toStrictEqual({ releases: [{ version: '1.64.0', type: 'regular', releaseDate: '2026-02-30' }] })
+
+    const [entry] = (merged as { releases: ReleaseInput[] }).releases
+    const spec = formatReleaseSpec({
+      id: { kind: 'version', semver: { major: 1, minor: 64, patch: 0 }, raw: '1.64.0' },
+      type: 'regular',
+      releaseDate: entry!.releaseDate!,
+    })
+
+    expect(spec).toBe('1.64.0@2026-02-30')
+    expect(() => {
+      return parseReleaseSpec(spec)
+    }).toThrow(InvalidReleaseDateError)
+    expect(() => {
+      return parseReleaseSpec(spec)
+    }).toThrow('Release date "2026-02-30" is not a calendar date in yyyy-mm-dd form.')
   })
 })
 

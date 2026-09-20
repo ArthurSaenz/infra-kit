@@ -96,4 +96,18 @@ describe('release-create — the confirm site propagates its refusal', () => {
     expect(mocks.prepareGitForRelease).not.toHaveBeenCalled()
     expect(mocks.createSingleRelease).not.toHaveBeenCalled()
   })
+
+  // The confirm text is what the human approves, so the date Jira will end up with must be in it.
+  it('shows the planned release date in the confirm summary', async () => {
+    agentMode.source = 'flag'
+
+    const error = await releaseCreate({
+      releases: [{ version: '1.2.3', type: 'regular', releaseDate: '2026-10-28' }],
+      confirmedCommand: false,
+    }).catch((e: unknown) => {
+      return e
+    })
+
+    expect((error as StructuredRefusalError).structuredContent.message).toContain('v1.2.3 · regular · ships 2026-10-28')
+  })
 })

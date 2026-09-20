@@ -32,7 +32,7 @@ export interface CreateJiraVersionParams {
   projectId: number
   /** Description of the version */
   description?: string
-  /** Release date in ISO format (YYYY-MM-DD). Defaults to current date if not provided */
+  /** Release date in ISO format (YYYY-MM-DD) */
   releaseDate?: string
   /** Whether the version is released. Defaults to true */
   released?: boolean
@@ -61,8 +61,8 @@ export interface UpdateJiraVersionParams {
   versionId: string
   /** Whether the version is released */
   released?: boolean
-  /** Release date in ISO format (YYYY-MM-DD) */
-  releaseDate?: string
+  /** Release date in ISO format (YYYY-MM-DD); `null` clears it. Absent leaves it untouched. */
+  releaseDate?: string | null
   /** Description of the version */
   description?: string
   /** Whether the version is archived */

@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { stdinReaderCount } from 'src/lib/prompts/stdin-ref'
 import { parseVersion } from 'src/lib/version-utils'
 
-import { promptForVersionInput } from '../release-create'
+import { promptForReleaseDateInput, promptForVersionInput } from '../release-create'
 
 vi.mock('@inquirer/input', () => {
   return { default: vi.fn() }
@@ -79,6 +79,40 @@ describe('release-create version prompt', () => {
     await promptForVersionInput([parseVersion('v1.2.3')], 'regular')
 
     expect(input.mock.calls[0]?.[0]).not.toHaveProperty('default')
+  })
+})
+
+describe('release-create release-date prompt', () => {
+  type Validate = (answer: string) => true | string
+
+  const validateOf = async (): Promise<Validate> => {
+    input.mockResolvedValue('')
+    await promptForReleaseDateInput()
+
+    return input.mock.calls[0]?.[0]?.validate as Validate
+  }
+
+  it('keeps empty — Enter skips the date', async () => {
+    input.mockResolvedValue('   ')
+
+    expect(await promptForReleaseDateInput()).toBe('')
+    expect((await validateOf())('')).toBe(true)
+  })
+
+  it('accepts a valid calendar date and trims it', async () => {
+    input.mockResolvedValue(' 2026-10-28 ')
+
+    expect(await promptForReleaseDateInput()).toBe('2026-10-28')
+    expect((await validateOf())('2026-10-28')).toBe(true)
+  })
+
+  // Inquirer re-asks on a string answer from `validate`, so the validator's message being returned
+  // (not thrown) IS the re-ask — and it names the offender.
+  it('re-asks on an invalid date with the validator message', async () => {
+    const validate = await validateOf()
+
+    expect(validate('2026-02-30')).toBe('Release date "2026-02-30" is not a calendar date in yyyy-mm-dd form.')
+    expect(validate('28/10/2026')).toMatch(/not a calendar date in yyyy-mm-dd form/)
   })
 })
 

@@ -96,6 +96,13 @@ describe('rerunArgv round-trips through the program', () => {
       argv: ['release', 'desc-edit', '--version', '1.2.3', '--description', 'x y'],
     },
     {
+      // Canonical form on purpose: `formatReleaseSpec` is minimal, so the echo of
+      // `1.2.5@2026-10-28:regular` would be `1.2.5@2026-10-28`; the description forces the full form.
+      label: 'a dated release spec (-r token@yyyy-mm-dd:type:description)',
+      path: ['release', 'create'],
+      argv: ['release', 'create', '--release', '1.2.5@2026-10-28:regular:desc'],
+    },
+    {
       label: 'a variadic option (--services <services...>) stops at --yes',
       path: ['release', 'deploy-selected'],
       argv: ['release', 'deploy-selected', '--from', 'ci', '--services', 'api', 'ui', '--agent'],

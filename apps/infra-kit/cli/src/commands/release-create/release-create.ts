@@ -18,6 +18,7 @@ import { assertBaseBranchSwitchable, assertCleanCheckout, assertManagementContex
 import { logger } from 'src/lib/logger'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { refuseMissingArguments } from 'src/lib/prompts/refuse-missing-arguments'
+import { InvalidReleaseDateError, assertIsoDate, isoDateSchema } from 'src/lib/release-date'
 import { createReleaseFormProvider } from 'src/lib/release-form'
 import { InvalidReleaseNameError, displayLabel, validateName } from 'src/lib/release-id'
 import { createSingleRelease, getBaseBranch, prepareGitForRelease } from 'src/lib/release-utils'
@@ -116,6 +117,39 @@ const promptForNameInput = async (): Promise<string> => {
   return name
 }
 
+/**
+ * Inquirer re-asks on a string answer, so the validator's message IS the re-ask; empty is the skip.
+ * Exported for test only — the validate callback is observable no other way.
+ */
+export const promptForReleaseDateInput = async (): Promise<string> => {
+  return (
+    await withEscape(
+      (context) => {
+        return input(
+          {
+            message: '  Release date (yyyy-mm-dd, optional, press Enter to skip): ',
+            validate: (answer: string) => {
+              if (answer.trim() === '') return true
+
+              try {
+                assertIsoDate(answer)
+
+                return true
+              } catch (err) {
+                if (err instanceof InvalidReleaseDateError) return err.message
+
+                throw err
+              }
+            },
+          },
+          context,
+        )
+      },
+      { whenHeadless: 'refuse' },
+    )
+  ).trim()
+}
+
 // Every prompt in this wizard (and the two input helpers above) refuses when headless, and refusing is
 // the only honest outcome: there is no safe default for "which release", so answering would cut a
 // branch nobody chose. An elicitation-capable client never gets here (the form supplies `releases`);
@@ -200,7 +234,13 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
       )
     ).trim()
 
-    entries.push({ ...resolved, ...(description !== '' ? { description } : {}) })
+    const releaseDate = await promptForReleaseDateInput()
+
+    entries.push({
+      ...resolved,
+      ...(description !== '' ? { description } : {}),
+      ...(releaseDate !== '' ? { releaseDate } : {}),
+    })
 
     addAnother = await withEscape(
       (context) => {
@@ -218,6 +258,8 @@ const formatReleaseSummary = (entry: ReleaseEntry): string => {
   const parts = [label, entry.type]
 
   if (entry.description) parts.push(entry.description)
+  // This is the text the human approves, so the date Jira will end up with has to be in it.
+  if (entry.releaseDate) parts.push(`ships ${entry.releaseDate}`)
 
   return parts.join(' · ')
 }
@@ -334,6 +376,7 @@ const executeOne = async (
       id: entry.id,
       jiraConfig,
       description: entry.description,
+      ...(entry.releaseDate === undefined ? {} : { releaseDate: entry.releaseDate }),
       type: entry.type,
       baseSha,
     })
@@ -499,6 +542,11 @@ export const releaseCreateMcpTool = defineMcpTool({
               .default('regular')
               .describe('Release type: "regular" (branches off dev) or "hotfix" (branches off main).'),
             description: z.string().optional().describe('Optional description for the Jira version.'),
+            releaseDate: isoDateSchema
+              .optional()
+              .describe(
+                'Optional planned production date, yyyy-mm-dd. Written to the Jira fix version as its release date; "release deliver" overwrites it with the actual date. Rides in the CLI spec as "<token>@yyyy-mm-dd".',
+              ),
           })
           .refine(
             (entry) => {
@@ -509,13 +557,14 @@ export const releaseCreateMcpTool = defineMcpTool({
             },
           )
           .transform((entry): ReleaseInput => {
+            const optional = {
+              ...(entry.description ? { description: entry.description } : {}),
+              ...(entry.releaseDate === undefined ? {} : { releaseDate: entry.releaseDate }),
+            }
+
             return entry.name !== undefined
-              ? { name: entry.name, type: entry.type, ...(entry.description ? { description: entry.description } : {}) }
-              : {
-                  version: entry.version as string,
-                  type: entry.type,
-                  ...(entry.description ? { description: entry.description } : {}),
-                }
+              ? { name: entry.name, type: entry.type, ...optional }
+              : { version: entry.version as string, type: entry.type, ...optional }
           }),
       )
       .min(1)
@@ -540,6 +589,10 @@ export const releaseCreateMcpTool = defineMcpTool({
           branchName: z.string().describe('Release branch name'),
           prUrl: z.string().describe('GitHub PR URL'),
           jiraVersionUrl: z.string().describe('Jira version URL'),
+          releaseDate: z
+            .string()
+            .nullable()
+            .describe('The release date the Jira fix version now carries (yyyy-mm-dd), or null when it has none'),
         }),
       )
       .describe('Detailed information for each created release with URLs'),

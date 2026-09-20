@@ -72,6 +72,8 @@ export interface ReleaseCreationResult {
   branchName: string
   prUrl: string
   jiraVersionUrl: string
+  /** What the Jira fix version carries after the call — its echo, not the request — or `null`. */
+  releaseDate: string | null
 }
 
 /**
@@ -131,6 +133,8 @@ interface CreateSingleReleaseArgs {
   id: ReleaseId
   jiraConfig: JiraConfig
   description?: string
+  /** Planned production date (`yyyy-mm-dd`), written to the Jira fix version. */
+  releaseDate?: string
   type?: ReleaseType
   /** The base-branch SHA from {@link prepareGitForRelease}, forwarded to the branch cut. */
   baseSha: string
@@ -140,6 +144,7 @@ interface EnsureJiraVersionArgs {
   versionName: string
   jiraConfig: JiraConfig
   description?: string
+  releaseDate?: string
 }
 
 /**
@@ -157,11 +162,14 @@ interface EnsureJiraVersionArgs {
 // - A differing description is written through. The PR body is composed from the description
 //   passed to THIS call, so a bare reuse would leave the PR and the fix version disagreeing
 //   permanently, with nothing to indicate which one is current.
+// - A differing release date is written through for the same reason: the confirm summary the
+//   human approved shows the date, so Jira has to end up matching it. An ABSENT date never clears
+//   one — creating must not be a way to erase.
 // - A released or archived version is refused rather than reused. Re-cutting a release whose
 //   version was already delivered is a plausible mistake, and quietly attaching a new branch
 //   to a closed version would misreport the delivered scope.
 const ensureJiraVersion = async (args: EnsureJiraVersionArgs): Promise<JiraVersion> => {
-  const { versionName, jiraConfig, description } = args
+  const { versionName, jiraConfig, description, releaseDate } = args
   const existing = await findVersionByName(versionName, jiraConfig)
 
   if (!existing) {
@@ -172,6 +180,7 @@ const ensureJiraVersion = async (args: EnsureJiraVersionArgs): Promise<JiraVersi
         description: description || '',
         released: false,
         archived: false,
+        ...(releaseDate === undefined ? {} : { releaseDate }),
       },
       jiraConfig,
     )
@@ -188,25 +197,39 @@ const ensureJiraVersion = async (args: EnsureJiraVersionArgs): Promise<JiraVersi
   }
 
   const wanted = description || ''
-
-  if (wanted !== '' && wanted !== (existing.description ?? '')) {
-    await updateJiraVersion({ versionId: existing.id, description: wanted }, jiraConfig)
-
-    return { ...existing, description: wanted }
+  const changes = {
+    ...(wanted !== '' && wanted !== (existing.description ?? '') ? { description: wanted } : {}),
+    ...(releaseDate !== undefined && releaseDate !== (existing.releaseDate ?? '') ? { releaseDate } : {}),
   }
 
-  return existing
+  if (Object.keys(changes).length === 0) return existing
+
+  const updated = await updateJiraVersion({ versionId: existing.id, ...changes }, jiraConfig)
+
+  // The date is read back from the PUT echo, not taken from the request, because it is reported to
+  // the caller (`ReleaseCreationResult.releaseDate`) and Jira may normalise it. Nothing reports the
+  // description from here — the PR body is built from the request — so it stays as sent.
+  return {
+    ...existing,
+    ...changes,
+    ...(changes.releaseDate === undefined ? {} : { releaseDate: updated.version.releaseDate }),
+  }
 }
 
 /**
  * Create a single release by creating both Jira version and GitHub release branch
  */
 export const createSingleRelease = async (args: CreateSingleReleaseArgs): Promise<ReleaseCreationResult> => {
-  const { id, jiraConfig, description, type = 'regular', baseSha } = args
+  const { id, jiraConfig, description, releaseDate, type = 'regular', baseSha } = args
   // 1. Ensure the Jira version exists (mandatory). For versioned releases this is
   // "v1.2.3" (byte-identical to before); for named releases it is "<name>".
   const versionName = formatJiraName(id)
-  const jiraVersion = await ensureJiraVersion({ versionName, jiraConfig, description })
+  const jiraVersion = await ensureJiraVersion({
+    versionName,
+    jiraConfig,
+    description,
+    ...(releaseDate === undefined ? {} : { releaseDate }),
+  })
   const jiraVersionUrl = buildJiraVersionUrl(jiraConfig, jiraVersion)
 
   // 2. Create GitHub release branch
@@ -218,6 +241,7 @@ export const createSingleRelease = async (args: CreateSingleReleaseArgs): Promis
     branchName: releaseInfo.branchName,
     prUrl: releaseInfo.prUrl,
     jiraVersionUrl,
+    releaseDate: jiraVersion.releaseDate || null,
   }
 }
 
