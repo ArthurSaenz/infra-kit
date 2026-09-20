@@ -158,17 +158,22 @@ export const parseReleaseRef = (input: string): ReleaseId => {
     )
   }
 
+  // A `1.64.0@2026-10-28` spec is what `release create -r` teaches, so it is the likeliest thing to
+  // be pasted here; one hint at the parser serves every ref-taking command. It REPLACES the
+  // kebab-case reason rather than trailing it: that reason is noise for this input, and callers
+  // that wrap the message (`resolveReleaseBranch`) cap it, which would cut the hint off.
+  if (trimmed.includes('@')) {
+    throw new InvalidReleaseRefError(
+      `Cannot parse "${input}" as a release ref: the \`@date\` suffix belongs to \`release create\`; pass the version alone here and use \`--release-date\` on \`release edit\``,
+    )
+  }
+
   try {
     validateName(trimmed)
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
-    // A `1.64.0@2026-10-28` spec is what `release create -r` teaches, so it is the likeliest thing
-    // to be pasted here; one hint at the parser serves every ref-taking command.
-    const hint = trimmed.includes('@')
-      ? ' (the `@date` suffix belongs to `release create`; pass the version alone here and use `--release-date` on `release edit`)'
-      : ''
 
-    throw new InvalidReleaseRefError(`Cannot parse "${input}" as a release ref: ${reason}${hint}`)
+    throw new InvalidReleaseRefError(`Cannot parse "${input}" as a release ref: ${reason}`)
   }
 
   return { kind: 'name', name: trimmed, raw: trimmed }

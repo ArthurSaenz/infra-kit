@@ -350,9 +350,12 @@ export const resolveReleaseBranch = (versionArg: string): string => {
   try {
     return formatBranchName(parseReleaseRef(versionArg))
   } catch (error) {
+    // `OperationError` never renders `cause.message`, so without the excerpt the parser's reason —
+    // including its `@date` hint for a pasted `release create` spec — would be dropped here.
     throw new OperationError(error, {
       operation: `resolve release ref "${versionArg}"`,
       remediation: 'pass a version (e.g. "1.2.5") or a release name (e.g. "checkout-redesign")',
+      stderrExcerpt: error instanceof Error ? error.message : String(error),
     })
   }
 }

@@ -133,6 +133,12 @@ describe('resolveReleaseBranch', () => {
     }).toThrow(OperationError)
   })
 
+  it("surfaces the parser's reason, so the `@date` hint reaches the operator", () => {
+    expect(() => {
+      return resolveReleaseBranch('1.64.0@2026-10-28')
+    }).toThrow(/`@date` suffix belongs to `release create`/)
+  })
+
   it('throws an OperationError for the unresolved "next" token', () => {
     expect(() => {
       return resolveReleaseBranch('next')
