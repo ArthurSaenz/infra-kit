@@ -175,7 +175,7 @@ describe('every @inquirer call site routes through withEscape', () => {
     )
 
     expect(files).toContain('commands/release-create/release-create.ts')
-    expect(files).toContain('commands/release-desc-edit/release-desc-edit.ts')
+    expect(files).toContain('commands/release-edit/release-edit.ts')
   })
 })
 

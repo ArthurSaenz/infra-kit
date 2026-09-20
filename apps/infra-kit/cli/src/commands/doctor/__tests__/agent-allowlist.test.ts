@@ -215,7 +215,7 @@ describe('readAllowPatterns / inspectAgentAllowlist', () => {
           commands: [
             'release merge-dev',
             'release create',
-            'release desc-edit',
+            'release edit',
             'release deploy-all',
             'release deploy-selected',
             'release deliver',

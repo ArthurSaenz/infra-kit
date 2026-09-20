@@ -7,10 +7,10 @@ import { commandEcho } from 'src/lib/command-echo'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { jsonOutput } from 'src/lib/json-output'
 
-import { releaseDescEdit } from '../release-desc-edit'
+import { releaseEdit } from '../release-edit'
 
 /**
- * The confirm site of `release-desc-edit` under agent mode: `confirmation_required` reaches the
+ * The confirm site of `release-edit` under agent mode: `confirmation_required` reaches the
  * caller, and neither Jira nor the PR body is touched. Both writes are mocked so a regression here
  * would be a recorded call, not a network error.
  */
@@ -65,11 +65,11 @@ afterEach(() => {
   jsonOutput.enabled = false
 })
 
-describe('release-desc-edit — the confirm site propagates its refusal', () => {
+describe('release-edit — the confirm site propagates its refusal', () => {
   it('an unconfirmed agent run throws confirmation_required and writes to neither Jira nor the PR', async () => {
     agentMode.source = 'flag'
 
-    const error = await releaseDescEdit({ version: '1.2.5', description: 'new', confirmedCommand: false }).catch(
+    const error = await releaseEdit({ version: '1.2.5', description: 'new', confirmedCommand: false }).catch(
       (e: unknown) => {
         return e
       },
@@ -89,7 +89,7 @@ describe('release-desc-edit — the confirm site propagates its refusal', () => 
   it('a missing --description in agent mode is argument_required naming it, not a prompt', async () => {
     agentMode.source = 'env'
 
-    const error = await releaseDescEdit({ version: '1.2.5', confirmedCommand: false }).catch((e: unknown) => {
+    const error = await releaseEdit({ version: '1.2.5', confirmedCommand: false }).catch((e: unknown) => {
       return e
     })
 

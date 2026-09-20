@@ -19,7 +19,7 @@ import type { ReleaseType } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
-interface ReleaseDescEditArgs extends RequiredConfirmedOptionArg {
+interface ReleaseEditArgs extends RequiredConfirmedOptionArg {
   version?: string
   description?: string
 }
@@ -87,7 +87,7 @@ export const promptDescription = async (current: string): Promise<string> => {
  * GitHub release PR body. The PR body is rewritten canonically to
  * `<jiraVersionUrl>\n\n<description>` (matching `release-create`).
  */
-export const releaseDescEdit = async (args: ReleaseDescEditArgs) => {
+export const releaseEdit = async (args: ReleaseEditArgs) => {
   const { version: versionArg, description: descriptionArg, confirmedCommand } = args
 
   const jiraConfig = await loadJiraConfig()
@@ -189,8 +189,8 @@ export const releaseDescEdit = async (args: ReleaseDescEditArgs) => {
 }
 
 // MCP Tool Registration
-export const releaseDescEditMcpTool = defineMcpTool({
-  name: 'release-desc-edit',
+export const releaseEditMcpTool = defineMcpTool({
+  name: 'release-edit',
   description:
     "Edit a release's description in Jira and in the matching GitHub release PR body. Accepts a release version or a release name: targets the Jira fix version named `v<version>` (versioned) or `<name>` (named) and the open PR on branch `release/v<version>` or `release/<name>`. The PR body is rewritten canonically to `<jiraVersionUrl>\\n\\n<description>` — any prior manual edits to the body are overwritten. Both `version` and `description` are required for MCP calls (the picker/prompt are unreachable without a TTY). Empty `description` clears the description on both sides. Confirmation is auto-skipped for MCP, so the caller is responsible for gating.",
   inputSchema: {
@@ -207,5 +207,5 @@ export const releaseDescEditMcpTool = defineMcpTool({
     newDescription: z.string().describe('The description after the update'),
     changed: z.boolean().describe('Whether the description actually changed'),
   },
-  handler: releaseDescEdit,
+  handler: releaseEdit,
 })

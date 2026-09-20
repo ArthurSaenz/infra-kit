@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { promptDescription } from '../release-desc-edit'
+import { promptDescription } from '../release-edit'
 
 vi.mock('@inquirer/input', () => {
   return { default: vi.fn() }
@@ -21,7 +21,7 @@ afterEach(() => {
  * Pinned here rather than left to `@inquirer/input`'s own normalisation, so the semantics survive a
  * minor bump of that package whichever way its default goes.
  */
-describe('release-desc-edit description prompt', () => {
+describe('release-edit description prompt', () => {
   it('keeps the current description when the answer is empty', async () => {
     input.mockResolvedValue('')
 

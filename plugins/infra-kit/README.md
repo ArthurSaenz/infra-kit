@@ -25,7 +25,7 @@ skills or guards. The root `CLAUDE.md` block says so, and `infra-kit doctor` rep
 
 - **Every call carries `--json --agent`.** `--json` puts the structured result on stdout (human logs
   stay on stderr); `--agent` tells the CLI a model is reading, so it never opens a prompt.
-- **A confirm-site command without `--yes` executes nothing** (`release create|remove|desc-edit|merge-dev|deploy-all|deploy-selected`,
+- **A confirm-site command without `--yes` executes nothing** (`release create|remove|edit|merge-dev|deploy-all|deploy-selected`,
   `worktrees add|remove|sync`, `local deploy-all|deploy-selected`). It exits 2 with
   `{"status": "confirmation_required", "message", "plan", "rerun": [...]}`. The skill shows the plan
   to the human, and only after their go-ahead runs exactly `infra-kit <rerun>` — the same argv with
@@ -52,7 +52,7 @@ A skill's `allowed-tools` lists **read-only argv only** — `Bash(infra-kit rele
 each resolving to a `mutating: false` row of the CLI's command catalog, never carrying `--yes`, plus
 the plugin's own bundled scripts (`${CLAUDE_PLUGIN_ROOT}/skills/<skill>/scripts/…`). Every mutating
 argv (`infra-kit env-load`, `infra-kit env-clear`, `infra-kit setup`,
-`infra-kit release create|remove|desc-edit|merge-dev|deploy-*`, `infra-kit worktrees add|remove|sync`)
+`infra-kit release create|remove|edit|merge-dev|deploy-*`, `infra-kit worktrees add|remove|sync`)
 is unlisted on purpose: the host prompts the human with it, and the `--yes` argv keeps the destructive
 intent in the transcript. The manifest suite pins this against the catalog (`__tests__/manifest.test.mjs`).
 One consequence to know: a "don't ask again" answer to a mutating prompt creates a prefix allow for the

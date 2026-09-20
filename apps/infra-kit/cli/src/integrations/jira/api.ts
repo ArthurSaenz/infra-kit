@@ -49,7 +49,7 @@ export const assertJiraOk = async (response: Response, context: string): Promise
  *
  * Lives here rather than beside either caller because both of its inputs originate in this
  * module: `release create` needs it for a version it just created *or* reused, and
- * `release desc-edit` needs it for one it looked up. Hoisting it out of the command layer is
+ * `release edit` needs it for one it looked up. Hoisting it out of the command layer is
  * what lets `lib/release-utils` use it — importing the command's private copy would close a
  * cycle, since that command already imports `lib/release-utils`.
  */

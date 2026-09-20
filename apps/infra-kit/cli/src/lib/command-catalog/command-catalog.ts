@@ -16,7 +16,7 @@ import { ghReleaseDeploySelectedMcpTool } from 'src/commands/gh-release-deploy-s
 import { ghReleaseListMcpTool } from 'src/commands/gh-release-list'
 import { localDeployAllMcpTool, localDeploySelectedMcpTool } from 'src/commands/local-deploy'
 import { releaseCreateMcpTool } from 'src/commands/release-create'
-import { releaseDescEditMcpTool } from 'src/commands/release-desc-edit'
+import { releaseEditMcpTool } from 'src/commands/release-edit'
 import { releaseRemoveMcpTool } from 'src/commands/release-remove'
 import { setupMcpTool } from 'src/commands/setup'
 import { vendorCheckMcpTool } from 'src/commands/vendor-check'
@@ -224,12 +224,12 @@ export const commandCatalog: CommandCatalogEntry[] = [
     groupPath: ['release', 'create'],
   },
   {
-    cliName: 'release-desc-edit',
+    cliName: 'release-edit',
     menuGroup: 'release',
-    mcpTool: releaseDescEditMcpTool,
+    mcpTool: releaseEditMcpTool,
     mcpExposed: true,
     mutating: true,
-    groupPath: ['release', 'desc-edit'],
+    groupPath: ['release', 'edit'],
   },
   {
     cliName: 'release-deploy-all',
@@ -563,7 +563,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
 export const LOW_RISK_MUTATING_ALLOWLIST: readonly string[] = [
   // Overwrites the Jira fix-version description and the release PR body — reversible by re-editing;
   // no git/branch/deploy side effect.
-  'release-desc-edit',
+  'release-edit',
   // Purely additive: creates worktrees for existing release branches; removing them is a separate op.
   'worktrees-add',
   // Reconciles the worktree set to the live release branches; recreatable via worktrees-add.

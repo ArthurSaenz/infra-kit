@@ -22,7 +22,7 @@ import { ghReleaseDeliver } from 'src/commands/gh-release-deliver'
 import { ghReleaseList } from 'src/commands/gh-release-list'
 import { releaseCreate } from 'src/commands/release-create'
 import { deprecatedLocalDeploy, releaseDeployAll, releaseDeploySelected } from 'src/commands/release-deploy'
-import { releaseDescEdit } from 'src/commands/release-desc-edit'
+import { releaseEdit } from 'src/commands/release-edit'
 import { releaseRemove } from 'src/commands/release-remove'
 import { setup } from 'src/commands/setup'
 import { vendorCheck } from 'src/commands/vendor-check'
@@ -165,7 +165,7 @@ const configureReleaseCreate = (cmd: Command): Command => {
     })
 }
 
-const configureReleaseDescEdit = (cmd: Command): Command => {
+const configureReleaseEdit = (cmd: Command): Command => {
   return cmd
     .description("Edit a release's description in Jira and in the matching GitHub PR body")
     .option('-v, --version <version>', 'Release version (e.g. 1.2.5) or release name (e.g. checkout-redesign)')
@@ -173,7 +173,7 @@ const configureReleaseDescEdit = (cmd: Command): Command => {
     .option('-y, --yes', 'Skip confirmation prompt')
     .action(async (options) => {
       emit(
-        await releaseDescEdit({
+        await releaseEdit({
           version: options.version,
           description: options.description,
           confirmedCommand: options.yes,
@@ -436,7 +436,7 @@ export const buildProgram = (): Command => {
   configureMergeDev(releaseGroup.command('merge-dev'))
   configureReleaseList(releaseGroup.command('list'))
   configureReleaseCreate(releaseGroup.command('create'))
-  configureReleaseDescEdit(releaseGroup.command('desc-edit'))
+  configureReleaseEdit(releaseGroup.command('edit'))
   configureReleaseDeployAll(releaseGroup.command('deploy-all'))
   configureReleaseDeploySelected(releaseGroup.command('deploy-selected'))
   configureReleaseDeliver(releaseGroup.command('deliver'))

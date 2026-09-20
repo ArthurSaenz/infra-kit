@@ -59,9 +59,9 @@ const POLICY_SITES: Record<
     tools: ['local-deploy-selected'],
     fields: ['service'],
   },
-  'commands/release-desc-edit/release-desc-edit.ts#promptDescription': {
+  'commands/release-edit/release-edit.ts#promptDescription': {
     policy: 'argument',
-    tools: ['release-desc-edit'],
+    tools: ['release-edit'],
     fields: ['description'],
   },
   // Reachable since the guards re-rooted on the Bash surface. `tools: []` because the command has NO
@@ -297,7 +297,7 @@ describe('g6 — a tool that promises a non-interactive answer must not refuse',
     // required and still says so. Removing a tool from here is only legitimate when its prose changed;
     // this row exists so that dropping one silently cannot happen.
     expect([...promiseCarryingTools]).toEqual(
-      expect.arrayContaining(['release-desc-edit', 'worktrees-add', 'local-deploy-selected']),
+      expect.arrayContaining(['release-edit', 'worktrees-add', 'local-deploy-selected']),
     )
   })
 

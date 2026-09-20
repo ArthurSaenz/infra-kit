@@ -17,7 +17,7 @@ const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.
 
 const MACHINE_PATH_FILES = [
   'entry/cli.ts',
-  'commands/release-desc-edit/release-desc-edit.ts',
+  'commands/release-edit/release-edit.ts',
   'commands/gh-release-deliver/gh-release-deliver.ts',
   'commands/gh-release-deploy-all/gh-release-deploy-all.ts',
   'commands/gh-release-deploy-selected/gh-release-deploy-selected.ts',

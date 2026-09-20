@@ -92,8 +92,8 @@ describe('rerunArgv round-trips through the program', () => {
     },
     {
       label: 'string options with spaces in their values',
-      path: ['release', 'desc-edit'],
-      argv: ['release', 'desc-edit', '--version', '1.2.3', '--description', 'x y'],
+      path: ['release', 'edit'],
+      argv: ['release', 'edit', '--version', '1.2.3', '--description', 'x y'],
     },
     {
       // Canonical form on purpose: `formatReleaseSpec` is minimal, so the echo of
