@@ -40,7 +40,7 @@
     "@inquirer/input": "^5.1.6",
     "@inquirer/password": "^5.2.2",
     "@inquirer/select": "^5.2.5",
-    "@slip-stream-kit/config": "^0.10.0",
+    "@slip-stream-kit/config": "^0.11.0",
     "chalk": "^6.0.0",
     "chokidar": "^5.0.0",
     "commander": "^15.0.0",

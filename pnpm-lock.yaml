@@ -293,8 +293,8 @@ importers:
         specifier: ^5.2.5
         version: 5.2.5(@types/node@26.5.1)
       '@slip-stream-kit/config':
-        specifier: ^0.10.0
-        version: 0.10.0(vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.2)(jiti@2.7.0)(less@4.6.4)(sass@1.99.0)(stylus@0.62.0(supports-color@7.2.0))(yaml@2.9.1))
+        specifier: ^0.11.0
+        version: 0.11.0(vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.2)(jiti@2.7.0)(less@4.6.4)(sass@1.99.0)(stylus@0.62.0(supports-color@7.2.0))(yaml@2.9.1))
       chalk:
         specifier: ^6.0.0
         version: 6.0.0
@@ -415,8 +415,8 @@ importers:
   apps/infra-kit/vite:
     dependencies:
       '@slip-stream-kit/config':
-        specifier: ^0.10.0
-        version: 0.10.0(vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.2)(jiti@2.7.0)(less@4.6.4)(sass@1.99.0)(stylus@0.62.0(supports-color@7.2.0))(yaml@2.9.1))
+        specifier: ^0.11.0
+        version: 0.11.0(vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.2)(jiti@2.7.0)(less@4.6.4)(sass@1.99.0)(stylus@0.62.0(supports-color@7.2.0))(yaml@2.9.1))
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -2498,8 +2498,8 @@ packages:
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
 
-  '@slip-stream-kit/config@0.10.0':
-    resolution: {integrity: sha512-q2iYCzWmGLOVvWLROfsomZixcz0qSDmpq8eNRyTVEDmWg5iX8tDqaGBt/j8xwb+xI/XEGnlqWRcKtjexFWEkvw==}
+  '@slip-stream-kit/config@0.11.0':
+    resolution: {integrity: sha512-vOVHx/HT2iHNarrDi9lImrYdPdV8+0kdLL5wN7C2n9UxDUsd/k0B2PO05Ou0bRN0Hv+SuyGfqtdkcgMxzHuMnA==}
     engines: {node: '>=24.x'}
     peerDependencies:
       vite: '>=8'
@@ -9084,9 +9084,9 @@ snapshots:
 
   '@sindresorhus/merge-streams@4.0.0': {}
 
-  '@slip-stream-kit/config@0.10.0(vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.2)(jiti@2.7.0)(less@4.6.4)(sass@1.99.0)(stylus@0.62.0(supports-color@7.2.0))(yaml@2.9.1))':
+  '@slip-stream-kit/config@0.11.0(vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.2)(jiti@2.7.0)(less@4.6.4)(sass@1.99.0)(stylus@0.62.0(supports-color@7.2.0))(yaml@2.9.1))':
     dependencies:
-      zod: 4.6.2
+      zod: 4.6.5
     optionalDependencies:
       vite: 8.3.0(@types/node@26.5.1)(esbuild@0.28.2)(jiti@2.7.0)(less@4.6.4)(sass@1.99.0)(stylus@0.62.0(supports-color@7.2.0))(yaml@2.9.1)
 
