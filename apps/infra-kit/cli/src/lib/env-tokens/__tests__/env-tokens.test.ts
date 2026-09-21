@@ -125,9 +125,8 @@ describe('readTokenStore', () => {
   })
 
   // The CLASS of every refusal above, not just its message. A broken store is the most DURABLE
-  // env-auth failure there is — a 30s retry cannot heal it — but as a plain Error it is classified
-  // TRANSIENT by env auto-load, expires with that backoff, and goes silent on the backgrounded
-  // shell-startup spawn whose stderr is discarded. `env` is null: no ONE environment is at fault.
+  // env-auth failure there is, and downstream callers classify on that CLASS — a plain Error would
+  // be invisible to them. `env` is null: no ONE environment is at fault.
   it.each([
     ['corrupt JSON', 'garbage'],
     ['a schema mismatch', JSON.stringify({ version: 2, envs: {} })],

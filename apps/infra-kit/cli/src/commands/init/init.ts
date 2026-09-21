@@ -6,6 +6,7 @@ import process from 'node:process'
 import type { GuidanceWrite } from 'src/lib/agent-guidance'
 import { seedCreatedMessage, seedUserProjectConfig } from 'src/lib/config-bootstrap'
 import { CONFIG_STUB, buildUserGlobalExample, buildVendorExample } from 'src/lib/config-templates'
+import { getCacheRoot } from 'src/lib/constants'
 import { getInfraKitConfig, getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
 import { fallbackUpdateCommand, formatUpdateCommand } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
@@ -126,11 +127,15 @@ export class InitStepError extends Error {
  */
 export const SHELL_ACTIVATION_REMINDER = 'Run `source ~/.zshrc` or open a new terminal to activate.'
 
-/** The four migrations announce their own conversions, so this step has nothing of its own to print. */
+/**
+ * The four migrations announce their own conversions and the cache reaper is silent, so this step
+ * has nothing of its own to print.
+ */
 const MIGRATIONS_CHECKED: InitEntry = {
   step: 'migrations',
   outcome: 'skipped',
-  message: 'Config migrations checked (legacy yml layers, user-global filename, ide structure, factory config)',
+  message:
+    'Config migrations checked (legacy yml layers, user-global filename, ide structure, factory config, retired project cache)',
   level: 'silent',
 }
 
@@ -185,6 +190,7 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
 
   await withStep('migrations', async () => {
     await runConfigMigrations()
+    removeRetiredWarmCacheRoot()
     record(MIGRATIONS_CHECKED)
   })
 
@@ -316,6 +322,14 @@ const writeZshenvBlock = (): InitEntry => {
 }
 
 /**
+ * `<cacheRoot>/projects/` held per-project warm copies of `env-load.sh` — secrets on disk — whose only
+ * sweeper was the retired env auto-load. Nothing reads the dir any more, so it is removed outright.
+ */
+export const removeRetiredWarmCacheRoot = (): void => {
+  fs.rmSync(path.join(getCacheRoot(), 'projects'), { recursive: true, force: true })
+}
+
+/**
  * Three file-existence one-shots, then the shared shape pipeline — in the one order that works.
  */
 const runConfigMigrations = async (): Promise<void> => {
@@ -340,8 +354,9 @@ const runConfigMigrations = async (): Promise<void> => {
 }
 
 /**
- * The shell integration is zsh-only (zmodload zsh/stat, add-zsh-hook, ${dir:h}), so a non-zsh login
- * shell is warned about non-fatally rather than left with a silent no-op block.
+ * The shell integration is zsh-only (it lives in ~/.zshrc and ~/.zshenv, and the zshenv block leans on
+ * zsh globbing), so a non-zsh login shell is warned about non-fatally rather than left with a silent
+ * no-op block.
  */
 const shellEntries = (): InitEntry[] => {
   const shell = process.env.SHELL ?? ''
@@ -351,7 +366,7 @@ const shellEntries = (): InitEntry[] => {
     entries.push({
       step: 'shell',
       outcome: 'warned',
-      message: `Your login shell ($SHELL=${shell || 'unset'}) is not zsh. The infra-kit shell integration (env-load/env-clear/auto-load) is zsh-only and won't activate in bash/fish.`,
+      message: `Your login shell ($SHELL=${shell || 'unset'}) is not zsh. The infra-kit shell integration (env-load/env-clear) is zsh-only and won't activate in bash/fish.`,
       level: 'warn',
     })
   }
@@ -959,13 +974,7 @@ const isBlockLine = (line: string): boolean => {
     line.startsWith('env-status') ||
     line.startsWith('if ') ||
     line.startsWith('  export INFRA_KIT_SESSION') ||
-    line.startsWith('export _INFRA_KIT_') ||
-    line.startsWith(': ${_INFRA_KIT_') ||
-    line.startsWith('fi') ||
-    line.startsWith('zmodload ') ||
-    line.startsWith('autoload ') ||
-    line.startsWith('add-zsh-hook ') ||
-    line.startsWith('_infra_kit_autoload')
+    line.startsWith('fi')
   )
 }
 
@@ -1010,161 +1019,16 @@ export const buildShellBody = (): string => {
   const runCmd = 'pnpm exec infra-kit'
 
   return [
-    'zmodload zsh/stat 2>/dev/null',
-    'zmodload zsh/datetime 2>/dev/null',
-    'zmodload zsh/sched 2>/dev/null',
     // eslint-disable-next-line no-template-curly-in-string
     'if [[ -z "${INFRA_KIT_SESSION}" ]]; then',
     '  export INFRA_KIT_SESSION=$(head -c 4 /dev/urandom | xxd -p)',
     'fi',
-    // eslint-disable-next-line no-template-curly-in-string
-    ': ${_INFRA_KIT_LAST_LOAD_MTIME:=0}',
-    // eslint-disable-next-line no-template-curly-in-string
-    ': ${_INFRA_KIT_LAST_CLEAR_MTIME:=0}',
-    // eslint-disable-next-line no-template-curly-in-string
-    ': ${_INFRA_KIT_SHELL_STARTED:=${EPOCHSECONDS:-0}}',
-    // Warm-cache source TTL (seconds); MUST equal DEFAULT_WARM_TTL_SECONDS (node
-    // eviction) — both 2h. A warm file older than this is not sourced at startup.
-    // eslint-disable-next-line no-template-curly-in-string
-    ': ${_INFRA_KIT_WARM_TTL:=7200}',
-    'export _INFRA_KIT_LAST_LOAD_MTIME _INFRA_KIT_LAST_CLEAR_MTIME _INFRA_KIT_SHELL_STARTED _INFRA_KIT_WARM_TTL',
-    `env-load() { local f m; f=$(${runCmd} env-load "$@") || return; m=$(zstat +mtime -- "$f" 2>/dev/null || echo 0); _INFRA_KIT_LAST_LOAD_MTIME=$m; source "$f"; ${runCmd} env-status; }`,
-    `env-clear() { local f m; f=$(${runCmd} env-clear "$@") || return; m=$(zstat +mtime -- "$f" 2>/dev/null || echo 0); _INFRA_KIT_LAST_CLEAR_MTIME=$m; source "$f"; ${runCmd} env-status; }`,
+    `env-load() { local f; f=$(${runCmd} env-load "$@") || return; source "$f"; ${runCmd} env-status; }`,
+    `env-clear() { local f; f=$(${runCmd} env-clear "$@") || return; source "$f"; ${runCmd} env-status; }`,
     `env-status() { ${runCmd} env-status; }`,
     // No `alias ik=…` here: a global install provides real `infra-kit` and `ik` bins, and an alias
     // would SHADOW the global `ik`, forcing the project-local `pnpm exec` even when a global CLI exists.
     // (`isBlockLine` still lists `alias ` so re-running `initCore` strips the stale alias from old configs.)
-    // Print an async notice without corrupting an already-drawn prompt. The
-    // startup poll fires via `sched` at an IDLE prompt (ZLE active) which does
-    // NOT redraw the prompt, so a bare `print` lands appended to the visible
-    // prompt line and looks like un-removable typed input. When ZLE is active we
-    // erase the current line (CR + clear-to-EOL), print the message on its own
-    // line, then `zle reset-prompt` to redraw the prompt below it. In precmd /
-    // shell-startup (ZLE inactive) `zle` is false and this is a plain stderr
-    // print above the about-to-be-drawn prompt — unchanged behavior.
-    '_infra_kit_notify() {',
-    // When ZLE is active, erase the current prompt line first and redraw after;
-    // both are no-ops when ZLE is inactive so this stays a plain stderr print.
-    "  zle && print -u2 -n $'\\r\\e[K'",
-    '  print -u2 -- "$1"',
-    '  zle && zle reset-prompt',
-    '}',
-    '_infra_kit_autoload() {',
-    '  [[ -z "$INFRA_KIT_SESSION" ]] && return',
-    // eslint-disable-next-line no-template-curly-in-string
-    '  local cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/infra-kit"',
-    '  local dir="$cache_root/$INFRA_KIT_SESSION"',
-    '  local load_file="$dir/env-load.sh"',
-    '  local clear_file="$dir/env-clear.sh"',
-    '  local load_mtime=0 clear_mtime=0',
-    '  [[ -f "$load_file" ]] && load_mtime=$(zstat +mtime -- "$load_file" 2>/dev/null || echo 0)',
-    '  [[ -f "$clear_file" ]] && clear_mtime=$(zstat +mtime -- "$clear_file" 2>/dev/null || echo 0)',
-    '  if (( load_mtime > _INFRA_KIT_LAST_LOAD_MTIME && load_mtime >= _INFRA_KIT_SHELL_STARTED && load_mtime >= clear_mtime )); then',
-    '    source "$load_file"',
-    '    _INFRA_KIT_LAST_LOAD_MTIME=$load_mtime',
-    // eslint-disable-next-line no-template-curly-in-string
-    '    _infra_kit_notify "infra-kit: auto-loaded vars for ${INFRA_KIT_ENV_CONFIG:-?}"',
-    '  fi',
-    '  if (( clear_mtime > _INFRA_KIT_LAST_CLEAR_MTIME && clear_mtime >= _INFRA_KIT_SHELL_STARTED && clear_mtime > load_mtime )); then',
-    '    source "$clear_file"',
-    '    _INFRA_KIT_LAST_CLEAR_MTIME=$clear_mtime',
-    '    _infra_kit_notify "infra-kit: auto-cleared env"',
-    '  fi',
-    '}',
-    'autoload -Uz add-zsh-hook',
-    'if (( _INFRA_KIT_SHELL_STARTED > 0 )); then',
-    '  add-zsh-hook precmd _infra_kit_autoload',
-    'fi',
-    // Non-blocking startup poll: the shell-startup spawn (below) writes env-load.sh
-    // asynchronously (node + Doppler fetch, ~0.5-2s), so the FIRST precmd — which
-    // fires before the first prompt — runs before the file lands and sources nothing;
-    // without this the vars only appear after the user's first command. This one-shot
-    // re-arming poll re-runs the precmd sourcer once per second, at the idle prompt
-    // with NO user command, until it sources the freshly written file (its mtime is
-    // >= _INFRA_KIT_SHELL_STARTED so the existing gate accepts it) OR the startup
-    // window closes. _infra_kit_autoload sets _INFRA_KIT_LAST_LOAD_MTIME on a
-    // successful source, which lifts it to >= _INFRA_KIT_SHELL_STARTED and stops the
-    // re-arm. Bounded to WINDOW seconds so an unconfigured project / down Doppler
-    // that never writes a file only costs a handful of no-op ticks, then falls back
-    // to the precmd hook. Sources the same freshly written file as precmd, so there
-    // is no stale/last-known-good secrets window.
-    '_INFRA_KIT_AUTOLOAD_WINDOW=6',
-    'export _INFRA_KIT_AUTOLOAD_WINDOW',
-    '_infra_kit_poll_autoload() {',
-    '  _infra_kit_autoload',
-    // eslint-disable-next-line no-template-curly-in-string
-    '  if (( _INFRA_KIT_LAST_LOAD_MTIME < _INFRA_KIT_SHELL_STARTED )) && (( ${EPOCHSECONDS:-0} - _INFRA_KIT_SHELL_STARTED < _INFRA_KIT_AUTOLOAD_WINDOW )); then',
-    '    (( $+builtins[sched] )) && sched +1 _infra_kit_poll_autoload',
-    '  fi',
-    '}',
-    // Warm cache: source the project-scoped last-known-good env-load.sh INSTANTLY at
-    // startup (pure zsh, no node/Doppler) so vars are present at prompt-0, before the
-    // backgrounded refresh lands. `key` is sha256 of the canonical project dir passed
-    // in by the caller — byte-identical to node's warmCacheKey (printf %s | shasum,
-    // full 64-hex). Skips when: no sha tool (degrade to poll), no warm file, a project
-    // clear-marker is at least as new (clear wins ties), or the file is past TTL
-    // (bounds a rotated secret served at prompt-0). Deliberately does NOT set
-    // _INFRA_KIT_LAST_LOAD_MTIME (leaves it 0) so the poll/precmd still source the
-    // fresh SESSION file (different path, newer mtime) and upgrade warm->fresh.
-    '_infra_kit_warm_source() {',
-    '  local canon="$1" key',
-    '  if (( $+commands[shasum] )); then',
-    '    key=$(printf %s "$canon" | shasum -a 256 | cut -c1-64)',
-    '  elif (( $+commands[sha256sum] )); then',
-    '    key=$(printf %s "$canon" | sha256sum | cut -c1-64)',
-    '  else',
-    '    return',
-    '  fi',
-    // eslint-disable-next-line no-template-curly-in-string
-    '  local cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/infra-kit"',
-    '  local warm="$cache_root/projects/$key/env-load.sh"',
-    '  local wclear="$cache_root/projects/$key/env-clear.sh"',
-    '  [[ -f "$warm" ]] || return',
-    '  local wm=0 cm=0',
-    '  wm=$(zstat +mtime -- "$warm" 2>/dev/null || echo 0)',
-    '  [[ -f "$wclear" ]] && cm=$(zstat +mtime -- "$wclear" 2>/dev/null || echo 0)',
-    '  (( cm >= wm )) && return',
-    // eslint-disable-next-line no-template-curly-in-string
-    '  (( ${EPOCHSECONDS:-0} - wm >= _INFRA_KIT_WARM_TTL )) && return',
-    '  source "$warm"',
-    // eslint-disable-next-line no-template-curly-in-string
-    '  _infra_kit_notify "infra-kit: loaded cached vars for ${INFRA_KIT_ENV_CONFIG:-?} (refreshing…)"',
-    '}',
-    // One-shot env auto-load when a NEW shell opens inside an infra-kit project
-    // or worktree (config: envAutoLoad.trigger "shell-startup"). Cheap pure-zsh
-    // project gate (walk up for infra-kit.json) avoids spawning node in unrelated
-    // shells; the spawn is skipped only when the already-loaded env belongs to THIS
-    // project root (INFRA_KIT_ENV_PROJECT_ROOT), so cd'ing into a DIFFERENT project
-    // re-loads instead of silently keeping the previous project's secrets. The spawn
-    // is DETACHED+backgrounded ( ... & ) so it never blocks the prompt; it only
-    // WRITES env-load.sh. The startup poll armed right after (and the precmd hook as
-    // a later-prompt fallback) sources the file once it lands. Trade-off: the gate
-    // can't read the merged JSON config, so a fresh shell in a project WITHOUT
-    // envAutoLoad still spawns one background process that resolves config, finds
-    // nothing, and exits.
-    '_infra_kit_startup_autoload() {',
-    '  [[ -z "$INFRA_KIT_SESSION" ]] && return',
-    '  local dir="$PWD" prev=""',
-    '  while [[ -n "$dir" && "$dir" != "$prev" ]]; do',
-    '    if [[ -f "$dir/infra-kit.json" ]]; then',
-    '      [[ -n "$INFRA_KIT_ENV_CONFIG" && "$dir" == "$INFRA_KIT_ENV_PROJECT_ROOT" ]] && return',
-    // canon = realpath of the project dir; the SAME string node hashes for the warm
-    // key (passed via --project-dir), so the two keys are byte-identical.
-    // eslint-disable-next-line no-template-curly-in-string
-    '      local canon="${dir:A}"',
-    '      _infra_kit_warm_source "$canon"',
-    `      ( ${runCmd} env-autoload --project-dir "$canon" & ) >/dev/null 2>&1`,
-    '      (( $+builtins[sched] )) && sched +1 _infra_kit_poll_autoload',
-    '      return',
-    '    fi',
-    '    prev="$dir"',
-    // eslint-disable-next-line no-template-curly-in-string
-    '    dir="${dir:h}"',
-    '  done',
-    '}',
-    'if (( _INFRA_KIT_SHELL_STARTED > 0 )); then',
-    '  _infra_kit_startup_autoload',
-    'fi',
   ].join('\n')
 }
 
@@ -1186,8 +1050,8 @@ export const buildZshenvBody = (): string => {
   return [
     "# Inherit this terminal's infra-kit session env into every zsh it spawns, interactive or not.",
     '# A fresh terminal has no session yet (it is minted in .zshrc, after this file) and skips.',
-    '# Only the canonical 8-hex id .zshrc mints is honoured. Load wins a tie with clear, as the',
-    '# .zshrc precmd gate does. Prints nothing of its own.',
+    '# Only the canonical 8-hex id .zshrc mints is honoured. Load wins a tie with clear.',
+    '# Prints nothing of its own.',
     // eslint-disable-next-line no-template-curly-in-string
     'if [[ -n "${INFRA_KIT_SESSION:-}" ]]; then',
     '  () {',

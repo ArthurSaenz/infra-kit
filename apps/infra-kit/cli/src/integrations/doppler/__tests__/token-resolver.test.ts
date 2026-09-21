@@ -77,9 +77,8 @@ describe('resolveEnvToken — the no-token refusal', () => {
     await expect(resolveEnvToken('dev')).rejects.toThrow(INFRA_KIT_ENV_TOKEN_VAR)
   })
 
-  // The CLASS, not just the message. A plain Error here is classified TRANSIENT by env auto-load, so
-  // it expires with the 30s backoff and the shell-startup user — whose stderr is discarded — is never
-  // told anything at all. That is the migration case, and it shipped exactly this way once.
+  // The CLASS, not just the message: downstream callers classify durable-vs-transient on
+  // `isEnvAuthFailure`, and a plain Error here would be invisible to that check.
   it('throws an ENV-AUTH-class error, so the durable failure is type-detectable downstream', async () => {
     const error = await resolveEnvToken('dev').catch((err: unknown) => {
       return err

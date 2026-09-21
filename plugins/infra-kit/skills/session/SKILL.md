@@ -1,12 +1,12 @@
 ---
 name: session
-description: Switch this terminal's context — load a named environment through the infra-kit CLI.
+description: Load a named environment for Claude's own shells through the infra-kit CLI.
 argument-hint: [--clear] [<environment>]
 disable-model-invocation: true
 allowed-tools: Bash(infra-kit env-list --json*), Bash(infra-kit env-status --json*)
 ---
 
-# session — switching a terminal's context through infra-kit
+# session — loading an environment for Claude's shells through infra-kit
 
 CLI on PATH: !`zsh -c 'infra-kit version --json' 2>/dev/null || echo '{"error":"infra-kit not on PATH"}'`
 Terminal status at invocation: !`zsh -c 'infra-kit env-status --json' 2>/dev/null || echo '{"error":"status unavailable"}'`
@@ -33,31 +33,26 @@ name **is** the Doppler config name. There is no mapping table to consult.
 The contract a second provider would implement, and the recipe for adding one, live in
 `docs/session-context-orchestrator.md`. They are written for whoever adds that provider, not for you.
 
-## 2. How this reaches the user's shell, and how it fails
+## 2. Where the load lands — Claude's shells, not the human's terminal
 
 `env-load` mutates no process. It downloads the config's variables, writes them to
 `${XDG_CACHE_HOME:-$HOME/.cache}/infra-kit/$INFRA_KIT_SESSION/env-load.sh` and returns that path as
-`filePath`, with the id it wrote under as `sessionId`. The zsh block `infra-kit setup` installs
-registers a `precmd` hook that sources the file when its mtime beats the last one sourced, the
-shell's start time, and the clear file.
+`filePath`, with the id it wrote under as `sessionId`.
 
-State both of the following.
-
-**Timing.** `precmd` runs before a prompt is drawn and cannot run while a foreground process holds
-the shell. The variables appear at its next prompt — after Claude Code exits or is backgrounded, not
-when the command returns.
-
-**Destination.** The session id is the one the `Bash` tool inherited when Claude Code launched, so
-the file lands in the terminal that launched Claude Code and no other. A session whose terminal is
-gone writes into a directory nothing is watching and still returns success — no error, no other
-signal. So report the session id from the returned filePath (it is also `sessionId`), and tell the
-human to compare it with INFRA_KIT_SESSION at their own prompt. That comparison is the only check
-there is.
+**Destination.** `INFRA_KIT_SESSION` is the id Claude Code's `Bash` tool inherited when it launched,
+and the `.zshenv` block `infra-kit setup` installs sources this file into every zsh spawned under
+that id afterwards — Claude's own subsequent `Bash` calls, not this one. It never reaches the
+human's own, already-open terminal: that shell reads `.zshenv` once, at its own start, so nothing
+sourced later shows up there. Tell the human to run `infra-kit env-load -c <config>` themselves if
+they want the variables in their own prompt — report the session id from the returned `filePath` (it
+is also `sessionId`) so they can compare it with their own `INFRA_KIT_SESSION` and confirm it's the
+same session.
 
 **What the injected blocks mean.** The `Terminal status at invocation` block above reads the session
-file for the inherited `INFRA_KIT_SESSION`, so its `sessionConfig` is the last load that landed —
-not what the terminal shows yet. The same call after a load (the CLI re-reads the file on every run)
-confirms the load landed for THIS session id, and still says nothing about the terminal prompt:
+file for the inherited `INFRA_KIT_SESSION`, so its `sessionConfig` is the last load that landed for
+THIS session — not what the human's own terminal shows. The same call after a load (the CLI re-reads
+the file on every run) confirms the load landed for THIS session id, and still says nothing about the
+human's own terminal:
 
 ```
 infra-kit env-status --json --agent
@@ -120,7 +115,7 @@ picker must still be typed and passed as `-c`. Only `hasToken` is authoritative 
 precedence. Both precedence answers are wrong: loading is not what was asked for, and clearing
 discards the name that was typed.
 
-## 6. `--clear`'s approval, and the tie hazard
+## 6. `--clear`'s approval
 
 `env-clear` is a mutating command with **no confirm step in the CLI**: `infra-kit env-clear --json
 --agent` clears on the first run. What stands between the human and the clear is the host's
@@ -131,16 +126,6 @@ next — or exits 1 with a stderr line when nothing is loaded for this session; 
 
 `env-load` is the same shape: one host prompt, no `--yes`. Say so if the human expects a second
 prompt, so nobody waits for one that never comes.
-
-**The tie hazard.** The shell's clear gate compares mtimes in whole seconds and strictly, while its
-load gate does not. A clear whose file lands in the same wall-clock second as the load it follows
-therefore loses: the terminal prints `infra-kit: auto-loaded vars for <config>` after the human asked
-to clear, or prints nothing and stays loaded. Running `--clear` once more a second later is the
-recovery. Tell the human to confirm at their own prompt rather than trusting the command's return.
-
-**How often this matters.** On this path, rarely — the host's prompt puts a human between the load
-and the clear, and that latency is usually enough. It is common in scripted or back-to-back use, where
-nothing interposes. Raise it when a clear closely follows a load, not on every clear.
 
 ## 7. What not to do
 

@@ -7,14 +7,10 @@ import { logger } from 'src/lib/logger'
 
 import { buildProgram } from '../program'
 
-// The preAction hook's other two legs touch the outside world: the layer-3 seed writes to $HOME and
-// the auto-load shells out to Doppler. Neither is under test here.
+// The preAction hook's other leg touches the outside world: the layer-3 seed writes to $HOME. It is
+// not under test here.
 vi.mock('src/lib/config-bootstrap', () => {
   return { ensureUserProjectConfig: vi.fn(async () => {}) }
-})
-
-vi.mock('src/lib/env-autoload', () => {
-  return { runEnvAutoLoad: vi.fn(async () => {}), surfaceStickyAuthFailure: vi.fn() }
 })
 
 // The command under test is the ACTION, not `audit()`: the exit code is set here and nowhere else,

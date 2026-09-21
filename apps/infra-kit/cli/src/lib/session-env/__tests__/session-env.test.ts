@@ -22,7 +22,6 @@ vi.mock('src/lib/constants', async (importOriginal) => {
 
 const SESSION = 'session-env-test'
 const JIRA_NAMES = ['JIRA_BASE_URL', 'JIRA_TOKEN', 'JIRA_API_TOKEN', 'JIRA_PROJECT_ID', 'JIRA_EMAIL']
-const MANUAL_LOAD_UNSETS = ['INFRA_KIT_ENV_AUTOLOADED', 'INFRA_KIT_ENV_CLEARED']
 
 let cacheHome = ''
 let sessionDir = ''
@@ -50,7 +49,7 @@ const makeSessionDir = (name: string): string => {
 const writeLoad = (
   dir: string,
   pairs: Array<[string, string]>,
-  { config = 'dev', autoLoaded = false }: { config?: string; autoLoaded?: boolean } = {},
+  { config = 'dev' }: { config?: string } = {},
 ): string => {
   const file = path.join(dir, 'env-load.sh')
   const lines = buildEnvLoadFileLines({
@@ -59,7 +58,6 @@ const writeLoad = (
     project: 'proj',
     projectRoot: dir,
     loadedAt: '2026-09-15T00:00:00.000Z',
-    autoLoaded,
   })
 
   atomicWriteFileSync(file, `${lines.join('\n')}\n`, 0o600)
@@ -111,8 +109,6 @@ beforeEach(() => {
   sessionDir = makeSessionDir(SESSION)
   resetToLaunchEnv()
 
-  for (const name of MANUAL_LOAD_UNSETS) delete process.env[name]
-
   info = vi.spyOn(logger, 'info').mockImplementation(() => {})
   warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
   vi.mocked(parseVarsFromEnvFile).mockClear()
@@ -130,7 +126,7 @@ describe('readSessionEnvState — the zshenv rule', () => {
     expect(readSessionEnvState()).toEqual({ kind: 'none', signature: 'none' })
   })
 
-  it('load only → load, with the file’s vars, its unset lines and a load signature', () => {
+  it('load only → load, with the file’s vars and a load signature', () => {
     writeLoad(sessionDir, [['JIRA_TOKEN', 't']])
 
     const state = readSessionEnvState()
@@ -141,7 +137,6 @@ describe('readSessionEnvState — the zshenv rule', () => {
 
     expect(state.vars.JIRA_TOKEN).toBe('t')
     expect(state.vars.INFRA_KIT_ENV_CONFIG).toBe('dev')
-    expect(state.unset).toEqual(MANUAL_LOAD_UNSETS)
     expect(state.signature).toMatch(/^load:\d+:[\d.]+:\d+$/)
   })
 
@@ -161,7 +156,6 @@ describe('readSessionEnvState — the zshenv rule', () => {
       'INFRA_KIT_ENV_PROJECT',
       'INFRA_KIT_ENV_PROJECT_ROOT',
       'INFRA_KIT_ENV_LOADED_AT',
-      'INFRA_KIT_ENV_AUTOLOADED',
     ])
     expect(state.signature).toMatch(/^clear:\d+:[\d.]+$/)
   })
@@ -227,15 +221,13 @@ describe('applySessionEnv', () => {
     clearLike(sessionDir)
     applySessionEnv()
     expect(process.env.JIRA_TOKEN).toBeUndefined()
-    expect(process.env.INFRA_KIT_ENV_CLEARED).toBe('1')
 
     fs.rmSync(path.join(sessionDir, 'env-clear.sh'))
     expect(applySessionEnv().changed).toBe(true)
     expect({ ...process.env }).toEqual(before)
   })
 
-  it('reports set/unset names on a manual load and drops the load file’s unset markers', () => {
-    process.env.INFRA_KIT_ENV_CLEARED = '1'
+  it('reports the set names on a load and unsets nothing', () => {
     writeLoad(sessionDir, [['JIRA_TOKEN', 't']])
 
     const result = applySessionEnv()
@@ -248,8 +240,7 @@ describe('applySessionEnv', () => {
       'INFRA_KIT_ENV_PROJECT_ROOT',
       'INFRA_KIT_ENV_LOADED_AT',
     ])
-    expect(result.unset).toEqual(MANUAL_LOAD_UNSETS)
-    expect(process.env.INFRA_KIT_ENV_CLEARED).toBeUndefined()
+    expect(result.unset).toEqual([])
   })
 
   it('short-circuits on an unchanged signature without re-parsing, and re-parses a same-content atomic rewrite', () => {
@@ -276,13 +267,11 @@ describe('applySessionEnv', () => {
     applySessionEnv()
     expect(process.env.JIRA_TOKEN).toBeUndefined()
     expect(process.env.INFRA_KIT_ENV_CONFIG).toBeUndefined()
-    expect(process.env.INFRA_KIT_ENV_CLEARED).toBe('1')
 
     fs.rmSync(path.join(sessionDir, 'env-clear.sh'))
     applySessionEnv()
     expect(process.env.JIRA_TOKEN).toBe('launch')
     expect(process.env.INFRA_KIT_ENV_CONFIG).toBe('dev')
-    expect(process.env.INFRA_KIT_ENV_CLEARED).toBeUndefined()
   })
 
   it('a13: baseline dev, clear(dev), then load(arthur) yields dev ∪ arthur with arthur winning per name', () => {
@@ -309,7 +298,6 @@ describe('applySessionEnv', () => {
     expect(process.env.JIRA_TOKEN).toBe('arthur-token')
     expect(process.env.DEV_ONLY).toBe('dev')
     expect(process.env.ARTHUR_ONLY).toBe('arthur')
-    expect(process.env.INFRA_KIT_ENV_CLEARED).toBeUndefined()
   })
 
   it('aC4: protected names are skipped on assign and on unset, and named once', () => {
@@ -339,7 +327,6 @@ describe('applySessionEnv', () => {
       'INFRA_KIT_ENV_PROJECT',
       'INFRA_KIT_ENV_PROJECT_ROOT',
       'INFRA_KIT_ENV_LOADED_AT',
-      'INFRA_KIT_ENV_AUTOLOADED',
     ])
     expect(process.env.PATH).toBe(originalPath)
     expect(process.env.XDG_CACHE_HOME).toBe(cacheHome)
@@ -419,10 +406,10 @@ describe('applySessionEnv', () => {
     applySessionEnv()
 
     expect(linesOf(info)).toEqual([
-      'session-env applied: set [JIRA_TOKEN, JIRA_EMAIL, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG, INFRA_KIT_ENV_PROJECT, INFRA_KIT_ENV_PROJECT_ROOT, INFRA_KIT_ENV_LOADED_AT] unset [INFRA_KIT_ENV_AUTOLOADED, INFRA_KIT_ENV_CLEARED] (load, 7 vars)',
-      // env-clear lists the load file's marker assignments AND its own marker lines, so the
+      'session-env applied: set [JIRA_TOKEN, JIRA_EMAIL, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG, INFRA_KIT_ENV_PROJECT, INFRA_KIT_ENV_PROJECT_ROOT, INFRA_KIT_ENV_LOADED_AT] unset [] (load, 7 vars)',
+      // env-clear lists the load file's metadata assignments AND its own metadata unsets, so the
       // names repeat — the log mirrors the file rather than deduplicating it.
-      'session-env applied: set [INFRA_KIT_ENV_CLEARED] unset [JIRA_TOKEN, JIRA_EMAIL, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG, INFRA_KIT_ENV_PROJECT, INFRA_KIT_ENV_PROJECT_ROOT, INFRA_KIT_ENV_LOADED_AT, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG, INFRA_KIT_ENV_PROJECT, INFRA_KIT_ENV_PROJECT_ROOT, INFRA_KIT_ENV_LOADED_AT, INFRA_KIT_ENV_AUTOLOADED] (clear)',
+      'session-env applied: set [] unset [JIRA_TOKEN, JIRA_EMAIL, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG, INFRA_KIT_ENV_PROJECT, INFRA_KIT_ENV_PROJECT_ROOT, INFRA_KIT_ENV_LOADED_AT, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG, INFRA_KIT_ENV_PROJECT, INFRA_KIT_ENV_PROJECT_ROOT, INFRA_KIT_ENV_LOADED_AT] (clear)',
       'session-env applied: set [] unset [] (none)',
     ])
 

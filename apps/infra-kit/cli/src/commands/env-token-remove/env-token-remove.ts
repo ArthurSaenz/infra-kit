@@ -2,7 +2,6 @@ import { getDopplerProject } from 'src/integrations/doppler'
 import { getTokenStorePath, readTokenStore, removeToken } from 'src/lib/env-tokens'
 import { logger } from 'src/lib/logger'
 import { tildify } from 'src/lib/path-display'
-import { purgeRepoWarmCaches } from 'src/lib/warm-cache'
 import { textContent } from 'src/types'
 
 export interface EnvTokenRemoveArgs {
@@ -26,8 +25,8 @@ const buildRevokeNotice = (project: string, env: string): string[] => {
 }
 
 /**
- * Drop one environment's service token from the local store, purge the warm caches it may have
- * populated, and tell the user where to actually revoke it.
+ * Drop one environment's service token from the local store and tell the user where to actually
+ * revoke it.
  *
  * No confirm step, under --agent included (LOW_RISK_MUTATING_ALLOWLIST): the host's permission prompt
  * on the argv is the gate, and the loss is local — the Doppler token survives and `env-token-set` puts
@@ -39,10 +38,6 @@ export const envTokenRemove = async ({ env }: EnvTokenRemoveArgs) => {
 
   await removeToken(env)
 
-  // A removed token must not keep working for another 2h out of a sibling worktree's warm cache — the
-  // cache is keyed per WORKTREE, the store per REPO, so this enumerates every worktree.
-  const purged = await purgeRepoWarmCaches()
-
   const project = await getDopplerProject()
   const storePath = await getTokenStorePath()
 
@@ -50,10 +45,6 @@ export const envTokenRemove = async ({ env }: EnvTokenRemoveArgs) => {
     logger.info(`Removed the "${env}" service token from ${tildify(storePath)}.`)
   } else {
     logger.info(`No "${env}" service token was stored in ${tildify(storePath)} — nothing to remove.`)
-  }
-
-  if (purged.length > 0) {
-    logger.info(`Purged ${purged.length} warm cache(s) across this repo's worktrees.`)
   }
 
   for (const line of buildRevokeNotice(project, env)) {
@@ -64,7 +55,6 @@ export const envTokenRemove = async ({ env }: EnvTokenRemoveArgs) => {
     env,
     removed: existed,
     storePath,
-    warmCachesPurged: purged.length,
     revokeUrl: `${DOPPLER_DASHBOARD_URL}/${project}`,
   }
 

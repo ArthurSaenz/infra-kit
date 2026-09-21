@@ -7,7 +7,6 @@ import { readTokenStore, setToken } from 'src/lib/env-tokens'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
-import { purgeRepoWarmCaches } from 'src/lib/warm-cache'
 
 import { envTokenRemove } from '../env-token-remove'
 
@@ -16,15 +15,6 @@ const PROD_TOKEN = 'dp.st.prod.REMOVE_CANARY_2222aaaa'
 
 vi.mock('src/lib/git-utils', () => {
   return { getProjectRoot: vi.fn(), getMainRepoRoot: vi.fn(), getRepoName: vi.fn() }
-})
-
-// The real purge (3 worktrees, real git) is covered in lib/warm-cache/__tests__/purge-repo.test.ts.
-vi.mock('src/lib/warm-cache', () => {
-  return {
-    purgeRepoWarmCaches: vi.fn(async () => {
-      return ['/warm/a', '/warm/b', '/warm/c']
-    }),
-  }
 })
 
 vi.mock('src/lib/logger', () => {
@@ -76,17 +66,6 @@ describe('env-token-remove', () => {
     expect(store?.envs.dev).toBeUndefined()
     expect(store?.envs.prod).toBe(PROD_TOKEN)
     expect(result.structuredContent.removed).toBe(true)
-  })
-
-  /**
-   * The removed token must not keep working for another 2h out of a sibling worktree's warm cache —
-   * the cache is keyed per WORKTREE while the store is keyed per REPO.
-   */
-  it('purges the warm caches across every worktree', async () => {
-    const result = await envTokenRemove({ env: 'dev' })
-
-    expect(vi.mocked(purgeRepoWarmCaches)).toHaveBeenCalledTimes(1)
-    expect(result.structuredContent.warmCachesPurged).toBe(3)
   })
 
   // The thing a user is most likely to get wrong: a local delete is not a revocation.

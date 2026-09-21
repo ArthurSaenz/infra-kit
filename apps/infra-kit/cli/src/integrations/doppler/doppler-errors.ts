@@ -25,8 +25,7 @@ export type DopplerNotFoundKind = 'project' | 'config' | 'unknown'
  * Every class of `secrets download` failure we act on. `'auth'` is the token-only addition: the
  * service token is absent, revoked, garbage, or scoped to a DIFFERENT config. It is deliberately
  * distinct from the not-found kinds (the name is wrong) and from `'unknown'` (network, timeout,
- * Doppler down) — only `'auth'` is a durable, user-fixable state, and only `'auth'` earns the sticky
- * shell-startup marker (see `lib/env-autoload/auth-failure.ts`).
+ * Doppler down) — only `'auth'` is a durable, user-fixable state.
  */
 export type DopplerFailureKind = 'auth' | DopplerNotFoundKind
 
@@ -94,8 +93,8 @@ export const classifyDopplerAuthFailure = (stderr: string): DopplerAuthKind | nu
 
 /**
  * Is this failure text an auth-class Doppler failure (bad / absent / mis-scoped service token)
- * rather than a transient one (network, timeout, Doppler down)? The single source of truth for that
- * question — `lib/env-autoload/auth-failure.ts` delegates its `isAuthFailure` default here.
+ * rather than a transient one (network, timeout, Doppler down)? The single source of truth
+ * callers classify on.
  *
  * @example
  * isDopplerAuthFailure('Doppler Error: Invalid Auth token') // => true
@@ -147,8 +146,8 @@ export const buildDopplerAuthFailureMessage = (env: string): string => {
  * DOWNSTREAM consumer classifies on.
  *
  * It is the DOPPLER-REFUSED-US subset of {@link EnvAuthError}, the durable/user-fixable env-auth
- * class. Downstream policy (the sticky auth marker) therefore classifies on `isEnvAuthFailure`;
- * `isDopplerAuthError` remains for the callers who genuinely mean "the token was SENT and Doppler
+ * class. Downstream policy therefore classifies on `isEnvAuthFailure`; `isDopplerAuthError`
+ * remains for the callers who genuinely mean "the token was SENT and Doppler
  * rejected it". The message is unchanged — {@link buildDopplerAuthFailureMessage} still renders
  * it — so a human who only ever sees `error.message` sees precisely what they saw before.
  *
@@ -205,8 +204,7 @@ export class DopplerAuthError extends EnvAuthError {
  *
  * Use {@link isEnvAuthFailure} instead when the question is the POLICY one — "is this durable and the
  * user's to fix?" — because a missing token and a corrupt token store are both of those and neither is
- * a Doppler refusal. Classifying auto-load policy on THIS guard is precisely how the missing-token
- * (migration) case shipped silent.
+ * a Doppler refusal; narrowing policy to this guard silently drops both cases.
  *
  * @example
  * isDopplerAuthError(new DopplerAuthError('dev'))                   // => true

@@ -20,13 +20,13 @@ import { buildZshenvBlock } from '../init'
 const SESSION = 'abcd1234'
 
 const PROBE =
-  "printf 'cfg=[%s] FOO=[%s] dir=[%s] load=[%s] clear=[%s] cleared=[%s]\\n' " +
+  "printf 'cfg=[%s] FOO=[%s] dir=[%s] load=[%s] clear=[%s]\\n' " +
   // eslint-disable-next-line no-template-curly-in-string
-  '"${INFRA_KIT_ENV_CONFIG:-}" "${FOO:-}" "${dir:-}" "${load:-}" "${clear:-}" "${INFRA_KIT_ENV_CLEARED:-}"'
+  '"${INFRA_KIT_ENV_CONFIG:-}" "${FOO:-}" "${dir:-}" "${load:-}" "${clear:-}"'
 
-const LOADED = 'cfg=[arthur] FOO=[from-load] dir=[D] load=[L] clear=[C] cleared=[]\n'
-const CLEARED = 'cfg=[] FOO=[] dir=[] load=[] clear=[] cleared=[1]\n'
-const NOTHING = 'cfg=[] FOO=[] dir=[] load=[] clear=[] cleared=[]\n'
+const LOADED = 'cfg=[arthur] FOO=[from-load] dir=[D] load=[L] clear=[C]\n'
+const CLEARED = 'cfg=[] FOO=[] dir=[] load=[] clear=[]\n'
+const NOTHING = 'cfg=[] FOO=[] dir=[] load=[] clear=[]\n'
 
 interface Scratch {
   root: string
@@ -100,7 +100,6 @@ const loadLines = (pairs: Array<[string, string]>, config = 'arthur'): string[] 
     project: 'hulyo',
     projectRoot: '/repo',
     loadedAt: '2026-09-14T00:00:00.000Z',
-    autoLoaded: false,
   })
 }
 
@@ -146,7 +145,7 @@ describe.skipIf(!fs.existsSync('/bin/zsh'))('the ~/.zshenv block, under a real /
     expect(zsh(PROBE)).toEqual(clean(LOADED))
   })
 
-  it('2. clear only: vars the child INHERITED are unset and the cleared marker is exported', () => {
+  it('2. clear only: vars the child INHERITED are unset', () => {
     writeClear(scratch.sessionDir)
 
     const result = zsh(PROBE, scrubbedEnv({ FOO: 'inherited', INFRA_KIT_ENV_CONFIG: 'inherited' }))
@@ -174,7 +173,7 @@ describe.skipIf(!fs.existsSync('/bin/zsh'))('the ~/.zshenv block, under a real /
     expect(zsh(PROBE, scrubbedEnv({ FOO: 'inherited' }))).toEqual(clean(CLEARED))
   })
 
-  it('5. tie: load wins, as the .zshrc precmd gate rules', () => {
+  it('5. tie: load wins', () => {
     const load = writeLoad(scratch.sessionDir)
     const clear = writeClear(scratch.sessionDir)
 

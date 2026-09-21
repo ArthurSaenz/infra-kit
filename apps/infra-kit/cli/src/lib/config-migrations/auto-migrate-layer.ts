@@ -1,4 +1,3 @@
-import process from 'node:process'
 import type { z } from 'zod'
 
 import { isCI } from 'src/lib/agent-mode'
@@ -14,7 +13,7 @@ export interface AutoMigrateLayer {
   path: string
   /** The tracked project layer — the only one a CI checkout must not rewrite. */
   required: boolean
-  /** `'off'` for callers whose stderr nobody reads (the shell-startup autoload); they keep today's strict error. */
+  /** `'off'` for callers whose stderr nobody reads; they keep today's strict error instead of a rewritten file. */
   autoMigrate: 'write' | 'off'
   /** From the stat the loader already took before reading — the stale-read guard's baseline. */
   mtimeMs: number
@@ -44,7 +43,7 @@ export const tryAutoMigrateLayer = async (
   raw: string,
   { schema }: { schema: z.ZodType },
 ): Promise<AutoMigrateOutcome> => {
-  if (layer.autoMigrate === 'off' || process.env.INFRA_KIT_NO_AUTO_MIGRATE) {
+  if (layer.autoMigrate === 'off') {
     return { kind: 'not-applicable' }
   }
 

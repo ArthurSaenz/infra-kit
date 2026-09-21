@@ -98,7 +98,7 @@ describe('buildEnvLoadFileLines', () => {
   }
 
   it('wraps the body in set -a / set +a and records config/project/projectRoot/loadedAt', () => {
-    const lines = buildEnvLoadFileLines({ ...args, autoLoaded: false })
+    const lines = buildEnvLoadFileLines(args)
 
     expect(lines[0]).toBe('set -a')
     expect(lines.at(-1)).toBe('set +a')
@@ -112,24 +112,19 @@ describe('buildEnvLoadFileLines', () => {
   })
 
   it('exports the purpose-named INFRA_KIT_ENV handle, single-quoted', () => {
-    const lines = buildEnvLoadFileLines({ ...args, config: 'arthur', autoLoaded: false })
+    const lines = buildEnvLoadFileLines({ ...args, config: 'arthur' })
 
     expect(lines).toContain("INFRA_KIT_ENV='arthur'")
   })
 
-  it('writes the AUTOLOADED marker only when autoLoaded is true', () => {
-    const lines = buildEnvLoadFileLines({ ...args, autoLoaded: true })
+  it('emits only assignments between the set -a / set +a pair — nothing is unset', () => {
+    const lines = buildEnvLoadFileLines(args)
 
-    expect(lines).toContain("INFRA_KIT_ENV_AUTOLOADED='1'")
-    expect(lines).not.toContain('unset INFRA_KIT_ENV_AUTOLOADED')
-  })
-
-  it('drops the marker and lifts the clear sentinel on a manual load (autoLoaded false)', () => {
-    const lines = buildEnvLoadFileLines({ ...args, autoLoaded: false })
-
-    expect(lines).toContain('unset INFRA_KIT_ENV_AUTOLOADED')
-    expect(lines).toContain('unset INFRA_KIT_ENV_CLEARED')
-    expect(lines).not.toContain("INFRA_KIT_ENV_AUTOLOADED='1'")
+    expect(
+      lines.slice(1, -1).every((line) => {
+        return /^[A-Z_]\w*=/.test(line)
+      }),
+    ).toBe(true)
   })
 })
 
@@ -139,7 +134,6 @@ describe('buildEnvLoadFileLines — injection neutralization (single-quoting)', 
     project: 'proj',
     projectRoot: '/repo',
     loadedAt: '2026-01-01T00:00:00.000Z',
-    autoLoaded: false as const,
   }
 
   it('single-quotes shell-active values so nothing expands or executes on source', () => {
@@ -183,7 +177,6 @@ describe('buildEnvLoadFileLines — credential filtering', () => {
     project: 'proj',
     projectRoot: '/repo',
     loadedAt: '2026-01-01T00:00:00.000Z',
-    autoLoaded: false as const,
   }
 
   const TOKEN_LITERAL = 'dp.st.dev.NEVER_IN_A_SOURCED_FILE'

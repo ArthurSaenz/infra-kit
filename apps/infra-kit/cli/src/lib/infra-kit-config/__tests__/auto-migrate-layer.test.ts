@@ -66,7 +66,6 @@ beforeEach(async () => {
   vi.clearAllMocks()
   // The runner exports CI=true; every write case must start from "not CI".
   vi.stubEnv('CI', '')
-  vi.stubEnv('INFRA_KIT_NO_AUTO_MIGRATE', '')
 
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'ik-config-auto-migrate-'))
   mainPath = path.join(root, 'infra-kit.json')
@@ -101,6 +100,17 @@ describe('getInfraKitConfig — auto-migration of a refused layer', () => {
     expect(await readJson(userGlobalPath)).toEqual({})
     expect(warnSpy).toHaveBeenCalledTimes(1)
     expect(warnSpy.mock.calls[0]?.[0]).toMatch(/^Migrated ~\/\.infra-kit\/infra-kit\.json: removed /)
+  })
+
+  it('layer 1 with `envAutoLoad`: rewritten without the key, the line names it and the replacement', async () => {
+    await writeJson(mainPath, { ...VALID, envAutoLoad: { enabled: true, config: 'dev' } })
+
+    const cfg = await getInfraKitConfig()
+
+    expect(cfg.envManagement.config.name).toBe('p')
+    expect(await readJson(mainPath)).toEqual(VALID)
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(warnSpy.mock.calls[0]?.[0]).toMatch(/removed the retired "envAutoLoad" key .*env-load -c <config>/)
   })
 
   it('the rewrite is exactly one cache miss: the next read parses the clean file without the registry', async () => {
@@ -228,13 +238,10 @@ describe("getInfraKitConfig — no write, today's error", () => {
     expect(await fs.readFile(mainPath, 'utf8')).toBe(raw)
   })
 
-  it('the INFRA_KIT_NO_AUTO_MIGRATE=1 kill switch skips the registry entirely', async () => {
-    vi.stubEnv('INFRA_KIT_NO_AUTO_MIGRATE', '1')
-    const raw = await writeJson(mainPath, { ...VALID, environments: ['dev'] })
+  it('with autoMigrate off a lingering `envAutoLoad` is refused by name, so the user knows what to delete', async () => {
+    const raw = await writeJson(mainPath, { ...VALID, envAutoLoad: { enabled: true, config: 'dev' } })
 
-    await expect(getInfraKitConfig()).rejects.toThrow(strictMessage('infra-kit.json', mainPath))
-    expect(applyConfigMigrations).not.toHaveBeenCalled()
-    expect(writeMigratedConfigFile).not.toHaveBeenCalled()
+    await expect(getInfraKitConfig({ autoMigrate: 'off' })).rejects.toThrow(/"envAutoLoad"/)
     expect(await fs.readFile(mainPath, 'utf8')).toBe(raw)
   })
 

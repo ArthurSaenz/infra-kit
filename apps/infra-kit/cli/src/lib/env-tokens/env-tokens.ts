@@ -101,10 +101,8 @@ export const readTokenStore = async (): Promise<TokenStore | null> => {
   }
 
   // Every refusal below is an EnvAuthError, not a plain Error. A broken store is the MOST durable
-  // env-auth failure there is — it cannot heal on a 30s retry, only a human can fix it — and env
-  // auto-load's sticky marker is keyed on that CLASS. Thrown as a plain Error these were classified
-  // TRANSIENT, so a corrupt store went silent on the backgrounded shell-startup spawn and the user's
-  // env simply stopped loading with nothing ever said. `env` is null: no ONE environment is at fault.
+  // env-auth failure there is — only a human can fix it — and downstream callers classify on that
+  // CLASS (see EnvAuthError's doc). `env` is null: no ONE environment is at fault.
   let parsedRaw: unknown
 
   try {

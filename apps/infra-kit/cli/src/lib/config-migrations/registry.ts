@@ -1,4 +1,5 @@
 import { dropDevProxyKeyMigration } from './migrations/drop-dev-proxy-key'
+import { dropEnvAutoLoadKeyMigration } from './migrations/drop-env-auto-load-key'
 import { dropEnvironmentsKeyMigration } from './migrations/drop-environments-key'
 import { stripLegacyIdeModeMigration } from './migrations/strip-legacy-ide-mode'
 import { stripRetiredZedIdeMigration } from './migrations/strip-retired-zed-ide'
@@ -14,4 +15,5 @@ export const CONFIG_MIGRATIONS: readonly ConfigMigration[] = [
   stripRetiredZedIdeMigration,
   dropEnvironmentsKeyMigration,
   dropDevProxyKeyMigration,
+  dropEnvAutoLoadKeyMigration,
 ]

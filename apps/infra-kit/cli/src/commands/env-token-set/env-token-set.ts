@@ -11,7 +11,6 @@ import { logger } from 'src/lib/logger'
 import { tildify } from 'src/lib/path-display'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { redactToken } from 'src/lib/redact'
-import { purgeRepoWarmCaches } from 'src/lib/warm-cache'
 import { textContent } from 'src/types'
 
 export interface EnvTokenSetArgs {
@@ -156,9 +155,8 @@ const translateProbeFailure = (error: unknown, env: string): Error => {
  *
  * We FAIL CLOSED here, and fail OPEN in `env-load`'s `assertTokenScope` — deliberately, and the
  * asymmetry is the design. A human is watching THIS command: refusing costs them one `--force` and
- * they learn something. On the silent shell-startup autoload path nobody is watching, and failing
- * closed there would blank every developer's environment at once the day Doppler changes what it
- * injects.
+ * they learn something. `env-load` has no such escape hatch, and failing closed there would blank
+ * every developer's environment at once the day Doppler changes what it injects.
  */
 const buildUnverifiableScopeMessage = (env: string): string => {
   return [
@@ -205,10 +203,6 @@ export const envTokenSet = async ({ env, stdin, fromEnv, force }: EnvTokenSetArg
 
   await setToken(env, token)
 
-  // The warm cache is per-WORKTREE while the token store is per-REPO, so a rotation here would leave
-  // sibling worktrees serving up to 2h of secrets fetched with the OLD token at the next shell prompt.
-  const purged = await purgeRepoWarmCaches()
-
   const storePath = await getTokenStorePath()
 
   // The token is rendered ONLY through redactToken, and never interpolated into a message string —
@@ -219,19 +213,12 @@ export const envTokenSet = async ({ env, stdin, fromEnv, force }: EnvTokenSetArg
     logger.warn(`Scope was NOT verified (no ${DOPPLER_CONFIG_KEY} in the payload) — written because --force was given.`)
   }
 
-  if (purged.length > 0) {
-    logger.info(
-      `Purged ${purged.length} warm cache(s) so the next shell cannot serve secrets fetched with an old token.`,
-    )
-  }
-
   const structuredContent = {
     env,
     source,
     redactedToken: redactToken(token),
     storePath,
     scopeVerified,
-    warmCachesPurged: purged.length,
   }
 
   commandEcho.print()

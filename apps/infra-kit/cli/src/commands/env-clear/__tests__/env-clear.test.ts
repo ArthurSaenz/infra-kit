@@ -10,19 +10,22 @@ describe('buildEnvClearLines', () => {
     expect(lines).toContain('unset BAR')
   })
 
-  it('unsets the session metadata vars and the auto-load marker', () => {
+  it('unsets the session metadata vars', () => {
     const lines = buildEnvClearLines([])
 
     expect(lines).toContain('unset INFRA_KIT_ENV')
     expect(lines).toContain('unset INFRA_KIT_ENV_CONFIG')
     expect(lines).toContain('unset INFRA_KIT_ENV_PROJECT')
     expect(lines).toContain('unset INFRA_KIT_ENV_LOADED_AT')
-    expect(lines).toContain('unset INFRA_KIT_ENV_AUTOLOADED')
   })
 
-  it('exports the clear sentinel so cli-invocation auto-load stays suppressed', () => {
-    const lines = buildEnvClearLines([])
+  it('only unsets — nothing is exported into the shell that sources it', () => {
+    const lines = buildEnvClearLines(['FOO'])
 
-    expect(lines).toContain("export INFRA_KIT_ENV_CLEARED='1'")
+    expect(
+      lines.every((line) => {
+        return line.startsWith('unset ')
+      }),
+    ).toBe(true)
   })
 })

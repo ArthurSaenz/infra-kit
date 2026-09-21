@@ -9,7 +9,6 @@ import { commandEcho } from 'src/lib/command-echo'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
-import { purgeRepoWarmCaches } from 'src/lib/warm-cache'
 
 import { envTokenSet } from '../env-token-set'
 
@@ -54,16 +53,6 @@ vi.mock('src/lib/git-utils', () => {
   return { getProjectRoot: vi.fn(), getMainRepoRoot: vi.fn(), getRepoName: vi.fn() }
 })
 
-// The real purge is covered end-to-end (3 real worktrees) in lib/warm-cache/__tests__/purge-repo.test.ts;
-// here we only assert that this command CALLS it — the seam that would silently rot.
-vi.mock('src/lib/warm-cache', () => {
-  return {
-    purgeRepoWarmCaches: vi.fn(async () => {
-      return ['/warm/a', '/warm/b']
-    }),
-  }
-})
-
 vi.mock('src/lib/logger', () => {
   return { logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } }
 })
@@ -95,7 +84,7 @@ const everythingLogged = (): string => {
 }
 
 beforeEach(() => {
-  // Module mocks (zx, password, the purge, the logger) live for the whole FILE — their call history
+  // Module mocks (zx, password, the logger) live for the whole FILE — their call history
   // does not reset itself between tests, and every leak assertion below is a "was never called with"
   // assertion. Without this, one test's calls are another test's evidence.
   vi.clearAllMocks()
@@ -140,7 +129,6 @@ describe('env-token-set — it validates BEFORE it writes', () => {
     await expect(envTokenSet({ env: 'dev' })).rejects.toThrow(/scoped to a DIFFERENT config/)
 
     expect(fs.existsSync(storePath), 'a refused token must never reach disk').toBe(false)
-    expect(vi.mocked(purgeRepoWarmCaches)).not.toHaveBeenCalled()
   })
 
   it('refuses a revoked / garbage token, naming the right diagnosis', async () => {
@@ -162,8 +150,8 @@ describe('env-token-set — it validates BEFORE it writes', () => {
 
   /**
    * FAIL CLOSED here, unlike `env-load`'s assertTokenScope which fails OPEN on the same input. A human
-   * is watching this command: refusing costs them one `--force`. On the silent autoload path nobody is
-   * watching, and failing closed would blank every developer's shell at once.
+   * is watching this command: refusing costs them one `--force`. `env-load` has no such escape hatch,
+   * and failing closed there would blank every developer's shell at once.
    */
   it('refuses when the scope is UNVERIFIABLE (no DOPPLER_CONFIG in the payload)', async () => {
     download.stdout = JSON.stringify({ API_KEY: 'x' })
@@ -207,15 +195,11 @@ describe('env-token-set — it validates BEFORE it writes', () => {
 })
 
 describe('env-token-set — the happy path', () => {
-  it('writes the token at 0600 and purges the warm caches of every worktree', async () => {
+  it('writes the token at 0600', async () => {
     const result = await envTokenSet({ env: 'dev' })
 
     expect(readStore().envs.dev).toBe(TOKEN)
     expect(modeOf(storePath)).toBe('600')
-
-    // A fresh token must not lose to a 2h-old warm cache fetched with the OLD one.
-    expect(vi.mocked(purgeRepoWarmCaches)).toHaveBeenCalledTimes(1)
-    expect(result.structuredContent.warmCachesPurged).toBe(2)
     expect(result.structuredContent.scopeVerified).toBe(true)
   })
 

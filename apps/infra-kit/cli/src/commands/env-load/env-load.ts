@@ -19,8 +19,6 @@ import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import {
   ENV_LOAD_FILE,
-  INFRA_KIT_ENV_AUTOLOADED_VAR,
-  INFRA_KIT_ENV_CLEARED_VAR,
   INFRA_KIT_ENV_CONFIG_VAR,
   INFRA_KIT_ENV_LOADED_AT_VAR,
   INFRA_KIT_ENV_PROJECT_ROOT_VAR,
@@ -38,7 +36,6 @@ import { logger } from 'src/lib/logger'
 import { listProjectEnvNames } from 'src/lib/project-envs'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { refuseMissingArguments } from 'src/lib/prompts/refuse-missing-arguments'
-import { canonicalizeProjectRoot, evictStaleWarmCaches, shouldWriteWarm, writeWarmCache } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
 
 interface EnvLoadArgs {
@@ -48,25 +45,6 @@ interface EnvLoadArgs {
 interface WriteEnvLoadFileArgs {
   /** Resolved Doppler config / environment name (no interactive picker here). */
   config: string
-  /**
-   * Marks the produced file as auto-loaded. `true` writes the
-   * INFRA_KIT_ENV_AUTOLOADED marker; `false` (a manual load) instead unsets the
-   * marker and lifts any clear suppression so a deliberate load wins.
-   */
-  autoLoaded?: boolean
-  /**
-   * Auto-load only: re-checked AFTER the Doppler download, immediately before the
-   * atomic write. Return false to abort (a clear or a manual load landed during the
-   * slow download). Manual loads omit it and always write.
-   */
-  beforeWrite?: () => boolean
-  /**
-   * Canonical (realpath'd) project dir the SHELL passed via `--project-dir` on the
-   * shell-startup auto-load spawn. Its presence (with `autoLoaded`) is what enables
-   * the project-scoped WARM cache write; see {@link shouldWriteWarm}. Undefined for
-   * manual loads and the cli-invocation trigger — those write no warm copy.
-   */
-  projectDir?: string
 }
 
 export interface EnvLoadFileResult {
@@ -82,25 +60,6 @@ interface EnvLoadFileLinesArgs {
   project: string
   projectRoot: string
   loadedAt: string
-  autoLoaded: boolean
-}
-
-/**
- * The auto-load marker lines appended to env-load.sh. Pure so the marker policy
- * is unit-testable without touching Doppler or the filesystem.
- *
- * @example
- * buildAutoLoadMarkerLines(true)  // => ["INFRA_KIT_ENV_AUTOLOADED='1'"]
- * buildAutoLoadMarkerLines(false) // => ['unset INFRA_KIT_ENV_AUTOLOADED', 'unset INFRA_KIT_ENV_CLEARED']
- */
-const buildAutoLoadMarkerLines = (autoLoaded: boolean): string[] => {
-  if (autoLoaded) {
-    return [`${INFRA_KIT_ENV_AUTOLOADED_VAR}=${shellSingleQuote('1')}`]
-  }
-
-  // Manual load: drop any auto marker so auto-load never re-clobbers a deliberate
-  // choice, and lift a prior clear suppression so the manual load takes effect.
-  return [`unset ${INFRA_KIT_ENV_AUTOLOADED_VAR}`, `unset ${INFRA_KIT_ENV_CLEARED_VAR}`]
 }
 
 /** The payload key that carries the token's scope — the one {@link assertTokenScope} compares. */
@@ -137,7 +96,7 @@ const warnFilteredCredentialKeys = (keys: string[]): void => {
 
 /**
  * Build the dotenv-format shell lines for env-load.sh. Pure apart from the one-shot credential
- * warning, so callers can assert the exact marker behavior. `set -a`/`set +a` auto-export every
+ * warning, so callers can assert the exact file contents. `set -a`/`set +a` auto-export every
  * assignment when the file is sourced.
  */
 export const buildEnvLoadFileLines = ({
@@ -146,7 +105,6 @@ export const buildEnvLoadFileLines = ({
   project,
   projectRoot,
   loadedAt,
-  autoLoaded,
 }: EnvLoadFileLinesArgs): string[] => {
   const emitted = pairs.filter(([key]) => {
     return !CREDENTIAL_SECRET_KEYS.has(key)
@@ -174,16 +132,14 @@ export const buildEnvLoadFileLines = ({
     `${INFRA_KIT_ENV_PROJECT_VAR}=${shellSingleQuote(project)}`,
     `${INFRA_KIT_ENV_PROJECT_ROOT_VAR}=${shellSingleQuote(projectRoot)}`,
     `${INFRA_KIT_ENV_LOADED_AT_VAR}=${shellSingleQuote(loadedAt)}`,
-    ...buildAutoLoadMarkerLines(autoLoaded),
     'set +a',
   ]
 }
 
 /**
- * Project root (git top-level) the loaded env belongs to, for the cross-project
- * shell gate. Returns '' when this isn't a git checkout so a non-git infra-kit
- * project still loads — the shell gate then fails open (spawns rather than skips)
- * instead of breaking the whole load on `git rev-parse` throwing.
+ * Project root (git top-level) the loaded env belongs to. Returns '' when this isn't
+ * a git checkout so a non-git infra-kit project still loads instead of the whole
+ * load breaking on `git rev-parse` throwing.
  */
 const resolveProjectRootSafe = async (): Promise<string> => {
   try {
@@ -195,46 +151,24 @@ const resolveProjectRootSafe = async (): Promise<string> => {
 
 /**
  * Download Doppler secrets for a resolved config and atomically write env-load.sh
- * to the session cache dir. Does NOT print to stdout — shared by the `envLoad`
- * entry (which prints the path) and the auto-load path (which lets the shell
- * precmd hook source the file).
+ * to the session cache dir. Does NOT print to stdout — the path line belongs to the
+ * CLI action in `lib/program`.
  */
-export const writeEnvLoadFile = async ({
-  config,
-  autoLoaded = false,
-  beforeWrite,
-  projectDir,
-}: WriteEnvLoadFileArgs): Promise<EnvLoadFileResult | null> => {
+export const writeEnvLoadFile = async ({ config }: WriteEnvLoadFileArgs): Promise<EnvLoadFileResult> => {
   const project = await getDopplerProject()
   const projectRoot = await resolveProjectRootSafe()
 
   const pairs = await downloadDopplerSecrets(project, config)
 
   const loadedAt = new Date().toISOString()
-  const envFileLines = buildEnvLoadFileLines({ pairs, config, project, projectRoot, loadedAt, autoLoaded })
+  const envFileLines = buildEnvLoadFileLines({ pairs, config, project, projectRoot, loadedAt })
   const fileContents = `${envFileLines.join('\n')}\n`
 
   const cacheDir = getSessionCacheDir()
   const envFilePath = path.resolve(cacheDir, ENV_LOAD_FILE)
 
-  // Re-check suppression immediately before the atomic write: a clear or a manual
-  // load may have landed during the slow Doppler download (auto-load path only).
-  if (beforeWrite && !beforeWrite()) return null
-
   fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
   atomicWriteFileSync(envFilePath, fileContents, 0o600)
-
-  // Project-scoped WARM copy: lets the NEXT shell source these vars instantly at
-  // startup (pure zsh, no Doppler) before this session's fresh file lands. Gated so
-  // it only fires for a shell-startup auto-load whose realpath'd git root matches the
-  // dir the shell keyed on (see shouldWriteWarm). Each warm write also sweeps stale
-  // warm dirs — we own the only cache reaper in the codebase.
-  const canonicalProjectRoot = canonicalizeProjectRoot(projectRoot)
-
-  if (shouldWriteWarm({ autoLoaded, projectDir, canonicalProjectRoot })) {
-    writeWarmCache(projectDir!, fileContents)
-    evictStaleWarmCaches()
-  }
 
   return {
     filePath: envFilePath,
@@ -308,12 +242,7 @@ export const envLoad = async (args: EnvLoadArgs) => {
 
   commandEcho.addOption('--config', selectedConfig)
 
-  // A manual load is authoritative: autoLoaded=false drops the auto marker.
-  const result = await writeEnvLoadFile({ config: selectedConfig, autoLoaded: false })
-
-  // A manual load passes no beforeWrite, so it always writes — this guards the
-  // invariant (and narrows the nullable result) rather than handling a real path.
-  if (!result) throw new Error('env-load: write was unexpectedly aborted')
+  const result = await writeEnvLoadFile({ config: selectedConfig })
 
   // The path the zsh wrapper captures is printed by the CLI action in `lib/program`, not here: the
   // handler's stdout stays empty so a `--json` caller gets exactly one document; `emitSourcePath` in
@@ -346,8 +275,7 @@ export const DOPPLER_MAX_OUTPUT_BYTES = 1024 * 1024
 
 /**
  * Hard upper bound for the Doppler subprocess. Well under zx's default so a
- * hung call surfaces quickly instead of blocking an interactive shell or the
- * backgrounded autoload.
+ * hung call surfaces quickly instead of blocking an interactive shell.
  */
 const DOPPLER_DOWNLOAD_TIMEOUT_MS = 30_000
 
@@ -426,7 +354,7 @@ const downloadDopplerSecrets = async (project: string, config: string): Promise<
  * ABSENT ⇒ PROCEED, deliberately. The Doppler CLI already refuses a real mismatch on the wire
  * (SPIKE-0 Q1: exit 1, "does not have access to requested config"), so it — not this — is the
  * load-bearing guard. An absent `DOPPLER_CONFIG` therefore means Doppler changed what it injects,
- * and failing closed here would blank every developer's shell at once on the SILENT autoload path.
+ * and failing closed here would blank every developer's shell at once.
  *
  * @example
  * assertTokenScope([['DOPPLER_CONFIG', 'dev']], 'dev')   // ok
@@ -440,10 +368,9 @@ export const assertTokenScope = (pairs: Array<[string, string]>, config: string)
 
   if (actual === undefined || actual === config) return
 
-  // A DopplerAuthError, not a plain Error: this IS an auth failure, and only the auth CLASS reaches the
-  // sticky marker that a shell-startup user ever sees. A plain Error here would be classified transient,
-  // expire in 30s, and leave them silently loading another environment's secrets — the exact failure this
-  // assert exists to catch. The message stays richer than the generic one: we know the token's real config.
+  // A DopplerAuthError, not a plain Error: this IS an auth failure, and callers classify by TYPE
+  // (`isEnvAuthFailure`), so a plain Error would read as transient. The message stays richer than the
+  // generic one: we know the token's real config.
   throw new DopplerAuthError(
     config,
     null,
@@ -470,9 +397,8 @@ export const assertTokenScope = (pairs: Array<[string, string]>, config: string)
  * translateDopplerDownloadError(new Error('connect ETIMEDOUT'), 'p', 'dev')
  * // => the same Error, untouched
  */
-// Why a type and not prose: `lib/env-autoload` used to text-match the raw Doppler markers on the
-// error this function had already rewritten — they were long gone, so the sticky auth marker was
-// never written and a revoked token went silent.
+// Why a type and not prose: a caller that text-matched the raw Doppler markers on the error this
+// function had already rewritten found them long gone, and a revoked token went silent.
 //
 // The not-found message no longer lists the AVAILABLE names: `listDopplerProjects` /
 // `listDopplerConfigs` require an ACCOUNT login, which token-only auth deleted, so that probe

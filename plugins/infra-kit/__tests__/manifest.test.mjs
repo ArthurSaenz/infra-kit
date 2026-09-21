@@ -909,24 +909,23 @@ const SESSION_CLAUSES = [
   'not JSON, treat it as unknown and call `env-list` yourself',
   'infra-kit env-token-set <env>',
   'a name absent from the picker must still be typed and passed as `-c`',
-  // The shell round trip's three properties, and the one check a human can perform.
-  'at its next prompt — after Claude Code exits or is backgrounded',
-  'the terminal that launched Claude Code and no other',
-  'writes into a directory nothing is watching and still returns success',
-  'report the session id from the returned filePath',
+  // The delivery contract: the load lands in Claude's own shells via `.zshenv`, never the human's
+  // own already-open terminal, and the one check a human can perform.
+  'sources this file into every zsh spawned under',
+  "It never reaches the human's own, already-open terminal",
+  'run `infra-kit env-load -c <config>` themselves',
+  'report the session id from the returned `filePath`',
   '`sessionId`',
-  'compare it with INFRA_KIT_SESSION at their own prompt',
+  'compare it with their own `INFRA_KIT_SESSION`',
   'does not persist shell state between calls',
   'INFRA_KIT_SESSION is not set',
   'infra-kit setup --skip-tools',
   // What `env-list` is and is not.
   'not a live Doppler enumeration',
   'an empty list is a legitimate result',
-  // The approval (host prompt, no confirm site), the tie hazard, and the tether to the provider contract.
+  // The approval (host prompt, no confirm site), and the tether to the provider contract.
   ...NO_CONFIRM_CLAUSES,
   'run it once, and never add `--yes`',
-  'in the same wall-clock second',
-  'infra-kit: auto-loaded vars for',
   'docs/session-context-orchestrator.md',
   // What not to do — the clause that keeps the picker the human's, not the agent's.
   'Do not supply a `-c` the human did not name in order to skip the picker.',

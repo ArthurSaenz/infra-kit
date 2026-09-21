@@ -11,7 +11,6 @@ import { decidePrune, isDevSessionRunning } from 'src/commands/doctor/prune-rout
 // own comment requires of its hint.
 import { FIXABLE_NAMES } from 'src/commands/doctor/report'
 import { parseServiceArgv } from 'src/commands/doctor/service-file'
-import { buildDopplerChildEnv } from 'src/commands/env-load/env-load'
 import { buildZshenvBlock } from 'src/commands/init'
 // `resolveGitRoot` is the WRITER's gate, imported rather than re-derived so the reader's row set and
 // the writer's reach cannot drift apart (see the gate comment beside the plugin rows below).
@@ -43,15 +42,14 @@ import {
 import type { ServiceInstallSeams } from 'src/dev/proxy/portless-link'
 import { portlessNodePath, readPortlessNodeSidecar } from 'src/dev/proxy/portless-node'
 import type { PortlessNodeFs, PortlessNodeSidecar, PortlessNodeStat } from 'src/dev/proxy/portless-node'
-import { INFRA_KIT_ENV_TOKEN_VAR, probeEnvToken, resolveEnvToken } from 'src/integrations/doppler'
-import type { EnvTokenProbe, EnvTokenSource, ResolvedEnvToken } from 'src/integrations/doppler'
+import { INFRA_KIT_ENV_TOKEN_VAR, resolveEnvToken } from 'src/integrations/doppler'
+import type { EnvTokenSource, ResolvedEnvToken } from 'src/integrations/doppler'
 import type { IdeProvider } from 'src/integrations/ide'
 import { probeOrca } from 'src/integrations/orca'
 import { inspectPackageGuidance, readGuidanceFile } from 'src/lib/agent-guidance'
 import { agentMode, resolveAgentModeSource } from 'src/lib/agent-mode'
 import type { ResolveAgentModeInput } from 'src/lib/agent-mode'
 import { describeOverrides, readOverrideSummary } from 'src/lib/config-overrides'
-import { DEFAULT_WARM_TTL_SECONDS, ENV_LOAD_FILE, getProjectWarmCacheDir } from 'src/lib/constants'
 // The probe reports FACTS about an install and can neither name nor run a fix — the same one-way seam
 // as the registry import below. `lib/dependency-plan` is the module that turns a probe into a recipe,
 // and `doctor` deliberately stops one module short of it.
@@ -94,7 +92,6 @@ import { listProjectEnvNames } from 'src/lib/project-envs'
 import { quietShell } from 'src/lib/quiet-shell'
 import { isNewerVersion } from 'src/lib/update-check/semver'
 import { sortVersions } from 'src/lib/version-utils'
-import { canonicalizeProjectRoot } from 'src/lib/warm-cache'
 import { defineMcpTool, textContent } from 'src/types'
 
 import packageJson from '../../../package.json' with { type: 'json' }
@@ -243,50 +240,6 @@ export const checkZshenvInitialized = (): CheckResult => {
   return checkManagedRcBlock('zshenv session block', '.zshenv', 'session-env', buildZshenvBlock())
 }
 
-/**
- * Surface the state of the project-scoped warm env cache (populated by an
- * auto-loaded shell startup). Informational only — always passes — since a
- * missing or stale warm file just means the next auto-load will (re)populate
- * it rather than indicating a problem.
- */
-const checkWarmCache = async (): Promise<CheckResult> => {
-  const name = 'warm cache'
-
-  let root: string
-
-  try {
-    root = await getProjectRoot()
-  } catch {
-    return { name, status: 'pass', message: 'warm cache: not a git project' }
-  }
-
-  const canon = canonicalizeProjectRoot(root)
-
-  if (!canon) {
-    return { name, status: 'pass', message: 'warm cache: unavailable' }
-  }
-
-  const warmFile = path.join(getProjectWarmCacheDir(canon), ENV_LOAD_FILE)
-
-  if (!fs.existsSync(warmFile)) {
-    return { name, status: 'pass', message: 'warm cache: none yet (populated on next auto-load)' }
-  }
-
-  const ageSeconds = Math.floor((Date.now() - fs.statSync(warmFile).mtimeMs) / 1000)
-  const ageMinutes = Math.floor(ageSeconds / 60)
-  const ttlMinutes = Math.floor(DEFAULT_WARM_TTL_SECONDS / 60)
-
-  if (ageSeconds >= DEFAULT_WARM_TTL_SECONDS) {
-    return {
-      name,
-      status: 'pass',
-      message: `warm cache: present but stale (${ageMinutes}m old, TTL ${ttlMinutes}m) — will refresh`,
-    }
-  }
-
-  return { name, status: 'pass', message: `warm cache: present, ${ageMinutes}m old` }
-}
-
 const checkPnpmWorkspaceVirtualStore = async (): Promise<CheckResult> => {
   const name = 'pnpm enableGlobalVirtualStore'
 
@@ -372,16 +325,14 @@ export interface EnvTokenCheckDeps {
   readStore?: () => Promise<TokenStore | null>
   /** Resolves one env's token (`INFRA_KIT_ENV_TOKEN` → store → throw). */
   resolveToken?: (env: string) => Promise<ResolvedEnvToken>
-  /** Asks Doppler what a token actually is. Never throws; see {@link probeEnvToken}. */
-  probe?: (args: { childEnv: NodeJS.ProcessEnv; project: string; config: string }) => Promise<EnvTokenProbe>
   storePath?: () => Promise<string>
   /** `null` = the path does not exist. */
   statPath?: (target: string) => fs.Stats | null
   chmodPath?: (target: string, mode: number) => void
   /**
    * Reads `INFRA_KIT_ENV_TOKEN` — the CI / agent channel. A SEAM rather than a direct `process.env`
-   * read so the store checks are deterministic under test: a developer whose shell has already
-   * auto-loaded an env would otherwise run the suite with the variable set and silently exercise the
+   * read so the store checks are deterministic under test: a developer whose shell has sourced an
+   * `env-load` file would otherwise run the suite with the variable set and silently exercise the
    * skip branch instead of the one under assertion.
    */
   readEnvToken?: () => string | undefined
@@ -406,8 +357,13 @@ interface EnvTokenEntry {
  * @example
  * describeEntries([{ env: 'dev', source: 'store' }, { env: 'prod', source: null }])
  * // => 'dev: token (store), prod: no token'
+ * describeEntries([])
+ * // => 'no envs declared'
  */
 const describeEntries = (entries: EnvTokenEntry[]): string => {
+  // A repo with no workflow envs and no stored tokens is a valid state, not a missing message.
+  if (entries.length === 0) return 'no envs declared'
+
   return entries
     .map((entry) => {
       const held = entry.source === null ? 'no token' : `token (${entry.source})`
@@ -436,19 +392,14 @@ const resolveEntries = async (
 }
 
 /**
- * Which envs have a service token, and is the one that MATTERS among them?
- *
- * Under token-only auth the `envAutoLoad.config` env is load-bearing: no token there means the
- * developer's shell silently stops getting its environment, so that one is a FAIL. Every other env is
- * a listing line, not a verdict — a developer legitimately holds a `dev` token and no `prod` one, and
- * a doctor that failed on that would train everyone to ignore it.
- *
- * The gap it names is a store that holds tokens, just not the load-bearing one. A store that holds
- * NOTHING is {@link checkTokenStorePresent}'s failure and is deferred to it — see the branch below.
+ * Which envs have a service token? A listing, never a verdict: no env is load-bearing now that
+ * `env-load -c <config>` is explicit, and a developer legitimately holds a `dev` token and no `prod`
+ * one — a doctor that failed on that would train everyone to ignore it. A store that holds NOTHING is
+ * {@link checkTokenStorePresent}'s failure; a store that cannot be parsed is the one FAIL here.
  *
  * @example
  * await checkEnvTokensConfigured({ config, error: null })
- * // => { name: 'env tokens configured', status: 'pass', message: 'auto-load env "dev": token (store). dev: token (store), prod: no token' }
+ * // => { name: 'env tokens configured', status: 'pass', message: 'dev: token (store), prod: no token' }
  */
 export const checkEnvTokensConfigured = async (
   read: DoctorConfig,
@@ -469,118 +420,17 @@ export const checkEnvTokensConfigured = async (
   // There is no longer a "store belongs to another repo" case to report here: the store carries no
   // `repoRoot` (see `lib/env-tokens`), so a hand-written store loads and a basename collision between
   // two checkouts is an accepted risk, not a diagnosis. Do not add a branch back for it.
-  let store: TokenStore | null
-
   try {
-    store = await readStore()
+    await readStore()
   } catch (err) {
     return { name, status: 'fail', message: `Token store unreadable — ${(err as Error).message}` }
   }
 
   // The env universe is the union of what the workflows declare and what we hold tokens for — see
   // `lib/project-envs`. It replaces `config.environments`, which was a hand-maintained third copy.
-  const envs = await listProjectEnvNames()
-  const autoLoadEnv = read.config.envAutoLoad?.config
+  const entries = await resolveEntries(await listProjectEnvNames(), resolveToken)
 
-  // The auto-load env is load-bearing whether or not anything declares it: it is what the shell tries
-  // to load. Probe it even when no workflow names it, so "no token for it" beats "we never looked".
-  const universe = autoLoadEnv && !envs.includes(autoLoadEnv) ? [...envs, autoLoadEnv] : envs
-
-  const entries = await resolveEntries(universe, resolveToken)
-  const listing = describeEntries(entries)
-
-  if (autoLoadEnv === undefined) {
-    return { name, status: 'pass', message: `No envAutoLoad configured — no env is load-bearing. ${listing}` }
-  }
-
-  const autoLoadEntry = entries.find((entry) => {
-    return entry.env === autoLoadEnv
-  })
-
-  if (!autoLoadEntry || autoLoadEntry.source === null) {
-    // A store that holds NOTHING (absent, or hand-edited down to `{ envs: {} }`) is already the FAIL
-    // of `tokens.json present`, with the same root cause and the same fix command — so this would be
-    // the SECOND red line for one problem, on the most ordinary broken setup there is (a fresh
-    // checkout that configures `envAutoLoad`). The gap this check exists to name is the narrower one:
-    // a store that holds tokens, just not for the load-bearing env. Same deferral as `tokens.json
-    // perms` below and `env token valid` above — one problem, one line.
-    if (store === null || Object.keys(store.envs).length === 0) {
-      return { name, status: 'pass', message: 'Skipped — there is no token store to read (see tokens.json present)' }
-    }
-
-    return {
-      name,
-      status: 'fail',
-      message:
-        `No Doppler service token for the auto-load env "${autoLoadEnv}" — your shell env will not load. ` +
-        `Fix: run \`infra-kit env-token-set ${autoLoadEnv}\`. ${listing}`,
-    }
-  }
-
-  return {
-    name,
-    status: 'pass',
-    message: `auto-load env "${autoLoadEnv}": token (${autoLoadEntry.source}). ${listing}`,
-  }
-}
-
-/** The verdict for each probe outcome. `unreachable` is a PASS — see {@link checkEnvTokenValid}. */
-const PROBE_VERDICT: Record<EnvTokenProbe['outcome'], { status: CheckResult['status']; describe: string }> = {
-  valid: { status: 'pass', describe: 'live and correctly scoped' },
-  revoked: { status: 'fail', describe: 'REJECTED by Doppler (revoked or invalid)' },
-  'mis-scoped': { status: 'fail', describe: 'live but scoped to a DIFFERENT config' },
-  unreachable: { status: 'pass', describe: 'could not be checked (Doppler unreachable)' },
-}
-
-/**
- * Is the auto-load env's token actually LIVE and correctly SCOPED? The only check here that leaves the
- * machine, and the only one that can tell a developer why their shell went quiet.
- *
- * An UNREACHABLE probe passes, deliberately: a network failure proves nothing about a token, and a
- * doctor that reported "your token is revoked" to a developer on a plane would be worse than one that
- * said nothing. The same `null`-means-couldn't-tell contract the Doppler listings always carried.
- *
- * @example
- * await checkEnvTokenValid({ config, error: null })
- * // => { name: 'env token valid', status: 'fail', message: 'The token for env "dev" is live but scoped to a DIFFERENT config …' }
- */
-export const checkEnvTokenValid = async (read: DoctorConfig, deps: EnvTokenCheckDeps = {}): Promise<CheckResult> => {
-  const name = 'env token valid'
-  const resolveToken = deps.resolveToken ?? resolveEnvToken
-  const probe = deps.probe ?? probeEnvToken
-
-  if (!read.config) {
-    return { name, status: 'pass', message: 'Skipped — infra-kit config could not be read (see config check)' }
-  }
-
-  const env = read.config.envAutoLoad?.config
-
-  if (env === undefined) {
-    return { name, status: 'pass', message: 'Skipped — no envAutoLoad env to probe' }
-  }
-
-  let token: string
-
-  try {
-    token = (await resolveToken(env)).token
-  } catch {
-    // Already the FAIL of `env tokens configured`; repeating it here would double-count one problem.
-    return { name, status: 'pass', message: `Skipped — no token for env "${env}" (see env tokens configured)` }
-  }
-
-  const project = read.config.envManagement.config.name
-  const result = await probe({ childEnv: buildDopplerChildEnv(token), project, config: env })
-  const verdict = PROBE_VERDICT[result.outcome]
-  const suffix =
-    result.outcome === 'revoked' || result.outcome === 'mis-scoped'
-      ? ` Fix: run \`infra-kit env-token-set ${env}\` with a token scoped to "${env}".`
-      : ''
-
-  return {
-    name,
-    status: verdict.status,
-    message: `The token for env "${env}" (project "${project}") is ${verdict.describe}.${suffix}`,
-  }
+  return { name, status: 'pass', message: describeEntries(entries) }
 }
 
 /** The live `INFRA_KIT_ENV_TOKEN`, or `undefined`. An EMPTY value is a MISS — the resolver's rule. */
@@ -602,10 +452,9 @@ const defaultReadEnvToken = (): string | undefined => {
  * // => { name: 'tokens.json present', status: 'fail', message: 'No token store at ~/.infra-kit/projects/api/tokens.json …' }
  */
 // Every project this CLI drives authenticates through that store, so a checkout without one cannot
-// load an env, deploy, or read a secret — whatever `envAutoLoad` happens to say. Before this check
-// existed that state was reported as THREE passes (`env tokens configured` passes outright when no
-// `envAutoLoad` is configured, and the other two skip), so a green report meant nothing on exactly
-// the machine that needed the report most.
+// load an env, deploy, or read a secret. `env tokens configured` only LISTS sources and never fails
+// on a missing token, so without this check an empty machine would read as green — on exactly the
+// machine that needed the report most.
 //
 // An EMPTY store fails alongside a missing one: `env-token-set` never writes `{ envs: {} }`, so a
 // store with no envs is a hand-edit or an `env-token-remove` of the last token — functionally the
@@ -2442,12 +2291,10 @@ export const doctor = async (
     checkOrca(),
     Promise.resolve(checkZshrcInitialized()),
     Promise.resolve(checkZshenvInitialized()),
-    checkWarmCache(),
     checkPnpmWorkspaceVirtualStore(),
     Promise.resolve(checkInfraKitConfigValid(read)),
     checkTokenStorePresent(),
     checkEnvTokensConfigured(read),
-    checkEnvTokenValid(read),
     checkTokenStorePerms(options.fix ?? false),
     checkUserOverridePath(),
     checkLegacyUserGlobalConfig(),

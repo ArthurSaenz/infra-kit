@@ -19,8 +19,8 @@ export const CONFIG_STUB = '{}\n'
 
 // The documented key set, shared verbatim by the layer-2 (user-global) and layer-3
 // (user-project) examples so the two can never disagree about what the schema is.
-// Covers ALL nine top-level keys of `infraKitConfigObject` — `config-templates.test.ts`
-// fails the build if a tenth is added to the schema and not documented here.
+// Covers ALL eight top-level keys of `infraKitConfigObject` — `config-templates.test.ts`
+// fails the build if a ninth is added to the schema and not documented here.
 //
 // Every line is a `//` comment: the surrounding braces are the only live JSON, so the
 // file always parses to `{}` once the comments are stripped.
@@ -49,14 +49,6 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   //   // or "three-pane" (left split top/bottom + full-height right).
   //   "orca": { "layout": "two-columns" }
   // },
-  //
-  // // Auto-load Doppler env when working inside this project/worktree. Omit to
-  // // disable. "trigger" (pick one): "shell-startup" (new shells) | "cli-invocation"
-  // // (before each infra-kit command, primes subsequent commands). "config" is the
-  // // environment to load — must have a service token (infra-kit env-token-set) or
-  // // auto-load quietly disables. Requires the committed infra-kit.json at the git
-  // // repo root, and the zsh shell integration (infra-kit init + a new shell). zsh only.
-  // "envAutoLoad": { "trigger": "shell-startup", "config": "dev" },
   //
   // // Per-app local-dev overrides, keyed by APP FOLDER name (the directory under
   // // apps/). Both fields optional: "port" pins the local listen port (otherwise
@@ -148,8 +140,8 @@ export const buildUserGlobalExample = (): string => {
 //
 // Merge is shallow: setting a top-level key replaces that whole section from
 // layer 1. Arrays do not concatenate. Top-level keys recognized:
-// envManagement, ide, taskManager, worktrees, envAutoLoad, dev,
-// devServersPresets, protectedEnvs, mcp (project layer only). The schema is strict — an
+// envManagement, ide, taskManager, worktrees, dev, devServersPresets,
+// protectedEnvs, mcp (project layer only). The schema is strict — an
 // unrecognized top-level key is a parse error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real global
@@ -181,9 +173,9 @@ export const buildUserProjectExample = (projectName: string): string => {
 // Layer 3 (highest precedence) of the config merge chain. Shallow-merged on top of
 // <repo>/infra-kit.json (layer 1) and ~/.infra-kit/infra-kit.json (layer 2) — a
 // top-level key set here replaces that whole section wholesale; arrays do not
-// concatenate. Top-level keys recognized: envManagement, ide,
-// taskManager, worktrees, envAutoLoad, dev, devServersPresets,
-// protectedEnvs, mcp (project layer only — refused here). The schema is strict — an unrecognized top-level key is a parse
+// concatenate. Top-level keys recognized: envManagement, ide, taskManager,
+// worktrees, dev, devServersPresets, protectedEnvs, mcp (project layer only —
+// refused here). The schema is strict — an unrecognized top-level key is a parse
 // error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real overrides

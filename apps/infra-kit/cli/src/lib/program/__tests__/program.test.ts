@@ -1,25 +1,19 @@
 import type { Command } from 'commander'
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { commandCatalog } from 'src/lib/command-catalog'
 import { resolveLeaf } from 'src/lib/command-catalog/palette'
 import { commandEcho } from 'src/lib/command-echo'
-import { runEnvAutoLoad, surfaceStickyAuthFailure } from 'src/lib/env-autoload'
 import { logger } from 'src/lib/logger'
 
 import { buildProgram, commandPath } from '../program'
 
-// The preAction hook's other two legs touch the outside world: the layer-3 seed writes to $HOME and the
-// auto-load shells out to Doppler. Neither is under test here, and a test that seeds a real home dir is
-// a test that changes the machine it runs on.
+// The preAction hook's other leg touches the outside world: the layer-3 seed writes to $HOME. It is not
+// under test here, and a test that seeds a real home dir is a test that changes the machine it runs on.
 vi.mock('src/lib/config-bootstrap', () => {
   return { ensureUserProjectConfig: vi.fn(async () => {}) }
-})
-
-vi.mock('src/lib/env-autoload', () => {
-  return { runEnvAutoLoad: vi.fn(async () => {}), surfaceStickyAuthFailure: vi.fn() }
 })
 
 /** Every catalog command that is a runnable leaf — skips the bare `vendor`/`config` group nodes. */
@@ -208,31 +202,42 @@ describe('program — every command we print is a command we accept', () => {
   })
 })
 
-describe('program — the sticky auth-failure warning is not gated by the auto-load exclusion', () => {
+describe('program — the retired env auto-load surface is gone, not hidden', () => {
   /**
-   * The second half of the silent-token bug. `version`, `doctor` and `dev` are excluded from the
-   * cli-invocation auto-LOAD on purpose (priming Doppler env there would be surprising) — but they are
-   * exactly what a user whose shell env went quiet runs next. Replaying the recorded token failure is
-   * WARNING, not LOADING, so it must fire on every command, including the excluded ones. Gated on the
-   * same set, a `dev`-only user would be warned by nothing, ever.
+   * A `.zshrc` block written by an older release keeps spawning `infra-kit env-autoload` in the
+   * background until `setup` is re-run (auto-update never runs it). That spawn must be a plain
+   * Commander refusal — exit 1, no preAction, no handler — so a stale block degrades to silence
+   * instead of quietly doing half of a feature that no longer exists.
    */
-  beforeEach(() => {
-    vi.mocked(runEnvAutoLoad).mockClear()
-    vi.mocked(surfaceStickyAuthFailure).mockClear()
+  const parseRefused = async (argv: string[]): Promise<{ code: string; exitCode: number }> => {
+    const program = buildProgram()
+    const silence = { writeErr: () => {}, writeOut: () => {} }
+    const prepare = (cmd: Command): void => {
+      cmd.exitOverride().configureOutput(silence)
+      cmd.commands.forEach(prepare)
+    }
+
+    prepare(program)
+
+    return program.parseAsync(['node', 'infra-kit', ...argv]).then(
+      () => {
+        throw new Error(`expected Commander to refuse: ${argv.join(' ')}`)
+      },
+      (error: { code: string; exitCode: number }) => {
+        return { code: error.code, exitCode: error.exitCode }
+      },
+    )
+  }
+
+  it('refuses `env-autoload` as an unknown command with exit 1', async () => {
+    await expect(parseRefused(['env-autoload'])).resolves.toEqual({ code: 'commander.unknownCommand', exitCode: 1 })
   })
 
-  it('replays on an auto-load-EXCLUDED command (version), which still never auto-loads', async () => {
-    await parseWithInertAction(['version'])
-
-    expect(surfaceStickyAuthFailure).toHaveBeenCalled()
-    expect(runEnvAutoLoad).not.toHaveBeenCalled()
-  })
-
-  it('replays on a non-excluded command too (which does auto-load)', async () => {
-    await parseWithInertAction(['worktrees', 'list'])
-
-    expect(surfaceStickyAuthFailure).toHaveBeenCalled()
-    expect(runEnvAutoLoad).toHaveBeenCalledWith(expect.objectContaining({ expectedTrigger: 'cli-invocation' }))
+  it('refuses `env-clear --purge` as an unknown option with exit 1', async () => {
+    await expect(parseRefused(['env-clear', '--purge'])).resolves.toEqual({
+      code: 'commander.unknownOption',
+      exitCode: 1,
+    })
   })
 })
 

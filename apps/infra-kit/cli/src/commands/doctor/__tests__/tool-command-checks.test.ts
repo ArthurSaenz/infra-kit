@@ -61,9 +61,6 @@ vi.mock('src/integrations/doppler', async (importOriginal) => {
     resolveEnvToken: vi.fn(() => {
       return Promise.resolve({ token: 'redacted', source: 'store' })
     }),
-    probeEnvToken: vi.fn(() => {
-      return Promise.resolve({ outcome: 'unreachable' })
-    }),
   }
 })
 

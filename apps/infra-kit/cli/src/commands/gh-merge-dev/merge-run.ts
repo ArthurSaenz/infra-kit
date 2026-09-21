@@ -1,4 +1,3 @@
-import process from 'node:process'
 import { $ } from 'zx'
 
 import {
@@ -239,14 +238,9 @@ export const verifyMerges = async (args: {
     try {
       await assertPristineWorktree(worktreePath)
       await $({ cwd: worktreePath, quiet: true })`git checkout --detach ${ref.sha}`
-      // A `qa`-style tier reaches `ik audit`, i.e. the migrating config read. The scratch checkout
-      // must never be rewritten: on a branch that still carries a retired key the strict error IS
-      // the verdict — the fix belongs on that branch, not in a throwaway worktree.
-      await $({
-        cwd: worktreePath,
-        quiet: true,
-        env: { ...process.env, INFRA_KIT_NO_AUTO_MIGRATE: '1' },
-      })`sh -c ${command}`
+      // A `qa`-style tier reaches `ik audit`, i.e. the migrating config read; a rewrite it makes in
+      // the scratch checkout is discarded by the reset below, so the branch itself is never touched.
+      await $({ cwd: worktreePath, quiet: true })`sh -c ${command}`
 
       kept.push(ref)
     } catch (error) {

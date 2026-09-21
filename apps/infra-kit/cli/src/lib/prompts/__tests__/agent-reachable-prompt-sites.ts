@@ -17,7 +17,7 @@ import type { CatalogMcpTool } from 'src/lib/command-catalog/command-catalog'
  * THE SURFACE IS BASH, NOT A TOOL LIST. An agent drives this CLI as `Bash(infra-kit …)`, so every
  * command is reachable whether or not it ever carried a `defineMcpTool`; the catalog's `mcpExposed`
  * is historical ("was listed on the retired server") and filtering on it left `env-token-set` and
- * `env-autoload` — both `mutating: true, mcpExposed: false` — outside every guard here. Roots are
+ * `env-token-remove` — both `mutating: true, mcpExposed: false` — outside every guard here. Roots are
  * therefore every file declaring a `defineMcpTool({ name })` PLUS every `src/commands/<cmd>/<cmd>.ts`
  * that declares none. Only `entry/cli.ts`'s palette stays out: it is not a command, and a human typed
  * the bare `infra-kit` that opens it.

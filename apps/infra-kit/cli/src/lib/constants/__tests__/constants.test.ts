@@ -103,7 +103,7 @@ describe('parseUnsetNamesFromEnvFile', () => {
     expect(parseUnsetNamesFromEnvFile('/nonexistent/path/env.sh')).toEqual([])
   })
 
-  it('yields every name a real env-clear.sh unsets, and not the exported sentinel', () => {
+  it('yields every name a real env-clear.sh unsets', () => {
     withTmpDir((dir) => {
       const file = path.join(dir, 'env-clear.sh')
 
@@ -116,13 +116,12 @@ describe('parseUnsetNamesFromEnvFile', () => {
         'INFRA_KIT_ENV_PROJECT',
         'INFRA_KIT_ENV_PROJECT_ROOT',
         'INFRA_KIT_ENV_LOADED_AT',
-        'INFRA_KIT_ENV_AUTOLOADED',
       ])
       expect(parseVarNamesFromEnvFile(file)).toEqual([])
     })
   })
 
-  const writeRealLoadFile = (dir: string, autoLoaded: boolean): string => {
+  const writeRealLoadFile = (dir: string): string => {
     const file = path.join(dir, 'env-load.sh')
     const lines = buildEnvLoadFileLines({
       pairs: [['JIRA_TOKEN', 'secret']],
@@ -130,7 +129,6 @@ describe('parseUnsetNamesFromEnvFile', () => {
       project: 'proj',
       projectRoot: dir,
       loadedAt: '2026-09-15T00:00:00.000Z',
-      autoLoaded,
     })
 
     fs.writeFileSync(file, `${lines.join('\n')}\n`)
@@ -138,17 +136,9 @@ describe('parseUnsetNamesFromEnvFile', () => {
     return file
   }
 
-  it('yields the two marker lines of a real manual env-load.sh, and none of its assignments', () => {
+  it('yields nothing for a real env-load.sh — its assignments are never read as unsets', () => {
     withTmpDir((dir) => {
-      const file = writeRealLoadFile(dir, false)
-
-      expect(parseUnsetNamesFromEnvFile(file)).toEqual(['INFRA_KIT_ENV_AUTOLOADED', 'INFRA_KIT_ENV_CLEARED'])
-    })
-  })
-
-  it('yields nothing for an auto-loaded env-load.sh', () => {
-    withTmpDir((dir) => {
-      expect(parseUnsetNamesFromEnvFile(writeRealLoadFile(dir, true))).toEqual([])
+      expect(parseUnsetNamesFromEnvFile(writeRealLoadFile(dir))).toEqual([])
     })
   })
 

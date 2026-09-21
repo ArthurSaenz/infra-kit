@@ -5,7 +5,6 @@ import process from 'node:process'
 import {
   ENV_CLEAR_FILE,
   ENV_LOAD_FILE,
-  INFRA_KIT_ENV_CLEARED_VAR,
   INFRA_KIT_SESSION_VAR,
   getSessionCacheDir,
   parseUnsetNamesFromEnvFile,
@@ -21,7 +20,7 @@ import { PROTECTED_CHILD_ENV_NAMES } from 'src/lib/mcp-proxy/protected-env'
  * re-parsed; `no-session` carries none because nothing is ever applied for it.
  */
 export type SessionEnvState =
-  | { kind: 'load'; vars: Record<string, string>; unset: string[]; signature: string }
+  | { kind: 'load'; vars: Record<string, string>; signature: string }
   | { kind: 'clear'; unset: string[]; signature: string }
   | { kind: 'none'; signature: 'none' }
   | { kind: 'no-session' }
@@ -119,12 +118,7 @@ const chooseSourcedFile = (dir: string): SourcedFile => {
 
 const parseSourcedFile = (sourced: SourcedFile): SessionEnvState => {
   if (sourced.kind === 'load') {
-    return {
-      kind: 'load',
-      vars: parseVarsFromEnvFile(sourced.file),
-      unset: parseUnsetNamesFromEnvFile(sourced.file),
-      signature: sourced.signature,
-    }
+    return { kind: 'load', vars: parseVarsFromEnvFile(sourced.file), signature: sourced.signature }
   }
 
   if (sourced.kind === 'clear') {
@@ -200,12 +194,10 @@ const overlayState = (state: Exclude<SessionEnvState, { kind: 'no-session' }>): 
 
   if (state.kind === 'load') {
     for (const [name, value] of Object.entries(state.vars)) assign(overlay, name, value)
-    for (const name of state.unset) remove(overlay, name)
   }
 
   if (state.kind === 'clear') {
     for (const name of state.unset) remove(overlay, name)
-    assign(overlay, INFRA_KIT_ENV_CLEARED_VAR, '1')
   }
 
   return overlay

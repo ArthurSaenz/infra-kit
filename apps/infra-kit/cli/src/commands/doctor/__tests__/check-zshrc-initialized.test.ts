@@ -64,8 +64,10 @@ describe('checkZshrcInitialized', () => {
   })
 
   it('fails as out-of-date when the installed block has drifted from current', () => {
-    const drifted = buildShellBlock().replace('zmodload zsh/stat', 'zmodload zsh/OLD')
+    const drifted = buildShellBlock().replace('INFRA_KIT_SESSION', 'INFRA_KIT_OLD')
 
+    // A drift that touches nothing would make the installed block current and the assertion vacuous.
+    expect(drifted).not.toBe(buildShellBlock())
     fs.writeFileSync(zshrcPath, `${drifted}\n`)
 
     const result = checkZshrcInitialized()

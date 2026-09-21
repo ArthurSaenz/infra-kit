@@ -151,22 +151,6 @@ const devPresetSchema = z
 
 const devPresetsSchema = z.record(z.string().min(1), devPresetSchema)
 
-// env auto-load: opt-in convenience that primes Doppler env when you work inside
-// this project / a worktree. Absent => disabled. `trigger` selects the moment
-// (pick one):
-//   shell-startup  — when a new shell opens inside the project
-//   cli-invocation — before each `infra-kit` command (primes SUBSEQUENT commands)
-// `config` names which environment to load. It is intentionally NOT validated
-// against `environments` here: an invalid name must DISABLE the feature at
-// resolve time (lib/env-autoload), never throw inside the merged-config parse and
-// brick every command.
-const envAutoLoadSchema = z
-  .object({
-    trigger: z.enum(['shell-startup', 'cli-invocation']),
-    config: z.string().min(1),
-  })
-  .strict()
-
 // Base object shape, kept separate so `.partial()` (which only works on a plain
 // ZodObject, not the `.superRefine`-wrapped full schema) can derive the override
 // schema from it.
@@ -275,7 +259,6 @@ export const infraKitConfigObject = z
     ide: idesSchema.optional(),
     taskManager: taskManagerSchema.optional(),
     worktrees: worktreesConfigSchema.optional(),
-    envAutoLoad: envAutoLoadSchema.optional(),
     dev: devConfigSchema.optional(),
     devServersPresets: devPresetsSchema.optional(),
     protectedEnvs: protectedEnvsSchema.optional(),
@@ -333,9 +316,6 @@ export type ProtectedEnvsSetting = z.infer<typeof protectedEnvsSchema>
 /** One `mcp.<name>` entry after parsing — defaults applied. */
 export type McpProxySpec = z.infer<typeof mcpProxySchema>
 export type McpProxies = z.infer<typeof mcpProxiesSchema>
-
-/** Resolved env auto-load config (`{ trigger, config }`), or `undefined` when off. */
-export type EnvAutoLoadConfig = z.infer<typeof envAutoLoadSchema>
 
 /** Per-app dev-server overrides (`{ port?, prefixUrl? }`). */
 export type DevAppConfig = z.infer<typeof devAppConfigSchema>

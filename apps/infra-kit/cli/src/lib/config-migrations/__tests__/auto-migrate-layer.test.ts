@@ -60,7 +60,6 @@ beforeEach(async () => {
   vi.clearAllMocks()
   // A runner exports CI=true; every case that expects a write must start from "not CI".
   vi.stubEnv('CI', '')
-  vi.stubEnv('INFRA_KIT_NO_AUTO_MIGRATE', '')
 
   home = await fs.mkdtemp(path.join(os.tmpdir(), 'auto-migrate-layer-'))
   configPath = path.join(home, 'infra-kit.json')
@@ -104,17 +103,6 @@ describe('tryAutoMigrateLayer', () => {
     expect(writeMigratedConfigFile).not.toHaveBeenCalled()
     expect(await readBack()).toBe(raw)
     expect(warnSpy).not.toHaveBeenCalled()
-  })
-
-  it('the INFRA_KIT_NO_AUTO_MIGRATE kill switch forces off everywhere', async () => {
-    vi.stubEnv('INFRA_KIT_NO_AUTO_MIGRATE', '1')
-    const layer = await writeLayer(DIRTY)
-
-    const outcome = await tryAutoMigrateLayer(layer, DIRTY, raw, { schema })
-
-    expect(outcome).toEqual({ kind: 'not-applicable' })
-    expect(applyConfigMigrations).not.toHaveBeenCalled()
-    expect(await readBack()).toBe(raw)
   })
 
   it('nothing to migrate (a plain typo key) → not-applicable, no write', async () => {

@@ -266,10 +266,10 @@ describe('every agent-reachable withEscape site declares its headless policy', (
   })
 
   it('roots the commands that never carried a tool, not only the defineMcpTool declarers', () => {
-    // The gap the re-root closed: these three are `mutating: true` and were invisible to every guard
+    // The gap the re-root closed: these two are `mutating: true` and were invisible to every guard
     // here while the roots were the registered tool set. If a refactor narrowed the roots back to the
     // declarers, the rule above would pass by no longer looking.
-    for (const command of ['env-token-set', 'env-token-remove', 'env-autoload']) {
+    for (const command of ['env-token-set', 'env-token-remove']) {
       expect(reachableModules.has(path.join(SRC, 'commands', command, `${command}.ts`))).toBe(true)
     }
 

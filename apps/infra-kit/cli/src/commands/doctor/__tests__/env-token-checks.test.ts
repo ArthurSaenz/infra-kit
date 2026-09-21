@@ -1,13 +1,13 @@
 import type fs from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { EnvTokenProbe, ResolvedEnvToken } from 'src/integrations/doppler'
+import type { ResolvedEnvToken } from 'src/integrations/doppler'
 import type { TokenStore } from 'src/lib/env-tokens'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { listProjectEnvNames } from 'src/lib/project-envs'
 
 import type { DoctorConfig, EnvTokenCheckDeps } from '../doctor'
-import { checkEnvTokenValid, checkEnvTokensConfigured, checkTokenStorePerms, checkTokenStorePresent } from '../doctor'
+import { checkEnvTokensConfigured, checkTokenStorePerms, checkTokenStorePresent } from '../doctor'
 
 vi.mock('src/lib/logger', () => {
   return { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }
@@ -27,17 +27,14 @@ beforeEach(() => {
 /**
  * The literal every assertion in the leak test hunts for. A doctor line is printed to a terminal,
  * pasted into bug reports and returned over MCP — a token in one is a credential disclosure, so the
- * matrix below renders EVERY branch of all three checks and greps the lot.
+ * matrix below renders EVERY branch of all the checks and greps the lot.
  */
 const TOKEN = 'dp.st.dev.SUPER-SECRET-DO-NOT-PRINT'
 
 /** The merged config as doctor already read it (see `readDoctorConfig`). */
-const configured = (autoLoadEnv?: string): DoctorConfig => {
+const configured = (): DoctorConfig => {
   return {
-    config: {
-      envManagement: { provider: 'doppler', config: { name: 'api' } },
-      ...(autoLoadEnv === undefined ? {} : { envAutoLoad: { trigger: 'shell-startup', config: autoLoadEnv } }),
-    } as unknown as InfraKitConfig,
+    config: { envManagement: { provider: 'doppler', config: { name: 'api' } } } as unknown as InfraKitConfig,
     error: null,
   }
 }
@@ -45,7 +42,7 @@ const configured = (autoLoadEnv?: string): DoctorConfig => {
 /** How each env's token resolves. A missing entry = no token (the resolver throws). */
 type TokenMap = Record<string, ResolvedEnvToken['source']>
 
-const depsFor = (tokens: TokenMap, probe?: EnvTokenProbe): EnvTokenCheckDeps => {
+const depsFor = (tokens: TokenMap): EnvTokenCheckDeps => {
   // The store is DERIVED from the same map the resolver answers from, never hardcoded: since
   // `checkEnvTokensConfigured` defers an empty store to `tokens.json present`, a fixture whose store
   // disagreed with its resolver would describe an impossible machine — a token resolving from a
@@ -74,80 +71,42 @@ const depsFor = (tokens: TokenMap, probe?: EnvTokenProbe): EnvTokenCheckDeps => 
 
       return { token: TOKEN, source }
     },
-    probe: async () => {
-      return probe ?? { outcome: 'valid', scopedTo: 'dev' }
-    },
   }
 }
 
-describe('checkEnvTokensConfigured — which envs have a token, and is the load-bearing one among them', () => {
-  it('passes and names the source when the auto-load env has a token', async () => {
+describe('checkEnvTokensConfigured — which envs have a token', () => {
+  /** A developer legitimately holds a `dev` token and no `prod` one — failing on that trains everyone to ignore doctor. */
+  it('lists every env with its source and never fails on a missing token', async () => {
     vi.mocked(listProjectEnvNames).mockResolvedValue(['dev', 'prod'])
 
-    const result = await checkEnvTokensConfigured(configured('dev'), depsFor({ dev: 'store' }))
+    const result = await checkEnvTokensConfigured(configured(), depsFor({ dev: 'store' }))
 
     expect(result.status).toBe('pass')
-    expect(result.message).toContain('auto-load env "dev": token (store)')
-    expect(result.message).toContain('dev: token (store)')
+    expect(result.message).toBe('dev: token (store), prod: no token')
+  })
+
+  it('passes with a sentence, not an empty row, when the project declares no envs', async () => {
+    vi.mocked(listProjectEnvNames).mockResolvedValue([])
+
+    const result = await checkEnvTokensConfigured(configured(), depsFor({}))
+
+    expect(result).toMatchObject({ status: 'pass', message: 'no envs declared' })
   })
 
   it('reports the CI channel as the source when the token comes from the environment', async () => {
     vi.mocked(listProjectEnvNames).mockResolvedValue(['dev'])
 
-    const result = await checkEnvTokensConfigured(configured('dev'), depsFor({ dev: 'env' }))
+    const result = await checkEnvTokensConfigured(configured(), depsFor({ dev: 'env' }))
 
     expect(result.status).toBe('pass')
-    expect(result.message).toContain('token (env)')
-  })
-
-  /** Token-only auth has no fallback: no token for the auto-load env means the shell silently stops loading. */
-  it('fAILS when the auto-load env has no token', async () => {
-    vi.mocked(listProjectEnvNames).mockResolvedValue(['dev', 'prod'])
-
-    const result = await checkEnvTokensConfigured(configured('dev'), depsFor({ prod: 'store' }))
-
-    expect(result.status).toBe('fail')
-    expect(result.message).toContain('auto-load env "dev"')
-    expect(result.message).toContain('infra-kit env-token-set dev')
-  })
-
-  /** A developer legitimately holds a `dev` token and no `prod` one — failing on that trains everyone to ignore doctor. */
-  it('passes when a NON-auto-load env has no token, and still lists it', async () => {
-    vi.mocked(listProjectEnvNames).mockResolvedValue(['dev', 'prod'])
-
-    const result = await checkEnvTokensConfigured(configured('dev'), depsFor({ dev: 'store' }))
-
-    expect(result.status).toBe('pass')
-    expect(result.message).toContain('prod: no token')
-  })
-
-  it('passes with a listing when envAutoLoad is not configured — no env is load-bearing', async () => {
-    vi.mocked(listProjectEnvNames).mockResolvedValue(['dev', 'prod'])
-
-    const result = await checkEnvTokensConfigured(configured(), depsFor({}))
-
-    expect(result.status).toBe('pass')
-    expect(result.message).toContain('No envAutoLoad configured')
-    expect(result.message).toContain('dev: no token, prod: no token')
-  })
-
-  it('fAILS when the auto-load env is declared by no workflow and holds no token, appending it to the listing', async () => {
-    vi.mocked(listProjectEnvNames).mockResolvedValue(['dev'])
-
-    const result = await checkEnvTokensConfigured(configured('staging'), depsFor({ dev: 'store' }))
-
-    expect(result.status).toBe('fail')
-    expect(result.message).toContain('auto-load env "staging"')
-    expect(result.message).toContain('infra-kit env-token-set staging')
-    // The auto-load env is probed even though nothing declares it — appended to the universe.
-    expect(result.message).toContain('staging: no token')
+    expect(result.message).toContain('dev: token (env)')
   })
 
   /** A corrupt store throws for EVERY env — rendering that as "no tokens" would point at the wrong fix. */
   it('surfaces a corrupt token store as its own FAIL rather than as "no token anywhere"', async () => {
     vi.mocked(listProjectEnvNames).mockResolvedValue(['dev'])
 
-    const result = await checkEnvTokensConfigured(configured('dev'), {
+    const result = await checkEnvTokensConfigured(configured(), {
       ...depsFor({ dev: 'store' }),
       readStore: async () => {
         throw new Error('Invalid JSON in the token store at ~/.infra-kit/projects/api/tokens.json')
@@ -164,27 +123,13 @@ describe('checkEnvTokensConfigured — which envs have a token, and is the load-
    * command. Failing here too would print TWO reds for one problem on the most ordinary broken setup
    * there is — see the pair test at the bottom of this file, which is what pins the count at one.
    */
-  it('defers to tokens.json present when the store holds nothing at all', async () => {
+  it('stays a listing when the store holds nothing at all — tokens.json present owns that failure', async () => {
     vi.mocked(listProjectEnvNames).mockResolvedValue(['dev', 'prod'])
 
-    const result = await checkEnvTokensConfigured(configured('dev'), depsFor({}))
+    const result = await checkEnvTokensConfigured(configured(), depsFor({}))
 
     expect(result.status).toBe('pass')
-    expect(result.message).toContain('see tokens.json present')
-  })
-
-  it('defers the same way for a store that exists but was hand-edited empty', async () => {
-    vi.mocked(listProjectEnvNames).mockResolvedValue(['dev'])
-
-    const result = await checkEnvTokensConfigured(configured('dev'), {
-      ...depsFor({}),
-      readStore: async () => {
-        return { version: 1, envs: {} }
-      },
-    })
-
-    expect(result.status).toBe('pass')
-    expect(result.message).toContain('see tokens.json present')
+    expect(result.message).toBe('dev: no token, prod: no token')
   })
 
   it('skips (passes) when the infra-kit config could not be read — doctor is the escape hatch for that', async () => {
@@ -194,68 +139,6 @@ describe('checkEnvTokensConfigured — which envs have a token, and is the load-
     expect(result.message).toContain('Skipped')
     // Bails before ever asking what envs exist.
     expect(listProjectEnvNames).not.toHaveBeenCalled()
-  })
-})
-
-describe('checkEnvTokenValid — is the auto-load env token live and correctly scoped', () => {
-  const cases: Array<{ probe: EnvTokenProbe; status: 'pass' | 'fail'; matches: RegExp }> = [
-    { probe: { outcome: 'valid', scopedTo: 'dev' }, status: 'pass', matches: /live and correctly scoped/ },
-    { probe: { outcome: 'revoked' }, status: 'fail', matches: /REJECTED by Doppler/ },
-    { probe: { outcome: 'mis-scoped' }, status: 'fail', matches: /scoped to a DIFFERENT config/ },
-    { probe: { outcome: 'unreachable' }, status: 'pass', matches: /could not be checked/ },
-  ]
-
-  for (const testCase of cases) {
-    it(`reports ${testCase.probe.outcome} as a ${testCase.status}`, async () => {
-      const result = await checkEnvTokenValid(configured('dev'), depsFor({ dev: 'store' }, testCase.probe))
-
-      expect(result.status).toBe(testCase.status)
-      expect(result.message).toMatch(testCase.matches)
-    })
-  }
-
-  /** A failed probe proves nothing about a token. Reporting "revoked" to a developer on a plane is worse than silence. */
-  it('never turns an unreachable Doppler into a verdict about the token', async () => {
-    const result = await checkEnvTokenValid(configured('dev'), depsFor({ dev: 'store' }, { outcome: 'unreachable' }))
-
-    expect(result.status).toBe('pass')
-    expect(result.message).not.toMatch(/revoked|invalid|mis-scoped/i)
-  })
-
-  it('probes ONLY the auto-load env, never the other environments', async () => {
-    const probe = vi.fn(async (): Promise<EnvTokenProbe> => {
-      return { outcome: 'valid', scopedTo: 'dev' }
-    })
-
-    await checkEnvTokenValid(configured('dev'), {
-      ...depsFor({ dev: 'store', prod: 'store' }),
-      probe,
-    })
-
-    expect(probe).toHaveBeenCalledTimes(1)
-    expect(probe).toHaveBeenCalledWith(expect.objectContaining({ config: 'dev', project: 'api' }))
-  })
-
-  it('skips when there is no envAutoLoad env to probe', async () => {
-    const result = await checkEnvTokenValid(configured(), depsFor({ dev: 'store' }))
-
-    expect(result.status).toBe('pass')
-    expect(result.message).toContain('no envAutoLoad env to probe')
-  })
-
-  /** The missing token is already the FAIL of `env tokens configured`; failing twice double-counts one problem. */
-  it('skips (rather than double-failing) when the auto-load env has no token', async () => {
-    const result = await checkEnvTokenValid(configured('dev'), depsFor({}))
-
-    expect(result.status).toBe('pass')
-    expect(result.message).toContain('see env tokens configured')
-  })
-
-  it('skips when the infra-kit config could not be read', async () => {
-    const result = await checkEnvTokenValid({ config: null, error: new Error('bad config') }, depsFor({}))
-
-    expect(result.status).toBe('pass')
-    expect(result.message).toContain('Skipped')
   })
 })
 
@@ -354,7 +237,7 @@ describe('checkTokenStorePerms — the credential file is 0600 behind 0700 dirs'
  * The store as the presence check sees it: a parsed store, `null` for no file at all, or `'corrupt'`
  * for the one state `readTokenStore` reports by THROWING. `envToken` stands in for the ambient
  * `INFRA_KIT_ENV_TOKEN` — read through a seam precisely so a developer whose shell has already
- * auto-loaded an env does not silently run this file against the skip branch.
+ * sourced an `env-load` file does not silently run this file against the skip branch.
  */
 const storeDeps = (store: TokenStore | null | 'corrupt', envToken?: string): EnvTokenCheckDeps => {
   return {
@@ -443,14 +326,14 @@ describe('checkTokenStorePresent — every project needs a token store', () => {
 /**
  * ONE root cause, ONE red line. The per-function tests above are structurally blind to this: each
  * check is correct in isolation while the SECTION double-reports. The pair below is the exact machine
- * this change was written for — a checkout that configures `envAutoLoad` and has no token store — and
- * the count, not the verdicts, is what is being pinned.
+ * this change was written for — a fresh checkout with no token store — and the count, not the
+ * verdicts, is what is being pinned.
  */
 describe('the token checks never print two failures for one root cause', () => {
   it('reports an absent store exactly once across the whole section', async () => {
     vi.mocked(listProjectEnvNames).mockResolvedValue(['dev', 'prod'])
 
-    const read = configured('dev')
+    const read = configured()
     const deps = depsFor({})
     // Both fixtures, merged: `depsFor` carries the resolver and an (agreeing) empty store, `storeDeps`
     // carries the store PATH and the env-var seam. Without the latter the presence check would spawn
@@ -458,7 +341,6 @@ describe('the token checks never print two failures for one root cause', () => {
     const results = [
       await checkTokenStorePresent({ ...storeDeps(null), ...deps }),
       await checkEnvTokensConfigured(read, deps),
-      await checkEnvTokenValid(read, deps),
       await checkTokenStorePerms(false, permDeps({})),
     ]
     const failed = results.filter((result) => {
@@ -474,17 +356,11 @@ describe('the token checks never print two failures for one root cause', () => {
 })
 
 /**
- * The one rule a credential path cannot bend. Every branch of all four checks, rendered, grepped for
+ * The one rule a credential path cannot bend. Every branch of all three checks, rendered, grepped for
  * the token literal. It is a MATRIX rather than a spot-check because the leak that matters is the one
  * in the branch nobody thought to assert on.
  */
 describe('no doctor message ever contains a token value', () => {
-  const outcomes: EnvTokenProbe[] = [
-    { outcome: 'valid', scopedTo: 'dev' },
-    { outcome: 'revoked' },
-    { outcome: 'mis-scoped', scopedTo: 'prod' },
-    { outcome: 'unreachable' },
-  ]
   const tokenMaps: TokenMap[] = [{ dev: 'store' }, { dev: 'env' }, { prod: 'store' }, {}]
   /** Every state `checkTokenStorePresent` renders — including a POPULATED store, whose values are tokens. */
   const stores: Array<TokenStore | null | 'corrupt'> = [
@@ -503,25 +379,17 @@ describe('no doctor message ever contains a token value', () => {
       }
     }
 
-    for (const autoLoadEnv of ['dev', undefined]) {
-      for (const tokens of tokenMaps) {
-        for (const probe of outcomes) {
-          vi.mocked(listProjectEnvNames).mockResolvedValue(['dev', 'prod'])
+    for (const tokens of tokenMaps) {
+      vi.mocked(listProjectEnvNames).mockResolvedValue(['dev', 'prod'])
 
-          const read = configured(autoLoadEnv)
-          const deps = depsFor(tokens, probe)
-
-          messages.push(
-            (await checkEnvTokensConfigured(read, deps)).message,
-            (await checkEnvTokenValid(read, deps)).message,
-            (await checkTokenStorePerms(false, permDeps({ ...tightPaths(), [STORE]: 0o644 }))).message,
-          )
-        }
-      }
+      messages.push(
+        (await checkEnvTokensConfigured(configured(), depsFor(tokens))).message,
+        (await checkTokenStorePerms(false, permDeps({ ...tightPaths(), [STORE]: 0o644 }))).message,
+      )
     }
 
     // The matrix must actually have rendered something, or the grep below is vacuous.
-    expect(messages).toHaveLength(stores.length * 2 + 2 * tokenMaps.length * outcomes.length * 3)
+    expect(messages).toHaveLength(stores.length * 2 + tokenMaps.length * 2)
 
     for (const message of messages) {
       expect(message).not.toContain(TOKEN)

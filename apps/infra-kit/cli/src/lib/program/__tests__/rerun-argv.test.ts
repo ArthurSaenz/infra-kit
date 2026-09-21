@@ -25,10 +25,6 @@ vi.mock('src/lib/config-bootstrap', () => {
   return { ensureUserProjectConfig: vi.fn(async () => {}) }
 })
 
-vi.mock('src/lib/env-autoload', () => {
-  return { runEnvAutoLoad: vi.fn(async () => {}), surfaceStickyAuthFailure: vi.fn() }
-})
-
 const originalCwd = process.cwd()
 const originalEnv = { ...process.env }
 let tmp: string

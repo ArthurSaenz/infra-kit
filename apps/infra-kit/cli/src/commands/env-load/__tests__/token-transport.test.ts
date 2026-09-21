@@ -6,15 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { $ } from 'zx'
 
 import { INFRA_KIT_ENV_TOKEN_VAR } from 'src/integrations/doppler'
-import { ENV_LOAD_FILE, INFRA_KIT_SESSION_VAR, getProjectWarmCacheDir, getSessionCacheDir } from 'src/lib/constants'
+import { INFRA_KIT_SESSION_VAR, getSessionCacheDir } from 'src/lib/constants'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 
 import { writeEnvLoadFile } from '../env-load'
 
 /**
- * The token literal every assertion in this file hunts for. If it EVER lands in argv, in
- * env-load.sh, or in the warm cache, a credential has been handed to every process on the box.
+ * The token literal every assertion in this file hunts for. If it EVER lands in argv or in
+ * env-load.sh, a credential has been handed to every process on the box.
  */
 const TOKEN = 'dp.st.dev.LEAK_CANARY_0123456789'
 
@@ -175,7 +175,7 @@ describe('writeEnvLoadFile — the token reaches no artifact on disk', () => {
   it('writes neither the token nor its keys into env-load.sh, but KEEPS the scope evidence', async () => {
     const result = await writeEnvLoadFile({ config: 'dev' })
 
-    const contents = fs.readFileSync(result!.filePath, 'utf-8')
+    const contents = fs.readFileSync(result.filePath, 'utf-8')
 
     expect(contents).not.toContain(TOKEN)
     expect(contents).not.toContain('DOPPLER_TOKEN=')
@@ -186,22 +186,13 @@ describe('writeEnvLoadFile — the token reaches no artifact on disk', () => {
     expect(contents).toContain("API_URL='https://api.example.com'")
   })
 
-  it('writes no token into the WARM cache either — the file the NEXT shell sources blind', async () => {
-    await writeEnvLoadFile({ config: 'dev', autoLoaded: true, projectDir: repoRoot })
-
-    const warmFile = path.join(getProjectWarmCacheDir(repoRoot), ENV_LOAD_FILE)
-
-    expect(fs.existsSync(warmFile)).toBe(true)
-    expect(fs.readFileSync(warmFile, 'utf-8')).not.toContain(TOKEN)
-  })
-
   it('leaves no token anywhere under the cache root', async () => {
-    await writeEnvLoadFile({ config: 'dev', autoLoaded: true, projectDir: repoRoot })
+    await writeEnvLoadFile({ config: 'dev' })
 
     const contents = readAllFiles(path.dirname(getSessionCacheDir()))
 
-    // Non-vacuity: the walk really found the artifacts (session file + warm copy).
-    expect(contents.length).toBeGreaterThanOrEqual(2)
+    // Non-vacuity: the walk really found the session file.
+    expect(contents.length).toBeGreaterThanOrEqual(1)
     expect(contents.join('\n')).not.toContain(TOKEN)
   })
 })

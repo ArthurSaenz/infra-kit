@@ -28,9 +28,6 @@ vi.mock('src/integrations/doppler', async (importOriginal) => {
     resolveEnvToken: vi.fn(() => {
       return Promise.reject(new Error(CORRUPT))
     }),
-    probeEnvToken: vi.fn(() => {
-      return Promise.resolve({ outcome: 'unreachable' })
-    }),
   }
 })
 
@@ -41,7 +38,6 @@ vi.mock('src/lib/infra-kit-config', () => {
     getInfraKitConfig: vi.fn(() => {
       return Promise.resolve({
         envManagement: { provider: 'doppler', config: { name: 'api' } },
-        envAutoLoad: { trigger: 'shell-startup', config: 'dev' },
       })
     }),
     getInfraKitConfigPaths: vi.fn(() => {

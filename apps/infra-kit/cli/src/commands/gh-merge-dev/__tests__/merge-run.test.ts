@@ -254,7 +254,7 @@ describe('reclassify', () => {
 })
 
 describe('verifyMerges', () => {
-  it('runs the tier with auto-migration OFF, on top of the operator env — the scratch checkout is never rewritten', async () => {
+  it('runs the tier on top of the operator env', async () => {
     const repo = await makeFixture()
 
     process.env.IK_MERGE_RUN_PASSTHROUGH = 'yes'
@@ -263,11 +263,11 @@ describe('verifyMerges', () => {
       const outcome = await withScratchWorktree({ cwd: repo }, async (worktree) => {
         const entries = await planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: ['release/v1.0.0'] })
 
-        // The tier itself is the assertion: it passes only when both variables reach the child.
+        // The tier itself is the assertion: it passes only when the variable reaches the child.
         return verifyMerges({
           worktreePath: worktree.path,
           refs: pushableRefs(entries),
-          command: 'test "$INFRA_KIT_NO_AUTO_MIGRATE" = 1 && test "$IK_MERGE_RUN_PASSTHROUGH" = yes',
+          command: 'test "$IK_MERGE_RUN_PASSTHROUGH" = yes',
         })
       })
 

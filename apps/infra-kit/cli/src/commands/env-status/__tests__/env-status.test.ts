@@ -4,13 +4,8 @@ import path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  INFRA_KIT_ENV_AUTOLOADED_VAR,
-  INFRA_KIT_ENV_CLEARED_VAR,
-  INFRA_KIT_ENV_CONFIG_VAR,
-  INFRA_KIT_ENV_PROJECT_VAR,
-  INFRA_KIT_SESSION_VAR,
-} from 'src/lib/constants'
+import { INFRA_KIT_ENV_CONFIG_VAR, INFRA_KIT_ENV_PROJECT_VAR, INFRA_KIT_SESSION_VAR } from 'src/lib/constants'
+import { logger } from 'src/lib/logger'
 
 import { envStatus } from '../env-status'
 
@@ -31,8 +26,7 @@ beforeEach(() => {
   process.env[INFRA_KIT_SESSION_VAR] = 'sess-status'
   delete process.env[INFRA_KIT_ENV_CONFIG_VAR]
   delete process.env[INFRA_KIT_ENV_PROJECT_VAR]
-  delete process.env[INFRA_KIT_ENV_AUTOLOADED_VAR]
-  delete process.env[INFRA_KIT_ENV_CLEARED_VAR]
+  vi.mocked(logger.info).mockClear()
 })
 
 afterEach(() => {
@@ -41,38 +35,23 @@ afterEach(() => {
 })
 
 describe('envStatus', () => {
-  it('reports nothing loaded with autoLoaded=false, cleared=false', async () => {
+  it('reports nothing loaded when no config is in the environment', async () => {
     const { structuredContent } = await envStatus()
 
     expect(structuredContent.sessionConfig).toBeNull()
-    expect(structuredContent.autoLoaded).toBe(false)
-    expect(structuredContent.cleared).toBe(false)
+    expect(structuredContent.sessionLoadedCount).toBe(0)
+    expect(vi.mocked(logger.info).mock.calls.at(-1)?.[0]).toBe('  Session sess-status: no env loaded\n')
   })
 
-  it('reports cleared=true when the clear sentinel is set', async () => {
-    process.env[INFRA_KIT_ENV_CLEARED_VAR] = '1'
-
-    const { structuredContent } = await envStatus()
-
-    expect(structuredContent.cleared).toBe(true)
-  })
-
-  it('reports autoLoaded=true when the auto-load marker is present', async () => {
+  it('reports the loaded config and project', async () => {
     process.env[INFRA_KIT_ENV_CONFIG_VAR] = 'dev'
     process.env[INFRA_KIT_ENV_PROJECT_VAR] = 'my-project'
-    process.env[INFRA_KIT_ENV_AUTOLOADED_VAR] = '1'
 
     const { structuredContent } = await envStatus()
 
     expect(structuredContent.sessionConfig).toBe('dev')
-    expect(structuredContent.autoLoaded).toBe(true)
-  })
-
-  it('reports autoLoaded=false for a manual load (config set, no marker)', async () => {
-    process.env[INFRA_KIT_ENV_CONFIG_VAR] = 'dev'
-
-    const { structuredContent } = await envStatus()
-
-    expect(structuredContent.autoLoaded).toBe(false)
+    expect(structuredContent.sessionProject).toBe('my-project')
+    expect(structuredContent).not.toHaveProperty('autoLoaded')
+    expect(structuredContent).not.toHaveProperty('cleared')
   })
 })

@@ -515,16 +515,6 @@ export const commandCatalog: CommandCatalogEntry[] = [
   // Bare groups: help + non-zero exit, so they never belong in the leaf-only menu.
   { cliName: 'vendor', menuGroup: null, mcpTool: null, mcpExposed: false, mutating: false, groupPath: ['vendor'] },
   { cliName: 'config', menuGroup: null, mcpTool: null, mcpExposed: false, mutating: false, groupPath: ['config'] },
-  // Internal shell-startup trigger; hidden from the menu and carries no tool definition
-  // (it can't apply env to a shell — only the zsh integration sources the file).
-  {
-    cliName: 'env-autoload',
-    menuGroup: null,
-    mcpTool: null,
-    mcpExposed: false,
-    mutating: true,
-    groupPath: ['env-autoload'],
-  },
   // env-token-set / env-token-remove carry NO tool definition (no schema to publish, no
   // `argument_required` payload to shape) and sit in LOW_RISK_MUTATING_ALLOWLIST below, so under
   // --agent they are ungated. The guard on the write is not a confirm: the host's permission prompt on
@@ -570,9 +560,6 @@ export const LOW_RISK_MUTATING_ALLOWLIST: readonly string[] = [
   'worktrees-sync',
   // Writes a load file under the infra-kit cache dir; cleared by env-clear, no remote/git effect.
   'env-load',
-  // Writes the same session load file as env-load, fired backgrounded by the precmd hook; no
-  // remote/git effect.
-  'env-autoload',
   // Writes one token into the local store; overwritten by the next set; no remote/git effect.
   'env-token-set',
   // Deletes one token from the local store; the Doppler token itself survives and env-token-set puts

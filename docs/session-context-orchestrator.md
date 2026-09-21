@@ -70,7 +70,7 @@ Today a session name **is** a Doppler config name — an identity mapping with n
 A real map (`prod` → this Doppler config, that AWS profile, this kube context) becomes worth having
 the moment a second provider exists.
 
-When it does: it belongs in `infra-kit.json`, the runtime config, next to `envAutoLoad`. It does not
+When it does: it belongs in `infra-kit.json`, the runtime config, next to `envManagement`. It does not
 belong in `infra-kit.config.ts`, which holds audit rules and is read by the audit path, not by
 anything running at session time.
 

@@ -19,8 +19,7 @@ import { buildProgram } from '../program'
  * @fileoverview
  * The preAction hook's agent contract: `-C <dir>` is applied FIRST (before the layer-3 seed, which
  * keys off the cwd), and `agentMode.source` is resolved from `--agent` and the environment on every
- * run. The seed and the auto-load are mocked for the same
- * reason program.test.ts mocks them — they touch $HOME and Doppler.
+ * run. The seed is mocked for the same reason program.test.ts mocks it — it writes to $HOME.
  */
 
 const seedCwds: string[] = []
@@ -31,10 +30,6 @@ vi.mock('src/lib/config-bootstrap', () => {
       seedCwds.push(process.cwd())
     }),
   }
-})
-
-vi.mock('src/lib/env-autoload', () => {
-  return { runEnvAutoLoad: vi.fn(async () => {}), surfaceStickyAuthFailure: vi.fn() }
 })
 
 const originalCwd = process.cwd()

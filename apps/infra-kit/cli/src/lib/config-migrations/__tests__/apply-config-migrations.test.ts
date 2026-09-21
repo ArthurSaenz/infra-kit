@@ -9,13 +9,20 @@ describe('applyConfigMigrations', () => {
       CONFIG_MIGRATIONS.map((migration) => {
         return migration.id
       }),
-    ).toEqual(['strip-legacy-ide-mode', 'strip-retired-zed-ide', 'drop-environments-key', 'drop-dev-proxy-key'])
+    ).toEqual([
+      'strip-legacy-ide-mode',
+      'strip-retired-zed-ide',
+      'drop-environments-key',
+      'drop-dev-proxy-key',
+      'drop-env-auto-load-key',
+    ])
   })
 
   it('accumulates one note per changed step, in registry order', () => {
     const { changed, result, notes } = applyConfigMigrations({
       environments: ['dev'],
       devProxy: { port: 4443 },
+      envAutoLoad: { enabled: true, config: 'dev' },
       ide: { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: 'ws' } },
       worktrees: { openInOrca: true },
     })
@@ -29,6 +36,7 @@ describe('applyConfigMigrations', () => {
       'legacy "mode"',
       'the retired "environments" key (deploy targets now come from each workflow\'s workflow_dispatch options, auth from the token store)',
       'the retired "devProxy" key (dev URLs are port-free https://<release>.<package>.localhost)',
+      'the retired "envAutoLoad" key (env auto-load is gone — run `env-load -c <config>` in the terminal)',
     ])
   })
 
@@ -54,6 +62,7 @@ describe('applyConfigMigrations', () => {
     const once = applyConfigMigrations({
       environments: ['dev'],
       devProxy: {},
+      envAutoLoad: {},
       ide: [{ provider: 'zed', config: { mode: 'windows' } }],
     })
     const twice = applyConfigMigrations(once.result)

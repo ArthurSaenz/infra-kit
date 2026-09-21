@@ -266,7 +266,7 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
    *
    * Keyed on `mutating` alone: every command is one `Bash(infra-kit …)` away, and `mcpExposed` is
    * historical ("was listed on the retired server"), so keying on it left `env-token-set` and
-   * `env-autoload` outside the invariant. A new mutating command that sets neither reds CI — opting out
+   * `env-token-remove` outside the invariant. A new mutating command that sets neither reds CI — opting out
    * of the gate becomes a deliberate, greppable allowlist edit, never a silently-typed `false`.
    */
   it('leaves no mutating command ungated unless it is on the low-risk allowlist', () => {
@@ -359,8 +359,8 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
   // The allowlist is a safety escape hatch, not a dumping ground: every member must actually be a
   // mutating catalog entry that is NOT gated. A stale name (e.g. a tool that was later gated or
   // removed) would silently widen the escape hatch, so pin it. `mcpExposed` is deliberately NOT
-  // required — it is historical, and the members that motivated dropping it (`env-autoload`,
-  // `env-token-set`) never carried a tool at all.
+  // required — it is historical, and the members that motivated dropping it (`env-token-set`,
+  // `env-token-remove`) never carried a tool at all.
   it('keeps every allowlist member a real, ungated, mutating entry', () => {
     for (const cliName of LOW_RISK_MUTATING_ALLOWLIST) {
       const entry = commandCatalog.find((candidate) => {

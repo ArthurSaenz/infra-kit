@@ -8,7 +8,6 @@ import { configEdit, configPath } from 'src/commands/config'
 import { configGet } from 'src/commands/config-get'
 import { devStatus } from 'src/commands/dev-status'
 import { doctor, printDoctorReport } from 'src/commands/doctor'
-import { envAutoload } from 'src/commands/env-autoload'
 import { envClear } from 'src/commands/env-clear'
 import { envList } from 'src/commands/env-list'
 import { envLoad } from 'src/commands/env-load'
@@ -38,7 +37,6 @@ import { agentMode, resolveAgentModeSource } from 'src/lib/agent-mode'
 import { isLongRunningCommand } from 'src/lib/command-catalog'
 import { commandEcho } from 'src/lib/command-echo'
 import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
-import { runEnvAutoLoad, surfaceStickyAuthFailure } from 'src/lib/env-autoload'
 import { addJsonOption, emit, jsonOutput } from 'src/lib/json-output'
 import { logger } from 'src/lib/logger'
 import { InvalidReleaseDateError, assertIsoDate } from 'src/lib/release-date'
@@ -384,40 +382,15 @@ const configureConfigEdit = (cmd: Command): Command => {
   })
 }
 
-// Commands excluded from the cli-invocation auto-load trigger: the env-* family
-// (avoids recursion — `env-autoload`/`env-load` would re-enter), plus the
-// host-inspecting / meta commands where priming Doppler env would be surprising
-// (`setup` bootstraps the shell block AND installs doppler itself, `doctor`
-// inspects auth, `version` prints a string, `dev` is a long-running server that
-// manages its own env).
-// `--help`/`--version`/the bare-arg menu don't fire preAction at all.
-//
-// `setup` is the member that carries the machine-bootstrap case, and it carries it under BOTH its
-// spellings: the set is keyed on the INVOKED command name, and `setup --skip-tools` invokes the same
-// name, so the additive form is excluded by the same entry. That matters because `--skip-tools` is the
-// form a user runs BEFORE doppler is installed, where there is nothing to prime from — priming there
-// would write a Doppler env-load file into the session cache off a command that exists to install the
-// tool it would be priming from.
-const AUTO_LOAD_EXCLUDED = new Set(['setup', 'doctor', 'version', 'dev'])
-
-const isAutoLoadExcludedCommand = (name: string): boolean => {
-  return name.startsWith('env-') || AUTO_LOAD_EXCLUDED.has(name)
-}
-
-// Commands excluded from the layer-3 config auto-seed. A SEPARATE, much SMALLER set than
-// AUTO_LOAD_EXCLUDED above — the asymmetry is intentional, not an oversight:
-//   - `env-autoload` is the hidden command the zsh precmd hook fires BACKGROUNDED on every prompt
-//     (see the shell body in init.ts). It runs constantly; the seed has no business on that path.
-//   - `version` touches config ZERO times today, so seeding is pure new cost on the fastest path.
-// Everything else DOES seed — `doctor`, `config path`, `dev` and `setup` included (they are all in
-// AUTO_LOAD_EXCLUDED, but that set answers a different question), as does the whole `env-*` family
-// apart from `env-autoload`.
+// Commands excluded from the layer-3 config auto-seed: `version` touches config ZERO times today, so
+// seeding is pure new cost on the fastest path. Everything else DOES seed — `doctor`, `config path`,
+// `dev` and the whole `env-*` family included.
 //
 // `setup` is deliberately absent from this set rather than overlooked: it is the command that
 // establishes this project's layer-3 override file, so excluding it would mean the setup command is the
 // one command that does not set up the config. That holds for `setup --skip-tools` too — the seed is a
 // local write, not a tool install, so the additive form has exactly the same business here.
-const SEED_EXCLUDED = new Set(['env-autoload', 'version'])
+const SEED_EXCLUDED = new Set(['version'])
 
 /**
  * Canonical space-joined command path for a leaf (e.g. the `check` leaf of `vendor` → "vendor check").
@@ -436,7 +409,7 @@ export const commandPath = (leaf: Command): string => {
 
 /**
  * Build the full Commander program: ONE surface per command (the grouped form — `release create`, never
- * `release-create`), plus `--json` on every command and the pre-action auto-load hook. Pure: no I/O, no
+ * `release-create`), plus `--json` on every command and the pre-action hooks. Pure: no I/O, no
  * top-level await, no process mutation — safe to import from a test to introspect the command tree.
  *
  * @example
@@ -719,9 +692,8 @@ export const buildProgram = (): Command => {
   program
     .command('env-clear')
     .description('Clear loaded env vars. Source the returned file path to apply.')
-    .option('--purge', "Also delete this project's warm cache outright (durable disable)")
-    .action(async (options) => {
-      emitSourcePath(await envClear({ purge: Boolean(options.purge) }))
+    .action(async () => {
+      emitSourcePath(await envClear())
     })
 
   // --- Doppler service tokens (flat, related names — not a nested `env token <sub>` group) ---
@@ -763,19 +735,6 @@ export const buildProgram = (): Command => {
       emit(await envTokenRemove({ env }))
     })
 
-  // Internal: driven by the init shell-startup integration (backgrounded). Writes
-  // env-load.sh when envAutoLoad is configured + eligible; the precmd hook sources
-  // it. Hidden + no stdout output so it never pollutes the shell or the menu.
-  program
-    .command('env-autoload', { hidden: true })
-    .description('Internal: prime env for the shell-startup auto-load trigger')
-    // The shell passes its already-canonicalized (`${dir:A}`) project dir so node can
-    // key the warm cache identically; see writeEnvLoadFile / shouldWriteWarm.
-    .option('--project-dir <dir>', 'Canonical project dir for the warm-cache key (shell-startup only)')
-    .action(async (options) => {
-      await envAutoload({ projectDir: options.projectDir })
-    })
-
   // Register `--json` on every command, then resolve the flag before each action
   // runs. In JSON mode we lower the logger to `warn` so the human-oriented info
   // lines stop cluttering stderr while errors still surface; the structured
@@ -792,7 +751,7 @@ export const buildProgram = (): Command => {
   addDebugOption(program)
 
   program.hook('preAction', async (_thisCommand, actionCommand) => {
-    // `-C` FIRST — before the echo, before `--json`, before the seed and the auto-load — so nothing in
+    // `-C` FIRST — before the echo, before `--json`, before the seed — so nothing in
     // this hook or the action ever sees the launch cwd. Relative to where the user typed it, which is
     // what `process.cwd()` still is at this line. A bad dir throws here, before `--json` is resolved,
     // so it reaches `entry/cli.ts` as a plain stderr line and exit 1 — stated, not structured.
@@ -844,24 +803,6 @@ export const buildProgram = (): Command => {
     // never corrupt `--json` stdout.
     if (!SEED_EXCLUDED.has(commandPath(actionCommand))) {
       await ensureUserProjectConfig()
-    }
-
-    // Replay a sticky Doppler auth failure (revoked / mis-scoped service token) recorded
-    // by the BACKGROUNDED shell-startup auto-load, which runs with stderr discarded and
-    // so has no channel of its own. Deliberately OUTSIDE the auto-load exclusion below:
-    // warning is not loading. `version`, `doctor` and `dev` never auto-load, but they are
-    // exactly what a user whose shell env went quiet runs next — gating the warning on the
-    // same set would leave them warned by nothing. Warns at most once per session, never
-    // throws, and writes nothing to stdout.
-    surfaceStickyAuthFailure()
-
-    // cli-invocation auto-load: primes the shell env for SUBSEQUENT commands. The
-    // current command does NOT see these vars — a child process can't mutate its
-    // parent shell; the precmd hook sources the written file on the next prompt.
-    // runEnvAutoLoad self-gates on config trigger and swallows transient failures,
-    // so this is a no-op unless configured for cli-invocation and never blocks.
-    if (!isAutoLoadExcludedCommand(actionCommand.name())) {
-      await runEnvAutoLoad({ expectedTrigger: 'cli-invocation' })
     }
   })
 

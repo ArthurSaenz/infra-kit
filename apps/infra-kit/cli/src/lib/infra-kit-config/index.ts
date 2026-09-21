@@ -20,7 +20,6 @@ export type {
   DevConfig,
   DevPreset,
   DevPresets,
-  EnvAutoLoadConfig,
   GetInfraKitConfigOptions,
   InfraKitConfig,
   InfraKitConfigPaths,

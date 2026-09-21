@@ -55,35 +55,9 @@ export const resolveEnvToken = async (env: string): Promise<ResolvedEnvToken> =>
 
   if (fromStore) return { token: fromStore, source: 'store' }
 
-  // An EnvAuthError, not a plain Error: "no token" is the DURABLE, user-fixable auth failure — the
-  // migration case, and the one case env auto-load's sticky marker exists to survive. A plain Error
-  // here is classified TRANSIENT downstream, expires with the 30s backoff, and (on the backgrounded
-  // shell-startup spawn, whose stderr is discarded) leaves the user with no channel at all: their env
-  // silently stops loading and nothing ever says why. The class is what reaches them.
+  // An EnvAuthError, not a plain Error: "no token" is the DURABLE, user-fixable auth failure — see
+  // EnvAuthError's own doc for why the class, not the message, is what downstream callers classify on.
   throw new EnvAuthError(buildMissingTokenMessage(env, await getTokenStorePath()), env)
-}
-
-/**
- * Whether a token resolves for one env — the same precedence as {@link resolveEnvToken}, without
- * producing the token and without the refusal.
- *
- * For callers that must DECIDE rather than authenticate: env auto-load has to answer "is this env
- * usable?" at shell startup, and asking by catching {@link resolveEnvToken}'s throw would conflate two
- * very different failures — "no token for this env" (disable quietly, a typo'd `envAutoLoad.config`)
- * and "the store itself is broken" (surface loudly). This propagates the latter and reports the former
- * as a plain `false`.
- *
- * @example
- * await envTokenExists('dev')  // => true
- * await envTokenExists('typo') // => false
- * // corrupt store => throws EnvAuthError (deliberately — the caller must not swallow that)
- */
-export const envTokenExists = async (env: string): Promise<boolean> => {
-  if (process.env[INFRA_KIT_ENV_TOKEN_VAR]) return true
-
-  const store = await readTokenStore()
-
-  return Boolean(store?.envs[env])
 }
 
 /**

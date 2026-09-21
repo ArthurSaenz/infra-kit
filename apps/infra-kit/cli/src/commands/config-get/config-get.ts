@@ -40,7 +40,7 @@ const configGetOutputSchema = {
   config: z
     .record(z.string(), z.unknown())
     .describe(
-      'The fully resolved infra-kit configuration — the same object every command sees at runtime, after the project infra-kit.json, the user-global, and the user-scope per-project override layers are merged (later layers win). Top-level sections include envManagement, ide, worktrees, envAutoLoad, dev, devServersPresets, and protectedEnvs.',
+      'The fully resolved infra-kit configuration — the same object every command sees at runtime, after the project infra-kit.json, the user-global, and the user-scope per-project override layers are merged (later layers win). Top-level sections include envManagement, ide, worktrees, dev, devServersPresets, and protectedEnvs.',
     ),
   configPath: z
     .string()

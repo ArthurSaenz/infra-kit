@@ -27,8 +27,8 @@ import type { CheckResult } from './doctor'
  *
  * REDACTION INVARIANT — read before adding a check message: these lines are written straight to
  * stderr, which BYPASSES pino's `REDACT_PATHS` backstop (see `lib/logger`). Every doctor message is
- * pre-redacted by construction (`describeEntries` reports a token's SOURCE, never its value;
- * `checkEnvTokenValid` never interpolates the token). Any new check message must hold to that.
+ * pre-redacted by construction (`describeEntries` reports a token's SOURCE, never its value). Any
+ * new check message must hold to that.
  */
 
 /** A named group of checks, in the order they are printed. */
@@ -79,12 +79,9 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
       'ide installed',
     ],
   ],
-  [
-    SECTION_SHELL,
-    ['zshrc init block', 'zshenv session block', 'warm cache', 'pnpm enableGlobalVirtualStore', 'CLAUDE.md block'],
-  ],
+  [SECTION_SHELL, ['zshrc init block', 'zshenv session block', 'pnpm enableGlobalVirtualStore', 'CLAUDE.md block']],
   [SECTION_CONFIG, ['infra-kit config valid', 'user override path', 'legacy user-global config']],
-  [SECTION_TOKENS, ['tokens.json present', 'env tokens configured', 'env token valid', 'tokens.json perms']],
+  [SECTION_TOKENS, ['tokens.json present', 'env tokens configured', 'tokens.json perms']],
   [
     SECTION_PROXY,
     [

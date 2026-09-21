@@ -32,7 +32,7 @@ describe('groupChecks', () => {
     const sections = groupChecks([
       pass('portless installed'),
       pass('gh installed'),
-      pass('env token valid'),
+      pass('env tokens configured'),
       pass('zshrc init block'),
       pass('user override path'),
     ])
@@ -65,7 +65,7 @@ describe('groupChecks', () => {
   })
 
   it('does NOT mutate or reorder its input (structuredContent.checks order is a contract)', () => {
-    const input = [pass('portless installed'), pass('gh installed'), pass('env token valid')]
+    const input = [pass('portless installed'), pass('gh installed'), pass('env tokens configured')]
     const snapshot = [...input]
 
     groupChecks(input)
@@ -86,11 +86,12 @@ describe('section coverage', () => {
     expect(unmapped).toEqual([])
   })
 
-  it('covers exactly 37 checks', () => {
+  it('covers exactly 35 checks', () => {
     // 36, up from 34: the two agent rows (`Agent mode`, `Agent allowlist`) joined the plugin section.
     // 37: `portless node` joined the proxy section.
-    expect(DOCTOR_CHECK_NAMES).toHaveLength(37)
-    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(37)
+    // 35: `warm cache` and `env token valid` left with the retired env auto-load.
+    expect(DOCTOR_CHECK_NAMES).toHaveLength(35)
+    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(35)
   })
 
   it('keeps the Claude Code plugin rows adjacent, in order, followed by the MCP key and agent rows (O3)', () => {

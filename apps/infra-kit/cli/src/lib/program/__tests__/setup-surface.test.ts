@@ -6,7 +6,6 @@ import { runRecipe } from 'src/lib/dependency-install'
 import type { InstallOutcome } from 'src/lib/dependency-install'
 import { probeAll } from 'src/lib/dependency-probe'
 import type { DependencyState } from 'src/lib/dependency-probe'
-import { runEnvAutoLoad } from 'src/lib/env-autoload'
 import { buildProgram } from 'src/lib/program'
 
 /**
@@ -56,12 +55,6 @@ vi.mock('src/lib/dependency-probe', async (importOriginal) => {
 
 vi.mock('src/lib/logger', () => {
   return { logger: { level: 'info', info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() } }
-})
-
-vi.mock('src/lib/env-autoload', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('src/lib/env-autoload')>()
-
-  return { ...actual, runEnvAutoLoad: vi.fn(), surfaceStickyAuthFailure: vi.fn() }
 })
 
 const aState = (over: Partial<DependencyState> & { id: DependencyState['id'] }): DependencyState => {
@@ -195,37 +188,5 @@ describe('setup --skip-tools is the additive path, and init is gone', () => {
     program.configureOutput({ writeErr: () => {} })
 
     await expect(program.parseAsync(['init'], { from: 'user' })).rejects.toThrow(/unknown command/iu)
-  })
-})
-
-// I-4. Asserted over BEHAVIOUR rather than over the contents of `AUTO_LOAD_EXCLUDED`, so it survives
-// the set being renamed or restructured and still fails if the exclusion stops taking effect.
-describe('the cli-invocation env auto-load skips the machine-setup commands', () => {
-  // Reds on: forgetting the `setup-dependency` → `setup` rename in the set, which would make `setup`
-  // prime Doppler env on the shell-startup path.
-  it('never fires for setup', async () => {
-    await run(['setup'])
-
-    expect(vi.mocked(runEnvAutoLoad)).not.toHaveBeenCalled()
-  })
-
-  // The additive spelling is the one that most needs this, and it is covered by the SAME set entry:
-  // exclusion is keyed on the invoked name, and `--skip-tools` invokes `setup`. Asserted separately
-  // anyway, because that argument is about the implementation and this is about the behaviour — a
-  // future flag-aware exclusion would keep the test above green while breaking this one.
-  it('never fires for setup --skip-tools either', async () => {
-    await run(['setup', '--skip-tools'])
-
-    expect(vi.mocked(runEnvAutoLoad)).not.toHaveBeenCalled()
-  })
-
-  // The positive control: without it, both assertions above pass on a build where the auto-load is
-  // unreachable from every command, which is the failure mode a bare negative always has. `config-get`
-  // is the cheapest command NOT in the excluded set — `version` looks like the obvious choice and is
-  // wrong, because it is excluded too.
-  it('does fire for a command that is not excluded', async () => {
-    await run(['config-get'])
-
-    expect(vi.mocked(runEnvAutoLoad)).toHaveBeenCalledTimes(1)
   })
 })
