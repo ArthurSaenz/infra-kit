@@ -1,7 +1,8 @@
 import { ghReleaseDeployAll } from 'src/commands/gh-release-deploy-all'
 import { ghReleaseDeploySelected } from 'src/commands/gh-release-deploy-selected'
-import { localDeployAll, localDeploySelected } from 'src/commands/local-deploy'
+// import { localDeployAll, localDeploySelected } from 'src/commands/local-deploy'
 import { commandEcho } from 'src/lib/command-echo'
+import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { assertFlagsMatchSource, resolveDeploySource } from 'src/lib/release-deploy'
 
@@ -50,15 +51,27 @@ const runReleaseDeploy = async (args: ReleaseDeployArgs, selection: Selection, e
     '--print-env': printEnv,
   })
 
+  // TEMPORARILY DISABLED: deploys run in CI only. Refusing here, after `--from` is resolved, is the one
+  // choke point every entry path shares — the merged command, the deprecated `local …` aliases and
+  // the palette — so an agent cannot reach the local runner through any of them. Restore the block
+  // below (and the import above + the picker choice in `source-picker.ts`) to re-enable it.
   if (source === 'local') {
-    // `--services` is the one service flag on the merged surface; the local entrypoints still take
-    // `service`, which is what their tool schemas declare and must keep declaring.
-    // `confirmedCommand: yes`, the same normalization the two `gh` calls below do: `confirmedCommand`
-    // is the one name every handler and every confirm site reads, `yes` is Commander's flag alone.
-    return selection === 'all'
-      ? localDeployAll({ env, confirmedCommand: yes, dryRun, printEnv })
-      : localDeploySelected({ env, service: services, confirmedCommand: yes, dryRun, printEnv })
+    throw new OperationError(undefined, {
+      operation: 'deploy --from local',
+      remediation: 'use --from ci to dispatch the release workflow',
+      stderrExcerpt: 'local deploys are disabled for now — deploys run in CI only',
+    })
   }
+
+  // if (source === 'local') {
+  //   // `--services` is the one service flag on the merged surface; the local entrypoints still take
+  //   // `service`, which is what their tool schemas declare and must keep declaring.
+  //   // `confirmedCommand: yes`, the same normalization the two `gh` calls below do: `confirmedCommand`
+  //   // is the one name every handler and every confirm site reads, `yes` is Commander's flag alone.
+  //   return selection === 'all'
+  //     ? localDeployAll({ env, confirmedCommand: yes, dryRun, printEnv })
+  //     : localDeploySelected({ env, service: services, confirmedCommand: yes, dryRun, printEnv })
+  // }
 
   return selection === 'all'
     ? ghReleaseDeployAll({ version, env, skipTerraform, confirmedCommand: yes })

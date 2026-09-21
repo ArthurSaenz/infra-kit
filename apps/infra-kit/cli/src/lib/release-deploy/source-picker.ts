@@ -41,7 +41,11 @@ export const pickDeploySource = async (): Promise<DeploySource> => {
       return select(
         {
           message: '🚀 Where should this deploy run?',
-          choices: DEPLOY_SOURCES.map((source) => {
+          // TEMPORARILY DISABLED: `local` is filtered out while deploys run in CI only; the dispatcher
+          // in `commands/release-deploy` refuses it too. Drop the filter to re-enable.
+          choices: DEPLOY_SOURCES.filter((source) => {
+            return source !== 'local'
+          }).map((source) => {
             return { name: source, value: source, description: SOURCE_DESCRIPTIONS[source] }
           }),
         },
