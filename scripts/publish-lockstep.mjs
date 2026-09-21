@@ -19,7 +19,10 @@
 // version` means the tarball WAS accepted and is being processed — the poll below waits it out. And
 // `pnpm view` is served from a stale metadata cache, so "is it live?" is asked of the registry directly.
 //
-// Usage:  node scripts/publish-lockstep.mjs [--skip-plugin-update] [--allow-dirty]
+// Usage:  node scripts/publish-lockstep.mjs [<step>] [--skip-plugin-update] [--allow-dirty]
+//         <step> runs ONE step and stops: config | repin | cli | eslint-plugin | vite | install.
+//         No step runs them all in order. A later step still checks its prerequisites — `cli`
+//         refuses while config is not on the registry or the pin still says the old version.
 // Exit:   non-zero on the first step that cannot be completed; re-run to resume.
 import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -40,6 +43,12 @@ const PACKAGES = [
 ]
 // The packages whose `dependencies` carry the registry range on config (step 2).
 const PINNED_DIRS = [path.join(APPS, 'cli'), path.join(APPS, 'vite')]
+/** The step name is the app directory, which is how the user thinks of the four packages. */
+const packageForStep = (step) => {
+  return PACKAGES.find((pkg) => {
+    return path.basename(pkg.dir) === step
+  })
+}
 // Everything the release bump must have moved together; a mismatch means the bump commit is half done.
 const VERSION_FIELDS = [
   ...PACKAGES.map((pkg) => {
@@ -60,6 +69,10 @@ const REGISTRY_POLL_MAX_MS = 6 * 60_000
 const args = new Set(process.argv.slice(2))
 const skipPluginUpdate = args.has('--skip-plugin-update')
 const allowDirty = args.has('--allow-dirty')
+const STEPS = ['config', 'repin', 'cli', 'eslint-plugin', 'vite', 'install']
+const requestedSteps = [...args].filter((arg) => {
+  return !arg.startsWith('--')
+})
 
 const log = (line) => {
   return console.log(`\n▶ ${line}`)
@@ -264,25 +277,76 @@ const updatePlugins = () => {
   if (failures.length > 0) console.log(`  ⚠ plugin update failed in:\n    ${failures.join('\n    ')}`)
 }
 
+const isPinned = (version) => {
+  return PINNED_DIRS.every((dir) => {
+    return readJson(path.join(dir, 'package.json')).dependencies?.[CONFIG_PKG] === `^${version}`
+  })
+}
+
+/** The three dependents only make sense once config is live AND the tree points at it. */
+const assertConfigLanded = async (version) => {
+  if (!(await isPublished(CONFIG_PKG, version))) {
+    fail(`${CONFIG_PKG}@${version} is not on the registry yet — run the \`config\` step first`)
+  }
+  if (!isPinned(version)) fail(`cli + vite still pin the old ${CONFIG_PKG} — run the \`repin\` step first`)
+}
+
+const runStep = async (step, version) => {
+  switch (step) {
+    case 'config':
+      log(`publish ${CONFIG_PKG}@${version}`)
+      await publish(PACKAGES[0], version)
+      return
+    case 'repin':
+      log(`re-pin ${CONFIG_PKG} at ^${version} in cli + vite`)
+      if (!(await isPublished(CONFIG_PKG, version))) {
+        fail(`${CONFIG_PKG}@${version} is not on the registry yet — re-pinning now would wedge every pnpm command`)
+      }
+      repinConfig(version)
+      return
+    case 'cli':
+    case 'eslint-plugin':
+    case 'vite': {
+      const pkg = packageForStep(step)
+      log(`publish ${pkg.name}@${version}`)
+      await assertConfigLanded(version)
+      await publish(pkg, version)
+      return
+    }
+    case 'install':
+      log(`install infra-kit@${version} globally${skipPluginUpdate ? '' : ' and update the plugin in every consumer'}`)
+      if (!(await isPublished('infra-kit', version))) fail(`infra-kit@${version} is not on the registry yet`)
+      installGlobal(version)
+      if (!skipPluginUpdate) updatePlugins()
+      return
+    default:
+      fail(`unknown step "${step}" — one of: ${STEPS.join(', ')}`)
+  }
+}
+
 const main = async () => {
+  if (requestedSteps.length > 1) fail(`one step per run — got: ${requestedSteps.join(', ')}`)
+  const [requested] = requestedSteps
+  if (requested && !STEPS.includes(requested)) fail(`unknown step "${requested}" — one of: ${STEPS.join(', ')}`)
+
   const version = resolveVersion()
-  log(`release ${version}`)
-  assertPublishableTree()
+  log(`release ${version}${requested ? ` — step: ${requested}` : ''}`)
+  // The `repin` step only edits package.json + the lockfile and commits them itself, so it has no
+  // tarball to protect; every other step packs the working tree.
+  if (requested !== 'repin') assertPublishableTree()
 
-  log(`1/4 publish ${CONFIG_PKG}@${version}`)
-  await publish(PACKAGES[0], version)
+  const steps = requested ? [requested] : STEPS
+  for (const step of steps) await runStep(step, version)
 
-  log(`2/4 re-pin ${CONFIG_PKG} at ^${version} in cli + vite`)
-  repinConfig(version)
-
-  log(`3/4 publish the remaining packages`)
-  for (const pkg of PACKAGES.slice(1)) await publish(pkg, version)
-
-  log(`4/4 install infra-kit@${version} globally${skipPluginUpdate ? '' : ' and update the plugin in every consumer'}`)
-  installGlobal(version)
-  if (!skipPluginUpdate) updatePlugins()
-
-  log(`done — ${version} is live. Push the pin commit: git push origin main`)
+  if (requested) {
+    const next = STEPS[STEPS.indexOf(requested) + 1]
+    log(
+      next ? `step "${requested}" done — next: node scripts/publish-lockstep.mjs ${next}` : `done — ${version} is live`,
+    )
+  } else {
+    log(`done — ${version} is live`)
+  }
+  if (requested === 'repin' || !requested) console.log('  push the pin commit: git push origin main')
 }
 
 main().catch((error) => {
