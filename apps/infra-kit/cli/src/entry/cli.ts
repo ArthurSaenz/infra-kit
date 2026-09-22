@@ -21,6 +21,7 @@ import { buildProgram } from 'src/lib/program'
 import { exitForError } from 'src/lib/program/exit-for-error'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { formatAlignedRows } from 'src/lib/render'
+import { applySessionEnv } from 'src/lib/session-env'
 import { captureSessionReportPath } from 'src/lib/session/report'
 import { runSession, sessionGateEnabled } from 'src/lib/session/run-session'
 import { maybeAutoUpdate } from 'src/lib/update-check'
@@ -40,6 +41,15 @@ captureSessionReportPath()
 const program = buildProgram()
 
 const runProgram = async (argv: string[] = process.argv): Promise<void> => {
+  // The same rule `~/.zshenv` applies to a new shell, applied to this process: a command picked in
+  // the session shell (or re-run in the same terminal) must see what `env-load` last wrote, and the
+  // interactive zsh never re-sources the file itself. NOT at module scope, on purpose: the session
+  // shell must hand children the pristine terminal env so each derives its own overlay from the
+  // files (a parent-applied overlay would survive an in-session env-clear + env-load of another
+  // config), and the module-scope readers — the auto-update opt-out, the session gate, the report
+  // capture — deliberately key off the terminal env, never a Doppler-defined value.
+  applySessionEnv()
+
   // Recorded BEFORE parsing so the argv a refusal names is the one Commander saw — including the
   // interactive-menu re-entry, which hands in a synthetic argv that `process.argv` never carries.
   setParsedArgv(argv)

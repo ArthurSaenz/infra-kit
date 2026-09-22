@@ -1,14 +1,18 @@
-import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { buildCliBundle } from 'src/__tests__/helpers/build-cli-bundle'
+import { buildEnvClearLines } from 'src/commands/env-clear/env-clear'
+import { buildEnvLoadFileLines } from 'src/commands/env-load'
+import { ENV_CLEAR_FILE, ENV_LOAD_FILE } from 'src/lib/constants'
 import { createReleaseRemoveFormProvider } from 'src/lib/release-remove-form'
 
 import {
   FIXTURE_RELEASE,
+  FIXTURE_SESSION,
   ensureReleaseWorktree,
   makeAgentCliFixture,
   readGhLog,
@@ -307,4 +311,145 @@ describe('worktrees remove', () => {
     })
     expect(existsSync(join(fixture.releaseWorktreeDir, 'scratch.txt'))).toBe(true)
   }, 30_000)
+})
+
+describe('session-env overlay', () => {
+  /**
+   * Where `env-load` writes for the fixture session — the same path `getSessionCacheDir()` resolves in
+   * the child. A function: `describe` bodies run at collection, before `beforeAll` builds the fixture.
+   */
+  const sessionDir = (): string => {
+    return join(fixture.env.XDG_CACHE_HOME!, 'infra-kit', FIXTURE_SESSION)
+  }
+  /** Every load file carries these five after its own pairs (see `buildEnvLoadFileLines`). */
+  const METADATA_COUNT = 5
+
+  /** pino-pretty is built with `colorize: true`, which ignores the fixture's `NO_COLOR`. */
+  // eslint-disable-next-line no-control-regex -- Matching the SGR escape byte is the entire point here.
+  const SGR = /\u001B\[[\d;]*m/gu
+
+  const stripAnsi = (text: string): string => {
+    return text.replaceAll(SGR, '')
+  }
+
+  const resetSessionDir = (): void => {
+    rmSync(sessionDir(), { force: true, recursive: true })
+    mkdirSync(sessionDir(), { recursive: true, mode: 0o700 })
+  }
+
+  /**
+   * The newer-file rule is strict (`clear.mtimeMs > load.mtimeMs`), so two writes in the same tick
+   * would tie — to the load file — and pass for the wrong reason. Every write pins its own mtime.
+   */
+  const writeAt = (file: string, lines: string[], mtimeSeconds: number): void => {
+    writeFileSync(file, `${lines.join('\n')}\n`, { mode: 0o600 })
+    utimesSync(file, mtimeSeconds, mtimeSeconds)
+  }
+
+  const writeLoad = (pairs: Array<[string, string]>, config: string, mtimeSeconds: number): void => {
+    writeAt(
+      join(sessionDir(), ENV_LOAD_FILE),
+      buildEnvLoadFileLines({
+        pairs,
+        config,
+        project: 'fixture',
+        projectRoot: fixture.repoDir,
+        loadedAt: '2026-09-22T00:00:00.000Z',
+      }),
+      mtimeSeconds,
+    )
+  }
+
+  /** What `env-clear` does: write the unsets, then delete the load file. */
+  const clearLike = (varNames: string[], mtimeSeconds: number): void => {
+    writeAt(join(sessionDir(), ENV_CLEAR_FILE), buildEnvClearLines(varNames), mtimeSeconds)
+    rmSync(join(sessionDir(), ENV_LOAD_FILE), { force: true })
+  }
+
+  const T0 = Math.floor(Date.now() / 1000) - 600
+
+  it('a load file → `env-status --json` reports it loaded, config named, nothing on stderr', async () => {
+    resetSessionDir()
+    writeLoad([['JIRA_EMAIL', 'x']], 'dev', T0)
+
+    const run = await cli(['env-status', '--json'])
+    const json = expectJson(run)
+
+    expect(run.code).toBe(0)
+    expect(run.stderr).toBe('')
+    expect(json.sessionId).toBe(FIXTURE_SESSION)
+    expect(json.sessionConfig).toBe('dev')
+    expect(json.sessionTotalCount).toBe(1 + METADATA_COUNT)
+    expect(json.sessionLoadedCount).toBe(1 + METADATA_COUNT)
+  })
+
+  it('a newer clear file (load file deleted, as env-clear does) → not loaded', async () => {
+    resetSessionDir()
+    writeLoad([['JIRA_EMAIL', 'x']], 'dev', T0)
+    clearLike(['JIRA_EMAIL'], T0 + 2)
+
+    const run = await cli(['env-status', '--json'])
+    const json = expectJson(run)
+
+    expect(run.code).toBe(0)
+    expect(json.sessionConfig).toBeNull()
+    expect(json.sessionLoadedCount).toBe(0)
+    expect(json.sessionTotalCount).toBe(0)
+  })
+
+  it('config switch: load A → newer clear → newer load B → exactly B, A-only names never applied', async () => {
+    resetSessionDir()
+    writeLoad([['FOO_A', 'a']], 'A', T0)
+    clearLike(['FOO_A'], T0 + 2)
+    writeLoad(
+      [
+        ['FOO_B', 'b'],
+        ['BAR_B', 'b'],
+      ],
+      'B',
+      T0 + 4,
+    )
+
+    const run = await cli(['env-status', '--json'])
+    const json = expectJson(run)
+
+    expect(run.code).toBe(0)
+    expect(json.sessionConfig).toBe('B')
+    expect(json.sessionTotalCount).toBe(2 + METADATA_COUNT)
+    expect(json.sessionLoadedCount).toBe(2 + METADATA_COUNT)
+
+    // Names are only observable on the entry-time debug line: `--json` downgrades the logger to
+    // `warn` in preAction, which runs AFTER the overlay has already logged.
+    const debugRun = await cli(['env-status', '--json', '--debug'])
+    const stderr = stripAnsi(debugRun.stderr)
+
+    expect(debugRun.code).toBe(0)
+    expect(stderr).toContain(
+      'session-env applied: set [FOO_B, BAR_B, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG, INFRA_KIT_ENV_PROJECT, INFRA_KIT_ENV_PROJECT_ROOT, INFRA_KIT_ENV_LOADED_AT] unset [] (load, 7 vars)',
+    )
+    expect(stderr).not.toContain('FOO_A')
+  })
+
+  it('no session id → `version --json` runs as today: exit 0, no session-env line', async () => {
+    const run = await cli(['version', '--json'], { INFRA_KIT_SESSION: undefined })
+    const json = expectJson(run)
+
+    expect(run.code).toBe(0)
+    expect(typeof json.version).toBe('string')
+    expect(run.stderr).not.toContain('session-env')
+  })
+
+  it('`--debug` prints the applied names, never a value', async () => {
+    resetSessionDir()
+    writeLoad([['JIRA_EMAIL', 'sentinel@example.invalid']], 'dev', T0)
+
+    const run = await cli(['env-status', '--json', '--debug'])
+    const stderr = stripAnsi(run.stderr)
+
+    expect(run.code).toBe(0)
+    expect(stderr).toContain(
+      'session-env applied: set [JIRA_EMAIL, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG, INFRA_KIT_ENV_PROJECT, INFRA_KIT_ENV_PROJECT_ROOT, INFRA_KIT_ENV_LOADED_AT] unset [] (load, 6 vars)',
+    )
+    expect(stderr).not.toContain('sentinel@example.invalid')
+  })
 })

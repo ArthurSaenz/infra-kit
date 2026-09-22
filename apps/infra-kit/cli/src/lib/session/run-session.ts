@@ -41,7 +41,7 @@ export interface SessionCommand {
    * leaves the alternate screen defensively on their behalf.
    */
   entersAltScreen?: boolean
-  /** Append the "applies after you exit" notice (env-load/clear can't mutate the parent shell). */
+  /** Append the env notice: children overlay the session env themselves, the parent zsh does not. */
   sessionEnvNotice?: boolean
   /**
    * Runs until the user stops it (`dev`). It writes no report (its action resolves at boot, long before

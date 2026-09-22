@@ -102,7 +102,7 @@ describe('formatTranscriptEntry', () => {
 
   it('appends the env-notice as a third line', () => {
     expect(formatTranscriptEntry({ ...base, outcome: 'ok', envNotice: true })).toBe(
-      '$ infra-kit vendor check\n✓ ok · 4.2s\nApplies to your shell after you exit this session.',
+      '$ infra-kit vendor check\n✓ ok · 4.2s\nApplies to infra-kit commands in this terminal and to new shells; this zsh prompt itself needs the env-load function.',
     )
   })
 

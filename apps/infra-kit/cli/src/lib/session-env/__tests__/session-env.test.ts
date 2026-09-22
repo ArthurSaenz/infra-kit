@@ -28,6 +28,7 @@ let sessionDir = ''
 let envSnapshot: NodeJS.ProcessEnv = {}
 let info: MockInstance<typeof logger.info>
 let warn: MockInstance<typeof logger.warn>
+let debug: MockInstance<typeof logger.debug>
 
 const restoreEnv = (snapshot: NodeJS.ProcessEnv): void => {
   for (const name of Object.keys(process.env)) {
@@ -111,6 +112,7 @@ beforeEach(() => {
 
   info = vi.spyOn(logger, 'info').mockImplementation(() => {})
   warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+  debug = vi.spyOn(logger, 'debug').mockImplementation(() => {})
   vi.mocked(parseVarsFromEnvFile).mockClear()
 })
 
@@ -189,7 +191,8 @@ describe('readSessionEnvState — the zshenv rule', () => {
     expect(readSessionEnvState()).toEqual({ kind: 'no-session' })
     expect(applySessionEnv()).toEqual({ set: [], unset: [], changed: false })
 
-    expect(linesOf(warn)).toEqual(['session-env: INFRA_KIT_SESSION unset — no overlay'])
+    expect(linesOf(debug)).toEqual(['session-env: INFRA_KIT_SESSION unset — no overlay'])
+    expect(linesOf(warn)).toEqual([])
     expect(linesOf(info)).toEqual([])
     expect(stat).not.toHaveBeenCalled()
   })
@@ -251,7 +254,7 @@ describe('applySessionEnv', () => {
     expect(applySessionEnv().changed).toBe(true)
     expect(applySessionEnv()).toEqual({ set: [], unset: [], changed: false })
     expect(vi.mocked(parseVarsFromEnvFile)).toHaveBeenCalledTimes(1)
-    expect(linesOf(info)).toHaveLength(1)
+    expect(linesOf(debug)).toHaveLength(1)
 
     atomicWriteFileSync(file, content, 0o600)
     expect(fs.statSync(file).ino).not.toBe(ino)
@@ -405,15 +408,16 @@ describe('applySessionEnv', () => {
     fs.rmSync(path.join(sessionDir, 'env-clear.sh'))
     applySessionEnv()
 
-    expect(linesOf(info)).toEqual([
+    expect(linesOf(debug)).toEqual([
       'session-env applied: set [JIRA_TOKEN, JIRA_EMAIL, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG, INFRA_KIT_ENV_PROJECT, INFRA_KIT_ENV_PROJECT_ROOT, INFRA_KIT_ENV_LOADED_AT] unset [] (load, 7 vars)',
       // env-clear lists the load file's metadata assignments AND its own metadata unsets, so the
       // names repeat — the log mirrors the file rather than deduplicating it.
       'session-env applied: set [] unset [JIRA_TOKEN, JIRA_EMAIL, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG, INFRA_KIT_ENV_PROJECT, INFRA_KIT_ENV_PROJECT_ROOT, INFRA_KIT_ENV_LOADED_AT, INFRA_KIT_ENV, INFRA_KIT_ENV_CONFIG, INFRA_KIT_ENV_PROJECT, INFRA_KIT_ENV_PROJECT_ROOT, INFRA_KIT_ENV_LOADED_AT] (clear)',
       'session-env applied: set [] unset [] (none)',
     ])
+    expect(linesOf(info)).toEqual([])
 
-    const everyArg = JSON.stringify([...info.mock.calls, ...warn.mock.calls])
+    const everyArg = JSON.stringify([...info.mock.calls, ...warn.mock.calls, ...debug.mock.calls])
 
     expect(everyArg).not.toContain('jira-sentinel-8f3a')
     expect(everyArg).not.toContain('sentinel@example.invalid')

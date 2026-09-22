@@ -84,7 +84,7 @@ const resolveSessionDir = (): string | null => {
     return getSessionCacheDir()
   } catch {
     noSession = true
-    logger.warn(`session-env: ${INFRA_KIT_SESSION_VAR} unset — no overlay`)
+    logger.debug(`session-env: ${INFRA_KIT_SESSION_VAR} unset — no overlay`)
 
     return null
   }
@@ -208,9 +208,9 @@ const describeState = (state: Exclude<SessionEnvState, { kind: 'no-session' }>):
 }
 
 /**
- * Make `process.env` equal `baseline ⊕ state`. SYNCHRONOUS on purpose: the SDK
- * dispatches tool handlers concurrently, and a restore+overlay that cannot yield
- * cannot interleave — `process.env` is always one full result, never a mix of two.
+ * Make `process.env` equal `baseline ⊕ state`. Called once per process by the CLI entry
+ * (src/entry/cli.ts `runProgram`); SYNCHRONOUS so the overlay is complete before
+ * Commander parses — every handler sees one full result, never a half-applied env.
  *
  * The stat pair is the whole per-call cost: the default state is read through the
  * signature check, so an unchanged file is never parsed. Never throws: a missing
@@ -232,7 +232,7 @@ export const applySessionEnv = (state = readSessionEnvStateIfMoved()): SessionEn
 
   if (skipped.length > 0) logger.warn(`session-env: skipped protected names [${skipped.join(', ')}]`)
 
-  logger.info(`session-env applied: set [${set.join(', ')}] unset [${unset.join(', ')}] (${describeState(state)})`)
+  logger.debug(`session-env applied: set [${set.join(', ')}] unset [${unset.join(', ')}] (${describeState(state)})`)
 
   return { set, unset, changed: true }
 }

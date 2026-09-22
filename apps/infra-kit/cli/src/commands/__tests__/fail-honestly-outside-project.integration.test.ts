@@ -65,12 +65,14 @@ const tmpDirs: string[] = []
  */
 // `CLAUDECODE` / `INFRA_KIT_AGENT` are scrubbed: the child's stdin is a pipe, so under Claude Code's
 // runner the inherited `CLAUDECODE=1` would put it in agent mode (lib/agent-mode) and every
-// human-channel remediation here would render its agent wording instead.
+// human-channel remediation here would render its agent wording instead. `INFRA_KIT_SESSION` too: the
+// entry overlays the session dir's env-load.sh onto the child, and the developer's real one must not reach it.
 const cleanEnv = (overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...process.env, ...KILL_SWITCHES }
 
   delete env.CLAUDECODE
   delete env.INFRA_KIT_AGENT
+  delete env.INFRA_KIT_SESSION
 
   for (const [key, value] of Object.entries(overrides)) {
     if (value === undefined) {

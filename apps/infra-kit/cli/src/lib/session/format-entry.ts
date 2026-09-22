@@ -47,7 +47,8 @@ const T = {
   sep: ' · ',
   reproPrefix: '$ ',
   nonReproPrefix: '≈ ',
-  envNotice: 'Applies to your shell after you exit this session.',
+  envNotice:
+    'Applies to infra-kit commands in this terminal and to new shells; this zsh prompt itself needs the env-load function.',
 }
 
 /**
@@ -202,7 +203,7 @@ export interface TranscriptEntryInput {
   summary?: string[]
   /** Finding count, used to label a `findings` outcome as `${n} findings`. */
   findingsCount?: number
-  /** Append the "applies to your shell after you exit" env notice as a third line. */
+  /** Append the env notice (which processes the loaded env reaches) as a third line. */
   envNotice?: boolean
   /** Use ASCII glyphs instead of unicode (for `!isTTY` / `TERM=dumb`). */
   ascii?: boolean
