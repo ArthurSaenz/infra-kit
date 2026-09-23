@@ -59,11 +59,15 @@ export type InitStepName =
 /**
  * What a step did.
  *
- * `written` changed something; `unchanged` ran and found nothing to change; `skipped` did not run, or
- * reports through another channel (the migrators and both `agent-files` gates print their own lines);
- * `warned` is a best-effort failure that did not stop the run.
+ * `written` changed something; `unchanged` ran and changed nothing of its own (the migrators print
+ * their own conversion lines, so their step reports `unchanged`); `skipped` did not run; `manual` was
+ * not run by the CLI, and the message carries the command a human runs instead; `warned` is a
+ * best-effort failure that did not stop the run; `failed` is a step that threw and ended the init half.
+ *
+ * `manual` is a member here rather than a label a caller derives, so the `--json` payload names it:
+ * an agent reading `skipped` could not tell "nothing to do" from "a human has to run this".
  */
-export type InitOutcome = 'skipped' | 'unchanged' | 'warned' | 'written'
+export type InitOutcome = 'failed' | 'manual' | 'skipped' | 'unchanged' | 'warned' | 'written'
 
 /**
  * One reportable thing `initCore` did, in the order it did it.
@@ -104,7 +108,7 @@ type InitStepRecorder = (...entries: InitEntry[]) => void
 /**
  * Tags a throwing step with the step it threw in.
  *
- * The tag exists for `setup`, the only caller: it catches this, records the step as `warned`, and goes
+ * The tag exists for `setup`, the only caller: it catches this, records the step as `failed`, and goes
  * on to its dependency half rather than losing the run to one failed local write. Nothing unwraps it
  * back to the bare reason any more — the standalone command that used to do that is gone — so a caller
  * that lets it escape surfaces the step name too, which is strictly more than the old CLI printed.
@@ -133,7 +137,7 @@ export const SHELL_ACTIVATION_REMINDER = 'Run `source ~/.zshrc` or open a new te
  */
 const MIGRATIONS_CHECKED: InitEntry = {
   step: 'migrations',
-  outcome: 'skipped',
+  outcome: 'unchanged',
   message:
     'Config migrations checked (legacy yml layers, user-global filename, ide structure, factory config, retired project cache)',
   level: 'silent',
@@ -449,17 +453,17 @@ export const seedUserGlobalConfig = (): InitEntry => {
 // no-op — unusable as a re-seed hook. Its ungated replacement does not read `INFRA_KIT_NO_SEED`,
 // so without the check above the kill switch would be airtight on every path EXCEPT `initCore`.
 const reseedUserProjectConfig = async (): Promise<InitEntry[]> => {
-  if (process.env.INFRA_KIT_NO_SEED) return [projectConfigSkip('INFRA_KIT_NO_SEED is set')]
+  if (process.env.INFRA_KIT_NO_SEED) return [projectConfigSkip('skipped', 'INFRA_KIT_NO_SEED is set')]
 
   try {
     const paths = await getInfraKitConfigPaths()
 
     // The same D2 gate the preAction seed applies — re-evaluated now that the migrations have run.
-    if (!fs.existsSync(paths.main)) return [projectConfigSkip(`no project config at ${paths.main}`)]
+    if (!fs.existsSync(paths.main)) return [projectConfigSkip('skipped', `no project config at ${paths.main}`)]
 
     const result = await seedUserProjectConfig(paths)
 
-    if (!result.createdConfig) return [projectConfigSkip('the user-project config was already present')]
+    if (!result.createdConfig) return [projectConfigSkip('unchanged', 'the user-project config was already present')]
 
     return [{ step: 'project-config', outcome: 'written', message: seedCreatedMessage(result), level: 'info' }]
   } catch (err) {
@@ -467,15 +471,19 @@ const reseedUserProjectConfig = async (): Promise<InitEntry[]> => {
     // of this line, and an entry carries a message string. The entry beside it reports the outcome.
     logger.debug({ err, msg: 'Skipped seeding the user-project config (init).' })
 
-    return [projectConfigSkip(err instanceof Error ? err.message : String(err))]
+    return [projectConfigSkip('warned', err instanceof Error ? err.message : String(err))]
   }
 }
 
-/** Every reason the layer-3 reseed does nothing is silent on the CLI, exactly as it has always been. */
-const projectConfigSkip = (why: string): InitEntry => {
+/**
+ * Every reason the layer-3 reseed does nothing is silent on the CLI, exactly as it has always been —
+ * but the reasons differ in outcome: a gate that declined did not run, a config already present ran
+ * and found nothing to do, and a throw is a best-effort failure.
+ */
+const projectConfigSkip = (outcome: 'skipped' | 'unchanged' | 'warned', why: string): InitEntry => {
   return {
     step: 'project-config',
-    outcome: 'skipped',
+    outcome,
     message: `Skipped seeding the user-project config — ${why}`,
     level: 'silent',
   }
@@ -673,13 +681,14 @@ const gateDisagreementEntries = (gitRoot: string | null, guidanceRoot: string | 
 /** The two commands, in order, that a person runs by hand when `initCore` could not run them. */
 const manualInstallEntries = (): InitEntry[] => {
   return [MARKETPLACE_ADD_COMMAND, PLUGIN_INSTALL_COMMAND].map((command) => {
-    return { step: 'plugin-pointer', outcome: 'skipped', message: command, level: 'info' }
+    return { step: 'plugin-pointer', outcome: 'manual', message: command, level: 'info' }
   })
 }
 
 /**
  * The withheld update, as one WARN line the reader can act on: the version they are behind and the
- * command that closes the gap. `outcome: 'skipped'` — nothing failed, the step chose not to run.
+ * command that closes the gap. `outcome: 'manual'` — nothing failed, and closing the gap is a command
+ * the CLI hands a human rather than runs.
  *
  * The installer reports `skipped-cli-stale` only when the `cliIsStale` thunk it was handed returned
  * true, and that thunk reads `staleness.stale`; the non-stale arm exists for the type, not for a path.
@@ -691,7 +700,7 @@ const cliStaleEntry = (staleness: CliStaleness): InitEntry => {
 
   return {
     step: 'plugin-pointer',
-    outcome: 'skipped',
+    outcome: 'manual',
     message: `Claude Code plugin not updated — ${detail}. The plugin follows on the next update check after that.`,
     level: 'warn',
   }
@@ -953,7 +962,7 @@ const syncMcpProxies = async (root: string | null): Promise<InitEntry[]> => {
     return [
       {
         step: 'mcp-proxies',
-        outcome: 'skipped',
+        outcome: 'warned',
         message: `  ik-mcp entries not synced — infra-kit.json could not be loaded (${message.split('\n')[0] ?? message})`,
         level: 'warn',
       },

@@ -249,7 +249,7 @@ const runInitHalf = async (): Promise<{ entries: InitEntry[]; failed: boolean }>
   } catch (err) {
     const entry: InitEntry = {
       step: failedStep(err, entries),
-      outcome: 'warned',
+      outcome: 'failed',
       message: `The ${failedStep(err, entries)} step failed: ${err instanceof Error ? err.message : String(err)}`,
       level: 'warn',
     }
@@ -351,8 +351,10 @@ const initStepSchema = z.object({
     ])
     .describe('Which init step this reports on'),
   outcome: z
-    .enum(['written', 'unchanged', 'skipped', 'warned'])
-    .describe('What that step did: changed something, found nothing to change, did not run, or failed non-fatally'),
+    .enum(['written', 'unchanged', 'skipped', 'manual', 'warned', 'failed'])
+    .describe(
+      'What that step did: changed something, found nothing to change, did not run, left a command for a human to run (the message carries it), failed non-fatally, or threw and ended the init half (setup exits 1)',
+    ),
   message: z.string().describe('The same line a human running this would have read'),
 })
 

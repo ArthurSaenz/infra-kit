@@ -22,6 +22,7 @@ import type { UpdateCache } from 'src/lib/update-check'
 
 import packageJson from '../../../../package.json' with { type: 'json' }
 import { initCore, logInitEntry } from '../init'
+import type { InitEntry } from '../init'
 
 /**
  * The additive half's plugin steps — the pointer, the install and the `.mcp.json` registration —
@@ -158,6 +159,18 @@ const runInit = async (): Promise<void> => {
   await initCore(logInitEntry)
 }
 
+/** The same run, keeping the entries: the outcome word is what the `--json` report carries. */
+const runInitEntries = async (): Promise<InitEntry[]> => {
+  const entries: InitEntry[] = []
+
+  await initCore((entry) => {
+    entries.push(entry)
+    logInitEntry(entry)
+  })
+
+  return entries
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
 
@@ -262,6 +275,20 @@ describe('setup --skip-tools — plugin pointer', () => {
     await runInit()
 
     expect(fs.readFileSync(settingsPath(), 'utf-8')).toBe(first)
+  })
+
+  // Reds on: reporting the commands a human runs as `skipped`, which reads as "nothing to do".
+  it('reports both commands a human runs as manual when claude is missing', async () => {
+    const entries = await runInitEntries()
+
+    expect(
+      entries.filter((entry) => {
+        return entry.outcome === 'manual'
+      }),
+    ).toEqual([
+      { step: 'plugin-pointer', outcome: 'manual', message: MARKETPLACE_ADD_COMMAND, level: 'info' },
+      { step: 'plugin-pointer', outcome: 'manual', message: PLUGIN_INSTALL_COMMAND, level: 'info' },
+    ])
   })
 
   it('prints the marketplace command alongside the install command when claude is missing', async () => {
@@ -752,6 +779,19 @@ describe('setup --skip-tools — plugin update withheld behind a stale CLI', () 
         return line.includes('up to date')
       }),
     ).toBe(false)
+  })
+
+  // Reds on: reporting the withheld update as `skipped` — it hands a human the CLI update command.
+  it('reports the withheld update as manual, still on the warn stream', async () => {
+    writeCache({ latestVersion: NEWER, updateCommand: ['brew', 'upgrade', 'infra-kit'] })
+
+    const entries = await runInitEntries()
+
+    expect(
+      entries.find((entry) => {
+        return entry.message.startsWith('Claude Code plugin not updated')
+      }),
+    ).toMatchObject({ step: 'plugin-pointer', outcome: 'manual', level: 'warn' })
   })
 
   it('falls back to the pinned npm command when the cache has a newer version but no verdict', async () => {

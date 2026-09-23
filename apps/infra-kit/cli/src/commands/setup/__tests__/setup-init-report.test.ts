@@ -4,11 +4,15 @@ import path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { InitStepName } from 'src/commands/init'
 import { setup } from 'src/commands/setup'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
+import { MARKETPLACE_ADD_COMMAND, PLUGIN_INSTALL_COMMAND } from 'src/lib/plugin-pointer'
+
+import { migrateConfigShapes } from '../../init/migrate-config'
 
 /**
  * What an MCP caller actually receives from the init half — driven through the REAL `initCore`, because
@@ -70,6 +74,20 @@ const nothingInstalled = (): ProbeDeps => {
   }
 }
 
+/** A `Record` so adding an `InitStepName` without a row here fails `ts-check`, not silently passes. */
+const EVERY_STEP: Record<InitStepName, true> = {
+  zshrc: true,
+  zshenv: true,
+  migrations: true,
+  'user-config': true,
+  guidance: true,
+  'plugin-pointer': true,
+  'mcp-server': true,
+  'mcp-proxies': true,
+  'project-config': true,
+  shell: true,
+}
+
 let home: string
 let repo: string
 const originalExitCode = process.exitCode
@@ -114,22 +132,9 @@ describe('the MCP payload reports what the init half did', () => {
       return entry.step
     })
 
-    // All ten: a step that did nothing this run still reports (`skipped`), because "nothing happened"
-    // is an answer an agent needs and silence is not.
-    expect(new Set(steps)).toEqual(
-      new Set([
-        'zshrc',
-        'zshenv',
-        'migrations',
-        'user-config',
-        'guidance',
-        'plugin-pointer',
-        'mcp-server',
-        'mcp-proxies',
-        'project-config',
-        'shell',
-      ]),
-    )
+    // All ten: a step that did not run this time still reports (`skipped`), and one that ran and
+    // changed nothing reports `unchanged` — "nothing happened" is an answer an agent needs, silence is not.
+    expect(new Set(steps)).toEqual(new Set(Object.keys(EVERY_STEP)))
     expect(structuredContent.init).toContainEqual({
       step: 'zshrc',
       outcome: 'written',
@@ -155,6 +160,81 @@ describe('the MCP payload reports what the init half did', () => {
       outcome: 'unchanged',
       message: expect.stringContaining('none wanted — the plugin is skills-only') as unknown as string,
     })
+  })
+
+  // Reds on: an `initCore` step that stops recording an entry, or a new step name nobody reports.
+  it.each(Object.keys(EVERY_STEP))('reports the %s step in a real run', async (step) => {
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), skipTools: true })
+
+    expect(
+      structuredContent.init.some((entry) => {
+        return entry.step === step
+      }),
+    ).toBe(true)
+  })
+
+  // Reds on: reporting the migrations step `skipped` again — it ran; its conversions print their own lines.
+  it('reports the migrations step as ran, not as skipped', async () => {
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), skipTools: true })
+
+    expect(structuredContent.init).toContainEqual({
+      step: 'migrations',
+      outcome: 'unchanged',
+      message: expect.stringContaining('Config migrations checked') as unknown as string,
+    })
+  })
+
+  // Reds on: folding a command handed to a human back into `skipped`, which an agent reads as "nothing to do".
+  it('reports the two plugin commands a human runs as manual when claude is missing', async () => {
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), skipTools: true })
+
+    expect(structuredContent.init).toContainEqual({
+      step: 'plugin-pointer',
+      outcome: 'manual',
+      message: MARKETPLACE_ADD_COMMAND,
+    })
+    expect(structuredContent.init).toContainEqual({
+      step: 'plugin-pointer',
+      outcome: 'manual',
+      message: PLUGIN_INSTALL_COMMAND,
+    })
+  })
+
+  // Reds on: recording an init throw as `warned`, the word a non-fatal failure that exits 0 also uses.
+  it('reports an init throw as failed, and exits 1', async () => {
+    vi.mocked(migrateConfigShapes).mockRejectedValueOnce(new Error('EACCES: read-only file system'))
+
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), skipTools: true })
+
+    expect(structuredContent.init.at(-1)).toEqual({
+      step: 'migrations',
+      outcome: 'failed',
+      message: 'The migrations step failed: EACCES: read-only file system',
+    })
+    expect(process.exitCode).toBe(1)
+  })
+
+  // Reds on: letting a per-file guidance failure turn the run red, or reporting it as `failed`.
+  it('reports a guidance write failure as warned, and exits 0', async () => {
+    // A directory where the root CLAUDE.md belongs: the guidance writer cannot read or replace it.
+    fs.mkdirSync(path.join(repo, 'CLAUDE.md'))
+
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), skipTools: true })
+    const guidance = structuredContent.init.filter((entry) => {
+      return entry.step === 'guidance'
+    })
+
+    expect(guidance).toContainEqual({
+      step: 'guidance',
+      outcome: 'warned',
+      message: expect.stringContaining('could not be written') as unknown as string,
+    })
+    expect(
+      structuredContent.init.some((entry) => {
+        return entry.outcome === 'failed'
+      }),
+    ).toBe(false)
+    expect(process.exitCode ?? 0).toBe(0)
   })
 
   // Reds on: returning the internal entries verbatim, which would leak the CLI's `level` rendering hint

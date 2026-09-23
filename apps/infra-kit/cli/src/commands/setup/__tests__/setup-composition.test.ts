@@ -142,8 +142,9 @@ describe('setup runs both halves, in order, whatever the first one does', () => 
 
     expect(vi.mocked(runRecipe)).toHaveBeenCalledTimes(1)
     expect(resultFor(structuredContent.tools, 'gh')).toMatchObject({ action: 'updated' })
+    // `failed`, not `warned`: a throw exits 1, and `warned` is the word for a failure that exits 0.
     expect(structuredContent.init).toEqual([
-      { step: 'user-config', outcome: 'warned', message: expect.stringContaining('EACCES') as unknown as string },
+      { step: 'user-config', outcome: 'failed', message: expect.stringContaining('EACCES') as unknown as string },
     ])
     expect(process.exitCode).toBe(1)
   })
