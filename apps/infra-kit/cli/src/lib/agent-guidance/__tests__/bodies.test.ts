@@ -218,7 +218,7 @@ describe('buildRootBody', () => {
     )
     expect(rendered).toContain('re-run the same argv with `--yes` to execute')
     expect(rendered).toContain('`env-load`, `env-clear` and `infra-kit setup` have no confirm step and run once')
-    expect(rendered).toContain('`release deliver` is human-only and is refused under agent mode')
+    expect(rendered).toContain('`release deliver` and `vendor sync` are human-only and are refused under agent mode')
     expect(rendered).toContain('Never put a mutating command behind a prefix allow')
     expect(rendered).toContain('`argument_required`')
   })
