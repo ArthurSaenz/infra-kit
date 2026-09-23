@@ -146,7 +146,7 @@ vi.mock('src/lib/git-utils', () => {
 /**
  * `portless service target` reads the service file at the driver's fixed path and, when it parses, dates
  * the daemon through `ps`. Both constants are pointed at paths that cannot exist so the row is the
- * deterministic `Skipped —` pass on every machine — including one with a real root plist — and no `ps`
+ * deterministic `skip` on every machine — including one with a real root plist — and no `ps`
  * is ever spawned: the pid file lives under the same unreachable state dir.
  */
 vi.mock('src/dev/proxy/portless-driver', () => {

@@ -70,8 +70,8 @@ const healthyDeps = (overrides: PortlessCheckDeps = {}): PortlessCheckDeps => {
     caPath: () => {
       return path.join(stateDir, 'ca.pem')
     },
-    // No OS service file and no `~/.infra-kit/portless` link: the service-target row is its `Skipped —`
-    // pass and every remediation renders the real bin, whatever the author's machine holds at those paths.
+    // No OS service file and no `~/.infra-kit/portless` link: the service-target row is its `skip`
+    // and every remediation renders the real bin, whatever the author's machine holds at those paths.
     // The link's own rows live in `doctor-service-target.test.ts`.
     readServiceFile: () => {
       return null
@@ -120,15 +120,21 @@ afterEach(() => {
 })
 
 describe('checkPortless', () => {
-  it('reports seven passes and NOT ONE remediation on a healthy, correctly-trusted machine', async () => {
+  it('reports six passes and NOT ONE remediation on a healthy, correctly-trusted machine', async () => {
     const checks = await checkPortless(healthyDeps())
 
     expect(checks).toHaveLength(7)
+    // The fixture has no OS service file, so the service-target row never read a target. It used to be
+    // counted as a pass; principle 2 makes it a skip, so "never looked" differs from "looked and fine".
     expect(
-      checks.filter((check) => {
-        return check.status !== 'pass'
-      }),
-    ).toEqual([])
+      checks
+        .filter((check) => {
+          return check.status !== 'pass'
+        })
+        .map((check) => {
+          return [check.name, check.status]
+        }),
+    ).toEqual([['portless service target', 'skip']])
 
     const printed = messagesOf(checks)
 

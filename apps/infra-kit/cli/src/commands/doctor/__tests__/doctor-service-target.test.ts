@@ -160,19 +160,20 @@ const converged = (overrides: Partial<Machine> = {}): Machine => {
 const INSTALL_THROUGH_LINK = `sudo ${EXEC_PATH} ${LINK_CLI} service install`
 
 describe('portless service target', () => {
-  it('skips (as a pass) when the OS service is not installed', async () => {
+  // Was a pass; principle 2: a check that did not evaluate is a skip, never a pass, so the report can tell "never looked" from "looked and fine". With no service file there is no target to read.
+  it('skips when the OS service is not installed', async () => {
     const row = await serviceTargetRow({ files: {} })
 
-    expect(row.status).toBe('pass')
-    expect(row.message).toMatch(/^Skipped — the OS service is not installed/)
+    expect(row.status).toBe('skip')
+    expect(row.message).toMatch(/^the OS service is not installed/)
     expect(row.message).toContain(DARWIN_SERVICE_PLIST_PATH)
   })
 
   it('skips on a platform portless writes no plist or unit for', async () => {
     const row = await serviceTargetRow({ ...converged(), platform: 'win32' })
 
-    expect(row.status).toBe('pass')
-    expect(row.message).toMatch(/^Skipped — no portless OS service file on this platform/)
+    expect(row.status).toBe('skip')
+    expect(row.message).toMatch(/^no portless OS service file on this platform/)
   })
 
   it('fails when the service runs a node that no longer exists, and prints the reinstall through the link', async () => {

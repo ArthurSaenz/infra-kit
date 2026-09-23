@@ -121,10 +121,11 @@ describe('portless node', () => {
   it('n1: skips on a platform with no OS service, and renders through execPath', async () => {
     const { node, installLine } = await run({ nodeFs: hardlinkFs(), platform: 'win32' })
 
+    // `skip`, not the old pass: there is no service whose node could be checked (principle 2).
     expect(node).toEqual({
       name: 'portless node',
-      status: 'pass',
-      message: 'Skipped — no portless OS service on this platform',
+      status: 'skip',
+      message: 'no portless OS service on this platform',
     })
     expect(installLine).toBe(THROUGH_EXEC)
   })
@@ -132,10 +133,11 @@ describe('portless node', () => {
   it('n2: from a checkout the ROW is a skip, but stableNode is still resolved so the printed line is the short one', async () => {
     const { node, installLine } = await run({ nodeFs: hardlinkFs(), isGlobal: false })
 
+    // `skip`, not the old pass: a checkout does not own the file, so the row never judged it (principle 2).
     expect(node).toEqual({
       name: 'portless node',
-      status: 'pass',
-      message: 'Skipped — not a global install; the global infra-kit keeps ~/.infra-kit/node current',
+      status: 'skip',
+      message: 'not a global install; the global infra-kit keeps ~/.infra-kit/node current',
     })
     expect(installLine).toBe(THROUGH_STABLE)
   })
@@ -143,8 +145,8 @@ describe('portless node', () => {
   it('n2 from a checkout with no file: the skip row, and the deep execPath line', async () => {
     const { node, installLine } = await run({ nodeFs: fakeNodeFs(), isGlobal: false })
 
-    expect(node.status).toBe('pass')
-    expect(node.message).toMatch(/^Skipped — not a global install/)
+    expect(node.status).toBe('skip')
+    expect(node.message).toMatch(/^not a global install/)
     expect(installLine).toBe(THROUGH_EXEC)
   })
 

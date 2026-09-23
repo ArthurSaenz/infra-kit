@@ -99,12 +99,13 @@ describe('checkLegacyUserGlobalConfig', () => {
     })
   })
 
-  it('passes informationally when the config paths cannot be resolved', async () => {
+  // Was a pass; principle 2: a check that did not evaluate is a skip, never a pass, so the report can tell "never looked" from "looked and fine".
+  it('skips when the config paths cannot be resolved', async () => {
     cfg.shouldThrow = true
 
     const result = await checkLegacyUserGlobalConfig()
 
-    expect(result.status).toBe('pass')
-    expect(result.message).toMatch(/Skipped/)
+    expect(result.status).toBe('skip')
+    expect(result.message).toContain('could not be resolved')
   })
 })

@@ -426,7 +426,7 @@ export const checkEnvTokensConfigured = async (
   const resolveToken = deps.resolveToken ?? resolveEnvToken
 
   if (!read.config) {
-    return { name, status: 'pass', message: 'Skipped — infra-kit config could not be read (see config check)' }
+    return { name, status: 'skip', message: 'infra-kit config could not be read (see config check)' }
   }
 
   // A corrupt store throws for EVERY env, which would otherwise render as "no token anywhere" — the
@@ -461,7 +461,8 @@ const defaultReadEnvToken = (): string | undefined => {
  * Fails when `~/.infra-kit/projects/<repo>/tokens.json` is missing OR holds zero envs. Two states
  * are deliberately NOT failures: `INFRA_KIT_ENV_TOKEN` set (the CI / agent channel takes
  * precedence over the store and needs no home config — see {@link INFRA_KIT_ENV_TOKEN_VAR}), and a
- * store that THROWS (`env tokens configured` already reports that one).
+ * store that THROWS (`env tokens configured` already reports that one). Both are a `skip`, not a
+ * pass: in neither case was the store's content looked at.
  *
  * @example
  * await checkTokenStorePresent()
@@ -487,8 +488,8 @@ export const checkTokenStorePresent = async (deps: EnvTokenCheckDeps = {}): Prom
   if (readEnvToken()) {
     return {
       name,
-      status: 'pass',
-      message: `Skipped — ${INFRA_KIT_ENV_TOKEN_VAR} is set; that channel takes precedence over the store`,
+      status: 'skip',
+      message: `${INFRA_KIT_ENV_TOKEN_VAR} is set; that channel takes precedence over the store`,
     }
   }
 
@@ -498,7 +499,7 @@ export const checkTokenStorePresent = async (deps: EnvTokenCheckDeps = {}): Prom
   try {
     displayPath = tildify(await storePath())
   } catch {
-    return { name, status: 'pass', message: 'Skipped — the token store path could not be resolved' }
+    return { name, status: 'skip', message: 'the token store path could not be resolved' }
   }
 
   let store: TokenStore | null
@@ -506,7 +507,7 @@ export const checkTokenStorePresent = async (deps: EnvTokenCheckDeps = {}): Prom
   try {
     store = await readStore()
   } catch {
-    return { name, status: 'pass', message: `The store at ${displayPath} is unreadable (see env tokens configured)` }
+    return { name, status: 'skip', message: `The store at ${displayPath} is unreadable (see env tokens configured)` }
   }
 
   const envs = store === null ? [] : Object.keys(store.envs)
@@ -539,8 +540,8 @@ const modeOf = (target: string, statPath: NonNullable<EnvTokenCheckDeps['statPat
  * touched them (an editor's save-and-rename, a `cp -r`, a synced dotfiles dir), which is exactly the
  * case a self-healing writer cannot fix on its own.
  *
- * Skipped when the store does not exist: a machine with no tokens has nothing to protect, and CI
- * (`INFRA_KIT_ENV_TOKEN`) never writes one.
+ * A `skip` when the store does not exist: a machine with no tokens has nothing to protect, and CI
+ * (`INFRA_KIT_ENV_TOKEN`) never writes one. Not a pass, because no mode was read.
  *
  * @example
  * await checkTokenStorePerms(false)
@@ -557,11 +558,11 @@ export const checkTokenStorePerms = async (fix: boolean, deps: EnvTokenCheckDeps
   try {
     target = await storePath()
   } catch {
-    return { name, status: 'pass', message: 'Skipped — the token store path could not be resolved' }
+    return { name, status: 'skip', message: 'the token store path could not be resolved' }
   }
 
   if (modeOf(target, statPath) === null) {
-    return { name, status: 'pass', message: `No store to protect at ${tildify(target)} (see tokens.json present)` }
+    return { name, status: 'skip', message: `No store to protect at ${tildify(target)} (see tokens.json present)` }
   }
 
   // Every directory on the way to the file, plus the file: a 0600 file inside a world-readable
@@ -681,7 +682,7 @@ export const checkLegacyUserGlobalConfig = async (): Promise<CheckResult> => {
   try {
     paths = await getInfraKitConfigPaths()
   } catch {
-    return { name, status: 'pass', message: 'Skipped — infra-kit config paths could not be resolved' }
+    return { name, status: 'skip', message: 'infra-kit config paths could not be resolved' }
   }
 
   const legacyPath = path.join(path.dirname(paths.userGlobal), 'config.json')
@@ -734,9 +735,9 @@ const probeIde = async (provider: IdeProvider): Promise<IdeProbe> => {
 /**
  * Check that every editor configured under `ide` is installed. Probes each binary (`cursor`)
  * named by the ALREADY-READ config ({@link readDoctorConfig}). Passes only if all configured editors
- * are present; fails listing any that are missing. Informational pass when no IDE is configured or
- * the config can't be read — an unconfigured editor is a valid setup, and config validity is
- * reported separately by `checkInfraKitConfigValid`.
+ * are present; fails listing any that are missing. Passes when no IDE is configured — an unconfigured
+ * editor is a valid setup. A `skip` when the config can't be read, since then nothing was asked;
+ * config validity is reported separately by `checkInfraKitConfigValid`.
  *
  * @example
  * await checkIdeInstalled({ config: { ide: [{ provider: 'cursor' }] }, error: null })
@@ -746,7 +747,7 @@ export const checkIdeInstalled = async (read: DoctorConfig): Promise<CheckResult
   const name = 'ide installed'
 
   if (!read.config) {
-    return { name, status: 'pass', message: 'Skipped — infra-kit config could not be read (see config check)' }
+    return { name, status: 'skip', message: 'infra-kit config could not be read (see config check)' }
   }
 
   const providers = resolveConfiguredIdes(read.config).map((ide) => {
@@ -1775,7 +1776,7 @@ const resolvePortlessNodeHealth = (seams: ServiceTargetSeams): PortlessNodeVerdi
 const checkPortlessNode = (seams: ServiceTargetSeams): PortlessNodeVerdict => {
   if (serviceFilePath(seams.platform) === null) {
     return {
-      row: { name: PORTLESS_NODE_NAME, status: 'pass', message: 'Skipped — no portless OS service on this platform' },
+      row: { name: PORTLESS_NODE_NAME, status: 'skip', message: 'no portless OS service on this platform' },
       stableNode: null,
       sidecar: null,
     }
@@ -1789,8 +1790,8 @@ const checkPortlessNode = (seams: ServiceTargetSeams): PortlessNodeVerdict => {
     ...health,
     row: {
       name: PORTLESS_NODE_NAME,
-      status: 'pass',
-      message: `Skipped — not a global install; the global infra-kit keeps ${NODE_DISPLAY} current`,
+      status: 'skip',
+      message: `not a global install; the global infra-kit keeps ${NODE_DISPLAY} current`,
     },
   }
 }
@@ -2004,7 +2005,7 @@ const nodeDriftVerdict = (node: string, install: string, seams: ServiceTargetSea
  * file `service install` wrote, with the same two grammars portless reads it with (`service-file.ts`).
  * The plist is the only witness: the running daemon's argv is what it was, not what launchd will use next.
  *
- * "Not installed" is a `Skipped —` pass (the `:443` row already says what to do), a file this reader
+ * "Not installed" is a `skip` (the `:443` row already says what to do), a file this reader
  * cannot make sense of is an advisory, never a throw.
  */
 const checkPortlessServiceTarget = async (seams: ServiceTargetSeams): Promise<ServiceTargetOutcome> => {
@@ -2015,8 +2016,8 @@ const checkPortlessServiceTarget = async (seams: ServiceTargetSeams): Promise<Se
       state: 'absent',
       row: {
         name: SERVICE_TARGET_NAME,
-        status: 'pass',
-        message: 'Skipped — no portless OS service file on this platform',
+        status: 'skip',
+        message: 'no portless OS service file on this platform',
       },
     }
   }
@@ -2028,8 +2029,8 @@ const checkPortlessServiceTarget = async (seams: ServiceTargetSeams): Promise<Se
       state: 'absent',
       row: {
         name: SERVICE_TARGET_NAME,
-        status: 'pass',
-        message: `Skipped — the OS service is not installed (no ${filePath})`,
+        status: 'skip',
+        message: `the OS service is not installed (no ${filePath})`,
       },
     }
   }

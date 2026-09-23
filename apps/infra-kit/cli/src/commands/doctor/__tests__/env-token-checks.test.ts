@@ -132,11 +132,12 @@ describe('checkEnvTokensConfigured — which envs have a token', () => {
     expect(result.message).toBe('dev: no token, prod: no token')
   })
 
-  it('skips (passes) when the infra-kit config could not be read — doctor is the escape hatch for that', async () => {
+  // Was a pass; principle 2: a check that did not evaluate is a skip, never a pass, so the report can tell "never looked" from "looked and fine".
+  it('skips when the infra-kit config could not be read — doctor is the escape hatch for that', async () => {
     const result = await checkEnvTokensConfigured({ config: null, error: new Error('bad config') }, depsFor({}))
 
-    expect(result.status).toBe('pass')
-    expect(result.message).toContain('Skipped')
+    expect(result.status).toBe('skip')
+    expect(result.message).toContain('could not be read')
     // Bails before ever asking what envs exist.
     expect(listProjectEnvNames).not.toHaveBeenCalled()
   })
@@ -176,11 +177,14 @@ describe('checkTokenStorePerms — the credential file is 0600 behind 0700 dirs'
     expect(result.message).toContain('is 0600 (0700 dirs)')
   })
 
-  /** The ABSENCE itself is `tokens.json present`'s failure; this check only ever grades modes. */
-  it('skips (passes) when there is no token store — there is nothing to protect, and it is reported elsewhere', async () => {
+  /**
+   * The ABSENCE itself is `tokens.json present`'s failure; this check only ever grades modes. It was a
+   * pass; with no mode read it is a skip (principle 2), and still not a second failure.
+   */
+  it('skips when there is no token store — there is nothing to protect, and it is reported elsewhere', async () => {
     const result = await checkTokenStorePerms(false, permDeps({}))
 
-    expect(result.status).toBe('pass')
+    expect(result.status).toBe('skip')
     expect(result.message).toContain('see tokens.json present')
   })
 
@@ -228,8 +232,8 @@ describe('checkTokenStorePerms — the credential file is 0600 behind 0700 dirs'
       },
     })
 
-    expect(result.status).toBe('pass')
-    expect(result.message).toContain('Skipped')
+    expect(result.status).toBe('skip')
+    expect(result.message).toContain('could not be resolved')
   })
 })
 
@@ -279,11 +283,14 @@ describe('checkTokenStorePresent — every project needs a token store', () => {
     expect(result.message).not.toContain(TOKEN)
   })
 
-  /** CI and agents authenticate through the variable and never write a store — failing them is noise. */
+  /**
+   * CI and agents authenticate through the variable and never write a store — failing them is noise.
+   * It was a pass; the store was never looked at, so it is a skip (principle 2).
+   */
   it('skips when INFRA_KIT_ENV_TOKEN is set, even with no store on disk', async () => {
     const result = await checkTokenStorePresent(storeDeps(null, TOKEN))
 
-    expect(result.status).toBe('pass')
+    expect(result.status).toBe('skip')
     expect(result.message).toContain('INFRA_KIT_ENV_TOKEN')
     expect(result.message).not.toContain(TOKEN)
   })
@@ -300,11 +307,14 @@ describe('checkTokenStorePresent — every project needs a token store', () => {
     expect(result.status).toBe('fail')
   })
 
-  /** A corrupt store is already the FAIL of `env tokens configured`; failing twice double-counts it. */
+  /**
+   * A corrupt store is already the FAIL of `env tokens configured`; failing twice double-counts it. It
+   * is a skip, not the old pass, because the store's content was never read (principle 2).
+   */
   it('defers to env tokens configured when the store is unreadable', async () => {
     const result = await checkTokenStorePresent(storeDeps('corrupt'))
 
-    expect(result.status).toBe('pass')
+    expect(result.status).toBe('skip')
     expect(result.message).toContain('see env tokens configured')
   })
 
@@ -318,8 +328,8 @@ describe('checkTokenStorePresent — every project needs a token store', () => {
       },
     })
 
-    expect(result.status).toBe('pass')
-    expect(result.message).toContain('Skipped')
+    expect(result.status).toBe('skip')
+    expect(result.message).toContain('could not be resolved')
   })
 })
 
