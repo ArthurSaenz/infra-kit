@@ -65,8 +65,8 @@ describe('checkAgentFiles', () => {
   })
 
   /**
-   * Rewritten, not kept green: `[]` here was the omission defect. A check that did not run is a `skip`
-   * row, never an absence, because a missing row reads as "nothing to report" when it means "never looked".
+   * A check that did not run is a `skip` row, never an absence, because a missing row reads as "nothing
+   * to report" when it means "never looked".
    */
   it('reports a skip outside an infra-kit repo (never crashes, never vanishes)', async () => {
     await withTmpRepo(

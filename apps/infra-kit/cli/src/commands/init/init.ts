@@ -250,7 +250,7 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
 /**
  * The one place an {@link InitEntry} becomes a log line.
  *
- * `setup` no longer streams entries (its end table carries them), so the only callers are the init
+ * `setup` does not stream entries (its end table carries them), so the only callers are the init
  * suites, which assert each step's line through the logger. It stays here rather than in a test helper
  * so those suites keep reading the production mapping of `level` to stream.
  */

@@ -97,8 +97,8 @@ describe('checkAgentFiles package guidance staleness', () => {
 
   /**
    * The staleness report rides on the `CLAUDE.md block` row, so that row must exist even where nothing
-   * can be inspected. It used to be omitted outside a repo, taking the staleness answer with it; principle
-   * 2 makes it a `skip`, and a skip that never scanned a package must not carry a staleness verdict.
+   * can be inspected: an omitted row reads as "nothing to report" when it means "never looked". Outside a
+   * repo it is a `skip`, and a skip that never scanned a package must not carry a staleness verdict.
    */
   it('still emits the one row outside an infra-kit repo, as a skip with no staleness report', async () => {
     await withTmpRepo(

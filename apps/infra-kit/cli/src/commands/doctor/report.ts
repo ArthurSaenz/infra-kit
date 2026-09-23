@@ -151,10 +151,9 @@ export const FIXABLE_NAMES: ReadonlySet<string> = new Set(['portless routes', 't
  * this must never sort or splice the input.
  *
  * A check that cannot run is still a row: it arrives as a `skip`, never as an absence, because an
- * omitted row reads as "nothing to report" when it means "never looked". That reverses this function's
- * old contract, which omitted such checks and let their sections vanish. Empty sections are still
- * omitted, but only a section with no member rows at all can be empty now. Any unmapped name lands in
- * a trailing {@link OTHER_SECTION} rather than disappearing.
+ * omitted row reads as "nothing to report" when it means "never looked". Empty sections are omitted,
+ * but only a section with no member rows at all can be empty. Any unmapped name lands in a trailing
+ * {@link OTHER_SECTION} rather than disappearing.
  *
  * @example
  * groupChecks([{ name: 'gh installed', status: 'pass', message: '…' }])
@@ -179,11 +178,6 @@ export const groupChecks = (checks: readonly CheckResult[]): DoctorSection[] => 
     return bucket && bucket.length > 0 ? [{ label, checks: bucket }] : []
   })
 }
-
-/** Kept as doctor's name for the shared options so existing callers and tests do not move. */
-export type DoctorReportOptions = RunReportOptions
-
-export type PrintDoctorReportDeps = PrintRunReportDeps
 
 export { resolveReportCapabilities }
 
@@ -231,11 +225,11 @@ const toRunReport = (checks: readonly CheckResult[]): RunReport => {
  * formatDoctorReport([{ name: 'gh installed', status: 'pass', message: 'installed' }], { color: false })
  * // => ['infra-kit doctor', '', '  Tools & CLIs …', '    ✓ gh installed  installed', …]
  */
-export const formatDoctorReport = (checks: readonly CheckResult[], options: DoctorReportOptions = {}): string[] => {
+export const formatDoctorReport = (checks: readonly CheckResult[], options: RunReportOptions = {}): string[] => {
   return formatRunReport(toRunReport(checks), options)
 }
 
 /** Write the doctor report to stderr in ONE write (see {@link printRunReport}). */
-export const printDoctorReport = (checks: readonly CheckResult[], deps: PrintDoctorReportDeps = {}): void => {
+export const printDoctorReport = (checks: readonly CheckResult[], deps: PrintRunReportDeps = {}): void => {
   printRunReport(toRunReport(checks), deps)
 }

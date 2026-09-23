@@ -120,7 +120,8 @@ describe('checkIdeInstalled', () => {
     expect(result.message).toMatch(/Installed: Cursor/)
   })
 
-  // Was a pass; principle 2: a check that did not evaluate is a skip, never a pass, so the report can tell "never looked" from "looked and fine".
+  // A check that did not evaluate is a skip, never a pass, so the report can tell "never looked" from
+  // "looked and fine".
   it('skips when the config could not be read', async () => {
     const result = await checkIdeInstalled({ config: null, error: new Error('bad config') })
 

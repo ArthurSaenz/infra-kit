@@ -121,7 +121,7 @@ describe('portless node', () => {
   it('n1: skips on a platform with no OS service, and renders through execPath', async () => {
     const { node, installLine } = await run({ nodeFs: hardlinkFs(), platform: 'win32' })
 
-    // `skip`, not the old pass: there is no service whose node could be checked (principle 2).
+    // A skip, not a pass: there is no service whose node could be checked.
     expect(node).toEqual({
       name: 'portless node',
       status: 'skip',
@@ -133,7 +133,7 @@ describe('portless node', () => {
   it('n2: from a checkout the ROW is a skip, but stableNode is still resolved so the printed line is the short one', async () => {
     const { node, installLine } = await run({ nodeFs: hardlinkFs(), isGlobal: false })
 
-    // `skip`, not the old pass: a checkout does not own the file, so the row never judged it (principle 2).
+    // A skip, not a pass: a checkout does not own the file, so the row never judged it.
     expect(node).toEqual({
       name: 'portless node',
       status: 'skip',

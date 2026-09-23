@@ -132,7 +132,8 @@ describe('checkEnvTokensConfigured — which envs have a token', () => {
     expect(result.message).toBe('dev: no token, prod: no token')
   })
 
-  // Was a pass; principle 2: a check that did not evaluate is a skip, never a pass, so the report can tell "never looked" from "looked and fine".
+  // A check that did not evaluate is a skip, never a pass, so the report can tell "never looked" from
+  // "looked and fine".
   it('skips when the infra-kit config could not be read — doctor is the escape hatch for that', async () => {
     const result = await checkEnvTokensConfigured({ config: null, error: new Error('bad config') }, depsFor({}))
 
@@ -178,8 +179,8 @@ describe('checkTokenStorePerms — the credential file is 0600 behind 0700 dirs'
   })
 
   /**
-   * The ABSENCE itself is `tokens.json present`'s failure; this check only ever grades modes. It was a
-   * pass; with no mode read it is a skip (principle 2), and still not a second failure.
+   * The ABSENCE itself is `tokens.json present`'s failure; this check only ever grades modes. With no
+   * mode read it is a skip, and still not a second failure.
    */
   it('skips when there is no token store — there is nothing to protect, and it is reported elsewhere', async () => {
     const result = await checkTokenStorePerms(false, permDeps({}))
@@ -285,7 +286,7 @@ describe('checkTokenStorePresent — every project needs a token store', () => {
 
   /**
    * CI and agents authenticate through the variable and never write a store — failing them is noise.
-   * It was a pass; the store was never looked at, so it is a skip (principle 2).
+   * The store was never looked at, so it is a skip.
    */
   it('skips when INFRA_KIT_ENV_TOKEN is set, even with no store on disk', async () => {
     const result = await checkTokenStorePresent(storeDeps(null, TOKEN))
@@ -309,7 +310,7 @@ describe('checkTokenStorePresent — every project needs a token store', () => {
 
   /**
    * A corrupt store is already the FAIL of `env tokens configured`; failing twice double-counts it. It
-   * is a skip, not the old pass, because the store's content was never read (principle 2).
+   * is a skip, not a pass, because the store's content was never read.
    */
   it('defers to env tokens configured when the store is unreadable', async () => {
     const result = await checkTokenStorePresent(storeDeps('corrupt'))

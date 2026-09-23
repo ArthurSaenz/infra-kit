@@ -31,8 +31,8 @@ they are separate commands precisely so that asking a question does not cost an 
 
 ## 1. What one call does, in order
 
-Two halves, and **both always run**. Neither short-circuits the other: an init-half failure is recorded
-and the dependency half still runs.
+Three parts, and **all always run**. None short-circuits another: an init-half failure is recorded,
+and the dependency converge and the portless service step still run.
 
 ### Step 1 — the init half: local, offline, additive, near-instant
 
@@ -57,8 +57,8 @@ one infra-kit manages. A recipe the risk predicate refuses is **printed, not run
 ### Step 3 — show the report
 
 The call ends with one report on stderr, in every mode and `--json` included, and the `Bash` result
-carries it: a section per half with its rollup, the closing totals, then the `source ~/.zshrc`
-reminder as the last line. A tool recipe's `running` lines stream above it while that recipe runs.
+carries it: a section per part (Local setup, Tools, Portless service) with its rollup, the closing
+totals, then the `source ~/.zshrc` reminder as the last line. A tool recipe's `running` lines stream above it while that recipe runs.
 **Show the report verbatim**, never re-grouped, re-tabulated or rebuilt from the JSON. It is the same
 table a human sees in a terminal, and a second copy is one that drifts.
 

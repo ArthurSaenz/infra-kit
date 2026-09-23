@@ -124,8 +124,8 @@ describe('checkPortless', () => {
     const checks = await checkPortless(healthyDeps())
 
     expect(checks).toHaveLength(7)
-    // The fixture has no OS service file, so the service-target row never read a target. It used to be
-    // counted as a pass; principle 2 makes it a skip, so "never looked" differs from "looked and fine".
+    // The fixture has no OS service file, so the service-target row never read a target. It is a skip,
+    // not a pass, so "never looked" differs from "looked and fine".
     expect(
       checks
         .filter((check) => {
@@ -343,8 +343,7 @@ describe('checkPortless', () => {
   })
 
   /**
-   * Rewritten, not kept green: this used to pin a single row, which is the omission defect itself. A
-   * row that did not run is a `skip`, never an absence, because a missing row reads as "nothing to
+   * A row that did not run is a `skip`, never an absence, because a missing row reads as "nothing to
    * report" when it means "never looked".
    */
   it('keeps all seven rows when portless is not resolvable: the install fails, the six that need it skip', async () => {

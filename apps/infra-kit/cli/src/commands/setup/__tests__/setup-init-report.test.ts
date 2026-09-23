@@ -262,9 +262,8 @@ describe('the MCP payload reports what the init half did', () => {
   })
 
   // Reds on: streaming the init half's entries again beside the table, or dropping the held-back reminder.
-  // The order changed on purpose: the init half no longer streams (it is local and near-instant, so a
-  // live line gives no progress signal), and its verdicts are the table's first section, ahead of the
-  // tools, with the reminder after the whole table.
+  // The init half does not stream: it is local and near-instant, so a live line gives no progress signal.
+  // Its verdicts are the table's first section, ahead of the tools, with the reminder after the whole table.
   it('prints the init half first in the table, the tools next, and the activation reminder last', async () => {
     await setup({ probeDeps: nothingInstalled(), skipTools: true, portlessDeps: noPortless() })
 

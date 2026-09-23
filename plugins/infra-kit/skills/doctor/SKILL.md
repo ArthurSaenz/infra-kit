@@ -78,7 +78,7 @@ Its findings are in its output.
 ## Step 3 — interpret
 
 Open with one line, the combined verdict, computed from the two totals lines:
-`CLI: N passed · N failed · N warned · N skipped | Session: …`, with the session half in the same
+`CLI: N passed · N skipped · N failed · N warned | Session: …`, with the session half in the same
 shape. A count a totals line leaves out is zero; when the CLI half did not run, write
 `CLI: unavailable`. This is the only figure the skill composes, and it copies no rows.
 

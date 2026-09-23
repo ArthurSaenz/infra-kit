@@ -259,7 +259,7 @@ export const portlessNodeStatus = (outcome: PortlessNodeResult['outcome']): RunS
   }
 }
 
-export const portlessLinkDetail = (outcome: PortlessLinkOutcome): string => {
+const portlessLinkDetail = (outcome: PortlessLinkOutcome): string => {
   switch (outcome) {
     case 'created': {
       return 'linked ~/.infra-kit/portless to the running portless'
@@ -285,7 +285,7 @@ export const portlessLinkDetail = (outcome: PortlessLinkOutcome): string => {
   }
 }
 
-export const portlessNodeDetail = (result: PortlessNodeResult): string => {
+const portlessNodeDetail = (result: PortlessNodeResult): string => {
   const verb = result.method === 'copy' ? 'copied' : 'linked'
 
   switch (result.outcome) {

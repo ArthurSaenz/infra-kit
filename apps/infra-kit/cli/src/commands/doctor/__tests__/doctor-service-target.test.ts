@@ -160,11 +160,12 @@ const converged = (overrides: Partial<Machine> = {}): Machine => {
 const INSTALL_THROUGH_LINK = `sudo ${EXEC_PATH} ${LINK_CLI} service install`
 
 /**
- * The advisories below are `warn`, not the old green row led by `Warning —`: a pass counted them in
- * "N passed", so succeeded and warned were indistinguishable (decision driver 2). The glyph says it now.
+ * The advisories below are `warn`, not a green row led by `Warning —`: a pass is counted in "N passed",
+ * so a success and a warning would be indistinguishable in the totals.
  */
 describe('portless service target', () => {
-  // Was a pass; principle 2: a check that did not evaluate is a skip, never a pass, so the report can tell "never looked" from "looked and fine". With no service file there is no target to read.
+  // With no service file there is no target to read, and a check that did not evaluate is a skip, never
+  // a pass, so the report can tell "never looked" from "looked and fine".
   it('skips when the OS service is not installed', async () => {
     const row = await serviceTargetRow({ files: {} })
 
@@ -294,8 +295,7 @@ describe('portless service target', () => {
   it('does not call the global target a checkout when doctor is run from $HOME', async () => {
     const row = await serviceTargetRow(converged({ cwd: HOME }))
 
-    // `pass`, not `warn`: the advisory is a status now, so the old "no Warning in the message" check
-    // has nothing left to read.
+    // Asserted on the status, not the message: an advisory is a `warn` row, so `pass` proves none fired.
     expect(row.status).toBe('pass')
   })
 

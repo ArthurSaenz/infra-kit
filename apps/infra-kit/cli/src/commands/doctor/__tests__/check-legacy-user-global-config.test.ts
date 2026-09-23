@@ -99,7 +99,8 @@ describe('checkLegacyUserGlobalConfig', () => {
     })
   })
 
-  // Was a pass; principle 2: a check that did not evaluate is a skip, never a pass, so the report can tell "never looked" from "looked and fine".
+  // A check that did not evaluate is a skip, never a pass, so the report can tell "never looked" from
+  // "looked and fine".
   it('skips when the config paths cannot be resolved', async () => {
     cfg.shouldThrow = true
 

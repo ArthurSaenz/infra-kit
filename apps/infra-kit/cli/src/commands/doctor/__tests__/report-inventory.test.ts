@@ -327,9 +327,8 @@ describe('the Agent allowlist row is gated on the git root', () => {
   })
 
   /**
-   * Rewritten, not kept green: this used to assert the row was omitted, which is the defect. A check
-   * that did not run is a `skip` row, never an absence, because a missing row reads as "nothing to
-   * report" when it means "never looked". What stays pinned is the other half: no verdict on the cwd.
+   * A check that did not run is a `skip` row, never an absence, because a missing row reads as "nothing
+   * to report" when it means "never looked". It must also give no verdict on the cwd.
    */
   it('is a skip, not answered against the cwd, when the git seam is blank', async () => {
     gitTopLevel = ''

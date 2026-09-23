@@ -429,7 +429,7 @@ export const resolveUnicode = (env) => {
   return locale === undefined ? true : /UTF-?8/i.test(locale)
 }
 
-export const formatProbeReport = (rows, env) => {
+const formatProbeReport = (rows, env) => {
   return formatRunReport(
     { title: 'infra-kit doctor (session)', sections: [{ label: 'Session (plugin-side)', rows }] },
     { unicode: resolveUnicode(env), width: REPORT_WIDTH },

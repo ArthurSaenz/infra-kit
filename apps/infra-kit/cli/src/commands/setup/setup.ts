@@ -100,7 +100,7 @@ const realPortlessServiceDeps = (): PortlessServiceDeps => {
  * What the portless-service step did, for the `--json` payload. `service` is doctor's own verdict word, so
  * the payload and doctor's row can never name one state two ways; `'skipped'` means no portless to judge.
  */
-export interface PortlessServiceResult {
+interface PortlessServiceResult {
   link: PortlessLinkOutcome
   node: PortlessNodeResult['outcome']
   service: ServiceTargetState | 'skipped'
@@ -111,9 +111,9 @@ export interface PortlessServiceResult {
 /**
  * Converge `~/.infra-kit/portless` and `~/.infra-kit/node` and, when the installed system service (if
  * any) has not caught up to them, return the single `service install` command a human has to run — sudo
- * is never run here, and the command reaches the human as the service row's note in the report. This is its own step, run unconditionally like the init half rather than gated on
- * `--skip-tools`/`--tools`: it is local and idempotent, not a network install of one of the six tracked
- * tools.
+ * is never run here, and the command reaches the human as the service row's note in the report. This is
+ * its own step, run unconditionally like the init half rather than gated on `--skip-tools`/`--tools`:
+ * it is local and idempotent, not a network install of one of the six tracked tools.
  *
  * The line renders through the stable node only on doctor's health verdict (§5.4 N8 — resolved after
  * the converge, and from `execPath` even on a checkout's `'skipped-local'`, so the global's node still

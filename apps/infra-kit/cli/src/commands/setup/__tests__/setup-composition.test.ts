@@ -157,7 +157,7 @@ describe('a refusal is not a failure, and a failure is not a refusal', () => {
     expect(structuredContent.changed).toBe(false)
     expect(process.exitCode ?? 0).toBe(0)
     // The commands are the point of a refusal: printed, for the human, never run.
-    // Read from stderr, not the logger: the argv is now the report row's note, written in the report's one
+    // Read from stderr, not the logger: the argv is the report row's note, written in the report's one
     // stderr write. Routing the table through pino would prefix every line with its level.
     expect(stderrLines().join('\n')).toContain('install.sh')
     expect(vi.mocked(runRecipe)).not.toHaveBeenCalled()
@@ -391,7 +391,7 @@ describe('manual rows never affect the exit code or allSucceeded', () => {
     expect(process.exitCode ?? 0).toBe(0)
   })
 
-  // Reds on: an exit rule that ignores a failed row outside the tools (the old `!allSucceeded` rule).
+  // Reds on: an exit rule that reads only the tools' success and ignores a failed row outside them.
   it('adding one fail row beside the manual ones exits 1', async () => {
     initReports(
       anEntry({ step: 'plugin-pointer', outcome: 'manual', message: 'claude plugin install x', level: 'info' }),
