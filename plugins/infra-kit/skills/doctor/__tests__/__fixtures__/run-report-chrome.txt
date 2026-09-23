@@ -1,0 +1,15 @@
+infra-kit chrome fixture
+
+  Chrome  2/6 · 1 changed · 1 skipped · 1 to run yourself · 1 failed · 1 warning
+    ✓ ok row       passed
+    + changed row  wrote the file
+    - skipped row  did not run
+    > manual row   run this yourself
+    ! warn row     advisory finding
+    ✗ fail row     a long message that wraps across several lines of the report
+                   and carries one unbreakable token
+                   /Users/someone/.claude/plugins/cache/infra-kit/infra-kit/0.0.0/skills/doctor/scripts/session-probe.mjs
+                   whole
+
+  ────────────────────────────────────────────────────────
+  1 passed · 1 changed · 1 skipped · 1 to run yourself · 1 failed · 1 warned

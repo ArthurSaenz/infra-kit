@@ -2,12 +2,12 @@
 // it in as `env.CLAUDE_CONFIG_DIR`, so no test reads the developer's real ~/.claude — the same
 // injection discipline the CLI's own plugin-pointer tests use.
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 
-import { probe, resolveRoot } from '../scripts/session-probe.mjs'
+import { formatRunReport, probe, resolveRoot, resolveUnicode } from '../scripts/session-probe.mjs'
 
 const PLUGIN_KEY = 'infra-kit@infra-kit'
 const temps = []
@@ -295,4 +295,43 @@ test('the probe writes nothing', () => {
 
   assert.deepEqual(snapshot(configDir), before)
   assert.ok(existsSync(configDir))
+})
+
+// --- report chrome parity -----------------------------------------------------------------------
+
+// The same report `lib/render/__tests__/run-report.test.ts` renders through the CLI's formatter. Both
+// sides must reproduce the fixture, so a chrome change on either side reds one of the two tests.
+const CHROME_REPORT = {
+  title: 'infra-kit chrome fixture',
+  sections: [
+    {
+      label: 'Chrome',
+      rows: [
+        { name: 'ok row', status: 'ok', message: 'passed' },
+        { name: 'changed row', status: 'changed', message: 'wrote the file' },
+        { name: 'skipped row', status: 'skipped', message: 'did not run' },
+        { name: 'manual row', status: 'manual', message: 'run this yourself' },
+        { name: 'warn row', status: 'warn', message: 'advisory finding' },
+        {
+          name: 'fail row',
+          status: 'fail',
+          message:
+            'a long message that wraps across several lines of the report and carries one unbreakable token /Users/someone/.claude/plugins/cache/infra-kit/infra-kit/0.0.0/skills/doctor/scripts/session-probe.mjs whole',
+        },
+      ],
+    },
+  ],
+}
+
+test('the probe renders the shared run-report chrome byte for byte', () => {
+  const fixture = readFileSync(new URL('./__fixtures__/run-report-chrome.txt', import.meta.url), 'utf8')
+
+  assert.equal(`${formatRunReport(CHROME_REPORT, { width: 80, unicode: true }).join('\n')}\n`, fixture)
+})
+
+test('glyphs follow the CLI locale rule: unset means UTF-8, a set non-UTF-8 locale means ASCII', () => {
+  assert.equal(resolveUnicode({}), true)
+  assert.equal(resolveUnicode({ LC_ALL: '', LANG: 'en_US.UTF-8' }), true)
+  assert.equal(resolveUnicode({ LC_ALL: 'C', LANG: 'en_US.UTF-8' }), false)
+  assert.equal(resolveUnicode({ LANG: 'en_US.utf8' }), true)
 })

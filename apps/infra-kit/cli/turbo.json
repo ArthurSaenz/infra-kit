@@ -1,0 +1,12 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/plugins/infra-kit/skills/doctor/__tests__/__fixtures__/run-report-chrome.txt"
+      ]
+    }
+  }
+}

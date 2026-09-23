@@ -154,7 +154,8 @@ const checkSessionVsRecords = (root, env, projectPath) => {
     return row(
       name,
       FAIL,
-      `Nothing records ${PLUGIN_KEY} as installed, so this session loads no infra-kit skills. ` + 'Run: infra-kit setup --skip-tools',
+      `Nothing records ${PLUGIN_KEY} as installed, so this session loads no infra-kit skills. ` +
+        'Run: infra-kit setup --skip-tools',
     )
   }
 
@@ -291,10 +292,148 @@ export const probe = ({ root, env = process.env, projectPath }) => {
   ]
 }
 
-const MARKERS = { [OK]: 'ok  ', [WARN]: 'warn', [FAIL]: 'FAIL' }
+// ---------------------------------------------------------------------------------------------------
+// Report chrome — a DUPLICATE of the CLI's `lib/render/run-report.ts`, not an import of it.
+//
+// Step 2 of the doctor skill runs this probe precisely when the CLI may be broken (a stale global, a
+// half-installed bundle), so it cannot depend on the CLI's TypeScript or dist. Drift is caught instead
+// by one golden file, `__tests__/__fixtures__/run-report-chrome.txt`, which both the plugin's
+// `session-probe.test.mjs` and the CLI's `run-report.test.ts` render byte for byte. Change the chrome
+// in one place and the other side's test reds.
+// ---------------------------------------------------------------------------------------------------
 
-const formatRows = (rows) => {
-  return rows.map((r) => `  [${MARKERS[r.status]}] ${r.name}: ${r.message}`)
+/**
+ * The probe only ever emits ok, warn and fail. `changed`, `skipped` and `manual` are defensive: they
+ * exist so the shared fixture can cover all six statuses through this one formatter.
+ */
+const GLYPHS = {
+  unicode: { ok: '✓', changed: '+', skipped: '-', manual: '>', warn: '!', fail: '✗', separator: '·', rule: '─' },
+  ascii: { ok: 'ok', changed: '++', skipped: '--', manual: '>>', warn: '!?', fail: '!!', separator: '-', rule: '-' },
+}
+
+const MIN_MESSAGE_WIDTH = 24
+const INDENT = '  '
+const ROW_INDENT = '    '
+
+/** Stdout is a pipe into the skill's transcript, so there is no terminal width to read. */
+const REPORT_WIDTH = 80
+
+/** Words longer than `width` stay whole on their own line: a command split mid-token is not runnable. */
+const wrapText = (text, width) => {
+  const words = text.split(/\s+/).filter((word) => word.length > 0)
+  const lines = []
+  let current = ''
+
+  for (const word of words) {
+    if (current.length === 0) current = word
+    else if (`${current} ${word}`.length <= width) current = `${current} ${word}`
+    else {
+      lines.push(current)
+      current = word
+    }
+  }
+  if (current.length > 0) lines.push(current)
+
+  return lines.length > 0 ? lines : ['']
+}
+
+const tally = (rows) => {
+  const counts = { ok: 0, changed: 0, skipped: 0, manual: 0, warn: 0, fail: 0 }
+
+  for (const r of rows) counts[r.status] += 1
+
+  return counts
+}
+
+/** The fixed order shared by the rollup and the totals line; only the warn wording differs. */
+const countParts = (counts, warnWord) => {
+  return [
+    { status: 'changed', plain: `${counts.changed} changed` },
+    { status: 'skipped', plain: `${counts.skipped} skipped` },
+    { status: 'manual', plain: `${counts.manual} to run yourself` },
+    { status: 'fail', plain: `${counts.fail} failed` },
+    { status: 'warn', plain: `${counts.warn} ${warnWord(counts.warn)}` },
+  ].filter((part) => counts[part.status] > 0)
+}
+
+const formatRollup = (counts, total, glyphs) => {
+  if (counts.ok === total) return `${total}/${total} ok`
+
+  const parts = countParts(counts, (count) => `warning${count === 1 ? '' : 's'}`)
+
+  return [`${counts.ok + counts.changed}/${total}`, ...parts.map((part) => part.plain)].join(` ${glyphs.separator} `)
+}
+
+const formatSectionHeader = (section, glyphs, width) => {
+  const rollup = formatRollup(tally(section.rows), section.rows.length, glyphs)
+  const gap = Math.max(1, width - INDENT.length - section.label.length - rollup.length)
+
+  return `${INDENT}${section.label}${' '.repeat(gap)}${rollup}`
+}
+
+const formatRow = (r, nameWidth, glyphs, width) => {
+  const messageColumn = ROW_INDENT.length + glyphs.ok.length + 1 + nameWidth + 2
+  const messageWidth = Math.max(MIN_MESSAGE_WIDTH, width - messageColumn)
+  const [first, ...rest] = wrapText(r.message, messageWidth)
+  const hanging = ' '.repeat(messageColumn)
+  const head = `${ROW_INDENT}${glyphs[r.status]} ${r.name.padEnd(nameWidth)}  ${first ?? ''}`.trimEnd()
+
+  return [
+    head,
+    ...rest.map((line) => `${hanging}${line}`),
+    ...(r.notes ?? []).map((note) => `${hanging}${note}`.trimEnd()),
+  ]
+}
+
+const formatSummary = (report, rows, glyphs, width) => {
+  const counts = tally(rows)
+  const rule = glyphs.rule.repeat(Math.max(12, Math.min(width - INDENT.length, 56)))
+  const parts = countParts(counts, () => 'warned')
+  const totals = [`${counts.ok} passed`, ...parts.map((part) => part.plain)].join(` ${glyphs.separator} `)
+  const hints = (report.hints ?? []).map((hint) => `  ${hint}`)
+
+  return [`${INDENT}${rule}`, `${INDENT}${totals}${hints.join('')}`]
+}
+
+/**
+ * The CLI's `formatRunReport` with colour permanently off: the probe's stdout is a pipe, never a
+ * terminal, so there is no case in which ANSI would render.
+ */
+export const formatRunReport = (report, { unicode = true, width = REPORT_WIDTH } = {}) => {
+  const glyphs = unicode ? GLYPHS.unicode : GLYPHS.ascii
+  const sections = report.sections.filter((section) => section.rows.length > 0)
+  const rows = sections.flatMap((section) => section.rows)
+
+  if (rows.length === 0) return [report.title, '', `${INDENT}${report.emptyMessage ?? 'Nothing ran.'}`]
+
+  // One name column for the whole report, so the message column does not jump at each heading.
+  const nameWidth = Math.max(...rows.map((r) => r.name.length))
+  const body = sections.flatMap((section) => [
+    formatSectionHeader(section, glyphs, width),
+    ...section.rows.flatMap((r) => formatRow(r, nameWidth, glyphs, width)),
+    '',
+  ])
+
+  return [report.title, '', ...body, ...formatSummary(report, rows, glyphs, width)]
+}
+
+/**
+ * The CLI's `resolveUnicode`: UTF-8 unless a locale variable is SET and says otherwise. An unset locale
+ * is the common case (launchd, CI, bare `sh`) and renders the glyphs fine.
+ */
+export const resolveUnicode = (env) => {
+  const locale = ['LC_ALL', 'LC_CTYPE', 'LANG']
+    .map((name) => env[name])
+    .find((value) => value !== undefined && value !== '')
+
+  return locale === undefined ? true : /UTF-?8/i.test(locale)
+}
+
+export const formatProbeReport = (rows, env) => {
+  return formatRunReport(
+    { title: 'infra-kit doctor (session)', sections: [{ label: 'Session (plugin-side)', rows }] },
+    { unicode: resolveUnicode(env), width: REPORT_WIDTH },
+  )
 }
 
 /**
@@ -315,7 +454,7 @@ const main = () => {
   const projectPath = process.cwd()
   const rows = probe({ root, projectPath })
 
-  process.stdout.write(`${['Session checks (plugin-side):', ...formatRows(rows)].join('\n')}\n`)
+  process.stdout.write(`${formatProbeReport(rows, process.env).join('\n')}\n`)
 }
 
 // Exit status is always 0: findings belong in the report the skill renders, not in a code that would

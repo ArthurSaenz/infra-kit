@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 
 import { RUN_REPORT_GLYPHS, formatRunReport, printRunReport } from '../run-report'
@@ -215,5 +218,53 @@ describe('printRunReport', () => {
     expect(write).toHaveBeenCalledTimes(1)
     expect(write.mock.calls[0]?.[0]).toContain('infra-kit test')
     expect(write.mock.calls[0]?.[0]?.endsWith('\n')).toBe(true)
+  })
+})
+
+/** The workspace root, found by walking up: the fixture lives in the plugin tree, outside this package. */
+const findRepoRoot = (): string => {
+  let dir = path.dirname(fileURLToPath(import.meta.url))
+
+  while (!existsSync(path.join(dir, 'pnpm-workspace.yaml'))) {
+    const parent = path.dirname(dir)
+
+    if (parent === dir) throw new Error('no pnpm-workspace.yaml above the test file')
+    dir = parent
+  }
+
+  return dir
+}
+
+describe('shared chrome fixture', () => {
+  // The same report `plugins/infra-kit/skills/doctor/__tests__/session-probe.test.mjs` renders through
+  // the probe's duplicated formatter. The probe cannot import this module (it must run when the CLI is
+  // broken), so this fixture is the only thing holding the two renderers together.
+  it('renders the fixture the session probe also reproduces, byte for byte', () => {
+    const fixture = readFileSync(
+      path.join(findRepoRoot(), 'plugins/infra-kit/skills/doctor/__tests__/__fixtures__/run-report-chrome.txt'),
+      'utf8',
+    )
+    const chrome: RunReport = {
+      title: 'infra-kit chrome fixture',
+      sections: [
+        {
+          label: 'Chrome',
+          rows: [
+            row('ok row', 'ok', 'passed'),
+            row('changed row', 'changed', 'wrote the file'),
+            row('skipped row', 'skipped', 'did not run'),
+            row('manual row', 'manual', 'run this yourself'),
+            row('warn row', 'warn', 'advisory finding'),
+            row(
+              'fail row',
+              'fail',
+              'a long message that wraps across several lines of the report and carries one unbreakable token /Users/someone/.claude/plugins/cache/infra-kit/infra-kit/0.0.0/skills/doctor/scripts/session-probe.mjs whole',
+            ),
+          ],
+        },
+      ],
+    }
+
+    expect(`${formatRunReport(chrome, { width: 80, color: false, unicode: true }).join('\n')}\n`).toBe(fixture)
   })
 })
