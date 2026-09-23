@@ -12,7 +12,7 @@ export interface TargetOutcome {
   commit?: CommitResult
 }
 
-export interface SyncReportOptions {
+interface SyncReportOptions {
   mode: SyncMode
   commit?: boolean
   manifestOnly?: boolean

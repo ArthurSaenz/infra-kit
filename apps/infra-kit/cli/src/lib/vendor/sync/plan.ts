@@ -1,7 +1,8 @@
 import { shellLine } from 'src/lib/shell-quote'
 
 import { sameFingerprint } from './fingerprint'
-import { rebasePath, withoutExcluded } from './paths'
+import { shortSha } from './git'
+import { rebasePath, uniqueSorted, withoutExcluded } from './paths'
 import type {
   ChangelogFacts,
   EntryPlan,
@@ -17,19 +18,12 @@ import type {
 /** Paths a blocked row lists before truncating; the `git status` argv shows the rest. */
 const MAX_LISTED_PATHS = 20
 
-/** Changelog lines a changed row lists before truncating. */
 const MAX_CHANGELOG_LINES = 20
-
-const SHA_DISPLAY_LENGTH = 7
 
 const truncated = (lines: readonly string[], max: number): string[] => {
   if (lines.length <= max) return [...lines]
 
   return [...lines.slice(0, max), `…and ${lines.length - max} more`]
-}
-
-const uniqueSorted = (paths: Iterable<string>): string[] => {
-  return [...new Set(paths)].sort()
 }
 
 /**
@@ -129,7 +123,7 @@ const changelogLines = (changelog: ChangelogFacts, sourceName: string): { notes:
     }
   }
 
-  const sha7 = changelog.sha.slice(0, SHA_DISPLAY_LENGTH)
+  const sha7 = shortSha(changelog.sha)
 
   if (changelog.kind === 'unresolvable') {
     return { notes: [], warnings: [`manifest commit ${sha7} is not in ${sourceName}, so the changelog is unknown`] }

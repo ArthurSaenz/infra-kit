@@ -1,6 +1,4 @@
-import { runGit } from './git'
-
-const SHA_DISPLAY_LENGTH = 7
+import { runGit, shortSha } from './git'
 
 /**
  * The commit subject for a sync.
@@ -9,7 +7,7 @@ const SHA_DISPLAY_LENGTH = 7
  * syncCommitMessage('starter-workspace', 'a1b2c3d4e5') // => '[ROOT] vendor: sync from starter-workspace@a1b2c3d'
  */
 export const syncCommitMessage = (sourceName: string, headSha: string): string => {
-  return `[ROOT] vendor: sync from ${sourceName}@${headSha.slice(0, SHA_DISPLAY_LENGTH)}`
+  return `[ROOT] vendor: sync from ${sourceName}@${shortSha(headSha)}`
 }
 
 export type CommitResult = { ok: true } | { ok: false; output: string }

@@ -16,7 +16,7 @@ import { writeManifest } from '../manifest'
 import { VENDOR_DIR, isSkippedPath } from '../skip-sets'
 import { fingerprintOnDisk } from './fingerprint'
 import { runGit, splitNul } from './git'
-import { VENDOR_MANIFEST_PATH, VENDOR_README_PATH, toVendorRelative } from './paths'
+import { VENDOR_MANIFEST_PATH, VENDOR_README_PATH, toVendorRelative, uniqueSorted } from './paths'
 import { vendorReadme } from './readme'
 import { listTrackedVendorPaths } from './tracked-files'
 import type { ApplyResult, EntryPlan, SourceIdentity, TargetPlan, WriteOp } from './types'
@@ -144,7 +144,7 @@ export const manifestPathsAfterApply = (
       return rel !== null && !isSkippedPath(rel)
     })
 
-  return [...new Set(relative)].sort()
+  return uniqueSorted(relative)
 }
 
 const writeVendorMeta = async (
@@ -202,12 +202,12 @@ export const applyTargetPlan = async ({ source, plan, onBeforeFirstWrite }: Appl
     return op.target
   })
 
-  if (!plan.writeVendorMeta) return { touched: [...new Set([...deleted, ...written])].sort(), manifestWritten: false }
+  if (!plan.writeVendorMeta) return { touched: uniqueSorted([...deleted, ...written]), manifestWritten: false }
 
   await writeVendorMeta(targetRoot, source, plan.entries, deleted)
 
   return {
-    touched: [...new Set([...deleted, ...written, VENDOR_README_PATH, VENDOR_MANIFEST_PATH])].sort(),
+    touched: uniqueSorted([...deleted, ...written, VENDOR_README_PATH, VENDOR_MANIFEST_PATH]),
     manifestWritten: true,
   }
 }

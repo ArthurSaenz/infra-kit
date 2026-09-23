@@ -100,7 +100,7 @@ export interface WriteOp {
   change: 'added' | 'modified'
 }
 
-export interface EntryCounts {
+interface EntryCounts {
   added: number
   modified: number
   removed: number

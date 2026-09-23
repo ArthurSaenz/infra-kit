@@ -18,6 +18,11 @@ export const runGit = async (cwd: string, args: string[], options: RunGitOptions
   return result.exitCode === 0 ? result.stdout : ''
 }
 
+/** @example shortSha('a1b2c3d4e5') // => 'a1b2c3d' */
+export const shortSha = (sha: string): string => {
+  return sha.slice(0, 7)
+}
+
 /** Split `-z` output into records, dropping the empty tail after the final NUL. */
 export const splitNul = (stdout: string): string[] => {
   return stdout.split('\0').filter((record) => {

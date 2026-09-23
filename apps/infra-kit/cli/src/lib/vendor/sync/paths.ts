@@ -79,6 +79,10 @@ export const rebasePath = (sourcePath: string, entry: ResolvedCopyEntry): string
   return `${entry.target}${sourcePath.slice(entry.path.length)}`
 }
 
+export const uniqueSorted = (paths: Iterable<string>): string[] => {
+  return [...new Set(paths)].sort()
+}
+
 /**
  * Strip the `vendor/` prefix, or `null` for a path outside it.
  *
