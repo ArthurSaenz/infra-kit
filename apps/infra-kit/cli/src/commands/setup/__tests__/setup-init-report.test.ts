@@ -9,10 +9,17 @@ import { setup } from 'src/commands/setup'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
-import { logger } from 'src/lib/logger'
-import { MARKETPLACE_ADD_COMMAND, PLUGIN_INSTALL_COMMAND } from 'src/lib/plugin-pointer'
+import { formatUpdateCommand } from 'src/lib/install-manager'
+import {
+  MARKETPLACE_ADD_COMMAND,
+  PLUGIN_INSTALL_COMMAND,
+  installPluginForProject,
+  resolvePluginInstall,
+} from 'src/lib/plugin-pointer'
+import { readUpdateCache } from 'src/lib/update-check'
 
 import { migrateConfigShapes } from '../../init/migrate-config'
+import { captureStderr, noPortless, stderrLines } from './setup-stderr'
 
 /**
  * What an MCP caller actually receives from the init half — driven through the REAL `initCore`, because
@@ -55,7 +62,15 @@ vi.mock('src/lib/plugin-pointer', async (importOriginal) => {
     installPluginForProject: vi.fn(() => {
       return { status: 'claude-missing' }
     }),
+    resolvePluginInstall: vi.fn(actual.resolvePluginInstall),
   }
+})
+
+/** Seamed only so the stale-CLI case can name a newer published version without a registry fetch. */
+vi.mock('src/lib/update-check', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('src/lib/update-check')>()
+
+  return { ...actual, readUpdateCache: vi.fn(actual.readUpdateCache) }
 })
 
 /** Everything absent: the probe has something to report, and nothing is a candidate for a real install. */
@@ -92,14 +107,9 @@ let home: string
 let repo: string
 const originalExitCode = process.exitCode
 
-const infoLines = (): string[] => {
-  return vi.mocked(logger.info).mock.calls.map((call) => {
-    return typeof call[0] === 'string' ? call[0] : JSON.stringify(call[0])
-  })
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
+  captureStderr()
   process.exitCode = undefined
 
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-report-home-'))
@@ -116,6 +126,10 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // `mockReset` returns each `vi.fn(impl)` to its factory implementation; `restoreAllMocks` does not.
+  vi.mocked(resolvePluginInstall).mockReset()
+  vi.mocked(readUpdateCache).mockReset()
+  vi.mocked(installPluginForProject).mockReset()
   delete process.env.INFRA_KIT_NO_SEED
   process.exitCode = originalExitCode
   vi.restoreAllMocks()
@@ -247,27 +261,94 @@ describe('the MCP payload reports what the init half did', () => {
     }
   })
 
-  // Reds on: printing the init half's entries in a trailing block, or dropping the held-back reminder —
-  // the human output must read init half, then tools, then how to activate.
-  it('prints the init half first, the tool summary next, and the activation reminder last', async () => {
-    await setup({ probeDeps: nothingInstalled(), skipTools: true })
+  // Reds on: streaming the init half's entries again beside the table, or dropping the held-back reminder.
+  // The order changed on purpose: the init half no longer streams (it is local and near-instant, so a
+  // live line gives no progress signal), and its verdicts are the table's first section, ahead of the
+  // tools, with the reminder after the whole table.
+  it('prints the init half first in the table, the tools next, and the activation reminder last', async () => {
+    await setup({ probeDeps: nothingInstalled(), skipTools: true, portlessDeps: noPortless() })
 
-    const lines = infoLines()
+    const lines = stderrLines()
     const zshrc = lines.findIndex((line) => {
-      return line.startsWith('Added infra-kit shell functions')
+      return line.includes(' zshrc ') && line.includes('Added infra-kit shell functions')
     })
     const tools = lines.findIndex((line) => {
-      return line.includes('doppler —')
+      return line.includes(' doppler ')
     })
 
     expect(zshrc).toBeGreaterThanOrEqual(0)
     expect(zshrc).toBeLessThan(tools)
     expect(lines.at(-1)).toBe('Run `source ~/.zshrc` or open a new terminal to activate.')
-    // Exactly once: held back from the init half's stream, not printed there AND here.
     expect(
       lines.filter((line) => {
-        return line.startsWith('Run `source ~/.zshrc`')
+        return line.includes('Run `source ~/.zshrc`')
       }),
     ).toHaveLength(1)
+  })
+})
+
+describe('commands a human has to run reach the report as manual rows, and never fail the run', () => {
+  const rowFor = (
+    report: { label: string; rows: { name: string; status: string; notes?: string[] }[] }[],
+    name: string,
+  ) => {
+    return report
+      .flatMap((section) => {
+        return section.rows
+      })
+      .find((row) => {
+        return row.name === name
+      })
+  }
+
+  // Reds on: choosing notes by pino level, which drops these two `info`-level commands from the table.
+  it('prints both plugin commands verbatim under a manual plugin-pointer row when claude is missing', async () => {
+    const { structuredContent } = await setup({
+      probeDeps: nothingInstalled(),
+      skipTools: true,
+      portlessDeps: noPortless(),
+    })
+    const lines = stderrLines()
+
+    expect(rowFor(structuredContent.report, 'plugin-pointer')).toMatchObject({
+      status: 'manual',
+      notes: expect.arrayContaining([MARKETPLACE_ADD_COMMAND, PLUGIN_INSTALL_COMMAND]) as unknown as string[],
+    })
+    for (const command of [MARKETPLACE_ADD_COMMAND, PLUGIN_INSTALL_COMMAND]) {
+      expect(
+        lines.some((line) => {
+          return line.trim() === command
+        }),
+      ).toBe(true)
+    }
+    expect(structuredContent.allSucceeded).toBe(true)
+    expect(process.exitCode ?? 0).toBe(0)
+  })
+
+  // Reds on: embedding the update command in prose again, which makes the note uncopyable.
+  it('reports a stale CLI with the bare update command as its own note', async () => {
+    const updateCommand = ['pnpm', 'add', '-g', 'infra-kit@latest']
+
+    vi.mocked(resolvePluginInstall).mockReturnValue({ kind: 'installed' } as never)
+    vi.mocked(readUpdateCache).mockReturnValue({ latestVersion: '999.0.0', updateCommand } as never)
+    vi.mocked(installPluginForProject).mockReturnValue({ status: 'skipped-cli-stale' } as never)
+
+    const { structuredContent } = await setup({
+      probeDeps: nothingInstalled(),
+      skipTools: true,
+      portlessDeps: noPortless(),
+    })
+    const row = rowFor(structuredContent.report, 'plugin-pointer')
+
+    // `warn` outranks `manual`: the row shows the sentence and the bare command as two notes.
+    expect(row?.status).toBe('warn')
+    expect(row?.notes).toContain(formatUpdateCommand(updateCommand))
+    expect(
+      row?.notes?.find((note) => {
+        return note.startsWith('Claude Code plugin not updated')
+      }),
+    ).not.toContain(formatUpdateCommand(updateCommand))
+    expect(stderrLines().join('\n')).toContain(formatUpdateCommand(updateCommand))
+    expect(process.exitCode ?? 0).toBe(0)
   })
 })

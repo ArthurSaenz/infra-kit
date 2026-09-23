@@ -772,8 +772,9 @@ describe('setup --skip-tools — plugin update withheld behind a stale CLI', () 
     expect(updateSpawned()).toBe(false)
     expect(fetchMock).not.toHaveBeenCalled()
     expect(withheldLine()).toBe(
-      `Claude Code plugin not updated — CLI ${CURRENT} is behind ${NEWER}, update it first: brew upgrade infra-kit. The plugin follows on the next update check after that.`,
+      `Claude Code plugin not updated — CLI ${CURRENT} is behind ${NEWER}, update it first with the command below. The plugin follows on the next update check after that.`,
     )
+    expect(infoLines()).toContain('brew upgrade infra-kit')
     expect(
       infoLines().some((line) => {
         return line.includes('up to date')
@@ -781,17 +782,24 @@ describe('setup --skip-tools — plugin update withheld behind a stale CLI', () 
     ).toBe(false)
   })
 
-  // Reds on: reporting the withheld update as `skipped` — it hands a human the CLI update command.
-  it('reports the withheld update as manual, still on the warn stream', async () => {
+  // Reds on: folding the command back into the sentence (the report note would stop being copy-pasteable),
+  // or reporting the command as `skipped`, which an agent reads as "nothing to do".
+  it('reports the withheld update as a warned sentence plus a manual entry holding the bare command', async () => {
     writeCache({ latestVersion: NEWER, updateCommand: ['brew', 'upgrade', 'infra-kit'] })
 
     const entries = await runInitEntries()
+    const withheld = entries.findIndex((entry) => {
+      return entry.message.startsWith('Claude Code plugin not updated')
+    })
 
-    expect(
-      entries.find((entry) => {
-        return entry.message.startsWith('Claude Code plugin not updated')
-      }),
-    ).toMatchObject({ step: 'plugin-pointer', outcome: 'manual', level: 'warn' })
+    expect(entries[withheld]).toMatchObject({ step: 'plugin-pointer', outcome: 'warned', level: 'warn' })
+    expect(entries[withheld]?.message).not.toContain('brew upgrade')
+    expect(entries[withheld + 1]).toEqual({
+      step: 'plugin-pointer',
+      outcome: 'manual',
+      message: 'brew upgrade infra-kit',
+      level: 'info',
+    })
   })
 
   it('falls back to the pinned npm command when the cache has a newer version but no verdict', async () => {
@@ -801,7 +809,8 @@ describe('setup --skip-tools — plugin update withheld behind a stale CLI', () 
     await runInit()
 
     expect(updateSpawned()).toBe(false)
-    expect(withheldLine()).toContain(`update it first: npm install -g infra-kit@${NEWER}.`)
+    expect(withheldLine()).toContain(`is behind ${NEWER}, update it first with the command below.`)
+    expect(infoLines()).toContain(`npm install -g infra-kit@${NEWER}`)
   })
 
   it('updates as before when the cache holds a version that is not newer, without fetching', async () => {
@@ -831,9 +840,8 @@ describe('setup --skip-tools — plugin update withheld behind a stale CLI', () 
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(updateSpawned()).toBe(false)
-    expect(withheldLine()).toContain(
-      `CLI ${CURRENT} is behind ${NEWER}, update it first: npm install -g infra-kit@${NEWER}.`,
-    )
+    expect(withheldLine()).toContain(`CLI ${CURRENT} is behind ${NEWER}, update it first with the command below.`)
+    expect(infoLines()).toContain(`npm install -g infra-kit@${NEWER}`)
   })
 
   it('updates when no cache exists and the fetch reports nothing newer', async () => {

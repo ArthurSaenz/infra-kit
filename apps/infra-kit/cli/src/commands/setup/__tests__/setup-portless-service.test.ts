@@ -22,7 +22,8 @@ import type { PortlessNodeSidecar } from 'src/dev/proxy/portless-node'
 import { runRecipe } from 'src/lib/dependency-install'
 import type { InstallOutcome } from 'src/lib/dependency-install'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
-import { logger } from 'src/lib/logger'
+
+import { captureStderr, stderrLines } from './setup-stderr'
 
 /**
  * US-005: `setup` converges `~/.infra-kit/portless` and `~/.infra-kit/node` and, only when the installed
@@ -86,6 +87,9 @@ const anEntry = (): InitEntry => {
 }
 
 beforeEach(() => {
+  captureStderr()
+  // Pins the unicode marker width, so the note indent below does not depend on the host's locale.
+  vi.stubEnv('LC_ALL', 'en_US.UTF-8')
   vi.mocked(initCore).mockImplementation(async (onStep?: InitStepSink) => {
     const entry = anEntry()
 
@@ -228,10 +232,15 @@ const HOME_LINK = `${HOME}/.infra-kit/portless`
 const HOME_LINK_CLI = `${HOME_LINK}/dist/cli.js`
 const HOME_NODE = `${HOME}/.infra-kit/node`
 const HOME_SIDECAR = `${HOME_NODE}.source.json`
+/**
+ * The report's note column: row indent (4), the unicode marker (1), a space, the widest row name
+ * (`project-config`, 14), two spaces. The command after it is byte-for-byte what a human copies.
+ */
+const NOTE_INDENT = ' '.repeat(22)
 /** The line every drifted verdict prints once the node is healthy: both words under `~/.infra-kit`, absolute, unquoted. */
-const SHORT_LINE = `  sudo ${HOME_NODE} ${HOME_LINK_CLI} service install`
+const SHORT_LINE = `${NOTE_INDENT}sudo ${HOME_NODE} ${HOME_LINK_CLI} service install`
 /** The fallback line — through the link, but under the node that provably runs. */
-const EXEC_PATH_LINE = `  sudo ${EXEC_PATH} ${HOME_LINK_CLI} service install`
+const EXEC_PATH_LINE = `${NOTE_INDENT}sudo ${EXEC_PATH} ${HOME_LINK_CLI} service install`
 /** The payload's `command` is the printed line minus its indent: the same bytes a human copies. */
 const SHORT_COMMAND = SHORT_LINE.trimStart()
 const EXEC_PATH_COMMAND = EXEC_PATH_LINE.trimStart()
@@ -241,15 +250,10 @@ const convergedNode = (): Record<string, NodeEntry> => {
   return { [HOME_NODE]: execEntry(), [HOME_SIDECAR]: sidecarEntry() }
 }
 
-const infoLines = (): string[] => {
-  return vi.mocked(logger.info).mock.calls.map((call) => {
-    return typeof call[0] === 'string' ? call[0] : JSON.stringify(call[0])
-  })
-}
-
 const portlessSudoLines = (): string[] => {
-  return infoLines().filter((line) => {
-    return line.includes('service install')
+  return stderrLines().filter((line) => {
+    // The command, not the service row's own "no service installed" message.
+    return line.endsWith(' service install')
   })
 }
 
@@ -258,19 +262,30 @@ const portlessSudoLines = (): string[] => {
  * and these tests are about the portless step alone.
  */
 const sudoLines = (): string[] => {
-  return infoLines().filter((line) => {
+  return stderrLines().filter((line) => {
     return line.includes('sudo')
   })
 }
 
-const stepLines = (name: 'portless link' | 'portless node'): string[] => {
-  return infoLines().filter((line) => {
-    return line.includes(` ${name} — `)
-  })
+interface ReportPayload {
+  report: { label: string; rows: { name: string; status: string; message: string; notes?: string[] }[] }[]
+}
+
+/** One row of the report's portless section, as the JSON carries it — the same row the table prints. */
+const portlessRow = (payload: ReportPayload, name: 'link' | 'node' | 'service') => {
+  return payload.report
+    .find((section) => {
+      return section.label === 'Portless service'
+    })
+    ?.rows.find((row) => {
+      return row.name === name
+    })
 }
 
 afterEach(() => {
   vi.clearAllMocks()
+  vi.unstubAllEnvs()
+  process.exitCode = undefined
 })
 
 describe('setup converges the portless link and node and prints the sudo line only on drift', () => {
@@ -289,10 +304,14 @@ describe('setup converges the portless link and node and prints the sudo line on
       command: SHORT_COMMAND,
     })
     expect(portlessSudoLines()).toEqual([SHORT_LINE])
-    expect(stepLines('portless link')).toEqual([expect.stringContaining('created   portless link — linked')])
-    expect(stepLines('portless node')).toEqual([
-      `  created   portless node — linked Node ${NODE_VERSION} to ~/.infra-kit/node`,
-    ])
+    expect(portlessRow(structuredContent, 'link')).toMatchObject({
+      status: 'changed',
+      message: expect.stringContaining('linked') as unknown as string,
+    })
+    expect(portlessRow(structuredContent, 'node')).toMatchObject({
+      status: 'changed',
+      message: `linked Node ${NODE_VERSION} to ~/.infra-kit/node`,
+    })
     expectRenameOnly(deps.nodeFs.calls, HOME_NODE)
   })
 
@@ -315,10 +334,12 @@ describe('setup converges the portless link and node and prints the sudo line on
       command: null,
     })
     expect(portlessSudoLines()).toHaveLength(0)
-    expect(stepLines('portless link')).toEqual([expect.stringContaining('unchanged portless link')])
-    expect(stepLines('portless node')).toEqual([
-      `  unchanged portless node — ~/.infra-kit/node is already Node ${NODE_VERSION}`,
-    ])
+    expect(portlessRow(structuredContent, 'link')).toMatchObject({ status: 'ok' })
+    expect(portlessRow(structuredContent, 'node')).toMatchObject({
+      status: 'ok',
+      message: `~/.infra-kit/node is already Node ${NODE_VERSION}`,
+    })
+    expect(portlessRow(structuredContent, 'service')).toMatchObject({ status: 'ok' })
     expect(mutatingCalls(deps.nodeFs.calls)).toEqual([])
   })
 
@@ -387,11 +408,15 @@ describe('setup converges the portless link and node and prints the sudo line on
       command: EXEC_PATH_COMMAND,
     })
 
-    expect(stepLines('portless node')).toEqual([
-      '  failed    portless node — could not write ~/.infra-kit/node — see the debug log',
-    ])
+    expect(portlessRow(structuredContent, 'node')).toEqual({
+      name: 'node',
+      status: 'fail',
+      message: 'could not write ~/.infra-kit/node — see the debug log',
+    })
     expect(portlessSudoLines()).toEqual([EXEC_PATH_LINE])
     expect(mutatingCalls(deps.nodeFs.calls)).toEqual([])
+    // A failed portless row fails the run: the exit code reads the same rows the table prints.
+    expect(process.exitCode).toBe(1)
   })
 
   // The copy path is the one where the inode proves nothing: a copy that does not start as this Node
@@ -447,11 +472,12 @@ describe('setup converges the portless link and node and prints the sudo line on
       nodeVersionOf,
     })
 
-    await setup({ probeDeps: nothingInstalled(), portlessDeps: deps })
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), portlessDeps: deps })
 
-    expect(stepLines('portless node')).toEqual([
-      `  unchanged portless node — ~/.infra-kit/node is already Node ${NODE_VERSION}`,
-    ])
+    expect(portlessRow(structuredContent, 'node')).toMatchObject({
+      status: 'ok',
+      message: `~/.infra-kit/node is already Node ${NODE_VERSION}`,
+    })
     expect(portlessSudoLines()).toEqual([SHORT_LINE])
     expect(nodeVersionOf.mock.calls).toEqual([[HOME_NODE]])
   })
@@ -471,7 +497,11 @@ describe('setup converges the portless link and node and prints the sudo line on
       command: EXEC_PATH_COMMAND,
     })
 
-    expect(stepLines('portless node')).toEqual(['  skipped-local portless node — skipped — this install is not global'])
+    expect(portlessRow(structuredContent, 'node')).toEqual({
+      name: 'node',
+      status: 'skipped',
+      message: 'skipped — this install is not global',
+    })
     expect(mutatingCalls(deps.nodeFs.calls)).toEqual([])
     expect(portlessSudoLines()).toEqual([EXEC_PATH_LINE])
   })
@@ -551,6 +581,12 @@ describe('setup converges the portless link and node and prints the sudo line on
     })
 
     expect(structuredContent.portlessService.service).toBe('absent')
+    expect(portlessRow(structuredContent, 'service')).toEqual({
+      name: 'service',
+      status: 'manual',
+      message: 'no service installed',
+      notes: [SHORT_COMMAND],
+    })
     expect(sudoLines()).toEqual([SHORT_LINE])
   })
 
@@ -565,6 +601,12 @@ describe('setup converges the portless link and node and prints the sudo line on
     })
 
     expect(structuredContent.portlessService.service).toBe('drifted')
+    expect(portlessRow(structuredContent, 'service')).toEqual({
+      name: 'service',
+      status: 'manual',
+      message: 'installed service is out of date',
+      notes: [SHORT_COMMAND],
+    })
     expect(sudoLines()).toEqual([SHORT_LINE])
   })
 

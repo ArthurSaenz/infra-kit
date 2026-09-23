@@ -41,6 +41,9 @@ export const initLoggerCLI = () => {
       destination: 2,
       ignore: ignoreFields.join(','),
       colorize: true,
+      // Sync, because reports go straight to `process.stderr` in one write beside these lines. pino-pretty's
+      // default async destination buffers, so lines logged BEFORE a report landed after it in a pipe.
+      sync: true,
     }),
   )
 

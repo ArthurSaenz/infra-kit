@@ -1,22 +1,22 @@
 /**
  * One command that sets a machine up: the local, offline `initCore` half first, then the dependency
- * converge, then one combined summary.
+ * converge, then the portless-service step, then one report table on stderr.
  *
  * The order is not arbitrary. The init half is local, cheap, and one of its steps (the plugin install,
  * which brings the `/infra-kit:*` skills) is what makes the agent surface usable at all, so it must not
- * sit behind a network converge. The refused recipes' manual commands are the last thing the human reads, and the
- * `source ~/.zshrc` reminder is last of all.
+ * sit behind a network converge. The table follows every streamed line, so the commands a human has to
+ * run sit under their rows at the end, and the `source ~/.zshrc` reminder is last of all.
  *
- * Both halves ALWAYS run: neither short-circuits the other, an init-half throw is recorded and the
- * dependency half still runs, and the run exits non-zero if either half hard-failed. A `risk-predicate`
- * refusal is not a failure — its argv is printed for a human, and the run still succeeds.
+ * Every step ALWAYS runs: an init-half or dependency-half throw is recorded as a `fail` row and the rest
+ * still runs, and the run exits non-zero iff a row failed. A `risk-predicate` refusal is not a failure:
+ * it is a `manual` row whose notes carry the argv for a human, and the run still succeeds.
  */
 import process from 'node:process'
 import { z } from 'zod'
 
 import { portlessServiceTargetState } from 'src/commands/doctor/doctor'
 import type { ServiceTargetDeps, ServiceTargetState } from 'src/commands/doctor/doctor'
-import { InitStepError, SHELL_ACTIVATION_REMINDER, initCore, logInitEntry } from 'src/commands/init'
+import { InitStepError, SHELL_ACTIVATION_REMINDER, initCore } from 'src/commands/init'
 import type { InitEntry, InitStep, InitStepName } from 'src/commands/init'
 import {
   ensurePortlessLink,
@@ -27,16 +27,18 @@ import {
 import type { EnsurePortlessLinkDeps, PortlessLinkOutcome } from 'src/dev/proxy/portless-link'
 import { ensurePortlessNode } from 'src/dev/proxy/portless-node'
 import type { EnsurePortlessNodeDeps, PortlessNodeResult } from 'src/dev/proxy/portless-node'
-import { assertNever } from 'src/lib/assert-never'
 import type { runRecipe } from 'src/lib/dependency-install'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
 import { DEPENDENCY_IDS } from 'src/lib/dependency-registry'
 import type { DependencyId } from 'src/lib/dependency-registry'
 import { logger } from 'src/lib/logger'
+import { printRunReport } from 'src/lib/render/run-report'
 import { defineMcpTool, textContent } from 'src/types'
 
 import { convergeDependencies, probeDependencies } from './converge'
 import type { SetupMode, ToolResult } from './converge'
+import { reportHasFailure, toSetupReport } from './report'
+import type { SetupReportInput } from './report'
 
 export interface SetupOptions {
   /** `--tools <ids...>`: converge only these. */
@@ -51,6 +53,8 @@ export interface SetupOptions {
   run?: typeof runRecipe
   /** Portless-service seams for tests; production omits it and builds the real ones. */
   portlessDeps?: PortlessServiceDeps
+  /** `--ascii`: render the report with ASCII markers instead of unicode glyphs. */
+  ascii?: boolean
 }
 
 /**
@@ -104,66 +108,10 @@ export interface PortlessServiceResult {
   command: string | null
 }
 
-/** One line describing what `ensurePortlessLink` did, in the same `<outcome> <name> — <detail>` shape the tool lines use. */
-const portlessLinkDetail = (outcome: PortlessLinkOutcome): string => {
-  switch (outcome) {
-    case 'created': {
-      return 'linked ~/.infra-kit/portless to the running portless'
-    }
-    case 'repointed': {
-      return 're-pointed ~/.infra-kit/portless to the running portless'
-    }
-    case 'unchanged': {
-      return 'already linked to the running portless'
-    }
-    case 'skipped-local': {
-      return 'skipped — this install is not global'
-    }
-    case 'skipped-unresolved': {
-      return 'skipped — portless is not installed'
-    }
-    case 'failed': {
-      return 'could not update the link — see the debug log'
-    }
-    default: {
-      return assertNever(outcome)
-    }
-  }
-}
-
-/** The node step's line, in the same `<outcome> <name> — <detail>` shape. */
-const portlessNodeDetail = (result: PortlessNodeResult): string => {
-  const verb = result.method === 'copy' ? 'copied' : 'linked'
-
-  switch (result.outcome) {
-    case 'created': {
-      return `${verb} Node ${result.version} to ~/.infra-kit/node`
-    }
-    case 'refreshed': {
-      return `re-${verb} Node ${result.version} to ~/.infra-kit/node`
-    }
-    case 'unchanged': {
-      return `~/.infra-kit/node is already Node ${result.version}`
-    }
-    case 'skipped-local': {
-      return 'skipped — this install is not global'
-    }
-    case 'skipped-platform': {
-      return 'skipped — no portless OS service on this platform'
-    }
-    case 'failed': {
-      return 'could not write ~/.infra-kit/node — see the debug log'
-    }
-    default: {
-      return assertNever(result.outcome)
-    }
-  }
-}
-
 /**
  * Converge `~/.infra-kit/portless` and `~/.infra-kit/node` and, when the installed system service (if
- * any) has not caught up to them, print the single `service install` command a human has to run — sudo
- * is never run here. This is its own step, run unconditionally like the init half rather than gated on
+ * any) has not caught up to them, return the single `service install` command a human has to run — sudo
+ * is never run here, and the command reaches the human as the service row's note in the report. This is its own step, run unconditionally like the init half rather than gated on
  * `--skip-tools`/`--tools`: it is local and idempotent, not a network install of one of the six tracked
  * tools.
  *
@@ -172,22 +120,16 @@ const portlessNodeDetail = (result: PortlessNodeResult): string => {
  * shortens the line when it is the same inode): that verdict is the one surface that pays the spawn, so
  * a copy that does not run is never handed to root.
  */
-const convergePortlessService = async (deps: PortlessServiceDeps): Promise<PortlessServiceResult> => {
-  const link = ensurePortlessLink(deps.link)
-
-  logger.info(`  ${link.outcome.padEnd(9)} portless link — ${portlessLinkDetail(link.outcome)}`)
-
+const convergePortlessService = async (deps: PortlessServiceDeps): Promise<SetupReportInput['portless']> => {
+  const link = ensurePortlessLink(deps.link).outcome
   const node = ensurePortlessNode(deps.node)
-
-  logger.info(`  ${node.outcome.padEnd(9)} portless node — ${portlessNodeDetail(node)}`)
-
   const bin = portlessLinkCliPath(deps.link.home, deps.target.exists) ?? deps.link.resolveBin()
 
-  if (bin === null) return { link: link.outcome, node: node.outcome, service: 'skipped', command: null }
+  if (bin === null) return { link, node, service: 'skipped', command: null }
 
   const { state, stableNode } = await portlessServiceTargetState(deps.target, bin)
 
-  if (state === 'converged') return { link: link.outcome, node: node.outcome, service: state, command: null }
+  if (state === 'converged') return { link, node, service: state, command: null }
 
   const command = serviceInstallCommand(bin, {
     home: deps.link.home,
@@ -196,10 +138,7 @@ const convergePortlessService = async (deps: PortlessServiceDeps): Promise<Portl
     stableNode,
   })
 
-  logger.info('Run this yourself to finish the portless service:')
-  logger.info(`  ${command}`)
-
-  return { link: link.outcome, node: node.outcome, service: state, command }
+  return { link, node, service: state, command }
 }
 
 /**
@@ -245,71 +184,61 @@ const failedStep = (err: unknown, completed: InitEntry[]): InitStepName => {
   return completed.at(-1)?.step ?? 'zshrc'
 }
 
-/** Run the init half, printing as it goes, and report a throw as an entry instead of propagating it. */
-const runInitHalf = async (): Promise<{ entries: InitEntry[]; failed: boolean }> => {
+/**
+ * Run the init half and report a throw as an entry instead of propagating it. Nothing is printed per
+ * entry: the half is local and near-instant, so streaming it gives no progress signal, and the end
+ * table already carries every step's verdict. Lines the libraries print themselves still stream.
+ */
+const runInitHalf = async (): Promise<InitEntry[]> => {
   const entries: InitEntry[] = []
-  const sink = (entry: InitEntry): void => {
-    entries.push(entry)
-
-    // Everything prints where it happens — except the activation reminder, which `setup` holds back so
-    // it lands after the dependency summary rather than in the middle of the run.
-    if (entry.message !== SHELL_ACTIVATION_REMINDER) logInitEntry(entry)
-  }
 
   try {
-    await initCore(sink)
-
-    return { entries, failed: false }
+    await initCore((entry) => {
+      entries.push(entry)
+    })
   } catch (err) {
-    const entry: InitEntry = {
+    entries.push({
       step: failedStep(err, entries),
       outcome: 'failed',
       message: `The ${failedStep(err, entries)} step failed: ${err instanceof Error ? err.message : String(err)}`,
       level: 'warn',
-    }
-
-    logInitEntry(entry)
-    entries.push(entry)
-
-    return { entries, failed: true }
+    })
   }
+
+  return entries
 }
 
 /**
- * One line per tool, then the argv a human has to run themselves, then the portless-service step, then
- * the activation reminder last of all.
+ * One `failed` result per requested tool when the dependency half throws before it can report any of
+ * them, so the table still prints and the run still exits 1 rather than dying without a report.
  */
-const printSummary = async (
-  tools: ToolResult[],
-  skipTools: boolean,
-  portlessDeps: PortlessServiceDeps,
-): Promise<PortlessServiceResult> => {
-  for (const tool of tools) {
-    logger.info(`  ${tool.action.padEnd(9)} ${tool.id} — ${tool.detail}`)
-  }
+const dependencyHalfFailed = (ids: readonly DependencyId[], err: unknown): ToolResult[] => {
+  const reason = err instanceof Error ? err.message : String(err)
 
-  for (const tool of tools) {
-    if (!needsManualRun(tool, skipTools)) continue
-
-    logger.info(`Run these yourself to ${skipTools ? 'set up' : 'finish'} ${tool.id}:`)
-
-    for (const command of tool.commands) {
-      logger.info(`  ${command}`)
+  return ids.map((id) => {
+    return {
+      id,
+      action: 'failed',
+      before: { present: false, onPath: false, version: null, manager: 'unknown' },
+      commands: [],
+      detail: `the dependency step failed before reaching this tool: ${reason}`,
     }
-  }
-
-  const portlessService = await convergePortlessService(portlessDeps)
-
-  logger.info(SHELL_ACTIVATION_REMINDER)
-
-  return portlessService
+  })
 }
 
-/** A tool whose argv the human has to run: every refusal, and — under the probe — everything not run. */
-const needsManualRun = (tool: ToolResult, skipTools: boolean): boolean => {
-  if (tool.commands.length === 0) return false
-
-  return tool.action === 'refused' || (skipTools && tool.action === 'skipped')
+const runDependencyHalf = async (request: ResolvedRequest, options: SetupOptions): Promise<ToolResult[]> => {
+  try {
+    return request.skipTools
+      ? await probeDependencies(request.ids, options.probeDeps)
+      : await convergeDependencies({
+          ids: request.ids,
+          mode: request.mode,
+          probeDeps: options.probeDeps,
+          run: options.run,
+        })
+  } catch (err) {
+    return dependencyHalfFailed(request.ids, err)
+  }
 }
 
 /** The `--json` payload carries the three declared keys and not the CLI's rendering hint. */
@@ -320,25 +249,32 @@ const toInitStep = (entry: InitEntry): InitStep => {
 export const setup = async (options: SetupOptions = {}) => {
   const request = resolveRequest(options)
   const init = await runInitHalf()
-  const tools = request.skipTools
-    ? await probeDependencies(request.ids, options.probeDeps)
-    : await convergeDependencies({
-        ids: request.ids,
-        mode: request.mode,
-        probeDeps: options.probeDeps,
-        run: options.run,
-      })
+  const tools = await runDependencyHalf(request, options)
+  const portless = await convergePortlessService(options.portlessDeps ?? realPortlessServiceDeps())
+  const report = toSetupReport({ init, tools, portless }, { skipTools: request.skipTools })
 
-  const portlessService = await printSummary(
-    tools,
-    request.skipTools,
-    options.portlessDeps ?? realPortlessServiceDeps(),
-  )
+  // Printed in EVERY mode, `--json` included: the setup skill always passes `--json` and its human reads
+  // this table from the Bash result. stdout still carries only the JSON document.
+  printRunReport({ title: 'infra-kit setup', sections: report }, { ascii: options.ascii })
+  // Its own line after the table rather than a report hint: hints share the totals line, and this is
+  // the one instruction that has to be read last.
+  logger.info(SHELL_ACTIVATION_REMINDER)
+
+  // Exit 1 iff any printed row failed, so the table and the exit code cannot disagree. `manual` never
+  // counts: nothing failed, a human just has a command to run. The action owns the exit code because
+  // nothing downstream reads the payload's booleans.
+  if (reportHasFailure(report)) process.exitCode = 1
 
   const structuredContent = {
-    init: init.entries.map(toInitStep),
+    init: init.map(toInitStep),
     tools,
-    portlessService,
+    portlessService: {
+      link: portless.link,
+      node: portless.node.outcome,
+      service: portless.service,
+      command: portless.command,
+    } satisfies PortlessServiceResult,
+    report,
     converged: !request.skipTools,
     changed: tools.some((tool) => {
       return tool.action === 'installed' || tool.action === 'updated'
@@ -347,11 +283,6 @@ export const setup = async (options: SetupOptions = {}) => {
       return tool.action !== 'failed'
     }),
   }
-
-  // The action owns the exit code, as `vendor-config` and `local-deploy` do: nothing downstream of here
-  // reads the payload's booleans, so a hard failure in EITHER half has to be turned into one here or the
-  // command exits 0 having failed.
-  if (init.failed || !structuredContent.allSucceeded) process.exitCode = 1
 
   return { content: textContent(JSON.stringify(structuredContent, null, 2)), structuredContent }
 }
@@ -422,6 +353,28 @@ const outputSchema = {
   ),
   converged: z.boolean().describe('Whether the dependency step could act at all (false under skipTools)'),
   changed: z.boolean().describe('Whether anything was installed or updated'),
+  report: z
+    .array(
+      z.object({
+        label: z.string().describe('Section heading'),
+        rows: z.array(
+          z.object({
+            name: z.string().describe('Init step, tool id, or portless part'),
+            status: z
+              .enum(['ok', 'changed', 'skipped', 'manual', 'warn', 'fail'])
+              .describe(
+                'ok: nothing to change; changed: changed something; skipped: did not run; manual: not run by the CLI, the notes hold the command a human runs; warn: advisory problem; fail: failed (setup exits 1)',
+              ),
+            message: z.string().describe('The row message, as printed'),
+            notes: z
+              .array(z.string())
+              .optional()
+              .describe('Lines printed under the row, verbatim: the manual commands, warnings and failures'),
+          }),
+        ),
+      }),
+    )
+    .describe('The exact rows of the table printed on stderr; setup exits 1 iff a row is fail'),
   allSucceeded: z.boolean().describe('Whether no tool failed (a refusal is not a failure)'),
 }
 

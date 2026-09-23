@@ -250,8 +250,9 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
 /**
  * The one place an {@link InitEntry} becomes a log line.
  *
- * Exported for `setup`, which prints the same half with the same words — a second renderer there would
- * be a second set of strings to keep in step with this one.
+ * `setup` no longer streams entries (its end table carries them), so the only callers are the init
+ * suites, which assert each step's line through the logger. It stays here rather than in a test helper
+ * so those suites keep reading the production mapping of `level` to stream.
  */
 export const logInitEntry = (entry: InitEntry): void => {
   if (entry.level === 'silent') return
@@ -686,24 +687,30 @@ const manualInstallEntries = (): InitEntry[] => {
 }
 
 /**
- * The withheld update, as one WARN line the reader can act on: the version they are behind and the
- * command that closes the gap. `outcome: 'manual'` — nothing failed, and closing the gap is a command
- * the CLI hands a human rather than runs.
+ * The withheld update, as a WARN line naming the version the reader is behind, then — when the command
+ * that closes the gap is known — that command as its own `manual` entry, the same shape as
+ * {@link manualInstallEntries}: a note a human copies has to be the bare argv, not a sentence around it.
  *
  * The installer reports `skipped-cli-stale` only when the `cliIsStale` thunk it was handed returned
  * true, and that thunk reads `staleness.stale`; the non-stale arm exists for the type, not for a path.
  */
-const cliStaleEntry = (staleness: CliStaleness): InitEntry => {
-  const detail = staleness.stale
-    ? `CLI ${packageJson.version} is behind ${staleness.latestVersion}, update it first: ${formatUpdateCommand(staleness.updateCommand)}`
+const cliStaleEntries = (staleness: CliStaleness): InitEntry[] => {
+  const behind = staleness.stale
+    ? `CLI ${packageJson.version} is behind ${staleness.latestVersion}, update it first with the command below`
     : `CLI ${packageJson.version} is behind the published version, update it first`
-
-  return {
+  const prose: InitEntry = {
     step: 'plugin-pointer',
-    outcome: 'manual',
-    message: `Claude Code plugin not updated — ${detail}. The plugin follows on the next update check after that.`,
+    outcome: 'warned',
+    message: `Claude Code plugin not updated — ${behind}. The plugin follows on the next update check after that.`,
     level: 'warn',
   }
+
+  if (!staleness.stale) return [prose]
+
+  return [
+    prose,
+    { step: 'plugin-pointer', outcome: 'manual', message: formatUpdateCommand(staleness.updateCommand), level: 'info' },
+  ]
 }
 
 /**
@@ -716,7 +723,7 @@ const cliStaleEntry = (staleness: CliStaleness): InitEntry => {
  * a warning a reader cannot act on is noise.
  */
 const installEntries = (outcome: PluginInstallOutcome, staleness: CliStaleness): InitEntry[] => {
-  if (outcome.status === 'skipped-cli-stale') return [cliStaleEntry(staleness)]
+  if (outcome.status === 'skipped-cli-stale') return cliStaleEntries(staleness)
 
   if (outcome.status === 'updated') {
     return [

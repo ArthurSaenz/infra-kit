@@ -11,6 +11,8 @@ import type { InstallOutcome } from 'src/lib/dependency-install'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
 import { logger } from 'src/lib/logger'
 
+import { captureStderr, noPortless, reportLines, stderrLines } from './setup-stderr'
+
 /**
  * How `setup` composes its two halves, and what it refuses to do.
  *
@@ -86,12 +88,6 @@ const initReports = (...entries: InitEntry[]): void => {
   })
 }
 
-const infoLines = (): string[] => {
-  return vi.mocked(logger.info).mock.calls.map((call) => {
-    return typeof call[0] === 'string' ? call[0] : JSON.stringify(call[0])
-  })
-}
-
 const resultFor = <T extends { id: string }>(tools: T[], id: string): T | undefined => {
   return tools.find((tool) => {
     return tool.id === id
@@ -102,6 +98,7 @@ const originalExitCode = process.exitCode
 
 beforeEach(() => {
   vi.clearAllMocks()
+  captureStderr()
   process.exitCode = undefined
   initReports(anEntry())
 })
@@ -160,7 +157,9 @@ describe('a refusal is not a failure, and a failure is not a refusal', () => {
     expect(structuredContent.changed).toBe(false)
     expect(process.exitCode ?? 0).toBe(0)
     // The commands are the point of a refusal: printed, for the human, never run.
-    expect(infoLines().join('\n')).toContain('install.sh')
+    // Read from stderr, not the logger: the argv is now the report row's note, written in the report's one
+    // stderr write. Routing the table through pino would prefix every line with its level.
+    expect(stderrLines().join('\n')).toContain('install.sh')
     expect(vi.mocked(runRecipe)).not.toHaveBeenCalled()
   })
 
@@ -224,7 +223,7 @@ describe('--skip-tools installs nothing, and cannot be talked into installing so
     expect(resultFor(structuredContent.tools, 'doppler')).toMatchObject({ action: 'skipped' })
     expect(resultFor(structuredContent.tools, 'doppler')?.detail).toContain('would install')
     // The argv that would fix it is printed, which is the whole point of the probe.
-    expect(infoLines().join('\n')).toContain('brew install dopplerhq/cli/doppler')
+    expect(stderrLines().join('\n')).toContain('brew install dopplerhq/cli/doppler')
   })
 
   // Reds on: letting --tools or --update silently override --skip-tools instead of refusing.
@@ -271,5 +270,141 @@ describe('--skip-tools installs nothing, and cannot be talked into installing so
     walk(root)
 
     expect(offenders).toEqual([])
+  })
+})
+
+describe('the report follows every streamed line, and the reminder follows the report', () => {
+  const REMINDER = 'Run `source ~/.zshrc` or open a new terminal to activate.'
+
+  // Reds on: printing the table before the dependency half's narration, or the reminder anywhere but last.
+  it('prints library and `running` lines first, then the report, then the reminder', async () => {
+    vi.mocked(initCore).mockImplementation(async (onStep?: InitStepSink) => {
+      logger.info('✓ Migrated infra-kit.json')
+      onStep?.(anEntry())
+
+      return [anEntry()]
+    })
+
+    await setup({
+      probeDeps: brewAndGhInstalled(),
+      tools: ['gh'],
+      portlessDeps: noPortless(),
+      run: (recipe) => {
+        const commands = recipe.steps.map((step) => {
+          return step.join(' ')
+        })
+
+        for (const command of commands) logger.info(`  running   ${command}`)
+
+        return { ran: true, ok: true, commands }
+      },
+    })
+
+    const lines = stderrLines()
+    const migrated = lines.indexOf('✓ Migrated infra-kit.json')
+    const running = lines.indexOf('  running   brew upgrade gh')
+    const title = lines.indexOf('infra-kit setup')
+
+    expect(migrated).toBeGreaterThanOrEqual(0)
+    expect(migrated).toBeLessThan(running)
+    expect(running).toBeLessThan(title)
+    expect(lines.at(-1)).toBe(REMINDER)
+    expect(
+      lines.filter((line) => {
+        return line === REMINDER
+      }),
+    ).toHaveLength(1)
+  })
+
+  // Reds on: letting a dependency-half throw escape `setup()`, which would end the run with no table.
+  it('turns a dependency-half throw into one fail row per requested tool, and exits 1', async () => {
+    const { structuredContent } = await setup({
+      probeDeps: brewAndGhInstalled(),
+      tools: ['gh', 'doppler'],
+      portlessDeps: noPortless(),
+      run: () => {
+        throw new Error('spawn exploded')
+      },
+    })
+    const tools = structuredContent.report.find((section) => {
+      return section.label === 'Tools'
+    })
+
+    expect(tools?.rows).toEqual([
+      { name: 'gh', status: 'fail', message: expect.stringContaining('spawn exploded') as unknown as string },
+      { name: 'doppler', status: 'fail', message: expect.stringContaining('spawn exploded') as unknown as string },
+    ])
+    expect(structuredContent.allSucceeded).toBe(false)
+    expect(reportLines().join('\n')).toContain('spawn exploded')
+    expect(process.exitCode).toBe(1)
+  })
+})
+
+describe('manual rows never affect the exit code or allSucceeded', () => {
+  /** Every recipe refused, as an agent-mode run refuses them: the executor never runs a step. */
+  const refuseAll = async (): Promise<typeof runRecipe> => {
+    const actual = await vi.importActual<typeof import('src/lib/dependency-install')>('src/lib/dependency-install')
+
+    return (recipe, context) => {
+      return actual.runRecipe(recipe, context, {
+        agentMode: () => {
+          return true
+        },
+        spawnSync: () => {
+          throw new Error('agent mode must never spawn')
+        },
+      })
+    }
+  }
+
+  // Reds on: mapping `refused` to `warn` (six yellow rows on every skill run), or letting `manual` set exit 1.
+  it('an agent-mode run with every recipe refused has zero warn rows and exits 0', async () => {
+    initReports(
+      anEntry({ step: 'plugin-pointer', outcome: 'manual', message: 'claude plugin install x', level: 'info' }),
+    )
+
+    const { structuredContent } = await setup({
+      probeDeps: brewAndGhInstalled(),
+      portlessDeps: noPortless(),
+      run: await refuseAll(),
+    })
+    const rows = structuredContent.report.flatMap((section) => {
+      return section.rows
+    })
+
+    expect(
+      structuredContent.tools.every((tool) => {
+        return tool.action === 'refused'
+      }),
+    ).toBe(true)
+    expect(
+      rows.filter((row) => {
+        return row.status === 'warn'
+      }),
+    ).toEqual([])
+    expect(
+      rows.filter((row) => {
+        return row.status === 'manual'
+      }).length,
+    ).toBeGreaterThan(0)
+    expect(structuredContent.allSucceeded).toBe(true)
+    expect(process.exitCode ?? 0).toBe(0)
+  })
+
+  // Reds on: an exit rule that ignores a failed row outside the tools (the old `!allSucceeded` rule).
+  it('adding one fail row beside the manual ones exits 1', async () => {
+    initReports(
+      anEntry({ step: 'plugin-pointer', outcome: 'manual', message: 'claude plugin install x', level: 'info' }),
+      anEntry({ step: 'guidance', outcome: 'failed', message: 'boom', level: 'warn' }),
+    )
+
+    const { structuredContent } = await setup({
+      probeDeps: brewAndGhInstalled(),
+      portlessDeps: noPortless(),
+      run: await refuseAll(),
+    })
+
+    expect(structuredContent.allSucceeded).toBe(true)
+    expect(process.exitCode).toBe(1)
   })
 })

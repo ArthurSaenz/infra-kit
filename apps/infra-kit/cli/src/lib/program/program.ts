@@ -648,15 +648,19 @@ export const buildProgram = (): Command => {
     .option('--tools <ids...>', 'Limit to these tools (brew, git, aws, gh, doppler, portless)')
     .option('--update [ids...]', 'Update what is already installed; never install a missing tool')
     .option('--skip-tools', 'Do the local setup only, then REPORT what each tool needs — installs nothing')
-    .action(async (options: { tools?: string[]; update?: boolean | string[]; skipTools?: boolean }) => {
-      emit(
-        await setup({
-          tools: options.tools as never,
-          update: options.update as never,
-          skipTools: options.skipTools,
-        }),
-      )
-    })
+    .option('--ascii', 'Render the report with ASCII markers instead of unicode glyphs (row messages are unchanged)')
+    .action(
+      async (options: { tools?: string[]; update?: boolean | string[]; skipTools?: boolean; ascii?: boolean }) => {
+        emit(
+          await setup({
+            tools: options.tools as never,
+            update: options.update as never,
+            skipTools: options.skipTools,
+            ascii: Boolean(options.ascii),
+          }),
+        )
+      },
+    )
 
   program
     .command('version')
