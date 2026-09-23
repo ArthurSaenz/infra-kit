@@ -253,6 +253,51 @@ const mcpProxiesSchema = z.record(
   mcpProxySchema,
 )
 
+/** A path inside the repository, resolved against its root on both the source and the target side. */
+const repoRelativePathSchema = z
+  .string()
+  .min(1)
+  .superRefine((value, ctx) => {
+    if (value.startsWith('/') || value.startsWith('\\') || /^[a-z]:/i.test(value)) {
+      ctx.addIssue({ code: 'custom', message: `"${value}" must be relative to the repository root` })
+
+      return
+    }
+
+    const segments = value.split(/[/\\]/).filter((segment) => {
+      return segment !== '' && segment !== '.'
+    })
+
+    if (segments.includes('..')) {
+      ctx.addIssue({ code: 'custom', message: `"${value}" must not contain a ".." segment` })
+    }
+
+    // Copying or deleting inside `.git` would rewrite the target's object store and refs, not its files.
+    if (segments[0] === '.git') {
+      ctx.addIssue({ code: 'custom', message: `"${value}" must not be .git or a path inside it` })
+    }
+  })
+
+const vendorCopyEntrySchema = z
+  .object({
+    path: repoRelativePathSchema,
+    target: repoRelativePathSchema.optional(),
+  })
+  .strict()
+
+/**
+ * Marks this repo as the source that `ik vendor sync` copies from. No `.default()` anywhere inside
+ * it, for the same reason as `protectedEnvs`: the always-present layer 3 would inject it.
+ */
+export const vendorSourceSchema = z
+  .object({
+    copy: z.array(vendorCopyEntrySchema).min(1),
+    // Matched against each path segment on both sides of the diff, so a slash could never match.
+    exclude: z.array(z.string().regex(/^[^/\\]+$/, 'must be a single path segment, without "/"')).optional(),
+    legacyCleanup: z.array(repoRelativePathSchema).optional(),
+  })
+  .strict()
+
 export const infraKitConfigObject = z
   .object({
     envManagement: envManagementSchema,
@@ -263,6 +308,7 @@ export const infraKitConfigObject = z
     devServersPresets: devPresetsSchema.optional(),
     protectedEnvs: protectedEnvsSchema.optional(),
     mcp: mcpProxiesSchema.optional(),
+    vendorSource: vendorSourceSchema.nullable().optional(),
   })
   .strict()
 
@@ -316,6 +362,8 @@ export type ProtectedEnvsSetting = z.infer<typeof protectedEnvsSchema>
 /** One `mcp.<name>` entry after parsing — defaults applied. */
 export type McpProxySpec = z.infer<typeof mcpProxySchema>
 export type McpProxies = z.infer<typeof mcpProxiesSchema>
+
+export type VendorSourceConfig = z.infer<typeof vendorSourceSchema>
 
 /** Per-app dev-server overrides (`{ port?, prefixUrl? }`). */
 export type DevAppConfig = z.infer<typeof devAppConfigSchema>
@@ -766,13 +814,8 @@ const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | 
     throw new Error(buildEnvTokensRejectionMessage(layer))
   }
 
-  // `mcp` is the ONE key that feeds a committed artifact: `ik setup` derives `.mcp.json` entries from
-  // it. The layer merge below is shallow (`{ ...merged, ...data }`), so a per-machine `mcp` would
-  // replace the project's block wholesale and then be derived into the shared file — either
-  // reddening `audit` on this machine alone or, worse, getting committed. Refused loudly rather than
-  // silently ignored: the message names the tool that DOES own a per-machine server override.
-  if (!layer.required && isRecord(parsedRaw) && 'mcp' in parsedRaw) {
-    throw new Error(buildMcpLayerRejectionMessage(layer))
+  if (!layer.required && isRecord(parsedRaw)) {
+    assertNoProjectLayerOnlyKeys(layer, parsedRaw)
   }
 
   const result = infraKitOverrideConfigSchema.safeParse(parsedRaw)
@@ -820,6 +863,38 @@ export const buildMcpLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigr
     '  claude mcp add --scope local <name> -- ik-mcp --name <name> --env <VAR> ... -- <command> <args>',
     '(local scope shadows the project entry by name; `claude mcp list` will show a same-name conflict warning, which is expected).',
   ].join('\n')
+}
+
+const buildVendorSourceLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>): string => {
+  return [
+    `"vendorSource" is not allowed in ${layer.label} (${layer.path}): only the committed project file may mark a repository as the \`vendor sync\` source. In the machine-wide file it would make every repository on this machine a source; in a per-project override it would make this machine disagree with every other clone.`,
+    "Move the block to the source repository's own infra-kit.json and commit it there.",
+  ].join('\n')
+}
+
+type LayerRejectionMessageBuilder = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>) => string
+
+/**
+ * Keys only the committed project layer may carry. `mcp` feeds the committed `.mcp.json`, and the
+ * shallow layer merge would let a per-machine block replace the project's wholesale and then be
+ * derived into the shared file. `vendorSource` decides which repo is the sync source.
+ */
+const PROJECT_LAYER_ONLY_KEYS: Readonly<Record<string, LayerRejectionMessageBuilder>> = {
+  mcp: buildMcpLayerRejectionMessage,
+  vendorSource: buildVendorSourceLayerRejectionMessage,
+}
+
+// Refused loudly rather than silently ignored: each key's message says why a per-machine copy is
+// wrong and where the block belongs instead.
+const assertNoProjectLayerOnlyKeys = (
+  layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>,
+  parsedRaw: Record<string, unknown>,
+): void => {
+  for (const [key, buildMessage] of Object.entries(PROJECT_LAYER_ONLY_KEYS)) {
+    if (key in parsedRaw) {
+      throw new Error(buildMessage(layer))
+    }
+  }
 }
 
 /**

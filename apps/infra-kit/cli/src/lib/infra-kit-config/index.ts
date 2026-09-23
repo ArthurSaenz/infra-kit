@@ -12,6 +12,7 @@ export {
   resolveOrcaLayout,
   resolveUserGlobalConfigPath,
   USER_CONFIG_DIR_NAME,
+  vendorSourceSchema,
   withSetupHint,
 } from './infra-kit-config'
 export type {
@@ -28,4 +29,5 @@ export type {
   OrcaLayout,
   ProtectedEnvsSetting,
   ProxySource,
+  VendorSourceConfig,
 } from './infra-kit-config'

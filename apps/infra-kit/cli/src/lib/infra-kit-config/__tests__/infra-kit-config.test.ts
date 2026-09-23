@@ -12,6 +12,7 @@ import {
   resetInfraKitConfigCache,
   resolveConfiguredIdes,
   resolveOrcaLayout,
+  vendorSourceSchema,
 } from '../infra-kit-config'
 import type { InfraKitConfig } from '../infra-kit-config'
 
@@ -858,6 +859,133 @@ describe('mcp is refused outside the project layer', () => {
 
       // `{...merged, ...{mcp:{}}}` = no servers; `ik setup` would then derive nothing and `audit` go red.
       await expect(getInfraKitConfig()).rejects.toThrow(/"mcp" is not allowed in/)
+    })
+  })
+})
+
+describe('vendorSource', () => {
+  const VENDOR_SOURCE = {
+    copy: [{ path: '.claude' }, { path: 'vendor/configs', target: 'vendor/configs' }],
+    exclude: ['serverless-config'],
+    legacyCleanup: ['packages/web-toolkit', 'configs'],
+  }
+
+  const writeProjectLayer = (tmp: string, extra: Record<string, unknown>): void => {
+    fs.writeFileSync(path.join(tmp, 'infra-kit.json'), JSON.stringify({ ...JSON.parse(VALID_JSON), ...extra }))
+  }
+
+  const copyWithPath = (value: string): unknown => {
+    return { copy: [{ path: value }] }
+  }
+
+  it('is undefined when no layer sets it, even though layer 3 always exists', async () => {
+    await withTmpRepo(async (tmp) => {
+      writeProjectLayer(tmp, {})
+
+      const layerThreeDir = path.join(tmp, '.infra-kit', 'projects', path.basename(tmp))
+
+      fs.mkdirSync(layerThreeDir, { recursive: true })
+      fs.writeFileSync(path.join(layerThreeDir, 'infra-kit.json'), '{}\n')
+
+      const cfg = await getInfraKitConfig()
+
+      expect(cfg.vendorSource).toBeUndefined()
+      expect('vendorSource' in cfg).toBe(false)
+    })
+  })
+
+  it('parses null from the project layer', async () => {
+    await withTmpRepo(async (tmp) => {
+      writeProjectLayer(tmp, { vendorSource: null })
+
+      expect((await getInfraKitConfig()).vendorSource).toBeNull()
+    })
+  })
+
+  it('parses a valid block from the project layer without adding keys it did not carry', async () => {
+    await withTmpRepo(async (tmp) => {
+      writeProjectLayer(tmp, { vendorSource: { copy: [{ path: '.claude' }] } })
+
+      expect((await getInfraKitConfig()).vendorSource).toStrictEqual({ copy: [{ path: '.claude' }] })
+    })
+  })
+
+  it('accepts the full block', () => {
+    expect(vendorSourceSchema.parse(VENDOR_SOURCE)).toStrictEqual(VENDOR_SOURCE)
+  })
+
+  it('refuses an empty copy list', () => {
+    expect(vendorSourceSchema.safeParse({ copy: [] }).success).toBe(false)
+  })
+
+  it('refuses an unknown key inside vendorSource', () => {
+    expect(vendorSourceSchema.safeParse({ ...VENDOR_SOURCE, vendored: true }).success).toBe(false)
+  })
+
+  it('refuses an unknown key inside a copy entry', () => {
+    expect(vendorSourceSchema.safeParse({ copy: [{ path: '.claude', vendored: true }] }).success).toBe(false)
+  })
+
+  it.each(['/etc/passwd', 'C:/repo/.claude', '\\\\server\\share'])('refuses the absolute path %s', (value) => {
+    const result = vendorSourceSchema.safeParse(copyWithPath(value))
+
+    expect(result.success).toBe(false)
+    expect(result.error?.issues[0]?.message).toMatch(/must be relative/)
+  })
+
+  it.each(['..', '../sibling', 'vendor/../../escape', 'a\\..\\b'])('refuses the ".." path %s', (value) => {
+    const result = vendorSourceSchema.safeParse(copyWithPath(value))
+
+    expect(result.success).toBe(false)
+    expect(result.error?.issues[0]?.message).toMatch(/"\.\." segment/)
+  })
+
+  it.each(['.git', '.git/hooks', './.git/config'])('refuses the .git path %s', (value) => {
+    const result = vendorSourceSchema.safeParse(copyWithPath(value))
+
+    expect(result.success).toBe(false)
+    expect(result.error?.issues[0]?.message).toMatch(/must not be \.git/)
+  })
+
+  it('accepts a path that only starts with the letters .git', () => {
+    expect(vendorSourceSchema.safeParse(copyWithPath('.gitignore')).success).toBe(true)
+  })
+
+  it('applies the path rules to target and legacyCleanup too', () => {
+    expect(vendorSourceSchema.safeParse({ copy: [{ path: '.claude', target: '../out' }] }).success).toBe(false)
+    expect(vendorSourceSchema.safeParse({ copy: [{ path: '.claude' }], legacyCleanup: ['/configs'] }).success).toBe(
+      false,
+    )
+    expect(vendorSourceSchema.safeParse({ copy: [{ path: '.claude' }], legacyCleanup: ['.git'] }).success).toBe(false)
+  })
+
+  it('refuses an exclude entry with a slash', () => {
+    expect(vendorSourceSchema.safeParse({ copy: [{ path: '.claude' }], exclude: ['a/b'] }).success).toBe(false)
+  })
+
+  it('refuses the block in the user-global layer with the layer message', async () => {
+    await withTmpRepo(async (tmp) => {
+      writeProjectLayer(tmp, {})
+      fs.mkdirSync(path.join(tmp, '.infra-kit'), { recursive: true })
+      fs.writeFileSync(path.join(tmp, '.infra-kit', 'infra-kit.json'), JSON.stringify({ vendorSource: VENDOR_SOURCE }))
+
+      await expect(getInfraKitConfig()).rejects.toThrow(
+        /"vendorSource" is not allowed in .*\.infra-kit\/infra-kit\.json/,
+      )
+      await expect(getInfraKitConfig()).rejects.toThrow(/every repository on this machine a source/)
+    })
+  })
+
+  it('refuses the block in the per-project override, even as null', async () => {
+    await withTmpRepo(async (tmp) => {
+      writeProjectLayer(tmp, { vendorSource: VENDOR_SOURCE })
+
+      const layerThreeDir = path.join(tmp, '.infra-kit', 'projects', path.basename(tmp))
+
+      fs.mkdirSync(layerThreeDir, { recursive: true })
+      fs.writeFileSync(path.join(layerThreeDir, 'infra-kit.json'), JSON.stringify({ vendorSource: null }))
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/"vendorSource" is not allowed in .*\.infra-kit\/projects/)
     })
   })
 })
