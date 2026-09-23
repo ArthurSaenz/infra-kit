@@ -15,7 +15,7 @@ import process from 'node:process'
 import { z } from 'zod'
 
 import { portlessServiceTargetState } from 'src/commands/doctor/doctor'
-import type { ServiceTargetDeps } from 'src/commands/doctor/doctor'
+import type { ServiceTargetDeps, ServiceTargetState } from 'src/commands/doctor/doctor'
 import { InitStepError, SHELL_ACTIVATION_REMINDER, initCore, logInitEntry } from 'src/commands/init'
 import type { InitEntry, InitStep, InitStepName } from 'src/commands/init'
 import {
@@ -92,6 +92,18 @@ const realPortlessServiceDeps = (): PortlessServiceDeps => {
   }
 }
 
+/**
+ * What the portless-service step did, for the `--json` payload. `service` is doctor's own verdict word, so
+ * the payload and doctor's row can never name one state two ways; `'skipped'` means no portless to judge.
+ */
+export interface PortlessServiceResult {
+  link: PortlessLinkOutcome
+  node: PortlessNodeResult['outcome']
+  service: ServiceTargetState | 'skipped'
+  /** The `service install` command a human has to run, exactly when `service` is `absent` or `drifted`. */
+  command: string | null
+}
+
 /** One line describing what `ensurePortlessLink` did, in the same `<outcome> <name> — <detail>` shape the tool lines use. */
 const portlessLinkDetail = (outcome: PortlessLinkOutcome): string => {
   switch (outcome) {
@@ -160,7 +172,7 @@ const portlessNodeDetail = (result: PortlessNodeResult): string => {
  * shortens the line when it is the same inode): that verdict is the one surface that pays the spawn, so
  * a copy that does not run is never handed to root.
  */
-const convergePortlessService = async (deps: PortlessServiceDeps): Promise<void> => {
+const convergePortlessService = async (deps: PortlessServiceDeps): Promise<PortlessServiceResult> => {
   const link = ensurePortlessLink(deps.link)
 
   logger.info(`  ${link.outcome.padEnd(9)} portless link — ${portlessLinkDetail(link.outcome)}`)
@@ -171,21 +183,23 @@ const convergePortlessService = async (deps: PortlessServiceDeps): Promise<void>
 
   const bin = portlessLinkCliPath(deps.link.home, deps.target.exists) ?? deps.link.resolveBin()
 
-  if (bin === null) return
+  if (bin === null) return { link: link.outcome, node: node.outcome, service: 'skipped', command: null }
 
   const { state, stableNode } = await portlessServiceTargetState(deps.target, bin)
 
-  if (state === 'converged') return
+  if (state === 'converged') return { link: link.outcome, node: node.outcome, service: state, command: null }
+
+  const command = serviceInstallCommand(bin, {
+    home: deps.link.home,
+    exists: deps.target.exists,
+    execPath: deps.target.execPath,
+    stableNode,
+  })
 
   logger.info('Run this yourself to finish the portless service:')
-  logger.info(
-    `  ${serviceInstallCommand(bin, {
-      home: deps.link.home,
-      exists: deps.target.exists,
-      execPath: deps.target.execPath,
-      stableNode,
-    })}`,
-  )
+  logger.info(`  ${command}`)
+
+  return { link: link.outcome, node: node.outcome, service: state, command }
 }
 
 /**
@@ -269,7 +283,7 @@ const printSummary = async (
   tools: ToolResult[],
   skipTools: boolean,
   portlessDeps: PortlessServiceDeps,
-): Promise<void> => {
+): Promise<PortlessServiceResult> => {
   for (const tool of tools) {
     logger.info(`  ${tool.action.padEnd(9)} ${tool.id} — ${tool.detail}`)
   }
@@ -284,9 +298,11 @@ const printSummary = async (
     }
   }
 
-  await convergePortlessService(portlessDeps)
+  const portlessService = await convergePortlessService(portlessDeps)
 
   logger.info(SHELL_ACTIVATION_REMINDER)
+
+  return portlessService
 }
 
 /** A tool whose argv the human has to run: every refusal, and — under the probe — everything not run. */
@@ -313,11 +329,16 @@ export const setup = async (options: SetupOptions = {}) => {
         run: options.run,
       })
 
-  await printSummary(tools, request.skipTools, options.portlessDeps ?? realPortlessServiceDeps())
+  const portlessService = await printSummary(
+    tools,
+    request.skipTools,
+    options.portlessDeps ?? realPortlessServiceDeps(),
+  )
 
   const structuredContent = {
     init: init.entries.map(toInitStep),
     tools,
+    portlessService,
     converged: !request.skipTools,
     changed: tools.some((tool) => {
       return tool.action === 'installed' || tool.action === 'updated'
@@ -373,9 +394,32 @@ const resultSchema = z.object({
   detail: z.string().describe('Why, in one line'),
 })
 
+const portlessServiceSchema = z.object({
+  link: z
+    .enum(['created', 'repointed', 'unchanged', 'skipped-local', 'skipped-unresolved', 'failed'])
+    .describe('What the ~/.infra-kit/portless link step did'),
+  node: z
+    .enum(['created', 'refreshed', 'unchanged', 'skipped-local', 'skipped-platform', 'failed'])
+    .describe('What the ~/.infra-kit/node step did'),
+  service: z
+    .enum(['absent', 'converged', 'drifted', 'skipped'])
+    .describe(
+      'The installed portless system service against the link and node: not installed, already running through both, installed but pointing elsewhere, or not judged because portless is not installed',
+    ),
+  command: z
+    .string()
+    .nullable()
+    .describe(
+      'The sudo `service install` command a human has to run; present if and only if service is absent or drifted, null otherwise',
+    ),
+})
+
 const outputSchema = {
   init: z.array(initStepSchema).describe('One entry per init step, in the order they ran'),
   tools: z.array(resultSchema).describe('One result per requested dependency'),
+  portlessService: portlessServiceSchema.describe(
+    'The portless link, node, and system-service step — run on every setup, never gated on the tool options',
+  ),
   converged: z.boolean().describe('Whether the dependency step could act at all (false under skipTools)'),
   changed: z.boolean().describe('Whether anything was installed or updated'),
   allSucceeded: z.boolean().describe('Whether no tool failed (a refusal is not a failure)'),

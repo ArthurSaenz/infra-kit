@@ -148,6 +148,8 @@ interface Fixture {
   serviceNode?: string
   /** Whether the node the service names is still on disk. Default: yes. */
   nodeExists?: boolean
+  /** What resolving the running portless finds; `null` = portless is not installed. Default: `BIN`. */
+  resolvedBin?: string | null
 }
 
 /** Builds a `PortlessServiceDeps` from a small fixture, so each test states only what differs. */
@@ -159,7 +161,7 @@ const portlessDeps = (fixture: Fixture): PortlessServiceDeps & { nodeFs: FakeNod
   }
   const link: EnsurePortlessLinkDeps = {
     resolveBin: () => {
-      return BIN
+      return fixture.resolvedBin === undefined ? BIN : fixture.resolvedBin
     },
     isGlobal,
     home,
@@ -230,6 +232,9 @@ const HOME_SIDECAR = `${HOME_NODE}.source.json`
 const SHORT_LINE = `  sudo ${HOME_NODE} ${HOME_LINK_CLI} service install`
 /** The fallback line — through the link, but under the node that provably runs. */
 const EXEC_PATH_LINE = `  sudo ${EXEC_PATH} ${HOME_LINK_CLI} service install`
+/** The payload's `command` is the printed line minus its indent: the same bytes a human copies. */
+const SHORT_COMMAND = SHORT_LINE.trimStart()
+const EXEC_PATH_COMMAND = EXEC_PATH_LINE.trimStart()
 
 /** A machine whose node file is this process's inode and whose sidecar says so — doctor's N8, T8's argv[0]. */
 const convergedNode = (): Record<string, NodeEntry> => {
@@ -245,6 +250,16 @@ const infoLines = (): string[] => {
 const portlessSudoLines = (): string[] => {
   return infoLines().filter((line) => {
     return line.includes('service install')
+  })
+}
+
+/**
+ * Every stderr line mentioning sudo. Callers run with `tools: []`: the brew refusal names `needs-sudo`,
+ * and these tests are about the portless step alone.
+ */
+const sudoLines = (): string[] => {
+  return infoLines().filter((line) => {
+    return line.includes('sudo')
   })
 }
 
@@ -265,8 +280,14 @@ describe('setup converges the portless link and node and prints the sudo line on
   it('prints exactly one portless sudo line, through the link and the stable node, on a fresh machine', async () => {
     const deps = portlessDeps({ linkFs: {} })
 
-    await setup({ probeDeps: nothingInstalled(), portlessDeps: deps })
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), portlessDeps: deps })
 
+    expect(structuredContent.portlessService).toEqual({
+      link: 'created',
+      node: 'created',
+      service: 'absent',
+      command: SHORT_COMMAND,
+    })
     expect(portlessSudoLines()).toEqual([SHORT_LINE])
     expect(stepLines('portless link')).toEqual([expect.stringContaining('created   portless link — linked')])
     expect(stepLines('portless node')).toEqual([
@@ -285,8 +306,14 @@ describe('setup converges the portless link and node and prints the sudo line on
       serviceNode: HOME_NODE,
     })
 
-    await setup({ probeDeps: nothingInstalled(), portlessDeps: deps })
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), portlessDeps: deps })
 
+    expect(structuredContent.portlessService).toEqual({
+      link: 'unchanged',
+      node: 'unchanged',
+      service: 'converged',
+      command: null,
+    })
     expect(portlessSudoLines()).toHaveLength(0)
     expect(stepLines('portless link')).toEqual([expect.stringContaining('unchanged portless link')])
     expect(stepLines('portless node')).toEqual([
@@ -298,7 +325,7 @@ describe('setup converges the portless link and node and prints the sudo line on
   // T5: the plist still names the package manager's node — the file `service install` bakes in from
   // `process.execPath`, gone at the next re-mint. The one re-run that switches it to the stable node.
   it('prints the short line when the installed service runs the package manager’s node (T5)', async () => {
-    await setup({
+    const { structuredContent } = await setup({
       probeDeps: nothingInstalled(),
       portlessDeps: portlessDeps({
         linkFs: { [HOME_LINK]: { kind: 'symlink', target: TARGET } },
@@ -309,11 +336,12 @@ describe('setup converges the portless link and node and prints the sudo line on
     })
 
     expect(portlessSudoLines()).toEqual([SHORT_LINE])
+    expect(structuredContent.portlessService).toMatchObject({ service: 'drifted', command: SHORT_COMMAND })
   })
 
   // AC(c): the plist is installed, but its argv[1] is still a version-specific pnpm store path.
   it('prints the sudo line when the installed service still points at a version-specific path', async () => {
-    await setup({
+    const { structuredContent } = await setup({
       probeDeps: nothingInstalled(),
       portlessDeps: portlessDeps({
         linkFs: { [HOME_LINK]: { kind: 'symlink', target: TARGET } },
@@ -322,12 +350,13 @@ describe('setup converges the portless link and node and prints the sudo line on
     })
 
     expect(portlessSudoLines()).toEqual([SHORT_LINE])
+    expect(structuredContent.portlessService).toMatchObject({ service: 'drifted', command: SHORT_COMMAND })
   })
 
   // The plist already goes through the link, but names a node that was since removed: launchd cannot start
   // the daemon at the next boot. An argv[1]-only comparison called this converged and printed nothing.
   it('prints the sudo line when the link-based plist names a node that no longer exists', async () => {
-    await setup({
+    const { structuredContent } = await setup({
       probeDeps: nothingInstalled(),
       portlessDeps: portlessDeps({
         linkFs: { [HOME_LINK]: { kind: 'symlink', target: TARGET } },
@@ -337,6 +366,7 @@ describe('setup converges the portless link and node and prints the sudo line on
     })
 
     expect(portlessSudoLines()).toEqual([SHORT_LINE])
+    expect(structuredContent.portlessService).toMatchObject({ service: 'drifted', command: SHORT_COMMAND })
   })
 
   // The node step could not publish the file (a symlink squats on the path — the one thing the step
@@ -348,7 +378,14 @@ describe('setup converges the portless link and node and prints the sudo line on
       nodeFs: { [HOME_NODE]: { kind: 'symlink' } },
     })
 
-    await setup({ probeDeps: nothingInstalled(), portlessDeps: deps })
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), portlessDeps: deps })
+
+    expect(structuredContent.portlessService).toEqual({
+      link: 'unchanged',
+      node: 'failed',
+      service: 'absent',
+      command: EXEC_PATH_COMMAND,
+    })
 
     expect(stepLines('portless node')).toEqual([
       '  failed    portless node — could not write ~/.infra-kit/node — see the debug log',
@@ -367,7 +404,7 @@ describe('setup converges the portless link and node and prints the sudo line on
       }
     }
 
-    await setup({
+    const { structuredContent } = await setup({
       probeDeps: nothingInstalled(),
       portlessDeps: portlessDeps({
         linkFs: { [HOME_LINK]: { kind: 'symlink', target: TARGET } },
@@ -379,10 +416,11 @@ describe('setup converges the portless link and node and prints the sudo line on
     })
 
     expect(portlessSudoLines()).toEqual([EXEC_PATH_LINE])
+    expect(structuredContent.portlessService).toMatchObject({ service: 'absent', command: EXEC_PATH_COMMAND })
 
     vi.clearAllMocks()
 
-    await setup({
+    const second = await setup({
       probeDeps: nothingInstalled(),
       portlessDeps: portlessDeps({
         linkFs: { [HOME_LINK]: { kind: 'symlink', target: TARGET } },
@@ -394,6 +432,7 @@ describe('setup converges the portless link and node and prints the sudo line on
     })
 
     expect(portlessSudoLines()).toEqual([EXEC_PATH_LINE])
+    expect(second.structuredContent.portlessService).toMatchObject({ service: 'absent', command: EXEC_PATH_COMMAND })
   })
 
   // One verdict feeds both the state and the printed line, so the copy is spawned ONCE per run.
@@ -423,7 +462,14 @@ describe('setup converges the portless link and node and prints the sudo line on
   it('skips the node step from a checkout, touching nothing, and prints the execPath line', async () => {
     const deps = portlessDeps({ linkFs: {}, isGlobal: false })
 
-    await setup({ probeDeps: nothingInstalled(), portlessDeps: deps })
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), portlessDeps: deps })
+
+    expect(structuredContent.portlessService).toEqual({
+      link: 'skipped-local',
+      node: 'skipped-local',
+      service: 'absent',
+      command: EXEC_PATH_COMMAND,
+    })
 
     expect(stepLines('portless node')).toEqual(['  skipped-local portless node — skipped — this install is not global'])
     expect(mutatingCalls(deps.nodeFs.calls)).toEqual([])
@@ -437,7 +483,7 @@ describe('setup converges the portless link and node and prints the sudo line on
     const node = path.join(home, '.infra-kit', 'node')
     const linkCli = path.join(home, '.infra-kit', 'portless', 'dist', 'cli.js')
 
-    await setup({
+    const { structuredContent } = await setup({
       probeDeps: nothingInstalled(),
       portlessDeps: portlessDeps({
         home,
@@ -450,6 +496,7 @@ describe('setup converges the portless link and node and prints the sudo line on
     })
 
     expect(portlessSudoLines()).toHaveLength(0)
+    expect(structuredContent.portlessService).toMatchObject({ service: 'converged', command: null })
   })
 
   // A path holding the literal text `&quot;` is written as `&amp;quot;`; unescaping `&amp;` FIRST turns that
@@ -462,7 +509,7 @@ describe('setup converges the portless link and node and prints the sudo line on
 
     expect(plist).toContain('&amp;quot;')
 
-    await setup({
+    const { structuredContent } = await setup({
       probeDeps: nothingInstalled(),
       portlessDeps: portlessDeps({
         home,
@@ -474,6 +521,51 @@ describe('setup converges the portless link and node and prints the sudo line on
     })
 
     expect(portlessSudoLines()).toHaveLength(0)
+    expect(structuredContent.portlessService).toMatchObject({ service: 'converged', command: null })
+  })
+
+  // No portless anywhere: there is no binary to judge the service against, so the payload says so rather
+  // than claiming a state, and no command is handed out.
+  it('reports the service as skipped, with no command and no sudo line, when portless is not installed', async () => {
+    const { structuredContent } = await setup({
+      tools: [],
+      probeDeps: nothingInstalled(),
+      portlessDeps: portlessDeps({ linkFs: {}, resolvedBin: null, linkResolves: false }),
+    })
+
+    expect(structuredContent.portlessService).toEqual({
+      link: 'skipped-unresolved',
+      node: 'created',
+      service: 'skipped',
+      command: null,
+    })
+    expect(sudoLines()).toHaveLength(0)
+  })
+
+  // The payload's command must not be a second rendering beside the printed one.
+  it('prints exactly one sudo line when the service is absent', async () => {
+    const { structuredContent } = await setup({
+      tools: [],
+      probeDeps: nothingInstalled(),
+      portlessDeps: portlessDeps({ linkFs: {} }),
+    })
+
+    expect(structuredContent.portlessService.service).toBe('absent')
+    expect(sudoLines()).toEqual([SHORT_LINE])
+  })
+
+  it('prints exactly one sudo line when the service is drifted', async () => {
+    const { structuredContent } = await setup({
+      tools: [],
+      probeDeps: nothingInstalled(),
+      portlessDeps: portlessDeps({
+        linkFs: { [HOME_LINK]: { kind: 'symlink', target: TARGET } },
+        serviceFile: launchdPlist([EXEC_PATH, DRIFTED_ARGV1, 'proxy']),
+      }),
+    })
+
+    expect(structuredContent.portlessService.service).toBe('drifted')
+    expect(sudoLines()).toEqual([SHORT_LINE])
   })
 
   it('never runs sudo itself — runRecipe is the only executor, and it never sees "service install"', async () => {
