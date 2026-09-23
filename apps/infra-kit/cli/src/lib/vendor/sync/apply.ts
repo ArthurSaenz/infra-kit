@@ -16,18 +16,15 @@ import { writeManifest } from '../manifest'
 import { VENDOR_DIR, isSkippedPath } from '../skip-sets'
 import { fingerprintOnDisk } from './fingerprint'
 import { runGit, splitNul } from './git'
-import { toVendorRelative } from './paths'
+import { VENDOR_MANIFEST_PATH, VENDOR_README_PATH, toVendorRelative } from './paths'
 import { vendorReadme } from './readme'
 import { listTrackedVendorPaths } from './tracked-files'
 import type { ApplyResult, EntryPlan, SourceIdentity, TargetPlan, WriteOp } from './types'
 
-const README_PATH = `${VENDOR_DIR}/README.md`
-const MANIFEST_PATH = `${VENDOR_DIR}/.sync-manifest.json`
-
 /**
  * The argv that restores every tracked path the plan writes or deletes. It is printed, never run, and is
- * never a `git clean`: a clean scoped to a synced directory would also take the consumer's own untracked
- * files, which the preflight allows because they are in no synced set.
+ * never a `git clean`: the consumer's untracked files can sit under a synced directory outside the paths the
+ * preflight guards, and a clean deletes them unrecoverably where a checkout loses nothing.
  */
 export const recoveryArgv = (plan: TargetPlan): string[] => {
   return ['git', '-C', plan.root, '--literal-pathspecs', 'checkout', 'HEAD', '--', ...plan.recoveryPaths]
@@ -63,14 +60,25 @@ const writeOne = (sourceRoot: string, targetRoot: string, op: WriteOp): void => 
   chmodSync(to, op.mode === '100755' ? 0o755 : 0o644)
 }
 
-const isTrackedUnder = async (targetRoot: string, dir: string, deleted: ReadonlySet<string>): Promise<boolean> => {
-  const relativeDir = path.relative(targetRoot, dir).split(path.sep).join('/')
-  const tracked = splitNul(await runGit(targetRoot, ['--literal-pathspecs', 'ls-files', '-z', '--', relativeDir]))
+/**
+ * Every directory that still holds a tracked path. The index keeps listing what this apply deleted until a
+ * commit, so those entries do not count.
+ */
+const trackedDirectories = async (targetRoot: string, deleted: ReadonlySet<string>): Promise<Set<string>> => {
+  const directories = new Set<string>()
 
-  // The index still lists what this apply deleted until a commit, so those entries do not count.
-  return tracked.some((trackedPath) => {
-    return !deleted.has(trackedPath)
-  })
+  for (const trackedPath of splitNul(await runGit(targetRoot, ['ls-files', '-z']))) {
+    if (deleted.has(trackedPath)) continue
+
+    let dir = path.posix.dirname(trackedPath)
+
+    while (dir !== '.') {
+      directories.add(dir)
+      dir = path.posix.dirname(dir)
+    }
+  }
+
+  return directories
 }
 
 /**
@@ -78,7 +86,9 @@ const isTrackedUnder = async (targetRoot: string, dir: string, deleted: Readonly
  * root, at a directory that still holds anything (ignored files included), or at one git still tracks.
  */
 const pruneEmptyDirs = async (targetRoot: string, deleted: readonly string[]): Promise<void> => {
-  const deletedSet = new Set(deleted)
+  if (deleted.length === 0) return
+
+  const tracked = await trackedDirectories(targetRoot, new Set(deleted))
   const candidates = [
     ...new Set(
       deleted.map((deletedPath) => {
@@ -97,7 +107,7 @@ const pruneEmptyDirs = async (targetRoot: string, deleted: readonly string[]): P
 
     while (dir !== targetRoot && dir.startsWith(targetRoot)) {
       if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) break
-      if (readdirSync(dir).length > 0 || (await isTrackedUnder(targetRoot, dir, deletedSet))) break
+      if (readdirSync(dir).length > 0 || tracked.has(path.relative(targetRoot, dir).split(path.sep).join('/'))) break
 
       rmdirSync(dir)
       dir = path.dirname(dir)
@@ -128,9 +138,11 @@ export const manifestPathsAfterApply = (
   const surviving = trackedVendor.filter((trackedPath) => {
     return !deletedSet.has(trackedPath)
   })
-  const relative = [...fromSource, README_PATH, ...surviving].map(toVendorRelative).filter((rel): rel is string => {
-    return rel !== null && !isSkippedPath(rel)
-  })
+  const relative = [...fromSource, VENDOR_README_PATH, ...surviving]
+    .map(toVendorRelative)
+    .filter((rel): rel is string => {
+      return rel !== null && !isSkippedPath(rel)
+    })
 
   return [...new Set(relative)].sort()
 }
@@ -144,7 +156,7 @@ const writeVendorMeta = async (
   const vendorRoot = path.join(targetRoot, VENDOR_DIR)
 
   mkdirSync(vendorRoot, { recursive: true })
-  writeFileSync(path.join(targetRoot, README_PATH), vendorReadme(source.name))
+  writeFileSync(path.join(targetRoot, VENDOR_README_PATH), vendorReadme(source.name))
 
   const paths = manifestPathsAfterApply(entries, await listTrackedVendorPaths(targetRoot), deleted)
 
@@ -194,7 +206,10 @@ export const applyTargetPlan = async ({ source, plan, onBeforeFirstWrite }: Appl
 
   await writeVendorMeta(targetRoot, source, plan.entries, deleted)
 
-  return { touched: [...new Set([...deleted, ...written, README_PATH, MANIFEST_PATH])].sort(), manifestWritten: true }
+  return {
+    touched: [...new Set([...deleted, ...written, VENDOR_README_PATH, VENDOR_MANIFEST_PATH])].sort(),
+    manifestWritten: true,
+  }
 }
 
 /**
@@ -204,5 +219,5 @@ export const applyTargetPlan = async ({ source, plan, onBeforeFirstWrite }: Appl
 export const writeVendorMetaOnly = async (targetRoot: string, source: SourceIdentity): Promise<string[]> => {
   await writeVendorMeta(targetRoot, source, [], [])
 
-  return [README_PATH, MANIFEST_PATH]
+  return [VENDOR_README_PATH, VENDOR_MANIFEST_PATH]
 }

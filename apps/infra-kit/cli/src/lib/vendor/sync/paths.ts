@@ -1,7 +1,13 @@
+import path from 'node:path'
+
+import { MANIFEST_FILE } from '../manifest'
 import { VENDOR_DIR } from '../skip-sets'
 import type { CopyEntry, ResolvedCopyEntry, SyncSpec } from './types'
 
 const VENDOR_PREFIX = `${VENDOR_DIR}/`
+
+export const VENDOR_README_PATH = `${VENDOR_DIR}/README.md`
+export const VENDOR_MANIFEST_PATH = `${VENDOR_DIR}/${MANIFEST_FILE}`
 
 /**
  * Whether a target path is vendored, i.e. covered by the integrity manifest.
@@ -14,6 +20,14 @@ export const isVendoredTarget = (target: string): boolean => {
   return target.startsWith(VENDOR_PREFIX)
 }
 
+// Belt and braces only: the config schema refuses every non-canonical spelling. `rebasePath` slices by length
+// and `git ls-files` prints canonical paths, so `tools/x/` or `./vendor/x` would silently mismatch.
+const toCanonical = (repoPath: string): string => {
+  const normalized = path.posix.normalize(repoPath)
+
+  return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized
+}
+
 /**
  * Fill in each entry's default target and its vendored flag.
  *
@@ -21,12 +35,13 @@ export const isVendoredTarget = (target: string): boolean => {
  * resolveCopyEntry({ path: 'vendor/configs' }) // => { path: 'vendor/configs', target: 'vendor/configs', vendored: true }
  */
 export const resolveCopyEntry = (entry: CopyEntry): ResolvedCopyEntry => {
-  const target = entry.target ?? entry.path
+  const source = toCanonical(entry.path)
+  const target = entry.target === undefined ? source : toCanonical(entry.target)
 
-  return { path: entry.path, target, vendored: isVendoredTarget(target) }
+  return { path: source, target, vendored: isVendoredTarget(target) }
 }
 
-/** {@link resolveCopyEntry} over a whole spec. */
+/** The sync's only entry point into a spec, so every path it probes, diffs or writes is canonical. */
 export const resolveCopyEntries = (spec: SyncSpec): ResolvedCopyEntry[] => {
   return spec.copy.map(resolveCopyEntry)
 }
@@ -45,7 +60,7 @@ export const hasExcludedSegment = (relativePath: string, exclude: readonly strin
   })
 }
 
-/** Drop every path with an excluded segment. */
+/** Generic over the item so the source's fingerprinted files and the target's tracked files share one rule. */
 export const withoutExcluded = <T extends { path: string }>(items: readonly T[], exclude: readonly string[]): T[] => {
   return items.filter((item) => {
     return !hasExcludedSegment(item.path, exclude)

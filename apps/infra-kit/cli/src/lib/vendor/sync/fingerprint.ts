@@ -44,7 +44,7 @@ export const fingerprintSourceFile = (repoRoot: string, file: TrackedFile): Sour
   return { ...file, fingerprint }
 }
 
-/** Whether two fingerprints describe the same bytes, mode and link text. */
+/** Nothing on disk (`null`) never matches, so a missing target file always plans a write. */
 export const sameFingerprint = (a: Fingerprint, b: Fingerprint | null): boolean => {
   if (b === null || a.kind !== b.kind) return false
   if (a.kind === 'link' && b.kind === 'link') return a.text === b.text

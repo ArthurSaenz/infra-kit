@@ -47,14 +47,15 @@ export const selectTargets = (factory: FactoryConfig, requested: readonly string
 const MANIFEST_ONLY_MESSAGE = 'rewrite vendor/README.md and vendor/.sync-manifest.json from the tracked vendor/ files'
 
 /**
- * `--manifest-only` copies nothing, so a checked-out repo is always `changed` and its recovery covers only the
- * two meta files HEAD already tracks.
+ * `--manifest-only` copies nothing, so a checked-out, unblocked repo is always `changed` and its recovery
+ * covers only the two meta files HEAD already tracks.
  */
 const manifestOnlyPlan = async (source: SourceFacts, ref: TargetRef): Promise<TargetPlan> => {
   const facts = await probeTarget(source, ref)
   const plan = buildTargetPlan(source, facts)
 
-  if (facts.kind !== 'repo') return plan
+  // A blocked target stays blocked: rewriting its manifest would hash the uncommitted edits the plan refused.
+  if (facts.kind !== 'repo' || plan.status === 'fail') return plan
 
   return {
     ...plan,

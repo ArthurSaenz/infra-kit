@@ -276,6 +276,25 @@ const repoRelativePathSchema = z
     if (segments[0] === '.git') {
       ctx.addIssue({ code: 'custom', message: `"${value}" must not be .git or a path inside it` })
     }
+
+    // The sync rebases paths by string prefix and matches them against `git ls-files` output, which is always
+    // canonical, so any other spelling of the same path silently mismatches.
+    if (value.includes('\\')) {
+      ctx.addIssue({ code: 'custom', message: `"${value}" must use "/" as the separator, not "\\"` })
+    }
+
+    const rawSegments = value.split('/')
+
+    if (rawSegments.includes('')) {
+      ctx.addIssue({ code: 'custom', message: `"${value}" must not have a trailing or doubled "/"` })
+    }
+
+    if (rawSegments.includes('.')) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `"${value}" must not contain a "." segment; write it from the repository root, e.g. "vendor/configs"`,
+      })
+    }
   })
 
 const vendorCopyEntrySchema = z

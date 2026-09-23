@@ -1,20 +1,24 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 
-import { getMainRepoRoot } from 'src/lib/git-utils'
+import { getMainRepoRoot, revParseVerify } from 'src/lib/git-utils'
 
 import { readManifest } from '../manifest'
 import { VENDOR_DIR } from '../skip-sets'
 import { fingerprintOnDisk, fingerprintSourceFile } from './fingerprint'
 import { runGit, splitNul } from './git'
-import { hasExcludedSegment, rebasePath, resolveCopyEntries, withoutExcluded } from './paths'
+import {
+  VENDOR_MANIFEST_PATH,
+  VENDOR_README_PATH,
+  hasExcludedSegment,
+  rebasePath,
+  resolveCopyEntries,
+  withoutExcluded,
+} from './paths'
 import { guardedPaths } from './plan'
 import { vendorReadme } from './readme'
 import { listTrackedFiles } from './tracked-files'
 import type { ChangelogFacts, SourceFacts, SyncSpec, TargetEntryFacts, TargetFacts, TargetRef } from './types'
-
-const README_PATH = `${VENDOR_DIR}/README.md`
-const MANIFEST_PATH = `${VENDOR_DIR}/.sync-manifest.json`
 
 /**
  * Gather everything the plan needs from the source repo: HEAD, its repo name, and the fingerprinted tracked
@@ -123,7 +127,16 @@ const probeLegacy = async (source: SourceFacts, root: string): Promise<string[]>
 
 const headVendorMeta = async (root: string): Promise<string[]> => {
   try {
-    const args = ['--literal-pathspecs', 'ls-tree', '-z', '--name-only', 'HEAD', '--', README_PATH, MANIFEST_PATH]
+    const args = [
+      '--literal-pathspecs',
+      'ls-tree',
+      '-z',
+      '--name-only',
+      'HEAD',
+      '--',
+      VENDOR_README_PATH,
+      VENDOR_MANIFEST_PATH,
+    ]
 
     return splitNul(await runGit(root, args))
   } catch {
@@ -143,11 +156,7 @@ const readManifestSha = (root: string): string | null => {
 const probeChangelog = async (source: SourceFacts, manifestSha: string | null): Promise<ChangelogFacts> => {
   if (manifestSha === null) return { kind: 'unknown-sha' }
 
-  try {
-    await runGit(source.root, ['rev-parse', '--verify', '--quiet', `${manifestSha}^{commit}`])
-  } catch {
-    return { kind: 'unresolvable', sha: manifestSha }
-  }
+  if ((await revParseVerify(source.root, manifestSha)) === null) return { kind: 'unresolvable', sha: manifestSha }
 
   const copyPaths = source.entries.map(({ entry }) => {
     return entry.path
@@ -169,7 +178,7 @@ const probeChangelog = async (source: SourceFacts, manifestSha: string | null): 
 
 const readmeIsCurrent = (root: string, sourceName: string): boolean => {
   try {
-    return readFileSync(path.join(root, README_PATH), 'utf8') === vendorReadme(sourceName)
+    return readFileSync(path.join(root, VENDOR_README_PATH), 'utf8') === vendorReadme(sourceName)
   } catch {
     return false
   }

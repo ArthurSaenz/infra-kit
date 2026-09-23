@@ -947,6 +947,35 @@ describe('vendorSource', () => {
     expect(result.error?.issues[0]?.message).toMatch(/must not be \.git/)
   })
 
+  it.each([
+    ['tools/x/', /trailing or doubled "\/"/],
+    ['vendor//configs', /trailing or doubled "\/"/],
+    ['.', /"\." segment/],
+    ['./vendor/configs', /"\." segment/],
+    ['vendor/./configs', /"\." segment/],
+    ['vendor\\configs', /must use "\/" as the separator/],
+  ])('refuses the non-canonical path %s', (value, message) => {
+    const result = vendorSourceSchema.safeParse(copyWithPath(value))
+
+    expect(result.success).toBe(false)
+    expect(
+      result.error?.issues.map((issue) => {
+        return issue.message
+      }),
+    ).toContainEqual(expect.stringMatching(message))
+  })
+
+  it('refuses a non-canonical target', () => {
+    expect(vendorSourceSchema.safeParse({ copy: [{ path: 'tools/x', target: 'vendor/x/' }] }).success).toBe(false)
+  })
+
+  it('accepts canonical nested paths', () => {
+    expect(
+      vendorSourceSchema.safeParse({ copy: [{ path: '.agents/skills/shadcn', target: 'vendor/skills/shadcn' }] })
+        .success,
+    ).toBe(true)
+  })
+
   it('accepts a path that only starts with the letters .git', () => {
     expect(vendorSourceSchema.safeParse(copyWithPath('.gitignore')).success).toBe(true)
   })

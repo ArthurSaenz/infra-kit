@@ -46,8 +46,10 @@ export const commitSyncedPaths = async (
   const fromStdin = ['--pathspec-from-file=-', '--pathspec-file-nul']
 
   try {
-    await runGit(targetRoot, ['--literal-pathspecs', 'add', '-A', ...fromStdin], pathspecs)
-    await runGit(targetRoot, ['--literal-pathspecs', 'commit', '--only', '-m', message, ...fromStdin], pathspecs)
+    await runGit(targetRoot, ['--literal-pathspecs', 'add', '-A', ...fromStdin], { input: pathspecs })
+    await runGit(targetRoot, ['--literal-pathspecs', 'commit', '--only', '-m', message, ...fromStdin], {
+      input: pathspecs,
+    })
 
     return { ok: true }
   } catch (error) {

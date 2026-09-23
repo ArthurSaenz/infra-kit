@@ -1,27 +1,15 @@
-import { $ } from 'zx'
-
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import type { RunRow } from 'src/lib/render/run-report'
+import { parsePorcelainZ, runGit } from 'src/lib/vendor/sync'
 
 const MAX_LISTED_DIRTY = 20
 
 const git = async (cwd: string, args: string[]): Promise<string> => {
-  const result = await $({ cwd, quiet: true, nothrow: true })`git ${args}`
-
-  return result.exitCode === 0 ? result.stdout.trim() : ''
+  return (await runGit(cwd, args, { allowFailure: true })).trim()
 }
 
 const dirtySourcePaths = async (sourceRoot: string): Promise<string[]> => {
-  const result = await $({ cwd: sourceRoot, quiet: true })`git status --porcelain --untracked-files=normal`
-
-  return result.stdout
-    .split('\n')
-    .filter((line) => {
-      return line.trim().length > 0
-    })
-    .map((line) => {
-      return line.slice(3)
-    })
+  return parsePorcelainZ(await runGit(sourceRoot, ['status', '--porcelain', '-z', '--untracked-files=normal']))
 }
 
 const reachabilityRow = async (sourceRoot: string): Promise<RunRow | null> => {

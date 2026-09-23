@@ -6,9 +6,11 @@ export { applyTargetPlan, manifestPathsAfterApply, recoveryArgv, writeVendorMeta
 export type { ApplyOptions } from './apply'
 export { commitSyncedPaths, syncCommitMessage } from './commit'
 export type { CommitResult } from './commit'
+export { runGit } from './git'
+export type { RunGitOptions } from './git'
 export { isVendoredTarget, resolveCopyEntries, resolveCopyEntry } from './paths'
 export { buildTargetPlan, diffEntry, guardedPaths } from './plan'
-export { probeSource, probeTarget } from './probe'
+export { parsePorcelainZ, probeSource, probeTarget } from './probe'
 export { vendorReadme } from './readme'
 export { listTrackedFiles, listTrackedVendorPaths } from './tracked-files'
 export type {

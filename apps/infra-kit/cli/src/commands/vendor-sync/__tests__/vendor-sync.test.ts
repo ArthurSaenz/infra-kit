@@ -12,7 +12,7 @@ import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { jsonOutput } from 'src/lib/json-output'
 import { loadFactoryConfig } from 'src/lib/vendor/factory-config'
 import { applyTargetPlan, buildTargetPlan, probeSource, probeTarget, writeVendorMetaOnly } from 'src/lib/vendor/sync'
-import type { SourceFacts, TargetPlan } from 'src/lib/vendor/sync'
+import type { SourceFacts, TargetFacts, TargetPlan } from 'src/lib/vendor/sync'
 
 import { preflightSource } from '../source-preflight'
 import { vendorSync } from '../vendor-sync'
@@ -207,6 +207,22 @@ describe('vendorSync — decline', () => {
 })
 
 describe('vendorSync — gates', () => {
+  it('reads no config when the source preflight refuses a dirty tree', async () => {
+    const dirty = new StructuredRefusalError({ status: 'refused', reason: 'source-dirty', paths: ['a.ts'] }, 1, {
+      operation: 'sync',
+      stderrExcerpt: 'the source has 1 uncommitted path(s)',
+      remediation: 'commit it',
+    })
+
+    vi.mocked(preflightSource).mockRejectedValue(dirty)
+
+    expect(await run({})).toBe(dirty)
+    expect(getInfraKitConfig).not.toHaveBeenCalled()
+    expect(loadFactoryConfig).not.toHaveBeenCalled()
+    expect(probeSource).not.toHaveBeenCalled()
+    touchedNothing()
+  })
+
   it.each([undefined, null])('refuses naming vendorSource when it is %s', async (vendorSource) => {
     vi.mocked(getInfraKitConfig).mockResolvedValue({ vendorSource } as InfraKitConfig)
 
@@ -286,5 +302,51 @@ describe('vendorSync — apply failures', () => {
     expect(hulyo.rows[0]).toMatchObject({ status: 'fail' })
     expect(hulyo.rows[0]!.notes!.join('\n')).toContain('checkout HEAD')
     expect(result.structuredContent.targets[1]).toMatchObject({ name: 'travelist', applied: true })
+  })
+})
+
+describe('vendorSync --manifest-only', () => {
+  const repoFacts = (name: string): TargetFacts => {
+    return {
+      name,
+      root: `/work/${name}`,
+      kind: 'repo',
+      branch: 'main',
+      dirty: [],
+      entries: [],
+      legacy: [],
+      headVendorMeta: ['vendor/.sync-manifest.json'],
+      readmeCurrent: true,
+      manifestPresent: true,
+      changelog: { kind: 'unknown-sha' },
+    }
+  }
+
+  beforeEach(() => {
+    setStdinTTY(true)
+    vi.mocked(probeTarget).mockImplementation(async (_source, ref) => {
+      return repoFacts(ref.name)
+    })
+    vi.mocked(writeVendorMetaOnly).mockResolvedValue(['vendor/README.md', 'vendor/.sync-manifest.json'])
+  })
+
+  it('rewrites the meta files of a clean target and copies nothing', async () => {
+    planned({ hulyo: 'ok' })
+
+    const result = await vendorSync({ manifestOnly: true, confirmedCommand: true })
+
+    expect(writeVendorMetaOnly).toHaveBeenCalledExactlyOnceWith('/work/hulyo', SOURCE)
+    expect(applyTargetPlan).not.toHaveBeenCalled()
+    expect(result.structuredContent.targets[0]).toMatchObject({ name: 'hulyo', applied: true })
+  })
+
+  it('keeps a dirty target blocked, so its uncommitted edits never reach the manifest', async () => {
+    planned({ hulyo: 'fail', travelist: 'ok' })
+
+    const result = await vendorSync({ manifestOnly: true, confirmedCommand: true })
+
+    expect(writeVendorMetaOnly).toHaveBeenCalledExactlyOnceWith('/work/travelist', SOURCE)
+    expect(result.structuredContent.failed).toBe(true)
+    expect(result.structuredContent.targets[0]).toMatchObject({ name: 'hulyo', applied: false })
   })
 })
