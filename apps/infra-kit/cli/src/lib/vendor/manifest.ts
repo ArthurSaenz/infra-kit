@@ -49,15 +49,17 @@ export const isUnknownSchema = (manifest: VendorManifest): boolean => {
 }
 
 /**
- * Walk the vendor tree and hash every file into a `{ relativePath: sha256 }`
- * map (sorted by walk order → stable). A file that cannot be read (e.g. a
- * dangling symlink) surfaces an explicit error rather than crashing with a raw
- * fs stack.
+ * Hash every file into a `{ relativePath: sha256 }` map, sorted so the output
+ * is stable. `paths` replaces the working-tree walk: `vendor sync` passes the
+ * tracked set, because a walk would record ignored files a fresh clone never
+ * has. A file that cannot be read (e.g. a dangling symlink) surfaces an
+ * explicit error rather than crashing with a raw fs stack.
  */
-export const buildFilesMap = (vendorRoot: string): Record<string, string> => {
+export const buildFilesMap = (vendorRoot: string, paths?: readonly string[]): Record<string, string> => {
   const files: Record<string, string> = {}
+  const relativePaths = paths ? [...new Set(paths)].sort() : walkVendorTree(vendorRoot)
 
-  for (const rel of walkVendorTree(vendorRoot)) {
+  for (const rel of relativePaths) {
     try {
       files[rel] = sha256(path.join(vendorRoot, rel))
     } catch (cause) {
@@ -95,7 +97,8 @@ export const readManifest = (vendorRoot: string): VendorManifest => {
 }
 
 /**
- * Build and write a fresh manifest for the current content of `vendorRoot`.
+ * Build and write a fresh manifest for the current content of `vendorRoot`,
+ * over `paths` (vendor-relative) when given, else over a working-tree walk.
  * Emits the CURRENT schema version, the supplied `source`/`commit`, an ISO
  * `syncedAt`, and the per-file checksum map. Returns the written manifest.
  *
@@ -103,8 +106,12 @@ export const readManifest = (vendorRoot: string): VendorManifest => {
  * `writeVendorMeta`, so a regenerated manifest differs from a legacy one only by
  * the added `schemaVersion` and the `syncedAt` timestamp.
  */
-export const writeManifest = (vendorRoot: string, meta: { source: string; commit: string }): VendorManifest => {
-  const files = buildFilesMap(vendorRoot)
+export const writeManifest = (
+  vendorRoot: string,
+  meta: { source: string; commit: string },
+  paths?: readonly string[],
+): VendorManifest => {
+  const files = buildFilesMap(vendorRoot, paths)
 
   const manifest: VendorManifest = {
     schemaVersion: CURRENT_SCHEMA_VERSION,
