@@ -137,6 +137,7 @@ describe('message data', () => {
     expect(lint('frontend', 'features')).toEqual([])
     expect(lint('backend', 'controllers')).toEqual([])
     expect(lint('e2e', 'fixtures')).toEqual([])
+    expect(lint('e2e', 'tests/checkout/fixtures')).toEqual([])
   })
 
   it('names the unit a forbidden segment sits in', () => {

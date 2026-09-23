@@ -152,7 +152,7 @@ const portlessNodeDetail = (result: PortlessNodeResult): string => {
  * Converge `~/.infra-kit/portless` and `~/.infra-kit/node` and, when the installed system service (if
  * any) has not caught up to them, print the single `service install` command a human has to run — sudo
  * is never run here. This is its own step, run unconditionally like the init half rather than gated on
- * `--skip-tools`/`--tools`: it is local and idempotent, not a network install of one of the five tracked
+ * `--skip-tools`/`--tools`: it is local and idempotent, not a network install of one of the six tracked
  * tools.
  *
  * The line renders through the stable node only on doctor's health verdict (§5.4 N8 — resolved after
@@ -383,7 +383,7 @@ const inputSchema = {
   tools: z
     .array(z.enum(DEPENDENCY_IDS as [DependencyId, ...DependencyId[]]))
     .optional()
-    .describe('Which tools to act on. Omit for all five.'),
+    .describe('Which tools to act on. Omit for all six.'),
   mode: z
     .enum(['converge', 'update'])
     .optional()
@@ -401,7 +401,7 @@ const inputSchema = {
 export const setupMcpTool = defineMcpTool({
   name: 'setup',
   description:
-    'Set this machine up in one call: inject the shell integration into .zshrc and the session-env block into .zshenv, run the config migrations, seed the user-global config, refresh the agent-instruction files, register the Claude Code plugin pointer and install or update the skills plugin (the `/infra-kit:*` skills drive the infra-kit CLI on PATH; a leftover .mcp.json entry is reported, never written), then bring brew, aws, gh, doppler and portless to a working state — installing what is missing and updating what is present. Pass mode:"update" to update only and never install, or skipTools:true to do the local setup and then REPORT what each tool needs without installing anything. Recipes that need sudo or pipe a script fetched over the network — the Homebrew bootstrap and the first AWS CLI install — are never run; they are reported with the exact commands for you to run yourself. Use `doctor` first to see the state of this machine without changing it.',
+    'Set this machine up in one call: inject the shell integration into .zshrc and the session-env block into .zshenv, run the config migrations, seed the user-global config, refresh the agent-instruction files, register the Claude Code plugin pointer and install or update the skills plugin (the `/infra-kit:*` skills drive the infra-kit CLI on PATH; a leftover .mcp.json entry is reported, never written), then bring brew, git, aws, gh, doppler and portless to a working state — installing what is missing and updating what is present. Pass mode:"update" to update only and never install, or skipTools:true to do the local setup and then REPORT what each tool needs without installing anything. Recipes that need sudo or pipe a script fetched over the network — the Homebrew bootstrap and the first AWS CLI install — are never run; they are reported with the exact commands for you to run yourself. Use `doctor` first to see the state of this machine without changing it.',
   inputSchema,
   outputSchema,
   requiresHumanConfirm: true,

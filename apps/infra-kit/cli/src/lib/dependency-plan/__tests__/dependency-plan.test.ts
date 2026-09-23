@@ -6,7 +6,7 @@ import type { ProbeDeps } from 'src/lib/dependency-probe'
 /**
  * @fileoverview
  *
- * The one invariant of {@link planDependencies} that no caller can restate: it PROBES all five tools and
+ * The one invariant of {@link planDependencies} that no caller can restate: it PROBES all six tools and
  * only then plans the requested subset.
  *
  * This lived in `commands/setup-dependency`'s suite until that command was folded into `setup`, and it
@@ -71,7 +71,7 @@ describe('the planner probes every tool, then plans the subset it was asked for'
     expect(plans[0]?.executable, `refused because: ${plans[0]?.refusedBecause.join(', ')}`).toBe(true)
   })
 
-  // The narrowing half: probing all five must not turn into PLANNING all five.
+  // The narrowing half: probing all six must not turn into PLANNING all six.
   it('plans only what was requested', async () => {
     const { plans } = await planDependencies(['gh'], brewAndGhInstalled())
 

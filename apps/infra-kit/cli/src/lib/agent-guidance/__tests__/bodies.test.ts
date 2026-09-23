@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { extractVersion } from 'src/lib/managed-block'
+import { E2E_SCRIPTS, E2E_SLOW_MO_DEMO_MS } from 'src/lib/package-config'
 
 import { buildDesignSkeleton } from '../bodies/design-skeleton'
 import { buildPackageBody } from '../bodies/package-body'
@@ -48,7 +49,7 @@ const LINE_COUNTS: Readonly<Record<PackageType, number>> = {
   frontend: 24,
   backend: 23,
   lib: 24,
-  e2e: 24,
+  e2e: 25,
   mobile: 24,
 }
 
@@ -111,6 +112,32 @@ describe('buildPackageBody — conditional bullets', () => {
   it('tells the agent to ask rather than invent a missing DESIGN.md', () => {
     expect(body('frontend')).toContain('ask before inventing one')
   })
+
+  it('names docs/e2e-playwright.md in the e2e body only when the repo has it', () => {
+    const withDoc = buildPackageBody({
+      version: VERSION,
+      type: 'e2e',
+      packageName: PACKAGE_NAME,
+      relDir: REL_DIR,
+      hasReadme: true,
+      hasDesign: false,
+      hasE2eDoc: true,
+    })
+
+    expect(withDoc).toContain('`docs/e2e-playwright.md`')
+    expect(withDoc.split('\n')).toHaveLength(LINE_COUNTS.e2e + 1)
+    expect(body('e2e')).not.toContain('e2e-playwright')
+  })
+
+  it.each([...PACKAGE_TYPES])('%s names the shared e2e scripts only when it is an e2e package', (type) => {
+    expect(body(type).includes('`e2e-test-ui-demo`')).toBe(type === 'e2e')
+  })
+
+  it('quotes the demo slow-motion default the e2e-test-ui-demo script actually sets', () => {
+    expect(E2E_SCRIPTS['e2e-test-ui-demo']).toContain(`:-${E2E_SLOW_MO_DEMO_MS}}`)
+    expect(body('e2e')).toContain(`\`E2E_SLOW_MO=${E2E_SLOW_MO_DEMO_MS}\``)
+    expect(body('e2e')).toContain(`${E2E_SLOW_MO_DEMO_MS / 1000} s`)
+  })
 })
 
 describe('buildRootBody', () => {
@@ -130,7 +157,7 @@ describe('buildRootBody', () => {
   it('documents the fix writer, the setup command and the per-package convention', () => {
     expect(rendered).toContain('`ik audit --fix`')
     expect(rendered).toContain(
-      '`ik setup` — set up infra-kit on this machine: shell integration, the Claude Code skills plugin, and the external CLIs (brew, aws, gh, doppler, portless).',
+      '`ik setup` — set up infra-kit on this machine: shell integration, the Claude Code skills plugin, and the external CLIs (brew, git, aws, gh, doppler, portless).',
     )
     expect(rendered).toContain('Every workspace package has its own CLAUDE.md with package-scoped rules')
   })

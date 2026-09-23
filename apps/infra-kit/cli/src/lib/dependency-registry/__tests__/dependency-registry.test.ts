@@ -33,6 +33,7 @@ const AWS_INSTALL_URL = 'https://awscli.amazonaws.com/v2/install.sh'
  */
 const LAYOUTS: Record<DependencyId, { owned: string; foreign: string }> = {
   brew: { owned: '/opt/homebrew/bin/brew', foreign: '/somewhere/odd/brew' },
+  git: { owned: '/opt/homebrew/Cellar/git/2.47.0/bin/git', foreign: '/usr/bin/git' },
   aws: { owned: AWS_KEG, foreign: '/somewhere/odd/aws' },
   gh: { owned: '/opt/homebrew/Cellar/gh/2.60.0/bin/gh', foreign: '/somewhere/odd/gh' },
   doppler: { owned: '/opt/homebrew/Cellar/doppler/3.68.0/bin/doppler', foreign: '/somewhere/odd/doppler' },
@@ -117,7 +118,7 @@ describe('static risk literals', () => {
   })
 
   it('marks every package-manager recipe as neither', () => {
-    for (const id of ['gh', 'doppler', 'portless'] as DependencyId[]) {
+    for (const id of ['git', 'gh', 'doppler', 'portless'] as DependencyId[]) {
       expect(specFor(id).bootstrapInstall).toMatchObject({ needsSudo: false, fetchesNetworkScript: false })
     }
   })
@@ -284,10 +285,10 @@ describe('probe argv', () => {
 })
 
 describe('the registry is exhaustive', () => {
-  it('exposes exactly the five tools, each keyed by its own id', () => {
+  it('exposes exactly the six tools, each keyed by its own id', () => {
     // Copy before sorting: `DEPENDENCY_IDS` is the module's own array, and an in-place sort here would
     // silently reorder it for every later test in the file.
-    expect([...DEPENDENCY_IDS].sort()).toEqual(['aws', 'brew', 'doppler', 'gh', 'portless'])
+    expect([...DEPENDENCY_IDS].sort()).toEqual(['aws', 'brew', 'doppler', 'gh', 'git', 'portless'])
     for (const id of DEPENDENCY_IDS) expect(DEPENDENCY_SPECS[id].id).toBe(id)
   })
 })

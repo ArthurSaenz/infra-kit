@@ -1,5 +1,5 @@
 /**
- * What each of the five tools needs, decided once and shared by every surface.
+ * What each of the six tools needs, decided once and shared by every surface.
  *
  * `setup --skip-tools` renders these plans and stops; flagless `setup` runs them. Both reach the SAME
  * function, so the report is literally the dry run of the converge rather than a second implementation
@@ -105,7 +105,7 @@ export const planDependencies = async (
   // decide brew is absent and refuse a recipe it should have run. Probe all, plan the subset.
   const states = await probeAll(DEPENDENCY_IDS, deps)
   const context: RiskContext = { owner: null, present: presentManagers(states) }
-  // Prerequisite order, not declaration order: `gh` and `doppler` both need `brew`, and today that
+  // Prerequisite order, not declaration order: `git`, `gh` and `doppler` all need `brew`, and today that
   // happens to hold only because `brew` is declared first in the registry. Reordering two rows there
   // would otherwise break installs silently.
   const ordered = installOrder(ids)

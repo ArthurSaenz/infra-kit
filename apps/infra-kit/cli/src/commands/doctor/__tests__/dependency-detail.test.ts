@@ -243,11 +243,11 @@ describe('the setup surface an agent sees', () => {
   })
 
   /**
-   * Stated over every registry id rather than over the four detailed ones, so removing a row is a
+   * Stated over every registry id rather than over the five detailed ones, so removing a row is a
    * failure rather than a narrowing. `portless` answers through its row's `status` because it carries
    * no `detail` — the deliberate exclusion above — and a boolean is a boolean either way.
    */
-  it('answers `is it installed` for all five dependency ids, each as a boolean', async () => {
+  it('answers `is it installed` for all six dependency ids, each as a boolean', async () => {
     const checks = await rows()
     const presence = new Map<DependencyId, boolean>()
 

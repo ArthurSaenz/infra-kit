@@ -10,7 +10,6 @@ import {
   checkAgentMode,
   checkClaudeCli,
   checkClaudePlugin,
-  checkMcpServerKey,
   inspectServedPluginServer,
 } from '../doctor'
 import { DOCTOR_CHECK_NAMES, groupChecks } from '../report'
@@ -409,85 +408,8 @@ describe('plugin MCP server — flipped: a served .mcp.json is the stale state',
   })
 })
 
-/**
- * `MCP server key`: the repo's own `.mcp.json` against the retired server. A leftover key under ANY
- * name is a chore (pass + "delete this key"), no key is the healthy state, and only an unreadable file
- * fails. No transition guard any more: the plugin serves nothing, so the served copy cannot change
- * what the repo's entry means.
- */
-describe('checkMcpServerKey', () => {
-  const writeMcp = (value: unknown): void => {
-    fs.writeFileSync(path.join(repo, '.mcp.json'), JSON.stringify(value, null, 2), 'utf-8')
-  }
-
-  it('passes with the "delete this key" advisory on a leftover infra-kit key (stale)', () => {
-    writeMcp({ mcpServers: { 'infra-kit': { type: 'stdio', command: 'infra-kit', args: ['mcp'] } } })
-
-    const check = checkMcpServerKey(repo)
-
-    expect(check.status).toBe('pass')
-    expect(check.message).toContain('still registers "infra-kit" — delete this key')
-    expect(check.message).toContain('the plugin no longer serves an MCP server')
-    expect(check.message).toContain('spawns a retired subcommand that exits immediately')
-    expect(check.message).toContain('Delete the "infra-kit" entry from .mcp.json by hand')
-  })
-
-  it('passes as nothing-to-spawn when only siblings remain (absent)', () => {
-    writeMcp({ mcpServers: { 'linear-server': { type: 'http', url: 'https://mcp.linear.app/mcp' } } })
-
-    const check = checkMcpServerKey(repo)
-
-    expect(check.status).toBe('pass')
-    expect(check.message).toContain('no "infra-kit" key')
-    expect(check.message).toContain('nothing spawns the retired server')
-  })
-
-  it('passes as nothing-to-spawn when there is no .mcp.json at all', () => {
-    const check = checkMcpServerKey(repo)
-
-    expect(check.status).toBe('pass')
-    expect(check.message).toContain('no .mcp.json at the repo root')
-    expect(check.message).not.toContain('infra-kit setup')
-  })
-
-  /** The same chore under another key: named, and no longer red — there is no prefix left for it to break. */
-  it('passes with the advisory, naming the key, when our server is filed under another key', () => {
-    writeMcp({ mcpServers: { ik: { type: 'stdio', command: 'infra-kit', args: ['mcp'] } } })
-
-    const check = checkMcpServerKey(repo)
-
-    expect(check.status).toBe('pass')
-    expect(check.message).toContain('still registers "ik" — delete this key')
-    expect(check.message).toContain('Delete the "ik" entry from .mcp.json by hand')
-  })
-
-  /** The pre-plugin shape spawned the deleted bundle by path; it is the same leftover, under whatever key. */
-  it('names the key for a `node …/dist/mcp.js` entry too (wrong-key by the args path)', () => {
-    writeMcp({ mcpServers: { ik: { type: 'stdio', command: 'node', args: ['./node_modules/infra-kit/dist/mcp.js'] } } })
-
-    const check = checkMcpServerKey(repo)
-
-    expect(check.status).toBe('pass')
-    expect(check.message).toContain('still registers "ik" — delete this key')
-    expect(check.message).toContain('spawns a retired subcommand that exits immediately')
-  })
-
-  it('fails on a file it cannot read', () => {
-    fs.writeFileSync(path.join(repo, '.mcp.json'), '{ nope', 'utf-8')
-
-    const check = checkMcpServerKey(repo)
-
-    expect(check.status).toBe('fail')
-    expect(check.message).toContain('Could not read mcpServers')
-  })
-
-  /** Edit 8 at the row: a proxy whose args mention infra-kit is not a misfiled server. */
-  it('does not read an ik-mcp proxy named like us as wrong-key', () => {
-    writeMcp({ mcpServers: { grafana: { command: 'ik-mcp', args: ['--name', 'infra-kit-x', '--', 'mcp-grafana'] } } })
-
-    expect(checkMcpServerKey(repo).message).toContain('nothing spawns the retired server')
-  })
-
+/** Source guards for the plugin section as a whole, not for any one row. */
+describe('plugin section source guards', () => {
   it('spells no tool prefix at all (source guard)', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'doctor.ts'), 'utf-8')
 
@@ -496,7 +418,7 @@ describe('checkMcpServerKey', () => {
   })
 
   /**
-   * Exit 1 is scoped to `plugin installed` alone (F14): none of the MCP or agent rows may reach the
+   * Exit 1 is scoped to `plugin installed` alone (F14): none of the server or agent rows may reach the
    * exit code, whatever their status. Pinned at the source of the CLI action, which is the only
    * place the code is set.
    */
@@ -506,7 +428,7 @@ describe('checkMcpServerKey', () => {
 
     expect(action).toBeDefined()
     expect(action).toContain("check.name === 'plugin installed'")
-    expect(action).not.toMatch(/MCP server key|plugin MCP server|Agent mode|Agent allowlist/)
+    expect(action).not.toMatch(/plugin MCP server|Agent mode|Agent allowlist/)
   })
 })
 
@@ -736,17 +658,16 @@ describe('report placement', () => {
     const sections = groupChecks([
       await checkClaudeCli(),
       ...checkClaudePlugin(repo),
-      checkMcpServerKey(repo),
       checkAgentMode({ env: {}, stdinIsTTY: true, flag: false }),
       checkAgentAllowlist(repo),
     ])
 
     expect(sections).toHaveLength(1)
     expect(sections[0]?.label).toBe('Claude Code plugin')
-    expect(sections[0]?.checks).toHaveLength(9)
+    expect(sections[0]?.checks).toHaveLength(8)
   })
 
-  it('lists the nine names in the canonical inventory', () => {
+  it('lists the eight names in the canonical inventory', () => {
     for (const name of [
       'claude CLI',
       'marketplace registered',
@@ -754,7 +675,6 @@ describe('report placement', () => {
       'plugin version',
       'plugin MCP server',
       'CLI version',
-      'MCP server key',
       'Agent mode',
       'Agent allowlist',
     ])
@@ -763,7 +683,7 @@ describe('report placement', () => {
 
   /** `claude CLI` is a report, not a verdict: only `plugin installed` drives doctor's exit code. */
   it('places claude CLI first, ahead of the rows its absence explains', () => {
-    const plugin = DOCTOR_CHECK_NAMES.slice(-9)
+    const plugin = DOCTOR_CHECK_NAMES.slice(-8)
 
     expect(plugin[0]).toBe('claude CLI')
   })

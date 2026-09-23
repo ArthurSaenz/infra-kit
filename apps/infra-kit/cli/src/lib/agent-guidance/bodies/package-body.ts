@@ -22,6 +22,8 @@ export interface BuildPackageBodyArgs {
    * later without a signature change.
    */
   hasDesign: boolean
+  /** Whether `docs/e2e-playwright.md` exists at the repo root. Read by the e2e body only. */
+  hasE2eDoc?: boolean
 }
 
 /** The version line, e.g. `<!-- infra-kit:package:version 0.4.0 frontend -->`. */
@@ -35,6 +37,10 @@ const buildVersionLine = (version: string, type: PackageType): string => {
  * placeholder. An empty string removes the whole line (see `renderTemplate`).
  */
 const README_BULLET = '`README.md` — what this package is and how to run it.'
+
+export const E2E_DOC_PATH = 'docs/e2e-playwright.md'
+
+const E2E_DOC_BULLET = `\`${E2E_DOC_PATH}\` at the repo root — env setup, run modes, \`E2E_SLOW_MO\`, traces after a failure.`
 
 /**
  * Render a package's guidance body — the text that goes *between* the package
@@ -50,13 +56,15 @@ const README_BULLET = '`README.md` — what this package is and how to run it.'
  * // => '<!-- infra-kit:package:version 0.4.0 frontend -->\n\n# @hulyo/client-ui\n…'
  */
 export const buildPackageBody = (args: BuildPackageBodyArgs): string => {
-  const { version, type, packageName, relDir, hasReadme } = args
+  const { version, type, packageName, relDir, hasReadme, hasE2eDoc } = args
 
+  // `renderTemplate` refuses a variable the template never uses, so the e2e-only one is keyed on type.
   const body = renderTemplate(RESOURCES[`package/${type}`], {
     packageName,
     relDir,
     type,
     readmeBullet: hasReadme ? README_BULLET : '',
+    ...(type === 'e2e' ? { e2eDocBullet: hasE2eDoc ? E2E_DOC_BULLET : '' } : {}),
   })
 
   return [buildVersionLine(version, type), '', body].join('\n')

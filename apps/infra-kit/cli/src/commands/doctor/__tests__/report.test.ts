@@ -89,13 +89,14 @@ describe('section coverage', () => {
   it('covers exactly 35 checks', () => {
     // 36, up from 34: the two agent rows (`Agent mode`, `Agent allowlist`) joined the plugin section.
     // 37: `portless node` joined the proxy section.
-    // 35: `warm cache` and `env token valid` left with the retired env auto-load.
+    // 36: `warm cache` and `env token valid` left with the retired env auto-load; `git installed` joined.
+    // 35: `MCP server key` left — the `.mcp.json` leftover is reported by `setup` and `audit`, not doctor.
     expect(DOCTOR_CHECK_NAMES).toHaveLength(35)
     expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(35)
   })
 
-  it('keeps the Claude Code plugin rows adjacent, in order, followed by the MCP key and agent rows (O3)', () => {
-    const plugin = DOCTOR_CHECK_NAMES.slice(-9)
+  it('keeps the Claude Code plugin rows adjacent, in order, followed by the agent rows (O3)', () => {
+    const plugin = DOCTOR_CHECK_NAMES.slice(-8)
 
     expect(plugin).toEqual([
       'claude CLI',
@@ -104,7 +105,6 @@ describe('section coverage', () => {
       'plugin version',
       'plugin MCP server',
       'CLI version',
-      'MCP server key',
       'Agent mode',
       'Agent allowlist',
     ])

@@ -633,7 +633,7 @@ export const buildProgram = (): Command => {
     })
 
   // The one command that sets a machine up: the local `initCore` writes, then install-or-update for
-  // brew, aws, gh, doppler and portless. The recipes that need sudo or pipe a network-fetched script are
+  // brew, git, aws, gh, doppler and portless. The recipes that need sudo or pipe a network-fetched script are
   // never run from here — they are printed, for the human to run in their own shell.
   //
   // `--skip-tools` is the additive form (the local writes, and nothing installed). It
@@ -645,7 +645,7 @@ export const buildProgram = (): Command => {
     .description(
       'Set this machine up: shell integration, agent files, the Claude Code skills plugin, then the external tools',
     )
-    .option('--tools <ids...>', 'Limit to these tools (brew, aws, gh, doppler, portless)')
+    .option('--tools <ids...>', 'Limit to these tools (brew, git, aws, gh, doppler, portless)')
     .option('--update [ids...]', 'Update what is already installed; never install a missing tool')
     .option('--skip-tools', 'Do the local setup only, then REPORT what each tool needs — installs nothing')
     .action(async (options: { tools?: string[]; update?: boolean | string[]; skipTools?: boolean }) => {

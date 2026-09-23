@@ -5,6 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PACKAGE_MARKER_END, PACKAGE_MARKER_START, ROOT_MARKER_START, resetAdoptionCache } from 'src/lib/agent-guidance'
+import { E2E_SCRIPTS } from 'src/lib/package-config'
 
 import { audit } from '../audit'
 import { captureLog } from './helpers/capture-log'
@@ -42,6 +43,14 @@ const EXPECTED_TYPES: Readonly<Record<(typeof FIXTURE_PACKAGES)[number], string>
   'packages/lib-a': 'lib',
 }
 
+const E2E_PLAYWRIGHT_CONFIG = `
+const SLOW_MO = Number(process.env.E2E_SLOW_MO ?? 0)
+export default defineConfig({
+  timeout: 30_000 + SLOW_MO * 100,
+  use: { launchOptions: { slowMo: SLOW_MO }, trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure' },
+})
+`
+
 /* eslint-disable sonarjs/no-os-command-from-path -- hermetic test fixture drives the real `git` CLI */
 /** Make `dir` a git repo, so the fixture matches the versioned workspace a real consumer runs in. */
 const gitInit = (dir: string): void => {
@@ -77,10 +86,17 @@ const makeWorkspace = (): string => {
 
   for (const relDir of FIXTURE_PACKAGES) {
     const dir = path.join(root, relDir)
+    const isE2e = EXPECTED_TYPES[relDir] === 'e2e'
 
     fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: `@ws/${path.basename(relDir)}` }))
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: `@ws/${path.basename(relDir)}`, ...(isE2e ? { scripts: E2E_SCRIPTS } : {}) }),
+    )
     fs.writeFileSync(path.join(dir, 'infra-kit.config.ts'), 'export default { requiredScripts: [], requiredFiles: [] }')
+
+    // The e2e type carries convention checks no config can switch off, so the fixture has to satisfy them.
+    if (isE2e) fs.writeFileSync(path.join(dir, 'playwright.config.ts'), E2E_PLAYWRIGHT_CONFIG)
   }
 
   gitInit(root)

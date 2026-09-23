@@ -109,6 +109,18 @@ const resolveAdoptionStart = async (options: AuditOptions): Promise<string> => {
  * // red:    [FAIL] travelist-monorepo turbo:test: not defined in turbo.json
  * //         ❌ audit failed — 1/8 checks, 2 targets
  */
+/**
+ * `audit` on a standalone package must stay soft outside a git repo, so a missing root only costs
+ * the path-based e2e inference — a declared `type` or a `@playwright/test` dependency still counts.
+ */
+const resolveRepoRoot = async (): Promise<string | undefined> => {
+  try {
+    return await getProjectRoot()
+  } catch {
+    return undefined
+  }
+}
+
 const logResults = (results: PackageValidationResult[]): boolean => {
   let total = 0
   let failed = 0
@@ -201,10 +213,11 @@ export const audit = async (options: AuditOptions = {}) => {
   const targets = await resolveTargets(options)
   const adoption = await resolveAdoption(workspaceRoot)
 
+  const repoRoot = await resolveRepoRoot()
   const results: PackageValidationResult[] = []
 
   for (const target of targets) {
-    results.push(await validatePackage(target.dir, target.baseline, { adoption, isRoot: target.isRoot }))
+    results.push(await validatePackage(target.dir, target.baseline, { adoption, isRoot: target.isRoot, repoRoot }))
   }
 
   // Root audit also validates project-level devServersPresets proxy locality (a `local`

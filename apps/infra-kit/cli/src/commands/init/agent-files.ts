@@ -61,7 +61,7 @@ const SKIPPED_GUIDANCE_ONLY =
  * a blank resolve, or `$HOME`.
  *
  * SILENT, and that is load-bearing: this answers a question, it does not narrate a decision.
- * `doctor` consults it read-only to decide whether the `MCP server key` row is answerable, and
+ * `doctor` consults it read-only to decide whether the `Agent allowlist` row is answerable, and
  * a predicate that logs made a read-only command print `initCore`'s "Skipped …" line — first, above
  * its own report header — in every non-git directory and in `$HOME`. Writers announce through
  * {@link resolveGitRootForWrites}; a new reader gets silence by default, which is the safe

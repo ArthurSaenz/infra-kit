@@ -52,7 +52,10 @@ export const DEFAULT_ENTRIES: Partial<Record<PackageType, LayerEntry>> = {
     skill: '/infra-kit:be-architect',
   },
   e2e: {
-    layers: ['tests', 'pages', 'fixtures', 'mocks', 'data', 'config', 'lib', 'components'],
+    layers: ['tests', 'pages', 'config', 'lib', 'components', 'mocks', 'fixtures'],
+    segments: {
+      'tests/*': ['fixtures', 'data', 'mocks'],
+    },
     skill: '/infra-kit:e2e-architect',
   },
 }

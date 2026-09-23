@@ -65,7 +65,7 @@ afterEach(() => {
  * The shared predicate, where every assertion is paired with a SILENCE assertion.
  *
  * Silence is the contract here, not an implementation detail: `doctor` imports this same function
- * read-only to decide whether the `MCP server key` row is answerable, and while the predicate
+ * read-only to decide whether the `Agent allowlist` row is answerable, and while the predicate
  * announced, `doctor` printed `initCore`'s "Skipped … the plugin install and .mcp.json" as stderr line 1
  * — above its own report header — in every non-git directory and in `$HOME`. Without these mirrors,
  * nothing stops the log moving back in here.

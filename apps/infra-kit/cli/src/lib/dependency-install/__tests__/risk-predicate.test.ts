@@ -28,6 +28,7 @@ const EVERYTHING: DependencyManager[] = ['homebrew', 'npm', 'script']
  */
 const OWNED_LAYOUT: Record<DependencyId, string> = {
   brew: '/opt/homebrew/bin/brew',
+  git: '/opt/homebrew/Cellar/git/2.47.0/bin/git',
   aws: '/opt/homebrew/Cellar/awscli/2.17.0/bin/aws',
   gh: '/opt/homebrew/Cellar/gh/2.60.0/bin/gh',
   doppler: '/opt/homebrew/Cellar/doppler/3.68.0/bin/doppler',
@@ -36,6 +37,7 @@ const OWNED_LAYOUT: Record<DependencyId, string> = {
 
 const UNOWNED_LAYOUT: Record<DependencyId, string> = {
   brew: '/somewhere/odd/brew',
+  git: '/usr/bin/git',
   aws: '/somewhere/odd/aws',
   gh: '/somewhere/odd/gh',
   doppler: '/somewhere/odd/doppler',
@@ -135,7 +137,7 @@ describe('every unknown classification is refused', () => {
 // aws's user-scope update reaches this sweep only because `AWS_USER_INSTALL` is the same object as its
 // `bootstrapInstall`; `AWS_SCRIPT_LAYOUT` here is the `/usr/local` one. Should those ever diverge, add
 // the XDG layout to the list below rather than relying on the identity.
-describe('the full sweep: five tools x every layout x every owner classification', () => {
+describe('the full sweep: six tools x every layout x every owner classification', () => {
   it('never reports a sudo-requiring or network-fetched recipe as executable, under any classification', () => {
     for (const id of DEPENDENCY_IDS) {
       const spec = specFor(id)

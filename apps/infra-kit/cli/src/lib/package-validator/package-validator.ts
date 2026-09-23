@@ -1,11 +1,12 @@
 import path from 'node:path'
 
 import type { AdoptionState } from 'src/lib/agent-guidance/adoption'
+import { detectPackageType } from 'src/lib/agent-guidance/package-type'
 import { DEFAULT_RULES } from 'src/lib/package-config'
 import type { ResolvedPackageRules } from 'src/lib/package-config'
 
-import { checkAgentGuidance, checkConfig, checkFiles, checkScripts, checkTurbo } from './checks'
-import { readPackageJson } from './loader'
+import { checkAgentGuidance, checkConfig, checkE2e, checkFiles, checkScripts, checkTurbo } from './checks'
+import { readDeclaredPackageType, readPackageJson } from './loader'
 import type { PackageCheck, PackageValidationResult } from './types'
 
 // Re-exported on the historical import path so consumers and tests that reach
@@ -27,10 +28,28 @@ export interface ValidatePackageOptions {
    * consumer's `infra-kit-check-root`. The check is skipped entirely instead.
    */
   isRoot?: boolean
+  /**
+   * Repo root, so the package type can be inferred from the path (`apps/<app>/tests` → e2e) the
+   * same way the guidance writer infers it. Absent, only a declared `type` or a dependency signal counts.
+   */
+  repoRoot?: string
 }
 
 /** What an absent `adoption` option means: never enforce on a workspace nobody probed. */
 const UNADOPTED: AdoptionState = { adopted: false, workspaceRoot: null }
+
+const resolvePackageType = async (
+  packageDir: string,
+  pkgJson: Awaited<ReturnType<typeof readPackageJson>>,
+  repoRoot: string | undefined,
+) => {
+  return detectPackageType({
+    packageDir,
+    repoRoot: repoRoot ?? packageDir,
+    pkgJson,
+    declaredType: await readDeclaredPackageType(packageDir),
+  })
+}
 
 /**
  * Validate a single directory against its `infra-kit.config.ts` rules: the config
@@ -70,6 +89,12 @@ export const validatePackage = async (
     checks.push(...checkScripts(pkgJson.scripts ?? {}, rules.requiredScripts))
     checks.push(...(await checkFiles(packageDir, rules.requiredFiles)))
     checks.push(...(await checkTurbo(packageDir, rules.turboTasks)))
+  }
+
+  // Type-level policy, deliberately outside `rules`: a package cannot opt out of the shared e2e
+  // convention by emptying `requiredScripts`, which every consumer did while the checks were "temporarily" off.
+  if (!options.isRoot && (await resolvePackageType(packageDir, pkgJson, options.repoRoot)) === 'e2e') {
+    checks.push(...(await checkE2e(packageDir, pkgJson.scripts ?? {})))
   }
 
   const passed = checks.every((check) => {

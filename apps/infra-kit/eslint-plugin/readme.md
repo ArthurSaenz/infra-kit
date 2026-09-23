@@ -581,13 +581,13 @@ replaces the whole entry (`layers`, `segments` and `skill`) — there is no merg
 entry is silent, which is why `mobile` and `lib` report nothing by default: their layouts are not
 settled.
 
-| Type       | Default `layers`                                                             | Default `segments`                                                                | Default `skill`            |
-| ---------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------- |
-| `frontend` | `app`, `features`, `lib`, `components`, `pages`, `routes`                    | `features/*` → `containers`, `components`, `services`, `__stories__`, `__tests__` | `/infra-kit:fe-architect`  |
-| `backend`  | `controllers`, `services`, `lib`, `config`                                   | `services/*` → `__tests__`                                                        | `/infra-kit:be-architect`  |
-| `e2e`      | `tests`, `pages`, `fixtures`, `mocks`, `data`, `config`, `lib`, `components` | —                                                                                 | `/infra-kit:e2e-architect` |
-| `mobile`   | — (silent)                                                                   | —                                                                                 | —                          |
-| `lib`      | — (silent)                                                                   | —                                                                                 | —                          |
+| Type       | Default `layers`                                                     | Default `segments`                                                                | Default `skill`            |
+| ---------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------- |
+| `frontend` | `app`, `features`, `lib`, `components`, `pages`, `routes`            | `features/*` → `containers`, `components`, `services`, `__stories__`, `__tests__` | `/infra-kit:fe-architect`  |
+| `backend`  | `controllers`, `services`, `lib`, `config`                           | `services/*` → `__tests__`                                                        | `/infra-kit:be-architect`  |
+| `e2e`      | `tests`, `pages`, `config`, `lib`, `components`, `mocks`, `fixtures` | `tests/*` → `fixtures`, `data`, `mocks`                                           | `/infra-kit:e2e-architect` |
+| `mobile`   | — (silent)                                                           | —                                                                                 | —                          |
+| `lib`      | — (silent)                                                           | —                                                                                 | —                          |
 
 | Option            | Type                       | Description                                                                                                                                     |
 | ----------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |

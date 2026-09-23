@@ -25,7 +25,7 @@ section 1 reproduces none of the refusals in section 3 and skips the approval in
 the only place a human approves an install.
 
 **If all you want is to know what this machine looks like, run `doctor` instead** — the
-`/infra-kit:doctor` skill. It reports the same five tools plus the rest of the setup, mutates
+`/infra-kit:doctor` skill. It reports the same six tools plus the rest of the setup, mutates
 nothing, and raises no approval. `infra-kit setup` is the write path; `doctor` is the read path, and
 they are separate commands precisely so that asking a question does not cost an approval.
 
@@ -59,8 +59,8 @@ they must not sit behind a network converge that can be slow or fail.
 
 ### Step 2 — the dependency converge
 
-Five tools, serially, in registry order: **brew, aws, gh, doppler, portless**. Serial and ordered
-because the recipes have prerequisites — `gh` and `doppler` both need `brew`, and doppler's own two
+Six tools, serially, in registry order: **brew, git, aws, gh, doppler, portless**. Serial and ordered
+because the recipes have prerequisites — `git`, `gh` and `doppler` all need `brew`, and doppler's own two
 steps (gnupg, then the tap) must not interleave with another tool's.
 
 Per tool: install it when it is absent, update it when it is present, skip it when its manager is not
@@ -88,7 +88,7 @@ installed"** — read `tools[].action`, and tell the human about every `refused`
 
 ## 2. The flags, and what each one narrows
 
-The default — no flag — converges all five tools.
+The default — no flag — converges all six tools.
 
 - `--tools <ids...>` → converge **only those ids**. Same behaviour per tool, smaller set. The ids are
   `brew`, `aws`, `gh`, `doppler` and `portless`.

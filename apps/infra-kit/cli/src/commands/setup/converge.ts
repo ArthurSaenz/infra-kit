@@ -1,5 +1,5 @@
 /**
- * The dependency half of `setup`: bring the five external tools to a working state, or — under
+ * The dependency half of `setup`: bring the six external tools to a working state, or — under
  * `--skip-tools` — report what that would take without running any of it.
  *
  * Both entry points reach the SAME {@link planDependencies}, so the probe is the converge's dry run by
@@ -109,7 +109,7 @@ export const convergeDependencies = async (options: ConvergeOptions): Promise<To
   const { plans } = await planDependencies(options.ids, options.probeDeps)
   const tools: ToolResult[] = []
 
-  // Serial, in registry order, because the recipes have prerequisites: gh and doppler both need brew,
+  // Serial, in registry order, because the recipes have prerequisites: git, gh and doppler all need brew,
   // and doppler's own two steps must not interleave with another tool's.
   for (const plan of plans) {
     const stop = preflight(plan, options.mode)

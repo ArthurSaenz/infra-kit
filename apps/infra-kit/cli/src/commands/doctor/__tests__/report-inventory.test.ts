@@ -112,7 +112,8 @@ const ensureGitOnlyFixture = (): string => {
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-inventory-gitonly-'))
 
-  fs.writeFileSync(path.join(dir, '.mcp.json'), 'not json at all')
+  fs.mkdirSync(path.join(dir, '.claude'))
+  fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), 'not json at all')
   gitOnlyDir = dir
 
   return dir
@@ -128,7 +129,7 @@ let gitTopLevel: string | null = null
 /**
  * The git seam, mocked DELIBERATELY: it is load-bearing for the row set, not incidental to it.
  *
- * `MCP server key` renders iff `resolveGitRoot()` — `git rev-parse --show-toplevel` — answers a
+ * `Agent allowlist` renders iff `resolveGitRoot()` — `git rev-parse --show-toplevel` — answers a
  * usable root, so an unmocked seam would make this suite's answer depend on where vitest was launched
  * and on the working tree's state. The `zx` mock below is NOT a substitute: blank stdout is a REFUSAL
  * by contract, so with only that mock the row is omitted and this reconciliation fails. Making the
@@ -302,39 +303,35 @@ describe('doctor --json payload', () => {
  * got wrong: it hid the row where `initCore` writes the file, and it would have rendered the row against
  * `process.cwd()` where `git rev-parse` answers nothing.
  */
-describe('the MCP server key and Agent allowlist rows are gated on the git root', () => {
-  it('render in a git repo with no infra-kit.json', async () => {
+describe('the Agent allowlist row is gated on the git root', () => {
+  it('renders in a git repo with no infra-kit.json', async () => {
     gitTopLevel = ensureGitOnlyFixture()
 
-    const produced = await producedNames()
-
-    expect(produced).toContain('MCP server key')
-    expect(produced).toContain('Agent allowlist')
+    expect(await producedNames()).toContain('Agent allowlist')
   })
 
   /**
    * The guard against a green that came from the live tree rather than from the mock. The verdict
-   * asserted here is only producible by the fixture's own deliberately-broken `.mcp.json`, so this
-   * fails if the row is ever answered against `process.cwd()` — the failure mode a real git seam, or
-   * a blank-stdout one without the refusal, would silently pass.
+   * asserted here is only producible by the fixture's own deliberately-broken `.claude/settings.json`,
+   * so this fails if the row is ever answered against `process.cwd()` — the failure mode a real git
+   * seam, or a blank-stdout one without the refusal, would silently pass.
    */
   it('answers against the mocked root, not the directory vitest was launched from', async () => {
     gitTopLevel = ensureGitOnlyFixture()
 
     const { checks } = (await runDoctor()).structuredContent
     const row = checks.find((check) => {
-      return check.name === 'MCP server key'
+      return check.name === 'Agent allowlist'
     })
 
-    expect(row?.message).toContain('Could not read mcpServers')
+    expect(row?.message).toContain('Could not read permissions.allow')
   })
 
-  it('are omitted, not answered against the cwd, when the git seam is blank', async () => {
+  it('is omitted, not answered against the cwd, when the git seam is blank', async () => {
     gitTopLevel = ''
 
     const produced = await producedNames()
 
-    expect(produced).not.toContain('MCP server key')
     expect(produced).not.toContain('Agent allowlist')
     // `doctor` is READ-ONLY. It borrows the writer's predicate to decide the row set; it skips
     // nothing and intends to write nothing, so the writer's four-step skip line must not reach
@@ -343,7 +340,7 @@ describe('the MCP server key and Agent allowlist rows are gated on the git root'
     expect([...produced].sort()).toEqual(
       [...DOCTOR_CHECK_NAMES]
         .filter((name) => {
-          return name !== 'MCP server key' && name !== 'Agent allowlist'
+          return name !== 'Agent allowlist'
         })
         .sort(),
     )

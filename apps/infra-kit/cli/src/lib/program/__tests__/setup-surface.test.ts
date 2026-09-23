@@ -70,6 +70,7 @@ const aState = (over: Partial<DependencyState> & { id: DependencyState['id'] }):
 const oneToolMissing = (): DependencyState[] => {
   return [
     aState({ id: 'brew' }),
+    aState({ id: 'git', manager: 'unknown' }),
     aState({ id: 'gh', present: false, onPath: false, version: null, manager: 'unknown' }),
     aState({ id: 'aws', manager: 'unknown' }),
     aState({ id: 'doppler', manager: 'unknown' }),

@@ -1,5 +1,5 @@
 <!-- infra-kit:package:begin -->
-<!-- infra-kit:package:version 0.11.0 lib -->
+<!-- infra-kit:package:version 0.11.10 lib -->
 
 # @pkg/linter-spec
 

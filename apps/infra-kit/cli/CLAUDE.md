@@ -5,7 +5,7 @@
 - The tracked project layer is not rewritten under `CI` (the strict error carries a setup hint instead). `INFRA_KIT_NO_AUTO_MIGRATE=1` turns the automatic rewrite off everywhere; `infra-kit setup` still runs the same registry explicitly.
 
 <!-- infra-kit:package:begin -->
-<!-- infra-kit:package:version 0.11.0 lib -->
+<!-- infra-kit:package:version 0.11.10 lib -->
 
 # infra-kit
 

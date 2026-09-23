@@ -65,10 +65,11 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
   [
     SECTION_TOOLS,
     [
-      // First in the section because it is first in prerequisite order: `gh` and `doppler` are both
+      // First in the section because it is first in prerequisite order: `git`, `gh` and `doppler` are all
       // installed THROUGH brew here, so a reader scanning a failing report reads the cause above the
       // effects.
       'brew installed',
+      'git installed',
       'gh installed',
       'gh authenticated',
       'doppler installed',
@@ -103,7 +104,6 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
       'plugin version',
       'plugin MCP server',
       'CLI version',
-      'MCP server key',
       // The two agent rows close the section: how this shell would be classified, and whether the
       // repo's allowlist would let an agent bypass the `--yes` re-run on a mutating command.
       'Agent mode',

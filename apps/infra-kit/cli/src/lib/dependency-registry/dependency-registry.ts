@@ -1,5 +1,5 @@
 /**
- * What the five external tools are, how to recognise an existing install, and the exact argv that
+ * What the six external tools are, how to recognise an existing install, and the exact argv that
  * installs or updates each one. Pure data and pure predicates: no `spawn`, no `process.env` read,
  * matching `lib/install-manager`'s discipline, so the whole matrix is table-testable. The one filesystem
  * touch is `isWithin`'s `realpath`, which resolves a constant this module declares and never a value a
@@ -12,7 +12,7 @@
 import { hasSegment, isBrewKegOf, isWithin, npmPrefixOfPackage, safeRealpath } from 'src/lib/install-manager'
 import type { InstallManager } from 'src/lib/install-manager'
 
-export type DependencyId = 'brew' | 'aws' | 'gh' | 'doppler' | 'portless'
+export type DependencyId = 'brew' | 'git' | 'aws' | 'gh' | 'doppler' | 'portless'
 
 /**
  * `install-manager`'s classification plus `script`, which it has no reason to know about: the
@@ -245,6 +245,24 @@ const AWS: DependencySpec = {
   }),
 }
 
+const GIT_NAMES = { brewFormula: 'git', brewInstallSpec: 'git', kegName: 'git' } as const
+
+// macOS ships Apple's git with the Command Line Tools (`/usr/bin/git`, an xcrun shim), which the brew
+// bootstrap pulls in anyway. That copy classifies as `unknown`, so a present non-brew git is left alone
+// rather than shadowed by a second install; only an ABSENT git gets the formula.
+const GIT: DependencySpec = {
+  id: 'git',
+  binName: 'git',
+  ...GIT_NAMES,
+  probeArgv: ['git', '--version'],
+  versionFrom: firstVersion,
+  platforms: UNIX,
+  prerequisites: ['brew'],
+  bootstrapInstall: managed(['brew', 'install', GIT_NAMES.brewInstallSpec]),
+  identify: brewKegIdentify(GIT_NAMES.kegName),
+  updateFor: brewKegUpdate(GIT_NAMES),
+}
+
 const GH_NAMES = { brewFormula: 'gh', brewInstallSpec: 'gh', kegName: 'gh' } as const
 
 const GH: DependencySpec = {
@@ -313,6 +331,7 @@ const PORTLESS: DependencySpec = {
 /** Every spec, keyed by id. The single source of the probe argv `doctor` also reads. */
 export const DEPENDENCY_SPECS: Record<DependencyId, DependencySpec> = {
   brew: BREW,
+  git: GIT,
   aws: AWS,
   gh: GH,
   doppler: DOPPLER,
@@ -332,7 +351,7 @@ export const supportsPlatform = (spec: DependencySpec, platform: NodeJS.Platform
 
 /**
  * The ids in an order where every prerequisite precedes its dependents (depth-first, stable).
- * The graph is five nodes and acyclic by construction; a cycle would recurse, so `seen` is what makes
+ * The graph is six nodes and acyclic by construction; a cycle would recurse, so `seen` is what makes
  * a hand-edit that introduces one fail loudly here rather than hang.
  */
 export const installOrder = (ids: readonly DependencyId[]): DependencyId[] => {

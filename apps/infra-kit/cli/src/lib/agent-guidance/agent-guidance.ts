@@ -6,7 +6,7 @@ import { removeManagedBlock, upsertManagedBlock } from 'src/lib/managed-block'
 import { readPackageJson } from 'src/lib/package-validator/loader'
 
 import { buildDesignSkeleton } from './bodies/design-skeleton'
-import { buildPackageBody } from './bodies/package-body'
+import { E2E_DOC_PATH, buildPackageBody } from './bodies/package-body'
 import { buildRootBody } from './bodies/root-body'
 import { PACKAGE_MARKER_END, PACKAGE_MARKER_START, ROOT_MARKER_END, ROOT_MARKER_START } from './markers'
 import type { PackageType } from './package-type'
@@ -246,6 +246,7 @@ export const syncPackageGuidance = async (
     relDir: path.relative(repoRoot, packageDir).split(path.sep).join('/'),
     hasReadme: hasExactFile(packageDir, README_FILE),
     hasDesign: hasExactFile(packageDir, DESIGN_FILE),
+    hasE2eDoc: fs.existsSync(path.join(repoRoot, E2E_DOC_PATH)),
   })
 
   const written: GuidanceWrite[] = []

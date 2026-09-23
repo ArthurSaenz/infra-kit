@@ -19,8 +19,8 @@ import type { DependencyDetail } from '../doctor'
 
 const DOCTOR_SOURCE = fs.readFileSync(path.join(__dirname, '..', 'doctor.ts'), 'utf-8')
 
-/** The four doctor rows whose argv the registry now owns. `brew` joined them with its own new row. */
-const UNIFIED: DependencyId[] = ['brew', 'gh', 'doppler', 'aws']
+/** The five doctor rows whose argv the registry now owns. `brew` and `git` joined them with their own rows. */
+const UNIFIED: DependencyId[] = ['brew', 'git', 'gh', 'doppler', 'aws']
 
 /**
  * `K extends keyof T` evaluated at COMPILE time. A needle check catches a name; this catches the

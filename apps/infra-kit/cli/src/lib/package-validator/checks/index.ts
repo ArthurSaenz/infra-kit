@@ -1,5 +1,6 @@
 export { checkAgentGuidance } from './agent-guidance-check'
 export { checkConfig } from './config-check'
+export { checkE2e, checkE2eConfig, checkE2eScripts } from './e2e-check'
 export { checkFiles } from './files-check'
 export { checkScripts } from './scripts-check'
 export { checkTurbo } from './turbo-check'

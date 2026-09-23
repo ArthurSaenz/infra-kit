@@ -57,7 +57,7 @@ export const PLACEHOLDERS: Readonly<Record<ResourceKey, readonly string[]>> = {
   'package/frontend': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
   'package/backend': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
   'package/lib': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
-  'package/e2e': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
+  'package/e2e': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}', '{{e2eDocBullet}}'],
   'package/mobile': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
   'design/skeleton': ['{{packageName}}'],
 }

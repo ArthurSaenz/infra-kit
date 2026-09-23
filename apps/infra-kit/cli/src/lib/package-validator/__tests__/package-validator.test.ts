@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { DEFAULT_RULES, ROOT_DEFAULT_RULES } from 'src/lib/package-config'
+import { DEFAULT_RULES, E2E_SCRIPTS, ROOT_DEFAULT_RULES } from 'src/lib/package-config'
 
 import { discoverPackages, loadPackageConfig, validatePackage } from '../package-validator'
 
@@ -256,6 +256,105 @@ describe('validatePackage — agent-guidance wiring', () => {
         message: 'present (block from infra-kit 0.4.0, type lib)',
       }),
     )
+  })
+})
+
+describe('validatePackage — e2e convention', () => {
+  const E2E_CONFIG = `
+const SLOW_MO = Number(process.env.E2E_SLOW_MO ?? 0)
+export default defineConfig({
+  timeout: 30_000 + SLOW_MO * 100,
+  use: { launchOptions: { slowMo: SLOW_MO }, trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure' },
+})
+`
+
+  const e2eNames = (checks: { name: string }[]): string[] => {
+    return checks
+      .map((check) => {
+        return check.name
+      })
+      .filter((name) => {
+        return name.startsWith('e2e-')
+      })
+  }
+
+  it('adds the e2e checks to a package under apps/<app>/tests, even with requiredScripts emptied', async () => {
+    const root = makeTmpDir()
+    const dir = path.join(root, 'apps/client/tests')
+
+    fs.mkdirSync(dir, { recursive: true })
+    writePackage(dir, {
+      packageJson: { name: 'e2e-client', type: 'module', scripts: { ...E2E_SCRIPTS } },
+      config: 'export default { requiredScripts: [], requiredFiles: [] }',
+      files: { 'playwright.config.ts': E2E_CONFIG },
+    })
+
+    const result = await validatePackage(dir, undefined, { repoRoot: root })
+
+    expect(result.passed).toBe(true)
+    expect(e2eNames(result.checks)).toHaveLength(Object.keys(E2E_SCRIPTS).length + 4)
+  })
+
+  it('fails the package when a shared script drifts or the config lacks slow motion', async () => {
+    const root = makeTmpDir()
+    const dir = path.join(root, 'apps/client/tests')
+
+    fs.mkdirSync(dir, { recursive: true })
+    writePackage(dir, {
+      packageJson: {
+        name: 'e2e-client',
+        type: 'module',
+        scripts: { ...E2E_SCRIPTS, 'e2e-test-ui-demo': 'pnpm exec playwright test --ui --headed' },
+      },
+      config: 'export default { requiredScripts: [], requiredFiles: [] }',
+      files: { 'playwright.config.ts': "export default defineConfig({ use: { trace: 'on-first-retry' } })" },
+    })
+
+    const result = await validatePackage(dir, undefined, { repoRoot: root })
+    const failed = result.checks.filter((check) => {
+      return check.status === 'fail'
+    })
+
+    expect(result.passed).toBe(false)
+    expect(
+      failed.map((check) => {
+        return check.name
+      }),
+    ).toEqual([
+      'e2e-script:e2e-test-ui-demo',
+      'e2e-config:slow-mo',
+      'e2e-config:launch-options',
+      'e2e-config:timeout-headroom',
+      'e2e-config:trace',
+    ])
+  })
+
+  it('reaches an e2e package through its declared type when the path says nothing', async () => {
+    const dir = makeTmpDir()
+
+    writePackage(dir, {
+      packageJson: { name: '@x/suite', type: 'module', scripts: { ...E2E_SCRIPTS } },
+      config: "export default { type: 'e2e', requiredScripts: [], requiredFiles: [] }",
+      files: { 'playwright.config.ts': E2E_CONFIG },
+    })
+
+    const result = await validatePackage(dir)
+
+    expect(e2eNames(result.checks)).not.toHaveLength(0)
+    expect(result.passed).toBe(true)
+  })
+
+  it('leaves a lib package alone', async () => {
+    const dir = makeTmpDir()
+
+    writePackage(dir, {
+      packageJson: { name: '@x/lib', type: 'module' },
+      config: 'export default { requiredScripts: [], requiredFiles: [] }',
+    })
+
+    const result = await validatePackage(dir)
+
+    expect(e2eNames(result.checks)).toEqual([])
   })
 })
 

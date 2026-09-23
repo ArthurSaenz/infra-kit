@@ -80,12 +80,11 @@ import {
   PLUGIN_INSTALL_COMMAND,
   PLUGIN_KEY,
   PLUGIN_UPDATE_COMMAND,
-  inspectLegacyMcpRegistration,
   isMarketplaceRegistered,
   readInstalledPluginVersion,
   resolvePluginInstall,
 } from 'src/lib/plugin-pointer'
-import type { McpRegistration, PluginInstallState } from 'src/lib/plugin-pointer'
+import type { PluginInstallState } from 'src/lib/plugin-pointer'
 import { readMarketplacePluginVersion } from 'src/lib/plugin-pointer/install-state'
 import { MCP_FILE_NAME, SERVERS_KEY } from 'src/lib/plugin-pointer/mcp-registration'
 import { listProjectEnvNames } from 'src/lib/project-envs'
@@ -119,7 +118,7 @@ export interface DependencyDetail {
  * One diagnosis. `name` is a stable public identifier — it is returned under `--json`, keyed by the
  * report's section map (`report.ts`), and pasted into bug reports — so renaming one is a breaking change.
  *
- * `detail` is OPTIONAL and carried by the four dependency rows alone, which is what keeps the ~23 other
+ * `detail` is OPTIONAL and carried by the five dependency rows alone, which is what keeps the ~23 other
  * check functions untouched. `portless installed` deliberately has none: it resolves out of
  * `node_modules` rather than off `PATH`, so a probe payload would describe a different question than
  * the row asks (`probe-argv-single-source.test.ts`).
@@ -141,7 +140,7 @@ export interface CheckResult {
  * exclusion is argued in `probe-argv-single-source.test.ts`. Declared here rather than derived from
  * `DEPENDENCY_IDS` minus a filter: the exclusion is a decision, and a decision should be readable.
  */
-const DETAILED_IDS: readonly DependencyId[] = ['brew', 'gh', 'doppler', 'aws']
+const DETAILED_IDS: readonly DependencyId[] = ['brew', 'git', 'gh', 'doppler', 'aws']
 
 /**
  * Probe the detailed ids once, keyed by id. Runs alongside the `--version` rows rather than replacing
@@ -1166,54 +1165,6 @@ export const checkClaudePlugin = (root: string | null, origin?: DoctorOrigin): C
     claudePluginServerCheck(inspectServedPluginServer(state)),
     { name: 'CLI version', status: 'pass', message: `infra-kit CLI ${packageJson.version}` },
   ]
-}
-
-/** The chore text for a leftover entry under `key`: what it spawns today, and the hand deletion that retires it. */
-const deleteKeyAdvisory = (key: string): string => {
-  return `${MCP_FILE_NAME} still registers "${key}" — delete this key: the plugin no longer serves an MCP server and the entry spawns a retired subcommand that exits immediately (Claude Code lists it as failed). Delete the "${key}" entry from ${MCP_FILE_NAME} by hand in a PR, keeping its siblings (\`claude mcp remove ${key} --scope project\` also works but re-indents the file)`
-}
-
-/**
- * One message per `.mcp.json` verdict. `absent` / `missing-file` are the healthy state, `stale` and
- * `wrong-key` the chore spelled out (a chore is not red), `unparseable` the one fault — built by the
- * caller, which has the key for `wrong-key`.
- */
-const MCP_MESSAGES: Record<Exclude<McpRegistration['kind'], 'wrong-key'>, string> = {
-  stale: deleteKeyAdvisory(MARKETPLACE_NAME),
-  absent: `${MCP_FILE_NAME} carries no "${MARKETPLACE_NAME}" key — nothing spawns the retired server`,
-  'missing-file': `no ${MCP_FILE_NAME} at the repo root — nothing spawns the retired server`,
-  unparseable: `Could not read ${SERVERS_KEY} from ${MCP_FILE_NAME} — fix the JSON and re-run`,
-}
-
-/**
- * The verdicts that do NOT fail the row: no key (with or without a file) and a leftover key under any
- * name — the stub keeps such a session working, so the deletion is a chore with no deadline.
- * Exit 1 stays scoped to `plugin installed` alone (`program.ts`), so none of this touches it.
- */
-const MCP_NON_FAILING: ReadonlySet<McpRegistration['kind']> = new Set(['absent', 'missing-file', 'stale', 'wrong-key'])
-
-/**
- * The `MCP server key` row: the repo's own `.mcp.json` against the retired infra-kit server, read-only.
- * No longer guarded on what the served plugin carries — the plugin serves nothing, so the repo's entry
- * is a leftover whichever plugin copy is installed.
- *
- * @example
- * checkMcpServerKey('/repo')
- * // => { name: 'MCP server key', status: 'pass', message: '.mcp.json still registers "infra-kit" — delete this key: …' }
- */
-export const checkMcpServerKey = (root: string): CheckResult => {
-  const name = 'MCP server key'
-  const registration = inspectLegacyMcpRegistration(root)
-
-  if (registration.kind === 'wrong-key') {
-    return { name, status: 'pass', message: deleteKeyAdvisory(registration.key) }
-  }
-
-  return {
-    name,
-    status: MCP_NON_FAILING.has(registration.kind) ? 'pass' : 'fail',
-    message: MCP_MESSAGES[registration.kind],
-  }
 }
 
 /** The raw inputs, spelled out so a pasted row explains its own verdict. */
@@ -2244,6 +2195,15 @@ export const doctor = async (
       ),
     ),
     withDetail(
+      'git',
+      checkCommand(
+        'git installed',
+        specFor('git').probeArgv,
+        'git is installed',
+        'git is not installed. Install with: brew install git',
+      ),
+    ),
+    withDetail(
       'gh',
       checkCommand(
         'gh installed',
@@ -2315,16 +2275,14 @@ export const doctor = async (
     else portlessChecks.push(pruned)
   }
 
-  // The Claude Code plugin rows read `~/.claude/` and answer from anywhere; the `.mcp.json` and
-  // allowlist rows are about a PROJECT and so are gated — but NOT on the same predicate as the
-  // guidance check. Nothing writes the `infra-kit` key any more (the plugin is skills-only), so the
-  // key row is a read-only report on a leftover entry, and both belong to any git toplevel that is not
-  // `$HOME` (`resolveGitRoot`) — the same set `setup` inspects — while the guidance writer still
-  // requires an `infra-kit.json` there. Gating them on `infra-kit.json` too would hide a leftover key
-  // or a broad allow in exactly the repos that lack one.
+  // The Claude Code plugin rows read `~/.claude/` and answer from anywhere; the allowlist row is
+  // about a PROJECT and so is gated — but NOT on the same predicate as the guidance check. It belongs
+  // to any git toplevel that is not `$HOME` (`resolveGitRoot`) — the same set `setup` inspects — while
+  // the guidance writer still requires an `infra-kit.json` there. Gating it on `infra-kit.json` too
+  // would hide a broad allow in exactly the repos that lack one.
   //
   // `resolveGitRoot` is also what keeps a blank `git rev-parse` from being answered: it returns
-  // `null` rather than `''`, so the rows are omitted instead of rendered against `process.cwd()`.
+  // `null` rather than `''`, so the row is omitted instead of rendered against `process.cwd()`.
   const repoRoot = await resolveCheckedRepoRoot()
   const gitRoot = await resolveGitRoot()
   const origin: DoctorOrigin = { projectDir: process.env.CLAUDE_PROJECT_DIR || null, cwd: process.cwd(), gitRoot }
@@ -2333,7 +2291,6 @@ export const doctor = async (
     // rows whose failure it explains.
     await checkClaudeCli(),
     ...checkClaudePlugin(repoRoot, origin),
-    ...(gitRoot === null ? [] : [checkMcpServerKey(gitRoot)]),
     // `flag` is the resolved source, not a re-parse of argv: `preAction` has already run, and a
     // `--agent` on this very invocation is what set it.
     checkAgentMode({ env: process.env, stdinIsTTY: process.stdin.isTTY === true, flag: agentMode.source === 'flag' }),
@@ -2392,7 +2349,7 @@ export const doctorMcpTool = defineMcpTool({
           status: z.enum(['pass', 'fail', 'warn']).describe('Check result; warn is advisory and never fails the run'),
           message: z.string().describe('Details about the check result'),
           fixable: z.boolean().describe('Whether `infra-kit doctor --fix` repairs this row'),
-          // Present on the four dependency rows only. `status` answers "resolves on PATH"; this answers
+          // Present on the five dependency rows only. `status` answers "resolves on PATH"; this answers
           // the richer question beside it, which is why `present` and `onPath` are both here and can
           // disagree with each other.
           detail: z
