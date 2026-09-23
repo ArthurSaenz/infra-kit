@@ -127,8 +127,9 @@ export interface CheckResult {
   name: string
   /**
    * `warn` is a third verdict, not a soft fail: the report counts it apart, `--fix` never claims it,
-   * and `allPassed` ignores it. It exists for one class of row — a setting that is legal but defeats a
-   * guard the CLI relies on (`Agent allowlist`) — where red would be a lie and green would hide it.
+   * and `allPassed` ignores it. It is for a state that works today but should not be left — a setting
+   * that defeats a guard the CLI relies on (`Agent allowlist`), a service pointed at a path that will
+   * go away (`portless service target`) — where red would be a lie and green would hide it.
    *
    * `skip` is a check that could not be evaluated, which is neither a pass nor a failure: counting it
    * as a pass claims a look that never happened, and omitting the row reads as "nothing to report"
@@ -842,9 +843,8 @@ const collectStalePackageVersions = async (root: string, current: string): Promi
 /**
  * The staleness sentence appended to the `CLAUDE.md block` message, or `''` when nothing is behind.
  *
- * Deliberately a message-only dimension: `CheckResult.status` is `'pass' | 'fail'` with no warn
- * state, and drift in per-package blocks is not a broken machine, so this never changes the
- * check's status.
+ * Deliberately a message-only dimension: the row's status answers "is the repo's CLAUDE.md block
+ * present", and drift in per-package blocks is a different question, so this never changes it.
  */
 const packageGuidanceStaleness = async (root: string, current: string): Promise<string> => {
   const stale = await collectStalePackageVersions(root, current)
@@ -1531,14 +1531,12 @@ const checkPortlessStaleRoutes = async (
 const SERVICE_TARGET_NAME = 'portless service target'
 
 /**
- * `warn` rendered in the only vocabulary {@link CheckResult} has: `status` is `'pass' | 'fail'` with no
- * third state (see {@link packageGuidanceStaleness}), so an advisory is a green row whose message leads
- * with `Warning —`. Every warn in the service-target table is by design NOT a broken machine — an old Node
+ * An advisory service-target row. Every warn in this table is by design NOT a broken machine — an old Node
  * that still exists, a version-specific script path that still exists, a daemon one release behind — so a
- * red row would tell a working user to go run sudo now.
+ * red row would tell a working user to go run sudo now, and a green one would count it as passed.
  */
 const warnRow = (message: string): CheckResult => {
-  return { name: SERVICE_TARGET_NAME, status: 'pass', message: `Warning — ${message}` }
+  return { name: SERVICE_TARGET_NAME, status: 'warn', message }
 }
 
 /** The plain-text file `service install` wrote on this platform, or `null` where portless writes none we read. */

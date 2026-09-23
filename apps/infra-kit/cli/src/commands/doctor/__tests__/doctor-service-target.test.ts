@@ -159,6 +159,10 @@ const converged = (overrides: Partial<Machine> = {}): Machine => {
 
 const INSTALL_THROUGH_LINK = `sudo ${EXEC_PATH} ${LINK_CLI} service install`
 
+/**
+ * The advisories below are `warn`, not the old green row led by `Warning —`: a pass counted them in
+ * "N passed", so succeeded and warned were indistinguishable (decision driver 2). The glyph says it now.
+ */
 describe('portless service target', () => {
   // Was a pass; principle 2: a check that did not evaluate is a skip, never a pass, so the report can tell "never looked" from "looked and fine". With no service file there is no target to read.
   it('skips when the OS service is not installed', async () => {
@@ -197,9 +201,9 @@ describe('portless service target', () => {
 
     const row = await serviceTargetRow(machine)
 
-    expect(row.status).toBe('pass')
+    expect(row.status).toBe('warn')
     expect(row.message).toBe(
-      `Warning — The service runs \`${OLD_NODE}\`; infra-kit runs \`${EXEC_PATH}\`. Works until the old Node is removed. Re-run when convenient: \`${INSTALL_THROUGH_LINK}\``,
+      `The service runs \`${OLD_NODE}\`; infra-kit runs \`${EXEC_PATH}\`. Works until the old Node is removed. Re-run when convenient: \`${INSTALL_THROUGH_LINK}\``,
     )
   })
 
@@ -211,8 +215,8 @@ describe('portless service target', () => {
 
     const row = await serviceTargetRow(machine)
 
-    expect(row.status).toBe('pass')
-    expect(row.message).toContain(`Warning — The service points at \`${versioned}\`, a version-specific location`)
+    expect(row.status).toBe('warn')
+    expect(row.message).toContain(`The service points at \`${versioned}\`, a version-specific location`)
     expect(row.message).toContain(INSTALL_THROUGH_LINK)
   })
 
@@ -223,7 +227,7 @@ describe('portless service target', () => {
 
     const row = await serviceTargetRow(machine)
 
-    expect(row.status).toBe('pass')
+    expect(row.status).toBe('warn')
     expect(row.message).toContain(`sudo ${EXEC_PATH} ${CHECKOUT_BIN} service install`)
     expect(row.message).not.toContain(LINK_CLI)
   })
@@ -290,8 +294,9 @@ describe('portless service target', () => {
   it('does not call the global target a checkout when doctor is run from $HOME', async () => {
     const row = await serviceTargetRow(converged({ cwd: HOME }))
 
+    // `pass`, not `warn`: the advisory is a status now, so the old "no Warning in the message" check
+    // has nothing left to read.
     expect(row.status).toBe('pass')
-    expect(row.message).not.toContain('Warning')
   })
 
   it('warns when the running daemon started before the link target was installed', async () => {
@@ -304,9 +309,9 @@ describe('portless service target', () => {
 
     const row = await serviceTargetRow(machine)
 
-    expect(row.status).toBe('pass')
+    expect(row.status).toBe('warn')
     expect(row.message).toBe(
-      'Warning — The running daemon predates portless 1.2.3 that `dev` will talk to. Restart it: `sudo launchctl kickstart -k system/sh.portless.proxy` (or reboot).',
+      'The running daemon predates portless 1.2.3 that `dev` will talk to. Restart it: `sudo launchctl kickstart -k system/sh.portless.proxy` (or reboot).',
     )
   })
 
@@ -438,8 +443,8 @@ describe('portless service target', () => {
   it('warns "could not parse" on a malformed file instead of throwing', async () => {
     const row = await serviceTargetRow({ files: { [DARWIN_SERVICE_PLIST_PATH]: '<plist>garbage' } })
 
-    expect(row.status).toBe('pass')
-    expect(row.message).toContain(`Warning — could not parse ${DARWIN_SERVICE_PLIST_PATH}`)
+    expect(row.status).toBe('warn')
+    expect(row.message).toContain(`could not parse ${DARWIN_SERVICE_PLIST_PATH}`)
   })
 })
 
@@ -463,9 +468,9 @@ describe('portless service target — stable node', () => {
   it('t5: warns when the plist still names the deep node although the stable node is healthy, and renders the switch through it', async () => {
     const row = await serviceTargetRow(converged({ nodeFs: stableNodeFs() }))
 
-    expect(row.status).toBe('pass')
+    expect(row.status).toBe('warn')
     expect(row.message).toBe(
-      `Warning — The service runs \`${EXEC_PATH}\`, a path its package manager will remove. Re-run once to switch it to the stable node: \`${INSTALL_THROUGH_STABLE_NODE}\``,
+      `The service runs \`${EXEC_PATH}\`, a path its package manager will remove. Re-run once to switch it to the stable node: \`${INSTALL_THROUGH_STABLE_NODE}\``,
     )
   })
 
@@ -477,8 +482,9 @@ describe('portless service target — stable node', () => {
 
     const row = await serviceTargetRow(machine)
 
+    expect(row.status).toBe('warn')
     expect(row.message).toBe(
-      `Warning — The service runs \`${OLD_NODE}\`; infra-kit runs \`${EXEC_PATH}\`. Works until the old Node is removed. Re-run when convenient: \`${INSTALL_THROUGH_LINK}\``,
+      `The service runs \`${OLD_NODE}\`; infra-kit runs \`${EXEC_PATH}\`. Works until the old Node is removed. Re-run when convenient: \`${INSTALL_THROUGH_LINK}\``,
     )
   })
 
@@ -492,8 +498,9 @@ describe('portless service target — stable node', () => {
 
     const row = await serviceTargetRow(machine)
 
+    expect(row.status).toBe('warn')
     expect(row.message).toBe(
-      `Warning — The running daemon predates Node ${process.version} that \`dev\` will talk to. Restart it: \`sudo launchctl kickstart -k system/sh.portless.proxy\` (or reboot).`,
+      `The running daemon predates Node ${process.version} that \`dev\` will talk to. Restart it: \`sudo launchctl kickstart -k system/sh.portless.proxy\` (or reboot).`,
     )
   })
 
