@@ -150,8 +150,11 @@ export const FIXABLE_NAMES: ReadonlySet<string> = new Set(['portless routes', 't
  * from the same array in `doctor()`, and its order is part of that payload's compatibility surface, so
  * this must never sort or splice the input.
  *
- * Empty sections are omitted (a machine with no portless binary reports one portless check, not five),
- * and any unmapped name lands in a trailing {@link OTHER_SECTION} rather than disappearing.
+ * A check that cannot run is still a row: it arrives as a `skip`, never as an absence, because an
+ * omitted row reads as "nothing to report" when it means "never looked". That reverses this function's
+ * old contract, which omitted such checks and let their sections vanish. Empty sections are still
+ * omitted, but only a section with no member rows at all can be empty now. Any unmapped name lands in
+ * a trailing {@link OTHER_SECTION} rather than disappearing.
  *
  * @example
  * groupChecks([{ name: 'gh installed', status: 'pass', message: '…' }])
@@ -184,7 +187,7 @@ export type PrintDoctorReportDeps = PrintRunReportDeps
 
 export { resolveReportCapabilities }
 
-/** Doctor's three verdicts are a subset of the shared statuses; a new verdict must pick its row status here. */
+/** Doctor's four verdicts are a subset of the shared statuses; a new verdict must pick its row status here. */
 const toRunStatus = (status: CheckResult['status']): RunStatus => {
   switch (status) {
     case 'pass':
@@ -193,6 +196,8 @@ const toRunStatus = (status: CheckResult['status']): RunStatus => {
       return 'fail'
     case 'warn':
       return 'warn'
+    case 'skip':
+      return 'skipped'
     default:
       return assertNever(status)
   }

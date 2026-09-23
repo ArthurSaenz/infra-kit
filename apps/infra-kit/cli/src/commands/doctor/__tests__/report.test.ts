@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { allChecksPassed } from '../doctor'
 import type { CheckResult } from '../doctor'
 import {
   DOCTOR_CHECK_NAMES,
@@ -17,6 +18,10 @@ const pass = (name: string, message = 'ok'): CheckResult => {
 
 const fail = (name: string, message = 'broken'): CheckResult => {
   return { name, status: 'fail', message }
+}
+
+const skip = (name: string, message = 'not evaluated'): CheckResult => {
+  return { name, status: 'skip', message }
 }
 
 /** eslint-disable-next-line no-control-regex — matching ANSI is the point. */
@@ -463,5 +468,29 @@ describe('printDoctorReport', () => {
 
     expect(stdout).not.toHaveBeenCalled()
     stdout.mockRestore()
+  })
+})
+
+/**
+ * A `skip` is a check that was never evaluated. The old CA-chain short-circuit reported that as a pass,
+ * so the totals line counted a look that never happened in `N passed`.
+ */
+describe('skip', () => {
+  it('renders as skipped: kept off the ratio and out of the passed count', () => {
+    const text = strip(formatDoctorReport([pass('portless installed'), skip('portless CA chain valid')]).join('\n'))
+
+    expect(text).toContain('1/2 · 1 skipped')
+    expect(text).toContain('1 passed')
+    expect(text).not.toContain('2 passed')
+    expect(text).not.toContain('failed')
+  })
+
+  it('never unsets allPassed, and a fail beside it still does', () => {
+    expect(allChecksPassed([pass('portless installed'), skip('portless routes'), skip('Agent allowlist')])).toBe(true)
+    expect(allChecksPassed([skip('portless routes'), fail('portless installed')])).toBe(false)
+  })
+
+  it('is never offered to --fix, even on a fixable name', () => {
+    expect(strip(formatDoctorReport([skip('portless routes')]).join('\n'))).not.toContain('--fix')
   })
 })

@@ -266,7 +266,9 @@ describe('checkPortless', () => {
     )
 
     expect(statusOf(checks, 'portless serving TLS')).toBe('fail')
-    expect(statusOf(checks, 'portless CA chain valid')).toBe('pass')
+    // `skip`, not `pass`: no handshake happened, so a pass would be counted in "N passed" for a look
+    // that never took place.
+    expect(statusOf(checks, 'portless CA chain valid')).toBe('skip')
 
     const printed = messagesOf(checks)
 
@@ -334,18 +336,44 @@ describe('checkPortless', () => {
     expect(printed).toContain(`${BIN} alias --remove`)
   })
 
-  it('short-circuits to a single install check when portless is not resolvable', async () => {
-    const checks = await checkPortless(
+  /**
+   * Rewritten, not kept green: this used to pin a single row, which is the omission defect itself. A
+   * row that did not run is a `skip`, never an absence, because a missing row reads as "nothing to
+   * report" when it means "never looked".
+   */
+  it('keeps all seven rows when portless is not resolvable: the install fails, the six that need it skip', async () => {
+    const unresolved = await checkPortless(
       healthyDeps({
         resolveBin: () => {
           return null
         },
       }),
     )
+    const evaluated = await checkPortless(healthyDeps())
 
-    expect(checks).toHaveLength(1)
-    expect(checks[0]?.status).toBe('fail')
-    expect(checks[0]?.message).toContain('pnpm install')
+    expect(unresolved).toHaveLength(7)
+    expect(unresolved[0]?.status).toBe('fail')
+    expect(unresolved[0]?.message).toContain('pnpm install')
+    expect(
+      unresolved.slice(1).map((check) => {
+        return check.status
+      }),
+    ).toEqual(Array.from({ length: 6 }).fill('skip'))
+    expect(
+      unresolved.slice(1).every((check) => {
+        return check.message === 'portless not resolvable'
+      }),
+    ).toBe(true)
+    // Same names in the same order as the evaluated path, so the section never changes shape.
+    expect(
+      unresolved.map((check) => {
+        return check.name
+      }),
+    ).toEqual(
+      evaluated.map((check) => {
+        return check.name
+      }),
+    )
   })
 })
 

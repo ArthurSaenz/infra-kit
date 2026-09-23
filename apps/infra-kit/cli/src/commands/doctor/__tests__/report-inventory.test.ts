@@ -20,9 +20,8 @@ import { DOCTOR_CHECK_NAMES, FIXABLE_NAMES } from '../report'
  * green suite. This test closes the loop by running the REAL `doctor()` and asserting the names it
  * produces are exactly the inventory.
  *
- * Every external seam is mocked so the set is deterministic rather than machine-dependent: on a
- * machine with no portless binary `checkPortless` returns 1 name instead of 5, and outside an
- * infra-kit repo `checkAgentFiles` returns none at all.
+ * Every external seam is mocked so the set is deterministic rather than machine-dependent: the
+ * mocks pin which rows are evaluated and which are `skip`, and a `skip` keeps its name in the set.
  */
 
 /**
@@ -327,22 +326,30 @@ describe('the Agent allowlist row is gated on the git root', () => {
     expect(row?.message).toContain('Could not read permissions.allow')
   })
 
-  it('is omitted, not answered against the cwd, when the git seam is blank', async () => {
+  /**
+   * Rewritten, not kept green: this used to assert the row was omitted, which is the defect. A check
+   * that did not run is a `skip` row, never an absence, because a missing row reads as "nothing to
+   * report" when it means "never looked". What stays pinned is the other half: no verdict on the cwd.
+   */
+  it('is a skip, not answered against the cwd, when the git seam is blank', async () => {
     gitTopLevel = ''
 
-    const produced = await producedNames()
+    const { checks } = (await runDoctor()).structuredContent
+    const row = checks.find((check) => {
+      return check.name === 'Agent allowlist'
+    })
 
-    expect(produced).not.toContain('Agent allowlist')
-    // `doctor` is READ-ONLY. It borrows the writer's predicate to decide the row set; it skips
-    // nothing and intends to write nothing, so the writer's four-step skip line must not reach
-    // someone who only ran the diagnostic — least of all as stderr line 1, above the report header.
+    expect(row).toMatchObject({ status: 'skip', message: 'no git root' })
+    // `doctor` is READ-ONLY. It borrows the writer's predicate to decide the row set; it intends to
+    // write nothing, so the writer's four-step skip line must not reach someone who only ran the
+    // diagnostic — least of all as stderr line 1, above the report header.
     expect(infoLinesMatching(GIT_ROOT_SKIP)).toHaveLength(0)
-    expect([...produced].sort()).toEqual(
-      [...DOCTOR_CHECK_NAMES]
-        .filter((name) => {
-          return name !== 'Agent allowlist'
+    expect(
+      checks
+        .map((check) => {
+          return check.name
         })
         .sort(),
-    )
+    ).toEqual([...DOCTOR_CHECK_NAMES].sort())
   })
 })

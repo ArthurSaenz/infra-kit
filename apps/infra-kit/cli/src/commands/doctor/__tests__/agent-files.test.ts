@@ -64,10 +64,16 @@ describe('checkAgentFiles', () => {
     vi.clearAllMocks()
   })
 
-  it('returns no checks outside an infra-kit repo (never crashes)', async () => {
+  /**
+   * Rewritten, not kept green: `[]` here was the omission defect. A check that did not run is a `skip`
+   * row, never an absence, because a missing row reads as "nothing to report" when it means "never looked".
+   */
+  it('reports a skip outside an infra-kit repo (never crashes, never vanishes)', async () => {
     await withTmpRepo(
       async () => {
-        await expect(checkAgentFiles()).resolves.toEqual([])
+        await expect(checkAgentFiles()).resolves.toEqual([
+          { name: 'CLAUDE.md block', status: 'skip', message: 'no infra-kit config in this repo' },
+        ])
       },
       { repo: false },
     )

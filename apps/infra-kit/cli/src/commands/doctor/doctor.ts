@@ -129,10 +129,27 @@ export interface CheckResult {
    * `warn` is a third verdict, not a soft fail: the report counts it apart, `--fix` never claims it,
    * and `allPassed` ignores it. It exists for one class of row — a setting that is legal but defeats a
    * guard the CLI relies on (`Agent allowlist`) — where red would be a lie and green would hide it.
+   *
+   * `skip` is a check that could not be evaluated, which is neither a pass nor a failure: counting it
+   * as a pass claims a look that never happened, and omitting the row reads as "nothing to report"
+   * when it means "never looked". `allPassed` ignores it, like `warn`; the message says why.
    */
-  status: 'pass' | 'fail' | 'warn'
+  status: 'pass' | 'fail' | 'warn' | 'skip'
   message: string
   detail?: DependencyDetail
+}
+
+/**
+ * The `allPassed` verdict: no row failed. A warning is advisory and a skip is not a verdict at all (see
+ * {@link CheckResult}), so neither unsets it.
+ *
+ * @example
+ * allChecksPassed([{ name: 'portless routes', status: 'skip', message: 'portless not resolvable' }]) // => true
+ */
+export const allChecksPassed = (checks: readonly CheckResult[]): boolean => {
+  return checks.every((check) => {
+    return check.status !== 'fail'
+  })
 }
 
 /**
@@ -844,8 +861,8 @@ const packageGuidanceStaleness = async (root: string, current: string): Promise<
 
 /**
  * Check that the repo agent-instruction guidance managed by `infra-kit setup` exists:
- * the guidance block in `CLAUDE.md`. Presence only. Repo-gated: returns no checks
- * when run outside an infra-kit repo so doctor never crashes there. A repo that
+ * the guidance block in `CLAUDE.md`. Presence only. Repo-gated: outside an infra-kit repo the
+ * row is a `skip`, never an absence, so the report says it did not look. A repo that
  * predates the AGENTS.md→CLAUDE.md migration will report this check as failing until
  * `infra-kit setup` is re-run.
  *
@@ -855,15 +872,18 @@ const packageGuidanceStaleness = async (root: string, current: string): Promise<
  * inventory fixture's counts, and `'CLAUDE.md block'` is already sectioned.
  */
 export const checkAgentFiles = async (): Promise<CheckResult[]> => {
+  const notARepo: CheckResult[] = [
+    { name: 'CLAUDE.md block', status: 'skip', message: 'no infra-kit config in this repo' },
+  ]
   let mainConfigPath: string
 
   try {
     mainConfigPath = (await getInfraKitConfigPaths()).main
   } catch {
-    return []
+    return notARepo
   }
 
-  if (!fs.existsSync(mainConfigPath)) return []
+  if (!fs.existsSync(mainConfigPath)) return notARepo
 
   const root = path.dirname(mainConfigPath)
   const claudePath = path.join(root, 'CLAUDE.md')
@@ -1353,13 +1373,19 @@ export interface PortlessCheckDeps extends ServiceTargetDeps {
   caPath?: () => string
 }
 
+// A function, not a module-scope const: suites that partially mock the config barrel leave the port
+// undefined at import time, and a load-time read would fail those suites before any test runs.
+const portlessServingName = (): string => {
+  return `portless serving TLS on :${DEFAULT_DEV_PROXY_PORT}`
+}
+
 /** Is the daemon serving portless-over-TLS on the dev proxy port? Proven on the wire; reads no state file. */
 const checkPortlessServing = async (
   isProxyServing: NonNullable<PortlessCheckDeps['isProxyServing']>,
   bin: string,
   seams: ServiceInstallSeams,
 ): Promise<CheckResult> => {
-  const name = `portless serving TLS on :${DEFAULT_DEV_PROXY_PORT}`
+  const name = portlessServingName()
   const serving = await isProxyServing(DEFAULT_DEV_PROXY_PORT, true)
 
   if (!serving) {
@@ -2036,6 +2062,22 @@ export const portlessServiceTargetState = async (
 }
 
 /**
+ * The six rows after `portless installed`, in the order the evaluated path returns them. Every one needs
+ * the binary, so an unresolvable one still emits them — as `skip` — and the section reads seven rows
+ * either way.
+ */
+const portlessDependentNames = (): string[] => {
+  return [
+    PORTLESS_NODE_NAME,
+    SERVICE_TARGET_NAME,
+    portlessServingName(),
+    'portless CA chain valid',
+    'portless CA trusted',
+    'portless routes',
+  ]
+}
+
+/**
  * The portless block of doctor: is the HTTPS dev proxy installed, serving, trusted, and free of dead routes?
  * This is the diagnostic surface for the port-free HTTPS dev URLs — it is what tells a developer to run
  * `trust` (sudo-free) or the one-time `service install` (root), and it never conflates the two. Both are
@@ -2071,6 +2113,9 @@ export const checkPortless = async (deps: PortlessCheckDeps = {}): Promise<Check
         status: 'fail',
         message: 'portless is not resolvable from node_modules — run `pnpm install`.',
       },
+      ...portlessDependentNames().map((name): CheckResult => {
+        return { name, status: 'skip', message: 'portless not resolvable' }
+      }),
     ]
   }
 
@@ -2087,7 +2132,7 @@ export const checkPortless = async (deps: PortlessCheckDeps = {}): Promise<Check
   // second, derivative failure to the one the user must fix first.
   const chain: CheckResult =
     serving.status === 'fail'
-      ? { name: 'portless CA chain valid', status: 'pass', message: 'Skipped — no daemon to handshake with' }
+      ? { name: 'portless CA chain valid', status: 'skip', message: 'no daemon to handshake with' }
       : await checkPortlessCaChain(handshake, routes, caPath, bin, seams)
 
   return [
@@ -2282,11 +2327,11 @@ export const doctor = async (
   // would hide a broad allow in exactly the repos that lack one.
   //
   // `resolveGitRoot` is also what keeps a blank `git rev-parse` from being answered: it returns
-  // `null` rather than `''`, so the row is omitted instead of rendered against `process.cwd()`.
+  // `null` rather than `''`, so the row is a `skip` instead of a verdict on `process.cwd()`.
   const repoRoot = await resolveCheckedRepoRoot()
   const gitRoot = await resolveGitRoot()
   const origin: DoctorOrigin = { projectDir: process.env.CLAUDE_PROJECT_DIR || null, cwd: process.cwd(), gitRoot }
-  const pluginChecks = [
+  const pluginChecks: CheckResult[] = [
     // First in the section: the binary the install step drives. Read the prerequisite before the
     // rows whose failure it explains.
     await checkClaudeCli(),
@@ -2294,7 +2339,9 @@ export const doctor = async (
     // `flag` is the resolved source, not a re-parse of argv: `preAction` has already run, and a
     // `--agent` on this very invocation is what set it.
     checkAgentMode({ env: process.env, stdinIsTTY: process.stdin.isTTY === true, flag: agentMode.source === 'flag' }),
-    ...(gitRoot === null ? [] : [checkAgentAllowlist(gitRoot)]),
+    gitRoot === null
+      ? { name: 'Agent allowlist', status: 'skip', message: 'no git root' }
+      : checkAgentAllowlist(gitRoot),
   ]
 
   const checks: CheckResult[] = [...baseChecks, ...portlessChecks, ...(await checkAgentFiles()), ...pluginChecks]
@@ -2322,10 +2369,7 @@ export const doctor = async (
         detail: c.detail,
       }
     }),
-    // A warning is advisory by definition (see `CheckResult`), so it does not unset this.
-    allPassed: checks.every((c) => {
-      return c.status !== 'fail'
-    }),
+    allPassed: allChecksPassed(checks),
     cliVersion: packageJson.version,
   }
 
@@ -2346,7 +2390,11 @@ export const doctorMcpTool = defineMcpTool({
       .array(
         z.object({
           name: z.string().describe('Name of the check'),
-          status: z.enum(['pass', 'fail', 'warn']).describe('Check result; warn is advisory and never fails the run'),
+          status: z
+            .enum(['pass', 'fail', 'warn', 'skip'])
+            .describe(
+              'Check result; warn is advisory and never fails the run; skip is not evaluated; the message says why; never a failure',
+            ),
           message: z.string().describe('Details about the check result'),
           fixable: z.boolean().describe('Whether `infra-kit doctor --fix` repairs this row'),
           // Present on the five dependency rows only. `status` answers "resolves on PATH"; this answers
@@ -2364,7 +2412,7 @@ export const doctorMcpTool = defineMcpTool({
         }),
       )
       .describe('List of all check results'),
-    allPassed: z.boolean().describe('Whether no check failed (warnings are advisory and do not count)'),
+    allPassed: z.boolean().describe('Whether no check failed (warnings and skips do not count)'),
     cliVersion: z.string().describe('Version of the infra-kit CLI that produced this report'),
   },
   // Read-only on purpose: `--fix` is NOT reachable through this handler, and that is what keeps the

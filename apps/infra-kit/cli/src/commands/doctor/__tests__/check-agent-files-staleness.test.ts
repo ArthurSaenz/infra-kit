@@ -52,13 +52,13 @@ const addPackage = (repo: string, name: string, blockVersion: string | null): vo
   if (blockVersion !== null) writeFile(path.join(dir, 'CLAUDE.md'), packageBlock(blockVersion))
 }
 
-const withTmpRepo = async (fn: (tmp: string) => Promise<void>): Promise<void> => {
+const withTmpRepo = async (fn: (tmp: string) => Promise<void>, opts: { repo?: boolean } = {}): Promise<void> => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'infra-kit-doctor-staleness-test-'))
 
   vi.mocked(getProjectRoot).mockResolvedValue(tmp)
   vi.mocked(getRepoName).mockResolvedValue(path.basename(tmp))
 
-  writeFile(path.join(tmp, 'infra-kit.json'), '{}\n')
+  if (opts.repo !== false) writeFile(path.join(tmp, 'infra-kit.json'), '{}\n')
 
   // getInfraKitConfigPaths memoizes on `cwd + homedir`, neither of which changes between
   // tests here (only the mocked getProjectRoot does), so the memo would hand this test the
@@ -93,6 +93,27 @@ describe('checkAgentFiles package guidance staleness', () => {
 
   afterEach(() => {
     vi.clearAllMocks()
+  })
+
+  /**
+   * The staleness report rides on the `CLAUDE.md block` row, so that row must exist even where nothing
+   * can be inspected. It used to be omitted outside a repo, taking the staleness answer with it; principle
+   * 2 makes it a `skip`, and a skip that never scanned a package must not carry a staleness verdict.
+   */
+  it('still emits the one row outside an infra-kit repo, as a skip with no staleness report', async () => {
+    await withTmpRepo(
+      async (tmp) => {
+        addWorkspaceFile(tmp)
+        addPackage(tmp, 'alpha', '0.0.1')
+
+        const checks = await checkAgentFiles()
+
+        expect(checks).toHaveLength(1)
+        expect(checks[0]!.status).toBe('skip')
+        expect(checks[0]!.message).not.toContain('package guidance blocks')
+      },
+      { repo: false },
+    )
   })
 
   it('reports blocks older than the running CLI without changing the pass status', async () => {
