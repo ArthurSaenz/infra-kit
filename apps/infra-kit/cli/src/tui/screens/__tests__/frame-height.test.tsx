@@ -156,6 +156,7 @@ const paletteItems = (): PaletteItem[] => {
     ['vendor-check', 'Verify vendor/ matches vendor/.sync-manifest.json (self-contained)', 'Environment'],
     ['vendor-diff', 'Source-aware drift check (rsync dry-run) of each target vendored subtree', 'Environment'],
     ['vendor-config', 'Show the machine-local factory config (~/.infra-kit/vendor.json)', 'Environment'],
+    ['vendor-sync', 'Mirror the source repo vendorSource files into every target in vendor.json', 'Environment'],
     ['config-path', 'Show the resolved config merge chain and file paths', 'Environment'],
     ['config-edit', 'Open the user-scope per-project override file in $EDITOR', 'Environment'],
     ['doctor', 'Check installation and authentication status of gh and doppler CLIs', 'Environment'],

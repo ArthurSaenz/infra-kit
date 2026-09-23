@@ -131,7 +131,7 @@ describe('mutatingCommandsReachedBy', () => {
 
   /** A group row is read-only itself, but an allow on it covers its mutating children. */
   it('reaches the mutating children of a read-only group row', () => {
-    expect(mutatingCommandsReachedBy('Bash(infra-kit vendor:*)')).toEqual(['vendor config'])
+    expect(mutatingCommandsReachedBy('Bash(infra-kit vendor:*)')).toEqual(['vendor config', 'vendor sync'])
     expect(mutatingCommandsReachedBy('Bash(infra-kit vendor check:*)')).toEqual([])
   })
 

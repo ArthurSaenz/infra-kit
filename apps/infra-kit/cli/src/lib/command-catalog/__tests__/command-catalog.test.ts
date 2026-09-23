@@ -261,8 +261,9 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
   })
 
   /**
-   * The P1 invariant, fail-closed. Every mutating command must EITHER carry `requiresHumanConfirm` OR
-   * be an explicit, one-line-justified member of LOW_RISK_MUTATING_ALLOWLIST.
+   * The P1 invariant, fail-closed. Every mutating command must carry `requiresHumanConfirm`, be
+   * `humanOnly` (refused under agent mode outright), or be an explicit, one-line-justified member of
+   * LOW_RISK_MUTATING_ALLOWLIST.
    *
    * Keyed on `mutating` alone: every command is one `Bash(infra-kit …)` away, and `mcpExposed` is
    * historical ("was listed on the retired server"), so keying on it left `env-token-set` and
@@ -272,7 +273,7 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
   it('leaves no mutating command ungated unless it is on the low-risk allowlist', () => {
     const offenders = commandCatalog
       .filter((entry) => {
-        return entry.mutating && entry.mcpTool?.requiresHumanConfirm !== true
+        return entry.mutating && entry.mcpTool?.requiresHumanConfirm !== true && entry.humanOnly !== true
       })
       .map((entry) => {
         return entry.cliName
@@ -453,7 +454,7 @@ describe('command catalog — menu grouping', () => {
     // also held config, vendor, and setup commands — the four groups below are what came out of it.
     expect(groupPaths('environment')).toEqual(['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list'])
     expect(groupPaths('configuration')).toEqual(['config-get', 'config path', 'config edit'])
-    expect(groupPaths('vendor')).toEqual(['vendor check', 'vendor config'])
+    expect(groupPaths('vendor')).toEqual(['vendor check', 'vendor config', 'vendor sync'])
     // `setup` LEADS the group: it is the command that acts on what `doctor` and `audit` report, and the
     // position is asserted so a later reshuffle has to be deliberate. It carried `menuGroup: null` until
     // the cost of hiding it landed — a shipped command nobody could find outside `--help`; its catalog

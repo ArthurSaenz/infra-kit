@@ -55,7 +55,7 @@ describe('command palette', () => {
       ['Worktrees', ['worktrees add', 'worktrees list', 'worktrees remove', 'worktrees sync']],
       ['Environment', ['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list']],
       ['Configuration', ['config-get', 'config path', 'config edit']],
-      ['Vendor', ['vendor check', 'vendor config']],
+      ['Vendor', ['vendor check', 'vendor config', 'vendor sync']],
       // `setup` LEADS this group and the order is asserted, not incidental: it is the command that acts
       // on what `doctor` and `audit` report. It was hidden from the palette until the cost of that
       // showed up as a user unable to find a command they had just shipped — the reasoning, and the two

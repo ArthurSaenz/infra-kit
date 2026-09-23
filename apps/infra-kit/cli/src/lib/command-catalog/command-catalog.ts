@@ -117,8 +117,8 @@ export interface CommandCatalogEntry {
   mcpExposed: boolean
   /**
    * Whether running this command writes git/remote/consumer-repo/Doppler-env/fs-outside-cache state.
-   * Drives the destructive-op gate: a mutating command must set `requiresHumanConfirm` or sit in
-   * {@link LOW_RISK_MUTATING_ALLOWLIST}.
+   * Drives the destructive-op gate: a mutating command must set `requiresHumanConfirm` or `humanOnly`, or
+   * sit in {@link LOW_RISK_MUTATING_ALLOWLIST}.
    */
   mutating: boolean
   /**
@@ -155,6 +155,12 @@ export interface CommandCatalogEntry {
    *    read that as a failure and stamp every normal dev exit `✗ failed`.
    */
   longRunning?: boolean
+  /**
+   * Refused under agent mode even with `--yes`: a human types it in their own shell or it does not run.
+   * Satisfies the destructive-op gate in place of `requiresHumanConfirm`, because a refusal is stricter
+   * than any confirm an agent could answer.
+   */
+  humanOnly?: true
 }
 
 /**
@@ -255,6 +261,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mcpTool: ghReleaseDeliverMcpTool,
     mcpExposed: false,
     mutating: true,
+    humanOnly: true,
     groupPath: ['release', 'deliver'],
   },
   // Gated, not refused, unlike its neighbour `release-deliver`. What an agent may run is governed by
@@ -437,6 +444,17 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mcpExposed: false,
     mutating: true,
     groupPath: ['vendor', 'config'],
+  },
+  // Writes into every target repo, so it is human-only rather than gated: no agent confirms a sync for a
+  // human, and the apply also needs a real terminal on stdin. No tool definition, so no allowlist entry.
+  {
+    cliName: 'vendor-sync',
+    menuGroup: 'vendor',
+    mcpTool: null,
+    mcpExposed: false,
+    mutating: true,
+    humanOnly: true,
+    groupPath: ['vendor', 'sync'],
   },
 
   // --- Setup & Diagnostics (menu group) ---

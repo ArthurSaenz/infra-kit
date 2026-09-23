@@ -26,6 +26,7 @@ import { releaseRemove } from 'src/commands/release-remove'
 import { setup } from 'src/commands/setup'
 import { vendorCheck } from 'src/commands/vendor-check'
 import { vendorConfig } from 'src/commands/vendor-config'
+import { vendorSync } from 'src/commands/vendor-sync'
 import { version } from 'src/commands/version'
 import { worktreesAdd } from 'src/commands/worktrees-add'
 import { worktreesList } from 'src/commands/worktrees-list'
@@ -37,6 +38,7 @@ import { agentMode, resolveAgentModeSource } from 'src/lib/agent-mode'
 import { isLongRunningCommand } from 'src/lib/command-catalog'
 import { commandEcho } from 'src/lib/command-echo'
 import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
+import { isCommandDeclined } from 'src/lib/errors/command-declined-error'
 import { addJsonOption, emit, jsonOutput } from 'src/lib/json-output'
 import { logger } from 'src/lib/logger'
 import { InvalidReleaseDateError, assertIsoDate } from 'src/lib/release-date'
@@ -370,6 +372,45 @@ const configureVendorCheck = (cmd: Command): Command => {
     })
 }
 
+const configureVendorSync = (cmd: Command): Command => {
+  return cmd
+    .description(
+      "Mirror the source repo's vendorSource files into every target in ~/.infra-kit/vendor.json (human-only)",
+    )
+    .argument('[targets...]', 'Narrow to these target names from ~/.infra-kit/vendor.json')
+    .option('-y, --yes', 'Apply the previewed plan (needs a real terminal on stdin)')
+    .option('--check', 'Preview only; exit 1 when any target would change')
+    .option('--commit', 'Commit exactly the synced paths in each target after it syncs')
+    .option('--manifest-only', 'Rewrite vendor/README.md and vendor/.sync-manifest.json only; copy nothing')
+    .action(async (targets: string[], options) => {
+      let result: Awaited<ReturnType<typeof vendorSync>>
+
+      try {
+        result = await vendorSync({
+          targets,
+          confirmedCommand: options.yes,
+          check: options.check,
+          commit: options.commit,
+          manifestOnly: options.manifestOnly,
+        })
+      } catch (error) {
+        // `throwOnDecline` exists so a "no" unwinds instead of `process.exit(0)`; the decline itself
+        // is still a clean exit, not an error.
+        if (!isCommandDeclined(error)) throw error
+
+        logger.info('Operation cancelled.')
+
+        return
+      }
+
+      emit(result)
+
+      const { failed, changed, mode } = result.structuredContent
+
+      if (failed || (mode === 'check' && changed)) process.exitCode = 1
+    })
+}
+
 const configureConfigPath = (cmd: Command): Command => {
   return cmd.description('Show the resolved config merge chain and file paths').action(async () => {
     emit(await configPath())
@@ -554,10 +595,11 @@ export const buildProgram = (): Command => {
       }
     })
 
-  const vendorCmd = program.command('vendor').description('Verify the mirrored vendor/ tree')
+  const vendorCmd = program.command('vendor').description('Mirror and verify the vendored starter files')
 
   configureVendorCheck(vendorCmd.command('check'))
   configureVendorConfig(vendorCmd.command('config'))
+  configureVendorSync(vendorCmd.command('sync'))
 
   program
     .command('doctor')

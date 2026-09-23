@@ -29,7 +29,7 @@ import type { CommandCatalogEntry } from 'src/lib/command-catalog/command-catalo
 const ungatedOffenders = (catalog: readonly CommandCatalogEntry[]): string[] => {
   return catalog
     .filter((entry) => {
-      return entry.mutating && entry.mcpTool?.requiresHumanConfirm !== true
+      return entry.mutating && entry.mcpTool?.requiresHumanConfirm !== true && entry.humanOnly !== true
     })
     .map((entry) => {
       return entry.cliName
@@ -57,6 +57,17 @@ describe('the fail-closed gate actually covers the installing tools', () => {
 
   it.each(INSTALLERS)('names %s the moment its gate is removed', (cliName) => {
     expect(ungatedOffenders(withGateRemoved(cliName))).toEqual([cliName])
+  })
+
+  // `humanOnly` is the second way through the gate, so it needs the same proof that it is load-bearing.
+  it('names vendor-sync the moment its humanOnly flag is removed', () => {
+    const stripped = commandCatalog.map((entry) => {
+      if (entry.cliName !== 'vendor-sync') return entry
+
+      return { ...entry, humanOnly: undefined }
+    })
+
+    expect(ungatedOffenders(stripped)).toEqual(['vendor-sync'])
   })
 
   it.each(INSTALLERS)('would also catch %s being added to the low-risk allowlist', (cliName) => {
