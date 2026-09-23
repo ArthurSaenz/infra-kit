@@ -36,26 +36,14 @@ and the dependency half still runs.
 
 ### Step 1 — the init half: local, offline, additive, near-instant
 
-In this order:
-
-1. the managed block in `~/.zshrc` — the shell integration
-2. the managed block in `~/.zshenv` — the session-env inheritance
-3. the four config migrations, in their recorded order
-4. the user-global config seed
-5. the repo's agent-instruction files (`CLAUDE.md` guidance blocks) — **non-fatal**; a repo it cannot
-   resolve is warned about, not failed on
-6. the git-root resolution for writes, warning when the two root gates disagree
-7. the Claude Code plugin pointer — `.claude/settings.json`, the plugin install or update (the plugin
-   is skills only; the CLI on `PATH` is what they drive), and a read-only report of any `infra-kit`
-   key left in the repo's `.mcp.json`
-8. the per-project config reseed
-9. a warning when `$SHELL` is not zsh
+The shell integration, the config migrations and seeds, the repo's guidance blocks and the Claude Code
+plugin pointer, in a fixed order. The report's Local setup section names each step, one row per step.
 
 Every writer here is additive and never overwrites. Nothing in this half installs software and nothing
 reaches the network.
 
-**It runs first deliberately.** Steps 1.1, 1.2 and 1.7 are what make the skills usable at all, so
-they must not sit behind a network converge that can be slow or fail.
+**It runs first deliberately.** The shell blocks and the plugin pointer are what make the skills
+usable at all, so they must not sit behind a network converge that can be slow or fail.
 
 ### Step 2 — the dependency converge
 
@@ -66,32 +54,53 @@ steps (gnupg, then the tap) must not interleave with another tool's.
 Per tool: install it when it is absent, update it when it is present, skip it when its manager is not
 one infra-kit manages. A recipe the risk predicate refuses is **printed, not run** — section 3.
 
-### Step 3 — one combined summary
+### Step 3 — show the report
 
-One line per tool, then the exact argv for every refused recipe, then the `source ~/.zshrc` reminder
-last of all.
+The call ends with one report on stderr, in every mode and `--json` included, and the `Bash` result
+carries it: a section per half with its rollup, the closing totals, then the `source ~/.zshrc`
+reminder as the last line. A tool recipe's `running` lines stream above it while that recipe runs.
+**Show the report verbatim**, never re-grouped, re-tabulated or rebuilt from the JSON. It is the same
+table a human sees in a terminal, and a second copy is one that drifts.
 
 ### How to read the result
 
-- `init` — one entry per step above, each with an `outcome` of `written`, `unchanged`, `skipped` or
-  `warned`, and the same message a human would have read.
+stdout is one JSON document:
+
+- `init` — one entry per init write, each with the same message a human would have read and an
+  `outcome`: `written` (changed something), `unchanged`, `skipped` (did not run, and only that),
+  `manual` (left a command for a human, which the message carries), `warned` (failed non-fatally) or
+  `failed` (threw and ended the init half).
 - `tools` — one entry per requested dependency: `action` (`installed`, `updated`, `skipped`, `refused`
   or `failed`), the `before` state, the `commands` that were run or would have been, and a one-line
   `detail`.
+- `portlessService` — the portless step: the `link` and `node` outcomes, the `service` verdict, and
+  `command`, the service install line a human runs when the service is absent or out of date (`null`
+  otherwise).
+- `report` — the exact rows printed on stderr, each with a `status` of `ok`, `changed`, `skipped`,
+  `manual`, `warn` or `fail`, and `notes` on the rows a human has to read.
 - `converged` — whether the dependency step could act at all. `false` under `--skip-tools`.
 - `changed` — whether anything was installed or updated.
 - `allSucceeded` — whether no tool **failed**. **A refusal is not a failure**, so this stays `true` when
   a recipe was printed instead of run.
 
-The process exits non-zero when either half hard-failed. **Do not read a success as "everything is
-installed"** — read `tools[].action`, and tell the human about every `refused` entry.
+**The exit rule.** Exit 1 iff `report` has a `fail` row; a `manual` row never counts. Exit 2 with
+`{"status": "refused"}` is a usage error or a state only the human can clear: relay it and stop.
+Non-JSON stdout, or exit 1 with no JSON, is a crash: stop and show stderr.
+
+Then act on the JSON. **Name every `manual` row in `report` — tools, init and portless alike — and
+hand the human the command in its notes.** That one rule covers five sources: the refused tool
+recipes, the `--skip-tools` probe rows, the plugin marketplace-add and install commands, the stale-CLI
+update command, and the portless `sudo` service line. A `manual` row is expected in agent mode — it is
+the CLI declining to run something unattended — and not a problem to apologise for. **Do not read a
+success as "everything is installed"**: a clean exit with `manual` rows still leaves work for the
+human.
 
 ## 2. The flags, and what each one narrows
 
 The default — no flag — converges all six tools.
 
 - `--tools <ids...>` → converge **only those ids**. Same behaviour per tool, smaller set. The ids are
-  `brew`, `aws`, `gh`, `doppler` and `portless`.
+  `brew`, `git`, `aws`, `gh`, `doppler` and `portless`.
 - `--update [ids...]` → update mode. **Never installs.** A tool that is present is updated; a tool
   that is absent is reported `skipped` with the reason, and its install recipe is not run. Given ids, it
   also narrows the set, so `--update gh` is "update gh, and nothing else, and only if it is there".
@@ -154,9 +163,7 @@ preview round to skip. One install therefore costs one prompt plus the computed 
 If the human wants different flags, that is a new call and a new prompt. Do not widen the flags on
 your own.
 
-**The exits.** Exit 0 with the result of section 1 — read it as described there.
-`{"status": "refused"}` (exit 2) — a usage error or a state only the human can clear; relay and
-stop. Non-JSON stdout, or exit 1 with no JSON, is a crash: stop and show stderr.
+Read the result and its exit as section 1 describes.
 
 ## 5. There is no `init` command
 
@@ -179,5 +186,5 @@ Say which one you chose. Running `infra-kit audit --fix` inside that repo rewrit
 - Do not work around a refusal in section 3 with `Bash`. The refusal is the control.
 - Never pass `--yes`; `infra-kit setup` does not take it, and the host's prompt is the approval. See
   section 4.
-- Do not report success from the exit status alone. Read every `tools[].action` and name the refusals.
+- Do not report success from the exit status alone. Read `report` and name every `manual` row.
 - Do not run this command to answer a question. Run `doctor` — it changes nothing and prompts no one.

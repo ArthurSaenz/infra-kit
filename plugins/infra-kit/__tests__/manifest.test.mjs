@@ -1075,6 +1075,52 @@ test('U18: the release-create, release-remove and setup bodies carry every load-
   }
 })
 
+// U21 — the setup skill's `--tools` ids equal the CLI's `DEPENDENCY_IDS`
+//
+// The plugin cannot import the CLI's TypeScript, so the ids are read from its source text. This guard
+// exists because the skill's id list already drifted once (it lost `git`). A refactor of the
+// declaration's shape must fail here, loudly, never parse to an empty list and pass.
+const DEPENDENCY_REGISTRY_DIR = join(REPO_ROOT, 'apps', 'infra-kit', 'cli', 'src', 'lib', 'dependency-registry')
+const MISSING_IDS = 'could not find DEPENDENCY_IDS'
+
+/** U21. Pure: registry source text in, the ids in declaration order out. Throws on any regex miss. */
+function parseDependencyIds(source) {
+  const declaration = source.match(/export const DEPENDENCY_IDS\b[^=]*=\s*(?:\[([^\]]*)\]|Object\.keys\((\w+)\))/)
+  if (!declaration) throw new Error(`${MISSING_IDS} in the dependency-registry source`)
+
+  const [, arrayBody, specsName] = declaration
+  const literal = arrayBody ?? source.match(new RegExp(`export const ${specsName}\\b[^=]*=\\s*\\{([^}]*)\\}`))?.[1]
+  if (literal === undefined) throw new Error(`${MISSING_IDS}: no object literal named ${specsName}`)
+
+  const ids =
+    arrayBody === undefined
+      ? [...literal.matchAll(/^\s*([\w-]+)\s*:/gm)].map((match) => match[1])
+      : [...literal.matchAll(/['"]([\w-]+)['"]/g)].map((match) => match[1])
+  if (ids.length === 0) throw new Error(`${MISSING_IDS}: its literal parsed to no ids`)
+  return ids
+}
+
+test("U21: the setup skill's --tools sentence names every DEPENDENCY_IDS id, in order", () => {
+  const source = readdirSync(DEPENDENCY_REGISTRY_DIR)
+    .filter((name) => name.endsWith('.ts'))
+    .map((name) => readText(join(DEPENDENCY_REGISTRY_DIR, name)))
+    .join('\n')
+  const expected = parseDependencyIds(source)
+
+  const { file, body } = procedureSkill('setup')
+  const sentence = joinedParagraphs(body).match(/`--tools <ids\.\.\.>`[^\n]*?The ids are ([^.]+)\./)
+  assert.ok(sentence, `${rel(file)} lost the \`--tools\` "The ids are …" sentence`)
+  const named = [...sentence[1].matchAll(/`([\w-]+)`/g)].map((match) => match[1])
+
+  assert.deepEqual(named, expected, `${rel(file)}'s --tools ids drifted from the CLI's DEPENDENCY_IDS`)
+})
+
+test('U21 red: a registry without a parseable DEPENDENCY_IDS throws instead of passing', () => {
+  assert.throws(() => parseDependencyIds('export const IDS = []'), new RegExp(MISSING_IDS))
+  assert.throws(() => parseDependencyIds('export const DEPENDENCY_IDS = Object.keys(SPECS)'), new RegExp(MISSING_IDS))
+  assert.throws(() => parseDependencyIds('export const DEPENDENCY_IDS = []'), new RegExp(MISSING_IDS))
+})
+
 test('U18: no procedure body carries a retired clause', () => {
   for (const [name, clauses] of Object.entries(RETIRED_CLAUSES)) {
     const { file, body } = procedureSkill(name)

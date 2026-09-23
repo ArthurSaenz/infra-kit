@@ -47,9 +47,10 @@ infra-kit doctor
 sections, already rolled up, and each failing line already carries its own fix. Reformatting it
 means holding a second copy of a list this skill does not own, and that copy goes stale silently.
 
-**A non-zero exit here is a diagnosis, not a broken command.** The CLI deliberately exits 1 when the
-plugin is not installed for the current project — which is exactly the machine someone runs this on.
-Never report that as a tool failure.
+**The exit rule.** The CLI exits 1 only when the plugin is not installed for the current project, and
+for no other finding. That is a diagnosis, not a broken command — it is exactly the machine someone
+runs this on — so never report it as a tool failure. A skipped row is a check that could not run
+here: it is neither a pass nor a failure.
 
 If neither binary resolves, do **not** stop. Say the CLI half is unavailable and why, then run
 step 2 anyway: it needs nothing from the CLI, so it still works on the machine where the CLI is the
@@ -70,11 +71,18 @@ which tree this session loaded, whether that matches what Claude Code recorded, 
 version is sitting in the cache, whether the loaded skills tree is intact, and whether the config
 directory is the one the CLI assumes.
 
-It always exits 0. Its findings are in its output.
+It prints in the same chrome as the CLI report — a titled section, one marked row per check, the
+rollup, a rule and a totals line — so show it verbatim too, right after the CLI's. It always exits 0.
+Its findings are in its output.
 
 ## Step 3 — interpret
 
-State the failing lines from both halves and what they mean together. Two combinations worth calling
+Open with one line, the combined verdict, computed from the two totals lines:
+`CLI: N passed · N failed · N warned · N skipped | Session: …`, with the session half in the same
+shape. A count a totals line leaves out is zero; when the CLI half did not run, write
+`CLI: unavailable`. This is the only figure the skill composes, and it copies no rows.
+
+Then state the failing lines from both halves and what they mean together. Two combinations worth calling
 out explicitly, because neither half says it alone:
 
 - The CLI reports the plugin as installed, but the probe reports the loaded tree is not the recorded
