@@ -361,6 +361,9 @@ export const defaultUiDevFactory: UiDevFactory = ({
       // `parseTurboTaskFailure` — the flag changes the blast radius, not the visibility.
       '--continue=dependencies-successful',
       '--output-logs=new-only',
+      // `auto` switches to grouped `::group::` output with no `<pkg>:<task>:` prefix whenever GITHUB_ACTIONS is
+      // set, and every line parser below keys off that prefix — so a run inside CI would attribute nothing.
+      '--log-order=stream',
       '--no-update-notifier',
       '--ui=stream',
     ],

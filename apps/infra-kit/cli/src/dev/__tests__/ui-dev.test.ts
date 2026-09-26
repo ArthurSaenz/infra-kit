@@ -149,6 +149,7 @@ describe('defaultUiDevFactory — turbo child spawn contract', () => {
         '--only',
         '--continue=dependencies-successful',
         '--output-logs=new-only',
+        '--log-order=stream',
         '--no-update-notifier',
         '--ui=stream',
       ],

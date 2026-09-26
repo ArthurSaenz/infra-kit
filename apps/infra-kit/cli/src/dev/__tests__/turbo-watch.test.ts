@@ -90,6 +90,7 @@ describe('defaultTurboWatchFactory — spawn argv', () => {
         '--filter=website-ui^...',
         '--continue=dependencies-successful',
         '--env-mode=loose',
+        '--log-order=stream',
       ],
       { cwd: '/repo', detached: true, stdio: ['ignore', logFd, logFd] },
     ])

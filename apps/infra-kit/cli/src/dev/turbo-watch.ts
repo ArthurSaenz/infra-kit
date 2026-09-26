@@ -114,7 +114,18 @@ export const defaultTurboWatchFactory: TurboWatchFactory = ({
   const out = openLog ? openLog(logFile) : fs.openSync(logFile, 'a')
   const child = spawn(
     'pnpm',
-    ['exec', 'turbo', 'watch', 'build', ...filters, '--continue=dependencies-successful', '--env-mode=loose'],
+    [
+      'exec',
+      'turbo',
+      'watch',
+      'build',
+      ...filters,
+      '--continue=dependencies-successful',
+      '--env-mode=loose',
+      // Same reason as `ui-dev.ts`: under GITHUB_ACTIONS `auto` groups output and drops the task prefix, which
+      // would leave the watch log unattributable.
+      '--log-order=stream',
+    ],
     { cwd, detached: true, stdio: ['ignore', out, out] },
   )
 
