@@ -25,7 +25,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # arm64, like plugin-ci: pnpm-workspace.yaml's supportedArchitectures installs optional
+    # binaries (esbuild, turbo) for arm64 only, so an x64 runner has no esbuild to build with.
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
     steps:
@@ -53,7 +55,7 @@ jobs:
           if-no-files-found: error
 
   publish: # the critical job: no dependencies installed, no cache, only pinned first-party actions
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: build
     permissions:
       contents: read

@@ -1,5 +1,5 @@
-# Keeps the SHA-pinned actions current. The cooldown mirrors the dependency cooldown in
-# pnpm-workspace.yaml: a compromised action release is usually pulled within days.
+# Keeps the SHA-pinned actions current. A compromised action release is usually pulled within
+# days; 7 is the floor zizmor's dependabot-cooldown audit accepts.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -7,4 +7,4 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      default-days: 3
+      default-days: 7

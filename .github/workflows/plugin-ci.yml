@@ -31,7 +31,9 @@ jobs:
         with:
           node-version-file: .node-version
       - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code
+        # The plugin validator is the CLI itself; an exact pin is the closest thing to a lockfile
+        # this one-off global install can have. Bump it deliberately, together with the local CLI.
+        run: npm install -g @anthropic-ai/claude-code@2.1.283 # zizmor: ignore[adhoc-packages]
       - name: U1 — plugin manifest and skills validate under --strict
         run: claude plugin validate ./plugins/infra-kit --strict --json
       - name: Marketplace catalog validates under --strict
@@ -42,7 +44,9 @@ jobs:
         run: node --test --test-concurrency=1 'plugins/infra-kit/skills/*/__tests__/*.test.mjs'
       - name: U9 — a plugin change must bump plugin.json version
         if: github.event_name == 'pull_request'
-        run: node scripts/check-plugin-version-bump.mjs "origin/${{ github.base_ref }}"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: node scripts/check-plugin-version-bump.mjs "origin/$BASE_REF"
       # Reports, never gates. The plugin is live on merge and the CLI on publish, so a skill can name a
       # tool — or lean on `env-load` accepting a missing `config` — that the build a user installs does
       # not have yet. Each skill's floor sentence and fallback clause are what make that window
