@@ -56,6 +56,20 @@ const readPackageName = (dir: string): string | undefined => {
   }
 }
 
+/** The unique `tasks[].package` set from a `turbo run … --dry=json` stdout payload. */
+export const parseDryRunPackages = (stdout: string): string[] => {
+  const parsed = JSON.parse(stdout) as { tasks?: Array<{ package?: unknown }> }
+  const names = (parsed.tasks ?? [])
+    .map((t) => {
+      return t.package
+    })
+    .filter((p): p is string => {
+      return typeof p === 'string'
+    })
+
+  return [...new Set(names)]
+}
+
 /**
  * Default {@link DryRunner}: `turbo run build --dry=json --filter=...<pkg>` in `root`, returning the
  * unique `tasks[].package` set (the packages turbo would rebuild for `<pkg>`). `...` includes the
@@ -68,16 +82,8 @@ export const defaultDryRunner = (root: string): DryRunner => {
       ['exec', 'turbo', 'run', 'build', '--dry=json', `--filter=...${packageName}`],
       { cwd: root, maxBuffer: 32 * 1024 * 1024 },
     )
-    const parsed = JSON.parse(stdout) as { tasks?: Array<{ package?: unknown }> }
-    const names = (parsed.tasks ?? [])
-      .map((t) => {
-        return t.package
-      })
-      .filter((p): p is string => {
-        return typeof p === 'string'
-      })
 
-    return [...new Set(names)]
+    return parseDryRunPackages(stdout)
   }
 }
 

@@ -22,6 +22,7 @@ describe('shouldRunWizard', () => {
     ['--self', { self: true }],
     ['--orca', { orca: true }],
     ['--watch', { watch: true }],
+    ['--no-watch', { watch: false }],
     ['--verbose', { verbose: true }],
     ['--routes', { routes: true }],
   ])('never fires when %s is present (runs directly from flags)', (_label, raw) => {

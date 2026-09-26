@@ -120,8 +120,13 @@ describe('classifyDistChange — route a compiled-output path to app vs package'
     expect(change).toEqual({ kind: 'package', packageDir: '/repo/packages/lib-core/dist' })
   })
 
-  it('returns an app change with undefined dir when nothing matches', () => {
-    const change = classifyDistChange('/repo/elsewhere/dist/x.js', appDistDirs, packageDistDirs)
+  // `dist-old` guards the bare-prefix trap: a sibling dir sharing the dist dir's name prefix is not inside it.
+  it.each([
+    ['nothing matches', '/repo/elsewhere/dist/x.js'],
+    ['an app dist dir only prefixes a sibling', '/repo/apps/client/api/dist-old/x.js'],
+    ['a package dist dir only prefixes a sibling', '/repo/packages/lib-core/dist-old/index.js'],
+  ])('returns an app change with undefined dir when %s', (_case, changedPath) => {
+    const change = classifyDistChange(changedPath, appDistDirs, packageDistDirs)
 
     expect(change).toEqual({ kind: 'app', app: undefined })
   })

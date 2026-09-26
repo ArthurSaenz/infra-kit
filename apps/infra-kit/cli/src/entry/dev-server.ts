@@ -39,6 +39,10 @@ const FATAL_TEARDOWN_DEADLINE_MS = 20_000
 
 /** Raw option object as produced by Commander (comma-joined strings). */
 export interface DevCliOptions {
+  /**
+   * `--watch` and `--no-watch` are both declared, so Commander leaves this `undefined` when neither was passed —
+   * which is what lets the wizard tell "said nothing" from an explicit choice. Unset means watch.
+   */
   watch?: boolean
   app?: string
   /**
@@ -107,7 +111,7 @@ const splitList = (value: string | undefined): string[] | null => {
  */
 export const toDevServerOptions = (raw: DevCliOptions): DevServerOptions => {
   return {
-    watch: raw.watch ?? false,
+    watch: raw.watch ?? true,
     include: splitList(raw.app),
     preset: raw.preset,
     presetDef: toPresetDef(splitList(raw.target)),
@@ -483,7 +487,7 @@ export const shouldRunWizard = (raw: DevCliOptions, tty: boolean, json: boolean)
   // `--no-ui-health` is deliberately NOT in this list. It selects a diagnostic, not a run plan, and a flag
   // that quietly turns the picker into "run the entire repo" is a far bigger surprise than the one it would
   // avoid. The wizard carries it through instead (see `wizardToOptions`), so the user gets both.
-  const bare = !raw.preset && !raw.app && !raw.self && !raw.orca && !raw.watch && !raw.verbose && !raw.routes
+  const bare = !raw.preset && !raw.app && !raw.self && !raw.orca && raw.watch == null && !raw.verbose && !raw.routes
 
   return bare && tty && !json
 }
@@ -571,7 +575,8 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
     .name('infra-kit-dev-server')
     .description('Run local dev servers for the apps in a named devServersPresets preset (or all apps)')
     .argument('[preset]', 'Named preset from devServersPresets (omit to run every app)')
-    .option('-w, --watch', 'Rebuild and restart on file save')
+    .option('-w, --watch', 'Rebuild and restart on file save (the default)')
+    .option('--no-watch', 'Build once and never restart on save')
     .option('--app <names>', 'Further narrow to these app folder names (comma-separated)')
     .option(
       '--orca',

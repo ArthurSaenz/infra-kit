@@ -262,7 +262,7 @@ export interface EquivalentCommand {
 }
 
 /**
- * Build the equivalent `infra-kit dev --target=… [--watch] [--orca]` flag string for a derived plan.
+ * Build the equivalent `infra-kit dev --target=… [--no-watch] [--orca]` flag string for a derived plan.
  * Always exact: `--target` names packages at `<app>/<part>` granularity — the same grammar the plan's
  * `targetKeys` already use — so every wizard selection, whole-app or part-level, round-trips into a
  * pasteable command. (`--app` is deliberately NOT used here: its app-name granularity over-launches a
@@ -271,7 +271,7 @@ export interface EquivalentCommand {
 export const equivalentCommand = (plan: DerivedPlan, selection: ManualSelection): EquivalentCommand => {
   const parts = [`--target=${plan.targetKeys.join(',')}`]
 
-  if (selection.watch) parts.push('--watch')
+  if (!selection.watch) parts.push('--no-watch')
   if (selection.orca) parts.push('--orca')
 
   return { flags: parts.join(' ') }

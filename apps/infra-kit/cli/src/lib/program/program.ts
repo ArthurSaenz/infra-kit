@@ -98,6 +98,12 @@ const configureMergeDev = (cmd: Command): Command => {
       '--verify [command]',
       'Check each merge before pushing it. Bare runs `pnpm install --frozen-lockfile`; pass a command to run that instead. A branch that fails is dropped from the push, never rolled back',
     )
+    .option(
+      '--keep-conflicts',
+      'On the confirmed run, leave each conflicted branch mid-merge in <root>-worktrees/merge-dev/ for resolution',
+    )
+    .option('--continue', 'Check, preview, then commit and push the selected resolutions left by --keep-conflicts')
+    .option('--abort', 'Discard the selected resolutions left by --keep-conflicts')
     .action(async (options) => {
       // The signal guard is installed HERE, on the CLI path, and nowhere else:
       // `ghMergeDev` is a pure handler that returns a structured result, so a
@@ -108,6 +114,9 @@ const configureMergeDev = (cmd: Command): Command => {
           versions: options.versions,
           dryRun: options.dryRun,
           verify: options.verify,
+          keepConflicts: options.keepConflicts,
+          continue: options.continue,
+          abort: options.abort,
           confirmedCommand: options.yes,
         })
       })
@@ -636,7 +645,8 @@ export const buildProgram = (): Command => {
     .command('dev')
     .description('Run local dev servers for a named devServersPresets preset (or all apps); api + ui')
     .argument('[preset]', 'Named preset from devServersPresets (omit to run every app)')
-    .option('-w, --watch', 'Rebuild and restart on file save')
+    .option('-w, --watch', 'Rebuild and restart on file save (the default)')
+    .option('--no-watch', 'Build once and never restart on save')
     .option('--app <names>', 'Further narrow to these app folder names (comma-separated)')
     .option(
       '--target <keys>',

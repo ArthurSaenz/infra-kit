@@ -23,6 +23,12 @@
  *     never on the `infra-kit dev <preset>` path, which is the one people actually type.)
  * "Intended local, isn't up" covers all three with one predicate, crash included.
  *
+ * A backend that this run LAUNCHED and that failed to boot is never allowed to fall back at all: under
+ * `--watch` the runner holds its route at the backend's own local alias (see `holdFailedBackendsLocal` in
+ * `dev-server.ts`), so the frontend fails loudly on that route until the backend comes back — it never
+ * quietly answers from cloud in the meantime. Such a package is passed in as `held`, and the route is
+ * reported as resolving `local` (a dead alias), not to its declared fallback.
+ *
  * Side-effect free: every input is passed in (nothing is read from disk here), so the rule is fully
  * unit-testable.
  */
@@ -78,6 +84,8 @@ export interface PairingInputs {
   running: ReadonlySet<string>
   /** package → its start-failure reason. Absent for a package that was never attempted at all. */
   reasons: ReadonlyMap<string, { app: string; reason: string }>
+  /** Down packages whose routes the runner holds at their local alias instead of the declared fallback. */
+  held?: ReadonlySet<string>
   /** `INFRA_KIT_ENV`, for the `<env>` placeholder in a cloud template. */
   env?: string
 }
@@ -121,6 +129,11 @@ const interpolateCloud = (template: string, packageName: string, env: string | u
 /** Where an unserved route actually lands, per the helper's `pickSource`: `default`, else the sole source. */
 const resolveFallback = (route: PairingRoute): PairingSource => {
   return route.default ?? route.from[0] ?? 'cloud'
+}
+
+/** Where a local-capable route whose backend is NOT up lands: its held alias, else the declared fallback. */
+const resolveUnserved = (route: PairingRoute, held: ReadonlySet<string> | undefined): PairingSource => {
+  return route.from.includes('local') && held?.has(route.packageName) ? 'local' : resolveFallback(route)
 }
 
 /** The cloud origin a route lands on, or undefined when there is no template (or no `<env>` for one). */
@@ -167,14 +180,14 @@ const judgeRoute = (
   ui: LaunchedUi,
   route: string,
   spec: PairingRoute,
-  { wanted, running, reasons, env }: PairingInputs,
+  { wanted, running, reasons, held, env }: PairingInputs,
 ): DegradedRoute | null => {
   const { packageName } = spec
   const intendedLocal = wanted.has(packageName) || spec.pinnedLocal === true
 
   if (!spec.from.includes('local') || !intendedLocal || running.has(packageName)) return null
 
-  const fallback = resolveFallback(spec)
+  const fallback = resolveUnserved(spec, held)
   const failure = reasons.get(packageName)
   const cloudTarget =
     fallback === 'cloud' && ui.cloudTemplate != null ? interpolateCloud(ui.cloudTemplate, packageName, env) : undefined
@@ -221,6 +234,8 @@ export interface ProxyResolutionInputs {
   running: ReadonlySet<string>
   /** A running backend package → its local origin URL, for a `local` route's `target`. */
   localOrigin: (packageName: string) => string | undefined
+  /** Down packages held at their local alias — see {@link PairingInputs.held}. */
+  held?: ReadonlySet<string>
   /** `INFRA_KIT_ENV`, for the `<env>` placeholder in a cloud template. */
   env?: string
 }
@@ -237,7 +252,7 @@ export interface ProxyResolutionInputs {
  * Routes are emitted sorted by path within each UI, so the listing is stable regardless of config order.
  */
 export const resolveProxyRoutes = (input: ProxyResolutionInputs): ResolvedProxyRoute[] => {
-  const { uis, running, localOrigin, env } = input
+  const { uis, running, localOrigin, held, env } = input
 
   return uis.flatMap((ui) => {
     return Object.entries(ui.routes)
@@ -246,7 +261,7 @@ export const resolveProxyRoutes = (input: ProxyResolutionInputs): ResolvedProxyR
       })
       .map(([route, spec]): ResolvedProxyRoute => {
         const source: PairingSource =
-          spec.from.includes('local') && running.has(spec.packageName) ? 'local' : resolveFallback(spec)
+          spec.from.includes('local') && running.has(spec.packageName) ? 'local' : resolveUnserved(spec, held)
         const target =
           source === 'local' ? localOrigin(spec.packageName) : cloudTargetOf(ui.cloudTemplate, spec.packageName, env)
 
@@ -288,7 +303,7 @@ const wasAttempted = (d: DegradedRoute): boolean => {
  * "run with --watch" would be sending them to wait on a restart that cannot happen.
  */
 const remedy = (d: DegradedRoute): string => {
-  if (wasAttempted(d)) return `fix ${d.apiApp}/api and re-run (or use --watch to retry it on the next save)`
+  if (wasAttempted(d)) return `fix ${d.apiApp}/api and re-run (or drop --no-watch to retry it on the next save)`
 
   return (
     `this run never launched "${d.packageName}" — drop the --app/--self narrowing, add its api to the ` +

@@ -796,6 +796,24 @@ const readAppRelease = (cwd: string): string => {
 }
 
 /**
+ * The portless alias NAME (`<release>.<label>`, no `.localhost`) an api app registers — computable before
+ * it binds, which is what lets a boot-failed app's routes be held at it.
+ *
+ * @throws When the package name yields no legal DNS label.
+ */
+const appAliasName = (packageName: string, appDir: string): string => {
+  // An npm name is not a DNS label — see `slugifyHostLabel`. `infra-kit/vite` slugifies its
+  // own `<packageName>` template token identically, so the proxy target and this alias cannot drift.
+  const label = slugifyHostLabel(packageName)
+
+  if (label === '') {
+    throw new Error(`infra-kit dev: package name "${packageName}" has no letters or digits to build a hostname from.`)
+  }
+
+  return `${readAppRelease(appDir)}.${label}`
+}
+
+/**
  * The one-line `reason` for a `● failed` row. Endpoint rows are a single terminal line, so a stack
  * trace cannot go there — it is already in the log tail and the session log. Take the message only,
  * and its first line at that: validation errors like to append their own multi-line dumps.
@@ -910,6 +928,11 @@ export class DevServerRunner {
    */
   private degradedRoutes: DegradedRoute[] = []
   /**
+   * Packages of boot-failed backends whose routes {@link holdFailedBackendsLocal} pinned at their own local
+   * alias. Empty unless the run stays resident under `--watch` with a backend down.
+   */
+  private readonly heldLocalPkgs = new Set<string>()
+  /**
    * The launched frontends and their declared `dev.proxy` routes, built once alongside {@link degradedRoutes}
    * from the SAME `loadDev` read the vite helper uses. Shared so both the degraded check and the ready
    * header's per-app proxy listing resolve off one source of truth.
@@ -920,9 +943,9 @@ export class DevServerRunner {
    * for the nested "all proxies — which one and where" list under each UI row.
    *
    * A BOOT-TIME SNAPSHOT: computed once in {@link printReady} and only ever filtered (never re-derived) by
-   * {@link proxiesFor}. It is committed into the static header, so under `--watch` a backend that boot-fails
-   * then recovers keeps its `cloud` line here even after vite has flipped the live proxy back to `local`.
-   * That live surface is deliberately owned by the self-clearing {@link degradedRows}, not this list.
+   * {@link proxiesFor}. It is committed into the static header. A boot-failed backend's route already reads
+   * `local` here (it is held, see {@link holdFailedBackendsLocal}); that it is DOWN is owned by the
+   * self-clearing {@link degradedRows}, not this list.
    */
   private proxyRoutes: ResolvedProxyRoute[] = []
   /**
@@ -1273,8 +1296,10 @@ export class DevServerRunner {
     // the header the user still needs.
     //
     // `--watch` is the one exception, and only because it can genuinely fix this: a boot-failed app is a
-    // restart target now (see `resolveRestartTargets`), so the next save can bring the backend up
-    // and the route back to local. It stays resident with a loud, self-clearing `⚠ … ● cloud` row instead.
+    // restart target now (see `resolveRestartTargets`), so the next save can bring the backend up. It stays
+    // resident — but with the route HELD at the backend's local alias (`holdFailedBackendsLocal`), never on
+    // cloud: the frontend fails loudly on that route, under a self-clearing `⚠ … ● dead alias` row, until
+    // the backend is back.
     //
     // That healing is real, and it is the `infraKit()` vite PLUGIN that makes it real: its `configureServer`
     // hook watches the dev-context fragment dir, re-resolves the proxy, and restarts vite when the resolved
@@ -1284,6 +1309,7 @@ export class DevServerRunner {
     // `local` until that UI is restarted. Discovery treats both shapes as managed, so on such a UI this row
     // can clear while the traffic still goes to cloud. The plugin is the supported wiring and every
     // consumer uses it today; stated here so the assumption is on the record rather than merely held.
+    if (watch) this.holdFailedBackendsLocal()
     this.degradedRoutes = await this.collectDegradedRoutes(uiApps, wantedLocalPkgs, presetProxy)
     if (this.degradedRoutes.length > 0 && !watch) {
       throw new Error(formatPairingRefusal(this.degradedRoutes, target))
@@ -1514,6 +1540,7 @@ export class DevServerRunner {
           return [app.packageName, { app: app.name, reason }]
         }),
       ),
+      held: this.heldLocalPkgs,
       env: process.env[INFRA_KIT_ENV_VAR],
     })
   }
@@ -1902,15 +1929,7 @@ export class DevServerRunner {
    * @throws When the package name yields no legal DNS label, or portless rejects the registration.
    */
   private async registerAppAlias(packageName: string, appDir: string, port: number): Promise<string> {
-    const release = readAppRelease(appDir)
-    // An npm name is not a DNS label — see `slugifyHostLabel`. `infra-kit/vite` slugifies its
-    // own `<packageName>` template token identically, so the proxy target and this alias cannot drift.
-    const label = slugifyHostLabel(packageName)
-
-    if (label === '') {
-      throw new Error(`infra-kit dev: package name "${packageName}" has no letters or digits to build a hostname from.`)
-    }
-    const name = `${release}.${label}`
+    const name = appAliasName(packageName, appDir)
 
     if (!(await this.proxy.registerAlias(name, port))) {
       throw new Error(`infra-kit dev: portless refused the alias "${name}" → 127.0.0.1:${port}.`)
@@ -1996,6 +2015,31 @@ export class DevServerRunner {
     this.renderer.narrate(`✅ ${app.name} started on port ${boundPort}`)
 
     return { server, boundPort, alias }
+  }
+
+  /**
+   * Pin every boot-failed backend's routes at the local alias it WILL register once it boots, so no
+   * frontend falls back to cloud while it is down.
+   *
+   * Without this a failed backend writes no fragment, and the vite helper's `pickSource` sends its
+   * `from: ['local','cloud']` routes to `default: 'cloud'` — the frontend then quietly talks to the shared
+   * backend the user chose NOT to use. A held fragment names the backend's own origin, so the route stays
+   * `local` and every request on it fails at portless (no alias is registered) until the backend is up.
+   * Recovery then needs nothing extra: {@link startOneApp} registers that same alias and rewrites the
+   * fragment with the same origin.
+   *
+   * The fragment is the published v2 wire shape, so every helper already pinned in a consumer obeys it.
+   * `port: 0` records that nothing is bound. Non-fatal per app, like the fragment write in startOneApp.
+   */
+  private holdFailedBackendsLocal(): void {
+    for (const { app } of this.failedApps) {
+      try {
+        this.writeDevContextFragment(app, 0, `${appAliasName(app.packageName, app.path)}.localhost`)
+        this.heldLocalPkgs.add(app.packageName)
+      } catch (error) {
+        this.renderer.log(`⚠️  Failed to hold ${app.name}'s routes local: ${String(error)}`, 'warn')
+      }
+    }
   }
 
   /**
@@ -2220,7 +2264,7 @@ export class DevServerRunner {
 
           if (restarted) {
             // A boot-failed app has no slot to overwrite: it is APPENDED and cleared from `failedApps`,
-            // which is also what takes its frontend's `⚠ … ● cloud` row down (see `degradedRows`).
+            // which is also what takes its frontend's `⚠ … ● dead alias` row down (see `degradedRows`).
             if (idx < 0) {
               const recovered = this.promoteRecoveredApp(app, restarted)
 
@@ -3090,6 +3134,7 @@ export class DevServerRunner {
       localOrigin: (pkg) => {
         return originByPkg.get(pkg)
       },
+      held: this.heldLocalPkgs,
       env: process.env[INFRA_KIT_ENV_VAR],
     })
 
@@ -3388,6 +3433,11 @@ export class DevServerRunner {
       // Remove this runner's own dev-context fragment so a stopped app drops out of the
       // helper's localSet (only its own — the directory model keeps runners independent).
       this.removeDevContextFragment(app)
+    }
+
+    // A backend still down at exit owns a HELD fragment (see `holdFailedBackendsLocal`) and no server.
+    for (const { app } of this.failedApps) {
+      if (this.heldLocalPkgs.has(app.packageName)) this.removeDevContextFragment(app)
     }
 
     // Final terminal-visible confirmation, so Ctrl-C never ends on a bare cursor. `log` (not the

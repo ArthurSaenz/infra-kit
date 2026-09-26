@@ -53,18 +53,18 @@ vi.mock('src/dev/signal-shutdown', () => {
 /**
  * Pure per-pane command construction for `infra-kit dev --orca`. A pane with no explicit targets maps to
  * the single-app primitive `pnpm exec infra-kit dev --app=<name>`; a pane carrying targets maps to the
- * part-level `--target=<app>/<part>,…`. `--watch` is threaded through only when watch mode is on.
+ * part-level `--target=<app>/<part>,…`. `--no-watch` is threaded through only when watch mode is off.
  */
 describe('buildPaneCommands', () => {
-  it('maps each app to the single-app dev primitive (no watch)', () => {
-    expect(buildPaneCommands([{ app: 'client' }, { app: 'backoffice' }], false)).toEqual([
+  it('maps each app to the single-app dev primitive (watch is the default, so no flag)', () => {
+    expect(buildPaneCommands([{ app: 'client' }, { app: 'backoffice' }], true)).toEqual([
       'pnpm exec infra-kit dev --app=client',
       'pnpm exec infra-kit dev --app=backoffice',
     ])
   })
 
-  it('appends --watch to each command when watch is on', () => {
-    expect(buildPaneCommands([{ app: 'client' }], true)).toEqual(['pnpm exec infra-kit dev --app=client --watch'])
+  it('appends --no-watch to each command when watch is off', () => {
+    expect(buildPaneCommands([{ app: 'client' }], false)).toEqual(['pnpm exec infra-kit dev --app=client --no-watch'])
   })
 
   it('returns an empty list for no apps', () => {
@@ -74,19 +74,19 @@ describe('buildPaneCommands', () => {
   it('emits --target for a pane with explicit parts, so an unticked part never starts', () => {
     // `--app=client` expands to EVERY part client has. A wizard selection of `client/api` alone must not
     // silently start `client/ui` in that pane — the whole reason `--target` exists.
-    expect(buildPaneCommands([{ app: 'client', targets: ['client/api'] }], false)).toEqual([
+    expect(buildPaneCommands([{ app: 'client', targets: ['client/api'] }], true)).toEqual([
       'pnpm exec infra-kit dev --target=client/api',
     ])
   })
 
   it('joins multiple parts of the same app into one --target', () => {
     expect(buildPaneCommands([{ app: 'client', targets: ['client/api', 'client/ui'] }], true)).toEqual([
-      'pnpm exec infra-kit dev --target=client/api,client/ui --watch',
+      'pnpm exec infra-kit dev --target=client/api,client/ui',
     ])
   })
 
   it('falls back to --app when the targets list is empty (not merely absent)', () => {
-    expect(buildPaneCommands([{ app: 'client', targets: [] }], false)).toEqual(['pnpm exec infra-kit dev --app=client'])
+    expect(buildPaneCommands([{ app: 'client', targets: [] }], true)).toEqual(['pnpm exec infra-kit dev --app=client'])
   })
 })
 
@@ -154,7 +154,7 @@ const happyRoutes = (overrides: Record<string, OrcaReply | ((argv: string[]) => 
 
 /** Start the resident supervisor and wait until it has wired its signal handler — the happy path never resolves. */
 const startResident = async (): Promise<void> => {
-  void runOrcaDevServer({ include: null, watch: false })
+  void runOrcaDevServer({ include: null, watch: true })
 
   await vi.waitFor(() => {
     expect(mocks.registerSignalShutdown).toHaveBeenCalledTimes(1)
@@ -180,7 +180,7 @@ describe('runOrcaDevServer', () => {
   it('falls back with no Orca call at all when no API app has a pane to open', async () => {
     mocks.apps = []
 
-    await expect(runOrcaDevServer({ include: null, watch: false })).resolves.toEqual({
+    await expect(runOrcaDevServer({ include: null, watch: true })).resolves.toEqual({
       fallback: 'no API apps to open a pane for (panes are backend-only)',
     })
     expect(orcaCli.calls).toEqual([])
@@ -191,7 +191,7 @@ describe('runOrcaDevServer', () => {
       return { exitCode: 127, stdout: '', stderr: 'orca: command not found' }
     }
 
-    await expect(runOrcaDevServer({ include: null, watch: false })).resolves.toEqual({
+    await expect(runOrcaDevServer({ include: null, watch: true })).resolves.toEqual({
       fallback: 'Orca is not installed',
     })
     expect(orcaCli.calls).toEqual([STATUS_ARGV])
@@ -200,7 +200,7 @@ describe('runOrcaDevServer', () => {
   it('falls back when the app is installed but not running', async () => {
     orcaCli.respond = routes({ status: ok({ app: { running: false }, runtime: { reachable: false } }) })
 
-    await expect(runOrcaDevServer({ include: null, watch: false })).resolves.toEqual({
+    await expect(runOrcaDevServer({ include: null, watch: true })).resolves.toEqual({
       fallback: 'Orca is not running',
     })
     expect(orcaCli.calls).toEqual([STATUS_ARGV])
@@ -209,7 +209,7 @@ describe('runOrcaDevServer', () => {
   it('falls back — never `repo add` — when the main repo is not registered', async () => {
     orcaCli.respond = happyRoutes({ 'repo list': ok({ repos: [{ path: '/home/dev/other' }] }) })
 
-    await expect(runOrcaDevServer({ include: null, watch: false })).resolves.toEqual({
+    await expect(runOrcaDevServer({ include: null, watch: true })).resolves.toEqual({
       fallback: 'repo is not registered in Orca — run `infra-kit worktrees add` once, it offers to register it',
     })
     expect(orcaCli.calls).toEqual([STATUS_ARGV, REPO_LIST_ARGV])
@@ -218,7 +218,7 @@ describe('runOrcaDevServer', () => {
   it('falls back with the UI steps when the sidebar hides this worktree (no --focus can reveal it)', async () => {
     orcaCli.respond = happyRoutes({ 'worktree list': ok({ worktrees: [{ path: MAIN }] }) })
 
-    await expect(runOrcaDevServer({ include: null, watch: false })).resolves.toEqual({
+    await expect(runOrcaDevServer({ include: null, watch: true })).resolves.toEqual({
       fallback: `this worktree is hidden in Orca's sidebar — open Orca → repo → "hidden worktrees" → Show`,
     })
     expect(orcaCli.calls).toEqual([STATUS_ARGV, REPO_LIST_ARGV, WORKTREE_LIST_ARGV])
@@ -255,7 +255,7 @@ describe('runOrcaDevServer', () => {
       expect(mocks.registerSignalShutdown).toHaveBeenCalledTimes(1)
     })
 
-    expect(orcaCli.calls.slice(3)).toEqual([createArgv('pnpm exec infra-kit dev --target=client/api --watch')])
+    expect(orcaCli.calls.slice(3)).toEqual([createArgv('pnpm exec infra-kit dev --target=client/api')])
   })
 
   it('shutdown closes the whole tab through the first handle', async () => {
@@ -291,7 +291,7 @@ describe('runOrcaDevServer', () => {
     mocks.apps = [app('client'), app('backoffice')]
     orcaCli.respond = happyRoutes({ 'terminal split': fail('runtime_error', 'split failed') })
 
-    await expect(runOrcaDevServer({ include: null, watch: false })).rejects.toThrow('split failed')
+    await expect(runOrcaDevServer({ include: null, watch: true })).rejects.toThrow('split failed')
 
     expect(orcaCli.calls.slice(3)).toEqual([
       createArgv(CMD('client')),

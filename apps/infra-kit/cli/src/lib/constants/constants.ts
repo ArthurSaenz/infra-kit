@@ -255,3 +255,10 @@ export const atomicWriteFileSync = (filePath: string, content: string, mode: num
 }
 
 export const WORKTREES_DIR_SUFFIX = '-worktrees'
+
+/**
+ * Canonical `<repo>-worktrees` subdirectory names, shared by every command that lays worktrees
+ * out under it (`init`'s scaffold, `worktrees add`) or reasons about that layout (`worktrees
+ * sync`/`remove`, `gh merge-dev`'s scratch checkout) — one literal each, not re-typed per site.
+ */
+export const WORKTREE_SUBDIRS = { release: 'release', feature: 'feature', mergeDev: 'merge-dev' } as const

@@ -60,7 +60,7 @@
     "fix": "pnpm run prettier-fix && pnpm run eslint-fix && pnpm run qa"
   },
   "dependencies": {
-    "zod": "^4.6.2"
+    "zod": "^4.6.5"
   },
   "peerDependencies": {
     "vite": ">=8"

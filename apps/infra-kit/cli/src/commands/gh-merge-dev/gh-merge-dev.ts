@@ -7,7 +7,14 @@ import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { isCommandDeclined } from 'src/lib/errors/command-declined-error'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertRepoWithOrigin } from 'src/lib/git-guard'
-import { getMainRepoRoot, listWorktrees, lsRemoteHead, pushAtomic, withScratchWorktree } from 'src/lib/git-utils'
+import {
+  getMainRepoRoot,
+  listWorktrees,
+  lsRemoteHead,
+  pushAtomic,
+  revParseVerify,
+  withScratchWorktree,
+} from 'src/lib/git-utils'
 import type { WorktreeEntry } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
@@ -18,6 +25,8 @@ import type { RequiredConfirmedOptionArg } from 'src/types'
 
 import { DEFAULT_VERIFY_COMMAND, planMergeRun, pushableRefs, reclassify, verifyMerges } from './merge-run'
 import type { MergePlanEntry, MergeStatus } from './merge-run'
+import { abortResolutions, continueResolutions, handOffConflicts, isLockfileOnly } from './resolution'
+import type { Blocked, HandOffOutcome, Resolution, ResolutionResultStatus, ResolutionRunOutcome } from './resolution'
 import { registerRunCleanup } from './run-cleanup'
 
 interface GhMergeDevArgs extends RequiredConfirmedOptionArg {
@@ -34,9 +43,15 @@ interface GhMergeDevArgs extends RequiredConfirmedOptionArg {
    * a string runs that command verbatim in the scratch worktree.
    */
   verify?: boolean | string
+  /** On the `--yes` run, leave each conflicted branch mid-merge in its own worktree for resolution. */
+  keepConflicts?: boolean
+  /** Check, commit and push the selected resolutions left by `keepConflicts`. */
+  continue?: boolean
+  /** Discard the selected resolutions left by `keepConflicts`. */
+  abort?: boolean
 }
 
-type ResultStatus = MergeStatus | 'push-aborted' | 'verify-failed'
+type ResultStatus = MergeStatus | ResolutionResultStatus
 
 interface MergeDevResultEntry {
   branch: string
@@ -45,6 +60,8 @@ interface MergeDevResultEntry {
   conflictPaths?: string[]
   pushed: boolean
   reason?: string
+  resolution?: Resolution
+  blocked?: Blocked
 }
 
 type SkipReason = 'hotfix (targets main)' | 'title/base mismatch' | 'open PRs to both dev and main'
@@ -258,6 +275,8 @@ interface RunOutcome {
   observedLanded?: string[]
   /** branch → why verification refused it, when --verify ran. */
   verifyFailed?: Map<string, string>
+  /** branch → the `--keep-conflicts` hand-off, for each conflicted branch. */
+  handOffs?: Map<string, HandOffOutcome>
   declined: boolean
 }
 
@@ -395,8 +414,83 @@ const applyPush = async (args: {
   }
 }
 
+/** The three resolution modes exclude each other, and `--dry-run` belongs to the plain run only. */
+const assertModes = (args: GhMergeDevArgs): void => {
+  const modes = (['keepConflicts', 'continue', 'abort'] as const).filter((mode) => {
+    return args[mode]
+  })
+
+  const flags: Record<(typeof modes)[number], string> = {
+    keepConflicts: '--keep-conflicts',
+    continue: '--continue',
+    abort: '--abort',
+  }
+
+  if (modes.length > 1 || (modes.length === 1 && args.dryRun)) {
+    const named = [
+      ...modes.map((mode) => {
+        return flags[mode]
+      }),
+      ...(args.dryRun ? ['--dry-run'] : []),
+    ]
+
+    throw new OperationError(undefined, {
+      operation: 'choose the merge-dev mode',
+      stderrExcerpt: `${named.join(' and ')} cannot be combined`,
+      remediation: 'pass at most one of --keep-conflicts, --continue, --abort; --dry-run only on a plain run',
+    })
+  }
+}
+
+/** A `--continue`/`--abort` outcome in the same result shape as a plain run. */
+const resolutionResponse = (outcome: ResolutionRunOutcome) => {
+  const { results, atomicPush, declined } = outcome
+
+  for (const entry of results) {
+    const firstLine = entry.reason?.split('\n')[0]
+
+    logger.info(firstLine ? `  ${entry.branch} — ${entry.status}: ${firstLine}` : `  ${entry.branch} — ${entry.status}`)
+  }
+
+  const counted = declined
+    ? []
+    : results.filter((entry) => {
+        return entry.status !== 'aborted'
+      })
+  const failed = counted.filter((entry) => {
+    return !SUCCESS_STATUSES.has(entry.status)
+  })
+
+  return toResponse({
+    successfulMerges: counted.length - failed.length,
+    failedMerges: failed.length,
+    failedBranches: failed.map((entry) => {
+      return entry.branch
+    }),
+    totalBranches: results.length,
+    dryRun: false,
+    atomicPush,
+    results,
+    skipped: [],
+  })
+}
+
+const runResolutionMode = async (args: GhMergeDevArgs) => {
+  const { all, versions, verify, confirmedCommand } = args
+  const cwd = await getMainRepoRoot()
+
+  if (args.abort) return resolutionResponse(await abortResolutions({ cwd, versions, all, confirmedCommand }))
+
+  // Under `--continue` the mandatory install check always runs; `--verify <cmd>` adds to it.
+  const extraVerify = typeof verify === 'string' && verify.length > 0 ? verify : undefined
+
+  return resolutionResponse(await continueResolutions({ cwd, versions, all, verify: extraVerify, confirmedCommand }))
+}
+
 export const ghMergeDev = async (args: GhMergeDevArgs) => {
-  const { all, versions, dryRun = false, verify, confirmedCommand } = args
+  const { all, versions, dryRun = false, verify, keepConflicts = false, confirmedCommand } = args
+
+  assertModes(args)
 
   // `true` (bare `--verify`) selects the cheap default tier; a string is the
   // operator's own command. Configuring at the call site rather than in repo
@@ -408,6 +502,8 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
   // existing checkout, so requiring a clean tree and refusing to run from a
   // linked worktree would only refuse work that is about to succeed.
   await assertRepoWithOrigin({ operation: 'merge dev into release branches' })
+
+  if (args.continue || args.abort) return runResolutionMode(args)
 
   // Per-row exclusion, never a run-level throw: one retitled or dual-base PR must not block
   // merging dev into every other release.
@@ -468,6 +564,7 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
         versions,
         dryRun,
         verify: verifyCommand,
+        keepConflicts,
         confirmedCommand,
       })
     } finally {
@@ -475,7 +572,7 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
     }
   })
 
-  const { entries, selected, pushed, pushAborted, abortedBy, declined, verifyFailed } = outcome
+  const { entries, selected, pushed, pushAborted, abortedBy, declined, verifyFailed, handOffs } = outcome
 
   // One cheap porcelain read, so a failed branch's printed recipe names the
   // worktree it actually lives in rather than a  that would fail.
@@ -491,6 +588,7 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
     abortedBy,
     declined,
     verifyFailed,
+    handOffs,
     dryRun,
     worktrees,
     skipped,
@@ -507,10 +605,15 @@ const planConfirmAndPush = async (args: {
   versions?: string | string[]
   dryRun: boolean
   verify?: string
+  keepConflicts: boolean
   confirmedCommand: boolean | undefined
 }): Promise<RunOutcome> => {
-  const { cwd, worktree, toPlan, candidates, skipped, all, versions, dryRun, verify, confirmedCommand } = args
+  const { cwd, worktree, toPlan, candidates, skipped, all, versions, dryRun, verify, keepConflicts, confirmedCommand } =
+    args
 
+  // Read beside the plan, with no fetch between: the hand-off must reproduce the conflict the
+  // operator approved, even if dev moves before it runs.
+  const plannedDevSha = keepConflicts ? await revParseVerify(cwd, 'origin/dev') : null
   const entries = await planMergeRun({ cwd, worktreePath: worktree.path, branches: toPlan })
   const idle = { entries, pushed: false, pushAborted: false, declined: false }
 
@@ -551,7 +654,7 @@ const planConfirmAndPush = async (args: {
     await confirmOrExit(
       confirmedCommand,
       `Are you sure you want to merge dev into these branches: ${selected.join(', ')}?`,
-      { throwOnDecline: true },
+      { throwOnDecline: true, plan: previewPlan(entries, selected, skipped) },
     )
   } catch (error) {
     if (!isCommandDeclined(error)) throw error
@@ -563,17 +666,57 @@ const planConfirmAndPush = async (args: {
     commandEcho.addOption('--yes', true)
   }
 
+  const pushOutcome = await applyPush({ cwd, worktreePath: worktree.path, entries, selected, verify })
+
+  const conflicted = entries
+    .filter((entry) => {
+      return selected.includes(entry.branch) && entry.status === 'conflict'
+    })
+    .map((entry) => {
+      return entry.branch
+    })
+
+  const handOffs =
+    keepConflicts && plannedDevSha && conflicted.length > 0
+      ? await handOffConflicts({ cwd, branches: conflicted, devSha: plannedDevSha })
+      : undefined
+
+  return { entries, selected, declined: false, ...pushOutcome, handOffs }
+}
+
+/** The structured form of the confirm message, so an agent can show the human each branch's status. */
+const previewPlan = (entries: MergePlanEntry[], selected: string[], skipped: SkippedEntry[]) => {
   return {
-    entries,
-    selected,
-    declined: false,
-    ...(await applyPush({ cwd, worktreePath: worktree.path, entries, selected, verify })),
+    entries: entries
+      .filter((entry) => {
+        return selected.includes(entry.branch)
+      })
+      .map((entry) => {
+        return {
+          branch: entry.branch,
+          status: entry.status,
+          ...(entry.conflictPaths ? { conflictPaths: entry.conflictPaths } : {}),
+          ...(entry.status === 'conflict' ? { lockfileOnly: isLockfileOnly(entry.conflictPaths) } : {}),
+          ...(entry.reason ? { reason: entry.reason } : {}),
+        }
+      }),
+    skipped,
   }
+}
+
+/** What to do about a branch that did not merge: the hand-off's worktree, or the manual recipe. */
+const nextStepLine = (entry: MergeDevResultEntry, worktrees: WorktreeEntry[]): string => {
+  if (entry.resolution) {
+    return `# ${entry.branch} — ${entry.status}, left to resolve in ${entry.resolution.worktreePath} (then --continue)\n`
+  }
+
+  return `# ${entry.branch} — ${entry.status}\n${reproduceCommand(entry.branch, worktrees)}\n`
 }
 
 /** Turn the run's outcome into the printed report and the structured result. */
 const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]; skipped: SkippedEntry[] }) => {
-  const { entries, selected, pushed, pushAborted, abortedBy, declined, dryRun, worktrees, verifyFailed, skipped } = args
+  const { entries, selected, pushed, pushAborted, abortedBy, declined, dryRun, worktrees, verifyFailed, handOffs, skipped } =
+    args
 
   const pushedBranches = new Set(
     pushed
@@ -603,6 +746,7 @@ const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]
       // the push, so reporting it as `push-aborted` would name the wrong cause.
       const pushOutcome: ResultStatus = pushAborted && wasPushable ? 'push-aborted' : entry.status
       const status: ResultStatus = verifyReason ? 'verify-failed' : pushOutcome
+      const handOff = handOffs?.get(entry.branch)
 
       return {
         branch: entry.branch,
@@ -610,7 +754,8 @@ const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]
         mergeSha: entry.mergeSha,
         conflictPaths: entry.conflictPaths,
         pushed: pushedBranches.has(entry.branch),
-        reason: verifyReason ?? entry.reason,
+        reason: verifyReason ?? handOff?.reason ?? entry.reason,
+        ...(handOff?.resolution ? { resolution: handOff.resolution } : {}),
       }
     })
 
@@ -641,7 +786,7 @@ const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]
   } else if (failed.length > 0) {
     logger.info(`\n⚠️  ${failed.length} branch(es) did not merge.\n`)
     for (const entry of failed) {
-      logger.info(`# ${entry.branch} — ${entry.status}\n${reproduceCommand(entry.branch, worktrees)}\n`)
+      logger.info(nextStepLine(entry, worktrees))
     }
   } else {
     logger.info('✅ All merges completed successfully!\n')
@@ -699,8 +844,24 @@ export const ghMergeDevMcpTool = defineMcpTool({
       .union([z.boolean(), z.string()])
       .optional()
       .describe(
-        'Check each merge before pushing it. `true` runs `pnpm install --frozen-lockfile` — which catches the characteristic dev→release failure, a pnpm-lock.yaml whose text merge is clean but whose result is broken. A string runs that command instead. A branch that fails verification is dropped from the push; nothing is ever rolled back, because verification runs pre-push.',
+        'Check each merge before pushing it. `true` runs `pnpm install --frozen-lockfile` — which catches the characteristic dev→release failure, a pnpm-lock.yaml whose text merge is clean but whose result is broken. A string runs that command instead. A branch that fails verification is dropped from the push; nothing is ever rolled back, because verification runs pre-push. Under `continue`, a string runs after the mandatory `pnpm install --frozen-lockfile --ignore-scripts`.',
       ),
+    keepConflicts: z
+      .boolean()
+      .optional()
+      .describe(
+        'On the confirmed run, after the clean branches are pushed, leave each conflicted branch mid-merge in a detached worktree under `<root>-worktrees/merge-dev/` for resolution. Excludes `continue`, `abort` and `dryRun`.',
+      ),
+    continue: z
+      .boolean()
+      .optional()
+      .describe(
+        'Check the selected resolutions (only conflicted paths edited, no markers, install passes), preview them, and on confirmation commit exactly the previewed tree and push atomically. Excludes `keepConflicts`, `abort` and `dryRun`.',
+      ),
+    abort: z
+      .boolean()
+      .optional()
+      .describe('Discard the selected resolution worktrees and their state. Excludes `keepConflicts`, `continue` and `dryRun`.'),
     confirm: z
       .boolean()
       .optional()
@@ -728,6 +889,34 @@ export const ghMergeDevMcpTool = defineMcpTool({
           conflictPaths: z.array(z.string()).optional(),
           pushed: z.boolean(),
           reason: z.string().optional(),
+          resolution: z
+            .object({
+              worktreePath: z.string(),
+              baseSha: z.string(),
+              devSha: z.string(),
+              conflictPaths: z.array(z.string()),
+              lockfileOnly: z.boolean(),
+              rererePreResolved: z.array(z.string()),
+              state: z.enum(['needs-agent', 'lockfile-only', 'exists']),
+            })
+            .optional()
+            .describe('The `keepConflicts` hand-off for a conflicted branch'),
+          blocked: z
+            .object({
+              code: z.enum([
+                'unmerged-paths',
+                'markers-remaining',
+                'out-of-scope-edit',
+                'verify-failed',
+                'verify-mutated-tree',
+                'parents-mismatch',
+                'git-too-old',
+              ]),
+              paths: z.array(z.string()).optional(),
+              detail: z.string(),
+            })
+            .optional()
+            .describe('Why a `continue` run did not commit this resolution'),
         }),
       )
       .describe('Per-branch terminal state'),

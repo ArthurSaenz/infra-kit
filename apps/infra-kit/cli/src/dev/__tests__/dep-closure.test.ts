@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { buildClosureMap, selectPackageRestartTargets } from 'src/dev/dep-closure'
+import { buildClosureMap, parseDryRunPackages, selectPackageRestartTargets } from 'src/dev/dep-closure'
 import type { ClosureMap, DryRunner } from 'src/dev/dep-closure'
 
 import { createTempTracker, makeMonorepo } from './fixtures'
@@ -119,6 +119,37 @@ describe('buildClosureMap — invert per-app closures into dependents-by-package
       ),
     ).rejects.toThrow(/turbo --dry failed/)
   })
+})
+
+/**
+ * Real `turbo run build --dry=json --filter=...shop-api` stdout from a 3-package pnpm workspace
+ * (shop-api → @acme/lib-core → @acme/lib-util), trimmed to the fields the parser reads plus
+ * `turboVersion`. 2.10.12 is the consumer-era pin, 2.11.4 this repo's; recapture on a turbo bump
+ * that reshapes the payload.
+ */
+describe('parseDryRunPackages — captured turbo --dry=json payloads', () => {
+  it.each(['2.10.12', '2.11.4'])(
+    'turbo %s: yields the transitive closure that buildClosureMap scopes by',
+    async (version) => {
+      const stdout = fs.readFileSync(path.join(import.meta.dirname, 'fixtures', `turbo-dry-${version}.json`), 'utf-8')
+      const closure = parseDryRunPackages(stdout)
+
+      expect(closure.toSorted()).toEqual(['@acme/lib-core', '@acme/lib-util', 'shop-api'])
+
+      const root = temp.register(makeMonorepo([{ name: 'shop', packageName: 'shop-api' }]))
+      const coreDist = addPackage(root, 'lib-core', '@acme/lib-core')
+      const utilDist = addPackage(root, 'lib-util', '@acme/lib-util')
+
+      const { dependentsByPackageDir } = await buildClosureMap(
+        root,
+        [{ name: 'shop', packageName: 'shop-api' }],
+        fakeDryRunner({ 'shop-api': closure }),
+      )
+
+      expect(dependentsByPackageDir.get(coreDist)).toEqual(new Set(['shop']))
+      expect(dependentsByPackageDir.get(utilDist)).toEqual(new Set(['shop']))
+    },
+  )
 })
 
 describe('selectPackageRestartTargets — scope a package change to its dependents', () => {

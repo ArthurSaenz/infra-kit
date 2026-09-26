@@ -20,7 +20,7 @@ import {
 import type { OrcaOpenedLayout, OrcaProbe, OrcaRepoVisibility } from 'src/integrations/orca'
 import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
-import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
+import { WORKTREES_DIR_SUFFIX, WORKTREE_SUBDIRS } from 'src/lib/constants'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
@@ -38,9 +38,6 @@ import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
 // Constants
-const FEATURE_DIR = 'feature'
-const RELEASE_DIR = 'release'
-
 const OPERATION = 'create worktrees'
 
 // The two optional follow-ups below declare `whenHeadless: { value: false }`, and that value is not
@@ -143,8 +140,8 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
 
     const worktreeDir = `${projectRoot}${WORKTREES_DIR_SUFFIX}`
 
-    await ensureWorktreeDirectory(`${worktreeDir}/${RELEASE_DIR}`)
-    await ensureWorktreeDirectory(`${worktreeDir}/${FEATURE_DIR}`)
+    await ensureWorktreeDirectory(`${worktreeDir}/${WORKTREE_SUBDIRS.release}`)
+    await ensureWorktreeDirectory(`${worktreeDir}/${WORKTREE_SUBDIRS.feature}`)
 
     let selectedReleaseBranches: string[] = []
 

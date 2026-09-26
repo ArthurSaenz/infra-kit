@@ -8,6 +8,7 @@ import { assertRepoWithOrigin } from 'src/lib/git-guard'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 
 import { ghMergeDev } from '../gh-merge-dev'
+import { planMergeRun } from '../merge-run'
 
 /**
  * @fileoverview
@@ -57,6 +58,7 @@ vi.mock('src/lib/git-utils', () => {
       return fn({ path: '/scratch' })
     }),
     pushAtomic: vi.fn(),
+    revParseVerify: vi.fn().mockResolvedValue('devsha'),
   }
 })
 
@@ -193,5 +195,70 @@ describe('gh-merge-dev — the confirm site propagates its refusal', () => {
     })
     expect((error as StructuredRefusalError).exitCode).toBe(2)
     expect(pickReleaseBranches).not.toHaveBeenCalled()
+  })
+
+  it('carries each branch status in plan.entries, with conflictPaths and lockfileOnly on conflicts', async () => {
+    agentMode.source = 'env'
+    vi.mocked(getReleasePRsWithInfo).mockResolvedValue(
+      ['release/v1.2.5', 'release/v1.2.6', 'release/v1.2.7'].map((branch, index) => {
+        return {
+          branch,
+          number: index + 1,
+          title: `Release ${branch.slice('release/'.length)}`,
+          createdAt: '2024-01-01T00:00:00Z',
+          baseRefName: 'dev',
+          type: 'regular' as const,
+          titleMismatch: false,
+          dualBase: false,
+        }
+      }),
+    )
+    vi.mocked(planMergeRun).mockResolvedValueOnce([
+      { branch: 'release/v1.2.5', status: 'merged', mergeSha: 'sha' },
+      { branch: 'release/v1.2.6', status: 'conflict', conflictPaths: ['pnpm-lock.yaml'], reason: 'CONFLICT' },
+      { branch: 'release/v1.2.7', status: 'conflict', conflictPaths: ['src/a.ts', 'pnpm-lock.yaml'] },
+    ])
+
+    const error = await ghMergeDev({ confirmedCommand: false, all: true, keepConflicts: true }).catch((e: unknown) => {
+      return e
+    })
+
+    expect((error as StructuredRefusalError).structuredContent).toMatchObject({
+      status: 'confirmation_required',
+      plan: {
+        entries: [
+          { branch: 'release/v1.2.5', status: 'merged' },
+          { branch: 'release/v1.2.6', status: 'conflict', conflictPaths: ['pnpm-lock.yaml'], lockfileOnly: true },
+          {
+            branch: 'release/v1.2.7',
+            status: 'conflict',
+            conflictPaths: ['src/a.ts', 'pnpm-lock.yaml'],
+            lockfileOnly: false,
+          },
+        ],
+        skipped: [],
+      },
+    })
+
+    const plan = (error as StructuredRefusalError).structuredContent.plan as { entries: object[] }
+
+    expect(plan.entries[0]).not.toHaveProperty('lockfileOnly')
+  })
+})
+
+describe('gh-merge-dev — resolution modes', () => {
+  it.each([
+    [{ keepConflicts: true, continue: true }, '--keep-conflicts and --continue'],
+    [{ continue: true, abort: true }, '--continue and --abort'],
+    [{ abort: true, dryRun: true }, '--abort and --dry-run'],
+    [{ keepConflicts: true, dryRun: true }, '--keep-conflicts and --dry-run'],
+  ])('refuses %o before touching git', async (modes, named) => {
+    const error = await ghMergeDev({ confirmedCommand: true, all: true, ...modes }).catch((e: unknown) => {
+      return e
+    })
+
+    expect(error).toBeInstanceOf(OperationError)
+    expect(String((error as Error).message)).toContain(named)
+    expect(assertRepoWithOrigin).not.toHaveBeenCalled()
   })
 })

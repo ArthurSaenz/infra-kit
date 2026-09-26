@@ -295,6 +295,7 @@ const initStepSchema = z.object({
       'migrations',
       'user-config',
       'guidance',
+      'worktrees',
       'plugin-pointer',
       'mcp-server',
       'mcp-proxies',

@@ -23,6 +23,7 @@ const EXPECTED_SKILLS = [
   'fe-architect',
   'fe-patterns',
   'full-cycle',
+  'merge-dev',
   'release-create',
   'release-remove',
   'session',
@@ -755,6 +756,7 @@ function namedPluginTools(text) {
 // no `setup`, no `release create|remove`: the host's prompt on those argv is the human's approval,
 // and a grant would let the `--yes` re-run pass with no prompt at all (plan §3.8).
 const READ_ONLY_GRANTS = {
+  'merge-dev': ['infra-kit release list --json*'],
   'release-create': ['infra-kit release list --json*'],
   'release-remove': ['infra-kit release list --json*', 'infra-kit worktrees list --json*'],
   session: ['infra-kit env-list --json*', 'infra-kit env-status --json*'],
@@ -768,6 +770,10 @@ const READ_ONLY_GRANTS = {
 // what replaces the deleted resource; its human gate is the preview → approve → `--yes` protocol,
 // which no `allowed-tools` grant can skip because `setup` is granted nowhere.
 const PROCEDURE_SKILLS = {
+  'merge-dev': {
+    keys: ['allowed-tools', 'argument-hint', 'description', 'disable-model-invocation', 'name'],
+    humanOnly: true,
+  },
   'release-create': {
     keys: ['allowed-tools', 'argument-hint', 'description', 'disable-model-invocation', 'name'],
     humanOnly: true,
@@ -1131,13 +1137,20 @@ test('U18: no procedure body carries a retired clause', () => {
   }
 })
 
+// merge-dev's resolution hand-off needs a newer CLI than the other procedure skills (§2.3 of
+// .omc/plans/merge-dev-skill.md: AUTO_MERGE support requires git ≥ 2.42, published only once the
+// CLI hand-off itself is out), so its floor is pinned higher. Every other skill keeps the 0.8.0 floor
+// that has applied since the plugin went skills-only.
+const VERSION_FLOORS = { 'merge-dev': '0.12.0' }
+
 // The floor line is the same bytes in every procedure skill AND in doctor: a drifted copy would read
 // a different command, and `--version` is not one the CLI has.
 test('U18: every procedure skill and doctor open with the same version-floor injection', () => {
   for (const name of [...Object.keys(PROCEDURE_SKILLS), 'doctor']) {
     const { file, body } = procedureSkill(name)
     assert.ok(body.split('\n').includes(VERSION_FLOOR_LINE), `${rel(file)} must carry the version-floor line verbatim`)
-    assert.ok(joinedParagraphs(body).includes('`0.8.0`'), `${rel(file)} must state the floor`)
+    const floor = VERSION_FLOORS[name] ?? '0.8.0'
+    assert.ok(joinedParagraphs(body).includes(`\`${floor}\``), `${rel(file)} must state the floor`)
   }
 })
 

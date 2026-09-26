@@ -72,6 +72,25 @@ const scripted = (script: {
   }
 }
 
+/** Wrap a prompt seam so every `confirm` config — including the `default` `scripted` ignores — is recorded. */
+const recordConfirms = (
+  prompts: WizardPrompts,
+): { prompts: WizardPrompts; asked: { message: string; default?: boolean }[] } => {
+  const asked: { message: string; default?: boolean }[] = []
+
+  return {
+    asked,
+    prompts: {
+      ...prompts,
+      confirm: (cfg) => {
+        asked.push(cfg)
+
+        return prompts.confirm(cfg)
+      },
+    },
+  }
+}
+
 /**
  * Scrub the Orca opt-in before every case: it is a real shell escape hatch, so a developer running the
  * suite with it exported would otherwise push the wizard down the Orca branch and throw on the prompt
@@ -295,6 +314,25 @@ describe('runWizardFlow — step-0 + preset branch', () => {
     )
 
     expect(result?.presetDef?.apps?.['client/api']).toEqual({})
+  })
+})
+
+// Watch is the default of `infra-kit dev`, so pressing Enter at the wizard must not quietly opt out of it.
+describe('runWizardFlow — watch defaults to yes', () => {
+  it.each<[string, WizardModel, Parameters<typeof scripted>[0]]>([
+    ['manual', model(), { checkbox: [['Which packages', ['client/ui']]], select: [['local or cloud', 'local']] }],
+    ['preset', model(['full']), { select: [['preset', 'full']] }],
+  ])('%s branch: the watch question is asked with default: true', async (_branch, wizardModel, answers) => {
+    const { prompts, asked } = recordConfirms(scripted({ ...answers, confirm: [['watch', true]] }))
+
+    await runWizardFlow(prompts, wizardModel)
+
+    const watchQuestions = asked.filter((cfg) => {
+      return cfg.message.includes('watch')
+    })
+
+    expect(watchQuestions).toHaveLength(1)
+    expect(watchQuestions[0]?.default).toBe(true)
   })
 })
 

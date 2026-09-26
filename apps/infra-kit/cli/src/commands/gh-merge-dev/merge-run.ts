@@ -31,7 +31,7 @@ export interface MergePlanEntry {
   durationMs?: number
 }
 
-const MERGE_MESSAGE_PREFIX = "Merge remote-tracking branch 'origin/dev' into "
+export const MERGE_MESSAGE_PREFIX = "Merge remote-tracking branch 'origin/dev' into "
 
 const stderrOf = (error: unknown): string => {
   return String((error as { stderr?: string }).stderr ?? (error as { message?: string }).message ?? error).trim()
@@ -267,6 +267,9 @@ export interface ReclassifyResult {
  * Mandatory rather than defensive. Cheap by construction — one fetch plus one `is-ancestor` per
  * branch, no checkout — so it is safe to run twice when a long `--verify` pass sits between the
  * plan and the push.
+ *
+ * `devRef` is `origin/dev` for a plain run; a resolved hand-off passes the dev sha it recorded,
+ * because that — not wherever dev has moved since — is what its merge commit carries.
  */
 // Two independent reasons it is mandatory:
 //
@@ -277,14 +280,18 @@ export interface ReclassifyResult {
 // 2. Under `--atomic` it is worse than a false alarm: one teammate's hand-merge would abort the
 //    push for *every* branch in the run. `--atomic` without this step is a downgrade, not an
 //    upgrade.
-export const reclassify = async (cwd: string, refs: { branch: string; sha: string }[]): Promise<ReclassifyResult> => {
+export const reclassify = async (
+  cwd: string,
+  refs: { branch: string; sha: string }[],
+  devRef = 'origin/dev',
+): Promise<ReclassifyResult> => {
   await $({ cwd, quiet: true })`git fetch origin --prune`
 
   const kept: { branch: string; sha: string }[] = []
   const nowUpToDate: string[] = []
 
   for (const ref of refs) {
-    if (await isAncestor(cwd, 'origin/dev', `origin/${ref.branch}`)) {
+    if (await isAncestor(cwd, devRef, `origin/${ref.branch}`)) {
       nowUpToDate.push(ref.branch)
     } else {
       kept.push(ref)

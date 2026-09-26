@@ -871,3 +871,86 @@ Implementation is one new module, `src/lib/git-utils/worktree-sync.ts` (+ `__tes
 | A6, A7, A8 | architect's independent measurement of the desync lie, the localized build, and relative `core.hooksPath` being per-worktree | architect |
 | E15.1–E15.6 | the **structural** classifier resolves all six refusal cases correctly — rebase dir, in-progress heads, `is-ancestor`, and the incoming∩dirty path intersection split on `??` — with E15.1 producing an identical result under `LC_ALL=de_DE.UTF-8` | `exp15-structural.sh` |
 | E15.8 | `rev-parse --git-path` returns a **relative** path in the main checkout and an **absolute** one in a linked worktree — resolve against the worktree, not `process.cwd()` | `exp15-structural.sh` |
+
+---
+
+## 11. Amendment: opt-in resolution hand-off
+
+**Status: pending approval.** This amends the plan it lives in, same as §10; it does not replace it.
+Full design, evidence and open questions live in `.omc/plans/merge-dev-skill.md` — this section
+records only the Principle 3 exception and the one measurement (S0) that a reader of this document
+needs to reconcile with §1 and §10.
+
+**Directive.** `release merge-dev` gains an opt-in resolution hand-off — `--keep-conflicts`,
+`--continue`, `--abort` — so a human-driven agent can resolve a real conflict without ever running
+`git merge`, `git commit` or `git push` by hand. Unlike §10's convergence, this is **not**
+mandatory or flagless: it only exists when `--keep-conflicts` is passed, and it never runs without a
+human approving both the hand-off and the resolved content before anything reaches a shared branch.
+
+### 11.1 Principle 3 gains a second, narrower exception
+
+§10.1 already rewrote Principle 3 once, to let the command fast-forward a worktree the operator
+already owns. This amendment adds a **different** kind of exception, and the two must not be
+conflated: §10's worktrees are the operator's own, pre-existing, and only ever fast-forwarded, never
+merged into. The resolution hand-off's worktree is the opposite on every one of those axes — it is
+**new**, **CLI-created**, lives at `<root>-worktrees/merge-dev/<branch-slug>`, and is deliberately
+left mid-`git merge`, in `MERGING` state, for the agent to edit.
+
+That is precisely what §1's Principle 3 (as amended by §10.1) still forbids in its second half: "…
+and never leaves one in a state the operator has to repair… never leaves a `MERGING` state … behind."
+The exception has to be as narrow as the reason for it: an agent needs *somewhere* to edit conflicted
+files that the CLI can then verify against a tree sha the human approved, and `.git/**` is off limits
+to an editing agent while an operator's own worktree is exactly the shared-state resource Principle 3
+protects. So:
+
+- The worktree is **opt-in** — created only by `--keep-conflicts`, never by a plain run.
+- It is **CLI-owned**, not the operator's — nothing else has ever checked it out, and the CLI
+  registers it, tracks its state file, and is the only thing that resolves the `MERGING` state
+  (`--continue` or `--abort`). Nobody is expected to discover and repair it by hand, which is the
+  harm the original wording was written to prevent.
+- It is **detached**, so `getCurrentWorktrees` (`git-utils.ts:93-107`, which maps to `entry.branch`
+  and drops `null`) never enumerates it — `worktrees sync` and `worktrees remove --all` cannot touch
+  it, and §10's own convergence (which walks the same enumeration) skips it for the same reason it
+  already skips the scratch worktree (§10.5).
+- The `MERGING` state is **temporary and CLI-resolved**: `--continue` either finishes it (stage,
+  scope-check, verify, commit, push) or reports why it cannot yet; `--abort` deletes the worktree and
+  its state outright. There is no third way to leave it — a run that pushes or aborts a branch cleans
+  up both the worktree and the registration (`.omc/plans/merge-dev-skill.md` §2.2 step 13).
+
+Everything the CLI does inside that worktree beyond the initial `git merge --no-edit` stays governed
+by the plan's own guardrails, not by a relaxation of them: the agent edits only
+`resolution.conflictPaths`, runs no mutating git command, and the human approves the exact tree sha
+that gets committed and pushed (§2.2, §2.3 of the linked plan) — the same content-binding discipline
+Principle 3's first sentence already requires of the rest of this command.
+
+### 11.2 S0: the lockfile is merged in exactly one place, and only by a recipe that survives markers
+
+The resolution hand-off's `--continue` step merges `pnpm-lock.yaml` deterministically so a lockfile
+conflict never needs an agent. Before writing that code, `.omc/plans/merge-dev-skill.md` §2.0 ran a
+blocking spike (S0) rather than assume `pnpm install` merges a conflicted lockfile the way a package
+manager built for it "should":
+
+- **`pnpm install --lockfile-only` on a lockfile that still carries `<<<<<<<` markers does not merge
+  the two sides.** It logs `WARN Ignoring broken lockfile … simple key expected ':'` and silently
+  **re-resolves the whole tree from scratch** against whatever `package.json` files are on disk.
+  Measured drift: a workspace pin `ms@2.0.0` under a `^2.0.0` range became `ms@2.1.3` with nobody
+  asking for it — in a real monorepo that is an unannounced upgrade of every ranged dependency, not a
+  merge.
+- **The recipe that actually holds:** write dev's own valid lockfile over the conflicted one
+  (`git show :3:pnpm-lock.yaml > pnpm-lock.yaml` — `:3:` is the merge-head side, `origin/dev`, since
+  the merge runs on the release branch), *then* run `pnpm install --lockfile-only --ignore-scripts`.
+  That reconciles dev's lockfile against the already-merged `package.json` files, keeping dev's
+  existing pins (`ms@2.0.0` survives) while adding both sides' new dependencies, with no markers left
+  and `pnpm install --frozen-lockfile` passing afterward. It must run **after** every `package.json`
+  conflict is resolved, because it resolves against the merged manifests, not against either side in
+  isolation.
+
+Consequence for this document: `pnpm-lock.yaml` is never a file the agent edits, and never a file
+the CLI hands to `pnpm` while conflict markers are still in it. `--continue` step 5 is the **one**
+place in the whole command, across §3–§11, where `pnpm` ever runs against a lockfile that came out of
+a merge — everywhere else (§3.4's scratch-worktree merge, §4's verify pass) a marker-free lockfile is
+a precondition, not an output.
+
+See `.omc/plans/merge-dev-skill.md` for the full CLI surface (§2.1), the `--continue` pipeline
+(§2.2), the skill that drives it (§2.3), and the ADR recording why this was chosen over the
+zero-CLI alternative (§6, Option D) that this document's own Option D fallback text still names.

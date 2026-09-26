@@ -40,11 +40,12 @@ const INIT_STEP_ORDER: Record<InitStepName, number> = {
   migrations: 2,
   'user-config': 3,
   guidance: 4,
-  'plugin-pointer': 5,
-  'mcp-server': 6,
-  'mcp-proxies': 7,
-  'project-config': 8,
-  shell: 9,
+  worktrees: 5,
+  'plugin-pointer': 6,
+  'mcp-server': 7,
+  'mcp-proxies': 8,
+  'project-config': 9,
+  shell: 10,
 }
 
 export const INIT_STEPS = (Object.keys(INIT_STEP_ORDER) as InitStepName[]).sort((a, b) => {

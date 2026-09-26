@@ -1,4 +1,5 @@
 import { DEV_CONTEXT_WIRE_VERSION } from '@slip-stream-kit/config/internal'
+import { infraKitDev } from '@slip-stream-kit/config/vite'
 import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import os from 'node:os'
@@ -9,9 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DevServerRunner } from 'src/dev/dev-server'
 import type { DevServerOptions, ProbeOutcome } from 'src/dev/dev-server'
 import type { DevUi } from 'src/dev/dev-ui'
-import { DevLogSink } from 'src/dev/log-sink'
+import { DevLogSink, logFileName } from 'src/dev/log-sink'
 import type { ReadySummary } from 'src/dev/render'
 import { stripAnsi } from 'src/dev/render'
+import type { TurboWatchOptions } from 'src/dev/turbo-watch'
+import type { UiDevOptions } from 'src/dev/ui-dev'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
@@ -462,7 +465,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     await runner.shutdown()
   })
 
-  it('stays resident under --watch instead, painting a degraded row that names the cloud origin', async () => {
+  it('stays resident under --watch with the route HELD local — never proxying the dead backend to cloud', async () => {
     const { root, fakeRunBuild } = await brokenPairing()
     const stdout: string[] = []
 
@@ -490,11 +493,29 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
 
     const painted = stripAnsi(stdout.join(''))
 
-    expect(painted).toContain('● cloud (local backend down)')
+    expect(painted).toContain('● dead alias (local backend down)')
     expect(painted).toContain('client/ui /api')
-    expect(painted).toContain('https://dev.hulyo.co.il')
+    expect(painted, 'the panel advertised cloud for a route the user chose to run locally').not.toContain(
+      '● cloud (local backend down)',
+    )
+
+    // The real, published vite helper — the code a consumer's frontend actually runs — reading the
+    // dev-context this runner left on disk. This is the decision the whole bug is about.
+    const { proxy } = await infraKitDev({ cwd: path.join(root, 'apps', 'client', 'ui') })
+    const fragment = JSON.parse(
+      fs.readFileSync(path.join(root, '.infra-kit', 'dev-context', 'client.json'), 'utf-8'),
+    ) as { origin: string }
+
+    expect(proxy['/api']?.target, 'a launched backend that failed fell back to cloud').toBe(fragment.origin)
+    expect(proxy['/api']?.target).toMatch(/\.backend-api\.localhost$/)
+    expect(fragment).toMatchObject({ package: 'backend-api', port: 0, pid: process.pid })
+    // The cloud-only route is untouched: holding is about `local`-capable routes only.
+    expect(proxy['/media']?.target).toBe('https://dev.hulyo.co.il')
 
     await runner.shutdown()
+
+    // A held fragment is this runner's own and goes with it — a stale one would outlive the session.
+    expect(fs.existsSync(path.join(root, '.infra-kit', 'dev-context', 'client.json'))).toBe(false)
   })
 
   /**
@@ -549,10 +570,8 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
 
     await runner.start()
 
-    // The boot paint carries the warning.
-    expect(latestDegraded()).toEqual([
-      { route: '/api', tag: 'client/ui', fallback: 'cloud', target: 'https://dev.hulyo.co.il' },
-    ])
+    // The boot paint carries the warning — and it is a dead local alias, never a cloud fallback.
+    expect(latestDegraded()).toEqual([{ route: '/api', tag: 'client/ui', fallback: 'local', target: undefined }])
 
     // The runner's OWN record of the app being up. Deliberately not `process.env.CLIENT_PORT`: that is
     // only a preferred-port HINT, and a busy machine can hand the hint to someone else and leave the app
@@ -560,15 +579,19 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     // The fragment carries the port actually bound, and writing it is the very act that flips the vite
     // helper's route back to `local`, so it is also the thing under test.
     const fragment = path.join(root, '.infra-kit', 'dev-context', 'client.json')
+    const heldOrigin = (JSON.parse(fs.readFileSync(fragment, 'utf-8')) as { origin: string }).origin
+    // `port: 0` is the HELD fragment: the route is pinned to the alias, nothing is bound behind it yet.
     const boundPort = (): number | null => {
       try {
-        return (JSON.parse(fs.readFileSync(fragment, 'utf-8')) as { port: number }).port
+        const { port } = JSON.parse(fs.readFileSync(fragment, 'utf-8')) as { port: number }
+
+        return port > 0 ? port : null
       } catch {
         return null
       }
     }
 
-    // It really is dead to begin with: a backend that never started writes no fragment.
+    // It really is dead to begin with.
     expect(boundPort()).toBeNull()
 
     const waitUntil = async (done: () => boolean, onTick?: () => void): Promise<void> => {
@@ -603,6 +626,8 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
 
     expect(port, 'watch never restarted the boot-failed backend').not.toBeNull()
     expect((await fetch(`http://127.0.0.1:${port}/__health`)).ok).toBe(true)
+    // Recovery lands on the SAME origin the route was held at, so vite has nothing to re-resolve.
+    expect((JSON.parse(fs.readFileSync(fragment, 'utf-8')) as { origin: string }).origin).toBe(heldOrigin)
 
     // And the warning goes with it. The liveness tick drives the repaint, so wait for one that reflects
     // the recovered app: a row that outlived its cause is a warning nobody reads.
@@ -1041,6 +1066,13 @@ describe('start — port-conflict pre-check', () => {
 /** The runner announces every restart with this prefix; counting them is how a watch burst is judged. */
 const isRestartLine = (line: string): boolean => {
   return line.includes('🔄 Restarting')
+}
+
+/** Reads the restart signal a build-less restart leaves: every `startOneApp` rewrites the fragment's `writtenAt`. */
+const fragmentWrittenAt = (root: string, app: string): number => {
+  const raw = fs.readFileSync(path.join(root, '.infra-kit', 'dev-context', `${app}.json`), 'utf-8')
+
+  return (JSON.parse(raw) as { writtenAt: number }).writtenAt
 }
 
 const writeHandlers = (root: string, appNames: string[]): (() => Promise<void>) => {
@@ -1810,8 +1842,8 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     const omegaPort = await getFreePort()
 
     process.env.OMEGA_PORT = String(omegaPort)
-    // Hermetic polling so the dist watcher fires without relying on native fs events.
-    process.env.DEV_SERVER_CHOKIDAR_POLL = '1'
+    // Native fs events on purpose (no DEV_SERVER_CHOKIDAR_POLL): polling-only coverage would hide a
+    // regression in `awaitWriteFinish` or atomic-rename handling on the path real sessions take.
 
     // Fake build: boot build only. In turbo mode the on-change rebuild is owned by the
     // (faked) turbo engine, so runBuild must NOT be called again after boot.
@@ -2041,9 +2073,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     // Each restart rewrites the app's dev-context fragment with a fresh `writtenAt`, so the fragment
     // timestamp is the restart signal (the build-less restart leaves the handler version unchanged).
     const writtenAt = (app: string): number => {
-      const raw = fs.readFileSync(path.join(root, '.infra-kit', 'dev-context', `${app}.json`), 'utf-8')
-
-      return (JSON.parse(raw) as { writtenAt: number }).writtenAt
+      return fragmentWrittenAt(root, app)
     }
 
     await runner.start()
@@ -3513,4 +3543,617 @@ describe('devServerRunner — the module-scoped log sink is unhooked only by its
 
     expect(shutdownLines, 'the first teardown unhooked the second runner’s logging').toHaveLength(2)
   })
+})
+
+const sleep = (ms: number): Promise<void> => {
+  return new Promise((r) => {
+    setTimeout(r, ms)
+  })
+}
+
+/** Poll `predicate` every 100ms until it holds or `ms` elapse; resolves to its final verdict. */
+const waitFor = async (predicate: () => boolean, ms = 8000): Promise<boolean> => {
+  const deadline = Date.now() + ms
+
+  while (Date.now() < deadline) {
+    if (predicate()) return true
+    await sleep(100)
+  }
+
+  return predicate()
+}
+
+interface LoggedLine {
+  message: string
+  level: Parameters<DevUi['log']>[1]
+}
+
+/** A silent {@link DevUi} that keeps every `log` call WITH its level — warn-vs-error is part of several contracts. */
+const makeLogRenderer = (): { renderer: DevUi; logs: LoggedLine[]; messages: () => string[] } => {
+  const logs: LoggedLine[] = []
+  const noop = (): void => {}
+
+  return {
+    logs,
+    messages: () => {
+      return logs.map((l) => {
+        return l.message
+      })
+    },
+    renderer: {
+      narrate: noop,
+      log: (message, level) => {
+        logs.push({ message, level })
+      },
+      logFn: noop,
+      bootStep: noop,
+      ready: noop,
+      dispose: noop,
+    },
+  }
+}
+
+const closureOfSelf = (pkg: string): Promise<string[]> => {
+  return Promise.resolve([pkg])
+}
+
+/** {@link RunnerTeardownPrivates} plus the restart-chain internals the tests below drive or observe. */
+interface RunnerRestartPrivates extends RunnerTeardownPrivates {
+  appServers: Array<{ app: unknown; restarts: number; startedAt: number }>
+  startOneApp: (app: unknown) => Promise<unknown>
+  healthOf: (tag: string) => string
+}
+
+/**
+ * Boot the one-app `omega` fixture with a log-capturing renderer. The liveness monitor is pushed out of
+ * the test's lifetime so no background probe races the restart assertions.
+ */
+const bootOmega = async (
+  seams: {
+    options?: DevServerOptions
+    runBuild?: (cmd: string) => Promise<void>
+    turboWatch?: (opts: TurboWatchOptions) => { kill: () => Promise<void> }
+    healthProbe?: () => Promise<ProbeOutcome>
+  } = {},
+): Promise<{
+  runner: DevServerRunner
+  priv: RunnerRestartPrivates
+  apps: unknown[]
+  logs: LoggedLine[]
+  messages: () => string[]
+  distDir: string
+}> => {
+  const root = temp.register(makeMonorepo([{ name: 'omega', packageName: 'omega-api', withHandler: true }]))
+  const { renderer, logs, messages } = makeLogRenderer()
+
+  process.chdir(root)
+
+  const runner = new DevServerRunner(
+    { livenessIntervalMs: 60_000, ...seams.options },
+    seams.runBuild ?? noopBuild,
+    seams.turboWatch ?? noopTurboChild,
+    undefined,
+    closureOfSelf,
+    renderer,
+    seams.healthProbe,
+    workingProxy(),
+  )
+
+  await runner.start()
+
+  const priv = runner as unknown as RunnerRestartPrivates
+
+  return {
+    runner,
+    priv,
+    logs,
+    messages,
+    apps: priv.appServers.map((e) => {
+      return e.app
+    }),
+    distDir: path.join(fs.realpathSync(root), 'apps', 'omega', 'api', 'dist'),
+  }
+}
+
+describe('devServerRunner — watch engine and watcher wiring', () => {
+  it('warns once when `turbo watch build` dies on its own, and stays silent for the exit teardown causes', async () => {
+    let reportExit: TurboWatchOptions['onUnexpectedExit']
+    const { runner, messages } = await bootOmega({
+      options: { watch: true },
+      turboWatch: (opts) => {
+        reportExit = opts.onUnexpectedExit
+
+        return noopTurboChild()
+      },
+    })
+    const engineLines = (): string[] => {
+      return messages().filter((l) => {
+        return l.includes('Watch engine')
+      })
+    }
+
+    try {
+      expect(reportExit, 'the runner never handed the engine an exit callback').toBeDefined()
+      reportExit?.('exited 1')
+
+      expect(engineLines()).toEqual([
+        '⚠️  Watch engine (`turbo watch build`) exited 1 — file saves no longer rebuild. Restart `infra-kit dev`.',
+      ])
+    } finally {
+      // `shutdown()` latches `shuttingDown` synchronously, so this exit is the one our own kill provokes.
+      const teardown = runner.shutdown()
+
+      reportExit?.('exited 1')
+      await teardown
+    }
+
+    expect(engineLines(), 'the teardown-caused exit was reported as a crash').toHaveLength(1)
+  }, 15000)
+
+  it('never restarts on tsc bookkeeping or sourcemaps, while a real module in the same dist still does', async () => {
+    const { runner, messages, distDir } = await bootOmega({ options: { watch: true } })
+    const restartLines = (): string[] => {
+      return messages().filter(isRestartLine)
+    }
+
+    try {
+      await sleep(1200)
+      fs.writeFileSync(path.join(distDir, 'handler.tsbuildinfo'), '{"program":{}}\n')
+      fs.writeFileSync(path.join(distDir, 'handler.js.map'), '{"version":3}\n')
+
+      // Longer than awaitWriteFinish + the debounce: an unignored event would have restarted by now.
+      await sleep(1500)
+      expect(restartLines(), 'a .tsbuildinfo / .map write bounced the server').toHaveLength(0)
+
+      // The control: the same watcher is live, so the silence above is the filter, not a deaf watcher.
+      fs.writeFileSync(path.join(distDir, 'extra.js'), 'export const extra = 1\n')
+      expect(
+        await waitFor(() => {
+          return restartLines().length > 0
+        }),
+        'the watcher never saw a real module',
+      ).toBe(true)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  /** A UI-only session: no API app and no `dist/` anywhere, so the engine is all there is to arm. */
+  const bootUiOnlyWatch = async (): Promise<{
+    runner: DevServerRunner
+    logs: LoggedLine[]
+    engine: () => TurboWatchOptions | undefined
+  }> => {
+    const root = temp.register(makeMonorepo([{ name: 'shop', api: false, ui: { packageName: 'shop-ui' } }]))
+    let engineOpts: TurboWatchOptions | undefined
+    const { renderer, logs } = makeLogRenderer()
+
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { watch: true },
+      noopBuild,
+      (opts: TurboWatchOptions) => {
+        engineOpts = opts
+
+        return noopTurboChild()
+      },
+      noopTurboChild,
+      closureOfSelf,
+      renderer,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    return {
+      runner,
+      logs,
+      engine: () => {
+        return engineOpts
+      },
+    }
+  }
+
+  it('warns and arms no watcher when there is no dist to watch, yet still spawns the engine', async () => {
+    const { runner, logs, engine } = await bootUiOnlyWatch()
+
+    try {
+      expect(logs).toContainEqual({
+        message: '⚠️  No app or package dist directories found to watch (were they built?)',
+        level: 'warn',
+      })
+      expect((runner as unknown as RunnerTeardownPrivates).watcher).toBeNull()
+      // The engine is what would CREATE a dist on the first lib save, so it must not be skipped with the watcher.
+      expect(engine()).toBeDefined()
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('arms the engine for a UI-only session with only the `<ui>^...` closure, no dep-inclusive filter', async () => {
+    const { runner, engine } = await bootUiOnlyWatch()
+
+    try {
+      expect(engine()?.depInclusive).toEqual([])
+      expect(engine()?.depClosure).toEqual(['shop-ui'])
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('forces the boot build past the turbo cache only under --watch', async () => {
+    // Without `--force` a cache hit restores `dist/` without running tsc, and the first watch restart can be
+    // a no-op against output that does not match the source on disk.
+    const bootBuildCommand = async (watch: boolean): Promise<string | undefined> => {
+      const commands: string[] = []
+      const { runner } = await bootOmega({
+        options: { watch },
+        runBuild: async (cmd) => {
+          commands.push(cmd)
+        },
+      })
+
+      await runner.shutdown()
+
+      return commands.find((c) => {
+        return c.includes('--filter=omega-api')
+      })
+    }
+
+    const watched = await bootBuildCommand(true)
+    const plain = await bootBuildCommand(false)
+
+    expect(watched).toMatch(/ --force$/)
+    expect(plain).toBeDefined()
+    expect(plain).not.toContain('--force')
+  }, 15000)
+})
+
+describe('devServerRunner — a shared-package edit without a usable closure map', () => {
+  /** appx and appy both depend on `shared`; appy opts out of dep-triggered restarts. */
+  const OPT_OUT_APPY: DevServerOptions = {
+    watch: true,
+    livenessIntervalMs: 60_000,
+    presetDef: { apps: { 'appx/api': {}, 'appy/api': { watchDeps: false } } },
+  }
+
+  const setupShared = (): { root: string; sharedIndex: string } => {
+    const root = fs.realpathSync(
+      temp.register(
+        makeMonorepo([
+          { name: 'appx', packageName: 'appx-api', withHandler: true },
+          { name: 'appy', packageName: 'appy-api', withHandler: true },
+        ]),
+      ),
+    )
+    const sharedDir = path.join(root, 'packages', 'shared')
+
+    fs.mkdirSync(path.join(sharedDir, 'dist'), { recursive: true })
+    fs.writeFileSync(path.join(sharedDir, 'package.json'), JSON.stringify({ name: 'shared' }))
+    fs.writeFileSync(path.join(sharedDir, 'dist', 'index.js'), 'export const v = 1\n')
+    process.chdir(root)
+
+    return { root, sharedIndex: path.join(sharedDir, 'dist', 'index.js') }
+  }
+
+  it('restarts EVERY app when `turbo --dry` fails — the fail-safe overrides a `watchDeps: false` opt-out', async () => {
+    const { root, sharedIndex } = setupShared()
+    const { renderer, logs, messages } = makeLogRenderer()
+    const runner = new DevServerRunner(
+      OPT_OUT_APPY,
+      noopBuild,
+      noopTurboChild,
+      undefined,
+      () => {
+        return Promise.reject(new Error('turbo --dry exploded'))
+      },
+      renderer,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    const priv = runner as unknown as RunnerTeardownPrivates
+
+    try {
+      await priv.closureBuild
+
+      expect(priv.closureMap).toBeNull()
+      expect(logs).toContainEqual({
+        message: expect.stringContaining('Dependency-closure map unavailable (Error: turbo --dry exploded)'),
+        level: 'warn',
+      })
+
+      const beforeX = fragmentWrittenAt(root, 'appx')
+      const beforeY = fragmentWrittenAt(root, 'appy')
+
+      await sleep(1200)
+      fs.writeFileSync(sharedIndex, 'export const v = 2\n')
+
+      const bothRestarted = await waitFor(() => {
+        return fragmentWrittenAt(root, 'appx') > beforeX && fragmentWrittenAt(root, 'appy') > beforeY
+      })
+
+      expect(bothRestarted, 'the fail-safe skipped an app — a missing map must never drop a restart').toBe(true)
+      expect(messages().filter(isRestartLine)[0]).toBe('🔄 Restarting 2 apps...')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('leaves a `watchDeps: false` app alone once the closure map is in hand', async () => {
+    const { root, sharedIndex } = setupShared()
+    const { renderer, messages } = makeLogRenderer()
+    const runner = new DevServerRunner(
+      OPT_OUT_APPY,
+      noopBuild,
+      noopTurboChild,
+      undefined,
+      (pkg: string): Promise<string[]> => {
+        return Promise.resolve([pkg, 'shared'])
+      },
+      renderer,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    const priv = runner as unknown as RunnerTeardownPrivates
+
+    try {
+      await priv.closureBuild
+      expect(priv.closureMap).not.toBeNull()
+
+      const beforeX = fragmentWrittenAt(root, 'appx')
+      const beforeY = fragmentWrittenAt(root, 'appy')
+
+      await sleep(1200)
+      fs.writeFileSync(sharedIndex, 'export const v = 2\n')
+
+      expect(
+        await waitFor(() => {
+          return fragmentWrittenAt(root, 'appx') > beforeX
+        }),
+        'the dependent never restarted',
+      ).toBe(true)
+      // A wrongly-scheduled appy timer gets its full debounce window to fire.
+      await sleep(700)
+
+      expect(fragmentWrittenAt(root, 'appy'), 'the opted-out app was restarted').toBe(beforeY)
+      expect(messages().filter(isRestartLine)).toEqual(['🔄 Restarting appx...'])
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+})
+
+describe('devServerRunner — the UI dev child', () => {
+  it('files attributed lines under `<app>/ui`, the raw chunk under turbo.log, and an unknown package under `<pkg>/ui`', async () => {
+    const root = temp.register(
+      makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }]),
+    )
+    // Nested: the sink GCs sibling log dirs and plants a `latest` link in its parent.
+    const logDir = path.join(temp.register(fs.mkdtempSync(path.join(os.tmpdir(), 'ik-ui-route-'))), 'logs')
+    let uiOpts: UiDevOptions | undefined
+
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { livenessIntervalMs: 60_000 },
+      noopBuild,
+      noopTurboChild,
+      (opts: UiDevOptions) => {
+        uiOpts = opts
+
+        return noopTurboChild()
+      },
+      undefined,
+      makeLogRenderer().renderer,
+      (): Promise<ProbeOutcome> => {
+        return Promise.resolve('ok')
+      },
+      workingProxy(),
+      new DevLogSink(logDir),
+    )
+
+    await runner.start()
+
+    const readLog = (service: string): string => {
+      return fs.readFileSync(path.join(logDir, logFileName(service)), 'utf-8')
+    }
+
+    try {
+      uiOpts?.appendLog?.('shop-ui:dev: raw turbo chunk')
+      uiOpts?.onLine?.({ pkg: 'shop-ui', text: 'VITE ready in 90 ms', level: 'info' })
+      uiOpts?.onLine?.({ pkg: 'stray-ui', text: 'a package the header never listed', level: 'error' })
+
+      expect(readLog('turbo')).toContain('shop-ui:dev: raw turbo chunk')
+      expect(readLog('turbo')).not.toContain('VITE ready')
+      expect(readLog('shop/ui')).toContain('VITE ready in 90 ms')
+      expect(readLog('stray-ui/ui')).toContain('a package the header never listed')
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('warns (never errors) when the UI dep warm fails, and still starts the UI dev child', async () => {
+    // Non-fatal by design: vite reports the unresolved dep loudly in its own tail, so refusing to start
+    // would only trade a visible failure for no frontend at all.
+    const root = temp.register(
+      makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }]),
+    )
+    const { renderer, logs } = makeLogRenderer()
+    let uiPackages: string[] | null = null
+
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { livenessIntervalMs: 60_000 },
+      async (cmd: string): Promise<void> => {
+        if (cmd.includes('shop-ui^...')) throw new Error('lib build broke')
+      },
+      noopTurboChild,
+      (opts: UiDevOptions) => {
+        uiPackages = opts.packageNames
+
+        return noopTurboChild()
+      },
+      undefined,
+      renderer,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    try {
+      const failures = logs.filter((l) => {
+        return l.message.includes('UI dep build failed')
+      })
+
+      expect(failures).toHaveLength(1)
+      expect(failures[0]?.level).toBe('warn')
+      expect(failures[0]?.message).toContain('lib build broke')
+      expect(uiPackages).toEqual(['shop-ui'])
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+})
+
+describe('devServerRunner — the restart chain', () => {
+  it('runs two queued restarts of the same app strictly in order, never overlapping', async () => {
+    // Driven through `restart()` directly: two chokidar events on one key would be collapsed by the
+    // debounce before they ever reached the chain this test is about.
+    const { runner, priv, apps } = await bootOmega()
+    const startOneApp = priv.startOneApp.bind(runner)
+    const events: string[] = []
+    let releaseFirst: () => void = () => {}
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let calls = 0
+
+    priv.startOneApp = async (app) => {
+      calls += 1
+      const call = calls
+
+      events.push(`start ${call}`)
+      if (call === 1) await firstGate
+
+      const started = await startOneApp(app)
+
+      events.push(`done ${call}`)
+
+      return started
+    }
+
+    try {
+      const first = priv.restart(apps)
+      const second = priv.restart(apps)
+
+      expect(
+        await waitFor(() => {
+          return events.includes('start 1')
+        }),
+      ).toBe(true)
+      // Well past close + the port-release delay: an overlapping second job would have reached here.
+      await sleep(600)
+      expect(events, 'the second restart began while the first was still starting').toEqual(['start 1'])
+
+      releaseFirst()
+      await Promise.all([first, second])
+
+      expect(events).toEqual(['start 1', 'done 1', 'start 2', 'done 2'])
+      expect(priv.appServers[0]?.restarts).toBe(2)
+    } finally {
+      releaseFirst()
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('reports a restart that throws as ● down, without probing the port it never bound', async () => {
+    let probes = 0
+    // Always `ok`: had the failed restart been probed, the summary could only have said `● up`.
+    const { runner, priv, apps, logs, messages, distDir } = await bootOmega({
+      healthProbe: () => {
+        probes += 1
+
+        return Promise.resolve('ok')
+      },
+    })
+
+    try {
+      fs.writeFileSync(path.join(distDir, 'handler.js'), 'export const ping = (\n')
+
+      const probesBefore = probes
+
+      await priv.restart(apps)
+
+      expect(logs).toContainEqual({ message: expect.stringContaining('❌ Failed to restart omega'), level: 'error' })
+
+      const summary = messages().find((l) => {
+        return l.includes('Restarted omega')
+      })
+
+      expect(summary).toBe('⚠️  Restarted omega ● down')
+      expect(priv.healthOf('omega/api')).toBe('down')
+      expect(probes, 'the failed restart was probed').toBe(probesBefore)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('narrates the reload-memory warning and still restarts when the budget says warn', async () => {
+    // One sample over a 1-byte budget is `warn`; the two-sample hysteresis keeps it short of `stop`.
+    process.env.INFRA_KIT_DEV_STOP_BYTES = '1'
+
+    const exitCodes: number[] = []
+    const { runner, priv, apps, logs, messages } = await bootOmega({
+      options: {
+        watch: true,
+        onExitRequest: (code) => {
+          exitCodes.push(code)
+        },
+      },
+    })
+
+    try {
+      await priv.restart(apps)
+
+      const warn = logs.find((l) => {
+        return l.message.includes('Reload memory')
+      })
+
+      expect(warn?.level).toBe('warn')
+      expect(warn?.message).toMatch(/Reload memory \d+ MB after \d+ reload\(s\)/)
+      expect(messages().filter(isRestartLine)).toEqual(['🔄 Restarting omega...'])
+      expect(
+        messages().some((l) => {
+          return l.includes('Restarted omega')
+        }),
+      ).toBe(true)
+      expect(exitCodes).toEqual([])
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('carries the restart count forward and resets the uptime clock on the replacement', async () => {
+    const { runner, priv, apps } = await bootOmega()
+    const before = { ...priv.appServers[0]! }
+
+    try {
+      await priv.restart(apps)
+
+      expect(priv.appServers[0]?.restarts).toBe(before.restarts + 1)
+      expect(priv.appServers[0]?.startedAt).toBeGreaterThan(before.startedAt)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
 })

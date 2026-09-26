@@ -300,7 +300,11 @@ describe('ordering and lifecycle', () => {
 
     // Without this, `confirmOrExit` calls process.exit(0), which skips the
     // `finally` that removes the worktree — leaking one on every decline.
-    expect(confirmOrExit).toHaveBeenCalledWith(false, expect.any(String), { throwOnDecline: true })
+    expect(confirmOrExit).toHaveBeenCalledWith(
+      false,
+      expect.any(String),
+      expect.objectContaining({ throwOnDecline: true }),
+    )
   })
 
   it('drops a branch a teammate merged mid-run rather than aborting the push', async () => {

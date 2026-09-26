@@ -431,7 +431,7 @@ const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Prom
   })
   const sources = await promptRouteSources(prompts, model, uiKeys)
 
-  const watch = await prompts.confirm({ message: '👀 Rebuild & restart on save (watch)?', default: false })
+  const watch = await prompts.confirm({ message: '👀 Rebuild & restart on save (watch)?', default: true })
   const orca = asksOrca()
     ? await prompts.confirm({ message: '🧩 Run each app in its own Orca pane?', default: false })
     : false
@@ -514,11 +514,11 @@ const echoManual = (plan: DerivedPlan, selection: ManualSelection): void => {
 
 /** The preset-branch flow: run a named preset, asking only whether to watch (presets can't encode it). */
 const runPresetBranch = async (prompts: WizardPrompts, preset: string): Promise<WizardResult> => {
-  const watch = await prompts.confirm({ message: '👀 Rebuild & restart on save (watch)?', default: false })
+  const watch = await prompts.confirm({ message: '👀 Rebuild & restart on save (watch)?', default: true })
 
   commandEcho.setInteractive()
   commandEcho.addOption(preset, true)
-  if (watch) commandEcho.addOption('--watch', true)
+  if (!watch) commandEcho.addOption('--no-watch', true)
   commandEcho.print()
 
   return { preset, watch, orca: false }

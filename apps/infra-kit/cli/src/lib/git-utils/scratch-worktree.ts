@@ -2,6 +2,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { $ } from 'zx'
 
+import { WORKTREES_DIR_SUFFIX, WORKTREE_SUBDIRS } from 'src/lib/constants'
 import { OperationError } from 'src/lib/errors/operation-error'
 
 /**
@@ -43,6 +44,24 @@ export const scratchWorktreePath = async (cwd?: string): Promise<string> => {
   const runId = process.env.INFRA_KIT_SESSION || String(process.pid)
 
   return path.join(path.resolve(root, commonDir), 'infra-kit', `merge-dev-${runId}`)
+}
+
+/** `release/v1.2.3` → `release-v1-2-3`: one flat directory name per branch. */
+export const branchSlug = (branch: string): string => {
+  return branch.replace(/[^\w-]+/g, '-')
+}
+
+/**
+ * Where `release merge-dev --keep-conflicts` leaves a branch mid-merge for someone to resolve:
+ * `<projectRoot>-worktrees/merge-dev/<branch-slug>`.
+ */
+// This reverses the "avoid `<projectRoot>-worktrees/`" choice above, because the resolver must edit
+// files here and `.git/**` is a protected path for agent edits. Both reasons for the original choice
+// still hold: the path is outside every working tree, and the worktree is DETACHED, so
+// `getCurrentWorktrees` (which keeps only entries with a branch) never hands it to `worktrees sync`
+// or `worktrees remove --all`.
+export const resolutionWorktreePath = (projectRoot: string, branch: string): string => {
+  return path.join(`${projectRoot}${WORKTREES_DIR_SUFFIX}`, WORKTREE_SUBDIRS.mergeDev, branchSlug(branch))
 }
 
 /** Whether a merge is in progress in `cwd`. Never throws. */

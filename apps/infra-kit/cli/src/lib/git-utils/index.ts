@@ -17,8 +17,10 @@ export { isAncestor, lsRemoteHead, pushAtomic, revParseVerify } from './merge-re
 export type { AtomicPushRef, AtomicPushResult } from './merge-refs'
 export {
   assertPristineWorktree,
+  branchSlug,
   hasMergeInProgress,
   resetScratchWorktree,
+  resolutionWorktreePath,
   scratchWorktreePath,
   withScratchWorktree,
 } from './scratch-worktree'

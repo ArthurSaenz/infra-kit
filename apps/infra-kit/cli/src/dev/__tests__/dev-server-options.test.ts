@@ -33,12 +33,16 @@ describe('toDevServerOptions — CLI flag parsing', () => {
     expect(opts.include).toBeNull()
   })
 
-  it('defaults watch to false when the flag is absent', () => {
-    expect(toDevServerOptions({} satisfies DevCliOptions).watch).toBe(false)
+  it('defaults watch to true when neither --watch nor --no-watch is passed', () => {
+    expect(toDevServerOptions({} satisfies DevCliOptions).watch).toBe(true)
   })
 
   it('passes --watch through as true', () => {
     expect(toDevServerOptions({ watch: true } satisfies DevCliOptions).watch).toBe(true)
+  })
+
+  it('passes --no-watch through as false', () => {
+    expect(toDevServerOptions({ watch: false } satisfies DevCliOptions).watch).toBe(false)
   })
 
   it('parses a combined flag set (--app --watch) in one pass', () => {

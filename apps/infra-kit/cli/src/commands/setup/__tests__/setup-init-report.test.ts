@@ -96,6 +96,7 @@ const EVERY_STEP: Record<InitStepName, true> = {
   migrations: true,
   'user-config': true,
   guidance: true,
+  worktrees: true,
   'plugin-pointer': true,
   'mcp-server': true,
   'mcp-proxies': true,
@@ -136,6 +137,9 @@ afterEach(() => {
   resetInfraKitConfigCache()
   fs.rmSync(home, { recursive: true, force: true })
   fs.rmSync(repo, { recursive: true, force: true })
+  // initCore now scaffolds <mainRepoRoot>-worktrees beside the repo (US-002); it is a sibling
+  // of `repo`, not inside it, so it needs its own cleanup.
+  fs.rmSync(`${repo}-worktrees`, { recursive: true, force: true })
 })
 
 describe('the MCP payload reports what the init half did', () => {

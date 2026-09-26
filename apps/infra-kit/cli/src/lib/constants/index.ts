@@ -15,5 +15,6 @@ export {
   parseVarNamesFromEnvFile,
   parseVarsFromEnvFile,
   USER_CONFIG_DIR_NAME,
+  WORKTREE_SUBDIRS,
   WORKTREES_DIR_SUFFIX,
 } from './constants'

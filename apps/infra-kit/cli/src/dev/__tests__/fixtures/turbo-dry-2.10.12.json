@@ -1,0 +1,17 @@
+{
+  "turboVersion": "2.10.12",
+  "tasks": [
+    {
+      "taskId": "@acme/lib-core#build",
+      "package": "@acme/lib-core"
+    },
+    {
+      "taskId": "@acme/lib-util#build",
+      "package": "@acme/lib-util"
+    },
+    {
+      "taskId": "shop-api#build",
+      "package": "shop-api"
+    }
+  ]
+}

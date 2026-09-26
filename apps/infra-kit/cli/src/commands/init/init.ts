@@ -6,7 +6,8 @@ import process from 'node:process'
 import type { GuidanceWrite } from 'src/lib/agent-guidance'
 import { seedCreatedMessage, seedUserProjectConfig } from 'src/lib/config-bootstrap'
 import { CONFIG_STUB, buildUserGlobalExample, buildVendorExample } from 'src/lib/config-templates'
-import { getCacheRoot } from 'src/lib/constants'
+import { WORKTREES_DIR_SUFFIX, WORKTREE_SUBDIRS, getCacheRoot } from 'src/lib/constants'
+import { getMainRepoRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig, getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
 import { fallbackUpdateCommand, formatUpdateCommand } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
@@ -53,6 +54,7 @@ export type InitStepName =
   | 'project-config'
   | 'shell'
   | 'user-config'
+  | 'worktrees'
   | 'zshrc'
   | 'zshenv'
 
@@ -228,6 +230,13 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
   })
 
   record(...gateDisagreementEntries(gitRoot, guidanceRoot))
+
+  // Same root as the plugin steps above (never `getProjectRoot`'s worktree-local toplevel — see
+  // resolveGitRoot's comment in agent-files.ts) — gitRoot === null means the shared gate already
+  // refused and announced the four-step skip, so this step contributes nothing of its own.
+  await withStep('worktrees', async () => {
+    record(...(await syncWorktreeScaffold(gitRoot)))
+  })
 
   await withStep('plugin-pointer', async () => {
     await syncPluginPointer(gitRoot, record)
@@ -813,6 +822,58 @@ const resolveCliStaleness = async (): Promise<CliStaleness> => {
   // The worker's verdict when it has one (`cannot-self-spawn` records the manager-specific command);
   // otherwise the same guess it records for an unrecognised location.
   return { stale: true, latestVersion, updateCommand: cache?.updateCommand ?? fallbackUpdateCommand(latestVersion) }
+}
+
+/**
+ * Idempotently lay out `<mainRepoRoot>-worktrees/{release,feature,merge-dev}` so `worktrees add`,
+ * `gh merge-dev`'s scratch checkout, and a fresh clone's first `worktrees sync` all find the
+ * scaffold already there instead of racing their own `mkdir -p` against it.
+ *
+ * Keyed on the MAIN repo root, not `gitRoot` itself: `gitRoot` is `resolveGitRootForWrites`'s
+ * worktree-local toplevel (see the comment on `resolveGitRoot` in `agent-files.ts`), but the
+ * `<repo>-worktrees` scaffold is shared by every worktree of a repo, so a run from inside a linked
+ * worktree must still converge on the one directory beside the main checkout.
+ *
+ * `null` is silent, not skipped: `resolveGitRootForWrites` already printed the four-step skip that
+ * covers this gate, so a second line here would only repeat it.
+ *
+ * @example
+ * await syncWorktreeScaffold('/Users/me/projects/api')
+ * // creates /Users/me/projects/api-worktrees/{release,feature,merge-dev}
+ */
+export const syncWorktreeScaffold = async (gitRoot: string | null): Promise<InitEntry[]> => {
+  if (gitRoot === null) return []
+
+  const mainRepoRoot = await getMainRepoRoot(gitRoot)
+  const worktreeDir = `${mainRepoRoot}${WORKTREES_DIR_SUFFIX}`
+
+  const created = Object.values(WORKTREE_SUBDIRS).filter((subdir) => {
+    return !fs.existsSync(path.join(worktreeDir, subdir))
+  })
+
+  for (const subdir of Object.values(WORKTREE_SUBDIRS)) {
+    fs.mkdirSync(path.join(worktreeDir, subdir), { recursive: true })
+  }
+
+  if (created.length === 0) {
+    return [
+      {
+        step: 'worktrees',
+        outcome: 'unchanged',
+        message: `Worktree directories already present at ${worktreeDir}`,
+        level: 'info',
+      },
+    ]
+  }
+
+  return [
+    {
+      step: 'worktrees',
+      outcome: 'written',
+      message: `Created worktree directories at ${worktreeDir} (${created.join(', ')})`,
+      level: 'info',
+    },
+  ]
 }
 
 /**

@@ -1,9 +1,31 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { buildTurboWatchFilters, defaultTurboWatchFactory } from '../turbo-watch'
+
+// Pass-through by default: the descriptor test below needs a real child to reap; only the argv
+// snapshot swaps in a fake, one call at a time.
+const { spawnMock, superviseChildMock } = vi.hoisted(() => {
+  return { spawnMock: vi.fn(), superviseChildMock: vi.fn() }
+})
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+
+  spawnMock.mockImplementation(actual.spawn)
+
+  return { ...actual, spawn: spawnMock }
+})
+
+vi.mock('../managed-child.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../managed-child.js')>()
+
+  superviseChildMock.mockImplementation(actual.superviseChild)
+
+  return { ...actual, superviseChild: superviseChildMock }
+})
 
 describe('buildTurboWatchFilters', () => {
   it('aPI-only: reproduces the historical dep-inclusive `--filter=...<pkg>` vector (byte-identical)', () => {
@@ -29,6 +51,48 @@ describe('buildTurboWatchFilters', () => {
 
   it('empty on both sides → no filters (turbo would watch nothing)', () => {
     expect(buildTurboWatchFilters([], [])).toEqual([])
+  })
+})
+
+describe('defaultTurboWatchFactory — spawn argv', () => {
+  it('spawns the exact detached `turbo watch build` command line, log fd on stdout+stderr', () => {
+    const fakeChild = { on: vi.fn(), pid: 123 }
+
+    spawnMock.mockClear()
+    spawnMock.mockReturnValueOnce(fakeChild)
+    superviseChildMock.mockImplementationOnce((child: unknown) => {
+      return child
+    })
+
+    let logFd = -1
+
+    defaultTurboWatchFactory({
+      depInclusive: ['omega-api'],
+      depClosure: ['website-ui'],
+      cwd: '/repo',
+      logFile: os.devNull,
+      openLog: (target) => {
+        logFd = fs.openSync(target, 'a')
+
+        return logFd
+      },
+    })
+
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+    expect(spawnMock.mock.calls[0]).toEqual([
+      'pnpm',
+      [
+        'exec',
+        'turbo',
+        'watch',
+        'build',
+        '--filter=...omega-api',
+        '--filter=website-ui^...',
+        '--continue=dependencies-successful',
+        '--env-mode=loose',
+      ],
+      { cwd: '/repo', detached: true, stdio: ['ignore', logFd, logFd] },
+    ])
   })
 })
 

@@ -224,6 +224,8 @@ interface Harness {
   ready: () => ReadySummary
   /** Fire the turbo `run dev` child's `onUnexpectedExit` — the engine dying on its own. */
   killEngine: () => void
+  /** Fire the turbo `run dev` child's `onTaskFailure` — one package's `dev` task exiting, engine alive. */
+  failTask: (packageName: string) => void
   privates: RunnerPrivates
   root: string
 }
@@ -248,9 +250,16 @@ const boot = async (
   }
 
   let fireExit: (() => void) | null = null
-  const fakeUiDev = (opts: { onUnexpectedExit?: (detail: string) => void }): { kill: () => Promise<void> } => {
+  let fireTaskFailure: ((packageName: string) => void) | null = null
+  const fakeUiDev = (opts: {
+    onUnexpectedExit?: (detail: string) => void
+    onTaskFailure?: (packageName: string) => void
+  }): { kill: () => Promise<void> } => {
     fireExit = (): void => {
       opts.onUnexpectedExit?.('exited with code 1')
+    }
+    fireTaskFailure = (packageName): void => {
+      opts.onTaskFailure?.(packageName)
     }
 
     return { kill: noopTurboChild().kill }
@@ -282,6 +291,10 @@ const boot = async (
       if (fireExit == null) throw new Error('the ui-dev child was never spawned')
       fireExit()
     },
+    failTask: (packageName): void => {
+      if (fireTaskFailure == null) throw new Error('the ui-dev child was never spawned')
+      fireTaskFailure(packageName)
+    },
   }
 }
 
@@ -289,6 +302,9 @@ const boot = async (
 const uiOnlyApp: AppSpec = { name: 'shop', api: false, ui: { packageName: 'shop-ui' } }
 /** An app with both halves — the shape that makes a tag collision possible. */
 const fullApp: AppSpec = { name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }
+
+/** A second UI-only app, so a task failure has a sibling that must survive it. */
+const cartUiApp: AppSpec = { name: 'cart', api: false, ui: { packageName: 'cart-ui' } }
 
 const warnsMatching = (logs: string[], needle: string): string[] => {
   return logs.filter((line) => {
@@ -642,6 +658,74 @@ describe('ui health — the UI engine dying is evidence about a never-up UI, and
       // ok (one refusal is not proof), and it landed after the switch — never on the engine's word alone.
       expect(downAt).toBeGreaterThan(switched)
       expect(h.frames[downAt - 1]?.health['shop/ui']).toBe('ok')
+    } finally {
+      await h.runner.shutdown()
+    }
+  }, 15000)
+})
+
+describe('ui health — one frontend’s `dev` task exiting (turbo’s per-task verdict, engine alive)', () => {
+  const FAILED = 'failed to start — its `dev` task exited'
+
+  // Default interval throughout: no probe fires, so a `down` can only have come from the task verdict.
+  it('marks the row ● down and narrates once, without claiming siblings when there are none', async () => {
+    const probe = makeProbe()
+    const h = await boot([uiOnlyApp], probe.probe)
+
+    try {
+      expect(h.frames.at(-1)?.health['shop/ui']).toBe('starting')
+
+      h.failTask('shop-ui')
+
+      expect(h.frames.at(-1)?.health['shop/ui']).toBe('down')
+      // A lone UI's exit takes the engine with it, so "others are unaffected" would be a lie.
+      expect(warnsMatching(h.logs, FAILED)).toEqual([`⚠️  shop/ui ${FAILED}`])
+
+      // Turbo can restate a verdict; the row is already down, so the death is not narrated twice.
+      h.failTask('shop-ui')
+
+      expect(warnsMatching(h.logs, FAILED)).toHaveLength(1)
+      expect(probe.calls).toEqual([])
+    } finally {
+      await h.runner.shutdown()
+    }
+  }, 15000)
+
+  it('says the other frontends are unaffected only when there are others — and leaves them alone', async () => {
+    const h = await boot([uiOnlyApp, cartUiApp], makeProbe().probe)
+
+    try {
+      h.failTask('shop-ui')
+
+      expect(warnsMatching(h.logs, FAILED)).toEqual([`⚠️  shop/ui ${FAILED}; other frontends are unaffected`])
+      expect(h.frames.at(-1)?.health['shop/ui']).toBe('down')
+      expect(h.frames.at(-1)?.health['cart/ui']).toBe('starting')
+    } finally {
+      await h.runner.shutdown()
+    }
+  }, 15000)
+
+  it('is a no-op once shutdown has begun — teardown kills every task, which is not a failure', async () => {
+    const h = await boot([uiOnlyApp], makeProbe().probe)
+
+    await h.runner.shutdown()
+
+    const framesBefore = h.frames.length
+
+    h.failTask('shop-ui')
+
+    expect(warnsMatching(h.logs, FAILED)).toEqual([])
+    expect(h.frames).toHaveLength(framesBefore)
+  }, 15000)
+
+  it('still narrates under --no-ui-health, but invents no dot for a row the user opted out of', async () => {
+    const h = await boot([uiOnlyApp], makeProbe().probe, { uiHealth: false })
+
+    try {
+      h.failTask('shop-ui')
+
+      expect(warnsMatching(h.logs, FAILED)).toEqual([`⚠️  shop/ui ${FAILED}`])
+      expect(h.frames.at(-1)?.health['shop/ui']).toBe('unknown')
     } finally {
       await h.runner.shutdown()
     }

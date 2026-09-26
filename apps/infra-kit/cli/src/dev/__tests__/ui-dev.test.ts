@@ -122,6 +122,44 @@ describe('defaultUiDevFactory — turbo child spawn contract', () => {
   it('passes --continue so one broken frontend cannot cancel the others', () => {
     expect(spawnArgs()).toContain('--continue=dependencies-successful')
   })
+
+  // The `toContain` checks above cannot see a dropped or reordered flag they do not name.
+  it('spawns the exact detached command line, env layered over the parent’s', () => {
+    spawnMock.mockClear()
+    spawnMock.mockReturnValue({ on: vi.fn(), pid: 123 })
+    defaultUiDevFactory({
+      packageNames: ['website-ui', 'backoffice-ui'],
+      cwd: '/repo',
+      concurrency: 10,
+      env: { INFRA_KIT_TEST_FLAG: '1' },
+    })
+
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+    expect(spawnMock.mock.calls[0]).toEqual([
+      'pnpm',
+      [
+        'exec',
+        'turbo',
+        'run',
+        'dev',
+        '--filter=website-ui',
+        '--filter=backoffice-ui',
+        '--concurrency=10',
+        '--env-mode=loose',
+        '--only',
+        '--continue=dependencies-successful',
+        '--output-logs=new-only',
+        '--no-update-notifier',
+        '--ui=stream',
+      ],
+      {
+        cwd: '/repo',
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, INFRA_KIT_TEST_FLAG: '1' },
+      },
+    ])
+  })
 })
 
 /**

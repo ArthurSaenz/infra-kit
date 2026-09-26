@@ -37,12 +37,12 @@ export interface PaneSpec {
 /** The supervisor either stays resident (`ran`, never actually returned) or explains why the caller should run in-process. */
 export type OrcaDevOutcome = 'ran' | { fallback: string }
 
-/** Build the per-pane primitive command for each pane (append `--watch` when requested). */
+/** Build the per-pane primitive command for each pane (append `--no-watch` when watch is off). */
 export const buildPaneCommands = (panes: PaneSpec[], watch: boolean): string[] => {
   return panes.map(({ app, targets }) => {
     const selector = targets && targets.length > 0 ? `--target=${targets.join(',')}` : `--app=${app}`
 
-    return `pnpm exec infra-kit dev ${selector}${watch ? ' --watch' : ''}`
+    return `pnpm exec infra-kit dev ${selector}${watch ? '' : ' --no-watch'}`
   })
 }
 

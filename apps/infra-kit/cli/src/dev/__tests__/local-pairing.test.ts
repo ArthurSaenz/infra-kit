@@ -122,6 +122,28 @@ describe('findDegradedRoutes', () => {
     // tell the user where their traffic was about to go.
     expect(findDegradedRoutes(crashed({ env: undefined }))[0]?.cloudTarget).toBeUndefined()
   })
+
+  it('reports a HELD crashed backend as local with no cloud origin — a launched backend that died never falls back', () => {
+    expect(findDegradedRoutes(crashed({ held: new Set(['backend-api']) }))).toEqual([
+      {
+        uiApp: 'client',
+        route: '/api',
+        packageName: 'backend-api',
+        fallback: 'local',
+        apiApp: 'client',
+        reason: CRASH,
+        cloudTarget: undefined,
+      },
+    ])
+  })
+
+  it('never lets holding revive a cloud-only route — held only overrides a route that lists local', () => {
+    const routes = findDegradedRoutes(crashed({ held: new Set(['backend-api']) })).map((d) => {
+      return d.route
+    })
+
+    expect(routes).toEqual(['/api'])
+  })
 })
 
 describe('formatPairingRefusal', () => {
@@ -133,8 +155,9 @@ describe('formatPairingRefusal', () => {
     // The whole point of the refusal: name the origin the user would otherwise have silently talked to.
     expect(message).toContain('https://dev.hulyo.co.il')
     expect(message).toContain(CRASH)
-    // A CRASHED backend is genuinely retryable — it is a restart target, so this advice can be followed.
-    expect(message).toContain('--watch')
+    // A CRASHED backend is genuinely retryable — it is a restart target, so this advice can be followed. The
+    // refusal only fires when watch is off, so the advice is to drop the opt-out.
+    expect(message).toContain('--no-watch')
   })
 
   /**
@@ -142,12 +165,12 @@ describe('formatPairingRefusal', () => {
    * is not a restart target and never becomes one. Advertising `--watch` there would send the user off to
    * wait on a restart that cannot happen — advice that is worse than none.
    */
-  it('never advertises --watch for a backend the run never launched — no save can retry it', () => {
+  it('never advertises watch for a backend the run never launched — no save can retry it', () => {
     const message = formatPairingRefusal(findDegradedRoutes(crashed({ reasons: new Map() })), 'crossApp')
 
     expect(message).toContain('never launched')
     expect(message).toContain('--app/--self')
-    expect(message).not.toContain('--watch')
+    expect(message).not.toContain('watch')
   })
 
   it('describes a local fallback as a dead alias, never as a cloud proxy', () => {
@@ -216,6 +239,27 @@ describe('resolveProxyRoutes', () => {
     })
 
     expect(api).toMatchObject({ route: '/api', source: 'cloud', target: 'https://dev.hulyo.co.il' })
+  })
+
+  it("keeps a HELD down backend's route local instead of the cloud default, and leaves cloud-only routes on cloud", () => {
+    const routes = resolveProxyRoutes({
+      uis: [clientUi()],
+      running: new Set(),
+      localOrigin,
+      held: new Set(['backend-api']),
+      env: 'dev',
+    })
+
+    expect(
+      routes.map(({ route, source }) => {
+        return [route, source]
+      }),
+    ).toEqual([
+      ['/api', 'local'],
+      ['/dynamic', 'cloud'],
+      ['/media', 'cloud'],
+    ])
+    expect(routes[0]?.target, 'a held route must not name the cloud origin').not.toContain('hulyo.co.il')
   })
 
   it('resolves a single-source local route to local with no default, and omits the target when nothing is serving it', () => {

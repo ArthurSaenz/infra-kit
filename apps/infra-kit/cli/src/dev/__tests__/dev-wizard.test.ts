@@ -26,7 +26,7 @@ const CLIENT_MODEL: WizardModel = {
 }
 
 const base = (over: Partial<ManualSelection>): ManualSelection => {
-  return { targets: [], sources: {}, watch: false, orca: false, ...over }
+  return { targets: [], sources: {}, watch: true, orca: false, ...over }
 }
 
 describe('deriveManualPlan', () => {
@@ -177,12 +177,12 @@ describe('deriveManualPlan', () => {
 
 describe('equivalentCommand', () => {
   it('emits --target with every part key for a full-stack (backend-launched) selection', () => {
-    const selection = base({ targets: ['client/ui'], sources: { 'client/ui /api': 'local' }, watch: true })
+    const selection = base({ targets: ['client/ui'], sources: { 'client/ui /api': 'local' }, watch: false })
     const plan = deriveManualPlan(selection, CLIENT_MODEL)
     const eq = equivalentCommand(plan, selection)
 
     // targetKeys are sorted, so api precedes ui.
-    expect(eq).toEqual({ flags: '--target=client/api,client/ui --watch' })
+    expect(eq).toEqual({ flags: '--target=client/api,client/ui --no-watch' })
   })
 
   it('emits --target with only the frontend for a cloud-only (no backend) selection', () => {

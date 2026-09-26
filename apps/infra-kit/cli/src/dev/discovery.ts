@@ -379,18 +379,19 @@ export function classifyDistChange(
   packageDistDirs: string[],
 ): ChangeClassification {
   const normalized = path.normalize(changedPath)
+  const isInside = (dir: string): boolean => {
+    const normalizedDir = path.normalize(dir)
 
-  const matchedPackageDir = packageDistDirs.find((dir) => {
-    return normalized.startsWith(path.normalize(dir))
-  })
+    return normalized === normalizedDir || normalized.startsWith(normalizedDir + path.sep)
+  }
+
+  const matchedPackageDir = packageDistDirs.find(isInside)
 
   if (matchedPackageDir) {
     return { kind: 'package', packageDir: matchedPackageDir }
   }
 
-  const matchedDir = appDistDirs.find((dir) => {
-    return normalized.startsWith(path.normalize(dir))
-  })
+  const matchedDir = appDistDirs.find(isInside)
 
   return { kind: 'app', app: matchedDir }
 }
