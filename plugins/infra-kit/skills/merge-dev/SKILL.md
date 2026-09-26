@@ -1,7 +1,7 @@
 ---
 name: merge-dev
 description: Merge origin/dev into open release branches through infra-kit's release merge-dev, including an opt-in agent hand-off that resolves real conflicts in a CLI-owned worktree, behind the preview-then-approve protocol.
-argument-hint: [--all | <version,...>] [--verify <cmd>]
+argument-hint: [<version,...>] [--verify <cmd>]
 disable-model-invocation: true
 allowed-tools: Bash(infra-kit release list --json*)
 ---
@@ -48,26 +48,28 @@ others.
 ### Reading `$ARGUMENTS`
 
 The `/infra-kit:merge-dev` skill hands you `$ARGUMENTS` verbatim; its argument hint is
-`[--all | <version,...>] [--verify <cmd>]`.
+`[<version,...>] [--verify <cmd>]`.
 
-- `--all` → the CLI's own `--all` — every open regular release branch.
-- `<version,...>` → the CLI's `--versions <list>`, a comma-separated list of the labels `infra-kit release list` shows.
+- **No version → `--all` (the default).** Every open regular release branch. Nothing is pushed on
+  this alone: the preview in section 2 still shows every branch and the human approves the set.
+- `<version,...>` → the CLI's `--versions <list>` instead of `--all`, a comma-separated list of the
+  labels `infra-kit release list` shows. `--all` typed explicitly means the same as no version.
 - `--verify <cmd>` → the CLI's `--continue --verify=<cmd>` — an extra command that runs, under `--continue` only, after the mandatory frozen-lockfile install check and before any commit.
 
-If `$ARGUMENTS` is empty, ask which branches in prose. Before asking, show what already exists
-(read-only and pre-approved):
+If `$ARGUMENTS` is empty, do not ask which branches — go straight to the `--all` preview. When the
+human wants to narrow the set, show what exists (read-only and pre-approved) and re-preview with
+`--versions`:
 
 ```
 infra-kit release list --json --agent
 ```
 
-Should a call reach the CLI with neither `--all` nor `--versions`, it exits 2 with
-`{"status": "argument_required", "argument", "choices"?}`; relay it the same way `release-create`
-and `release-remove` do — ask in prose against the rows above, then build the call.
+Always pass `--all` or `--versions`: without either the CLI exits 2 with `argument_required`. If that
+ever happens, re-run the preview with `--all`.
 
 ## 2. Preview and approval 1 — `--keep-conflicts`
 
-**Preview.** Run `infra-kit release merge-dev (--versions X | --all) --keep-conflicts --json
+**Preview.** Run `infra-kit release merge-dev (--all | --versions X) --keep-conflicts --json
 --agent`. It exits 2 with `{"status": "confirmation_required", "message", "plan", "rerun", …}`.
 Show `plan.entries` to the human as a table, one row per branch: **clean**, **lockfile-only**,
 **code conflict** with its `conflictPaths`, **hook-failed/error**, and **skipped** (hotfixes,
