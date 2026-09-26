@@ -142,7 +142,10 @@ edits.
 
 - `unmerged-paths`, `markers-remaining`, `out-of-scope-edit` or `verify-failed`: the agent fixes the
   named paths, within the budget from section 4.
-- `verify-mutated-tree`, `parents-mismatch`, `tree-changed` or `git-too-old`: relay the block to the human and
+- `tree-changed` on `pnpm-lock.yaml` whose detail says **the registry moved**: pnpm resolved dev's
+  lockfile differently than at the last preview. The CLI has already rebuilt it — preview again and
+  show the human the new `lockfileDiffStat`. Nothing to fix and nothing to abort.
+- `verify-mutated-tree`, `parents-mismatch`, any other `tree-changed`, or `git-too-old`: relay the block to the human and
   suggest either `--abort` plus a fresh `--keep-conflicts` hand-off, or Option D (section 9). Do not
   keep retrying these — they mean the worktree's state no longer matches what the CLI can safely
   push.
@@ -170,7 +173,9 @@ call the human has not seen this diff for, and never edit the `--tree` value: a 
 preview reports `tree-changed` and commits nothing.
 
 **`tree-changed` on the approved run** means the tree moved after the human saw it: an edit after
-the preview (preview again, and get approval again), or a commit hook that rewrote the approved
+the preview or a registry move in the rebuilt lockfile (preview again, and get approval again), a
+branch that was blocked in the preview and so has no `--tree` (its reason starts with `not
+approved:` — preview again), or a commit hook that rewrote the approved
 tree. In the hook case the commit already exists with a tree nobody approved; it is never pushed,
 and every later `--continue` blocks it as `tree-changed`. Relay that and offer `--abort` plus a
 fresh `--keep-conflicts` hand-off.

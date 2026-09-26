@@ -543,6 +543,7 @@ describe('--continue (AC 3–13)', () => {
       const result = await confirmContinue('1.0.0')
 
       expect(result.results).toMatchObject([{ status: 'tree-changed', pushed: false }])
+      expect(result.results[0]?.reason).toMatch(/^not approved: .*release\/v1\.0\.0/)
       expect(await git(wt, 'rev-parse', 'MERGE_HEAD')).toMatch(/^[0-9a-f]{40}$/)
     })
 
@@ -995,6 +996,44 @@ describe('lockfile-only conflict (AC 3, S0-PASS)', () => {
     expect(await git(repo, 'show', `${await originSha(repo, 'release/v2.0.0')}:pnpm-lock.yaml`)).not.toContain(
       'hand-made',
     )
+  })
+
+  it('names a registry move, not a foreign edit, when the rebuild differs from the CLI’s own last rebuild', async () => {
+    const { repo } = await lockfileFixture()
+
+    await handOff()
+
+    const wt = worktreeOf(repo, 'release/v2.0.0')
+
+    expect((await preview('2.0.0')).row.blocked).toBeUndefined()
+
+    // Stand in for "pnpm resolved differently last time": the staged lockfile and the state file's
+    // record of the CLI's last rebuild both name a blob the next rebuild will not reproduce.
+    await fs.writeFile(
+      path.join(wt, 'pnpm-lock.yaml'),
+      `${await git(wt, 'show', ':pnpm-lock.yaml')}\n# older resolve\n`,
+    )
+    await git(wt, 'add', 'pnpm-lock.yaml')
+
+    const stateDir = path.join(
+      await git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'),
+      'infra-kit',
+      'merge-dev-resolutions',
+    )
+    const [stateName] = await fs.readdir(stateDir)
+    const stateFile = path.join(stateDir, stateName as string)
+    const state = JSON.parse(await fs.readFile(stateFile, 'utf8'))
+
+    state.lockfileBlob = await git(wt, 'rev-parse', ':pnpm-lock.yaml')
+    await fs.writeFile(stateFile, JSON.stringify(state))
+
+    const drifted = await preview('2.0.0')
+
+    expect(drifted.row.blocked).toMatchObject({ code: 'tree-changed', paths: ['pnpm-lock.yaml'] })
+    expect(drifted.row.blocked.detail).toContain('registry moved')
+    expect(drifted.row.blocked.detail).not.toContain('something other than the CLI')
+    expect(await git(wt, 'show', ':pnpm-lock.yaml')).not.toContain('older resolve')
+    expect((await preview('2.0.0')).row.blocked).toBeUndefined()
   })
 })
 

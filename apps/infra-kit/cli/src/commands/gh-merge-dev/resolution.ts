@@ -67,6 +67,8 @@ interface ResolutionRecord {
   previewedTree?: string
   /** A merge commit a commit hook rewrote after approval: never pushable, only abortable. */
   unapprovedCommit?: string
+  /** The lockfile blob the CLI's last rebuild staged — tells a registry move from a foreign lockfile. */
+  lockfileBlob?: string
 }
 
 export type BlockedCode =
@@ -705,7 +707,7 @@ const prepareBranch = async (cwd: string, record: ResolutionRecord, extraVerify?
   const head = await revParseQuiet(wt, 'HEAD')
   const mergeHead = await revParseQuiet(wt, 'MERGE_HEAD')
 
-  if (head === record.baseSha && mergeHead === record.devSha) return prepareUncommitted(record, row, extraVerify)
+  if (head === record.baseSha && mergeHead === record.devSha) return prepareUncommitted(cwd, record, row, extraVerify)
 
   return prepareCommitted(record, row, head, mergeHead)
 }
@@ -776,20 +778,36 @@ const stagedBlob = async (cwd: string, file: string): Promise<string | null> => 
  */
 // A lockfile staged by anything else (an agent's `git add`, a hand edit) is replaced, and the run is
 // blocked once so the replacement is previewed before anyone approves it. A rebuild identical to
-// the staged lockfile is the CLI's own earlier rebuild, and passes.
-const rebuildLockfile = async (record: ResolutionRecord): Promise<Blocked | null> => {
+// the staged lockfile is the CLI's own earlier rebuild, and passes. A rebuild that differs from the
+// CLI's OWN earlier rebuild means pnpm resolved differently since — a registry publish between the
+// preview and `--yes` — so it is the same block, naming that cause instead of blaming a foreign edit.
+const rebuildLockfile = async (cwd: string, record: ResolutionRecord): Promise<Blocked | null> => {
   const wt = record.worktreePath
   const stagedBefore = await stagedBlob(wt, LOCKFILE)
+  const previousRebuild = record.lockfileBlob
   const merged = await mergeLockfile(wt, record.devSha)
 
   if (!merged.ok) return { code: 'verify-failed', detail: merged.reason, paths: [LOCKFILE] }
 
-  if (stagedBefore !== null && stagedBefore !== (await stagedBlob(wt, LOCKFILE))) {
-    return {
-      code: 'out-of-scope-edit',
-      detail: `${LOCKFILE} was staged by something other than the CLI; it has been rebuilt from dev — preview again`,
-      paths: [LOCKFILE],
-    }
+  const rebuilt = await stagedBlob(wt, LOCKFILE)
+
+  if (rebuilt !== null && rebuilt !== previousRebuild) {
+    record.lockfileBlob = rebuilt
+    await writeRecord(cwd, record)
+  }
+
+  if (stagedBefore !== null && stagedBefore !== rebuilt) {
+    return stagedBefore === previousRebuild
+      ? {
+          code: 'tree-changed',
+          detail: `rebuilding ${LOCKFILE} from dev resolved differently than the last preview (the registry moved) — preview again`,
+          paths: [LOCKFILE],
+        }
+      : {
+          code: 'out-of-scope-edit',
+          detail: `${LOCKFILE} was staged by something other than the CLI; it has been rebuilt from dev — preview again`,
+          paths: [LOCKFILE],
+        }
   }
 
   const violations = await scopeViolations(wt, record)
@@ -800,7 +818,7 @@ const rebuildLockfile = async (record: ResolutionRecord): Promise<Blocked | null
 }
 
 /** Steps 2–5: stage the resolver's edits and prove the index is resolved, in scope and marker-free. */
-const resolveIndex = async (record: ResolutionRecord): Promise<Blocked | null> => {
+const resolveIndex = async (cwd: string, record: ResolutionRecord): Promise<Blocked | null> => {
   const wt = record.worktreePath
 
   await stageConflictPaths(
@@ -836,17 +854,18 @@ const resolveIndex = async (record: ResolutionRecord): Promise<Blocked | null> =
     return { code: 'markers-remaining', detail: 'conflict markers are still staged', paths: markers }
   }
 
-  return record.conflictPaths.includes(LOCKFILE) ? rebuildLockfile(record) : null
+  return record.conflictPaths.includes(LOCKFILE) ? rebuildLockfile(cwd, record) : null
 }
 
 /** Steps 2–8 for a resolution still mid-merge. */
 const prepareUncommitted = async (
+  cwd: string,
   record: ResolutionRecord,
   row: ContinuePlanRow,
   extraVerify?: string,
 ): Promise<ContinuePlanRow> => {
   const wt = record.worktreePath
-  const blocked = await resolveIndex(record)
+  const blocked = await resolveIndex(cwd, record)
 
   if (blocked) return { ...row, blocked }
 
@@ -956,10 +975,17 @@ const commitApproved = async (
 
   // The approval is the tree named in the confirming argv (`--tree`), never state a later preview
   // could have overwritten.
-  if (!approvedTree || row.treeSha !== approvedTree) {
+  if (!approvedTree) {
     return fail(
       'tree-changed',
-      `the resolution is tree ${row.treeSha} but the approved tree is ${approvedTree ?? 'none'} — preview again`,
+      `not approved: the preview this --yes came from had no ready tree for ${row.branch} — preview again`,
+    )
+  }
+
+  if (row.treeSha !== approvedTree) {
+    return fail(
+      'tree-changed',
+      `the resolution is tree ${row.treeSha} but the approved tree is ${approvedTree} — preview again`,
     )
   }
 
