@@ -85,11 +85,9 @@ systemd service with `sudo`).
 
 - RESOLVED 2026-09-26: watch is now the default (`--no-watch` opts out), so hulyo/travelist's
   `pnpm exec infra-kit dev --self` gets the watch path once they pick up the release.
-- OPEN 2026-09-26 (found by the sandbox CI): with `GITHUB_ACTIONS=true` in the environment, turbo defaults to
+- RESOLVED 2026-09-26 (found by the sandbox CI, fixed in f18ecae): with `GITHUB_ACTIONS=true` turbo defaulted to
   grouped `::group::` output with no `<pkg>:<task>:` prefixes, so `parseTurboDevLine`/`parseTurboTaskFailure`
-  match nothing. infra-kit spawns `turbo run dev` (`ui-dev.ts`) and `turbo watch build` without
-  `--log-order=stream`, which would pin the prefixed format. The sandbox harness strips `CI`/`GITHUB_ACTIONS` to
-  model a developer terminal.
+  matched nothing. Both turbo spawns now pin `--log-order=stream`; the sandbox runs under CI's own env again.
 - travelist `packages/design-system` exports `src/*.css` — edits never touch `dist/`, so dist watching
   cannot see them (vite serves them directly, so the UI is fine; the backend is unaffected).
 - Vite libs (`vite build --watch` / turbo `build`) empty `dist/` before writing → unlink/add burst then
