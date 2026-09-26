@@ -19,8 +19,15 @@ const git = (cmdArgs) => {
   if (result.status !== 0) fail(`git ${cmdArgs.join(' ')} exited ${result.status}`)
 }
 
-const status = spawnSync('git', ['status', '--porcelain'], { cwd: REPO_ROOT, encoding: 'utf8' }).stdout.trim()
-if (status) fail('the tree is dirty — the bump commit must carry only the six version fields. Commit or stash first.')
+// Only the six files matter: CI packs from the pushed commit, so unrelated local edits can stay.
+const versionPaths = VERSION_FIELDS.map((field) => {
+  return path.relative(REPO_ROOT, field.file)
+})
+const dirty = spawnSync('git', ['status', '--porcelain', '--', ...versionPaths], {
+  cwd: REPO_ROOT,
+  encoding: 'utf8',
+}).stdout.trim()
+if (dirty) fail(`uncommitted changes in the version files — commit or stash them first:\n${dirty}`)
 
 if (await isPublished('infra-kit', version))
   fail(`infra-kit@${version} is already on the registry — pick the next version`)
