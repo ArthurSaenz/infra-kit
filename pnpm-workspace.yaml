@@ -132,10 +132,22 @@ allowBuilds:
   esbuild: true
   msw: true
 
+# 3 days: the median takedown of a malicious version is ~14h and a 3-day cooldown would have blocked
+# ~94% of them (https://evilmartians.com/chronicles/the-secure-way-to-release-an-npm-package).
+minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - '@slip-stream-kit/*'
   - infra-kit
   - portless@0.15.2
+  # turbo 2.11.4 was adopted on 2026-09-26, two days after it shipped and before the cooldown
+  # existed. The lockfile keeps it; delete these seven lines after 2026-09-28.
+  - turbo@2.11.4
+  - '@turbo/darwin-64@2.11.4'
+  - '@turbo/darwin-arm64@2.11.4'
+  - '@turbo/linux-64@2.11.4'
+  - '@turbo/linux-arm64@2.11.4'
+  - '@turbo/windows-64@2.11.4'
+  - '@turbo/windows-arm64@2.11.4'
 catalogs:
   conflicts_zod_h4_4_3:
     zod: ^4.4.3

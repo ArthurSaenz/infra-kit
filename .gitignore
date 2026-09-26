@@ -88,3 +88,6 @@ google-services.json
 GoogleService-Info.plist
 hulyo_key_store
 travelist-keystore
+
+# scripts/pack-release.mjs output (CI artifact, never committed)
+release-artifacts/

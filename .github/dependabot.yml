@@ -1,0 +1,10 @@
+# Keeps the SHA-pinned actions current. The cooldown mirrors the dependency cooldown in
+# pnpm-workspace.yaml: a compromised action release is usually pulled within days.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
