@@ -86,7 +86,10 @@ secret was ever set on the repo.
   publish only, `persist-credentials: false`, no cache on the release path, every action pinned to
   a commit SHA.
 - `.github/workflows/check-workflows.yaml`: zizmor lints every workflow on each push and PR.
-- `.github/dependabot.yml`: keeps the pinned actions current, with a 3-day cooldown.
+- `.github/dependabot.yml`: keeps the pinned actions current, with a 7-day cooldown (zizmor's floor).
+- Every package's `package.json` carries `repository` (`git+https://github.com/ArthurSaenz/infra-kit.git`
+  plus `directory`): the registry refuses a provenance-signed tarball whose `repository.url` does not
+  name the source repo (E422). A new package must copy the block before its first release.
 - `pnpm-workspace.yaml`: `minimumReleaseAge: 4320` (3-day dependency cooldown, pnpm's default is
   1 day); dependency install scripts stay blocked by pnpm 12, `allowBuilds` lists the exceptions.
 - `apps/infra-kit/{cli,vite}` depend on `@slip-stream-kit/config` as `workspace:^`, packed as
