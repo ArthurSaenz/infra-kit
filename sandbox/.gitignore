@@ -1,6 +1,0 @@
-node_modules
-**/dist
-**/.turbo
-**/*.tsbuildinfo
-**/.infra-kit/
-vite.config.ts.timestamp-*.mjs

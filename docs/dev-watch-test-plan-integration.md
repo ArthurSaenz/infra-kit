@@ -1,6 +1,6 @@
 # `infra-kit dev --watch` — real-process integration / e2e tests
 
-Status: IN PROGRESS (2026-09-26) — the harness lives in-repo at [`sandbox/`](../sandbox/README.md), a standalone pnpm workspace outside the root workspace (decided after the plan was approved; supersedes "a separate sandbox repo" below). Companion: [dev-watch-test-plan-unit.md](./dev-watch-test-plan-unit.md).
+Status: IN PROGRESS (2026-09-26) — the harness lives in its own public repo, [ArthurSaenz/infra-kit-sandbox](https://github.com/ArthurSaenz/infra-kit-sandbox), cloned as a sibling of infra-kit (`link:../infra-kit/apps/infra-kit/*`). It briefly lived in-repo at `sandbox/`; moved out so it behaves like a real consumer (own git root, own Layer-3 config). Companion: [dev-watch-test-plan-unit.md](./dev-watch-test-plan-unit.md).
 
 ## Why
 
@@ -59,9 +59,9 @@ sandbox turns out slow; everything that boots servers lives in the sandbox.
 
 | # | Status | Where |
 |---|--------|-------|
-| I1 | done — green | `sandbox/e2e/turbo-contract.e2e.test.ts` (turbo 2.11.4) |
+| I1 | done — green | `infra-kit-sandbox/e2e/turbo-contract.e2e.test.ts` (turbo 2.11.4) |
 | I2 | pending | — |
-| I3 | done — green | `sandbox/e2e/backend-watch.e2e.test.ts` |
+| I3 | done — green | `infra-kit-sandbox/e2e/backend-watch.e2e.test.ts` |
 | I4 | done — green | same |
 | I5 | done — **red by design**: a type error in `lib-core` still emits (`tsc -b`, no `noEmitOnError`), so the runner restarts onto the broken build and serves it (`lib: 42`). The "last-good `dist/` keeps serving" premise does not hold; see the report on the sandbox round | same |
 | I6 | done — green (add restarts once; delete restarts once more — `tsc -b` leaves the orphaned `dist/extra.js`, so there is no `unlink` event in dist) | same |
@@ -69,7 +69,7 @@ sandbox turns out slow; everything that boots servers lives in the sandbox.
 | I8 | pending | — |
 | I9 | pending | — |
 | I10 | pending | — |
-| I11 | done — **intermittently red** (fails ~2 in 3 under full-suite load, passes alone): still exactly one restart, but sometimes onto save 9 of 10, and the 10th is never compiled. turbo re-runs `lib-core#build` for the last save, but `tsc -b` judges the project up to date because that save's mtime is older than the `tsbuildinfo` the previous run wrote, so no `dist/` change ever reaches the runner | `sandbox/e2e/backend-watch.e2e.test.ts` |
+| I11 | done — **intermittently red** (fails ~2 in 3 under full-suite load, passes alone): still exactly one restart, but sometimes onto save 9 of 10, and the 10th is never compiled. turbo re-runs `lib-core#build` for the last save, but `tsc -b` judges the project up to date because that save's mtime is older than the `tsbuildinfo` the previous run wrote, so no `dist/` change ever reaches the runner | `infra-kit-sandbox/e2e/backend-watch.e2e.test.ts` |
 
 ## Order
 
