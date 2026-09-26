@@ -2,6 +2,11 @@
   "name": "@slip-stream-kit/config",
   "type": "module",
   "version": "0.11.11",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ArthurSaenz/infra-kit.git",
+    "directory": "apps/infra-kit/config"
+  },
   "description": "Config-authoring surface for infra-kit: defineConfig, defineVendorConfig, and the infraKitDev vite helper. Depends only on zod, so a consumer repo can keep this locally while the infra-kit CLI is installed globally.",
   "author": "Arthur Saenko <arthur.saenz7@gmail.com> (https://github.com/ArthurSaenz)",
   "license": "MIT",
