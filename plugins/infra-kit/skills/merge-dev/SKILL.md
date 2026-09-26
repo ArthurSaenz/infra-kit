@@ -181,9 +181,19 @@ each selected branch and touches nothing else — no commit, no push, no ref mov
 
 ## 8. Report
 
-For each branch: the pushed `mergeSha` on success, or its status plus the next command — `--continue`
-(with the blocking reason), `--abort`, or the Option D recipe. Never report a branch as merged on the
-strength of exit 0 alone; read its own row in `results`.
+Report as one markdown table, one row per branch, including skipped rows:
+
+| Branch           | Result         | Commit / reason                   | Next step              |
+| ---------------- | -------------- | --------------------------------- | ---------------------- |
+| `release/v1.2.3` | ✅ pushed      | `a1b2c3d`                         | —                      |
+| `release/v1.3.0` | ⏸ blocked      | `markers-remaining`: `src/app.ts` | fix, then `--continue` |
+| `release/v1.4.0` | ❌ hook-failed | the hook's first stderr line      | `--abort`, or Option D |
+| `release/v1.1.9` | ⏭ skipped      | hotfix (targets main)             | —                      |
+
+`Result` is the row's own `status` from `results` (`merged`/`fast-forward`/`up-to-date` count as
+pushed or already there), `Commit / reason` is the short `mergeSha` or the CLI's reason verbatim, and
+`Next step` is `--continue`, `--abort` or the Option D recipe. Below the table, one line of totals.
+Never report a branch as merged on the strength of exit 0 alone; read its own row in `results`.
 
 ## 9. Option D — the manual fallback
 
