@@ -38,6 +38,15 @@ import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import type { DevConfig, DevPreset, DevPresets, ProxySource } from 'src/lib/infra-kit-config'
 import { DEFAULT_DEV_PROXY_PORT, getInfraKitConfig } from 'src/lib/infra-kit-config'
 
+import {
+  buildInfoCoversOutputs,
+  findStaleSources,
+  formatBuildErrors,
+  readLatestBuildInfo,
+  readPackageName,
+  summarizeBuildErrors,
+} from './build-freshness.js'
+import type { BuildInfo, StaleSource } from './build-freshness.js'
 import { buildClosureMap, selectPackageRestartTargets } from './dep-closure.js'
 import type { ClosureMap, DryRunner } from './dep-closure.js'
 import type { DevUi } from './dev-ui.js'
@@ -867,6 +876,18 @@ export class DevServerRunner {
   /** Active chokidar watcher in `--watch` mode; closed on {@link shutdown}. */
   private watcher: FSWatcher | null = null
   private static readonly WATCH_DEBOUNCE_MS = 400
+  /** Every dist dir the watcher covers — maps a changed dist file back to the package that built it. */
+  private watchedDistDirs: string[] = []
+  /**
+   * Per package dir, the stale sources (path + current hash) a forced rebuild was already spent on. The
+   * same staleness is never nudged twice, so a source a build legitimately never compiles cannot loop.
+   */
+  private readonly nudgedStaleness = new Map<string, string>()
+  /**
+   * How long a stale build must STAY stale before the runner rebuilds it: a save that simply landed after
+   * the last build is compiled by `turbo watch` itself, and a second concurrent `tsc -b` would race it.
+   */
+  private static readonly STALE_BUILD_GRACE_MS = 1000
   /** Serialized restarts so rapid saves never bind :port while the previous server is still shutting down. */
   private restartWorkChain: Promise<void> = Promise.resolve()
   private static readonly PORT_RELEASE_DELAY_MS = 200
@@ -2110,12 +2131,14 @@ export class DevServerRunner {
   private restart(apps: IApiAppConfig[], staleFiles: string[] = []): Promise<void> {
     if (this.shuttingDown) return Promise.resolve()
 
-    return this.scheduleRestartWork(() => {
+    return this.scheduleRestartWork(async () => {
       // Re-checked inside the chain: this job may have queued behind a restart that was still
       // running when shutdown() latched, so the flag can flip between scheduling and execution.
-      if (this.shuttingDown) return Promise.resolve()
+      if (this.shuttingDown) return
 
-      return this.runRestart(apps, staleFiles)
+      await this.runRestart(apps, staleFiles)
+      // Not awaited: the rebuild it may start must not hold the chain the rebuild's own restart queues on.
+      void this.recoverLostSaves(this.triggeringBuilds(staleFiles))
     })
   }
 
@@ -2372,7 +2395,145 @@ export class DevServerRunner {
       return
     }
 
+    // `tsc -b` emits through a type error, so the new code IS what now runs — restarting onto it is right
+    // (blocking would freeze dev on any shared-lib type error). Only the green check would be a lie.
+    const buildErrors = this.describeBuildErrors(this.triggeringBuilds(staleFiles))
+
+    if (buildErrors !== undefined) {
+      this.renderer.log(`⚠️  Restarted ${labels} — ${buildErrors}`, 'warn')
+
+      return
+    }
+
     this.renderer.log(`${allHealthy ? '✅' : '⚠️ '} Restarted ${labels}`)
+  }
+
+  /**
+   * The packages (a dist dir's parent) whose dist changes triggered this restart, each with the buildinfo
+   * of the build that wrote them — a package whose buildinfo did not write them (see
+   * {@link buildInfoCoversOutputs}) or that has none is left out: nothing trustworthy to say about it.
+   */
+  private triggeringBuilds(changed: string[]): Array<{ pkgDir: string; info: BuildInfo }> {
+    const distFilesByPkg = new Map<string, string[]>()
+
+    for (const file of changed) {
+      const distDir = this.watchedDistDirs.find((dir) => {
+        return file === dir || file.startsWith(dir + path.sep)
+      })
+
+      if (distDir === undefined) continue
+
+      const pkgDir = path.dirname(distDir)
+
+      distFilesByPkg.set(pkgDir, [...(distFilesByPkg.get(pkgDir) ?? []), file])
+    }
+
+    return [...distFilesByPkg].flatMap(([pkgDir, distFiles]) => {
+      const info = readLatestBuildInfo(pkgDir)
+
+      return info && buildInfoCoversOutputs(info, distFiles) ? [{ pkgDir, info }] : []
+    })
+  }
+
+  /** The type errors the triggering builds emitted through, as one clause, or `undefined` when all are clean. */
+  private describeBuildErrors(builds: Array<{ pkgDir: string; info: BuildInfo }>): string | undefined {
+    const clauses = builds.flatMap(({ pkgDir, info }) => {
+      const errors = summarizeBuildErrors(info, pkgDir)
+
+      return errors ? [formatBuildErrors(readPackageName(pkgDir), errors)] : []
+    })
+
+    return clauses.length > 0 ? clauses.join('; ') : undefined
+  }
+
+  /**
+   * Rebuild a package whose last build did not compile its sources' current text, so the save it missed
+   * reaches the server through an ordinary dist change and restart.
+   *
+   * The miss is real: during a save burst `turbo watch` re-runs the build for the last save, but `tsc -b`
+   * judges it up to date because that save's mtime is older than the buildinfo the in-flight run wrote.
+   * turbo then caches that no-op under the last save's hash, so neither a re-save nor `turbo run` without
+   * `--force` recovers — and turbo ignores an mtime-only touch. Hence: touch (so `tsc -b` sees the input as
+   * newer) and a forced single-package `turbo run build` (which also overwrites the poisoned cache entry).
+   */
+  private async recoverLostSaves(builds: Array<{ pkgDir: string; info: BuildInfo }>): Promise<void> {
+    try {
+      for (const { pkgDir, info } of builds) {
+        await this.recoverLostSave(pkgDir, info)
+      }
+    } catch (error) {
+      this.renderer.log(`   Lost-save check failed: ${String(error)}`, 'debug')
+    }
+  }
+
+  private async recoverLostSave(pkgDir: string, info: BuildInfo): Promise<void> {
+    const stale = findStaleSources(info, pkgDir)
+
+    if (stale.length === 0) {
+      this.nudgedStaleness.delete(pkgDir)
+
+      return
+    }
+
+    const staleness = stale
+      .map(({ file, hash }) => {
+        return `${file}:${hash}`
+      })
+      .join('\n')
+
+    if (this.nudgedStaleness.get(pkgDir) === staleness) return
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, DevServerRunner.STALE_BUILD_GRACE_MS)
+    })
+
+    // A build that wrote in the meantime brings its own dist change and restart, which re-checks.
+    if (this.shuttingDown || readLatestBuildInfo(pkgDir)?.mtimeMs !== info.mtimeMs) return
+
+    this.nudgedStaleness.set(pkgDir, staleness)
+    await this.forceRebuild(pkgDir, stale)
+  }
+
+  private async forceRebuild(pkgDir: string, stale: StaleSource[]): Promise<void> {
+    const pkgName = readPackageName(pkgDir)
+    const files = stale
+      .map(({ file }) => {
+        return path.relative(pkgDir, file)
+      })
+      .join(', ')
+    const now = new Date()
+
+    this.renderer.log(`👀 ${pkgName}: last build missed a save of ${files}; forcing a rebuild`, 'debug')
+
+    for (const { file } of stale) {
+      try {
+        fs.utimesSync(file, now, now)
+      } catch {
+        // Deleted since the hash was taken — nothing left to rebuild for.
+      }
+    }
+
+    try {
+      await this.runBuild(
+        `pnpm exec turbo run build --filter=${pkgName} --env-mode=loose --output-logs=errors-only --no-update-notifier --force`,
+        (message) => {
+          this.renderer.log(message, 'debug')
+        },
+      )
+    } catch (error) {
+      // A type error fails the build yet still emits; the re-read below is the verdict either way.
+      this.renderer.log(`   Forced rebuild of ${pkgName} failed: ${String(error)}`, 'debug')
+    }
+
+    const retry = readLatestBuildInfo(pkgDir)
+
+    if (this.shuttingDown || !retry || findStaleSources(retry, pkgDir).length === 0) return
+
+    this.renderer.log(
+      `⚠️  ${pkgName}: ${files} changed but a forced rebuild still did not compile it — the server may be ` +
+        'serving an older save. Save the file again, or re-run `infra-kit dev`.',
+      'warn',
+    )
   }
 
   /**
@@ -2512,6 +2673,8 @@ export class DevServerRunner {
     const appDistDirs = getAppDistDirs(apps)
     const packageDistDirs = getPackageDistDirs(this.monorepoRoot)
     const allDistDirs = [...appDistDirs, ...packageDistDirs]
+
+    this.watchedDistDirs = allDistDirs
 
     if (allDistDirs.length === 0) {
       this.renderer.log('⚠️  No app or package dist directories found to watch (were they built?)', 'warn')

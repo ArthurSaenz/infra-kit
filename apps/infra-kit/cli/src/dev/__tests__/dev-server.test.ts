@@ -1,6 +1,7 @@
 import { DEV_CONTEXT_WIRE_VERSION } from '@slip-stream-kit/config/internal'
 import { infraKitDev } from '@slip-stream-kit/config/vite'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import os from 'node:os'
 import * as path from 'node:path'
@@ -4152,6 +4153,215 @@ describe('devServerRunner — the restart chain', () => {
 
       expect(priv.appServers[0]?.restarts).toBe(before.restarts + 1)
       expect(priv.appServers[0]?.startedAt).toBeGreaterThan(before.startedAt)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+})
+
+/** {@link RunnerRestartPrivates} plus the changed-files argument and the dist dirs the watcher covers. */
+interface RunnerFreshnessPrivates extends RunnerRestartPrivates {
+  restart: (apps: unknown[], changed?: string[]) => Promise<void>
+  watchedDistDirs: string[]
+}
+
+describe('devServerRunner — a build that emitted through errors, or missed the last save', () => {
+  const FORCED_BUILD =
+    'pnpm exec turbo run build --filter=omega-api --env-mode=loose --output-logs=errors-only --no-update-notifier --force'
+
+  const sha256 = (text: string): string => {
+    return createHash('sha256').update(text).digest('hex')
+  }
+
+  /** Boot omega in watch mode; `changed` is a dist file of the app, `appDir` holds its buildinfo. */
+  const bootWatched = async (
+    runBuild?: (cmd: string) => Promise<void>,
+  ): Promise<
+    Awaited<ReturnType<typeof bootOmega>> & { priv: RunnerFreshnessPrivates; appDir: string; changed: string[] }
+  > => {
+    // Entry-ness decides the module-staleness verdict, so a handler.js restart is never "still serving the
+    // OLD" — these tests are about the build's verdict, not the reload's.
+    process.env.INFRA_KIT_DEV_NO_GENERATION = '1'
+
+    const booted = await bootOmega({
+      options: { watch: true },
+      runBuild,
+      healthProbe: () => {
+        return Promise.resolve('ok')
+      },
+    })
+    const priv = booted.priv as RunnerFreshnessPrivates
+    const appDist = priv.watchedDistDirs[0]!
+
+    return { ...booted, priv, appDir: path.dirname(appDist), changed: [path.join(appDist, 'handler.js')] }
+  }
+
+  const writeBuildInfo = (appDir: string, data: object): void => {
+    fs.writeFileSync(path.join(appDir, 'tsconfig.tsbuildinfo'), JSON.stringify(data))
+  }
+
+  it('restarts onto a type-error build under a warning naming the error, then goes green once fixed', async () => {
+    const { runner, priv, apps, logs, appDir, changed } = await bootWatched()
+    const restartLines = (): LoggedLine[] => {
+      return logs.filter((l) => {
+        return l.message.includes('Restarted omega')
+      })
+    }
+
+    try {
+      writeBuildInfo(appDir, {
+        fileNames: ['./src/handler.ts'],
+        semanticDiagnosticsPerFile: [
+          [1, [{ code: 2322, category: 1, messageText: "Type 'number' is not assignable to type 'string'." }]],
+        ],
+      })
+      await priv.restart(apps, changed)
+
+      expect(restartLines()).toEqual([
+        {
+          message: expect.stringMatching(
+            /^⚠️ {2}Restarted omega:\d+ ● up — omega-api has type errors: src\/handler\.ts TS2322 Type 'number' is not assignable to type 'string'\.$/,
+          ),
+          level: 'warn',
+        },
+      ])
+
+      writeBuildInfo(appDir, { fileNames: ['./src/handler.ts'] })
+      await priv.restart(apps, changed)
+
+      expect(restartLines()[1]?.message).toMatch(/^✅ Restarted omega:\d+ ● up$/)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('forces ONE rebuild of a package whose build missed the last save, touching the source first', async () => {
+    const calls: string[] = []
+    let onBuild = (): void => {}
+    const { runner, priv, apps, logs, appDir, changed } = await bootWatched((cmd) => {
+      calls.push(cmd)
+      onBuild()
+
+      return Promise.resolve()
+    })
+    const source = path.join(appDir, 'src', 'handler.ts')
+    const bootCalls = calls.length
+
+    try {
+      fs.mkdirSync(path.dirname(source), { recursive: true })
+      fs.writeFileSync(source, 'save 10')
+      fs.utimesSync(source, new Date(1000), new Date(1000))
+      writeBuildInfo(appDir, { fileNames: ['./src/handler.ts'], fileInfos: [sha256('save 9')] })
+      // The forced build compiles the save, as a real `tsc -b` handed a newer input does.
+      onBuild = () => {
+        writeBuildInfo(appDir, { fileNames: ['./src/handler.ts'], fileInfos: [sha256('save 10')] })
+      }
+
+      await priv.restart(apps, changed)
+
+      expect(
+        await waitFor(() => {
+          return calls.length > bootCalls
+        }, 5000),
+      ).toBe(true)
+      expect(calls.slice(bootCalls)).toEqual([FORCED_BUILD])
+      expect(fs.statSync(source).mtimeMs, 'the source was not touched for tsc -b').toBeGreaterThan(1000)
+      expect(logs).toContainEqual({
+        message: '👀 omega-api: last build missed a save of src/handler.ts; forcing a rebuild',
+        level: 'debug',
+      })
+
+      // The rebuild's own restart finds the build fresh: nothing more to force, nothing to warn about.
+      await priv.restart(apps, changed)
+      await sleep(1500)
+
+      expect(calls.slice(bootCalls)).toEqual([FORCED_BUILD])
+      expect(
+        logs.filter((l) => {
+          return l.level === 'warn'
+        }),
+      ).toEqual([])
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('ignores a buildinfo older than the dist that triggered the restart — a turbo cache restore', async () => {
+    const calls: string[] = []
+    const { runner, priv, apps, logs, appDir, changed } = await bootWatched((cmd) => {
+      calls.push(cmd)
+
+      return Promise.resolve()
+    })
+    const source = path.join(appDir, 'src', 'handler.ts')
+    const bootCalls = calls.length
+
+    try {
+      fs.mkdirSync(path.dirname(source), { recursive: true })
+      fs.writeFileSync(source, 'save 2')
+      // Left over from an erroring build of another tree; the cache restore rewrote dist but not this.
+      writeBuildInfo(appDir, {
+        fileNames: ['./src/handler.ts'],
+        fileInfos: [sha256('save 1')],
+        semanticDiagnosticsPerFile: [[1, [{ code: 2322, messageText: 'stale' }]]],
+      })
+      fs.utimesSync(path.join(appDir, 'tsconfig.tsbuildinfo'), new Date(1000), new Date(1000))
+
+      await priv.restart(apps, changed)
+      await sleep(1500)
+
+      expect(
+        logs.find((l) => {
+          return l.message.includes('Restarted omega')
+        })?.message,
+      ).toMatch(/^✅ Restarted omega:\d+ ● up$/)
+      expect(calls.slice(bootCalls)).toEqual([])
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('warns when the forced rebuild is still stale, and never forces the same save twice', async () => {
+    const calls: string[] = []
+    const { runner, priv, apps, logs, appDir, changed } = await bootWatched((cmd) => {
+      calls.push(cmd)
+
+      return Promise.resolve()
+    })
+    const source = path.join(appDir, 'src', 'handler.ts')
+    const bootCalls = calls.length
+    const warnings = (): string[] => {
+      return logs
+        .filter((l) => {
+          return l.level === 'warn'
+        })
+        .map((l) => {
+          return l.message
+        })
+    }
+
+    try {
+      fs.mkdirSync(path.dirname(source), { recursive: true })
+      fs.writeFileSync(source, 'save 10')
+      writeBuildInfo(appDir, { fileNames: ['./src/handler.ts'], fileInfos: [sha256('save 9')] })
+
+      await priv.restart(apps, changed)
+
+      expect(
+        await waitFor(() => {
+          return warnings().length > 0
+        }, 5000),
+      ).toBe(true)
+      expect(warnings()).toEqual([
+        '⚠️  omega-api: src/handler.ts changed but a forced rebuild still did not compile it — the server may be ' +
+          'serving an older save. Save the file again, or re-run `infra-kit dev`.',
+      ])
+
+      await priv.restart(apps, changed)
+      await sleep(1500)
+
+      expect(calls.slice(bootCalls), 'the same stale save was forced twice').toEqual([FORCED_BUILD])
+      expect(warnings()).toHaveLength(1)
     } finally {
       await runner.shutdown()
     }

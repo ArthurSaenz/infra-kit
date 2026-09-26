@@ -97,7 +97,10 @@ export const buildTurboWatchFilters = (depInclusive: string[], depClosure: strin
  * Filters come from {@link buildTurboWatchFilters}: `...<api>` (dep-inclusive) rebuilds a backend + its
  * closure; `<ui>^...` (dep-closure-only) rebuilds the frontend's shared libs without production-building
  * the UI. `--continue=dependencies-successful` keeps the watcher alive when one package fails to compile,
- * so a shared-lib type error never tears down the whole engine and the last-good `dist/` keeps serving.
+ * so a shared-lib type error never tears down the whole engine: independent tasks still run, and only the
+ * failed package's dependents are skipped until it builds again. It does NOT keep a last-good `dist/`:
+ * `tsc -b` without `noEmitOnError` emits through a type error, so the failed package's new `dist/` is what
+ * the runner restarts onto (and flags — see `describeBuildErrors` in the dev-server).
  */
 export const defaultTurboWatchFactory: TurboWatchFactory = ({
   depInclusive,
