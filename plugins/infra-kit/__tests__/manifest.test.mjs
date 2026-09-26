@@ -1141,7 +1141,7 @@ test('U18: no procedure body carries a retired clause', () => {
 // .omc/plans/merge-dev-skill.md: AUTO_MERGE support requires git ≥ 2.42, published only once the
 // CLI hand-off itself is out), so its floor is pinned higher. Every other skill keeps the 0.8.0 floor
 // that has applied since the plugin went skills-only.
-const VERSION_FLOORS = { 'merge-dev': '0.12.0' }
+const VERSION_FLOORS = { 'merge-dev': '0.11.12' }
 
 // The floor line is the same bytes in every procedure skill AND in doctor: a drifted copy would read
 // a different command, and `--version` is not one the CLI has.

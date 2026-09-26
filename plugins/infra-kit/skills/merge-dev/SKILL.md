@@ -16,7 +16,7 @@ The command is `infra-kit release merge-dev`. Everything below is about running 
 `Bash`, with `--json --agent` on every call.
 
 **Version floor.** Read both lines above first. On `{"error": …}` from either, or an `infra-kit
-version` below `0.12.0`, or a `git --version` below `2.42` (git needs to be that new for
+version` below `0.11.12`, or a `git --version` below `2.42` (git needs to be that new for
 `AUTO_MERGE`, which the resolution hand-off reads per worktree), tell the human to update —
 `pnpm add -g infra-kit@latest` or `infra-kit setup` for the CLI, their system package manager for
 git — and stop. An older CLI or git answers none of the shapes below.
