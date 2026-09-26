@@ -233,6 +233,27 @@ const listRecords = async (cwd: string): Promise<ResolutionRecord[]> => {
   })
 }
 
+export interface PendingResolution {
+  branch: string
+  worktreePath: string
+  createdAt: string
+  worktreeExists: boolean
+}
+
+/** Every hand-off `--continue`/`--abort` has not finished yet — what `doctor` reports as forgotten. */
+export const listPendingResolutions = async (cwd: string): Promise<PendingResolution[]> => {
+  return Promise.all(
+    (await listRecords(cwd)).map(async (record) => {
+      return {
+        branch: record.branch,
+        worktreePath: record.worktreePath,
+        createdAt: record.createdAt,
+        worktreeExists: await succeeds(fs.stat(record.worktreePath)),
+      }
+    }),
+  )
+}
+
 const toResolution = (record: ResolutionRecord, state: ResolutionState): Resolution => {
   return {
     worktreePath: record.worktreePath,

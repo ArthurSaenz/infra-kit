@@ -11,6 +11,7 @@ import { decidePrune, isDevSessionRunning } from 'src/commands/doctor/prune-rout
 // own comment requires of its hint.
 import { FIXABLE_NAMES } from 'src/commands/doctor/report'
 import { parseServiceArgv } from 'src/commands/doctor/service-file'
+import { listPendingResolutions } from 'src/commands/gh-merge-dev/resolution'
 import { buildZshenvBlock } from 'src/commands/init'
 // `resolveGitRoot` is the WRITER's gate, imported rather than re-derived so the reader's row set and
 // the writer's reach cannot drift apart (see the gate comment beside the plugin rows below).
@@ -1297,6 +1298,57 @@ export const checkAgentAllowlist = (root: string): CheckResult => {
   }
 }
 
+const describeAge = (createdAt: string, now: number): string => {
+  const hours = Math.floor((now - Date.parse(createdAt)) / 3_600_000)
+
+  if (Number.isNaN(hours)) return 'age unknown'
+
+  return hours >= 24 ? `${Math.floor(hours / 24)}d old` : `${Math.max(hours, 0)}h old`
+}
+
+/**
+ * Flag `release merge-dev --keep-conflicts` hand-offs nobody finished. Nothing else ever surfaces
+ * them: the resolution worktree is detached, so `worktrees list/sync/remove` never see it, and its
+ * state file lives under the git common dir. A `warn`, never a `fail` — an unfinished hand-off may be
+ * mid-resolution on purpose — and never `--fix`ed, because dropping one discards resolution work.
+ *
+ * @example
+ * await checkMergeDevResolutions('/repo')
+ * // => { name: 'merge-dev resolutions', status: 'warn', message: '1 unfinished merge-dev hand-off: release/v1.2.0 (3d old, ~/repo-worktrees/merge-dev/release-v1-2-0) — …' }
+ */
+export const checkMergeDevResolutions = async (root: string | null, now = Date.now()): Promise<CheckResult> => {
+  const name = 'merge-dev resolutions'
+
+  if (root === null) return { name, status: 'skip', message: 'no git root' }
+
+  let pending: Awaited<ReturnType<typeof listPendingResolutions>>
+
+  try {
+    pending = await listPendingResolutions(root)
+  } catch (err) {
+    return { name, status: 'skip', message: `could not read the merge-dev state: ${(err as Error).message}` }
+  }
+
+  if (pending.length === 0) return { name, status: 'pass', message: 'no merge-dev hand-off in progress' }
+
+  const rows = pending.map((entry) => {
+    const where = entry.worktreeExists ? tildify(entry.worktreePath) : 'worktree missing'
+
+    return `${entry.branch} (${describeAge(entry.createdAt, now)}, ${where})`
+  })
+  const versions = pending
+    .map((entry) => {
+      return entry.branch
+    })
+    .join(',')
+
+  return {
+    name,
+    status: 'warn',
+    message: `${pending.length} unfinished merge-dev hand-off${pending.length === 1 ? '' : 's'}: ${rows.join('; ')} — finish with: infra-kit release merge-dev --continue --versions ${versions}, or drop with --abort`,
+  }
+}
+
 /** The sudo-free "trust the local CA" command, rendered from the same resolved bin. */
 const trustCmd = (bin: string): string => {
   return formatPortlessCommand(['trust'], { bin })
@@ -2343,7 +2395,13 @@ export const doctor = async (
       : checkAgentAllowlist(gitRoot),
   ]
 
-  const checks: CheckResult[] = [...baseChecks, ...portlessChecks, ...(await checkAgentFiles()), ...pluginChecks]
+  const checks: CheckResult[] = [
+    ...baseChecks,
+    await checkMergeDevResolutions(gitRoot),
+    ...portlessChecks,
+    ...(await checkAgentFiles()),
+    ...pluginChecks,
+  ]
 
   // NO rendering here, deliberately. `--json` must be one document on stdout with nothing human mixed
   // in, so the handler returns the payload and the CLI action owns presentation (see `report.ts`).

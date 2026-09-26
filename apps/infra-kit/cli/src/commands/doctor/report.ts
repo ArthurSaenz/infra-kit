@@ -80,7 +80,10 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
     ],
   ],
   [SECTION_SHELL, ['zshrc init block', 'zshenv session block', 'pnpm enableGlobalVirtualStore', 'CLAUDE.md block']],
-  [SECTION_CONFIG, ['infra-kit config valid', 'user override path', 'legacy user-global config']],
+  [
+    SECTION_CONFIG,
+    ['infra-kit config valid', 'user override path', 'legacy user-global config', 'merge-dev resolutions'],
+  ],
   [SECTION_TOKENS, ['tokens.json present', 'env tokens configured', 'tokens.json perms']],
   [
     SECTION_PROXY,

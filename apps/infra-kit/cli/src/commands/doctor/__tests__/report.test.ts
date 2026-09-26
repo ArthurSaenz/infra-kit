@@ -91,13 +91,14 @@ describe('section coverage', () => {
     expect(unmapped).toEqual([])
   })
 
-  it('covers exactly 35 checks', () => {
+  it('covers exactly 36 checks', () => {
     // 36, up from 34: the two agent rows (`Agent mode`, `Agent allowlist`) joined the plugin section.
     // 37: `portless node` joined the proxy section.
     // 36: `warm cache` and `env token valid` left with the retired env auto-load; `git installed` joined.
     // 35: `MCP server key` left — the `.mcp.json` leftover is reported by `setup` and `audit`, not doctor.
-    expect(DOCTOR_CHECK_NAMES).toHaveLength(35)
-    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(35)
+    // 36: `merge-dev resolutions` joined the project-config section.
+    expect(DOCTOR_CHECK_NAMES).toHaveLength(36)
+    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(36)
   })
 
   it('keeps the Claude Code plugin rows adjacent, in order, followed by the agent rows (O3)', () => {
