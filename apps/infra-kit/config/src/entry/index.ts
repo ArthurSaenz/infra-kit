@@ -13,6 +13,7 @@ export type {
   InfraKitDevProxy,
   InfraKitDevProxyRoute,
   InfraKitDevProxySource,
+  InfraKitE2e,
   InfraKitPackageConfig,
   InfraKitPackageConfigInput,
   InfraKitPackageType,

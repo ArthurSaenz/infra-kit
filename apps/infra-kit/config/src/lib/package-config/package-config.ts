@@ -29,6 +29,8 @@ export interface InfraKitPackageConfig {
   }
   /** Local-dev configuration. Accepted-and-inert to the audit; consumed by the dev server. */
   dev?: InfraKitDev
+  /** Where `infra-kit e2e` points this e2e package's Playwright run. Consumed by the CLI, inert to the audit. */
+  e2e?: InfraKitE2e
   /**
    * Explicit override for infra-kit's directory/dependency-based package-type detection (used to
    * pick the agent guidance rendered into this package's `CLAUDE.md`). Detection already covers
@@ -78,6 +80,30 @@ export interface InfraKitDevProxy {
 
 export interface InfraKitDev {
   proxy?: InfraKitDevProxy
+}
+
+/**
+ * The e2e package's target. Local vs cloud is never configured: `infra-kit e2e` runs against this
+ * worktree's dev server when one serves `target`, and against the deployed app at `INFRA_KIT_ENV` otherwise.
+ *
+ * @example
+ * // apps/client/tests/infra-kit.config.ts
+ * export default defineConfig(() => ({
+ *   e2e: { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL' },
+ * }))
+ */
+export interface InfraKitE2e {
+  /** The package under test, `<app>/ui` or `<app>/api`. */
+  target: string
+  /** The env var the Playwright config reads its base URL from; `infra-kit e2e` sets it for the run. */
+  baseUrlEnv: string
+  /**
+   * The deployed URL, with an `<env>` placeholder. Separate from `dev.proxy.templates.cloud` because that
+   * one names the BACKEND a UI proxies to, which is not always the host the UI itself is served from.
+   * Absent → the value of `baseUrlEnv` that `infra-kit env-load` loaded, which is where Doppler already
+   * keeps each env's deployed URL — the usual case, and the only one where prod is not `<env>`-shaped.
+   */
+  cloud?: string
 }
 
 /**

@@ -38,7 +38,7 @@ describe('command palette', () => {
   // taught a name the CLI now does not accept. A regression to the flat labels fails right here.
   it('renders seven honest groups, labelled with the grouped path it actually runs', () => {
     expect(groupedNames()).toEqual([
-      ['Develop', ['dev', 'dev-status']],
+      ['Develop', ['dev', 'dev-status', 'e2e']],
       [
         'Release Management',
         [

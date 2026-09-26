@@ -208,3 +208,27 @@ describe('packageConfigSchema', () => {
     expect(result.success).toBe(true)
   })
 })
+
+describe('packageConfigSchema — e2e', () => {
+  it('accepts a target, the base-url env var, and a cloud template', () => {
+    const result = packageConfigSchema.safeParse({
+      e2e: { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL', cloud: 'https://<env>.hulyo.co.il' },
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects a target that is not `<app>/ui` or `<app>/api`', () => {
+    const result = packageConfigSchema.safeParse({ e2e: { target: 'client', baseUrlEnv: 'E2E_CLIENT_BASE_URL' } })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects an env list — local vs cloud is never configured', () => {
+    const result = packageConfigSchema.safeParse({
+      e2e: { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL', envs: ['dev'] },
+    })
+
+    expect(result.success).toBe(false)
+  })
+})

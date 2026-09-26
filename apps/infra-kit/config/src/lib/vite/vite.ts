@@ -484,6 +484,60 @@ export const resolveProxyConfig = ({
   return orderBySpecificity(result)
 }
 
+/** One `dev.proxy` route as {@link resolveProxyConfig} would resolve it, for a caller that reports rather than proxies. */
+export interface ProxyRouteDescription {
+  path: string
+  packageName: string
+  source: InfraKitDevProxySource
+  /** `null` when it cannot be resolved: a cloud route with no `env`, or a local fragment that broke its wire promise. */
+  target: string | null
+}
+
+/**
+ * The route-by-route local/cloud split a UI's vite proxy is running with, most specific first. The same
+ * `pickSource` and target resolution the proxy uses, but it never throws — `infra-kit e2e` reports the
+ * topology it is testing against, and an unresolvable route is a finding there, not a crash.
+ */
+export const describeProxyRoutes = ({
+  proxy,
+  localContext,
+  env,
+  getRelease,
+}: {
+  proxy: InfraKitDevProxy
+  localContext: LocalContext
+  env: string | undefined
+  getRelease: () => string
+}): ProxyRouteDescription[] => {
+  const paths = Object.keys(proxy.routes).toSorted((a, b) => {
+    return b.length - a.length
+  })
+
+  return paths.map((routePath) => {
+    const route = proxy.routes[routePath]!
+    const source = pickSource(route, localContext.packages)
+    let target: string | null = null
+
+    if (source === 'cloud') {
+      target = env ? interpolate(proxy.templates.cloud, { release: '', packageName: route.packageName, env }) : null
+    } else {
+      try {
+        target = resolveLocalTarget({
+          route,
+          templates: proxy.templates,
+          env,
+          getRelease,
+          info: localContext.info.get(route.packageName),
+        })
+      } catch {
+        target = null
+      }
+    }
+
+    return { path: routePath, packageName: route.packageName, source, target }
+  })
+}
+
 /**
  * Warn (never throw) when `dev.proxy.templates.local` is not `https://`. The portless daemon that
  * serves the local template is TLS-only, and {@link resolveLegacyTarget} only ever downgrades

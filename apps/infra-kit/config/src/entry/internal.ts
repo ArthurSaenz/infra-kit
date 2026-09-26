@@ -24,4 +24,11 @@ export type { VendorConfig, VendorCopyItem } from '../lib/vendor/config-schema'
 // Dev-context readers + the `dev` config loader. The CLI's dev-server and audit read the SAME
 // fragment files this package's vite helper reads, through the SAME parser — the two sides now ship
 // as separate npm packages, so a second reader here would be a silently version-skewed one.
-export { DEV_CONTEXT_WIRE_VERSION, loadDev, readLocalContext, readLocalSet } from '../lib/vite/vite'
+export {
+  describeProxyRoutes,
+  DEV_CONTEXT_WIRE_VERSION,
+  loadDev,
+  readLocalContext,
+  readLocalSet,
+} from '../lib/vite/vite'
+export type { LocalContext, LocalPackageInfo, ProxyRouteDescription } from '../lib/vite/vite'

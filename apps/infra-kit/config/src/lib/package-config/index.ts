@@ -4,6 +4,7 @@ export type {
   InfraKitDevProxy,
   InfraKitDevProxyRoute,
   InfraKitDevProxySource,
+  InfraKitE2e,
   InfraKitPackageConfig,
   InfraKitPackageConfigInput,
 } from './package-config'

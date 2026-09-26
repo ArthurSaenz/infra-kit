@@ -408,6 +408,7 @@ describe('command catalog — CLI/MCP name parity', () => {
     'vendor-check': 'vendor-check',
     'config-get': 'config-get',
     'dev-status': 'dev-status',
+    e2e: 'e2e',
     setup: 'setup',
   }
 
@@ -432,7 +433,7 @@ describe('command catalog — menu grouping', () => {
   }
 
   it('preserves each menu group in display order, as grouped paths', () => {
-    expect(groupPaths('develop')).toEqual(['dev', 'dev-status'])
+    expect(groupPaths('develop')).toEqual(['dev', 'dev-status', 'e2e'])
 
     expect(groupPaths('release')).toEqual([
       'release merge-dev',

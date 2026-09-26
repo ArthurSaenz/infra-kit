@@ -8,6 +8,7 @@ import { configEdit, configPath } from 'src/commands/config'
 import { configGet } from 'src/commands/config-get'
 import { devStatus } from 'src/commands/dev-status'
 import { doctor, printDoctorReport } from 'src/commands/doctor'
+import { e2e } from 'src/commands/e2e'
 import { envClear } from 'src/commands/env-clear'
 import { envList } from 'src/commands/env-list'
 import { envLoad } from 'src/commands/env-load'
@@ -690,6 +691,21 @@ export const buildProgram = (): Command => {
     .description('Show what `infra-kit dev` currently has running (reads dev-context fragments; starts nothing)')
     .action(async () => {
       emit(await devStatus())
+    })
+
+  // Named after `dev` on purpose: `dev` starts the servers, `e2e` tests whatever they serve. Local vs cloud
+  // is not a flag — a dev server serving the target on this worktree IS the choice.
+  program
+    .command('e2e')
+    .description(
+      'Run an app’s Playwright e2e against this worktree’s dev server, else the deployed app at INFRA_KIT_ENV',
+    )
+    .argument('[playwrightArgs...]', 'Passed to `playwright test` (put them after `--`)')
+    .option('--app <name>', 'App folder whose apps/<app>/tests package to run (inferred from cwd when omitted)')
+    .option('--dry-run', 'Resolve and print the target and proxy topology without running')
+    .option('-y, --yes', 'Skip the confirmation a cloud run asks for')
+    .action(async (playwrightArgs: string[], options) => {
+      emit(await e2e({ app: options.app, dryRun: options.dryRun, yes: options.yes, playwrightArgs }))
     })
 
   // The one command that sets a machine up: the local `initCore` writes, then install-or-update for

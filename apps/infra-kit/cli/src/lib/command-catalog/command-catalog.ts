@@ -4,6 +4,7 @@ import { auditMcpTool } from 'src/commands/audit'
 import { configGetMcpTool } from 'src/commands/config-get'
 import { devStatusMcpTool } from 'src/commands/dev-status'
 import { doctorMcpTool } from 'src/commands/doctor'
+import { e2eMcpTool } from 'src/commands/e2e'
 import { envClearMcpTool } from 'src/commands/env-clear'
 import { envListMcpTool } from 'src/commands/env-list'
 import { envLoadMcpTool } from 'src/commands/env-load'
@@ -202,6 +203,16 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mcpExposed: true,
     mutating: false,
     groupPath: ['dev-status'],
+  },
+  // Tests what `dev` serves, or the deployed app when nothing is served. `requiresHumanConfirm` covers the
+  // cloud run only — a local run touches nothing but this machine, so it runs without a preview.
+  {
+    cliName: 'e2e',
+    menuGroup: 'develop',
+    mcpTool: e2eMcpTool,
+    mcpExposed: false,
+    mutating: true,
+    groupPath: ['e2e'],
   },
 
   // --- Release Management (menu group) ---

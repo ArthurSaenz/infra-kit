@@ -61,4 +61,11 @@ export const packageConfigSchema = z.strictObject({
         .optional(),
     })
     .optional(),
+  e2e: z
+    .strictObject({
+      target: z.string().regex(/^[^/\s]+\/(?:ui|api)$/, 'target must be `<app>/ui` or `<app>/api` (e.g. `client/ui`)'),
+      baseUrlEnv: z.string().regex(/^[A-Z_][A-Z0-9_]*$/, 'baseUrlEnv must be an env var name'),
+      cloud: z.string().min(1).optional(),
+    })
+    .optional(),
 })

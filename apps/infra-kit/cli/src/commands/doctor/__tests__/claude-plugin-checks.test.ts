@@ -537,7 +537,7 @@ describe('checkAgentAllowlist', () => {
 
     expect(check.status).toBe('warn')
     expect(check.message).toMatch(
-      /reaches \d+ mutating infra-kit commands \(dev, release merge-dev, release create, release edit \+\d+ more\)/,
+      /reaches \d+ mutating infra-kit commands \(dev, e2e, release merge-dev, release create \+\d+ more\)/,
     )
   })
 

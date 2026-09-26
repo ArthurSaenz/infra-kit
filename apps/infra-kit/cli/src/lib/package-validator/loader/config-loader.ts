@@ -1,3 +1,4 @@
+import type { InfraKitPackageConfig } from '@slip-stream-kit/config'
 import { packageConfigSchema } from '@slip-stream-kit/config/internal'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -115,4 +116,24 @@ export const loadPackageConfig = async (
   }
 
   return resolvePackageConfig(parsed.data, baseline)
+}
+
+/**
+ * A package's parsed `infra-kit.config.ts` as authored, before any audit baseline is merged in — for the
+ * commands that read its non-audit blocks (`e2e`). `undefined` when the package has no config file.
+ *
+ * @throws When the config exists but fails {@link packageConfigSchema}.
+ */
+export const loadAuthoredPackageConfig = async (packageDir: string): Promise<InfraKitPackageConfig | undefined> => {
+  const configPath = path.join(packageDir, PACKAGE_CONFIG_FILE)
+
+  if (!(await pathExists(configPath))) return undefined
+
+  const parsed = packageConfigSchema.safeParse(await importConfigExport(configPath))
+
+  if (!parsed.success) {
+    throw new Error(`Invalid ${PACKAGE_CONFIG_FILE} at ${configPath}: ${z.prettifyError(parsed.error)}`)
+  }
+
+  return parsed.data
 }

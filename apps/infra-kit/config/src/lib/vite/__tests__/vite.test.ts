@@ -8,7 +8,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { InfraKitDevProxy } from '../../package-config/package-config'
 import type { InfraKitViteProxyEntry, LocalPackageInfo } from '../vite'
-import { DEV_CONTEXT_WIRE_VERSION, infraKitDev, readLocalSet, resolveProxyConfig, slugifyRelease } from '../vite'
+import {
+  DEV_CONTEXT_WIRE_VERSION,
+  describeProxyRoutes,
+  infraKitDev,
+  readLocalSet,
+  resolveProxyConfig,
+  slugifyRelease,
+} from '../vite'
 
 const FIXTURES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures')
 
@@ -1087,5 +1094,55 @@ describe('loadDev (warn-first https requirement on dev.proxy.templates.local)', 
       warnSpy.mockRestore()
       fs.rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('describeProxyRoutes', () => {
+  const proxy: InfraKitDevProxy = {
+    templates: { local: 'https://<release>.<packageName>.localhost', cloud: 'https://<env>.hulyo.co.il' },
+    routes: {
+      '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },
+      '/api/v1/cronjob': { packageName: 'cronjobs-api', from: ['local', 'cloud'], default: 'cloud' },
+      '/media': { packageName: 'backend-api', from: ['cloud'] },
+    },
+  }
+  const getRelease = () => {
+    return 'feat-x'
+  }
+
+  it('reports the same local/cloud split the proxy resolves, most specific route first', () => {
+    const localContext = {
+      packages: new Set(['backend-api']),
+      info: new Map([['backend-api', { port: 4001, origin: 'https://feat-x.backend-api.localhost', wire: 2 }]]),
+    }
+
+    expect(describeProxyRoutes({ proxy, localContext, env: 'dev', getRelease })).toEqual([
+      { path: '/api/v1/cronjob', packageName: 'cronjobs-api', source: 'cloud', target: 'https://dev.hulyo.co.il' },
+      { path: '/media', packageName: 'backend-api', source: 'cloud', target: 'https://dev.hulyo.co.il' },
+      { path: '/api', packageName: 'backend-api', source: 'local', target: 'https://feat-x.backend-api.localhost' },
+    ])
+  })
+
+  it('leaves a cloud target null instead of throwing when no env is set', () => {
+    const localContext = { packages: new Set<string>(), info: new Map<string, LocalPackageInfo>() }
+    const routes = describeProxyRoutes({ proxy, localContext, env: undefined, getRelease })
+
+    expect(
+      routes.map((route) => {
+        return route.target
+      }),
+    ).toEqual([null, null, null])
+  })
+
+  it('leaves a local target null when the fragment broke its wire promise', () => {
+    const localContext = {
+      packages: new Set(['backend-api']),
+      info: new Map<string, LocalPackageInfo>([['backend-api', { port: 4001, wire: 2 }]]),
+    }
+    const api = describeProxyRoutes({ proxy, localContext, env: 'dev', getRelease }).find((route) => {
+      return route.path === '/api'
+    })
+
+    expect(api).toMatchObject({ source: 'local', target: null })
   })
 })
