@@ -16,7 +16,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const INFRA_KIT_APPS = path.resolve(__dirname, '../..')
+const INFRA_KIT_APPS = path.resolve(__dirname, '../../..')
 
 interface Manifest {
   name: string

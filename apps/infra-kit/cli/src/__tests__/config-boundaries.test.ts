@@ -16,7 +16,7 @@ import { ESLint } from 'eslint'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const PROJECT = path.resolve(__dirname, '..')
+const PROJECT = path.resolve(__dirname, '../..')
 
 const eslint = new ESLint({ cwd: PROJECT })
 
