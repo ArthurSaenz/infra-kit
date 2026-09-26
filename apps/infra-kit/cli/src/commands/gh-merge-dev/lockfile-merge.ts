@@ -9,19 +9,21 @@ const CONFLICT_MARKER = /^(?:<{7}|={7}|>{7})(?:\s|$)/m
 export type LockfileMergeResult = { ok: true } | { ok: false; reason: string }
 
 /**
- * Merge a conflicted `pnpm-lock.yaml` deterministically: start from dev's valid lockfile, let pnpm
- * add whatever the merged manifests need on top of it, and stage the result.
+ * Rebuild a conflicted `pnpm-lock.yaml` deterministically: start from dev's valid lockfile at
+ * `devSha`, let pnpm add whatever the merged manifests need on top of it, and stage the result.
+ * Whatever the index or the working tree held for the lockfile before is discarded.
  *
  * Must run only after every other conflicted path — `package.json`s included — is resolved and
  * staged, because pnpm resolves against the manifests in the working tree.
  */
 // Never run pnpm on the marked lockfile: pnpm 12 prints `WARN Ignoring broken lockfile` and
 // re-resolves every dependency from scratch, silently upgrading every ranged pin (measured in the
-// S0 spike, .omc/plans/merge-dev-skill.md §2.0). Stage 3 is dev's side, because the merge runs on
-// the release branch. `--no-frozen-lockfile` because pnpm defaults to frozen under `CI`.
-export const mergeLockfile = async (worktreePath: string): Promise<LockfileMergeResult> => {
+// S0 spike, .omc/plans/merge-dev-skill.md §2.0). Read from the dev commit, not from index stage 3:
+// once anything stages the lockfile, stage 3 is gone. `--no-frozen-lockfile` because pnpm defaults
+// to frozen under `CI`.
+export const mergeLockfile = async (worktreePath: string, devSha: string): Promise<LockfileMergeResult> => {
   const lockfilePath = path.join(worktreePath, LOCKFILE)
-  const stage = `:3:${LOCKFILE}`
+  const stage = `${devSha}:${LOCKFILE}`
 
   try {
     const devSide = await $({ cwd: worktreePath, quiet: true })`git show ${stage}`

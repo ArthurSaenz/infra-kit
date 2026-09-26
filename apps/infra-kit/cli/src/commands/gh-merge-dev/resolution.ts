@@ -19,6 +19,7 @@ import {
   revParseVerify,
 } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
+import { rerunArgv } from 'src/lib/parsed-argv'
 import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 import { formatBranchName, parseReleaseRef } from 'src/lib/release-id'
 import { formatBranchPickerItems } from 'src/lib/release-utils'
@@ -29,7 +30,7 @@ import { MERGE_MESSAGE_PREFIX, reclassify } from './merge-run'
 import { registerRunCleanup } from './run-cleanup'
 
 /** The mandatory check before any resolution commit; it also creates the `node_modules` hooks need. */
-export const INSTALL_CHECK_COMMAND = 'pnpm install --frozen-lockfile --ignore-scripts'
+const INSTALL_CHECK_COMMAND = 'pnpm install --frozen-lockfile --ignore-scripts'
 
 const RESOLUTION_DIFF_CAP = 64 * 1024
 const REASON_CAP = 4096
@@ -62,8 +63,10 @@ interface ResolutionRecord {
   lockfileOnly: boolean
   cliVersion: string
   createdAt: string
-  /** The tree the last `--continue` preview showed; `--yes` commits only this tree. */
+  /** The tree the last `--continue` preview showed; a committed resume must still carry it. */
   previewedTree?: string
+  /** A merge commit a commit hook rewrote after approval: never pushable, only abortable. */
+  unapprovedCommit?: string
 }
 
 export type BlockedCode =
@@ -74,6 +77,7 @@ export type BlockedCode =
   | 'verify-mutated-tree'
   | 'parents-mismatch'
   | 'git-too-old'
+  | 'tree-changed'
 
 export interface Blocked {
   code: BlockedCode
@@ -81,7 +85,7 @@ export interface Blocked {
   detail: string
 }
 
-export interface ContinuePlanRow {
+interface ContinuePlanRow {
   branch: string
   worktreePath: string
   baseSha: string
@@ -94,6 +98,8 @@ export interface ContinuePlanRow {
   diffStat?: string
   resolutionDiff?: string
   resolutionDiffTruncated?: boolean
+  /** The rebuilt lockfile against dev's and the base branch's, when the lockfile conflicted. */
+  lockfileDiffStat?: { vsDev: string; vsBase: string }
   rerereFiles: string[]
   verify?: { command: string; ok: boolean; reason?: string }
   blocked?: Blocked
@@ -155,6 +161,25 @@ const revParseQuiet = async (cwd: string, ref: string): Promise<string | null> =
   }
 }
 
+const gitCommonDir = async (cwd: string): Promise<string> => {
+  return path.resolve(cwd, (await git(cwd, ['rev-parse', '--git-common-dir'])).trim())
+}
+
+const succeeds = (promise: Promise<unknown>): Promise<boolean> => {
+  return promise.then(
+    () => {
+      return true
+    },
+    () => {
+      return false
+    },
+  )
+}
+
+const idleOutcome = (): ResolutionRunOutcome => {
+  return { results: [], atomicPush: { attempted: false, aborted: false }, declined: false }
+}
+
 export const isLockfileOnly = (conflictPaths: string[] | undefined): boolean => {
   return conflictPaths?.length === 1 && conflictPaths[0] === LOCKFILE
 }
@@ -162,9 +187,7 @@ export const isLockfileOnly = (conflictPaths: string[] | undefined): boolean => 
 // --- state files ---
 
 const recordsDir = async (cwd: string): Promise<string> => {
-  const commonDir = (await git(cwd, ['rev-parse', '--git-common-dir'])).trim()
-
-  return path.join(path.resolve(cwd, commonDir), 'infra-kit', 'merge-dev-resolutions')
+  return path.join(await gitCommonDir(cwd), 'infra-kit', 'merge-dev-resolutions')
 }
 
 const recordPath = async (cwd: string, branch: string): Promise<string> => {
@@ -268,15 +291,7 @@ const rererePreResolvedPaths = async (cwd: string, unmerged: string[]): Promise<
     })
   ).trim()
 
-  const rrCache = path.join((await git(cwd, ['rev-parse', '--git-common-dir'])).trim(), 'rr-cache')
-  const hasCache = await fs.stat(path.resolve(cwd, rrCache)).then(
-    () => {
-      return true
-    },
-    () => {
-      return false
-    },
-  )
+  const hasCache = await succeeds(fs.stat(path.join(await gitCommonDir(cwd), 'rr-cache')))
 
   if (configured === 'false' || (configured === '' && !hasCache)) return []
 
@@ -304,7 +319,7 @@ const isUnderNodeModules = (file: string): boolean => {
 // - `ls-files -v` catches assume-unchanged (lowercase tag) and skip-worktree (`S`), both of which
 //   make `git status` blind to an edit of that path.
 const scopeViolations = async (cwd: string, record: ResolutionRecord): Promise<string[]> => {
-  const allowed = new Set([...record.conflictPaths, LOCKFILE])
+  const allowed = new Set(record.conflictPaths)
   const knownIgnored = new Set(record.ignoredAtHandoff)
 
   const staged = nulFields(
@@ -359,7 +374,10 @@ const hiddenByIndexFlags = async (cwd: string): Promise<string[]> => {
     })
 }
 
-/** Staged files that still carry a conflict marker; the lockfile is merged separately. */
+/**
+ * Staged files that still carry a conflict marker; the lockfile is rebuilt separately. Throws when
+ * git itself failed, so a broken check can never read as "no markers".
+ */
 const markerPaths = async (cwd: string): Promise<string[]> => {
   const exclude = `:(exclude)${LOCKFILE}`
 
@@ -368,10 +386,18 @@ const markerPaths = async (cwd: string): Promise<string[]> => {
 
     return []
   } catch (error) {
+    const { stdout = '', stderr = '', exitCode } = error as { stdout?: string; stderr?: string; exitCode?: number }
+
+    // `--check` reports its findings on stdout with a non-zero exit and nothing on stderr; anything
+    // else is git failing to run the check at all.
+    if (stderr.trim().length > 0 || stdout.trim().length === 0 || (exitCode !== 1 && exitCode !== 2)) {
+      throw new OperationError(error, { operation: 'check the staged resolution for conflict markers' })
+    }
+
     // `--check` also reports whitespace errors, which dev's own changes may carry; only markers count.
     const found = new Set<string>()
 
-    for (const line of String((error as { stdout?: string }).stdout ?? '').split('\n')) {
+    for (const line of stdout.split('\n')) {
       const match = /^(.*):\d+: leftover conflict marker/.exec(line)
 
       if (match?.[1]) found.add(match[1])
@@ -388,14 +414,7 @@ const stageConflictPaths = async (cwd: string, conflictPaths: string[]): Promise
   // A path gone from both the index and the disk (a staged deletion, a rename/rename source) is
   // already resolved, and naming it would fail the whole `git add` with "pathspec did not match".
   for (const file of conflictPaths) {
-    const onDisk = await fs.lstat(path.join(cwd, file)).then(
-      () => {
-        return true
-      },
-      () => {
-        return false
-      },
-    )
+    const onDisk = await succeeds(fs.lstat(path.join(cwd, file)))
     const inIndex = onDisk || (await git(cwd, ['--literal-pathspecs', 'ls-files', '--', file])).length > 0
 
     if (inIndex) present.push(file)
@@ -431,8 +450,17 @@ const runVerify = async (
 const describeResolution = async (
   cwd: string,
   record: ResolutionRecord,
-): Promise<Pick<ContinuePlanRow, 'diffStat' | 'resolutionDiff' | 'resolutionDiffTruncated'>> => {
+): Promise<Pick<ContinuePlanRow, 'diffStat' | 'resolutionDiff' | 'resolutionDiffTruncated' | 'lockfileDiffStat'>> => {
   const diffStat = (await git(cwd, ['diff', '--cached', '--stat', record.autoMergeTree])).trim()
+  const lockfileStat = async (against: string): Promise<string> => {
+    return (await git(cwd, ['diff', '--cached', '--stat', against, '--', LOCKFILE])).trim()
+  }
+
+  // The lockfile's own diff is too large to review; its size against each side is what a human can
+  // judge — against dev it should show only what the release branch itself added.
+  const lockfileDiffStat = record.conflictPaths.includes(LOCKFILE)
+    ? { vsDev: await lockfileStat(record.devSha), vsBase: await lockfileStat(record.baseSha) }
+    : undefined
   const raw = await git(cwd, ['diff', '--cached', record.autoMergeTree, '--', '.', `:(exclude)${LOCKFILE}`])
   const rerere = new Set(record.rererePreResolved)
 
@@ -449,6 +477,7 @@ const describeResolution = async (
 
   return {
     diffStat,
+    ...(lockfileDiffStat ? { lockfileDiffStat } : {}),
     resolutionDiff: truncated ? Buffer.from(labelled).subarray(0, RESOLUTION_DIFF_CAP).toString() : labelled,
     resolutionDiffTruncated: truncated,
   }
@@ -616,7 +645,9 @@ const selectRecords = async (args: {
 
   if (all || records.length === 0) return records
 
-  const picked = await pickReleaseBranches(formatBranchPickerItems({ branches: available, descriptions: new Map() }), { required: true })
+  const picked = await pickReleaseBranches(formatBranchPickerItems({ branches: available, descriptions: new Map() }), {
+    required: true,
+  })
 
   return records.filter((record) => {
     return picked.includes(record.branch)
@@ -687,6 +718,15 @@ const prepareCommitted = async (
   mergeHead: string | null,
 ): Promise<ContinuePlanRow> => {
   const wt = record.worktreePath
+
+  if (head !== null && head === record.unapprovedCommit) {
+    return blockRow(
+      row,
+      'tree-changed',
+      `commit ${head} carries a tree a commit hook rewrote after approval — run --abort, then hand off again`,
+    )
+  }
+
   const parents = mergeHead ? [] : await commitParents(wt)
   const tree = mergeHead ? null : await revParseQuiet(wt, 'HEAD^{tree}')
   const isApprovedCommit =
@@ -722,12 +762,46 @@ const prepareCommitted = async (
   }
 }
 
+/** The staged (stage-0) blob of `file`, or `null` when it is unmerged or absent. */
+const stagedBlob = async (cwd: string, file: string): Promise<string | null> => {
+  const entries = lines(await git(cwd, ['--literal-pathspecs', 'ls-files', '-s', '--', file]))
+  const [mode, sha, stage] = entries.length === 1 ? (entries[0] ?? '').split(/\s+/) : []
+
+  return mode && stage === '0' ? (sha ?? null) : null
+}
+
+/**
+ * Step 5: rebuild the lockfile from dev on EVERY run, whatever the index holds, so only the CLI's
+ * own deterministic merge can ever be committed.
+ */
+// A lockfile staged by anything else (an agent's `git add`, a hand edit) is replaced, and the run is
+// blocked once so the replacement is previewed before anyone approves it. A rebuild identical to
+// the staged lockfile is the CLI's own earlier rebuild, and passes.
+const rebuildLockfile = async (record: ResolutionRecord): Promise<Blocked | null> => {
+  const wt = record.worktreePath
+  const stagedBefore = await stagedBlob(wt, LOCKFILE)
+  const merged = await mergeLockfile(wt, record.devSha)
+
+  if (!merged.ok) return { code: 'verify-failed', detail: merged.reason, paths: [LOCKFILE] }
+
+  if (stagedBefore !== null && stagedBefore !== (await stagedBlob(wt, LOCKFILE))) {
+    return {
+      code: 'out-of-scope-edit',
+      detail: `${LOCKFILE} was staged by something other than the CLI; it has been rebuilt from dev — preview again`,
+      paths: [LOCKFILE],
+    }
+  }
+
+  const violations = await scopeViolations(wt, record)
+
+  return violations.length > 0
+    ? { code: 'out-of-scope-edit', detail: 'merging the lockfile changed other paths', paths: violations }
+    : null
+}
+
 /** Steps 2–5: stage the resolver's edits and prove the index is resolved, in scope and marker-free. */
 const resolveIndex = async (record: ResolutionRecord): Promise<Blocked | null> => {
   const wt = record.worktreePath
-  const outOfScope = (paths: string[], detail: string): Blocked | null => {
-    return paths.length > 0 ? { code: 'out-of-scope-edit', detail, paths } : null
-  }
 
   await stageConflictPaths(
     wt,
@@ -736,12 +810,13 @@ const resolveIndex = async (record: ResolutionRecord): Promise<Blocked | null> =
     }),
   )
 
-  const scoped = outOfScope(await scopeViolations(wt, record), 'only the conflicted paths may change')
+  const violations = await scopeViolations(wt, record)
 
-  if (scoped) return scoped
+  if (violations.length > 0) {
+    return { code: 'out-of-scope-edit', detail: 'only the conflicted paths may change', paths: violations }
+  }
 
-  const unmerged = await unmergedPaths(wt)
-  const stillUnmerged = unmerged.filter((file) => {
+  const stillUnmerged = (await unmergedPaths(wt)).filter((file) => {
     return file !== LOCKFILE
   })
 
@@ -749,17 +824,19 @@ const resolveIndex = async (record: ResolutionRecord): Promise<Blocked | null> =
     return { code: 'unmerged-paths', detail: 'these paths are still unmerged', paths: stillUnmerged }
   }
 
-  const markers = await markerPaths(wt)
+  let markers: string[]
 
-  if (markers.length > 0) return { code: 'markers-remaining', detail: 'conflict markers are still staged', paths: markers }
+  try {
+    markers = await markerPaths(wt)
+  } catch (error) {
+    return { code: 'markers-remaining', detail: `the marker check could not run: ${stderrOf(error)}` }
+  }
 
-  if (!unmerged.includes(LOCKFILE)) return null
+  if (markers.length > 0) {
+    return { code: 'markers-remaining', detail: 'conflict markers are still staged', paths: markers }
+  }
 
-  const merged = await mergeLockfile(wt)
-
-  if (!merged.ok) return { code: 'verify-failed', detail: merged.reason, paths: [LOCKFILE] }
-
-  return outOfScope(await scopeViolations(wt, record), 'merging the lockfile changed other paths')
+  return record.conflictPaths.includes(LOCKFILE) ? rebuildLockfile(record) : null
 }
 
 /** Steps 2–8 for a resolution still mid-merge. */
@@ -794,23 +871,60 @@ const prepareUncommitted = async (
   return { ...verified, ...(await describeResolution(wt, record)) }
 }
 
+const COMMIT_TIMEOUT_MS = 120_000
+
 /** `git commit` that can never wait on a human: no terminal prompt, no stdin, no controlling TTY. */
-// `detached` puts git in its own session, so a hook or a gpg pinentry that opens `/dev/tty` fails
-// instead of hanging the run; the failure is reported as `hook-failed` and never retried.
-const commitMerge = async (cwd: string): Promise<{ ok: true } | { ok: false; reason: string }> => {
+// `detached` puts git in its own session and process group, so a hook or a gpg pinentry that opens
+// `/dev/tty` fails instead of hanging the run, and a hook that hangs anyway is killed as a group at
+// the timeout. Either way it is `hook-failed`, never retried.
+export const commitMerge = async (
+  cwd: string,
+  timeoutMs = COMMIT_TIMEOUT_MS,
+): Promise<{ ok: true } | { ok: false; reason: string }> => {
+  const commit = $({
+    cwd,
+    quiet: true,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  })`git commit --no-edit --cleanup=strip`
+
+  let timedOut = false
+
+  const timer = setTimeout(() => {
+    timedOut = true
+
+    const pid = commit.child?.pid
+
+    try {
+      if (pid) process.kill(-pid, 'SIGKILL')
+    } catch {
+      // Already gone.
+    }
+  }, timeoutMs)
+
   try {
-    await $({
-      cwd,
-      quiet: true,
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-    })`git commit --no-edit --cleanup=strip`
+    await commit
 
     return { ok: true }
   } catch (error) {
-    return { ok: false, reason: stderrOf(error) }
+    if (!timedOut) return { ok: false, reason: stderrOf(error) }
+
+    // A git killed mid-commit leaves its index lock behind, which would fail every later
+    // `--continue` in this CLI-owned worktree with "index.lock exists".
+    const lock = (await git(cwd, ['rev-parse', '--git-path', 'index.lock'])).trim()
+
+    await fs.rm(path.resolve(cwd, lock), { force: true })
+
+    return { ok: false, reason: `git commit timed out after ${timeoutMs}ms` }
+  } finally {
+    clearTimeout(timer)
   }
+}
+
+const BLOCKED_STATUS: Partial<Record<BlockedCode, ResolutionResultStatus>> = {
+  'verify-failed': 'verify-failed',
+  'tree-changed': 'tree-changed',
 }
 
 const blockedResult = (row: ContinuePlanRow): ResolutionResultEntry => {
@@ -818,32 +932,38 @@ const blockedResult = (row: ContinuePlanRow): ResolutionResultEntry => {
 
   return {
     branch: row.branch,
-    status: blocked.code === 'verify-failed' ? 'verify-failed' : 'blocked',
+    status: BLOCKED_STATUS[blocked.code] ?? 'blocked',
     conflictPaths: row.conflictPaths,
     pushed: false,
-    reason: [`${blocked.code}: ${blocked.detail}`, ...(blocked.paths ? [`(${blocked.paths.join(', ')})`] : [])].join(' '),
+    reason: [`${blocked.code}: ${blocked.detail}`, ...(blocked.paths ? [`(${blocked.paths.join(', ')})`] : [])].join(
+      ' ',
+    ),
     blocked,
   }
 }
 
 /** Step 10: commit an approved tree, then prove the commit is exactly what was approved. */
 const commitApproved = async (
+  cwd: string,
   row: ContinuePlanRow,
   record: ResolutionRecord,
+  approvedTree: string | undefined,
 ): Promise<{ sha: string } | ResolutionResultEntry> => {
   const wt = record.worktreePath
   const fail = (status: ResolutionResultStatus, reason: string, extra: Partial<ResolutionResultEntry> = {}) => {
     return { branch: row.branch, status, conflictPaths: row.conflictPaths, pushed: false, reason, ...extra }
   }
 
-  if (row.committed && row.mergeSha) return { sha: row.mergeSha }
-
-  if (!record.previewedTree || row.treeSha !== record.previewedTree) {
+  // The approval is the tree named in the confirming argv (`--tree`), never state a later preview
+  // could have overwritten.
+  if (!approvedTree || row.treeSha !== approvedTree) {
     return fail(
       'tree-changed',
-      `the resolution is tree ${row.treeSha} but the approved preview was ${record.previewedTree ?? 'never run'} — preview again`,
+      `the resolution is tree ${row.treeSha} but the approved tree is ${approvedTree ?? 'none'} — preview again`,
     )
   }
+
+  if (row.committed && row.mergeSha) return { sha: row.mergeSha }
 
   const committed = await commitMerge(wt)
 
@@ -853,7 +973,14 @@ const commitApproved = async (
   const tree = (await git(wt, ['rev-parse', 'HEAD^{tree}'])).trim()
 
   if (tree !== row.treeSha) {
-    return fail('tree-changed', `a commit hook rewrote the tree (${tree}, approved ${row.treeSha})`, { mergeSha: sha })
+    record.unapprovedCommit = sha
+    await writeRecord(cwd, record)
+
+    return fail(
+      'tree-changed',
+      `a commit hook rewrote the tree (${tree}, approved ${row.treeSha}) — run --abort, then hand off again`,
+      { mergeSha: sha },
+    )
   }
 
   const parents = await commitParents(wt)
@@ -937,69 +1064,118 @@ export const continueResolutions = async (args: {
   versions?: string | string[]
   all?: boolean
   verify?: string
+  /** branch → the tree the human approved, from the confirming argv's `--tree`. */
+  trees?: Map<string, string>
   confirmedCommand: boolean | undefined
 }): Promise<ResolutionRunOutcome> => {
-  const { cwd, versions, all, verify, confirmedCommand } = args
-  const idle: ResolutionRunOutcome = { results: [], atomicPush: { attempted: false, aborted: false }, declined: false }
+  const { cwd, versions, all, verify, trees = new Map<string, string>(), confirmedCommand } = args
   const records = await selectRecords({ cwd, versions, all })
 
   if (records.length === 0) {
     logger.info('ℹ️ No merge-dev resolutions in progress')
 
-    return idle
+    return idleOutcome()
   }
 
-  if (!confirmedCommand) {
-    const rows: ContinuePlanRow[] = []
+  if (confirmedCommand) return executeContinue(cwd, records, verify, trees)
 
-    for (const record of records) {
-      const row = await prepareBranch(cwd, record, verify)
+  const rows: ContinuePlanRow[] = []
 
-      if (!row.blocked && !row.committed && row.treeSha) {
-        record.previewedTree = row.treeSha
-        await writeRecord(cwd, record)
-      }
+  for (const record of records) {
+    const row = await prepareBranch(cwd, record, verify)
 
-      rows.push(row)
+    if (!row.blocked && !row.committed && row.treeSha) {
+      record.previewedTree = row.treeSha
+      await writeRecord(cwd, record)
     }
 
-    renderRows(rows)
+    rows.push(row)
+  }
 
-    const plan = { branches: rows }
+  renderRows(rows)
 
-    if (
-      rows.every((row) => {
-        return row.blocked
-      })
-    ) {
-      throw new StructuredRefusalError({ status: 'refused', plan, agentMode: agentMode.source }, 2, {
-        operation: 'continue the merge-dev resolutions',
-        stderrExcerpt: 'every selected resolution is blocked',
-        remediation: 'fix the paths each row names, then preview again — or drop it with --abort',
+  const plan = { branches: rows }
+  const ready = rows.filter((row): row is ContinuePlanRow & { treeSha: string } => {
+    return !row.blocked && row.treeSha !== undefined
+  })
+
+  if (ready.length === 0) {
+    throw new StructuredRefusalError({ status: 'refused', plan, agentMode: agentMode.source }, 2, {
+      operation: 'continue the merge-dev resolutions',
+      stderrExcerpt: 'every selected resolution is blocked',
+      remediation: 'fix the paths each row names, then preview again — or drop it with --abort',
+    })
+  }
+
+  const approved = new Map(
+    ready.map((row) => {
+      return [row.branch, row.treeSha] as const
+    }),
+  )
+
+  try {
+    await confirmOrExit(
+      confirmedCommand,
+      `Commit and push the resolved merges for: ${[...approved.keys()].join(', ')}?`,
+      { plan, throwOnDecline: true, rerun: rerunWithTrees(approved) },
+    )
+  } catch (error) {
+    if (!isCommandDeclined(error)) throw error
+
+    return { ...idleOutcome(), declined: true }
+  }
+
+  return executeContinue(cwd, records, verify, approved)
+}
+
+/** `branch=tree[,branch=tree…]`, one or many — the `--tree` value a preview's `rerun` carries. */
+export const parseTrees = (specs: string | string[] | undefined): Map<string, string> => {
+  const trees = new Map<string, string>()
+  const tokens = (Array.isArray(specs) ? specs : [specs ?? '']).flatMap((spec) => {
+    return spec.split(',')
+  })
+
+  for (const token of tokens.map((part) => {
+    return part.trim()
+  })) {
+    if (token.length === 0) continue
+
+    const match = /^(.+)=([0-9a-f]{40,64})$/.exec(token)
+
+    if (!match?.[1] || !match[2]) {
+      throw new OperationError(undefined, {
+        operation: 'read --tree',
+        stderrExcerpt: `"${token}" is not <branch>=<tree sha>`,
+        remediation: 'run the rerun a --continue preview printed, unchanged',
       })
     }
 
-    try {
-      await confirmOrExit(
-        confirmedCommand,
-        `Commit and push the resolved merges for: ${rows
-          .filter((row) => {
-            return !row.blocked
-          })
-          .map((row) => {
-            return row.branch
-          })
-          .join(', ')}?`,
-        { plan, throwOnDecline: true },
-      )
-    } catch (error) {
-      if (!isCommandDeclined(error)) throw error
+    trees.set(match[1], match[2])
+  }
 
-      return { ...idle, declined: true }
+  return trees
+}
+
+/** The preview's own argv with the approved trees bound into it, so `--yes` can commit nothing else. */
+const rerunWithTrees = (trees: Map<string, string>): string[] => {
+  const args: string[] = []
+  let skipValue = false
+
+  for (const token of rerunArgv()) {
+    if (skipValue) {
+      skipValue = false
+    } else if (token === '--tree') {
+      skipValue = true
+    } else if (token !== '--yes' && token !== '-y' && !token.startsWith('--tree=')) {
+      args.push(token)
     }
   }
 
-  return executeContinue(cwd, records, verify)
+  const treeSpecs = [...trees].map(([branch, tree]) => {
+    return `${branch}=${tree}`
+  })
+
+  return [...args, '--tree', treeSpecs.join(','), '--yes']
 }
 
 /** Steps 10–11 for one branch: the pushable commit, or the branch's terminal result. */
@@ -1007,12 +1183,13 @@ const commitAndReclassify = async (
   cwd: string,
   record: ResolutionRecord,
   verify: string | undefined,
+  approvedTree: string | undefined,
 ): Promise<{ sha: string } | ResolutionResultEntry> => {
   const row = await prepareBranch(cwd, record, verify)
 
   if (row.blocked) return blockedResult(row)
 
-  const committed = await commitApproved(row, record)
+  const committed = await commitApproved(cwd, row, record, approvedTree)
 
   if (!('sha' in committed)) return committed
 
@@ -1064,12 +1241,13 @@ const executeContinue = async (
   cwd: string,
   records: ResolutionRecord[],
   verify: string | undefined,
+  trees: Map<string, string>,
 ): Promise<ResolutionRunOutcome> => {
   const settled: ResolutionResultEntry[] = []
   const toPush: { record: ResolutionRecord; sha: string }[] = []
 
   for (const record of records) {
-    const outcome = await commitAndReclassify(cwd, record, verify)
+    const outcome = await commitAndReclassify(cwd, record, verify, trees.get(record.branch))
 
     if ('sha' in outcome) {
       toPush.push({ record, sha: outcome.sha })
@@ -1113,13 +1291,12 @@ export const abortResolutions = async (args: {
   confirmedCommand: boolean | undefined
 }): Promise<ResolutionRunOutcome> => {
   const { cwd, versions, all, confirmedCommand } = args
-  const idle: ResolutionRunOutcome = { results: [], atomicPush: { attempted: false, aborted: false }, declined: false }
   const records = await selectRecords({ cwd, versions, all })
 
   if (records.length === 0) {
     logger.info('ℹ️ No merge-dev resolutions in progress')
 
-    return idle
+    return idleOutcome()
   }
 
   const plan = {
@@ -1141,7 +1318,7 @@ export const abortResolutions = async (args: {
   } catch (error) {
     if (!isCommandDeclined(error)) throw error
 
-    return { ...idle, declined: true }
+    return { ...idleOutcome(), declined: true }
   }
 
   for (const record of records) {
@@ -1150,7 +1327,7 @@ export const abortResolutions = async (args: {
   }
 
   return {
-    ...idle,
+    ...idleOutcome(),
     results: records.map((record) => {
       return { branch: record.branch, status: 'aborted' as const, conflictPaths: record.conflictPaths, pushed: false }
     }),

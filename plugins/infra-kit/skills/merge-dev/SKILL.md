@@ -86,16 +86,21 @@ or exit 1 with no JSON at all, is a real crash — stop and show stderr.
 
 **Resolution states**, per conflicted branch's `resolution.state`:
 
-| State | Meaning | What you do |
-|---|---|---|
-| `needs-agent` | A real conflict outside the lockfile. | Resolve it — section 4. |
-| `lockfile-only` | The only conflict is `pnpm-lock.yaml`. | No editing needed; `--continue` merges it deterministically — section 4 still applies for the approval. |
-| `exists` | A state file for this branch already exists — a previous hand-off was never finished. | Do not hand off again. Offer the human `--continue` or `--abort` for it. |
+| State           | Meaning                                                                               | What you do                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `needs-agent`   | A real conflict outside the lockfile.                                                 | Resolve it — section 4.                                                                                 |
+| `lockfile-only` | The only conflict is `pnpm-lock.yaml`.                                                | No editing needed; `--continue` merges it deterministically — section 4 still applies for the approval. |
+| `exists`        | A state file for this branch already exists — a previous hand-off was never finished. | Do not hand off again. Offer the human `--continue` or `--abort` for it.                                |
 
 ## 3. Relay-only outcomes
 
-Do not act on `hook-failed`, `error` or `push-aborted` — there is no retry for any of them. Relay
-the CLI's `reason` verbatim to the human, together with the Option D recipe (section 9).
+Do not act on `hook-failed` or `error`, or on a **clean** branch's `push-aborted` from approval 1 —
+there is no retry for any of them. Relay the CLI's `reason` verbatim to the human, together with the
+Option D recipe (section 9).
+
+A **resolved** branch's `push-aborted` from approval 2 is different: its merge commit is already
+made and approved, and the same `--continue` rerun resumes from it and pushes that same commit.
+Offer the human that rerun; do not treat it as relay-only.
 
 ## 4. Resolving conflicts in the worktree
 
@@ -108,7 +113,7 @@ Inside `worktreePath`, the agent:
 - edits or deletes **only** paths listed in `conflictPaths`. It never edits any other file, and it
   never touches `pnpm-lock.yaml` — the CLI merges the lockfile deterministically inside `--continue`
   by writing dev's side (`git show :3:pnpm-lock.yaml`) and re-running `pnpm install --lockfile-only
-  --ignore-scripts`. **Never run `pnpm` yourself on a lockfile that still has conflict markers** — it
+--ignore-scripts`. **Never run `pnpm` yourself on a lockfile that still has conflict markers** — it
   does not merge the markers, it silently re-resolves the whole tree from scratch, which can bump
   ranged dependencies with nobody asking for it.
 - runs **no mutating git command** — no `add`, `commit`, `merge --continue`, `checkout --`, `reset`,
@@ -135,7 +140,7 @@ edits.
 
 - `unmerged-paths`, `markers-remaining`, `out-of-scope-edit` or `verify-failed`: the agent fixes the
   named paths, within the budget from section 4.
-- `verify-mutated-tree`, `parents-mismatch` or `git-too-old`: relay the block to the human and
+- `verify-mutated-tree`, `parents-mismatch`, `tree-changed` or `git-too-old`: relay the block to the human and
   suggest either `--abort` plus a fresh `--keep-conflicts` hand-off, or Option D (section 9). Do not
   keep retrying these — they mean the worktree's state no longer matches what the CLI can safely
   push.
@@ -150,12 +155,23 @@ at all), show the human, per branch:
 - `resolutionDiff` — the index diffed against `AUTO_MERGE`, with any hunk `rerere` already
   pre-resolved labelled **"rerere (recorded resolution)"**, never as the agent's own work. When it is
   truncated, fall back to `git -C <worktreePath> diff --cached AUTO_MERGE` for the full diff.
-- `lockfileMerged` — whether the lockfile step ran.
+- `treeSha` — the exact tree this approval covers. The preview's `rerun` carries it as
+  `--tree <branch>=<treeSha>`; `--yes` commits a branch only if its resolved tree still equals it.
+- `lockfileMerged` and `lockfileDiffStat` — whether the CLI rebuilt `pnpm-lock.yaml` from dev, and
+  its size against dev (`vsDev`, which should show only what the release branch added) and against
+  the base branch (`vsBase`).
 - The verify result (the mandatory frozen-lockfile install, plus `--verify=<cmd>` if one was given).
 
 This is the second and last approval — it is bound to the exact tree that will be committed and
-pushed. On "go", run the `rerun` verbatim (`--continue --yes`). Never add `--yes` to a call the human
-has not seen this diff for.
+pushed. On "go", run the `rerun` verbatim (`--continue --tree … --yes`). Never add `--yes` to a
+call the human has not seen this diff for, and never edit the `--tree` value: a rerun of an older
+preview reports `tree-changed` and commits nothing.
+
+**`tree-changed` on the approved run** means the tree moved after the human saw it: an edit after
+the preview (preview again, and get approval again), or a commit hook that rewrote the approved
+tree. In the hook case the commit already exists with a tree nobody approved; it is never pushed,
+and every later `--continue` blocks it as `tree-changed`. Relay that and offer `--abort` plus a
+fresh `--keep-conflicts` hand-off.
 
 ## 7. `--abort`
 
@@ -175,13 +191,15 @@ Use this when the CLI refuses a hand-off outright (`git-too-old`, a repeated `ve
 `parents-mismatch`, or an edit that genuinely needs a file outside `conflictPaths`, which v1 always
 refuses rather than widening scope). It needs no CLI change and no agent worktree:
 
-1. The human runs `infra-kit worktrees add <release>` themselves, in their own terminal, to get a
-   normal (non-detached) worktree for the release branch.
-2. They (or the agent, at the human's direction, inside that ordinary worktree) run `git merge
-   origin/dev` and resolve it by hand — commit included.
-3. They push normally, or simply re-run `/infra-kit:merge-dev <version>` — the CLI's recorded-dev
-   reclassify sees the hand-merged branch as `up-to-date` and drops it from the atomic push with
-   nothing left to do.
+Every step is the **human's**, in their own terminal. The agent does not run any of them.
+
+1. The human runs `infra-kit worktrees add <release>` to get a normal (non-detached) worktree for
+   the release branch.
+2. In that worktree, the human merges `origin/dev`, resolves the conflicts and commits.
+3. The human pushes the release branch themselves.
+
+The hand-merge reaches origin only when the human pushes it. Until then, no `release merge-dev` run
+knows about it.
 
 ## 10. What not to do
 
@@ -192,7 +210,8 @@ refuses rather than widening scope). It needs no CLI change and no agent worktre
 - Do not edit any path outside `resolution.conflictPaths`, and never edit `pnpm-lock.yaml` yourself.
 - Do not run `pnpm install` (or anything else) inside a resolution worktree while `pnpm-lock.yaml`
   still carries conflict markers.
-- Do not retry `hook-failed`, `push-aborted` or `git-too-old` — relay them.
+- Do not retry `hook-failed`, `git-too-old`, or a clean branch's `push-aborted` — relay them. A
+  resolved branch's `push-aborted` resumes through its own `--continue` rerun (section 3).
 - Do not run any `infra-kit … --yes` call that is not the `rerun` of a plan or diff the human just
   saw.
 - Do not keep resolving past the section 4 budget — hand back to the human instead.

@@ -104,6 +104,13 @@ const configureMergeDev = (cmd: Command): Command => {
     )
     .option('--continue', 'Check, preview, then commit and push the selected resolutions left by --keep-conflicts')
     .option('--abort', 'Discard the selected resolutions left by --keep-conflicts')
+    .option(
+      '--tree <branch=sha>',
+      'With --continue --yes: the approved tree per branch, as a --continue preview prints it (repeatable)',
+      (value: string, prev: string[] | undefined): string[] => {
+        return [...(prev ?? []), value]
+      },
+    )
     .action(async (options) => {
       // The signal guard is installed HERE, on the CLI path, and nowhere else:
       // `ghMergeDev` is a pure handler that returns a structured result, so a
@@ -117,6 +124,7 @@ const configureMergeDev = (cmd: Command): Command => {
           keepConflicts: options.keepConflicts,
           continue: options.continue,
           abort: options.abort,
+          tree: options.tree,
           confirmedCommand: options.yes,
         })
       })

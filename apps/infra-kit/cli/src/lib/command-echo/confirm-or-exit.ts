@@ -58,6 +58,11 @@ export interface ConfirmOrExitOptions {
    * owns catching it and exiting 0: a decline is a successful outcome.
    */
   throwOnDecline?: boolean
+  /**
+   * The argv that confirms, when it must carry more than this run's own argv plus `--yes` — e.g.
+   * the content hash the human is approving. Defaults to `rerunArgv()`.
+   */
+  rerun?: string[]
 }
 
 /**
@@ -71,9 +76,8 @@ export interface ConfirmOrExitOptions {
 // site has: the message, the plan, and the knowledge that `--yes` is the answer. Callers key it on
 // `isHeadless()`, never on `confirmedCommand`, so their `--yes` short-circuit stays as it was for
 // agent and human alike.
-export const refuseUnconfirmed = (message: string, plan?: unknown): never => {
+export const refuseUnconfirmed = (message: string, plan?: unknown, rerun: string[] = rerunArgv()): never => {
   const { source } = agentMode
-  const rerun = rerunArgv()
 
   throw new StructuredRefusalError({ status: 'confirmation_required', message, plan, rerun, agentMode: source }, 2, {
     operation: 'confirm before running',
@@ -90,7 +94,7 @@ export const confirmOrExit = async (
   message: string,
   options: ConfirmOrExitOptions = {},
 ): Promise<void> => {
-  if (!confirmedCommand && isHeadless()) refuseUnconfirmed(message, options.plan)
+  if (!confirmedCommand && isHeadless()) refuseUnconfirmed(message, options.plan, options.rerun)
 
   const answer = confirmedCommand
     ? true

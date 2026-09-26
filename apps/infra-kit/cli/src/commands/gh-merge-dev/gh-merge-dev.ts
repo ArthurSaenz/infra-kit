@@ -25,7 +25,7 @@ import type { RequiredConfirmedOptionArg } from 'src/types'
 
 import { DEFAULT_VERIFY_COMMAND, planMergeRun, pushableRefs, reclassify, verifyMerges } from './merge-run'
 import type { MergePlanEntry, MergeStatus } from './merge-run'
-import { abortResolutions, continueResolutions, handOffConflicts, isLockfileOnly } from './resolution'
+import { abortResolutions, continueResolutions, handOffConflicts, isLockfileOnly, parseTrees } from './resolution'
 import type { Blocked, HandOffOutcome, Resolution, ResolutionResultStatus, ResolutionRunOutcome } from './resolution'
 import { registerRunCleanup } from './run-cleanup'
 
@@ -49,6 +49,11 @@ interface GhMergeDevArgs extends RequiredConfirmedOptionArg {
   continue?: boolean
   /** Discard the selected resolutions left by `keepConflicts`. */
   abort?: boolean
+  /**
+   * Under `continue` with `--yes`: `branch=treeSha`, one or a comma list — the trees the human
+   * approved. A `--continue` preview's `rerun` carries it; a branch whose tree differs is not committed.
+   */
+  tree?: string | string[]
 }
 
 type ResultStatus = MergeStatus | ResolutionResultStatus
@@ -440,6 +445,14 @@ const assertModes = (args: GhMergeDevArgs): void => {
       remediation: 'pass at most one of --keep-conflicts, --continue, --abort; --dry-run only on a plain run',
     })
   }
+
+  if (args.tree !== undefined && !args.continue) {
+    throw new OperationError(undefined, {
+      operation: 'choose the merge-dev mode',
+      stderrExcerpt: '--tree belongs to --continue',
+      remediation: 'run the rerun a --continue preview printed, unchanged',
+    })
+  }
 }
 
 /** A `--continue`/`--abort` outcome in the same result shape as a plain run. */
@@ -484,7 +497,16 @@ const runResolutionMode = async (args: GhMergeDevArgs) => {
   // Under `--continue` the mandatory install check always runs; `--verify <cmd>` adds to it.
   const extraVerify = typeof verify === 'string' && verify.length > 0 ? verify : undefined
 
-  return resolutionResponse(await continueResolutions({ cwd, versions, all, verify: extraVerify, confirmedCommand }))
+  return resolutionResponse(
+    await continueResolutions({
+      cwd,
+      versions,
+      all,
+      verify: extraVerify,
+      trees: parseTrees(args.tree),
+      confirmedCommand,
+    }),
+  )
 }
 
 export const ghMergeDev = async (args: GhMergeDevArgs) => {
@@ -715,8 +737,19 @@ const nextStepLine = (entry: MergeDevResultEntry, worktrees: WorktreeEntry[]): s
 
 /** Turn the run's outcome into the printed report and the structured result. */
 const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]; skipped: SkippedEntry[] }) => {
-  const { entries, selected, pushed, pushAborted, abortedBy, declined, dryRun, worktrees, verifyFailed, handOffs, skipped } =
-    args
+  const {
+    entries,
+    selected,
+    pushed,
+    pushAborted,
+    abortedBy,
+    declined,
+    dryRun,
+    worktrees,
+    verifyFailed,
+    handOffs,
+    skipped,
+  } = args
 
   const pushedBranches = new Set(
     pushed
@@ -861,7 +894,15 @@ export const ghMergeDevMcpTool = defineMcpTool({
     abort: z
       .boolean()
       .optional()
-      .describe('Discard the selected resolution worktrees and their state. Excludes `keepConflicts`, `continue` and `dryRun`.'),
+      .describe(
+        'Discard the selected resolution worktrees and their state. Excludes `keepConflicts`, `continue` and `dryRun`.',
+      ),
+    tree: z
+      .union([z.string(), z.array(z.string())])
+      .optional()
+      .describe(
+        'With `continue` and confirmation: `<branch>=<treeSha>`, comma-separated or repeated — the trees the human approved in the `continue` preview. Pass the preview `rerun` unchanged; a branch whose resolved tree differs is reported `tree-changed` and not committed.',
+      ),
     confirm: z
       .boolean()
       .optional()
@@ -911,6 +952,7 @@ export const ghMergeDevMcpTool = defineMcpTool({
                 'verify-mutated-tree',
                 'parents-mismatch',
                 'git-too-old',
+                'tree-changed',
               ]),
               paths: z.array(z.string()).optional(),
               detail: z.string(),
