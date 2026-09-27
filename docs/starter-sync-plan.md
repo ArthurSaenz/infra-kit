@@ -138,8 +138,7 @@ because `.partial()` keeps a `ZodDefault` and would inject values through the al
     { "path": "vendor/configs" },
     { "path": "vendor/packages/docs-ui" }
   ],
-  "exclude": ["serverless-config"],
-  "legacyCleanup": ["packages/web-toolkit", "configs"]
+  "exclude": ["serverless-config"]
 }
 ```
 
@@ -151,7 +150,8 @@ Schema rules, all `.strict()`:
   `.git` or start with it.
 - `exclude[]`: path-segment names dropped from **both** sides of the diff (6.4). It shrinks from 14 entries to 1,
   because `node_modules`, `dist`, `.turbo` and the rest are never tracked.
-- `legacyCleanup[]`: tracked target paths removed before copying, only when clean.
+- `legacyCleanup[]` was shipped in 0.11.12 and removed 2026-09-27: no target still had `packages/web-toolkit` or
+  `configs/`, so the pre-clean deleted nothing.
 - Absent and `null` mean the same thing: this repo is not a source.
 
 The key is **layer-1 only**. `loadLayer` refuses it in every non-required layer, meaning
@@ -175,7 +175,7 @@ ik vendor sync [targets...] [--yes] [--check] [--commit] [--manifest-only]
 | `--commit` | After a target syncs, commit exactly the synced paths in that target (7.2) | new |
 | `--manifest-only` | Rewrite `vendor/.sync-manifest.json` and `vendor/README.md` from the target's tracked `vendor/` files, no copy. Still preview-then-`--yes`. | `--manifest-only` |
 
-`--no-clean` is dropped: emptying `legacyCleanup` in the starter does the same thing. `-C <dir>` already works
+`--no-clean` is dropped: there is no pre-clean left to skip. `-C <dir>` already works
 globally, so `ik -C ~/projects/starter-workspace vendor sync` runs from anywhere.
 
 ### 6.3 Execution order

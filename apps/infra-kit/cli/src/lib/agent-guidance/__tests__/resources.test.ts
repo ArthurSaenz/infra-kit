@@ -118,34 +118,29 @@ describe('resources — prettier is the adversary', () => {
 })
 
 /**
- * Lines that are genuinely this type's own: its `## Rules` bullets, plus the
- * `DESIGN.md` Read-first bullet on the two types that have a visual language.
+ * The shared region: every line except the type's own ones — the `DESIGN.md`
+ * Read-first bullet on the two types that have a visual language, and the body
+ * after `## Rules` (its bullets plus any type-only sections, like e2e's Structure /
+ * Naming / Tags). The heading, the blank line under it and any trailing blank lines
+ * stay shared.
  *
- * Derived rather than written out as literals on purpose. Listing the rule text
- * here would make editing one sentence of per-type prose a two-file diff — the exact
- * cost moving this prose into markdown exists to remove.
+ * Split by position, not by matching text: a type-only section brings its own blank
+ * lines, and a text filter would strip those from the shared region too.
  */
-const perTypeLines = (content: string): string[] => {
-  const lines = content.split('\n')
+const sharedLines = (type: PackageType): string[] => {
+  const lines = RESOURCES[`package/${type}`].split('\n')
   const rulesAt = lines.indexOf('## Rules')
+  const lastContent = lines.findLastIndex((line) => {
+    return line !== ''
+  })
 
   return [
     ...lines.slice(0, rulesAt).filter((line) => {
-      return line.includes('`DESIGN.md`')
+      return !line.includes('`DESIGN.md`')
     }),
-    ...lines.slice(rulesAt + 1).filter((line) => {
-      return line.startsWith('- ')
-    }),
+    ...lines.slice(rulesAt, rulesAt + 2),
+    ...lines.slice(lastContent + 1),
   ]
-}
-
-const sharedLines = (type: PackageType): string[] => {
-  const content = RESOURCES[`package/${type}`]
-  const own = perTypeLines(content)
-
-  return content.split('\n').filter((line) => {
-    return !own.includes(line)
-  })
 }
 
 describe('resources — shared-region drift across the five type files', () => {

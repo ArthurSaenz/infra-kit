@@ -49,7 +49,6 @@ export const probeSource = async (sourceRoot: string, spec: SyncSpec): Promise<S
     headSha,
     entries,
     exclude,
-    legacyCleanup: spec.legacyCleanup ?? [],
   }
 }
 
@@ -111,18 +110,6 @@ const probeEntries = async (source: SourceFacts, root: string): Promise<TargetEn
       }
     }),
   )
-}
-
-const probeLegacy = async (source: SourceFacts, root: string): Promise<string[]> => {
-  const perPath = await Promise.all(
-    source.legacyCleanup.map((legacyPath) => {
-      return listTrackedFiles(root, legacyPath, source.exclude)
-    }),
-  )
-
-  return perPath.flat().map((file) => {
-    return file.path
-  })
 }
 
 const headVendorMeta = async (root: string): Promise<string[]> => {
@@ -221,11 +208,10 @@ export const probeTarget = async (source: SourceFacts, ref: TargetRef): Promise<
   }
 
   const manifestSha = readManifestSha(ref.root)
-  const [branch, dirty, entries, legacy, headMeta, changelog] = await Promise.all([
+  const [branch, dirty, entries, headMeta, changelog] = await Promise.all([
     currentBranch(ref.root),
     dirtyPaths(source, ref.root),
     probeEntries(source, ref.root),
-    probeLegacy(source, ref.root),
     headVendorMeta(ref.root),
     probeChangelog(source, manifestSha),
   ])
@@ -236,7 +222,6 @@ export const probeTarget = async (source: SourceFacts, ref: TargetRef): Promise<
     branch,
     dirty,
     entries,
-    legacy,
     headVendorMeta: headMeta,
     readmeCurrent: readmeIsCurrent(ref.root, source.name),
     manifestPresent: manifestSha !== null,

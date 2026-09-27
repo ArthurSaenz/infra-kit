@@ -96,7 +96,7 @@ describe('message data', () => {
 
     expect(message).toContain('/infra-kit:fe-architect')
     expect(message).toBe(
-      '`core` is not an allowed `src/` layer for package type `frontend` (allowed: app, features, lib, components, pages, routes). See /infra-kit:fe-architect for the frontend layout.',
+      '`core` is not an allowed `src/` layer for package type `frontend` (allowed: app, features, lib, components, pages, routes, __tests__). See /infra-kit:fe-architect for the frontend layout.',
     )
   })
 

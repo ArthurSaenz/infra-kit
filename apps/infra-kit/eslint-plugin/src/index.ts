@@ -107,6 +107,30 @@ plugin.configs.recommended = [
       [`${PLUGIN_NAME}/package-structure`]: 'error',
     },
   },
+  // Scoped by filename, so it never runs on non-test files. e2e packages are exempt inside the rule
+  // (by package type); `*.e2e.test.*` covers e2e suites that sit in a package of another type.
+  {
+    files: ['**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}'],
+    plugins: {
+      [PLUGIN_NAME]: plugin,
+    },
+    rules: {
+      [`${PLUGIN_NAME}/test-location`]: ['error', { ignore: ['**/*.e2e.test.*'] }],
+    },
+  },
+  // The e2e rules gate themselves on the package type, so a repo-wide glob costs one cached type
+  // lookup per file elsewhere.
+  {
+    files: ['**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}'],
+    plugins: {
+      [PLUGIN_NAME]: plugin,
+    },
+    rules: {
+      [`${PLUGIN_NAME}/e2e-file-layout`]: 'error',
+      [`${PLUGIN_NAME}/e2e-test-tags`]: 'error',
+      [`${PLUGIN_NAME}/e2e-test-title`]: 'error',
+    },
+  },
 ]
 
 export const meta: ESLint.Plugin['meta'] = plugin.meta

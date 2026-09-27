@@ -171,7 +171,7 @@ export interface ApplyOptions {
 }
 
 /**
- * Apply one `changed` plan row: legacy paths first, then each entry's deletes and writes, then the README and
+ * Apply one `changed` plan row: each entry's deletes and writes, then the README and
  * manifest when any entry is vendored. Deletes run before writes so a tracked file standing where the source
  * now has a directory is gone before that directory is created. Rows in any other status are a no-op.
  */
@@ -181,12 +181,9 @@ export const applyTargetPlan = async ({ source, plan, onBeforeFirstWrite }: Appl
   onBeforeFirstWrite?.(recoveryArgv(plan))
 
   const targetRoot = path.resolve(plan.root)
-  const deleted = [
-    ...plan.legacy,
-    ...plan.entries.flatMap((entry) => {
-      return entry.deletes
-    }),
-  ]
+  const deleted = plan.entries.flatMap((entry) => {
+    return entry.deletes
+  })
 
   for (const deletedPath of deleted) removeLeaf(path.join(targetRoot, deletedPath))
 

@@ -65,7 +65,6 @@ const manifestOnlyPlan = async (source: SourceFacts, ref: TargetRef): Promise<Ta
     warnings: [],
     branch: facts.branch,
     entries: [],
-    legacy: [],
     writeVendorMeta: true,
     recoveryPaths: facts.headVendorMeta,
   }

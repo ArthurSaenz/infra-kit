@@ -90,20 +90,16 @@ const emptyPlan = (ref: TargetRef, status: TargetPlan['status'], message: string
     notes,
     warnings: [],
     entries: [],
-    legacy: [],
     writeVendorMeta: false,
     recoveryPaths: [],
   }
 }
 
-/** The pathspecs a target's preflight covers: every copy target plus every legacy path. */
+/** The pathspecs a target's preflight covers: every copy target. */
 export const guardedPaths = (source: SourceFacts): string[] => {
-  return [
-    ...source.entries.map((facts) => {
-      return facts.entry.target
-    }),
-    ...source.legacyCleanup,
-  ]
+  return source.entries.map((facts) => {
+    return facts.entry.target
+  })
 }
 
 const blockedPlan = (source: SourceFacts, ref: TargetRef, dirty: readonly string[]): TargetPlan => {
@@ -142,16 +138,14 @@ const entryNote = (entry: EntryPlan): string | null => {
   return `${entry.target}: ${added} added, ${modified} modified, ${removed} removed`
 }
 
-const totalsMessage = (entries: readonly EntryPlan[], legacy: readonly string[]): string => {
+const totalsMessage = (entries: readonly EntryPlan[]): string => {
   const sum = (key: 'added' | 'modified' | 'removed'): number => {
     return entries.reduce((total, entry) => {
       return total + entry.counts[key]
     }, 0)
   }
 
-  const legacyPart = legacy.length > 0 ? `, ${legacy.length} legacy removed` : ''
-
-  return `${sum('added')} added, ${sum('modified')} modified, ${sum('removed')} removed${legacyPart}`
+  return `${sum('added')} added, ${sum('modified')} modified, ${sum('removed')} removed`
 }
 
 type RepoFacts = Extract<TargetFacts, { kind: 'repo' }>
@@ -169,7 +163,7 @@ const recoveryPathsFor = (entries: readonly EntryPlan[], facts: RepoFacts, write
     return [...modified, ...entry.deletes]
   })
 
-  return uniqueSorted([...paths, ...facts.legacy, ...(writeVendorMeta ? facts.headVendorMeta : [])])
+  return uniqueSorted([...paths, ...(writeVendorMeta ? facts.headVendorMeta : [])])
 }
 
 const repoPlan = (source: SourceFacts, facts: RepoFacts): TargetPlan => {
@@ -189,26 +183,19 @@ const repoPlan = (source: SourceFacts, facts: RepoFacts): TargetPlan => {
   const metaStale = writeVendorMeta && (!facts.readmeCurrent || !facts.manifestPresent)
   const base = { ...emptyPlan(facts, 'ok', 'up to date'), branch: facts.branch, entries, writeVendorMeta }
 
-  if (!fileChanges && facts.legacy.length === 0 && !metaStale) return base
+  if (!fileChanges && !metaStale) return base
 
   const changelog = changelogLines(facts.changelog, source.name)
   const entryNotes = entries.map(entryNote).filter((note): note is string => {
     return note !== null
   })
-  const legacyNotes = facts.legacy.length > 0 ? [`legacy: ${facts.legacy.length} tracked file(s) removed`] : []
 
   return {
     ...base,
     status: 'changed',
-    message: `${totalsMessage(entries, facts.legacy)} on ${facts.branch}`,
-    notes: [
-      ...entryNotes,
-      ...legacyNotes,
-      ...(metaStale ? ['vendor/README.md and manifest rewritten'] : []),
-      ...changelog.notes,
-    ],
+    message: `${totalsMessage(entries)} on ${facts.branch}`,
+    notes: [...entryNotes, ...(metaStale ? ['vendor/README.md and manifest rewritten'] : []), ...changelog.notes],
     warnings: changelog.warnings,
-    legacy: facts.legacy,
     recoveryPaths: recoveryPathsFor(entries, facts, writeVendorMeta),
   }
 }

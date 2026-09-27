@@ -43,13 +43,15 @@ const body = (type: PackageType, overrides: { hasReadme?: boolean; hasDesign?: b
  *
  * Headroom is one line: `managed-block` wraps these in markers and the block budget
  * is 25. Adding a line to the shared region of the five resource files puts three
- * types at the ceiling.
+ * types at the ceiling. e2e is the deliberate exception: its Structure / Naming /
+ * Tags sections are the suite's conventions, asked to live in the package CLAUDE.md
+ * rather than behind a skill.
  */
 const LINE_COUNTS: Readonly<Record<PackageType, number>> = {
   frontend: 24,
   backend: 23,
   lib: 24,
-  e2e: 26,
+  e2e: 60,
   mobile: 24,
 }
 
@@ -182,12 +184,12 @@ describe('buildRootBody', () => {
     expect(rendered).not.toContain('infra-kit init')
   })
 
-  it('renders exactly 37 lines', () => {
+  it('renders exactly 38 lines', () => {
     // Same net as the per-type counts, extended to the two resources `PACKAGE_TYPES`
     // does not reach. The root body carries no placeholder today, so this count is the
     // ONLY net against the prettier-inserts-a-line class here — the alternative backstop
     // is a snapshot whose update path is `vitest -u`.
-    expect(rendered.split('\n')).toHaveLength(37)
+    expect(rendered.split('\n')).toHaveLength(38)
   })
 
   it('keeps the pre-existing command and convention text', () => {

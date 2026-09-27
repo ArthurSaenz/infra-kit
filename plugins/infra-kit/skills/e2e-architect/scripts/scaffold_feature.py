@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Scaffold a per-feature e2e test folder from the bundled template.
+"""Scaffold a per-domain e2e test folder from the bundled template.
 
 Copies assets/feature-template/ into <dest>/<feature-kebab>/, substituting placeholder
 tokens with the feature name in kebab / camelCase / PascalCase / Title Case forms, and
-renaming the `__feature-kebab__.*` files accordingly.
+renaming the `__feature-kebab__*` files accordingly. The template's subfolders (`pages/`,
+`fixtures/`) are kept: a domain folder's root holds only specs.
 
-Copies a deliberately MINIMAL starter (Page Object + cleanup fixture + smoke + crud specs).
+Copies a deliberately MINIMAL starter (Page Object + cleanup fixture + page-loads and
+create-and-validation specs).
 Grow it into the full behavioral-axis layout described in references/conventions.md as the
 feature matures.
 
@@ -51,7 +53,7 @@ def substitute(text: str, repl: dict) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Scaffold a per-feature e2e test folder.")
+    parser = argparse.ArgumentParser(description="Scaffold a per-domain e2e test folder.")
     parser.add_argument("feature", help="Feature name in kebab-case (e.g. coupon-batch)")
     parser.add_argument("--dest", required=True, help="Target tests dir (e.g. apps/backoffice/tests/src/tests)")
     args = parser.parse_args()
@@ -82,11 +84,12 @@ def main() -> int:
     dest_dir.mkdir()
 
     written = []
-    for src in sorted(TEMPLATE_DIR.iterdir()):
-        if not src.is_file():
+    for src in sorted(TEMPLATE_DIR.rglob("*")):
+        # Tool state (`.omc/`, `.DS_Store`) can land in the template dir; it is never part of a scaffold.
+        if not src.is_file() or any(part.startswith(".") for part in src.relative_to(TEMPLATE_DIR).parts):
             continue
-        out_name = substitute(src.name, repl)
-        out_path = dest_dir / out_name
+        out_path = dest_dir / substitute(str(src.relative_to(TEMPLATE_DIR)), repl)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(substitute(src.read_text(), repl))
         written.append(out_path)
 

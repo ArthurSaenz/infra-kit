@@ -12,8 +12,6 @@ export interface SyncSpec {
   copy: CopyEntry[]
   /** Path-segment names dropped from both sides of the diff. */
   exclude?: string[]
-  /** Tracked target paths removed before copying. */
-  legacyCleanup?: string[]
 }
 
 export interface ResolvedCopyEntry {
@@ -53,7 +51,6 @@ export interface SourceFacts {
   headSha: string
   entries: SourceEntryFacts[]
   exclude: string[]
-  legacyCleanup: string[]
 }
 
 export interface TargetEntryFacts {
@@ -79,11 +76,9 @@ export type TargetFacts =
   | (TargetRef & {
       kind: 'repo'
       branch: string
-      /** Changed tracked paths and untracked non-ignored paths under any copy or legacy path. */
+      /** Changed tracked paths and untracked non-ignored paths under any copy path. */
       dirty: string[]
       entries: TargetEntryFacts[]
-      /** Tracked files under `legacyCleanup` paths. */
-      legacy: string[]
       /** `vendor/README.md` / `vendor/.sync-manifest.json` as present in HEAD, for the recovery argv. */
       headVendorMeta: string[]
       readmeCurrent: boolean
@@ -129,7 +124,6 @@ export interface TargetPlan {
   warnings: string[]
   branch?: string
   entries: EntryPlan[]
-  legacy: string[]
   writeVendorMeta: boolean
   /** Tracked paths the apply will write or delete; the only input to the recovery argv. */
   recoveryPaths: string[]

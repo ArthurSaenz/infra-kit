@@ -83,6 +83,16 @@ describe('package-structure registration', () => {
   })
 })
 
+describe('test-location registration', () => {
+  it('is registered in the rule map', () => {
+    expect(rules['test-location']).toBeDefined()
+  })
+
+  it('is enabled by the recommended preset', () => {
+    expect(presetRuleIds).toContain('@wl/test-location')
+  })
+})
+
 // The REAL preset against a real fixture: the rule lives in its own `**/*.{ts,tsx,js,jsx}` block
 // because the components gate is `**/*.tsx` only — a regression that folded it into that block
 // would still pass a unit test on the rule and only show up here, on a `.ts` file.

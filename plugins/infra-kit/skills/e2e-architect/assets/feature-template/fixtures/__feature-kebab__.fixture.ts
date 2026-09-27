@@ -2,7 +2,7 @@ import { E2E_BASE_URL_BACKOFFICE } from '#root/constants'
 import { test as base, expect } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 
-import { __FeaturePascal__Page } from './__feature-kebab__.page'
+import { __FeaturePascal__Page } from '../pages/__feature-kebab__.page'
 
 /**
  * __Feature Title__ test fixture.

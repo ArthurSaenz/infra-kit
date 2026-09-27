@@ -128,7 +128,9 @@ describe('package-structure (real fs)', () => {
   })
 
   it('dunder-dirs-are-ordinary-layers', () => {
-    expect(messagesOf('apps/client/ui/src/__tests__/a.ts')[0]).toContain('`__tests__` is not an allowed `src/` layer')
+    // `__tests__` is a listed layer (tests of `src/`-root files), not a dunder exemption.
+    expect(messagesOf('apps/client/ui/src/__tests__/sanity.test.tsx')).toEqual([])
+    expect(messagesOf('apps/client/api/src/__tests__/sanity.test.ts')).toEqual([])
     expect(messagesOf('apps/client/ui/src/__mocks__/core/a.ts')[0]).toContain('`__mocks__` is not an allowed')
   })
 

@@ -68,7 +68,6 @@ const SOURCE: SourceFacts = {
   headSha: 'abcdef1234567890',
   entries: [],
   exclude: [],
-  legacyCleanup: [],
 }
 
 const plan = (name: string, status: TargetPlan['status']): TargetPlan => {
@@ -81,7 +80,6 @@ const plan = (name: string, status: TargetPlan['status']): TargetPlan => {
     warnings: [],
     branch: 'main',
     entries: [],
-    legacy: [],
     writeVendorMeta: false,
     recoveryPaths: [],
   }
@@ -314,7 +312,6 @@ describe('vendorSync --manifest-only', () => {
       branch: 'main',
       dirty: [],
       entries: [],
-      legacy: [],
       headVendorMeta: ['vendor/.sync-manifest.json'],
       readmeCurrent: true,
       manifestPresent: true,

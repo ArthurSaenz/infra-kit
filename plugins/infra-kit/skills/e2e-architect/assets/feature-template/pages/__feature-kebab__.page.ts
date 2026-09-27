@@ -10,7 +10,7 @@ import type { Locator, Page } from '@playwright/test'
  *
  * This template is intentionally MINIMAL. Add locators/methods as the feature needs them, and
  * grow the spec set along the behavioral axes documented in references/conventions.md
- * (smoke → create+validation → edit → lifecycle → list-filter).
+ * (page-loads → create-and-validation → edit → lifecycle → list-filter).
  *
  * `createdMarkers` records a unique marker for every entity the test creates so the fixture
  * can clean them up in teardown — keep this even in the smallest suite.

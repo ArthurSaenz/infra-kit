@@ -867,7 +867,6 @@ describe('vendorSource', () => {
   const VENDOR_SOURCE = {
     copy: [{ path: '.claude' }, { path: 'vendor/configs', target: 'vendor/configs' }],
     exclude: ['serverless-config'],
-    legacyCleanup: ['packages/web-toolkit', 'configs'],
   }
 
   const writeProjectLayer = (tmp: string, extra: Record<string, unknown>): void => {
@@ -980,12 +979,8 @@ describe('vendorSource', () => {
     expect(vendorSourceSchema.safeParse(copyWithPath('.gitignore')).success).toBe(true)
   })
 
-  it('applies the path rules to target and legacyCleanup too', () => {
+  it('applies the path rules to target too', () => {
     expect(vendorSourceSchema.safeParse({ copy: [{ path: '.claude', target: '../out' }] }).success).toBe(false)
-    expect(vendorSourceSchema.safeParse({ copy: [{ path: '.claude' }], legacyCleanup: ['/configs'] }).success).toBe(
-      false,
-    )
-    expect(vendorSourceSchema.safeParse({ copy: [{ path: '.claude' }], legacyCleanup: ['.git'] }).success).toBe(false)
   })
 
   it('refuses an exclude entry with a slash', () => {

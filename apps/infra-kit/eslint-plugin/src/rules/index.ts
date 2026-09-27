@@ -4,6 +4,9 @@ import type { Rule } from 'eslint'
 // `moduleResolution: bundler`; a future switch to node16/nodenext would require explicit paths.
 import { componentArrowFunction } from './component-arrow-function'
 import { componentFileOrder } from './component-file-order'
+import { e2eFileLayout } from './e2e-file-layout'
+import { e2eTestTags } from './e2e-test-tags'
+import { e2eTestTitle } from './e2e-test-title'
 import { maxComponentsPerFile } from './max-components-per-file'
 import { maxJsdocLines } from './max-jsdoc-lines'
 import { maxJsdocSummaryLines } from './max-jsdoc-summary-lines'
@@ -15,6 +18,7 @@ import { propsTypeName } from './props-type-name'
 import { propsTypeReference } from './props-type-reference'
 import { requireComponentStories } from './require-component-stories'
 import { requireJsdocExample } from './require-jsdoc-example'
+import { testLocation } from './test-location'
 
 export const rules: Record<string, Rule.RuleModule> = {
   'props-destructuring-newline': propsDestructuringNewline,
@@ -30,4 +34,8 @@ export const rules: Record<string, Rule.RuleModule> = {
   'require-component-stories': requireComponentStories,
   'require-jsdoc-example': requireJsdocExample,
   'package-structure': packageStructure,
+  'test-location': testLocation,
+  'e2e-file-layout': e2eFileLayout,
+  'e2e-test-tags': e2eTestTags,
+  'e2e-test-title': e2eTestTitle,
 }

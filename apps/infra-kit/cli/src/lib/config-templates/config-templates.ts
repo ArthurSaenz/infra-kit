@@ -114,17 +114,15 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   // }
   //
   // // Marks the repo as the source \`ik vendor sync\` copies from: the tracked paths to mirror into
-  // // every target in ~/.infra-kit/vendor.json, the path segments dropped on both sides of the diff,
-  // // and the stale target paths a sync removes first. Absent or null means "not a source", which is
-  // // every consumer repo.
+  // // every target in ~/.infra-kit/vendor.json and the path segments dropped on both sides of the
+  // // diff. Absent or null means "not a source", which is every consumer repo.
   // //
   // // PROJECT LAYER ONLY. This key is REFUSED here and in the per-project override — a machine-wide
   // // copy would make every repo on this machine a source, and a per-project override would make this
   // // machine disagree with every other clone. Commit it in the source repo's own infra-kit.json.
   // "vendorSource": {
   //   "copy": [{ "path": ".claude" }, { "path": "vendor/configs" }],
-  //   "exclude": ["serverless-config"],
-  //   "legacyCleanup": ["configs"]
+  //   "exclude": ["serverless-config"]
   // }
   //
   // // Doppler SERVICE TOKENS are not a config key and never belong in this file. They live in

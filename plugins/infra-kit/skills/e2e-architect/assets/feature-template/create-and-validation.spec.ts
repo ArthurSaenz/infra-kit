@@ -1,13 +1,13 @@
-import { expect, test } from './__feature-kebab__.fixture'
+import { expect, test } from './fixtures/__feature-kebab__.fixture'
 
 /**
  * The one spec that demonstrates the full pattern end to end: create with a UNIQUE marker
  * (so the fixture cleans it up), find the row by that marker, and one validation example.
  *
  * As the feature grows, split this into the behavioral axes from references/conventions.md —
- * create-and-validation / edit / lifecycle / list-filter — rather than letting one file sprawl.
+ * edit / lifecycle / list-filter — rather than letting one file sprawl.
  */
-test.describe('__Feature Title__ — crud', () => {
+test.describe('__Feature Title__', () => {
   test.beforeEach(async ({ __featureCamel__Page: page }) => {
     await page.goto()
   })

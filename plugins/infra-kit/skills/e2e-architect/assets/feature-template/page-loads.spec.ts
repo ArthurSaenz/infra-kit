@@ -1,10 +1,10 @@
-import { expect, test } from './__feature-kebab__.fixture'
+import { expect, test } from './fixtures/__feature-kebab__.fixture'
 
 /**
- * Smoke: the page loads and its core controls are present. No data is created here.
- * Keep these fast and dependency-free — they are the first signal that the feature renders.
+ * The page loads and its core controls are present. No data is created here, so it is tagged
+ * `@smoke` (the fast post-deploy signal) and `@readonly` (safe against any shared environment).
  */
-test.describe('__Feature Title__ — smoke', () => {
+test.describe('__Feature Title__', { tag: ['@smoke', '@readonly'] }, () => {
   test.beforeEach(async ({ __featureCamel__Page: page }) => {
     await page.goto()
   })

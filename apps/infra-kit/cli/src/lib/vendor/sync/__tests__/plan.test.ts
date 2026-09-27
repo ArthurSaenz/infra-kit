@@ -25,7 +25,6 @@ const source = (entries: SourceEntryFacts[], overrides: Partial<SourceFacts> = {
     headSha: 'f00dfacecafe',
     entries,
     exclude: [],
-    legacyCleanup: [],
     ...overrides,
   }
 }
@@ -40,7 +39,6 @@ const repo = (entries: TargetEntryFacts[], overrides: Partial<RepoFacts> = {}): 
     branch: 'main',
     dirty: [],
     entries,
-    legacy: [],
     headVendorMeta: [],
     readmeCurrent: true,
     manifestPresent: true,
@@ -73,7 +71,7 @@ describe('buildTargetPlan — row status', () => {
 
   it('blocks a dirty tracked path and names it plus the git status argv', () => {
     const plan = buildTargetPlan(
-      source([claude], { legacyCleanup: ['configs'] }),
+      source([claude]),
       repo([{ target: '.claude', tracked: ['.claude/a.md'], onDisk: { '.claude/a.md': file('edited') } }], {
         dirty: ['.claude/a.md'],
       }),
@@ -81,7 +79,7 @@ describe('buildTargetPlan — row status', () => {
 
     expect(plan.status).toBe('fail')
     expect(plan.notes).toContain('.claude/a.md')
-    expect(plan.notes.at(-1)).toBe('git -C /ws/app --literal-pathspecs status -- .claude configs')
+    expect(plan.notes.at(-1)).toBe('git -C /ws/app --literal-pathspecs status -- .claude')
     expect(plan.recoveryPaths).toEqual([])
   })
 

@@ -535,7 +535,7 @@ folder" surfaces in the IDE explorer. The message names the skill that owns that
 has an owner:
 
 ```
-`core` is not an allowed `src/` layer for package type `frontend` (allowed: app, features, lib, components, pages, routes). See /infra-kit:fe-architect for the frontend layout.
+`core` is not an allowed `src/` layer for package type `frontend` (allowed: app, features, lib, components, pages, routes, __tests__). See /infra-kit:fe-architect for the frontend layout.
 `hooks` is not an allowed segment of `features/user` for package type `frontend` (allowed: containers, components, services, __stories__, __tests__). See /infra-kit:fe-architect for the frontend layout.
 ```
 
@@ -581,13 +581,13 @@ replaces the whole entry (`layers`, `segments` and `skill`) — there is no merg
 entry is silent, which is why `mobile` and `lib` report nothing by default: their layouts are not
 settled.
 
-| Type       | Default `layers`                                                     | Default `segments`                                                                | Default `skill`            |
-| ---------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------- |
-| `frontend` | `app`, `features`, `lib`, `components`, `pages`, `routes`            | `features/*` → `containers`, `components`, `services`, `__stories__`, `__tests__` | `/infra-kit:fe-architect`  |
-| `backend`  | `controllers`, `services`, `lib`, `config`                           | `services/*` → `__tests__`                                                        | `/infra-kit:be-architect`  |
-| `e2e`      | `tests`, `pages`, `config`, `lib`, `components`, `mocks`, `fixtures` | `tests/*` → `fixtures`, `data`, `mocks`                                           | `/infra-kit:e2e-architect` |
-| `mobile`   | — (silent)                                                           | —                                                                                 | —                          |
-| `lib`      | — (silent)                                                           | —                                                                                 | —                          |
+| Type       | Default `layers`                                                                        | Default `segments`                                                                | Default `skill`            |
+| ---------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------- |
+| `frontend` | `app`, `features`, `lib`, `components`, `pages`, `routes`, `__tests__`                  | `features/*` → `containers`, `components`, `services`, `__stories__`, `__tests__` | `/infra-kit:fe-architect`  |
+| `backend`  | `controllers`, `services`, `lib`, `config`, `__tests__`                                 | `services/*` → `__tests__`                                                        | `/infra-kit:be-architect`  |
+| `e2e`      | `tests`, `visual`, `setup`, `pages`, `config`, `lib`, `components`, `mocks`, `fixtures` | `tests/*`, `visual/*` → `pages`, `fixtures`, `mocks`, `data`, `lib`               | `/infra-kit:e2e-architect` |
+| `mobile`   | — (silent)                                                                              | —                                                                                 | —                          |
+| `lib`      | — (silent)                                                                              | —                                                                                 | —                          |
 
 | Option            | Type                       | Description                                                                                                                                     |
 | ----------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -628,6 +628,124 @@ override restates every type it wants to change — and only those.
   stale until those files change. Run without `--cache` in CI if you rely on this rule as a gate.
 - **The backend skill is a forward reference.** `/infra-kit:be-architect` is named in the default
   message ahead of the skill shipping; override `backend.skill` if the pointer should go elsewhere.
+
+### `test-location`
+
+Require unit tests to be **`*.test.*` files in a `__tests__/` folder beside the code they test**,
+never next to the source file. The file is reported at the top, with the path to move it to:
+
+```
+`slugs.test.ts` sits next to its source. Move it to `src/lib/__tests__/slugs.test.ts` — tests live in a `__tests__/` folder beside the code they test.
+```
+
+Inside a frontend feature (`src/…/features/<name>/`) the only place is the feature root's
+`__tests__/` — the `/infra-kit:fe-architect` layout — so `features/<name>/services/__tests__/` is
+reported too, with `features/<name>/__tests__/` as the target. Elsewhere any `__tests__` segment in
+the path satisfies the rule, so nested folders (`__tests__/fixtures/…`) are fine.
+
+`.spec` is reserved for Playwright: a `*.spec.*` file is reported with its `*.test.*` name. Files in
+an `e2e` package (by the same package-type resolution `package-structure` uses) are never reported
+— `e2e-file-layout` owns their layout.
+
+```js
+{
+  rules: {
+    '@wl/test-location': ['error', { ignore: ['**/*.e2e.test.*'] }],
+  },
+}
+```
+
+#### Options
+
+| Option   | Type       | Default | Description                                    |
+| -------- | ---------- | ------- | ---------------------------------------------- |
+| `ignore` | `string[]` | `[]`    | Globs; the rule is skipped for matching files. |
+
+The recommended preset enables it on test-file names only, with `ignore: ['**/*.e2e.test.*']` for
+e2e suites that sit in a package of another type.
+
+### `e2e-file-layout`
+
+Hold an **e2e package** to its file layout: specs are `*.spec.ts` at the root of a domain folder
+(`src/tests/<domain>/` or `src/visual/<domain>/`), and every other file in a domain folder sits in
+one of its subfolders — `pages/`, `fixtures/`, `mocks/`, `data/`, `lib/`. The file is reported once,
+at the top, with where it belongs:
+
+```
+`edge-redirects.test.ts` uses `.test`. Rename it to `edge-redirects.spec.ts` — every Playwright spec in an e2e package is `*.spec.ts`.
+`src/tests/ui/auth/login.spec.ts` nests a spec below its domain folder. Move it to `src/tests/ui/login.spec.ts`, or split the domain into two sibling domains if it holds too many specs.
+`checkout.page.ts` sits in the root of domain `checkout`, which holds only `*.spec.ts`. Move it to `src/tests/checkout/pages/checkout.page.ts`.
+```
+
+The subfolder comes from the suffix: `.page` / `.component` → `pages/`, `.fixture` → `fixtures/`,
+`.mock` → `mocks/`, `.data` → `data/`, anything else → `lib/`. Files outside `src/tests` and
+`src/visual` (shared `src/pages/`, `src/setup/*.setup.ts`, `playwright.config.ts`) are not judged
+beyond the spec checks; which `src/` folders may exist at all is
+[`package-structure`](#package-structure)'s job. Packages of any other type are silent — the type is
+resolved the same way `package-structure` resolves it.
+
+```js
+{
+  rules: {
+    '@wl/e2e-file-layout': 'error',
+  },
+}
+```
+
+#### Options
+
+| Option   | Type       | Default | Description                                    |
+| -------- | ---------- | ------- | ---------------------------------------------- |
+| `ignore` | `string[]` | `[]`    | Globs; the rule is skipped for matching files. |
+
+### `e2e-test-tags`
+
+Restrict the tags on Playwright `test(…)` and `test.describe(…)` calls in an **e2e package** to an
+allowed set — by default `@smoke`, `@readonly`, `@mocked`, `@slow`. Each unknown tag is reported on
+its own string:
+
+```
+Tag `@mocking` is not an allowed e2e tag. Use one of `@smoke`, `@readonly`, `@mocked`, `@slow`; browsers, devices and environments are Playwright projects, not tags.
+```
+
+Only string literals in the `tag` property of the details object are judged (`{ tag: '@smoke' }`,
+`{ tag: ['@smoke', '@readonly'] }`); a tag held in a shared constant is not resolved. `test.step`
+and hooks carry no tags and are ignored.
+
+```js
+{
+  rules: {
+    '@wl/e2e-test-tags': ['error', { allowed: ['@smoke', '@readonly', '@mocked', '@slow', '@mobile'] }],
+  },
+}
+```
+
+#### Options
+
+| Option    | Type       | Default                                       | Description                                      |
+| --------- | ---------- | --------------------------------------------- | ------------------------------------------------ |
+| `allowed` | `string[]` | `['@smoke', '@readonly', '@mocked', '@slow']` | The only tags allowed. Each must start with `@`. |
+
+### `e2e-test-title`
+
+Flag e2e test titles that open with `should`, and suggest the direct form — the title states the
+behaviour and its observable outcome:
+
+```
+Test title "should reject an expired card" starts with `should`. State the behaviour and its observable outcome directly: "reject an expired card".
+```
+
+Only `test(…)` and its `only` / `skip` / `fixme` / `fail` forms with a plain-string title are
+checked; `describe` and `test.step` titles are not. The recommended preset enables it as `error`:
+
+```js
+{
+  rules: {
+    '@wl/e2e-test-title': 'error',
+  },
+}
+```
+
 ### `max-jsdoc-lines`
 
 Cap the height of a JSDoc block. The block's **prose** and its **`@example` bodies**

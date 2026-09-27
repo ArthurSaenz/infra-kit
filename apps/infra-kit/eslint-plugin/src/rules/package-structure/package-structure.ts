@@ -36,14 +36,15 @@ export interface Options extends Partial<Record<PackageType, LayerEntry>> {
  */
 export const DEFAULT_ENTRIES: Partial<Record<PackageType, LayerEntry>> = {
   frontend: {
-    layers: ['app', 'features', 'lib', 'components', 'pages', 'routes'],
+    // `__tests__` holds the tests of files that sit directly in `src/` (see `test-location`).
+    layers: ['app', 'features', 'lib', 'components', 'pages', 'routes', '__tests__'],
     segments: {
       'features/*': ['containers', 'components', 'services', '__stories__', '__tests__'],
     },
     skill: '/infra-kit:fe-architect',
   },
   backend: {
-    layers: ['controllers', 'services', 'lib', 'config'],
+    layers: ['controllers', 'services', 'lib', 'config', '__tests__'],
     segments: {
       'services/*': ['__tests__'],
     },
@@ -52,9 +53,11 @@ export const DEFAULT_ENTRIES: Partial<Record<PackageType, LayerEntry>> = {
     skill: '/infra-kit:be-architect',
   },
   e2e: {
-    layers: ['tests', 'pages', 'config', 'lib', 'components', 'mocks', 'fixtures'],
+    layers: ['tests', 'visual', 'setup', 'pages', 'config', 'lib', 'components', 'mocks', 'fixtures'],
+    // A domain folder's root holds only specs; its support files always sit in one of these.
     segments: {
-      'tests/*': ['fixtures', 'data', 'mocks'],
+      'tests/*': ['pages', 'fixtures', 'mocks', 'data', 'lib'],
+      'visual/*': ['pages', 'fixtures', 'mocks', 'data', 'lib'],
     },
     skill: '/infra-kit:e2e-architect',
   },

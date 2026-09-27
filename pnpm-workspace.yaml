@@ -148,6 +148,8 @@ minimumReleaseAgeExclude:
   - '@turbo/linux-arm64@2.11.4'
   - '@turbo/windows-64@2.11.4'
   - '@turbo/windows-arm64@2.11.4'
+  - fumadocs-mdx@15.4.5
+  - prettier-plugin-astro@1.1.0
 catalogs:
   conflicts_zod_h4_4_3:
     zod: ^4.4.3

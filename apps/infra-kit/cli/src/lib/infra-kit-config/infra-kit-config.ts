@@ -313,7 +313,6 @@ export const vendorSourceSchema = z
     copy: z.array(vendorCopyEntrySchema).min(1),
     // Matched against each path segment on both sides of the diff, so a slash could never match.
     exclude: z.array(z.string().regex(/^[^/\\]+$/, 'must be a single path segment, without "/"')).optional(),
-    legacyCleanup: z.array(repoRelativePathSchema).optional(),
   })
   .strict()
 
