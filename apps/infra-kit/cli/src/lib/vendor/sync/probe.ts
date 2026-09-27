@@ -132,9 +132,11 @@ const headVendorMeta = async (root: string): Promise<string[]> => {
   }
 }
 
-const readManifestSha = (root: string): string | null => {
+const readManifestMeta = (root: string): { commit: string; source: string } | null => {
   try {
-    return readManifest(path.join(root, VENDOR_DIR)).commit
+    const { commit, source } = readManifest(path.join(root, VENDOR_DIR))
+
+    return { commit, source }
   } catch {
     return null
   }
@@ -207,7 +209,8 @@ export const probeTarget = async (source: SourceFacts, ref: TargetRef): Promise<
     return { ...ref, kind: 'not-git', reason: `it sits inside the repo at ${top.toplevel}` }
   }
 
-  const manifestSha = readManifestSha(ref.root)
+  const manifest = readManifestMeta(ref.root)
+  const manifestSha = manifest?.commit ?? null
   const [branch, dirty, entries, headMeta, changelog] = await Promise.all([
     currentBranch(ref.root),
     dirtyPaths(source, ref.root),
@@ -224,7 +227,8 @@ export const probeTarget = async (source: SourceFacts, ref: TargetRef): Promise<
     entries,
     headVendorMeta: headMeta,
     readmeCurrent: readmeIsCurrent(ref.root, source.name),
-    manifestPresent: manifestSha !== null,
+    manifestPresent: manifest !== null,
+    manifestSource: manifest?.source ?? null,
     changelog,
   }
 }

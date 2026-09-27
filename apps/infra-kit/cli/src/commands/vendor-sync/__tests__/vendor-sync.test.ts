@@ -1,4 +1,6 @@
 import confirm from '@inquirer/confirm'
+import { existsSync } from 'node:fs'
+import fs from 'node:fs/promises'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -6,9 +8,6 @@ import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { CommandDeclinedError } from 'src/lib/errors/command-declined-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
-import { getProjectRoot } from 'src/lib/git-utils'
-import { getInfraKitConfig } from 'src/lib/infra-kit-config'
-import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { jsonOutput } from 'src/lib/json-output'
 import { loadFactoryConfig } from 'src/lib/vendor/factory-config'
 import { applyTargetPlan, buildTargetPlan, probeSource, probeTarget, writeVendorMetaOnly } from 'src/lib/vendor/sync'
@@ -17,16 +16,20 @@ import type { SourceFacts, TargetFacts, TargetPlan } from 'src/lib/vendor/sync'
 import { preflightSource } from '../source-preflight'
 import { vendorSync } from '../vendor-sync'
 
-vi.mock('src/lib/git-utils', () => {
-  return { getProjectRoot: vi.fn() }
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+
+  return { ...actual, existsSync: vi.fn() }
+})
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+
+  return { ...actual, default: { ...actual, readFile: vi.fn() } }
 })
 
 vi.mock('../source-preflight', () => {
   return { preflightSource: vi.fn() }
-})
-
-vi.mock('src/lib/infra-kit-config', () => {
-  return { getInfraKitConfig: vi.fn() }
 })
 
 vi.mock('src/lib/vendor/factory-config', async (importOriginal) => {
@@ -103,21 +106,27 @@ const touchedNothing = (): void => {
 }
 
 const planned = (statuses: Record<string, TargetPlan['status']>): void => {
-  vi.mocked(loadFactoryConfig).mockResolvedValue({ workspaceDir: '/work', targets: Object.keys(statuses) })
+  vi.mocked(loadFactoryConfig).mockResolvedValue({
+    workspaceDir: '/work',
+    source: 'starter',
+    targets: Object.keys(statuses),
+  })
   vi.mocked(buildTargetPlan).mockImplementation((_source, facts) => {
     return plan(facts.name, statuses[facts.name]!)
   })
+}
+
+const sourceConfig = (config: unknown): void => {
+  vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(config) as never)
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
   commandEcho.reset()
   setStdinTTY(false)
-  vi.mocked(getProjectRoot).mockResolvedValue('/work/starter')
+  vi.mocked(existsSync).mockReturnValue(true)
   vi.mocked(preflightSource).mockResolvedValue([{ name: 'working tree', status: 'ok', message: 'clean' }])
-  vi.mocked(getInfraKitConfig).mockResolvedValue({
-    vendorSource: { copy: [{ path: 'vendor/configs' }] },
-  } as InfraKitConfig)
+  sourceConfig({ vendorSource: { copy: [{ path: 'vendor/configs' }] } })
   vi.mocked(probeSource).mockResolvedValue(SOURCE)
   vi.mocked(probeTarget).mockImplementation(async (_source, ref) => {
     return { ...ref, kind: 'missing' }
@@ -145,10 +154,9 @@ describe('vendorSync — human-only under agent mode', () => {
     expect((error as StructuredRefusalError).structuredContent).toEqual({ status: 'refused', agentMode: 'flag' })
     expect((error as StructuredRefusalError).exitCode).toBe(2)
     expect((error as StructuredRefusalError).stderrExcerpt).toContain('human-only')
-    expect(getProjectRoot).not.toHaveBeenCalled()
-    expect(preflightSource).not.toHaveBeenCalled()
-    expect(getInfraKitConfig).not.toHaveBeenCalled()
     expect(loadFactoryConfig).not.toHaveBeenCalled()
+    expect(preflightSource).not.toHaveBeenCalled()
+    expect(fs.readFile).not.toHaveBeenCalled()
     touchedNothing()
   })
 })
@@ -205,7 +213,26 @@ describe('vendorSync — decline', () => {
 })
 
 describe('vendorSync — gates', () => {
-  it('reads no config when the source preflight refuses a dirty tree', async () => {
+  it('takes the source from vendor.json, not the cwd', async () => {
+    await vendorSync({ check: true })
+
+    expect(preflightSource).toHaveBeenCalledExactlyOnceWith('/work/starter')
+    expect(fs.readFile).toHaveBeenCalledExactlyOnceWith('/work/starter/infra-kit.json', 'utf8')
+    expect(vi.mocked(probeSource).mock.calls[0]![0]).toBe('/work/starter')
+  })
+
+  it('refuses when the source is not checked out, before any git call', async () => {
+    vi.mocked(existsSync).mockReturnValue(false)
+
+    const error = await run({})
+
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+    expect((error as StructuredRefusalError).structuredContent).toMatchObject({ reason: 'source-missing' })
+    expect((error as StructuredRefusalError).stderrExcerpt).toContain('/work/starter')
+    expect(preflightSource).not.toHaveBeenCalled()
+  })
+
+  it('reads no source config when the source preflight refuses a dirty tree', async () => {
     const dirty = new StructuredRefusalError({ status: 'refused', reason: 'source-dirty', paths: ['a.ts'] }, 1, {
       operation: 'sync',
       stderrExcerpt: 'the source has 1 uncommitted path(s)',
@@ -215,22 +242,31 @@ describe('vendorSync — gates', () => {
     vi.mocked(preflightSource).mockRejectedValue(dirty)
 
     expect(await run({})).toBe(dirty)
-    expect(getInfraKitConfig).not.toHaveBeenCalled()
-    expect(loadFactoryConfig).not.toHaveBeenCalled()
+    expect(fs.readFile).not.toHaveBeenCalled()
     expect(probeSource).not.toHaveBeenCalled()
     touchedNothing()
   })
 
   it.each([undefined, null])('refuses naming vendorSource when it is %s', async (vendorSource) => {
-    vi.mocked(getInfraKitConfig).mockResolvedValue({ vendorSource } as InfraKitConfig)
+    sourceConfig({ vendorSource })
 
     const error = await run({})
 
     expect(error).toBeInstanceOf(StructuredRefusalError)
     expect((error as StructuredRefusalError).exitCode).toBe(1)
+    expect((error as StructuredRefusalError).stderrExcerpt).toContain('/work/starter/infra-kit.json')
     expect((error as StructuredRefusalError).stderrExcerpt).toContain('vendorSource')
-    expect(getInfraKitConfig).toHaveBeenCalledWith({ autoMigrate: 'off' })
-    expect(loadFactoryConfig).not.toHaveBeenCalled()
+    expect(probeSource).not.toHaveBeenCalled()
+  })
+
+  it('refuses an invalid vendorSource with the schema error', async () => {
+    sourceConfig({ vendorSource: { copy: [] } })
+
+    const error = await run({})
+
+    expect((error as StructuredRefusalError).structuredContent).toMatchObject({ reason: 'not-a-vendor-source' })
+    expect((error as StructuredRefusalError).stderrExcerpt).toContain('invalid vendorSource')
+    expect(probeSource).not.toHaveBeenCalled()
   })
 
   it('refuses unknown target names and lists the valid ones', async () => {
@@ -315,6 +351,7 @@ describe('vendorSync --manifest-only', () => {
       headVendorMeta: ['vendor/.sync-manifest.json'],
       readmeCurrent: true,
       manifestPresent: true,
+      manifestSource: 'starter',
       changelog: { kind: 'unknown-sha' },
     }
   }

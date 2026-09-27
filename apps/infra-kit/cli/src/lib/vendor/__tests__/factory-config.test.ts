@@ -55,11 +55,12 @@ describe('getFactoryConfigPath', () => {
 
 describe('loadFactoryConfig', () => {
   it('loads a JSON config', async () => {
-    writeConfig(JSON.stringify({ workspaceDir: '~/projects', targets: ['travelist-monorepo'] }))
+    writeConfig(JSON.stringify({ workspaceDir: '~/projects', source: 'starter', targets: ['travelist-monorepo'] }))
 
     const config = await loadFactoryConfig()
 
     expect(config.workspaceDir).toBe('~/projects')
+    expect(config.source).toBe('starter')
     expect(config.targets).toEqual(['travelist-monorepo'])
   })
 
@@ -76,20 +77,30 @@ describe('loadFactoryConfig', () => {
   })
 
   it('throws on a schema-invalid config (missing targets)', async () => {
-    writeConfig(JSON.stringify({ workspaceDir: '~/projects' }))
+    writeConfig(JSON.stringify({ workspaceDir: '~/projects', source: 'starter' }))
     await expect(loadFactoryConfig()).rejects.toThrow(/Invalid factory config/)
   })
 
+  it('throws naming `source` when it is missing', async () => {
+    writeConfig(JSON.stringify({ workspaceDir: '~/projects', targets: ['a'] }))
+    await expect(loadFactoryConfig()).rejects.toThrow(/source/)
+  })
+
+  it('rejects a source that is also listed as a target', async () => {
+    writeConfig(JSON.stringify({ workspaceDir: '~/projects', source: 'starter', targets: ['a', 'starter'] }))
+    await expect(loadFactoryConfig()).rejects.toThrow(/must not also be listed in "targets"/)
+  })
+
   it('rejects a stray `copy` key (.strict())', async () => {
-    writeConfig(JSON.stringify({ workspaceDir: '~/projects', targets: ['a'], copy: [] }))
+    writeConfig(JSON.stringify({ workspaceDir: '~/projects', source: 'starter', targets: ['a'], copy: [] }))
     await expect(loadFactoryConfig()).rejects.toThrow(/Invalid factory config/)
   })
 
   it('reads the current file on every call so an edit is picked up without a restart', async () => {
-    writeConfig(JSON.stringify({ workspaceDir: '~/projects', targets: ['first'] }))
+    writeConfig(JSON.stringify({ workspaceDir: '~/projects', source: 'starter', targets: ['first'] }))
     expect((await loadFactoryConfig()).targets).toEqual(['first'])
 
-    writeConfig(JSON.stringify({ workspaceDir: '~/projects', targets: ['second'] }))
+    writeConfig(JSON.stringify({ workspaceDir: '~/projects', source: 'starter', targets: ['second'] }))
     expect((await loadFactoryConfig()).targets).toEqual(['second'])
   })
 })

@@ -186,6 +186,11 @@ const repoPlan = (source: SourceFacts, facts: RepoFacts): TargetPlan => {
   if (!fileChanges && !metaStale) return base
 
   const changelog = changelogLines(facts.changelog, source.name)
+  // A warn, not a block: the preview is shown before the confirm, so switching sources stays a human decision.
+  const sourceSwitch =
+    facts.manifestSource !== null && facts.manifestSource !== source.name
+      ? [`vendor/ was last synced from ${facts.manifestSource}, not ${source.name}: this sync replaces it`]
+      : []
   const entryNotes = entries.map(entryNote).filter((note): note is string => {
     return note !== null
   })
@@ -195,7 +200,7 @@ const repoPlan = (source: SourceFacts, facts: RepoFacts): TargetPlan => {
     status: 'changed',
     message: `${totalsMessage(entries)} on ${facts.branch}`,
     notes: [...entryNotes, ...(metaStale ? ['vendor/README.md and manifest rewritten'] : []), ...changelog.notes],
-    warnings: changelog.warnings,
+    warnings: [...sourceSwitch, ...changelog.warnings],
     recoveryPaths: recoveryPathsFor(entries, facts, writeVendorMeta),
   }
 }

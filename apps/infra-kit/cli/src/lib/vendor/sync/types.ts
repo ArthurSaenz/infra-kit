@@ -83,6 +83,8 @@ export type TargetFacts =
       headVendorMeta: string[]
       readmeCurrent: boolean
       manifestPresent: boolean
+      /** The source name the target's manifest records; `null` without a readable manifest. */
+      manifestSource: string | null
       changelog: ChangelogFacts
     })
 

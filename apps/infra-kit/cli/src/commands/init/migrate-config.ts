@@ -15,7 +15,6 @@ import {
 import { logger } from 'src/lib/logger'
 import { fileExists, tildify } from 'src/lib/path-display'
 import { getFactoryConfigPath } from 'src/lib/vendor/factory-config'
-import { factoryConfigSchema } from 'src/lib/vendor/factory-config-schema'
 
 interface MigrateLayer {
   label: string
@@ -197,6 +196,15 @@ export const migrateUserGlobalConfigFilename = async (): Promise<void> => {
   }
 }
 
+// A legacy vendor.config.ts predates `source`, so it converts without one and the loader then names the
+// missing key; validating it against today's schema would strand the old file forever.
+const legacyFactoryConfigSchema = z
+  .object({
+    workspaceDir: z.string().min(1),
+    targets: z.array(z.string()).min(1),
+  })
+  .strict()
+
 /**
  * Convert a legacy machine-local factory config from executable TypeScript
  * (`~/.infra-kit/vendor.config.ts`) to static JSON (`~/.infra-kit/vendor.json`) as part of
@@ -248,7 +256,7 @@ export const migrateFactoryConfigToJson = async (): Promise<void> => {
     const wasFunction = typeof raw === 'function'
     const resolved = wasFunction ? await (raw as () => unknown)() : raw
 
-    const result = factoryConfigSchema.safeParse(resolved)
+    const result = legacyFactoryConfigSchema.safeParse(resolved)
 
     if (!result.success) {
       logger.info(`⚠ Skipped ${tildify(oldTs)} — invalid factory config: ${z.prettifyError(result.error)}`)

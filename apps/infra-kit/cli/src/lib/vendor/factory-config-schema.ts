@@ -17,19 +17,29 @@ import { z } from 'zod'
 export const FACTORY_CONFIG_FILE = 'vendor.json'
 
 /**
- * The machine-local factory registry. Answers "where do my project repos live"
- * (`workspaceDir`) and "which ones does the factory stamp" (`targets`). The
- * portable "what to vendor" definition (`copy[]`) lives in the committed SOURCE
- * `vendor.config.ts`, never here. `.strict()` rejects a stray `copy` key so a
- * misplaced source config produces a clear error.
+ * The machine-local factory registry: where the repos live (`workspaceDir`), the one
+ * repo copied from (`source`) and the repos stamped (`targets`).
+ *
+ * The "what to vendor" list (`vendorSource.copy[]`) stays in the source repo's committed
+ * `infra-kit.json`, never here: it must travel with the source commit each target's
+ * manifest records. `.strict()` rejects a stray `copy` key so a misplaced source config
+ * produces a clear error.
  */
 export const factoryConfigSchema = z
   .object({
-    /** Absolute (or `~`-prefixed) dir where the target project repos are cloned. */
+    /** Absolute (or `~`-prefixed) dir where the source and target project repos are cloned. */
     workspaceDir: z.string().min(1),
+    /** The one source repo directory name, resolved under `workspaceDir`. */
+    source: z.string().min(1),
     /** Target repo directory names, resolved under `workspaceDir`. */
     targets: z.array(z.string()).min(1),
   })
   .strict()
+  .refine(
+    (config) => {
+      return !config.targets.includes(config.source)
+    },
+    { message: 'the source repo must not also be listed in "targets"', path: ['targets'] },
+  )
 
 export type FactoryConfig = z.infer<typeof factoryConfigSchema>

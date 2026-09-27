@@ -14,7 +14,7 @@ let factoryPath: string
 
 const writeFactory = (workspaceDir: string, targets: string[]): void => {
   fs.mkdirSync(path.dirname(factoryPath), { recursive: true })
-  fs.writeFileSync(factoryPath, JSON.stringify({ workspaceDir, targets }), 'utf8')
+  fs.writeFileSync(factoryPath, JSON.stringify({ workspaceDir, source: 'starter', targets }), 'utf8')
 }
 
 beforeEach(() => {
@@ -39,7 +39,19 @@ describe('vendorConfig (print)', () => {
     expect(process.exitCode).toBe(1)
   })
 
-  it('exits zero when workspaceDir and every target are reachable', async () => {
+  it('exits zero when workspaceDir, the source and every target are reachable', async () => {
+    const workspaceDir = path.join(home, 'projects')
+
+    fs.mkdirSync(path.join(workspaceDir, 'starter'), { recursive: true })
+    fs.mkdirSync(path.join(workspaceDir, 'repo-a'), { recursive: true })
+    writeFactory(workspaceDir, ['repo-a'])
+
+    await vendorConfig()
+
+    expect(process.exitCode).toBe(0)
+  })
+
+  it('exits non-zero when the source is missing', async () => {
     const workspaceDir = path.join(home, 'projects')
 
     fs.mkdirSync(path.join(workspaceDir, 'repo-a'), { recursive: true })
@@ -47,7 +59,7 @@ describe('vendorConfig (print)', () => {
 
     await vendorConfig()
 
-    expect(process.exitCode).toBe(0)
+    expect(process.exitCode).toBe(1)
   })
 
   it('exits non-zero when a target is missing', async () => {
@@ -73,6 +85,7 @@ describe('vendorConfig --init', () => {
     expect(written).not.toContain('export default')
     expect(written).not.toContain(`from 'infra-kit'`)
     expect(parsed.workspaceDir).toBe('~/projects')
+    expect(parsed.source).toBe(path.basename(source))
   })
 
   it('seeds targets from a legacy source vendor.config.ts', async () => {

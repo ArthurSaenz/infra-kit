@@ -393,7 +393,7 @@ const configureVendorCheck = (cmd: Command): Command => {
 const configureVendorSync = (cmd: Command): Command => {
   return cmd
     .description(
-      "Mirror the source repo's vendorSource files into every target in ~/.infra-kit/vendor.json (human-only)",
+      'Mirror vendorSource files from the ~/.infra-kit/vendor.json source into every target, from any directory (human-only)',
     )
     .argument('[targets...]', 'Narrow to these target names from ~/.infra-kit/vendor.json')
     .option('-y, --yes', 'Apply the previewed plan (needs a real terminal on stdin)')

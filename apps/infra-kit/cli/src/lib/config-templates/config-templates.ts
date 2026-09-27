@@ -215,12 +215,13 @@ export const buildVendorExample = (): string => {
   return `// infra-kit factory registry — ~/.infra-kit/vendor.json
 //
 // Machine-local registry the vendor commands (sync/manifest/diff) read to know
-// where your project repos live and which ones to stamp. This .example.jsonc is
+// where your project repos live, which one is the source and which ones to stamp. This .example.jsonc is
 // reference only — it is NOT loaded. The real file is the strict-JSON sibling
 // vendor.json (no comments, double-quoted keys); run \`infra-kit vendor config --init\`
 // to scaffold it.
 {
-  // "workspaceDir": "~/projects",   // string (absolute or ~-prefixed) — where target repos are cloned
+  // "workspaceDir": "~/projects",   // string (absolute or ~-prefixed) — where the source and target repos are cloned
+  // "source": "starter-workspace",   // string — the one repo \`vendor sync\` copies from (its infra-kit.json holds vendorSource)
   // "targets": ["my-repo-a", "my-repo-b"]   // string[] (>=1) — repo dir names resolved under workspaceDir
 }
 `

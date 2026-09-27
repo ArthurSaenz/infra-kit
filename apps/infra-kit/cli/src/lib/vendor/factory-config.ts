@@ -53,7 +53,7 @@ export const expandTilde = (p: string): string => {
  * file is absent.
  *
  * @example
- * const { workspaceDir, targets } = await loadFactoryConfig()
+ * const { workspaceDir, source, targets } = await loadFactoryConfig()
  */
 export const loadFactoryConfig = async (): Promise<FactoryConfig> => {
   const configPath = getFactoryConfigPath()
@@ -65,10 +65,11 @@ export const loadFactoryConfig = async (): Promise<FactoryConfig> => {
   } catch {
     throw new Error(
       `Factory config not found at ${configPath}. infra-kit needs a machine-local factory ` +
-        `registry to know where your project repos live and which to stamp. Run ` +
+        `registry to know where your project repos live, which one is the source and which to stamp. Run ` +
         `\`infra-kit vendor config --init\` to scaffold it, or create it manually as JSON:\n\n` +
         `  {\n` +
         `    "workspaceDir": "~/projects",\n` +
+        `    "source": "my-starter",\n` +
         `    "targets": ["my-repo"]\n` +
         `  }\n`,
     )

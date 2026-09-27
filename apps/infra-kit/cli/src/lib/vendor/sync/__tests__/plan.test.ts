@@ -42,6 +42,7 @@ const repo = (entries: TargetEntryFacts[], overrides: Partial<RepoFacts> = {}): 
     headVendorMeta: [],
     readmeCurrent: true,
     manifestPresent: true,
+    manifestSource: 'starter',
     changelog: { kind: 'log', sha: 'abc1234def', lines: ['abc1234 tweak'] },
     ...overrides,
   }
@@ -138,6 +139,16 @@ describe('buildTargetPlan — row status', () => {
 
     expect(plan.status).toBe('changed')
     expect(plan.warnings).toHaveLength(1)
+  })
+
+  it('warns when the manifest names a different source than this sync', () => {
+    const plan = buildTargetPlan(
+      source([claude]),
+      repo([{ target: '.claude', tracked: [], onDisk: { '.claude/a.md': null } }], { manifestSource: 'old-starter' }),
+    )
+
+    expect(plan.status).toBe('changed')
+    expect(plan.warnings).toEqual(['vendor/ was last synced from old-starter, not starter: this sync replaces it'])
   })
 
   it('treats a mode change or a link where a file was as a modification', () => {

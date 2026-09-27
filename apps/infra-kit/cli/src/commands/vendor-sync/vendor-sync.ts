@@ -1,16 +1,20 @@
+import { existsSync } from 'node:fs'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import process from 'node:process'
+import { z } from 'zod'
 
 import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { confirmOrExit } from 'src/lib/command-echo'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
-import { getProjectRoot } from 'src/lib/git-utils'
-import { getInfraKitConfig } from 'src/lib/infra-kit-config'
+import { vendorSourceSchema } from 'src/lib/infra-kit-config'
 import type { VendorSourceConfig } from 'src/lib/infra-kit-config'
 import { jsonOutput } from 'src/lib/json-output'
 import { printRunReport } from 'src/lib/render/run-report'
 import type { RunReport, RunRow } from 'src/lib/render/run-report'
 import { shellLine } from 'src/lib/shell-quote'
-import { loadFactoryConfig } from 'src/lib/vendor/factory-config'
+import { expandTilde, loadFactoryConfig } from 'src/lib/vendor/factory-config'
+import type { FactoryConfig } from 'src/lib/vendor/factory-config-schema'
 import {
   applyTargetPlan,
   commitSyncedPaths,
@@ -62,19 +66,52 @@ const refuseWithoutTty = (): void => {
   })
 }
 
-// `autoMigrate: 'off'`: a migration would rewrite the tracked infra-kit.json and dirty the source
-// right after the clean-tree check passed.
-const readVendorSource = async (): Promise<VendorSourceConfig> => {
-  const config = await getInfraKitConfig({ autoMigrate: 'off' })
+// The source comes from the factory config, never from the cwd, so a sync runs the same from any directory.
+const resolveSourceRoot = (factory: FactoryConfig): string => {
+  const sourceRoot = path.join(expandTilde(factory.workspaceDir), factory.source)
 
-  if (config.vendorSource) return config.vendorSource
+  if (existsSync(sourceRoot)) return sourceRoot
 
-  throw new StructuredRefusalError({ status: 'refused', reason: 'not-a-vendor-source' }, 1, {
+  throw new StructuredRefusalError({ status: 'refused', reason: 'source-missing', source: sourceRoot }, 1, {
     operation: OPERATION,
-    stderrExcerpt:
-      'this repo is not a vendor source; `infra-kit vendor sync` runs only in a repo whose infra-kit.json has a vendorSource block',
-    remediation: 'run it from the source repo, or point -C at it',
+    stderrExcerpt: `the source repo ${factory.source} is not checked out at ${sourceRoot}`,
+    remediation: 'clone it there, or fix "source" / "workspaceDir" in ~/.infra-kit/vendor.json',
   })
+}
+
+const notAVendorSource = (configPath: string, detail: string): StructuredRefusalError => {
+  return new StructuredRefusalError({ status: 'refused', reason: 'not-a-vendor-source' }, 1, {
+    operation: OPERATION,
+    stderrExcerpt: `${configPath} ${detail}`,
+    remediation:
+      'add a vendorSource block to the source repo\'s committed infra-kit.json, or point "source" at the repo that has one',
+  })
+}
+
+// Only the committed project file is read: `vendorSource` is refused in every ~/.infra-kit layer, and the
+// merged loader is cwd-bound and may migrate the file on disk, which would dirty the source after the
+// clean-tree check.
+const readVendorSource = async (sourceRoot: string): Promise<VendorSourceConfig> => {
+  const configPath = path.join(sourceRoot, 'infra-kit.json')
+  let raw: unknown
+
+  try {
+    raw = JSON.parse(await fs.readFile(configPath, 'utf8'))
+  } catch (error) {
+    throw notAVendorSource(configPath, `is unreadable: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  const vendorSource = (raw as { vendorSource?: unknown } | null)?.vendorSource
+
+  if (vendorSource === undefined || vendorSource === null)
+    throw notAVendorSource(configPath, 'has no vendorSource block')
+
+  const parsed = vendorSourceSchema.safeParse(vendorSource)
+
+  if (!parsed.success)
+    throw notAVendorSource(configPath, `has an invalid vendorSource: ${z.prettifyError(parsed.error)}`)
+
+  return parsed.data
 }
 
 const printRecovery = (plan: TargetPlan, argv: string[]): void => {
@@ -187,10 +224,10 @@ interface Prepared {
 }
 
 const prepare = async (options: VendorSyncOptions): Promise<Prepared> => {
-  const sourceRoot = await getProjectRoot()
-  const sourceRows = await preflightSource(sourceRoot)
-  const spec = await readVendorSource()
   const factory = await loadFactoryConfig()
+  const sourceRoot = resolveSourceRoot(factory)
+  const sourceRows = await preflightSource(sourceRoot)
+  const spec = await readVendorSource(sourceRoot)
   const refs = selectTargets(factory, options.targets ?? [])
   const source = await probeSource(sourceRoot, spec)
   const plans = await planTargets(source, refs, Boolean(options.manifestOnly))
@@ -199,7 +236,7 @@ const prepare = async (options: VendorSyncOptions): Promise<Prepared> => {
 }
 
 /**
- * Mirror the source repo's `vendorSource.copy` entries into every factory target: preview, confirm, then
+ * Mirror the factory source repo's `vendorSource.copy` entries into every factory target, from any cwd: preview, confirm, then
  * apply target by target, with an optional per-target commit. Human-only: refused under agent mode even with
  * `--yes`, and the apply needs a real terminal on stdin. Never calls `process.exit`; the CLI action maps
  * `failed` (and `changed` under `--check`) to the exit code.

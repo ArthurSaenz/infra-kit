@@ -56,16 +56,21 @@ const printFactoryConfig = async (): Promise<void> => {
     return
   }
 
-  const { workspaceDir, targets } = await loadFactoryConfig()
+  const { workspaceDir, source, targets } = await loadFactoryConfig()
   const resolvedWorkspace = expandTilde(workspaceDir)
   const workspaceExists = await fileExists(resolvedWorkspace)
+  const sourcePath = path.join(resolvedWorkspace, source)
+  const sourceExists = await fileExists(sourcePath)
 
   logger.info(
     `workspaceDir:   ${workspaceDir}   (resolved: ${resolvedWorkspace})   ${workspaceExists ? '[✓ exists]' : '[ ] not found'}`,
   )
+  logger.info(
+    `Source:         ${sourceExists ? '[✓]' : '[ ]'} ${source}   ${tildify(sourcePath)}${sourceExists ? '' : '   (not found — clone it)'}`,
+  )
   logger.info('Targets:')
 
-  let allReachable = workspaceExists
+  let allReachable = workspaceExists && sourceExists
 
   for (const repo of targets) {
     const targetPath = path.join(resolvedWorkspace, repo)
@@ -100,7 +105,7 @@ const initFactoryConfig = async (cwd?: string): Promise<void> => {
   const seededTargets = await readLegacyTargets(sourceRoot)
 
   await fs.mkdir(path.dirname(factoryPath), { recursive: true })
-  await fs.writeFile(factoryPath, buildScaffold(seededTargets), 'utf-8')
+  await fs.writeFile(factoryPath, buildScaffold(path.basename(sourceRoot), seededTargets), 'utf-8')
 
   logger.info(`✓ Created ${tildify(factoryPath)}`)
 
@@ -109,6 +114,9 @@ const initFactoryConfig = async (cwd?: string): Promise<void> => {
   }
 
   logger.info(`  Edit \`workspaceDir\` (placeholder: ${PLACEHOLDER_WORKSPACE_DIR}) to point at where your repos live.`)
+  logger.info(
+    `  \`source\` is seeded with ${path.basename(sourceRoot)} (this repo); change it if the source is another repo.`,
+  )
 
   if (seededTargets.length === 0) {
     logger.info('  Add at least one repo name to `targets` before running vendor sync/manifest/diff.')
@@ -157,6 +165,6 @@ const readLegacyTargets = async (sourceRoot: string): Promise<string[]> => {
  * stub the user must edit before running vendor sync/manifest/diff. The annotated
  * guidance lives in the sibling `vendor.example.jsonc` (seeded by `infra-kit setup`).
  */
-const buildScaffold = (targets: string[]): string => {
-  return `${JSON.stringify({ workspaceDir: PLACEHOLDER_WORKSPACE_DIR, targets }, null, 2)}\n`
+const buildScaffold = (source: string, targets: string[]): string => {
+  return `${JSON.stringify({ workspaceDir: PLACEHOLDER_WORKSPACE_DIR, source, targets }, null, 2)}\n`
 }
