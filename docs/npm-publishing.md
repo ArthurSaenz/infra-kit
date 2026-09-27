@@ -9,7 +9,7 @@ on npmjs.com and github.com rather than in the repo.
 ## Release flow
 
 ```sh
-node scripts/release-bump.mjs 0.12.0   # moves the six version fields, commits
+node scripts/release-bump.mjs minor    # or patch|major|0.12.0 — moves the six version fields, commits
 git push origin main                   # .github/workflows/publish.yaml runs
 ```
 

@@ -3,15 +3,26 @@
 // commit to main is what runs .github/workflows/publish.yaml. There is no tag to create and no
 // `pnpm publish` to run from a laptop — CI stages, the human approves on npmjs.com.
 //
-// Usage: node scripts/release-bump.mjs <version>        e.g. 0.12.0
+// Usage: node scripts/release-bump.mjs <patch|minor|major|x.y.z>   e.g. minor, 0.12.0
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { REPO_ROOT, VERSION_FIELDS, fail, isPublished, log } from './lib/release.mjs'
+import { REPO_ROOT, VERSION_FIELDS, fail, isPublished, log, resolveVersion } from './lib/release.mjs'
 
-const [version] = process.argv.slice(2)
-if (!version || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) fail('usage: node scripts/release-bump.mjs <x.y.z>')
+const LEVELS = ['major', 'minor', 'patch']
+
+const bumpLevel = (current, level) => {
+  const [major, minor, patch] = current.split(/[.-]/).map(Number)
+  if (level === 'major') return `${major + 1}.0.0`
+  if (level === 'minor') return `${major}.${minor + 1}.0`
+  return `${major}.${minor}.${patch + 1}`
+}
+
+const [arg] = process.argv.slice(2)
+const version = LEVELS.includes(arg) ? bumpLevel(resolveVersion(), arg) : arg
+if (!version || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version))
+  fail('usage: node scripts/release-bump.mjs <patch|minor|major|x.y.z>')
 
 const git = (cmdArgs) => {
   console.log(`  $ git ${cmdArgs.join(' ')}`)
