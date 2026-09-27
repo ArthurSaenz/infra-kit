@@ -1,234 +1,229 @@
 ---
 name: merge-dev
-description: Merge origin/dev into open release branches through infra-kit's release merge-dev, including an opt-in agent hand-off that resolves real conflicts in a CLI-owned worktree, behind the preview-then-approve protocol.
+description: Merge origin/dev into open release branches through infra-kit's release merge-dev, autonomously — clean merges pushed once they pass qa, real conflicts resolved and qa-verified by the agent in CLI-owned worktrees, with one human approval before any agent-resolved merge is pushed.
 argument-hint: [<version,...>] [--verify <cmd>]
 disable-model-invocation: true
 allowed-tools: Bash(infra-kit release list --json*)
 ---
 
-# merge-dev — merging dev into release branches, with agent-assisted conflict resolution
+# merge-dev — merging dev into release branches, autonomously
 
 CLI on PATH: !`zsh -c 'infra-kit version --json' 2>/dev/null || echo '{"error":"infra-kit not on PATH"}'`
 
 Git on PATH: !`zsh -c 'git --version' 2>/dev/null || echo '{"error":"git not on PATH"}'`
 
+Root `qa` script: !`node -e 'const s=require("./package.json").scripts||{};console.log(s.qa?"present":"absent")' 2>/dev/null || echo absent`
+
 The command is `infra-kit release merge-dev`. Everything below is about running that command through
 `Bash`, with `--json --agent` on every call.
 
-**Version floor.** Read both lines above first. On `{"error": …}` from either, or an `infra-kit
-version` below `0.11.12`, or a `git --version` below `2.42` (git needs to be that new for
+**Version floor.** Read the lines above first. On `{"error": …}` from either, or an `infra-kit
+version` below `0.11.15`, or a `git --version` below `2.42` (git needs to be that new for
 `AUTO_MERGE`, which the resolution hand-off reads per worktree), tell the human to update —
 `pnpm add -g infra-kit@latest` or `infra-kit setup` for the CLI, their system package manager for
-git — and stop. An older CLI or git answers none of the shapes below.
+git — and stop.
 
 **cwd.** Every call runs from the directory Claude Code was launched in — the repo root. If the
 shell was `cd`'d elsewhere, `cd` back first (the CLI also accepts `-C <dir>`).
 
-Do not reproduce any step with `git merge`, `git commit`, `git push` or `gh`. Those reproduce none
-of the mechanical checks below — the scope check against `AUTO_MERGE`, the atomic push, the
-recorded-dev reclassify — and skip the approvals in sections 2 and 6, which are the only places a
-human approves what lands on a shared branch.
+Do not reproduce any step with `git merge`, `git commit`, `git push` or `gh`. Those skip the
+mechanical checks the CLI makes — the scope check against `AUTO_MERGE`, the tree binding, the atomic
+push, the recorded-dev reclassify.
 
-## 1. What this adds to the plain command
+## 0. The autonomy contract
 
-The plain run fetches `origin/dev`, merges it into each selected regular release branch inside one
-scratch worktree, then pushes atomically. This skill adds three modes, mutually exclusive with each
-other and with `--dry-run`:
+The human invoking this skill is the go-ahead for the whole run. You drive it end to end without
+asking, with exactly **one** stop for the human:
 
-- `--keep-conflicts` — after pushing every clean branch, hand off each conflicted branch to a
-  CLI-owned resolution worktree instead of discarding it.
-- `--continue` — resume a hand-off: stage, scope-check, merge the lockfile, verify, and (on
-  `--yes`) commit and push.
-- `--abort` — delete a hand-off's worktree and state, touching nothing on any branch.
+- **Clean merges** (git merged them with no conflict) are pushed without asking, but only after the
+  verify command (section 1) passes on each one. A branch that fails verify is not pushed.
+- **Conflicted branches** are handed off, resolved by you, and verified by you in a loop until
+  `--continue`'s preview is clean. Nothing you authored is pushed until the human has seen it.
+- **The one stop — approval 2 (section 6):** a single table of every resolved branch, its
+  resolution diff and its passing verify. The human's "go" pushes them all.
 
-**Push grouping.** Clean branches are pushed at the first approval (section 2); resolved branches are
-pushed later, as their own atomic set (section 6). A hard conflict on one branch never delays the
-others.
+Do not ask which branches, do not ask before the first run, and do not stop mid-resolution to ask
+about a hunk: resolve it on your best judgement and flag it for approval 2 (section 4).
 
-### Reading `$ARGUMENTS`
+## 1. Arguments and the verify command
 
-The `/infra-kit:merge-dev` skill hands you `$ARGUMENTS` verbatim; its argument hint is
-`[<version,...>] [--verify <cmd>]`.
+The skill hands you `$ARGUMENTS` verbatim.
 
-- **No version → `--all` (the default).** Every open regular release branch. Nothing is pushed on
-  this alone: the preview in section 2 still shows every branch and the human approves the set.
-- `<version,...>` → the CLI's `--versions <list>` instead of `--all`, a comma-separated list of the
-  labels `infra-kit release list` shows. `--all` typed explicitly means the same as no version.
-- `--verify <cmd>` → the CLI's `--continue --verify=<cmd>` — an extra command that runs, under `--continue` only, after the mandatory frozen-lockfile install check and before any commit.
+- **No version → `--all`.** Every open regular release branch.
+- `<version,...>` → the CLI's `--versions <list>`. Always pass `--all` or `--versions`: without
+  either the CLI exits 2 with `argument_required`.
+- `--verify <cmd>` → overrides the default verify below.
 
-If `$ARGUMENTS` is empty, do not ask which branches — go straight to the `--all` preview. When the
-human wants to narrow the set, show what exists (read-only and pre-approved) and re-preview with
-`--versions`:
+To see which release labels exist (read-only and pre-approved):
 
 ```
 infra-kit release list --json --agent
 ```
 
-Always pass `--all` or `--versions`: without either the CLI exits 2 with `argument_required`. If that
-ever happens, re-run the preview with `--all`.
+**Verify command (`V`).** When `$ARGUMENTS` has no `--verify`: if the "Root `qa` script" line above
+says `present`, `V` is `pnpm run qa`; otherwise `V` is empty and only the CLI's built-in
+frozen-lockfile install check runs. It is passed differently to the two phases, because the
+clean-merge phase runs in a fresh scratch checkout with no `node_modules`, while `--continue`
+installs before verifying on its own:
 
-## 2. Preview and approval 1 — `--keep-conflicts`
+- first run (section 2): `--verify='pnpm install --frozen-lockfile && V'` (or bare `--verify` when
+  `V` is empty);
+- every `--continue` (sections 5–6): `--verify='V'` (omitted when `V` is empty).
 
-**Preview.** Run `infra-kit release merge-dev (--all | --versions X) --keep-conflicts --json
---agent`. It exits 2 with `{"status": "confirmation_required", "message", "plan", "rerun", …}`.
-Show `plan.entries` to the human as a table, one row per branch: **clean**, **lockfile-only**,
-**code conflict** with its `conflictPaths`, **hook-failed/error**, and **skipped** (hotfixes,
-title/base mismatches). This is the only place the human approves what is about to be pushed and
-handed off — do not skip it.
+Pass the same `--verify` value on every `--continue` call of a run: the CLI reuses a passing verify
+only for the same tree and the same command, so changing it re-runs the whole suite.
 
-**Approval 1.** Once the human says go, run exactly the `rerun` given, `--yes` appended, unchanged.
-This pushes every clean branch atomically and, for each conflicted branch, creates a resolution
-worktree at `<root>-worktrees/merge-dev/<branch-slug>` — detached, stopped mid-merge, with a state
-file recording `baseSha`, `devSha` and `conflictPaths`.
+## 2. The first run — clean merges pushed, conflicts handed off
 
-**An exit 1 with a parseable JSON `results` here is the expected hand-off, not a failure.** The
-first `--yes` under `--keep-conflicts` exits 1 on purpose whenever any branch was handed off, so CI
-still sees an incomplete run. Read the `results` and continue to section 3/4; only non-JSON stdout,
-or exit 1 with no JSON at all, is a real crash — stop and show stderr.
+1. **Preview.** `infra-kit release merge-dev (--all | --versions X) --keep-conflicts --verify='…'
+--json --agent` exits 2 with `{"status": "confirmation_required", "plan", "rerun", …}`. Print
+   `plan.entries` as a short table for the human's information — **clean**, **lockfile-only**,
+   **code conflict** with its `conflictPaths`, **hook-failed/error**, **skipped** — and continue
+   without waiting.
+2. **Run.** Execute exactly the `rerun` given, `--yes` appended, unchanged. This verifies and
+   atomically pushes every clean branch that passed, and for each conflicted branch creates a
+   resolution worktree at `<root>-worktrees/merge-dev/<branch-slug>` — detached, mid-merge, with a
+   state file recording `baseSha`, `devSha` and `conflictPaths`.
+3. **Exit 1 with parseable JSON `results` is the expected hand-off, not a failure** — the CLI exits 1
+   whenever a branch was handed off, so CI sees an incomplete run. Only non-JSON stdout, or exit 1
+   with no JSON, is a crash: stop and show stderr.
 
-**Resolution states**, per conflicted branch's `resolution.state`:
+Nothing in section 2 is retried. A clean branch that failed verify, `hook-failed`, `error` or a
+clean `push-aborted` goes into the final report (section 8) with the CLI's `reason` verbatim.
 
-| State           | Meaning                                                                               | What you do                                                                                             |
-| --------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `needs-agent`   | A real conflict outside the lockfile.                                                 | Resolve it — section 4.                                                                                 |
-| `lockfile-only` | The only conflict is `pnpm-lock.yaml`.                                                | No editing needed; `--continue` merges it deterministically — section 4 still applies for the approval. |
-| `exists`        | A state file for this branch already exists — a previous hand-off was never finished. | Do not hand off again. Offer the human `--continue` or `--abort` for it.                                |
+**Resolution states**, per handed-off branch's `resolution.state`:
 
-## 3. Relay-only outcomes
+| State           | Meaning                                                  | What you do                                                                |
+| --------------- | -------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `needs-agent`   | A real conflict outside the lockfile.                    | Resolve it — section 4.                                                    |
+| `lockfile-only` | The only conflict is `pnpm-lock.yaml`.                   | No editing; go straight to section 5 — the CLI merges the lockfile itself. |
+| `exists`        | A hand-off for this branch was left unfinished by a run. | Resume it with `--continue` (section 5) as if you had just handed it off.  |
 
-Do not act on `hook-failed` or `error`, or on a **clean** branch's `push-aborted` from approval 1 —
-there is no retry for any of them. Relay the CLI's `reason` verbatim to the human, together with the
-Option D recipe (section 9).
+## 3. Permissions, once
 
-A **resolved** branch's `push-aborted` from approval 2 is different: its merge commit is already
-made and approved, and the same `--continue` rerun resumes from it and pushes that same commit.
-Offer the human that rerun; do not treat it as relay-only.
+Edits inside `<root>-worktrees/merge-dev/` are outside the launch directory, so each write prompts.
+If any branch is `needs-agent`, tell the human once, before the first edit, to run
+`/add-dir <root>-worktrees/merge-dev` (with the real path), then carry on.
 
 ## 4. Resolving conflicts in the worktree
 
 Before editing, run the read-only `git -C <worktreePath> rev-parse -q --verify AUTO_MERGE`. If it
-is missing, the worktree's git is below the floor this hand-off needs — relay that and fall back to
-Option D (section 9) for this branch.
+is missing, that worktree's git is below the floor — report the branch as blocked with Option D
+(section 9) and move to the next branch.
 
-Inside `worktreePath`, the agent:
+Inside `worktreePath`:
 
-- edits or deletes **only** paths listed in `conflictPaths`. It never edits any other file, and it
-  never touches `pnpm-lock.yaml` — the CLI merges the lockfile deterministically inside `--continue`
-  by writing dev's side (`git show :3:pnpm-lock.yaml`) and re-running `pnpm install --lockfile-only
---ignore-scripts`. **Never run `pnpm` yourself on a lockfile that still has conflict markers** — it
-  does not merge the markers, it silently re-resolves the whole tree from scratch, which can bump
-  ranged dependencies with nobody asking for it.
-- runs **no mutating git command** — no `add`, `commit`, `merge --continue`, `checkout --`, `reset`,
-  `stash`, or anything that changes the index, `HEAD` or a ref. The CLI stages, commits and pushes;
-  the agent only edits files on disk.
-- may read for context, and only read: `git show :1:<path>` / `:2:<path>` / `:3:<path>` (ours/theirs/
-  base), `git log origin/dev -- <path>`, `git log <baseSha> -- <path>`, `git diff`.
-- resolves **hunk by hunk** and never takes one side wholesale on a real code conflict.
-- resolves a modify/delete conflict by explicitly keeping or removing the file — say which, and why.
-- writes one line per file saying which side won each hunk and why.
-- **stops and asks the human in prose** whenever a hunk needs a product decision, rather than
-  guessing.
-- **hands back** to the human after 2 blocked `--continue` previews on the same branch, or as soon
-  as one file needs more than about 15 hunks resolved. Say so plainly and stop, rather than grinding.
+- Edit or delete **only** paths in `conflictPaths`, and never `pnpm-lock.yaml` — the CLI rebuilds it
+  from dev's side inside `--continue`. **Never run `pnpm` yourself while the lockfile has conflict
+  markers**: pnpm silently re-resolves the whole tree and can bump ranged dependencies.
+- Run **no mutating git command** — no `add`, `commit`, `merge --continue`, `checkout --`, `reset`,
+  `stash`. The CLI stages, commits and pushes; you only edit files on disk.
+- Read freely for context: `git show :1:<path>` / `:2:<path>` / `:3:<path>` (base/ours/theirs),
+  `git log origin/dev -- <path>`, `git log <baseSha> -- <path>`, `git diff`, and the surrounding code
+  and tests.
+- Resolve **hunk by hunk**; on a real code conflict never take one side wholesale. Prefer keeping
+  both intents: the release branch's fix and dev's change. A modify/delete conflict is resolved by
+  explicitly keeping or removing the file.
+- Keep one line per file for approval 2: which side won each hunk and why.
+- **A hunk that needs a product decision** (both sides changed behaviour in incompatible ways): pick
+  the reading most consistent with the release branch's purpose, and mark the file
+  **⚠ needs review** with the question in one sentence. Do not stop to ask.
 
-Editing outside the Claude Code cwd prompts for permission on every write. Warn the human up front
-and suggest `/add-dir <root>-worktrees/merge-dev` once, rather than approving every file one at a
-time.
+Work through every `needs-agent` branch before approval 2; branches are independent, so one that
+stays blocked never holds the others back.
 
-## 5. Check — `--continue` preview
+## 5. The fix loop — `--continue` preview
 
-Run `infra-kit release merge-dev --continue --versions <b…> --json --agent` after each round of
-edits.
+After each round of edits, run `infra-kit release merge-dev --continue --versions <b…> --verify='V'
+--json --agent`. It stages, scope-checks, rebuilds the lockfile, runs the install check and `V`, and
+exits 2 with a clean preview or a `blocked` row. Act on the code:
 
-- `unmerged-paths`, `markers-remaining`, `out-of-scope-edit` or `verify-failed`: the agent fixes the
-  named paths, within the budget from section 4.
-- `tree-changed` on `pnpm-lock.yaml` whose detail says **the registry moved**: pnpm resolved dev's
-  lockfile differently than at the last preview. The CLI has already rebuilt it — preview again and
-  show the human the new `lockfileDiffStat`. Nothing to fix and nothing to abort.
-- `verify-mutated-tree`, `parents-mismatch`, any other `tree-changed`, or `git-too-old`: relay the block to the human and
-  suggest either `--abort` plus a fresh `--keep-conflicts` hand-off, or Option D (section 9). Do not
-  keep retrying these — they mean the worktree's state no longer matches what the CLI can safely
-  push.
+- `unmerged-paths`, `markers-remaining`: finish the named paths, preview again.
+- `verify-failed`: read `reason` (the tail of the failing command's output). When the failure is in
+  a conflicted path, or caused by how you resolved one (a type error, a lint error, a failing test
+  touching the merged code), fix it in the conflicted paths and preview again. When the fix would
+  need a file outside `conflictPaths`, the hand-off cannot carry it: stop this branch and report it
+  as blocked with the failing output and Option D.
+- `out-of-scope-edit`: you touched a path outside `conflictPaths` — revert that edit by hand (edit
+  the file back; no git command), preview again.
+- `tree-changed` on `pnpm-lock.yaml` saying **the registry moved**: the CLI already rebuilt it —
+  preview again.
+- `verify-mutated-tree`, `parents-mismatch`, any other `tree-changed`, `git-too-old`: stop this
+  branch; report it with `--abort` plus a fresh hand-off, or Option D, as the next step.
 
-## 6. Approval 2 and the approved run
+**Budget:** at most **5** blocked previews per branch. On the 6th, stop that branch and report it
+blocked with the last `blocked` row — do not grind.
 
-Once `--continue`'s preview is clean for a branch (lockfile-only branches reach this with no editing
-at all), show the human, per branch:
+A preview that is clean has already run `V` on that exact tree; the approved run reuses that result
+(`verify.reused: true`) instead of running the suite again.
 
-- `diffStat` — the size of what changed.
-- The agent's own per-file lines from section 4 (skip this for `lockfile-only`).
-- `resolutionDiff` — the index diffed against `AUTO_MERGE`, with any hunk `rerere` already
-  pre-resolved labelled **"rerere (recorded resolution)"**, never as the agent's own work. When it is
-  truncated, fall back to `git -C <worktreePath> diff --cached AUTO_MERGE` for the full diff.
-- `treeSha` — the exact tree this approval covers. The preview's `rerun` carries it as
-  `--tree <branch>=<treeSha>`; `--yes` commits a branch only if its resolved tree still equals it.
-- `lockfileMerged` and `lockfileDiffStat` — whether the CLI rebuilt `pnpm-lock.yaml` from dev, and
-  its size against dev (`vsDev`, which should show only what the release branch added) and against
-  the base branch (`vsBase`).
-- The verify result (the mandatory frozen-lockfile install, plus `--verify=<cmd>` if one was given).
+## 6. Approval 2 — the one stop
 
-This is the second and last approval — it is bound to the exact tree that will be committed and
-pushed. On "go", run the `rerun` verbatim (`--continue --tree … --yes`). Never add `--yes` to a
-call the human has not seen this diff for, and never edit the `--tree` value: a rerun of an older
-preview reports `tree-changed` and commits nothing.
+When every handed-off branch is either clean in its last preview or stopped, show the human **one**
+message:
 
-**`tree-changed` on the approved run** means the tree moved after the human saw it: an edit after
-the preview or a registry move in the rebuilt lockfile (preview again, and get approval again), a
-branch that was blocked in the preview and so has no `--tree` (its reason starts with `not
-approved:` — preview again), or a commit hook that rewrote the approved
-tree. In the hook case the commit already exists with a tree nobody approved; it is never pushed,
-and every later `--continue` blocks it as `tree-changed`. Relay that and offer `--abort` plus a
-fresh `--keep-conflicts` hand-off.
+1. A table, one row per clean-preview branch: `diffStat`, the verify command and ✅, `lockfileMerged`
+   with `lockfileDiffStat` (`vsDev` should show only what the release branch itself added), and the
+   count of ⚠ files.
+2. Under it, per branch: your per-file lines from section 4, with every **⚠ needs review** question
+   first, and the `resolutionDiff` — hunks `rerere` pre-resolved labelled **"rerere (recorded
+   resolution)"**, never as your own work. When `resolutionDiffTruncated`, say so and give the
+   `git -C <worktreePath> diff --cached AUTO_MERGE` to read the rest.
+3. The stopped branches, one line each, so the human sees the whole run in one place.
+
+Ask once: push all, push some (they name which), or change something. On "go", run each clean
+branch's `rerun` verbatim (`--continue --tree <branch>=<treeSha> … --yes`), batched as the CLI gave
+it. Never edit a `--tree` value, and never run `--yes` for a tree the human has not seen.
+
+If the human asks for changes, edit, return to section 5, and come back here with a fresh preview —
+the new tree needs its own approval.
+
+**`tree-changed` on the approved run** means the tree moved after the human saw it: preview again
+and bring it back to approval 2. When its reason says a commit hook rewrote the approved tree, that
+commit is never pushable — report it with `--abort` plus a fresh hand-off.
+
+A **resolved** branch's `push-aborted` keeps its approved commit: the same `--continue` rerun resumes
+and pushes that commit. Run it once without asking again; report if it aborts a second time.
 
 ## 7. `--abort`
 
-Confirm-gated like the other two modes: preview which resolution worktrees and state files would be
-removed, get approval, then run the `rerun` verbatim. It deletes the worktree and the state file for
-each selected branch and touches nothing else — no commit, no push, no ref move.
+Only on the human's request, or as the recorded next step in the report — never on your own
+initiative. It is confirm-gated: run the preview, show which worktrees and state files go, and run
+the `rerun` with `--yes` on their "go". It deletes the worktree and state file only — no commit,
+push or ref move.
 
 ## 8. Report
 
-Report as one markdown table, one row per branch, including skipped rows:
+End with one markdown table, one row per branch, including skipped rows:
 
-| Branch           | Result         | Commit / reason                   | Next step              |
-| ---------------- | -------------- | --------------------------------- | ---------------------- |
-| `release/v1.2.3` | ✅ pushed      | `a1b2c3d`                         | —                      |
-| `release/v1.3.0` | ⏸ blocked      | `markers-remaining`: `src/app.ts` | fix, then `--continue` |
-| `release/v1.4.0` | ❌ hook-failed | the hook's first stderr line      | `--abort`, or Option D |
-| `release/v1.1.9` | ⏭ skipped      | hotfix (targets main)             | —                      |
+| Branch           | Result               | Commit / reason                        | Next step          |
+| ---------------- | -------------------- | -------------------------------------- | ------------------ |
+| `release/v1.2.3` | ✅ pushed (clean)    | `a1b2c3d`                              | —                  |
+| `release/v1.2.4` | ✅ pushed (resolved) | `e4f5a6b` · 2 files, 1 ⚠               | —                  |
+| `release/v1.3.0` | ⏸ blocked            | `verify-failed`: needs `src/other.ts`  | Option D           |
+| `release/v1.4.0` | ❌ verify-failed     | `pnpm run qa` — the first failing line | fix on dev, re-run |
+| `release/v1.1.9` | ⏭ skipped            | hotfix (targets main)                  | —                  |
 
 `Result` is the row's own `status` from `results` (`merged`/`fast-forward`/`up-to-date` count as
-pushed or already there), `Commit / reason` is the short `mergeSha` or the CLI's reason verbatim, and
-`Next step` is `--continue`, `--abort` or the Option D recipe. Below the table, one line of totals.
-Never report a branch as merged on the strength of exit 0 alone; read its own row in `results`.
+pushed or already there). Below the table, one line of totals. Never report a branch as merged on
+the strength of exit 0 alone; read its own row in `results`.
 
 ## 9. Option D — the manual fallback
 
-Use this when the CLI refuses a hand-off outright (`git-too-old`, a repeated `verify-mutated-tree`/
-`parents-mismatch`, or an edit that genuinely needs a file outside `conflictPaths`, which v1 always
-refuses rather than widening scope). It needs no CLI change and no agent worktree:
+For a branch the hand-off cannot carry (`git-too-old`, a repeated `verify-mutated-tree` /
+`parents-mismatch`, or a fix that needs a file outside `conflictPaths`). Every step is the
+**human's**, in their own terminal:
 
-Every step is the **human's**, in their own terminal. The agent does not run any of them.
-
-1. The human runs `infra-kit worktrees add <release>` to get a normal (non-detached) worktree for
-   the release branch.
-2. In that worktree, the human merges `origin/dev`, resolves the conflicts and commits.
-3. The human pushes the release branch themselves.
-
-The hand-merge reaches origin only when the human pushes it. Until then, no `release merge-dev` run
-knows about it.
+1. `infra-kit worktrees add <release>` for a normal worktree of the release branch.
+2. Merge `origin/dev` there, resolve, commit.
+3. Push the release branch.
 
 ## 10. What not to do
 
-- Do not run `git merge`, `git commit`, `git push` or `gh` yourself for any part of this flow —
-  section 1's rule.
-- Do not read an exit 2 `confirmation_required`, or an exit 1 hand-off with JSON, as a failure. See
-  sections 2 and 3.
-- Do not edit any path outside `resolution.conflictPaths`, and never edit `pnpm-lock.yaml` yourself.
-- Do not run `pnpm install` (or anything else) inside a resolution worktree while `pnpm-lock.yaml`
-  still carries conflict markers.
-- Do not retry `hook-failed`, `git-too-old`, or a clean branch's `push-aborted` — relay them. A
-  resolved branch's `push-aborted` resumes through its own `--continue` rerun (section 3).
-- Do not run any `infra-kit … --yes` call that is not the `rerun` of a plan or diff the human just
-  saw.
-- Do not keep resolving past the section 4 budget — hand back to the human instead.
+- Do not run `git merge`, `git commit`, `git push` or `gh` for any part of this flow.
+- Do not read exit 2 `confirmation_required`, or exit 1 with hand-off JSON, as a failure.
+- Do not edit outside `resolution.conflictPaths`, and never edit `pnpm-lock.yaml`.
+- Do not run `pnpm` in a resolution worktree while `pnpm-lock.yaml` carries conflict markers.
+- Do not run `--yes` on a `--continue` whose tree the human has not approved in section 6.
+- Do not retry `hook-failed`, `git-too-old`, or a clean branch's `push-aborted` or verify failure.
+- Do not exceed the section 5 budget.

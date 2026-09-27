@@ -15,8 +15,8 @@ import { resetZxFactoryArgs, zxFactoryArgs } from 'src/lib/quiet-shell/__tests__
 vi.mock('zx', async () => {
   const { zxShellMock } = await import('src/lib/quiet-shell/__tests__/zx-shell-mock')
 
-  return zxShellMock((_strings, command) => {
-    if (command[0] === 'command') return Promise.resolve({ stdout: '/usr/local/bin/aws\n', stderr: '' })
+  return zxShellMock((strings) => {
+    if (strings[0]?.startsWith('command -v')) return Promise.resolve({ stdout: '/usr/local/bin/aws\n', stderr: '' })
 
     // `aws --version` writes its banner to STDERR, which is why `runCommand` concatenates the streams.
     return Promise.resolve({ stdout: '', stderr: 'aws-cli/2.17.0 Python/3.11.6\n' })

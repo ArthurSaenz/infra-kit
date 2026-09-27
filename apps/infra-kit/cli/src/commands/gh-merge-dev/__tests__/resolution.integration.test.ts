@@ -493,6 +493,52 @@ describe('--continue (AC 3–13)', () => {
     expect(row.blocked.paths).toContain('base.txt')
   })
 
+  it('ignored build output a --verify creates is not an out-of-scope edit, now or at the next preview', async () => {
+    const { repo } = await codeConflictFixture()
+
+    await handOff()
+    await resolve(repo, 'release/v1.0.0')
+
+    const verify = 'mkdir -p out && echo built > out/bundle.log'
+    const first = await preview('1.0.0', { verify })
+
+    expect(first.row.blocked).toBeUndefined()
+    expect(first.row.verify).toMatchObject({ ok: true })
+
+    const second = await preview('1.0.0', { verify })
+
+    expect(second.row.blocked).toBeUndefined()
+    expect(second.row.verify).toMatchObject({ ok: true, reused: true })
+  })
+
+  it('a --verify that hides files behind a new .gitignore is still verify-mutated-tree', async () => {
+    const { repo } = await codeConflictFixture()
+
+    await handOff()
+    await resolve(repo, 'release/v1.0.0')
+
+    const { status, row } = await preview('1.0.0', {
+      verify: "mkdir -p sub && printf '*\\n' > sub/.gitignore && echo hidden > sub/payload.txt",
+    })
+
+    expect(status).toBe('refused')
+    expect(row.blocked).toMatchObject({ code: 'verify-mutated-tree', paths: ['sub/.gitignore'] })
+  })
+
+  it('an edit after a passing preview re-runs verify', async () => {
+    const { repo } = await codeConflictFixture()
+
+    await handOff()
+    await resolve(repo, 'release/v1.0.0')
+    await preview('1.0.0', { verify: 'true' })
+    await resolve(repo, 'release/v1.0.0', 'resolved again')
+
+    const { row } = await preview('1.0.0', { verify: 'true' })
+
+    expect(row.verify).toMatchObject({ ok: true })
+    expect(row.verify.reused).toBeUndefined()
+  })
+
   describe('content binding (AC 6)', () => {
     it('an edit after the preview is tree-changed, and nothing is pushed', async () => {
       const { repo } = await codeConflictFixture()
@@ -626,8 +672,8 @@ describe('--continue (AC 3–13)', () => {
       entries.map((entry) => {
         return entry.kind
       }),
-    ).toEqual(['verify', 'verify', 'commit'])
-    expect(entries[1]!.at).toBeLessThanOrEqual(entries[2]!.at)
+    ).toEqual(['verify', 'commit'])
+    expect(entries[0]!.at).toBeLessThanOrEqual(entries[1]!.at)
   })
 
   describe('recorded dev (AC 9)', () => {

@@ -1139,9 +1139,10 @@ test('U18: no procedure body carries a retired clause', () => {
 
 // merge-dev's resolution hand-off needs a newer CLI than the other procedure skills (§2.3 of
 // .omc/plans/merge-dev-skill.md: AUTO_MERGE support requires git ≥ 2.42, published only once the
-// CLI hand-off itself is out), so its floor is pinned higher. Every other skill keeps the 0.8.0 floor
-// that has applied since the plugin went skills-only.
-const VERSION_FLOORS = { 'merge-dev': '0.11.12' }
+// CLI hand-off itself is out), so its floor is pinned higher; 0.11.15 is where a `qa`-style verify's
+// build output stops failing the scope check. Every other skill keeps the 0.8.0 floor that has
+// applied since the plugin went skills-only.
+const VERSION_FLOORS = { 'merge-dev': '0.11.15' }
 
 // The floor line is the same bytes in every procedure skill AND in doctor: a drifted copy would read
 // a different command, and `--version` is not one the CLI has.

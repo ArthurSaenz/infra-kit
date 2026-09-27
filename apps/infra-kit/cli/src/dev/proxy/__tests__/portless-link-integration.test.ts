@@ -151,7 +151,9 @@ interface RealHomeSnapshot {
 const describeEntry = (target: string): string | null => {
   const stat = fs.lstatSync(target, { throwIfNoEntry: false })
 
-  return stat === undefined ? null : `${stat.ino}:${stat.dev}:${stat.size}:${stat.ctimeMs}:${stat.mtimeMs}`
+  // No ctime: the real `~/.infra-kit/node` can share its inode with the running node, so the suite's own
+  // hardlink of that binary bumps the link count — and with it the ctime — without touching the file.
+  return stat === undefined ? null : `${stat.ino}:${stat.dev}:${stat.size}:${stat.mtimeMs}`
 }
 
 const snapshotRealHome = (): RealHomeSnapshot => {

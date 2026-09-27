@@ -32,6 +32,10 @@ import { registerRunCleanup } from './run-cleanup'
 /** The mandatory check before any resolution commit; it also creates the `node_modules` hooks need. */
 const INSTALL_CHECK_COMMAND = 'pnpm install --frozen-lockfile --ignore-scripts'
 
+// An extra verify runs the repo's own code (a `qa`, a build), which needs what install scripts
+// generate; the tree check after verify still catches a script that rewrites a tracked file.
+const INSTALL_FOR_EXTRA_VERIFY = 'pnpm install --frozen-lockfile'
+
 const RESOLUTION_DIFF_CAP = 64 * 1024
 const REASON_CAP = 4096
 
@@ -69,6 +73,10 @@ interface ResolutionRecord {
   unapprovedCommit?: string
   /** The lockfile blob the CLI's last rebuild staged — tells a registry move from a foreign lockfile. */
   lockfileBlob?: string
+  /** Ignored build output a passing verify created (`dist/`, `.turbo/`, …), outside `node_modules/`. */
+  ignoredByVerify?: string[]
+  /** The tree and command of the last passing verify, so an unchanged tree is not verified twice. */
+  verified?: { treeSha: string; command: string }
 }
 
 export type BlockedCode =
@@ -103,8 +111,16 @@ interface ContinuePlanRow {
   /** The rebuilt lockfile against dev's and the base branch's, when the lockfile conflicted. */
   lockfileDiffStat?: { vsDev: string; vsBase: string }
   rerereFiles: string[]
-  verify?: { command: string; ok: boolean; reason?: string }
+  verify?: VerifyResult
   blocked?: Blocked
+}
+
+interface VerifyResult {
+  command: string
+  ok: boolean
+  reason?: string
+  /** The same tree already passed this command at an earlier `--continue`, so it was not re-run. */
+  reused?: boolean
 }
 
 export type ResolutionResultStatus =
@@ -343,7 +359,7 @@ const isUnderNodeModules = (file: string): boolean => {
 //   make `git status` blind to an edit of that path.
 const scopeViolations = async (cwd: string, record: ResolutionRecord): Promise<string[]> => {
   const allowed = new Set(record.conflictPaths)
-  const knownIgnored = new Set(record.ignoredAtHandoff)
+  const knownIgnored = new Set([...record.ignoredAtHandoff, ...(record.ignoredByVerify ?? [])])
 
   const staged = nulFields(
     await git(cwd, ['diff', '--cached', '--name-only', '-z', '--no-renames', record.autoMergeTree]),
@@ -454,12 +470,11 @@ const commitParents = async (cwd: string): Promise<string[]> => {
   return (await git(cwd, ['rev-list', '--parents', '-n', '1', 'HEAD'])).trim().split(' ').slice(1)
 }
 
-const runVerify = async (
-  cwd: string,
-  extra: string | undefined,
-): Promise<{ command: string; ok: boolean; reason?: string }> => {
-  const command = extra ? `${INSTALL_CHECK_COMMAND} && ${extra}` : INSTALL_CHECK_COMMAND
+const verifyCommand = (extra: string | undefined): string => {
+  return extra ? `${INSTALL_FOR_EXTRA_VERIFY} && ${extra}` : INSTALL_CHECK_COMMAND
+}
 
+const runVerify = async (cwd: string, command: string): Promise<VerifyResult> => {
   try {
     await $({ cwd, quiet: true })`sh -c ${command}`
 
@@ -878,6 +893,38 @@ const resolveIndex = async (cwd: string, record: ResolutionRecord): Promise<Bloc
   return record.conflictPaths.includes(LOCKFILE) ? rebuildLockfile(cwd, record) : null
 }
 
+/**
+ * Run verify unless this exact tree already passed this exact command, and record the ignored
+ * build output it created so later scope checks do not read it as the resolver's.
+ */
+// A `.gitignore` is never absorbed: an untracked self-ignoring one is how a resolver would hide
+// files from `git status`, which is what the ignored-set check exists to catch.
+const verifyTree = async (
+  cwd: string,
+  record: ResolutionRecord,
+  treeSha: string,
+  command: string,
+): Promise<VerifyResult> => {
+  if (record.verified?.treeSha === treeSha && record.verified.command === command) {
+    return { command, ok: true, reused: true }
+  }
+
+  const wt = record.worktreePath
+  const ignoredBefore = new Set(await ignoredPaths(wt))
+  const verify = await runVerify(wt, command)
+
+  if (!verify.ok) return verify
+
+  const created = (await ignoredPaths(wt)).filter((file) => {
+    return !ignoredBefore.has(file) && !isUnderNodeModules(file) && path.posix.basename(file) !== '.gitignore'
+  })
+
+  record.ignoredByVerify = [...new Set([...(record.ignoredByVerify ?? []), ...created])]
+  await writeRecord(cwd, record)
+
+  return verify
+}
+
 /** Steps 2–8 for a resolution still mid-merge. */
 const prepareUncommitted = async (
   cwd: string,
@@ -894,7 +941,7 @@ const prepareUncommitted = async (
   const treeSha = await writeTree(wt)
 
   // Before any commit, always: it also installs the `node_modules` a commit hook may shell into.
-  const verify = await runVerify(wt, extraVerify)
+  const verify = await verifyTree(cwd, record, treeSha, verifyCommand(extraVerify))
   const verified = { ...row, treeSha, lockfileMerged, verify }
 
   if (!verify.ok) return blockRow(verified, 'verify-failed', verify.reason ?? 'the verify command failed')
@@ -906,6 +953,11 @@ const prepareUncommitted = async (
     return blockRow(verified, 'verify-mutated-tree', 'the verify step changed the tree', [
       ...new Set([...afterVerify, ...unstaged]),
     ])
+  }
+
+  if (!verify.reused) {
+    record.verified = { treeSha, command: verify.command }
+    await writeRecord(cwd, record)
   }
 
   return { ...verified, ...(await describeResolution(wt, record)) }
