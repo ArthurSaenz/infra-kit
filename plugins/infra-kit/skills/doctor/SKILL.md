@@ -43,9 +43,23 @@ install it resolves a different binary than the one being diagnosed.
 infra-kit doctor
 ```
 
-**Show the output as it comes, without rewriting or re-grouping it.** It is already grouped into
-sections, already rolled up, and each failing line already carries its own fix. Reformatting it
-means holding a second copy of a list this skill does not own, and that copy goes stale silently.
+**Show it to the human as Markdown tables, transcribed from this run's output.** The terminal
+output is wrapped to a fixed width, and it reads as broken text in the chat. The report is already
+grouped into sections and rolled up, and every failing line carries its own fix, so you copy it and
+add nothing:
+
+- Per section, one bold line with the section label and its rollup, exactly as printed. Under it goes
+  a table with the columns `|   | Check | Result |`.
+- One table row per report row, in printed order: the marker as printed (`✓` `✗` `!` `-`), the name,
+  and the message. A message the terminal wrapped onto indented continuation lines is joined back
+  into one cell with single spaces. Escape a literal `|` as `\|`.
+- After the last section, the totals line as printed.
+
+Transcribe; never compose. Every row goes in, the passing ones too, and you drop, merge, reorder
+and reword nothing. The rows come from **this** output, never from memory or an earlier run. A
+table built any other way is a second copy of a list this skill does not own, and that copy goes
+stale silently. If the output does not have this shape (a crash, a stack trace, an unknown flag),
+show it unchanged in a code fence.
 
 **The exit rule.** The CLI exits 1 only when the plugin is not installed for the current project, and
 for no other finding. That is a diagnosis, not a broken command — it is exactly the machine someone
@@ -72,7 +86,8 @@ version is sitting in the cache, whether the loaded skills tree is intact, and w
 directory is the one the CLI assumes.
 
 It prints in the same chrome as the CLI report — a titled section, one marked row per check, the
-rollup, a rule and a totals line — so show it verbatim too, right after the CLI's. It always exits 0.
+rollup, a rule and a totals line. Show it as a table by the same step 1 rules, right after the CLI's
+tables. It always exits 0.
 Its findings are in its output.
 
 ## Step 3 — interpret

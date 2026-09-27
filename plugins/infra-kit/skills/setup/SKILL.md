@@ -59,8 +59,21 @@ one infra-kit manages. A recipe the risk predicate refuses is **printed, not run
 The call ends with one report on stderr, in every mode and `--json` included, and the `Bash` result
 carries it: a section per part (Local setup, Tools, Portless service) with its rollup, the closing
 totals, then the `source ~/.zshrc` reminder as the last line. A tool recipe's `running` lines stream above it while that recipe runs.
-**Show the report verbatim**, never re-grouped, re-tabulated or rebuilt from the JSON. It is the same
-table a human sees in a terminal, and a second copy is one that drifts.
+**Show the report to the human as Markdown tables, built from the JSON `report` array.** That array
+holds the exact rows printed on stderr, already sectioned. The stderr copy is wrapped to a fixed
+width and reads as broken text in the chat, so do not paste it.
+
+- Per section, one bold line with its `label`. Under it goes a table with the columns
+  `|   | Step | Status | Result |`: the stderr marker (`✓` ok, `+` changed, `-` skipped, `>`
+  manual, `!` warn, `✗` fail), `name`, `status` and `message`. Escape a literal `|` as `\|`.
+- A row's `notes` never go in a cell. They are argv a human copies, so list them after the tables,
+  each in a code fence under the row name it belongs to.
+- Finish with the totals line and the `source ~/.zshrc` reminder, copied from stderr.
+
+Transcribe; never compose. Every row goes in, in array order, and you drop, merge, re-group and
+reword nothing. A table built from anything other than `report` is a second copy, and it drifts.
+Skip the streamed `running` lines. When there is no JSON (a crash), show stderr unchanged in a code
+fence.
 
 ### How to read the result
 
