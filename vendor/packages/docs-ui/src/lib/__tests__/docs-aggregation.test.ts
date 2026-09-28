@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { createDocsAggregation } from './docs-aggregation.ts'
+import { createDocsAggregation } from '../docs-aggregation.ts'
 
 // readDocSlugOverride is pure frontmatter parsing (independent of repoRoot/appDir), exposed via
 // the factory. Resolve against this package's own dir — resolveRepoRoot walks up to the workspace.

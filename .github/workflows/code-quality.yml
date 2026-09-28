@@ -1,0 +1,26 @@
+name: '07 ⚙️ Code quality'
+run-name: '07 ⚙️ Code quality'
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate-cache:
+    uses: ./.github/workflows/_cache-nodemodules-jobs.yml
+    with:
+      branch: ${{ github.ref }}
+      cache_version: 1
+    secrets: inherit
+
+  code-quality:
+    needs: [validate-cache]
+    uses: ./.github/workflows/_code-quality-jobs.yml
+    with:
+      branch: ${{ github.ref }}
+      cache_version: 1
+    secrets: inherit
+
+  notify-success:
+    needs: [code-quality]
+    uses: ./.github/workflows/_notify-success-jobs.yml
+    secrets: inherit

@@ -1,0 +1,56 @@
+name: _terraform-apply-infrastructure-jobs
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+
+jobs:
+  apply-infrastructure:
+    runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: "./devops/terraform/infrastructure"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.14.2
+
+      - name: Set up AWS CLI
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.TERRAFORM_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TERRAFORM_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.ROOT_AWS_REGION }}
+        env:
+          ACTIONS_STEP_DEBUG: true
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: terraform change workspace
+        run: terraform workspace select ${{ inputs.environment }}
+
+      - name: Terraform Apply
+        id: apply
+        run: TF_VAR_slack_token=${{ secrets.SLACK_TOKEN }} terraform apply -auto-approve
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_MESSAGE: "Build failed for ${{ github.ref_name }} by ${{ github.actor }}"
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}

@@ -131,6 +131,55 @@ describe('boundaries: sibling cross-imports are type-only', () => {
   })
 })
 
+// A `__tests__` folder is a tooling convention, not an architectural element. Before `!(__*__)` was
+// added to the service patterns, moving a co-located test into `services/__tests__/` silently turned
+// it into element `service="__tests__"`, and importing the module under test was reported as crossing
+// a boundary. The first case fails without the exclusion, so it guards it; the other two are
+// controls proving the exclusion did not stop real service folders from being elements.
+describe('boundaries: __tests__ folders are not elements', () => {
+  it('allows a test in services/__tests__ to import the module under test at runtime', async () => {
+    expectClean(
+      await lintAt(
+        'src/features/alpha/services/__tests__/notify.test.ts',
+        code`
+          import { notify } from '../notify'
+
+          export const a = notify
+        `,
+      ),
+    )
+  })
+
+  it('allows a test inside a real service to import that service at runtime', async () => {
+    expectClean(
+      await lintAt(
+        'src/features/alpha/services/mailer/__tests__/send.test.ts',
+        code`
+          import { send } from '../send'
+
+          export const a = send
+        `,
+      ),
+    )
+  })
+
+  // Control: the exclusion must not stop a real service folder from being an element, nor blank out
+  // the captured name the violation message relies on.
+  it('still classifies a real feature-nested service, and still captures its name', async () => {
+    const messages = await lintAt(
+      'src/features/alpha/services/mailer/x.ts',
+      code`
+        import { util } from '../../../beta/local/util'
+
+        export const a = util
+      `,
+    )
+
+    expectFlagged(messages)
+    expect(messages[0]?.message).toContain('service="mailer"')
+  })
+})
+
 // Without a resolver that understands `#root/`, these imports resolve to nothing and the rule
 // reports nothing — exit 0 on a real violation. This is the form the convention actually writes,
 // so it is the form most worth pinning.

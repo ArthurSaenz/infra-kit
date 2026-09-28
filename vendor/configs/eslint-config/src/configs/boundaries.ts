@@ -51,13 +51,19 @@ export const boundaries = (severity: 'warn' | 'error' = 'error'): TypedFlatConfi
       { type: 'shared', pattern: '**/shared' },
       // Feature-nested services must be matched before the generic feature pattern: with
       // `boundaries/elements-single-type` (v7 default), the first matching descriptor wins.
+      //
+      // `!(__*__)` keeps tooling-convention folders (`__tests__`, `__mocks__`, `__fixtures__`) from
+      // being read as services of their own. Without it a test moved into `services/__tests__/`
+      // became element `service="__tests__"`, so importing the very module under test crossed a
+      // boundary and was reported — the co-located file had been part of the feature all along.
+      // A `__tests__` INSIDE a real service still resolves to that service: folder mode walks up.
       {
         type: 'service',
-        pattern: '**/features/*/services/*',
+        pattern: '**/features/*/services/!(__*__)',
         capture: ['base', 'feature', 'service'],
       },
       { type: 'feature', pattern: '**/features/*', capture: ['base', 'feature'] },
-      { type: 'service', pattern: '**/services/*', capture: ['base', 'service'] },
+      { type: 'service', pattern: '**/services/!(__*__)', capture: ['base', 'service'] },
     ],
   },
   rules: {

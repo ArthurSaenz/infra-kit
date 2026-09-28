@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { makePathToSlugs } from './slugs.ts'
+import { makePathToSlugs } from '../slugs.ts'
 
 // The docs app's own landing content lives at the repo-root `spec/docs/` dir (per-repo, outside
 // vendor). The pure slug logic maps that content to clean URLs (and its index to the landing).

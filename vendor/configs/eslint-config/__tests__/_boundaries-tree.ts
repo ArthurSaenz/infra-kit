@@ -18,6 +18,11 @@ const SCAFFOLD: Record<string, string> = {
     "export { thing } from './internal/thing'\nexport type { Thing } from './internal/thing'\n",
   'src/features/alpha/internal/thing.ts': "export const thing = 'thing'\nexport type Thing = { id: string }\n",
   'src/features/beta/local/util.ts': "export const util = 'util'\n",
+  // Feature-nested services: `notify` sits directly in services/ (so it belongs to the feature),
+  // `mailer` is a real service folder. Both are needed to pin how `__tests__` resolves either side.
+  'src/features/alpha/services/notify.ts': "export const notify = 'notify'\n",
+  'src/features/alpha/services/mailer/index.ts': "export { send } from './send'\n",
+  'src/features/alpha/services/mailer/send.ts': "export const send = 'send'\n",
   'src/services/email/index.ts':
     "export { client } from './internal/client'\nexport type { EmailClient } from './internal/client'\n",
   'src/services/email/internal/client.ts':
