@@ -7,7 +7,7 @@ const PLUGIN_NAME = '@wl'
 const plugin: ESLint.Plugin & { configs: Record<string, Linter.Config | Linter.Config[]> } = {
   meta: {
     name: '@wl/eslint-plugin',
-    version: '0.11.16',
+    version: '0.12.0',
   },
   rules,
   configs: {},
