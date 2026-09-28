@@ -332,12 +332,22 @@ const pickSource = (route: InfraKitDevProxyRoute, localSet: ReadonlySet<string>)
   return route.from.includes('local') && localSet.has(route.packageName) ? 'local' : fallback
 }
 
+/**
+ * Where this UI's cloud routes go: the value of its `deployedUrlEnv`, as the loaded environment set it.
+ * The variable's NAME rides along so an unset one can be named in the error.
+ */
+export interface CloudOrigin {
+  envVar: string | undefined
+  url: string | undefined
+}
+
 interface ResolveRouteArgs {
   routePath: string
   route: InfraKitDevProxyRoute
   templates: InfraKitDevProxy['templates']
   localSet: ReadonlySet<string>
   env: string | undefined
+  cloud: CloudOrigin
   getRelease: () => string
   /** Per-package runtime data (recorded release/port) from the dev-context merge. */
   localInfo?: ReadonlyMap<string, LocalPackageInfo>
@@ -375,6 +385,7 @@ const resolveRoute = ({
   templates,
   localSet,
   env,
+  cloud,
   getRelease,
   localInfo,
 }: ResolveRouteArgs): InfraKitViteProxyEntry => {
@@ -390,21 +401,24 @@ const resolveRoute = ({
     return isLoopbackTarget(target) ? { target, changeOrigin: true, secure: false } : { target, changeOrigin: true }
   }
 
-  if (!env) {
+  if (!cloud.url) {
+    const missing = cloud.envVar
+      ? `${cloud.envVar} is not set`
+      : 'this package declares no `deployedUrlEnv` to read it from'
+
     throw new Error(
-      `@slip-stream-kit/config/vite: proxy route "${routePath}" resolves to a cloud backend but ${INFRA_KIT_ENV} is not set. Source an environment from Doppler first (e.g. \`infra-kit env-load -c dev\`).`,
+      `@slip-stream-kit/config/vite: proxy route "${routePath}" resolves to the deployed app, but ${missing}. Load an environment from Doppler first (e.g. \`infra-kit env-load -c dev\`).`,
     )
   }
 
-  const target = interpolate(templates.cloud, { release: '', packageName: route.packageName, env })
-
-  return { target, changeOrigin: true, secure: false, cookieDomainRewrite: '' }
+  return { target: cloud.url, changeOrigin: true, secure: false, cookieDomainRewrite: '' }
 }
 
 interface ResolveProxyArgs {
   proxy: InfraKitDevProxy
   localSet: ReadonlySet<string>
   env: string | undefined
+  cloud: CloudOrigin
   getRelease: () => string
   /** Pre-computed `Authorization` header value applied uniformly to every route. */
   authHeader?: string
@@ -469,6 +483,7 @@ export const resolveProxyConfig = ({
   proxy,
   localSet,
   env,
+  cloud,
   getRelease,
   authHeader,
   localInfo,
@@ -477,7 +492,16 @@ export const resolveProxyConfig = ({
   const headers = authHeader ? { Authorization: authHeader } : undefined
 
   for (const [routePath, route] of Object.entries(proxy.routes)) {
-    const entry = resolveRoute({ routePath, route, templates: proxy.templates, localSet, env, getRelease, localInfo })
+    const entry = resolveRoute({
+      routePath,
+      route,
+      templates: proxy.templates,
+      localSet,
+      env,
+      cloud,
+      getRelease,
+      localInfo,
+    })
 
     result[routePath] = headers ? { ...entry, headers } : entry
   }
@@ -490,7 +514,7 @@ export interface ProxyRouteDescription {
   path: string
   packageName: string
   source: InfraKitDevProxySource
-  /** `null` when it cannot be resolved: a cloud route with no `env`, or a local fragment that broke its wire promise. */
+  /** `null` when it cannot be resolved: a cloud route whose URL is not loaded, or a local fragment that broke its wire promise. */
   target: string | null
 }
 
@@ -503,11 +527,13 @@ export const describeProxyRoutes = ({
   proxy,
   localContext,
   env,
+  cloud,
   getRelease,
 }: {
   proxy: InfraKitDevProxy
   localContext: LocalContext
   env: string | undefined
+  cloud: CloudOrigin
   getRelease: () => string
 }): ProxyRouteDescription[] => {
   const paths = Object.keys(proxy.routes).toSorted((a, b) => {
@@ -520,7 +546,7 @@ export const describeProxyRoutes = ({
     let target: string | null = null
 
     if (source === 'cloud') {
-      target = env ? interpolate(proxy.templates.cloud, { release: '', packageName: route.packageName, env }) : null
+      target = cloud.url ?? null
     } else {
       try {
         target = resolveLocalTarget({
@@ -576,6 +602,11 @@ const once = <T>(fn: () => T): (() => T) => {
 // `vite.config.ts` we are a library in their process and do NOT patch their globals, so such a package
 // still prints Node's MODULE_TYPELESS_PACKAGE_JSON banner there. Harmless (it is a double-parse
 // notice), and latent while consumer UI packages declare `"type": "module"`.
+/** The deployed URL `deployedUrlEnv` names, as the loaded environment set it. */
+export const readCloudOrigin = (envVar: string | undefined, env: NodeJS.ProcessEnv = process.env): CloudOrigin => {
+  return { envVar, url: envVar ? env[envVar] || undefined : undefined }
+}
+
 /**
  * Load and validate a package's `infra-kit.config.ts`, or `undefined` when it is absent. The `.ts` config is
  * evaluated via Node's native type stripping (Node >= 24) — the same mechanism the CLI's config loader uses.
@@ -951,12 +982,16 @@ export const infraKitDev = async (
   const ws: InfraKitViteWs | undefined =
     managed?.alias == null ? undefined : { protocol: 'wss', host: managed.alias, clientPort: HTTPS_PORT }
   const server = { port, host, ...(strictPort ? { strictPort } : {}), ...(ws ? { ws } : {}) }
-  const dev = await loadDev(cwd)
+  const config = await loadPackageConfig(cwd)
+  const dev = config?.dev
+
+  warnIfNonHttpsLocalTemplate(dev, path.join(cwd, PACKAGE_CONFIG_FILE))
 
   if (!dev?.proxy) return { ...server, proxy: {} }
 
   const { packages: localSet, info: localInfo } = readLocalContext(cwd)
   const env = process.env[INFRA_KIT_ENV]
+  const cloud = readCloudOrigin(config?.deployedUrlEnv)
   const authHeader = buildBasicAuthHeader(process.env, options.basicAuth)
   const getRelease = once(() => {
     return readRelease(cwd)
@@ -964,7 +999,7 @@ export const infraKitDev = async (
 
   return {
     ...server,
-    proxy: resolveProxyConfig({ proxy: dev.proxy, localSet, env, getRelease, authHeader, localInfo }),
+    proxy: resolveProxyConfig({ proxy: dev.proxy, localSet, env, cloud, getRelease, authHeader, localInfo }),
   }
 }
 

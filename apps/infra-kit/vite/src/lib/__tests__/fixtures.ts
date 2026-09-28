@@ -24,11 +24,11 @@ export interface TempRepo {
 
 /** The two-route proxy every case here resolves against: both routes prefer `local`, and fall back to cloud. */
 const CONFIG_SOURCE = `export default {
+  deployedUrlEnv: 'CLIENT_URL',
   dev: {
     proxy: {
       templates: {
         local: 'https://<release>.<packageName>.localhost',
-        cloud: 'https://<env>.example.test',
       },
       routes: {
         '/api': { packageName: 'client-api', from: ['local', 'cloud'], default: 'cloud' },

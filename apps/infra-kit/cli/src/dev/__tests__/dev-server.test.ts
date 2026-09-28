@@ -295,7 +295,7 @@ describe('devServerRunner — an app name and --reuse', () => {
           name: 'client',
           packageName: 'client-api',
           withHandler: true,
-          ui: { packageName: 'client-ui', proxy: { cloud: 'https://dev.example.com', routes } },
+          ui: { packageName: 'client-ui', proxy: { routes } },
         },
       ]),
     )
@@ -393,13 +393,12 @@ describe('devServerRunner — an app name and --reuse', () => {
     expect(fs.existsSync(fragment)).toBe(true)
   })
 
-  it('--reuse refuses before anything starts when a cloud route has no INFRA_KIT_ENV', async () => {
-    const root = clientFixture({ ...API_ROUTE, '/media': { packageName: 'client-api', from: ['cloud'] } })
+  /** `--reuse` against a UI whose `/media` route can only go to the deployed app. */
+  const reuseWithCloudRoute = (): { runner: DevServerRunner; builds: string[] } => {
     const builds: string[] = []
+    const root = clientFixture({ ...API_ROUTE, '/media': { packageName: 'client-api', from: ['cloud'] } })
 
-    delete process.env[INFRA_KIT_ENV_VAR]
     process.env.PORTLESS_STATE_DIR = temp.register(fs.mkdtempSync(path.join(os.tmpdir(), 'ik-portless-')))
-    spyStdoutWrite([])
     process.chdir(root)
 
     const runner = new DevServerRunner(
@@ -417,8 +416,39 @@ describe('devServerRunner — an app name and --reuse', () => {
       workingProxy(),
     )
 
-    await expect(runner.start()).rejects.toThrow(/client\/ui \/media/)
+    return { runner, builds }
+  }
+
+  it('--reuse refuses before anything starts when a cloud route’s deployed URL is not loaded, naming the variable', async () => {
+    // An env name alone is not enough: the URL is the value of the UI's `deployedUrlEnv`, not a template.
+    process.env[INFRA_KIT_ENV_VAR] = 'dev'
+    delete process.env.CLIENT_URL
+    spyStdoutWrite([])
+
+    const { runner, builds } = reuseWithCloudRoute()
+    const error = await runner.start().then(
+      () => {
+        return null
+      },
+      (e: unknown) => {
+        return e as Error
+      },
+    )
+
+    expect(error?.message).toMatch(/client\/ui \/media \(CLIENT_URL\)/)
+    expect(error?.message).toContain('whose URL is not loaded')
     expect(builds).toEqual([])
+
+    await runner.shutdown()
+  })
+
+  it('--reuse passes the cloud-route preflight once the deployed URL is loaded', async () => {
+    process.env.CLIENT_URL = 'https://dev.example.com'
+    spyStdoutWrite([])
+
+    const { runner } = reuseWithCloudRoute()
+
+    await expect(runner.start()).resolves.toBeUndefined()
 
     await runner.shutdown()
   })
@@ -445,7 +475,6 @@ describe('devServerRunner — a named preset with a static proxy-locality violat
           ui: {
             packageName: 'client-ui',
             proxy: {
-              cloud: 'https://dev.example.com',
               routes: { '/api': { packageName: 'client-api', from: ['local', 'cloud'], default: 'cloud' } },
             },
           },
@@ -581,7 +610,6 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
           ui: {
             packageName: 'website-ui',
             proxy: {
-              cloud: 'https://<env>.hulyo.co.il',
               routes: {
                 // `default: 'cloud'` is REQUIRED by the schema for a multi-source route — and it is
                 // exactly the fallback that makes the failure silent.
@@ -596,7 +624,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     )
 
     process.env.CLIENT_PORT = String(await getFreePort())
-    process.env[INFRA_KIT_ENV_VAR] = 'dev'
+    process.env.CLIENT_URL = 'https://dev.hulyo.co.il'
 
     const fakeRunBuild = async (): Promise<void> => {
       fs.writeFileSync(
@@ -847,7 +875,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     )
 
     process.env.CLIENT_PORT = String(await getFreePort())
-    process.env[INFRA_KIT_ENV_VAR] = 'dev'
+    process.env.CLIENT_URL = 'https://dev.hulyo.co.il'
 
     const fakeRunBuild = async (): Promise<void> => {
       fs.writeFileSync(path.join(root, 'apps', 'client', 'api', 'dist', 'handler.js'), 'throw new Error("boom")\n')
@@ -894,7 +922,6 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
           ui: {
             packageName: 'website-ui',
             proxy: {
-              cloud: 'https://<env>.hulyo.co.il',
               // Cross-app: client's frontend is served by BACKOFFICE's backend.
               routes: {
                 '/api': { packageName: 'backoffice-api', from: ['local', 'cloud'], default: 'cloud' },
@@ -907,7 +934,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
 
     process.env.CLIENT_PORT = String(await getFreePort())
     process.env.BACKOFFICE_PORT = String(await getFreePort())
-    process.env[INFRA_KIT_ENV_VAR] = 'dev'
+    process.env.CLIENT_URL = 'https://dev.hulyo.co.il'
 
     const fakeRunBuild = async (): Promise<void> => {}
 
@@ -975,7 +1002,6 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
           ui: {
             packageName: 'website-ui',
             proxy: {
-              cloud: 'https://<env>.hulyo.co.il',
               routes: { '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' } },
             },
           },
@@ -983,7 +1009,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
       ]),
     )
 
-    process.env[INFRA_KIT_ENV_VAR] = 'dev'
+    process.env.CLIENT_URL = 'https://dev.hulyo.co.il'
 
     const fakeRunBuild = async (): Promise<void> => {}
 
@@ -1022,7 +1048,6 @@ describe('devServerRunner — the ready header lists each frontend’s resolved 
             packageName: 'website-ui',
             viteConfig: true,
             proxy: {
-              cloud: 'https://<env>.hulyo.co.il',
               routes: {
                 '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },
                 '/media': { packageName: 'backend-api', from: ['cloud'] },
@@ -1035,7 +1060,7 @@ describe('devServerRunner — the ready header lists each frontend’s resolved 
 
     gitInitOnBranch(root, 'feat-x')
     process.env.CLIENT_PORT = String(await getFreePort())
-    process.env[INFRA_KIT_ENV_VAR] = 'dev'
+    process.env.CLIENT_URL = 'https://dev.hulyo.co.il'
     process.chdir(root)
 
     const fakeRunBuild = async (): Promise<void> => {
@@ -1076,7 +1101,7 @@ describe('devServerRunner — the ready header lists each frontend’s resolved 
         { route: '/api', source: 'local' },
         { route: '/media', source: 'cloud' },
       ])
-      // Where: the local route points at the running backend's own origin, the cloud route at the env origin.
+      // Where: the local route points at the running backend's own origin, the cloud route at the loaded deployed URL.
       expect(
         ui?.proxies?.find((p) => {
           return p.route === '/api'

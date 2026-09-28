@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { logger } from 'src/lib/logger'
 
 import { MANUAL_CHOICE, WIZARD_ORCA_VAR, auditManualPlan, loadBackends, runWizardFlow } from '../dev-wizard-run.js'
-import type { WizardChoice, WizardPrompts } from '../dev-wizard-run.js'
+import type { LoadEnvVars, WizardChoice, WizardPrompts } from '../dev-wizard-run.js'
 import type { WizardModel } from '../dev-wizard.js'
 
 /** One full-stack app whose frontend proxies a two-option `/api` → its own `client-api` backend. */
@@ -18,6 +18,7 @@ const model = (presets: string[] = []): WizardModel => {
         hasApi: true,
         hasUi: true,
         apiPackage: 'client-api',
+        deployedUrlEnv: 'CLIENT_URL',
         backends: [
           {
             packageName: 'client-api',
@@ -72,6 +73,26 @@ const scripted = (script: {
   }
 }
 
+/** A Doppler stand-in holding `vars` for every env; `calls` records what the wizard asked it for. */
+const fakeEnvVars = (vars: Record<string, string>): { load: LoadEnvVars; calls: [string, string[]][] } => {
+  const calls: [string, string[]][] = []
+
+  return {
+    calls,
+    load: (env, names) => {
+      calls.push([env, names])
+
+      return Promise.resolve(
+        new Map(
+          names.flatMap((name) => {
+            return vars[name] === undefined ? [] : [[name, vars[name]] as const]
+          }),
+        ),
+      )
+    },
+  }
+}
+
 /** Wrap a prompt seam so every `confirm` config — including the `default` `scripted` ignores — is recorded. */
 const recordConfirms = (
   prompts: WizardPrompts,
@@ -98,6 +119,9 @@ const recordConfirms = (
  */
 beforeEach(() => {
   vi.stubEnv(WIZARD_ORCA_VAR, undefined)
+  // The cloud-env pick writes these; stubbing records the shell's values so `unstubAllEnvs` restores them.
+  vi.stubEnv('INFRA_KIT_ENV', undefined)
+  vi.stubEnv('CLIENT_URL', undefined)
 })
 
 afterEach(() => {
@@ -126,6 +150,7 @@ describe('runWizardFlow — manual branch', () => {
   })
 
   it('full-stack local: frontend + /api answered local → presetDef with both parts, no env prompt', async () => {
+    const doppler = fakeEnvVars({ CLIENT_URL: 'https://dev.example.com' })
     const result = await runWizardFlow(
       scripted({
         checkbox: [['Which packages', ['client/ui']]],
@@ -133,11 +158,14 @@ describe('runWizardFlow — manual branch', () => {
         confirm: [['watch', false]],
       }),
       model(),
+      doppler.load,
     )
 
     expect(result?.presetDef?.apps).toEqual({ 'client/ui': { proxy: { '/api': 'local' } }, 'client/api': {} })
     expect(result?.watch).toBe(false)
     expect(result?.orca).toBe(false)
+    // No route goes to cloud, so no deployed URL is fetched.
+    expect(doppler.calls).toEqual([])
   })
 
   it('frontend cloud: /api answered cloud → cloud env prompt, presetDef drops the backend', async () => {
@@ -151,11 +179,61 @@ describe('runWizardFlow — manual branch', () => {
         confirm: [['watch', false]],
       }),
       model(),
+      fakeEnvVars({ CLIENT_URL: 'https://staging.example.com' }).load,
     )
 
     expect(Object.keys(result?.presetDef?.apps ?? {})).toEqual(['client/ui'])
     expect(result?.presetDef?.apps?.['client/ui']).toEqual({ proxy: { '/api': 'cloud' } })
     expect(process.env.INFRA_KIT_ENV).toBe('staging')
+  })
+
+  it("frontend cloud: loads the picked env's deployed URL into the frontend's deployedUrlEnv", async () => {
+    // The shell may hold another env's URL; the proxy must follow the env picked here.
+    process.env.CLIENT_URL = 'https://dev.example.com'
+    const doppler = fakeEnvVars({ CLIENT_URL: 'https://staging.example.com' })
+
+    await runWizardFlow(
+      scripted({
+        checkbox: [['Which packages', ['client/ui']]],
+        select: [
+          ['local or cloud', 'cloud'],
+          ['environment', 'staging'],
+        ],
+        confirm: [['watch', false]],
+      }),
+      model(),
+      doppler.load,
+    )
+
+    expect(doppler.calls).toEqual([['staging', ['CLIENT_URL']]])
+    expect(process.env.CLIENT_URL).toBe('https://staging.example.com')
+  })
+
+  it('frontend cloud: warns, naming the env and the variable, when the picked env holds no deployed URL', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    // The shell holds another env's URL; the picked env has none, so it must not survive the pick.
+    process.env.CLIENT_URL = 'https://dev.example.com'
+
+    const result = await runWizardFlow(
+      scripted({
+        checkbox: [['Which packages', ['client/ui']]],
+        select: [
+          ['local or cloud', 'cloud'],
+          ['environment', 'staging'],
+        ],
+        confirm: [['watch', false]],
+      }),
+      model(),
+      fakeEnvVars({}).load,
+    )
+
+    // A missing URL is not fatal to the pick — the run still starts, and the warning says why cloud calls fail.
+    expect(result?.presetDef?.apps?.['client/ui']).toEqual({ proxy: { '/api': 'cloud' } })
+    expect(process.env.INFRA_KIT_ENV).toBe('staging')
+    expect(process.env.CLIENT_URL).toBeUndefined()
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/"staging" holds no CLIENT_URL/))
+    warn.mockRestore()
   })
 
   it('orca: returns an include of the launched API apps, PLUS the presetDef that pins the parts of each pane', async () => {
@@ -215,6 +293,7 @@ describe('runWizardFlow — manual branch', () => {
         ],
       }),
       model(),
+      fakeEnvVars({ CLIENT_URL: 'https://dev.example.com' }).load,
     )
 
     // frontend-only + orca → no backend panes → in-process presetDef, orca disabled, no empty include.
@@ -373,7 +452,7 @@ describe('loadBackends', () => {
 
   it('returns backends for a valid config (guard does not swallow the happy path)', async () => {
     const dir = makeUiDir(
-      'export default { dev: { proxy: { templates: { local: "http://{package}.localhost", cloud: "https://{env}.acme.dev" }, routes: { "/api": { packageName: "acme-api", from: ["local"] } } } } }',
+      'export default { dev: { proxy: { templates: { local: "http://{package}.localhost" }, routes: { "/api": { packageName: "acme-api", from: ["local"] } } } } }',
     )
 
     const backends = await loadBackends(dir, 'acme', new Map([['acme-api', 'acme']]))

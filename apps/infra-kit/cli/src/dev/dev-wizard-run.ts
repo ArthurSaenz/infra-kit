@@ -10,7 +10,7 @@
 import inquirerCheckbox from '@inquirer/checkbox'
 import inquirerConfirm from '@inquirer/confirm'
 import inquirerSelect, { Separator } from '@inquirer/select'
-import { loadDev } from '@slip-stream-kit/config/internal'
+import { loadDev, loadPackageConfig } from '@slip-stream-kit/config/internal'
 import path from 'node:path'
 import process from 'node:process'
 
@@ -211,14 +211,20 @@ export const gatherWizardModel = async (root: string): Promise<WizardModel> => {
         hasUi,
         apiPackage: apiPkgByName.get(name),
         backends: hasUi ? await loadBackends(path.join(root, 'apps', name, 'ui'), name, ownerByPkg) : [],
+        deployedUrlEnv: hasUi
+          ? (
+              await loadPackageConfig(path.join(root, 'apps', name, 'ui')).catch(() => {
+                return undefined
+              })
+            )?.deployedUrlEnv
+          : undefined,
       }
     }),
   )
 
   // The cloud-env choices are the envs we hold a token for — the same authority as `env-load`, because
-  // it is the same question. This picker writes INFRA_KIT_ENV, which `@slip-stream-kit/config/vite`
-  // reads to build the cloud backend's URL, and whose only other writer is `env-load` (which cannot run
-  // without a Doppler token). Sourcing it from the workflow options instead would put `prod` in the list
+  // it is the same question. Picking one loads that env's deployed URLs for the picked frontends, which
+  // `@slip-stream-kit/config/vite` sends their cloud routes to — and the download needs the env's token. Sourcing it from the workflow options instead would put `prod` in the list
   // for everyone — including a developer holding no prod credential — and point a local UI at
   // production. No token, no entry.
   const store = await readTokenStore()
@@ -411,7 +417,62 @@ const recapSources = (plan: DerivedPlan, model: WizardModel): void => {
 }
 
 /** The manual-branch flow: frontends + per-route source + env + watch + orca → audited plan → recap → echo. */
-const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Promise<WizardResult | null> => {
+/** Reads named variables of one environment (its Doppler config). A seam, so the flow runs without Doppler in tests. */
+export type LoadEnvVars = (env: string, names: string[]) => Promise<Map<string, string>>
+
+const loadEnvVarsFromDoppler: LoadEnvVars = async (env, names) => {
+  const { downloadEnvSecrets } = await import('src/commands/env-load/env-load')
+  const secrets = await downloadEnvSecrets(env)
+
+  return new Map(
+    names.flatMap((name) => {
+      const value = secrets.get(name)
+
+      return value === undefined ? [] : [[name, value] as const]
+    }),
+  )
+}
+
+/**
+ * Point this session's cloud routes at the picked env: its name, and the deployed URL of every picked
+ * frontend. The URLs are the picked env's own — the shell may hold another env's, and `INFRA_KIT_ENV` alone
+ * no longer names a host. Backends keep the shell's env; only what the proxy reads changes.
+ */
+const applyCloudEnv = async (
+  env: string,
+  uiKeys: string[],
+  model: WizardModel,
+  loadEnvVars: LoadEnvVars,
+): Promise<void> => {
+  const names = uiKeys.flatMap((key) => {
+    const app = model.apps.find((candidate) => {
+      return `${candidate.name}/ui` === key
+    })
+
+    return app?.deployedUrlEnv ? [app.deployedUrlEnv] : []
+  })
+  const values = names.length > 0 ? await loadEnvVars(env, names) : new Map<string, string>()
+
+  process.env[INFRA_KIT_ENV_VAR] = env
+
+  for (const name of names) {
+    const value = values.get(name)
+
+    if (value) {
+      process.env[name] = value
+    } else {
+      // The shell's value names another env's host; keeping it would send this env's cloud routes there.
+      delete process.env[name]
+      logger.warn(`☁️  "${env}" holds no ${name}; routes that go to the deployed app will fail until it does.`)
+    }
+  }
+}
+
+const runManualBranch = async (
+  prompts: WizardPrompts,
+  model: WizardModel,
+  loadEnvVars: LoadEnvVars,
+): Promise<WizardResult | null> => {
   if (model.apps.length === 0) {
     logger.warn('No apps discovered to run.')
 
@@ -457,7 +518,7 @@ const runManualBranch = async (prompts: WizardPrompts, model: WizardModel): Prom
         return { name: e, value: e }
       }),
     })
-    process.env[INFRA_KIT_ENV_VAR] = selection.env
+    await applyCloudEnv(selection.env, uiKeys, model, loadEnvVars)
   }
 
   const issues = auditManualPlan(plan.presetDef, model)
@@ -531,9 +592,13 @@ export const MANUAL_CHOICE = ' manual'
  * Drive the wizard's branch flow over an ALREADY-gathered model (no disk/config access). Split from
  * {@link runDevWizard} so the flow is unit-testable with scripted prompts + a fixture model.
  */
-export const runWizardFlow = async (prompts: WizardPrompts, model: WizardModel): Promise<WizardResult | null> => {
+export const runWizardFlow = async (
+  prompts: WizardPrompts,
+  model: WizardModel,
+  loadEnvVars: LoadEnvVars = loadEnvVarsFromDoppler,
+): Promise<WizardResult | null> => {
   if (model.presets.length === 0) {
-    return runManualBranch(prompts, model)
+    return runManualBranch(prompts, model, loadEnvVars)
   }
 
   const choice = await prompts.select({
@@ -547,7 +612,7 @@ export const runWizardFlow = async (prompts: WizardPrompts, model: WizardModel):
     ],
   })
 
-  return choice === MANUAL_CHOICE ? runManualBranch(prompts, model) : runPresetBranch(prompts, choice)
+  return choice === MANUAL_CHOICE ? runManualBranch(prompts, model, loadEnvVars) : runPresetBranch(prompts, choice)
 }
 
 /**

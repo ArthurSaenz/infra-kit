@@ -57,7 +57,7 @@ const devCommandFor = (location: E2eLocation): string => {
 }
 
 const formatTarget = (target: E2eTarget, served: boolean): string => {
-  const lines = [`${target.app} e2e → ${target.mode.toUpperCase()} ${target.baseUrl}  (${target.baseUrlEnv})`]
+  const lines = [`${target.app} e2e → ${target.mode.toUpperCase()} ${target.baseUrl}`]
 
   if (target.mode === 'cloud') lines.push(`  deployed app at env "${target.env}"`)
   else if (served) lines.push(`  dev server for ${target.target} on release "${target.release}", already running`)
@@ -138,14 +138,14 @@ const resolveLocal = async (location: E2eLocation, deps: E2eDeps): Promise<E2eTa
     })
   }
 
-  const { app, testsDir, target, packageName, baseUrlEnv, release, env, localUrl } = location
+  const { app, testsDir, target, packageName, deployedUrlEnv, release, env, localUrl } = location
 
   return {
     app,
     testsDir,
     target,
     packageName,
-    baseUrlEnv,
+    deployedUrlEnv,
     release,
     env,
     localUrl,
@@ -160,7 +160,9 @@ const defaultRunPlaywright = (target: E2eTarget, args: string[]): Promise<number
     // eslint-disable-next-line sonarjs/no-os-command-from-path -- the consumer's own pnpm, as its e2e scripts run it
     const child = spawn('pnpm', ['exec', 'playwright', 'test', ...args], {
       cwd: target.testsDir,
-      env: { ...process.env, [E2E_MODE_ENV]: target.mode, [target.baseUrlEnv]: target.baseUrl },
+      // Only the mode: the deployed URL stays as loaded, because the dev server a local run starts proxies
+      // the UI's cloud-only routes there.
+      env: { ...process.env, [E2E_MODE_ENV]: target.mode },
       // Under --json/agent mode stdout carries the result document; Playwright's report goes to stderr.
       stdio: ['inherit', jsonOutput.enabled || isHeadless() ? 2 : 'inherit', 'inherit'],
     })
@@ -182,12 +184,6 @@ export const e2e = async (args: E2eArgs, deps: E2eDeps = {}) => {
   const target = args.cloud ? describeCloudTarget(location, deps) : await resolveLocal(location, deps)
 
   logger.info(formatTarget(target, location.served))
-
-  const current = (deps.env ?? process.env)[target.baseUrlEnv]
-
-  if (current && current !== target.baseUrl) {
-    logger.info(`  ${target.baseUrlEnv} was ${current} in this shell; the run uses ${target.baseUrl}`)
-  }
 
   if (target.mode === 'cloud') await assertCloudEnvReachable(target, deps)
 
@@ -235,8 +231,11 @@ const e2eOutputSchema = {
   mode: z
     .enum(['local', 'cloud'])
     .describe('local (default): this worktree’s dev server. cloud (--cloud): the deployed app at env.'),
-  baseUrl: z.string().describe('The URL the run was pointed at, via the baseUrlEnv variable.'),
-  baseUrlEnv: z.string(),
+  baseUrl: z.string().describe('The URL the run was pointed at: the local alias, or the deployed URL.'),
+  deployedUrlEnv: z
+    .string()
+    .nullable()
+    .describe('The target’s variable holding its deployed URL; a cloud run reads it. Null when it declares none.'),
   release: z.string().describe('This worktree’s release slug — the first label of every local alias.'),
   env: z.string().nullable().describe('INFRA_KIT_ENV of this process; the env a cloud run targets.'),
   localUrl: z.string().describe('This worktree’s address for the target, whether or not anything serves it.'),

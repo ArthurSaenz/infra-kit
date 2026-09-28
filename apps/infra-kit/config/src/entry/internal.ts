@@ -31,7 +31,8 @@ export {
   DEV_CONTEXT_WIRE_VERSION,
   loadDev,
   loadPackageConfig,
+  readCloudOrigin,
   readLocalContext,
   readLocalSet,
 } from '../lib/vite/vite'
-export type { LocalContext, LocalPackageInfo, ProxyRouteDescription } from '../lib/vite/vite'
+export type { CloudOrigin, LocalContext, LocalPackageInfo, ProxyRouteDescription } from '../lib/vite/vite'

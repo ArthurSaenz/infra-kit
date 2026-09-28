@@ -128,12 +128,21 @@ export interface AppSpec {
      * Also write the UI's `infra-kit.config.ts` with a `dev.proxy` block declaring these routes. This is
      * the file the vite helper resolves the real proxy from, and the same file the broken-local-pairing
      * check reads — so a fixture without it declares no routes and can never degrade.
+     *
+     * `deployedUrlEnv` names the variable holding the deployed URL cloud routes proxy to; it defaults to
+     * {@link deployedUrlEnvOf} the app. The value is read from `process.env`, so a test that needs a cloud
+     * target sets that variable and one that models "not loaded" deletes it.
      */
     proxy?: {
       routes: Record<string, { packageName: string; from: ('local' | 'cloud')[]; default?: 'local' | 'cloud' }>
-      cloud?: string
+      deployedUrlEnv?: string
     }
   }
+}
+
+/** The `deployedUrlEnv` a fixture UI declares by default: `client` → `CLIENT_URL`. */
+export function deployedUrlEnvOf(app: string): string {
+  return `${app.toUpperCase().replaceAll('-', '_')}_URL`
 }
 
 /** Scaffold `apps/<app>/api`: serverless.yml, package.json, and (optionally) a compiled dist handler. */
@@ -197,18 +206,16 @@ function writeUi(root: string, app: AppSpec & { ui: NonNullable<AppSpec['ui']> }
   if (!ui.proxy) return
 
   const proxy = {
-    templates: {
-      local: 'https://<release>.<packageName>.localhost',
-      cloud: ui.proxy.cloud ?? 'https://<env>.example.com',
-    },
+    templates: { local: 'https://<release>.<packageName>.localhost' },
     routes: ui.proxy.routes,
   }
+  const deployedUrlEnv = ui.proxy.deployedUrlEnv ?? deployedUrlEnvOf(app.name)
 
   // A plain object export (not a function): `loadDev` accepts either, and this keeps the fixture free of
   // an import of `@slip-stream-kit/config`, which the temp dir cannot resolve.
   fs.writeFileSync(
     path.join(uiDir, 'infra-kit.config.ts'),
-    `export default ${JSON.stringify({ requiredScripts: [], requiredFiles: [], dev: { proxy } }, null, 2)}\n`,
+    `export default ${JSON.stringify({ requiredScripts: [], requiredFiles: [], deployedUrlEnv, dev: { proxy } }, null, 2)}\n`,
   )
 }
 

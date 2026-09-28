@@ -65,10 +65,10 @@ export interface LaunchedUi {
   /** Route path → its declared backend, capable sources, and fallback. */
   routes: Record<string, PairingRoute>
   /**
-   * The frontend's `dev.proxy.templates.cloud`, so a cloud-falling route can name the origin it is about
-   * to use. Omitted → the finding carries no `cloudTarget`.
+   * The frontend's deployed URL (the value of its `deployedUrlEnv`), so a cloud-falling route can name the
+   * origin it is about to use. Omitted when not loaded → the finding carries no `cloudTarget`.
    */
-  cloudTemplate?: string
+  cloudUrl?: string
 }
 
 /** Everything the rule needs to decide intent vs reality. */
@@ -86,8 +86,6 @@ export interface PairingInputs {
   reasons: ReadonlyMap<string, { app: string; reason: string }>
   /** Down packages whose routes the runner holds at their local alias instead of the declared fallback. */
   held?: ReadonlySet<string>
-  /** `INFRA_KIT_ENV`, for the `<env>` placeholder in a cloud template. */
-  env?: string
 }
 
 /** A route this run meant to serve locally, whose backend is not up. */
@@ -111,21 +109,6 @@ export interface DegradedRoute {
 /** Reason text for a package the run never even attempted to start. */
 const NOT_LAUNCHED = 'this run never launched it'
 
-/**
- * Fill the `<env>`/`<packageName>` placeholders in a cloud template (`<release>` is local-only), or
- * `undefined` when the template needs an `<env>` and none is sourced.
- *
- * Refusing to interpolate an empty `<env>` matters: `https://<env>.hulyo.co.il` with nothing to put in it
- * renders `https://.hulyo.co.il`, a host that resolves nowhere. Naming a made-up origin in a message whose
- * entire job is to tell the user WHERE their traffic was about to go is worse than naming none — the
- * caller then says "the cloud backend" and stays true.
- */
-const interpolateCloud = (template: string, packageName: string, env: string | undefined): string | undefined => {
-  if (!env && template.includes('<env>')) return undefined
-
-  return template.replaceAll('<packageName>', packageName).replaceAll('<env>', env ?? '')
-}
-
 /** Where an unserved route actually lands, per the helper's `pickSource`: `default`, else the sole source. */
 const resolveFallback = (route: PairingRoute): PairingSource => {
   return route.default ?? route.from[0] ?? 'cloud'
@@ -134,15 +117,6 @@ const resolveFallback = (route: PairingRoute): PairingSource => {
 /** Where a local-capable route whose backend is NOT up lands: its held alias, else the declared fallback. */
 const resolveUnserved = (route: PairingRoute, held: ReadonlySet<string> | undefined): PairingSource => {
   return route.from.includes('local') && held?.has(route.packageName) ? 'local' : resolveFallback(route)
-}
-
-/** The cloud origin a route lands on, or undefined when there is no template (or no `<env>` for one). */
-const cloudTargetOf = (
-  cloudTemplate: string | undefined,
-  packageName: string,
-  env: string | undefined,
-): string | undefined => {
-  return cloudTemplate == null ? undefined : interpolateCloud(cloudTemplate, packageName, env)
 }
 
 /**
@@ -157,9 +131,9 @@ const cloudTargetOf = (
  *
  * @example
  * findDegradedRoutes({
- *   uis: [{ app: 'client', cloudTemplate: 'https://<env>.hulyo.co.il',
+ *   uis: [{ app: 'client', cloudUrl: 'https://dev.hulyo.co.il',
  *           routes: { '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' } } }],
- *   wanted: new Set(['backend-api']), running: new Set(), env: 'dev',
+ *   wanted: new Set(['backend-api']), running: new Set(),
  *   reasons: new Map([['backend-api', { app: 'client', reason: "config is missing field: 'connectionURL'" }]]),
  * })
  * // => [{ uiApp: 'client', route: '/api', packageName: 'backend-api', fallback: 'cloud', apiApp: 'client',
@@ -180,7 +154,7 @@ const judgeRoute = (
   ui: LaunchedUi,
   route: string,
   spec: PairingRoute,
-  { wanted, running, reasons, held, env }: PairingInputs,
+  { wanted, running, reasons, held }: PairingInputs,
 ): DegradedRoute | null => {
   const { packageName } = spec
   const intendedLocal = wanted.has(packageName) || spec.pinnedLocal === true
@@ -189,8 +163,7 @@ const judgeRoute = (
 
   const fallback = resolveUnserved(spec, held)
   const failure = reasons.get(packageName)
-  const cloudTarget =
-    fallback === 'cloud' && ui.cloudTemplate != null ? interpolateCloud(ui.cloudTemplate, packageName, env) : undefined
+  const cloudTarget = fallback === 'cloud' ? ui.cloudUrl : undefined
 
   return {
     uiApp: ui.app,
@@ -214,9 +187,9 @@ export interface ResolvedProxyRoute {
   /** Where the route actually resolves — what the vite helper's `pickSource` will return for this run. */
   source: PairingSource
   /**
-   * The origin the route resolves to: the running backend's local origin (`local`) or the interpolated
-   * cloud origin (`cloud`). Omitted when it is not knowable — a `local` route whose backend is not up (a
-   * dead alias, already surfaced as a degraded row) or a `cloud` route with no `<env>` sourced.
+   * The origin the route resolves to: the running backend's local origin (`local`) or the deployed
+   * URL (`cloud`). Omitted when it is not knowable — a `local` route whose backend is not up (a
+   * dead alias, already surfaced as a degraded row) or a `cloud` route whose deployed URL is not loaded.
    */
   target?: string
 }
@@ -236,8 +209,6 @@ export interface ProxyResolutionInputs {
   localOrigin: (packageName: string) => string | undefined
   /** Down packages held at their local alias — see {@link PairingInputs.held}. */
   held?: ReadonlySet<string>
-  /** `INFRA_KIT_ENV`, for the `<env>` placeholder in a cloud template. */
-  env?: string
 }
 
 /**
@@ -252,7 +223,7 @@ export interface ProxyResolutionInputs {
  * Routes are emitted sorted by path within each UI, so the listing is stable regardless of config order.
  */
 export const resolveProxyRoutes = (input: ProxyResolutionInputs): ResolvedProxyRoute[] => {
-  const { uis, running, localOrigin, held, env } = input
+  const { uis, running, localOrigin, held } = input
 
   return uis.flatMap((ui) => {
     return Object.entries(ui.routes)
@@ -262,8 +233,7 @@ export const resolveProxyRoutes = (input: ProxyResolutionInputs): ResolvedProxyR
       .map(([route, spec]): ResolvedProxyRoute => {
         const source: PairingSource =
           spec.from.includes('local') && running.has(spec.packageName) ? 'local' : resolveUnserved(spec, held)
-        const target =
-          source === 'local' ? localOrigin(spec.packageName) : cloudTargetOf(ui.cloudTemplate, spec.packageName, env)
+        const target = source === 'local' ? localOrigin(spec.packageName) : ui.cloudUrl
 
         return { uiApp: ui.app, route, packageName: spec.packageName, source, target }
       })

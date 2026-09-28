@@ -21,11 +21,11 @@ no consumer uses today). If you add a new managed UI, wire the **plugin**.
 In each UI's `infra-kit.config.ts`:
 
 ```ts
+deployedUrlEnv: 'BACKOFFICE_URL',  // the variable holding this app's deployed URL; the value is in Doppler, per env
 dev: {
   proxy: {
     templates: {
       local: 'https://<release>.<packageName>.localhost',  // MUST be https:// (portless serves TLS on :443)
-      cloud: 'https://<env>.example.com',
     },
     routes: {
       '/api': { packageName: 'backoffice-api', from: ['local', 'cloud'], default: 'cloud' },
@@ -34,6 +34,9 @@ dev: {
 }
 ```
 
+- A route that goes to cloud is sent to the value of `deployedUrlEnv` — whatever `ik env-load -c <env>`
+  loaded. The URL is data per environment (prod's hosts are not `<env>`-shaped), so it lives in Doppler,
+  never in a template. The same variable is where `infraKitE2e()` points a cloud e2e run.
 - `packageName` MUST equal the backend app's **actual `package.json` name** — dev-context
   fragments (which drive local routing) are keyed by real package names. A mismatch means the
   route can never resolve `local` and silently uses its `default`. (This exact drift shipped
@@ -41,8 +44,8 @@ dev: {
   `sls-trvl-back-office`/`sls-trvl-api-handler`.)
 - `devServersPresets` keys in `infra-kit.json` are `<app>/ui` or `<app>/api` — a bare `<app>`
   key fails validation loudly.
-- A preset that pins a route `"local"` must also launch the backend that route names
-  (hulyo pattern: `clientLocal` = `client/ui` (with the pin) + `client/api`).
+- `ik dev <app>` runs the app plus every backend its local-capable routes name, pinned local — no
+  preset needed for that. A preset that pins a route `"local"` must also launch the backend it names.
 - All of the above is validated by `infra-kit audit --root` (exit 1 on failure). Both
   consumers run it in `qa` via the root `infra-kit-check-root` script — keep that wired in CI.
 

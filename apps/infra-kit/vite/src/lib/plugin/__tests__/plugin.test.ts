@@ -7,7 +7,7 @@ import { infraKit } from '../plugin'
 
 afterEach(() => {
   cleanupRepos()
-  delete process.env.INFRA_KIT_ENV
+  delete process.env.CLIENT_URL
 })
 
 const SERVE: ConfigEnv = { command: 'serve', mode: 'development' }
@@ -48,7 +48,7 @@ describe('infraKit', () => {
   it('falls back to the cloud target when no backend is running locally', async () => {
     const repo = createRepo()
 
-    process.env.INFRA_KIT_ENV = 'dev'
+    process.env.CLIENT_URL = 'https://dev.example.test'
 
     const config = await runConfigHook({ cwd: repo.dir })
 

@@ -58,12 +58,10 @@ describe('packageConfigSchema', () => {
 
   it('accepts a full dev.proxy config authored through defineConfig', () => {
     const config: InfraKitPackageConfig = {
+      deployedUrlEnv: 'CLIENT_URL',
       dev: {
         proxy: {
-          templates: {
-            local: 'http://localhost:<port>',
-            cloud: 'https://<release>-<packageName>.<env>.example.com',
-          },
+          templates: { local: 'https://<release>.<packageName>.localhost' },
           routes: {
             '/api': { packageName: '@app/backend', from: ['local', 'cloud'], default: 'cloud' },
             '/media': { packageName: '@app/media', from: ['cloud'] },
@@ -84,7 +82,7 @@ describe('packageConfigSchema', () => {
     const result = packageConfigSchema.safeParse({
       dev: {
         proxy: {
-          templates: { local: 'http://<release>.<packageName>.localhost', cloud: 'https://<env>.example.com' },
+          templates: { local: 'http://<release>.<packageName>.localhost' },
           routes: { '/api': { packageName: '@app/backend', from: ['local'] } },
         },
       },
@@ -97,7 +95,7 @@ describe('packageConfigSchema', () => {
     const result = packageConfigSchema.safeParse({
       dev: {
         proxy: {
-          templates: { local: 'l', cloud: 'c' },
+          templates: { local: 'l' },
           routes: { '/api': { packageName: '@app/backend', from: [] } },
         },
       },
@@ -110,7 +108,7 @@ describe('packageConfigSchema', () => {
     const result = packageConfigSchema.safeParse({
       dev: {
         proxy: {
-          templates: { local: 'l', cloud: 'c' },
+          templates: { local: 'l' },
           routes: { '/api': { packageName: '@app/backend', from: ['local'], foo: true } },
         },
       },
@@ -121,9 +119,10 @@ describe('packageConfigSchema', () => {
 
   it('accepts a single-source proxy route with no `default`', () => {
     const result = packageConfigSchema.safeParse({
+      deployedUrlEnv: 'CLIENT_URL',
       dev: {
         proxy: {
-          templates: { local: 'l', cloud: 'c' },
+          templates: { local: 'l' },
           routes: { '/media': { packageName: '@app/media', from: ['cloud'] } },
         },
       },
@@ -134,9 +133,10 @@ describe('packageConfigSchema', () => {
 
   it('rejects a proxy route whose `default` is not listed in `from`', () => {
     const result = packageConfigSchema.safeParse({
+      deployedUrlEnv: 'CLIENT_URL',
       dev: {
         proxy: {
-          templates: { local: 'l', cloud: 'c' },
+          templates: { local: 'l' },
           routes: { '/api': { packageName: '@app/backend', from: ['cloud'], default: 'local' } },
         },
       },
@@ -147,9 +147,10 @@ describe('packageConfigSchema', () => {
 
   it('rejects a proxy route missing the required `default`', () => {
     const result = packageConfigSchema.safeParse({
+      deployedUrlEnv: 'CLIENT_URL',
       dev: {
         proxy: {
-          templates: { local: 'l', cloud: 'c' },
+          templates: { local: 'l' },
           routes: { '/api': { packageName: '@app/backend', from: ['local', 'cloud'] } },
         },
       },
@@ -160,9 +161,10 @@ describe('packageConfigSchema', () => {
 
   it('accepts a proxy route whose `default` is listed in `from`', () => {
     const result = packageConfigSchema.safeParse({
+      deployedUrlEnv: 'CLIENT_URL',
       dev: {
         proxy: {
-          templates: { local: 'l', cloud: 'c' },
+          templates: { local: 'l' },
           routes: { '/api': { packageName: '@app/backend', from: ['local', 'cloud'], default: 'local' } },
         },
       },
@@ -209,26 +211,103 @@ describe('packageConfigSchema', () => {
   })
 })
 
-describe('packageConfigSchema — e2e', () => {
-  it('accepts a target, the base-url env var, and a cloud template', () => {
+const issueAt = (input: unknown, key: string) => {
+  const result = packageConfigSchema.safeParse(input)
+
+  expect(result.success).toBe(false)
+
+  return result.error?.issues.find((issue) => {
+    return issue.path.includes(key)
+  })
+}
+
+describe('packageConfigSchema — deployedUrlEnv', () => {
+  const cloudRoute = { '/api': { packageName: '@app/backend', from: ['local', 'cloud'], default: 'cloud' } }
+
+  it('accepts an env var name', () => {
+    expect(packageConfigSchema.safeParse({ deployedUrlEnv: 'CLIENT_URL' }).success).toBe(true)
+  })
+
+  it.each(['client_url', '1CLIENT_URL', 'CLIENT-URL', 'https://dev.example.com', ''])(
+    'rejects %j, which is not an env var name',
+    (value) => {
+      expect(issueAt({ deployedUrlEnv: value }, 'deployedUrlEnv')?.message).toMatch(/must be an env var name/)
+    },
+  )
+
+  it('refuses the retired `templates.cloud`, naming `deployedUrlEnv` as its replacement', () => {
+    const issue = issueAt(
+      {
+        deployedUrlEnv: 'CLIENT_URL',
+        dev: {
+          proxy: { templates: { local: 'l', cloud: 'https://<env>.example.com' }, routes: cloudRoute },
+        },
+      },
+      'cloud',
+    )
+
+    expect(issue?.path).toEqual(['dev', 'proxy', 'templates', 'cloud'])
+    expect(issue?.message).toMatch(/`templates\.cloud` was replaced by `deployedUrlEnv`/)
+  })
+
+  it('refuses a route that can go to cloud when no `deployedUrlEnv` is declared', () => {
+    const issue = issueAt({ dev: { proxy: { templates: { local: 'l' }, routes: cloudRoute } } }, 'deployedUrlEnv')
+
+    expect(issue?.path).toEqual(['deployedUrlEnv'])
+    expect(issue?.message).toMatch(/can go to cloud needs `deployedUrlEnv`/)
+  })
+
+  it('refuses a cloud-only route with no `deployedUrlEnv` too', () => {
     const result = packageConfigSchema.safeParse({
-      e2e: { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL', cloud: 'https://<env>.hulyo.co.il' },
+      dev: {
+        proxy: { templates: { local: 'l' }, routes: { '/media': { packageName: '@app/media', from: ['cloud'] } } },
+      },
     })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('needs no `deployedUrlEnv` when every route is local-only', () => {
+    const result = packageConfigSchema.safeParse({
+      dev: {
+        proxy: { templates: { local: 'l' }, routes: { '/api': { packageName: '@app/backend', from: ['local'] } } },
+      },
+    })
+
+    expect(result.success).toBe(true)
+  })
+})
+
+describe('packageConfigSchema — e2e', () => {
+  it('accepts a target alone', () => {
+    const result = packageConfigSchema.safeParse({ e2e: { target: 'client/ui' } })
 
     expect(result.success).toBe(true)
   })
 
   it('rejects a target that is not `<app>/ui` or `<app>/api`', () => {
-    const result = packageConfigSchema.safeParse({ e2e: { target: 'client', baseUrlEnv: 'E2E_CLIENT_BASE_URL' } })
+    const result = packageConfigSchema.safeParse({ e2e: { target: 'client' } })
 
     expect(result.success).toBe(false)
   })
 
   it('rejects an env list — local vs cloud is never configured', () => {
-    const result = packageConfigSchema.safeParse({
-      e2e: { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL', envs: ['dev'] },
-    })
+    const result = packageConfigSchema.safeParse({ e2e: { target: 'client/ui', envs: ['dev'] } })
 
     expect(result.success).toBe(false)
+  })
+
+  it('refuses the retired `e2e.baseUrlEnv`, pointing at the target’s `deployedUrlEnv`', () => {
+    const issue = issueAt({ e2e: { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL' } }, 'baseUrlEnv')
+
+    expect(issue?.path).toEqual(['e2e', 'baseUrlEnv'])
+    expect(issue?.message).toMatch(/`e2e\.baseUrlEnv` was removed: .*`deployedUrlEnv`/)
+  })
+
+  it('refuses the retired `e2e.cloud`, pointing at the target’s `deployedUrlEnv`', () => {
+    const issue = issueAt({ e2e: { target: 'client/ui', cloud: 'https://<env>.hulyo.co.il' } }, 'cloud')
+
+    expect(issue?.path).toEqual(['e2e', 'cloud'])
+    expect(issue?.message).toMatch(/`e2e\.cloud` was removed: .*`deployedUrlEnv`/)
   })
 })

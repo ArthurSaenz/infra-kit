@@ -92,6 +92,63 @@ describe('loadPackageConfig', () => {
 
     await expect(loadPackageConfig(dir)).rejects.toThrow(/Invalid/)
   })
+
+  it('accepts a top-level deployedUrlEnv beside cloud-capable routes', async () => {
+    const dir = makeTmpDir()
+    const config = {
+      deployedUrlEnv: 'CLIENT_URL',
+      dev: {
+        proxy: {
+          templates: { local: 'https://<release>.<packageName>.localhost' },
+          routes: { '/media': { packageName: 'backend-api', from: ['cloud'] } },
+        },
+      },
+    }
+
+    writePackage(dir, { config: `export default ${JSON.stringify(config)}` })
+
+    await expect(loadPackageConfig(dir)).resolves.toMatchObject({ requiredFiles: DEFAULT_RULES.requiredFiles })
+  })
+
+  // A retired key is refused with its replacement named: the config is TypeScript, so the message is the fix.
+  it.each([
+    [
+      'dev.proxy.templates.cloud',
+      {
+        deployedUrlEnv: 'CLIENT_URL',
+        dev: { proxy: { templates: { local: 'https://<release>.localhost', cloud: 'https://<env>.x' }, routes: {} } },
+      },
+      /`templates\.cloud` was replaced by `deployedUrlEnv`/,
+    ],
+    [
+      'e2e.baseUrlEnv',
+      { e2e: { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL' } },
+      /`e2e\.baseUrlEnv` was removed/,
+    ],
+    ['e2e.cloud', { e2e: { target: 'client/ui', cloud: 'https://<env>.x' } }, /`e2e\.cloud` was removed/],
+  ])('refuses the retired %s, naming its replacement', async (_key, config, message) => {
+    const dir = makeTmpDir()
+
+    writePackage(dir, { config: `export default ${JSON.stringify(config)}` })
+
+    await expect(loadPackageConfig(dir)).rejects.toThrow(message)
+  })
+
+  it('refuses a cloud-capable route when no deployedUrlEnv names where cloud is', async () => {
+    const dir = makeTmpDir()
+    const config = {
+      dev: {
+        proxy: {
+          templates: { local: 'https://<release>.<packageName>.localhost' },
+          routes: { '/media': { packageName: 'backend-api', from: ['cloud'] } },
+        },
+      },
+    }
+
+    writePackage(dir, { config: `export default ${JSON.stringify(config)}` })
+
+    await expect(loadPackageConfig(dir)).rejects.toThrow(/can go to cloud needs `deployedUrlEnv`/)
+  })
 })
 
 describe('validatePackage', () => {

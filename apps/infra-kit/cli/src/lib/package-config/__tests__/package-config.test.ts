@@ -49,16 +49,30 @@ describe('resolvePackageConfig', () => {
     expect(rules.turboTasks).toEqual([])
   })
 
-  it('treats a `dev` block as inert to the audit', () => {
+  it('treats `deployedUrlEnv` and a `dev` block as inert to the audit', () => {
     const config: InfraKitPackageConfig = {
+      deployedUrlEnv: 'CLIENT_URL',
       dev: {
         proxy: {
-          templates: { local: 'http://localhost:<port>', cloud: 'https://<env>.example.com' },
+          templates: { local: 'http://localhost:<port>' },
           routes: { '/api': { packageName: '@app/backend', from: ['cloud'] } },
         },
       },
     }
 
     expect(resolvePackageConfig(config)).toEqual(resolvePackageConfig({}))
+  })
+
+  it('no longer types the retired cloud-URL keys', () => {
+    const retired: InfraKitPackageConfig[] = [
+      // @ts-expect-error `templates.cloud` was replaced by the top-level `deployedUrlEnv`
+      { dev: { proxy: { templates: { local: 'https://<release>.localhost', cloud: 'https://<env>.x' }, routes: {} } } },
+      // @ts-expect-error `e2e.baseUrlEnv` was removed: the target package's `deployedUrlEnv` names the variable
+      { e2e: { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL' } },
+      // @ts-expect-error `e2e.cloud` was removed for the same reason
+      { e2e: { target: 'client/ui', cloud: 'https://<env>.x' } },
+    ]
+
+    expect(retired).toHaveLength(3)
   })
 })

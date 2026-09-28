@@ -63,22 +63,21 @@ const writeConfig = (relative: string, config: unknown) => {
   write(relative, `export default ${JSON.stringify(config)}\n`)
 }
 
-const E2E_CLIENT = { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL', cloud: 'https://<env>.hulyo.co.il' }
+/** The target UI's `deployedUrlEnv`: env-load puts the deployed URL there, per environment. */
+const CLIENT_URL = 'CLIENT_URL'
+
+const CLIENT_PROXY = {
+  templates: { local: 'https://<release>.<packageName>.localhost' },
+  routes: {
+    '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },
+    '/media': { packageName: 'backend-api', from: ['cloud'] },
+  },
+}
 
 const seedRepo = () => {
-  writeConfig('apps/client/tests/infra-kit.config.ts', { e2e: E2E_CLIENT })
+  writeConfig('apps/client/tests/infra-kit.config.ts', { e2e: { target: 'client/ui' } })
   write('apps/client/ui/package.json', JSON.stringify({ name: '@hulyo/client-ui' }))
-  writeConfig('apps/client/ui/infra-kit.config.ts', {
-    dev: {
-      proxy: {
-        templates: { local: 'https://<release>.<packageName>.localhost', cloud: 'https://<env>.hulyo.co.il' },
-        routes: {
-          '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },
-          '/media': { packageName: 'backend-api', from: ['cloud'] },
-        },
-      },
-    },
-  })
+  writeConfig('apps/client/ui/infra-kit.config.ts', { deployedUrlEnv: CLIENT_URL, dev: { proxy: CLIENT_PROXY } })
   const git = (...args: string[]) => {
     // eslint-disable-next-line sonarjs/no-os-command-from-path
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: root })
@@ -160,14 +159,14 @@ describe('e2e — local (the default)', () => {
     })
     const result = await e2e(
       { playwrightArgs: ['--project=chromium'] },
-      deps({ INFRA_KIT_ENV: 'dev' }, { runPlaywright }),
+      deps({ INFRA_KIT_ENV: 'dev', [CLIENT_URL]: 'https://dev.hulyo.co.il' }, { runPlaywright }),
     )
 
     expect(result.structuredContent).toMatchObject({
       app: 'client',
       mode: 'local',
       baseUrl: `https://${UI_HOST}`,
-      baseUrlEnv: 'E2E_CLIENT_BASE_URL',
+      deployedUrlEnv: CLIENT_URL,
       release: RELEASE,
       served: true,
       devCommand: null,
@@ -179,6 +178,20 @@ describe('e2e — local (the default)', () => {
       ],
     })
     expect(runPlaywright.mock.calls[0]?.[1]).toEqual(['--project=chromium'])
+  })
+
+  it('reports a cloud-only route with no target when the deployed URL is not loaded', async () => {
+    registerUi(await viteServer())
+    writeBackendFragment(await backendServer())
+
+    const result = await e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))
+    const media = result.structuredContent.routes.find((route) => {
+      return route.path === '/media'
+    })
+
+    // The env name alone names no host: without CLIENT_URL there is nothing to report as the target.
+    expect(media).toMatchObject({ source: 'cloud', live: null })
+    expect(media?.target ?? null).toBeNull()
   })
 
   it('stays local with a cloud env loaded, handing the start to the Playwright config', async () => {
@@ -243,14 +256,18 @@ describe('e2e — local (the default)', () => {
 })
 
 describe('e2e — --cloud', () => {
-  it('uses the cloud template at INFRA_KIT_ENV, even when this worktree serves the target', async () => {
+  it('uses the loaded CLIENT_URL at INFRA_KIT_ENV, even when this worktree serves the target', async () => {
     registerUi(await viteServer())
 
-    const result = await e2e({ cloud: true, dryRun: true }, deps({ INFRA_KIT_ENV: 'oriana' }))
+    const result = await e2e(
+      { cloud: true, dryRun: true },
+      deps({ INFRA_KIT_ENV: 'oriana', [CLIENT_URL]: 'https://oriana.hulyo.co.il' }),
+    )
 
     expect(result.structuredContent).toMatchObject({
       mode: 'cloud',
       baseUrl: 'https://oriana.hulyo.co.il',
+      deployedUrlEnv: CLIENT_URL,
       env: 'oriana',
       localUrl: `https://${UI_HOST}`,
       devCommand: null,
@@ -265,88 +282,101 @@ describe('e2e — --cloud', () => {
     const runPlaywright = vi.fn(async () => {
       return 0
     })
-    const error = await e2e({ cloud: true }, deps({ INFRA_KIT_ENV: 'dev' }, { runPlaywright })).catch(
-      (caught: unknown) => {
-        return caught
-      },
-    )
+    const error = await e2e(
+      { cloud: true },
+      deps({ INFRA_KIT_ENV: 'dev', [CLIENT_URL]: 'https://dev.hulyo.co.il' }, { runPlaywright }),
+    ).catch((caught: unknown) => {
+      return caught
+    })
 
     expect(error).toBeInstanceOf(StructuredRefusalError)
     expect((error as StructuredRefusalError).structuredContent.status).toBe('confirmation_required')
     expect(runPlaywright).not.toHaveBeenCalled()
   })
 
-  it('runs a cloud target with --yes and hands Playwright the resolved URL', async () => {
+  it('runs a cloud target with --yes and hands Playwright the loaded URL', async () => {
     agentMode.source = 'flag'
 
     const runPlaywright = vi.fn(async (_target: E2eTarget, _args: string[]) => {
       return 1
     })
-    const result = await e2e({ cloud: true, yes: true }, deps({ INFRA_KIT_ENV: 'dev' }, { runPlaywright }))
+    const result = await e2e(
+      { cloud: true, yes: true },
+      deps({ INFRA_KIT_ENV: 'dev', [CLIENT_URL]: 'https://dev.hulyo.co.il' }, { runPlaywright }),
+    )
 
-    expect(runPlaywright.mock.calls[0]?.[0].baseUrl).toBe('https://dev.hulyo.co.il')
+    expect(runPlaywright.mock.calls[0]?.[0]).toMatchObject({
+      baseUrl: 'https://dev.hulyo.co.il',
+      deployedUrlEnv: CLIENT_URL,
+    })
     expect(result.structuredContent.exitCode).toBe(1)
     expect(process.exitCode).toBe(1)
   })
 
-  it('refuses a protected env unless the project allows it', async () => {
-    await expect(e2e({ cloud: true, dryRun: true }, deps({ INFRA_KIT_ENV: 'prod' }))).rejects.toThrow(
-      /protected environment/,
-    )
+  it('refuses a protected env unless the project allows it, then uses its URL verbatim', async () => {
+    // prod is not `<env>`-shaped — exactly why the URL is loaded, not derived from the env name.
+    const prod = { INFRA_KIT_ENV: 'prod', [CLIENT_URL]: 'https://www.hulyo.co.il' }
+
+    await expect(e2e({ cloud: true, dryRun: true }, deps(prod))).rejects.toThrow(/protected environment/)
 
     const result = await e2e(
       { cloud: true, dryRun: true },
-      deps(
-        { INFRA_KIT_ENV: 'prod' },
-        {
-          protectedEnvAccess: async () => {
-            return allowed
-          },
+      deps(prod, {
+        protectedEnvAccess: async () => {
+          return allowed
         },
-      ),
+      }),
     )
 
-    expect(result.structuredContent.baseUrl).toBe('https://prod.hulyo.co.il')
+    expect(result.structuredContent.baseUrl).toBe('https://www.hulyo.co.il')
   })
 
-  it('names the missing env when none is loaded', async () => {
-    await expect(e2e({ cloud: true, dryRun: true }, deps({}))).rejects.toThrow(/INFRA_KIT_ENV is not set/)
-  })
-
-  it('uses the env-loaded base URL when the package declares no cloud template', async () => {
-    writeConfig('apps/client/tests/infra-kit.config.ts', {
-      e2e: { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL' },
-    })
-
-    const result = await e2e(
-      { cloud: true, dryRun: true },
-      deps({ INFRA_KIT_ENV: 'dev', E2E_CLIENT_BASE_URL: 'https://dev.hulyo.co.il' }),
+  it('names the missing env when none is loaded, even with a URL left in the shell', async () => {
+    await expect(e2e({ cloud: true, dryRun: true }, deps({ [CLIENT_URL]: 'https://dev.hulyo.co.il' }))).rejects.toThrow(
+      /INFRA_KIT_ENV is not set/,
     )
-
-    expect(result.structuredContent).toMatchObject({ mode: 'cloud', baseUrl: 'https://dev.hulyo.co.il' })
   })
 
-  it('refuses cloud when neither a template nor the env-loaded variable names it', async () => {
-    writeConfig('apps/client/tests/infra-kit.config.ts', {
-      e2e: { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL' },
-    })
-
+  it('refuses cloud when the deployed URL is not loaded, naming the variable', async () => {
     await expect(e2e({ cloud: true, dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))).rejects.toThrow(
-      /E2E_CLIENT_BASE_URL is not set/,
+      /CLIENT_URL is not set/,
     )
+  })
+})
+
+describe('e2e — the target declares its deployed URL variable', () => {
+  it('runs locally without a deployedUrlEnv, and refuses only a cloud run for want of one', async () => {
+    writeConfig('apps/client/ui/infra-kit.config.ts', {
+      dev: { proxy: { ...CLIENT_PROXY, routes: { '/api': { packageName: 'backend-api', from: ['local'] } } } },
+    })
+    registerUi(await viteServer())
+    writeBackendFragment(await backendServer())
+
+    const result = await e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))
+
+    expect(result.structuredContent).toMatchObject({ mode: 'local', deployedUrlEnv: null })
+    await expect(e2e({ cloud: true, dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))).rejects.toThrow(
+      /client\/ui names no variable holding its deployed URL/,
+    )
+  })
+
+  it('refuses a target config still carrying templates.cloud, naming the replacement', async () => {
+    writeConfig('apps/client/ui/infra-kit.config.ts', {
+      deployedUrlEnv: CLIENT_URL,
+      dev: { proxy: { ...CLIENT_PROXY, templates: { ...CLIENT_PROXY.templates, cloud: 'https://<env>.hulyo.co.il' } } },
+    })
+
+    await expect(
+      e2e({ cloud: true, dryRun: true }, deps({ INFRA_KIT_ENV: 'dev', [CLIENT_URL]: 'https://dev.hulyo.co.il' })),
+    ).rejects.toThrow(/`templates\.cloud` was replaced by `deployedUrlEnv`/)
   })
 })
 
 describe('e2e — picking the package', () => {
   beforeEach(() => {
-    writeConfig('apps/backoffice/tests/infra-kit.config.ts', {
-      e2e: {
-        target: 'backoffice/ui',
-        baseUrlEnv: 'E2E_BACKOFFICE_BASE_URL',
-        cloud: 'https://backoffice.<env>.hulyo.co.il',
-      },
-    })
+    writeConfig('apps/backoffice/tests/infra-kit.config.ts', { e2e: { target: 'backoffice/ui' } })
     write('apps/backoffice/ui/package.json', JSON.stringify({ name: '@hulyo/backoffice-ui' }))
+    writeConfig('apps/backoffice/ui/infra-kit.config.ts', { deployedUrlEnv: 'BACKOFFICE_URL' })
   })
 
   it('refuses with the e2e apps as choices when it cannot tell which one', async () => {
@@ -364,20 +394,37 @@ describe('e2e — picking the package', () => {
   it('infers the app from a cwd inside apps/<app>/', async () => {
     const result = await e2e(
       { cloud: true, dryRun: true },
-      { ...deps({ INFRA_KIT_ENV: 'dev' }), cwd: path.join(root, 'apps/backoffice/tests') },
+      {
+        ...deps({ INFRA_KIT_ENV: 'dev', BACKOFFICE_URL: 'https://backoffice.dev.hulyo.co.il' }),
+        cwd: path.join(root, 'apps/backoffice/tests'),
+      },
     )
 
+    // Each target reads its OWN variable — the picked app decides which URL the run gets.
     expect(result.structuredContent).toMatchObject({
       app: 'backoffice',
       baseUrl: 'https://backoffice.dev.hulyo.co.il',
-      baseUrlEnv: 'E2E_BACKOFFICE_BASE_URL',
+      deployedUrlEnv: 'BACKOFFICE_URL',
     })
+  })
+
+  it('surfaces a tests config the schema refuses, rather than dropping the package', async () => {
+    writeConfig('apps/backoffice/tests/infra-kit.config.ts', {
+      e2e: { target: 'backoffice/ui', baseUrlEnv: 'E2E_BACKOFFICE_BASE_URL' },
+    })
+
+    await expect(e2e({ app: 'client', dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))).rejects.toThrow(
+      /`e2e.baseUrlEnv` was removed/,
+    )
   })
 
   it('takes --app over the cwd', async () => {
     const result = await e2e(
       { app: 'client', cloud: true, dryRun: true },
-      { ...deps({ INFRA_KIT_ENV: 'dev' }), cwd: path.join(root, 'apps/backoffice/tests') },
+      {
+        ...deps({ INFRA_KIT_ENV: 'dev', [CLIENT_URL]: 'https://dev.hulyo.co.il' }),
+        cwd: path.join(root, 'apps/backoffice/tests'),
+      },
     )
 
     expect(result.structuredContent.app).toBe('client')

@@ -20,7 +20,8 @@
 import {
   DEV_CONTEXT_WIRE_VERSION,
   DEV_SERVING_MARKER,
-  loadDev,
+  loadPackageConfig,
+  readCloudOrigin,
   readLocalContext,
   slugifyHostLabel,
 } from '@slip-stream-kit/config/internal'
@@ -37,7 +38,6 @@ import { z } from 'zod'
 
 import { agentMode } from 'src/lib/agent-mode'
 import { readAppRelease } from 'src/lib/app-release'
-import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import type { DevConfig, DevPreset, DevPresets, ProxySource } from 'src/lib/infra-kit-config'
@@ -1433,9 +1433,10 @@ export class DevServerRunner {
       // A config that throws must not take the run down here: the frontend is about to load the very same
       // file itself and will report it far better than this check can. Treat it as "declares no routes"
       // and let vite own the error.
-      const dev = await loadDev(ui.path).catch(() => {
+      const config = await loadPackageConfig(ui.path).catch(() => {
         return undefined
       })
+      const dev = config?.dev
 
       if (!dev?.proxy) continue
 
@@ -1446,7 +1447,7 @@ export class DevServerRunner {
         }),
       )
 
-      uis.push({ app: ui.name, routes, cloudTemplate: dev.proxy.templates.cloud })
+      uis.push({ app: ui.name, routes, cloudUrl: readCloudOrigin(config?.deployedUrlEnv).url })
     }
 
     // Stashed so the ready header's per-app proxy listing resolves off the exact same loaded routes the
@@ -1469,7 +1470,6 @@ export class DevServerRunner {
         }),
       ),
       held: this.heldLocalPkgs,
-      env: process.env[INFRA_KIT_ENV_VAR],
     })
   }
 
@@ -3258,11 +3258,9 @@ export class DevServerRunner {
 
   /**
    * `--reuse` refuses up front what a human session only reports on its panel: a UI route that will proxy
-   * to cloud with no `INFRA_KIT_ENV` to name the env fails every test that touches it.
+   * to the deployed app, whose URL the loaded environment does not carry, fails every test that touches it.
    */
   private async assertCloudRoutesHaveEnv(apps: IApiAppConfig[], uiApps: DiscoveredUiApp[]): Promise<void> {
-    if (process.env[INFRA_KIT_ENV_VAR]) return
-
     const launched = new Set(
       apps.map((app) => {
         return app.packageName
@@ -3271,10 +3269,17 @@ export class DevServerRunner {
     const cloudBound: string[] = []
 
     for (const ui of uiApps) {
-      for (const [routePath, route] of Object.entries((await loadDev(ui.path))?.proxy?.routes ?? {})) {
-        if (!route.from.includes('local') || !launched.has(route.packageName)) {
-          cloudBound.push(`${ui.name}/ui ${routePath}`)
-        }
+      const config = await loadPackageConfig(ui.path)
+      const routes = Object.entries(config?.dev?.proxy?.routes ?? {}).filter(([, route]) => {
+        return !route.from.includes('local') || !launched.has(route.packageName)
+      })
+
+      if (routes.length > 0 && !readCloudOrigin(config?.deployedUrlEnv).url) {
+        const paths = routes.map(([routePath]) => {
+          return routePath
+        })
+
+        cloudBound.push(`${ui.name}/ui ${paths.join(', ')} (${config?.deployedUrlEnv ?? 'no deployedUrlEnv'})`)
       }
     }
 
@@ -3283,7 +3288,7 @@ export class DevServerRunner {
     throw new OperationError(undefined, {
       operation: 'start the dev servers',
       remediation: 'load an environment first (`infra-kit env-load -c dev`)',
-      stderrExcerpt: `these routes proxy to cloud and ${INFRA_KIT_ENV_VAR} is not set: ${cloudBound.join(', ')}`,
+      stderrExcerpt: `these routes proxy to the deployed app, whose URL is not loaded: ${cloudBound.join('; ')}`,
     })
   }
 
@@ -3359,7 +3364,6 @@ export class DevServerRunner {
         return originByPkg.get(pkg)
       },
       held: this.heldLocalPkgs,
-      env: process.env[INFRA_KIT_ENV_VAR],
     })
 
     this.uiPortMap = {}

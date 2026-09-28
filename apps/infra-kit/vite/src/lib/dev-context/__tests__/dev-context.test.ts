@@ -113,7 +113,7 @@ describe('watchDevContext', () => {
     const repo = createRepo()
     const server = fakeServer()
 
-    process.env.INFRA_KIT_ENV = 'dev'
+    process.env.CLIENT_URL = 'https://dev.example.test'
 
     const current = await currentSignature(repo.dir)
     const watch = watchDevContext({ server, cwd: repo.dir, options: { cwd: repo.dir }, current })
@@ -132,7 +132,7 @@ describe('watchDevContext', () => {
     const repo = createRepo()
     const server = fakeServer()
 
-    process.env.INFRA_KIT_ENV = 'dev'
+    process.env.CLIENT_URL = 'https://dev.example.test'
     repo.writeFragment('client-api', LOCAL_ORIGIN)
 
     const current = await currentSignature(repo.dir)
@@ -156,7 +156,7 @@ describe('watchDevContext', () => {
     const repo = createRepo()
     const server = fakeServer()
 
-    process.env.INFRA_KIT_ENV = 'dev'
+    process.env.CLIENT_URL = 'https://dev.example.test'
     repo.writeFragment('client-api', LOCAL_ORIGIN)
 
     const current = await currentSignature(repo.dir)
@@ -176,7 +176,7 @@ describe('watchDevContext', () => {
     const repo = createRepo()
     const server = fakeServer()
 
-    process.env.INFRA_KIT_ENV = 'dev'
+    process.env.CLIENT_URL = 'https://dev.example.test'
 
     const current = await currentSignature(repo.dir)
     const watch = watchDevContext({ server, cwd: repo.dir, options: { cwd: repo.dir }, current })
@@ -197,14 +197,14 @@ describe('watchDevContext', () => {
     const repo = createRepo()
     const server = fakeServer()
 
-    process.env.INFRA_KIT_ENV = 'dev'
+    process.env.CLIENT_URL = 'https://dev.example.test'
 
     const current = await currentSignature(repo.dir)
     const watch = watchDevContext({ server, cwd: repo.dir, options: { cwd: repo.dir }, current })
 
     // A cloud route with no sourced env is the helper's fail-fast. Mid-edit it is transient; tearing the
     // dev server down over it would be worse than keeping the proxy we already resolved.
-    delete process.env.INFRA_KIT_ENV
+    delete process.env.CLIENT_URL
     server.emit('change', path.join(repo.dir, 'infra-kit.config.ts'))
 
     await vi.waitFor(() => {

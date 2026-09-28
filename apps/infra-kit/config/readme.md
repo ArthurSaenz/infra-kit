@@ -52,7 +52,8 @@ frontend flips its route from `cloud` to `local` on its own. The helper here sta
 when you want the raw `server` block.
 
 ```ts
-// apps/<app>/tests/playwright.config.ts — the package's infra-kit.config.ts declares `e2e: { target, baseUrlEnv }`
+// apps/<app>/tests/playwright.config.ts — the package's infra-kit.config.ts declares `e2e: { target: '<app>/ui' }`,
+// and the target's own infra-kit.config.ts declares `deployedUrlEnv` (e.g. `CLIENT_URL`)
 import { infraKitE2e } from '@slip-stream-kit/config/playwright'
 import { defineConfig } from '@playwright/test'
 
@@ -67,7 +68,9 @@ export default defineConfig({
 Every run is local by default: `baseURL` is this worktree's alias for `e2e.target`, and `webServer` runs
 `infra-kit dev <app> --reuse`, which reuses the dev server this worktree already runs or starts one for the
 run (Playwright stops it after). `INFRA_KIT_E2E=cloud` — set by `infra-kit e2e --cloud`, and the default on
-CI — points at the deployed app instead and starts nothing.
+CI — points at the URL the loaded environment holds under the target's `deployedUrlEnv` instead, and
+starts nothing. The helper never writes that variable: the dev server it starts proxies the UI's cloud routes
+there.
 
 ```ts
 // vendor.config.ts

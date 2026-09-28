@@ -12,7 +12,7 @@ const clientUi = (): LaunchedUi => {
       '/dynamic': { packageName: 'backend-api', from: ['cloud'] },
       '/media': { packageName: 'backend-api', from: ['cloud'] },
     },
-    cloudTemplate: 'https://<env>.hulyo.co.il',
+    cloudUrl: 'https://dev.hulyo.co.il',
   }
 }
 
@@ -25,7 +25,6 @@ const crashed = (overrides: Partial<PairingInputs> = {}): PairingInputs => {
     wanted: new Set(['backend-api']),
     running: new Set(),
     reasons: new Map([['backend-api', { app: 'client', reason: CRASH }]]),
-    env: 'dev',
     ...overrides,
   }
 }
@@ -97,7 +96,7 @@ describe('findDegradedRoutes', () => {
     const ui: LaunchedUi = {
       app: 'client',
       routes: { '/api': { packageName: 'backend-api', from: ['local'] } },
-      cloudTemplate: 'https://<env>.hulyo.co.il',
+      cloudUrl: 'https://dev.hulyo.co.il',
     }
     const [degraded] = findDegradedRoutes(crashed({ uis: [ui] }))
 
@@ -110,17 +109,24 @@ describe('findDegradedRoutes', () => {
     const ui: LaunchedUi = {
       app: 'client',
       routes: { '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'local' } },
-      cloudTemplate: 'https://<env>.hulyo.co.il',
+      cloudUrl: 'https://dev.hulyo.co.il',
     }
 
     expect(findDegradedRoutes(crashed({ uis: [ui] }))[0]?.fallback).toBe('local')
   })
 
-  it('names no cloud origin at all rather than a bogus one when no env is sourced', () => {
-    // Caught on a real run: with `INFRA_KIT_ENV` unset, `https://<env>.hulyo.co.il` interpolated to
-    // `https://.hulyo.co.il` — a host that resolves nowhere, printed by the very message whose job is to
-    // tell the user where their traffic was about to go.
-    expect(findDegradedRoutes(crashed({ env: undefined }))[0]?.cloudTarget).toBeUndefined()
+  it('names no cloud origin at all when the deployed URL is not loaded', () => {
+    // Guessing an origin in a message whose job is to say where the traffic goes is worse than naming none.
+    const ui: LaunchedUi = { ...clientUi(), cloudUrl: undefined }
+
+    expect(findDegradedRoutes(crashed({ uis: [ui] }))[0]?.cloudTarget).toBeUndefined()
+  })
+
+  it('names the loaded deployed URL verbatim — no placeholder is ever interpolated', () => {
+    // prod is not `<env>`-shaped; the URL comes from the environment as-is.
+    const ui: LaunchedUi = { ...clientUi(), cloudUrl: 'https://www.hulyo.co.il' }
+
+    expect(findDegradedRoutes(crashed({ uis: [ui] }))[0]?.cloudTarget).toBe('https://www.hulyo.co.il')
   })
 
   it('reports a HELD crashed backend as local with no cloud origin — a launched backend that died never falls back', () => {
@@ -181,7 +187,7 @@ describe('formatPairingRefusal', () => {
     expect(message).not.toContain('to the cloud backend')
   })
 
-  it('falls back to naming no origin when the cloud template is unknown', () => {
+  it('falls back to naming no origin when the deployed URL is not loaded', () => {
     const ui: LaunchedUi = {
       app: 'client',
       routes: { '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' } },
@@ -203,7 +209,6 @@ describe('resolveProxyRoutes', () => {
         uis: [clientUi()],
         running: new Set(['backend-api']),
         localOrigin,
-        env: 'dev',
       }),
     ).toEqual([
       {
@@ -235,7 +240,6 @@ describe('resolveProxyRoutes', () => {
       uis: [clientUi()],
       running: new Set(),
       localOrigin,
-      env: 'dev',
     })
 
     expect(api).toMatchObject({ route: '/api', source: 'cloud', target: 'https://dev.hulyo.co.il' })
@@ -247,7 +251,6 @@ describe('resolveProxyRoutes', () => {
       running: new Set(),
       localOrigin,
       held: new Set(['backend-api']),
-      env: 'dev',
     })
 
     expect(
@@ -283,10 +286,10 @@ describe('resolveProxyRoutes', () => {
         '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },
         '/auth': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },
       },
-      cloudTemplate: 'https://<env>.hulyo.co.il',
+      cloudUrl: 'https://dev.hulyo.co.il',
     }
 
-    const rows = resolveProxyRoutes({ uis: [ui], running: new Set(['backend-api']), localOrigin, env: 'dev' })
+    const rows = resolveProxyRoutes({ uis: [ui], running: new Set(['backend-api']), localOrigin })
 
     expect(
       rows.every((r) => {
@@ -300,15 +303,9 @@ describe('resolveProxyRoutes', () => {
     ).toEqual(['https://feat-x.backend-api.localhost/api/v1', 'https://feat-x.backend-api.localhost/api/v1'])
   })
 
-  it('omits a cloud target when the template needs an <env> and none is sourced', () => {
+  it('omits a cloud target when the deployed URL is not loaded', () => {
     const [media] = resolveProxyRoutes({
-      uis: [
-        {
-          app: 'client',
-          routes: { '/media': { packageName: 'backend-api', from: ['cloud'] } },
-          cloudTemplate: 'https://<env>.hulyo.co.il',
-        },
-      ],
+      uis: [{ app: 'client', routes: { '/media': { packageName: 'backend-api', from: ['cloud'] } } }],
       running: new Set(),
       localOrigin,
     })

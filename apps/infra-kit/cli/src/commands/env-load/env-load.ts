@@ -313,6 +313,14 @@ export const buildDopplerChildEnv = (token: string, baseEnv: NodeJS.ProcessEnv =
   return childEnv
 }
 
+/**
+ * One Doppler config's secrets, downloaded with the token stored for it — `env-load`'s own fetch, for a
+ * caller that needs a few values of an env without loading the whole env into a shell.
+ */
+export const downloadEnvSecrets = async (config: string): Promise<Map<string, string>> => {
+  return new Map(await downloadDopplerSecrets(await getDopplerProject(), config))
+}
+
 const downloadDopplerSecrets = async (project: string, config: string): Promise<Array<[string, string]>> => {
   const { token } = await resolveEnvToken(config)
 

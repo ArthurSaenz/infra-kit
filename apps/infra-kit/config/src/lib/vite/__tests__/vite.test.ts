@@ -7,11 +7,12 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { InfraKitDevProxy } from '../../package-config/package-config'
-import type { InfraKitViteProxyEntry, LocalPackageInfo } from '../vite'
+import type { CloudOrigin, InfraKitViteProxyEntry, LocalPackageInfo } from '../vite'
 import {
   DEV_CONTEXT_WIRE_VERSION,
   describeProxyRoutes,
   infraKitDev,
+  readCloudOrigin,
   readLocalSet,
   resolveProxyConfig,
   slugifyRelease,
@@ -21,15 +22,15 @@ const FIXTURES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fi
 
 /** Fixture proxy config shared across the resolution cases. */
 const FIXTURE_PROXY: InfraKitDevProxy = {
-  templates: {
-    local: 'http://<release>.<packageName>.localhost',
-    cloud: 'https://<env>.hulyo.co.il',
-  },
+  templates: { local: 'http://<release>.<packageName>.localhost' },
   routes: {
     '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },
     '/media': { packageName: 'backend-api', from: ['cloud'] },
   },
 }
+
+/** The deployed URL a cloud route targets, as `readCloudOrigin` reads it from the loaded env. */
+const CLOUD: CloudOrigin = { envVar: 'CLIENT_URL', url: 'https://dev.hulyo.co.il' }
 
 /** A release getter that fails the test if called when it should not be. */
 const unusedRelease = (): string => {
@@ -39,7 +40,7 @@ const unusedRelease = (): string => {
 /** A single local-first `/api` route on `client-api`, over an optionally overridden local template. */
 const localRouteProxy = (local: string = FIXTURE_PROXY.templates.local): InfraKitDevProxy => {
   return {
-    templates: { local, cloud: FIXTURE_PROXY.templates.cloud },
+    templates: { local },
     routes: { '/api': { packageName: 'client-api', from: ['local', 'cloud'], default: 'cloud' } },
   }
 }
@@ -81,18 +82,19 @@ describe('resolveProxyConfig', () => {
       proxy: FIXTURE_PROXY,
       localSet: new Set(),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: unusedRelease,
     })
 
     expect(proxy).toEqual({
       '/api': {
-        target: 'https://arthur.hulyo.co.il',
+        target: CLOUD.url,
         changeOrigin: true,
         secure: false,
         cookieDomainRewrite: '',
       },
       '/media': {
-        target: 'https://arthur.hulyo.co.il',
+        target: CLOUD.url,
         changeOrigin: true,
         secure: false,
         cookieDomainRewrite: '',
@@ -105,6 +107,7 @@ describe('resolveProxyConfig', () => {
       proxy: FIXTURE_PROXY,
       localSet: new Set(['backend-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: () => {
         return slugifyRelease('release/2.4')
       },
@@ -120,7 +123,7 @@ describe('resolveProxyConfig', () => {
 
     // /media is from: ['cloud'] only → still cloud even though backend-api is local.
     expect(proxy['/media']).toEqual({
-      target: 'https://arthur.hulyo.co.il',
+      target: CLOUD.url,
       changeOrigin: true,
       secure: false,
       cookieDomainRewrite: '',
@@ -132,11 +135,7 @@ describe('resolveProxyConfig', () => {
     // (see dev-server.test.ts "slugifies a scoped package name…"). If only one side slugifies, vite
     // emits a target host that no alias backs and every proxied request 502s.
     const scoped: InfraKitDevProxy = {
-      templates: {
-        local: 'http://<release>.<packageName>.localhost',
-        // The cloud service name is NOT a DNS label derived from the package — it must stay raw.
-        cloud: 'https://<packageName>/<env>',
-      },
+      templates: { local: 'http://<release>.<packageName>.localhost' },
       routes: {
         '/api': { packageName: '@hulyo/client-ui', from: ['local', 'cloud'], default: 'cloud' },
         '/media': { packageName: '@hulyo/client-ui', from: ['cloud'] },
@@ -147,6 +146,7 @@ describe('resolveProxyConfig', () => {
       proxy: scoped,
       localSet: new Set(['@hulyo/client-ui']), // the local set keys on the raw npm name
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: () => {
         return 'feat-x'
       },
@@ -154,19 +154,44 @@ describe('resolveProxyConfig', () => {
 
     // Byte-for-byte the host the dev-server aliases: `feat-x.hulyo-client-ui`.
     expect(proxy['/api']?.target).toBe('http://feat-x.hulyo-client-ui.localhost')
-    // Cloud keeps the raw npm name — slugifying it would point at a service that does not exist.
-    expect(proxy['/media']?.target).toBe('https://@hulyo/client-ui/arthur')
+    // Cloud is the deployed URL verbatim — neither the package name nor `env` is interpolated into it.
+    expect(proxy['/media']?.target).toBe('https://dev.hulyo.co.il')
   })
 
-  it('throws an actionable error when a cloud route is needed but INFRA_KIT_ENV is unset', () => {
+  it('targets the deployed URL verbatim, even with a placeholder-looking value and no INFRA_KIT_ENV', () => {
+    const proxy = resolveProxyConfig({
+      proxy: FIXTURE_PROXY,
+      localSet: new Set(),
+      env: undefined,
+      cloud: { envVar: 'CLIENT_URL', url: 'https://<env>.hulyo.co.il' },
+      getRelease: unusedRelease,
+    })
+
+    expect(proxy['/media']?.target).toBe('https://<env>.hulyo.co.il')
+  })
+
+  it('throws an actionable error naming the deployedUrlEnv variable when a cloud route needs it unset', () => {
     expect(() => {
       return resolveProxyConfig({
         proxy: FIXTURE_PROXY,
         localSet: new Set(),
-        env: undefined,
+        env: 'arthur',
+        cloud: { envVar: 'CLIENT_URL', url: undefined },
         getRelease: unusedRelease,
       })
-    }).toThrow(/INFRA_KIT_ENV is not set/)
+    }).toThrow(/proxy route "\/api" resolves to the deployed app, but CLIENT_URL is not set/)
+  })
+
+  it('throws naming the missing `deployedUrlEnv` when the package declares none', () => {
+    expect(() => {
+      return resolveProxyConfig({
+        proxy: FIXTURE_PROXY,
+        localSet: new Set(),
+        env: 'arthur',
+        cloud: { envVar: undefined, url: undefined },
+        getRelease: unusedRelease,
+      })
+    }).toThrow(/this package declares no `deployedUrlEnv`/)
   })
 
   it('falls back to a `local` default (using <release>) when the packageName is not in the local set', () => {
@@ -176,11 +201,12 @@ describe('resolveProxyConfig', () => {
     }
 
     // backend-api is NOT local, but default is 'local' → resolves local via <release>.
-    // env is undefined but that must NOT fail-fast because the resolved source is local.
+    // No deployed URL is loaded, but that must NOT fail-fast because the resolved source is local.
     const proxy = resolveProxyConfig({
       proxy: localDefault,
       localSet: new Set(),
       env: undefined,
+      cloud: { envVar: 'CLIENT_URL', url: undefined },
       getRelease: () => {
         return slugifyRelease('release/2.4')
       },
@@ -207,6 +233,7 @@ describe('resolveProxyConfig', () => {
       proxy: multiLocal,
       localSet: new Set(['client-api', 'media']),
       env: 'arthur',
+      cloud: CLOUD,
       // Global slug must NOT be used when a per-package release is recorded.
       getRelease: () => {
         throw new Error('per-package release should win over the global slug')
@@ -231,6 +258,7 @@ describe('resolveProxyConfig', () => {
       proxy: localOnly,
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: () => {
         return slugifyRelease('release/2.4')
       },
@@ -249,6 +277,7 @@ describe('resolveProxyConfig', () => {
       proxy: localRouteProxy(),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: () => {
         return 'feat-x'
       },
@@ -265,6 +294,7 @@ describe('resolveProxyConfig', () => {
       proxy: localRouteProxy(),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: unusedRelease,
       localInfo: aliasedInfo(1355),
     })
@@ -283,6 +313,7 @@ describe('resolveProxyConfig', () => {
       proxy: localRouteProxy('http://<release>.<packageName>.localhost/base/'),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: unusedRelease,
       localInfo: aliasedInfo(1355),
     })
@@ -295,6 +326,7 @@ describe('resolveProxyConfig', () => {
       proxy: localRouteProxy('http://<release>.<packageName>.localhost:9999'),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: unusedRelease,
       localInfo: aliasedInfo(1355),
     })
@@ -308,6 +340,7 @@ describe('resolveProxyConfig', () => {
         proxy: localRouteProxy('<release>.<packageName>.localhost'), // no scheme → not a URL
         localSet: new Set(['client-api']),
         env: 'arthur',
+        cloud: CLOUD,
         getRelease: unusedRelease,
         localInfo: aliasedInfo(1355),
       })
@@ -319,6 +352,7 @@ describe('resolveProxyConfig', () => {
       proxy: localRouteProxy(),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: unusedRelease,
       localInfo: aliasedInfo(80),
     })
@@ -339,6 +373,7 @@ describe('resolveProxyConfig (route ordering)', () => {
         proxy: proxyWithRoutes(routes),
         localSet: new Set(),
         env: 'dev',
+        cloud: CLOUD,
         getRelease: unusedRelease,
       }),
     )
@@ -398,6 +433,7 @@ describe('resolveProxyConfig (origin is authoritative)', () => {
       proxy: localRouteProxy('http://wrong-host.example.com:9999'),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: unusedRelease,
       localInfo: originInfo('https://2-4.client-api.localhost'),
     })
@@ -410,6 +446,7 @@ describe('resolveProxyConfig (origin is authoritative)', () => {
       proxy: localRouteProxy(),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: unusedRelease,
       // A fragment carrying BOTH (an old field alongside the new one) must still honour only the origin.
       localInfo: new Map([['client-api', { port: 3110, origin: 'https://2-4.client-api.localhost', proxyPort: 1355 }]]),
@@ -431,6 +468,7 @@ describe('resolveProxyConfig (wire version)', () => {
         proxy: localRouteProxy('http://<release>.<packageName>.localhost'),
         localSet: new Set(['client-api']),
         env: 'arthur',
+        cloud: CLOUD,
         getRelease: unusedRelease,
         localInfo: new Map([['client-api', { port: 3110, wire: DEV_CONTEXT_WIRE_VERSION }]]),
       })
@@ -444,6 +482,7 @@ describe('resolveProxyConfig (wire version)', () => {
       proxy: localRouteProxy('http://<release>.<packageName>.localhost'),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: unusedRelease,
       localInfo: new Map([['client-api', { port: 3110, release: '2-4' }]]),
     })
@@ -460,6 +499,7 @@ describe('resolveProxyConfig (legacy mode — origin absent, i.e. a fragment fro
       proxy: localRouteProxy('https://<release>.<packageName>.localhost'),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: unusedRelease,
       localInfo: aliasedInfo(1355),
     })
@@ -477,6 +517,7 @@ describe('resolveProxyConfig (legacy mode — origin absent, i.e. a fragment fro
       proxy: localRouteProxy('https://<release>.<packageName>.localhost'),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: unusedRelease,
       localInfo: aliasedInfo(443),
     })['/api']?.target
@@ -495,6 +536,7 @@ describe('resolveProxyConfig (legacy mode — origin absent, i.e. a fragment fro
       proxy: localRouteProxy(),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: unusedRelease,
       localInfo: aliasedInfo(443),
     })['/api']?.target
@@ -509,6 +551,7 @@ describe('resolveProxyConfig (legacy mode — origin absent, i.e. a fragment fro
       proxy: localRouteProxy('https://<release>.<packageName>.localhost/base/'),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: () => {
         return 'feat-x'
       },
@@ -525,6 +568,7 @@ describe('resolveProxyConfig (secure: false is scoped to loopback hostnames)', (
       proxy: localRouteProxy(local),
       localSet: new Set(['client-api']),
       env: 'arthur',
+      cloud: CLOUD,
       getRelease: () => {
         return '2-4'
       },
@@ -674,6 +718,7 @@ describe('readLocalSet (dev-context fragment directory merge)', () => {
 
 describe('infraKitDev (config loading)', () => {
   const originalEnv = process.env.INFRA_KIT_ENV
+  const originalClientUrl = process.env.CLIENT_URL
   const originalUser = process.env.E2E__BASIC_AUTH_USERNAME
   const originalPass = process.env.E2E__BASIC_AUTH_PASSWORD
 
@@ -686,6 +731,7 @@ describe('infraKitDev (config loading)', () => {
 
   afterEach(() => {
     restore('INFRA_KIT_ENV', originalEnv)
+    restore('CLIENT_URL', originalClientUrl)
     restore('E2E__BASIC_AUTH_USERNAME', originalUser)
     restore('E2E__BASIC_AUTH_PASSWORD', originalPass)
     restore('INFRA_KIT_UI_PORTS', originalUiPorts)
@@ -862,14 +908,16 @@ describe('infraKitDev (config loading)', () => {
   })
 
   it('loads dev.proxy from a .ts config and resolves the frontend-only cloud case', async () => {
-    process.env.INFRA_KIT_ENV = 'arthur'
+    // INFRA_KIT_ENV no longer shapes the cloud target — only the config's `deployedUrlEnv` value does.
+    delete process.env.INFRA_KIT_ENV
+    process.env.CLIENT_URL = 'https://dev.hulyo.co.il'
     delete process.env.E2E__BASIC_AUTH_USERNAME
     delete process.env.E2E__BASIC_AUTH_PASSWORD
 
     const { proxy } = await infraKitDev({ cwd: path.join(FIXTURES_DIR, 'with-proxy') })
 
     expect(proxy['/api']).toEqual({
-      target: 'https://arthur.hulyo.co.il',
+      target: CLOUD.url,
       changeOrigin: true,
       secure: false,
       cookieDomainRewrite: '',
@@ -882,7 +930,7 @@ describe('infraKitDev (config loading)', () => {
   })
 
   it('injects an Authorization header into every route when both E2E__BASIC_AUTH_* are set', async () => {
-    process.env.INFRA_KIT_ENV = 'arthur'
+    process.env.CLIENT_URL = 'https://dev.hulyo.co.il'
     process.env.E2E__BASIC_AUTH_USERNAME = 'user'
     process.env.E2E__BASIC_AUTH_PASSWORD = 'pass'
 
@@ -891,7 +939,7 @@ describe('infraKitDev (config loading)', () => {
     const expectedHeader = `Basic ${Buffer.from('user:pass').toString('base64')}`
 
     expect(proxy['/api']).toEqual({
-      target: 'https://arthur.hulyo.co.il',
+      target: CLOUD.url,
       changeOrigin: true,
       secure: false,
       cookieDomainRewrite: '',
@@ -904,7 +952,7 @@ describe('infraKitDev (config loading)', () => {
   })
 
   it('adds no headers when only one of the two E2E__BASIC_AUTH_* creds is set', async () => {
-    process.env.INFRA_KIT_ENV = 'arthur'
+    process.env.CLIENT_URL = 'https://dev.hulyo.co.il'
     process.env.E2E__BASIC_AUTH_USERNAME = 'user'
     delete process.env.E2E__BASIC_AUTH_PASSWORD
 
@@ -916,7 +964,7 @@ describe('infraKitDev (config loading)', () => {
   })
 
   it('lets an explicit basicAuth option override the env vars', async () => {
-    process.env.INFRA_KIT_ENV = 'arthur'
+    process.env.CLIENT_URL = 'https://dev.hulyo.co.il'
     process.env.E2E__BASIC_AUTH_USERNAME = 'envuser'
     process.env.E2E__BASIC_AUTH_PASSWORD = 'envpass'
 
@@ -932,8 +980,16 @@ describe('infraKitDev (config loading)', () => {
     }
   })
 
+  it('fails fast naming the unset deployedUrlEnv when a cloud route resolves', async () => {
+    delete process.env.CLIENT_URL
+
+    await expect(infraKitDev({ cwd: path.join(FIXTURES_DIR, 'with-proxy') })).rejects.toThrow(
+      /resolves to the deployed app, but CLIENT_URL is not set/,
+    )
+  })
+
   it('resolves a route to local using the fragment-recorded release when the package is started', async () => {
-    process.env.INFRA_KIT_ENV = 'arthur'
+    delete process.env.CLIENT_URL
     delete process.env.E2E__BASIC_AUTH_USERNAME
     delete process.env.E2E__BASIC_AUTH_PASSWORD
 
@@ -945,11 +1001,11 @@ describe('infraKitDev (config loading)', () => {
         path.join(pkg, 'infra-kit.config.ts'),
         [
           'export default {',
+          "  deployedUrlEnv: 'CLIENT_URL',",
           '  dev: {',
           '    proxy: {',
           '      templates: {',
           "        local: 'http://<release>.<packageName>.localhost',",
-          "        cloud: 'https://<env>.hulyo.co.il',",
           '      },',
           '      routes: {',
           "        '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },",
@@ -999,11 +1055,11 @@ describe('infraKitDev (config loading)', () => {
         path.join(pkg, 'infra-kit.config.ts'),
         [
           'export default {',
+          "  deployedUrlEnv: 'CLIENT_URL',",
           '  dev: {',
           '    proxy: {',
           '      templates: {',
           "        local: 'http://<release>.<packageName>.localhost',",
-          "        cloud: 'https://<env>.hulyo.co.il',",
           '      },',
           '      routes: {',
           "        '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },",
@@ -1039,7 +1095,7 @@ describe('infraKitDev (config loading)', () => {
 })
 
 describe('loadDev (warn-first https requirement on dev.proxy.templates.local)', () => {
-  /** A single-source `local` route, so resolution never needs a sourced `INFRA_KIT_ENV`. */
+  /** A single-source `local` route, so neither a `deployedUrlEnv` nor its value is needed. */
   const writeLocalOnlyConfig = (dir: string, local: string): void => {
     fs.writeFileSync(
       path.join(dir, 'infra-kit.config.ts'),
@@ -1049,7 +1105,6 @@ describe('loadDev (warn-first https requirement on dev.proxy.templates.local)', 
         '    proxy: {',
         '      templates: {',
         `        local: '${local}',`,
-        "        cloud: 'https://<env>.hulyo.co.il',",
         '      },',
         '      routes: {',
         "        '/api': { packageName: 'backend-api', from: ['local'] },",
@@ -1099,7 +1154,7 @@ describe('loadDev (warn-first https requirement on dev.proxy.templates.local)', 
 
 describe('describeProxyRoutes', () => {
   const proxy: InfraKitDevProxy = {
-    templates: { local: 'https://<release>.<packageName>.localhost', cloud: 'https://<env>.hulyo.co.il' },
+    templates: { local: 'https://<release>.<packageName>.localhost' },
     routes: {
       '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' },
       '/api/v1/cronjob': { packageName: 'cronjobs-api', from: ['local', 'cloud'], default: 'cloud' },
@@ -1116,16 +1171,17 @@ describe('describeProxyRoutes', () => {
       info: new Map([['backend-api', { port: 4001, origin: 'https://feat-x.backend-api.localhost', wire: 2 }]]),
     }
 
-    expect(describeProxyRoutes({ proxy, localContext, env: 'dev', getRelease })).toEqual([
+    expect(describeProxyRoutes({ proxy, localContext, env: 'dev', cloud: CLOUD, getRelease })).toEqual([
       { path: '/api/v1/cronjob', packageName: 'cronjobs-api', source: 'cloud', target: 'https://dev.hulyo.co.il' },
       { path: '/media', packageName: 'backend-api', source: 'cloud', target: 'https://dev.hulyo.co.il' },
       { path: '/api', packageName: 'backend-api', source: 'local', target: 'https://feat-x.backend-api.localhost' },
     ])
   })
 
-  it('leaves a cloud target null instead of throwing when no env is set', () => {
+  it('leaves a cloud target null instead of throwing when the deployedUrlEnv variable is unset', () => {
     const localContext = { packages: new Set<string>(), info: new Map<string, LocalPackageInfo>() }
-    const routes = describeProxyRoutes({ proxy, localContext, env: undefined, getRelease })
+    const cloud = { envVar: 'CLIENT_URL', url: undefined }
+    const routes = describeProxyRoutes({ proxy, localContext, env: 'dev', cloud, getRelease })
 
     expect(
       routes.map((route) => {
@@ -1139,10 +1195,31 @@ describe('describeProxyRoutes', () => {
       packages: new Set(['backend-api']),
       info: new Map<string, LocalPackageInfo>([['backend-api', { port: 4001, wire: 2 }]]),
     }
-    const api = describeProxyRoutes({ proxy, localContext, env: 'dev', getRelease }).find((route) => {
+    const api = describeProxyRoutes({ proxy, localContext, env: 'dev', cloud: CLOUD, getRelease }).find((route) => {
       return route.path === '/api'
     })
 
     expect(api).toMatchObject({ source: 'local', target: null })
+  })
+})
+
+describe('readCloudOrigin', () => {
+  it('reads the named variable from the given env', () => {
+    expect(readCloudOrigin('CLIENT_URL', { CLIENT_URL: 'https://www.hulyo.co.il' })).toEqual({
+      envVar: 'CLIENT_URL',
+      url: 'https://www.hulyo.co.il',
+    })
+  })
+
+  it('reports an unset or empty variable as no url, keeping the name for the error', () => {
+    expect(readCloudOrigin('CLIENT_URL', {})).toEqual({ envVar: 'CLIENT_URL', url: undefined })
+    expect(readCloudOrigin('CLIENT_URL', { CLIENT_URL: '' })).toEqual({ envVar: 'CLIENT_URL', url: undefined })
+  })
+
+  it('has no url when the package declares no deployedUrlEnv', () => {
+    expect(readCloudOrigin(undefined, { CLIENT_URL: 'https://www.hulyo.co.il' })).toEqual({
+      envVar: undefined,
+      url: undefined,
+    })
   })
 })

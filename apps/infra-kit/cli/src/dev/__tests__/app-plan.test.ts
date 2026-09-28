@@ -14,9 +14,8 @@ const uiWithRoutes = (app: string, routes: Record<string, unknown>) => {
   fs.writeFileSync(
     path.join(dir, 'infra-kit.config.ts'),
     `export default ${JSON.stringify({
-      dev: {
-        proxy: { templates: { local: 'https://<release>.<packageName>.localhost', cloud: 'https://<env>.x' }, routes },
-      },
+      deployedUrlEnv: `${app.toUpperCase()}_URL`,
+      dev: { proxy: { templates: { local: 'https://<release>.<packageName>.localhost' }, routes } },
     })}\n`,
   )
 

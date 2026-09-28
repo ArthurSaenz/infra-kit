@@ -1,5 +1,11 @@
 import type { InfraKitE2e } from '@slip-stream-kit/config'
-import { describeProxyRoutes, loadDev, readLocalContext, slugifyHostLabel } from '@slip-stream-kit/config/internal'
+import {
+  describeProxyRoutes,
+  loadDev,
+  readCloudOrigin,
+  readLocalContext,
+  slugifyHostLabel,
+} from '@slip-stream-kit/config/internal'
 import type { ProxyRouteDescription } from '@slip-stream-kit/config/internal'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -33,7 +39,7 @@ export interface E2eTarget {
   packageName: string
   mode: 'local' | 'cloud'
   baseUrl: string
-  baseUrlEnv: string
+  deployedUrlEnv: string | null
   release: string
   /** `INFRA_KIT_ENV` of this process — the env a cloud run targets. */
   env: string | null
@@ -65,9 +71,9 @@ const discoverE2ePackages = async (root: string): Promise<E2ePackage[]> => {
 
   for (const app of apps) {
     const testsDir = path.join(appsDir, app, 'tests')
-    const config = await loadAuthoredPackageConfig(testsDir).catch(() => {
-      return undefined
-    })
+    // Not caught: a tests config the schema refuses (a retired `e2e.baseUrlEnv`, say) must say so, not
+    // vanish from the list and surface as "no package declares an e2e block".
+    const config = await loadAuthoredPackageConfig(testsDir)
 
     if (config?.e2e) found.push({ app, testsDir, e2e: config.e2e })
   }
@@ -101,8 +107,7 @@ const pickPackage = (packages: E2ePackage[], app: string | undefined, cwd: strin
   if (names.length === 0) {
     throw new OperationError(undefined, {
       operation: 'find an e2e package',
-      remediation:
-        'declare `e2e: { target, baseUrlEnv }` in `apps/<app>/tests/infra-kit.config.ts` (see the `InfraKitE2e` type)',
+      remediation: 'declare `e2e: { target }` in `apps/<app>/tests/infra-kit.config.ts` (see the `InfraKitE2e` type)',
       stderrExcerpt: `no apps/*/tests package under ${root} declares an e2e block`,
     })
   }
@@ -151,9 +156,8 @@ export interface E2eLocation {
   /** `apps/<app>/<kind>` of the target, absolute. */
   targetDir: string
   packageName: string
-  baseUrlEnv: string
-  /** The package's `e2e.cloud` template, if it declares one. */
-  cloud: string | undefined
+  /** The target package's `deployedUrlEnv` — the variable a cloud run reads its URL from. Only a cloud run needs it. */
+  deployedUrlEnv: string | null
   release: string
   env: string | null
   localUrl: string
@@ -170,10 +174,12 @@ export const locateE2eTarget = async (app: string | undefined, deps: E2eTargetDe
   const env = (deps.env ?? process.env)[INFRA_KIT_ENV_VAR] || null
   const probe = deps.healthProbe ?? defaultHealthProbe
   const picked = pickPackage(await discoverE2ePackages(root), app, cwd, root)
-  const { target, baseUrlEnv, cloud } = picked.e2e
+  const { target } = picked.e2e
   const [targetApp, kind] = target.split('/') as [string, 'ui' | 'api']
   const targetDir = path.join(root, 'apps', targetApp, kind)
   const packageName = (await readPackageJson(targetDir)).name
+  // Not caught: a target config the schema refuses (a retired `templates.cloud`, say) must say so.
+  const deployedUrlEnv = (await loadAuthoredPackageConfig(targetDir))?.deployedUrlEnv ?? null
 
   if (!packageName) {
     throw new OperationError(undefined, {
@@ -211,8 +217,7 @@ export const locateE2eTarget = async (app: string | undefined, deps: E2eTargetDe
     kind,
     targetDir,
     packageName,
-    baseUrlEnv,
-    cloud,
+    deployedUrlEnv,
     release,
     env,
     localUrl,
@@ -221,9 +226,9 @@ export const locateE2eTarget = async (app: string | undefined, deps: E2eTargetDe
 }
 
 const baseOf = (location: E2eLocation) => {
-  const { app, testsDir, target, packageName, baseUrlEnv, release, env, localUrl } = location
+  const { app, testsDir, target, packageName, deployedUrlEnv, release, env, localUrl } = location
 
-  return { app, testsDir, target, packageName, baseUrlEnv, release, env, localUrl }
+  return { app, testsDir, target, packageName, deployedUrlEnv, release, env, localUrl }
 }
 
 /** The local run against a served target: the UI's proxy split, each local backend probed. */
@@ -236,6 +241,7 @@ export const describeLocalTarget = async (location: E2eLocation, deps: E2eTarget
         proxy: dev.proxy,
         localContext,
         env: location.env ?? undefined,
+        cloud: readCloudOrigin(location.deployedUrlEnv ?? undefined, deps.env ?? process.env),
         getRelease: () => {
           return location.release
         },
@@ -256,28 +262,32 @@ export const describeLocalTarget = async (location: E2eLocation, deps: E2eTarget
 }
 
 /**
- * The cloud run: the package's `cloud` URL at `INFRA_KIT_ENV`, or the env-loaded `baseUrlEnv`.
+ * The cloud run: the URL the loaded environment holds under the target's `deployedUrlEnv`. `INFRA_KIT_ENV`
+ * is required beside it — it names the env for the protected-env check, and a URL without it could be left
+ * over from an earlier load.
  *
- * @throws When the cloud side cannot be named (no `cloud`, no env).
+ * @throws When either is not loaded.
  */
 export const describeCloudTarget = (location: E2eLocation, deps: E2eTargetDeps = {}): E2eTarget => {
-  const { env, cloud, baseUrlEnv, target } = location
-  const processEnv = deps.env ?? process.env
+  const { env, deployedUrlEnv, target } = location
 
-  // Doppler already carries each env's deployed URL under `baseUrlEnv`, so a package without `cloud`
-  // uses the value `env-load` put there. `INFRA_KIT_ENV` is still required: it is what names the env for
-  // the protected-env check, and a variable without it could be left over from any earlier load.
-  const cloudUrl = cloud ? env && cloud.replaceAll('<env>', env) : processEnv[baseUrlEnv]
+  if (!deployedUrlEnv) {
+    throw new OperationError(undefined, {
+      operation: `resolve the deployed app ${location.app}'s cloud e2e run targets`,
+      remediation: `declare \`deployedUrlEnv: '<APP>_URL'\` in ${path.join(location.targetDir, 'infra-kit.config.ts')} and keep the URL per environment in Doppler`,
+      stderrExcerpt: `${target} names no variable holding its deployed URL`,
+    })
+  }
+
+  const cloudUrl = (deps.env ?? process.env)[deployedUrlEnv]
 
   if (!env || !cloudUrl) {
-    const missing = env
-      ? `${baseUrlEnv} is not set (and \`e2e.cloud\` is not configured)`
-      : `${INFRA_KIT_ENV_VAR} is not set`
-
     throw new OperationError(undefined, {
       operation: `resolve the deployed app ${location.app}'s cloud e2e run targets`,
       remediation: 'load an environment (`infra-kit env-load -c <env>`), or drop --cloud to run against this worktree',
-      stderrExcerpt: `a cloud run of ${target} needs a deployed URL, and ${missing}`,
+      stderrExcerpt: `a cloud run of ${target} needs ${deployedUrlEnv} and ${INFRA_KIT_ENV_VAR}, and ${
+        cloudUrl ? INFRA_KIT_ENV_VAR : deployedUrlEnv
+      } is not set`,
     })
   }
 

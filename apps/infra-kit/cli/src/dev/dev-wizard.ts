@@ -63,6 +63,8 @@ export interface WizardApp {
   apiPackage?: string
   /** Backends this app's frontend proxies to (empty for api-only apps or a frontend with no `dev.proxy`). */
   backends: ProxyBackend[]
+  /** The frontend's `deployedUrlEnv` — the variable its cloud routes are sent to. Absent when it declares none. */
+  deployedUrlEnv?: string
 }
 
 /** Everything the wizard needs, gathered impurely by {@link file://./dev-wizard-run.ts}. */
