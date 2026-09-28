@@ -150,15 +150,14 @@ const makeWorkspace = (): string => {
   tmpDirs.push(root)
   fs.writeFileSync(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n')
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'ws-root', type: 'module' }))
-  // Marks the repo as an infra-kit project: `audit --root` loads it via the preset-proxy check.
-  // `envManagement` is the one required key; no `devServersPresets`, so that check returns null.
+  // Marks the repo as an infra-kit project and carries the root audit rules. `envManagement` is the
+  // one required key; no `devServersPresets`, so the preset-proxy check returns null.
   fs.writeFileSync(
     path.join(root, 'infra-kit.json'),
-    JSON.stringify({ envManagement: { provider: 'doppler', config: { name: 'ws-root' } } }),
-  )
-  fs.writeFileSync(
-    path.join(root, 'infra-kit.config.ts'),
-    'export default { requiredScripts: [], requiredFiles: [], turbo: { requiredTasks: [] } }',
+    JSON.stringify({
+      envManagement: { provider: 'doppler', config: { name: 'ws-root' } },
+      audit: { requiredScripts: [], requiredFiles: [], turbo: { requiredTasks: [] } },
+    }),
   )
 
   for (const name of ['a', 'b']) {
@@ -310,6 +309,115 @@ describe('audit --root — agent-guidance regression', () => {
       }),
     ).not.toContain('agent-guidance')
     expect(result.structuredContent.allPassed).toBe(true)
+  })
+})
+
+describe('audit --root — rules from infra-kit.json', () => {
+  beforeEach(() => {
+    resetAdoptionCache()
+    resetInfraKitConfigCache()
+  })
+
+  const writeProjectConfig = (root: string, extra: Record<string, unknown>): void => {
+    fs.writeFileSync(
+      path.join(root, 'infra-kit.json'),
+      `${JSON.stringify({ envManagement: { provider: 'doppler', config: { name: 'ws-root' } }, ...extra }, null, 2)}\n`,
+    )
+  }
+
+  const failedChecks = (result: AuditResult): string[] => {
+    return result.structuredContent.packages.flatMap((pkg) => {
+      return pkg.checks
+        .filter((check) => {
+          return check.status !== 'pass'
+        })
+        .map((check) => {
+          return check.name
+        })
+    })
+  }
+
+  it('enforces the audit block over the root baseline', async () => {
+    const root = makeWorkspace()
+
+    writeProjectConfig(root, { audit: { requiredScripts: ['qa'], requiredFiles: [], turbo: { requiredTasks: [] } } })
+    projectRoot.value = root
+
+    const result = await audit({ root: true })
+
+    expect(failedChecks(result)).toEqual(['script:qa'])
+  })
+
+  it('falls back to the root baseline without an audit block', async () => {
+    const root = makeWorkspace()
+
+    writeProjectConfig(root, {})
+    projectRoot.value = root
+
+    const result = await audit({ root: true })
+
+    expect(failedChecks(result)).toContain('script:infra-kit-check')
+    expect(failedChecks(result)).toContain('file:turbo.json')
+  })
+
+  it('fails a leftover root infra-kit.config.ts', async () => {
+    const root = makeWorkspace()
+
+    fs.writeFileSync(path.join(root, 'infra-kit.config.ts'), 'export default { requiredScripts: [] }')
+    projectRoot.value = root
+
+    const result = await audit({ root: true })
+
+    expect(failedChecks(result)).toEqual(['infra-kit.config.ts'])
+  })
+
+  it('--fix moves the root config into infra-kit.json and deletes it', async () => {
+    const root = makeWorkspace()
+
+    writeProjectConfig(root, {})
+    fs.writeFileSync(
+      path.join(root, 'infra-kit.config.ts'),
+      'export default () => ({ requiredScripts: [], requiredFiles: [], turbo: { requiredTasks: [] } })',
+    )
+    projectRoot.value = root
+
+    const result = await audit({ root: true, fix: true })
+
+    expect(fs.existsSync(path.join(root, 'infra-kit.config.ts'))).toBe(false)
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'infra-kit.json'), 'utf8')).audit).toEqual({
+      requiredScripts: [],
+      requiredFiles: [],
+      turbo: { requiredTasks: [] },
+    })
+    expect(result.structuredContent.allPassed).toBe(true)
+  })
+
+  it('--fix refuses when infra-kit.json already has an audit block', async () => {
+    const root = makeWorkspace()
+
+    fs.writeFileSync(path.join(root, 'infra-kit.config.ts'), 'export default { requiredScripts: [] }')
+    projectRoot.value = root
+
+    const result = await audit({ root: true, fix: true })
+
+    expect(fs.existsSync(path.join(root, 'infra-kit.config.ts'))).toBe(true)
+    expect(result.structuredContent.fixed).toContainEqual({ path: path.join(root, 'infra-kit.json'), action: 'failed' })
+  })
+
+  it('--fix refuses keys that mean nothing at the root', async () => {
+    const root = makeWorkspace()
+
+    writeProjectConfig(root, {})
+    fs.writeFileSync(path.join(root, 'infra-kit.config.ts'), "export default { type: 'lib' }")
+    projectRoot.value = root
+
+    const result = await audit({ root: true, fix: true })
+
+    expect(fs.existsSync(path.join(root, 'infra-kit.config.ts'))).toBe(true)
+    expect(result.structuredContent.fixed).toContainEqual({
+      path: path.join(root, 'infra-kit.config.ts'),
+      action: 'failed',
+    })
   })
 })
 

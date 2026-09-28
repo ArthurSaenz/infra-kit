@@ -316,6 +316,23 @@ export const vendorSourceSchema = z
   })
   .strict()
 
+/**
+ * The repo root's `audit --root` rules, over `ROOT_DEFAULT_RULES`. Same vocabulary as a package's
+ * `infra-kit.config.ts`, so a rule reads the same at either level; each key replaces its baseline.
+ */
+const auditRulesSchema = z
+  .object({
+    requiredScripts: z.array(z.string().min(1)).optional(),
+    requiredFiles: z.array(z.string().min(1)).optional(),
+    turbo: z
+      .object({
+        requiredTasks: z.array(z.string().min(1)).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+
 export const infraKitConfigObject = z
   .object({
     envManagement: envManagementSchema,
@@ -327,6 +344,7 @@ export const infraKitConfigObject = z
     protectedEnvs: protectedEnvsSchema.optional(),
     mcp: mcpProxiesSchema.optional(),
     vendorSource: vendorSourceSchema.nullable().optional(),
+    audit: auditRulesSchema.optional(),
   })
   .strict()
 
@@ -382,6 +400,9 @@ export type McpProxySpec = z.infer<typeof mcpProxySchema>
 export type McpProxies = z.infer<typeof mcpProxiesSchema>
 
 export type VendorSourceConfig = z.infer<typeof vendorSourceSchema>
+
+/** The root `audit` block: `audit --root` rules layered over the root baseline. */
+export type AuditRulesConfig = z.infer<typeof auditRulesSchema>
 
 /** Per-app dev-server overrides (`{ port?, prefixUrl? }`). */
 export type DevAppConfig = z.infer<typeof devAppConfigSchema>
@@ -890,16 +911,25 @@ const buildVendorSourceLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMi
   ].join('\n')
 }
 
+const buildAuditLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>): string => {
+  return [
+    `"audit" is not allowed in ${layer.label} (${layer.path}): the root audit gates CI, so a per-machine copy would make this machine pass or fail a different check list than CI.`,
+    'Move the block to the project infra-kit.json and commit it there.',
+  ].join('\n')
+}
+
 type LayerRejectionMessageBuilder = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>) => string
 
 /**
  * Keys only the committed project layer may carry. `mcp` feeds the committed `.mcp.json`, and the
  * shallow layer merge would let a per-machine block replace the project's wholesale and then be
- * derived into the shared file. `vendorSource` decides which repo is the sync source.
+ * derived into the shared file. `vendorSource` decides which repo is the sync source. `audit` is
+ * what CI enforces at the root.
  */
 const PROJECT_LAYER_ONLY_KEYS: Readonly<Record<string, LayerRejectionMessageBuilder>> = {
   mcp: buildMcpLayerRejectionMessage,
   vendorSource: buildVendorSourceLayerRejectionMessage,
+  audit: buildAuditLayerRejectionMessage,
 }
 
 // Refused loudly rather than silently ignored: each key's message says why a per-machine copy is

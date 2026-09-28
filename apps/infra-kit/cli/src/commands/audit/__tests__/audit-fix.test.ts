@@ -76,11 +76,10 @@ const makeWorkspace = (): string => {
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'ws-root', type: 'module' }))
   fs.writeFileSync(
     path.join(root, 'infra-kit.json'),
-    JSON.stringify({ envManagement: { provider: 'doppler', config: { name: 'ws-root' } } }),
-  )
-  fs.writeFileSync(
-    path.join(root, 'infra-kit.config.ts'),
-    'export default { requiredScripts: [], requiredFiles: [], turbo: { requiredTasks: [] } }',
+    JSON.stringify({
+      envManagement: { provider: 'doppler', config: { name: 'ws-root' } },
+      audit: { requiredScripts: [], requiredFiles: [], turbo: { requiredTasks: [] } },
+    }),
   )
   fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# root notes\n')
 

@@ -16,6 +16,7 @@ export {
   withSetupHint,
 } from './infra-kit-config'
 export type {
+  AuditRulesConfig,
   ConfiguredIde,
   DevAppConfig,
   DevConfig,

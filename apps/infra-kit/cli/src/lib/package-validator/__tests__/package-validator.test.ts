@@ -274,8 +274,9 @@ describe('validatePackage — agent-guidance wiring', () => {
     const dir = makeTmpDir()
 
     writePackage(dir, {
+      // Root rules come from the project infra-kit.json (covered in audit.test.ts), so only the
+      // check list is asserted here, not the verdict.
       packageJson: { name: 'monorepo', type: 'module' },
-      config: 'export default { requiredScripts: [], requiredFiles: [], turbo: { requiredTasks: [] } }',
       // The ROOT block, which the package-scoped check would classify as `foreign-block`.
       files: { 'CLAUDE.md': '<!-- infra-kit:begin -->\nroot guidance\n<!-- infra-kit:end -->' },
     })
@@ -290,7 +291,6 @@ describe('validatePackage — agent-guidance wiring', () => {
         return check.name
       }),
     ).not.toContain('agent-guidance')
-    expect(result.passed).toBe(true)
   })
 
   it('passes a package carrying a well-formed block after adoption', async () => {

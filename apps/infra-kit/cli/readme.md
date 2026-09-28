@@ -42,11 +42,13 @@ Code loads is self-contained and needs no config reader at session start.
 
 ## Configuration
 
-**infra-kit.json** (runtime)  
-Defines dev server ports, environment providers (e.g., Doppler), and preset proxy templates. Consumed by `infra-kit dev` and the MCP server.
+The split is by level: one `infra-kit.json` per repo, one `infra-kit.config.ts` per workspace package. The repo root has no `infra-kit.config.ts`.
 
-**infra-kit.config.ts** (audit)  
-Strict schema file that declares audit rules (`requiredScripts`, `requiredFiles`) and an optional `type` override (`frontend` | `backend` | `lib` | `e2e` | `mobile`) used by the `agent-guidance` check. Validated by `infra-kit audit`. No runtime behavior.
+**infra-kit.json** (repo)  
+Repo-wide settings: environment providers (e.g., Doppler), dev server ports and presets, worktrees, MCP proxies, and the `audit` block `infra-kit audit --root` checks the root against. Layered with personal overrides from `~/.infra-kit/infra-kit.json` and `~/.infra-kit/projects/<repo>/infra-kit.json`; `mcp`, `vendorSource` and `audit` are accepted only in the committed file. A leftover root `infra-kit.config.ts` fails `audit --root`; `infra-kit audit --fix --root` moves its rules into `audit` and deletes it.
+
+**infra-kit.config.ts** (package)  
+Strict schema file that declares the package's audit rules (`requiredScripts`, `requiredFiles`), an optional `type` override (`frontend` | `backend` | `lib` | `e2e` | `mobile`) used by the `agent-guidance` check, and the `dev.proxy` / `e2e` blocks read by the Vite plugin, `infra-kit dev` and the Playwright helper.
 
 An `e2e` package (declared, or inferred from `apps/<app>/tests` / a `@playwright/test` dependency) is additionally held to the shared Playwright convention, which no config key can switch off: the `e2e-test*` / `playwright-install` scripts must carry their canonical values (`e2e-script:*` checks), and `playwright.config.ts` must read `E2E_SLOW_MO`, pass it to `launchOptions.slowMo`, add it to `timeout`, and keep traces on local failures (`e2e-config:*` checks). Each failure prints the expected line.
 

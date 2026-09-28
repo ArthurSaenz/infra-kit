@@ -1013,3 +1013,40 @@ describe('vendorSource', () => {
     })
   })
 })
+
+describe('audit', () => {
+  const AUDIT = { requiredScripts: ['qa'], turbo: { requiredTasks: ['build'] } }
+
+  const writeProjectLayer = (tmp: string, extra: Record<string, unknown>): void => {
+    fs.writeFileSync(path.join(tmp, 'infra-kit.json'), JSON.stringify({ ...JSON.parse(VALID_JSON), ...extra }))
+  }
+
+  it('accepts the block in the project layer', async () => {
+    await withTmpRepo(async (tmp) => {
+      writeProjectLayer(tmp, { audit: AUDIT })
+
+      expect((await getInfraKitConfig()).audit).toEqual(AUDIT)
+    })
+  })
+
+  it('refuses an unknown rule key', async () => {
+    await withTmpRepo(async (tmp) => {
+      writeProjectLayer(tmp, { audit: { requiredScript: ['qa'] } })
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/requiredScript/)
+    })
+  })
+
+  it('refuses the block in the per-project override with the layer message', async () => {
+    await withTmpRepo(async (tmp) => {
+      writeProjectLayer(tmp, {})
+
+      const layerThreeDir = path.join(tmp, '.infra-kit', 'projects', path.basename(tmp))
+
+      fs.mkdirSync(layerThreeDir, { recursive: true })
+      fs.writeFileSync(path.join(layerThreeDir, 'infra-kit.json'), JSON.stringify({ audit: AUDIT }))
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/"audit" is not allowed in .*\.infra-kit\/projects/)
+    })
+  })
+})

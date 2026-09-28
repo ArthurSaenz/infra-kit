@@ -4,5 +4,9 @@
     "config": {
       "name": "infra-kit"
     }
+  },
+  "audit": {
+    "requiredScripts": [],
+    "requiredFiles": []
   }
 }

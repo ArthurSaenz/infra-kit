@@ -5,7 +5,15 @@ import { detectPackageType } from 'src/lib/agent-guidance/package-type'
 import { DEFAULT_RULES } from 'src/lib/package-config'
 import type { ResolvedPackageRules } from 'src/lib/package-config'
 
-import { checkAgentGuidance, checkConfig, checkE2e, checkFiles, checkScripts, checkTurbo } from './checks'
+import {
+  checkAgentGuidance,
+  checkConfig,
+  checkE2e,
+  checkFiles,
+  checkRootConfig,
+  checkScripts,
+  checkTurbo,
+} from './checks'
 import { readDeclaredPackageType, readPackageJson } from './loader'
 import type { PackageCheck, PackageValidationResult } from './types'
 
@@ -13,6 +21,15 @@ import type { PackageCheck, PackageValidationResult } from './types'
 // for the loader through `package-validator` keep resolving after the split.
 export { discoverPackages, loadPackageConfig } from './loader'
 export type { PackageCheck, PackageValidationResult } from './types'
+
+const checkPackageConfig = async (
+  packageDir: string,
+  baseline: Readonly<ResolvedPackageRules>,
+): Promise<{ checks: PackageCheck[]; rules: ResolvedPackageRules | null }> => {
+  const { check, rules } = await checkConfig(packageDir, baseline)
+
+  return { checks: [check], rules }
+}
 
 /** Caller-supplied context for one {@link validatePackage} run. */
 export interface ValidatePackageOptions {
@@ -52,8 +69,8 @@ const resolvePackageType = async (
 }
 
 /**
- * Validate a single directory against its `infra-kit.config.ts` rules: the config
- * must be present and valid, every required script must be declared, every
+ * Validate a single directory against its rules — a package's `infra-kit.config.ts`, or with
+ * `isRoot` the project `infra-kit.json` `audit` block: the config must be present and valid, every required script must be declared, every
  * required file must exist, and (root only) every required turbo task must be
  * defined. When the config fails to load, the rule-based checks are skipped (the
  * rules are unknown) but the `agent-guidance` check still reports, since it reads
@@ -75,8 +92,9 @@ export const validatePackage = async (
   const pkgJson = await readPackageJson(packageDir)
   const packageName = pkgJson.name ?? path.basename(packageDir)
 
-  const { check: configCheck, rules } = await checkConfig(packageDir, baseline)
-  const checks: PackageCheck[] = [configCheck]
+  const { checks, rules } = options.isRoot
+    ? await checkRootConfig(packageDir, baseline)
+    : await checkPackageConfig(packageDir, baseline)
 
   // Outside the `if (rules)` branch on purpose: a package whose config fails to load still
   // gets its guidance reported. Deliberately not a `requiredFiles` entry either — both
