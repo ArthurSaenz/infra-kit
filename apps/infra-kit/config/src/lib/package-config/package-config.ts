@@ -83,8 +83,9 @@ export interface InfraKitDev {
 }
 
 /**
- * The e2e package's target. Local vs cloud is never configured: `infra-kit e2e` runs against this
- * worktree's dev server when one serves `target`, and against the deployed app at `INFRA_KIT_ENV` otherwise.
+ * The e2e package's target. `infraKitE2e()` (`@slip-stream-kit/config/playwright`) reads it: a run is local
+ * by default — `target` on this worktree, served by `infra-kit dev <app>` — and cloud only when asked
+ * (`INFRA_KIT_E2E=cloud`, or CI).
  *
  * @example
  * // apps/client/tests/infra-kit.config.ts
@@ -95,7 +96,7 @@ export interface InfraKitDev {
 export interface InfraKitE2e {
   /** The package under test, `<app>/ui` or `<app>/api`. */
   target: string
-  /** The env var the Playwright config reads its base URL from; `infra-kit e2e` sets it for the run. */
+  /** The env var the Playwright config reads its base URL from; `infraKitE2e()` sets it for the run. */
   baseUrlEnv: string
   /**
    * The deployed URL, with an `<env>` placeholder. Separate from `dev.proxy.templates.cloud` because that

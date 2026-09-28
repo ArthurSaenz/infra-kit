@@ -1,10 +1,12 @@
+import { E2E_MODE_ENV } from '@slip-stream-kit/config/internal'
 import { spawn } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
 
 import { isHeadless } from 'src/lib/agent-mode'
 import { confirmOrExit } from 'src/lib/command-echo'
-import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { jsonOutput } from 'src/lib/json-output'
@@ -13,13 +15,15 @@ import { isProtectedEnv, resolveProtectedEnvAccess } from 'src/lib/workflow-envs
 import type { ProtectedEnvAccess } from 'src/lib/workflow-envs'
 import { defineMcpTool, textContent } from 'src/types'
 
-import { resolveE2eTarget } from './e2e-target'
-import type { E2eTarget, E2eTargetDeps } from './e2e-target'
+import { describeCloudTarget, describeLocalTarget, locateE2eTarget } from './e2e-target'
+import type { E2eLocation, E2eTarget, E2eTargetDeps } from './e2e-target'
 
 export interface E2eArgs {
   app?: string
   dryRun?: boolean
   yes?: boolean
+  /** Run against the deployed app at `INFRA_KIT_ENV` instead of this worktree. */
+  cloud?: boolean
   /** Passed through to `playwright test` verbatim. */
   playwrightArgs?: string[]
 }
@@ -30,13 +34,34 @@ export interface E2eDeps extends E2eTargetDeps {
   runPlaywright?: (target: E2eTarget, args: string[]) => Promise<number>
 }
 
-const formatTarget = (target: E2eTarget): string => {
-  const lines = [
-    `${target.app} e2e → ${target.mode.toUpperCase()} ${target.baseUrl}  (${target.baseUrlEnv})`,
-    target.mode === 'local'
-      ? `  dev server for ${target.target} on release "${target.release}"`
-      : `  nothing serves ${target.target} at ${target.localUrl}; cloud env "${target.env}" (${INFRA_KIT_ENV_VAR})`,
-  ]
+const PLAYWRIGHT_CONFIGS = [
+  'playwright.config.ts',
+  'playwright.config.mts',
+  'playwright.config.js',
+  'playwright.config.mjs',
+]
+
+/** Whether the package's Playwright config wires `infraKitE2e()` — the only thing that starts `dev` for a run. */
+const startsItsOwnDevServer = (testsDir: string): boolean => {
+  return PLAYWRIGHT_CONFIGS.some((file) => {
+    try {
+      return fs.readFileSync(path.join(testsDir, file), 'utf8').includes('infraKitE2e')
+    } catch {
+      return false
+    }
+  })
+}
+
+const devCommandFor = (location: E2eLocation): string => {
+  return `infra-kit dev ${location.target.split('/')[0]} --no-watch --reuse`
+}
+
+const formatTarget = (target: E2eTarget, served: boolean): string => {
+  const lines = [`${target.app} e2e → ${target.mode.toUpperCase()} ${target.baseUrl}  (${target.baseUrlEnv})`]
+
+  if (target.mode === 'cloud') lines.push(`  deployed app at env "${target.env}"`)
+  else if (served) lines.push(`  dev server for ${target.target} on release "${target.release}", already running`)
+  else lines.push(`  nothing serves ${target.target} yet; the Playwright config starts it and stops it after the run`)
 
   for (const route of target.routes) {
     let state = ''
@@ -95,12 +120,47 @@ const assertCloudEnvReachable = async (target: E2eTarget, deps: E2eDeps): Promis
   })
 }
 
+/** The local run: the served target's proxy split when it is up, else the alias the config will start. */
+const resolveLocal = async (location: E2eLocation, deps: E2eDeps): Promise<E2eTarget> => {
+  if (location.served) {
+    const target = await describeLocalTarget(location, deps)
+
+    assertLocalRoutesLive(target)
+
+    return target
+  }
+
+  if (!startsItsOwnDevServer(location.testsDir)) {
+    throw new OperationError(undefined, {
+      operation: `run ${location.app} e2e locally`,
+      remediation: `start it (\`${devCommandFor(location)}\`), or wire \`infraKitE2e()\` from @slip-stream-kit/config/playwright into its playwright.config.ts`,
+      stderrExcerpt: `nothing serves ${location.target} and ${location.testsDir}'s Playwright config does not start it`,
+    })
+  }
+
+  const { app, testsDir, target, packageName, baseUrlEnv, release, env, localUrl } = location
+
+  return {
+    app,
+    testsDir,
+    target,
+    packageName,
+    baseUrlEnv,
+    release,
+    env,
+    localUrl,
+    mode: 'local',
+    baseUrl: localUrl,
+    routes: [],
+  }
+}
+
 const defaultRunPlaywright = (target: E2eTarget, args: string[]): Promise<number> => {
   return new Promise((resolve, reject) => {
     // eslint-disable-next-line sonarjs/no-os-command-from-path -- the consumer's own pnpm, as its e2e scripts run it
     const child = spawn('pnpm', ['exec', 'playwright', 'test', ...args], {
       cwd: target.testsDir,
-      env: { ...process.env, [target.baseUrlEnv]: target.baseUrl },
+      env: { ...process.env, [E2E_MODE_ENV]: target.mode, [target.baseUrlEnv]: target.baseUrl },
       // Under --json/agent mode stdout carries the result document; Playwright's report goes to stderr.
       stdio: ['inherit', jsonOutput.enabled || isHeadless() ? 2 : 'inherit', 'inherit'],
     })
@@ -113,14 +173,15 @@ const defaultRunPlaywright = (target: E2eTarget, args: string[]): Promise<number
 }
 
 /**
- * Run an app's Playwright suite against this worktree's dev server when one serves its target, or
- * against the deployed app at `INFRA_KIT_ENV` otherwise. A cloud run touches an environment other
- * people use, so it previews and needs `--yes`; a local run does not.
+ * Run an app's Playwright suite. Local by default — this worktree's dev server, reused when it runs and
+ * otherwise started by the package's `infraKitE2e()` config for the length of the run. `--cloud` runs
+ * against the deployed app at `INFRA_KIT_ENV`, which other people use, so it previews and needs `--yes`.
  */
 export const e2e = async (args: E2eArgs, deps: E2eDeps = {}) => {
-  const target = await resolveE2eTarget(args.app, deps)
+  const location = await locateE2eTarget(args.app, deps)
+  const target = args.cloud ? describeCloudTarget(location, deps) : await resolveLocal(location, deps)
 
-  logger.info(formatTarget(target))
+  logger.info(formatTarget(target, location.served))
 
   const current = (deps.env ?? process.env)[target.baseUrlEnv]
 
@@ -128,10 +189,14 @@ export const e2e = async (args: E2eArgs, deps: E2eDeps = {}) => {
     logger.info(`  ${target.baseUrlEnv} was ${current} in this shell; the run uses ${target.baseUrl}`)
   }
 
-  if (target.mode === 'local') assertLocalRoutesLive(target)
-  else await assertCloudEnvReachable(target, deps)
+  if (target.mode === 'cloud') await assertCloudEnvReachable(target, deps)
 
-  const plan = { ...target, playwrightArgs: args.playwrightArgs ?? [] }
+  const plan = {
+    ...target,
+    served: location.served,
+    devCommand: target.mode === 'local' && !location.served ? devCommandFor(location) : null,
+    playwrightArgs: args.playwrightArgs ?? [],
+  }
 
   if (args.dryRun) {
     return buildResult({ ...plan, ran: false, exitCode: null })
@@ -151,7 +216,13 @@ export const e2e = async (args: E2eArgs, deps: E2eDeps = {}) => {
 }
 
 const buildResult = (
-  structuredContent: E2eTarget & { playwrightArgs: string[]; ran: boolean; exitCode: number | null },
+  structuredContent: E2eTarget & {
+    served: boolean
+    devCommand: string | null
+    playwrightArgs: string[]
+    ran: boolean
+    exitCode: number | null
+  },
 ) => {
   return { content: textContent(JSON.stringify(structuredContent, null, 2)), structuredContent }
 }
@@ -163,14 +234,17 @@ const e2eOutputSchema = {
   packageName: z.string(),
   mode: z
     .enum(['local', 'cloud'])
-    .describe(
-      'local: this worktree’s dev server serves the target. cloud: it does not; the run uses the env-loaded baseUrlEnv, or e2e.cloud at env.',
-    ),
+    .describe('local (default): this worktree’s dev server. cloud (--cloud): the deployed app at env.'),
   baseUrl: z.string().describe('The URL the run was pointed at, via the baseUrlEnv variable.'),
   baseUrlEnv: z.string(),
   release: z.string().describe('This worktree’s release slug — the first label of every local alias.'),
   env: z.string().nullable().describe('INFRA_KIT_ENV of this process; the env a cloud run targets.'),
-  localUrl: z.string().describe('The local address probed, whether or not anything answered.'),
+  localUrl: z.string().describe('This worktree’s address for the target, whether or not anything serves it.'),
+  served: z.boolean().describe('Whether this worktree’s dev server already served the target when the run began.'),
+  devCommand: z
+    .string()
+    .nullable()
+    .describe('Local runs with nothing served: the dev command the Playwright config starts, and stops after.'),
   routes: z
     .array(
       z.object({
@@ -181,7 +255,7 @@ const e2eOutputSchema = {
         live: z.boolean().nullable(),
       }),
     )
-    .describe('Local UI runs only: the dev proxy’s route-by-route local/cloud split, local backends probed.'),
+    .describe('Served local UI runs only: the dev proxy’s route-by-route local/cloud split, local backends probed.'),
   playwrightArgs: z.array(z.string()),
   ran: z.boolean().describe('False for --dry-run.'),
   exitCode: z.number().nullable().describe('Playwright’s exit code; null when it did not run.'),
@@ -190,7 +264,7 @@ const e2eOutputSchema = {
 export const e2eMcpTool = defineMcpTool({
   name: 'e2e',
   description:
-    'Run an app’s Playwright e2e suite against this worktree’s local dev server when it serves the target, else against the deployed app at INFRA_KIT_ENV. dryRun resolves and reports the target and the proxy topology without running. A cloud run is confirm-gated; a protected env (prod) follows protectedEnvs.',
+    'Run an app’s Playwright e2e suite against this worktree: the running dev server, or one the package’s infraKitE2e() Playwright config starts and stops. cloud runs against the deployed app at INFRA_KIT_ENV instead, confirm-gated; a protected env (prod) follows protectedEnvs. dryRun reports the target without running.',
   requiresHumanConfirm: true,
   inputSchema: {
     app: z
@@ -199,6 +273,7 @@ export const e2eMcpTool = defineMcpTool({
       .describe('App folder with an apps/<app>/tests e2e package; inferred from cwd when omitted.'),
     dryRun: z.boolean().optional(),
     yes: z.boolean().optional(),
+    cloud: z.boolean().optional().describe('Run against the deployed app at INFRA_KIT_ENV instead of this worktree.'),
   },
   outputSchema: e2eOutputSchema,
   handler: (params: E2eArgs) => {

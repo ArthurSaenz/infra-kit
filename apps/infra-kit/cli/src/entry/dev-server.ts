@@ -51,8 +51,13 @@ export interface DevCliOptions {
    * a `devServersPresets` key, so a wizard selection round-trips into a command you can paste.
    */
   target?: string
-  /** Named preset positional (`infra-kit dev <preset>`); selects launch targets from `devServersPresets`. */
+  /**
+   * Positional: a `devServersPresets` name, else an app folder (`infra-kit dev <app>` runs that app and the
+   * backends its routes can run locally).
+   */
   preset?: string
+  /** `--reuse`: test-runner mode — see `DevServerOptions.reuse`. */
+  reuse?: boolean
   orca?: boolean
   self?: boolean
   verbose?: boolean
@@ -120,6 +125,9 @@ export const toDevServerOptions = (raw: DevCliOptions): DevServerOptions => {
     verbose: raw.verbose ?? false,
     routes: raw.routes ?? false,
     uiHealth: raw.uiHealth ?? true,
+    reuse: raw.reuse ?? false,
+    // A test runner is waiting on the serving marker, which a probe tick prints — so tick fast.
+    ...(raw.reuse ? { livenessIntervalMs: 1000 } : {}),
   }
 }
 
@@ -277,9 +285,11 @@ export const createFatalHandler = ({
   }
 }
 
-/** The signals guarded during boot. Matches `signal-shutdown`'s SIGINT/SIGTERM, minus SIGHUP: this guard
+/**
+ * The signals guarded during boot. Matches `signal-shutdown`'s SIGINT/SIGTERM, minus SIGHUP: this guard
  * exists only for the window before a runner exists, and is gone (see {@link installBootSignalGuard}'s
- * doc block) by the time `registerSignalShutdown` — which does own SIGHUP — takes over. */
+ * doc block) by the time `registerSignalShutdown` — which does own SIGHUP — takes over.
+ */
 const BOOT_SIGNALS: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM']
 
 /**
@@ -487,7 +497,8 @@ export const shouldRunWizard = (raw: DevCliOptions, tty: boolean, json: boolean)
   // `--no-ui-health` is deliberately NOT in this list. It selects a diagnostic, not a run plan, and a flag
   // that quietly turns the picker into "run the entire repo" is a far bigger surprise than the one it would
   // avoid. The wizard carries it through instead (see `wizardToOptions`), so the user gets both.
-  const bare = !raw.preset && !raw.app && !raw.self && !raw.orca && raw.watch == null && !raw.verbose && !raw.routes
+  const bare =
+    !raw.preset && !raw.app && !raw.self && !raw.orca && raw.watch == null && !raw.verbose && !raw.routes && !raw.reuse
 
   return bare && tty && !json
 }

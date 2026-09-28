@@ -1,4 +1,4 @@
-import { DEV_CONTEXT_WIRE_VERSION } from '@slip-stream-kit/config/internal'
+import { DEV_CONTEXT_WIRE_VERSION, DEV_SERVING_MARKER } from '@slip-stream-kit/config/internal'
 import { infraKitDev } from '@slip-stream-kit/config/vite'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -17,6 +17,7 @@ import { stripAnsi } from 'src/dev/render'
 import type { TurboWatchOptions } from 'src/dev/turbo-watch'
 import type { UiDevOptions } from 'src/dev/ui-dev'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 
@@ -230,6 +231,194 @@ describe('devServerRunner — a preset with an invalid target key', () => {
     expect(error?.message).toContain('infra-kit dev: cannot run this preset')
     expect(error?.message).toContain('backoffice')
     expect(error?.message).toContain('<app>/api')
+
+    await runner.shutdown()
+  })
+})
+
+describe('devServerRunner — a name that is neither a preset nor an app', () => {
+  it('refuses with the presets and apps as choices, so an agent picks one instead of guessing again', async () => {
+    const root = temp.register(makeMonorepo([{ name: 'client', packageName: 'client-api', withHandler: true }]))
+
+    presetConfigSeed.config = {
+      envManagement: { provider: 'doppler', config: { name: 'test' } },
+      devServersPresets: { clientLocal: { apps: { 'client/api': {} } }, clientUICloud: { apps: {} } },
+    }
+
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { preset: 'nope' },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    const error = await runner.start().then(
+      () => {
+        return null
+      },
+      (e: unknown) => {
+        return e
+      },
+    )
+
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+    expect((error as StructuredRefusalError).structuredContent).toMatchObject({
+      status: 'argument_required',
+      argument: 'preset',
+      choices: { properties: { preset: { enum: ['clientLocal', 'clientUICloud', 'client'] } } },
+    })
+    expect((error as Error).message).toContain('"nope" is neither a dev preset nor an app')
+
+    await runner.shutdown()
+  })
+})
+
+/**
+ * `infra-kit dev <app>` and `--reuse` — the pair Playwright's `webServer` drives through `infraKitE2e()`.
+ * The app plan is derived from the UI's routes (see `app-plan.ts`); `--reuse` must never start a second
+ * session over one this worktree already runs, and must never tear that session down on its way out.
+ */
+describe('devServerRunner — an app name and --reuse', () => {
+  const clientFixture = (
+    routes: Record<string, { packageName: string; from: ('local' | 'cloud')[]; default?: 'local' | 'cloud' }>,
+  ) => {
+    return temp.register(
+      makeMonorepo([
+        {
+          name: 'client',
+          packageName: 'client-api',
+          withHandler: true,
+          ui: { packageName: 'client-ui', proxy: { cloud: 'https://dev.example.com', routes } },
+        },
+      ]),
+    )
+  }
+  const API_ROUTE = {
+    '/api': { packageName: 'client-api', from: ['local', 'cloud'] as ('local' | 'cloud')[], default: 'cloud' as const },
+  }
+
+  it('runs the app’s api for its UI’s local route, and prints the serving marker once everything answers', async () => {
+    const root = clientFixture(API_ROUTE)
+    const apiPort = await getFreePort()
+    const lines: string[] = []
+    const uiSpawns: string[][] = []
+
+    process.env.CLIENT_PORT = String(apiPort)
+    spyStdoutWrite(lines)
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { preset: 'client', uiHealth: false },
+      async () => {
+        fs.writeFileSync(path.join(root, 'apps', 'client', 'api', 'dist', 'handler.js'), handlerSource(1))
+      },
+      noopTurboChild,
+      ({ packageNames }) => {
+        uiSpawns.push(packageNames)
+
+        return { kill: async () => {} }
+      },
+      undefined,
+      undefined,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    const health = (await (await fetch(`http://127.0.0.1:${apiPort}/__health`)).json()) as { app: string }
+
+    expect(health).toMatchObject({ app: 'client' })
+    expect(uiSpawns).toEqual([['client-ui']])
+    expect(
+      lines.filter((line) => {
+        return line.includes(DEV_SERVING_MARKER)
+      }),
+    ).toHaveLength(1)
+
+    await runner.shutdown()
+  })
+
+  it('--reuse over a session this worktree already runs starts nothing and leaves that session alone', async () => {
+    const root = clientFixture(API_ROUTE)
+    const fragment = path.join(root, '.infra-kit', 'dev-context', 'client.json')
+    const lines: string[] = []
+    const builds: string[] = []
+
+    fs.mkdirSync(path.dirname(fragment), { recursive: true })
+    fs.writeFileSync(
+      fragment,
+      JSON.stringify({
+        v: 2,
+        package: 'client-api',
+        port: 4321,
+        pid: process.pid,
+        writtenAt: Date.now(),
+        release: 'local',
+        alias: 'local.client-api.localhost',
+        origin: 'https://local.client-api.localhost',
+      }),
+    )
+    process.env.PORTLESS_STATE_DIR = temp.register(fs.mkdtempSync(path.join(os.tmpdir(), 'ik-portless-')))
+    spyStdoutWrite(lines)
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { preset: 'client', reuse: true },
+      async () => {
+        builds.push('build')
+      },
+      noopTurboChild,
+      undefined,
+      undefined,
+      undefined,
+      async (target) => {
+        return target.port === 4321 ? 'ok' : 'refused'
+      },
+      workingProxy(),
+    )
+
+    await runner.start()
+    await runner.shutdown()
+
+    expect(builds).toEqual([])
+    expect(lines.join('')).toContain(`${DEV_SERVING_MARKER} client/api`)
+    expect(fs.existsSync(fragment)).toBe(true)
+  })
+
+  it('--reuse refuses before anything starts when a cloud route has no INFRA_KIT_ENV', async () => {
+    const root = clientFixture({ ...API_ROUTE, '/media': { packageName: 'client-api', from: ['cloud'] } })
+    const builds: string[] = []
+
+    delete process.env[INFRA_KIT_ENV_VAR]
+    process.env.PORTLESS_STATE_DIR = temp.register(fs.mkdtempSync(path.join(os.tmpdir(), 'ik-portless-')))
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { preset: 'client', reuse: true },
+      async () => {
+        builds.push('build')
+      },
+      noopTurboChild,
+      undefined,
+      undefined,
+      undefined,
+      async () => {
+        return 'refused'
+      },
+      workingProxy(),
+    )
+
+    await expect(runner.start()).rejects.toThrow(/client\/ui \/media/)
+    expect(builds).toEqual([])
 
     await runner.shutdown()
   })

@@ -146,8 +146,12 @@ afterEach(async () => {
   fs.rmSync(stateDir, { recursive: true, force: true })
 })
 
-describe('e2e — local', () => {
-  it('runs against the worktree UI and reports the proxy split, local backend probed', async () => {
+describe('e2e — local (the default)', () => {
+  const usesHelper = () => {
+    write('apps/client/tests/playwright.config.ts', 'const e2e = await infraKitE2e({ dir: import.meta.dirname })\n')
+  }
+
+  it('runs against the served worktree UI and reports the proxy split, local backend probed', async () => {
     registerUi(await viteServer())
     writeBackendFragment(await backendServer())
 
@@ -165,6 +169,8 @@ describe('e2e — local', () => {
       baseUrl: `https://${UI_HOST}`,
       baseUrlEnv: 'E2E_CLIENT_BASE_URL',
       release: RELEASE,
+      served: true,
+      devCommand: null,
       ran: true,
       exitCode: 0,
       routes: [
@@ -175,7 +181,32 @@ describe('e2e — local', () => {
     expect(runPlaywright.mock.calls[0]?.[1]).toEqual(['--project=chromium'])
   })
 
-  it('does not call a port that answers plain HTML a live UI', async () => {
+  it('stays local with a cloud env loaded, handing the start to the Playwright config', async () => {
+    usesHelper()
+
+    const runPlaywright = vi.fn(async (_target: E2eTarget, _args: string[]) => {
+      return 0
+    })
+    const result = await e2e({}, deps({ INFRA_KIT_ENV: 'dev' }, { runPlaywright }))
+
+    expect(result.structuredContent).toMatchObject({
+      mode: 'local',
+      baseUrl: `https://${UI_HOST}`,
+      served: false,
+      devCommand: 'infra-kit dev client --no-watch --reuse',
+      routes: [],
+    })
+    expect(runPlaywright.mock.calls[0]?.[0].mode).toBe('local')
+  })
+
+  it('refuses when nothing serves the target and the Playwright config would not start it', async () => {
+    await expect(e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))).rejects.toThrow(
+      /Playwright config does not start it/,
+    )
+  })
+
+  it('does not call a port that answers plain HTML a served UI', async () => {
+    usesHelper()
     registerUi(
       await listen((_req, res) => {
         res.statusCode = 200
@@ -186,7 +217,7 @@ describe('e2e — local', () => {
 
     const result = await e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))
 
-    expect(result.structuredContent.mode).toBe('cloud')
+    expect(result.structuredContent).toMatchObject({ mode: 'local', served: false })
   })
 
   it('refuses when a route is held local but its backend is not serving', async () => {
@@ -211,15 +242,18 @@ describe('e2e — local', () => {
   })
 })
 
-describe('e2e — cloud', () => {
-  it('falls to the cloud template at INFRA_KIT_ENV when nothing serves the target', async () => {
-    const result = await e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'oriana' }))
+describe('e2e — --cloud', () => {
+  it('uses the cloud template at INFRA_KIT_ENV, even when this worktree serves the target', async () => {
+    registerUi(await viteServer())
+
+    const result = await e2e({ cloud: true, dryRun: true }, deps({ INFRA_KIT_ENV: 'oriana' }))
 
     expect(result.structuredContent).toMatchObject({
       mode: 'cloud',
       baseUrl: 'https://oriana.hulyo.co.il',
       env: 'oriana',
       localUrl: `https://${UI_HOST}`,
+      devCommand: null,
       routes: [],
       ran: false,
     })
@@ -231,9 +265,11 @@ describe('e2e — cloud', () => {
     const runPlaywright = vi.fn(async () => {
       return 0
     })
-    const error = await e2e({}, deps({ INFRA_KIT_ENV: 'dev' }, { runPlaywright })).catch((caught: unknown) => {
-      return caught
-    })
+    const error = await e2e({ cloud: true }, deps({ INFRA_KIT_ENV: 'dev' }, { runPlaywright })).catch(
+      (caught: unknown) => {
+        return caught
+      },
+    )
 
     expect(error).toBeInstanceOf(StructuredRefusalError)
     expect((error as StructuredRefusalError).structuredContent.status).toBe('confirmation_required')
@@ -246,7 +282,7 @@ describe('e2e — cloud', () => {
     const runPlaywright = vi.fn(async (_target: E2eTarget, _args: string[]) => {
       return 1
     })
-    const result = await e2e({ yes: true }, deps({ INFRA_KIT_ENV: 'dev' }, { runPlaywright }))
+    const result = await e2e({ cloud: true, yes: true }, deps({ INFRA_KIT_ENV: 'dev' }, { runPlaywright }))
 
     expect(runPlaywright.mock.calls[0]?.[0].baseUrl).toBe('https://dev.hulyo.co.il')
     expect(result.structuredContent.exitCode).toBe(1)
@@ -254,10 +290,12 @@ describe('e2e — cloud', () => {
   })
 
   it('refuses a protected env unless the project allows it', async () => {
-    await expect(e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'prod' }))).rejects.toThrow(/protected environment/)
+    await expect(e2e({ cloud: true, dryRun: true }, deps({ INFRA_KIT_ENV: 'prod' }))).rejects.toThrow(
+      /protected environment/,
+    )
 
     const result = await e2e(
-      { dryRun: true },
+      { cloud: true, dryRun: true },
       deps(
         { INFRA_KIT_ENV: 'prod' },
         {
@@ -271,8 +309,8 @@ describe('e2e — cloud', () => {
     expect(result.structuredContent.baseUrl).toBe('https://prod.hulyo.co.il')
   })
 
-  it('names both ways out when there is no dev server and no env', async () => {
-    await expect(e2e({ dryRun: true }, deps({}))).rejects.toThrow(/INFRA_KIT_ENV is not set/)
+  it('names the missing env when none is loaded', async () => {
+    await expect(e2e({ cloud: true, dryRun: true }, deps({}))).rejects.toThrow(/INFRA_KIT_ENV is not set/)
   })
 
   it('uses the env-loaded base URL when the package declares no cloud template', async () => {
@@ -281,21 +319,11 @@ describe('e2e — cloud', () => {
     })
 
     const result = await e2e(
-      { dryRun: true },
+      { cloud: true, dryRun: true },
       deps({ INFRA_KIT_ENV: 'dev', E2E_CLIENT_BASE_URL: 'https://dev.hulyo.co.il' }),
     )
 
     expect(result.structuredContent).toMatchObject({ mode: 'cloud', baseUrl: 'https://dev.hulyo.co.il' })
-  })
-
-  it('refuses the env-loaded base URL when INFRA_KIT_ENV does not name its env', async () => {
-    writeConfig('apps/client/tests/infra-kit.config.ts', {
-      e2e: { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL' },
-    })
-
-    await expect(e2e({ dryRun: true }, deps({ E2E_CLIENT_BASE_URL: 'https://dev.hulyo.co.il' }))).rejects.toThrow(
-      /INFRA_KIT_ENV is not set/,
-    )
   })
 
   it('refuses cloud when neither a template nor the env-loaded variable names it', async () => {
@@ -303,7 +331,7 @@ describe('e2e — cloud', () => {
       e2e: { target: 'client/ui', baseUrlEnv: 'E2E_CLIENT_BASE_URL' },
     })
 
-    await expect(e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))).rejects.toThrow(
+    await expect(e2e({ cloud: true, dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))).rejects.toThrow(
       /E2E_CLIENT_BASE_URL is not set/,
     )
   })
@@ -335,7 +363,7 @@ describe('e2e — picking the package', () => {
 
   it('infers the app from a cwd inside apps/<app>/', async () => {
     const result = await e2e(
-      { dryRun: true },
+      { cloud: true, dryRun: true },
       { ...deps({ INFRA_KIT_ENV: 'dev' }), cwd: path.join(root, 'apps/backoffice/tests') },
     )
 
@@ -348,7 +376,7 @@ describe('e2e — picking the package', () => {
 
   it('takes --app over the cwd', async () => {
     const result = await e2e(
-      { app: 'client', dryRun: true },
+      { app: 'client', cloud: true, dryRun: true },
       { ...deps({ INFRA_KIT_ENV: 'dev' }), cwd: path.join(root, 'apps/backoffice/tests') },
     )
 

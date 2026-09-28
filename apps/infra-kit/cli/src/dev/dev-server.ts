@@ -17,7 +17,13 @@
  * runner's own narration, `<app>/api` and `<app>/ui` for each app, plus `turbo.log` (the UI engine's raw
  * chunk tee) and `watch.log`. Lambda / Powertools logs from handlers still go to stdout.
  */
-import { DEV_CONTEXT_WIRE_VERSION, loadDev, slugifyHostLabel } from '@slip-stream-kit/config/internal'
+import {
+  DEV_CONTEXT_WIRE_VERSION,
+  DEV_SERVING_MARKER,
+  loadDev,
+  readLocalContext,
+  slugifyHostLabel,
+} from '@slip-stream-kit/config/internal'
 import chokidar from 'chokidar'
 import type { FSWatcher } from 'chokidar'
 import { exec } from 'node:child_process'
@@ -27,12 +33,17 @@ import os from 'node:os'
 import * as path from 'node:path'
 import process from 'node:process'
 import util from 'node:util'
+import { z } from 'zod'
 
+import { agentMode } from 'src/lib/agent-mode'
 import { readAppRelease } from 'src/lib/app-release'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
+import { OperationError } from 'src/lib/errors/operation-error'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import type { DevConfig, DevPreset, DevPresets, ProxySource } from 'src/lib/infra-kit-config'
 import { DEFAULT_DEV_PROXY_PORT, getInfraKitConfig } from 'src/lib/infra-kit-config'
 
+import { planAppRun } from './app-plan.js'
 import {
   buildInfoCoversOutputs,
   findStaleSources,
@@ -79,7 +90,12 @@ import {
 import { buildPresetProxyContext } from './preset-proxy-context.js'
 import { deriveTargetLabel, resolvePreset, validatePresetKeys, validatePresetProxy } from './presets.js'
 import type { DiscoveredParts } from './presets.js'
-import { createPortlessDriver, formatPortlessCommand, readCaPath } from './proxy/portless-driver.js'
+import {
+  createPortlessDriver,
+  formatPortlessCommand,
+  listRoutes as listPortlessRoutes,
+  readCaPath,
+} from './proxy/portless-driver.js'
 import type { PortlessDriver } from './proxy/portless-driver.js'
 import { serviceInstallCommand } from './proxy/portless-link.js'
 import type { ServiceInstallSeams } from './proxy/portless-link.js'
@@ -272,6 +288,16 @@ export interface DevServerOptions {
    * Orca cannot show the panes. Handled by `runOrcaDevServer`, not the in-process `DevServerRunner`.
    */
   orca?: boolean
+  /**
+   * Test-runner mode (`--reuse`), for a caller that needs the apps served and does not care who serves them
+   * — Playwright's `webServer` is the one this exists for:
+   *  - when this worktree already serves any app of the plan, start nothing: announce it and idle until a
+   *    signal, owning nothing a shutdown could tear down;
+   *  - otherwise refuse cloud routes with no `INFRA_KIT_ENV` before anything starts, and exit on the first
+   *    app that fails to boot rather than staying resident half-up.
+   * Either way `DEV_SERVING_MARKER` is printed once everything answers its probe.
+   */
+  reuse?: boolean
   /**
    * Infer the single app to run from the current working directory (equivalent to
    * `--app=<that app>`), so every app can share the identical script
@@ -722,6 +748,13 @@ export class DevServerRunner {
   private static readonly PORT_RELEASE_DELAY_MS = 200
   /** Self-rescheduling backend liveness probe; cleared on {@link shutdown}. Null when unarmed (UI-only). */
   private livenessTimer: ReturnType<typeof setTimeout> | null = null
+  /** `--reuse` found this worktree already serving the plan: this runner owns nothing and only idles. */
+  private reusing = false
+  /** Holds the process open while {@link reusing} — nothing else it owns would. */
+  private keepAlive: ReturnType<typeof setInterval> | null = null
+  private servingAnnounced = false
+  /** The run's label, as the ready header names it; the serving marker repeats it. */
+  private targetLabel = ''
   /**
    * Probe history per row, keyed by TAG (`<app>/api`, `<app>/ui`) — never by app name, which would
    * collide an app's two halves into one counter the moment the frontends joined the tick. It survives an
@@ -979,11 +1012,16 @@ export class DevServerRunner {
   }
 
   /**
-   * The preset definition to run: the named preset (`infra-kit dev <preset>`; throws with the
-   * available names when unknown), or an `apps`-less preset when no preset was given — which
-   * `resolvePreset` expands to every discovered app + part.
+   * The preset definition to run: the named preset (`infra-kit dev <preset>`), else the app plan when the
+   * name is an app folder (`infra-kit dev <app>`, see {@link planAppRun}), or an `apps`-less preset when
+   * no name was given — which `resolvePreset` expands to every discovered app + part. A preset wins over an
+   * app of the same name: it was written on purpose, the app plan is derived.
    */
-  private resolvePresetDef(devPresets: DevPresets): DevPreset {
+  private async resolvePresetDef(
+    devPresets: DevPresets,
+    apiApps: IApiAppConfig[],
+    uiApps: DiscoveredUiApp[],
+  ): Promise<DevPreset> {
     // A wizard-built in-memory preset wins over the named lookup: it already IS the resolved run plan.
     if (this.options.presetDef != null) {
       return this.options.presetDef
@@ -997,15 +1035,55 @@ export class DevServerRunner {
 
     const def = devPresets[name]
 
-    if (!def) {
-      const available = Object.keys(devPresets)
+    if (def) return def
 
-      throw new Error(
-        `Unknown dev preset "${name}". Available: ${available.length > 0 ? available.join(', ') : '(none defined in devServersPresets)'}`,
-      )
+    const plan = await planAppRun(name, apiApps, uiApps)
+
+    if (plan) {
+      if (plan.unprovided.length > 0) {
+        this.renderer.log(
+          `⚠️  No apps/*/api provides these local-capable routes, so they stay on cloud: ${plan.unprovided.join(', ')}`,
+          'warn',
+        )
+      }
+
+      return plan.preset
     }
 
-    return def
+    const [first, ...rest] = [
+      ...new Set([
+        ...Object.keys(devPresets),
+        ...[...apiApps, ...uiApps]
+          .map((app) => {
+            return app.name
+          })
+          .toSorted(),
+      ]),
+    ]
+
+    if (first === undefined) {
+      throw new OperationError(undefined, {
+        operation: `run "${name}"`,
+        remediation: 'omit the name to run every app',
+        stderrExcerpt: 'no devServersPresets are defined and no apps were discovered',
+      })
+    }
+
+    // Preset and app names are per-repo, so an agent gets them as choices instead of guessing again.
+    throw new StructuredRefusalError(
+      {
+        status: 'argument_required',
+        argument: 'preset',
+        choices: z.toJSONSchema(z.object({ preset: z.enum([first, ...rest]) })),
+        agentMode: agentMode.source,
+      },
+      2,
+      {
+        operation: 'pick what infra-kit dev runs',
+        remediation: `pass a preset or an app: ${[first, ...rest].join(', ')}`,
+        stderrExcerpt: `"${name}" is neither a dev preset nor an app`,
+      },
+    )
   }
 
   /**
@@ -1090,11 +1168,7 @@ export class DevServerRunner {
       include,
     )
 
-    if (apps.length === 0 && uiApps.length === 0) {
-      this.renderer.log('⚠️  No API or UI apps to run for this preset', 'warn')
-
-      return
-    }
+    if (await this.endsBeforeBoot(apps, uiApps)) return
 
     // Once per app, per run: `start()` runs exactly once per `DevServerRunner` instance, and `uiApps`
     // never has two entries for the same app, so a plain pass over it already satisfies "one-time".
@@ -1115,6 +1189,7 @@ export class DevServerRunner {
           : `⚠️  ${this.appServers.length}/${apps.length} servers started — ${this.failedApps.length} failed`,
       )
       this.renderer.narrate(`📝 Logs → ${homeShorten(this.sink.dir)} (one file per service)`)
+      this.assertNoBootFailuresWhenReusing(apps.length)
     }
 
     // The label for what the user asked to run. Derived from the post-`--app` sets — not from
@@ -1159,6 +1234,8 @@ export class DevServerRunner {
     // `local` until that UI is restarted. Discovery treats both shapes as managed, so on such a UI this row
     // can clear while the traffic still goes to cloud. The plugin is the supported wiring and every
     // consumer uses it today; stated here so the assumption is on the record rather than merely held.
+    this.targetLabel = target
+
     if (watch) this.holdFailedBackendsLocal()
     this.degradedRoutes = await this.collectDegradedRoutes(uiApps, wantedLocalPkgs, presetProxy)
     if (this.degradedRoutes.length > 0 && !watch) {
@@ -1168,6 +1245,7 @@ export class DevServerRunner {
     // Collapse the boot spinner into the calm ready header (BE endpoints + UI reference lines).
     // Runs for a UI-only session too, so it never leaves a blank screen. The route dump is opt-in.
     await this.printReady(apps, uiApps, bootStart, target)
+    this.announceServingOnce()
     if (this.options.routes) {
       this.printRouteDump()
     }
@@ -1235,7 +1313,7 @@ export class DevServerRunner {
     const apiAppsAll = this.discoverApiApps(devConfig)
     const uiAppsAll = discoverUiAppsBare(this.monorepoRoot)
     const devPresets = await this.loadDevPresets()
-    const presetDef = this.resolvePresetDef(devPresets)
+    const presetDef = await this.resolvePresetDef(devPresets, apiAppsAll, uiAppsAll)
 
     // Guard BEFORE resolvePreset: its parseTargetKey throws a raw error on a key that isn't an
     // `<app>/api`|`<app>/ui` package (e.g. a bare `backoffice`), which surfaces as an uncaught stack
@@ -2474,6 +2552,13 @@ export class DevServerRunner {
 
     this.renderer.log(`⚠️  ${tag} failed to start — its \`dev\` task exited${others}`, 'error')
     this.refreshStatus()
+
+    // `--reuse` exits rather than serve a test run a frontend that is not there.
+    if (this.options.reuse) {
+      void this.shutdown().then(() => {
+        this.options.onExitRequest?.(1)
+      })
+    }
   }
 
   private setupWatch(apps: IApiAppConfig[], uiApps: DiscoveredUiApp[]): void {
@@ -3050,9 +3135,156 @@ export class DevServerRunner {
       }),
     )
 
+    this.announceServingOnce()
+
     // The panel's heartbeat. It rides the probe tick that already exists rather than adding a timer of
     // its own, so the numbers on screen are exactly as fresh as the health behind them.
     this.refreshStatus()
+  }
+
+  /**
+   * Print {@link DEV_SERVING_MARKER} the first time every probed row is up — a UI's row included, which the
+   * ready header cannot promise, because vite is spawned after it. A row nothing probes (`unknown`) does not
+   * hold it back; a failed app does, forever.
+   */
+  private announceServingOnce(): void {
+    if (this.servingAnnounced || this.lastSummary == null || this.failedApps.length > 0) return
+
+    const allUp = this.lastSummary.endpoints.every((row) => {
+      const health = this.healthOf(row.tag)
+
+      return health === 'ok' || health === 'unknown'
+    })
+
+    if (!allUp) return
+
+    this.servingAnnounced = true
+    this.renderer.log(`${DEV_SERVING_MARKER} ${this.targetLabel}`)
+  }
+
+  /**
+   * `--reuse`: which of the plan's apps this worktree already serves. A backend counts when its dev-context
+   * fragment's port answers `/__health`; a UI when its alias's port answers vite's ping — the same proofs
+   * the panel's own rows use.
+   */
+  private async findServedApps(apps: IApiAppConfig[], uiApps: DiscoveredUiApp[]): Promise<string[]> {
+    const routes = listPortlessRoutes()
+    const checks = [
+      ...apps.map((app) => {
+        return {
+          tag: `${app.name}/api`,
+          kind: 'api' as const,
+          port: readLocalContext(app.path).info.get(app.packageName)?.port ?? 0,
+        }
+      }),
+      ...uiApps.map((ui) => {
+        const label = `${readAppRelease(ui.path)}.${slugifyHostLabel(ui.packageName)}`
+
+        return {
+          tag: `${ui.name}/ui`,
+          kind: 'ui' as const,
+          port:
+            routes.find((route) => {
+              return route.name === label || route.name === `${label}.localhost`
+            })?.port ?? 0,
+        }
+      }),
+    ]
+    const served = await Promise.all(
+      checks.map(async (check) => {
+        return check.port > 0 && (await this.healthProbe(check)) === 'ok'
+      }),
+    )
+
+    return checks
+      .filter((_check, index) => {
+        return served[index]
+      })
+      .map((check) => {
+        return check.tag
+      })
+  }
+
+  /**
+   * Whether the run is over before anything boots: an empty plan, or `--reuse` over the session this worktree
+   * already runs. Under `--reuse` it also refuses what would leave the run half-working.
+   */
+  private async endsBeforeBoot(apps: IApiAppConfig[], uiApps: DiscoveredUiApp[]): Promise<boolean> {
+    if (apps.length === 0 && uiApps.length === 0) {
+      this.renderer.log('⚠️  No API or UI apps to run for this preset', 'warn')
+
+      return true
+    }
+
+    if (!this.options.reuse) return false
+
+    const served = await this.findServedApps(apps, uiApps)
+
+    if (served.length > 0) {
+      this.idleOverRunningSession(served)
+
+      return true
+    }
+
+    await this.assertCloudRoutesHaveEnv(apps, uiApps)
+
+    return false
+  }
+
+  /** `--reuse`: a test run against a half-up session fails on something unrelated to the change under test. */
+  private assertNoBootFailuresWhenReusing(planned: number): void {
+    const [first] = this.failedApps
+
+    if (!this.options.reuse || !first) return
+
+    throw new Error(
+      `infra-kit dev: ${this.failedApps.length} of ${planned} app(s) failed to start. ` +
+        `First failure (${first.app.name}): ${first.reason}`,
+    )
+  }
+
+  /**
+   * `--reuse` over a session this worktree already runs: start nothing, and stay up until a signal so the
+   * caller's lifecycle (Playwright's `webServer`) has a process to own. Its shutdown then touches nothing:
+   * every teardown step acts only on what this runner registered, and it registered nothing.
+   */
+  private idleOverRunningSession(served: string[]): void {
+    this.reusing = true
+    this.keepAlive = setInterval(() => {}, 60_000)
+    this.renderer.log(`♻️  Reusing the dev server this worktree already runs (${served.join(', ')})`)
+    this.servingAnnounced = true
+    this.renderer.log(`${DEV_SERVING_MARKER} ${served.join(', ')}`)
+  }
+
+  /**
+   * `--reuse` refuses up front what a human session only reports on its panel: a UI route that will proxy
+   * to cloud with no `INFRA_KIT_ENV` to name the env fails every test that touches it.
+   */
+  private async assertCloudRoutesHaveEnv(apps: IApiAppConfig[], uiApps: DiscoveredUiApp[]): Promise<void> {
+    if (process.env[INFRA_KIT_ENV_VAR]) return
+
+    const launched = new Set(
+      apps.map((app) => {
+        return app.packageName
+      }),
+    )
+    const cloudBound: string[] = []
+
+    for (const ui of uiApps) {
+      for (const [routePath, route] of Object.entries((await loadDev(ui.path))?.proxy?.routes ?? {})) {
+        if (!route.from.includes('local') || !launched.has(route.packageName)) {
+          cloudBound.push(`${ui.name}/ui ${routePath}`)
+        }
+      }
+    }
+
+    if (cloudBound.length === 0) return
+
+    throw new OperationError(undefined, {
+      operation: 'start the dev servers',
+      remediation: 'load an environment first (`infra-kit env-load -c dev`)',
+      stderrExcerpt: `these routes proxy to cloud and ${INFRA_KIT_ENV_VAR} is not set: ${cloudBound.join(', ')}`,
+    })
   }
 
   /** Probe one target and fold the outcome in. Split out of {@link livenessTick} to keep both simple. */
@@ -3345,6 +3577,17 @@ export class DevServerRunner {
     // turbo tree escalates SIGTERM→SIGKILL per child) — which is exactly how a second Ctrl-C gets
     // pressed, taking the force-quit path and orphaning the children.
     this.intercept?.uninstall()
+
+    // Every step below acts on what this runner registered; a reusing runner registered nothing, and the
+    // session it reused belongs to someone else's terminal.
+    if (this.reusing) {
+      if (this.keepAlive) clearInterval(this.keepAlive)
+      this.keepAlive = null
+      this.renderer.log('♻️  Left the reused dev server running')
+      this.stage = 'done'
+
+      return
+    }
 
     this.renderer.log('🛑 Shutting down all servers...')
 

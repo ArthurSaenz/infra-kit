@@ -28,6 +28,10 @@
       "types": "./dist/entry/vite.d.ts",
       "import": "./dist/vite.js"
     },
+    "./playwright": {
+      "types": "./dist/entry/playwright.d.ts",
+      "import": "./dist/playwright.js"
+    },
     "./internal": {
       "types": "./dist/entry/internal.d.ts",
       "import": "./dist/internal.js"

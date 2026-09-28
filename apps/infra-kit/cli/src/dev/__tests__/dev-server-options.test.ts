@@ -57,7 +57,16 @@ describe('toDevServerOptions — CLI flag parsing', () => {
       verbose: false,
       routes: false,
       uiHealth: true,
+      reuse: false,
     })
+  })
+
+  it('--reuse probes fast, because a test runner is waiting on the serving marker', () => {
+    expect(toDevServerOptions({ reuse: true } satisfies DevCliOptions)).toMatchObject({
+      reuse: true,
+      livenessIntervalMs: 1000,
+    })
+    expect(toDevServerOptions({} satisfies DevCliOptions).livenessIntervalMs).toBeUndefined()
   })
 
   it('passes the preset positional through', () => {

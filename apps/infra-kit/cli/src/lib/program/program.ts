@@ -652,8 +652,11 @@ export const buildProgram = (): Command => {
 
   program
     .command('dev')
-    .description('Run local dev servers for a named devServersPresets preset (or all apps); api + ui')
-    .argument('[preset]', 'Named preset from devServersPresets (omit to run every app)')
+    .description('Run local dev servers for a preset or an app (or every app); api + ui')
+    .argument(
+      '[preset]',
+      'A devServersPresets name, or an app — its api/ui plus the backends its routes can run locally (omit to run every app)',
+    )
     .option('-w, --watch', 'Rebuild and restart on file save (the default)')
     .option('--no-watch', 'Build once and never restart on save')
     .option('--app <names>', 'Further narrow to these app folder names (comma-separated)')
@@ -668,6 +671,10 @@ export const buildProgram = (): Command => {
     .option('--self', 'Run only the app of the current directory (infer from cwd; use inside apps/<app>/…)')
     .option('-V, --verbose', 'Print full boot narration (default: quiet; full detail always in the session log)')
     .option('--routes', 'Print each app’s registered METHOD /path routes at startup (default: off)')
+    .option(
+      '--reuse',
+      'For test runners: start nothing when this worktree already serves one of these apps, exit on a boot failure',
+    )
     .option(
       '--no-ui-health',
       'Do not probe the frontends’ liveness (vite’s HMR ping); their rows carry no health dot (also: INFRA_KIT_NO_UI_HEALTH=1)',
@@ -693,19 +700,21 @@ export const buildProgram = (): Command => {
       emit(await devStatus())
     })
 
-  // Named after `dev` on purpose: `dev` starts the servers, `e2e` tests whatever they serve. Local vs cloud
-  // is not a flag — a dev server serving the target on this worktree IS the choice.
+  // Named after `dev` on purpose: `dev` serves the apps, `e2e` tests them. Local by default — the package's
+  // `infraKitE2e()` Playwright config reuses or starts `dev`, so every Playwright entry point agrees with
+  // this one; cloud is the explicit exception because it runs against an environment other people use.
   program
     .command('e2e')
-    .description(
-      'Run an app’s Playwright e2e against this worktree’s dev server, else the deployed app at INFRA_KIT_ENV',
-    )
+    .description('Run an app’s Playwright e2e against this worktree (dev reused or started), or --cloud')
     .argument('[playwrightArgs...]', 'Passed to `playwright test` (put them after `--`)')
     .option('--app <name>', 'App folder whose apps/<app>/tests package to run (inferred from cwd when omitted)')
     .option('--dry-run', 'Resolve and print the target and proxy topology without running')
+    .option('--cloud', 'Run against the deployed app at INFRA_KIT_ENV instead of this worktree')
     .option('-y, --yes', 'Skip the confirmation a cloud run asks for')
     .action(async (playwrightArgs: string[], options) => {
-      emit(await e2e({ app: options.app, dryRun: options.dryRun, yes: options.yes, playwrightArgs }))
+      emit(
+        await e2e({ app: options.app, dryRun: options.dryRun, yes: options.yes, cloud: options.cloud, playwrightArgs }),
+      )
     })
 
   // The one command that sets a machine up: the local `initCore` writes, then install-or-update for

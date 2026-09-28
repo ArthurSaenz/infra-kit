@@ -52,6 +52,24 @@ frontend flips its route from `cloud` to `local` on its own. The helper here sta
 when you want the raw `server` block.
 
 ```ts
+// apps/<app>/tests/playwright.config.ts — the package's infra-kit.config.ts declares `e2e: { target, baseUrlEnv }`
+import { infraKitE2e } from '@slip-stream-kit/config/playwright'
+import { defineConfig } from '@playwright/test'
+
+const e2e = await infraKitE2e({ dir: import.meta.dirname })
+
+export default defineConfig({
+  webServer: e2e.webServer,
+  use: { baseURL: e2e.baseURL, ignoreHTTPSErrors: e2e.ignoreHTTPSErrors },
+})
+```
+
+Every run is local by default: `baseURL` is this worktree's alias for `e2e.target`, and `webServer` runs
+`infra-kit dev <app> --reuse`, which reuses the dev server this worktree already runs or starts one for the
+run (Playwright stops it after). `INFRA_KIT_E2E=cloud` — set by `infra-kit e2e --cloud`, and the default on
+CI — points at the deployed app instead and starts nothing.
+
+```ts
 // vendor.config.ts
 import { defineVendorConfig } from '@slip-stream-kit/config'
 
@@ -64,6 +82,7 @@ export default defineVendorConfig({ copy: [] })
 | --- | --- |
 | `.` | `defineConfig`, `defineVendorConfig`, and the config types |
 | `./vite` | `infraKitDev`, `infraKitProxy`, `resolveProxyConfig`, `slugifyRelease` |
+| `./playwright` | `infraKitE2e`, `DEV_SERVING_MARKER`, `E2E_MODE_ENV` |
 | `./internal` | Consumed by the `infra-kit` CLI. **Not public API** — no stability guarantee |
 
 ## Versioning

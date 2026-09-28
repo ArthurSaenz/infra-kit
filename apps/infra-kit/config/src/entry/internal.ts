@@ -13,6 +13,8 @@
 // No stability guarantee: `infra-kit` and `@slip-stream-kit/config` are released in lockstep, so
 // this surface may change in any release.
 export { packageConfigSchema } from '../lib/package-config/package-config-schema'
+export { DEV_SERVING_MARKER, E2E_MODE_ENV } from '../lib/playwright/playwright'
+export { readRelease } from '../lib/release-slug/read-release'
 export { DEFAULT_RELEASE_SLUG, slugifyHostLabel, slugifyRelease } from '../lib/release-slug/release-slug'
 export {
   defineVendorConfig,
@@ -28,6 +30,7 @@ export {
   describeProxyRoutes,
   DEV_CONTEXT_WIRE_VERSION,
   loadDev,
+  loadPackageConfig,
   readLocalContext,
   readLocalSet,
 } from '../lib/vite/vite'

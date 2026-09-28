@@ -204,8 +204,8 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mutating: false,
     groupPath: ['dev-status'],
   },
-  // Tests what `dev` serves, or the deployed app when nothing is served. `requiresHumanConfirm` covers the
-  // cloud run only — a local run touches nothing but this machine, so it runs without a preview.
+  // Tests this worktree by default, the deployed app with `--cloud`. `requiresHumanConfirm` covers the cloud
+  // run only — a local run touches nothing but this machine, so it runs without a preview.
   {
     cliName: 'e2e',
     menuGroup: 'develop',

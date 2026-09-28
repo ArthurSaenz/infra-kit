@@ -1,5 +1,4 @@
 import { Buffer } from 'node:buffer'
-import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
@@ -12,9 +11,11 @@ import type {
   InfraKitDevProxy,
   InfraKitDevProxyRoute,
   InfraKitDevProxySource,
+  InfraKitPackageConfig,
 } from '../package-config/package-config'
 import { packageConfigSchema } from '../package-config/package-config-schema'
-import { DEFAULT_RELEASE_SLUG, slugifyHostLabel, slugifyRelease } from '../release-slug/release-slug'
+import { readRelease } from '../release-slug/read-release'
+import { slugifyHostLabel, slugifyRelease } from '../release-slug/release-slug'
 
 /**
  * Env-name handle read at vite-config time to fill the `<env>` placeholder in a
@@ -576,13 +577,11 @@ const once = <T>(fn: () => T): (() => T) => {
 // still prints Node's MODULE_TYPELESS_PACKAGE_JSON banner there. Harmless (it is a double-parse
 // notice), and latent while consumer UI packages declare `"type": "module"`.
 /**
- * Load a package's `infra-kit.config.ts` and return its `dev` block, or
- * `undefined` when the config or the `dev` key is absent. The `.ts` config is
- * evaluated via Node's native type stripping (Node >= 24) — the same mechanism
- * the CLI's config loader uses. Cache-busted by mtime so repeated dev-server
- * reloads pick up edits.
+ * Load and validate a package's `infra-kit.config.ts`, or `undefined` when it is absent. The `.ts` config is
+ * evaluated via Node's native type stripping (Node >= 24) — the same mechanism the CLI's config loader uses.
+ * Cache-busted by mtime so repeated dev-server reloads pick up edits.
  */
-export const loadDev = async (cwd: string): Promise<InfraKitDev | undefined> => {
+export const loadPackageConfig = async (cwd: string): Promise<InfraKitPackageConfig | undefined> => {
   const configPath = path.join(cwd, PACKAGE_CONFIG_FILE)
 
   if (!fs.existsSync(configPath)) return undefined
@@ -601,13 +600,20 @@ export const loadDev = async (cwd: string): Promise<InfraKitDev | undefined> => 
 
   if (!parsed.success) {
     throw new Error(
-      `@slip-stream-kit/config/vite: invalid ${PACKAGE_CONFIG_FILE} at ${configPath}: ${z.prettifyError(parsed.error)}`,
+      `@slip-stream-kit/config: invalid ${PACKAGE_CONFIG_FILE} at ${configPath}: ${z.prettifyError(parsed.error)}`,
     )
   }
 
-  warnIfNonHttpsLocalTemplate(parsed.data.dev, configPath)
+  return parsed.data as InfraKitPackageConfig
+}
 
-  return parsed.data.dev
+/** A package's `dev` block, or `undefined` when the config or the `dev` key is absent. */
+export const loadDev = async (cwd: string): Promise<InfraKitDev | undefined> => {
+  const dev = (await loadPackageConfig(cwd))?.dev
+
+  warnIfNonHttpsLocalTemplate(dev, path.join(cwd, PACKAGE_CONFIG_FILE))
+
+  return dev
 }
 
 /** Coerce a parsed dev-context.json into the set of locally-running package names. */
@@ -791,12 +797,6 @@ export const readLocalSet = (cwd: string): ReadonlySet<string> => {
   return readLocalContext(cwd).packages
 }
 
-/** Current git branch of `cwd` (raw, un-slugified). */
-const readGitBranch = (cwd: string): string => {
-  // eslint-disable-next-line sonarjs/no-os-command-from-path
-  return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, encoding: 'utf-8' }).trim()
-}
-
 /**
  * An OS-assigned free TCP port on 127.0.0.1 — the per-worktree dev-server port (mirrors the
  * backend's `listen(0)`). This probes then releases the port, so there is a small TOCTOU window
@@ -959,13 +959,7 @@ export const infraKitDev = async (
   const env = process.env[INFRA_KIT_ENV]
   const authHeader = buildBasicAuthHeader(process.env, options.basicAuth)
   const getRelease = once(() => {
-    // Mirrors the dev-server's `readAppRelease`: outside a git repo both sides must land on the SAME
-    // label, or this target names a host the runner never aliased.
-    try {
-      return slugifyRelease(readGitBranch(cwd)) || DEFAULT_RELEASE_SLUG
-    } catch {
-      return DEFAULT_RELEASE_SLUG
-    }
+    return readRelease(cwd)
   })
 
   return {

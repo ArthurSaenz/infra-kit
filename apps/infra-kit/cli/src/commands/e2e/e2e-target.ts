@@ -142,13 +142,29 @@ const probeRoutes = async (routes: ProxyRouteDescription[], ports: Map<string, n
   )
 }
 
+/** An e2e package located on disk, and whether this worktree's dev server serves its target right now. */
+export interface E2eLocation {
+  app: string
+  testsDir: string
+  target: string
+  kind: 'ui' | 'api'
+  /** `apps/<app>/<kind>` of the target, absolute. */
+  targetDir: string
+  packageName: string
+  baseUrlEnv: string
+  /** The package's `e2e.cloud` template, if it declares one. */
+  cloud: string | undefined
+  release: string
+  env: string | null
+  localUrl: string
+  /** True when the target answers on this worktree's local address. */
+  served: boolean
+}
+
 /**
- * Decide where an e2e package's run goes: this worktree's dev server when it serves the target, the
- * package's `cloud` URL at `INFRA_KIT_ENV` otherwise. Reads and probes only — it starts nothing.
- *
- * @throws When no dev server serves the target and the cloud side cannot be named (no `cloud`, no env).
+ * Find an e2e package and probe whether this worktree serves its target. Reads and probes only.
  */
-export const resolveE2eTarget = async (app: string | undefined, deps: E2eTargetDeps = {}): Promise<E2eTarget> => {
+export const locateE2eTarget = async (app: string | undefined, deps: E2eTargetDeps = {}): Promise<E2eLocation> => {
   const cwd = deps.cwd ?? process.cwd()
   const root = deps.projectRoot ?? (await getProjectRoot())
   const env = (deps.env ?? process.env)[INFRA_KIT_ENV_VAR] || null
@@ -169,7 +185,6 @@ export const resolveE2eTarget = async (app: string | undefined, deps: E2eTargetD
 
   const release = readAppRelease(targetDir)
   const host = `${release}.${slugifyHostLabel(packageName)}.localhost`
-  const localContext = readLocalContext(targetDir)
   let localUrl = `https://${host}`
   let port = 0
 
@@ -181,36 +196,72 @@ export const resolveE2eTarget = async (app: string | undefined, deps: E2eTargetD
         return route.name === host || route.name === `${release}.${slugifyHostLabel(packageName)}`
       })?.port ?? 0
   } else {
-    const info = localContext.info.get(packageName)
+    const info = readLocalContext(targetDir).info.get(packageName)
 
     port = info?.port ?? 0
     localUrl = info?.origin ?? localUrl
   }
 
-  const live = port > 0 && (await probe({ tag: target, port, kind })) === 'ok'
-  const base = { app: picked.app, testsDir: picked.testsDir, target, packageName, baseUrlEnv, release, env, localUrl }
+  const served = port > 0 && (await probe({ tag: target, port, kind })) === 'ok'
 
-  if (live) {
-    const dev = kind === 'ui' ? await loadDev(targetDir) : undefined
-    const described = dev?.proxy
-      ? describeProxyRoutes({
-          proxy: dev.proxy,
-          localContext,
-          env: env ?? undefined,
-          getRelease: () => {
-            return release
-          },
-        })
-      : []
-    const ports = new Map(
-      [...localContext.info].map(([name, info]) => {
-        return [name, info.port] as const
-      }),
-    )
-
-    return { ...base, mode: 'local', baseUrl: localUrl, routes: await probeRoutes(described, ports, probe) }
+  return {
+    app: picked.app,
+    testsDir: picked.testsDir,
+    target,
+    kind,
+    targetDir,
+    packageName,
+    baseUrlEnv,
+    cloud,
+    release,
+    env,
+    localUrl,
+    served,
   }
+}
 
+const baseOf = (location: E2eLocation) => {
+  const { app, testsDir, target, packageName, baseUrlEnv, release, env, localUrl } = location
+
+  return { app, testsDir, target, packageName, baseUrlEnv, release, env, localUrl }
+}
+
+/** The local run against a served target: the UI's proxy split, each local backend probed. */
+export const describeLocalTarget = async (location: E2eLocation, deps: E2eTargetDeps = {}): Promise<E2eTarget> => {
+  const probe = deps.healthProbe ?? defaultHealthProbe
+  const localContext = readLocalContext(location.targetDir)
+  const dev = location.kind === 'ui' ? await loadDev(location.targetDir) : undefined
+  const described = dev?.proxy
+    ? describeProxyRoutes({
+        proxy: dev.proxy,
+        localContext,
+        env: location.env ?? undefined,
+        getRelease: () => {
+          return location.release
+        },
+      })
+    : []
+  const ports = new Map(
+    [...localContext.info].map(([name, info]) => {
+      return [name, info.port] as const
+    }),
+  )
+
+  return {
+    ...baseOf(location),
+    mode: 'local',
+    baseUrl: location.localUrl,
+    routes: await probeRoutes(described, ports, probe),
+  }
+}
+
+/**
+ * The cloud run: the package's `cloud` URL at `INFRA_KIT_ENV`, or the env-loaded `baseUrlEnv`.
+ *
+ * @throws When the cloud side cannot be named (no `cloud`, no env).
+ */
+export const describeCloudTarget = (location: E2eLocation, deps: E2eTargetDeps = {}): E2eTarget => {
+  const { env, cloud, baseUrlEnv, target } = location
   const processEnv = deps.env ?? process.env
 
   // Doppler already carries each env's deployed URL under `baseUrlEnv`, so a package without `cloud`
@@ -224,11 +275,11 @@ export const resolveE2eTarget = async (app: string | undefined, deps: E2eTargetD
       : `${INFRA_KIT_ENV_VAR} is not set`
 
     throw new OperationError(undefined, {
-      operation: `resolve where ${picked.app}'s e2e tests run`,
-      remediation: `start the dev server (\`infra-kit dev\`), or load an environment (\`infra-kit env-load -c <env>\`) to run against cloud`,
-      stderrExcerpt: `nothing serves ${target} at ${localUrl}, and ${missing}`,
+      operation: `resolve the deployed app ${location.app}'s cloud e2e run targets`,
+      remediation: 'load an environment (`infra-kit env-load -c <env>`), or drop --cloud to run against this worktree',
+      stderrExcerpt: `a cloud run of ${target} needs a deployed URL, and ${missing}`,
     })
   }
 
-  return { ...base, mode: 'cloud', baseUrl: cloudUrl, routes: [] }
+  return { ...baseOf(location), mode: 'cloud', baseUrl: cloudUrl, routes: [] }
 }
