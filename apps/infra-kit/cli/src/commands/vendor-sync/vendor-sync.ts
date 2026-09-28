@@ -25,7 +25,7 @@ import {
 } from 'src/lib/vendor/sync'
 import type { SourceFacts, TargetPlan } from 'src/lib/vendor/sync'
 
-import { reportHasFail, syncReport } from './report'
+import { appliedDelta, reportHasFail, syncReport } from './report'
 import type { SyncMode, TargetOutcome } from './report'
 import { preflightSource } from './source-preflight'
 import { planTargets, selectTargets } from './targets'
@@ -264,10 +264,13 @@ export const vendorSync = async (options: VendorSyncOptions = {}) => {
 
   const humanPreview = !options.confirmedCommand && !jsonOutput.enabled
 
-  if (humanPreview) printRunReport(preview)
   if (humanPreview && !process.stdin.isTTY) {
+    printRunReport(preview)
+
     return finish({ mode: 'preview', report: preview, outcomes, source, print: false })
   }
+  // The confirm prompt follows, so the preview's "re-run with --yes" hint would be wrong here.
+  if (humanPreview) printRunReport({ ...preview, hints: [] })
 
   await confirmOrExit(options.confirmedCommand, `Sync vendored files from ${source.name} into these targets?`, {
     plan: planPayload(plans),
@@ -278,5 +281,17 @@ export const vendorSync = async (options: VendorSyncOptions = {}) => {
   const applied = await applyAll(source, plans, options)
   const report = syncReport(sourceRows, applied, { ...reportOptions, mode: 'applied' })
 
-  return finish({ mode: 'applied', report, outcomes: applied, source, print: true })
+  if (humanPreview) {
+    const synced = applied
+      .filter((outcome) => {
+        return outcome.applied
+      })
+      .map((outcome) => {
+        return outcome.plan.name
+      })
+
+    printRunReport(appliedDelta(preview, report, synced))
+  }
+
+  return finish({ mode: 'applied', report, outcomes: applied, source, print: !humanPreview })
 }

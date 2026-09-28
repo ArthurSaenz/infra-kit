@@ -9,6 +9,8 @@ import { commandEcho } from 'src/lib/command-echo'
 import { CommandDeclinedError } from 'src/lib/errors/command-declined-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { jsonOutput } from 'src/lib/json-output'
+import { printRunReport } from 'src/lib/render/run-report'
+import type { RunReport } from 'src/lib/render/run-report'
 import { loadFactoryConfig } from 'src/lib/vendor/factory-config'
 import { applyTargetPlan, buildTargetPlan, probeSource, probeTarget, writeVendorMetaOnly } from 'src/lib/vendor/sync'
 import type { SourceFacts, TargetFacts, TargetPlan } from 'src/lib/vendor/sync'
@@ -192,6 +194,59 @@ describe('vendorSync — TTY gate for the apply', () => {
     expect(applyTargetPlan).toHaveBeenCalledTimes(1)
     expect(result.structuredContent).toMatchObject({ mode: 'applied', failed: false })
     expect(result.structuredContent.targets[0]).toMatchObject({ name: 'hulyo', applied: true })
+  })
+})
+
+describe('vendorSync — prompted apply prints the full report once', () => {
+  const printed = (): RunReport[] => {
+    return vi.mocked(printRunReport).mock.calls.map((call) => {
+      return call[0]
+    })
+  }
+
+  it('shows the preview without the --yes hint, then only a one-line result', async () => {
+    setStdinTTY(true)
+    vi.mocked(confirm).mockResolvedValue(true as never)
+
+    await vendorSync({})
+
+    const [preview, result] = printed()
+
+    expect(printed()).toHaveLength(2)
+    expect(preview!.hints).toEqual([])
+    expect(
+      result!.sections.flatMap((section) => {
+        return section.rows
+      }),
+    ).toEqual([])
+    expect(result!.emptyMessage).toBe('synced hulyo')
+  })
+
+  it('still prints a failure the preview could not show', async () => {
+    setStdinTTY(true)
+    vi.mocked(confirm).mockResolvedValue(true as never)
+    vi.mocked(applyTargetPlan).mockRejectedValueOnce(new Error('EACCES'))
+
+    await vendorSync({})
+
+    const rows = printed()[1]!.sections.flatMap((section) => {
+      return section.rows
+    })
+
+    expect(rows).toEqual([expect.objectContaining({ name: 'sync', status: 'fail' })])
+  })
+
+  it('--yes skips the preview and prints the full applied report', async () => {
+    setStdinTTY(true)
+
+    await vendorSync({ confirmedCommand: true })
+
+    expect(printed()).toHaveLength(1)
+    expect(
+      printed()[0]!.sections.map((section) => {
+        return section.label
+      }),
+    ).toEqual(['source', 'hulyo', 'travelist'])
   })
 })
 

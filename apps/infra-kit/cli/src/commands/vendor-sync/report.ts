@@ -115,3 +115,34 @@ export const reportHasFail = (report: RunReport): boolean => {
     })
   })
 }
+
+/**
+ * The applied report minus every row the human already saw in the preview (same section, name and status), so
+ * a confirmed run prints only what the apply added — failures, commits — or a one-line result when nothing did.
+ *
+ * @example
+ * appliedDelta(preview, applied, ['hulyo']) // => { title: 'infra-kit vendor sync', sections: [{ label: 'hulyo', rows: [commitRow] }], … }
+ */
+export const appliedDelta = (preview: RunReport, applied: RunReport, syncedTargets: readonly string[]): RunReport => {
+  const seen = new Set(
+    preview.sections.flatMap((section) => {
+      return section.rows.map((row) => {
+        return `${section.label}\0${row.name}\0${row.status}`
+      })
+    }),
+  )
+  const sections = applied.sections.map((section): RunSection => {
+    return {
+      label: section.label,
+      rows: section.rows.filter((row) => {
+        return !seen.has(`${section.label}\0${row.name}\0${row.status}`)
+      }),
+    }
+  })
+
+  return {
+    ...applied,
+    sections,
+    emptyMessage: `synced ${syncedTargets.join(', ')}`,
+  }
+}
