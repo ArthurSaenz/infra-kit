@@ -97,12 +97,13 @@ describe('section coverage', () => {
     // 36: `warm cache` and `env token valid` left with the retired env auto-load; `git installed` joined.
     // 35: `MCP server key` left — the `.mcp.json` leftover is reported by `setup` and `audit`, not doctor.
     // 36: `merge-dev resolutions` joined the project-config section.
-    expect(DOCTOR_CHECK_NAMES).toHaveLength(36)
-    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(36)
+    // 37: `claude in chrome` joined the plugin section.
+    expect(DOCTOR_CHECK_NAMES).toHaveLength(37)
+    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(37)
   })
 
   it('keeps the Claude Code plugin rows adjacent, in order, followed by the agent rows (O3)', () => {
-    const plugin = DOCTOR_CHECK_NAMES.slice(-8)
+    const plugin = DOCTOR_CHECK_NAMES.slice(-9)
 
     expect(plugin).toEqual([
       'claude CLI',
@@ -111,6 +112,7 @@ describe('section coverage', () => {
       'plugin version',
       'plugin MCP server',
       'CLI version',
+      'claude in chrome',
       'Agent mode',
       'Agent allowlist',
     ])

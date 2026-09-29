@@ -1,7 +1,7 @@
 ---
 name: doctor
 description: Diagnose an infra-kit setup — the CLI health report plus the checks only a live session can make.
-allowed-tools: Read, Bash(infra-kit doctor), Bash(infra-kit version --json*), Bash(node "${CLAUDE_PLUGIN_ROOT}"/skills/doctor/scripts/session-probe.mjs *)
+allowed-tools: Read, mcp__claude-in-chrome__list_connected_browsers, Bash(infra-kit doctor), Bash(infra-kit version --json*), Bash(node "${CLAUDE_PLUGIN_ROOT}"/skills/doctor/scripts/session-probe.mjs *)
 ---
 
 # infra-kit doctor
@@ -90,11 +90,30 @@ rollup, a rule and a totals line. Show it as a table by the same step 1 rules, r
 tables. It always exits 0.
 Its findings are in its output.
 
+## Step 2b — check the Claude in Chrome connection
+
+The CLI can only see whether Chrome's native host is registered on disk. Whether an extension is
+connected to this account right now is visible to a live session alone, so ask it: call
+`mcp__claude-in-chrome__list_connected_browsers` (load it through tool search first if it is deferred).
+
+Show the answer as one more table, `Session — Claude in Chrome`, one row per result below:
+
+- `✓` — at least one browser is listed. Name each by its display name, and say which is `inUse`. A
+  listed browser that is not `onThisComputer` (or not `isLocal`) is a `!`: browser skills will drive a
+  Chrome on another machine.
+- `✗` — the tool answers with an empty list. The extension is installed nowhere or signed in to a
+  different account; the fix is opening Chrome and signing the extension in to this account.
+- `-` — no `mcp__claude-in-chrome__*` tool exists in this session. Chrome integration is off here, which
+  is a skip, not a failure: `/chrome` in Claude Code turns it on.
+
+Count this row into the session half of the verdict in step 3. Only read the list: never select, switch
+or open a browser or a tab from this skill.
+
 ## Step 3 — interpret
 
 Open with one line, the combined verdict, computed from the two totals lines:
 `CLI: N passed · N skipped · N failed · N warned | Session: …`, with the session half in the same
-shape. A count a totals line leaves out is zero; when the CLI half did not run, write
+shape — the probe's totals plus the step 2b row. A count a totals line leaves out is zero; when the CLI half did not run, write
 `CLI: unavailable`. This is the only figure the skill composes, and it copies no rows.
 
 Then state the failing lines from both halves and what they mean together. Two combinations worth calling
@@ -102,6 +121,10 @@ out explicitly, because neither half says it alone:
 
 - The CLI reports the plugin as installed, but the probe reports the loaded tree is not the recorded
   one. The records are right and the session is stale — it was started before the install.
+- The CLI reports the Chrome native host as registered, but step 2b finds no connected browser. The
+  host side is fine and the extension is not running or not signed in — never re-run `/chrome` for it.
+  The reverse (a connected browser, a broken native host row) means an older wrapper still works for
+  the running Chrome and breaks on its next start; `/chrome` rewrites it.
 - The probe reports the loaded tree is intact, but the `/infra-kit:*` skills fail at their first
   `infra-kit …` call. The plugin is skills only; the CLI on `PATH` is the tool surface, so this is
   the step 0 finding — no CLI, or one below the floor — and the fix is the update command, not a

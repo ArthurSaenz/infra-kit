@@ -683,7 +683,7 @@ describe('report placement', () => {
 
   /** `claude CLI` is a report, not a verdict: only `plugin installed` drives doctor's exit code. */
   it('places claude CLI first, ahead of the rows its absence explains', () => {
-    const plugin = DOCTOR_CHECK_NAMES.slice(-8)
+    const plugin = DOCTOR_CHECK_NAMES.slice(-9)
 
     expect(plugin[0]).toBe('claude CLI')
   })
