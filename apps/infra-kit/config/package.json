@@ -1,7 +1,7 @@
 {
   "name": "@slip-stream-kit/config",
   "type": "module",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ArthurSaenz/infra-kit.git",
