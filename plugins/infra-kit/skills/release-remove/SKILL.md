@@ -84,7 +84,8 @@ The open release PRs — `releases[]` with `version`, `type` and the Jira `descr
 infra-kit worktrees list --json --agent
 ```
 
-The release worktrees on disk — `worktrees[]` with their paths and branches.
+The release worktrees on disk — `worktrees[]` with each one's `version`, `type` and Jira `description`
+(its `features[]` lists feature worktrees, which this command never touches).
 
 When the human already named a release, relay both lists' rows for it. When they have not, ask:
 run `infra-kit release remove --json --agent` with no `-v` and it exits 2 with

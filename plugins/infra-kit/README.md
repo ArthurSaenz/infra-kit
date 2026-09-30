@@ -64,19 +64,20 @@ mutating command.
 
 ## What it contains
 
-| Component | Name                          | Purpose                                                                                                                                |
-| --------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| skill     | `/infra-kit:comment-verifier` | Reviews and fixes comments against the "why, not what" policy, with a mechanical verify step                                           |
-| skill     | `/infra-kit:doctor`           | Runs the CLI health report, then adds the checks only a live session can make (which plugin tree loaded, drift, staleness)             |
-| skill     | `/infra-kit:fe-architect`     | Builds and reviews the inside of a React feature (naming, containers, state, services)                                                 |
-| skill     | `/infra-kit:fe-patterns`      | Cross-feature boundaries, injection patterns, promotion to shared                                                                      |
-| skill     | `/infra-kit:e2e-architect`    | Per-feature Playwright e2e layout: page object, fixture, specs by axis                                                                 |
-| skill     | `/infra-kit:update-toolchain` | Bumps pnpm, Node and Turbo across a monorepo, phase by phase                                                                           |
-| skill     | `/infra-kit:full-cycle`       | deep-interview → ralplan → review gate → ralph → verify (requires oh-my-claudecode)                                                    |
-| skill     | `/infra-kit:session`          | Loads a named environment into the terminal that launched Claude Code — the human picks from every known env (human-invoked only)      |
-| skill     | `/infra-kit:release-create`   | Cuts release branches through `infra-kit release create`, preview → approve → `--yes` (human-invoked only)                             |
-| skill     | `/infra-kit:release-remove`   | Tears down one release through `infra-kit release remove`, Jira fix version included, preview → approve → `--yes` (human-invoked only) |
-| skill     | `/infra-kit:setup`            | The procedure for `infra-kit setup` under agent mode: ordered local writes, dependency converge, printed-not-run recipes               |
+| Component | Name                          | Purpose                                                                                                                                 |
+| --------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| skill     | `/infra-kit:comment-verifier` | Reviews and fixes comments against the "why, not what" policy, with a mechanical verify step                                            |
+| skill     | `/infra-kit:doctor`           | Runs the CLI health report, then adds the checks only a live session can make (which plugin tree loaded, drift, staleness)              |
+| skill     | `/infra-kit:fe-architect`     | Builds and reviews the inside of a React feature (naming, containers, state, services)                                                  |
+| skill     | `/infra-kit:fe-patterns`      | Cross-feature boundaries, injection patterns, promotion to shared                                                                       |
+| skill     | `/infra-kit:e2e-architect`    | Per-feature Playwright e2e layout: page object, fixture, specs by axis                                                                  |
+| skill     | `/infra-kit:update-toolchain` | Bumps pnpm, Node and Turbo across a monorepo, phase by phase                                                                            |
+| skill     | `/infra-kit:full-cycle`       | deep-interview → ralplan → review gate → ralph → verify (requires oh-my-claudecode)                                                     |
+| skill     | `/infra-kit:session`          | Loads a named environment into the terminal that launched Claude Code — the human picks from every known env (human-invoked only)       |
+| skill     | `/infra-kit:release-create`   | Cuts release branches through `infra-kit release create`, preview → approve → `--yes` (human-invoked only)                              |
+| skill     | `/infra-kit:release-remove`   | Tears down one release through `infra-kit release remove`, Jira fix version included, preview → approve → `--yes` (human-invoked only)  |
+| skill     | `/infra-kit:setup`            | The procedure for `infra-kit setup` under agent mode: ordered local writes, dependency converge, printed-not-run recipes                |
+| skill     | `/infra-kit:worktrees`        | Starts, lists and removes feature worktrees (`feature/<name>` from `dev` or a release) through `infra-kit worktrees`, preview → `--yes` |
 
 ## Install
 

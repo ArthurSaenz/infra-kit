@@ -149,8 +149,10 @@ describe('worktrees add — the Orca leg on a shown, registered repo', () => {
     )
     expect(isOrcaWorktreeListed).toHaveBeenCalledWith(MAIN_REPO_ROOT, `${WORKTREE_DIR}/${BRANCH_A}`)
     expect(result.structuredContent).toEqual({
+      kind: 'release',
       createdWorktrees: [BRANCH_A],
       count: 1,
+      features: [],
       orcaOpened: [{ branch: BRANCH_A, layout: 'full' }],
       orcaSkipped: [],
       orcaHidden: [],
@@ -326,8 +328,10 @@ describe('worktrees add — the early return carries the Orca arrays', () => {
     const result = await worktreesAdd({ confirmedCommand: true })
 
     expect(result.structuredContent).toEqual({
+      kind: 'release',
       createdWorktrees: [],
       count: 0,
+      features: [],
       orcaOpened: [],
       orcaSkipped: [],
       orcaHidden: [],

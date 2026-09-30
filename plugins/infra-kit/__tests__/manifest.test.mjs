@@ -29,6 +29,7 @@ const EXPECTED_SKILLS = [
   'session',
   'setup',
   'update-toolchain',
+  'worktrees',
 ]
 
 // Claude Code reads none of these. They are OMC-era pipeline metadata that would ship as dead weight.

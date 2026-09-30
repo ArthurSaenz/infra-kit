@@ -138,8 +138,10 @@ describe('agent-mode refusals (spawned cli.js)', () => {
     // The three `orca*` arrays are part of the wire shape even when nothing was opened: the fixture
     // hides the developer's `orca` from PATH, so headless-false resolution leaves them empty.
     expect(json).toStrictEqual({
+      kind: 'release',
       createdWorktrees: [FIXTURE_RELEASE.branch],
       count: 1,
+      features: [],
       orcaOpened: [],
       orcaSkipped: [],
       orcaHidden: [],

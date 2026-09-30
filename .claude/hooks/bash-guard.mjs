@@ -167,10 +167,10 @@ const RE_MANAGED = new RegExp(`${GIT_PREFIX}(add|remove)\\b`);
 const RE_LIST = new RegExp(`${GIT_PREFIX}list\\b`);
 
 const WORKTREE_BLOCK_MSG =
-  "Use infra-kit instead of raw 'git worktree add/remove': `ik worktrees add --json --agent` / `ik worktrees remove --json --agent`. Both are confirm-gated — the first run previews the plan and exits; re-run the same argv with `--yes` to execute. Raw git skips infra-kit's setup (pnpm install, IDE open, release description), which is why the branch works but the worktree is half-configured. If you are inside a linked worktree, cd to the main checkout first. If you truly want an unmanaged throwaway worktree, ask the user to run the git command themselves.";
+  "Use infra-kit instead of raw 'git worktree add/remove': `ik worktrees add --json --agent` (release: `--versions`; feature: `--feature <name> [--base <dev|release>]`) / `ik worktrees remove --json --agent`. Both are confirm-gated — the first run previews the plan and exits; re-run the same argv with `--yes` to execute. Raw git skips infra-kit's setup (pnpm install, IDE open, release description), which is why the branch works but the worktree is half-configured. If you are inside a linked worktree, cd to the main checkout first. If you truly want an unmanaged throwaway worktree, ask the user to run the git command themselves.";
 
 const WORKTREE_ADVISE_MSG =
-  '`ik worktrees list --json --agent` returns a structured release-worktree summary (version, release type, Jira description). Prefer it for release-worktree info; keep using `git worktree list` when you need the full inventory (feature/ad-hoc worktrees, the main checkout, paths or HEADs), which infra-kit does not cover.';
+  '`ik worktrees list --json --agent` returns a structured summary of release worktrees (version, release type, Jira description) and feature/* worktrees. Prefer it; keep using `git worktree list` when you need the full inventory (ad-hoc worktrees, the main checkout, paths or HEADs), which infra-kit does not cover.';
 
 export const worktree = {
   name: 'worktree',

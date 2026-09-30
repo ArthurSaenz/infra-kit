@@ -89,7 +89,9 @@ beforeEach(() => {
   commandEcho.reset()
 
   vi.mocked(assertManagementContext).mockResolvedValue(undefined)
-  vi.mocked(getCurrentWorktrees).mockResolvedValue(CURRENT_WORKTREES)
+  vi.mocked(getCurrentWorktrees).mockImplementation(async (type) => {
+    return type === 'release' ? CURRENT_WORKTREES : []
+  })
   vi.mocked(getProjectRoot).mockResolvedValue(PROJECT_ROOT)
   vi.mocked(getRepoName).mockResolvedValue('repo')
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue([])

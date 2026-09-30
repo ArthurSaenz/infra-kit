@@ -16,7 +16,7 @@ interface WorktreeInfo {
 }
 
 /**
- * List all release git worktrees with version, type, and Jira description
+ * List release git worktrees (version, type, Jira description) and feature git worktrees
  */
 export const worktreesList = async () => {
   // GUARD (placement is load-bearing): `git worktree list` answers in ANY repo, so without this the
@@ -24,17 +24,46 @@ export const worktreesList = async () => {
   // found" — a false statement in a stranger's repo. Must stay ABOVE `getCurrentWorktrees`.
   await getInfraKitConfig()
 
-  const currentWorktrees = await getCurrentWorktrees('release')
+  const [currentWorktrees, features] = await Promise.all([
+    getCurrentWorktrees('release'),
+    getCurrentWorktrees('feature'),
+  ])
 
-  if (currentWorktrees.length === 0) {
+  if (currentWorktrees.length === 0 && features.length === 0) {
     logger.info('ℹ️ No active worktrees found')
 
+    const empty = { worktrees: [], count: 0, features: [] }
+
     return {
-      content: textContent(JSON.stringify({ worktrees: [], count: 0 }, null, 2)),
-      structuredContent: { worktrees: [], count: 0 },
+      content: textContent(JSON.stringify(empty, null, 2)),
+      structuredContent: empty,
     }
   }
 
+  const worktrees = currentWorktrees.length > 0 ? await describeReleaseWorktrees(currentWorktrees) : []
+  const sections: string[] = []
+
+  if (worktrees.length > 0) sections.push(`🌿 Active worktrees:\n\n${formatReleaseLines(worktrees).join('\n')}`)
+  if (features.length > 0) sections.push(`🧪 Feature worktrees:\n\n${features.join('\n')}`)
+
+  // One record, no trailing newline. Two calls made pino-pretty emit a bare `INFO:` line for the
+  // leading `\n`, and the trailing one stacked a second blank line under the list — which, in the
+  // session shell, collided with the blank line the transcript footer already writes above itself.
+  logger.info(sections.join('\n\n'))
+
+  const structuredContent = {
+    worktrees,
+    count: worktrees.length,
+    features,
+  }
+
+  return {
+    content: textContent(JSON.stringify(structuredContent, null, 2)),
+    structuredContent,
+  }
+}
+
+const describeReleaseWorktrees = async (currentWorktrees: string[]): Promise<WorktreeInfo[]> => {
   const [releasePRsInfo, jiraDescriptions] = await Promise.all([getReleasePRsWithInfo(), getJiraDescriptions()])
 
   const releaseTypes = new Map<string, ReleaseType>(
@@ -44,7 +73,7 @@ export const worktreesList = async () => {
   )
 
   // Skip worktrees whose branch does not parse as a release id (lenient source).
-  const worktrees: WorktreeInfo[] = currentWorktrees.flatMap((branch) => {
+  return currentWorktrees.flatMap((branch) => {
     const id = parseBranchName(branch)
 
     if (!id) return []
@@ -57,15 +86,16 @@ export const worktreesList = async () => {
 
     return [{ version, type, description }]
   })
+}
 
-  // Log formatted output
+const formatReleaseLines = (worktrees: WorktreeInfo[]): string[] => {
   const maxVersionLength = Math.max(
     ...worktrees.map((w) => {
       return w.version.length
     }),
   )
 
-  const formattedLines = worktrees.map((worktree) => {
+  return worktrees.map((worktree) => {
     const label = formatVersionLabel(worktree.version, worktree.type, maxVersionLength)
 
     if (worktree.description) {
@@ -74,28 +104,13 @@ export const worktreesList = async () => {
 
     return label
   })
-
-  // One record, no trailing newline. Two calls made pino-pretty emit a bare `INFO:` line for the
-  // leading `\n`, and the trailing one stacked a second blank line under the list — which, in the
-  // session shell, collided with the blank line the transcript footer already writes above itself.
-  logger.info(`🌿 Active worktrees:\n\n${formattedLines.join('\n')}`)
-
-  const structuredContent = {
-    worktrees,
-    count: worktrees.length,
-  }
-
-  return {
-    content: textContent(JSON.stringify(structuredContent, null, 2)),
-    structuredContent,
-  }
 }
 
 // MCP Tool Registration
 export const worktreesListMcpTool = defineMcpTool({
   name: 'worktrees-list',
   description:
-    'List existing release-branch worktrees with version, release type (regular / hotfix), and Jira fix-version description. Read-only.',
+    'List existing release-branch worktrees with version, release type (regular / hotfix), and Jira fix-version description, plus feature worktrees (feature/* branches). Read-only.',
   inputSchema: {},
   outputSchema: {
     worktrees: z
@@ -106,8 +121,9 @@ export const worktreesListMcpTool = defineMcpTool({
           description: z.string().nullable().describe('Jira version description'),
         }),
       )
-      .describe('List of all worktrees with details'),
-    count: z.number().describe('Number of worktrees'),
+      .describe('Release worktrees with details'),
+    count: z.number().describe('Number of release worktrees'),
+    features: z.array(z.string()).describe('Branches of feature worktrees (feature/<name>)'),
   },
   handler: worktreesList,
 })

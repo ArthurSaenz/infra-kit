@@ -37,6 +37,18 @@ import type { ReleaseType } from 'src/lib/release-utils'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
+import {
+  FEATURE_BRANCH_SOURCES,
+  addFeatureWorktree,
+  describeFeaturePlan,
+  planFeatureWorktrees,
+  promptFeatureBase,
+  promptFeatureName,
+  promptWorktreeKind,
+  resolveFeatureBase,
+} from './feature-worktrees'
+import type { FeatureWorktreePlan, WorktreeKind } from './feature-worktrees'
+
 // Constants
 const OPERATION = 'create worktrees'
 
@@ -67,6 +79,10 @@ const OPERATION = 'create worktrees'
 interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
   all?: boolean
   versions?: string
+  /** Comma-separated feature names; each becomes a `feature/<name>` worktree. */
+  feature?: string
+  /** Base for new feature branches: `dev` (default) or a release ref. */
+  base?: string
   ide?: IdeMode
   /** @deprecated Alias for `ide`, kept for back-compat. Ignored when `ide` is set. */
   cursor?: IdeMode
@@ -122,11 +138,11 @@ interface OrcaPreflight {
 }
 
 /**
- * Manage git worktrees for release branches
- * Creates worktrees for active release branches and removes unused ones
+ * Create git worktrees: release worktrees for open release branches, or feature worktrees on
+ * `feature/<name>` branches cut from `dev` or a release branch.
  */
 export const worktreesAdd = async (options: WorktreeManagementArgs) => {
-  const { confirmedCommand, all, versions, githubDesktop, orca } = options
+  const { confirmedCommand, githubDesktop, orca } = options
   // `cursor` is the deprecated alias for `ide`; `ide` wins when both are present.
   const ide = options.ide ?? options.cursor
 
@@ -134,8 +150,9 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
   // reads HEAD, so only the worktree + clean-tree legs apply.
   await assertManagementContext({ operation: OPERATION })
 
+  assertOneWorktreeKind(options)
+
   try {
-    const currentWorktrees = await getCurrentWorktrees('release')
     const projectRoot = await getProjectRoot()
 
     const worktreeDir = `${projectRoot}${WORKTREES_DIR_SUFFIX}`
@@ -143,57 +160,20 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     await ensureWorktreeDirectory(`${worktreeDir}/${WORKTREE_SUBDIRS.release}`)
     await ensureWorktreeDirectory(`${worktreeDir}/${WORKTREE_SUBDIRS.feature}`)
 
-    let selectedReleaseBranches: string[] = []
+    const kind = await resolveWorktreeKind(options)
+    const selection = kind === 'feature' ? await selectFeatureTargets(options) : await selectReleaseTargets(options)
 
-    if (versions) {
-      selectedReleaseBranches = versions.split(',').map((v) => {
-        return formatBranchName(parseReleaseRef(v.trim()))
-      })
-    } else {
-      const releasePRsInfo = await getReleasePRsWithInfo()
+    if (selection === null) {
+      logger.info('ℹ️ No open release branches found')
 
-      const releasePRsList = releasePRsInfo.map((pr) => {
-        return pr.branch
-      })
+      commandEcho.print()
 
-      if (releasePRsList.length === 0) {
-        logger.info('ℹ️ No open release branches found')
+      const empty = { kind, createdWorktrees: [], count: 0, features: [], ...emptyOrcaOutcomes() }
 
-        commandEcho.print()
-
-        const empty = { createdWorktrees: [], count: 0, ...emptyOrcaOutcomes() }
-
-        return {
-          content: textContent(JSON.stringify(empty, null, 2)),
-          structuredContent: empty,
-        }
+      return {
+        content: textContent(JSON.stringify(empty, null, 2)),
+        structuredContent: empty,
       }
-
-      if (all) {
-        selectedReleaseBranches = releasePRsList
-      } else {
-        commandEcho.setInteractive()
-
-        const releaseTypes = new Map<string, ReleaseType>(
-          releasePRsInfo.map((pr) => {
-            return [pr.branch, pr.type]
-          }),
-        )
-
-        const descriptions = await getJiraDescriptions()
-
-        selectedReleaseBranches = await pickReleaseBranches(
-          formatBranchPickerItems({ branches: releasePRsList, descriptions, types: releaseTypes }),
-          { required: true },
-        )
-      }
-    }
-
-    // Track --all flag if all branches were selected (either via flag or interactively)
-    if (all) {
-      commandEcho.addOption('--all', true)
-    } else {
-      commandEcho.addOption('--versions', releaseBranchLabels(selectedReleaseBranches))
     }
 
     const config = await getInfraKitConfig()
@@ -214,7 +194,7 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     const orcaPreflight = openInOrca ? await preflightOrca({ explicit: orca !== undefined, mainRepoRoot }) : null
 
     // Ask for confirmation
-    await confirmOrExit(confirmedCommand, buildConfirmMessage(orcaPreflight, repoName))
+    await confirmOrExit(confirmedCommand, buildConfirmMessage(orcaPreflight, repoName, selection.previewLines))
 
     // Track --yes flag if confirmation was interactive (user confirmed)
     if (!confirmedCommand) {
@@ -225,12 +205,7 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     // poll always sees a registered repo).
     const registration = orcaPreflight ? await registerOrcaRepo(orcaPreflight, mainRepoRoot) : null
 
-    const { branchesToCreate } = categorizeWorktrees({
-      selectedReleaseBranches,
-      currentWorktrees,
-    })
-
-    const createdWorktrees = await createWorktrees(branchesToCreate, worktreeDir)
+    const createdWorktrees = await createWorktrees(selection.targets, worktreeDir)
 
     logResults(createdWorktrees)
 
@@ -261,8 +236,12 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     commandEcho.print()
 
     const structuredContent = {
+      kind,
       createdWorktrees,
       count: createdWorktrees.length,
+      features: selection.features.filter((plan) => {
+        return createdWorktrees.includes(plan.branch)
+      }),
       ...orcaOutcomes,
     }
 
@@ -292,6 +271,157 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
       remediation: "verify branches don't already exist as worktrees: 'git worktree list'",
     })
   }
+}
+
+/** A branch to check out plus the `git worktree add` form that creates it at a given path. */
+interface WorktreeTarget {
+  branch: string
+  add: (worktreePath: string) => Promise<unknown>
+}
+
+interface WorktreeSelection {
+  targets: WorktreeTarget[]
+  features: FeatureWorktreePlan[]
+  /** Extra confirm-preview lines: what each feature branch starts from. */
+  previewLines: string[]
+}
+
+const assertOneWorktreeKind = (options: WorktreeManagementArgs): void => {
+  const release = options.all || options.versions !== undefined
+  const feature = options.feature !== undefined || options.base !== undefined
+
+  if (release && feature) {
+    throw new OperationError(undefined, {
+      operation: OPERATION,
+      remediation: 'pass either --versions/--all (release worktrees) or --feature [--base] (feature worktrees)',
+      stderrExcerpt: '--feature/--base cannot be combined with --versions/--all',
+    })
+  }
+}
+
+const resolveWorktreeKind = async (options: WorktreeManagementArgs): Promise<WorktreeKind> => {
+  if (options.feature !== undefined || options.base !== undefined) return 'feature'
+  if (options.all || options.versions !== undefined) return 'release'
+
+  commandEcho.setInteractive()
+
+  return promptWorktreeKind()
+}
+
+/** `null` when there is no open release branch to offer. */
+const selectReleaseTargets = async (options: WorktreeManagementArgs): Promise<WorktreeSelection | null> => {
+  const { all, versions } = options
+  const currentWorktrees = await getCurrentWorktrees('release')
+
+  let selectedReleaseBranches: string[] = []
+
+  if (versions) {
+    selectedReleaseBranches = versions.split(',').map((v) => {
+      return formatBranchName(parseReleaseRef(v.trim()))
+    })
+  } else {
+    const releasePRsInfo = await getReleasePRsWithInfo()
+
+    const releasePRsList = releasePRsInfo.map((pr) => {
+      return pr.branch
+    })
+
+    if (releasePRsList.length === 0) return null
+
+    if (all) {
+      selectedReleaseBranches = releasePRsList
+    } else {
+      commandEcho.setInteractive()
+
+      const releaseTypes = new Map<string, ReleaseType>(
+        releasePRsInfo.map((pr) => {
+          return [pr.branch, pr.type]
+        }),
+      )
+
+      const descriptions = await getJiraDescriptions()
+
+      selectedReleaseBranches = await pickReleaseBranches(
+        formatBranchPickerItems({ branches: releasePRsList, descriptions, types: releaseTypes }),
+        { required: true },
+      )
+    }
+  }
+
+  // Track --all flag if all branches were selected (either via flag or interactively)
+  if (all) {
+    commandEcho.addOption('--all', true)
+  } else {
+    commandEcho.addOption('--versions', releaseBranchLabels(selectedReleaseBranches))
+  }
+
+  const { branchesToCreate } = categorizeWorktrees({ selectedReleaseBranches, currentWorktrees })
+
+  const targets = branchesToCreate.map((branch) => {
+    return {
+      branch,
+      add: (worktreePath: string) => {
+        return $`git worktree add ${worktreePath} ${branch}`
+      },
+    }
+  })
+
+  return { targets, features: [], previewLines: [] }
+}
+
+const selectFeatureTargets = async (options: WorktreeManagementArgs): Promise<WorktreeSelection> => {
+  const names = options.feature?.split(',').filter((name) => {
+    return name.trim() !== ''
+  })
+
+  let featureNames = names ?? []
+  let base = options.base
+
+  if (featureNames.length === 0) {
+    commandEcho.setInteractive()
+    featureNames = [await promptFeatureName()]
+
+    if (base === undefined) {
+      const releaseBranches = (await getReleasePRsWithInfo()).map((pr) => {
+        return pr.branch
+      })
+
+      base = await promptFeatureBase(releaseBranches)
+    }
+  }
+
+  const resolvedBase = resolveFeatureBase(base)
+  const plans = await planFeatureWorktrees({ names: featureNames, base: resolvedBase })
+
+  commandEcho.addOption(
+    '--feature',
+    plans
+      .map((plan) => {
+        return plan.branch.replace(/^feature\//, '')
+      })
+      .join(','),
+  )
+  commandEcho.addOption('--base', resolvedBase)
+
+  const currentWorktrees = await getCurrentWorktrees('feature')
+  const toCreate = plans.filter((plan) => {
+    if (!currentWorktrees.includes(plan.branch)) return true
+
+    logger.info(`ℹ️ ${plan.branch} is already checked out in a worktree`)
+
+    return false
+  })
+
+  const targets = toCreate.map((plan) => {
+    return {
+      branch: plan.branch,
+      add: (worktreePath: string) => {
+        return addFeatureWorktree(plan, worktreePath)
+      },
+    }
+  })
+
+  return { targets, features: toCreate, previewLines: toCreate.map(describeFeaturePlan) }
 }
 
 const resolveGithubDesktopFollowUp = async (flag: boolean | undefined, config: InfraKitConfig): Promise<boolean> => {
@@ -388,8 +518,8 @@ const preflightOrca = async (args: PreflightOrcaArgs): Promise<OrcaPreflight> =>
   return { probe, registered: repo.registered, visibility: repo.visibility }
 }
 
-const buildConfirmMessage = (preflight: OrcaPreflight | null, repoName: string): string => {
-  const lines = ['Are you sure you want to proceed with these worktree changes?']
+const buildConfirmMessage = (preflight: OrcaPreflight | null, repoName: string, previewLines: string[]): string => {
+  const lines = ['Are you sure you want to proceed with these worktree changes?', ...previewLines]
 
   if (preflight?.probe === 'ready' && !preflight.registered) {
     lines.push(
@@ -544,17 +674,17 @@ const categorizeWorktrees = (args: CategorizeWorktreesArgs): { branchesToCreate:
 }
 
 /**
- * Create worktrees for the specified branches
+ * Create worktrees for the specified targets
  */
-const createWorktrees = async (branches: string[], worktreeDir: string): Promise<string[]> => {
+const createWorktrees = async (targets: WorktreeTarget[], worktreeDir: string): Promise<string[]> => {
   const results = await Promise.allSettled(
-    branches.map(async (branch) => {
-      const worktreePath = `${worktreeDir}/${branch}`
+    targets.map(async (target) => {
+      const worktreePath = `${worktreeDir}/${target.branch}`
 
-      await $`git worktree add ${worktreePath} ${branch}`
+      await target.add(worktreePath)
       await $({ cwd: worktreePath })`pnpm install`
 
-      return branch
+      return target.branch
     }),
   )
 
@@ -564,7 +694,7 @@ const createWorktrees = async (branches: string[], worktreeDir: string): Promise
     if (result.status === 'fulfilled') {
       created.push(result.value)
     } else {
-      const branch = branches[index]
+      const branch = targets[index]?.branch
       const err = new OperationError(result.reason, {
         operation: `git worktree add for ${branch}`,
         remediation: 'check the branch name and that the parent dir is writable',
@@ -596,8 +726,20 @@ const logResults = (created: string[]): void => {
 export const worktreesAddMcpTool = defineMcpTool({
   name: 'worktrees-add',
   description:
-    'Create local git worktrees for release branches under the worktrees directory and run "pnpm install" in each. Mutates the local filesystem. When invoked via MCP, pass either "versions" (comma-separated) or all=true — the branch picker and "open in Cursor / GitHub Desktop / Orca" follow-up prompts are unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls. With "orca" true each created worktree gets an Orca terminal tab laid out per "worktrees.orca.layout"; the result reports orcaOpened, orcaSkipped (with a reason) and orcaHidden (a worktree Orca\'s sidebar hides, with the UI steps to reveal it). An unregistered repo is registered in Orca first (orca repo add).',
+    'Create local git worktrees under the worktrees directory and run "pnpm install" in each: release worktrees for open release branches ("versions" / all=true), or feature worktrees ("feature", optional "base") — each name becomes a feature/<name> branch at <root>-worktrees/feature/<name>, cut from origin/<base> (default dev, or any release branch) with no upstream, or checked out as-is when the branch already exists locally or on origin. Mutates the local filesystem. When invoked via MCP, pass "versions" (comma-separated), all=true, or "feature" — the branch picker and "open in Cursor / GitHub Desktop / Orca" follow-up prompts are unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls. With "orca" true each created worktree gets an Orca terminal tab laid out per "worktrees.orca.layout"; the result reports orcaOpened, orcaSkipped (with a reason) and orcaHidden (a worktree Orca\'s sidebar hides, with the UI steps to reveal it). An unregistered repo is registered in Orca first (orca repo add).',
   inputSchema: {
+    feature: z
+      .string()
+      .optional()
+      .describe(
+        'Comma-separated feature names (e.g. "checkout-v2" or "feature/checkout-v2"); each becomes a feature/<name> worktree. Cannot be combined with "versions" or "all".',
+      ),
+    base: z
+      .string()
+      .optional()
+      .describe(
+        'Base for NEW feature branches: "dev" (default) or a release ref ("1.4.0", "release/v1.4.0", "release/<name>"). Not applied to a feature branch that already exists. Implies a feature run.',
+      ),
     all: z
       .boolean()
       .optional()
@@ -634,6 +776,18 @@ export const worktreesAddMcpTool = defineMcpTool({
       ),
   },
   outputSchema: {
+    kind: z.enum(['release', 'feature']).describe('Which kind of worktree the run created'),
+    features: z
+      .array(
+        z.object({
+          branch: z.string(),
+          base: z.string(),
+          source: z.enum(FEATURE_BRANCH_SOURCES),
+        }),
+      )
+      .describe(
+        'Created feature worktrees: source "new" = cut from origin/<base>; "local" / "remote" = an existing branch checked out as-is (base not applied)',
+      ),
     createdWorktrees: z.array(z.string()).describe('List of created git worktree branches'),
     count: z.number().describe('Number of git worktrees created'),
     orcaOpened: z

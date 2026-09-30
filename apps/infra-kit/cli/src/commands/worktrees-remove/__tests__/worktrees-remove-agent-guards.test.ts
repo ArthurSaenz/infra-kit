@@ -72,7 +72,9 @@ beforeEach(async () => {
   commandEcho.reset()
 
   vi.mocked(assertManagementContext).mockResolvedValue(undefined)
-  vi.mocked(getCurrentWorktrees).mockResolvedValue(CURRENT_WORKTREES)
+  vi.mocked(getCurrentWorktrees).mockImplementation(async (type) => {
+    return type === 'release' ? CURRENT_WORKTREES : []
+  })
   vi.mocked(getProjectRoot).mockResolvedValue('/workspace/project-root')
   vi.mocked(getRepoName).mockResolvedValue('repo')
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue([])
@@ -97,6 +99,25 @@ describe('worktrees-remove agent guards', () => {
 
     expect(removeWorktrees).toHaveBeenCalledTimes(1)
     expect(vi.mocked(removeWorktrees).mock.calls[0]?.[0].branches).toEqual(['release/v1.2.5'])
+  })
+
+  it('allows an explicit feature target under --agent and resolves it to its feature/ branch', async () => {
+    agentMode.source = 'flag'
+    vi.mocked(getCurrentWorktrees).mockImplementation(async (type) => {
+      return type === 'release' ? CURRENT_WORKTREES : ['feature/checkout-v2']
+    })
+
+    await worktreesRemove({ confirmedCommand: true, feature: 'checkout-v2' })
+
+    const { removeWorktrees } = await import('src/lib/worktrees')
+
+    expect(vi.mocked(removeWorktrees).mock.calls[0]?.[0].branches).toEqual(['feature/checkout-v2'])
+  })
+
+  it('refuses an agent call naming neither --versions nor --feature', async () => {
+    agentMode.source = 'flag'
+
+    await expect(worktreesRemove({ confirmedCommand: true })).rejects.toThrow(/--versions <refs>.*or --feature/)
   })
 })
 

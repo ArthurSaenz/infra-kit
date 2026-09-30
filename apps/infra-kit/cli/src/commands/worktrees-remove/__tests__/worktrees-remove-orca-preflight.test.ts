@@ -73,7 +73,9 @@ beforeEach(() => {
   agentMode.source = null
 
   vi.mocked(assertManagementContext).mockResolvedValue(undefined)
-  vi.mocked(getCurrentWorktrees).mockResolvedValue(CURRENT_WORKTREES)
+  vi.mocked(getCurrentWorktrees).mockImplementation(async (type) => {
+    return type === 'release' ? CURRENT_WORKTREES : []
+  })
   vi.mocked(getProjectRoot).mockResolvedValue(PROJECT_ROOT)
   vi.mocked(removeWorktrees).mockResolvedValue({ removed: [], failed: [] })
   vi.mocked(orcaCallerInsideTargets).mockResolvedValue(null)

@@ -93,6 +93,24 @@ const POLICY_SITES: Record<
     tools: ['worktrees-add'],
     fields: ['orca'],
   },
+  // The feature leg: with no kind flag a headless run answers "release", which then refuses on the
+  // release picker exactly as before; the name prompt only opens after that "feature" pick, and the
+  // base prompt only after the name prompt.
+  'commands/worktrees-add/feature-worktrees.ts#promptWorktreeKind': {
+    policy: 'value',
+    tools: ['worktrees-add'],
+    fields: ['versions', 'feature'],
+  },
+  'commands/worktrees-add/feature-worktrees.ts#promptFeatureName': {
+    policy: 'argument',
+    tools: ['worktrees-add'],
+    fields: ['feature'],
+  },
+  'commands/worktrees-add/feature-worktrees.ts#promptFeatureBase': {
+    policy: 'value',
+    tools: ['worktrees-add'],
+    fields: ['base'],
+  },
 }
 
 /** Prose that tells an agent what a headless call gets. G6 asserts only on tools carrying it. */

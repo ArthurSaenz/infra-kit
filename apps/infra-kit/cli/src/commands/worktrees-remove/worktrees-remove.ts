@@ -21,10 +21,14 @@ import { logRemovalResults, removeWorktrees, toRemovalToolResult } from 'src/lib
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
+import { toFeatureBranch } from '../worktrees-add/feature-worktrees'
+
 // Constants
 interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
   all?: boolean
   versions?: string
+  /** Comma-separated feature names (`checkout-v2` or `feature/checkout-v2`). */
+  feature?: string
 }
 
 /**
@@ -33,7 +37,7 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
  * direct/agent call can never fan out to every worktree. Require agent callers to name targets
  * explicitly via `versions`. No-op for a human at a TTY.
  */
-const assertAgentRemovalInput = (input: { all?: boolean; versions?: string }): void => {
+const assertAgentRemovalInput = (input: { all?: boolean; versions?: string; feature?: string }): void => {
   if (!isAgentMode()) return
 
   // Structured (exit 2, nothing ran): an agent reads `refused` as "this door is closed here" and
@@ -46,15 +50,15 @@ const assertAgentRemovalInput = (input: { all?: boolean; versions?: string }): v
     })
   }
 
-  if (!input.versions) {
+  if (!input.versions && !input.feature) {
     throw new StructuredRefusalError(
       { status: 'argument_required', argument: 'versions', agentMode: agentMode.source },
       2,
       {
         operation: 'remove worktrees',
         remediation:
-          'pass --versions <refs> (comma-separated release versions/names) on the re-run — `infra-kit worktrees list --json` lists them',
-        stderrExcerpt: 'worktrees remove under agent mode requires --versions',
+          'pass --versions <refs> (comma-separated release versions/names) or --feature <names> on the re-run — `infra-kit worktrees list --json` lists them',
+        stderrExcerpt: 'worktrees remove under agent mode requires --versions or --feature',
       },
     )
   }
@@ -63,8 +67,8 @@ const assertAgentRemovalInput = (input: { all?: boolean; versions?: string }): v
 /**
  * Every named target must be an active release worktree. Without this an unmatched version builds a
  * path that does not exist; `removeWorktrees` (Promise.allSettled) swallows the failure and reports a
- * no-op as success. Validate all-or-nothing BEFORE removing anything so a typo or a feature-worktree
- * name fails loudly on the `--versions` path. The `all` and interactive-picker
+ * no-op as success. Validate all-or-nothing BEFORE removing anything so a typo fails loudly on the
+ * `--versions` / `--feature` paths. The `all` and interactive-picker
  * paths select from `currentWorktrees`, so this is a no-op for them.
  */
 const assertTargetsExist = (selected: string[], currentWorktrees: string[]): void => {
@@ -108,12 +112,53 @@ export const assertCallerOutsideOrcaTargets = async (worktreeDir: string, branch
   )
 }
 
+const parseVersionTargets = (versions: string | undefined): string[] => {
+  if (!versions) return []
+
+  return versions.split(',').map((v) => {
+    return formatBranchName(parseReleaseRef(v.trim()))
+  })
+}
+
+const parseFeatureTargets = (feature: string | undefined): string[] => {
+  if (!feature) return []
+
+  return feature
+    .split(',')
+    .filter((name) => {
+      return name.trim() !== ''
+    })
+    .map(toFeatureBranch)
+}
+
+const addTargetOptions = (branches: string[]): void => {
+  const features = branches.filter((branch) => {
+    return branch.startsWith('feature/')
+  })
+  const releases = branches.filter((branch) => {
+    return !features.includes(branch)
+  })
+
+  if (releases.length > 0) commandEcho.addOption('--versions', releaseBranchLabels(releases))
+
+  if (features.length > 0) {
+    commandEcho.addOption(
+      '--feature',
+      features
+        .map((branch) => {
+          return branch.replace(/^feature\//, '')
+        })
+        .join(','),
+    )
+  }
+}
+
 /**
- * Manage git worktrees for release branches
+ * Manage git worktrees for release and feature branches
  * Creates worktrees for active release branches and removes unused ones
  */
 export const worktreesRemove = async (options: WorktreeManagementArgs) => {
-  const { confirmedCommand, all, versions } = options
+  const { confirmedCommand, all, versions, feature } = options
 
   // Branch-agnostic: `git worktree remove` addresses worktrees by path and never
   // reads HEAD, so only the worktree + clean-tree legs apply.
@@ -125,10 +170,14 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
   // Kept ABOVE assertAgentRemovalInput: "not an infra-kit project" is the more fundamental failure.
   await getInfraKitConfig()
 
-  assertAgentRemovalInput({ all, versions })
+  assertAgentRemovalInput({ all, versions, feature })
 
   try {
-    const currentWorktrees = await getCurrentWorktrees('release')
+    const [releaseWorktrees, featureWorktrees] = await Promise.all([
+      getCurrentWorktrees('release'),
+      getCurrentWorktrees('feature'),
+    ])
+    const currentWorktrees = [...releaseWorktrees, ...featureWorktrees]
 
     if (currentWorktrees.length === 0) {
       logger.info('ℹ️ No active worktrees to remove')
@@ -151,10 +200,8 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
 
     if (all) {
       selectedReleaseBranches = currentWorktrees
-    } else if (versions) {
-      selectedReleaseBranches = versions.split(',').map((v) => {
-        return formatBranchName(parseReleaseRef(v.trim()))
-      })
+    } else if (versions || feature) {
+      selectedReleaseBranches = [...parseVersionTargets(versions), ...parseFeatureTargets(feature)]
     } else {
       commandEcho.setInteractive()
 
@@ -167,7 +214,12 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       )
 
       selectedReleaseBranches = await pickReleaseBranches(
-        formatBranchPickerItems({ branches: currentWorktrees, descriptions, types: releaseTypes }),
+        [
+          ...formatBranchPickerItems({ branches: releaseWorktrees, descriptions, types: releaseTypes }),
+          ...featureWorktrees.map((branch) => {
+            return { value: branch, label: branch, type: 'feature' }
+          }),
+        ],
         { required: true },
       )
     }
@@ -180,7 +232,7 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
     if (allSelected) {
       commandEcho.addOption('--all', true)
     } else {
-      commandEcho.addOption('--versions', releaseBranchLabels(selectedReleaseBranches))
+      addTargetOptions(selectedReleaseBranches)
     }
 
     await assertCallerOutsideOrcaTargets(worktreeDir, selectedReleaseBranches)
@@ -233,13 +285,20 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
 export const worktreesRemoveMcpTool = defineMcpTool({
   name: 'worktrees-remove',
   description:
-    'Remove local git worktrees for the named release branches. Over MCP you MUST pass "versions" (comma-separated); bulk all=true removal is disabled here (it is a one-shot, unconfirmed wipe of every worktree) — the branch picker and confirmation are unavailable without a TTY. Every named version must be an active worktree, or the call errors without removing anything. What survives: the release branches/commits themselves are never deleted, and the worktrees directory plus its release/feature subfolders are left in place (recreate a worktree with worktrees-add). What is lost: git refuses to remove a worktree with modified tracked files or untracked files, BUT it DOES delete the worktree directory including gitignored contents — a hydrated .env of Doppler secrets (re-fetch with env-load) and build output such as node_modules/dist (needs reinstall/rebuild). When every worktree is removed it also runs "git worktree prune". A branch git refuses to remove is listed in failedWorktrees and the result carries isError; a leftover that git already unregistered and that holds only tool state (.omc/state, .omc/sessions, .DS_Store) is swept automatically. Every Orca terminal open in a removed worktree is closed first; a call made from an Orca terminal INSIDE one of the targets is refused (orca_caller_inside_target) before anything is removed — re-run it from a terminal that is not an Orca pane of that worktree.',
+    'Remove local git worktrees for the named release branches ("versions") and/or feature branches ("feature"). Over MCP you MUST pass "versions" or "feature" (comma-separated); bulk all=true removal is disabled here (it is a one-shot, unconfirmed wipe of every worktree) — the branch picker and confirmation are unavailable without a TTY. Every named target must be an active worktree, or the call errors without removing anything. What survives: the release and feature branches/commits themselves are never deleted, and the worktrees directory plus its release/feature subfolders are left in place (recreate a worktree with worktrees-add). What is lost: git refuses to remove a worktree with modified tracked files or untracked files, BUT it DOES delete the worktree directory including gitignored contents — a hydrated .env of Doppler secrets (re-fetch with env-load) and build output such as node_modules/dist (needs reinstall/rebuild). When every worktree is removed it also runs "git worktree prune". A branch git refuses to remove is listed in failedWorktrees and the result carries isError; a leftover that git already unregistered and that holds only tool state (.omc/state, .omc/sessions, .DS_Store) is swept automatically. Every Orca terminal open in a removed worktree is closed first; a call made from an Orca terminal INSIDE one of the targets is refused (orca_caller_inside_target) before anything is removed — re-run it from a terminal that is not an Orca pane of that worktree.',
   requiresHumanConfirm: true,
   inputSchema: {
     versions: z
       .string()
+      .optional()
       .describe(
-        'Comma-separated release versions or names to remove (e.g. "1.2.5, 1.2.6" or "checkout-redesign, 1.2.5"). Required: each must name an active worktree, or the call errors before removing anything.',
+        'Comma-separated release versions or names to remove (e.g. "1.2.5, 1.2.6" or "checkout-redesign, 1.2.5"). This or "feature" is required: each must name an active worktree, or the call errors before removing anything.',
+      ),
+    feature: z
+      .string()
+      .optional()
+      .describe(
+        'Comma-separated feature names to remove (e.g. "checkout-v2" or "feature/checkout-v2"). This or "versions" is required; each must name an active feature worktree.',
       ),
     confirm: z
       .boolean()

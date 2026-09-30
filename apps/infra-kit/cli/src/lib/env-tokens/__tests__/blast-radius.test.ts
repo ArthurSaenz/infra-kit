@@ -86,7 +86,7 @@ describe('a corrupt tokens.json', () => {
 
     const result = await worktreesList()
 
-    expect(result.structuredContent).toEqual({ worktrees: [], count: 0 })
+    expect(result.structuredContent).toEqual({ worktrees: [], count: 0, features: [] })
   })
 
   it('does not brick the config merge chain — the loader never globs the sibling', async () => {
