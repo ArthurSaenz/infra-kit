@@ -127,6 +127,10 @@ plugin.configs.recommended = [
     },
     rules: {
       [`${PLUGIN_NAME}/e2e-file-layout`]: 'error',
+      [`${PLUGIN_NAME}/e2e-file-order`]: 'error',
+      [`${PLUGIN_NAME}/e2e-page-object-member-order`]: 'error',
+      [`${PLUGIN_NAME}/e2e-describe-order`]: 'error',
+      [`${PLUGIN_NAME}/e2e-top-level-describe`]: 'error',
       [`${PLUGIN_NAME}/e2e-test-tags`]: 'error',
       [`${PLUGIN_NAME}/e2e-test-title`]: 'error',
     },

@@ -12,7 +12,7 @@ const TEST_MODIFIERS = new Set(['only', 'skip', 'fixme', 'fail'])
 const DESCRIBE_MODIFIERS = new Set(['only', 'skip', 'fixme', 'serial', 'parallel'])
 
 /** `test.describe.serial` → `['test', 'describe', 'serial']`; null for anything but a plain name chain. */
-const calleeNames = (callee: Expression | Node): string[] | null => {
+export const calleeNames = (callee: Expression | Node): string[] | null => {
   if (callee.type === 'Identifier') {
     return [callee.name]
   }
@@ -79,6 +79,17 @@ export const staticTitle = (node: CallExpression): string | null => {
 }
 
 /** True when the linted file belongs to a package whose type resolves to `e2e`. */
+/** The callee chain of a top-level `test.*(…)` statement, e.g. `['test', 'describe', 'configure']`. */
+export const testStatementNames = (statement: Node): string[] | null => {
+  if (statement.type !== 'ExpressionStatement' || statement.expression.type !== 'CallExpression') {
+    return null
+  }
+
+  const names = calleeNames(statement.expression.callee)
+
+  return names?.[0] === 'test' ? names : null
+}
+
 export const isInE2ePackage = (context: Rule.RuleContext): boolean => {
   const packageRoot = findPackageRoot(context.filename.split('\\').join('/'))
 

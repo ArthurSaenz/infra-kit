@@ -81,8 +81,12 @@ cd <app>/tests && pnpm exec playwright test src/tests/<domain> --reporter=line
    `pages/` / `fixtures/` / `mocks/` / `data/` / `lib/`; `fill`/`select`/`apply`/`add` method
    prefixes; `#root` alias for shared constants; relative paths in `playwright.config.ts`; shared
    harness (`constants.ts`, `setup/auth.setup.ts`, `lib/`) stays at `src/` root, never
-   duplicated per feature. `@wl/e2e-file-layout`, `@wl/e2e-test-tags` and `@wl/e2e-test-title`
-   lint the layout, tags and titles.
+   duplicated per feature. `@wl/e2e-file-layout`, `@wl/e2e-file-order`,
+   `@wl/e2e-page-object-member-order`, `@wl/e2e-top-level-describe`, `@wl/e2e-describe-order`,
+   `@wl/e2e-test-tags` and `@wl/e2e-test-title` lint the layout; the in-file order (imports, then
+   the class / `extend` / `test.*` calls / mock function / `lib/` exports, constants below); class
+   members (fields → constructor → getters → public → private methods); one top-level describe with
+   setup → hooks → tests inside it; tags and titles.
 
 For full rationale and the reference implementation, read `references/conventions.md`.
 

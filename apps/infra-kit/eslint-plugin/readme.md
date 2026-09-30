@@ -698,6 +698,129 @@ resolved the same way `package-structure` resolves it.
 | -------- | ---------- | ------- | ---------------------------------------------- |
 | `ignore` | `string[]` | `[]`    | Globs; the rule is skipped for matching files. |
 
+### `e2e-file-order`
+
+Open every **e2e** source file with its main content, so a reader sees it right after the imports:
+`*.page.ts` / `*.component.ts` open with the class, `*.fixture.ts` with the fixtures type and the
+`export const test = base.extend<…>(…)` call, `*.spec.ts` with its first `test.*` call
+(`test.describe`, `test.use`, `test.describe.configure`, …), `*.mock.ts` with its first exported
+function. Constants, helpers and types declared between the imports and that anchor are reported by
+name. A file under a `lib/` folder opens with its exports: a private declaration above any export
+(an `export { … }` list counts) is reported the same way:
+
+```
+`CART_URL` sits between the imports and class `CartPage`. Move it below class `CartPage`: a page object file opens with its imports, then the class. The autofix moves it to the end of the file.
+```
+
+A `const` is not hoisted, so a binding read **while the module loads** stays above the anchor and is
+not reported: a `describe` title, `test.use({…})`, a loop or `forEach` inside a `describe` body, a
+`static` class field, an `extend` option default like `[DEFAULT_LOCALE, { option: true }]` — and
+anything a kept binding reads. Reads inside `test(…)` bodies, hooks, fixture functions, methods and
+instance fields run later and do not pin a binding. `--fix` moves the reported statements, with
+their attached comments and in their original order, to the end of the file; a comment separated
+from the statement by a blank line (a file overview) stays where it is. `*.data.ts` files and
+packages of any other type are not judged.
+
+```js
+{
+  rules: {
+    '@wl/e2e-file-order': 'error',
+  },
+}
+```
+
+#### Options
+
+| Option   | Type       | Default | Description                                    |
+| -------- | ---------- | ------- | ---------------------------------------------- |
+| `ignore` | `string[]` | `[]`    | Globs; the rule is skipped for matching files. |
+
+### `e2e-page-object-member-order`
+
+Order the members of an **e2e** page object class (`*.page.ts`, `*.component.ts`): fields, the
+constructor, getters, public methods, then private methods. A private or protected getter counts as a
+private method. A property is a field even when it holds an arrow function, since properties
+initialize in source order. Each member out of place is reported with the one it follows:
+
+```
+The public method `goto` comes after the private method `waitForPageList` in class `Catalog2Page`. Order a page object: fields, constructor, getters, public methods, private methods.
+```
+
+`--fix` reorders the class body in one pass. The sort is stable, so members of one group keep their
+relative order, and each member moves with its attached comments.
+
+```js
+{
+  rules: {
+    '@wl/e2e-page-object-member-order': 'error',
+  },
+}
+```
+
+#### Options
+
+| Option   | Type       | Default | Description                                    |
+| -------- | ---------- | ------- | ---------------------------------------------- |
+| `ignore` | `string[]` | `[]`    | Globs; the rule is skipped for matching files. |
+
+### `e2e-describe-order`
+
+Order the body of every `test.describe` in an **e2e** spec: setup first (`test.use`,
+`test.describe.configure`, `test.setTimeout`, `test.slow`, and `test.skip` / `fixme` / `fail` used
+as a condition, not as a test), then hooks `beforeAll` → `beforeEach` → `afterEach` → `afterAll`,
+then tests and nested describes. Statements that are not `test.*` calls are ignored.
+
+```
+`test.use` (setup) comes after `test('shows the total')` (test) in describe 'Cart'. Order a describe body: `test.use` / `test.describe.configure` / annotations, then hooks beforeAll → beforeEach → afterEach → afterAll, then tests and nested describes.
+```
+
+There is no autofix: moving `test.use({ … })` up past a `const` it reads would put the read in the
+`const`'s TDZ.
+
+```js
+{
+  rules: {
+    '@wl/e2e-describe-order': 'error',
+  },
+}
+```
+
+#### Options
+
+| Option   | Type       | Default | Description                                    |
+| -------- | ---------- | ------- | ---------------------------------------------- |
+| `ignore` | `string[]` | `[]`    | Globs; the rule is skipped for matching files. |
+
+### `e2e-top-level-describe`
+
+Hold an **e2e** spec to one top-level `test.describe`, with its setup, hooks and tests inside it:
+
+```
+`test.describe('Cart Mutations')` is top-level describe number 2 in this spec; the limit is 1. Move it to its own spec file, or nest it inside `test.describe('Cart')`.
+`test.use` sits at the top level of the spec. Move it inside `test.describe('Cart')`: a spec holds one top-level describe, and its setup, hooks and tests live inside it.
+Test 'shows the total' sits at the top level of the spec. Wrap the spec’s tests in a `test.describe` named after the feature they cover.
+```
+
+When the spec has exactly one top-level describe, `--fix` moves every top-level `test.use`,
+`test.describe.configure`, hook and annotation to the start of its body, in source order and with
+their attached comments; with one describe they apply to the same tests either way. An extra
+describe or a top-level test needs a person: split the file, nest the describe, or wrap the tests.
+
+```js
+{
+  rules: {
+    '@wl/e2e-top-level-describe': ['error', { max: 1 }],
+  },
+}
+```
+
+#### Options
+
+| Option   | Type       | Default | Description                                       |
+| -------- | ---------- | ------- | ------------------------------------------------- |
+| `max`    | `integer`  | `1`     | Top-level `test.describe` blocks a spec may hold. |
+| `ignore` | `string[]` | `[]`    | Globs; the rule is skipped for matching files.    |
+
 ### `e2e-test-tags`
 
 Restrict the tags on Playwright `test(…)` and `test.describe(…)` calls in an **e2e package** to an
