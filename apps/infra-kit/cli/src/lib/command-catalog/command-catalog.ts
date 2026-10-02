@@ -421,6 +421,24 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mutating: false,
     groupPath: ['config-get'],
   },
+  // Per-machine override writers, top-level per the house rule. No tool definition and no menu row:
+  // both take a required <key>, which the flagless palette cannot supply.
+  {
+    cliName: 'config-set',
+    menuGroup: null,
+    mcpTool: null,
+    mcpExposed: false,
+    mutating: true,
+    groupPath: ['config-set'],
+  },
+  {
+    cliName: 'config-unset',
+    menuGroup: null,
+    mcpTool: null,
+    mcpExposed: false,
+    mutating: true,
+    groupPath: ['config-unset'],
+  },
   {
     cliName: 'config-path',
     menuGroup: 'configuration',
@@ -550,10 +568,11 @@ export const commandCatalog: CommandCatalogEntry[] = [
   // the argv, then `probeToken` (Doppler itself refuses a cross-config download) and `assertTokenScope`
   // (the payload must name this config) before `tokens.json` is touched. Removal is local-only — the
   // Doppler token survives and the next set puts it back.
-  // menuGroup is null because both take a required `<env>` argument the no-arg menu cannot supply.
+  // env-token-set is a menu row: its `[env]` is optional and the picker supplies it (a new env
+  // included). env-token-remove still takes a required `<env>` the flagless menu cannot supply.
   {
     cliName: 'env-token-set',
-    menuGroup: null,
+    menuGroup: 'environment',
     mcpTool: null,
     mcpExposed: false,
     mutating: true,
@@ -594,6 +613,10 @@ export const LOW_RISK_MUTATING_ALLOWLIST: readonly string[] = [
   // Deletes one token from the local store; the Doppler token itself survives and env-token-set puts
   // it back; no remote/git effect.
   'env-token-remove',
+  // Write/remove one top-level key in a per-machine override under ~/.infra-kit, kept only if the real
+  // loader accepts the result; never the committed infra-kit.json; agents may not touch protectedEnvs.
+  'config-set',
+  'config-unset',
   // Opens $EDITOR on the per-machine config override under ~/.infra-kit — a human is in the editor;
   // no remote/git effect.
   'config-edit',

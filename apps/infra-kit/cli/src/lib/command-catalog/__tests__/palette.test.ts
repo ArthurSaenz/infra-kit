@@ -53,7 +53,7 @@ describe('command palette', () => {
         ],
       ],
       ['Worktrees', ['worktrees add', 'worktrees list', 'worktrees remove', 'worktrees sync']],
-      ['Environment', ['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list']],
+      ['Environment', ['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list', 'env-token-set']],
       ['Configuration', ['config-get', 'config path', 'config edit']],
       ['Vendor', ['vendor check', 'vendor config', 'vendor sync']],
       // `setup` LEADS this group and the order is asserted, not incidental: it is the command that acts

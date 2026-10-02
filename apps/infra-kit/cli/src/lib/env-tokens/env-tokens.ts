@@ -169,11 +169,23 @@ export const writeTokenStore = async (store: TokenStore): Promise<void> => {
  * // tokens.json => { version: 1, envs: { dev: 'dp.st.dev.xxxxxxxx' } }
  */
 export const setToken = async (env: string, token: string): Promise<void> => {
+  await setTokens({ [env]: token })
+}
+
+/**
+ * Add or replace several environments' tokens in ONE read-modify-write, so a bulk import never leaves
+ * the store half-written between two of its entries.
+ *
+ * @example
+ * await setTokens({ dev: 'dp.st.dev.x', arthur: 'dp.st.arthur.y' })
+ * // tokens.json => { version: 1, envs: { …existing, dev: 'dp.st.dev.x', arthur: 'dp.st.arthur.y' } }
+ */
+export const setTokens = async (tokens: Record<string, string>): Promise<void> => {
   const existing = await readTokenStore()
 
   await writeTokenStore({
     version: TOKEN_STORE_VERSION,
-    envs: { ...existing?.envs, [env]: token },
+    envs: { ...existing?.envs, ...tokens },
   })
 }
 

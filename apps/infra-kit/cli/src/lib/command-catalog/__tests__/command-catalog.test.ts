@@ -453,7 +453,14 @@ describe('command catalog — menu grouping', () => {
 
     // `Environment` is the Doppler env commands and nothing else. It used to be a 13-entry drawer that
     // also held config, vendor, and setup commands — the four groups below are what came out of it.
-    expect(groupPaths('environment')).toEqual(['env-status', 'env-list', 'env-load', 'env-clear', 'env-token-list'])
+    expect(groupPaths('environment')).toEqual([
+      'env-status',
+      'env-list',
+      'env-load',
+      'env-clear',
+      'env-token-list',
+      'env-token-set',
+    ])
     expect(groupPaths('configuration')).toEqual(['config-get', 'config path', 'config edit'])
     expect(groupPaths('vendor')).toEqual(['vendor check', 'vendor config', 'vendor sync'])
     // `setup` LEADS the group: it is the command that acts on what `doctor` and `audit` report, and the

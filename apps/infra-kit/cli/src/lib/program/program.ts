@@ -6,6 +6,8 @@ import { cd } from 'zx'
 import { audit } from 'src/commands/audit'
 import { configEdit, configPath } from 'src/commands/config'
 import { configGet } from 'src/commands/config-get'
+import { configSet } from 'src/commands/config-set'
+import { configUnset } from 'src/commands/config-unset'
 import { devStatus } from 'src/commands/dev-status'
 import { doctor, printDoctorReport } from 'src/commands/doctor'
 import { e2e } from 'src/commands/e2e'
@@ -15,7 +17,7 @@ import { envLoad } from 'src/commands/env-load'
 import { envStatus } from 'src/commands/env-status'
 import { envTokenList } from 'src/commands/env-token-list'
 import { envTokenRemove } from 'src/commands/env-token-remove'
-import { envTokenSet } from 'src/commands/env-token-set'
+import { envTokenSet, envTokenSetFromFile } from 'src/commands/env-token-set'
 import { ghMergeDev } from 'src/commands/gh-merge-dev'
 import { withRunCleanup } from 'src/commands/gh-merge-dev/run-cleanup'
 import { ghReleaseDeliver } from 'src/commands/gh-release-deliver'
@@ -526,8 +528,29 @@ export const buildProgram = (): Command => {
   program
     .command('config-get')
     .description('Print the fully merged infra-kit config (project + user-global + per-project override layers)')
-    .action(async () => {
-      emit(await configGet())
+    .argument('[key]', 'Print only this top-level key (e.g. ide)')
+    .action(async (key) => {
+      emit(await configGet({ key }))
+    })
+
+  // Writes go to a per-machine override layer only — the committed infra-kit.json changes through review.
+  program
+    .command('config-set')
+    .description('Set a top-level key in this project’s per-machine config override (validated before it is kept)')
+    .argument('<key>', 'Top-level config key (e.g. protectedEnvs, ide)')
+    .argument('<value>', 'JSON value, or a bare string (e.g. cli-only, \'[{"provider":"orca"}]\')')
+    .option('--global', 'Write ~/.infra-kit/infra-kit.json (every project on this machine) instead')
+    .action(async (key, value, options) => {
+      emit(await configSet({ key, value, global: options.global }))
+    })
+
+  program
+    .command('config-unset')
+    .description('Remove a top-level key from this project’s per-machine config override')
+    .argument('<key>', 'Top-level config key')
+    .option('--global', 'Remove it from ~/.infra-kit/infra-kit.json instead')
+    .action(async (key, options) => {
+      emit(await configUnset({ key, global: options.global }))
     })
 
   // DEPRECATED. The CI/local choice moved onto `release deploy-* --from`, so it is stated on every
@@ -804,12 +827,31 @@ export const buildProgram = (): Command => {
   // to the terminal. The three input channels below all keep the token out of argv.
   program
     .command('env-token-set')
-    .description('Store the Doppler service token for an env (masked prompt; validated against Doppler before writing)')
-    .argument('<env>', 'Environment / Doppler config the token is scoped to (e.g. dev)')
-    .option('--stdin', 'Read the token from stdin instead of prompting (e.g. from a password manager)')
+    .description(
+      'Add or replace the Doppler service token for an env (masked prompt or piped stdin; validated against Doppler before writing)',
+    )
+    .argument(
+      '[env]',
+      'Environment / Doppler config the token is scoped to (e.g. dev); omitted → picker, incl. a new env',
+    )
+    .option(
+      '--stdin',
+      'Read the token from stdin (implied when stdin is piped, e.g. `op read … | ik env-token-set dev`)',
+    )
     .option('--from-env <var>', 'Read the token from the named environment variable (the NAME, never the value)')
+    .option('--from-file <path>', 'Import several tokens from a `<env>=<token>` file, each validated on its own')
     .option('--force', 'Store even when the token’s scope could not be verified. Never overrides a real mismatch.')
     .action(async (env, options) => {
+      if (options.fromFile) {
+        if (env || options.stdin || options.fromEnv) {
+          throw new Error('--from-file names its envs itself — drop <env>, --stdin and --from-env.')
+        }
+
+        emit(await envTokenSetFromFile({ fromFile: options.fromFile, force: options.force }))
+
+        return
+      }
+
       emit(
         await envTokenSet({
           env,

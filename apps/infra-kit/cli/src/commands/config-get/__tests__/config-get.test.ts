@@ -12,8 +12,11 @@ const seed = vi.hoisted(() => {
   }
 })
 
-vi.mock('src/lib/infra-kit-config', () => {
+vi.mock('src/lib/infra-kit-config', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('src/lib/infra-kit-config')>()
+
   return {
+    infraKitConfigObject: actual.infraKitConfigObject,
     getInfraKitConfig: vi.fn(() => {
       if (seed.configThrows) {
         return Promise.reject(seed.configThrows)
@@ -73,5 +76,17 @@ describe('configGet', () => {
     seed.configThrows = new Error('infra-kit.json not found at /nowhere/infra-kit.json')
 
     await expect(configGet()).rejects.toThrow('infra-kit.json not found')
+  })
+
+  it('reports one top-level key as `value`, null when no layer sets it', async () => {
+    const dev = await configGet({ key: 'dev' })
+    const ide = await configGet({ key: 'ide' })
+
+    expect(dev.structuredContent).toMatchObject({ key: 'dev', value: { web: { port: 3000 } } })
+    expect(ide.structuredContent).toMatchObject({ key: 'ide', value: null })
+  })
+
+  it('refuses a key the schema does not have, listing the real ones', async () => {
+    await expect(configGet({ key: 'nope' })).rejects.toThrow(/Unknown config key "nope".*envManagement/)
   })
 })

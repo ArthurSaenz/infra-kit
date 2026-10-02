@@ -1,16 +1,22 @@
+import confirm from '@inquirer/confirm'
+import input from '@inquirer/input'
 import password from '@inquirer/password'
+import select from '@inquirer/select'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
+import { Readable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
+import { listProjectEnvs } from 'src/lib/project-envs'
 
-import { envTokenSet } from '../env-token-set'
+import { envTokenSet, envTokenSetFromFile, parseTokenFile } from '../env-token-set'
 
 /**
  * The literal every assertion in this file hunts for. If it reaches argv, the echo, or stdout, a live
@@ -22,7 +28,7 @@ const TOKEN = 'dp.st.dev.SET_CANARY_0123456789abcdef'
 const { shellCalls, download } = vi.hoisted(() => {
   return {
     shellCalls: [] as Array<{ options: Record<string, unknown>; command: string; args: string[] }>,
-    download: { stdout: '{}', error: null as Error | null },
+    download: { stdout: '{}', error: null as Error | null, failForConfig: null as string | null },
   }
 })
 
@@ -36,7 +42,16 @@ vi.mock('zx', () => {
 
       return {
         timeout: () => {
-          return download.error ? Promise.reject(download.error) : Promise.resolve({ stdout: download.stdout })
+          if (download.failForConfig !== null && args[1] === download.failForConfig) {
+            return Promise.reject(
+              Object.assign(new Error('exit code: 1'), { stderr: 'Doppler Error: Invalid Auth token' }),
+            )
+          }
+
+          // A bulk import probes several configs; each payload must name the config it was asked for.
+          const stdout = download.stdout.replace('"DOPPLER_CONFIG":"dev"', `"DOPPLER_CONFIG":"${args[1]}"`)
+
+          return download.error ? Promise.reject(download.error) : Promise.resolve({ stdout })
         },
       }
     }
@@ -47,6 +62,22 @@ vi.mock('zx', () => {
 
 vi.mock('@inquirer/password', () => {
   return { default: vi.fn() }
+})
+
+vi.mock('@inquirer/confirm', () => {
+  return { default: vi.fn() }
+})
+
+vi.mock('@inquirer/select', () => {
+  return { default: vi.fn() }
+})
+
+vi.mock('@inquirer/input', () => {
+  return { default: vi.fn() }
+})
+
+vi.mock('src/lib/project-envs', () => {
+  return { listProjectEnvs: vi.fn() }
 })
 
 vi.mock('src/lib/git-utils', () => {
@@ -64,6 +95,23 @@ const REPO_CONFIG = JSON.stringify({
 let home: string
 let repo: string
 let storePath: string
+let stdinTTY: PropertyDescriptor | undefined
+
+const pipeStdin = (content: string): void => {
+  Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true })
+  vi.spyOn(process.stdin, 'setEncoding').mockReturnValue(process.stdin)
+  Object.defineProperty(process.stdin, Symbol.asyncIterator, {
+    configurable: true,
+    value: () => {
+      return Readable.from([content])[Symbol.asyncIterator]()
+    },
+  })
+}
+
+const writeStore = (envs: Record<string, string>): void => {
+  fs.mkdirSync(path.dirname(storePath), { recursive: true })
+  fs.writeFileSync(storePath, JSON.stringify({ version: 1, envs }))
+}
 
 /** A zx-style failure: the CLI's stderr is what every classifier reads. */
 const dopplerFailure = (stderr: string): Error => {
@@ -92,6 +140,11 @@ beforeEach(() => {
   shellCalls.length = 0
   download.stdout = JSON.stringify({ DOPPLER_CONFIG: 'dev', DOPPLER_PROJECT: 'example-project', API_KEY: 'x' })
   download.error = null
+  download.failForConfig = null
+  stdinTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+  // vitest's stdin is not a TTY, and a non-TTY stdin now IS the token channel. Every test that wants
+  // the prompt path says so by default; the pipe tests flip it back.
+  Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true })
 
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'token-set-home-'))
   repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'token-set-repo-')))
@@ -110,6 +163,12 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  if (stdinTTY) Object.defineProperty(process.stdin, 'isTTY', stdinTTY)
+  else Reflect.deleteProperty(process.stdin, 'isTTY')
+  Reflect.deleteProperty(process.stdin, Symbol.asyncIterator)
+  agentMode.source = null
+  vi.unstubAllEnvs()
+  process.exitCode = undefined
   vi.restoreAllMocks()
   resetInfraKitConfigCache()
   commandEcho.reset()
@@ -260,5 +319,172 @@ describe('env-token-set — the token never leaks', () => {
       expect.objectContaining({ mask: true }),
       expect.objectContaining({ output: process.stderr }),
     )
+  })
+})
+
+describe('env-token-set — replacing an existing token', () => {
+  const OLD = 'dp.st.dev.OLD_TOKEN_00000000wxyz'
+
+  it('replaces a piped token silently and reports both redacted values', async () => {
+    writeStore({ dev: OLD })
+    vi.stubEnv('MY_TOKEN', TOKEN)
+
+    const result = await envTokenSet({ env: 'dev', fromEnv: 'MY_TOKEN' })
+
+    expect(readStore().envs.dev).toBe(TOKEN)
+    expect(result.structuredContent).toMatchObject({
+      status: 'replaced',
+      previousRedactedToken: '****wxyz',
+      redactedToken: '****cdef',
+    })
+    expect(vi.mocked(confirm)).not.toHaveBeenCalled()
+    expect(everythingLogged()).toContain('****wxyz → ****cdef')
+  })
+
+  it('asks a human at the prompt before replacing, and keeps the old token on "no"', async () => {
+    writeStore({ dev: OLD })
+    vi.mocked(confirm).mockResolvedValue(false)
+
+    const result = await envTokenSet({ env: 'dev' })
+
+    expect(vi.mocked(confirm)).toHaveBeenCalledOnce()
+    expect(readStore().envs.dev).toBe(OLD)
+    expect(result.structuredContent.status).toBe('kept')
+  })
+
+  it('writes nothing when the token is the one already stored', async () => {
+    writeStore({ dev: TOKEN })
+    const before = fs.statSync(storePath).mtimeMs
+
+    const result = await envTokenSet({ env: 'dev' })
+
+    expect(result.structuredContent.status).toBe('unchanged')
+    expect(vi.mocked(confirm)).not.toHaveBeenCalled()
+    expect(fs.statSync(storePath).mtimeMs).toBe(before)
+  })
+})
+
+describe('env-token-set — a piped stdin is the token, no flag needed', () => {
+  it('reads the token from a non-TTY stdin without prompting', async () => {
+    pipeStdin(`${TOKEN}\n`)
+
+    const result = await envTokenSet({ env: 'dev' })
+
+    expect(readStore().envs.dev).toBe(TOKEN)
+    expect(result.structuredContent.source).toBe('stdin')
+    expect(vi.mocked(password)).not.toHaveBeenCalled()
+  })
+
+  it('refuses an EMPTY pipe for a human instead of prompting into EOF', async () => {
+    pipeStdin('')
+
+    await expect(envTokenSet({ env: 'dev' })).rejects.toThrow(/carried no token/)
+    expect(vi.mocked(password)).not.toHaveBeenCalled()
+  })
+
+  it('turns an empty pipe under --agent into argument_required naming stdin', async () => {
+    pipeStdin('')
+    agentMode.source = 'flag'
+
+    await expect(envTokenSet({ env: 'dev' })).rejects.toMatchObject({
+      structuredContent: { status: 'argument_required', argument: 'stdin' },
+    })
+  })
+})
+
+describe('env-token-set — no <env> given', () => {
+  it('refuses under --agent with argument_required naming env', async () => {
+    agentMode.source = 'flag'
+
+    await expect(envTokenSet({})).rejects.toMatchObject({
+      structuredContent: { status: 'argument_required', argument: 'env' },
+    })
+    expect(vi.mocked(select)).not.toHaveBeenCalled()
+  })
+
+  it('offers the known envs, marked set / not set, plus a new-env row', async () => {
+    writeStore({ dev: TOKEN })
+    vi.mocked(listProjectEnvs).mockResolvedValue([
+      { env: 'dev', source: 'gh-workflow' },
+      { env: 'stage', source: 'gh-workflow' },
+    ])
+    vi.mocked(select).mockResolvedValue('dev')
+    vi.mocked(password).mockResolvedValue(TOKEN)
+
+    await envTokenSet({})
+
+    const { choices } = vi.mocked(select).mock.calls[0]![0] as unknown as { choices: Array<{ name: string }> }
+
+    expect(
+      choices.map((choice) => {
+        return choice.name
+      }),
+    ).toEqual(['dev    set — replace', 'stage  not set', '+ new env…'])
+  })
+
+  it('takes a typed name for a new env and lets Doppler decide it is real', async () => {
+    vi.mocked(listProjectEnvs).mockResolvedValue([{ env: 'dev', source: 'gh-workflow' }])
+    vi.mocked(select).mockImplementation(async (config) => {
+      return (config as unknown as { choices: Array<{ value: string }> }).choices.at(-1)!.value
+    })
+    vi.mocked(input).mockResolvedValue(' staging ')
+    download.stdout = JSON.stringify({ DOPPLER_CONFIG: 'staging' })
+
+    const result = await envTokenSet({})
+
+    expect(result.structuredContent.env).toBe('staging')
+    expect(readStore().envs.staging).toBe(TOKEN)
+    expect(shellCalls.at(-1)!.args).toEqual(['example-project', 'staging'])
+  })
+})
+
+describe('env-token-set --from-file', () => {
+  it('parses env=token lines, comments, blanks and quotes', () => {
+    expect(parseTokenFile('# team\n\ndev=dp.st.dev.a\narthur = "dp.st.arthur.b"\n')).toEqual([
+      { env: 'dev', token: 'dp.st.dev.a' },
+      { env: 'arthur', token: 'dp.st.arthur.b' },
+    ])
+  })
+
+  it('names the bad line, never its content', () => {
+    expect(() => {
+      return parseTokenFile(`dev=a\n${TOKEN}\n`)
+    }).toThrow(/line 2/)
+
+    expect(() => {
+      return parseTokenFile(`dev=a\n${TOKEN}\n`)
+    }).not.toThrow(new RegExp(TOKEN))
+  })
+
+  it('refuses a duplicated env and an empty file', () => {
+    expect(() => {
+      return parseTokenFile('dev=a\ndev=b\n')
+    }).toThrow(/appears twice/)
+    expect(() => {
+      return parseTokenFile('# nothing\n')
+    }).toThrow(/no `<env>=<token>` lines/)
+  })
+
+  it('stores what Doppler accepts, reports what it refuses, and exits 1', async () => {
+    const file = path.join(home, 'tokens.env')
+
+    writeStore({ arthur: 'dp.st.arthur.SAME' })
+    fs.writeFileSync(file, `dev=${TOKEN}\nstage=dp.st.stage.BAD_00001111\narthur=dp.st.arthur.SAME\n`)
+    download.failForConfig = 'stage'
+
+    const result = await envTokenSetFromFile({ fromFile: file })
+
+    expect(
+      result.structuredContent.rows.map((row) => {
+        return [row.env, row.status]
+      }),
+    ).toEqual([
+      ['dev', 'stored'],
+      ['stage', 'failed'],
+      ['arthur', 'unchanged'],
+    ])
+    expect(readStore().envs).toEqual({ arthur: 'dp.st.arthur.SAME', dev: TOKEN })
+    expect(process.exitCode).toBe(1)
+    expect(everythingLogged()).not.toContain(TOKEN)
   })
 })
