@@ -21,6 +21,7 @@ live) sits in `pages/`, and its fixture, which guarantees cleanup even on mid-te
 - Restructuring a flat/monolithic spec file into the feature layout.
 - Reviewing an e2e folder for convention compliance (selectors leaking into specs, missing
   cleanup, one giant spec file, hardcoded markers).
+- Diagnosing a failing spec — see [Diagnose](#diagnose).
 
 ## Workflow
 
@@ -57,11 +58,37 @@ sibling specs rather than letting one file sprawl. Mocks, data builders and doma
 
 ### 3. Verify
 
-Run the suite filtered to the new folder and confirm it passes and leaves no state behind:
+Run the new or changed specs through `infra-kit e2e`, which targets this worktree's dev server the
+way every other entry point does, five times over so a flaky spec fails here and not in CI:
 
 ```bash
-cd <app>/tests && pnpm exec playwright test src/tests/<domain> --reporter=line
+cd <app>/tests && pnpm exec infra-kit e2e --json -- src/tests/<domain> --repeat-each=5
 ```
+
+Done when `exitCode` is 0, `summary.flaky` is 0, and the run left no state behind.
+
+## Diagnose
+
+For a spec that fails. The package's `CLAUDE.md` Repair section is the policy; this is the procedure.
+
+1. Run the failing spec alone:
+
+   ```bash
+   cd <app>/tests && pnpm exec infra-kit e2e --json -- <spec path> --grep "<test title>"
+   ```
+
+2. Read `failures[]` — `title`, `file:line`, `error` — and open the `tracePath` with
+   `pnpm exec playwright show-trace <tracePath>` for the DOM, network and console at the failing
+   step. Do not read the full log. `report: "unavailable"` means Playwright crashed before writing
+   results; then, and only then, read its stderr.
+3. Classify: product defect, intentional product change, test defect, test data or environment,
+   or flake. Take the expected behaviour from the spec's intent or the ticket, never from what the
+   UI shows now; when that is unclear, stop and report.
+4. Propose the smallest patch that fits the class — a Page Object locator, a missing `await`, a
+   wait on a real condition, cleanup. A product defect gets a report, not a patch to the test.
+   Never weaken the test without a person's approval: no deleted or loosened assertion, no
+   `test.skip` / `fixme` / `fail`, no snapshot update, no wider timeout, no retries.
+5. Verify the patch with the `--repeat-each=5` run from step 3 of the workflow.
 
 ## The conventions (summary)
 

@@ -1,6 +1,7 @@
 import { E2E_MODE_ENV } from '@slip-stream-kit/config/internal'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
@@ -17,6 +18,8 @@ import { defineMcpTool, textContent } from 'src/types'
 
 import { describeCloudTarget, describeLocalTarget, locateE2eTarget } from './e2e-target'
 import type { E2eLocation, E2eTarget, E2eTargetDeps } from './e2e-target'
+import { JSON_REPORTER_ARG, callerPicksReporter, jsonReporterEnv, readPlaywrightReport } from './playwright-report'
+import type { E2eFailure, E2eSummary } from './playwright-report'
 
 export interface E2eArgs {
   app?: string
@@ -30,8 +33,8 @@ export interface E2eArgs {
 
 export interface E2eDeps extends E2eTargetDeps {
   protectedEnvAccess?: () => Promise<ProtectedEnvAccess>
-  /** Runs Playwright and resolves its exit code. */
-  runPlaywright?: (target: E2eTarget, args: string[]) => Promise<number>
+  /** Runs Playwright with `env` on top of this process's, and resolves its exit code. */
+  runPlaywright?: (target: E2eTarget, args: string[], env: Record<string, string>) => Promise<number>
 }
 
 const PLAYWRIGHT_CONFIGS = [
@@ -155,14 +158,14 @@ const resolveLocal = async (location: E2eLocation, deps: E2eDeps): Promise<E2eTa
   }
 }
 
-const defaultRunPlaywright = (target: E2eTarget, args: string[]): Promise<number> => {
+const defaultRunPlaywright = (target: E2eTarget, args: string[], env: Record<string, string>): Promise<number> => {
   return new Promise((resolve, reject) => {
     // eslint-disable-next-line sonarjs/no-os-command-from-path -- the consumer's own pnpm, as its e2e scripts run it
     const child = spawn('pnpm', ['exec', 'playwright', 'test', ...args], {
       cwd: target.testsDir,
       // Only the mode: the deployed URL stays as loaded, because the dev server a local run starts proxies
       // the UI's cloud-only routes there.
-      env: { ...process.env, [E2E_MODE_ENV]: target.mode },
+      env: { ...process.env, ...env, [E2E_MODE_ENV]: target.mode },
       // Under --json/agent mode stdout carries the result document; Playwright's report goes to stderr.
       stdio: ['inherit', jsonOutput.enabled || isHeadless() ? 2 : 'inherit', 'inherit'],
     })
@@ -195,7 +198,7 @@ export const e2e = async (args: E2eArgs, deps: E2eDeps = {}) => {
   }
 
   if (args.dryRun) {
-    return buildResult({ ...plan, ran: false, exitCode: null })
+    return buildResult({ ...plan, ran: false, exitCode: null, ...NO_REPORT })
   }
 
   if (target.mode === 'cloud') {
@@ -204,12 +207,45 @@ export const e2e = async (args: E2eArgs, deps: E2eDeps = {}) => {
     })
   }
 
-  const exitCode = await (deps.runPlaywright ?? defaultRunPlaywright)(target, args.playwrightArgs ?? [])
+  const runPlaywright = deps.runPlaywright ?? defaultRunPlaywright
 
-  if (exitCode !== 0) process.exitCode = exitCode
+  // Per-test results are for a machine reader; a human already has Playwright's own report.
+  if (!isHeadless() || callerPicksReporter(plan.playwrightArgs)) {
+    const exitCode = await runPlaywright(target, plan.playwrightArgs, {})
 
-  return buildResult({ ...plan, ran: true, exitCode })
+    if (exitCode !== 0) process.exitCode = exitCode
+
+    return buildResult({ ...plan, ran: true, exitCode, ...NO_REPORT, report: isHeadless() ? 'caller-reporter' : 'off' })
+  }
+
+  const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ik-e2e-report-'))
+  const reportFile = path.join(reportDir, 'report.json')
+
+  try {
+    const exitCode = await runPlaywright(
+      target,
+      [JSON_REPORTER_ARG, ...plan.playwrightArgs],
+      jsonReporterEnv(reportFile),
+    )
+
+    if (exitCode !== 0) process.exitCode = exitCode
+
+    const report = readPlaywrightReport(reportFile)
+
+    return buildResult({
+      ...plan,
+      ran: true,
+      exitCode,
+      ...(report ? { report: 'collected', ...report } : { ...NO_REPORT, report: 'unavailable' }),
+    })
+  } finally {
+    fs.rmSync(reportDir, { recursive: true, force: true })
+  }
 }
+
+type E2eReportStatus = 'off' | 'caller-reporter' | 'unavailable' | 'collected'
+
+const NO_REPORT = { report: 'off' as E2eReportStatus, summary: null, failures: [], errors: [] }
 
 const buildResult = (
   structuredContent: E2eTarget & {
@@ -218,6 +254,10 @@ const buildResult = (
     playwrightArgs: string[]
     ran: boolean
     exitCode: number | null
+    report: E2eReportStatus
+    summary: E2eSummary | null
+    failures: E2eFailure[]
+    errors: string[]
   },
 ) => {
   return { content: textContent(JSON.stringify(structuredContent, null, 2)), structuredContent }
@@ -258,6 +298,34 @@ const e2eOutputSchema = {
   playwrightArgs: z.array(z.string()),
   ran: z.boolean().describe('False for --dry-run.'),
   exitCode: z.number().nullable().describe('Playwright’s exit code; null when it did not run.'),
+  report: z
+    .enum(['off', 'caller-reporter', 'unavailable', 'collected'])
+    .describe(
+      'Per-test results: collected from Playwright’s JSON reporter under --json/agent mode; caller-reporter when playwrightArgs carried its own --reporter; unavailable when the run wrote no readable report; off otherwise.',
+    ),
+  summary: z
+    .object({ expected: z.number(), unexpected: z.number(), flaky: z.number(), skipped: z.number() })
+    .nullable()
+    .describe('Test counts by outcome; null unless report is collected.'),
+  failures: z
+    .array(
+      z.object({
+        title: z.string().describe('Describe path and test title, joined with ›.'),
+        file: z.string(),
+        line: z.number().nullable(),
+        project: z.string(),
+        status: z.enum(['unexpected', 'flaky']).describe('flaky: failed, then passed on a retry.'),
+        retry: z.number().describe('The retry index of the failed attempt reported here.'),
+        error: z.string().nullable().describe('The failure message, ANSI stripped, truncated to 2000 characters.'),
+        tracePath: z.string().nullable().describe('The failed attempt’s trace.zip; open with `playwright show-trace`.'),
+      }),
+    )
+    .describe('Every test that failed or needed a retry; empty unless report is collected.'),
+  errors: z
+    .array(z.string())
+    .describe(
+      'Run-level errors with no test to blame (config, global setup, a spec that fails to import), ANSI stripped and truncated; empty unless report is collected.',
+    ),
 }
 
 export const e2eMcpTool = defineMcpTool({
@@ -273,6 +341,10 @@ export const e2eMcpTool = defineMcpTool({
     dryRun: z.boolean().optional(),
     yes: z.boolean().optional(),
     cloud: z.boolean().optional().describe('Run against the deployed app at INFRA_KIT_ENV instead of this worktree.'),
+    playwrightArgs: z
+      .array(z.string())
+      .optional()
+      .describe('Passed to `playwright test` verbatim — a spec path, `--grep <title>`, `--project=chromium`.'),
   },
   outputSchema: e2eOutputSchema,
   handler: (params: E2eArgs) => {

@@ -319,6 +319,7 @@ describe('validatePackage — agent-guidance wiring', () => {
 describe('validatePackage — e2e convention', () => {
   const E2E_CONFIG = `
 const SLOW_MO = Number(process.env.E2E_SLOW_MO ?? 0)
+const e2e = await infraKitE2e({ dir: import.meta.dirname })
 export default defineConfig({
   timeout: 30_000 + SLOW_MO * 100,
   use: { launchOptions: { slowMo: SLOW_MO }, trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure' },
@@ -349,7 +350,7 @@ export default defineConfig({
     const result = await validatePackage(dir, undefined, { repoRoot: root })
 
     expect(result.passed).toBe(true)
-    expect(e2eNames(result.checks)).toHaveLength(Object.keys(E2E_SCRIPTS).length + 4)
+    expect(e2eNames(result.checks)).toHaveLength(Object.keys(E2E_SCRIPTS).length + 6)
   })
 
   it('fails the package when a shared script drifts or the config lacks slow motion', async () => {
@@ -383,6 +384,7 @@ export default defineConfig({
       'e2e-config:launch-options',
       'e2e-config:timeout-headroom',
       'e2e-config:trace',
+      'e2e-config:infra-kit-e2e',
     ])
   })
 

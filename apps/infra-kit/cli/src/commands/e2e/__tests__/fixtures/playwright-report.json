@@ -1,0 +1,167 @@
+{
+  "config": { "rootDir": "/repo/apps/client/tests/src", "version": "1.55.0" },
+  "suites": [
+    {
+      "title": "tests/checkout/coupon.spec.ts",
+      "file": "tests/checkout/coupon.spec.ts",
+      "line": 0,
+      "column": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Checkout",
+          "file": "tests/checkout/coupon.spec.ts",
+          "line": 5,
+          "column": 6,
+          "specs": [
+            {
+              "title": "rejects an expired coupon without changing the total",
+              "ok": false,
+              "tags": ["mocked"],
+              "id": "a1",
+              "file": "tests/checkout/coupon.spec.ts",
+              "line": 12,
+              "column": 3,
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "status": "unexpected",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "status": "failed",
+                      "duration": 1200,
+                      "retry": 0,
+                      "error": {
+                        "message": "\u001b[31mError: expect(locator).toHaveText(expected)\u001b[39m\n\nExpected: \"€40\"\nReceived: \"€35\""
+                      },
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/repo/apps/client/tests/test-results/coupon/test-failed-1.png"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/repo/apps/client/tests/test-results/coupon/trace.zip"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "firefox",
+                  "projectName": "firefox",
+                  "status": "expected",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "status": "passed",
+                      "duration": 900,
+                      "retry": 0,
+                      "errors": [],
+                      "attachments": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "applies a valid coupon",
+              "ok": true,
+              "tags": ["mocked"],
+              "id": "a2",
+              "file": "tests/checkout/coupon.spec.ts",
+              "line": 30,
+              "column": 3,
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "status": "flaky",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "status": "timedOut",
+                      "duration": 30000,
+                      "retry": 0,
+                      "errors": [{ "message": "Test timeout of 30000ms exceeded." }],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/repo/apps/client/tests/test-results/apply/trace.zip"
+                        }
+                      ]
+                    },
+                    {
+                      "workerIndex": 2,
+                      "status": "passed",
+                      "duration": 800,
+                      "retry": 1,
+                      "errors": [],
+                      "attachments": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "tests/search/search.spec.ts",
+      "file": "tests/search/search.spec.ts",
+      "line": 0,
+      "column": 0,
+      "specs": [
+        {
+          "title": "lists results",
+          "ok": true,
+          "tags": ["readonly"],
+          "id": "b1",
+          "file": "tests/search/search.spec.ts",
+          "line": 4,
+          "column": 1,
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "skipped",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "status": "skipped",
+              "results": [
+                { "workerIndex": -1, "status": "skipped", "duration": 0, "retry": 0, "errors": [], "attachments": [] }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-03T10:00:00.000Z",
+    "duration": 33000,
+    "expected": 1,
+    "skipped": 1,
+    "unexpected": 1,
+    "flaky": 1
+  }
+}

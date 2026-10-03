@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { $ } from 'zx'
 
 import { E2E_SCRIPTS } from 'src/lib/package-config'
 
@@ -34,6 +35,11 @@ const CONFIG_RULES: ReadonlyArray<{ name: string; pattern: RegExp; expected: str
     name: 'trace',
     pattern: /trace:\s*process\.env\.CI\s*\?\s*'on-first-retry'\s*:\s*'retain-on-failure'/u,
     expected: "use.trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure'",
+  },
+  {
+    name: 'infra-kit-e2e',
+    pattern: /\binfraKitE2e\b/u,
+    expected: "baseURL, ignoreHTTPSErrors and webServer from infraKitE2e() ('@slip-stream-kit/config/playwright')",
   },
 ]
 
@@ -79,7 +85,71 @@ export const checkE2eConfig = async (packageDir: string): Promise<PackageCheck[]
   })
 }
 
+/** A string literal naming a `.auth` path segment: `'.auth/user.json'`, `'../.auth'`, `join(dir, '.auth', …)`. */
+const AUTH_DIR_PATTERN = /['"`](?:[^'"`\n]*\/)?\.auth['"/`]/u
+const SOURCE_FILE_PATTERN = /\.[cm]?[jt]sx?$/u
+
+const referencesAuthDir = async (packageDir: string): Promise<boolean> => {
+  const srcEntries = await fs
+    .readdir(path.join(packageDir, 'src'), { recursive: true, withFileTypes: true })
+    .catch(() => {
+      return []
+    })
+  const sourceFiles = srcEntries
+    .filter((entry) => {
+      return entry.isFile() && SOURCE_FILE_PATTERN.test(entry.name)
+    })
+    .map((entry) => {
+      return path.join(entry.parentPath, entry.name)
+    })
+
+  // `use.storageState` in the config is the other common place to name it.
+  for (const file of [path.join(packageDir, PLAYWRIGHT_CONFIG_FILE), ...sourceFiles]) {
+    const content = await fs.readFile(file, 'utf-8').catch(() => {
+      return ''
+    })
+
+    if (AUTH_DIR_PATTERN.test(content)) return true
+  }
+
+  return false
+}
+
+/**
+ * Saved storage state is a live session cookie, so committing it leaks a login. Asked of git rather
+ * than parsed from `.gitignore` files, so negations and nested ignores resolve as the next `git add`
+ * will; the global excludes file is switched off because it lives on one machine, not in the repo.
+ */
+export const checkE2eAuthIgnored = async (packageDir: string): Promise<PackageCheck> => {
+  const name = 'e2e-auth:gitignored'
+
+  if (!(await referencesAuthDir(packageDir))) {
+    return { name, status: 'pass', message: 'no saved auth state referenced' }
+  }
+
+  // A path inside it: bare `.auth` misses a `.auth/` rule until the directory exists, and a fresh clone has none.
+  const result = await $({
+    cwd: packageDir,
+    quiet: true,
+    nothrow: true,
+  })`git -c core.excludesFile=/dev/null check-ignore -q .auth/storage-state.json`
+
+  if (result.exitCode === 0) return { name, status: 'pass', message: '.auth/ is gitignored' }
+
+  if (result.exitCode === 1) {
+    return {
+      name,
+      status: 'fail',
+      message: 'the suite saves auth state under .auth/, which git would commit — add `.auth/` to .gitignore',
+    }
+  }
+
+  const reason = result.stderr.trim() || `exit ${result.exitCode}`
+
+  return { name, status: 'fail', message: `could not ask git whether .auth/ is ignored: ${reason}` }
+}
+
 /** Convention checks applied to every `e2e` package, on top of its `infra-kit.config.ts` rules. */
 export const checkE2e = async (packageDir: string, scripts: Record<string, string>): Promise<PackageCheck[]> => {
-  return [...checkE2eScripts(scripts), ...(await checkE2eConfig(packageDir))]
+  return [...checkE2eScripts(scripts), ...(await checkE2eConfig(packageDir)), await checkE2eAuthIgnored(packageDir)]
 }
