@@ -41,7 +41,9 @@ The contract a second provider would implement, and the recipe for adding one, l
 
 **Destination.** `INFRA_KIT_SESSION` is the id Claude Code's `Bash` tool inherited when it launched,
 and the `.zshenv` block `infra-kit setup` installs sources this file into every zsh spawned under
-that id afterwards — Claude's own subsequent `Bash` calls, not this one. It never reaches the
+that id afterwards — Claude's own subsequent `Bash` calls, not this one — but only in a directory
+inside the repo it was loaded from: its main checkout, any of its worktrees, or anything under them
+(the `env-load.root` file beside it lists them). A shell in another repo gets none of it. It never reaches the
 human's own, already-open terminal: that shell reads `.zshenv` once, at its own start, so nothing
 sourced later shows up there. Tell the human to run `infra-kit env-load -c <config>` themselves if
 they want the variables in their own prompt — report the session id from the returned `filePath` (it

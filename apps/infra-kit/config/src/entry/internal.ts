@@ -14,8 +14,11 @@
 // this surface may change in any release.
 export { packageConfigSchema } from '../lib/package-config/package-config-schema'
 export { DEV_SERVING_MARKER, E2E_MODE_ENV } from '../lib/playwright/playwright'
+export { readAppAliasHost, readAppAliasName } from '../lib/release-slug/app-alias'
 export { readRelease } from '../lib/release-slug/read-release'
 export { DEFAULT_RELEASE_SLUG, slugifyHostLabel, slugifyRelease } from '../lib/release-slug/release-slug'
+export { DEFAULT_REPO_SLUG, readRepoIdentity, readRepoSlug } from '../lib/release-slug/repo-slug'
+export type { RepoIdentity } from '../lib/release-slug/repo-slug'
 export {
   defineVendorConfig,
   VENDOR_CONFIG_FILE,

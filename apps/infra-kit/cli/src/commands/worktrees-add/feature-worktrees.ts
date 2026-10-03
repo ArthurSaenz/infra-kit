@@ -8,6 +8,9 @@ import { formatBranchName, parseReleaseRef } from 'src/lib/release-id'
 
 export const DEFAULT_FEATURE_BASE = 'dev'
 
+/** Accepted as a base even when `origin/HEAD` records no default branch. */
+const MAIN_BRANCH = 'main'
+
 const FEATURE_PREFIX = 'feature/'
 
 export type WorktreeKind = 'release' | 'feature'
@@ -43,16 +46,61 @@ export const toFeatureBranch = (name: string): string => {
   return `${FEATURE_PREFIX}${slug}`
 }
 
+/** The branch `origin/HEAD` points at, or null when the clone records none. */
+const readDefaultBranch = async (): Promise<string | null> => {
+  const head = await $({ nothrow: true, quiet: true })`git symbolic-ref --quiet --short refs/remotes/origin/HEAD`
+  const branch = head.exitCode === 0 ? head.stdout.trim().replace(/^origin\//, '') : ''
+
+  return branch === '' ? null : branch
+}
+
+/** `git ls-remote --exit-code` exits 2 when the ref is missing; anything else non-zero is a failed probe. */
+const LS_REMOTE_NO_MATCH = 2
+
 /**
- * `dev` or a release ref (`1.4.0`, `v1.4.0`, `release/v1.4.0`, `release/<name>`), as a branch name.
+ * The base when none is passed: `dev`, or the repo's default branch in a repo without one (infra-kit
+ * itself has only `main`). Falls back to `dev` when neither resolves, so the base check names it.
+ *
+ * @throws When origin cannot be asked (network, auth): cutting from the default branch then would be a
+ *   silent guess in a repo that may well have `dev`.
+ */
+export const defaultFeatureBase = async (): Promise<string> => {
+  // A full ref: a bare `dev` pattern also matches any `*/dev` branch. ls-remote, not fetch, because
+  // planFeatureWorktrees fetches whichever base this picks.
+  const probe = await $({
+    nothrow: true,
+    quiet: true,
+  })`git ls-remote --exit-code origin refs/heads/${DEFAULT_FEATURE_BASE}`
+
+  if (probe.exitCode === 0) return DEFAULT_FEATURE_BASE
+
+  if (probe.exitCode !== LS_REMOTE_NO_MATCH) {
+    throw new OperationError(undefined, {
+      operation: 'create feature worktree',
+      remediation: 'check the network and your access to origin, or pass --base explicitly',
+      stderrExcerpt: probe.stderr.trim() || `could not ask origin whether ${DEFAULT_FEATURE_BASE} exists`,
+    })
+  }
+
+  return (await readDefaultBranch()) ?? DEFAULT_FEATURE_BASE
+}
+
+/**
+ * `dev`, `main` / the repo's default branch, or a release ref (`1.4.0`, `v1.4.0`, `release/v1.4.0`,
+ * `release/<name>`), as a branch name. No base: {@link defaultFeatureBase}.
  *
  * @example
- * resolveFeatureBase('1.4.0') // => 'release/v1.4.0'
+ * await resolveFeatureBase('1.4.0') // => 'release/v1.4.0'
+ * await resolveFeatureBase('main') // => 'main'
  */
-export const resolveFeatureBase = (base: string | undefined): string => {
+export const resolveFeatureBase = async (base: string | undefined): Promise<string> => {
   const trimmed = base?.trim()
 
-  if (!trimmed || trimmed === DEFAULT_FEATURE_BASE) return DEFAULT_FEATURE_BASE
+  if (!trimmed) return defaultFeatureBase()
+
+  if (trimmed === DEFAULT_FEATURE_BASE || trimmed === MAIN_BRANCH || trimmed === (await readDefaultBranch())) {
+    return trimmed
+  }
 
   return formatBranchName(parseReleaseRef(trimmed))
 }
@@ -94,23 +142,23 @@ export const promptFeatureName = async (): Promise<string> => {
   )
 }
 
-export const promptFeatureBase = async (releaseBranches: string[]): Promise<string> => {
-  if (releaseBranches.length === 0) return DEFAULT_FEATURE_BASE
+export const promptFeatureBase = async (releaseBranches: string[], defaultBase: string): Promise<string> => {
+  if (releaseBranches.length === 0) return defaultBase
 
   return withEscape(
     (context) => {
       return select<string>(
         {
           message: 'Base branch:',
-          default: DEFAULT_FEATURE_BASE,
-          choices: [DEFAULT_FEATURE_BASE, ...releaseBranches].map((branch) => {
+          default: defaultBase,
+          choices: [defaultBase, ...releaseBranches].map((branch) => {
             return { name: branch, value: branch }
           }),
         },
         context,
       )
     },
-    { whenHeadless: { value: DEFAULT_FEATURE_BASE } },
+    { whenHeadless: { value: defaultBase } },
   )
 }
 
@@ -159,7 +207,7 @@ export const planFeatureWorktrees = async (args: PlanFeatureWorktreesArgs): Prom
   if (!(await fetchRemoteBranch(base))) {
     throw new OperationError(undefined, {
       operation: 'create feature worktree',
-      remediation: `pass --base dev or an existing release branch (\`infra-kit release list\` lists them)`,
+      remediation: `pass --base dev, --base main or an existing release branch (\`infra-kit release list\` lists them); a repo with neither dev nor a recorded default branch needs \`git remote set-head origin --auto\``,
       stderrExcerpt: `base branch origin/${base} not found`,
     })
   }

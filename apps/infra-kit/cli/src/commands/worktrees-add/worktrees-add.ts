@@ -40,6 +40,7 @@ import type { RequiredConfirmedOptionArg } from 'src/types'
 import {
   FEATURE_BRANCH_SOURCES,
   addFeatureWorktree,
+  defaultFeatureBase,
   describeFeaturePlan,
   planFeatureWorktrees,
   promptFeatureBase,
@@ -81,7 +82,7 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
   versions?: string
   /** Comma-separated feature names; each becomes a `feature/<name>` worktree. */
   feature?: string
-  /** Base for new feature branches: `dev` (default) or a release ref. */
+  /** Base for new feature branches: `dev` (default; the default branch when there is no `dev`), `main` or a release ref. */
   base?: string
   ide?: IdeMode
   /** @deprecated Alias for `ide`, kept for back-compat. Ignored when `ide` is set. */
@@ -268,7 +269,10 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     logger.debug({ err: error }, 'Error managing worktrees')
     throw new OperationError(error, {
       operation: OPERATION,
-      remediation: "verify branches don't already exist as worktrees: 'git worktree list'",
+      // An inner OperationError (a missing base, a bad name) already knows the fix; this hint is the guess.
+      remediation:
+        (error instanceof OperationError && error.remediation) ||
+        "verify branches don't already exist as worktrees: 'git worktree list'",
     })
   }
 }
@@ -386,11 +390,11 @@ const selectFeatureTargets = async (options: WorktreeManagementArgs): Promise<Wo
         return pr.branch
       })
 
-      base = await promptFeatureBase(releaseBranches)
+      base = await promptFeatureBase(releaseBranches, await defaultFeatureBase())
     }
   }
 
-  const resolvedBase = resolveFeatureBase(base)
+  const resolvedBase = await resolveFeatureBase(base)
   const plans = await planFeatureWorktrees({ names: featureNames, base: resolvedBase })
 
   commandEcho.addOption(
@@ -726,7 +730,7 @@ const logResults = (created: string[]): void => {
 export const worktreesAddMcpTool = defineMcpTool({
   name: 'worktrees-add',
   description:
-    'Create local git worktrees under the worktrees directory and run "pnpm install" in each: release worktrees for open release branches ("versions" / all=true), or feature worktrees ("feature", optional "base") — each name becomes a feature/<name> branch at <root>-worktrees/feature/<name>, cut from origin/<base> (default dev, or any release branch) with no upstream, or checked out as-is when the branch already exists locally or on origin. Mutates the local filesystem. When invoked via MCP, pass "versions" (comma-separated), all=true, or "feature" — the branch picker and "open in Cursor / GitHub Desktop / Orca" follow-up prompts are unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls. With "orca" true each created worktree gets an Orca terminal tab laid out per "worktrees.orca.layout"; the result reports orcaOpened, orcaSkipped (with a reason) and orcaHidden (a worktree Orca\'s sidebar hides, with the UI steps to reveal it). An unregistered repo is registered in Orca first (orca repo add).',
+    'Create local git worktrees under the worktrees directory and run "pnpm install" in each: release worktrees for open release branches ("versions" / all=true), or feature worktrees ("feature", optional "base") — each name becomes a feature/<name> branch at <root>-worktrees/feature/<name>, cut from origin/<base> (default dev, or the default branch of a repo without dev; main; or any release branch) with no upstream, or checked out as-is when the branch already exists locally or on origin. Mutates the local filesystem. When invoked via MCP, pass "versions" (comma-separated), all=true, or "feature" — the branch picker and "open in Cursor / GitHub Desktop / Orca" follow-up prompts are unreachable without a TTY, and the CLI confirmation is auto-skipped for MCP calls. With "orca" true each created worktree gets an Orca terminal tab laid out per "worktrees.orca.layout"; the result reports orcaOpened, orcaSkipped (with a reason) and orcaHidden (a worktree Orca\'s sidebar hides, with the UI steps to reveal it). An unregistered repo is registered in Orca first (orca repo add).',
   inputSchema: {
     feature: z
       .string()
@@ -738,7 +742,7 @@ export const worktreesAddMcpTool = defineMcpTool({
       .string()
       .optional()
       .describe(
-        'Base for NEW feature branches: "dev" (default) or a release ref ("1.4.0", "release/v1.4.0", "release/<name>"). Not applied to a feature branch that already exists. Implies a feature run.',
+        'Base for NEW feature branches: "dev" (default; the repo\'s default branch when it has no dev), "main", or a release ref ("1.4.0", "release/v1.4.0", "release/<name>"). Not applied to a feature branch that already exists. Implies a feature run.',
       ),
     all: z
       .boolean()

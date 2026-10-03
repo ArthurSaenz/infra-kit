@@ -2,8 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 
-import { readRelease } from '../release-slug/read-release'
-import { slugifyHostLabel } from '../release-slug/release-slug'
+import { readAppAliasHost } from '../release-slug/app-alias'
 import { loadPackageConfig } from '../vite/vite'
 
 /**
@@ -131,7 +130,7 @@ export const infraKitE2e = async (options: InfraKitE2eOptions = {}): Promise<Inf
 
   // The deployed URL stays in the environment untouched: the dev server `webServer` starts inherits it,
   // and proxies the UI's cloud-only routes there. Overwriting it with the local alias would loop them back.
-  const baseURL = `https://${readRelease(targetDir)}.${slugifyHostLabel(packageName)}.localhost`
+  const baseURL = `https://${readAppAliasHost(packageName, targetDir)}`
 
   return {
     mode,

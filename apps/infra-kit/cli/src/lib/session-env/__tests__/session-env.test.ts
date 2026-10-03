@@ -183,6 +183,21 @@ describe('readSessionEnvState — the zshenv rule', () => {
     expect(readSessionEnvState().kind).toBe('load')
   })
 
+  it('a load whose env-load.root names this directory → load', () => {
+    writeLoad(sessionDir, [['JIRA_TOKEN', 't']])
+    fs.writeFileSync(path.join(sessionDir, 'env-load.root'), `/elsewhere\n${fs.realpathSync(process.cwd())}\n`)
+
+    expect(readSessionEnvState().kind).toBe('load')
+  })
+
+  it('a load scoped to another repo → none, even with an older clear file present', () => {
+    setMtimeMs(writeClear(sessionDir, ['JIRA_TOKEN']), 1_000_000)
+    setMtimeMs(writeLoad(sessionDir, [['JIRA_TOKEN', 't']]), 2_000_000)
+    fs.writeFileSync(path.join(sessionDir, 'env-load.root'), `${path.join(cacheHome, 'other-repo')}\n`)
+
+    expect(readSessionEnvState()).toEqual({ kind: 'none', signature: 'none' })
+  })
+
   it('no session id → no-session, one log line per process, and no `no-session` dir is read', () => {
     delete process.env.INFRA_KIT_SESSION
     const stat = vi.spyOn(fs, 'statSync')
@@ -380,9 +395,18 @@ describe('applySessionEnv', () => {
     const file = writeLoad(sessionDir, [['JIRA_TOKEN', 't']])
     const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
 
-    vi.spyOn(fs, 'readFileSync').mockImplementationOnce(() => {
-      throw enoent
-    })
+    const realReadFileSync = fs.readFileSync
+    let raced = false
+
+    // Only the load file's read fails: the scope check reads its `env-load.root` sidecar first.
+    vi.spyOn(fs, 'readFileSync').mockImplementation(((target: fs.PathOrFileDescriptor, ...rest: never[]) => {
+      if (target === file && !raced) {
+        raced = true
+        throw enoent
+      }
+
+      return realReadFileSync(target, ...rest)
+    }) as typeof fs.readFileSync)
 
     const result = applySessionEnv()
 

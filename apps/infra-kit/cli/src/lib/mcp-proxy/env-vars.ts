@@ -1,7 +1,14 @@
 import path from 'node:path'
 import process from 'node:process'
 
-import { ENV_LOAD_FILE, INFRA_KIT_SESSION_VAR, getCacheRoot, parseVarsFromEnvFile } from 'src/lib/constants'
+import {
+  ENV_LOAD_FILE,
+  ENV_LOAD_ROOT_FILE,
+  INFRA_KIT_SESSION_VAR,
+  getCacheRoot,
+  isInEnvLoadScope,
+  parseVarsFromEnvFile,
+} from 'src/lib/constants'
 
 /**
  * Session id used when the proxy inherits none. `getSessionCacheDir()` THROWS in that case,
@@ -54,7 +61,10 @@ const pick = (fileVars: Record<string, string>, name: string): string => {
  * JSON, which is the respawn key — is stable however Doppler happens to order the file.
  */
 export const readListedVars = (names: readonly string[], filePath: string = resolveEnvFilePath()): ProxyVars | null => {
-  const fileVars = parseVarsFromEnvFile(filePath)
+  // Another repo's load must not configure this repo's MCP server; the inherited environment still can.
+  const fileVars = isInEnvLoadScope(path.join(path.dirname(filePath), ENV_LOAD_ROOT_FILE), process.cwd())
+    ? parseVarsFromEnvFile(filePath)
+    : {}
   const vars: ProxyVars = {}
 
   for (const name of names) {

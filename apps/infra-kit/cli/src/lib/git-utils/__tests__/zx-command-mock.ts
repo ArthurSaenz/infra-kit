@@ -3,6 +3,7 @@ import { vi } from 'vitest'
 /** What a mocked command answers. `throws` rejects outright; a non-zero `exitCode` depends on `nothrow`. */
 export interface FakeCommandResult {
   stdout?: string
+  stderr?: string
   exitCode?: number
   throws?: unknown
 }
@@ -45,7 +46,7 @@ export const zxCommandMock = (respond: CommandResponder) => {
 
     if (exitCode !== 0 && !nothrow) return Promise.reject(new Error(`command exited ${exitCode}: ${command}`))
 
-    return Promise.resolve({ stdout: result.stdout ?? '', exitCode })
+    return Promise.resolve({ stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode })
   }
 
   return vi.fn((first: TemplateStringsArray | Record<string, unknown>, ...values: unknown[]) => {

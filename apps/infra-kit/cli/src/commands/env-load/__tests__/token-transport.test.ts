@@ -186,6 +186,14 @@ describe('writeEnvLoadFile — the token reaches no artifact on disk', () => {
     expect(contents).toContain("API_URL='https://api.example.com'")
   })
 
+  it('scopes the load to the repo and its worktrees container in env-load.root', async () => {
+    await writeEnvLoadFile({ config: 'dev' })
+
+    expect(fs.readFileSync(path.join(getSessionCacheDir(), 'env-load.root'), 'utf-8')).toBe(
+      `${repoRoot}\n${repoRoot}-worktrees\n`,
+    )
+  })
+
   it('leaves no token anywhere under the cache root', async () => {
     await writeEnvLoadFile({ config: 'dev' })
 

@@ -21,9 +21,9 @@ import {
   DEV_CONTEXT_WIRE_VERSION,
   DEV_SERVING_MARKER,
   loadPackageConfig,
+  readAppAliasName,
   readCloudOrigin,
   readLocalContext,
-  slugifyHostLabel,
 } from '@slip-stream-kit/config/internal'
 import chokidar from 'chokidar'
 import type { FSWatcher } from 'chokidar'
@@ -384,7 +384,7 @@ interface StartedApp {
   server: ServerlessLocalRun
   /** The ACTUAL port bound at start (ephemeral or preferred), reported by `server.start()`. */
   boundPort: number
-  /** Layer-B alias host (`<release>.<package>.localhost`) — the app's only address. */
+  /** Layer-B alias host (`<release>.<package>.<repo>.localhost`) — the app's only address. */
   alias: string
 }
 
@@ -393,7 +393,7 @@ interface IAppServer {
   server: ServerlessLocalRun
   /** The ACTUAL port bound at start (ephemeral or preferred), reported by `server.start()`. */
   boundPort: number
-  /** Layer-B alias host (`<release>.<package>.localhost`) — the app's only address. */
+  /** Layer-B alias host (`<release>.<package>.<repo>.localhost`) — the app's only address. */
   alias: string
   /** Epoch ms of this server's last (re)start — the source of the panel's `up Xs` field. */
   startedAt: number
@@ -436,8 +436,8 @@ interface DevContextFragment {
 }
 
 /**
- * Every package that can supply the `infraKitDev` helper, with the lowest version of THAT package whose
- * helper understands the dev-context fragment's `origin` field.
+ * Every package that can supply the `infraKitDev` helper, with the lowest version of THAT package this CLI
+ * can run against, and what an older one gets wrong.
  *
  * A LIST, and each floor is a point on ITS OWN package's version line — never comparable across entries.
  * Keep them all, check whichever the repo actually resolves, and only drop the `infra-kit` entry once no
@@ -467,10 +467,21 @@ interface DevContextFragment {
 // from neither the app dir nor the repo root, and `assertHelperVersionFloor` would find nothing to check
 // and skip the repo entirely. The plugin's own `dependencies` pin the config version exactly
 // (`workspace:*` publishes as the released version), so checking the plugin checks the pair.
+// 0.15.0 is the first `@slip-stream-kit/config` whose `infraKitE2e()` aims at the repo-scoped
+// `<release>.<package>.<repo>.localhost` alias. An older one points Playwright at the repo-less host, which
+// this CLI no longer registers, or which another repo's older CLI still does: the collision this fixes.
+// The plugin pins config exactly, so it shares the floor. `infra-kit` ships no Playwright helper.
+const REPO_ALIAS_WHY =
+  'dev aliases are now scoped by repo (`<release>.<package>.<repo>.localhost`), and only that helper aims ' +
+  'Playwright at them. An older one would test whatever another repo serves on the old repo-less host.'
+const HTTPS_WHY =
+  'dev URLs are now HTTPS, and only that `infraKitDev` helper understands them. An older one would proxy ' +
+  'plain HTTP at a TLS listener, silently.'
+
 export const HELPER_PACKAGES = [
-  { name: '@slip-stream-kit/vite', floor: '0.1.134' },
-  { name: '@slip-stream-kit/config', floor: '0.1.134' },
-  { name: 'infra-kit', floor: '0.1.132' },
+  { name: '@slip-stream-kit/vite', floor: '0.15.0', why: REPO_ALIAS_WHY },
+  { name: '@slip-stream-kit/config', floor: '0.15.0', why: REPO_ALIAS_WHY },
+  { name: 'infra-kit', floor: '0.1.132', why: HTTPS_WHY },
 ] as const
 
 /** `true` when `version` sorts strictly below `floor` (numeric, dot-separated; missing parts are 0). */
@@ -581,7 +592,9 @@ const safeRealpath = (target: string): string => {
 }
 
 /** Enforce one helper package's floor against ONE resolved install directory. */
-const assertFloorAt = (repoRoot: string, name: string, floor: string, helperDir: string): void => {
+const assertFloorAt = (repoRoot: string, helper: (typeof HELPER_PACKAGES)[number], helperDir: string): void => {
+  const { name, floor, why } = helper
+
   // In this repo `node_modules/@slip-stream-kit/config` symlinks to `apps/infra-kit/config`, whose
   // version is the unreleased working tree. Enforcing a floor there would brick `infra-kit dev` on the
   // very repo that develops it.
@@ -603,9 +616,7 @@ const assertFloorAt = (repoRoot: string, name: string, floor: string, helperDir:
 
   if (isBelowVersion(version, floor)) {
     throw new Error(
-      `infra-kit dev: this repo pins ${name} ${version}, but dev URLs are now HTTPS and the ` +
-        `\`infraKitDev\` helper only understands them from ${floor}. An older helper would proxy plain ` +
-        `HTTP at a TLS listener — silently. Bump the dependency:\n` +
+      `infra-kit dev: this repo pins ${name} ${version}; bump ${name} to >=${floor}. From ${floor} on, ${why}\n` +
         `    pnpm add -D ${name}@^${floor}`,
     )
   }
@@ -613,7 +624,7 @@ const assertFloorAt = (repoRoot: string, name: string, floor: string, helperDir:
 
 /**
  * Refuse to start against a consumer-pinned `infraKitDev` helper too old to understand the dev-context
- * fragment's `origin` field — whichever package that helper comes from (see {@link HELPER_PACKAGES}).
+ * fragment's `origin` field, or the repo-scoped alias — whichever package that helper comes from (see {@link HELPER_PACKAGES}).
  *
  * Every helper package is checked INDEPENDENTLY, and every place it resolves from is checked (see
  * {@link findHelperDir}). Three outcomes per package:
@@ -632,7 +643,9 @@ const assertFloorAt = (repoRoot: string, name: string, floor: string, helperDir:
 export const assertHelperVersionFloor = (repoRoot: string): void => {
   const dirs = manifestDirs(repoRoot)
 
-  for (const { name, floor } of HELPER_PACKAGES) {
+  for (const helper of HELPER_PACKAGES) {
+    const { name } = helper
+
     const declaredIn = dirs.filter((dir) => {
       return declaresPackage(dir, name)
     })
@@ -658,26 +671,8 @@ export const assertHelperVersionFloor = (repoRoot: string): void => {
       )
     }
 
-    for (const helperDir of resolved.values()) assertFloorAt(repoRoot, name, floor, helperDir)
+    for (const helperDir of resolved.values()) assertFloorAt(repoRoot, helper, helperDir)
   }
-}
-
-/**
- * The portless alias NAME (`<release>.<label>`, no `.localhost`) an api app registers — computable before
- * it binds, which is what lets a boot-failed app's routes be held at it.
- *
- * @throws When the package name yields no legal DNS label.
- */
-const appAliasName = (packageName: string, appDir: string): string => {
-  // An npm name is not a DNS label — see `slugifyHostLabel`. `infra-kit/vite` slugifies its
-  // own `<packageName>` template token identically, so the proxy target and this alias cannot drift.
-  const label = slugifyHostLabel(packageName)
-
-  if (label === '') {
-    throw new Error(`infra-kit dev: package name "${packageName}" has no letters or digits to build a hostname from.`)
-  }
-
-  return `${readAppRelease(appDir)}.${label}`
 }
 
 /**
@@ -849,7 +844,7 @@ export class DevServerRunner {
    * port. A configurable port would put the port straight back into the URL.
    */
   private readonly proxyPort: number = DEFAULT_DEV_PROXY_PORT
-  /** Every `<release>.<package>` alias this runner registered; removed one-by-one in {@link shutdown}. */
+  /** Every `<release>.<package>.<repo>` alias this runner registered; removed one-by-one in {@link shutdown}. */
   private readonly registeredAliases = new Set<string>()
   /**
    * `{ "<ui-package>": { port, alias } }` handed to the turbo child via `INFRA_KIT_UI_PORTS` (computed in
@@ -1853,14 +1848,14 @@ export class DevServerRunner {
   }
 
   /**
-   * Register `<release>.<package>` → `port` with portless and return the alias HOST
-   * (`<release>.<package>.localhost`). The alias IS the app's only address, so a failure here is fatal
+   * Register `<release>.<package>.<repo>` → `port` with portless and return the alias HOST
+   * (`<release>.<package>.<repo>.localhost`). The alias IS the app's only address, so a failure here is fatal
    * rather than a silent downgrade — an app nobody can reach is not a running app.
    *
    * @throws When the package name yields no legal DNS label, or portless rejects the registration.
    */
   private async registerAppAlias(packageName: string, appDir: string, port: number): Promise<string> {
-    const name = appAliasName(packageName, appDir)
+    const name = readAppAliasName(packageName, appDir)
 
     if (!(await this.proxy.registerAlias(name, port))) {
       throw new Error(`infra-kit dev: portless refused the alias "${name}" → 127.0.0.1:${port}.`)
@@ -1965,7 +1960,7 @@ export class DevServerRunner {
   private holdFailedBackendsLocal(): void {
     for (const { app } of this.failedApps) {
       try {
-        this.writeDevContextFragment(app, 0, `${appAliasName(app.packageName, app.path)}.localhost`)
+        this.writeDevContextFragment(app, 0, `${readAppAliasName(app.packageName, app.path)}.localhost`)
         this.heldLocalPkgs.add(app.packageName)
       } catch (error) {
         this.renderer.log(`⚠️  Failed to hold ${app.name}'s routes local: ${String(error)}`, 'warn')
@@ -3184,7 +3179,7 @@ export class DevServerRunner {
         }
       }),
       ...uiApps.map((ui) => {
-        const label = `${readAppRelease(ui.path)}.${slugifyHostLabel(ui.packageName)}`
+        const label = readAppAliasName(ui.packageName, ui.path)
 
         return {
           tag: `${ui.name}/ui`,

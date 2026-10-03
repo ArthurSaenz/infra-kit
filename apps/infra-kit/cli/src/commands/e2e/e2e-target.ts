@@ -2,9 +2,9 @@ import type { InfraKitE2e } from '@slip-stream-kit/config'
 import {
   describeProxyRoutes,
   loadDev,
+  readAppAliasName,
   readCloudOrigin,
   readLocalContext,
-  slugifyHostLabel,
 } from '@slip-stream-kit/config/internal'
 import type { ProxyRouteDescription } from '@slip-stream-kit/config/internal'
 import fs from 'node:fs'
@@ -204,7 +204,8 @@ export const locateE2eTarget = async (app: string | undefined, deps: E2eTargetDe
   }
 
   const release = readAppRelease(targetDir)
-  const host = `${release}.${slugifyHostLabel(packageName)}.localhost`
+  const aliasName = readAppAliasName(packageName, targetDir)
+  const host = `${aliasName}.localhost`
   let localUrl = `https://${host}`
   let port = 0
 
@@ -213,7 +214,7 @@ export const locateE2eTarget = async (app: string | undefined, deps: E2eTargetDe
     // port — not a request through the alias — is what proves THIS worktree's UI is the one serving.
     port =
       (deps.listRoutes ?? listPortlessRoutes)().find((route) => {
-        return route.name === host || route.name === `${release}.${slugifyHostLabel(packageName)}`
+        return route.name === host || route.name === aliasName
       })?.port ?? 0
   } else {
     const info = readLocalContext(targetDir).info.get(packageName)

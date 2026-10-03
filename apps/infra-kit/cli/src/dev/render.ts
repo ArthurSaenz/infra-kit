@@ -278,7 +278,7 @@ export const formatUptime = (ms: number): string => {
 
 /**
  * Resolve the endpoint URL for an app: `https://<alias><prefix>`, where `alias` is the portless hostname
- * the runner registered (e.g. `feat-x.backend-api.localhost`). The runner refuses to start an app it could
+ * the runner registered (e.g. `feat-x.backend-api.hulyo-monorepo.localhost`). The runner refuses to start an app it could
  * not alias, so there is no port-form to fall back to.
  *
  * There is no port and no scheme choice, by construction. The proxy serves TLS on 443 — the implicit HTTPS

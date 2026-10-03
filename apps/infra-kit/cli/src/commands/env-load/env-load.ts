@@ -1,4 +1,5 @@
 import select from '@inquirer/select'
+import { readRepoIdentity } from '@slip-stream-kit/config/internal'
 import { Buffer } from 'node:buffer'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -19,12 +20,14 @@ import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import {
   ENV_LOAD_FILE,
+  ENV_LOAD_ROOT_FILE,
   INFRA_KIT_ENV_CONFIG_VAR,
   INFRA_KIT_ENV_LOADED_AT_VAR,
   INFRA_KIT_ENV_PROJECT_ROOT_VAR,
   INFRA_KIT_ENV_PROJECT_VAR,
   INFRA_KIT_ENV_VAR,
   INFRA_KIT_SESSION_VAR,
+  WORKTREES_DIR_SUFFIX,
   atomicWriteFileSync,
   getSessionCacheDir,
 } from 'src/lib/constants'
@@ -150,6 +153,20 @@ const resolveProjectRootSafe = async (): Promise<string> => {
 }
 
 /**
+ * The directories the loaded env applies in ({@link ENV_LOAD_ROOT_FILE}): the repo's own directory (the
+ * same `readRepoIdentity` that names the dev alias's `<repo>`) and its `-worktrees` container, so every
+ * worktree of the repo shares one load, plus the loading worktree itself in case it lives elsewhere.
+ * Outside git, just `cwd`.
+ */
+export const resolveEnvLoadRoots = (projectRoot: string, cwd = process.cwd()): string[] => {
+  if (projectRoot === '') return [path.resolve(cwd)]
+
+  const repoRoot = readRepoIdentity(projectRoot).root ?? projectRoot
+
+  return [...new Set([repoRoot, `${repoRoot}${WORKTREES_DIR_SUFFIX}`, projectRoot])]
+}
+
+/**
  * Download Doppler secrets for a resolved config and atomically write env-load.sh
  * to the session cache dir. Does NOT print to stdout — the path line belongs to the
  * CLI action in `lib/program`.
@@ -168,6 +185,10 @@ export const writeEnvLoadFile = async ({ config }: WriteEnvLoadFileArgs): Promis
   const envFilePath = path.resolve(cacheDir, ENV_LOAD_FILE)
 
   fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
+  // The scope lands first: a shell reading between the two writes then never sees the new env unscoped.
+  const roots = resolveEnvLoadRoots(projectRoot)
+
+  atomicWriteFileSync(path.resolve(cacheDir, ENV_LOAD_ROOT_FILE), `${roots.join('\n')}\n`, 0o600)
   atomicWriteFileSync(envFilePath, fileContents, 0o600)
 
   return {

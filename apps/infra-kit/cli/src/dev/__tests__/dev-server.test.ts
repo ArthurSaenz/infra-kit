@@ -1,4 +1,4 @@
-import { DEV_CONTEXT_WIRE_VERSION, DEV_SERVING_MARKER } from '@slip-stream-kit/config/internal'
+import { DEV_CONTEXT_WIRE_VERSION, DEV_SERVING_MARKER, slugifyHostLabel } from '@slip-stream-kit/config/internal'
 import { infraKitDev } from '@slip-stream-kit/config/vite'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -725,7 +725,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     ) as { origin: string }
 
     expect(proxy['/api']?.target, 'a launched backend that failed fell back to cloud').toBe(fragment.origin)
-    expect(proxy['/api']?.target).toMatch(/\.backend-api\.localhost$/)
+    expect(proxy['/api']?.target).toMatch(/\.backend-api\.[a-z0-9-]+\.localhost$/)
     expect(fragment).toMatchObject({ package: 'backend-api', port: 0, pid: process.pid })
     // The cloud-only route is untouched: holding is about `local`-capable routes only.
     expect(proxy['/media']?.target).toBe('https://dev.hulyo.co.il')
@@ -1600,6 +1600,11 @@ const gitInitOnBranch = (root: string, branch: string): void => {
 }
 /* eslint-enable sonarjs/no-os-command-from-path */
 
+/** The alias's `<repo>` label for a fixture monorepo: its main checkout's directory name. */
+const repoLabel = (root: string): string => {
+  return slugifyHostLabel(path.basename(root))
+}
+
 /**
  * Construct an api-only monorepo runner with an injected portless driver WITHOUT starting it; returns
  * the runner, the monorepo root (for dev-context fragment assertions) and the driver's records. The
@@ -1669,15 +1674,15 @@ const bootWithProxy = async (
 }
 
 describe('devServerRunner — Layer B portless aliases', () => {
-  it('registers <release>.<package> for a backend on start and removes it on shutdown', async () => {
-    const { runner, registered, removed } = await bootWithProxy(temp, 'client', 'feat-x', true)
+  it('registers <release>.<package>.<repo> for a backend on start and removes it on shutdown', async () => {
+    const { runner, root, registered, removed } = await bootWithProxy(temp, 'client', 'feat-x', true)
 
     try {
-      expect(registered).toContainEqual(['feat-x.client-api', expect.any(Number)])
+      expect(registered).toContainEqual([`feat-x.client-api.${repoLabel(root)}`, expect.any(Number)])
     } finally {
       await runner.shutdown()
     }
-    expect(removed).toContain('feat-x.client-api')
+    expect(removed).toContain(`feat-x.client-api.${repoLabel(root)}`)
   }, 15000)
 
   it('rejects the boot when portless is unavailable (there is no localhost fallback)', async () => {
@@ -1693,17 +1698,23 @@ describe('devServerRunner — Layer B portless aliases', () => {
     // (`Invalid hostname "feat-x.@hulyo"`). The driver swallows that into a best-effort `false`, so
     // BOTH the API row and the UI row silently fell back to `http://localhost:<port>` — the hero URLs
     // just never appeared, with no error surfaced to the user.
-    const { runner, registered, removed } = await bootWithProxy(temp, 'client', 'feat-x', true, '@hulyo/client-ui')
+    const { runner, root, registered, removed } = await bootWithProxy(
+      temp,
+      'client',
+      'feat-x',
+      true,
+      '@hulyo/client-ui',
+    )
 
     try {
-      expect(registered).toContainEqual(['feat-x.hulyo-client-ui', expect.any(Number)])
+      expect(registered).toContainEqual([`feat-x.hulyo-client-ui.${repoLabel(root)}`, expect.any(Number)])
       // No registered alias may carry a character portless rejects.
       for (const [name] of registered) expect(name).toMatch(/^[a-z0-9.-]+$/)
     } finally {
       await runner.shutdown()
     }
     // Cleanup must deregister the exact slugified name it registered (no leaked alias).
-    expect(removed).toContain('feat-x.hulyo-client-ui')
+    expect(removed).toContain(`feat-x.hulyo-client-ui.${repoLabel(root)}`)
   }, 15000)
 
   it('only ever checks :443 — the port is not negotiable', async () => {
@@ -2005,8 +2016,8 @@ describe('devServerRunner — Layer B portless aliases', () => {
       const raw = fs.readFileSync(path.join(root, '.infra-kit', 'dev-context', 'client.json'), 'utf-8')
       const fragment = JSON.parse(raw) as { alias?: string; origin?: string; proxyPort?: number }
 
-      expect(fragment.alias).toBe('feat-x.client-api.localhost')
-      expect(fragment.origin).toBe('https://feat-x.client-api.localhost')
+      expect(fragment.alias).toBe(`feat-x.client-api.${repoLabel(root)}.localhost`)
+      expect(fragment.origin).toBe(`https://feat-x.client-api.${repoLabel(root)}.localhost`)
       expect(fragment.proxyPort).toBeUndefined()
     } finally {
       await runner.shutdown()
@@ -2031,8 +2042,8 @@ describe('devServerRunner — Layer B portless aliases', () => {
       }
 
       expect(fragment.release).toBe('feat-x')
-      expect(fragment.alias).toBe('feat-x.client-api.localhost')
-      expect(fragment.origin).toBe('https://feat-x.client-api.localhost')
+      expect(fragment.alias).toBe(`feat-x.client-api.${repoLabel(root)}.localhost`)
+      expect(fragment.origin).toBe(`https://feat-x.client-api.${repoLabel(root)}.localhost`)
       expect(fragment.port).toBeGreaterThan(0)
       // The wire version is what lets the helper tell "an old CLI wrote this, legacy mode is correct" apart
       // from "a current CLI wrote a broken fragment, legacy mode proxies plain HTTP into a TLS listener".
@@ -2842,6 +2853,7 @@ const bootWithUi = async (
   viteConfig = true,
 ): Promise<{
   runner: DevServerRunner
+  root: string
   summary: () => ReadySummary
   uiEnv: () => Record<string, string> | undefined
   registered: Array<[string, number]>
@@ -2893,6 +2905,7 @@ const bootWithUi = async (
 
   return {
     runner,
+    root,
     summary,
     registered,
     bootSteps,
@@ -2906,16 +2919,16 @@ const bootWithUi = async (
 describe('devServerRunner — the UI gets the same port-free HTTPS URL as a backend', () => {
   it('renders the aliased hero URL as the UI endpoint row', async () => {
     // The UI gets a real endpoint row (not a bare "vite prints its URL below" reference line): its port is
-    // pre-assigned and aliased, so the port-free `https://<release>.<package>.localhost` hero URL is
+    // pre-assigned and aliased, so the port-free `https://<release>.<package>.<repo>.localhost` hero URL is
     // knowable before vite ever binds.
-    const { runner, summary } = await bootWithUi('feat-x', true)
+    const { runner, root, summary } = await bootWithUi('feat-x', true)
 
     try {
       const ui = summary().endpoints.find((e) => {
         return e.tag === 'shop/ui'
       })
 
-      expect(ui?.url).toBe('https://feat-x.shop-ui.localhost')
+      expect(ui?.url).toBe(`https://feat-x.shop-ui.${repoLabel(root)}.localhost`)
       // It is an endpoint row, not a reference line.
       expect(summary().uiRefs).toHaveLength(0)
       // Seeded, never probed yet: vite is spawned after the ready frame, so the row opens on `starting`.
@@ -2926,7 +2939,7 @@ describe('devServerRunner — the UI gets the same port-free HTTPS URL as a back
   }, 15000)
 
   it('hands the vite child BOTH the assigned port and the alias it actually registered', async () => {
-    const { runner, uiEnv } = await bootWithUi('feat-x', true)
+    const { runner, root, uiEnv } = await bootWithUi('feat-x', true)
 
     try {
       const map = JSON.parse(uiEnv()?.INFRA_KIT_UI_PORTS ?? '{}') as Record<string, { port: number; alias: string }>
@@ -2939,7 +2952,7 @@ describe('devServerRunner — the UI gets the same port-free HTTPS URL as a back
       // — the page is served over https://<alias>, so an HMR socket derived from vite's own bound port is
       // blocked as mixed content and hot reload dies silently. Publishing only the port (the old shape)
       // left the helper with no alias and it emitted no `ws` at all: HMR was wired to nothing.
-      expect(map['shop-ui']?.alias).toBe('feat-x.shop-ui.localhost')
+      expect(map['shop-ui']?.alias).toBe(`feat-x.shop-ui.${repoLabel(root)}.localhost`)
     } finally {
       await runner.shutdown()
     }
@@ -2969,12 +2982,12 @@ describe('devServerRunner — the UI gets the same port-free HTTPS URL as a back
 
   it('registers no alias for an unwired UI even when the proxy IS up', async () => {
     // An alias pointed at a port the UI never binds resolves to a 502, which is worse than no alias.
-    const { runner, summary, registered } = await bootWithUi('feat-x', true, false)
+    const { runner, root, summary, registered } = await bootWithUi('feat-x', true, false)
 
     try {
       expect(summary().uiRefs).toEqual([{ tag: 'shop/ui' }])
       // The backend still aliases; only the unwired UI is skipped.
-      expect(registered).toContainEqual(['feat-x.shop-api', expect.any(Number)])
+      expect(registered).toContainEqual([`feat-x.shop-api.${repoLabel(root)}`, expect.any(Number)])
       expect(
         registered.some(([name]) => {
           return name.includes('shop-ui')

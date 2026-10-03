@@ -11,6 +11,7 @@ import {
   atomicWriteFileSync,
   getCacheRoot,
   getSessionCacheDir,
+  isInEnvLoadScope,
   parseUnsetNamesFromEnvFile,
   parseVarNamesFromEnvFile,
 } from '../constants'
@@ -24,6 +25,39 @@ const withTmpDir = (fn: (dir: string) => void): void => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 }
+
+describe('isInEnvLoadScope', () => {
+  const scoped = (dir: string, cwd: string): boolean => {
+    const repo = fs.realpathSync(dir)
+    const rootFile = path.join(repo, 'env-load.root')
+
+    fs.writeFileSync(rootFile, `${path.join(repo, 'hulyo')}\n${path.join(repo, 'hulyo-worktrees')}\n`)
+    fs.mkdirSync(path.join(repo, cwd), { recursive: true })
+
+    return isInEnvLoadScope(rootFile, path.join(repo, cwd))
+  }
+
+  it('is in scope at a listed root and under it', () => {
+    withTmpDir((dir) => {
+      expect(scoped(dir, 'hulyo')).toBe(true)
+      expect(scoped(dir, 'hulyo/apps/web')).toBe(true)
+      expect(scoped(dir, 'hulyo-worktrees/feature/x')).toBe(true)
+    })
+  })
+
+  it('is out of scope in another repo, including one whose name extends a root', () => {
+    withTmpDir((dir) => {
+      expect(scoped(dir, 'travelist')).toBe(false)
+      expect(scoped(dir, 'hulyo-b')).toBe(false)
+    })
+  })
+
+  it('is in scope everywhere when there is no sidecar (a load written before it existed)', () => {
+    withTmpDir((dir) => {
+      expect(isInEnvLoadScope(path.join(dir, 'env-load.root'), dir)).toBe(true)
+    })
+  })
+})
 
 describe('parseVarNamesFromEnvFile', () => {
   it('returns empty array when file does not exist', () => {

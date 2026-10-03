@@ -83,14 +83,25 @@ interface Run {
   status: number | null
 }
 
-const run = (shell: string, args: string[], env: NodeJS.ProcessEnv): Run => {
-  const result = spawnSync(shell, args, { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+const run = (shell: string, args: string[], env: NodeJS.ProcessEnv, cwd?: string): Run => {
+  const result = spawnSync(shell, args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 
   return { stdout: result.stdout, stderr: result.stderr, status: result.status }
 }
 
 const zsh = (script: string, env: NodeJS.ProcessEnv = scrubbedEnv(), flag = '-c'): Run => {
   return run('/bin/zsh', [flag, script], env)
+}
+
+const zshIn = (cwd: string, script: string, env: NodeJS.ProcessEnv = scrubbedEnv()): Run => {
+  fs.mkdirSync(cwd, { recursive: true })
+
+  return run('/bin/zsh', ['-c', script], env, cwd)
+}
+
+/** The `env-load.root` sidecar `env-load` writes beside the load file. */
+const writeRoots = (roots: string[]): void => {
+  fs.writeFileSync(path.join(scratch.sessionDir, 'env-load.root'), `${roots.join('\n')}\n`)
 }
 
 const loadLines = (pairs: Array<[string, string]>, config = 'arthur'): string[] => {
@@ -254,6 +265,57 @@ describe.skipIf(!fs.existsSync('/bin/zsh'))('the ~/.zshenv block, under a real /
       const result = zsh(PROBE, scrubbedEnv({ INFRA_KIT_SESSION: id }))
 
       expect(result).toEqual(clean(NOTHING))
+    })
+  })
+
+  describe('12. env-load.root scopes the load to the repo it was loaded for', () => {
+    // Real paths: the block resolves `$PWD` with `:A`, and the tmpdir sits behind a symlink on macOS.
+    const repo = () => {
+      return path.join(fs.realpathSync(scratch.root), 'hulyo-monorepo')
+    }
+
+    beforeEach(() => {
+      writeLoad(scratch.sessionDir)
+      writeRoots([repo(), `${repo()}-worktrees`])
+    })
+
+    it('loads at the root and anywhere under it', () => {
+      expect(zshIn(repo(), PROBE)).toEqual(clean(LOADED))
+      expect(zshIn(path.join(repo(), 'apps/web/ui'), PROBE)).toEqual(clean(LOADED))
+    })
+
+    it('loads in a worktree of the same repo', () => {
+      expect(zshIn(path.join(`${repo()}-worktrees`, 'feature/x'), PROBE)).toEqual(clean(LOADED))
+    })
+
+    it('reaches the root through a symlinked path', () => {
+      const link = path.join(scratch.root, 'link')
+
+      fs.mkdirSync(repo(), { recursive: true })
+      fs.symlinkSync(repo(), link)
+
+      // zsh keeps an inherited `PWD` that names the cwd, so `$PWD` is the logical path a user cd'd through.
+      const viaLink = zshIn(link, `${PROBE}; printf 'pwd=[%s]\\n' "$PWD"`, scrubbedEnv({ PWD: link }))
+
+      expect(viaLink).toEqual(clean(`${LOADED}pwd=[${link}]\n`))
+    })
+
+    it('touches nothing in another repo, not even a name-prefix sibling, and leaves inherited vars alone', () => {
+      const clear = writeClear(scratch.sessionDir)
+
+      fs.utimesSync(clear, T0, T0)
+      const inherited = scrubbedEnv({ FOO: 'inherited' })
+
+      expect(zshIn(path.join(scratch.root, 'travelist-monorepo'), PROBE, inherited)).toEqual(
+        clean('cfg=[] FOO=[inherited] dir=[] load=[] clear=[]\n'),
+      )
+      expect(zshIn(`${repo()}-b`, PROBE, inherited)).toEqual(clean('cfg=[] FOO=[inherited] dir=[] load=[] clear=[]\n'))
+    })
+
+    it('a load with no sidecar, as an older CLI wrote it, loads anywhere', () => {
+      fs.rmSync(path.join(scratch.sessionDir, 'env-load.root'))
+
+      expect(zshIn(path.join(scratch.root, 'travelist-monorepo'), PROBE)).toEqual(clean(LOADED))
     })
   })
 

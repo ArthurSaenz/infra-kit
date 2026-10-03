@@ -8,13 +8,16 @@
  * into the lightweight `infra-kit/vite` bundle stays cheap.
  */
 
+/** RFC 1035: a DNS label holds at most 63 octets; a longer one makes the whole hostname invalid. */
+const MAX_DNS_LABEL_LENGTH = 63
+
 /**
  * Slugify an arbitrary string into a single DNS label: lowercase, collapse every
- * non-alphanumeric run to `-`, and drop leading/trailing separators. Returns `''`
+ * non-alphanumeric run to `-`, drop leading/trailing separators, and cap it at 63 characters. Returns `''`
  * when the input carries no alphanumeric run (the caller must treat that as "no label").
  *
  * portless rejects any hostname outside `[a-z0-9.-]`, so every segment fed into a
- * `<release>.<packageName>.localhost` alias must pass through here. A scoped npm name
+ * `<release>.<packageName>.<repo>.localhost` alias must pass through here. A scoped npm name
  * (`@hulyo/client-ui`) is the motivating case: registering it raw fails with
  * `Invalid hostname`, and because the driver swallows that into a best-effort `false`,
  * the whole hero-URL path degrades silently to `localhost:<port>`.
@@ -31,8 +34,10 @@ export const slugifyHostLabel = (label: string): string => {
   // than collapse-then-trim) is linear and sidesteps a super-linear trim regex,
   // while inherently dropping any leading/trailing separators.
   const runs = label.toLowerCase().match(/[a-z0-9]+/g)
+  const capped = runs ? runs.join('-').slice(0, MAX_DNS_LABEL_LENGTH) : ''
 
-  return runs ? runs.join('-') : ''
+  // Runs are joined by single dashes, so the cut leaves at most one behind.
+  return capped.endsWith('-') ? capped.slice(0, -1) : capped
 }
 
 /**

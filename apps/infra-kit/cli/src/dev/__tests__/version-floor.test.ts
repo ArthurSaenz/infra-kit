@@ -129,6 +129,15 @@ describe('assertHelperVersionFloor', () => {
     }).toThrow(new RegExp(`pins ${name.replaceAll('/', '\\/')} 0\\.0\\.1[\\s\\S]*${floor.replaceAll('.', '\\.')}`))
   })
 
+  it('refuses a config helper that predates the repo-scoped alias, naming the version to bump to', () => {
+    // 0.14.x's `infraKitE2e()` aims Playwright at the repo-less host another repo's server can own.
+    const root = makeRepo({ declares: [CURRENT], installed: { [CURRENT]: '0.14.0' } })
+
+    expect(() => {
+      return assertHelperVersionFloor(root)
+    }).toThrow(/bump @slip-stream-kit\/config to >=0\.15\.0[\s\S]*scoped by repo/)
+  })
+
   it.each(HELPER_NAMES)('passes when the pinned %s helper is at the floor', (name) => {
     const root = makeRepo({ declares: [name], installed: { [name]: floorOf(name) } })
 
