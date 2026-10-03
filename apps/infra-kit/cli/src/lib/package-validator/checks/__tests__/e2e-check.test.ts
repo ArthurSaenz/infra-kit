@@ -319,6 +319,35 @@ describe('checkE2eBasicAuthNaming', () => {
     expect((await checkE2eBasicAuthNaming(dir)).message).toContain('E2E_BASIC_AUTH_PASSWORD → E2E__BASIC_AUTH_PASSWORD')
   })
 
+  it('ignores a basic-auth flag that is not a credential name', async () => {
+    const dir = makeTmpDir()
+
+    writeEnvFile(dir, 'const on = process.env.E2E_BASIC_AUTH_ENABLED === "1"\n')
+
+    expect(await checkE2eBasicAuthNaming(dir)).toMatchObject({ status: 'pass' })
+  })
+
+  it('ignores names inside comments, but not beside a URL on the same line', async () => {
+    const dir = makeTmpDir()
+
+    writeEnvFile(
+      dir,
+      [
+        '// formerly E2E_CLIENT_BASIC_AUTH_USERNAME',
+        '/* E2E_CLIENT_BASIC_AUTH_PASSWORD was dropped */',
+        "const url = 'https://x.test'; const pass = process.env.E2E_CLIENT_BASIC_AUTH_PASS",
+        '',
+      ].join('\n'),
+    )
+
+    const check = await checkE2eBasicAuthNaming(dir)
+
+    expect(check.status).toBe('fail')
+    expect(check.message).toContain('E2E_CLIENT_BASIC_AUTH_PASS → E2E__BASIC_AUTH_PASSWORD')
+    expect(check.message).not.toContain('E2E_CLIENT_BASIC_AUTH_USERNAME')
+    expect(check.message).not.toContain('E2E_CLIENT_BASIC_AUTH_PASSWORD')
+  })
+
   it('ignores markdown, which documents names rather than reading them', async () => {
     const dir = makeTmpDir()
 

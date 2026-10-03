@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { cleanupRepos, createRepo } from '../../__tests__/fixtures'
 import type { RestartableServer } from '../dev-context'
-import { proxySignature, resolveWatchTargets, watchDevContext } from '../dev-context'
+import { proxySignature, resolveRestartSignature, resolveWatchTargets, watchDevContext } from '../dev-context'
 
 afterEach(() => {
   cleanupRepos()
@@ -52,9 +52,9 @@ const fakeServer = (): RestartableServer & {
   }
 }
 
-/** The proxy map vite is currently serving, as the plugin's `config` hook computed it. */
+/** The restart signature vite is currently serving, as the plugin's `config` hook computed it. */
 const currentSignature = async (cwd: string): Promise<string> => {
-  return proxySignature((await infraKitDev({ cwd, command: 'serve', port: 1 })).proxy)
+  return resolveRestartSignature(cwd, (await infraKitDev({ cwd, command: 'serve', port: 1 })).proxy)
 }
 
 const LOCAL_ORIGIN = 'https://main.client-api.localhost'
@@ -189,6 +189,29 @@ describe('watchDevContext', () => {
     })
 
     expect(server.restarts()).toBe(0)
+
+    watch.dispose()
+  })
+
+  it('restarts when dev.env changes, though the proxy does not', async () => {
+    const repo = createRepo()
+    const server = fakeServer()
+    const configFile = path.join(repo.dir, 'infra-kit.config.ts')
+
+    process.env.CLIENT_URL = 'https://dev.example.test'
+
+    const current = await currentSignature(repo.dir)
+    const watch = watchDevContext({ server, cwd: repo.dir, options: { cwd: repo.dir }, current })
+
+    fs.writeFileSync(
+      configFile,
+      fs.readFileSync(configFile, 'utf-8').replace('dev: {', "dev: {\n    env: { unset: ['IK_TEST_DEV_ENV'] },"),
+    )
+    server.emit('change', configFile)
+
+    await vi.waitFor(() => {
+      expect(server.restarts()).toBe(1)
+    })
 
     watch.dispose()
   })

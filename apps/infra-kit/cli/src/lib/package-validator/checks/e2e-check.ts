@@ -156,12 +156,18 @@ const BASIC_AUTH_USERNAME_ENV = 'E2E__BASIC_AUTH_USERNAME'
 const BASIC_AUTH_PASSWORD_ENV = 'E2E__BASIC_AUTH_PASSWORD'
 
 const BASIC_AUTH_NAME_PATTERN = /\bE2E_\w*BASIC_AUTH_\w+/gu
+// Credential names only: a flag such as `E2E_BASIC_AUTH_ENABLED` is not a second spelling of the pair.
+const CREDENTIAL_SUFFIX_PATTERN = /_(?:USER(?:NAME)?|PASS(?:WORD)?)$/u
+const BLOCK_COMMENT_PATTERN = /\/\*[\s\S]*?\*\//gu
+// The `:` guard keeps a URL's `https://` from reading as a comment.
+const LINE_COMMENT_PATTERN = /(^|[^:])\/\/[^\n]*/gu
 
 const canonicalBasicAuthName = (name: string): string => {
-  if (/_USER(?:NAME)?$/u.test(name)) return BASIC_AUTH_USERNAME_ENV
-  if (/_PASS(?:WORD)?$/u.test(name)) return BASIC_AUTH_PASSWORD_ENV
+  return /USER(?:NAME)?$/u.test(name) ? BASIC_AUTH_USERNAME_ENV : BASIC_AUTH_PASSWORD_ENV
+}
 
-  return `${BASIC_AUTH_USERNAME_ENV} / ${BASIC_AUTH_PASSWORD_ENV}`
+const stripComments = (source: string): string => {
+  return source.replace(BLOCK_COMMENT_PATTERN, '').replace(LINE_COMMENT_PATTERN, '$1')
 }
 
 /**
@@ -181,12 +187,16 @@ export const checkE2eBasicAuthNaming = async (packageDir: string): Promise<Packa
       return ''
     })
     const drifted = new Set(
-      [...content.matchAll(BASIC_AUTH_NAME_PATTERN)]
+      [...stripComments(content).matchAll(BASIC_AUTH_NAME_PATTERN)]
         .map((match) => {
           return match[0]
         })
         .filter((found) => {
-          return found !== BASIC_AUTH_USERNAME_ENV && found !== BASIC_AUTH_PASSWORD_ENV
+          return (
+            CREDENTIAL_SUFFIX_PATTERN.test(found) &&
+            found !== BASIC_AUTH_USERNAME_ENV &&
+            found !== BASIC_AUTH_PASSWORD_ENV
+          )
         }),
     )
 

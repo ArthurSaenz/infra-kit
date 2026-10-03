@@ -1,5 +1,6 @@
+import type { InfraKitDevEnv } from '@slip-stream-kit/config'
 import type { InfraKitDevOptions, InfraKitViteProxy } from '@slip-stream-kit/config/vite'
-import { infraKitDev } from '@slip-stream-kit/config/vite'
+import { infraKitDev, loadPackageConfig } from '@slip-stream-kit/config/vite'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -95,6 +96,24 @@ export const proxySignature = (proxy: InfraKitViteProxy): string => {
 }
 
 /**
+ * What a restart would change: the proxy map and the package's `dev.env`, which only a fresh config hook
+ * applies before vite's `loadEnv`.
+ */
+export const restartSignature = (proxy: InfraKitViteProxy, devEnv: InfraKitDevEnv | undefined): string => {
+  const unset = [...(devEnv?.unset ?? [])].sort()
+  const set = Object.entries(devEnv?.set ?? {}).sort(([a], [b]) => {
+    return a < b ? -1 : 1
+  })
+
+  return JSON.stringify([proxySignature(proxy), unset, set])
+}
+
+/** The {@link restartSignature} of what the package's config resolves to now. */
+export const resolveRestartSignature = async (cwd: string, proxy: InfraKitViteProxy): Promise<string> => {
+  return restartSignature(proxy, (await loadPackageConfig(cwd))?.dev?.env)
+}
+
+/**
  * The slice of `ViteDevServer` this module needs. Narrowed to an interface so the watch loop is
  * driveable by a fake in tests — booting a real vite dev server to assert "it restarted once" would
  * test vite, not this.
@@ -114,7 +133,7 @@ export interface WatchDevContextArgs {
   cwd: string
   /** The options the plugin was constructed with, re-applied on every re-resolve. */
   options: InfraKitDevOptions
-  /** The signature of the proxy map vite is currently serving (taken in the `config` hook). */
+  /** The {@link restartSignature} vite is currently serving (taken in the `config` hook). */
   current: string
 }
 
@@ -142,10 +161,13 @@ export const watchDevContext = (args: WatchDevContextArgs): { dispose: () => voi
   let timer: NodeJS.Timeout | undefined
 
   const recompute = async (): Promise<void> => {
-    let proxy: InfraKitViteProxy
+    let next: string
 
     try {
-      proxy = (await infraKitDev({ ...options, cwd, command: 'serve', port: PROBE_PORT })).proxy
+      // A probe: `dev.env` applied now would land after `loadEnv`; the restart's own config hook applies it.
+      const { proxy } = await infraKitDev({ ...options, cwd, command: 'serve', port: PROBE_PORT, applyDevEnv: false })
+
+      next = await resolveRestartSignature(cwd, proxy)
     } catch (error) {
       // A half-written fragment, or a `dev.proxy` edit mid-save, resolves to an error. It is transient by
       // nature — the next write re-runs this — so warn and keep serving the proxy we already have rather
@@ -154,8 +176,6 @@ export const watchDevContext = (args: WatchDevContextArgs): { dispose: () => voi
 
       return
     }
-
-    const next = proxySignature(proxy)
 
     if (next === signature) return
 

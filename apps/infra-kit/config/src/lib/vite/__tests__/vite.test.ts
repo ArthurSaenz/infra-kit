@@ -1280,6 +1280,19 @@ describe('infraKitDev (dev.env)', () => {
     }
   })
 
+  it('leaves the env alone when asked not to apply it', async () => {
+    process.env.IK_TEST_ORIGIN = 'https://www.example.com'
+    const pkg = writeConfig("{ dev: { env: { unset: ['IK_TEST_ORIGIN'] } } }")
+
+    try {
+      await infraKitDev({ cwd: pkg, command: 'serve', applyDevEnv: false })
+
+      expect(process.env.IK_TEST_ORIGIN).toBe('https://www.example.com')
+    } finally {
+      fs.rmSync(pkg, { recursive: true, force: true })
+    }
+  })
+
   it('leaves the env alone on build', async () => {
     process.env.IK_TEST_ORIGIN = 'https://www.example.com'
     const pkg = writeConfig("{ dev: { env: { unset: ['IK_TEST_ORIGIN'] } } }")

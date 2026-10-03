@@ -4,15 +4,15 @@ import process from 'node:process'
 import type { Plugin, ViteDevServer } from 'vite'
 
 import type { RestartableServer } from '../dev-context/dev-context'
-import { proxySignature, watchDevContext } from '../dev-context/dev-context'
+import { resolveRestartSignature, watchDevContext } from '../dev-context/dev-context'
 import { mirrorOnIpv6Loopback } from '../ipv6-loopback/ipv6-loopback'
 import { hasPinnedPortConflict, mergeServerConfig } from '../server-config/server-config'
 
 /**
- * Everything `infraKitDev()` accepts, minus `command` — the plugin knows vite's command without being
- * told (see {@link infraKit}), and accepting it would only let a consumer contradict it.
+ * Everything `infraKitDev()` accepts, minus `command` and `applyDevEnv` — the plugin knows vite's command and
+ * mode without being told (see {@link infraKit}), and accepting them would only let a consumer contradict it.
  */
-export interface InfraKitPluginOptions extends Omit<InfraKitDevOptions, 'command'> {
+export interface InfraKitPluginOptions extends Omit<InfraKitDevOptions, 'command' | 'applyDevEnv'> {
   /**
    * Re-resolve the proxy and restart the dev server when the `.infra-kit/dev-context` fragments change,
    * so a backend started AFTER the frontend flips its route from `cloud` to `local` on its own. Default
@@ -63,7 +63,7 @@ const asRestartable = (server: ViteDevServer): RestartableServer => {
 export const infraKit = (options: InfraKitPluginOptions = {}): Plugin => {
   const cwd = options.cwd ?? process.cwd()
 
-  let signature = proxySignature({})
+  let signature = ''
   let pinnedPortConflict = false
   let dispose: () => void = () => {}
 
@@ -71,10 +71,11 @@ export const infraKit = (options: InfraKitPluginOptions = {}): Plugin => {
     name: 'infra-kit',
     apply: 'serve',
 
-    config: async (userConfig) => {
-      const resolved = await infraKitDev({ ...options, cwd, command: 'serve' })
+    // Vitest runs `serve` config hooks too, under mode `test`; its env is the one the tests were given.
+    config: async (userConfig, { mode }) => {
+      const resolved = await infraKitDev({ ...options, cwd, command: 'serve', applyDevEnv: mode !== 'test' })
 
-      signature = proxySignature(resolved.proxy)
+      signature = await resolveRestartSignature(cwd, resolved.proxy)
       pinnedPortConflict = hasPinnedPortConflict(resolved, userConfig.server)
 
       return { server: mergeServerConfig(resolved, userConfig.server) }

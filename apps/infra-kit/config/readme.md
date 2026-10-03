@@ -52,13 +52,18 @@ frontend flips its route from `cloud` to `local` on its own. The helper here sta
 when you want the raw `server` block.
 
 `dev.env` in `infra-kit.config.ts` adjusts the env the dev server sees, applied when vite serves (never on
-`build`). Use it for a loaded variable meant for another build mode that breaks local dev:
+`build` or under vitest). Requires `@slip-stream-kit/config` 0.15.0 or later — an older one rejects the key.
+Use it for a loaded variable meant for another build mode that breaks local dev:
 
 ```ts
 // apps/client/ui/infra-kit.config.ts — VITE_ORIGIN_DOMAIN is for vite.mobile.config.ts; on web it sends
 // requests cross-origin around the dev proxy
 export default defineConfig(() => ({ dev: { env: { unset: ['VITE_ORIGIN_DOMAIN'] } } }))
 ```
+
+An edit to `dev.env` restarts the running dev server, except one: a name taken out of `unset` was already
+deleted from the process env, so it comes back only after an `infra-kit dev` restart. `unset` removes the
+inherited variable only; a value in the package's `.env` files still reaches `import.meta.env`.
 
 ```ts
 // apps/<app>/tests/playwright.config.ts — the package's infra-kit.config.ts declares `e2e: { target: '<app>/ui' }`,
@@ -93,7 +98,7 @@ export default defineVendorConfig({ copy: [] })
 | Entry | Contents |
 | --- | --- |
 | `.` | `defineConfig`, `defineVendorConfig`, and the config types |
-| `./vite` | `infraKitDev`, `infraKitProxy`, `resolveProxyConfig`, `slugifyRelease` |
+| `./vite` | `infraKitDev`, `infraKitProxy`, `loadPackageConfig`, `resolveProxyConfig`, `slugifyRelease` |
 | `./playwright` | `infraKitE2e`, `DEV_SERVING_MARKER`, `E2E_MODE_ENV` |
 | `./internal` | Consumed by the `infra-kit` CLI. **Not public API** — no stability guarantee |
 
