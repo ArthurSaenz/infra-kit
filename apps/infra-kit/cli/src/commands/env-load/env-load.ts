@@ -19,19 +19,21 @@ import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import {
   ENV_LOAD_FILE,
+  ENV_LOAD_ROOT_FILE,
   INFRA_KIT_ENV_CONFIG_VAR,
   INFRA_KIT_ENV_LOADED_AT_VAR,
   INFRA_KIT_ENV_PROJECT_ROOT_VAR,
   INFRA_KIT_ENV_PROJECT_VAR,
   INFRA_KIT_ENV_VAR,
   INFRA_KIT_SESSION_VAR,
+  WORKTREES_DIR_SUFFIX,
   atomicWriteFileSync,
   getSessionCacheDir,
 } from 'src/lib/constants'
 import { createEnvLoadFormProvider } from 'src/lib/env-load-form'
 import { extractStderr } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
-import { getProjectRoot } from 'src/lib/git-utils'
+import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { listProjectEnvNames } from 'src/lib/project-envs'
 import { withEscape } from 'src/lib/prompts/escapable-context'
@@ -150,6 +152,21 @@ const resolveProjectRootSafe = async (): Promise<string> => {
 }
 
 /**
+ * The directories the loaded env applies in ({@link ENV_LOAD_ROOT_FILE}): the main checkout and its
+ * `<main>-worktrees` container, so every worktree of the repo shares one load, plus the loading
+ * worktree itself in case it lives elsewhere. Outside git, just `cwd`.
+ */
+export const resolveEnvLoadRoots = async (projectRoot: string, cwd = process.cwd()): Promise<string[]> => {
+  if (projectRoot === '') return [path.resolve(cwd)]
+
+  const mainRoot = await getMainRepoRoot(projectRoot).catch(() => {
+    return projectRoot
+  })
+
+  return [...new Set([mainRoot, `${mainRoot}${WORKTREES_DIR_SUFFIX}`, projectRoot])]
+}
+
+/**
  * Download Doppler secrets for a resolved config and atomically write env-load.sh
  * to the session cache dir. Does NOT print to stdout — the path line belongs to the
  * CLI action in `lib/program`.
@@ -168,6 +185,10 @@ export const writeEnvLoadFile = async ({ config }: WriteEnvLoadFileArgs): Promis
   const envFilePath = path.resolve(cacheDir, ENV_LOAD_FILE)
 
   fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
+  // The scope lands first: a shell reading between the two writes then never sees the new env unscoped.
+  const roots = await resolveEnvLoadRoots(projectRoot)
+
+  atomicWriteFileSync(path.resolve(cacheDir, ENV_LOAD_ROOT_FILE), `${roots.join('\n')}\n`, 0o600)
   atomicWriteFileSync(envFilePath, fileContents, 0o600)
 
   return {

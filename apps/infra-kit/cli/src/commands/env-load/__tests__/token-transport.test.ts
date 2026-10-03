@@ -7,7 +7,7 @@ import { $ } from 'zx'
 
 import { INFRA_KIT_ENV_TOKEN_VAR } from 'src/integrations/doppler'
 import { INFRA_KIT_SESSION_VAR, getSessionCacheDir } from 'src/lib/constants'
-import { getProjectRoot } from 'src/lib/git-utils'
+import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 
 import { writeEnvLoadFile } from '../env-load'
@@ -53,7 +53,7 @@ vi.mock('src/lib/infra-kit-config', () => {
 vi.mock('src/lib/git-utils', async (importOriginal) => {
   const actual = await importOriginal<typeof import('src/lib/git-utils')>()
 
-  return { ...actual, getProjectRoot: vi.fn() }
+  return { ...actual, getMainRepoRoot: vi.fn(), getProjectRoot: vi.fn() }
 })
 
 vi.mock('src/lib/logger', () => {
@@ -118,6 +118,7 @@ beforeEach(() => {
     envManagement: { provider: 'doppler', config: { name: 'my-project' } },
   } as never)
   vi.mocked(getProjectRoot).mockResolvedValue(repoRoot)
+  vi.mocked(getMainRepoRoot).mockResolvedValue(repoRoot)
 })
 
 afterEach(() => {
@@ -184,6 +185,14 @@ describe('writeEnvLoadFile — the token reaches no artifact on disk', () => {
     expect(contents).toContain("DOPPLER_CONFIG='dev'")
     expect(contents).toContain("DOPPLER_PROJECT='my-project'")
     expect(contents).toContain("API_URL='https://api.example.com'")
+  })
+
+  it('scopes the load to the repo and its worktrees container in env-load.root', async () => {
+    await writeEnvLoadFile({ config: 'dev' })
+
+    expect(fs.readFileSync(path.join(getSessionCacheDir(), 'env-load.root'), 'utf-8')).toBe(
+      `${repoRoot}\n${repoRoot}-worktrees\n`,
+    )
   })
 
   it('leaves no token anywhere under the cache root', async () => {

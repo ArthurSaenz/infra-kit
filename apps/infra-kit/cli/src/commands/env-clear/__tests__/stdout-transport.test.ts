@@ -6,7 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { envLoad } from 'src/commands/env-load'
 import { INFRA_KIT_ENV_TOKEN_VAR } from 'src/integrations/doppler'
-import { ENV_CLEAR_FILE, ENV_LOAD_FILE, INFRA_KIT_SESSION_VAR, getSessionCacheDir } from 'src/lib/constants'
+import {
+  ENV_CLEAR_FILE,
+  ENV_LOAD_FILE,
+  ENV_LOAD_ROOT_FILE,
+  INFRA_KIT_SESSION_VAR,
+  getSessionCacheDir,
+} from 'src/lib/constants'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 
@@ -116,5 +122,19 @@ describe('the env handlers keep stdout clean — it is the MCP transport', () =>
     expect(result.structuredContent.filePath).toBe(path.join(getSessionCacheDir(), ENV_CLEAR_FILE))
     expect(fs.existsSync(result.structuredContent.filePath)).toBe(true)
     expect(stdoutWrite).not.toHaveBeenCalled()
+  })
+})
+
+describe('envClear', () => {
+  it('removes the env-load.root sidecar along with the load file', async () => {
+    await envLoad({ config: 'dev' })
+    const rootFile = path.join(getSessionCacheDir(), ENV_LOAD_ROOT_FILE)
+
+    expect(fs.readFileSync(rootFile, 'utf-8')).toContain(repoRoot)
+
+    await envClear()
+
+    expect(fs.existsSync(rootFile)).toBe(false)
+    expect(fs.existsSync(path.join(getSessionCacheDir(), ENV_LOAD_FILE))).toBe(false)
   })
 })

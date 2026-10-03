@@ -5,8 +5,10 @@ import process from 'node:process'
 import {
   ENV_CLEAR_FILE,
   ENV_LOAD_FILE,
+  ENV_LOAD_ROOT_FILE,
   INFRA_KIT_SESSION_VAR,
   getSessionCacheDir,
+  isInEnvLoadScope,
   parseUnsetNamesFromEnvFile,
   parseVarsFromEnvFile,
 } from 'src/lib/constants'
@@ -15,7 +17,8 @@ import { PROTECTED_CHILD_ENV_NAMES } from 'src/lib/mcp-proxy/protected-env'
 
 /**
  * What the session dir says is loaded right now, read the way `~/.zshenv` reads it
- * (src/commands/init/init.ts): env-load.sh wins unless env-clear.sh is strictly newer.
+ * (src/commands/init/init.ts): env-load.sh wins unless env-clear.sh is strictly newer, and
+ * applies only inside the directories its `env-load.root` sidecar names.
  * `signature` identifies the file the state came from so an unchanged file is never
  * re-parsed; `no-session` carries none because nothing is ever applied for it.
  */
@@ -108,6 +111,9 @@ const chooseSourcedFile = (dir: string): SourcedFile => {
 
   // zshenv: `! clear -nt load` — a tie goes to the load file.
   if (load && !(clear && clear.mtimeMs > load.mtimeMs)) {
+    // Out of scope applies nothing, the clear file included: this session's env is another repo's.
+    if (!isInEnvLoadScope(path.join(dir, ENV_LOAD_ROOT_FILE), process.cwd())) return { kind: 'none', signature: 'none' }
+
     return { kind: 'load', file: loadPath, signature: `load:${load.ino}:${load.mtimeMs}:${load.size}` }
   }
 

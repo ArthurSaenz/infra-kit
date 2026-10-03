@@ -5,6 +5,11 @@ import process from 'node:process'
 
 export const ENV_LOAD_FILE = 'env-load.sh'
 export const ENV_CLEAR_FILE = 'env-clear.sh'
+/**
+ * Sidecar of `env-load.sh`: the directories, one per line, the loaded env belongs to. The session is
+ * per terminal, not per repo, so without it a shell or agent in repo A sourced repo B's env.
+ */
+export const ENV_LOAD_ROOT_FILE = 'env-load.root'
 
 export const INFRA_KIT_SESSION_VAR = 'INFRA_KIT_SESSION'
 /**
@@ -255,6 +260,38 @@ export const atomicWriteFileSync = (filePath: string, content: string, mode: num
 }
 
 export const WORKTREES_DIR_SUFFIX = '-worktrees'
+
+/**
+ * Whether `cwd` is one of the directories in an {@link ENV_LOAD_ROOT_FILE}, or under one. Mirrors the
+ * `~/.zshenv` check in `init.ts`, symlinks resolved on both sides. No sidecar is in scope everywhere:
+ * that is an `env-load.sh` written before the sidecar existed, and it stays usable until the next load.
+ */
+export const isInEnvLoadScope = (rootFile: string, cwd: string): boolean => {
+  let content: string
+
+  try {
+    content = fs.readFileSync(rootFile, 'utf-8')
+  } catch {
+    return true
+  }
+
+  const realCwd = safeRealpath(cwd)
+
+  return content
+    .split('\n')
+    .filter(Boolean)
+    .some((root) => {
+      return realCwd === root || realCwd.startsWith(`${root}${path.sep}`)
+    })
+}
+
+const safeRealpath = (target: string): string => {
+  try {
+    return fs.realpathSync(target)
+  } catch {
+    return path.resolve(target)
+  }
+}
 
 /**
  * Canonical `<repo>-worktrees` subdirectory names, shared by every command that lays worktrees

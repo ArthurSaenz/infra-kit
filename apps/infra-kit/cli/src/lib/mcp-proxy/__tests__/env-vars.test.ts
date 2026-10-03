@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import process from 'node:process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -54,6 +55,23 @@ describe('readUnlistedNames — isolation from the rest of the env file', () => 
 })
 
 describe('readListedVars', () => {
+  it('ignores a load scoped to another repo and falls back to the inherited environment', () => {
+    withEnvFile([`GRAFANA_URL=${quoteEnvValue('https://other-repo.example')}`], (file) => {
+      fs.writeFileSync(path.join(path.dirname(file), 'env-load.root'), '/some/other-repo\n')
+      vi.stubEnv('GRAFANA_URL', 'https://inherited.example')
+
+      expect(readListedVars(['GRAFANA_URL'], file)).toEqual({ GRAFANA_URL: 'https://inherited.example' })
+    })
+  })
+
+  it('reads a load scoped to this directory', () => {
+    withEnvFile([`GRAFANA_URL=${quoteEnvValue('https://this-repo.example')}`], (file) => {
+      fs.writeFileSync(path.join(path.dirname(file), 'env-load.root'), `${fs.realpathSync(process.cwd())}\n`)
+
+      expect(readListedVars(['GRAFANA_URL'], file)).toEqual({ GRAFANA_URL: 'https://this-repo.example' })
+    })
+  })
+
   /**
    * The regression the prototype's `/^([A-Z_][A-Z0-9_]*)='(.*)'$/` could not survive. The names in
    * this fixture are data: it tests the PARSER, and stays verbatim through the rename.

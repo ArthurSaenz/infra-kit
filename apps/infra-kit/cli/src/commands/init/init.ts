@@ -1128,6 +1128,7 @@ export const buildZshenvBody = (): string => {
     "# Inherit this terminal's infra-kit session env into every zsh it spawns, interactive or not.",
     '# A fresh terminal has no session yet (it is minted in .zshrc, after this file) and skips.',
     '# Only the canonical 8-hex id .zshrc mints is honoured. Load wins a tie with clear.',
+    '# A load applies only at or under a directory its env-load.root names (no file: anywhere).',
     '# Prints nothing of its own.',
     // eslint-disable-next-line no-template-curly-in-string
     'if [[ -n "${INFRA_KIT_SESSION:-}" ]]; then',
@@ -1139,6 +1140,16 @@ export const buildZshenvBody = (): string => {
     '    local _ik_dir="${XDG_CACHE_HOME:-$HOME/.cache}/infra-kit/$INFRA_KIT_SESSION"',
     '    local _ik_load="$_ik_dir/env-load.sh" _ik_clear="$_ik_dir/env-clear.sh"',
     '    if [[ -r "$_ik_load" && ! "$_ik_clear" -nt "$_ik_load" ]]; then',
+    // eslint-disable-next-line no-template-curly-in-string
+    '      local _ik_roots="$_ik_dir/env-load.root" _ik_pwd=${PWD:A} _ik_root',
+    '      if [[ -r "$_ik_roots" ]]; then',
+    // eslint-disable-next-line no-template-curly-in-string
+    '        for _ik_root in "${(@f)$(<$_ik_roots)}"; do',
+    '          [[ -n "$_ik_root" && ( "$_ik_pwd" == "$_ik_root" || "$_ik_pwd" == "$_ik_root"/* ) ]] && break',
+    '          _ik_root=',
+    '        done',
+    '        [[ -n "$_ik_root" ]] || return',
+    '      fi',
     '      source "$_ik_load"',
     '    elif [[ -r "$_ik_clear" ]]; then',
     '      source "$_ik_clear"',
