@@ -1,4 +1,3 @@
-import { E2E_BASE_URL_BACKOFFICE } from '#root/constants'
 import { test as base, expect } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 
@@ -22,7 +21,8 @@ interface __FeaturePascal__Fixtures {
   __featureCamel__Page: __FeaturePascal__Page
 }
 
-const API = `${E2E_BASE_URL_BACKOFFICE}/api/v1/__feature-kebab__`
+// Relative, like every URL here: `request` resolves it against Playwright's baseURL, local or cloud.
+const API = '/api/v1/__feature-kebab__'
 
 interface ApiRow {
   _id?: string

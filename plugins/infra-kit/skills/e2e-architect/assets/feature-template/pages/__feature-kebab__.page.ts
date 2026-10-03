@@ -1,4 +1,3 @@
-import { E2E_BASE_URL_BACKOFFICE } from '#root/constants'
 import type { Locator, Page } from '@playwright/test'
 
 /**
@@ -46,7 +45,7 @@ export class __FeaturePascal__Page {
   }
 
   async goto() {
-    await this.page.goto(`${E2E_BASE_URL_BACKOFFICE}/__feature-kebab__`)
+    await this.page.goto('/__feature-kebab__')
     await this.pageHeading.waitFor()
   }
 

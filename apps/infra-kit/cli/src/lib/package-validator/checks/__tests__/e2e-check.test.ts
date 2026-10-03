@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -5,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { E2E_SCRIPTS } from 'src/lib/package-config'
 
-import { checkE2e, checkE2eConfig, checkE2eScripts } from '../e2e-check'
+import { checkE2e, checkE2eAuthIgnored, checkE2eConfig, checkE2eScripts } from '../e2e-check'
 
 const tmpDirs: string[] = []
 
@@ -25,9 +26,10 @@ afterEach(() => {
   }
 })
 
-/** The shape every conforming suite's `playwright.config.ts` carries — the four lines the check reads. */
+/** The shape every conforming suite's `playwright.config.ts` carries — the lines the check reads. */
 const CONFORMING_CONFIG = `
 const SLOW_MO = Number(process.env.E2E_SLOW_MO ?? 0)
+const e2e = await infraKitE2e({ dir: import.meta.dirname })
 
 export default defineConfig({
   timeout: 30_000 + SLOW_MO * 100,
@@ -116,7 +118,13 @@ describe('checkE2eConfig', () => {
       checks.map((check) => {
         return check.name
       }),
-    ).toEqual(['e2e-config:slow-mo', 'e2e-config:launch-options', 'e2e-config:timeout-headroom', 'e2e-config:trace'])
+    ).toEqual([
+      'e2e-config:slow-mo',
+      'e2e-config:launch-options',
+      'e2e-config:timeout-headroom',
+      'e2e-config:trace',
+      'e2e-config:infra-kit-e2e',
+    ])
   })
 
   it('fails as a single check when playwright.config.ts is missing', async () => {
@@ -161,6 +169,17 @@ describe('checkE2eConfig', () => {
     expect(failures(await checkE2eConfig(dir))).toEqual(['e2e-config:trace'])
   })
 
+  it('fails a config that never calls infraKitE2e, the source of baseURL and webServer', async () => {
+    const dir = makeTmpDir()
+
+    writeConfig(dir, CONFORMING_CONFIG.replace('const e2e = await infraKitE2e({ dir: import.meta.dirname })', ''))
+
+    const checks = await checkE2eConfig(dir)
+
+    expect(failures(checks)).toEqual(['e2e-config:infra-kit-e2e'])
+    expect(checks[4]?.message).toContain('infraKitE2e()')
+  })
+
   it('accepts a larger base timeout as long as the headroom is there', async () => {
     const dir = makeTmpDir()
 
@@ -178,7 +197,68 @@ describe('checkE2e', () => {
 
     const checks = await checkE2e(dir, { ...E2E_SCRIPTS })
 
-    expect(checks).toHaveLength(Object.keys(E2E_SCRIPTS).length + 4)
+    expect(checks).toHaveLength(Object.keys(E2E_SCRIPTS).length + 6)
     expect(failures(checks)).toEqual([])
+  })
+})
+
+describe('checkE2eAuthIgnored', () => {
+  const gitRepo = (gitignore: string | null): string => {
+    const dir = makeTmpDir()
+
+    // eslint-disable-next-line sonarjs/no-os-command-from-path
+    execFileSync('git', ['init', '-q'], { cwd: dir })
+    if (gitignore !== null) fs.writeFileSync(path.join(dir, '.gitignore'), gitignore)
+
+    return dir
+  }
+
+  const writeSetup = (dir: string, content: string): void => {
+    fs.mkdirSync(path.join(dir, 'src/setup'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'src/setup/auth.setup.ts'), content)
+  }
+
+  const AUTH_SETUP = "const STATE = path.join(import.meta.dirname, '../../.auth/user.json')\n"
+
+  it('passes when src saves auth state under a gitignored .auth/', async () => {
+    const dir = gitRepo('node_modules\n.auth/\n')
+
+    writeSetup(dir, AUTH_SETUP)
+
+    expect(await checkE2eAuthIgnored(dir)).toMatchObject({ name: 'e2e-auth:gitignored', status: 'pass' })
+  })
+
+  it('fails when src saves auth state under .auth/ and git would commit it', async () => {
+    const dir = gitRepo('node_modules\n')
+
+    writeSetup(dir, "await page.context().storageState({ path: join(root, '.auth', 'user.json') })\n")
+
+    const check = await checkE2eAuthIgnored(dir)
+
+    expect(check).toMatchObject({ status: 'fail' })
+    expect(check.message).toContain('add `.auth/` to .gitignore')
+  })
+
+  it('fails when only playwright.config.ts names an un-ignored .auth/ storage state', async () => {
+    const dir = gitRepo('node_modules\n')
+
+    fs.writeFileSync(
+      path.join(dir, 'playwright.config.ts'),
+      "export default { use: { storageState: '.auth/user.json' } }\n",
+    )
+
+    expect(await checkE2eAuthIgnored(dir)).toMatchObject({ name: 'e2e-auth:gitignored', status: 'fail' })
+  })
+
+  it('passes without asking git when nothing in src references .auth', async () => {
+    const dir = makeTmpDir()
+
+    writeSetup(dir, "const oauth = 'oauth/callback'\nconst file = 'user.auth.json'\n")
+
+    expect(await checkE2eAuthIgnored(dir)).toMatchObject({ status: 'pass', message: 'no saved auth state referenced' })
+  })
+
+  it('passes a package with no src directory at all', async () => {
+    expect(await checkE2eAuthIgnored(makeTmpDir())).toMatchObject({ status: 'pass' })
   })
 })
