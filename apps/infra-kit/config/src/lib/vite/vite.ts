@@ -206,11 +206,10 @@ const DEFAULT_HTTP_PORT = 80
 const LOOPBACK_V4 = '127.0.0.1'
 
 /**
- * Graft the proxy's listen port onto an interpolated local target. The `dev.proxy` local template is
- * written port-free (`https://<release>.<packageName>.localhost`) because the proxy serves TLS on `:443`,
- * the only port a port-free HTTPS URL can come from. A consumer who trades the clean URL for a zero-sudo
- * unprivileged port still needs the frontend to reach it, so the runner records the port it actually bound
- * and we append it here. A template that already pins its own port keeps it.
+ * LEGACY only ({@link resolveLegacyTarget}): graft the `proxyPort` a pre-v2 CLI recorded onto the
+ * interpolated `templates.local` target. Such a CLI ran portless on whatever port it could bind and wrote
+ * that port into the fragment; a current one publishes the finished `origin` and writes no `proxyPort`.
+ * A template that already pins its own port keeps it.
  */
 const withProxyPort = (target: string, proxyPort: number | undefined): string => {
   if (proxyPort == null || proxyPort === DEFAULT_HTTP_PORT) return target

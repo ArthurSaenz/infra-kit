@@ -6,32 +6,58 @@ import { slugifyHostLabel } from './release-slug'
 /** The `<repo>` label used outside a git repo, or when the repo's directory name slugifies to nothing. */
 export const DEFAULT_REPO_SLUG = 'repo'
 
+export interface RepoIdentity {
+  /**
+   * The repo's own directory, shared by every worktree: the main checkout, or a bare repo's `foo.git`
+   * itself (never its parent, which would take in every sibling). `null` outside git and for a submodule,
+   * which has no main checkout to converge on — callers fall back to their own toplevel.
+   */
+  root: string | null
+  /** The `<repo>` alias label: {@link root}'s name minus `.git`, slugified. */
+  slug: string
+}
+
 /**
- * The `<repo>` label for the repository `cwd` belongs to: the directory name of its MAIN checkout, so every
- * git worktree of one repo shares it (`hulyo-monorepo-worktrees/feature/x` still says `hulyo-monorepo`).
- * Falls back to {@link DEFAULT_REPO_SLUG}. Never throws.
+ * Which repository `cwd` belongs to, read from `git rev-parse --git-common-dir` so every worktree of one
+ * repo gives the same answer (`hulyo-monorepo-worktrees/feature/x` is still `hulyo-monorepo`). Never throws.
  *
- * Read from `git rev-parse --git-common-dir` rather than `infra-kit.json`'s `envManagement` name: git is
- * already required for `<release>`, it resolves the same from any worktree or subdirectory, and the config
- * name is optional, layered, and would pull the config loader into the lightweight vite/Playwright helpers.
+ * The one source for both the dev alias's `<repo>` label and the directories `env-load` scopes a load to,
+ * so the two can never disagree about what "this repo" is. Git rather than `infra-kit.json`'s
+ * `envManagement` name: git is already required for `<release>`, and the config name is optional, layered,
+ * and would pull the config loader into the lightweight vite/Playwright helpers.
  *
  * @example
- * readRepoSlug('/projects/hulyo-monorepo-worktrees/feature/x/apps/web/ui') // => 'hulyo-monorepo'
+ * readRepoIdentity('/projects/hulyo-monorepo-worktrees/feature/x/apps/web/ui')
+ * // => { root: '/projects/hulyo-monorepo', slug: 'hulyo-monorepo' }
  */
-export const readRepoSlug = (cwd: string): string => {
+export const readRepoIdentity = (cwd: string): RepoIdentity => {
+  let commonDir: string
+
   try {
     // eslint-disable-next-line sonarjs/no-os-command-from-path
-    const commonDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+    commonDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
       cwd,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim()
-    const name = path.basename(commonDir)
-    // `.git` (a normal checkout) or a dot-dir like `.bare` names nothing; a bare `foo.git` names the repo.
-    const repoName = name.startsWith('.') ? path.basename(path.dirname(commonDir)) : name.replace(/\.git$/, '')
-
-    return slugifyHostLabel(repoName) || DEFAULT_REPO_SLUG
   } catch {
-    return DEFAULT_REPO_SLUG
+    return { root: null, slug: DEFAULT_REPO_SLUG }
   }
+
+  const name = path.basename(commonDir)
+
+  if (commonDir.includes(`${path.sep}.git${path.sep}modules${path.sep}`)) {
+    return { root: null, slug: slugifyHostLabel(name) || DEFAULT_REPO_SLUG }
+  }
+
+  // `.git` (a normal checkout) or a dot-dir like `.bare` sits inside the repo's directory; anything else is
+  // a bare repo, which is its own directory.
+  const root = name.startsWith('.') ? path.dirname(commonDir) : commonDir
+
+  return { root, slug: slugifyHostLabel(path.basename(root).replace(/\.git$/, '')) || DEFAULT_REPO_SLUG }
+}
+
+/** The `<repo>` alias label — {@link readRepoIdentity}'s `slug`. */
+export const readRepoSlug = (cwd: string): string => {
+  return readRepoIdentity(cwd).slug
 }

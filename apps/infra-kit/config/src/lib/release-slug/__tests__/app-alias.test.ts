@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { readAppAliasHost, readAppAliasName } from '../app-alias'
-import { DEFAULT_REPO_SLUG, readRepoSlug } from '../repo-slug'
+import { DEFAULT_REPO_SLUG, readRepoIdentity, readRepoSlug } from '../repo-slug'
 
 let temp: string
 
@@ -80,15 +80,28 @@ describe('readRepoSlug', () => {
     expect(readRepoSlug(seedRepo('My_Repo.v2', 'dev'))).toBe('my-repo-v2')
   })
 
-  it('names a bare repo after itself, minus `.git`', () => {
+  it('names a bare repo after itself, minus `.git`, and roots it at itself rather than its parent', () => {
     const bare = path.join(temp, 'hulyo-monorepo.git')
 
     git(temp, 'init', '-q', '--bare', bare)
 
-    expect(readRepoSlug(bare)).toBe('hulyo-monorepo')
+    // Rooted at the parent, an env-load scope would take in every sibling repo under it.
+    expect(readRepoIdentity(bare)).toEqual({ root: bare, slug: 'hulyo-monorepo' })
+  })
+
+  it('roots a checkout and each of its worktrees at the main checkout', () => {
+    const main = path.join(temp, 'hulyo-monorepo')
+
+    seedRepo('hulyo-monorepo', 'dev')
+    const worktree = path.join(temp, 'hulyo-monorepo-worktrees/feature/x')
+
+    git(main, 'worktree', 'add', '-q', '-b', 'feature/x', worktree)
+
+    expect(readRepoIdentity(path.join(main, 'apps'))).toEqual({ root: main, slug: 'hulyo-monorepo' })
+    expect(readRepoIdentity(worktree)).toEqual({ root: main, slug: 'hulyo-monorepo' })
   })
 
   it('falls back outside a git repo', () => {
-    expect(readRepoSlug(temp)).toBe(DEFAULT_REPO_SLUG)
+    expect(readRepoIdentity(temp)).toEqual({ root: null, slug: DEFAULT_REPO_SLUG })
   })
 })

@@ -29,6 +29,11 @@ const failing = vi.hoisted(() => {
   return new Set<string>()
 })
 
+/** Commands that exit with a specific code; overrides {@link failing}. */
+const exitCodes = vi.hoisted(() => {
+  return new Map<string, number>()
+})
+
 /** Commands that print something; everything else prints nothing. */
 const stdouts = vi.hoisted(() => {
   return new Map<string, string>()
@@ -43,7 +48,7 @@ vi.mock('zx', async (importOriginal) => {
     $: zxCommandMock((command): FakeCommandResult => {
       shellCommands.push(command)
 
-      return { stdout: stdouts.get(command) ?? '', exitCode: failing.has(command) ? 1 : 0 }
+      return { stdout: stdouts.get(command) ?? '', exitCode: exitCodes.get(command) ?? (failing.has(command) ? 1 : 0) }
     }),
   }
 })
@@ -96,6 +101,7 @@ beforeEach(() => {
   shellCommands.length = 0
   failing.clear()
   stdouts.clear()
+  exitCodes.clear()
   commandEcho.reset()
   vi.spyOn(commandEcho, 'print').mockImplementation(() => {})
   agentMode.source = 'flag'
@@ -125,6 +131,8 @@ describe('feature names and bases', () => {
   })
 })
 
+const DEV_PROBE = 'git ls-remote --exit-code origin refs/heads/dev'
+
 describe('worktrees add --feature', () => {
   it('cuts a new branch from origin/dev with no upstream and reports it', async () => {
     branchIsNew(FEATURE)
@@ -132,6 +140,12 @@ describe('worktrees add --feature', () => {
     const result = await worktreesAdd({ confirmedCommand: true, feature: 'checkout-v2' })
 
     expect(shellCommands).toContain('git fetch origin dev')
+    expect(
+      shellCommands.filter((command) => {
+        return command === 'git fetch origin dev'
+      }),
+      'the default-base probe must not fetch dev a second time',
+    ).toHaveLength(1)
     expect(gitAdds()).toEqual([`git worktree add --no-track -b ${FEATURE} ${FEATURE_PATH} origin/dev`])
     expect(shellCommands).toContain('pnpm install')
     expect(result.structuredContent).toMatchObject({
@@ -191,7 +205,7 @@ describe('worktrees add --feature', () => {
 
     beforeEach(() => {
       branchIsNew(FEATURE)
-      failing.add('git fetch origin dev')
+      exitCodes.set(DEV_PROBE, 2)
     })
 
     it('cuts from the default branch origin/HEAD records, and previews it', async () => {
@@ -227,8 +241,23 @@ describe('worktrees add --feature', () => {
       expect(gitAdds()).toEqual([`git worktree add --no-track -b ${FEATURE} ${FEATURE_PATH} origin/trunk`])
     })
 
+    it('refuses rather than guessing main when origin cannot be asked whether dev exists', async () => {
+      exitCodes.set(DEV_PROBE, 128)
+      stdouts.set(ORIGIN_HEAD, 'origin/main\n')
+
+      const error = await worktreesAdd({ confirmedCommand: true, feature: 'checkout-v2' }).catch((e: unknown) => {
+        return e
+      })
+      const { message } = error as Error
+
+      expect(message).toContain('could not ask origin whether dev exists')
+      expect(message).toContain('pass --base explicitly')
+      expect(gitAdds()).toEqual([])
+    })
+
     it('refuses before git when origin records no default branch either, naming the way out', async () => {
       failing.add(ORIGIN_HEAD)
+      failing.add('git fetch origin dev')
 
       const error = await worktreesAdd({ confirmedCommand: true, feature: 'checkout-v2' }).catch((e: unknown) => {
         return e

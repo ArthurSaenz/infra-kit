@@ -56,6 +56,12 @@ describe('slugifyHostLabel (DNS-label slug for the <packageName> hostname segmen
   it('returns empty string when no alphanumeric run survives', () => {
     expect(slugifyHostLabel('@@@')).toBe('')
   })
+
+  it('caps a label at the 63 characters DNS allows, without leaving a trailing dash', () => {
+    expect(slugifyHostLabel('a'.repeat(80))).toBe('a'.repeat(63))
+    // The cut lands right after the dash joining the two runs.
+    expect(slugifyHostLabel(`${'a'.repeat(62)}_bbb`)).toBe('a'.repeat(62))
+  })
 })
 
 describe('slugifyRelease re-export chain (REV-4)', () => {

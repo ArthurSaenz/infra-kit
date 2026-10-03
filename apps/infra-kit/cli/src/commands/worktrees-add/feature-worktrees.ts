@@ -54,12 +54,33 @@ const readDefaultBranch = async (): Promise<string | null> => {
   return branch === '' ? null : branch
 }
 
+/** `git ls-remote --exit-code` exits 2 when the ref is missing; anything else non-zero is a failed probe. */
+const LS_REMOTE_NO_MATCH = 2
+
 /**
  * The base when none is passed: `dev`, or the repo's default branch in a repo without one (infra-kit
  * itself has only `main`). Falls back to `dev` when neither resolves, so the base check names it.
+ *
+ * @throws When origin cannot be asked (network, auth): cutting from the default branch then would be a
+ *   silent guess in a repo that may well have `dev`.
  */
 export const defaultFeatureBase = async (): Promise<string> => {
-  if (await fetchRemoteBranch(DEFAULT_FEATURE_BASE)) return DEFAULT_FEATURE_BASE
+  // A full ref: a bare `dev` pattern also matches any `*/dev` branch. ls-remote, not fetch, because
+  // planFeatureWorktrees fetches whichever base this picks.
+  const probe = await $({
+    nothrow: true,
+    quiet: true,
+  })`git ls-remote --exit-code origin refs/heads/${DEFAULT_FEATURE_BASE}`
+
+  if (probe.exitCode === 0) return DEFAULT_FEATURE_BASE
+
+  if (probe.exitCode !== LS_REMOTE_NO_MATCH) {
+    throw new OperationError(undefined, {
+      operation: 'create feature worktree',
+      remediation: 'check the network and your access to origin, or pass --base explicitly',
+      stderrExcerpt: probe.stderr.trim() || `could not ask origin whether ${DEFAULT_FEATURE_BASE} exists`,
+    })
+  }
 
   return (await readDefaultBranch()) ?? DEFAULT_FEATURE_BASE
 }

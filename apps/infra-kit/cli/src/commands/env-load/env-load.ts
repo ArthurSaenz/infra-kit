@@ -1,4 +1,5 @@
 import select from '@inquirer/select'
+import { readRepoIdentity } from '@slip-stream-kit/config/internal'
 import { Buffer } from 'node:buffer'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -33,7 +34,7 @@ import {
 import { createEnvLoadFormProvider } from 'src/lib/env-load-form'
 import { extractStderr } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
-import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
+import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { listProjectEnvNames } from 'src/lib/project-envs'
 import { withEscape } from 'src/lib/prompts/escapable-context'
@@ -152,18 +153,17 @@ const resolveProjectRootSafe = async (): Promise<string> => {
 }
 
 /**
- * The directories the loaded env applies in ({@link ENV_LOAD_ROOT_FILE}): the main checkout and its
- * `<main>-worktrees` container, so every worktree of the repo shares one load, plus the loading
- * worktree itself in case it lives elsewhere. Outside git, just `cwd`.
+ * The directories the loaded env applies in ({@link ENV_LOAD_ROOT_FILE}): the repo's own directory (the
+ * same `readRepoIdentity` that names the dev alias's `<repo>`) and its `-worktrees` container, so every
+ * worktree of the repo shares one load, plus the loading worktree itself in case it lives elsewhere.
+ * Outside git, just `cwd`.
  */
-export const resolveEnvLoadRoots = async (projectRoot: string, cwd = process.cwd()): Promise<string[]> => {
+export const resolveEnvLoadRoots = (projectRoot: string, cwd = process.cwd()): string[] => {
   if (projectRoot === '') return [path.resolve(cwd)]
 
-  const mainRoot = await getMainRepoRoot(projectRoot).catch(() => {
-    return projectRoot
-  })
+  const repoRoot = readRepoIdentity(projectRoot).root ?? projectRoot
 
-  return [...new Set([mainRoot, `${mainRoot}${WORKTREES_DIR_SUFFIX}`, projectRoot])]
+  return [...new Set([repoRoot, `${repoRoot}${WORKTREES_DIR_SUFFIX}`, projectRoot])]
 }
 
 /**
@@ -186,7 +186,7 @@ export const writeEnvLoadFile = async ({ config }: WriteEnvLoadFileArgs): Promis
 
   fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
   // The scope lands first: a shell reading between the two writes then never sees the new env unscoped.
-  const roots = await resolveEnvLoadRoots(projectRoot)
+  const roots = resolveEnvLoadRoots(projectRoot)
 
   atomicWriteFileSync(path.resolve(cacheDir, ENV_LOAD_ROOT_FILE), `${roots.join('\n')}\n`, 0o600)
   atomicWriteFileSync(envFilePath, fileContents, 0o600)

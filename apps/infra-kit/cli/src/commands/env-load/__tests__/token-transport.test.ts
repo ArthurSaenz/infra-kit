@@ -7,7 +7,7 @@ import { $ } from 'zx'
 
 import { INFRA_KIT_ENV_TOKEN_VAR } from 'src/integrations/doppler'
 import { INFRA_KIT_SESSION_VAR, getSessionCacheDir } from 'src/lib/constants'
-import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
+import { getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 
 import { writeEnvLoadFile } from '../env-load'
@@ -53,7 +53,7 @@ vi.mock('src/lib/infra-kit-config', () => {
 vi.mock('src/lib/git-utils', async (importOriginal) => {
   const actual = await importOriginal<typeof import('src/lib/git-utils')>()
 
-  return { ...actual, getMainRepoRoot: vi.fn(), getProjectRoot: vi.fn() }
+  return { ...actual, getProjectRoot: vi.fn() }
 })
 
 vi.mock('src/lib/logger', () => {
@@ -118,7 +118,6 @@ beforeEach(() => {
     envManagement: { provider: 'doppler', config: { name: 'my-project' } },
   } as never)
   vi.mocked(getProjectRoot).mockResolvedValue(repoRoot)
-  vi.mocked(getMainRepoRoot).mockResolvedValue(repoRoot)
 })
 
 afterEach(() => {
