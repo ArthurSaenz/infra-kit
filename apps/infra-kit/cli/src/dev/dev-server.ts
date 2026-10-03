@@ -21,9 +21,9 @@ import {
   DEV_CONTEXT_WIRE_VERSION,
   DEV_SERVING_MARKER,
   loadPackageConfig,
+  readAppAliasName,
   readCloudOrigin,
   readLocalContext,
-  slugifyHostLabel,
 } from '@slip-stream-kit/config/internal'
 import chokidar from 'chokidar'
 import type { FSWatcher } from 'chokidar'
@@ -384,7 +384,7 @@ interface StartedApp {
   server: ServerlessLocalRun
   /** The ACTUAL port bound at start (ephemeral or preferred), reported by `server.start()`. */
   boundPort: number
-  /** Layer-B alias host (`<release>.<package>.localhost`) — the app's only address. */
+  /** Layer-B alias host (`<release>.<package>.<repo>.localhost`) — the app's only address. */
   alias: string
 }
 
@@ -393,7 +393,7 @@ interface IAppServer {
   server: ServerlessLocalRun
   /** The ACTUAL port bound at start (ephemeral or preferred), reported by `server.start()`. */
   boundPort: number
-  /** Layer-B alias host (`<release>.<package>.localhost`) — the app's only address. */
+  /** Layer-B alias host (`<release>.<package>.<repo>.localhost`) — the app's only address. */
   alias: string
   /** Epoch ms of this server's last (re)start — the source of the panel's `up Xs` field. */
   startedAt: number
@@ -663,24 +663,6 @@ export const assertHelperVersionFloor = (repoRoot: string): void => {
 }
 
 /**
- * The portless alias NAME (`<release>.<label>`, no `.localhost`) an api app registers — computable before
- * it binds, which is what lets a boot-failed app's routes be held at it.
- *
- * @throws When the package name yields no legal DNS label.
- */
-const appAliasName = (packageName: string, appDir: string): string => {
-  // An npm name is not a DNS label — see `slugifyHostLabel`. `infra-kit/vite` slugifies its
-  // own `<packageName>` template token identically, so the proxy target and this alias cannot drift.
-  const label = slugifyHostLabel(packageName)
-
-  if (label === '') {
-    throw new Error(`infra-kit dev: package name "${packageName}" has no letters or digits to build a hostname from.`)
-  }
-
-  return `${readAppRelease(appDir)}.${label}`
-}
-
-/**
  * The one-line `reason` for a `● failed` row. Endpoint rows are a single terminal line, so a stack
  * trace cannot go there — it is already in the log tail and the session log. Take the message only,
  * and its first line at that: validation errors like to append their own multi-line dumps.
@@ -849,7 +831,7 @@ export class DevServerRunner {
    * port. A configurable port would put the port straight back into the URL.
    */
   private readonly proxyPort: number = DEFAULT_DEV_PROXY_PORT
-  /** Every `<release>.<package>` alias this runner registered; removed one-by-one in {@link shutdown}. */
+  /** Every `<release>.<package>.<repo>` alias this runner registered; removed one-by-one in {@link shutdown}. */
   private readonly registeredAliases = new Set<string>()
   /**
    * `{ "<ui-package>": { port, alias } }` handed to the turbo child via `INFRA_KIT_UI_PORTS` (computed in
@@ -1853,14 +1835,14 @@ export class DevServerRunner {
   }
 
   /**
-   * Register `<release>.<package>` → `port` with portless and return the alias HOST
-   * (`<release>.<package>.localhost`). The alias IS the app's only address, so a failure here is fatal
+   * Register `<release>.<package>.<repo>` → `port` with portless and return the alias HOST
+   * (`<release>.<package>.<repo>.localhost`). The alias IS the app's only address, so a failure here is fatal
    * rather than a silent downgrade — an app nobody can reach is not a running app.
    *
    * @throws When the package name yields no legal DNS label, or portless rejects the registration.
    */
   private async registerAppAlias(packageName: string, appDir: string, port: number): Promise<string> {
-    const name = appAliasName(packageName, appDir)
+    const name = readAppAliasName(packageName, appDir)
 
     if (!(await this.proxy.registerAlias(name, port))) {
       throw new Error(`infra-kit dev: portless refused the alias "${name}" → 127.0.0.1:${port}.`)
@@ -1965,7 +1947,7 @@ export class DevServerRunner {
   private holdFailedBackendsLocal(): void {
     for (const { app } of this.failedApps) {
       try {
-        this.writeDevContextFragment(app, 0, `${appAliasName(app.packageName, app.path)}.localhost`)
+        this.writeDevContextFragment(app, 0, `${readAppAliasName(app.packageName, app.path)}.localhost`)
         this.heldLocalPkgs.add(app.packageName)
       } catch (error) {
         this.renderer.log(`⚠️  Failed to hold ${app.name}'s routes local: ${String(error)}`, 'warn')
@@ -3184,7 +3166,7 @@ export class DevServerRunner {
         }
       }),
       ...uiApps.map((ui) => {
-        const label = `${readAppRelease(ui.path)}.${slugifyHostLabel(ui.packageName)}`
+        const label = readAppAliasName(ui.packageName, ui.path)
 
         return {
           tag: `${ui.name}/ui`,

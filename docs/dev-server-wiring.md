@@ -25,7 +25,7 @@ deployedUrlEnv: 'BACKOFFICE_URL',  // the variable holding this app's deployed U
 dev: {
   proxy: {
     templates: {
-      local: 'https://<release>.<packageName>.localhost',  // MUST be https:// (portless serves TLS on :443)
+      local: 'https://<release>.<packageName>.localhost',  // MUST be https://; read only for a pre-v2 CLI's fragment
     },
     routes: {
       '/api': { packageName: 'backoffice-api', from: ['local', 'cloud'], default: 'cloud' },
@@ -51,7 +51,9 @@ dev: {
 
 ## portless (the HTTPS proxy)
 
-- URLs are port-free `https://<release>.<packageName>.localhost`; the portless daemon serves
+- URLs are port-free `https://<release>.<packageName>.<repo>.localhost`. `<repo>` is the main
+  checkout's directory name (`git rev-parse --git-common-dir`), so every worktree of a repo shares it
+  and two repos with the same branch and package name never share an alias. The portless daemon serves
   **TLS on :443** (the historical `:80 --no-tls` mode is obsolete — docs that mention it are
   spike/plan archives).
 - One-time setup needs root: run the `sudo <node> <…/portless/dist/cli.js> service install`

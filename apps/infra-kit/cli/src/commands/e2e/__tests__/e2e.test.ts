@@ -1,3 +1,4 @@
+import { slugifyHostLabel } from '@slip-stream-kit/config/internal'
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -20,12 +21,16 @@ import type { E2eTarget } from '../e2e-target'
 // backend do. The probe under test is the dev panel's own, so a fake cannot agree with a wrong probe.
 
 const RELEASE = 'feat-x'
-const UI_HOST = `${RELEASE}.hulyo-client-ui.localhost`
 const API_ORIGIN = `https://${RELEASE}.backend-api.localhost`
 
 const servers: http.Server[] = []
 let root: string
 let stateDir: string
+
+/** `<repo>` is the checkout's directory name — here the temp root. */
+const uiHost = () => {
+  return `${RELEASE}.hulyo-client-ui.${slugifyHostLabel(path.basename(root))}.localhost`
+}
 
 const listen = async (handler: http.RequestListener): Promise<number> => {
   const server = http.createServer(handler)
@@ -89,7 +94,7 @@ const seedRepo = () => {
 }
 
 const registerUi = (port: number) => {
-  fs.writeFileSync(path.join(stateDir, 'routes.json'), JSON.stringify([{ hostname: UI_HOST, port }]))
+  fs.writeFileSync(path.join(stateDir, 'routes.json'), JSON.stringify([{ hostname: uiHost(), port }]))
 }
 
 const writeBackendFragment = (port: number, env?: string) => {
@@ -166,7 +171,7 @@ describe('e2e — local (the default)', () => {
     expect(result.structuredContent).toMatchObject({
       app: 'client',
       mode: 'local',
-      baseUrl: `https://${UI_HOST}`,
+      baseUrl: `https://${uiHost()}`,
       deployedUrlEnv: CLIENT_URL,
       release: RELEASE,
       served: true,
@@ -179,6 +184,21 @@ describe('e2e — local (the default)', () => {
       ],
     })
     expect(runPlaywright.mock.calls[0]?.[1]).toEqual(['--project=chromium'])
+  })
+
+  it('never takes another repo’s UI on the same branch and package name for this one', async () => {
+    const port = await viteServer()
+
+    fs.writeFileSync(
+      path.join(stateDir, 'routes.json'),
+      JSON.stringify([
+        { hostname: `${RELEASE}.hulyo-client-ui.other-monorepo.localhost`, port },
+        // The pre-repo alias shape an older CLI registered, which any repo could own.
+        { hostname: `${RELEASE}.hulyo-client-ui.localhost`, port },
+      ]),
+    )
+
+    await expect(e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))).rejects.toThrow(/nothing serves client\/ui/)
   })
 
   it('reports a cloud-only route with no target when the deployed URL is not loaded', async () => {
@@ -205,7 +225,7 @@ describe('e2e — local (the default)', () => {
 
     expect(result.structuredContent).toMatchObject({
       mode: 'local',
-      baseUrl: `https://${UI_HOST}`,
+      baseUrl: `https://${uiHost()}`,
       served: false,
       devCommand: 'infra-kit dev client --no-watch --reuse',
       routes: [],
@@ -374,7 +394,7 @@ describe('e2e — --cloud', () => {
       baseUrl: 'https://oriana.hulyo.co.il',
       deployedUrlEnv: CLIENT_URL,
       env: 'oriana',
-      localUrl: `https://${UI_HOST}`,
+      localUrl: `https://${uiHost()}`,
       devCommand: null,
       routes: [],
       ran: false,

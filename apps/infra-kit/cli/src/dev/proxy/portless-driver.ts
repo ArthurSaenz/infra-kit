@@ -3,7 +3,7 @@
  *
  * Thin, injectable driver for the `portless` daemon (Layer B — see `.omc/plans/dev-https-portless.md`).
  *
- * `infra-kit dev` uses it to register `<release>.<package>.localhost → 127.0.0.1:<port>` routes so the
+ * `infra-kit dev` uses it to register `<release>.<package>.<repo>.localhost → 127.0.0.1:<port>` routes so the
  * hero URLs resolve over **HTTPS on :443, with no port in the URL**. Every call here is **time-bounded and
  * never throws**: a missing binary, a non-zero exit, or a wedged process resolves to `false`/no-op. That is
  * a reporting contract, not a tolerance one — portless IS a hard dependency of the dev loop, and
@@ -331,7 +331,7 @@ const CA_TRUST_MARKER_FILE = 'ca.trusted'
 /** A route portless is serving: `<name> → 127.0.0.1:<port>`. */
 export interface PortlessRoute {
   /**
-   * The registered hostname (e.g. `2-4.client-api.localhost`). Usable verbatim as a
+   * The registered hostname (e.g. `2-4.client-api.hulyo-monorepo.localhost`). Usable verbatim as a
    * `portless alias --remove <name>` argument — portless strips a trailing TLD off the name it is handed
    * (`parseHostnames`, `chunk-SD2PIWJU.js:68-79`) — and as a TLS `servername`.
    */
@@ -473,7 +473,7 @@ export interface PortlessDriver {
    */
   isServiceInstalled: () => ServiceInstalled
   /**
-   * Register `<name> → 127.0.0.1:<port>` (`name` = `<release>.<package>`). Returns `true` on success so
+   * Register `<name> → 127.0.0.1:<port>` (`name` = `<release>.<package>.<repo>`). Returns `true` on success so
    * the caller shows the hero URL only for an alias that actually resolves (best-effort otherwise).
    */
   registerAlias: (name: string, port: number) => Promise<boolean>

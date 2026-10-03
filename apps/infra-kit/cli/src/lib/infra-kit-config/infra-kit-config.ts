@@ -350,7 +350,7 @@ export const infraKitConfigObject = z
 
 /**
  * The portless proxy's listen port. `443` — the implicit HTTPS port — because that is the ONLY port that
- * can serve a port-free `https://<release>.<packageName>.localhost` URL, which is the whole point.
+ * can serve a port-free `https://<release>.<packageName>.<repo>.localhost` URL, which is the whole point.
  *
  * It is privileged, so the daemon must already be running: `infra-kit dev` PROBES it and never elevates
  * (portless binds `:443` by re-execing through `sudo` with an inherited stdio, which a detached child can

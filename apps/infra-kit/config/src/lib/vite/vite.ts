@@ -318,6 +318,8 @@ const resolveLocalTarget = (args: {
     // The local template resolves to a `<release>.<packageName>.localhost` alias the dev-server
     // registered with portless — which slugifies the package name to a legal DNS label. Slugify
     // identically here or a scoped name (`@hulyo/client-ui`) emits a target that no alias backs.
+    // There is no `<repo>` token on purpose: only a pre-v2 CLI writes an origin-less fragment, and that
+    // CLI registered its aliases without a repo label, so the legacy template is exact for it.
     packageName: slugifyHostLabel(route.packageName),
     env: env ?? '',
   })
@@ -710,7 +712,7 @@ export interface LocalPackageInfo {
   /** The real bound port the runner recorded. Provenance only — the proxy target is the alias host. */
   port: number
   /**
-   * The authoritative local target (`https://<release>.<packageName>.localhost`), published by the
+   * The authoritative local target (`https://<release>.<packageName>.<repo>.localhost`), published by the
    * runner. Present → {@link resolveLocalTarget} uses it verbatim and consults no template. Absent →
    * the fragment came from an old CLI and the legacy template path runs.
    */

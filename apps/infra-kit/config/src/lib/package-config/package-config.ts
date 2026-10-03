@@ -78,7 +78,8 @@ export interface InfraKitDevProxyRoute {
 export interface InfraKitDevProxy {
   /**
    * The local backend's URL template — `<release>`/`<packageName>` are substituted at dev time. A cloud route
-   * goes to the package's `deployedUrlEnv` instead.
+   * goes to the package's `deployedUrlEnv` instead. Consulted only for a fragment from a pre-v2 CLI: a
+   * current one publishes the exact `origin` (`<release>.<packageName>.<repo>.localhost`) it registered.
    */
   templates: {
     local: string

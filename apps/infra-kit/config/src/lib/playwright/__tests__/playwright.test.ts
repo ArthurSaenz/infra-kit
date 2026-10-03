@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { slugifyHostLabel } from '../../release-slug/release-slug'
 import { DEV_SERVING_MARKER, infraKitE2e } from '../playwright'
 
 let root: string
@@ -51,7 +52,8 @@ describe('infraKitE2e — local', () => {
 
     expect(setup).toMatchObject({
       mode: 'local',
-      baseURL: 'https://hul-7.hulyo-client-ui.localhost',
+      // `<repo>` is the checkout's directory name — here the temp root.
+      baseURL: `https://hul-7.hulyo-client-ui.${slugifyHostLabel(path.basename(root))}.localhost`,
       deployedUrlEnv: 'CLIENT_URL',
       ignoreHTTPSErrors: true,
       webServer: {

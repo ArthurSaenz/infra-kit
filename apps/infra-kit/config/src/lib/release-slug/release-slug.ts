@@ -14,7 +14,7 @@
  * when the input carries no alphanumeric run (the caller must treat that as "no label").
  *
  * portless rejects any hostname outside `[a-z0-9.-]`, so every segment fed into a
- * `<release>.<packageName>.localhost` alias must pass through here. A scoped npm name
+ * `<release>.<packageName>.<repo>.localhost` alias must pass through here. A scoped npm name
  * (`@hulyo/client-ui`) is the motivating case: registering it raw fails with
  * `Invalid hostname`, and because the driver swallows that into a best-effort `false`,
  * the whole hero-URL path degrades silently to `localhost:<port>`.
