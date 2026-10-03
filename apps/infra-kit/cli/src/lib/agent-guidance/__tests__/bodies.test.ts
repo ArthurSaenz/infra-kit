@@ -51,7 +51,7 @@ const LINE_COUNTS: Readonly<Record<PackageType, number>> = {
   frontend: 25,
   backend: 23,
   lib: 24,
-  e2e: 68,
+  e2e: 69,
   mobile: 24,
 }
 

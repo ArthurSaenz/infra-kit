@@ -57,7 +57,7 @@ Everything [`infraKitDev`](https://www.npmjs.com/package/@slip-stream-kit/config
 | `cwd` | `process.cwd()` | The package dir whose `infra-kit.config.ts` is loaded. |
 | `port` | dynamic | Pin the dev-server port. Overrides the runner's assignment (and will 502 the alias). |
 | `host` | `127.0.0.1` | Vite's own `localhost` default binds `[::1]` only, which the proxy cannot dial. On `127.0.0.1` the plugin also accepts on `[::1]` at the same port, so portless's IPv6 fallback still connects when parallel e2e load uses up the IPv4 loopback ports. |
-| `basicAuth` | from `E2E__BASIC_AUTH_*` | Credentials injected as an `Authorization` header on every route. |
+| `basicAuth` | from `E2E__BASIC_AUTH_USERNAME` / `E2E__BASIC_AUTH_PASSWORD` | Credentials injected as an `Authorization` header on every route. The same two names (double underscore) are the only ones an e2e suite may read — `infra-kit audit` fails any other `E2E_*BASIC_AUTH_*`. |
 
 ## Versioning
 

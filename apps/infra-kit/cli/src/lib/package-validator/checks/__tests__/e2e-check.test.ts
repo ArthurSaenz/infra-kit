@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { E2E_SCRIPTS } from 'src/lib/package-config'
 
-import { checkE2e, checkE2eAuthIgnored, checkE2eConfig, checkE2eScripts } from '../e2e-check'
+import { checkE2e, checkE2eAuthIgnored, checkE2eBasicAuthNaming, checkE2eConfig, checkE2eScripts } from '../e2e-check'
 
 const tmpDirs: string[] = []
 
@@ -197,7 +197,7 @@ describe('checkE2e', () => {
 
     const checks = await checkE2e(dir, { ...E2E_SCRIPTS })
 
-    expect(checks).toHaveLength(Object.keys(E2E_SCRIPTS).length + 6)
+    expect(checks).toHaveLength(Object.keys(E2E_SCRIPTS).length + 7)
     expect(failures(checks)).toEqual([])
   })
 })
@@ -260,5 +260,70 @@ describe('checkE2eAuthIgnored', () => {
 
   it('passes a package with no src directory at all', async () => {
     expect(await checkE2eAuthIgnored(makeTmpDir())).toMatchObject({ status: 'pass' })
+  })
+})
+
+describe('checkE2eBasicAuthNaming', () => {
+  const writeEnvFile = (dir: string, content: string): void => {
+    fs.mkdirSync(path.join(dir, 'src/config'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'src/config/environment.ts'), content)
+  }
+
+  it('passes a suite that reads only the canonical pair', async () => {
+    const dir = makeTmpDir()
+
+    writeConfig(dir, 'username: process.env.E2E__BASIC_AUTH_USERNAME, password: process.env.E2E__BASIC_AUTH_PASSWORD')
+
+    expect(await checkE2eBasicAuthNaming(dir)).toMatchObject({ name: 'e2e-env:basic-auth', status: 'pass' })
+  })
+
+  it('fails a per-app name in src, naming the file and the canonical name to rename to', async () => {
+    const dir = makeTmpDir()
+
+    writeEnvFile(
+      dir,
+      'const user = process.env.E2E_CLIENT_BASIC_AUTH_USERNAME\nconst pass = process.env.E2E_CLIENT_BASIC_AUTH_PASSWORD\n',
+    )
+
+    const check = await checkE2eBasicAuthNaming(dir)
+
+    expect(check.status).toBe('fail')
+    expect(check.message).toContain(
+      `E2E_CLIENT_BASIC_AUTH_USERNAME → E2E__BASIC_AUTH_USERNAME (${path.join('src', 'config', 'environment.ts')})`,
+    )
+    expect(check.message).toContain('E2E_CLIENT_BASIC_AUTH_PASSWORD → E2E__BASIC_AUTH_PASSWORD')
+  })
+
+  it('fails a fallback to the old name even beside the canonical one', async () => {
+    const dir = makeTmpDir()
+
+    writeConfig(
+      dir,
+      'username: process.env.E2E__BASIC_AUTH_USERNAME || process.env.E2E_MULTIVENDOR_BASIC_AUTH_USERNAME',
+    )
+
+    const check = await checkE2eBasicAuthNaming(dir)
+
+    expect(check.status).toBe('fail')
+    expect(check.message).toContain(
+      'E2E_MULTIVENDOR_BASIC_AUTH_USERNAME → E2E__BASIC_AUTH_USERNAME (playwright.config.ts)',
+    )
+    expect(check.message).not.toContain('E2E__BASIC_AUTH_USERNAME →')
+  })
+
+  it('fails the single-underscore spelling', async () => {
+    const dir = makeTmpDir()
+
+    writeEnvFile(dir, 'process.env.E2E_BASIC_AUTH_PASSWORD')
+
+    expect((await checkE2eBasicAuthNaming(dir)).message).toContain('E2E_BASIC_AUTH_PASSWORD → E2E__BASIC_AUTH_PASSWORD')
+  })
+
+  it('ignores markdown, which documents names rather than reading them', async () => {
+    const dir = makeTmpDir()
+
+    fs.writeFileSync(path.join(dir, 'README.md'), 'formerly E2E_CLIENT_BASIC_AUTH_USERNAME')
+
+    expect(await checkE2eBasicAuthNaming(dir)).toMatchObject({ status: 'pass' })
   })
 })

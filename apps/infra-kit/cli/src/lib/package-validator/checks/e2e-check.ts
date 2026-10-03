@@ -89,19 +89,22 @@ export const checkE2eConfig = async (packageDir: string): Promise<PackageCheck[]
 const AUTH_DIR_PATTERN = /['"`](?:[^'"`\n]*\/)?\.auth['"/`]/u
 const SOURCE_FILE_PATTERN = /\.[cm]?[jt]sx?$/u
 
-const referencesAuthDir = async (packageDir: string): Promise<boolean> => {
-  const srcEntries = await fs
-    .readdir(path.join(packageDir, 'src'), { recursive: true, withFileTypes: true })
-    .catch(() => {
-      return []
-    })
-  const sourceFiles = srcEntries
+const listSourceFiles = async (dir: string, recursive: boolean): Promise<string[]> => {
+  const entries = await fs.readdir(dir, { recursive, withFileTypes: true }).catch(() => {
+    return []
+  })
+
+  return entries
     .filter((entry) => {
       return entry.isFile() && SOURCE_FILE_PATTERN.test(entry.name)
     })
     .map((entry) => {
       return path.join(entry.parentPath, entry.name)
     })
+}
+
+const referencesAuthDir = async (packageDir: string): Promise<boolean> => {
+  const sourceFiles = await listSourceFiles(path.join(packageDir, 'src'), true)
 
   // `use.storageState` in the config is the other common place to name it.
   for (const file of [path.join(packageDir, PLAYWRIGHT_CONFIG_FILE), ...sourceFiles]) {
@@ -149,7 +152,70 @@ export const checkE2eAuthIgnored = async (packageDir: string): Promise<PackageCh
   return { name, status: 'fail', message: `could not ask git whether .auth/ is ignored: ${reason}` }
 }
 
+const BASIC_AUTH_USERNAME_ENV = 'E2E__BASIC_AUTH_USERNAME'
+const BASIC_AUTH_PASSWORD_ENV = 'E2E__BASIC_AUTH_PASSWORD'
+
+const BASIC_AUTH_NAME_PATTERN = /\bE2E_\w*BASIC_AUTH_\w+/gu
+
+const canonicalBasicAuthName = (name: string): string => {
+  if (/_USER(?:NAME)?$/u.test(name)) return BASIC_AUTH_USERNAME_ENV
+  if (/_PASS(?:WORD)?$/u.test(name)) return BASIC_AUTH_PASSWORD_ENV
+
+  return `${BASIC_AUTH_USERNAME_ENV} / ${BASIC_AUTH_PASSWORD_ENV}`
+}
+
+/**
+ * One basic-auth pair across every suite and repo: it is what the dev proxy injects (`@slip-stream-kit/config/vite`)
+ * and what the shared CI job exports, so a per-app name works in one place and silently sends no credentials in the other.
+ */
+export const checkE2eBasicAuthNaming = async (packageDir: string): Promise<PackageCheck> => {
+  const name = 'e2e-env:basic-auth'
+  const files = [
+    ...(await listSourceFiles(packageDir, false)),
+    ...(await listSourceFiles(path.join(packageDir, 'src'), true)),
+  ]
+  const renames: string[] = []
+
+  for (const file of files) {
+    const content = await fs.readFile(file, 'utf-8').catch(() => {
+      return ''
+    })
+    const drifted = new Set(
+      [...content.matchAll(BASIC_AUTH_NAME_PATTERN)]
+        .map((match) => {
+          return match[0]
+        })
+        .filter((found) => {
+          return found !== BASIC_AUTH_USERNAME_ENV && found !== BASIC_AUTH_PASSWORD_ENV
+        }),
+    )
+
+    for (const found of drifted) {
+      renames.push(`${found} → ${canonicalBasicAuthName(found)} (${path.relative(packageDir, file)})`)
+    }
+  }
+
+  if (renames.length === 0) {
+    return {
+      name,
+      status: 'pass',
+      message: `basic auth read only from ${BASIC_AUTH_USERNAME_ENV} / ${BASIC_AUTH_PASSWORD_ENV}`,
+    }
+  }
+
+  return {
+    name,
+    status: 'fail',
+    message: `basic auth has one name pair in every suite — rename, with no fallback to the old name: ${renames.join('; ')}`,
+  }
+}
+
 /** Convention checks applied to every `e2e` package, on top of its `infra-kit.config.ts` rules. */
 export const checkE2e = async (packageDir: string, scripts: Record<string, string>): Promise<PackageCheck[]> => {
-  return [...checkE2eScripts(scripts), ...(await checkE2eConfig(packageDir)), await checkE2eAuthIgnored(packageDir)]
+  return [
+    ...checkE2eScripts(scripts),
+    ...(await checkE2eConfig(packageDir)),
+    await checkE2eAuthIgnored(packageDir),
+    await checkE2eBasicAuthNaming(packageDir),
+  ]
 }
