@@ -328,7 +328,10 @@ const configureWorktreesAdd = (cmd: Command): Command => {
     .option('-a, --all', 'Select all active release branches')
     .option('-v, --versions <versions>', 'Specify versions by comma, e.g. 1.2.5, 1.2.6')
     .option('-f, --feature <names>', 'Feature worktrees by comma, each on a feature/<name> branch, e.g. checkout-v2')
-    .option('-b, --base <branch>', 'Base for new feature branches: dev (default) or a release, e.g. 1.4.0')
+    .option(
+      '-b, --base <branch>',
+      'Base for new feature branches: dev (default; the default branch without one), main, or a release, e.g. 1.4.0',
+    )
     .option('-i, --ide [mode]', 'Editor mode for created worktrees: workspace (default) | none')
     .option('--no-ide', 'Skip the editor (alias for --ide none)')
     .option('-c, --cursor [mode]', 'Deprecated alias for --ide')

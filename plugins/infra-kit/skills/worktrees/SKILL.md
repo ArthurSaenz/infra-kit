@@ -1,7 +1,7 @@
 ---
 name: worktrees
-description: Start, list, or remove feature worktrees through the infra-kit CLI — a feature/<name> branch in its own checkout under <root>-worktrees/feature/, cut from dev or a release branch, behind the preview-then-approve protocol. Use when the user wants to start a feature in a separate worktree, resume one, or clean one up.
-argument-hint: [<feature-name>] [--base <dev|release>] [--remove]
+description: Start, list, or remove feature worktrees through the infra-kit CLI — a feature/<name> branch in its own checkout under <root>-worktrees/feature/, cut from dev, main or a release branch, behind the preview-then-approve protocol. Use when the user wants to start a feature in a separate worktree, resume one, or clean one up.
+argument-hint: [<feature-name>] [--base <dev|main|release>] [--remove]
 allowed-tools: Bash(infra-kit worktrees list --json*), Bash(infra-kit release list --json*)
 ---
 
@@ -36,8 +36,9 @@ prefix is optional in the name and added when missing; spaces become `-`.
 - **Existing branch** (local, or on `origin` — someone's PR): checked out as it is. `--base` is not
   applied to it, and the preview says so.
 
-`--base` is `dev` by default. Any release branch works too: `1.4.0`, `release/v1.4.0`, or a named
-release such as `checkout-redesign`. A base missing from `origin` is refused before anything is
+`--base` is `dev` by default, or the repo's default branch (`main`) in a repo with no `dev`. `--base
+main` and any release branch work too: `1.4.0`, `release/v1.4.0`, or a named release such as
+`checkout-redesign`. A base missing from `origin` is refused before anything is
 created.
 
 ## 2. Reading `$ARGUMENTS`
