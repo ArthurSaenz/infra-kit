@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import process from 'node:process'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DevServerRunner } from 'src/dev/dev-server'
 import { DEFAULT_PORT } from 'src/dev/ports'
@@ -53,6 +53,7 @@ interface FragmentShape {
   pid: number
   writtenAt: number
   release?: string
+  env?: string
 }
 
 /** Read + parse the `<app>.json` fragment (fails the test if it is not valid JSON). */
@@ -83,7 +84,7 @@ interface RunnerInternals {
 }
 
 describe('dev-context fragment — T1: records the ACTUAL bound ephemeral port', () => {
-  it('writes port === the real listen(0) port (∉ {DEFAULT_PORT, 0}) plus package/pid/release', async () => {
+  it('writes port === the real listen(0) port (∉ {DEFAULT_PORT, 0}) plus package/pid/release/env', async () => {
     const root = temp.register(makeMonorepo([{ name: 'solo', packageName: 'solo-api', withHandler: true }]))
 
     gitInit(root, 'feature/story-two')
@@ -91,6 +92,7 @@ describe('dev-context fragment — T1: records the ACTUAL bound ephemeral port',
     // No {APP}_PORT / PORT / dev.<app>.port => the app binds an ephemeral listen(0) port.
     delete process.env.PORT
     delete process.env.SOLO_PORT
+    vi.stubEnv('INFRA_KIT_ENV', 'stage')
     process.chdir(root)
 
     const runner = new DevServerRunner(
@@ -124,6 +126,8 @@ describe('dev-context fragment — T1: records the ACTUAL bound ephemeral port',
       expect(fragment.package).toBe('solo-api')
       expect(fragment.pid).toBe(process.pid)
       expect(fragment.release).toBe('story-two')
+      // The session's env, which `infra-kit e2e` checks its own shell against before trusting the split.
+      expect(fragment.env).toBe('stage')
 
       // No temp file is left behind (atomic temp-then-rename).
       const leftovers = fs.readdirSync(contextDir()).filter((f) => {
@@ -140,6 +144,7 @@ describe('dev-context fragment — T1: records the ACTUAL bound ephemeral port',
       })
     } finally {
       await runner.shutdown()
+      vi.unstubAllEnvs()
     }
   }, 15000)
 })

@@ -38,6 +38,7 @@ import { z } from 'zod'
 
 import { agentMode } from 'src/lib/agent-mode'
 import { readAppRelease } from 'src/lib/app-release'
+import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import type { DevConfig, DevPreset, DevPresets, ProxySource } from 'src/lib/infra-kit-config'
@@ -430,6 +431,8 @@ interface DevContextFragment {
   release: string
   alias: string
   origin: string
+  /** `INFRA_KIT_ENV` this session runs with (`''` when none): its UIs proxy cloud routes to that env. */
+  env: string
 }
 
 /**
@@ -1993,6 +1996,9 @@ export class DevServerRunner {
       // `prefixUrl` on top of this same alias). Prefix-free on purpose: this is a proxy target, and the
       // frontend supplies its own path.
       origin: `https://${alias}`,
+      // The wizard assigns the picked env onto this process, so this is the session's env even when the
+      // launching shell held another; `infra-kit e2e` compares it with its own before trusting the split.
+      env: process.env[INFRA_KIT_ENV_VAR] ?? '',
     }
     const target = path.join(this.devContextDir, `${app.name}.json`)
     const tmp = path.join(this.devContextDir, `${app.name}.json.${process.pid}.tmp`)

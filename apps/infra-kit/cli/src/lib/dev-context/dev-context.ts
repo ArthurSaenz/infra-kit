@@ -58,6 +58,8 @@ export interface DevContextApp {
   origin: string
   /** Release slug the runner recorded (empty when it derived none). */
   release: string
+  /** `INFRA_KIT_ENV` the runner's session runs with — empty when none, or when an older CLI wrote it. */
+  env: string
   /** Writer PID — advisory only; NOT probed for liveness here. */
   pid: number
   /** Epoch ms the runner stamped into the fragment. */
@@ -113,6 +115,7 @@ const readFragment = (fragmentDir: string, file: string, now: number): DevContex
       alias: str(fragment.alias),
       origin: str(fragment.origin),
       release: str(fragment.release),
+      env: str(fragment.env),
       pid: num(fragment.pid),
       writtenAt: num(fragment.writtenAt),
       mtimeMs: Math.round(stat.mtimeMs),

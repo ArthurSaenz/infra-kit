@@ -123,9 +123,25 @@ const assertCloudEnvReachable = async (target: E2eTarget, deps: E2eDeps): Promis
   })
 }
 
+/**
+ * A served UI proxies cloud routes to the env its dev session started with, while the split reported here
+ * and the run's own env come from this shell. Two envs would report one target and test another.
+ */
+const assertServedEnvMatches = (location: E2eLocation): void => {
+  if (location.servedEnv === null || location.servedEnv === location.env) return
+
+  throw new OperationError(undefined, {
+    operation: `run ${location.app} e2e against the local dev server`,
+    remediation: `load the same env (\`infra-kit env-load -c ${location.servedEnv}\`), or restart \`infra-kit dev\` under "${location.env ?? 'none'}"`,
+    stderrExcerpt: `the dev server serving ${location.target} runs with env "${location.servedEnv}", this shell with "${location.env ?? 'none'}"`,
+  })
+}
+
 /** The local run: the served target's proxy split when it is up, else the alias the config will start. */
 const resolveLocal = async (location: E2eLocation, deps: E2eDeps): Promise<E2eTarget> => {
   if (location.served) {
+    assertServedEnvMatches(location)
+
     const target = await describeLocalTarget(location, deps)
 
     assertLocalRoutesLive(target)
@@ -141,7 +157,7 @@ const resolveLocal = async (location: E2eLocation, deps: E2eDeps): Promise<E2eTa
     })
   }
 
-  const { app, testsDir, target, packageName, deployedUrlEnv, release, env, localUrl } = location
+  const { app, testsDir, target, packageName, deployedUrlEnv, release, env, servedEnv, localUrl } = location
 
   return {
     app,
@@ -151,6 +167,7 @@ const resolveLocal = async (location: E2eLocation, deps: E2eDeps): Promise<E2eTa
     deployedUrlEnv,
     release,
     env,
+    servedEnv,
     localUrl,
     mode: 'local',
     baseUrl: localUrl,
@@ -278,6 +295,12 @@ const e2eOutputSchema = {
     .describe('The target’s variable holding its deployed URL; a cloud run reads it. Null when it declares none.'),
   release: z.string().describe('This worktree’s release slug — the first label of every local alias.'),
   env: z.string().nullable().describe('INFRA_KIT_ENV of this process; the env a cloud run targets.'),
+  servedEnv: z
+    .string()
+    .nullable()
+    .describe(
+      'Served local runs: the INFRA_KIT_ENV the running dev session recorded — where its cloud routes go. Null when nothing served the target or the session recorded none. A local run refuses when it differs from env.',
+    ),
   localUrl: z.string().describe('This worktree’s address for the target, whether or not anything serves it.'),
   served: z.boolean().describe('Whether this worktree’s dev server already served the target when the run began.'),
   devCommand: z

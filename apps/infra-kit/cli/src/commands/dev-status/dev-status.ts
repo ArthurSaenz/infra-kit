@@ -75,6 +75,7 @@ export const devStatus = async (deps: DevStatusDeps = {}) => {
         alias: record.alias,
         origin: record.origin,
         release: record.release,
+        env: record.env || null,
         writtenAt: record.writtenAt > 0 ? new Date(record.writtenAt).toISOString() : null,
         fragmentMtime: new Date(record.mtimeMs).toISOString(),
         ageSeconds,
@@ -148,6 +149,12 @@ const devStatusOutputSchema = {
         alias: z.string().describe('Registered portless hostname for the app.'),
         origin: z.string().describe('Authoritative local origin the vite helper proxies to for this app.'),
         release: z.string().describe('Release slug the runner recorded for this worktree.'),
+        env: z
+          .string()
+          .nullable()
+          .describe(
+            'INFRA_KIT_ENV the dev session runs with — where its UIs proxy cloud routes. Null when none was loaded, or the fragment predates the field.',
+          ),
         writtenAt: z
           .string()
           .nullable()

@@ -28,6 +28,7 @@ const EXPECTED_SKILLS = [
   'release-remove',
   'session',
   'setup',
+  'ultraqa',
   'update-toolchain',
   'worktrees',
 ]

@@ -19,6 +19,7 @@ import type { PortlessRoute } from 'src/dev/proxy/portless-driver'
 import { agentMode } from 'src/lib/agent-mode'
 import { readAppRelease } from 'src/lib/app-release'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
+import { readDevContext } from 'src/lib/dev-context'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { getProjectRoot } from 'src/lib/git-utils'
@@ -43,6 +44,8 @@ export interface E2eTarget {
   release: string
   /** `INFRA_KIT_ENV` of this process — the env a cloud run targets. */
   env: string | null
+  /** The env the running dev session recorded, when one serves the target and recorded it. */
+  servedEnv: string | null
   /** The local address probed, whether or not anything answered there. */
   localUrl: string
   /** Local UI runs only: the proxy split the dev server is serving with. Empty otherwise. */
@@ -160,9 +163,20 @@ export interface E2eLocation {
   deployedUrlEnv: string | null
   release: string
   env: string | null
+  /** Only when `served`: the `INFRA_KIT_ENV` this worktree's dev session recorded in its fragments. */
+  servedEnv: string | null
   localUrl: string
   /** True when the target answers on this worktree's local address. */
   served: boolean
+}
+
+/** One `infra-kit dev` session writes every fragment, so any recorded env is the session's. */
+const readServedEnv = (targetDir: string): string | null => {
+  return (
+    readDevContext(targetDir).apps.find((record) => {
+      return record.env !== ''
+    })?.env ?? null
+  )
 }
 
 /**
@@ -209,6 +223,7 @@ export const locateE2eTarget = async (app: string | undefined, deps: E2eTargetDe
   }
 
   const served = port > 0 && (await probe({ tag: target, port, kind })) === 'ok'
+  const servedEnv = served ? readServedEnv(targetDir) : null
 
   return {
     app: picked.app,
@@ -220,15 +235,16 @@ export const locateE2eTarget = async (app: string | undefined, deps: E2eTargetDe
     deployedUrlEnv,
     release,
     env,
+    servedEnv,
     localUrl,
     served,
   }
 }
 
 const baseOf = (location: E2eLocation) => {
-  const { app, testsDir, target, packageName, deployedUrlEnv, release, env, localUrl } = location
+  const { app, testsDir, target, packageName, deployedUrlEnv, release, env, servedEnv, localUrl } = location
 
-  return { app, testsDir, target, packageName, deployedUrlEnv, release, env, localUrl }
+  return { app, testsDir, target, packageName, deployedUrlEnv, release, env, servedEnv, localUrl }
 }
 
 /** The local run against a served target: the UI's proxy split, each local backend probed. */

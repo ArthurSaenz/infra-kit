@@ -92,7 +92,7 @@ const registerUi = (port: number) => {
   fs.writeFileSync(path.join(stateDir, 'routes.json'), JSON.stringify([{ hostname: UI_HOST, port }]))
 }
 
-const writeBackendFragment = (port: number) => {
+const writeBackendFragment = (port: number, env?: string) => {
   write(
     '.infra-kit/dev-context/client.json',
     JSON.stringify({
@@ -104,6 +104,7 @@ const writeBackendFragment = (port: number) => {
       release: RELEASE,
       alias: `${RELEASE}.backend-api.localhost`,
       origin: API_ORIGIN,
+      ...(env === undefined ? {} : { env }),
     }),
   )
 }
@@ -231,6 +232,33 @@ describe('e2e — local (the default)', () => {
     const result = await e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))
 
     expect(result.structuredContent).toMatchObject({ mode: 'local', served: false })
+  })
+
+  it('reports the env the served dev session recorded when it matches this shell', async () => {
+    registerUi(await viteServer())
+    writeBackendFragment(await backendServer(), 'dev')
+
+    const result = await e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))
+
+    expect(result.structuredContent).toMatchObject({ served: true, env: 'dev', servedEnv: 'dev' })
+  })
+
+  it('refuses when the served dev session runs with another env than this shell', async () => {
+    registerUi(await viteServer())
+    writeBackendFragment(await backendServer(), 'stage')
+
+    await expect(e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))).rejects.toThrow(
+      /runs with env "stage", this shell with "dev"/,
+    )
+  })
+
+  it('trusts a fragment that recorded no env, as an older CLI writes it', async () => {
+    registerUi(await viteServer())
+    writeBackendFragment(await backendServer())
+
+    const result = await e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))
+
+    expect(result.structuredContent).toMatchObject({ served: true, servedEnv: null })
   })
 
   it('refuses when a route is held local but its backend is not serving', async () => {
