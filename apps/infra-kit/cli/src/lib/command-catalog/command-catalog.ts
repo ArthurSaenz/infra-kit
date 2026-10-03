@@ -474,15 +474,12 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mutating: true,
     groupPath: ['vendor', 'config'],
   },
-  // Writes into every target repo, so it is human-only rather than gated: no agent confirms a sync for a
-  // human, and the apply also needs a real terminal on stdin. No tool definition, so no allowlist entry.
   {
     cliName: 'vendor-sync',
     menuGroup: 'vendor',
     mcpTool: null,
     mcpExposed: false,
     mutating: true,
-    humanOnly: true,
     groupPath: ['vendor', 'sync'],
   },
 
@@ -622,6 +619,9 @@ export const LOW_RISK_MUTATING_ALLOWLIST: readonly string[] = [
   'config-edit',
   // Scaffolds the vendor config factory under ~/.infra-kit locally; no remote/git effect.
   'vendor-config',
+  // Rewrites only clean tracked vendor paths in local target checkouts (dirty ones block the target) and at
+  // most commits locally; never pushes, so git undoes it. Still previews, and an agent applies only with `--yes`.
+  'vendor-sync',
   // Writes dev-context fragments and portless routes under ~/.infra-kit and runs local servers in the
   // foreground until Ctrl-C; no remote/git effect.
   'dev',
