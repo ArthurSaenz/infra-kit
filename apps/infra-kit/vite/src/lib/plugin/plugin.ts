@@ -5,6 +5,7 @@ import type { Plugin, ViteDevServer } from 'vite'
 
 import type { RestartableServer } from '../dev-context/dev-context'
 import { proxySignature, watchDevContext } from '../dev-context/dev-context'
+import { mirrorOnIpv6Loopback } from '../ipv6-loopback/ipv6-loopback'
 import { hasPinnedPortConflict, mergeServerConfig } from '../server-config/server-config'
 
 /**
@@ -86,6 +87,25 @@ export const infraKit = (options: InfraKitPluginOptions = {}): Plugin => {
             'different port and registered its portless alias against THAT one. The pin wins — and the ' +
             'hero URL will 502. Remove server.port to let the runner place it.',
         )
+      }
+
+      if (server.httpServer) {
+        const { logger } = server.config
+
+        void mirrorOnIpv6Loopback(server.httpServer, {
+          // Only a taken port is worth a warning; a host without IPv6 (EADDRNOTAVAIL/EAFNOSUPPORT) would
+          // otherwise warn on every start and restart.
+          onBindError: (err) => {
+            if (err.code !== 'EADDRINUSE') return
+            logger.warn(
+              '[infra-kit] [::1] is taken on the dev-server port, so portless’s IPv6 fallback reaches that ' +
+                'process instead — the alias may 502 under heavy parallel load (e.g. e2e workers).',
+            )
+          },
+          onError: (err) => {
+            logger.warn(`[infra-kit] [::1] dev-server listener: ${err.code ?? err.message}`)
+          },
+        })
       }
 
       if (options.restartOnDevContextChange === false) return
