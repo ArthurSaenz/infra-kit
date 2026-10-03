@@ -407,10 +407,10 @@ const configureVendorCheck = (cmd: Command): Command => {
 const configureVendorSync = (cmd: Command): Command => {
   return cmd
     .description(
-      'Mirror vendorSource files from the ~/.infra-kit/vendor.json source into every target, from any directory (human-only)',
+      'Mirror vendorSource files from the ~/.infra-kit/vendor.json source into every target, from any directory',
     )
     .argument('[targets...]', 'Narrow to these target names from ~/.infra-kit/vendor.json')
-    .option('-y, --yes', 'Apply the previewed plan (needs a real terminal on stdin)')
+    .option('-y, --yes', 'Apply the previewed plan')
     .option('--check', 'Preview only; exit 1 when any target would change')
     .option('--commit', 'Commit exactly the synced paths in each target after it syncs')
     .option('--manifest-only', 'Rewrite vendor/README.md and vendor/.sync-manifest.json only; copy nothing')

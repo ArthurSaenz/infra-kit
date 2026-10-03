@@ -143,41 +143,58 @@ afterEach(() => {
   Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true })
 })
 
-describe('vendorSync — human-only under agent mode', () => {
-  it.each([
-    ['--agent', false],
-    ['--agent --yes', true],
-  ])('%s refuses with status refused, exit 2, before any git or config read', async (_label, yes) => {
+describe('vendorSync — agent mode: preview, then --yes applies', () => {
+  it('--agent without --yes throws confirmation_required with the plan and the confirming argv, exit 2', async () => {
     agentMode.source = 'flag'
 
-    const error = await run({ confirmedCommand: yes })
+    const error = await run({})
 
     expect(error).toBeInstanceOf(StructuredRefusalError)
-    expect((error as StructuredRefusalError).structuredContent).toEqual({ status: 'refused', agentMode: 'flag' })
     expect((error as StructuredRefusalError).exitCode).toBe(2)
-    expect((error as StructuredRefusalError).stderrExcerpt).toContain('human-only')
-    expect(loadFactoryConfig).not.toHaveBeenCalled()
-    expect(preflightSource).not.toHaveBeenCalled()
-    expect(fs.readFile).not.toHaveBeenCalled()
+    expect((error as StructuredRefusalError).structuredContent).toMatchObject({
+      status: 'confirmation_required',
+      agentMode: 'flag',
+      rerun: expect.arrayContaining(['--yes']),
+      plan: [
+        expect.objectContaining({ name: 'hulyo', status: 'changed' }),
+        expect.objectContaining({ name: 'travelist' }),
+      ],
+    })
+    expect(confirm).not.toHaveBeenCalled()
+    touchedNothing()
+  })
+
+  it('--json without --yes is headless too: confirmation_required, nothing written', async () => {
+    jsonOutput.enabled = true
+
+    const error = await run({})
+
+    expect((error as StructuredRefusalError).structuredContent).toMatchObject({ status: 'confirmation_required' })
+    touchedNothing()
+  })
+
+  it('--agent --yes applies without a TTY and reports the target as written', async () => {
+    agentMode.source = 'flag'
+
+    const result = await vendorSync({ confirmedCommand: true })
+
+    expect(applyTargetPlan).toHaveBeenCalledTimes(1)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(result.structuredContent).toMatchObject({ mode: 'applied', failed: false })
+    expect(result.structuredContent.targets[0]).toMatchObject({ name: 'hulyo', applied: true })
+  })
+
+  it('--agent --check reports drift without asking for confirmation', async () => {
+    agentMode.source = 'flag'
+
+    const result = await vendorSync({ check: true })
+
+    expect(result.structuredContent).toMatchObject({ mode: 'check', changed: true })
     touchedNothing()
   })
 })
 
-describe('vendorSync — TTY gate for the apply', () => {
-  it('refuses --yes on non-TTY stdin with exit 2 and writes nothing, even with INFRA_KIT_AGENT=0', async () => {
-    vi.stubEnv('INFRA_KIT_AGENT', '0')
-
-    const error = await run({ confirmedCommand: true })
-
-    vi.unstubAllEnvs()
-
-    expect(error).toBeInstanceOf(StructuredRefusalError)
-    expect((error as StructuredRefusalError).structuredContent).toMatchObject({ status: 'refused', reason: 'no-tty' })
-    expect((error as StructuredRefusalError).exitCode).toBe(2)
-    expect((error as StructuredRefusalError).remediation).toContain('from a real terminal')
-    touchedNothing()
-  })
-
+describe('vendorSync — human without a TTY', () => {
   it('previews on non-TTY stdin without --yes: no prompt, no write, exit 0', async () => {
     const result = (await vendorSync({})) as Awaited<ReturnType<typeof vendorSync>>
 
@@ -186,14 +203,11 @@ describe('vendorSync — TTY gate for the apply', () => {
     touchedNothing()
   })
 
-  it('applies --yes on a TTY and reports the target as written', async () => {
-    setStdinTTY(true)
-
+  it('applies --yes on non-TTY stdin', async () => {
     const result = await vendorSync({ confirmedCommand: true })
 
     expect(applyTargetPlan).toHaveBeenCalledTimes(1)
     expect(result.structuredContent).toMatchObject({ mode: 'applied', failed: false })
-    expect(result.structuredContent.targets[0]).toMatchObject({ name: 'hulyo', applied: true })
   })
 })
 

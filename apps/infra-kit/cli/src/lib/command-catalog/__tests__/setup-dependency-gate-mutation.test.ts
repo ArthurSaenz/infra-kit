@@ -60,14 +60,17 @@ describe('the fail-closed gate actually covers the installing tools', () => {
   })
 
   // `humanOnly` is the second way through the gate, so it needs the same proof that it is load-bearing.
-  it('names vendor-sync the moment its humanOnly flag is removed', () => {
-    const stripped = commandCatalog.map((entry) => {
-      if (entry.cliName !== 'vendor-sync') return entry
+  // `release-deliver` also carries a tool with `requiresHumanConfirm`, so that is stripped too: otherwise
+  // the row would still pass through the first gate and prove nothing about `humanOnly`.
+  it('names release-deliver the moment its humanOnly flag is removed', () => {
+    const stripped = withGateRemoved('release-deliver').map((entry) => {
+      if (entry.cliName !== 'release-deliver') return entry
 
       return { ...entry, humanOnly: undefined }
     })
 
-    expect(ungatedOffenders(stripped)).toEqual(['vendor-sync'])
+    expect(ungatedOffenders(withGateRemoved('release-deliver'))).toEqual([])
+    expect(ungatedOffenders(stripped)).toEqual(['release-deliver'])
   })
 
   it.each(INSTALLERS)('would also catch %s being added to the low-risk allowlist', (cliName) => {

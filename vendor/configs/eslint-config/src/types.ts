@@ -16,6 +16,8 @@ export interface ConfigOptions {
   markdown?: boolean
   /** White-label component-convention layer (@wl). Default true. */
   components?: boolean
+  /** Tailwind design-system rules (@shadcn/lint). Default true. */
+  shadcn?: boolean
   /** Consumer rule overrides, merged LAST (highest precedence). Omitted from the call when empty. */
   rules?: ConfigRules
   /** Arbitrary consumer flat-configs appended LAST. Empty by default. */
@@ -30,6 +32,7 @@ export interface ResolvedOptions {
   jsdoc: boolean
   markdown: boolean
   components: boolean
+  shadcn: boolean
   rules: NonNullable<ConfigRules>
   userConfigs: TypedFlatConfigItem[]
 }

@@ -4,12 +4,11 @@ import path from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
 
-import { agentMode, isAgentMode } from 'src/lib/agent-mode'
+import { isHeadless } from 'src/lib/agent-mode'
 import { confirmOrExit } from 'src/lib/command-echo'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { vendorSourceSchema } from 'src/lib/infra-kit-config'
 import type { VendorSourceConfig } from 'src/lib/infra-kit-config'
-import { jsonOutput } from 'src/lib/json-output'
 import { printRunReport } from 'src/lib/render/run-report'
 import type { RunReport, RunRow } from 'src/lib/render/run-report'
 import { shellLine } from 'src/lib/shell-quote'
@@ -40,31 +39,6 @@ export interface VendorSyncOptions {
 }
 
 const OPERATION = 'sync vendored files'
-
-// `--yes` is no answer here: a sync rewrites files in every target repo, so no agent confirms it for a
-// human. Placed before any config read so an agent learns nothing it could act on.
-const refuseAgentMode = (): void => {
-  if (!isAgentMode()) return
-
-  throw new StructuredRefusalError({ status: 'refused', agentMode: agentMode.source }, 2, {
-    operation: OPERATION,
-    stderrExcerpt: 'vendor sync is human-only: refused in agent mode regardless of --yes',
-    remediation:
-      'ask a human to run `infra-kit vendor sync` from their own shell — a sync is never confirmed by an agent',
-  })
-}
-
-// `INFRA_KIT_AGENT=0` clears the agent heuristic, so an agent's Bash could still reach the apply with
-// `--yes`; a real terminal on stdin is the one thing it cannot fake.
-const refuseWithoutTty = (): void => {
-  if (process.stdin.isTTY) return
-
-  throw new StructuredRefusalError({ status: 'refused', reason: 'no-tty' }, 2, {
-    operation: OPERATION,
-    stderrExcerpt: 'the apply needs a real terminal on stdin',
-    remediation: "run `infra-kit vendor sync --yes` from a real terminal; Claude Code's `!` prefix is not one",
-  })
-}
 
 // The source comes from the factory config, never from the cwd, so a sync runs the same from any directory.
 const resolveSourceRoot = (factory: FactoryConfig): string => {
@@ -237,17 +211,15 @@ const prepare = async (options: VendorSyncOptions): Promise<Prepared> => {
 
 /**
  * Mirror the factory source repo's `vendorSource.copy` entries into every factory target, from any cwd: preview, confirm, then
- * apply target by target, with an optional per-target commit. Human-only: refused under agent mode even with
- * `--yes`, and the apply needs a real terminal on stdin. Never calls `process.exit`; the CLI action maps
- * `failed` (and `changed` under `--check`) to the exit code.
+ * apply target by target, with an optional per-target commit. Headless (agent mode or `--json`) without `--yes`,
+ * the confirm throws a `confirmation_required` refusal carrying the plan; the same argv plus `--yes` applies.
+ * Never calls `process.exit`; the CLI action maps `failed` (and `changed` under `--check`) to the exit code.
  *
  * @example
  * await vendorSync({ check: true })                       // drift report, exit 1 when any target would change
  * await vendorSync({ targets: ['hulyo'], confirmedCommand: true, commit: true })
  */
 export const vendorSync = async (options: VendorSyncOptions = {}) => {
-  refuseAgentMode()
-
   const { source, sourceRows, plans } = await prepare(options)
   const outcomes = plans.map((plan): TargetOutcome => {
     return { plan, applied: false }
@@ -262,7 +234,7 @@ export const vendorSync = async (options: VendorSyncOptions = {}) => {
   if (options.check || nothingToApply)
     return finish({ mode: previewMode, report: preview, outcomes, source, print: true })
 
-  const humanPreview = !options.confirmedCommand && !jsonOutput.enabled
+  const humanPreview = !options.confirmedCommand && !isHeadless()
 
   if (humanPreview && !process.stdin.isTTY) {
     printRunReport(preview)
@@ -276,7 +248,6 @@ export const vendorSync = async (options: VendorSyncOptions = {}) => {
     plan: planPayload(plans),
     throwOnDecline: true,
   })
-  refuseWithoutTty()
 
   const applied = await applyAll(source, plans, options)
   const report = syncReport(sourceRows, applied, { ...reportOptions, mode: 'applied' })

@@ -54,15 +54,34 @@ retry_with_backoff() {
     done
 }
 
+# Skip the deploy (exit 0) unless the given deploy stage is in the allowed list.
+# Defense-in-depth alongside the workflow-level env gate: protects manual runs and
+# any other pipeline that wires the script in. The caller resolves the stage (the
+# SSM /projectName/environment read stays the source of truth) and passes it in.
+# Usage: skip_unless_env_enabled "<deploy stage>" "<service label>" "<space-separated allowed envs>"
+skip_unless_env_enabled() {
+    local stage="$1"
+    local service_label="$2"
+    local allowed_envs="$3"
+
+    case " $allowed_envs " in
+    *" $stage "*) ;;
+    *)
+        echo "${YELLOW}${service_label} is not enabled for environment '${stage}'. Skipping.${NC}"
+        exit 0
+        ;;
+    esac
+}
+
 # Install required tools (turbo and optionally serverless)
 # Usage: setup_tools [include_serverless]
 setup_tools() {
     local include_serverless="${1:-true}"
 
     if [ "$include_serverless" = "true" ]; then
-        run_command "Install turbo and serverless" "pnpm add -g turbo@2.10.12 serverless@3.39.0"
+        run_command "Install turbo and serverless" "pnpm add -g turbo@2.11.5 serverless@3.39.0"
     else
-        run_command "Install turbo" "pnpm add -g turbo@2.10.12"
+        run_command "Install turbo" "pnpm add -g turbo@2.11.5"
     fi
 }
 
@@ -88,8 +107,10 @@ prune_and_build() {
     # Install dependencies
     run_command "Install dependencies" "pnpm install"
 
-    # Build the app
-    run_command "Build $app_name" "pnpm exec turbo build --filter=$app_name --env-mode=loose"
+    # Build the app. The turbo task defaults to `build`; a caller can override it by exporting
+    # TURBO_BUILD_TASK (e.g. deploy-mobile.sh sets `build-mobile`). All other FE deploys leave it unset.
+    local turbo_task="${TURBO_BUILD_TASK:-build}"
+    run_command "Build $app_name" "pnpm exec turbo ${turbo_task} --filter=$app_name --env-mode=loose"
 
     # Install production dependencies if requested
     if [ "$install_prod" = "true" ]; then

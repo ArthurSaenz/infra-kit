@@ -81,12 +81,13 @@ afterEach(() => {
 })
 
 describe('humanOnly catalog rows refuse --agent --yes', () => {
-  it('covers at least release deliver and vendor sync', () => {
-    expect(
-      humanOnlyRows.map((entry) => {
-        return entry.cliName
-      }),
-    ).toEqual(expect.arrayContaining(['release-deliver', 'vendor-sync']))
+  it('covers release deliver, and no longer vendor sync', () => {
+    const names = humanOnlyRows.map((entry) => {
+      return entry.cliName
+    })
+
+    expect(names).toContain('release-deliver')
+    expect(names).not.toContain('vendor-sync')
   })
 
   it.each(
