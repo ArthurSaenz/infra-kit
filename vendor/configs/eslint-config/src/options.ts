@@ -13,7 +13,7 @@ export const isKnownMode = (mode: string): boolean => {
  * resolveOptions({ boundaries: false }) // boundaries layer dropped, everything else default
  */
 export const resolveOptions = (userOptions: ConfigOptions = {}): ResolvedOptions => {
-  const { mode, ignores, boundaries, jsdoc, markdown, components, rules, userConfigs } = userOptions
+  const { mode, ignores, boundaries, jsdoc, markdown, components, shadcn, rules, userConfigs } = userOptions
 
   return {
     mode: mode ?? 'react',
@@ -22,6 +22,7 @@ export const resolveOptions = (userOptions: ConfigOptions = {}): ResolvedOptions
     jsdoc: jsdoc ?? true,
     markdown: markdown ?? true,
     components: components ?? true,
+    shadcn: shadcn ?? true,
     rules: rules ?? {},
     userConfigs: userConfigs ?? [],
   }

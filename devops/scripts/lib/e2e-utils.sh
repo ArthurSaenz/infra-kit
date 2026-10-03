@@ -61,6 +61,9 @@ run_e2e_tests() {
     install_playwright_browsers "$project"
 
     echo -e "${GREEN}Running Playwright tests...${NC}"
+    # Explicit rather than relying on CI being set: infraKitE2e then reads the deployed URL from the
+    # target's deployedUrlEnv (exported by the caller) instead of starting a local dev server.
+    export INFRA_KIT_E2E=cloud
     pnpm --filter=e2e-${project} e2e-test
 
     echo -e "${GREEN}E2E tests completed for ${project}!${NC}"

@@ -17,6 +17,7 @@ describe('options: defaults invariant', () => {
       jsdoc: true,
       markdown: true,
       components: true,
+      shadcn: true,
       rules: {},
       userConfigs: [],
     })

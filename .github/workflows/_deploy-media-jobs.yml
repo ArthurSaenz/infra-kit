@@ -16,6 +16,7 @@ env:
 jobs:
   media:
     runs-on: ubuntu-24.04-arm
+    environment: ${{ inputs.environment }}
     env:
       WORKING_DIRECTORY: ${{ github.event.inputs.workingdir }}
       CI_RUN: ${{ github.event.inputs.ci_run }}
