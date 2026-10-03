@@ -5,6 +5,7 @@ import type { Plugin, ViteDevServer } from 'vite'
 
 import type { RestartableServer } from '../dev-context/dev-context'
 import { proxySignature, watchDevContext } from '../dev-context/dev-context'
+import { mirrorOnIpv6Loopback } from '../ipv6-loopback/ipv6-loopback'
 import { hasPinnedPortConflict, mergeServerConfig } from '../server-config/server-config'
 
 /**
@@ -86,6 +87,15 @@ export const infraKit = (options: InfraKitPluginOptions = {}): Plugin => {
             'different port and registered its portless alias against THAT one. The pin wins — and the ' +
             'hero URL will 502. Remove server.port to let the runner place it.',
         )
+      }
+
+      if (server.httpServer) {
+        mirrorOnIpv6Loopback(server.httpServer, (err) => {
+          server.config.logger.warn(
+            `[infra-kit] could not also listen on [::1] (${err.code ?? err.message}). The dev server still ` +
+              'serves 127.0.0.1, but the portless alias may 502 under heavy parallel load (e.g. e2e workers).',
+          )
+        })
       }
 
       if (options.restartOnDevContextChange === false) return

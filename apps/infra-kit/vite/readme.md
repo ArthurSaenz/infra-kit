@@ -56,7 +56,7 @@ Everything [`infraKitDev`](https://www.npmjs.com/package/@slip-stream-kit/config
 | `restartOnDevContextChange` | `true` | Re-resolve the proxy and restart when the local dev set changes. `false` freezes the proxy at boot. |
 | `cwd` | `process.cwd()` | The package dir whose `infra-kit.config.ts` is loaded. |
 | `port` | dynamic | Pin the dev-server port. Overrides the runner's assignment (and will 502 the alias). |
-| `host` | `127.0.0.1` | Vite's own `localhost` default binds `[::1]` only, which the proxy cannot dial. |
+| `host` | `127.0.0.1` | Vite's own `localhost` default binds `[::1]` only, which the proxy cannot dial. On `127.0.0.1` the plugin also accepts on `[::1]` at the same port, so portless's IPv6 fallback still connects when parallel e2e load uses up the IPv4 loopback ports. |
 | `basicAuth` | from `E2E__BASIC_AUTH_*` | Credentials injected as an `Authorization` header on every route. |
 
 ## Versioning
