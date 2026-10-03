@@ -4,7 +4,22 @@ import type { AddressInfo } from 'node:net'
 import net from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import type { MirrorHandlers } from '../ipv6-loopback'
 import { mirrorOnIpv6Loopback } from '../ipv6-loopback'
+
+// Probed at module load, not in `beforeAll`: `it.skipIf` reads its condition while tests are collected.
+const hasIpv6 = await new Promise<boolean>((resolve) => {
+  const probe = net.createServer()
+
+  probe.once('error', () => {
+    resolve(false)
+  })
+  probe.listen(0, '::1', () => {
+    probe.close(() => {
+      resolve(true)
+    })
+  })
+})
 
 const servers: net.Server[] = []
 
@@ -20,24 +35,34 @@ afterEach(async () => {
   )
 })
 
-const track = <T extends net.Server>(server: T): T => {
-  servers.push(server)
+const recorder = () => {
+  const bindErrors: string[] = []
+  const errors: string[] = []
+  const handlers: MirrorHandlers = {
+    onBindError: (err) => {
+      bindErrors.push(err.code ?? err.message)
+    },
+    onError: (err) => {
+      errors.push(err.code ?? err.message)
+    },
+  }
 
-  return server
+  return { bindErrors, errors, handlers }
 }
 
-const startHttp = async (host: string, onError: (err: NodeJS.ErrnoException) => void = () => {}) => {
-  const server = track(
-    http.createServer((_req, res) => {
-      res.end('ok')
-    }),
-  )
+const startHttp = async (host: string, handlers: MirrorHandlers, port = 0) => {
+  const server = http.createServer((_req, res) => {
+    res.end('ok')
+  })
 
-  mirrorOnIpv6Loopback(server, onError)
-  server.listen(0, host)
+  servers.push(server)
+
+  const mirrored = mirrorOnIpv6Loopback(server, handlers)
+
+  server.listen(port, host)
   await once(server, 'listening')
 
-  return { server, port: (server.address() as AddressInfo).port }
+  return { server, port: (server.address() as AddressInfo).port, mirror: await mirrored }
 }
 
 const get = (host: string, port: number): Promise<string> => {
@@ -72,69 +97,60 @@ const isListening = (host: string, port: number): Promise<boolean> => {
   })
 }
 
-/** Resolves on the next tick the `::1` mirror could have bound by, so assertions don't race its `listen`. */
-const settle = (): Promise<void> => {
-  return new Promise((resolve) => {
-    setTimeout(resolve, 20)
-  })
-}
-
 describe('mirrorOnIpv6Loopback', () => {
-  it('serves the same handler on [::1] when the server is bound to 127.0.0.1', async () => {
-    const { port } = await startHttp('127.0.0.1')
-
-    await settle()
+  it.skipIf(!hasIpv6)('serves the same handler on [::1] when the server is bound to 127.0.0.1', async () => {
+    const { bindErrors, errors, handlers } = recorder()
+    const { port } = await startHttp('127.0.0.1', handlers)
 
     expect(await get('127.0.0.1', port)).toBe('ok')
     expect(await get('::1', port)).toBe('ok')
+    expect(bindErrors).toEqual([])
+    expect(errors).toEqual([])
   })
 
-  it('releases [::1] when the server closes', async () => {
-    const { server, port } = await startHttp('127.0.0.1')
+  it.skipIf(!hasIpv6)('releases [::1] as soon as close() is called', async () => {
+    const { server, port, mirror } = await startHttp('127.0.0.1', recorder().handlers)
 
-    await settle()
     servers.splice(servers.indexOf(server), 1)
-    await new Promise<void>((resolve) => {
-      server.close(() => {
-        resolve()
-      })
-    })
-    await settle()
+    server.close()
 
+    expect(mirror?.listening).toBe(false)
     expect(await isListening('::1', port)).toBe(false)
   })
 
   it('leaves a non-loopback bind alone', async () => {
-    const { port } = await startHttp('0.0.0.0')
+    const { port, mirror } = await startHttp('0.0.0.0', recorder().handlers)
 
-    await settle()
-
+    expect(mirror).toBeUndefined()
     // `0.0.0.0` is IPv4-only, so anything answering on ::1 here would be the mirror.
     expect(await isListening('::1', port)).toBe(false)
   })
 
-  it('reports a [::1] port that is already taken, and keeps serving IPv4', async () => {
-    const squatter = track(net.createServer())
+  it.skipIf(!hasIpv6)('reports a taken [::1] port as a bind error, and keeps serving IPv4', async () => {
+    const squatter = net.createServer()
 
+    servers.push(squatter)
     squatter.listen(0, '::1')
     await once(squatter, 'listening')
 
     const { port: taken } = squatter.address() as AddressInfo
-    const errors: string[] = []
-    const server = track(
-      http.createServer((_req, res) => {
-        res.end('ok')
-      }),
-    )
+    const { bindErrors, errors, handlers } = recorder()
+    const { mirror } = await startHttp('127.0.0.1', handlers, taken)
 
-    mirrorOnIpv6Loopback(server, (err) => {
-      errors.push(err.code ?? err.message)
-    })
-    server.listen(taken, '127.0.0.1')
-    await once(server, 'listening')
-    await settle()
-
-    expect(errors).toEqual(['EADDRINUSE'])
+    expect(mirror).toBeUndefined()
+    expect(bindErrors).toEqual(['EADDRINUSE'])
+    expect(errors).toEqual([])
     expect(await get('127.0.0.1', taken)).toBe('ok')
+  })
+
+  it.skipIf(!hasIpv6)('reports an error after listening without throwing', async () => {
+    const { bindErrors, errors, handlers } = recorder()
+    const { port, mirror } = await startHttp('127.0.0.1', handlers)
+
+    mirror?.emit('error', Object.assign(new Error('boom'), { code: 'EMFILE' }))
+
+    expect(errors).toEqual(['EMFILE'])
+    expect(bindErrors).toEqual([])
+    expect(await get('::1', port)).toBe('ok')
   })
 })

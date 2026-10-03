@@ -90,11 +90,21 @@ export const infraKit = (options: InfraKitPluginOptions = {}): Plugin => {
       }
 
       if (server.httpServer) {
-        mirrorOnIpv6Loopback(server.httpServer, (err) => {
-          server.config.logger.warn(
-            `[infra-kit] could not also listen on [::1] (${err.code ?? err.message}). The dev server still ` +
-              'serves 127.0.0.1, but the portless alias may 502 under heavy parallel load (e.g. e2e workers).',
-          )
+        const { logger } = server.config
+
+        void mirrorOnIpv6Loopback(server.httpServer, {
+          // Only a taken port is worth a warning; a host without IPv6 (EADDRNOTAVAIL/EAFNOSUPPORT) would
+          // otherwise warn on every start and restart.
+          onBindError: (err) => {
+            if (err.code !== 'EADDRINUSE') return
+            logger.warn(
+              '[infra-kit] [::1] is taken on the dev-server port, so portless’s IPv6 fallback reaches that ' +
+                'process instead — the alias may 502 under heavy parallel load (e.g. e2e workers).',
+            )
+          },
+          onError: (err) => {
+            logger.warn(`[infra-kit] [::1] dev-server listener: ${err.code ?? err.message}`)
+          },
         })
       }
 
