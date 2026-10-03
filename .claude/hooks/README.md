@@ -85,7 +85,7 @@ command trips two guards, the one about secrets is worth showing).
 | `destructive` | block | `rm -rf`, bare `git push --force`, SQL `drop`/`truncate` |
 | `package-manager` | block | `npm` / `yarn` / `npx` in a pnpm workspace |
 | `style` | advise | prefer `rg` over `grep`, over `find -name` |
-| `dev-server` | block | `pnpm dev` / `ik dev` — servers are the human's to start; agents read `ik dev-status` |
+| `dev-server` | block / advise | blocks `pnpm dev` (use `ik dev`); advises on `ik dev` — background it, name an app, read `ik dev-status` |
 | `worktree` | block / advise | raw `git worktree add\|remove`; advises on `list` |
 
 A guard may declare `scope = 'segment'` to be run per shell segment, so its `^`-anchored regex still

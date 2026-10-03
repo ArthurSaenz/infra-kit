@@ -253,27 +253,27 @@
   },
   {
     "command": "ik dev",
-    "blocked": true,
-    "advised": false,
-    "signal": "block:dev-server"
+    "blocked": false,
+    "advised": true,
+    "signal": "advise:dev-server"
   },
   {
     "command": "pnpm exec infra-kit dev --watch",
-    "blocked": true,
-    "advised": false,
-    "signal": "block:dev-server"
+    "blocked": false,
+    "advised": true,
+    "signal": "advise:dev-server"
   },
   {
     "command": "pnpm infra-kit dev",
-    "blocked": true,
-    "advised": false,
-    "signal": "block:dev-server"
+    "blocked": false,
+    "advised": true,
+    "signal": "advise:dev-server"
   },
   {
     "command": "cd apps/client && ik dev",
-    "blocked": true,
-    "advised": false,
-    "signal": "block:dev-server"
+    "blocked": false,
+    "advised": true,
+    "signal": "advise:dev-server"
   },
   {
     "command": "ik dev-status --json --agent",

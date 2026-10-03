@@ -131,28 +131,35 @@ export const style = {
 
 // ------------------------------------------------------------------ dev-server
 
-// `ik dev` is a TTY product: from an agent's non-TTY Bash it skips the wizard and starts real
-// servers nobody is watching — and consumers wire `pnpm dev` to it, so both spellings are one action.
+// Agents start dev servers through `ik dev` only: its ports are per-worktree, so a run in a feature
+// worktree never collides with the human's checkout. `pnpm dev` is blocked because consumers' scripts
+// behind it vary per package (`vite`, `vike dev`, a bare turbo run) and skip that port allocation.
+// From a non-TTY Bash `ik dev` skips the wizard and starts every app, and it never exits — hence the
+// advice to name an app and background it.
 // `(?=[\s:]|$)` keeps `dev-status` (the read-only probe) and `devtools` out while `dev:client` stays in.
-// Known limits, carried over from the guard this replaced: `pnpm --filter x dev`, `turbo run dev` and
-// `./node_modules/.bin/ik dev` are not head-matched; and the quote-blind splitter makes
-// `echo "a; pnpm dev --watch"` a block (same trade the package-manager guard accepts).
+// Known limits: `pnpm --filter x dev`, `turbo run dev` and `./node_modules/.bin/ik dev` are not
+// head-matched; and the quote-blind splitter makes `echo "a; pnpm dev --watch"` a block (same trade
+// the package-manager guard accepts).
 const RE_PNPM_DEV = new RegExp(String.raw`${HEAD_PREFIX}pnpm\s+(run\s+)?dev(?=[\s:]|$)`, 'i');
 const RE_IK_DEV = new RegExp(String.raw`${HEAD_PREFIX}(pnpm\s+(exec\s+)?)?(infra-kit|ik)\s+dev(?=[\s:]|$)`, 'i');
 
-const DEV_SERVER_MESSAGE = [
-  'Dev servers are started by the human, in their own terminal: `ik dev` (TUI; `--orca` for a pane per app).',
-  'From here, read the running session instead: `ik dev-status --json --agent`.',
+const PNPM_DEV_MESSAGE = [
+  'Start dev servers through infra-kit, not `pnpm dev`: `ik dev <app|preset>` (or `infra-kit dev …`).',
+  'It allocates this worktree’s own ports, so it never collides with another checkout.',
+].join('\n');
+
+const IK_DEV_CONTEXT = [
+  '`ik dev` never exits: run it with `run_in_background: true`, and name an app or preset',
+  '(`ik dev client`) — with no name a non-TTY run starts every app.',
+  'Read URLs and health with `ik dev-status --json --agent`; stop it with TaskStop when done.',
 ].join('\n');
 
 export const devServer = {
   name: 'dev-server',
   scope: 'segment',
   check(command) {
-    if (RE_PNPM_DEV.test(command) || RE_IK_DEV.test(command)) {
-      return { action: 'block', message: DEV_SERVER_MESSAGE };
-    }
-
+    if (RE_IK_DEV.test(command)) return { action: 'advise', context: IK_DEV_CONTEXT };
+    if (RE_PNPM_DEV.test(command)) return { action: 'block', message: PNPM_DEV_MESSAGE };
     return null;
   },
 };
@@ -189,13 +196,16 @@ export const GUARDS = [doppler, destructive, packageManager, style, devServer, w
 
 const decide = (guard, command, segments) => {
   const inputs = guard.scope === 'segment' ? segments : [command];
+  let advice = null;
 
+  // A later segment's block must win over an earlier one's advice: `ik dev && pnpm dev`.
   for (const text of inputs) {
     const decision = guard.check(text);
-    if (decision) return decision;
+    if (decision?.action === 'block') return decision;
+    advice ??= decision;
   }
 
-  return null;
+  return advice;
 };
 
 const main = () => {

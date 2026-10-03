@@ -16,7 +16,7 @@ const IDENTITY = [
   ['doppler', /doppler secrets/],
   ['destructive', /recursive force-remove|force push|destructive SQL/],
   ['package-manager', /pnpm workspace/],
-  ['dev-server', /Dev servers are started by the human/],
+  ['dev-server', /Start dev servers through infra-kit|`ik dev` never exits/],
   ['worktree', /ik worktrees (add|list)/],
   ['style', /ripgrep|find -name/],
 ];

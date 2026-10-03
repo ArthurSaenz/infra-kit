@@ -171,11 +171,16 @@ test('style: advises (never blocks) on grep/find, stays quiet on piped grep', ()
   assert.equal(action(style.check('rg foo')), null);
 });
 
-test('dev-server: blocks every spelling that starts servers, allows the status probe', () => {
+test('dev-server: blocks `pnpm dev`, advises every infra-kit spelling, ignores the status probe', () => {
   for (const command of [
     'pnpm dev',
     'pnpm run dev',
     'pnpm dev:client', // `:` lookahead: script variants are still servers
+  ]) {
+    assert.equal(action(devServer.check(command)), 'block', command);
+  }
+
+  for (const command of [
     'ik dev',
     'ik dev --watch',
     'infra-kit dev api',
@@ -183,7 +188,7 @@ test('dev-server: blocks every spelling that starts servers, allows the status p
     'pnpm infra-kit dev', // every doctor INVOCATION spelling
     'env FOO=1 ik dev', // wrapper words via HEAD_PREFIX
   ]) {
-    assert.equal(action(devServer.check(command)), 'block', command);
+    assert.equal(action(devServer.check(command)), 'advise', command);
   }
 
   for (const command of [
@@ -230,7 +235,8 @@ test('bash-guard blocks when any guard blocks (exit 2)', () => {
     'git push origin main --force',
     'npm install',
     'pnpm dev',
-    'ik dev',
+    'ik dev && pnpm dev', // a later segment's block beats an earlier segment's advice
+    'git worktree list && git worktree add ../adhoc',
     'cd apps/client && pnpm dev', // segment-scoped now: the guard no longer segments itself
     'git worktree add ../repo-worktrees/feat',
     'rm -rf /tmp/x && npm install', // multiple guards -> first block wins
@@ -278,6 +284,14 @@ test('bash-guard advises on git worktree list (exit 0 + additionalContext)', () 
   const res = runHook('bash-guard.mjs', bash('git worktree list'));
   assert.equal(res.status, 0);
   assert.match(res.stdout, /additionalContext/);
+});
+
+test('bash-guard lets agents run `ik dev`, advising a background run', () => {
+  for (const command of ['ik dev client', 'cd ../repo-worktrees/feature/x && pnpm exec infra-kit dev']) {
+    const res = runHook('bash-guard.mjs', bash(command));
+    assert.equal(res.status, 0, command);
+    assert.match(res.stdout, /run_in_background/, command);
+  }
 });
 
 test('bash-guard ignores non-Bash tools and fails open on malformed input', () => {
