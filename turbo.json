@@ -41,7 +41,9 @@
       "outputs": ["storybook-static/**"]
     },
     "e2e-test": {
-      "dependsOn": ["playwright-install", "^build"]
+      "dependsOn": ["playwright-install", "^build"],
+      "cache": false,
+      "passThroughEnv": ["*"]
     },
     "playwright-install": {
       "cache": false
