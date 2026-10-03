@@ -51,6 +51,15 @@ helper cannot do: it re-resolves the proxy while the server is up, so a backend 
 frontend flips its route from `cloud` to `local` on its own. The helper here stays supported — use it
 when you want the raw `server` block.
 
+`dev.env` in `infra-kit.config.ts` adjusts the env the dev server sees, applied when vite serves (never on
+`build`). Use it for a loaded variable meant for another build mode that breaks local dev:
+
+```ts
+// apps/client/ui/infra-kit.config.ts — VITE_ORIGIN_DOMAIN is for vite.mobile.config.ts; on web it sends
+// requests cross-origin around the dev proxy
+export default defineConfig(() => ({ dev: { env: { unset: ['VITE_ORIGIN_DOMAIN'] } } }))
+```
+
 ```ts
 // apps/<app>/tests/playwright.config.ts — the package's infra-kit.config.ts declares `e2e: { target: '<app>/ui' }`,
 // and the target's own infra-kit.config.ts declares `deployedUrlEnv` (e.g. `CLIENT_URL`)

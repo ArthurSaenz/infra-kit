@@ -78,6 +78,22 @@ export const packageConfigSchema = z
             ),
           })
           .optional(),
+        env: z
+          .strictObject({
+            unset: z.array(z.string().regex(ENV_VAR_NAME, 'dev.env.unset entries must be env var names')).optional(),
+            set: z
+              .record(z.string().regex(ENV_VAR_NAME, 'dev.env.set keys must be env var names'), z.string())
+              .optional(),
+          })
+          .refine(
+            (env) => {
+              return !env.unset?.some((name) => {
+                return env.set?.[name] !== undefined
+              })
+            },
+            { message: 'a variable cannot be in both `dev.env.unset` and `dev.env.set`' },
+          )
+          .optional(),
       })
       .optional(),
     e2e: z

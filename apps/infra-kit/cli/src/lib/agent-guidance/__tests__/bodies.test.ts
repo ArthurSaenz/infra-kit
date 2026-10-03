@@ -48,7 +48,7 @@ const body = (type: PackageType, overrides: { hasReadme?: boolean; hasDesign?: b
  * rather than behind a skill.
  */
 const LINE_COUNTS: Readonly<Record<PackageType, number>> = {
-  frontend: 24,
+  frontend: 25,
   backend: 23,
   lib: 24,
   e2e: 68,
