@@ -311,3 +311,28 @@ describe('packageConfigSchema — e2e', () => {
     expect(issue?.message).toMatch(/`e2e\.cloud` was removed: .*`deployedUrlEnv`/)
   })
 })
+
+describe('packageConfigSchema — dev.env', () => {
+  it('accepts unset and set', () => {
+    const result = packageConfigSchema.safeParse({
+      dev: { env: { unset: ['VITE_ORIGIN_DOMAIN'], set: { VITE_FEATURE_X: 'on' } } },
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects a name that is not an env var name', () => {
+    expect(packageConfigSchema.safeParse({ dev: { env: { unset: ['vite-origin'] } } }).success).toBe(false)
+    expect(packageConfigSchema.safeParse({ dev: { env: { set: { 'a b': 'x' } } } }).success).toBe(false)
+  })
+
+  it('rejects a variable that is both unset and set', () => {
+    const result = packageConfigSchema.safeParse({ dev: { env: { unset: ['X'], set: { X: '1' } } } })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects an unknown key inside dev.env (strict)', () => {
+    expect(packageConfigSchema.safeParse({ dev: { env: { remove: ['X'] } } }).success).toBe(false)
+  })
+})

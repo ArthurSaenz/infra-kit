@@ -89,6 +89,23 @@ export interface InfraKitDevProxy {
 
 export interface InfraKitDev {
   proxy?: InfraKitDevProxy
+  env?: InfraKitDevEnv
+}
+
+/**
+ * Env overrides for this package's dev server only, applied over the loaded (Doppler) env when vite starts
+ * it — never on `build`. For variables another build mode needs that break local dev, e.g. a mobile-only
+ * absolute origin that sends requests around the dev proxy.
+ *
+ * @example
+ * // apps/client/ui/infra-kit.config.ts
+ * export default defineConfig(() => ({ dev: { env: { unset: ['VITE_ORIGIN_DOMAIN'] } } }))
+ */
+export interface InfraKitDevEnv {
+  /** Variables removed from the dev server's env. */
+  unset?: string[]
+  /** Variables set (or overridden) in the dev server's env. A name cannot also be in `unset`. */
+  set?: Record<string, string>
 }
 
 /**

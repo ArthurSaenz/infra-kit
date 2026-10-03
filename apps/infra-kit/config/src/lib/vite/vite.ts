@@ -8,6 +8,7 @@ import { z } from 'zod'
 
 import type {
   InfraKitDev,
+  InfraKitDevEnv,
   InfraKitDevProxy,
   InfraKitDevProxyRoute,
   InfraKitDevProxySource,
@@ -138,6 +139,11 @@ export interface InfraKitDevOptions {
    * fail-fast on a cloud route with no sourced env. Omit (or `'serve'`) for the dev-server config.
    */
   command?: 'build' | 'serve'
+  /**
+   * Apply the package's `dev.env` to `process.env` (see {@link applyDevEnv}). Default `true`. The plugin passes
+   * `false` under vitest, which also runs `serve` config hooks but must see the env the tests were given.
+   */
+  applyDevEnv?: boolean
   /**
    * Explicit dev-server port. Omit for a **per-worktree dynamic** free port (a fresh OS-assigned
    * port) so N simultaneous git worktrees never collide on Vite's default `5173`; Vite prints the
@@ -608,6 +614,20 @@ export const readCloudOrigin = (envVar: string | undefined, env: NodeJS.ProcessE
 }
 
 /**
+ * Apply a package's `dev.env` to `env` in place. It has to be this process's env rather than the spawn's:
+ * `infra-kit dev` runs every UI under ONE turbo child, so only the UI's own vite process can tell them apart.
+ * Vite runs config hooks before `loadEnv`, so a change made here reaches `import.meta.env`. `unset` only
+ * removes the inherited variable: a value in the package's `.env` files still reaches `import.meta.env`.
+ */
+export const applyDevEnv = (devEnv: InfraKitDevEnv | undefined, env: NodeJS.ProcessEnv = process.env): void => {
+  for (const name of devEnv?.unset ?? []) {
+    delete env[name]
+  }
+
+  Object.assign(env, devEnv?.set)
+}
+
+/**
  * Load and validate a package's `infra-kit.config.ts`, or `undefined` when it is absent. The `.ts` config is
  * evaluated via Node's native type stripping (Node >= 24) — the same mechanism the CLI's config loader uses.
  * Cache-busted by mtime so repeated dev-server reloads pick up edits.
@@ -941,6 +961,7 @@ export interface InfraKitViteWs {
  * from the `.infra-kit/dev-context/` fragment directory, and interpolates the local/cloud templates.
  * `<env>` comes from `INFRA_KIT_ENV`; `<release>` from each package's runner-recorded fragment when
  * present, else the slugified git branch (computed lazily, only when a local route needs it).
+ * The package's `dev.env` is applied to `process.env` first (see {@link applyDevEnv}).
  *
  * `port` defaults to a fresh OS-assigned free port so simultaneous git worktrees never collide on
  * Vite's `5173` (override via `options.port`). `host` defaults to {@link LOOPBACK_V4} so the portless
@@ -986,6 +1007,7 @@ export const infraKitDev = async (
   const dev = config?.dev
 
   warnIfNonHttpsLocalTemplate(dev, path.join(cwd, PACKAGE_CONFIG_FILE))
+  if (options.applyDevEnv !== false) applyDevEnv(dev?.env)
 
   if (!dev?.proxy) return { ...server, proxy: {} }
 

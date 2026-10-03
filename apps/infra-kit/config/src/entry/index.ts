@@ -10,6 +10,7 @@
 export { defineConfig } from '../lib/package-config/package-config'
 export type {
   InfraKitDev,
+  InfraKitDevEnv,
   InfraKitDevProxy,
   InfraKitDevProxyRoute,
   InfraKitDevProxySource,

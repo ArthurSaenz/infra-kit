@@ -350,7 +350,7 @@ export default defineConfig({
     const result = await validatePackage(dir, undefined, { repoRoot: root })
 
     expect(result.passed).toBe(true)
-    expect(e2eNames(result.checks)).toHaveLength(Object.keys(E2E_SCRIPTS).length + 6)
+    expect(e2eNames(result.checks)).toHaveLength(Object.keys(E2E_SCRIPTS).length + 7)
   })
 
   it('fails the package when a shared script drifts or the config lacks slow motion', async () => {

@@ -10,6 +10,7 @@ import type { InfraKitDevProxy } from '../../package-config/package-config'
 import type { CloudOrigin, InfraKitViteProxyEntry, LocalPackageInfo } from '../vite'
 import {
   DEV_CONTEXT_WIRE_VERSION,
+  applyDevEnv,
   describeProxyRoutes,
   infraKitDev,
   readCloudOrigin,
@@ -1221,5 +1222,87 @@ describe('readCloudOrigin', () => {
       envVar: undefined,
       url: undefined,
     })
+  })
+})
+
+describe('applyDevEnv', () => {
+  it('removes an unset variable', () => {
+    const env: NodeJS.ProcessEnv = { VITE_ORIGIN_DOMAIN: 'https://www.example.com', KEEP: '1' }
+
+    applyDevEnv({ unset: ['VITE_ORIGIN_DOMAIN'] }, env)
+
+    expect(env).toEqual({ KEEP: '1' })
+  })
+
+  it('overrides a set variable and adds a missing one', () => {
+    const env: NodeJS.ProcessEnv = { VITE_API: 'https://cloud.example.com' }
+
+    applyDevEnv({ set: { VITE_API: '/api', VITE_NEW: 'x' } }, env)
+
+    expect(env).toEqual({ VITE_API: '/api', VITE_NEW: 'x' })
+  })
+
+  it('changes nothing when dev.env is absent', () => {
+    const env: NodeJS.ProcessEnv = { VITE_ORIGIN_DOMAIN: 'https://www.example.com' }
+
+    applyDevEnv(undefined, env)
+
+    expect(env).toEqual({ VITE_ORIGIN_DOMAIN: 'https://www.example.com' })
+  })
+})
+
+describe('infraKitDev (dev.env)', () => {
+  const original = process.env.IK_TEST_ORIGIN
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.IK_TEST_ORIGIN
+    else process.env.IK_TEST_ORIGIN = original
+  })
+
+  const writeConfig = (body: string): string => {
+    const pkg = fs.mkdtempSync(path.join(os.tmpdir(), 'ik-vite-env-'))
+
+    fs.writeFileSync(path.join(pkg, 'infra-kit.config.ts'), `export default ${body}\n`)
+
+    return pkg
+  }
+
+  it('applies the package dev.env to the dev server process on serve', async () => {
+    process.env.IK_TEST_ORIGIN = 'https://www.example.com'
+    const pkg = writeConfig("{ dev: { env: { unset: ['IK_TEST_ORIGIN'] } } }")
+
+    try {
+      await infraKitDev({ cwd: pkg, command: 'serve' })
+
+      expect(process.env.IK_TEST_ORIGIN).toBeUndefined()
+    } finally {
+      fs.rmSync(pkg, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves the env alone when asked not to apply it', async () => {
+    process.env.IK_TEST_ORIGIN = 'https://www.example.com'
+    const pkg = writeConfig("{ dev: { env: { unset: ['IK_TEST_ORIGIN'] } } }")
+
+    try {
+      await infraKitDev({ cwd: pkg, command: 'serve', applyDevEnv: false })
+
+      expect(process.env.IK_TEST_ORIGIN).toBe('https://www.example.com')
+    } finally {
+      fs.rmSync(pkg, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves the env alone on build', async () => {
+    process.env.IK_TEST_ORIGIN = 'https://www.example.com'
+    const pkg = writeConfig("{ dev: { env: { unset: ['IK_TEST_ORIGIN'] } } }")
+
+    try {
+      await infraKitDev({ cwd: pkg, command: 'build' })
+
+      expect(process.env.IK_TEST_ORIGIN).toBe('https://www.example.com')
+    } finally {
+      fs.rmSync(pkg, { recursive: true, force: true })
+    }
   })
 })

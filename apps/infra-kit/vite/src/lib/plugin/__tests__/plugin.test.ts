@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import type { ConfigEnv, UserConfig } from 'vite'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -17,10 +19,14 @@ const LOCAL_ORIGIN = 'https://main.client-api.localhost'
  * Call the plugin's `config` hook the way vite does. It is declared as a plain function (not the
  * `{ handler }` object form), so the cast narrows an `ObjectHook` union rather than inventing a shape.
  */
-const runConfigHook = async (options: InfraKitPluginOptions, userConfig: UserConfig = {}): Promise<UserConfig> => {
+const runConfigHook = async (
+  options: InfraKitPluginOptions,
+  userConfig: UserConfig = {},
+  env: ConfigEnv = SERVE,
+): Promise<UserConfig> => {
   const hook = infraKit(options).config as (config: UserConfig, env: ConfigEnv) => Promise<UserConfig>
 
-  return hook(userConfig, SERVE)
+  return hook(userConfig, env)
 }
 
 describe('infraKit', () => {
@@ -100,5 +106,43 @@ describe('infraKit', () => {
     } finally {
       delete process.env.INFRA_KIT_UI_PORTS
     }
+  })
+
+  describe('dev.env', () => {
+    const withDevEnv = (): string => {
+      const repo = createRepo()
+      const configFile = path.join(repo.dir, 'infra-kit.config.ts')
+
+      fs.writeFileSync(
+        configFile,
+        fs.readFileSync(configFile, 'utf-8').replace('dev: {', "dev: {\n    env: { unset: ['IK_TEST_DEV_ENV'] },"),
+      )
+
+      return repo.dir
+    }
+
+    afterEach(() => {
+      delete process.env.IK_TEST_DEV_ENV
+    })
+
+    it('applies the package dev.env when vite serves', async () => {
+      const dir = withDevEnv()
+
+      process.env.CLIENT_URL = 'https://dev.example.test'
+      process.env.IK_TEST_DEV_ENV = 'set'
+      await runConfigHook({ cwd: dir })
+
+      expect(process.env.IK_TEST_DEV_ENV).toBeUndefined()
+    })
+
+    it('leaves the env alone under vitest (mode `test`)', async () => {
+      const dir = withDevEnv()
+
+      process.env.CLIENT_URL = 'https://dev.example.test'
+      process.env.IK_TEST_DEV_ENV = 'set'
+      await runConfigHook({ cwd: dir }, {}, { command: 'serve', mode: 'test' })
+
+      expect(process.env.IK_TEST_DEV_ENV).toBe('set')
+    })
   })
 })
