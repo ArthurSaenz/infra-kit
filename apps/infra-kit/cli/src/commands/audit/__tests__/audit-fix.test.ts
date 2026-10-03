@@ -45,6 +45,7 @@ const EXPECTED_TYPES: Readonly<Record<(typeof FIXTURE_PACKAGES)[number], string>
 
 const E2E_PLAYWRIGHT_CONFIG = `
 const SLOW_MO = Number(process.env.E2E_SLOW_MO ?? 0)
+const e2e = await infraKitE2e({ dir: import.meta.dirname })
 export default defineConfig({
   timeout: 30_000 + SLOW_MO * 100,
   use: { launchOptions: { slowMo: SLOW_MO }, trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure' },

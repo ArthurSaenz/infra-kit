@@ -181,9 +181,18 @@ Run categories are tags (\`{ tag: [...] }\`), never file names. Only these four 
 - \`@mocked\` — every backend call is mocked; runs without a live API.
 - \`@slow\` — excluded from local runs with \`--grep-invert @slow\`.
 
-Never tag a browser, device, or environment, and never add \`@flaky\`; fix the test or skip it with a linked issue.
+Never tag a browser, device, or environment, and never add \`@flaky\`; fix the test, or skip it with a linked issue once a person approves (see Repair).
 
-Lint enforces the mechanical part: \`@wl/e2e-file-layout\` the Structure folders and the \`.spec.ts\` suffix, \`@wl/e2e-file-order\` imports first and then the class, the \`extend\` call, the \`test.*\` calls, the mock function or a \`lib/\` file's exports — constants and helpers below, \`@wl/e2e-page-object-member-order\` fields → constructor → getters → public → private methods, \`@wl/e2e-top-level-describe\` one top-level describe holding the setup, hooks and tests, \`@wl/e2e-describe-order\` setup → hooks → tests inside it, \`@wl/e2e-test-tags\` the tag list, \`@wl/e2e-test-title\` the missing \`should\`. The rest of Naming — \`describe\` in Title Case, no ticket ids, outcome-bearing titles, \`test.step\` wording — is on the author and the reviewer."
+Lint enforces the mechanical part: \`@wl/e2e-file-layout\` the Structure folders and the \`.spec.ts\` suffix, \`@wl/e2e-file-order\` imports first and then the class, the \`extend\` call, the \`test.*\` calls, the mock function or a \`lib/\` file's exports — constants and helpers below, \`@wl/e2e-page-object-member-order\` fields → constructor → getters → public → private methods, \`@wl/e2e-top-level-describe\` one top-level describe holding the setup, hooks and tests, \`@wl/e2e-describe-order\` setup → hooks → tests inside it, \`@wl/e2e-test-tags\` the tag list, \`@wl/e2e-test-title\` the missing \`should\`. The rest of Naming — \`describe\` in Title Case, no ticket ids, outcome-bearing titles, \`test.step\` wording — is on the author and the reviewer.
+
+## Repair
+
+For a failing spec, before editing anything:
+
+- Classify the failure: product defect, intentional product change, test defect, test data or environment, or flake. Say which, and why, in the change.
+- Diagnose from \`infra-kit e2e --json\`: read \`failures[]\` (title, \`file:line\`, error) and open its \`tracePath\` with \`pnpm exec playwright show-trace\`, rather than reading the full log. Re-run one test with \`infra-kit e2e --json -- <spec> --grep "<title>"\`.
+- Never take the expected behaviour from what the UI shows now. It comes from the spec's intent, the ticket, or a person; when it is unclear, stop and report instead of editing.
+- Never without a person's explicit approval: delete or weaken an assertion, add \`test.skip\` / \`test.fixme\` / \`test.fail\`, update a snapshot or visual baseline, widen a timeout, or add retries. A product defect is reported, not tested around."
 `;
 
 exports[`guidance bodies — characterization snapshot > renders the e2e body without a README 1`] = `
@@ -242,9 +251,18 @@ Run categories are tags (\`{ tag: [...] }\`), never file names. Only these four 
 - \`@mocked\` — every backend call is mocked; runs without a live API.
 - \`@slow\` — excluded from local runs with \`--grep-invert @slow\`.
 
-Never tag a browser, device, or environment, and never add \`@flaky\`; fix the test or skip it with a linked issue.
+Never tag a browser, device, or environment, and never add \`@flaky\`; fix the test, or skip it with a linked issue once a person approves (see Repair).
 
-Lint enforces the mechanical part: \`@wl/e2e-file-layout\` the Structure folders and the \`.spec.ts\` suffix, \`@wl/e2e-file-order\` imports first and then the class, the \`extend\` call, the \`test.*\` calls, the mock function or a \`lib/\` file's exports — constants and helpers below, \`@wl/e2e-page-object-member-order\` fields → constructor → getters → public → private methods, \`@wl/e2e-top-level-describe\` one top-level describe holding the setup, hooks and tests, \`@wl/e2e-describe-order\` setup → hooks → tests inside it, \`@wl/e2e-test-tags\` the tag list, \`@wl/e2e-test-title\` the missing \`should\`. The rest of Naming — \`describe\` in Title Case, no ticket ids, outcome-bearing titles, \`test.step\` wording — is on the author and the reviewer."
+Lint enforces the mechanical part: \`@wl/e2e-file-layout\` the Structure folders and the \`.spec.ts\` suffix, \`@wl/e2e-file-order\` imports first and then the class, the \`extend\` call, the \`test.*\` calls, the mock function or a \`lib/\` file's exports — constants and helpers below, \`@wl/e2e-page-object-member-order\` fields → constructor → getters → public → private methods, \`@wl/e2e-top-level-describe\` one top-level describe holding the setup, hooks and tests, \`@wl/e2e-describe-order\` setup → hooks → tests inside it, \`@wl/e2e-test-tags\` the tag list, \`@wl/e2e-test-title\` the missing \`should\`. The rest of Naming — \`describe\` in Title Case, no ticket ids, outcome-bearing titles, \`test.step\` wording — is on the author and the reviewer.
+
+## Repair
+
+For a failing spec, before editing anything:
+
+- Classify the failure: product defect, intentional product change, test defect, test data or environment, or flake. Say which, and why, in the change.
+- Diagnose from \`infra-kit e2e --json\`: read \`failures[]\` (title, \`file:line\`, error) and open its \`tracePath\` with \`pnpm exec playwright show-trace\`, rather than reading the full log. Re-run one test with \`infra-kit e2e --json -- <spec> --grep "<title>"\`.
+- Never take the expected behaviour from what the UI shows now. It comes from the spec's intent, the ticket, or a person; when it is unclear, stop and report instead of editing.
+- Never without a person's explicit approval: delete or weaken an assertion, add \`test.skip\` / \`test.fixme\` / \`test.fail\`, update a snapshot or visual baseline, widen a timeout, or add retries. A product defect is reported, not tested around."
 `;
 
 exports[`guidance bodies — characterization snapshot > renders the frontend body with a README 1`] = `

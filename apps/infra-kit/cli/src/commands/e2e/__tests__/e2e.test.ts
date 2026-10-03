@@ -255,6 +255,83 @@ describe('e2e — local (the default)', () => {
   })
 })
 
+describe('e2e — per-test results for a machine reader', () => {
+  const REPORT = fs.readFileSync(path.join(import.meta.dirname, 'fixtures/playwright-report.json'), 'utf8')
+
+  beforeEach(() => {
+    agentMode.source = 'flag'
+  })
+
+  it('injects the JSON reporter, points it at a temp file, and returns its failures', async () => {
+    registerUi(await viteServer())
+
+    let reportFile = ''
+    const runPlaywright = vi.fn(async (_target: E2eTarget, _args: string[], env: Record<string, string>) => {
+      reportFile = env.PLAYWRIGHT_JSON_OUTPUT_FILE ?? ''
+      fs.writeFileSync(reportFile, REPORT)
+
+      return 1
+    })
+    const result = await e2e({ playwrightArgs: ['src/tests/checkout'] }, deps({}, { runPlaywright }))
+
+    expect(runPlaywright.mock.calls[0]?.[1]).toEqual(['--reporter=line,json', 'src/tests/checkout'])
+    expect(runPlaywright.mock.calls[0]?.[2]).toEqual({
+      PLAYWRIGHT_JSON_OUTPUT_FILE: reportFile,
+      PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile,
+    })
+    expect(result.structuredContent).toMatchObject({
+      exitCode: 1,
+      report: 'collected',
+      summary: { expected: 1, unexpected: 1, flaky: 1, skipped: 1 },
+    })
+    expect(
+      result.structuredContent.failures.map((failure) => {
+        return failure.tracePath
+      }),
+    ).toEqual([
+      '/repo/apps/client/tests/test-results/coupon/trace.zip',
+      '/repo/apps/client/tests/test-results/apply/trace.zip',
+    ])
+    expect(fs.existsSync(reportFile)).toBe(false)
+  })
+
+  it('leaves a caller-chosen reporter alone and says no report was collected', async () => {
+    registerUi(await viteServer())
+
+    const runPlaywright = vi.fn(async () => {
+      return 0
+    })
+    const result = await e2e({ playwrightArgs: ['--reporter=dot'] }, deps({}, { runPlaywright }))
+
+    expect(runPlaywright.mock.calls[0]).toEqual([expect.anything(), ['--reporter=dot'], {}])
+    expect(result.structuredContent).toMatchObject({ report: 'caller-reporter', summary: null, failures: [] })
+  })
+
+  it('reports the results unavailable when Playwright wrote no report, without failing the call', async () => {
+    registerUi(await viteServer())
+
+    const runPlaywright = vi.fn(async () => {
+      return 1
+    })
+    const result = await e2e({}, deps({}, { runPlaywright }))
+
+    expect(result.structuredContent).toMatchObject({ exitCode: 1, report: 'unavailable', summary: null, failures: [] })
+  })
+
+  it('injects nothing for a human at a terminal', async () => {
+    agentMode.source = null
+    registerUi(await viteServer())
+
+    const runPlaywright = vi.fn(async () => {
+      return 0
+    })
+    const result = await e2e({ playwrightArgs: ['src/tests/checkout'] }, deps({}, { runPlaywright }))
+
+    expect(runPlaywright.mock.calls[0]).toEqual([expect.anything(), ['src/tests/checkout'], {}])
+    expect(result.structuredContent.report).toBe('off')
+  })
+})
+
 describe('e2e — --cloud', () => {
   it('uses the loaded CLIENT_URL at INFRA_KIT_ENV, even when this worktree serves the target', async () => {
     registerUi(await viteServer())
