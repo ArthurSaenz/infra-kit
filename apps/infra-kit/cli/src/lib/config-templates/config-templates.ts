@@ -19,8 +19,8 @@ export const CONFIG_STUB = '{}\n'
 
 // The documented key set, shared verbatim by the layer-2 (user-global) and layer-3
 // (user-project) examples so the two can never disagree about what the schema is.
-// Covers ALL ten top-level keys of `infraKitConfigObject` — `config-templates.test.ts`
-// fails the build if an eleventh is added to the schema and not documented here.
+// Covers ALL eleven top-level keys of `infraKitConfigObject` — `config-templates.test.ts`
+// fails the build if a twelfth is added to the schema and not documented here.
 //
 // Every line is a `//` comment: the surrounding braces are the only live JSON, so the
 // file always parses to `{}` once the comments are stripped.
@@ -136,6 +136,14 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   //   "turbo": { "requiredTasks": ["build", "test"] }
   // }
   //
+  // // The <repo> label of the dev host \`<release>.<package>.<repo>.localhost\`, in place of the main
+  // // checkout's directory name. A DNS label: a-z, 0-9 and inner "-".
+  // //
+  // // PROJECT LAYER ONLY. REFUSED here and in the per-project override — the vite and Playwright
+  // // helpers read it from the committed infra-kit.json alone, so a per-machine copy would register a
+  // // dev host they never aim at.
+  // "aliasRepo": "trvl"
+  //
   // // Doppler SERVICE TOKENS are not a config key and never belong in this file. They live in
   // // tokens.json — a SIBLING of this file, at ~/.infra-kit/projects/<repo>/tokens.json (mode 0600) —
   // // shaped { "envs": { "<env>": "dp.st…" } }. Write it with \`infra-kit env-token-set <env>\` (which
@@ -164,7 +172,7 @@ export const buildUserGlobalExample = (): string => {
 // Merge is shallow: setting a top-level key replaces that whole section from
 // layer 1. Arrays do not concatenate. Top-level keys recognized:
 // envManagement, ide, taskManager, worktrees, dev, devServersPresets,
-// protectedEnvs, mcp, vendorSource, audit (the last three project layer only). The schema is strict — an
+// protectedEnvs, mcp, vendorSource, audit, aliasRepo (the last four project layer only). The schema is strict — an
 // unrecognized top-level key is a parse error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real global
@@ -197,7 +205,7 @@ export const buildUserProjectExample = (projectName: string): string => {
 // <repo>/infra-kit.json (layer 1) and ~/.infra-kit/infra-kit.json (layer 2) — a
 // top-level key set here replaces that whole section wholesale; arrays do not
 // concatenate. Top-level keys recognized: envManagement, ide, taskManager,
-// worktrees, dev, devServersPresets, protectedEnvs, mcp, vendorSource, audit (the last three project layer only —
+// worktrees, dev, devServersPresets, protectedEnvs, mcp, vendorSource, audit, aliasRepo (the last four project layer only —
 // refused here). The schema is strict — an unrecognized top-level key is a parse
 // error, not a silently ignored one.
 //

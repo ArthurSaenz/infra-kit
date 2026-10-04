@@ -54,7 +54,7 @@ describe('config templates', () => {
     expect(JSON.parse(CONFIG_STUB)).toEqual({})
   })
 
-  it('knows all ten top-level schema keys', () => {
+  it('knows all eleven top-level schema keys', () => {
     expect(SCHEMA_KEYS).toEqual([
       'envManagement',
       'ide',
@@ -66,6 +66,7 @@ describe('config templates', () => {
       'mcp',
       'vendorSource',
       'audit',
+      'aliasRepo',
     ])
   })
 

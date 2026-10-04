@@ -66,6 +66,19 @@ describe('readAppAliasName', () => {
     expect(readAppAliasName('website-ui', path.join(worktree, 'apps/website/ui'))).toBe('x.website-ui.hulyo-monorepo')
   })
 
+  it("takes `<repo>` from the main checkout's `aliasRepo`, in every worktree", () => {
+    const main = path.join(temp, 'travelist-monorepo')
+
+    seedRepo('travelist-monorepo', 'dev')
+    fs.writeFileSync(path.join(main, 'infra-kit.json'), JSON.stringify({ aliasRepo: 'trvl' }))
+    const worktree = path.join(temp, 'travelist-monorepo-worktrees/feature/x')
+
+    git(main, 'worktree', 'add', '-q', '-b', 'feature/x', worktree)
+
+    expect(readAppAliasName('website-ui', path.join(main, 'apps/website/ui'))).toBe('dev.website-ui.trvl')
+    expect(readAppAliasName('website-ui', path.join(worktree, 'apps/website/ui'))).toBe('x.website-ui.trvl')
+  })
+
   it('throws for a package name with no DNS-legal characters', () => {
     const appDir = seedRepo('hulyo-monorepo', 'dev')
 
@@ -99,6 +112,37 @@ describe('readRepoSlug', () => {
 
     expect(readRepoIdentity(path.join(main, 'apps'))).toEqual({ root: main, slug: 'hulyo-monorepo' })
     expect(readRepoIdentity(worktree)).toEqual({ root: main, slug: 'hulyo-monorepo' })
+  })
+
+  it('keeps `root` from git when `aliasRepo` renames the label', () => {
+    const main = path.join(temp, 'hulyo-monorepo')
+
+    seedRepo('hulyo-monorepo', 'dev')
+    fs.writeFileSync(path.join(main, 'infra-kit.json'), JSON.stringify({ aliasRepo: 'hulyo' }))
+
+    expect(readRepoIdentity(main)).toEqual({ root: main, slug: 'hulyo' })
+  })
+
+  it.each([
+    ['no `aliasRepo`', { envManagement: {} }],
+    ['a non-string `aliasRepo`', { aliasRepo: 7 }],
+    ['an `aliasRepo` with no DNS-legal characters', { aliasRepo: '@@' }],
+  ])('falls back to the directory name for %s', (_case, config) => {
+    const main = path.join(temp, 'hulyo-monorepo')
+
+    seedRepo('hulyo-monorepo', 'dev')
+    fs.writeFileSync(path.join(main, 'infra-kit.json'), JSON.stringify(config))
+
+    expect(readRepoSlug(main)).toBe('hulyo-monorepo')
+  })
+
+  it('falls back to the directory name when `infra-kit.json` is not JSON', () => {
+    const main = path.join(temp, 'hulyo-monorepo')
+
+    seedRepo('hulyo-monorepo', 'dev')
+    fs.writeFileSync(path.join(main, 'infra-kit.json'), '{')
+
+    expect(readRepoSlug(main)).toBe('hulyo-monorepo')
   })
 
   it('falls back outside a git repo', () => {

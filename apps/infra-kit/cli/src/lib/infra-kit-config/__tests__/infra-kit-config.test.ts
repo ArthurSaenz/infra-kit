@@ -1050,3 +1050,41 @@ describe('audit', () => {
     })
   })
 })
+
+describe('aliasRepo', () => {
+  const writeProjectLayer = (tmp: string, extra: Record<string, unknown>): void => {
+    fs.writeFileSync(path.join(tmp, 'infra-kit.json'), JSON.stringify({ ...JSON.parse(VALID_JSON), ...extra }))
+  }
+
+  it('accepts a DNS label in the project layer', async () => {
+    await withTmpRepo(async (tmp) => {
+      writeProjectLayer(tmp, { aliasRepo: 'trvl' })
+
+      expect((await getInfraKitConfig()).aliasRepo).toBe('trvl')
+    })
+  })
+
+  it.each(['Trvl', 'trvl.app', '-trvl', 'trvl-', '', 'a'.repeat(64)])(
+    'refuses %j, which is not a DNS label',
+    async (value) => {
+      await withTmpRepo(async (tmp) => {
+        writeProjectLayer(tmp, { aliasRepo: value })
+
+        await expect(getInfraKitConfig()).rejects.toThrow(/aliasRepo/)
+      })
+    },
+  )
+
+  it('refuses it in the per-project override with the layer message', async () => {
+    await withTmpRepo(async (tmp) => {
+      writeProjectLayer(tmp, {})
+
+      const layerThreeDir = path.join(tmp, '.infra-kit', 'projects', path.basename(tmp))
+
+      fs.mkdirSync(layerThreeDir, { recursive: true })
+      fs.writeFileSync(path.join(layerThreeDir, 'infra-kit.json'), JSON.stringify({ aliasRepo: 'trvl' }))
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/"aliasRepo" is not allowed in .*\.infra-kit\/projects/)
+    })
+  })
+})

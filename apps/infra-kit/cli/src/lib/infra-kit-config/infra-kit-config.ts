@@ -333,6 +333,14 @@ const auditRulesSchema = z
   })
   .strict()
 
+/**
+ * The `<repo>` label of the dev alias (`<release>.<package>.<repo>.localhost`), in place of the main
+ * checkout's directory name, to keep the host short. Taken verbatim, so it must already be a DNS label.
+ */
+const aliasRepoSchema = z
+  .string()
+  .regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/, 'must be a DNS label: a-z, 0-9 and inner "-", at most 63 characters')
+
 export const infraKitConfigObject = z
   .object({
     envManagement: envManagementSchema,
@@ -345,6 +353,7 @@ export const infraKitConfigObject = z
     mcp: mcpProxiesSchema.optional(),
     vendorSource: vendorSourceSchema.nullable().optional(),
     audit: auditRulesSchema.optional(),
+    aliasRepo: aliasRepoSchema.optional(),
   })
   .strict()
 
@@ -918,15 +927,24 @@ const buildAuditLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigrate' 
   ].join('\n')
 }
 
+const buildAliasRepoLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>): string => {
+  return [
+    `"aliasRepo" is not allowed in ${layer.label} (${layer.path}): the vite and Playwright helpers read it from the project infra-kit.json only, so a per-machine copy would register a dev host they never aim at.`,
+    'Move it to the project infra-kit.json and commit it there.',
+  ].join('\n')
+}
+
 type LayerRejectionMessageBuilder = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>) => string
 
 /**
  * Keys only the committed project layer may carry. `mcp` feeds the committed `.mcp.json`, and the
  * shallow layer merge would let a per-machine block replace the project's wholesale and then be
  * derived into the shared file. `vendorSource` decides which repo is the sync source. `audit` is
- * what CI enforces at the root.
+ * what CI enforces at the root. `aliasRepo` names the dev host, which the helpers read from the project
+ * file alone.
  */
 const PROJECT_LAYER_ONLY_KEYS: Readonly<Record<string, LayerRejectionMessageBuilder>> = {
+  aliasRepo: buildAliasRepoLayerRejectionMessage,
   mcp: buildMcpLayerRejectionMessage,
   vendorSource: buildVendorSourceLayerRejectionMessage,
   audit: buildAuditLayerRejectionMessage,
