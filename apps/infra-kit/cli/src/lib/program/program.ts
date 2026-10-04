@@ -372,6 +372,7 @@ const configureWorktreesRemove = (cmd: Command): Command => {
     .option('-a, --all', 'Select all active release and feature worktrees')
     .option('-v, --versions <versions>', 'Specify versions by comma, e.g. 1.2.5, 1.2.6')
     .option('-f, --feature <names>', 'Feature worktrees by comma, e.g. checkout-v2')
+    .option('--self', 'Remove the worktree this runs in, closing its Orca tabs (handed off to Orca)')
     .action(async (options) => {
       emit(
         await worktreesRemove({
@@ -379,6 +380,7 @@ const configureWorktreesRemove = (cmd: Command): Command => {
           all: options.all,
           versions: options.versions,
           feature: options.feature,
+          self: options.self,
         }),
       )
     })

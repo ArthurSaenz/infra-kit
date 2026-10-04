@@ -15,7 +15,7 @@ Tickets are prefixed by area:
 
 Pick one — the dominant area.
 <!-- infra-kit:begin -->
-<!-- infra-kit:version 0.12.0 -->
+<!-- infra-kit:version 0.15.0 -->
 
 # infra-kit
 

@@ -22,6 +22,7 @@ import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
 import { toFeatureBranch } from '../worktrees-add/feature-worktrees'
+import { worktreesRemoveSelf } from './remove-self'
 
 // Constants
 interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
@@ -29,6 +30,8 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
   versions?: string
   /** Comma-separated feature names (`checkout-v2` or `feature/checkout-v2`). */
   feature?: string
+  /** Remove the worktree this command runs in; the removal is handed to an Orca tab of the main checkout. */
+  self?: boolean
 }
 
 /**
@@ -158,7 +161,20 @@ const addTargetOptions = (branches: string[]): void => {
  * Creates worktrees for active release branches and removes unused ones
  */
 export const worktreesRemove = async (options: WorktreeManagementArgs) => {
-  const { confirmedCommand, all, versions, feature } = options
+  const { confirmedCommand, all, versions, feature, self } = options
+
+  // Before the management guard: --self runs from inside a linked worktree by definition.
+  if (self) {
+    if (all || versions || feature) {
+      throw new OperationError(undefined, {
+        operation: 'remove worktrees',
+        remediation: 'pass --self alone, or name targets with --versions / --feature',
+        stderrExcerpt: '--self cannot be combined with --all, --versions or --feature',
+      })
+    }
+
+    return worktreesRemoveSelf(confirmedCommand)
+  }
 
   // Branch-agnostic: `git worktree remove` addresses worktrees by path and never
   // reads HEAD, so only the worktree + clean-tree legs apply.
@@ -311,6 +327,10 @@ export const worktreesRemoveMcpTool = defineMcpTool({
       .array(z.string())
       .describe('Branches whose worktree could NOT be removed (git refused, or an unsweepable leftover remained)'),
     count: z.number().describe('Number of git worktrees removed'),
+    handedOff: z
+      .object({ branch: z.string(), worktreePath: z.string(), terminal: z.string() })
+      .optional()
+      .describe('--self only: the worktree whose removal now runs in an Orca tab of the main checkout'),
   },
   handler: worktreesRemove,
 })

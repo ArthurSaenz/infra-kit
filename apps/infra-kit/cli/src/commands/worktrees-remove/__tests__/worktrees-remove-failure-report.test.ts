@@ -179,7 +179,12 @@ describe('worktrees-remove failure report — agent path', () => {
   })
 
   it('declares failedWorktrees in the tool output schema', () => {
-    expect(Object.keys(worktreesRemoveMcpTool.outputSchema)).toEqual(['removedWorktrees', 'failedWorktrees', 'count'])
+    expect(Object.keys(worktreesRemoveMcpTool.outputSchema)).toEqual([
+      'removedWorktrees',
+      'failedWorktrees',
+      'count',
+      'handedOff',
+    ])
   })
 
   // Same handler, same rewrapping `catch`: the confirm site's `confirmation_required` must come out

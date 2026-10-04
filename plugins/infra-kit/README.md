@@ -78,7 +78,7 @@ mutating command.
 | skill     | `/infra-kit:release-create`   | Cuts release branches through `infra-kit release create`, preview → approve → `--yes` (human-invoked only)                               |
 | skill     | `/infra-kit:release-remove`   | Tears down one release through `infra-kit release remove`, Jira fix version included, preview → approve → `--yes` (human-invoked only)   |
 | skill     | `/infra-kit:setup`            | The procedure for `infra-kit setup` under agent mode: ordered local writes, dependency converge, printed-not-run recipes                 |
-| skill     | `/infra-kit:ultraqa`          | Release QA through `infra-kit e2e`: full suites local or cloud, a focus pass on what the branch changed, one report (human-invoked only) |
+| skill     | `/infra-kit:ultraqa`          | Release-branch QA: Jira tickets as context, `infra-kit e2e` full + focus runs, a resumable state, EN/HE report page (human-invoked only) |
 | skill     | `/infra-kit:worktrees`        | Starts, lists and removes feature worktrees (`feature/<name>` from `dev` or a release) through `infra-kit worktrees`, preview → `--yes`  |
 
 ## Install

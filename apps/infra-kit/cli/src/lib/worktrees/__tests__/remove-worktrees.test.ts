@@ -416,3 +416,22 @@ describe('removeWorktrees — a rejected `git worktree remove`', () => {
     expect(closeOrcaWorktreeTerminals).toHaveBeenNthCalledWith(2, expect.stringContaining('release/v9.9.9'), 'absent')
   })
 })
+
+describe('removeWorktrees — a dirty worktree keeps its Orca tabs', () => {
+  it('refuses before closing any terminal or running git worktree remove', async () => {
+    vi.mocked($).mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
+      const command = commandOf([strings, ...values])
+
+      return Promise.resolve({ stdout: command.endsWith('status --porcelain') ? '?? notes.md\n' : '', exitCode: 0 })
+    }) as unknown as typeof $)
+
+    const { closeOrcaWorktreeTerminals } = await import('src/integrations/orca')
+
+    const result = await remove([BRANCH])
+
+    expect(result.removed).toEqual([])
+    expect(result.failed[0]?.reason).toMatch(/uncommitted changes block removal/)
+    expect(closeOrcaWorktreeTerminals).not.toHaveBeenCalled()
+    expect(recordedCalls().map(commandOf)).not.toContain(`git worktree remove ${BRANCH_PATH}`)
+  })
+})

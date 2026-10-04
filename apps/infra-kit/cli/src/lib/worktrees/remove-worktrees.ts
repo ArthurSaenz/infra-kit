@@ -225,9 +225,37 @@ interface RemoveOneArgs {
   sleep: (ms: number) => Promise<void>
 }
 
+/**
+ * `git worktree remove` refuses modified-tracked and untracked files, but only AFTER the Orca
+ * terminals were closed — which left a dirty worktree with every tab killed. The same refusal is
+ * asked of `git status` first, so a dirty worktree keeps its tabs. A status that cannot run (the
+ * directory is already gone) proves nothing and lets git decide.
+ */
+const dirtyEntries = async (worktreePath: string): Promise<string[]> => {
+  try {
+    const result = await $`git -C ${worktreePath} status --porcelain`
+
+    return result.stdout.split('\n').filter((line) => {
+      return line.trim().length > 0
+    })
+  } catch {
+    return []
+  }
+}
+
 const removeOne = async (args: RemoveOneArgs): Promise<RemovalOutcome> => {
   const { branch, worktreeDir, projectRoot, orcaProbe, sleep } = args
   const worktreePath = `${worktreeDir}/${branch}`
+
+  const dirty = await dirtyEntries(worktreePath)
+
+  if (dirty.length > 0) {
+    return failedOutcome(
+      branch,
+      new Error(`uncommitted changes in ${worktreePath}: ${dirty.slice(0, 5).join(', ')}`),
+      DIRTY_TREE_REMEDIATION,
+    )
+  }
 
   // Close the worktree's Orca terminals before `git worktree remove` (the path must still exist for
   // the selector). An Orca that is absent/unreachable, or a row Orca does not know, is a skip — a
