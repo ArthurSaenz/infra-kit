@@ -207,7 +207,8 @@ describe('checkClaudePlugin', () => {
  */
 describe('plugin version — fetched-but-not-applied advisory', () => {
   const ADVISORY = 'fetched but not applied'
-  const UPDATE_COMMAND = 'claude plugin update infra-kit@infra-kit --scope project'
+  const UPDATE_COMMAND =
+    'claude plugin marketplace update infra-kit && claude plugin update infra-kit@infra-kit --scope project'
 
   const writeClone = (manifest: unknown): void => {
     writeJson(
@@ -318,7 +319,8 @@ describe('plugin version — fetched-but-not-applied advisory', () => {
  * `installPath`), never on a version floor and never on the marketplace clone.
  */
 describe('plugin MCP server — flipped: a served .mcp.json is the stale state', () => {
-  const UPDATE_COMMAND = 'claude plugin update infra-kit@infra-kit --scope project'
+  const UPDATE_COMMAND =
+    'claude plugin marketplace update infra-kit && claude plugin update infra-kit@infra-kit --scope project'
 
   it('fails, with the install command, when no plugin is installed for this project', () => {
     const checks = checkClaudePlugin(repo)

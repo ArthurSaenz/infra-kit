@@ -36,7 +36,7 @@ export const PLUGIN_INSTALL_COMMAND = `claude plugin install ${PLUGIN_KEY} --sco
  * served copy lags. Same `--scope project` rule, for the same reason — and because `claude` resolves
  * USER scope from every cwd when the flag is absent, then fails "not installed at scope user".
  */
-export const PLUGIN_UPDATE_COMMAND = `claude plugin update ${PLUGIN_KEY} --scope project`
+export const PLUGIN_UPDATE_COMMAND = `claude plugin marketplace update ${MARKETPLACE_NAME} && claude plugin update ${PLUGIN_KEY} --scope project`
 
 /**
  * The command that makes the marketplace known to this machine, and the prerequisite of the one

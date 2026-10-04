@@ -1,4 +1,4 @@
-export { CLAUDE_VERSION_ARGV, defaultClaudeRunner, PLUGIN_UPDATE_ARGV } from './claude-cli'
+export { CLAUDE_VERSION_ARGV, defaultClaudeRunner, MARKETPLACE_UPDATE_ARGV, PLUGIN_UPDATE_ARGV } from './claude-cli'
 export type { ClaudeCommand, ClaudeCommandResult, ClaudeRunner } from './claude-cli'
 export { installPluginForProject, MARKETPLACE_ADD_ARGV, PLUGIN_INSTALL_ARGV } from './install-plugin'
 export type { PluginInstallOutcome } from './install-plugin'

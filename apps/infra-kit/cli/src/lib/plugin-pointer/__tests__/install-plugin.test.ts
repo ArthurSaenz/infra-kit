@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { CLAUDE_VERSION_ARGV, PLUGIN_UPDATE_ARGV, defaultClaudeRunner } from '../claude-cli'
+import { CLAUDE_VERSION_ARGV, MARKETPLACE_UPDATE_ARGV, PLUGIN_UPDATE_ARGV, defaultClaudeRunner } from '../claude-cli'
 import type { ClaudeCommand, ClaudeCommandResult, ClaudeRunner } from '../claude-cli'
 import { MARKETPLACE_ADD_ARGV, PLUGIN_INSTALL_ARGV, installPluginForProject } from '../install-plugin'
 
@@ -99,8 +99,8 @@ describe('installPluginForProject — already installed → update', () => {
     const { runner, calls } = recordingRunner()
 
     expect(installPluginForProject({ projectRoot: repo, home, run: runner })).toEqual({ status: 'updated' })
-    expect(argvOf(calls)).toEqual([[...CLAUDE_VERSION_ARGV], [...PLUGIN_UPDATE_ARGV]])
-    expect(calls[1]?.cwd).toBe(repo)
+    expect(argvOf(calls)).toEqual([[...CLAUDE_VERSION_ARGV], [...MARKETPLACE_UPDATE_ARGV], [...PLUGIN_UPDATE_ARGV]])
+    expect(calls[2]?.cwd).toBe(repo)
     expect(argvOf(calls)).not.toContainEqual([...PLUGIN_INSTALL_ARGV])
     expect(argvOf(calls)).not.toContainEqual([...MARKETPLACE_ADD_ARGV])
   })
@@ -120,6 +120,20 @@ describe('installPluginForProject — already installed → update', () => {
       status: 'update-failed',
       error: 'Plugin infra-kit is not installed at scope user',
     })
+  })
+
+  it('reports update-failed and skips the plugin update when the marketplace refresh fails', () => {
+    writeInstalledRecord()
+
+    const { runner, calls } = recordingRunner({
+      [MARKETPLACE_UPDATE_ARGV.join(' ')]: { ok: false, output: 'Failed to fetch marketplace infra-kit' },
+    })
+
+    expect(installPluginForProject({ projectRoot: repo, home, run: runner })).toEqual({
+      status: 'update-failed',
+      error: 'Failed to fetch marketplace infra-kit',
+    })
+    expect(argvOf(calls)).not.toContainEqual([...PLUGIN_UPDATE_ARGV])
   })
 
   it('reports claude-missing without attempting the update when the probe fails', () => {
@@ -157,7 +171,7 @@ describe('installPluginForProject — already installed → update', () => {
     }
 
     expect(installPluginForProject({ projectRoot: repo, home, run: runner, cliIsStale })).toEqual({ status: 'updated' })
-    expect(argvOf(calls)).toEqual([[...CLAUDE_VERSION_ARGV], [...PLUGIN_UPDATE_ARGV]])
+    expect(argvOf(calls)).toEqual([[...CLAUDE_VERSION_ARGV], [...MARKETPLACE_UPDATE_ARGV], [...PLUGIN_UPDATE_ARGV]])
   })
 
   it('never consults the predicate on the fresh-install path — there is no update to withhold', () => {
@@ -305,7 +319,11 @@ describe('installPluginForProject — success', () => {
     const afterFirst = calls.length
 
     expect(installPluginForProject({ projectRoot: repo, home, run: runner })).toEqual({ status: 'updated' })
-    expect(argvOf(calls.slice(afterFirst))).toEqual([[...CLAUDE_VERSION_ARGV], [...PLUGIN_UPDATE_ARGV]])
+    expect(argvOf(calls.slice(afterFirst))).toEqual([
+      [...CLAUDE_VERSION_ARGV],
+      [...MARKETPLACE_UPDATE_ARGV],
+      [...PLUGIN_UPDATE_ARGV],
+    ])
   })
 })
 

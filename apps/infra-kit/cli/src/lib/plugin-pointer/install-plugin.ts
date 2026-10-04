@@ -1,6 +1,12 @@
 import { logger } from 'src/lib/logger'
 
-import { CLAUDE_BIN, CLAUDE_VERSION_ARGV, PLUGIN_UPDATE_ARGV, defaultClaudeRunner } from './claude-cli'
+import {
+  CLAUDE_BIN,
+  CLAUDE_VERSION_ARGV,
+  MARKETPLACE_UPDATE_ARGV,
+  PLUGIN_UPDATE_ARGV,
+  defaultClaudeRunner,
+} from './claude-cli'
 import type { ClaudeRunner } from './claude-cli'
 import { isMarketplaceRegistered, resolvePluginInstall } from './install-state'
 import { MARKETPLACE_REPO, PLUGIN_KEY } from './names'
@@ -13,7 +19,7 @@ import { MARKETPLACE_REPO, PLUGIN_KEY } from './names'
  *
  * The design constraint is that this shells out to somebody else's CLI. So every step is guarded by a
  * host-state READ first (`install-state.ts`), never by a second invocation: an already-installed
- * plugin skips the marketplace and install steps and runs only the idempotent `plugin update`, an
+ * plugin skips the marketplace add and install steps and runs only `marketplace update` + `plugin update`, an
  * already-registered marketplace skips its `add`, and a machine with no `claude` on PATH is a
  * reported outcome rather than a spawn error. That is what keeps re-running `initCore` on a
  * configured machine cheap (one ≈1 s command), and what keeps this from turning a setup command red.
@@ -105,6 +111,12 @@ const ensureMarketplace = (run: ClaudeRunner, home?: string): { step: 'marketpla
  * cwd — not a flag — is what decides which project-scope record the command updates.
  */
 const updateInstalledPlugin = (run: ClaudeRunner, projectRoot: string): PluginInstallOutcome => {
+  logger.debug({ msg: `Running: ${CLAUDE_BIN} ${MARKETPLACE_UPDATE_ARGV.join(' ')}` })
+
+  const refreshed = run({ args: MARKETPLACE_UPDATE_ARGV })
+
+  if (!refreshed.ok) return { status: 'update-failed', error: firstLine(refreshed.output) }
+
   logger.debug({ msg: `Running: ${CLAUDE_BIN} ${PLUGIN_UPDATE_ARGV.join(' ')}` })
 
   const updated = run({ args: PLUGIN_UPDATE_ARGV, cwd: projectRoot })

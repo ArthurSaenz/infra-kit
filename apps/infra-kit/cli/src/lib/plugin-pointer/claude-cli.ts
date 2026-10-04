@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 
-import { PLUGIN_KEY } from './names'
+import { MARKETPLACE_NAME, PLUGIN_KEY } from './names'
 
 /**
  * @fileoverview
@@ -34,6 +34,12 @@ export const CLAUDE_VERSION_ARGV: readonly string[] = ['--version']
  * decided by the command's cwd, not by any flag: callers pass `cwd: <recorded projectPath>`.
  */
 export const PLUGIN_UPDATE_ARGV: readonly string[] = ['plugin', 'update', PLUGIN_KEY, '--scope', 'project', '-y']
+
+/**
+ * `claude plugin marketplace update infra-kit`, as argv: run before `plugin update`, so the update
+ * compares against what `main` serves now and not against the marketplace clone of the last refresh.
+ */
+export const MARKETPLACE_UPDATE_ARGV: readonly string[] = ['plugin', 'marketplace', 'update', MARKETPLACE_NAME]
 
 /** One `claude` invocation. `cwd` matters: `--scope project` records the directory it ran in. */
 export interface ClaudeCommand {

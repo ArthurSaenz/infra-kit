@@ -130,7 +130,9 @@ the author's machine sat at 0.3.0 while `main` was at 0.7.0. The CLI carries the
 instead. The silent self-update child that runs after a user-typed `infra-kit …` command on a TTY
 (at most once per 20 minutes) also runs `claude plugin update infra-kit@infra-kit --scope project -y`
 for every project it is installed in, and `infra-kit setup` updates an already-installed plugin
-rather than reporting it installed. A machine where nobody types an `infra-kit` command never
+rather than reporting it installed: `claude plugin marketplace update infra-kit`, then
+`claude plugin update infra-kit@infra-kit --scope project -y`. `setup` holds the plugin update back
+while the CLI is older than the published one, so update the CLI first. A machine where nobody types an `infra-kit` command never
 advances — the same channel the CLI itself lives on. `/reload-plugins` or the next launch applies a
 fetched version; `infra-kit doctor` says when one is fetched but not yet applied.
 
