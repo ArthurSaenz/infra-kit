@@ -103,17 +103,36 @@ afterAll(async () => {
 })
 
 describe('scratchWorktreePath', () => {
-  it('lives under the git common dir, so it is invisible to `git status`', async () => {
+  it('lives beside the main checkout, so it is invisible to `git status`', async () => {
     const { repo } = await makeFixture()
 
     const scratch = await scratchWorktreePath(repo)
 
-    expect(scratch).toContain(path.join('.git', 'infra-kit', 'merge-dev-'))
+    expect(scratch.startsWith(path.join(`${repo}-worktrees`, 'merge-dev', '.scratch-'))).toBe(true)
 
     // The load-bearing property: an untracked dir in the main checkout would make
     // isWorkingTreeClean false for every other release command in this CLI.
     await fs.mkdir(scratch, { recursive: true })
     expect(await git(repo, 'status', '--porcelain')).toBe('')
+  })
+
+  it('has no `.git` segment, which Vite denies to every browser-mode test', async () => {
+    const { repo } = await makeFixture()
+
+    const scratch = await scratchWorktreePath(repo)
+
+    expect(scratch.split(path.sep)).not.toContain('.git')
+  })
+
+  it('resolves to the main checkout when run from a linked worktree', async () => {
+    const { repo } = await makeFixture()
+    // A linked worktree's common dir comes back realpath'd (macOS tmp is `/var` → `/private/var`).
+    const mainRepo = await fs.realpath(repo)
+    const linked = `${mainRepo}-linked`
+
+    await git(mainRepo, 'worktree', 'add', '-q', linked, 'release/v1.0.0')
+
+    expect(await scratchWorktreePath(linked)).toBe(await scratchWorktreePath(mainRepo))
   })
 
   it('is unique per run, so two concurrent runs cannot collide', async () => {

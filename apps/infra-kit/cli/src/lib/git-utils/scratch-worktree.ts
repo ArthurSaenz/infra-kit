@@ -21,29 +21,33 @@ export interface ScratchWorktree {
 }
 
 /**
- * Where the scratch worktree lives: `<git-common-dir>/infra-kit/merge-dev-<runId>`, with `runId`
- * taken from `INFRA_KIT_SESSION` (this repo's per-terminal id) and falling back to the pid.
+ * Where the scratch worktree lives: `<projectRoot>-worktrees/merge-dev/.scratch-<runId>`, with
+ * `runId` taken from `INFRA_KIT_SESSION` (this repo's per-terminal id) and falling back to the pid.
  *
- * Two properties are load-bearing: the path is outside every working tree, and it is unique per run.
+ * Three properties are load-bearing: the path is outside every working tree, it is unique per run,
+ * and no segment of it is `.git`.
  */
-// Both are about NOT colliding with things that already exist.
-//
 // 1. Outside every working tree. An untracked directory inside the main checkout would make
 //    `isWorkingTreeClean` false, and therefore `assertManagementContext` throw, for every OTHER
 //    release and worktree command in this CLI — so a crashed `gh-merge-dev` would break
-//    `worktrees add` and `release create` with a message naming neither of them. Under `.git/`
-//    it is invisible to `git status` by construction.
+//    `worktrees add` and `release create` with a message naming neither of them.
 // 2. Unique per run. A colliding path is a hard `fatal: … already exists`, so two concurrent runs
 //    would fight.
+// 3. Not under `.git/`, where this used to live. `--verify` runs the repo's own suite here, and
+//    Vite's default `server.fs.deny` includes `**/.git/**`: every browser-mode Vitest file failed
+//    with `Access denied`, so every clean merge was reported `verify-failed`.
 //
-// It also deliberately avoids the team's `<projectRoot>-worktrees/` convention, which
-// `getCurrentWorktrees` scans for release branches.
+// `<projectRoot>-worktrees/` is safe for the same reason as `resolutionWorktreePath`: the worktree
+// is DETACHED, so `getCurrentWorktrees` never hands it to `worktrees sync` or `remove --all`.
+// The project root is derived from the common dir so a run from a linked worktree still lands
+// beside the main checkout.
 export const scratchWorktreePath = async (cwd?: string): Promise<string> => {
   const root = cwd ?? process.cwd()
   const commonDir = (await $({ cwd: root, quiet: true })`git rev-parse --git-common-dir`).stdout.trim()
+  const projectRoot = path.dirname(path.resolve(root, commonDir))
   const runId = process.env.INFRA_KIT_SESSION || String(process.pid)
 
-  return path.join(path.resolve(root, commonDir), 'infra-kit', `merge-dev-${runId}`)
+  return path.join(`${projectRoot}${WORKTREES_DIR_SUFFIX}`, WORKTREE_SUBDIRS.mergeDev, `.scratch-${runId}`)
 }
 
 /** `release/v1.2.3` → `release-v1-2-3`: one flat directory name per branch. */
