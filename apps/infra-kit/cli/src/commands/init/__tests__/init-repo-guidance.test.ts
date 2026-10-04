@@ -4,12 +4,12 @@ import path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { PACKAGE_MARKER_START } from 'src/lib/agent-guidance'
+import { syncPackageGuidance, syncRootGuidance } from 'src/lib/agent-guidance'
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 
-import { AGENTS_MARKER_START } from '../agent-files'
+import packageJson from '../../../../package.json' with { type: 'json' }
 import { initCore, logInitEntry } from '../init'
 
 // The migrations are exercised by their own suites; here they would only add temp-dir
@@ -39,7 +39,10 @@ vi.mock('src/lib/logger', () => {
   return { logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() } }
 })
 
-const FAILURE_SUMMARY = '1 package guidance files could not be written — run: infra-kit audit --fix --all'
+const CHECK_FAILURE =
+  /^1 agent-instruction files could not be checked — run: infra-kit audit --root && infra-kit audit --all$/
+const DRIFT_SUMMARY = /^3 agent-instruction files differ from infra-kit .+ — setup does not rewrite them; run:$/
+const CURRENT_SUMMARY = /^Agent-instruction files current \(infra-kit .+\)$/
 
 let home: string
 let repo: string
@@ -56,10 +59,10 @@ const loggedAt = (level: 'info' | 'warn'): string[] => {
   })
 }
 
-/** The `  <action> <relPath>` line `initCore` logged for `relPath`, or undefined when it logged none. */
-const lineFor = (relPath: string): string | undefined => {
-  return loggedAt('info').find((line) => {
-    return line.includes(` ${relPath}`)
+/** Whether any line logged at `level` matches. */
+const loggedMatching = (level: 'info' | 'warn', pattern: RegExp): boolean => {
+  return loggedAt(level).some((line) => {
+    return pattern.test(line)
   })
 }
 
@@ -109,73 +112,47 @@ const runInit = async (): Promise<void> => {
   await initCore(logInitEntry)
 }
 
-describe('setup --skip-tools — repo-wide agent-guidance refresh', () => {
-  it('writes the root block and one block per workspace package, reporting each action', async () => {
+/** What `audit --fix --root` and `audit --fix --all` leave behind: every block current. */
+const writeCurrentGuidance = async (): Promise<void> => {
+  const { version } = packageJson
+
+  await syncRootGuidance(repo, { version })
+
+  for (const name of ['alpha', 'beta']) {
+    await syncPackageGuidance(path.join(repo, 'packages', name), { repoRoot: repo, version })
+  }
+}
+
+describe('setup --skip-tools — repo-wide agent-guidance check', () => {
+  it('writes no guidance file, and names both refresh commands when root and packages drifted', async () => {
     await runInit()
 
-    expect(fs.readFileSync(path.join(repo, 'CLAUDE.md'), 'utf-8')).toContain(AGENTS_MARKER_START)
-
-    for (const name of ['alpha', 'beta']) {
-      const claude = fs.readFileSync(path.join(repo, 'packages', name, 'CLAUDE.md'), 'utf-8')
-
-      expect(claude).toContain(PACKAGE_MARKER_START)
+    for (const rel of ['CLAUDE.md', 'packages/alpha/CLAUDE.md', 'packages/beta/CLAUDE.md']) {
+      expect(fs.existsSync(path.join(repo, rel))).toBe(false)
     }
 
-    expect(lineFor('CLAUDE.md')).toMatch(/^ {2}created {3}CLAUDE\.md$/)
-    // Package lines carry the resolved package type in parentheses.
-    expect(lineFor(path.join('packages', 'alpha', 'CLAUDE.md'))).toMatch(
-      /^ {2}created {3}packages\/alpha\/CLAUDE\.md \(.+\)$/,
-    )
-    expect(lineFor(path.join('packages', 'beta', 'CLAUDE.md'))).toMatch(
-      /^ {2}created {3}packages\/beta\/CLAUDE\.md \(.+\)$/,
-    )
-
-    expect(
-      loggedAt('info').some((line) => {
-        return /^Agent-instruction files synced \(infra-kit .+\)$/.test(line)
-      }),
-    ).toBe(true)
-
-    // Nothing failed, so the summary line must not appear.
-    expect(loggedAt('warn')).not.toContain(FAILURE_SUMMARY)
+    expect(loggedMatching('info', DRIFT_SUMMARY)).toBe(true)
+    expect(loggedAt('info')).toContain('infra-kit audit --fix --root')
+    expect(loggedAt('info')).toContain('infra-kit audit --fix --all')
   })
 
-  it('reports a per-package write failure, keeps going, and leaves the exit code untouched', async () => {
-    // A dangling symlink: `existsSync` follows links and reports false, so only the
-    // `lstat` guard inside the writer catches it — the failure path under test.
-    fs.symlinkSync(
-      path.join(repo, 'packages', 'alpha', 'nowhere.md'),
-      path.join(repo, 'packages', 'alpha', 'CLAUDE.md'),
-    )
+  it('names only the package command when the root block is current', async () => {
+    await syncRootGuidance(repo, { version: packageJson.version })
+    const rootBefore = fs.readFileSync(path.join(repo, 'CLAUDE.md'), 'utf-8')
 
     await runInit()
 
-    // The failed path is named, with its action.
-    expect(lineFor(path.join('packages', 'alpha', 'CLAUDE.md'))).toMatch(
-      /^ {2}failed {4}packages\/alpha\/CLAUDE\.md \(.+\)$/,
-    )
-
-    // The distinct summary line names the count and the fix.
-    expect(loggedAt('warn')).toContain(FAILURE_SUMMARY)
-
-    // `initCore`'s contract is shell setup: a guidance write failure must not turn it red.
-    expect(process.exitCode ?? 0).toBe(0)
-
-    // Continue-and-report: the package discovered AFTER the failing one was still written,
-    // as were the root block and the rest of initCore's steps.
-    expect(fs.readFileSync(path.join(repo, 'packages', 'beta', 'CLAUDE.md'), 'utf-8')).toContain(PACKAGE_MARKER_START)
-    expect(fs.readFileSync(path.join(repo, 'CLAUDE.md'), 'utf-8')).toContain(AGENTS_MARKER_START)
-    expect(fs.existsSync(path.join(home, '.zshrc'))).toBe(true)
+    expect(fs.readFileSync(path.join(repo, 'CLAUDE.md'), 'utf-8')).toBe(rootBefore)
+    expect(loggedAt('info')).not.toContain('infra-kit audit --fix --root')
+    expect(loggedAt('info')).toContain('infra-kit audit --fix --all')
   })
 
-  it('is idempotent — a second run reports nothing changed and logs no summary line', async () => {
-    await runInit()
+  it('reports current, with no command, when every block matches this CLI', async () => {
+    await writeCurrentGuidance()
 
     const before = ['CLAUDE.md', 'packages/alpha/CLAUDE.md', 'packages/beta/CLAUDE.md'].map((rel) => {
       return fs.readFileSync(path.join(repo, rel), 'utf-8')
     })
-
-    vi.clearAllMocks()
 
     await runInit()
 
@@ -184,30 +161,40 @@ describe('setup --skip-tools — repo-wide agent-guidance refresh', () => {
     })
 
     expect(after).toEqual(before)
-
-    // Unchanged files are not logged, so no per-file line survives the second run.
-    expect(lineFor('CLAUDE.md')).toBeUndefined()
-    expect(loggedAt('warn')).not.toContain(FAILURE_SUMMARY)
+    expect(loggedMatching('info', CURRENT_SUMMARY)).toBe(true)
     expect(
-      loggedAt('info').some((line) => {
-        return /^Agent-instruction files synced \(infra-kit .+\)$/.test(line)
+      loggedAt('info').filter((line) => {
+        return line.startsWith('infra-kit audit --fix')
       }),
-    ).toBe(true)
+    ).toEqual([])
   })
 
-  it('skips the whole sync outside an infra-kit repo, without failing init', async () => {
+  it('reports an uncheckable file as a warning, keeps going, and leaves the exit code untouched', async () => {
+    await writeCurrentGuidance()
+    fs.rmSync(path.join(repo, 'packages', 'alpha', 'CLAUDE.md'))
+    // A dangling symlink: `existsSync` follows links and reports false, so only the
+    // `lstat` guard catches it — the failure path under test.
+    fs.symlinkSync(
+      path.join(repo, 'packages', 'alpha', 'nowhere.md'),
+      path.join(repo, 'packages', 'alpha', 'CLAUDE.md'),
+    )
+
+    await runInit()
+
+    expect(loggedMatching('warn', CHECK_FAILURE)).toBe(true)
+    expect(process.exitCode ?? 0).toBe(0)
+    expect(fs.existsSync(path.join(home, '.zshrc'))).toBe(true)
+  })
+
+  it('skips the whole check outside an infra-kit repo, without failing init', async () => {
     fs.rmSync(path.join(repo, 'infra-kit.json'))
     resetInfraKitConfigCache()
 
     await runInit()
 
     expect(fs.existsSync(path.join(repo, 'CLAUDE.md'))).toBe(false)
-    expect(fs.existsSync(path.join(repo, 'packages', 'alpha', 'CLAUDE.md'))).toBe(false)
-    expect(
-      loggedAt('info').some((line) => {
-        return line.startsWith('Agent-instruction files synced')
-      }),
-    ).toBe(false)
+    expect(loggedMatching('info', CURRENT_SUMMARY)).toBe(false)
+    expect(loggedMatching('info', DRIFT_SUMMARY)).toBe(false)
     expect(process.exitCode ?? 0).toBe(0)
   })
 })

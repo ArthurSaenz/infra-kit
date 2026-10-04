@@ -1,5 +1,4 @@
 import { E2E_MODE_ENV } from '@slip-stream-kit/config/internal'
-import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -8,18 +7,19 @@ import { z } from 'zod'
 
 import { isHeadless } from 'src/lib/agent-mode'
 import { confirmOrExit } from 'src/lib/command-echo'
-import { OperationError } from 'src/lib/errors/operation-error'
-import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { jsonOutput } from 'src/lib/json-output'
 import { logger } from 'src/lib/logger'
 import { isProtectedEnv, resolveProtectedEnvAccess } from 'src/lib/workflow-envs'
 import type { ProtectedEnvAccess } from 'src/lib/workflow-envs'
 import { defineMcpTool, textContent } from 'src/types'
 
+import { e2eRefusal } from './e2e-refusal'
 import { describeCloudTarget, describeLocalTarget, locateE2eTarget } from './e2e-target'
 import type { E2eLocation, E2eTarget, E2eTargetDeps } from './e2e-target'
 import { JSON_REPORTER_ARG, callerPicksReporter, jsonReporterEnv, readPlaywrightReport } from './playwright-report'
-import type { E2eFailure, E2eSummary } from './playwright-report'
+import type { E2eAnnotatedFile, E2eFailure, E2eSummary } from './playwright-report'
+import { acquireRunLock } from './run-lock'
+import { spawnForwardingSignals } from './spawn-forwarding-signals'
 
 export interface E2eArgs {
   app?: string
@@ -92,11 +92,15 @@ const assertLocalRoutesLive = (target: E2eTarget): void => {
     return `${route.path} (${route.packageName})`
   })
 
-  throw new OperationError(undefined, {
-    operation: `run ${target.app} e2e against the local dev server`,
-    remediation: 'check the backend rows in `infra-kit dev-status`, fix or restart it, then re-run',
-    stderrExcerpt: `routes held local but their backend is not responding: ${names.join(', ')}`,
-  })
+  throw e2eRefusal(
+    'dead_local_routes',
+    { routes: names },
+    {
+      operation: `run ${target.app} e2e against the local dev server`,
+      remediation: 'check the backend rows in `infra-kit dev-status`, fix or restart it, then re-run',
+      stderrExcerpt: `routes held local but their backend is not responding: ${names.join(', ')}`,
+    },
+  )
 }
 
 const assertCloudEnvReachable = async (target: E2eTarget, deps: E2eDeps): Promise<void> => {
@@ -109,18 +113,26 @@ const assertCloudEnvReachable = async (target: E2eTarget, deps: E2eDeps): Promis
   const operation = `run ${target.app} e2e against "${target.env}"`
 
   if (access.reason === 'agent-blocked') {
-    throw new StructuredRefusalError({ status: 'refused', env: target.env }, 2, {
-      operation,
-      remediation: 'a human runs it from their own terminal — this project sets `protectedEnvs: "cli-only"`',
-      stderrExcerpt: `"${target.env}" is withheld from agents in this project`,
-    })
+    throw e2eRefusal(
+      'protected_env',
+      { env: target.env, humanMayRun: true },
+      {
+        operation,
+        remediation: 'a human runs it from their own terminal — this project sets `protectedEnvs: "cli-only"`',
+        stderrExcerpt: `"${target.env}" is withheld from agents in this project`,
+      },
+    )
   }
 
-  throw new OperationError(undefined, {
-    operation,
-    remediation: `load a non-protected env (\`infra-kit env-load -c dev\`), or set \`protectedEnvs\` in infra-kit.json`,
-    stderrExcerpt: `"${target.env}" is a protected environment`,
-  })
+  throw e2eRefusal(
+    'protected_env',
+    { env: target.env, humanMayRun: false },
+    {
+      operation,
+      remediation: `load a non-protected env (\`infra-kit env-load -c dev\`), or set \`protectedEnvs\` in infra-kit.json`,
+      stderrExcerpt: `"${target.env}" is a protected environment`,
+    },
+  )
 }
 
 /**
@@ -130,11 +142,15 @@ const assertCloudEnvReachable = async (target: E2eTarget, deps: E2eDeps): Promis
 const assertServedEnvMatches = (location: E2eLocation): void => {
   if (location.servedEnv === null || location.servedEnv === location.env) return
 
-  throw new OperationError(undefined, {
-    operation: `run ${location.app} e2e against the local dev server`,
-    remediation: `load the same env (\`infra-kit env-load -c ${location.servedEnv}\`), or restart \`infra-kit dev\` under "${location.env ?? 'none'}"`,
-    stderrExcerpt: `the dev server serving ${location.target} runs with env "${location.servedEnv}", this shell with "${location.env ?? 'none'}"`,
-  })
+  throw e2eRefusal(
+    'served_env_mismatch',
+    { servedEnv: location.servedEnv, env: location.env },
+    {
+      operation: `run ${location.app} e2e against the local dev server`,
+      remediation: `load the same env (\`infra-kit env-load -c ${location.servedEnv}\`), or restart \`infra-kit dev\` under "${location.env ?? 'none'}"`,
+      stderrExcerpt: `the dev server serving ${location.target} runs with env "${location.servedEnv}", this shell with "${location.env ?? 'none'}"`,
+    },
+  )
 }
 
 /** The local run: the served target's proxy split when it is up, else the alias the config will start. */
@@ -150,11 +166,15 @@ const resolveLocal = async (location: E2eLocation, deps: E2eDeps): Promise<E2eTa
   }
 
   if (!startsItsOwnDevServer(location.testsDir)) {
-    throw new OperationError(undefined, {
-      operation: `run ${location.app} e2e locally`,
-      remediation: `start it (\`${devCommandFor(location)}\`), or wire \`infraKitE2e()\` from @slip-stream-kit/config/playwright into its playwright.config.ts`,
-      stderrExcerpt: `nothing serves ${location.target} and ${location.testsDir}'s Playwright config does not start it`,
-    })
+    throw e2eRefusal(
+      'no_dev_server',
+      { devCommand: devCommandFor(location) },
+      {
+        operation: `run ${location.app} e2e locally`,
+        remediation: `start it (\`${devCommandFor(location)}\`), or wire \`infraKitE2e()\` from @slip-stream-kit/config/playwright into its playwright.config.ts`,
+        stderrExcerpt: `nothing serves ${location.target} and ${location.testsDir}'s Playwright config does not start it`,
+      },
+    )
   }
 
   const { app, testsDir, target, packageName, deployedUrlEnv, release, env, servedEnv, localUrl } = location
@@ -176,22 +196,55 @@ const resolveLocal = async (location: E2eLocation, deps: E2eDeps): Promise<E2eTa
 }
 
 const defaultRunPlaywright = (target: E2eTarget, args: string[], env: Record<string, string>): Promise<number> => {
-  return new Promise((resolve, reject) => {
-    // eslint-disable-next-line sonarjs/no-os-command-from-path -- the consumer's own pnpm, as its e2e scripts run it
-    const child = spawn('pnpm', ['exec', 'playwright', 'test', ...args], {
-      cwd: target.testsDir,
-      // Only the mode: the deployed URL stays as loaded, because the dev server a local run starts proxies
-      // the UI's cloud-only routes there.
-      env: { ...process.env, ...env, [E2E_MODE_ENV]: target.mode },
-      // Under --json/agent mode stdout carries the result document; Playwright's report goes to stderr.
-      stdio: ['inherit', jsonOutput.enabled || isHeadless() ? 2 : 'inherit', 'inherit'],
-    })
-
-    child.once('error', reject)
-    child.once('close', (code) => {
-      resolve(code ?? 1)
-    })
+  return spawnForwardingSignals('pnpm', ['exec', 'playwright', 'test', ...args], {
+    cwd: target.testsDir,
+    // Only the mode: the deployed URL stays as loaded, because the dev server a local run starts proxies
+    // the UI's cloud-only routes there.
+    env: { ...process.env, ...env, [E2E_MODE_ENV]: target.mode },
+    // Under --json/agent mode stdout carries the result document; Playwright's report goes to stderr.
+    stdio: ['inherit', jsonOutput.enabled || isHeadless() ? 2 : 'inherit', 'inherit'],
   })
+}
+
+/**
+ * Every run writes its traces to a directory of its own: Playwright empties its output directory when a run
+ * starts, so a focus run after a full one would delete the traces the full run's failures point at.
+ */
+const withOwnOutputDir = (target: E2eTarget, args: string[]): { args: string[]; outputDir: string } => {
+  const index = args.findIndex((arg) => {
+    return arg === '--output' || arg.startsWith('--output=')
+  })
+
+  if (index !== -1) {
+    const value = args[index] === '--output' ? (args[index + 1] ?? '') : args[index]!.slice('--output='.length)
+
+    return { args, outputDir: path.resolve(target.testsDir, value) }
+  }
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const outputDir = path.join(target.testsDir, 'test-results', `ik-e2e-${stamp}-${process.pid}`)
+
+  return { args: [...args, `--output=${outputDir}`], outputDir }
+}
+
+const holdRunLock = (target: E2eTarget): (() => void) => {
+  if (target.mode === 'cloud') return () => {}
+
+  const lock = acquireRunLock(target.testsDir)
+
+  if ('holder' in lock) {
+    throw e2eRefusal(
+      'run_in_progress',
+      { pid: lock.holder },
+      {
+        operation: `run ${target.app} e2e locally`,
+        remediation: `wait for it to finish (or stop process ${lock.holder}), then re-run`,
+        stderrExcerpt: `another local e2e run of ${target.app} (pid ${lock.holder}) is using its dev server`,
+      },
+    )
+  }
+
+  return lock.release
 }
 
 /**
@@ -224,26 +277,34 @@ export const e2e = async (args: E2eArgs, deps: E2eDeps = {}) => {
     })
   }
 
-  const runPlaywright = deps.runPlaywright ?? defaultRunPlaywright
+  const releaseRunLock = holdRunLock(target)
 
+  try {
+    return await runAndReport(plan, deps.runPlaywright ?? defaultRunPlaywright)
+  } finally {
+    releaseRunLock()
+  }
+}
+
+const runAndReport = async (
+  plan: E2eTarget & { served: boolean; devCommand: string | null; playwrightArgs: string[] },
+  runPlaywright: NonNullable<E2eDeps['runPlaywright']>,
+) => {
   // Per-test results are for a machine reader; a human already has Playwright's own report.
   if (!isHeadless() || callerPicksReporter(plan.playwrightArgs)) {
-    const exitCode = await runPlaywright(target, plan.playwrightArgs, {})
+    const exitCode = await runPlaywright(plan, plan.playwrightArgs, {})
 
     if (exitCode !== 0) process.exitCode = exitCode
 
     return buildResult({ ...plan, ran: true, exitCode, ...NO_REPORT, report: isHeadless() ? 'caller-reporter' : 'off' })
   }
 
+  const { args, outputDir } = withOwnOutputDir(plan, plan.playwrightArgs)
   const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ik-e2e-report-'))
   const reportFile = path.join(reportDir, 'report.json')
 
   try {
-    const exitCode = await runPlaywright(
-      target,
-      [JSON_REPORTER_ARG, ...plan.playwrightArgs],
-      jsonReporterEnv(reportFile),
-    )
+    const exitCode = await runPlaywright(plan, [JSON_REPORTER_ARG, ...args], jsonReporterEnv(reportFile))
 
     if (exitCode !== 0) process.exitCode = exitCode
 
@@ -254,6 +315,7 @@ export const e2e = async (args: E2eArgs, deps: E2eDeps = {}) => {
       ran: true,
       exitCode,
       ...(report ? { report: 'collected', ...report } : { ...NO_REPORT, report: 'unavailable' }),
+      outputDir,
     })
   } finally {
     fs.rmSync(reportDir, { recursive: true, force: true })
@@ -262,7 +324,14 @@ export const e2e = async (args: E2eArgs, deps: E2eDeps = {}) => {
 
 type E2eReportStatus = 'off' | 'caller-reporter' | 'unavailable' | 'collected'
 
-const NO_REPORT = { report: 'off' as E2eReportStatus, summary: null, failures: [], errors: [] }
+const NO_REPORT = {
+  report: 'off' as E2eReportStatus,
+  outputDir: null,
+  summary: null,
+  failures: [],
+  annotated: [],
+  errors: [],
+}
 
 const buildResult = (
   structuredContent: E2eTarget & {
@@ -272,8 +341,10 @@ const buildResult = (
     ran: boolean
     exitCode: number | null
     report: E2eReportStatus
+    outputDir: string | null
     summary: E2eSummary | null
     failures: E2eFailure[]
+    annotated: E2eAnnotatedFile[]
     errors: string[]
   },
 ) => {
@@ -326,10 +397,24 @@ const e2eOutputSchema = {
     .describe(
       'Per-test results: collected from Playwright’s JSON reporter under --json/agent mode; caller-reporter when playwrightArgs carried its own --reporter; unavailable when the run wrote no readable report; off otherwise.',
     ),
-  summary: z
-    .object({ expected: z.number(), unexpected: z.number(), flaky: z.number(), skipped: z.number() })
+  outputDir: z
+    .string()
     .nullable()
-    .describe('Test counts by outcome; null unless report is collected.'),
+    .describe(
+      'Where this run’s traces and attachments live — its own directory, so a later run cannot delete them. Null unless report is collected or unavailable.',
+    ),
+  summary: z
+    .object({
+      expected: z.number(),
+      unexpected: z.number(),
+      flaky: z.number(),
+      skipped: z.number(),
+      repeatFlaky: z.number(),
+    })
+    .nullable()
+    .describe(
+      'Playwright’s counts by outcome, one per run (each --repeat-each repeat counts), plus repeatFlaky: tests that passed in some repeats and failed in others. Null unless report is collected.',
+    ),
   failures: z
     .array(
       z.object({
@@ -337,13 +422,31 @@ const e2eOutputSchema = {
         file: z.string(),
         line: z.number().nullable(),
         project: z.string(),
-        status: z.enum(['unexpected', 'flaky']).describe('flaky: failed, then passed on a retry.'),
+        status: z
+          .enum(['unexpected', 'flaky'])
+          .describe('flaky: failed, then passed on a retry or in another --repeat-each repeat.'),
         retry: z.number().describe('The retry index of the failed attempt reported here.'),
+        runs: z.number().describe('How many times the test ran in this project — its --repeat-each repeats.'),
+        failedRuns: z.number().describe('How many of those runs failed.'),
         error: z.string().nullable().describe('The failure message, ANSI stripped, truncated to 2000 characters.'),
         tracePath: z.string().nullable().describe('The failed attempt’s trace.zip; open with `playwright show-trace`.'),
       }),
     )
-    .describe('Every test that failed or needed a retry; empty unless report is collected.'),
+    .describe(
+      'One entry per test and project that failed, needed a retry, or failed in some repeat; empty unless report is collected.',
+    ),
+  annotated: z
+    .array(
+      z.object({
+        file: z.string(),
+        fail: z.number().describe('test.fail — green only while the bug it registers exists.'),
+        fixme: z.number().describe('test.fixme — skipped as unfinished.'),
+        skip: z.number().describe('test.skip, declared or called at runtime, conditional ones included.'),
+      }),
+    )
+    .describe(
+      'Per spec file, the tests that passed or skipped while asserting little, as Playwright ran them; empty unless report is collected.',
+    ),
   errors: z
     .array(z.string())
     .describe(

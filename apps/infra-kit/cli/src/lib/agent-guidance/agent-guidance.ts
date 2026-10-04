@@ -11,7 +11,13 @@ import { buildRootBody } from './bodies/root-body'
 import { PACKAGE_MARKER_END, PACKAGE_MARKER_START, ROOT_MARKER_END, ROOT_MARKER_START } from './markers'
 import type { PackageType } from './package-type'
 import { detectPackageType } from './package-type'
-import { assertBlockPresent, assertNotSymlink, assertOutsideMarkersUnchanged, writeManaged } from './write-managed-file'
+import {
+  assertBlockPresent,
+  assertNotSymlink,
+  assertOutsideMarkersUnchanged,
+  planManaged,
+  writeManaged,
+} from './write-managed-file'
 import type { WriteAction } from './write-managed-file'
 
 /**
@@ -44,6 +50,8 @@ export interface GuidanceWrite {
 export interface SyncRootGuidanceOptions {
   /** CLI version recorded in the block's version line. */
   version: string
+  /** Report the action each file would take and write nothing. */
+  dryRun?: boolean
 }
 
 export interface SyncPackageGuidanceOptions {
@@ -55,6 +63,8 @@ export interface SyncPackageGuidanceOptions {
   design?: boolean
   /** `type` declared in the package's `infra-kit.config.ts`. Wins over every detected signal. */
   declaredType?: PackageType
+  /** Report the action each file would take and write nothing. */
+  dryRun?: boolean
 }
 
 /**
@@ -98,13 +108,21 @@ interface UpsertFileArgs {
    * against this result, so what it removes counts as removed by intent rather than as damage.
    */
   prepare?: (content: string) => string
+  dryRun?: boolean
 }
 
 /**
  * Upsert a managed block into one file, then assert what the write promised: the block is
  * present, and — on the replace-in-place path only — every byte outside the markers survived.
  */
-const upsertGuidanceFile = ({ filePath, body, startMarker, endMarker, prepare }: UpsertFileArgs): WriteAction => {
+const upsertGuidanceFile = ({
+  filePath,
+  body,
+  startMarker,
+  endMarker,
+  prepare,
+  dryRun,
+}: UpsertFileArgs): WriteAction => {
   const before = readExistingFile(filePath)
   const baseline = before === null ? '' : (prepare?.(before) ?? before)
 
@@ -115,6 +133,8 @@ const upsertGuidanceFile = ({ filePath, body, startMarker, endMarker, prepare }:
     endMarker,
     placement: 'replace-in-place',
   })
+
+  if (dryRun) return planManaged(filePath, next)
 
   const action = writeManaged(filePath, next)
 
@@ -134,7 +154,7 @@ const upsertGuidanceFile = ({ filePath, body, startMarker, endMarker, prepare }:
  * - file was purely generated (nothing but whitespace remains) → delete (`removed`),
  * - hand-authored content surrounds the block → write the block-free remainder (`updated`).
  */
-const migrateLegacyAgentsFile = (agentsPath: string): WriteAction => {
+const migrateLegacyAgentsFile = (agentsPath: string, dryRun: boolean): WriteAction => {
   if (!fs.existsSync(agentsPath)) return 'unchanged'
 
   assertNotSymlink(agentsPath)
@@ -145,18 +165,19 @@ const migrateLegacyAgentsFile = (agentsPath: string): WriteAction => {
   if (stripped === null) return 'unchanged'
 
   if (stripped.trim() === '') {
-    fs.rmSync(agentsPath)
+    if (!dryRun) fs.rmSync(agentsPath)
 
     return 'removed'
   }
 
-  return writeManaged(agentsPath, stripped)
+  return dryRun ? planManaged(agentsPath, stripped) : writeManaged(agentsPath, stripped)
 }
 
 /** The root `CLAUDE.md` write: strip the legacy import region, then upsert the root block. */
-const syncRootClaudeFile = (claudePath: string, version: string): WriteAction => {
+const syncRootClaudeFile = (claudePath: string, version: string, dryRun: boolean): WriteAction => {
   return upsertGuidanceFile({
     filePath: claudePath,
+    dryRun,
     body: buildRootBody(version),
     startMarker: ROOT_MARKER_START,
     endMarker: ROOT_MARKER_END,
@@ -179,20 +200,20 @@ const syncRootClaudeFile = (claudePath: string, version: string): WriteAction =>
  */
 export const syncRootGuidance = async (
   root: string,
-  { version }: SyncRootGuidanceOptions,
+  { version, dryRun = false }: SyncRootGuidanceOptions,
 ): Promise<GuidanceWrite[]> => {
   const claudePath = path.join(root, CLAUDE_FILE)
   const agentsPath = path.join(root, AGENTS_FILE)
   const written: GuidanceWrite[] = []
 
   try {
-    written.push({ path: claudePath, action: syncRootClaudeFile(claudePath, version) })
+    written.push({ path: claudePath, action: syncRootClaudeFile(claudePath, version, dryRun) })
   } catch (error) {
     written.push(failedWrite(claudePath, error))
   }
 
   try {
-    written.push({ path: agentsPath, action: migrateLegacyAgentsFile(agentsPath) })
+    written.push({ path: agentsPath, action: migrateLegacyAgentsFile(agentsPath, dryRun) })
   } catch (error) {
     written.push(failedWrite(agentsPath, error))
   }
@@ -201,15 +222,21 @@ export const syncRootGuidance = async (
 }
 
 /** Scaffold `DESIGN.md` for a type that owns a visual language, never overwriting an existing file. */
-const syncDesignFile = (packageDir: string, packageName: string, type: PackageType): GuidanceWrite | null => {
+const syncDesignFile = (
+  packageDir: string,
+  packageName: string,
+  type: PackageType,
+  dryRun: boolean,
+): GuidanceWrite | null => {
   if (!DESIGN_TYPES.includes(type) || hasExactFile(packageDir, DESIGN_FILE)) return null
 
   const designPath = path.join(packageDir, DESIGN_FILE)
+  const skeleton = buildDesignSkeleton(packageName)
 
   try {
     return {
       path: designPath,
-      action: writeManaged(designPath, buildDesignSkeleton(packageName)),
+      action: dryRun ? planManaged(designPath, skeleton) : writeManaged(designPath, skeleton),
       type,
     }
   } catch (error) {
@@ -232,7 +259,7 @@ const syncDesignFile = (packageDir: string, packageName: string, type: PackageTy
  */
 export const syncPackageGuidance = async (
   packageDir: string,
-  { repoRoot, version, design, declaredType }: SyncPackageGuidanceOptions,
+  { repoRoot, version, design, declaredType, dryRun = false }: SyncPackageGuidanceOptions,
 ): Promise<GuidanceWrite[]> => {
   const claudePath = path.join(packageDir, CLAUDE_FILE)
   const pkgJson = await readPackageJson(packageDir)
@@ -259,6 +286,7 @@ export const syncPackageGuidance = async (
         body,
         startMarker: PACKAGE_MARKER_START,
         endMarker: PACKAGE_MARKER_END,
+        dryRun,
       }),
       type,
     })
@@ -267,7 +295,7 @@ export const syncPackageGuidance = async (
   }
 
   if (design) {
-    const designWrite = syncDesignFile(packageDir, packageName, type)
+    const designWrite = syncDesignFile(packageDir, packageName, type, dryRun)
 
     if (designWrite) written.push(designWrite)
   }

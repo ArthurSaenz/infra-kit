@@ -25,6 +25,8 @@ import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { loadAuthoredPackageConfig, readPackageJson } from 'src/lib/package-validator/loader'
 
+import { e2eRefusal } from './e2e-refusal'
+
 /** A UI proxy route as the local dev server is running it, with its backend's liveness when local. */
 export interface E2eRoute extends ProxyRouteDescription {
   /** Local routes only: whether the backend behind it answers `/__health` right now. `null` for cloud. */
@@ -289,23 +291,32 @@ export const describeCloudTarget = (location: E2eLocation, deps: E2eTargetDeps =
   const { env, deployedUrlEnv, target } = location
 
   if (!deployedUrlEnv) {
-    throw new OperationError(undefined, {
-      operation: `resolve the deployed app ${location.app}'s cloud e2e run targets`,
-      remediation: `declare \`deployedUrlEnv: '<APP>_URL'\` in ${path.join(location.targetDir, 'infra-kit.config.ts')} and keep the URL per environment in Doppler`,
-      stderrExcerpt: `${target} names no variable holding its deployed URL`,
-    })
+    throw e2eRefusal(
+      'no_deployed_url_env',
+      { target },
+      {
+        operation: `resolve the deployed app ${location.app}'s cloud e2e run targets`,
+        remediation: `declare \`deployedUrlEnv: '<APP>_URL'\` in ${path.join(location.targetDir, 'infra-kit.config.ts')} and keep the URL per environment in Doppler`,
+        stderrExcerpt: `${target} names no variable holding its deployed URL`,
+      },
+    )
   }
 
   const cloudUrl = (deps.env ?? process.env)[deployedUrlEnv]
 
   if (!env || !cloudUrl) {
-    throw new OperationError(undefined, {
-      operation: `resolve the deployed app ${location.app}'s cloud e2e run targets`,
-      remediation: 'load an environment (`infra-kit env-load -c <env>`), or drop --cloud to run against this worktree',
-      stderrExcerpt: `a cloud run of ${target} needs ${deployedUrlEnv} and ${INFRA_KIT_ENV_VAR}, and ${
-        cloudUrl ? INFRA_KIT_ENV_VAR : deployedUrlEnv
-      } is not set`,
-    })
+    const missing = cloudUrl ? INFRA_KIT_ENV_VAR : deployedUrlEnv
+
+    throw e2eRefusal(
+      'env_not_loaded',
+      { missing },
+      {
+        operation: `resolve the deployed app ${location.app}'s cloud e2e run targets`,
+        remediation:
+          'load an environment (`infra-kit env-load -c <env>`), or drop --cloud to run against this worktree',
+        stderrExcerpt: `a cloud run of ${target} needs ${deployedUrlEnv} and ${INFRA_KIT_ENV_VAR}, and ${missing} is not set`,
+      },
+    )
   }
 
   return { ...baseOf(location), mode: 'cloud', baseUrl: cloudUrl, routes: [] }

@@ -233,8 +233,8 @@ describe('the MCP payload reports what the init half did', () => {
   })
 
   // Reds on: letting a per-file guidance failure turn the run red, or reporting it as `failed`.
-  it('reports a guidance write failure as warned, and exits 0', async () => {
-    // A directory where the root CLAUDE.md belongs: the guidance writer cannot read or replace it.
+  it('reports a guidance check failure as warned, and exits 0', async () => {
+    // A directory where the root CLAUDE.md belongs: the guidance check cannot read it.
     fs.mkdirSync(path.join(repo, 'CLAUDE.md'))
 
     const { structuredContent } = await setup({ probeDeps: nothingInstalled(), skipTools: true })
@@ -245,7 +245,7 @@ describe('the MCP payload reports what the init half did', () => {
     expect(guidance).toContainEqual({
       step: 'guidance',
       outcome: 'warned',
-      message: expect.stringContaining('could not be written') as unknown as string,
+      message: expect.stringContaining('could not be checked') as unknown as string,
     })
     expect(
       structuredContent.init.some((entry) => {

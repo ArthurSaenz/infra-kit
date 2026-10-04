@@ -47,14 +47,29 @@ export const assertNotSymlink = (filePath: string): void => {
  * // => 'created' | 'updated' | 'unchanged'
  */
 export const writeManaged = (filePath: string, next: string): WriteAction => {
+  const action = planManaged(filePath, next)
+
+  if (action !== 'unchanged') {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    fs.writeFileSync(filePath, next, 'utf-8')
+  }
+
+  return action
+}
+
+/**
+ * The action {@link writeManaged} would take, with the same symlink refusal, and nothing written.
+ *
+ * @example
+ * planManaged('/repo/CLAUDE.md', body)
+ * // => 'created' | 'updated' | 'unchanged'
+ */
+export const planManaged = (filePath: string, next: string): WriteAction => {
   assertNotSymlink(filePath)
 
   const previous = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null
 
   if (previous === next) return 'unchanged'
-
-  fs.mkdirSync(path.dirname(filePath), { recursive: true })
-  fs.writeFileSync(filePath, next, 'utf-8')
 
   return previous === null ? 'created' : 'updated'
 }

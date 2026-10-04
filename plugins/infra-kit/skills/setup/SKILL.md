@@ -42,6 +42,11 @@ plugin pointer, in a fixed order. The report's Local setup section names each st
 Every writer here is additive and never overwrites. Nothing in this half installs software and nothing
 reaches the network.
 
+The guidance blocks are **checked, never written**: `setup` is meant to be re-run routinely, so it must
+not leave a committed CLAUDE.md diff behind. Drift shows as a `manual` guidance row naming
+`infra-kit audit --fix --root` and/or `infra-kit audit --fix --all` — a separate operation that changes
+committed files, so it is the user's call, not part of the setup approval.
+
 **It runs first deliberately.** The shell blocks and the plugin pointer are what make the skills
 usable at all, so they must not sit behind a network converge that can be slow or fail.
 

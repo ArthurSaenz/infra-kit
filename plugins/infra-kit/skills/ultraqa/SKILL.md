@@ -16,9 +16,10 @@ The tool is `infra-kit e2e`. Everything below runs it through `Bash` with `--jso
 root of the release checkout — the directory Claude Code was launched in, or the release worktree
 section 2 picked, in which case every command carries the `cd <path> && ` prefix that section names.
 
-**Version floor.** On `{"error": …}` above, or a `version` below `0.15.0` (the first CLI whose
-`e2e --json` reports `servedEnv` and refuses a local run against a dev server on another env), tell
-the human to update — `pnpm add -g infra-kit@latest` — and stop.
+**Version floor.** On `{"error": …}` above, or a `version` below `0.17.3` (the first CLI whose
+`e2e --json` gives every run its own `outputDir`, folds `--repeat-each` repeats into `repeatFlaky`,
+reports `annotated[]`, and refuses with a structured `reason`), tell the human to update —
+`pnpm add -g infra-kit@latest` — and stop.
 
 This skill **reports**; it does not repair. Never edit a spec, a Page Object, a snapshot or a config,
 never add `test.skip` / `fixme` / `fail`, never pass `--update-snapshots`, never widen a timeout or
@@ -28,11 +29,21 @@ after reading the report.
 The phases run in order and each one ends by writing its outcome to the state file (section 2).
 Keep the terminal quiet: one short status line per phase, tables only where this file asks for one.
 
-**A CLI refusal is not always JSON.** Structured ones (`argument_required`, `confirmation_required`,
-`refused`) come on stdout. Every other refusal (a dev server on another env, a dead local route, a
-missing `deployedUrlEnv`, a protected env) exits non-zero with **empty stdout** and its reason on
-stderr. So, exit ≠ 0 with empty stdout: relay the stderr reason to the human. Never retry it
-unchanged, and never report it as a test result.
+**Reading a refusal.** `infra-kit e2e` refuses on stdout, exit 2: `argument_required`,
+`confirmation_required`, or `{"status": "refused", "reason", …}` where `reason` is one of:
+
+| `reason`              | Means                                                          | Do                                     |
+| --------------------- | -------------------------------------------------------------- | -------------------------------------- |
+| `served_env_mismatch` | the running dev server has `servedEnv`, the shell `env`        | section 7's choice                     |
+| `dead_local_routes`   | a backend the UI holds local does not answer (`routes`)        | relay; the human fixes `infra-kit dev` |
+| `no_dev_server`       | nothing serves the target and the config would not start it    | relay `devCommand`                     |
+| `no_deployed_url_env` | the target declares no deployed URL variable                   | the app is **local only** (section 4)  |
+| `env_not_loaded`      | `missing` (the URL variable or `INFRA_KIT_ENV`) is unset       | load the env (section 3), re-run once  |
+| `protected_env`       | `env` is protected                                             | relay and stop                         |
+| `run_in_progress`     | another local run of this package holds its dev server (`pid`) | wait for it; never run two at once     |
+
+Anything else — exit ≠ 0 with empty stdout — is a crash or a config error: relay stderr. Never retry a
+refusal unchanged, and never report one as a test result.
 
 ## 1. Arguments and language
 
@@ -47,7 +58,7 @@ The skill hands you `$ARGUMENTS` verbatim.
 - `--base <ref>` → the ref the release is compared against (section 6). Default: `origin/main`.
 - `--fresh` → start a new state file even when one exists for this release (the old one is kept
   beside it, renamed).
-- `--slow-mo [<ms>]` → offer the watched pass (section 11) without asking; `<ms>` defaults to `1500`.
+- `--slow-mo [<ms>]` → offer the watched pass (section 11) without asking; `<ms>` defaults to `2000`.
 
 **Language comes first** — before any other question or tool call, unless `--lang` named it, ask
 with `AskUserQuestion`: **English** or **עברית (Hebrew)**. From then on every question, status
@@ -58,8 +69,14 @@ reorder it.
 
 ## 2. Release branch and state file
 
-This skill runs on a **release branch only** (`release/v<semver>` or `release/<name>`). Open the
-state:
+This skill runs on a **release branch only** (`release/v<semver>` or `release/<name>`). Refresh the
+base first — a stale `origin/main` puts already-shipped commits into the ticket links and the scope:
+
+```
+git fetch origin
+```
+
+Then open the state:
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}"/skills/ultraqa/scripts/qa-state.mjs init --lang <en|he> --base <ref>
@@ -173,8 +190,8 @@ Show `plan.baseUrl` and `plan.env` to the human once for all apps. On their go, 
 `infra-kit ` followed by the `rerun` tokens joined by spaces. `rerun` already carries `--yes`
 (before any `--`), so add nothing. Every later cloud run of this pass (focus) carries `--yes` before
 its `--` the same way. Never send `--yes` before the human has seen that URL. A protected env
-(production) is refused either as `{"status": "refused"}` or on stderr: it is the human's to clear.
-Relay it and stop, do not retry.
+(production) is refused with `reason: "protected_env"`: it is the human's to clear (`humanMayRun:
+true` means they can run it from their own terminal). Relay it and stop, do not retry.
 
 ## 4. Discover the e2e apps
 
@@ -184,7 +201,8 @@ below carries `--cloud` too. A dry-run never runs anything and never asks for co
 A local dry-run that refuses because the running dev server has another env is the choice section 7
 describes ("The env of a running dev server"): ask it now, before any run.
 
-Run `infra-kit e2e --dry-run --json --agent` once with no `--app`.
+Run `infra-kit e2e --dry-run --json --agent` once with no `--app`. Run it from the repo root: inside
+`apps/<app>/` the CLI picks that app without listing the others.
 
 - More than one app: it exits 2 with `{"status": "argument_required", "argument": "app", "choices"}`.
   That is the listing, not a failure — the app names are `choices.properties.app.enum`.
@@ -194,8 +212,13 @@ Run `infra-kit e2e --dry-run --json --agent` once with no `--app`.
 
 An app whose `testsDir` holds no spec (Glob `<testsDir>/src/**/*.spec.ts`) is reported as
 **scaffold only** and not run — Playwright exits non-zero on "No tests found", which is not a test
-result. An app whose cloud dry-run refuses for a missing `deployedUrlEnv` cannot run in cloud mode:
-report it as **local only** and leave it out.
+result. An app whose cloud dry-run refuses with `reason: "no_deployed_url_env"` cannot run in cloud
+mode: report it as **local only** and leave it out. `env_not_loaded` is not that — it is section 3's
+env, not the app.
+
+Per app, also Read `<testsDir>/playwright.config.ts` once and keep its project names: the focus pass
+(section 7) needs one browser project plus every non-browser project (`api`, `contract`, …), and the
+visual pass needs to know whether the full suite already covers `src/visual`.
 
 ## 5. Release tickets (mandatory)
 
@@ -250,13 +273,18 @@ git diff --name-only <base>...HEAD
 ```
 
 Map each changed path to an e2e **domain** — a folder `<testsDir>/src/tests/<domain>/` (and
-`<testsDir>/src/visual/<domain>/` where it exists):
+`<testsDir>/src/visual/<domain>/` where it exists). Folders starting with `.` (`.omc/`, …) are tool
+state, never domains.
 
 1. A path under `apps/<app>/` belongs to that app's suite; a shared package (`packages/…`) touches
    every app that depends on it.
-2. Inside the app, match the feature or route folder name against the domain folder names (Glob the
-   domains, then Grep the specs for the route or component name when the folder names differ).
-3. A changed spec or Page Object marks its own domain.
+2. Inside the app, match the feature or route folder name against the domain folder names. They
+   often differ (`flight-baggage` ↔ `luggage`, `review-agency` ↔ `agency-review`), so a name match is
+   only the first try: Grep the specs and Page Objects for the feature's route, its `data-testid`s or
+   its component names, and take the domains that hit.
+3. A changed spec marks its own domain. A changed shared test file — a Page Object, fixture, mock or
+   helper under `src/pages/`, `src/fixtures/`, `src/mocks/`, `src/lib/` — marks every domain whose
+   specs import it (Grep the domains for its module name).
 4. A ticket marks the domain its commits touched (`git diff --name-only <sha>^ <sha>` for each sha in
    `tickets.json`'s `commitsByTicket`), and — for a ticket with no commit — the domain its summary,
    components or description name.
@@ -281,8 +309,8 @@ local run's data comes from the env, and the report must say which routes went w
 
 **The env of a running dev server.** A served dev server keeps the env it was started with; loading
 another env into the shell afterwards does not move its cloud routes. The dry-run reports it as
-`servedEnv`, and a local run whose `servedEnv` differs from its `env` refuses (exit 1, "the dev server
-serving … runs with env X, this shell with Y"). That refusal is the human's choice to make — ask with
+`servedEnv`, and a local run whose `servedEnv` differs from its `env` refuses with
+`reason: "served_env_mismatch"`. That refusal is the human's choice to make — ask with
 `AskUserQuestion`:
 
 - **Use the server's env** — run `infra-kit env-load -c <servedEnv> --json --agent` (the host's prompt
@@ -293,28 +321,41 @@ serving … runs with env X, this shell with Y"). That refusal is the human's ch
 Never stop a dev server yourself. `servedEnv: null` on a served target means the server was started
 with no env loaded, or by a CLI older than 0.15.0: say in the report that its env is unknown.
 
-Per app, in this order. Each is `infra-kit e2e --app <app> [--cloud] --json --agent -- <args>`; never
-pass `--reporter`, which turns off the per-test results the report is built from
-(`report: "caller-reporter"`).
+Per app, one run at a time, in this order. Each is
+`infra-kit e2e --app <app> [--cloud] --json --agent -- --output <stateDir>/runs/<app>-<kind> <args>`:
+the `--output` keeps the run's traces in the state dir, beside the report that cites them, after the
+worktree is gone. Never pass `--reporter`, which turns off the per-test results the report is built
+from (`report: "caller-reporter"`).
 
-1. **Full suite** — no extra args. Every test, every time; the focus pass never replaces it.
-2. **Focus pass** — `-- <domain folders…> --repeat-each=3 --project=chromium`, the domains from
-   section 6 as `src/tests/<domain>/` (relative to `testsDir`; the trailing `/` stops `checkout`
-   from also matching `checkout-v2`). A test that passes in run 1 and fails here is **flaky**,
-   reported as such.
-3. **Visual pass** — only when the app has `src/visual/` and the mode is local:
-   `-- src/visual --project=chromium`. Baselines are per-OS; a missing-baseline failure is reported
-   as "no baseline for this OS", not as a regression.
+1. **Full suite** (`<kind>` `full`) — no other args. Every test, every time; the focus pass never
+   replaces it.
+2. **Focus pass** (`focus`) — `<domain folders…> --repeat-each=3` plus one `--project=<name>` per
+   project to keep: the first browser project (usually `chromium`) and every non-browser one
+   (`api`, `contract`) from section 4 — a lone `--project=chromium` drops the `.api` / `.contract`
+   specs. A `setup` project runs on its own as a dependency. The domains are section 6's, as
+   `src/tests/<domain>/` (Playwright matches them against the file path; the trailing `/` stops
+   `checkout` from also matching `checkout-v2`).
+3. **Visual pass** (`visual`) — local mode only, and only when the app has `src/visual/` **and** the
+   full suite did not already run it (its config's `testDir` covers `src/visual` and nothing ignores
+   it locally — then the full run's results are the visual results; say so). Before running, Glob the
+   baselines: when no `*-<platform>.png` matches this machine (`darwin`, `linux`), skip the pass and
+   report "no baseline for this OS". Otherwise: `src/visual/ --project=<the browser project>`.
 
 Long suites: run each in the background and wait for it, rather than polling. Read only the JSON on
 stdout — Playwright's own log goes to stderr and is not the report (the one exception: an empty
 stdout, see the refusal rule at the top). After each run, write `runs[]` to the state, so an
 interrupted pass resumes at the next run instead of the first. Keep each failure in the state short:
-title, `file:line`, the first line of `error`, `tracePath`.
+title, `file`, `line`, `project`, `status`, `runs`/`failedRuns`, the first line of `error`,
+`tracePath`; keep the run's `outputDir` and its `annotated[]` beside it.
 
 Reading a result:
 
-- `report: "collected"` → `summary {expected, unexpected, flaky, skipped}` and `failures[]` are real.
+- `report: "collected"` → `summary {expected, unexpected, flaky, skipped, repeatFlaky}`,
+  `failures[]` and `annotated[]` are real. Under `--repeat-each` Playwright counts every repeat, so
+  `expected`/`unexpected` are ×3; read flakiness from `failures[]`: `status: "flaky"` means the test
+  failed on a retry or in some repeats and passed in others (`failedRuns` of `runs`), and
+  `summary.repeatFlaky` counts the latter. A focus-pass `unexpected` entry failed every repeat — a
+  real failure, not flake. A test that passed in the full run and fails here is flaky too.
 - `report: "unavailable"` → Playwright crashed before writing results: read its stderr, report the
   crash, continue with the next run.
 - `exitCode` non-zero with `unexpected: 0` → a setup or webServer failure; `errors[]` holds the
@@ -323,13 +364,17 @@ Reading a result:
 
 ## 8. Hollow green
 
-A passing suite can still assert little. Count, per focus domain, with Grep over `<testsDir>/src`:
+A passing suite can still assert little. The full run's `annotated[]` counts it per spec file, as
+Playwright ran it — declared and runtime annotations, conditional skips that fired, fixture-level
+skips included; never Grep for it (a grep counts comments and misses the skips called from fixtures
+and helpers). Sum the rows whose `file` sits in each focus domain:
 
-- `test.fail(` — a known bug registered as passing; green only while the bug exists.
-- `test.fixme(` — a placeholder; an empty body tests nothing.
-- `test.describe.skip(` / `test.describe.fixme(` — a whole block off; count it as one.
-- `test.skip(` — note which ones are data- or env-conditional (`test.skip(!…)`): on another env they
-  may have run.
+- `fail` — `test.fail`: a known bug registered as passing; green only while the bug exists. Read the
+  test title before calling it a bug: a guard's self-test (`write-guard`, `pii-guard`) is `fail` on
+  purpose.
+- `fixme` — a placeholder; often an empty body that tests nothing.
+- `skip` — skipped in this run: data-, env- or browser-conditional ones too. On another env, with
+  other data or another browser, they may run.
 
 Report the counts next to `summary.skipped`; they are part of the verdict, not a footnote.
 
@@ -349,7 +394,8 @@ One message, in the chosen language, in this order:
 2. **Context** — release, Jira version link, ticket count, branch, base, commit count, mode, `baseUrl`
    per app, env (and `servedEnv` when a running dev server was reused), and for local runs the route
    split from section 7 — one row per route: `path`, `local`/`cloud`, target URL, live, or "not
-   observed" with the `devCommand`.
+   observed" with the `devCommand`. Say plainly that a local run's cloud routes read the env's live
+   data, and that suites which write (create and delete records) wrote to that env.
 3. **Results table**, one row per app and run:
 
 | App     | Run    | ✅ expected | ❌ unexpected | 🔁 flaky | ⏭ skipped | Exit |
@@ -361,8 +407,9 @@ One message, in the chosen language, in this order:
 4. **Tickets** — one row per ticket: key (linked), its focus domains, the result of those domains
    (✅ / ❌ / 🔁), and **manual only** when no domain covers it or **no commit** when it has none.
 5. **Failures** — per `failures[]` row: the run it failed in (full / focus / visual), whether its
-   domain is in focus, the ticket it belongs to when one does, title, `file:line`, the first line of
-   `error`, the `tracePath` with `pnpm exec playwright show-trace <tracePath>`, and a first
+   domain is in focus, the ticket it belongs to when one does, title, `file:line` (from `file` and
+   `line`), `project`, `failedRuns`/`runs` for a focus row, the first line of `error`, the
+   `tracePath` with `pnpm exec playwright show-trace <tracePath>`, and a first
    classification (product defect / intentional product change / test defect / test data or
    environment / flake). Mark the classification as a first read — the e2e-architect Diagnose
    procedure confirms it.
@@ -399,16 +446,18 @@ path instead.
 ## 11. The watched pass (optional)
 
 After the page, offer it with `AskUserQuestion` (skip the question when `--slow-mo` was passed):
-which focus domains to watch, and at what speed (`1500` ms default; `3000` for a careful review).
+which focus domains to watch, and at what speed (`2000` ms default, as the consumer scripts default;
+`3000` for a careful review).
 
 It runs **locally**, on the human's screen: the Playwright UI with the chosen domains loaded, every
 action slowed to `<ms>`. The script lives in the e2e package, so it runs from `testsDir`:
 
 `E2E_SLOW_MO=<ms> pnpm --dir <testsDir> run e2e-test-ui-demo <domain folders…> --project=chromium`
 
-The folders are `src/tests/<domain>/`, plus `src/visual/<domain>/` where it exists. Every consumer
-e2e package carries `e2e-test-ui-demo` (`infra-kit audit` enforces it), and its config reuses this
-worktree's dev server or starts one.
+The folders are `src/tests/<domain>/`, plus `src/visual/<domain>/` where it exists. Check the
+package's `package.json` has `e2e-test-ui-demo` first — a repo can switch the audit rule that
+requires it off; without the script, say so and skip the pass. Its config reuses this worktree's dev
+server or starts one.
 
 Run it in the background and do not wait on it or kill it: the UI holds the process until the human
 closes the window. Tell them which folders are loaded, and that tests outside them are not listed

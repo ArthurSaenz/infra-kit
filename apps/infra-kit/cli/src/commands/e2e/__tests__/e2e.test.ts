@@ -15,6 +15,7 @@ import type { ProtectedEnvAccess } from 'src/lib/workflow-envs'
 import { e2e } from '../e2e'
 import type { E2eDeps } from '../e2e'
 import type { E2eTarget } from '../e2e-target'
+import { runLockPath } from '../run-lock'
 
 // Everything here is real except Playwright itself: a git worktree on disk, the consumer configs, the
 // dev-context fragments, portless's routes.json, and loopback servers that answer the way vite and a
@@ -267,9 +268,19 @@ describe('e2e — local (the default)', () => {
     registerUi(await viteServer())
     writeBackendFragment(await backendServer(), 'stage')
 
-    await expect(e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))).rejects.toThrow(
-      /runs with env "stage", this shell with "dev"/,
-    )
+    const error = await e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' })).catch((caught: unknown) => {
+      return caught
+    })
+
+    expect(error).toBeInstanceOf(StructuredRefusalError)
+    expect((error as StructuredRefusalError).message).toMatch(/runs with env "stage", this shell with "dev"/)
+    expect((error as StructuredRefusalError).exitCode).toBe(2)
+    expect((error as StructuredRefusalError).structuredContent).toEqual({
+      status: 'refused',
+      reason: 'served_env_mismatch',
+      servedEnv: 'stage',
+      env: 'dev',
+    })
   })
 
   it('trusts a fragment that recorded no env, as an older CLI writes it', async () => {
@@ -301,6 +312,51 @@ describe('e2e — local (the default)', () => {
     expect(result.structuredContent.mode).toBe('local')
     expect(runPlaywright).toHaveBeenCalledOnce()
   })
+
+  it('refuses a second local run of the package while the first one holds its dev server', async () => {
+    registerUi(await viteServer())
+
+    const lockPath = runLockPath(path.join(root, 'apps/client/tests'))
+
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true })
+    // The parent of this test process: alive, and not this process.
+    fs.writeFileSync(lockPath, String(process.ppid))
+
+    const runPlaywright = vi.fn(async () => {
+      return 0
+    })
+    const error = await e2e({}, deps({}, { runPlaywright })).catch((caught: unknown) => {
+      return caught
+    })
+
+    expect((error as StructuredRefusalError).structuredContent).toEqual({
+      status: 'refused',
+      reason: 'run_in_progress',
+      pid: process.ppid,
+    })
+    expect(runPlaywright).not.toHaveBeenCalled()
+  })
+
+  it('takes over a lock its dead holder left, and releases it after the run', async () => {
+    registerUi(await viteServer())
+
+    const lockPath = runLockPath(path.join(root, 'apps/client/tests'))
+
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true })
+    fs.writeFileSync(lockPath, '999999999')
+
+    let heldDuringRun = ''
+    const runPlaywright = vi.fn(async () => {
+      heldDuringRun = fs.readFileSync(lockPath, 'utf8')
+
+      return 0
+    })
+
+    await e2e({}, deps({}, { runPlaywright }))
+
+    expect(heldDuringRun).toBe(String(process.pid))
+    expect(fs.existsSync(lockPath)).toBe(false)
+  })
 })
 
 describe('e2e — per-test results for a machine reader', () => {
@@ -322,7 +378,14 @@ describe('e2e — per-test results for a machine reader', () => {
     })
     const result = await e2e({ playwrightArgs: ['src/tests/checkout'] }, deps({}, { runPlaywright }))
 
-    expect(runPlaywright.mock.calls[0]?.[1]).toEqual(['--reporter=line,json', 'src/tests/checkout'])
+    const outputDir = result.structuredContent.outputDir ?? ''
+
+    expect(outputDir.startsWith(path.join(root, 'apps/client/tests/test-results/ik-e2e-'))).toBe(true)
+    expect(runPlaywright.mock.calls[0]?.[1]).toEqual([
+      '--reporter=line,json',
+      'src/tests/checkout',
+      `--output=${outputDir}`,
+    ])
     expect(runPlaywright.mock.calls[0]?.[2]).toEqual({
       PLAYWRIGHT_JSON_OUTPUT_FILE: reportFile,
       PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile,
@@ -341,6 +404,30 @@ describe('e2e — per-test results for a machine reader', () => {
       '/repo/apps/client/tests/test-results/apply/trace.zip',
     ])
     expect(fs.existsSync(reportFile)).toBe(false)
+  })
+
+  it('gives every run its own output directory, so a later run cannot delete its traces', async () => {
+    registerUi(await viteServer())
+
+    const runPlaywright = vi.fn(async () => {
+      return 0
+    })
+    const first = await e2e({}, deps({}, { runPlaywright }))
+    const second = await e2e({}, deps({}, { runPlaywright }))
+
+    expect(first.structuredContent.outputDir).not.toBe(second.structuredContent.outputDir)
+  })
+
+  it('keeps a caller-chosen --output and reports it', async () => {
+    registerUi(await viteServer())
+
+    const runPlaywright = vi.fn(async (_target: E2eTarget, _args: string[]) => {
+      return 0
+    })
+    const result = await e2e({ playwrightArgs: ['--output', '../qa/full'] }, deps({}, { runPlaywright }))
+
+    expect(runPlaywright.mock.calls[0]?.[1]).toEqual(['--reporter=line,json', '--output', '../qa/full'])
+    expect(result.structuredContent.outputDir).toBe(path.join(root, 'apps/client/qa/full'))
   })
 
   it('leaves a caller-chosen reporter alone and says no report was collected', async () => {
@@ -466,6 +553,35 @@ describe('e2e — --cloud', () => {
     await expect(e2e({ cloud: true, dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))).rejects.toThrow(
       /CLIENT_URL is not set/,
     )
+  })
+
+  it('tells an unloaded env apart from a target with no deployed URL variable', async () => {
+    const refusalOf = (promise: Promise<unknown>) => {
+      return promise.then(
+        () => {
+          return null
+        },
+        (caught: unknown) => {
+          return (caught as StructuredRefusalError).structuredContent
+        },
+      )
+    }
+
+    expect(await refusalOf(e2e({ cloud: true, dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' })))).toEqual({
+      status: 'refused',
+      reason: 'env_not_loaded',
+      missing: CLIENT_URL,
+    })
+
+    writeConfig('apps/client/ui/infra-kit.config.ts', {
+      dev: { proxy: { ...CLIENT_PROXY, routes: { '/api': { packageName: 'backend-api', from: ['local'] } } } },
+    })
+
+    expect(await refusalOf(e2e({ cloud: true, dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' })))).toEqual({
+      status: 'refused',
+      reason: 'no_deployed_url_env',
+      target: 'client/ui',
+    })
   })
 })
 

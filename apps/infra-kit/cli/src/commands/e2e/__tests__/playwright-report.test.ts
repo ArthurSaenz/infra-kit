@@ -13,7 +13,7 @@ describe('summarizePlaywrightReport', () => {
   it('reports the totals and one entry per failed or flaky test, passes and skips left out', () => {
     const report = summarizePlaywrightReport(fixture())
 
-    expect(report?.summary).toEqual({ expected: 1, unexpected: 1, flaky: 1, skipped: 1 })
+    expect(report?.summary).toEqual({ expected: 1, unexpected: 1, flaky: 1, skipped: 1, repeatFlaky: 0 })
     expect(report?.failures).toEqual([
       {
         title: 'Checkout › rejects an expired coupon without changing the total',
@@ -22,6 +22,8 @@ describe('summarizePlaywrightReport', () => {
         project: 'chromium',
         status: 'unexpected',
         retry: 0,
+        runs: 1,
+        failedRuns: 1,
         error: 'Error: expect(locator).toHaveText(expected)\n\nExpected: "€40"\nReceived: "€35"',
         tracePath: '/repo/apps/client/tests/test-results/coupon/trace.zip',
       },
@@ -32,9 +34,109 @@ describe('summarizePlaywrightReport', () => {
         project: 'chromium',
         status: 'flaky',
         retry: 0,
+        runs: 1,
+        failedRuns: 1,
         error: 'Test timeout of 30000ms exceeded.',
         tracePath: '/repo/apps/client/tests/test-results/apply/trace.zip',
       },
+    ])
+  })
+
+  it('folds --repeat-each repeats into one entry per test and project, flaky when only some failed', () => {
+    const run = (status: string) => {
+      return {
+        projectName: 'chromium',
+        status,
+        results: [
+          status === 'expected'
+            ? { status: 'passed', retry: 0 }
+            : { status: 'failed', retry: 0, error: { message: `boom ${status}` }, attachments: [] },
+        ],
+      }
+    }
+    const raw = {
+      config: { rootDir: '/repo/tests' },
+      suites: [
+        {
+          title: 'cart.spec.ts',
+          specs: [
+            {
+              title: 'sometimes',
+              file: 'cart.spec.ts',
+              line: 3,
+              tests: [run('expected'), run('unexpected'), run('expected')],
+            },
+            {
+              title: 'always',
+              file: 'cart.spec.ts',
+              line: 9,
+              tests: [run('unexpected'), run('unexpected'), run('unexpected')],
+            },
+            {
+              title: 'never',
+              file: 'cart.spec.ts',
+              line: 15,
+              tests: [run('expected'), run('expected'), run('expected')],
+            },
+          ],
+        },
+      ],
+      stats: { expected: 5, unexpected: 4, flaky: 0, skipped: 0 },
+    }
+
+    const report = summarizePlaywrightReport(raw)
+
+    expect(report?.summary.repeatFlaky).toBe(1)
+    expect(
+      report?.failures.map(({ title, status, runs, failedRuns }) => {
+        return { title, status, runs, failedRuns }
+      }),
+    ).toEqual([
+      { title: 'sometimes', status: 'flaky', runs: 3, failedRuns: 1 },
+      { title: 'always', status: 'unexpected', runs: 3, failedRuns: 3 },
+    ])
+  })
+
+  it('counts test.fail, fixme and skip per spec file once, runtime skips included, whatever the projects', () => {
+    const test = (extra: object) => {
+      return { projectName: 'chromium', status: 'expected', results: [{ status: 'passed', retry: 0 }], ...extra }
+    }
+    const raw = {
+      config: { rootDir: '/repo/tests' },
+      suites: [
+        {
+          title: 'seo.spec.ts',
+          specs: [
+            {
+              title: 'known bug',
+              file: 'seo.spec.ts',
+              tests: [test({ expectedStatus: 'failed' }), test({ projectName: 'firefox', expectedStatus: 'failed' })],
+            },
+            {
+              title: 'unfinished',
+              file: 'seo.spec.ts',
+              tests: [test({ status: 'skipped', annotations: [{ type: 'fixme' }], results: [] })],
+            },
+            {
+              title: 'needs data',
+              file: 'seo.spec.ts',
+              tests: [
+                test({
+                  status: 'skipped',
+                  results: [{ status: 'skipped', retry: 0, annotations: [{ type: 'skip', description: 'no deal' }] }],
+                }),
+              ],
+            },
+            { title: 'plain', file: 'seo.spec.ts', tests: [test({})] },
+          ],
+        },
+        { title: 'home.spec.ts', specs: [{ title: 'plain', file: 'home.spec.ts', tests: [test({})] }] },
+      ],
+      stats: { expected: 3, unexpected: 0, flaky: 0, skipped: 2 },
+    }
+
+    expect(summarizePlaywrightReport(raw)?.annotated).toEqual([
+      { file: '/repo/tests/seo.spec.ts', fail: 1, fixme: 1, skip: 1 },
     ])
   })
 

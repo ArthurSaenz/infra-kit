@@ -286,7 +286,7 @@ describe('setup --skip-tools — plugin pointer', () => {
 
     expect(
       entries.filter((entry) => {
-        return entry.outcome === 'manual'
+        return entry.step === 'plugin-pointer' && entry.outcome === 'manual'
       }),
     ).toEqual([
       { step: 'plugin-pointer', outcome: 'manual', message: MARKETPLACE_ADD_COMMAND, level: 'info' },

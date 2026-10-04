@@ -220,8 +220,8 @@ export interface SyncRepoGuidanceResult {
   /** CLI version recorded in every block this run wrote. */
   version: string
   /**
-   * Every write this run attempted — the two root files first, then one entry per
-   * discovered package. Entries with `action: 'failed'` carry a `message`; the caller
+   * Every write this run attempted (under `dryRun`, would attempt) — the two root files first,
+   * then one entry per discovered package. Entries with `action: 'failed'` carry a `message`; the caller
    * decides how loud that is.
    */
   written: GuidanceWrite[]
@@ -255,28 +255,30 @@ const discoverWorkspacePackages = async (root: string): Promise<string[]> => {
  * well-formed package block behind, which adopts the workspace and reddens every package
  * the run never reached.
  *
- * Writes unconditionally — it does not ask, and does not skip an unadopted workspace.
- * `initCore` is the repo-wide refresh path, so a consumer re-running it after a CLI upgrade
- * gets every block regenerated in one pass.
+ * Does not skip an unadopted workspace. `dryRun` reports the action each file would take and
+ * writes nothing — `initCore` checks this way, because `setup` is meant to be re-run routinely
+ * and must not leave a committed-file diff behind; `audit --fix` is the operation that writes.
  *
  * @example
- * const result = await syncRepoGuidance()
+ * const result = await syncRepoGuidance({ dryRun: true })
  * // => { skipped: false, root: '/repo', version: '0.4.0', written: [ ...root, ...packages ] }
  */
-export const syncRepoGuidance = async (): Promise<SyncRepoGuidanceResult> => {
+export const syncRepoGuidance = async ({
+  dryRun = false,
+}: { dryRun?: boolean } = {}): Promise<SyncRepoGuidanceResult> => {
   const root = await resolveInfraKitRoot()
   const version = packageJson.version
 
   if (root === null) return { skipped: true, root: null, version, written: [] }
 
-  const written: GuidanceWrite[] = [...(await syncRootGuidance(root, { version }))]
+  const written: GuidanceWrite[] = [...(await syncRootGuidance(root, { version, dryRun }))]
 
   for (const packageDir of await discoverWorkspacePackages(root)) {
     // Total by contract: an absent, unloadable or unrecognised config resolves to `undefined`
     // rather than rejecting, so one broken package config cannot abort the repo-wide sync.
     const declaredType = await readDeclaredPackageType(packageDir)
 
-    written.push(...(await syncPackageGuidance(packageDir, { repoRoot: root, version, declaredType })))
+    written.push(...(await syncPackageGuidance(packageDir, { repoRoot: root, version, declaredType, dryRun })))
   }
 
   return { skipped: false, root, version, written }

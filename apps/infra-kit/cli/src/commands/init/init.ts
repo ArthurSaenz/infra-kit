@@ -204,12 +204,12 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
     record(seedUserGlobalConfig())
   })
 
-  // Best-effort, non-fatal, repo-gated: keep the agent-instruction files in sync
-  // with the CLI surface — root AND every workspace package. A no-op outside an
-  // infra-kit repo (gated on `resolveInfraKitRoot`: the blocks render config-derived
-  // content, so `infra-kit.json` is a real precondition for THEM).
+  // Best-effort, non-fatal, repo-gated, READ-ONLY: report whether the agent-instruction files
+  // (root AND every workspace package) match this CLI, and name the `audit --fix` that refreshes
+  // them. A no-op outside an infra-kit repo (gated on `resolveInfraKitRoot`: the blocks render
+  // config-derived content, so `infra-kit.json` is a real precondition for THEM).
   const guidanceRoot = await withStep('guidance', async () => {
-    const { entries, root } = await syncAgentGuidance()
+    const { entries, root } = await checkAgentGuidance()
 
     record(...entries)
 
@@ -500,72 +500,92 @@ const projectConfigSkip = (outcome: 'skipped' | 'unchanged' | 'warned', why: str
 }
 
 /**
- * Log one line per guidance file this run actually changed, then the step's closing line.
- *
- * Unchanged files are omitted: a repo-wide refresh touches every package, and a clean
- * re-run would otherwise print one no-op line per package on top of `initCore`'s other output.
- *
- * When any file failed, a distinct summary line names the count and the fix. `initCore` exits 0
- * regardless (its contract is shell setup, and the sync is a side effect that must not turn
- * a machine-setup command red), which makes this line the only signal a partial sync
- * happened — so it must not be a per-path line buried among the rest.
+ * The commands that refresh what drifted: `--root` for the root files, `--all` for the packages.
+ * Named separately so a single-package repo is never told to run `--all`, which needs a workspace.
  */
-const guidanceEntries = (root: string, version: string, written: GuidanceWrite[]): InitEntry[] => {
-  const entries: InitEntry[] = []
+const guidanceFixCommands = (drifted: GuidanceWrite[]): string[] => {
+  const commands: string[] = []
 
-  for (const file of written) {
-    if (file.action === 'unchanged') continue
-
-    const suffix = file.type === undefined ? '' : ` (${file.type})`
-
-    entries.push({
-      step: 'guidance',
-      // A failed row is still one line of the per-file list, so it prints at `info` like its siblings —
-      // the level and the outcome part company here, which is why the entry carries both.
-      outcome: file.action === 'failed' ? 'warned' : 'written',
-      message: `  ${file.action.padEnd(9)} ${path.relative(root, file.path)}${suffix}`,
-      level: 'info',
+  if (
+    drifted.some((file) => {
+      return file.type === undefined
     })
+  ) {
+    commands.push('infra-kit audit --fix --root')
   }
 
-  entries.push({
-    step: 'guidance',
-    outcome: 'written',
-    message: `Agent-instruction files synced (infra-kit ${version})`,
-    level: 'info',
-  })
+  if (
+    drifted.some((file) => {
+      return file.type !== undefined
+    })
+  ) {
+    commands.push('infra-kit audit --fix --all')
+  }
 
-  const failed = written.filter((file) => {
+  return commands
+}
+
+/**
+ * The guidance check's entries: one summary line, then — when anything drifted — the refresh
+ * commands as `manual` entries (bare argv, so the report's note is copyable).
+ *
+ * `setup` never rewrites these files: it is meant to be re-run routinely to confirm the machine's
+ * state, and a committed-file diff on every CLI upgrade made it an edit instead of a check.
+ */
+const guidanceEntries = (version: string, planned: GuidanceWrite[]): InitEntry[] => {
+  const failed = planned.filter((file) => {
     return file.action === 'failed'
   })
-
-  if (failed.length === 0) return entries
-
-  entries.push({
-    step: 'guidance',
-    outcome: 'warned',
-    message: `${failed.length} package guidance files could not be written — run: infra-kit audit --fix --all`,
-    level: 'warn',
+  const drifted = planned.filter((file) => {
+    return file.action !== 'unchanged' && file.action !== 'failed'
   })
+  const entries: InitEntry[] = []
+
+  if (drifted.length === 0) {
+    entries.push({
+      step: 'guidance',
+      outcome: 'unchanged',
+      message: `Agent-instruction files current (infra-kit ${version})`,
+      level: 'info',
+    })
+  } else {
+    entries.push(
+      {
+        step: 'guidance',
+        outcome: 'skipped',
+        message: `${drifted.length} agent-instruction files differ from infra-kit ${version} — setup does not rewrite them; run:`,
+        level: 'info',
+      },
+      ...guidanceFixCommands(drifted).map((command): InitEntry => {
+        return { step: 'guidance', outcome: 'manual', message: command, level: 'info' }
+      }),
+    )
+  }
+
+  if (failed.length > 0) {
+    entries.push({
+      step: 'guidance',
+      outcome: 'warned',
+      message: `${failed.length} agent-instruction files could not be checked — run: infra-kit audit --root && infra-kit audit --all`,
+      level: 'warn',
+    })
+  }
 
   return entries
 }
 
 /**
- * `initCore`'s agent-guidance step: refresh the root block AND every workspace package's block in
- * one pass, then report. Continue-and-report — `syncRepoGuidance` never throws, a per-file
- * error arrives as `action: 'failed'`, and `process.exitCode` is deliberately left untouched
- * so `initCore` goes on to its remaining steps. A user who wants a failure to be an error runs
- * `infra-kit audit --fix --all`, which does exit non-zero.
+ * `initCore`'s agent-guidance step: dry-run the repo-wide sync — the root block AND every workspace
+ * package's — and report what it would change, writing nothing. Continue-and-report:
+ * `syncRepoGuidance` never throws, and an unreadable file arrives as `action: 'failed'`.
  *
  * @example
- * await syncAgentGuidance()
- * // INFO:   updated   CLAUDE.md
- * // INFO:   created   apps/client/ui/CLAUDE.md (frontend)
- * // INFO: Agent-instruction files synced (infra-kit 0.4.0)
+ * await checkAgentGuidance()
+ * // INFO: 2 agent-instruction files differ from infra-kit 0.4.0 — setup does not rewrite them; run:
+ * // INFO: infra-kit audit --fix --all
  */
-const syncAgentGuidance = async (): Promise<{ root: string | null; entries: InitEntry[] }> => {
-  const { skipped, root, version, written } = await syncRepoGuidance()
+const checkAgentGuidance = async (): Promise<{ root: string | null; entries: InitEntry[] }> => {
+  const { skipped, root, version, written } = await syncRepoGuidance({ dryRun: true })
 
   if (skipped || root === null) {
     // Silent: `resolveInfraKitRoot` has already printed the reason it declined.
@@ -582,7 +602,7 @@ const syncAgentGuidance = async (): Promise<{ root: string | null; entries: Init
     }
   }
 
-  return { root, entries: guidanceEntries(root, version, written) }
+  return { root, entries: guidanceEntries(version, written) }
 }
 
 /** One line per pointer outcome. `unparseable` already warned from inside the lib, so it says nothing here. */
