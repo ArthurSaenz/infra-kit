@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile, execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,7 +8,16 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
-import { adfToText, correlate, mergeState, parseCommits, releaseFromBranch, releaseWorktrees } from '../scripts/lib.mjs'
+import {
+  adfToText,
+  correlate,
+  mergeState,
+  newState,
+  parseCommits,
+  patchError,
+  releaseFromBranch,
+  releaseWorktrees,
+} from '../scripts/lib.mjs'
 
 const SCRIPT = fileURLToPath(new URL('../scripts/qa-state.mjs', import.meta.url))
 const run = promisify(execFile)
@@ -180,6 +189,19 @@ const fakeJira = () => {
   return { server, seen }
 }
 
+test('patchError refuses the patches that would wedge a resume', () => {
+  const state = newState({ release: {}, repo: 'r', worktree: '/w', headSha: 'a', base: 'b', lang: 'en', now: 'n' })
+
+  assert.equal(patchError(state, { phases: { env: 'done' }, mode: 'local', runs: [] }), null)
+  assert.match(patchError(state, [1]), /JSON object/)
+  assert.match(patchError(state, { phase: { env: 'done' } }), /unknown key "phase"/)
+  assert.match(patchError(state, { phases: 'done' }), /must be an object/)
+  assert.match(patchError(state, { phases: { enviro: 'done' } }), /unknown phase "enviro"/)
+  assert.match(patchError(state, { phases: { env: 'ok' } }), /pending, done or skipped/)
+  assert.match(patchError(state, { runs: null }), /"runs" must be an array/)
+  assert.match(patchError(state, { headSha: 'x' }), /written by the script/)
+})
+
 test('init → tickets → update writes the state outside the repo and correlates commits', async (t) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'ultraqa-')))
   const home = join(root, 'home')
@@ -247,6 +269,10 @@ test('init → tickets → update writes the state outside the repo and correlat
     JSON.stringify({ mode: 'local', env: 'dev', phases: { env: 'done', runs: 'done' }, runs: [{ app: 'shop' }] }),
   )
 
+  const refused = await qa('update', JSON.stringify({ phases: 'done' })).catch((error) => JSON.parse(error.stdout))
+
+  assert.equal(refused.status, 'invalid_patch')
+
   const state = JSON.parse(readFileSync(join(stateDir, 'state.json'), 'utf-8'))
 
   assert.equal(state.mode, 'local')
@@ -287,6 +313,7 @@ test('init → tickets → update writes the state outside the repo and correlat
   assert.equal(afterRebase.phases.runs, 'pending')
   assert.equal(afterRebase.phases.tickets, 'done')
   assert.deepEqual(afterRebase.tickets.withoutCommits, [])
+  assert.equal(afterRebase.tickets.fetchedAt, state.tickets.fetchedAt, 'a rebase does not re-fetch, so fetchedAt stays')
   assert.equal(seen.filter((hit) => hit.key.startsWith('POST')).length, 1, 'a rebase must not call Jira again')
 
   const fresh = await qa('init', '--lang', 'he', '--fresh', '--base', 'base-ref')
@@ -294,6 +321,13 @@ test('init → tickets → update writes the state outside the repo and correlat
   assert.equal(fresh.resumed, false)
   assert.equal(fresh.state.phases.tickets, 'pending')
   assert.ok(existsSync(join(stateDir, 'tickets.md')))
+
+  writeFileSync(join(stateDir, 'state.json'), '{"half": ')
+
+  const corrupt = await qa('init', '--lang', 'en').catch((error) => JSON.parse(error.stdout))
+
+  assert.equal(corrupt.status, 'state_corrupt')
+  assert.equal((await qa('init', '--lang', 'en', '--fresh', '--base', 'base-ref')).resumed, false)
 })
 
 test('tickets refuses with the missing variable names only', async (t) => {

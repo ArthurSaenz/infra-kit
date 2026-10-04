@@ -176,7 +176,36 @@ export const mergeState = (base, patch) => {
   return merged
 }
 
-export const PHASES = ['release', 'apps', 'env', 'tickets', 'scope', 'runs', 'report', 'artifact']
+export const PHASES = ['release', 'env', 'apps', 'tickets', 'scope', 'runs', 'report', 'artifact']
+
+const PHASE_VALUES = new Set(['pending', 'done', 'skipped'])
+/** Written by `init` and `tickets` only — a patch that sets them would desync the state from git. */
+const SCRIPT_OWNED_KEYS = new Set(['schema', 'release', 'repo', 'worktree', 'headSha', 'base', 'startedAt', 'tickets'])
+
+/**
+ * Why an `update` patch must be refused, or null. A typo'd key or phase would otherwise sit in the
+ * state unnoticed and leave its phase `pending` forever, and a wrong-typed field breaks the resume.
+ */
+export const patchError = (state, patch) => {
+  if (!isPlainObject(patch)) return 'the patch must be a JSON object'
+
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === 'updatedAt') continue
+    if (!(key in state)) return `unknown key "${key}"`
+    if (SCRIPT_OWNED_KEYS.has(key)) return `"${key}" is written by the script, not by update`
+    if (Array.isArray(state[key]) && !Array.isArray(value)) return `"${key}" must be an array`
+  }
+
+  if (patch.phases === undefined) return null
+  if (!isPlainObject(patch.phases)) return '"phases" must be an object of phase → status'
+
+  for (const [phase, status] of Object.entries(patch.phases)) {
+    if (!PHASES.includes(phase)) return `unknown phase "${phase}" — one of ${PHASES.join(', ')}`
+    if (!PHASE_VALUES.has(status)) return `phase "${phase}" must be pending, done or skipped`
+  }
+
+  return null
+}
 
 /** The phases whose result depends on the commit the pass ran against. */
 const HEAD_BOUND_PHASES = ['scope', 'runs', 'report', 'artifact']

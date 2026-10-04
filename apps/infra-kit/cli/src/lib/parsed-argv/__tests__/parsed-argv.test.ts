@@ -64,4 +64,14 @@ describe('rerunArgv', () => {
 
     expect(rerunArgv()).toEqual(['worktrees', 'sync', '-y'])
   })
+
+  it('puts --yes before a `--`, whose tail belongs to Playwright and never confirms', () => {
+    setParsedArgv(['node', 'infra-kit', 'e2e', '--app', 'shop', '--cloud', '--', 'src/tests/cart', '--yes'])
+
+    expect(rerunArgv()).toEqual(['e2e', '--app', 'shop', '--cloud', '--yes', '--', 'src/tests/cart', '--yes'])
+
+    setParsedArgv(['node', 'infra-kit', 'e2e', '--cloud', '--yes', '--', 'src/tests/cart'])
+
+    expect(rerunArgv()).toEqual(['e2e', '--cloud', '--yes', '--', 'src/tests/cart'])
+  })
 })

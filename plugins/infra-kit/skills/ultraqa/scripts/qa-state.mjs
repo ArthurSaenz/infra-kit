@@ -19,6 +19,7 @@ import {
   mergeState,
   newState,
   parseCommits,
+  patchError,
   rebaseState,
   releaseFromBranch,
   releaseWorktrees,
@@ -61,7 +62,14 @@ const git = (...args) => {
 const flag = (argv, name) => {
   const index = argv.indexOf(name)
 
-  return index === -1 ? undefined : argv[index + 1]
+  if (index === -1) return undefined
+
+  const value = argv[index + 1]
+
+  // `--base --fresh` must not become a base named "--fresh".
+  if (value === undefined || value.startsWith('--')) fail({ status: 'argument_required', argument: name })
+
+  return value
 }
 
 /** The main checkout's directory name — the same in every worktree of the repo, so a pass started in
@@ -98,13 +106,29 @@ const statePaths = (release) => {
   }
 }
 
-const readState = (paths) => {
-  return existsSync(paths.state) ? JSON.parse(readFileSync(paths.state, 'utf-8')) : null
+const archiveState = (paths, label) => {
+  renameSync(paths.state, join(paths.dir, `state.${label.replace(/[:.]/g, '-')}.json`))
 }
 
+const readState = (paths, { archiveCorrupt = false } = {}) => {
+  if (!existsSync(paths.state)) return null
+
+  try {
+    return JSON.parse(readFileSync(paths.state, 'utf-8'))
+  } catch {
+    if (!archiveCorrupt) fail({ status: 'state_corrupt', state: paths.state, hint: 'init --fresh archives it' })
+
+    archiveState(paths, `corrupt-${new Date().toISOString()}`)
+
+    return null
+  }
+}
+
+/** Temp file + rename: an interrupted write leaves the previous state, never half a JSON. */
 const writeState = (paths, state) => {
   mkdirSync(paths.dir, { recursive: true })
-  writeFileSync(paths.state, `${JSON.stringify(state, null, 2)}\n`)
+  writeFileSync(`${paths.state}.tmp`, `${JSON.stringify(state, null, 2)}\n`)
+  renameSync(`${paths.state}.tmp`, paths.state)
 }
 
 /** Ticket ↔ commit links against the current HEAD. Re-derived from the cached fetch on a rebase, so
@@ -113,11 +137,11 @@ const commitLinks = (ticketKeys, base) => {
   return correlate(ticketKeys, parseCommits(git('log', '--format=%h%x09%p%x09%s', `${base}..HEAD`)))
 }
 
-const ticketsField = (version, count, links, paths) => {
+const ticketsField = (version, count, links, paths, fetchedAt) => {
   return {
     version,
     count,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt,
     withoutCommits: links.withoutCommits,
     untrackedCount: links.untrackedCommits.length,
     files: { json: paths.ticketsJson, markdown: paths.ticketsMd },
@@ -147,7 +171,9 @@ const rebase = (paths, existing, headSha, base) => {
 
   writeFileSync(paths.ticketsJson, `${JSON.stringify({ ...cache, ...links }, null, 2)}\n`)
 
-  return mergeState(rebased, { tickets: ticketsField(cache.version, cache.tickets.length, links, paths) })
+  return mergeState(rebased, {
+    tickets: ticketsField(cache.version, cache.tickets.length, links, paths, existing.tickets?.fetchedAt ?? null),
+  })
 }
 
 const init = (argv) => {
@@ -159,7 +185,7 @@ const init = (argv) => {
   const paths = statePaths(release)
   const headSha = git('rev-parse', 'HEAD')
   const requestedBase = flag(argv, '--base')
-  const existing = readState(paths)
+  const existing = readState(paths, { archiveCorrupt: argv.includes('--fresh') })
 
   if (existing && !argv.includes('--fresh')) {
     const base = requestedBase ?? existing.base
@@ -185,14 +211,18 @@ const init = (argv) => {
     return
   }
 
-  if (existing) renameSync(paths.state, join(paths.dir, `state.${existing.startedAt.replace(/[:.]/g, '-')}.json`))
+  if (existing) archiveState(paths, existing.startedAt)
+
+  const base = requestedBase ?? 'origin/main'
+
+  assertBase(base)
 
   const state = newState({
     release,
     repo: repoName(),
     worktree: git('rev-parse', '--show-toplevel'),
     headSha,
-    base: requestedBase ?? 'origin/main',
+    base,
     lang,
     now: new Date().toISOString(),
   })
@@ -347,7 +377,7 @@ const tickets = async (argv) => {
     mergeState(state, {
       updatedAt: new Date().toISOString(),
       phases: { tickets: 'done' },
-      tickets: ticketsField(versionInfo, rows.length, links, paths),
+      tickets: ticketsField(versionInfo, rows.length, links, paths, new Date().toISOString()),
     }),
   )
   print({
@@ -374,7 +404,12 @@ const update = (argv) => {
 
   if (!state) fail({ status: 'no_state', hint: 'run init first' })
 
-  const next = mergeState(state, { ...JSON.parse(source), updatedAt: new Date().toISOString() })
+  const patch = JSON.parse(source)
+  const error = patchError(state, patch)
+
+  if (error) fail({ status: 'invalid_patch', error })
+
+  const next = mergeState(state, { ...patch, updatedAt: new Date().toISOString() })
 
   writeState(paths, next)
   print({ status: 'ok', state: paths.state, phases: next.phases, updatedAt: next.updatedAt })

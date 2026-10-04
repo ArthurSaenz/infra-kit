@@ -45,10 +45,11 @@ const absolutizeChangeDir = (args: string[], cwd: string): string[] => {
  * The argv an agent re-runs to confirm what this run refused: the captured user args with `--yes`
  * appended and any relative `-C` made absolute, so the next Bash call may run from any cwd.
  *
- * Appending is safe: no leaf uses `passThroughOptions` or `--`, and the only variadic option
- * (`--project <names...>`) stops at `--yes`. An argv that already carries `--yes`/`-y` is returned
- * as-is — a second copy would be noise, and a confirm that fired despite it is not this function's
- * problem to hide.
+ * `--yes` goes before the first `--`: `e2e` hands everything after it to Playwright, so a `--yes`
+ * there never reaches Commander and the confirm fires again. The only variadic option
+ * (`--project <names...>`) stops at `--yes`. An argv whose options already carry `--yes`/`-y` is
+ * returned as-is — a second copy would be noise, and a confirm that fired despite it is not this
+ * function's problem to hide.
  *
  * @example
  * // captured: ['node', 'infra-kit', '-C', 'app', 'release', 'remove', '1.2.3', '--json'], cwd /w
@@ -57,11 +58,15 @@ const absolutizeChangeDir = (args: string[], cwd: string): string[] => {
 export const rerunArgv = (): string[] => {
   if (parsedArgv === null || launchCwd === null) return ['--yes']
 
-  const args = absolutizeChangeDir(parsedArgv.slice(2), launchCwd)
+  const userArgs = parsedArgv.slice(2)
+  const separator = userArgs.indexOf('--')
+  const optionsEnd = separator === -1 ? userArgs.length : separator
+  const options = absolutizeChangeDir(userArgs.slice(0, optionsEnd), launchCwd)
+  const passThrough = userArgs.slice(optionsEnd)
 
-  const alreadyConfirmed = args.some((token) => {
+  const alreadyConfirmed = options.some((token) => {
     return YES_FLAGS.has(token)
   })
 
-  return alreadyConfirmed ? args : [...args, '--yes']
+  return alreadyConfirmed ? [...options, ...passThrough] : [...options, '--yes', ...passThrough]
 }

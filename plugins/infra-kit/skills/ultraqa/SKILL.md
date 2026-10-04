@@ -28,15 +28,21 @@ after reading the report.
 The phases run in order and each one ends by writing its outcome to the state file (section 2).
 Keep the terminal quiet: one short status line per phase, tables only where this file asks for one.
 
+**A CLI refusal is not always JSON.** Structured ones (`argument_required`, `confirmation_required`,
+`refused`) come on stdout. Every other refusal (a dev server on another env, a dead local route, a
+missing `deployedUrlEnv`, a protected env) exits non-zero with **empty stdout** and its reason on
+stderr. So, exit ≠ 0 with empty stdout: relay the stderr reason to the human. Never retry it
+unchanged, and never report it as a test result.
+
 ## 1. Arguments and language
 
 The skill hands you `$ARGUMENTS` verbatim.
 
-- `<app,...>` → the `--app` of each run. No app → every e2e app the repo has (section 3).
+- `<app,...>` → the `--app` of each run. No app → every e2e app the repo has (section 4).
 - `--local` → local mode: this worktree's dev server, reused when it runs, started for the run
   otherwise. Never confirm-gated.
-- `--cloud <env>` → cloud mode against the deployed app of Doppler config `<env>` (section 4).
-- No mode given → ask (section 4).
+- `--cloud <env>` → cloud mode against the deployed app of Doppler config `<env>` (section 3).
+- No mode given → ask (section 3).
 - `--lang <en|he>` → the language of the pass; skips the language question.
 - `--base <ref>` → the ref the release is compared against (section 6). Default: `origin/main`.
 - `--fresh` → start a new state file even when one exists for this release (the old one is kept
@@ -93,8 +99,15 @@ Show its `phases` in one line and ask:
   was taken on. Ask: keep `stateBase` (re-run `init` without `--base`), or re-point to the new base
   (`init … --base <ref> --rebase`).
 
+`init` can also refuse with:
+
+- `{"status": "base_missing"}` → the base ref is not in this clone. Suggest `git fetch`, or another
+  `--base`.
+- `{"status": "state_corrupt"}` → the state file is unreadable (an interrupted write from an older
+  version). `init … --fresh` archives it and starts over.
+
 **Resuming never trusts the shell.** The state remembers the env's name, not its variables: before
-the first resumed phase, run section 4's `env-status` check, and `env-load -c <state.env>` when it is
+the first resumed phase, run section 3's `env-status` check, and `env-load -c <state.env>` when it is
 not loaded.
 
 **What the state is.** `~/.infra-kit/qa/<repo>/<release>/state.json` — outside the repo on purpose,
@@ -110,34 +123,21 @@ node "${CLAUDE_PLUGIN_ROOT}"/skills/ultraqa/scripts/qa-state.mjs update - <<'JSO
 JSON
 ```
 
-| Phase (section) | Writes                                                                                                             |
-| --------------- | ------------------------------------------------------------------------------------------------------------------ |
-| apps (3)        | `apps[]` — `app`, `testsDir`, `target`, `served`, `status` (`run` / `scaffold-only` / `local-only`); `phases.apps` |
-| env (4)         | `mode`, `env`, `servedEnv`, `phases.env`                                                                           |
-| tickets (5)     | written by the script itself                                                                                       |
-| scope (6)       | `focusDomains[]` — `app`, `domain`, `paths`, `tickets`; `coverageGaps[]`; `phases.scope`                           |
-| runs (7–8)      | `runs[]` — `app`, `kind`, `exitCode`, `report`, `summary`, `failures`; `hollowGreen[]`; `phases.runs`              |
-| report (9)      | `verdict` — `level`, `reason`; `manualChecklist[]` — `ticket`, `item`, `status`; `phases.report`                   |
-| artifact (10)   | `artifact` — `url`; `phases.artifact`                                                                              |
+| Phase (section) | Writes                                                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| env (3)         | `mode`, `env`, `phases.env`                                                                                                     |
+| apps (4)        | `apps[]` — `app`, `testsDir`, `target`, `served`, `status` (`run` / `scaffold-only` / `local-only`), `servedEnv`; `phases.apps` |
+| tickets (5)     | written by the script itself                                                                                                    |
+| scope (6)       | `focusDomains[]` — `app`, `domain`, `paths`, `tickets`; `coverageGaps[]`; `phases.scope`                                        |
+| runs (7–8)      | `runs[]` — `app`, `kind`, `exitCode`, `report`, `summary`, `failures`; `hollowGreen[]`; `phases.runs`                           |
+| report (9)      | `verdict` — `level`, `reason`; `manualChecklist[]` — `ticket`, `item`, `status`; `phases.report`                                |
+| artifact (10)   | `artifact` — `url`; `phases.artifact`                                                                                           |
 
-A phase the human chose to skip is written as `"skipped"`, never `"done"`.
+A phase the human chose to skip is written as `"skipped"`, never `"done"`. `update` refuses an
+unknown key, an unknown phase or a status other than `pending` / `done` / `skipped`
+(`{"status": "invalid_patch", "error"}`). Fix the patch, do not work around it.
 
-## 3. Discover the e2e apps
-
-Run `infra-kit e2e --dry-run --json --agent` once with no `--app`.
-
-- More than one app: it exits 2 with `{"status": "argument_required", "argument": "app", "choices"}`.
-  That is the listing, not a failure — the app names are `choices.properties.app.enum`.
-- One app: it exits 0 with the dry-run plan for that app.
-- Then one `infra-kit e2e --app <app> --dry-run --json --agent` per app gives `testsDir`, `target`,
-  `served` and `devCommand`. Keep them; the report needs them.
-
-An app whose `testsDir` holds no spec (Glob `<testsDir>/src/**/*.spec.ts`) is reported as
-**scaffold only** and not run — Playwright exits non-zero on "No tests found", which is not a test
-result. An app whose dry-run has `deployedUrlEnv: null` cannot run in cloud mode (the CLI errors
-before Playwright starts): in a cloud QA pass, report it as **local only** and leave it out.
-
-## 4. Pick the mode and load the env
+## 3. Pick the mode and load the env
 
 Unless `$ARGUMENTS` named one, ask the human with `AskUserQuestion`:
 
@@ -161,16 +161,41 @@ it too). The Jira credentials of section 5 come from the same env:
 infra-kit env-status --json --agent
 ```
 
-If it does not report `<env>` as loaded, run `infra-kit env-load -c <env> --json --agent` — there is no
-confirm step in the CLI, and the host's prompt on that argv is the approval — then re-check
-`env-status`.
+Loaded means `sessionConfig` is `<env>` and `sessionLoadedCount` equals a non-zero
+`sessionTotalCount`. If not, run `infra-kit env-load -c <env> --json --agent` — there is no confirm
+step in the CLI, and the host's prompt on that argv is the approval — then re-check `env-status`
+once. Still not loaded means this machine's shell integration is missing (`env-load` reaches the
+next Bash call only through it): send the human to `/infra-kit:doctor` and stop, do not loop.
 
 A cloud run is confirm-gated: `infra-kit e2e --app <app> --cloud --json --agent` exits 2 with
 `{"status": "confirmation_required", "message", "plan", "rerun"}`. That does not mean the call failed.
-Show `plan.baseUrl` and `plan.env` to the human once for all apps, and on their go run each `rerun`
-joined by spaces with `--yes` appended, unchanged. Never add `--yes` before the human has seen that
-URL. `{"status": "refused"}` (a protected env such as production) is the human's to clear — relay it
-and stop; do not retry.
+Show `plan.baseUrl` and `plan.env` to the human once for all apps. On their go, run
+`infra-kit ` followed by the `rerun` tokens joined by spaces. `rerun` already carries `--yes`
+(before any `--`), so add nothing. Every later cloud run of this pass (focus) carries `--yes` before
+its `--` the same way. Never send `--yes` before the human has seen that URL. A protected env
+(production) is refused either as `{"status": "refused"}` or on stderr: it is the human's to clear.
+Relay it and stop, do not retry.
+
+## 4. Discover the e2e apps
+
+Runs after section 3, with the env loaded: a local dry-run already checks the running dev server
+against the loaded env, and a cloud one needs the env's deployed URL. In a cloud pass every command
+below carries `--cloud` too. A dry-run never runs anything and never asks for confirmation.
+A local dry-run that refuses because the running dev server has another env is the choice section 7
+describes ("The env of a running dev server"): ask it now, before any run.
+
+Run `infra-kit e2e --dry-run --json --agent` once with no `--app`.
+
+- More than one app: it exits 2 with `{"status": "argument_required", "argument": "app", "choices"}`.
+  That is the listing, not a failure — the app names are `choices.properties.app.enum`.
+- One app: it exits 0 with the dry-run plan for that app.
+- Then one `infra-kit e2e --dry-run --json --agent --app <app>` per app gives `testsDir`, `target`,
+  `served`, `servedEnv`, `routes` and `devCommand`. Keep them; the report needs them.
+
+An app whose `testsDir` holds no spec (Glob `<testsDir>/src/**/*.spec.ts`) is reported as
+**scaffold only** and not run — Playwright exits non-zero on "No tests found", which is not a test
+result. An app whose cloud dry-run refuses for a missing `deployedUrlEnv` cannot run in cloud mode:
+report it as **local only** and leave it out.
 
 ## 5. Release tickets (mandatory)
 
@@ -249,11 +274,10 @@ local run's data comes from the env, and the report must say which routes went w
 
 - **Served target** (`served: true` in the dry-run): `routes[]` is the split the running dev server
   uses — `path`, `source` (`local`/`cloud`), `target`, `live`. Report it as is.
-- **Not served**: `routes` is empty, because the Playwright config starts the server for the run. Read
-  the routes from `dev.proxy.routes` in the target's `apps/<app>/<ui>/infra-kit.config.ts` instead: a
-  route goes `local` when `from` includes `local` and its `packageName` is one of the backends the
-  dev command launches, otherwise to its `default` (or first `from`) — `cloud` meaning the value of
-  the target's `deployedUrlEnv` in the loaded env. Mark these rows "from config".
+- **Not served**: `routes` is empty, because the Playwright config starts the server for the run.
+  Report `devCommand` and "route split not observed". Do not rebuild the split from config by hand.
+  When the human wants it in the report, they start `infra-kit dev <app>` in their terminal first,
+  and the dry-run then reports it.
 
 **The env of a running dev server.** A served dev server keeps the env it was started with; loading
 another env into the shell afterwards does not move its cloud routes. The dry-run reports it as
@@ -266,8 +290,8 @@ serving … runs with env X, this shell with Y"). That refusal is the human's ch
 - **Restart the dev server under this shell's env** — the human stops it in its own terminal; the next
   run's Playwright config starts a fresh one.
 
-Never stop a dev server yourself. `servedEnv: null` on a served target means an older CLI wrote the
-dev session's record: say in the report that its env is unknown.
+Never stop a dev server yourself. `servedEnv: null` on a served target means the server was started
+with no env loaded, or by a CLI older than 0.15.0: say in the report that its env is unknown.
 
 Per app, in this order. Each is `infra-kit e2e --app <app> [--cloud] --json --agent -- <args>`; never
 pass `--reporter`, which turns off the per-test results the report is built from
@@ -275,22 +299,27 @@ pass `--reporter`, which turns off the per-test results the report is built from
 
 1. **Full suite** — no extra args. Every test, every time; the focus pass never replaces it.
 2. **Focus pass** — `-- <domain folders…> --repeat-each=3 --project=chromium`, the domains from
-   section 6. A test that passes in run 1 and fails here is **flaky**, reported as such.
+   section 6 as `src/tests/<domain>/` (relative to `testsDir`; the trailing `/` stops `checkout`
+   from also matching `checkout-v2`). A test that passes in run 1 and fails here is **flaky**,
+   reported as such.
 3. **Visual pass** — only when the app has `src/visual/` and the mode is local:
    `-- src/visual --project=chromium`. Baselines are per-OS; a missing-baseline failure is reported
    as "no baseline for this OS", not as a regression.
 
 Long suites: run each in the background and wait for it, rather than polling. Read only the JSON on
-stdout — Playwright's own log goes to stderr and is not the report. After each run, write `runs[]` to
-the state, so an interrupted pass resumes at the next run instead of the first.
+stdout — Playwright's own log goes to stderr and is not the report (the one exception: an empty
+stdout, see the refusal rule at the top). After each run, write `runs[]` to the state, so an
+interrupted pass resumes at the next run instead of the first. Keep each failure in the state short:
+title, `file:line`, the first line of `error`, `tracePath`.
 
 Reading a result:
 
 - `report: "collected"` → `summary {expected, unexpected, flaky, skipped}` and `failures[]` are real.
 - `report: "unavailable"` → Playwright crashed before writing results: read its stderr, report the
   crash, continue with the next run.
-- `exitCode` non-zero with `unexpected: 0` → a setup or webServer failure; report it as an
-  environment failure, never as green.
+- `exitCode` non-zero with `unexpected: 0` → a setup or webServer failure; `errors[]` holds the
+  run-level reason (config, global setup, a spec that fails to import). Report it as an environment
+  failure, never as green.
 
 ## 8. Hollow green
 
@@ -298,6 +327,7 @@ A passing suite can still assert little. Count, per focus domain, with Grep over
 
 - `test.fail(` — a known bug registered as passing; green only while the bug exists.
 - `test.fixme(` — a placeholder; an empty body tests nothing.
+- `test.describe.skip(` / `test.describe.fixme(` — a whole block off; count it as one.
 - `test.skip(` — note which ones are data- or env-conditional (`test.skip(!…)`): on another env they
   may have run.
 
@@ -307,13 +337,19 @@ Report the counts next to `summary.skipped`; they are part of the verdict, not a
 
 One message, in the chosen language, in this order:
 
-1. **Verdict** — 🟢 ready / 🟡 ready with notes / 🔴 blocked, and one sentence why. Any `unexpected`
-   in a full suite is 🔴; flaky, hollow-green in a focus domain, a coverage gap, or a ticket with no
-   commit is at most 🟡.
+1. **Verdict** — 🟢 ready / 🟡 ready with notes / 🔴 blocked, and one sentence why. The first rule
+   that matches decides:
+   - 🔴 — any `unexpected` in a full suite, or a full suite that did not end with
+     `report: "collected"` (a crash, an environment failure, a CLI refusal). An app that was never
+     tested is not a passing app.
+   - 🟡 at most — a flaky test, hollow green in a focus domain, a coverage gap, a ticket with no
+     commit, a scaffold-only app, a local-only app left out of a cloud pass, a failed visual pass,
+     or a skipped ticket phase.
+   - 🟢 — only when none of the above holds.
 2. **Context** — release, Jira version link, ticket count, branch, base, commit count, mode, `baseUrl`
    per app, env (and `servedEnv` when a running dev server was reused), and for local runs the route
-   split from section 7 — one row per route: `path`, `local`/`cloud`, target URL, live or "from
-   config".
+   split from section 7 — one row per route: `path`, `local`/`cloud`, target URL, live, or "not
+   observed" with the `devCommand`.
 3. **Results table**, one row per app and run:
 
 | App     | Run    | ✅ expected | ❌ unexpected | 🔁 flaky | ⏭ skipped | Exit |
@@ -352,6 +388,9 @@ directory) and publish that path. Same sections as the report, with:
 - The manual checklist as real checkboxes, their ticks kept per viewer in `localStorage` (wrapped in
   `try`/`catch`, the page working without it).
 
+The page carries ticket text from Jira, which can hold customer data. Tell the human once, with the
+link, to check it before sharing it beyond the team.
+
 When the state already has `artifact.url` (a resumed pass, maybe a new session), read that artifact
 first, then publish to its `url` so the link the team has keeps working. Write `artifact.url` to the
 state and give the human the link. Without the `Artifact` tool, write the same file and give its
@@ -362,40 +401,19 @@ path instead.
 After the page, offer it with `AskUserQuestion` (skip the question when `--slow-mo` was passed):
 which focus domains to watch, and at what speed (`1500` ms default; `3000` for a careful review).
 
-It always runs **locally**, on the human's screen: the Playwright UI with the focus domains loaded,
-every test stepping at `<ms>` per action. Run the package's `e2e-test-ui-demo` script — every consumer
-package carries it (`infra-kit audit` enforces it as `--ui --headed --workers=1` with
-`E2E_SLOW_MO` defaulting to `2000`) — with the speed set and the domain folders as its filter:
+It runs **locally**, on the human's screen: the Playwright UI with the chosen domains loaded, every
+action slowed to `<ms>`. The script lives in the e2e package, so it runs from `testsDir`:
 
-`E2E_SLOW_MO=<ms> pnpm --filter <packageName> e2e-test-ui-demo <domain folders…> --project=chromium`
+`E2E_SLOW_MO=<ms> pnpm --dir <testsDir> run e2e-test-ui-demo <domain folders…> --project=chromium`
 
-The domain folders are relative to `testsDir`, because the script runs there: `src/tests/<domain>`
-for each chosen domain, plus `src/visual/<domain>` where that folder exists. `--project=chromium`
-lists each test once instead of once per project. The config reads `E2E_SLOW_MO` into
-`launchOptions.slowMo` and stretches the timeout to match, and `infraKitE2e()` reuses this
-worktree's dev server or starts it, as for any local run.
+The folders are `src/tests/<domain>/`, plus `src/visual/<domain>/` where it exists. Every consumer
+e2e package carries `e2e-test-ui-demo` (`infra-kit audit` enforces it), and its config reuses this
+worktree's dev server or starts one.
 
-**What the UI shows.** Playwright's UI lists only the tests under the folders it was started with —
-the filter is applied when the tests are listed, so the UI's own filter box can narrow it further but
-never widen it. So:
-
-- **Focus tests** are everything in the tree; nothing marks them as focus, because that is this
-  skill's grouping, not Playwright's.
-- **Non-focus tests** are not in the tree at all. Watching one means starting the UI again with its
-  folder, or with no folder for the whole suite.
-- **Visual or not** is the path: files under `src/visual/` are screenshot tests, files under
-  `src/tests/` are the domain's ordinary e2e specs.
-
-Run it in the background: the UI holds the process until the human closes its window, so do not wait
-on it or kill it. Tell the human the window is open, which domains are loaded under `src/tests/` and
-which under `src/visual/`, that tests outside those folders are not listed, and that the slow-mo
-speed applies to every test they start from it. The UI produces no JSON — its results are what the
-human saw, so ask what failed rather than reporting a verdict from it.
-
-When the human would rather watch without the UI, run the same domains headed instead and report its
-`summary` like any other run:
-
-`E2E_SLOW_MO=<ms> infra-kit e2e --app <app> --json --agent -- <domain folders…> --headed --workers=1 --project=chromium`
+Run it in the background and do not wait on it or kill it: the UI holds the process until the human
+closes the window. Tell them which folders are loaded, and that tests outside them are not listed
+(restart with another folder to see those). The UI produces no JSON, so ask the human what failed
+rather than reporting a verdict from it.
 
 ## 12. What not to do
 
