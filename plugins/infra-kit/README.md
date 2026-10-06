@@ -72,7 +72,7 @@ mutating command.
 | skill     | `/infra-kit:fe-architect`     | Builds and reviews the inside of a React feature (naming, containers, state, services)                                                   |
 | skill     | `/infra-kit:fe-patterns`      | Cross-feature boundaries, injection patterns, promotion to shared                                                                        |
 | skill     | `/infra-kit:e2e-architect`    | Per-feature Playwright e2e layout: page object, fixture, specs by axis                                                                   |
-| skill     | `/infra-kit:update-toolchain` | Bumps pnpm, Node and Turbo across a monorepo, phase by phase                                                                             |
+| skill     | `/infra-kit:update-toolchain` | Bumps pnpm, Node, Turbo and @slip-stream-kit packages on `dev`, then commits and pushes (human-invoked only)                             |
 | skill     | `/infra-kit:full-cycle`       | deep-interview → ralplan → review gate → ralph → verify (requires oh-my-claudecode)                                                      |
 | skill     | `/infra-kit:session`          | Loads a named environment into the terminal that launched Claude Code — the human picks from every known env (human-invoked only)        |
 | skill     | `/infra-kit:release-create`   | Cuts release branches through `infra-kit release create`, preview → approve → `--yes` (human-invoked only)                               |

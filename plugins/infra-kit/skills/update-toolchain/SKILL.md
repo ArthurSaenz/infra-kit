@@ -1,12 +1,23 @@
 ---
 name: update-toolchain
-description: Bump pnpm, Node.js, and Turbo to the latest stable versions across the monorepo
+description: Bump pnpm, Node.js, Turbo, and the @slip-stream-kit packages to their latest stable versions on dev, then commit and push
+disable-model-invocation: true
 ---
 
-# Update toolchain: pnpm, Node.js, and Turbo
+# Update toolchain: pnpm, Node.js, Turbo, and @slip-stream-kit
 
-Run every phase in order. Skip a phase when its component is already up-to-date. Do not commit or
-push until the Finalize phase, and only after explicit user confirmation.
+Run every phase in order. Skip a phase when its component is already up-to-date. The run commits and
+pushes to `dev` on its own in Finalize — do not ask for confirmation. The human typing
+`/infra-kit:update-toolchain` is the approval, which is why the skill is human-invoked only.
+
+## Phase 0: Preflight
+
+1. `git branch --show-current` must print `dev`. On any other branch, stop and report — never switch
+   branches yourself.
+2. `git status --porcelain` must be empty. If it is not, stop and report the dirty paths: the
+   Finalize commit must hold only this run's changes.
+3. Run `git pull --ff-only` so the bump lands on top of the latest `dev`. If it fails, stop and
+   report.
 
 ## Phase 1: Update pnpm
 
@@ -44,7 +55,7 @@ push until the Finalize phase, and only after explicit user confirmation.
    version).
 2. Run `pnpm view turbo version` to find the latest stable version. (Use `pnpm view`, not
    `npm view`, so the version lookup uses the same resolver that `pnpm install` uses.)
-3. If the latest version matches the OLD version, Turbo is already up-to-date — skip to Finalize.
+3. If the latest version matches the OLD version, Turbo is already up-to-date — skip to Phase 4.
 4. Update `devDependencies.turbo` in `package.json` to `<new version>` (pin exactly — no `^` prefix).
 5. Update the `turbo@<old>` references in `devops/scripts/lib/deploy-utils.sh` to `turbo@<new>`.
 
@@ -58,13 +69,38 @@ push until the Finalize phase, and only after explicit user confirmation.
 7. Verify: grep the entire repo for the OLD Turbo version (excluding `pnpm-lock.yaml` and
    `node_modules/`) — expect zero hits.
 
+## Phase 4: Update @slip-stream-kit packages
+
+> The `@slip-stream-kit/*` packages (`config`, `vite`, `eslint-plugin`, …) are released in lockstep
+> with the infra-kit CLI. They are in `minimumReleaseAgeExclude`, so a version published minutes ago
+> is installable.
+
+1. Find every declaration: grep `@slip-stream-kit/` in all `package.json` files and in
+   `pnpm-workspace.yaml` (`catalog:` and every named `catalogs:` entry), excluding `node_modules/`.
+   Skip a `workspace:` specifier — that package lives in this repo. Skip `catalog:` specifiers in a
+   `package.json` — their version lives in the catalog entry you already found.
+2. Skip every hit under `vendor/` unless the root `infra-kit.json` has a `vendorSource` key. A
+   consumer's `vendor/` is a mirror checksummed by `infra-kit vendor check` against
+   `vendor/.sync-manifest.json`; editing it reds `qa`, and only `infra-kit vendor sync`, run by a
+   human from the source repo, refreshes it. List the skipped vendor ranges in the summary instead.
+3. For each distinct package name, run `pnpm view @slip-stream-kit/<name> version` to get the
+   latest version. Record each declaration's current range (the OLD version).
+4. If every declaration already names the latest version, skip to Finalize.
+5. Rewrite each declaration's version to the latest, keeping its prefix (`^0.17.0` →
+   `^0.17.3`). Edit the files directly — do NOT use `pnpm update -r`: it rewrites the guarded
+   `vendor/` ranges too.
+6. Run `pnpm install` to update the lockfile.
+7. Verify: grep the entire repo for each OLD `@slip-stream-kit/<name>` range (excluding
+   `pnpm-lock.yaml`, `node_modules/`, and the skipped `vendor/` hits) — expect zero hits.
+
 ## Finalize
 
 1. If no phase made changes, report that everything is already up-to-date and stop.
-2. Summarize the diff: which components changed, and their old → new versions.
-3. Propose the commit message:
-   `Update pnpm <old> → <new>, Node.js <old> → <new>, Turbo <old> → <new>`
-   (omit whichever components were already up-to-date).
-4. Require explicit user confirmation before committing and pushing. Do not auto-commit or auto-push:
-   this procedure is destructive and may be reached via skill auto-discovery.
-5. On confirmation: commit, then push to the current branch.
+2. Commit every changed file with the message
+   `Update pnpm <old> → <new>, Node.js <old> → <new>, Turbo <old> → <new>, @slip-stream-kit <old> → <new>`
+   (omit whichever components were already up-to-date). If a commit hook rejects it, stop and report
+   the hook's output — never bypass it with `--no-verify`.
+3. Push to `origin dev`. If the push is rejected because `dev` moved, run `git pull --rebase`, re-run
+   `pnpm install`, and push once more; if that also fails, stop and report.
+4. Report the components that changed (old → new), the commit hash, any skipped `vendor/` ranges
+   from Phase 4, and the push result.
