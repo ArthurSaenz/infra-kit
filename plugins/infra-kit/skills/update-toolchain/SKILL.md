@@ -81,8 +81,8 @@ pushes to `dev` on its own in Finalize — do not ask for confirmation. The huma
    `package.json` — their version lives in the catalog entry you already found.
 2. Skip every hit under `vendor/` unless the root `infra-kit.json` has a `vendorSource` key. A
    consumer's `vendor/` is a mirror checksummed by `infra-kit vendor check` against
-   `vendor/.sync-manifest.json`; editing it reds `qa`, and only `infra-kit vendor sync`, run by a
-   human from the source repo, refreshes it. List the skipped vendor ranges in the summary instead.
+   `vendor/.sync-manifest.json`; editing it reds `qa`, and only a human, running the vendor refresh
+   from the source repo, updates it. List the skipped vendor ranges in the summary instead.
 3. For each distinct package name, run `pnpm view @slip-stream-kit/<name> version` to get the
    latest version. Record each declaration's current range (the OLD version).
 4. If every declaration already names the latest version, skip to Finalize.
