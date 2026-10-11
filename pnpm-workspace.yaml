@@ -138,9 +138,6 @@ minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - '@slip-stream-kit/*'
   - infra-kit
-  - portless@0.15.2
-  - fumadocs-mdx@15.4.5
-  - prettier-plugin-astro@1.1.0
 catalogs:
   conflicts_zod_h4_4_3:
     zod: ^4.4.3
