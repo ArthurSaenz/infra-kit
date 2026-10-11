@@ -11,10 +11,13 @@ import { e2ePageObjectMemberOrder } from './e2e-page-object-member-order'
 import { e2eTestTags } from './e2e-test-tags'
 import { e2eTestTitle } from './e2e-test-title'
 import { e2eTopLevelDescribe } from './e2e-top-level-describe'
+import { featurePublicApi } from './feature-public-api'
+import { layerImports } from './layer-imports'
 import { maxComponentsPerFile } from './max-components-per-file'
 import { maxJsdocLines } from './max-jsdoc-lines'
 import { maxJsdocSummaryLines } from './max-jsdoc-summary-lines'
 import { maxJsxReturnSize } from './max-jsx-return-size'
+import { noFeatureSelfImport } from './no-feature-self-import'
 import { packageStructure } from './package-structure'
 import { propsDestructuringBlankLine } from './props-destructuring-blank-line'
 import { propsDestructuringNewline } from './props-destructuring-newline'
@@ -39,6 +42,9 @@ export const rules: Record<string, Rule.RuleModule> = {
   'require-jsdoc-example': requireJsdocExample,
   'package-structure': packageStructure,
   'test-location': testLocation,
+  'layer-imports': layerImports,
+  'feature-public-api': featurePublicApi,
+  'no-feature-self-import': noFeatureSelfImport,
   'e2e-file-layout': e2eFileLayout,
   'e2e-file-order': e2eFileOrder,
   'e2e-page-object-member-order': e2ePageObjectMemberOrder,

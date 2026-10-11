@@ -664,6 +664,97 @@ an `e2e` package (by the same package-type resolution `package-structure` uses) 
 The recommended preset enables it on test-file names only, with `ignore: ['**/*.e2e.test.*']` for
 e2e suites that sit in a package of another type.
 
+### `layer-imports`
+
+Allow imports only to the **same or a lower layer** of a package's `src/`. The default levels,
+lowest first (folders on one level may import each other):
+
+```
+lib, components, shared, assets, styles, data → core, entities → features → pages, routes → app, renderer, mobile
+```
+
+A file in `src/features/` may import `lib/`, `components/`, `entities/` and other features, but not
+`pages/` or `app/`. The import is reported on its path, with the order spelled out:
+
+```
+`features` cannot import `#root/app/navigation` from the higher layer `app`. Layers import only their own level or below: lib, components, shared, assets, styles, data → core, entities → features → pages, routes → app, renderer, mobile. Move the shared code down into a lower layer, or pass it in from above.
+```
+
+The target is resolved from `#root/…` (the alias for `src/`) and from relative paths; package
+imports and other aliases are never reported. Static imports, re-exports and `import('…')` are
+checked. Type-only imports (`import type`, `typeof import()`) carry no runtime edge and are allowed
+unless `allowTypeImports: false`. Files directly in `src/`, in an unlisted folder, in a `backend` / `e2e`
+package, and test files (`__tests__/`, `*.test.*`, `*.spec.*`) are skipped: a test sets up its own
+environment (global styles, providers) like an entry point and is not part of the runtime graph.
+
+Imports between features are left to `eslint-plugin-boundaries`; this rule only judges direction.
+
+```js
+{
+  rules: {
+    '@wl/layer-imports': ['error', { layers: [['lib', 'components'], ['features'], ['pages'], ['app']] }],
+  },
+}
+```
+
+#### Options
+
+| Option             | Type         | Default          | Description                                                          |
+| ------------------ | ------------ | ---------------- | -------------------------------------------------------------------- |
+| `layers`           | `string[][]` | the levels above | Folders under `src/`, lowest level first; one inner array per level. |
+| `allowTypeImports` | `boolean`    | `true`           | Whether type-only imports may point at a higher layer.               |
+| `rootAlias`        | `string`     | `'#root'`        | The alias that maps to `src/`.                                       |
+| `ignore`           | `string[]`   | `[]`             | Globs; the rule is skipped for matching files.                       |
+
+### `feature-public-api`
+
+Require code outside a feature to import it **only through its public API** — `features/<name>` or
+`features/<name>/index` — whatever form the path takes. It closes the gaps of a
+`no-restricted-imports` pattern on `**/features/*/**`: relative deep paths
+(`../../other/components/x`) and type-level `typeof import('#root/features/x/services')` are
+reported too, and so are assets and stories inside another feature.
+
+```
+`../../flights-result/components/picker-component` reaches into the internals of feature `flights-result`. Import from its public API `#root/features/flights-result` instead, exporting what you need from `features/flights-result/index.ts`.
+```
+
+Imports inside the same feature are never reported. Type-only imports are reported as well: a type
+is part of the public API or it is internal.
+
+#### Options
+
+| Option      | Type       | Default   | Description                                    |
+| ----------- | ---------- | --------- | ---------------------------------------------- |
+| `rootAlias` | `string`   | `'#root'` | The alias that maps to `src/`.                 |
+| `ignore`    | `string[]` | `[]`      | Globs; the rule is skipped for matching files. |
+
+### `no-feature-self-import`
+
+Forbid a feature from importing **itself through its own public API** (`#root/features/<own>`,
+`'..'`, `'../index'`). The feature's `index.ts` re-exports the importing file, so the import closes
+a cycle and can hand back `undefined` during module evaluation.
+
+```
+`#root/features/coupons` imports feature `coupons` through its own public API from inside it, which makes an import cycle via `index.ts`. Import the module that defines it with a relative path instead.
+```
+
+A type-only self-import closes no runtime cycle, so it gets its own message that asks for the
+relative path by convention instead:
+
+```
+`#root/features/coupons` reads types of feature `coupons` through its own public API from inside it. Import them from the module that defines them with a relative path; the public API is for code outside the feature.
+```
+
+Files in the feature's `__tests__/` and `__stories__/` are exempt: they consume the feature from
+outside, so the public API is the right entry for them.
+
+#### Options
+
+| Option      | Type       | Default   | Description                                    |
+| ----------- | ---------- | --------- | ---------------------------------------------- |
+| `rootAlias` | `string`   | `'#root'` | The alias that maps to `src/`.                 |
+| `ignore`    | `string[]` | `[]`      | Globs; the rule is skipped for matching files. |
+
 ### `e2e-file-layout`
 
 Hold an **e2e package** to its file layout: specs are `*.spec.ts` at the root of a domain folder

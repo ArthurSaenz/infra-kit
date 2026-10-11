@@ -118,6 +118,19 @@ plugin.configs.recommended = [
       [`${PLUGIN_NAME}/test-location`]: ['error', { ignore: ['**/*.e2e.test.*'] }],
     },
   },
+  // Import-path rules read where a specifier lands under `src/`, so they reach every source extension.
+  // They gate themselves on the package type (backend and e2e packages have no UI layering).
+  {
+    files: ['**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}'],
+    plugins: {
+      [PLUGIN_NAME]: plugin,
+    },
+    rules: {
+      [`${PLUGIN_NAME}/layer-imports`]: 'error',
+      [`${PLUGIN_NAME}/feature-public-api`]: 'error',
+      [`${PLUGIN_NAME}/no-feature-self-import`]: 'error',
+    },
+  },
   // The e2e rules gate themselves on the package type, so a repo-wide glob costs one cached type
   // lookup per file elsewhere.
   {
