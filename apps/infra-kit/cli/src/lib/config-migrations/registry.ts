@@ -1,8 +1,10 @@
+import { dropDevKeyMigration } from './migrations/drop-dev-key'
+import { dropDevPresetsKeyMigration } from './migrations/drop-dev-presets-key'
 import { dropDevProxyKeyMigration } from './migrations/drop-dev-proxy-key'
 import { dropEnvAutoLoadKeyMigration } from './migrations/drop-env-auto-load-key'
 import { dropEnvironmentsKeyMigration } from './migrations/drop-environments-key'
-import { stripLegacyIdeModeMigration } from './migrations/strip-legacy-ide-mode'
-import { stripRetiredZedIdeMigration } from './migrations/strip-retired-zed-ide'
+import { dropIdeKeyMigration } from './migrations/drop-ide-key'
+import { dropTaskManagerKeyMigration } from './migrations/drop-task-manager-key'
 import type { ConfigMigration } from './types'
 
 /**
@@ -11,9 +13,11 @@ import type { ConfigMigration } from './types'
  * stable across runs.
  */
 export const CONFIG_MIGRATIONS: readonly ConfigMigration[] = [
-  stripLegacyIdeModeMigration,
-  stripRetiredZedIdeMigration,
+  dropIdeKeyMigration,
   dropEnvironmentsKeyMigration,
   dropDevProxyKeyMigration,
   dropEnvAutoLoadKeyMigration,
+  dropTaskManagerKeyMigration,
+  dropDevPresetsKeyMigration,
+  dropDevKeyMigration,
 ]

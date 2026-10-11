@@ -13,9 +13,6 @@ vi.mock('src/lib/infra-kit-config', () => {
   return {
     getInfraKitConfig: vi.fn(),
     resetInfraKitConfigCache: vi.fn(),
-    resolveConfiguredIdes: vi.fn(() => {
-      return []
-    }),
     getInfraKitConfigPaths: vi.fn(() => {
       if (cfg.shouldThrow) {
         return Promise.reject(new Error('not a git repository'))
@@ -89,12 +86,12 @@ describe('checkUserOverridePath', () => {
   })
 
   it('lists the raw top-level keys when the file carries real overrides', async () => {
-    fs.writeFileSync(cfg.userProject, JSON.stringify({ ide: { name: 'cursor' }, dev: { api: { port: 3000 } } }))
+    fs.writeFileSync(cfg.userProject, JSON.stringify({ worktrees: { openInOrca: true }, protectedEnvs: 'disallow' }))
 
     const result = await checkUserOverridePath()
 
     expect(result.status).toBe('pass')
-    expect(result.message).toContain('(2 override(s): ide, dev)')
+    expect(result.message).toContain('(2 override(s): worktrees, protectedEnvs)')
   })
 
   it('degrades to an unreadable line instead of throwing on malformed JSON', async () => {

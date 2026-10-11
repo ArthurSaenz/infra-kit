@@ -35,10 +35,6 @@ vi.mock('src/integrations/orca', () => {
   return { probeOrca: vi.fn(), closeOrcaWorktreeTerminals: vi.fn() }
 })
 
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
-})
-
 vi.mock('src/lib/logger', () => {
   return { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }
 })

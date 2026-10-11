@@ -17,32 +17,6 @@ const stripComments = (template: string): string => {
     .join('\n')
 }
 
-// The `apps` record of a `devServersPresets` entry is keyed by PACKAGE (`<app>/api`,
-// `<app>/ui`); a bare `<app>` is a folder and is rejected at resolve time. Pull the
-// example keys back out of the doc block so the templates can never regress to one.
-const appsExampleKeys = (template: string): string[] => {
-  const lines = template.split('\n')
-  const start = lines.findIndex((line) => {
-    return line.includes('"apps": {')
-  })
-
-  expect(start).toBeGreaterThan(-1)
-
-  const keys: string[] = []
-
-  for (const line of lines.slice(start + 1)) {
-    const body = line.replace(/^\s*\/\/\s*/, '')
-
-    if (body.startsWith('}')) break
-
-    const match = /^"([^"]+)":/.exec(body)
-
-    if (match) keys.push(match[1]!)
-  }
-
-  return keys
-}
-
 const CONFIG_EXAMPLES: [name: string, template: string][] = [
   ['user-global (layer 2)', buildUserGlobalExample()],
   ['user-project (layer 3)', buildUserProjectExample('x')],
@@ -54,14 +28,10 @@ describe('config templates', () => {
     expect(JSON.parse(CONFIG_STUB)).toEqual({})
   })
 
-  it('knows all eleven top-level schema keys', () => {
+  it('knows all seven top-level schema keys', () => {
     expect(SCHEMA_KEYS).toEqual([
       'envManagement',
-      'ide',
-      'taskManager',
       'worktrees',
-      'dev',
-      'devServersPresets',
       'protectedEnvs',
       'mcp',
       'vendorSource',
@@ -78,16 +48,6 @@ describe('config templates', () => {
 
     it('is comment-only — stripping the comments leaves an empty object', () => {
       expect(JSON.parse(stripComments(template))).toEqual({})
-    })
-
-    it('keys the devServersPresets "apps" example by package, never a bare app folder', () => {
-      const keys = appsExampleKeys(template)
-
-      expect(keys.length).toBeGreaterThan(0)
-
-      for (const key of keys) {
-        expect(key).toMatch(/^[^/]+\/(api|ui)$/)
-      }
     })
   })
 

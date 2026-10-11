@@ -135,7 +135,7 @@ describe('ensureUserProjectConfig', () => {
   it('leaves a real user layer-3 config byte-unchanged and reports createdConfig=false', async () => {
     writeMainConfig()
 
-    const realConfig = '{"ide":{"provider":"cursor","config":{"workspaceConfigPath":"./ws.code-workspace"}}}\n'
+    const realConfig = '{"worktrees":{"openInOrca":true}}\n'
 
     preSeed(realConfig, buildUserProjectExample(repoName))
 

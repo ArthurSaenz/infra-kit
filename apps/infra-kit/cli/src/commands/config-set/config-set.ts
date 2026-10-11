@@ -36,11 +36,12 @@ export const SCOPE_LABELS: Record<ConfigScope, string> = {
 
 /**
  * Refuse anything but a top-level schema key. Layers merge per TOP-LEVEL key (shallow), so a write of
- * `dev.port` would land as `{ dev: { port } }` and replace the project's whole `dev` section.
+ * `worktrees.openInOrca` would land as `{ worktrees: { openInOrca } }` and replace the project's whole
+ * `worktrees` section.
  *
  * @example
- * assertConfigKey('ide')      // ok
- * assertConfigKey('dev.port') // throws, naming the shallow merge
+ * assertConfigKey('worktrees') // ok
+ * assertConfigKey('worktrees.openInOrca') // throws, naming the shallow merge
  */
 export const assertConfigKey = (key: string, operation: string): void => {
   if (isAgentMode() && HUMAN_ONLY_KEYS.has(key)) {

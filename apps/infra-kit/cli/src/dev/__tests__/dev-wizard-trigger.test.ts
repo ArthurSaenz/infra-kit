@@ -17,7 +17,7 @@ describe('shouldRunWizard', () => {
   })
 
   it.each<[string, DevCliOptions]>([
-    ['preset', { preset: 'full' }],
+    ['app', { appName: 'client' }],
     ['--app', { app: 'client' }],
     ['--self', { self: true }],
     ['--orca', { orca: true }],

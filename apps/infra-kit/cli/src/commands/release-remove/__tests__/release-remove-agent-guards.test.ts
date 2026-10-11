@@ -108,10 +108,6 @@ vi.mock('src/integrations/gh/pr-status', () => {
   return { fetchPRByHead: vi.fn() }
 })
 
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
-})
-
 // Spread, so `buildJiraVersionUrl` stays real and the URL in the result is derived exactly as in
 // production; only the two lookup calls are replaced.
 vi.mock('src/integrations/jira', async (importOriginal) => {
@@ -281,7 +277,7 @@ describe('release remove — the count guard applies under --agent', () => {
     expect(message).toContain('affectsVersion on 3 issue(s)')
     // The exit is a flag the agent's own `--yes` re-run can carry.
     expect(message).toContain('--move-issues-to')
-    // Before any mutation: the refusal is preflight's, not step 6's.
+    // Before any mutation: the refusal is preflight's, not step 5's.
     expect(removeReleaseWorktreeIfPresent).not.toHaveBeenCalled()
     expect(deleteLocalBranch).not.toHaveBeenCalled()
     expect(removeJiraVersion).not.toHaveBeenCalled()

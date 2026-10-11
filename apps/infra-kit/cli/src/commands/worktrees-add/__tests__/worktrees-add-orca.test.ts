@@ -14,7 +14,7 @@ import { commandEcho } from 'src/lib/command-echo'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
-import { getInfraKitConfig, resolveConfiguredIdes, resolveOrcaLayout } from 'src/lib/infra-kit-config'
+import { getInfraKitConfig, resolveOrcaLayout } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 
 import { worktreesAdd } from '../worktrees-add'
@@ -58,17 +58,11 @@ vi.mock('src/lib/git-utils', () => {
 })
 
 vi.mock('src/lib/infra-kit-config', () => {
-  return { getInfraKitConfig: vi.fn(), resolveConfiguredIdes: vi.fn(), resolveOrcaLayout: vi.fn() }
+  return { getInfraKitConfig: vi.fn(), resolveOrcaLayout: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {
   return { getReleasePRsWithInfo: vi.fn() }
-})
-
-vi.mock('src/integrations/ide', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('src/integrations/ide')>()
-
-  return { ...actual, addIdeWorktreeFolders: vi.fn() }
 })
 
 // `OrcaError` stays real so the `code`-keyed skip reasons are exercised through `instanceof`; the
@@ -122,7 +116,6 @@ beforeEach(() => {
     envManagement: { provider: 'doppler', config: { name: 'test' } },
     worktrees: { openInGithubDesktop: false },
   })
-  vi.mocked(resolveConfiguredIdes).mockReturnValue([])
   vi.mocked(resolveOrcaLayout).mockReturnValue('three-pane')
 
   vi.mocked(probeOrca).mockResolvedValue('ready')

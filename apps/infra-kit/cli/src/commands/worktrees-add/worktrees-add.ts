@@ -5,8 +5,6 @@ import { z } from 'zod'
 import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
-import { IDE_MODES, addIdeWorktreeFolders } from 'src/integrations/ide'
-import type { IdeMode } from 'src/integrations/ide'
 import {
   OrcaError,
   addOrcaRepo,
@@ -26,7 +24,7 @@ import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
-import { getInfraKitConfig, resolveConfiguredIdes, resolveOrcaLayout } from 'src/lib/infra-kit-config'
+import { getInfraKitConfig, resolveOrcaLayout } from 'src/lib/infra-kit-config'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { withEscape } from 'src/lib/prompts/escapable-context'
@@ -84,9 +82,6 @@ interface WorktreeManagementArgs extends RequiredConfirmedOptionArg {
   feature?: string
   /** Base for new feature branches: `dev` (default; the default branch when there is no `dev`), `main` or a release ref. */
   base?: string
-  ide?: IdeMode
-  /** @deprecated Alias for `ide`, kept for back-compat. Ignored when `ide` is set. */
-  cursor?: IdeMode
   githubDesktop?: boolean
   orca?: boolean
 }
@@ -144,8 +139,6 @@ interface OrcaPreflight {
  */
 export const worktreesAdd = async (options: WorktreeManagementArgs) => {
   const { confirmedCommand, githubDesktop, orca } = options
-  // `cursor` is the deprecated alias for `ide`; `ide` wins when both are present.
-  const ide = options.ide ?? options.cursor
 
   // Branch-agnostic: `git worktree add` addresses branches by name and never
   // reads HEAD, so only the worktree + clean-tree legs apply.
@@ -179,13 +172,6 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
 
     const config = await getInfraKitConfig()
 
-    // One attach style: every configured editor gets the worktrees added to its
-    // workspace. Per-run skip is `--ide none` / `--no-ide`; no editor configured
-    // means there's nothing to open.
-    const ideMode: IdeMode = ide ?? (resolveConfiguredIdes(config).length > 0 ? 'workspace' : 'none')
-
-    commandEcho.addOption('--ide', ideMode)
-
     const openInGithubDesktop = await resolveGithubDesktopFollowUp(githubDesktop, config)
     const openInOrca = await resolveOrcaFollowUp(orca, config)
 
@@ -209,10 +195,6 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     const createdWorktrees = await createWorktrees(selection.targets, worktreeDir)
 
     logResults(createdWorktrees)
-
-    if (ideMode === 'workspace') {
-      await addIdeWorktreeFolders({ projectRoot, worktreeDir, branches: createdWorktrees })
-    }
 
     if (openInGithubDesktop) {
       for (const branch of createdWorktrees) {
@@ -756,16 +738,6 @@ export const worktreesAddMcpTool = defineMcpTool({
       .describe(
         'Comma-separated release versions or names to target (e.g. "1.2.5, 1.2.6" or "checkout-redesign, 1.2.5"). Either "versions" or all=true must be provided for MCP calls. Overrides "all" when set.',
       ),
-    ide: z
-      .enum(IDE_MODES)
-      .optional()
-      .describe(
-        'Editor open mode for created worktrees, applied to the configured editor (Cursor, per the "ide" config). "workspace" (the only attach style) adds each worktree to the Cursor workspace and opens it. "none" skips the editor. Resolution order: this flag → "workspace" when an "ide" is configured → "none" otherwise.',
-      ),
-    cursor: z
-      .enum(IDE_MODES)
-      .optional()
-      .describe('Deprecated alias for "ide". Prefer "ide". Ignored when "ide" is provided.'),
     githubDesktop: z
       .boolean()
       .optional()

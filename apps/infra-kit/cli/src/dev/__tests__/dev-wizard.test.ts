@@ -21,7 +21,6 @@ const CLIENT_MODEL: WizardModel = {
       ],
     },
   ],
-  presets: [],
   environments: ['dev', 'staging'],
 }
 
@@ -72,7 +71,6 @@ describe('deriveManualPlan', () => {
         },
         { name: 'payments', hasApi: true, hasUi: false, backends: [] },
       ],
-      presets: [],
       environments: ['dev'],
     }
 
@@ -90,7 +88,6 @@ describe('deriveManualPlan', () => {
   it('backend-only app: ticking an api-only part runs its api with no proxy', () => {
     const model: WizardModel = {
       apps: [{ name: 'worker', hasApi: true, hasUi: false, backends: [] }],
-      presets: [],
       environments: ['dev'],
     }
 
@@ -121,7 +118,6 @@ describe('deriveManualPlan', () => {
           ],
         },
       ],
-      presets: [],
       environments: ['dev'],
     }
 
@@ -154,7 +150,6 @@ describe('deriveManualPlan', () => {
           ],
         },
       ],
-      presets: [],
       environments: ['dev'],
     }
 
@@ -163,15 +158,6 @@ describe('deriveManualPlan', () => {
     expect(plan.presetDef.apps?.['client/ui']).toEqual({ proxy: { '/media': 'cloud' } })
     expect(plan.anyCloudRoute).toBe(true)
     expect(plan.targetKeys).toEqual(['client/ui'])
-  })
-
-  it('orca flag flows into the preset def', () => {
-    const plan = deriveManualPlan(
-      base({ targets: ['client/ui'], sources: { 'client/ui /api': 'local' }, orca: true }),
-      CLIENT_MODEL,
-    )
-
-    expect(plan.presetDef.orca).toBe(true)
   })
 })
 

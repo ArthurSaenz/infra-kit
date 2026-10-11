@@ -99,10 +99,6 @@ vi.mock('src/integrations/gh/pr-status', () => {
   return { fetchPRByHead: vi.fn() }
 })
 
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
-})
-
 // Spread, so `buildJiraVersionUrl` stays real and the URL in the result is derived exactly as in
 // production; only the two lookup calls are replaced.
 vi.mock('src/integrations/jira', async (importOriginal) => {
@@ -181,7 +177,7 @@ describe('release remove — the confirm text carries the whole inventory', () =
 
     expect(message).toContain(WORKTREE_PATH)
     expect(message).toContain(`switching to ${BASE_BRANCH} first`)
-    // The local tip is the handle that restores the branch after step 4; consenting without seeing it
+    // The local tip is the handle that restores the branch after step 3; consenting without seeing it
     // is consenting to a deletion with no stated way back.
     expect(message).toContain(LOCAL_TIP)
     expect(message).toContain(REMOTE_TIP)

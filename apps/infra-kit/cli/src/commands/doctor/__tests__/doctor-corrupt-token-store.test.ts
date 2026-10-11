@@ -48,9 +48,6 @@ vi.mock('src/lib/infra-kit-config', () => {
         projectName: 'api',
       })
     }),
-    resolveConfiguredIdes: vi.fn(() => {
-      return []
-    }),
   }
 })
 
@@ -126,7 +123,7 @@ describe('doctor with a corrupt tokens.json', () => {
       checks.map((check) => {
         return check.name
       }),
-    ).toEqual(expect.arrayContaining(['gh installed', 'doppler installed', 'infra-kit config valid', 'ide installed']))
+    ).toEqual(expect.arrayContaining(['gh installed', 'doppler installed', 'infra-kit config valid']))
   })
 
   it('has dropped the account-auth checks that token-only auth made unanswerable', async () => {

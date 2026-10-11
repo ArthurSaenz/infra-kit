@@ -101,6 +101,8 @@ const EVERY_STEP: Record<InitStepName, true> = {
   'mcp-server': true,
   'mcp-proxies': true,
   'project-config': true,
+  'token-perms': true,
+  chrome: true,
   shell: true,
 }
 
@@ -200,6 +202,18 @@ describe('the MCP payload reports what the init half did', () => {
       outcome: 'unchanged',
       message: expect.stringContaining('Config migrations checked') as unknown as string,
     })
+  })
+
+  // Reds on: setup writing Claude Code's state file itself, or going quiet about an unset-up Chrome.
+  it('hands Claude in Chrome to the human as /chrome, and writes nothing for it', async () => {
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), skipTools: true })
+
+    expect(structuredContent.init).toContainEqual({
+      step: 'chrome',
+      outcome: 'manual',
+      message: expect.stringContaining('Enabled by default') as unknown as string,
+    })
+    expect(fs.existsSync(path.join(home, '.claude.json'))).toBe(false)
   })
 
   // Reds on: folding a command handed to a human back into `skipped`, which an agent reads as "nothing to do".

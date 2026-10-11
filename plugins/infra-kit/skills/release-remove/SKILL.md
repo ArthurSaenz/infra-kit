@@ -150,14 +150,13 @@ If `$ARGUMENTS` is empty, omit `-v` and let the picker do the asking (section 2)
 
 ## 4. What one removal does
 
-In order: remove the release worktree (and close its Orca terminals), strip the folder
-from the Cursor workspace, close the PR with a comment, delete the
-local branch (switching the main checkout to the base branch first when it is on the release), and
+In order: remove the release worktree (and close its Orca terminals), close the PR with a
+comment, delete the local branch (switching the main checkout to the base branch first when it is on the release), and
 delete the branch on `origin`. The worktree goes first because git will not delete a branch that a
 worktree still has checked out; the rest follow in the order that leaves the most repairable
 residue if one fails.
 
-**The Jira fix version is removed** — step 6, last, because it is the one step with no undo. The
+**The Jira fix version is removed** — step 5, last, because it is the one step with no undo. The
 issue counts are re-read right before it, and a change since preflight aborts with nothing in Jira
 touched; the residue report then names the re-run. The result reports `jira: "removed"` with the
 version's `id`, `name` and `url` in `jiraVersion` (keep them in your reply: the id is what an

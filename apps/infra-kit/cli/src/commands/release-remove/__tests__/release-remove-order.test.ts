@@ -1,7 +1,6 @@
 import confirm from '@inquirer/confirm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { removeIdeWorktreeFolders } from 'src/integrations/ide'
 import { removeJiraVersion } from 'src/integrations/jira/remove-version'
 import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
@@ -16,8 +15,8 @@ import { BRANCH, JIRA_NAME, LABEL, LOCAL_TIP, installDefaults } from './release-
  * @fileoverview
  * D4 — step order, and what an abort is allowed to leave behind.
  *
- * The six steps run in ASCENDING irreversibility: worktree, ide-folders, pr, local-branch,
- * remote-branch, jira. That ordering is the entire safety argument — a worktree is recreated by
+ * The five steps run in ASCENDING irreversibility: worktree, pr, local-branch, remote-branch,
+ * jira. That ordering is the entire safety argument — a worktree is recreated by
  * `worktrees add`, a closed PR is reopened in the UI, a branch is restored from the captured tip
  * sha, and the Jira fix version is the one thing that is gone for good. Reorder the list and an
  * abort stops leaving the most repairable residue, with nothing else in the codebase objecting.
@@ -27,18 +26,13 @@ import { BRANCH, JIRA_NAME, LABEL, LOCAL_TIP, installDefaults } from './release-
  * `toEqual`. `mock.invocationCallOrder` is deliberately not used — it compares opaque global
  * counters and a failure prints two integers instead of the sequence that actually ran.
  *
- * Two false-successes are pinned besides the order:
- *   - a failure at step 5 that still reached step 6, i.e. an unrecoverable Jira delete performed on
- *     a teardown nobody inspected. The residue report must enumerate the four completed steps, name
- *     the surviving fix version, and carry the local tip sha — the only handle that restores the
- *     branch once steps 4-5 have run.
- *   - a THROWING editor cleanup that aborted the run. Step 2 is the single exemption from
- *     abort-on-first-error precisely because it carries no state into steps 3-6; a cosmetic Cursor
- *     write failure must not strand a teardown with the worktree gone, the PR open, the branch live
- *     and the fix version live.
+ * One false-success is pinned besides the order: a failure at step 4 that still reached step 5, i.e.
+ * an unrecoverable Jira delete performed on a teardown nobody inspected. The residue report must
+ * enumerate the three completed steps, name the surviving fix version, and carry the local tip sha —
+ * the only handle that restores the branch once steps 3-4 have run.
  *
- * Mocked: every step collaborator plus zx. Real: `runStep`/`tryStep`, the residue builder, and the
- * result projection.
+ * Mocked: every step collaborator plus zx. Real: `runStep`, the residue builder, and the result
+ * projection.
  */
 
 const state = vi.hoisted(() => {
@@ -53,7 +47,7 @@ vi.mock('zx', async (importOriginal) => {
   return {
     ...actual,
     $: zxCommandMock((command) => {
-      // The PR close is a raw `$` call, so the shell is the only place step 3 is observable.
+      // The PR close is a raw `$` call, so the shell is the only place step 2 is observable.
       if (command.includes('gh pr close')) state.order.push('pr')
 
       return { stdout: '' }
@@ -106,10 +100,6 @@ vi.mock('src/integrations/gh/pr-status', () => {
   return { fetchPRByHead: vi.fn() }
 })
 
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
-})
-
 // Spread, so `buildJiraVersionUrl` stays real and the URL in the result is derived exactly as in
 // production; only the two lookup calls are replaced.
 vi.mock('src/integrations/jira', async (importOriginal) => {
@@ -153,11 +143,6 @@ beforeEach(() => {
 
     return [BRANCH]
   })
-  vi.mocked(removeIdeWorktreeFolders).mockImplementation(async () => {
-    state.order.push('ide-folders')
-
-    return []
-  })
   vi.mocked(deleteLocalBranch).mockImplementation(async () => {
     state.order.push('local-branch')
   })
@@ -170,20 +155,20 @@ beforeEach(() => {
 })
 
 describe('release remove — step order', () => {
-  it('runs the six steps in ascending order of irreversibility', async () => {
+  it('runs the five steps in ascending order of irreversibility', async () => {
     await releaseRemove({ confirmedCommand: true, version: LABEL })
 
-    expect(state.order).toEqual(['worktree', 'ide-folders', 'pr', 'local-branch', 'remote-branch', 'jira'])
+    expect(state.order).toEqual(['worktree', 'pr', 'local-branch', 'remote-branch', 'jira'])
   })
 })
 
-describe('release remove — abort at step 5 stops before the unrecoverable step', () => {
+describe('release remove — abort at step 4 stops before the unrecoverable step', () => {
   it('never reaches removeJiraVersion', async () => {
     vi.mocked(deleteRemoteBranch).mockRejectedValue(new Error('remote ref does not exist'))
 
     await expect(releaseRemove({ confirmedCommand: true, version: LABEL })).rejects.toThrow()
 
-    expect(state.order).toEqual(['worktree', 'ide-folders', 'pr', 'local-branch'])
+    expect(state.order).toEqual(['worktree', 'pr', 'local-branch'])
     expect(removeJiraVersion).not.toHaveBeenCalled()
   })
 
@@ -198,28 +183,12 @@ describe('release remove — abort at step 5 stops before the unrecoverable step
 
     const { message } = error as Error
 
-    expect(message).toContain('step 5 of 6 (delete the remote branch)')
-    expect(message).toContain(`completed: worktree, ide-folders, pr, local-branch (was ${LOCAL_TIP.slice(0, 7)})`)
+    expect(message).toContain('step 4 of 5 (delete the remote branch)')
+    expect(message).toContain(`completed: worktree, pr, local-branch (was ${LOCAL_TIP.slice(0, 7)})`)
     expect(message).toContain(`The Jira fix version ${JIRA_NAME} was NOT removed`)
-    // The FULL sha, not the 7-char display prefix: after steps 4-5 this is the only handle that
+    // The FULL sha, not the 7-char display prefix: after steps 3-4 this is the only handle that
     // restores the branch, and `git branch -D`’s own `(was <sha>)` output is discarded by
     // `deleteLocalBranch`.
     expect(message).toContain(`git branch ${BRANCH} ${LOCAL_TIP}`)
-  })
-})
-
-describe('release remove — a throwing editor cleanup is the one non-blocking step', () => {
-  it('runs steps 3-6 anyway and reports the IDE step as attempted', async () => {
-    vi.mocked(removeIdeWorktreeFolders).mockImplementation(async () => {
-      state.order.push('ide-folders')
-
-      throw new Error('EACCES: cursor workspace file is read-only')
-    })
-
-    const result = await releaseRemove({ confirmedCommand: true, version: LABEL })
-
-    expect(state.order).toEqual(['worktree', 'ide-folders', 'pr', 'local-branch', 'remote-branch', 'jira'])
-    expect(result.structuredContent.ideFolders.outcome).toBe('attempted')
-    expect(result.structuredContent.jira).toBe('removed')
   })
 })

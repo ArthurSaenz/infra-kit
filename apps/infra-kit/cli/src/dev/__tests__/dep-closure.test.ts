@@ -153,10 +153,7 @@ describe('parseDryRunPackages — captured turbo --dry=json payloads', () => {
 })
 
 describe('selectPackageRestartTargets — scope a package change to its dependents', () => {
-  const apps = [
-    { name: 'appX', watchDeps: true },
-    { name: 'appY', watchDeps: true },
-  ]
+  const apps = [{ name: 'appX' }, { name: 'appY' }]
   const map: ClosureMap = {
     dependentsByPackageDir: new Map([
       ['/repo/packages/pkgA/dist', new Set(['appX'])],
@@ -166,9 +163,7 @@ describe('selectPackageRestartTargets — scope a package change to its dependen
   }
 
   it('restarts only the dependent app, not an unrelated one', () => {
-    expect(selectPackageRestartTargets(apps, map, '/repo/packages/pkgA/dist')).toEqual([
-      { name: 'appX', watchDeps: true },
-    ])
+    expect(selectPackageRestartTargets(apps, map, '/repo/packages/pkgA/dist')).toEqual([{ name: 'appX' }])
   })
 
   it('restarts every dependent when a shared package changes', () => {
@@ -177,17 +172,6 @@ describe('selectPackageRestartTargets — scope a package change to its dependen
 
   it('returns an empty set (restart nothing) for a package no participating backend depends on', () => {
     expect(selectPackageRestartTargets(apps, map, '/repo/packages/ui-only/dist')).toEqual([])
-  })
-
-  it('excludes an opted-out backend (watchDeps:false) even when it is a dependent', () => {
-    const optedOut = [
-      { name: 'appX', watchDeps: false },
-      { name: 'appY', watchDeps: true },
-    ]
-
-    expect(selectPackageRestartTargets(optedOut, map, '/repo/packages/pkgC/dist')).toEqual([
-      { name: 'appY', watchDeps: true },
-    ])
   })
 
   it('returns null (fail-safe: restart all) when the closure map is unavailable or the change has no package identity', () => {

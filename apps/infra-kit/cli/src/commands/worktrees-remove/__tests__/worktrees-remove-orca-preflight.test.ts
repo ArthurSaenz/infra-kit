@@ -46,10 +46,6 @@ vi.mock('src/lib/worktrees', async (importOriginal) => {
   return { ...actual, removeWorktrees: vi.fn() }
 })
 
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
-})
-
 vi.mock('src/integrations/gh', () => {
   return { getReleasePRsWithInfo: vi.fn() }
 })

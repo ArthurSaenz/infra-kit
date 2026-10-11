@@ -19,13 +19,13 @@ import { JIRA_NAME, LABEL, LOCAL_TIP, installDefaults } from './release-remove-m
  * colleague attaching a ticket to the fix version in that window — the ordinary workflow of a team
  * filing against an open release — is invisible to a guard that already passed.
  *
- * The false-success this pins is precise: a guard that passed six steps ago AUTHORISING an
+ * The false-success this pins is precise: a guard that passed five steps ago AUTHORISING an
  * unrecoverable call. The command would report success, and the issues would have lost their version
  * links with nothing recording what they were.
  *
  * Both directions are asserted, because only the pair is meaningful. Unchanged counts must proceed
  * SILENTLY — a re-probe that warned on every run would train operators to ignore it — and changed
- * counts must abort BEFORE the delete, reporting steps 1-5 done and the version intact so the
+ * counts must abort BEFORE the delete, reporting steps 1-4 done and the version intact so the
  * re-run finishes the job with the guard re-evaluated against the new counts.
  *
  * Mocked: git, gh, Orca, Jira and zx; `getVersionRelatedIssueCounts` answers differently on its
@@ -89,10 +89,6 @@ vi.mock('src/integrations/gh', () => {
 // `fetchPRByHead` run `gh pr list` during an earlier draft of this suite.
 vi.mock('src/integrations/gh/pr-status', () => {
   return { fetchPRByHead: vi.fn() }
-})
-
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
 })
 
 // Spread, so `buildJiraVersionUrl` stays real and the URL in the result is derived exactly as in
@@ -170,8 +166,8 @@ describe('release remove — issue counts changed since preflight', () => {
 
     const { message } = error as Error
 
-    expect(message).toContain('step 6 of 6 (remove the Jira fix version)')
-    expect(message).toContain(`completed: worktree, ide-folders, pr, local-branch (was ${LOCAL_TIP.slice(0, 7)})`)
+    expect(message).toContain('step 5 of 5 (remove the Jira fix version)')
+    expect(message).toContain(`completed: worktree, pr, local-branch (was ${LOCAL_TIP.slice(0, 7)})`)
     expect(message).toContain('remote-branch')
     expect(message).toContain(`The Jira fix version ${JIRA_NAME} was NOT removed`)
     // Both old and new counts, so the operator can see WHAT moved before deciding.

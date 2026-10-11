@@ -149,9 +149,8 @@ export const buildClosureMap = async (
 /**
  * Decide which launched apps a `packages/<pkg>/dist` change should restart. `null` means
  * "fail-safe: restart all" — the closure map is missing (a `--dry` failure) or the change carried
- * no package identity. Otherwise the participating (`watchDeps`) apps whose closure includes that
- * package dir — possibly an empty array (the package is UI-only, or every dependent opted out),
- * which the caller treats as "restart nothing".
+ * no package identity. Otherwise the apps whose closure includes that package dir — possibly an
+ * empty array (the package is UI-only), which the caller treats as "restart nothing".
  *
  * @example
  * // closure: pkgA → {appX}; pkgC → {appX, appY}
@@ -159,7 +158,7 @@ export const buildClosureMap = async (
  * selectPackageRestartTargets([appX, appY], map, '…/uiOnly/dist') // => []     (restart nothing)
  * selectPackageRestartTargets([appX, appY], null, '…/pkgA/dist') // => null    (fail-safe: restart all)
  */
-export const selectPackageRestartTargets = <T extends { name: string; watchDeps: boolean }>(
+export const selectPackageRestartTargets = <T extends { name: string }>(
   apps: T[],
   closureMap: ClosureMap | null,
   packageDir: string | undefined,
@@ -169,6 +168,6 @@ export const selectPackageRestartTargets = <T extends { name: string; watchDeps:
   const dependents = closureMap.dependentsByPackageDir.get(packageDir) ?? new Set<string>()
 
   return apps.filter((a) => {
-    return a.watchDeps && dependents.has(a.name)
+    return dependents.has(a.name)
   })
 }

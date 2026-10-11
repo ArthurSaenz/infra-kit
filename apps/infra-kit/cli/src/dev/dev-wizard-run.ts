@@ -1,6 +1,6 @@
 /**
  * Impure driver for the interactive `infra-kit dev` wizard: filesystem/config discovery, the inquirer
- * prompt flow (step-0 preset-or-manual, then the manual matrix), the pre-flight proxy audit, and the
+ * prompt flow (the package + per-route matrix), the pre-flight proxy audit, and the
  * `commandEcho` teaching line. The pure answer→plan mapping lives in {@link file://./dev-wizard.ts}.
  *
  * Prompts are behind the injectable {@link WizardPrompts} seam so the flow is testable without a TTY.
@@ -9,7 +9,7 @@
  */
 import inquirerCheckbox from '@inquirer/checkbox'
 import inquirerConfirm from '@inquirer/confirm'
-import inquirerSelect, { Separator } from '@inquirer/select'
+import inquirerSelect from '@inquirer/select'
 import { loadDev, loadPackageConfig } from '@slip-stream-kit/config/internal'
 import path from 'node:path'
 import process from 'node:process'
@@ -18,15 +18,13 @@ import { discoverApiApps, discoverUiApps, findMonorepoRoot } from 'src/dev/disco
 import { commandEcho } from 'src/lib/command-echo'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import { readTokenStore } from 'src/lib/env-tokens'
-import { getInfraKitConfig } from 'src/lib/infra-kit-config'
-import type { DevPreset, ProxySource } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 
 import { deriveManualPlan, equivalentCommand } from './dev-wizard.js'
 import type { DerivedPlan, ManualSelection, ProxyBackend, RouteCap, WizardApp, WizardModel } from './dev-wizard.js'
 import { validatePresetProxy } from './presets.js'
-import type { DiscoveredParts, PresetProxyContext } from './presets.js'
+import type { DevPreset, DiscoveredParts, PresetProxyContext, ProxySource } from './presets.js'
 
 /** A wizard prompt choice — all values are strings, so the seam needs no generics. */
 export interface WizardChoice {
@@ -43,7 +41,7 @@ export interface WizardChoice {
  * stdout stays clean. Tests pass a scripted object.
  */
 export interface WizardPrompts {
-  select: (cfg: { message: string; choices: (WizardChoice | Separator)[]; default?: string }) => Promise<string>
+  select: (cfg: { message: string; choices: WizardChoice[]; default?: string }) => Promise<string>
   checkbox: (cfg: { message: string; choices: WizardChoice[] }) => Promise<string[]>
   confirm: (cfg: { message: string; default?: boolean }) => Promise<boolean>
 }
@@ -53,8 +51,8 @@ export interface WizardPrompts {
  *
  * `clearPromptOnDone` erases each answered prompt instead of leaving a `✔ <question> <answer>` line
  * behind, so the wizard collapses to nothing once it finishes and the dev-server's ready header lands
- * at the top of a clean screen. The choices are not lost: {@link echoManual} / {@link runPresetBranch}
- * print the equivalent flag command, which is the durable record of what was picked.
+ * at the top of a clean screen. The choices are not lost: {@link echoManual} prints the equivalent flag
+ * command, which is the durable record of what was picked.
  */
 const promptContext = { output: process.stderr, clearPromptOnDone: true }
 
@@ -100,9 +98,7 @@ export const defaultPrompts: WizardPrompts = {
 
 /** What the wizard hands back to the entry point (merged into `DevServerOptions`), or null on cancel. */
 export interface WizardResult {
-  /** Named preset (preset branch) — passed through as `options.preset`. */
-  preset?: string
-  /** In-memory preset (manual branch, non-Orca) — passed through as `options.presetDef`. */
+  /** In-memory run plan — passed through as `options.presetDef`. */
   presetDef?: DevPreset
   /**
    * App-name include list for the Orca path only: which discovered API apps get a pane. Paired with
@@ -153,7 +149,7 @@ const groupBackends = (
  * or an import-time error — degrades THAT app to zero backends with a named warning instead of rejecting.
  * Without this, a single broken `apps/<x>/ui/infra-kit.config.ts` fails the whole `Promise.all` in
  * {@link gatherWizardModel} and takes the entire wizard down, so `infra-kit dev` becomes unusable for every
- * other app in the monorepo. Mirrors the audit path's per-app guard ({@link file://../commands/audit/preset-proxy-check.ts}).
+ * other app in the monorepo.
  */
 export const loadBackends = async (
   uiDir: string,
@@ -177,7 +173,6 @@ export const loadBackends = async (
 export const gatherWizardModel = async (root: string): Promise<WizardModel> => {
   const apiApps = discoverApiApps(root)
   const uiApps = discoverUiApps(root)
-  const config = await getInfraKitConfig()
 
   const ownerByPkg = new Map(
     apiApps.map((a) => {
@@ -231,7 +226,6 @@ export const gatherWizardModel = async (root: string): Promise<WizardModel> => {
 
   return {
     apps,
-    presets: Object.keys(config.devServersPresets ?? {}),
     environments: Object.keys(store?.envs ?? {}).sort(),
   }
 }
@@ -242,9 +236,9 @@ export const gatherWizardModel = async (root: string): Promise<WizardModel> => {
  * launched by choosing `local` for one of its frontend's routes (asked per-route afterwards), so the
  * checkbox stays a pick of frontends + standalone backends.
  *
- * Nothing starts checked: the manual branch is opt-in, so a run only ever launches what was explicitly
+ * Nothing starts checked: the selection is opt-in, so a run only ever launches what was explicitly
  * ticked. Pre-checking every part would make the fast path (accept the defaults) boot the whole monorepo
- * — the exact opposite of why someone reached for "Manual" over a preset.
+ * — the exact opposite of why someone reached for the wizard over a bare `infra-kit dev <app>`.
  */
 const buildPartChoices = (model: WizardModel): WizardChoice[] => {
   const choices: WizardChoice[] = []
@@ -291,7 +285,7 @@ const buildAuditContext = (model: WizardModel): PresetProxyContext => {
 
   for (const app of model.apps) {
     // Map EVERY discovered api app to its own api package — including api-only apps a frontend proxies
-    // to cross-app — so `launchedPkgs` in validatePresetProxy is faithful (mirrors preset-proxy-check.ts).
+    // to cross-app — so `launchedPkgs` in validatePresetProxy is faithful.
     // Deriving this from proxy backends alone would miss api-only owners and false-positive the audit.
     if (app.apiPackage != null) apiPkgByApp[app.name] = app.apiPackage
     for (const b of app.backends) {
@@ -311,12 +305,11 @@ const buildAuditContext = (model: WizardModel): PresetProxyContext => {
 }
 
 /**
- * Run the assembled plan through the SAME proxy-locality rule the root audit uses. Returns issue
- * messages (empty when clean). Catches a `local` override whose backend won't launch — the wizard's
+ * Run the assembled plan through the proxy-locality rule. Returns issue messages (empty when clean). Catches a `local` override whose backend won't launch — the wizard's
  * derivation launches owners, so a hit means the backend has no discoverable owning app.
  */
 export const auditManualPlan = (presetDef: DevPreset, model: WizardModel): string[] => {
-  return validatePresetProxy({ __wizard__: presetDef }, buildAuditContext(model)).map((i) => {
+  return validatePresetProxy(presetDef, buildAuditContext(model)).map((i) => {
     return i.message
   })
 }
@@ -559,7 +552,7 @@ const runManualBranch = async (
   return { presetDef: plan.presetDef, watch, orca: false }
 }
 
-/** Print the equivalent (`--target=…`) flag command, plus a save-as-preset ergonomics hint. */
+/** Print the equivalent (`--target=…`) flag command. */
 const echoManual = (plan: DerivedPlan, selection: ManualSelection): void => {
   commandEcho.setInteractive()
 
@@ -567,29 +560,10 @@ const echoManual = (plan: DerivedPlan, selection: ManualSelection): void => {
 
   commandEcho.addOption(eq.flags, true)
   commandEcho.print()
-
-  // The `--target=…` line reproduces the selection exactly; the preset is pure convenience — a short,
-  // memorable name instead of retyping the target keys.
-  logger.info('ℹ️  Prefer a short name? Save this selection as a devPreset and run `infra-kit dev <name>`.')
 }
-
-/** The preset-branch flow: run a named preset, asking only whether to watch (presets can't encode it). */
-const runPresetBranch = async (prompts: WizardPrompts, preset: string): Promise<WizardResult> => {
-  const watch = await prompts.confirm({ message: '👀 Rebuild & restart on save (watch)?', default: true })
-
-  commandEcho.setInteractive()
-  commandEcho.addOption(preset, true)
-  if (!watch) commandEcho.addOption('--no-watch', true)
-  commandEcho.print()
-
-  return { preset, watch, orca: false }
-}
-
-/** Sentinel value for the "Manual (custom)" step-0 choice (a preset name can never be empty). */
-export const MANUAL_CHOICE = ' manual'
 
 /**
- * Drive the wizard's branch flow over an ALREADY-gathered model (no disk/config access). Split from
+ * Drive the wizard flow over an ALREADY-gathered model (no disk/config access). Split from
  * {@link runDevWizard} so the flow is unit-testable with scripted prompts + a fixture model.
  */
 export const runWizardFlow = async (
@@ -597,22 +571,7 @@ export const runWizardFlow = async (
   model: WizardModel,
   loadEnvVars: LoadEnvVars = loadEnvVarsFromDoppler,
 ): Promise<WizardResult | null> => {
-  if (model.presets.length === 0) {
-    return runManualBranch(prompts, model, loadEnvVars)
-  }
-
-  const choice = await prompts.select({
-    message: '🚀 Start from a preset, or configure manually?',
-    choices: [
-      ...model.presets.map((p) => {
-        return { name: p, value: p }
-      }),
-      new Separator(' '),
-      { name: 'Manual (custom)…', value: MANUAL_CHOICE },
-    ],
-  })
-
-  return choice === MANUAL_CHOICE ? runManualBranch(prompts, model, loadEnvVars) : runPresetBranch(prompts, choice)
+  return runManualBranch(prompts, model, loadEnvVars)
 }
 
 /**

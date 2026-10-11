@@ -9,8 +9,6 @@ import { getReleasePRsWithInfo } from 'src/integrations/gh'
 // reasoning: `gh-release-deliver.ts:8-12`.
 import { fetchPRByHead } from 'src/integrations/gh/pr-status'
 import type { PRStatus } from 'src/integrations/gh/pr-status'
-import { removeIdeWorktreeFolders } from 'src/integrations/ide'
-import type { RemoveIdeWorktreeFoldersOutcome } from 'src/integrations/ide/types'
 import { buildJiraVersionUrl, findVersionByName, loadJiraConfigOptional } from 'src/integrations/jira'
 import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
 import { getVersionRelatedIssueCounts, removeJiraVersion } from 'src/integrations/jira/remove-version'
@@ -59,18 +57,17 @@ export interface ReleaseRemoveArgs extends RequiredConfirmedOptionArg {
 }
 
 /** Step ids in execution order — also the vocabulary of the residue report. */
-type RemovalStep = 'worktree' | 'ide-folders' | 'pr' | 'local-branch' | 'remote-branch' | 'jira'
+type RemovalStep = 'worktree' | 'pr' | 'local-branch' | 'remote-branch' | 'jira'
 
 /**
  * Ordered by ASCENDING irreversibility, so an abort leaves the most repairable residue: a worktree is
  * recreated by `worktrees add`, a closed PR is reopened in the UI, a branch is restored from the tip
  * sha captured in preflight — while the Jira fix version, once removed, is gone with its issue links.
  */
-const STEP_ORDER: RemovalStep[] = ['worktree', 'ide-folders', 'pr', 'local-branch', 'remote-branch', 'jira']
+const STEP_ORDER: RemovalStep[] = ['worktree', 'pr', 'local-branch', 'remote-branch', 'jira']
 
 const STEP_LABELS: Record<RemovalStep, string> = {
   worktree: 'remove the worktree',
-  'ide-folders': 'strip the worktree from configured editors',
   pr: 'close the PR',
   'local-branch': 'delete the local branch',
   'remote-branch': 'delete the remote branch',
@@ -79,8 +76,6 @@ const STEP_LABELS: Record<RemovalStep, string> = {
 
 interface DoneStep {
   step: RemovalStep
-  /** Rendered in parentheses after the step id in the residue report, when the step has one. */
-  detail?: string
 }
 
 interface JiraPlan {
@@ -95,8 +90,6 @@ interface ReleaseRemovePlan {
   id: ReleaseId
   label: string
   baseBranch: string
-  projectRoot: string
-  worktreeDir: string
   worktreePath: string
   worktreePresent: boolean
   /** Connected Orca terminals in the worktree; the removal closes them. Informational only. */
@@ -106,7 +99,7 @@ interface ReleaseRemovePlan {
   /**
    * Captured HERE, not parsed from `git branch -D`'s `(was <sha>)` line: `deleteLocalBranch` discards
    * that output, it is a localizable porcelain string, and on a resume run the branch is already gone
-   * so there is no delete output to read at all. After steps 4-5 this is the only handle that
+   * so there is no delete output to read at all. After steps 3-4 this is the only handle that
    * restores the branch.
    */
   localTipSha: string | null
@@ -117,25 +110,11 @@ interface ReleaseRemovePlan {
   moveIssuesTo: JiraVersion | null
 }
 
-type IdeStepOutcome = 'verified' | 'attempted' | 'skipped'
-
-interface IdeProviderReport {
-  provider: string
-  outcome: IdeStepOutcome
-  removed: string[]
-}
-
-interface IdeFoldersReport {
-  outcome: IdeStepOutcome
-  providers: IdeProviderReport[]
-}
-
 interface ReleaseRemoveStructured {
   branch: string
   version: string
   baseBranch: string
   worktree: 'removed' | 'absent'
-  ideFolders: IdeFoldersReport
   pr: 'closed' | 'already-closed' | 'absent'
   prNumber: number | null
   localBranch: 'deleted' | 'absent'
@@ -377,7 +356,7 @@ interface JiraPreflight {
   moveIssuesTo: JiraVersion | null
 }
 
-/** `--move-issues-to` is resolved HERE so a typo'd target fails before any mutation, not at step 6. */
+/** `--move-issues-to` is resolved HERE so a typo'd target fails before any mutation, not at step 5. */
 const buildJiraPreflight = async (id: ReleaseId, args: ReleaseRemoveArgs): Promise<JiraPreflight> => {
   const empty: JiraPreflight = { jiraConfig: null, jira: null, moveIssuesTo: null }
 
@@ -455,8 +434,6 @@ const buildPlan = async (branch: string, args: ReleaseRemoveArgs): Promise<Relea
     // under a reused branch name (newest-first lookup) is tolerated here — the same exposure this
     // had via the title, not a regression.
     baseBranch: pr?.baseRefName ?? getBaseBranch('regular'),
-    projectRoot,
-    worktreeDir,
     worktreePath,
     worktreePresent,
     orcaTerminalCount: worktreePresent ? await probeOrcaTerminals(worktreePath) : 0,
@@ -588,30 +565,10 @@ async function runStep<T extends StepResult>(step: RemovalStep, done: DoneStep[]
   }
 }
 
-/**
- * The single exemption from abort-on-first-error, and it is safe only because step 2 carries no state
- * into steps 3-6: a cosmetic editor edit must not strand a teardown with the worktree gone, the PR
- * open, the branch live and the fix version live.
- */
-// No success log here, deliberately: `tryStep`'s callback returns void, so this function cannot tell a
-// real editor edit from a no-op — and `ide-folders` is the step with the MOST to lie about, since an
-// empty `removed` array is evidence of nothing (`describeIdeProvider`). The caller owns the success
-// line because only it holds the computed outcome. The failure path stays here: `attempted` is exactly
-// what this level knows.
-const tryStep = async (step: RemovalStep, done: DoneStep[], fn: () => Promise<void>): Promise<void> => {
-  try {
-    await fn()
-    done.push({ step })
-  } catch (error) {
-    done.push({ step, detail: 'attempted' })
-    logger.warn({ err: formatZxError(error), step }, `⚠️ ${STEP_LABELS[step]} failed (non-blocking)`)
-  }
-}
-
 const describeDoneStep = (plan: ReleaseRemovePlan, entry: DoneStep): string => {
   if (entry.step === 'local-branch' && plan.localTipSha) return `local-branch (was ${plan.localTipSha.slice(0, 7)})`
 
-  return entry.detail ? `${entry.step} (${entry.detail})` : entry.step
+  return entry.step
 }
 
 interface ResidueErrorArgs {
@@ -649,12 +606,7 @@ const buildResidueError = (args: ResidueErrorArgs): OperationError => {
   })
 }
 
-interface WorktreeStepResult {
-  outcome: 'removed' | 'absent'
-  removedBranches: string[]
-}
-
-const removeWorktreeStep = async (plan: ReleaseRemovePlan): Promise<WorktreeStepResult> => {
+const removeWorktreeStep = async (plan: ReleaseRemovePlan): Promise<'removed' | 'absent'> => {
   const removed = await removeReleaseWorktreeIfPresent(plan.branch, {
     operation: `remove the worktree for ${plan.branch}`,
     // Deliberately NOT a `--force` suggestion: `worktrees remove` runs bare on purpose, and handing a
@@ -664,58 +616,7 @@ const removeWorktreeStep = async (plan: ReleaseRemovePlan): Promise<WorktreeStep
 
   // Reported from what the helper actually removed rather than from the preflight flag: "absent" here
   // means the worktree was already gone, since a genuine refusal throws rather than returning.
-  return { outcome: removed.includes(plan.branch) ? 'removed' : 'absent', removedBranches: removed }
-}
-
-const summariseIdeOutcomes = (outcomes: RemoveIdeWorktreeFoldersOutcome[]): IdeFoldersReport => {
-  const providers = outcomes.map((outcome) => {
-    return { provider: outcome.provider, outcome: describeIdeProvider(outcome), removed: outcome.removed }
-  })
-
-  const verified = providers.some((entry) => {
-    return entry.outcome === 'verified'
-  })
-
-  const attempted = providers.some((entry) => {
-    return entry.outcome === 'attempted'
-  })
-
-  const outcome: IdeStepOutcome = attempted ? 'attempted' : 'skipped'
-
-  return { outcome: verified ? 'verified' : outcome, providers }
-}
-
-/**
- * Cursor is `verified` only with a non-empty `removed`, because an empty array arrives from three
- * different paths including a CAUGHT write failure, so it is evidence of nothing.
- */
-const describeIdeProvider = (outcome: RemoveIdeWorktreeFoldersOutcome): IdeStepOutcome => {
-  return outcome.removed.length > 0 ? 'verified' : 'attempted'
-}
-
-const runIdeFoldersStep = async (
-  plan: ReleaseRemovePlan,
-  removedWorktrees: string[],
-  done: DoneStep[],
-): Promise<IdeFoldersReport> => {
-  let report: IdeFoldersReport = { outcome: 'attempted', providers: [] }
-
-  await tryStep('ide-folders', done, async () => {
-    const outcomes = await removeIdeWorktreeFolders({
-      projectRoot: plan.projectRoot,
-      worktreeDir: plan.worktreeDir,
-      removedWorktrees,
-    })
-
-    report = summariseIdeOutcomes(outcomes)
-  })
-
-  // Logged HERE rather than inside `tryStep`, which cannot see this: `skipped` and `verified` are the
-  // difference between "nothing was open to change" and "a Cursor workspace was rewritten", and the
-  // bare label rendered both identically — the same lie as an unverified branch delete.
-  logger.info({ outcome: report.outcome, step: 'ide-folders' }, `✅ ${STEP_LABELS['ide-folders']} — ${report.outcome}`)
-
-  return report
+  return removed.includes(plan.branch) ? 'removed' : 'absent'
 }
 
 interface PrStepResult {
@@ -827,8 +728,7 @@ const removeJiraStep = async (
 }
 
 interface StepResults {
-  worktree: WorktreeStepResult
-  ideFolders: IdeFoldersReport
+  worktree: 'removed' | 'absent'
   pr: PrStepResult
   localBranch: 'deleted' | 'absent'
   remoteBranch: 'deleted' | 'absent'
@@ -840,8 +740,7 @@ const buildResult = (plan: ReleaseRemovePlan, results: StepResults): ReleaseRemo
     branch: plan.branch,
     version: plan.label,
     baseBranch: plan.baseBranch,
-    worktree: results.worktree.outcome,
-    ideFolders: results.ideFolders,
+    worktree: results.worktree,
     pr: results.pr.outcome,
     prNumber: results.pr.number,
     localBranch: results.localBranch,
@@ -857,8 +756,6 @@ const runSteps = async (plan: ReleaseRemovePlan, args: ReleaseRemoveArgs, done: 
   const worktree = await runStep('worktree', done, () => {
     return removeWorktreeStep(plan)
   })
-
-  const ideFolders = await runIdeFoldersStep(plan, worktree.removedBranches, done)
 
   const pr = await runStep('pr', done, () => {
     return closePrStep(plan)
@@ -882,7 +779,7 @@ const runSteps = async (plan: ReleaseRemovePlan, args: ReleaseRemoveArgs, done: 
     return removeJiraStep(plan, args)
   })
 
-  return { worktree, ideFolders, pr, localBranch, remoteBranch, jira }
+  return { worktree, pr, localBranch, remoteBranch, jira }
 }
 
 const executeRemoval = async (plan: ReleaseRemovePlan, args: ReleaseRemoveArgs): Promise<ReleaseRemoveStructured> => {
@@ -940,7 +837,7 @@ const resolveTargetBranch = async (version?: string): Promise<string> => {
 }
 
 /**
- * Tear down one release: its worktree, editor entry, PR, both branches and its Jira fix version.
+ * Tear down one release: its worktree, PR, both branches and its Jira fix version.
  *
  * Single-target by design (no `--versions`, no `--all`): nothing this removes is recreatable, and
  * multi-target would force continue-on-error semantics that destroy the residue report.
@@ -1031,7 +928,7 @@ export const releaseRemove = async (options: ReleaseRemoveArgs) => {
 export const releaseRemoveMcpTool = defineMcpTool({
   name: 'release-remove',
   description:
-    'Tear down ONE release created by release-create: removes its git worktree (closing every Orca terminal open in it first — a call made from an Orca terminal inside that worktree is refused as orca_caller_inside_target before anything is touched), strips the worktree from the Cursor workspace, closes its pull request with a comment, deletes the release branch locally and on origin, and REMOVES ITS JIRA FIX VERSION — the one irreversible step (new id, new URL, lost issue links), which is why every call is gated behind human confirmation. Omit "version" and this server offers the human a form listing the open release PRs; the accepted choice feeds the confirm gate. A client that cannot render a form gets a gate with no version — confirming it is refused, never guessed. Pass "version" when the human already named the release. One release per call — repeat the call for another; there is no "versions" field. Refuses before any mutation when the PR is MERGED (the release has shipped), when the fix version is released/archived, when the fix version still carries issues (pass "moveIssuesTo" to reassign them), or when nothing named that version exists. skipJira is CLI-only and has no field here: it would leave a live fix version behind with nothing in the result pointing at it. Resumable: every step is a verified no-op when its artefact is already gone, so a re-run finishes a partial teardown. What is lost with the worktree directory: gitignored contents including a hydrated .env of Doppler secrets (re-fetch with env-load) and node_modules/dist.',
+    'Tear down ONE release created by release-create: removes its git worktree (closing every Orca terminal open in it first — a call made from an Orca terminal inside that worktree is refused as orca_caller_inside_target before anything is touched), closes its pull request with a comment, deletes the release branch locally and on origin, and REMOVES ITS JIRA FIX VERSION — the one irreversible step (new id, new URL, lost issue links), which is why every call is gated behind human confirmation. Omit "version" and this server offers the human a form listing the open release PRs; the accepted choice feeds the confirm gate. A client that cannot render a form gets a gate with no version — confirming it is refused, never guessed. Pass "version" when the human already named the release. One release per call — repeat the call for another; there is no "versions" field. Refuses before any mutation when the PR is MERGED (the release has shipped), when the fix version is released/archived, when the fix version still carries issues (pass "moveIssuesTo" to reassign them), or when nothing named that version exists. skipJira is CLI-only and has no field here: it would leave a live fix version behind with nothing in the result pointing at it. Resumable: every step is a verified no-op when its artefact is already gone, so a re-run finishes a partial teardown. What is lost with the worktree directory: gitignored contents including a hydrated .env of Doppler secrets (re-fetch with env-load) and node_modules/dist.',
   requiresHumanConfirm: true,
   formProvider: releaseRemoveForm,
   inputSchema: {
@@ -1057,20 +954,6 @@ export const releaseRemoveMcpTool = defineMcpTool({
     version: z.string().describe('The release label (e.g. "1.2.5")'),
     baseBranch: z.string().describe('The branch HEAD was moved to before the local delete'),
     worktree: z.enum(['removed', 'absent']).describe('Whether a git worktree was removed or none existed'),
-    ideFolders: z
-      .object({
-        outcome: z
-          .enum(['verified', 'attempted', 'skipped'])
-          .describe('"verified" only when an editor reported a real diff; "skipped" when no editor is configured'),
-        providers: z.array(
-          z.object({
-            provider: z.string(),
-            outcome: z.enum(['verified', 'attempted', 'skipped']),
-            removed: z.array(z.string()).describe('Folder paths confirmed removed'),
-          }),
-        ),
-      })
-      .describe('Per-editor outcome of stripping the worktree folder'),
     pr: z.enum(['closed', 'already-closed', 'absent']).describe('What happened to the release pull request'),
     prNumber: z.number().nullable().describe('The pull request number, or null when none exists'),
     localBranch: z.enum(['deleted', 'absent']).describe('Whether a local branch was deleted or none existed'),

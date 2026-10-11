@@ -14,8 +14,8 @@ export interface ConfigUnsetArgs {
  * A key that is not there is the state asked for — a no-op, not an error.
  *
  * @example
- * // CLI: `infra-kit config-unset devServersPresets`
- * // INFO: Removed devServersPresets from the per-project override (~/.infra-kit/projects/api/infra-kit.json)
+ * // CLI: `infra-kit config-unset protectedEnvs`
+ * // INFO: Removed protectedEnvs from the per-project override (~/.infra-kit/projects/api/infra-kit.json)
  */
 export const configUnset = async ({ key, global }: ConfigUnsetArgs) => {
   assertConfigKey(key, 'config-unset')

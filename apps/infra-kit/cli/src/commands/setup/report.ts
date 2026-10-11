@@ -45,7 +45,9 @@ const INIT_STEP_ORDER: Record<InitStepName, number> = {
   'mcp-server': 7,
   'mcp-proxies': 8,
   'project-config': 9,
-  shell: 10,
+  'token-perms': 10,
+  chrome: 11,
+  shell: 12,
 }
 
 export const INIT_STEPS = (Object.keys(INIT_STEP_ORDER) as InitStepName[]).sort((a, b) => {

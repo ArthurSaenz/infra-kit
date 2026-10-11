@@ -76,7 +76,6 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
       'package manager installed',
       'typescript-language-server installed',
       'orca installed',
-      'ide installed',
     ],
   ],
   [SECTION_SHELL, ['zshrc init block', 'zshenv session block', 'pnpm enableGlobalVirtualStore', 'CLAUDE.md block']],

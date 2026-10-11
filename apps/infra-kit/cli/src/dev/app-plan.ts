@@ -1,6 +1,6 @@
 import { loadDev } from '@slip-stream-kit/config/internal'
 
-import type { DevPreset, ProxySource } from 'src/lib/infra-kit-config'
+import type { DevPreset, ProxySource } from './presets.js'
 
 interface PlanApi {
   name: string
@@ -13,7 +13,7 @@ interface PlanUi {
 }
 
 export interface AppPlan {
-  /** The run plan, in the shape a `devServersPresets` entry has — the runner treats it as one. */
+  /** The run plan handed to the runner. */
   preset: DevPreset
   /** `<route> (<package>)` for routes that could run locally, but no `apps/*\/api` provides their backend. */
   unprovided: string[]
@@ -21,9 +21,9 @@ export interface AppPlan {
 
 /**
  * What `infra-kit dev <app>` runs: the app's own parts, plus every backend its UI's proxy routes can run
- * locally (`from` includes `local`), with those routes pinned `local`. Derived from the routes rather than
- * written as a preset, so `dev backoffice` brings up the cronjob backend its `/api/v1/cronjob` route needs
- * without anyone having to keep a preset in step with the config.
+ * locally (`from` includes `local`), with those routes pinned `local`. Derived from the routes, so
+ * `dev backoffice` brings up the cronjob backend its `/api/v1/cronjob` route needs without anyone having
+ * to keep a list in step with the config.
  *
  * @returns `null` when no `apps/<app>/api` or `apps/<app>/ui` was discovered.
  */

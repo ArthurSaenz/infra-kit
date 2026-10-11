@@ -6,7 +6,7 @@ import * as fs from 'node:fs'
 import os from 'node:os'
 import * as path from 'node:path'
 import process from 'node:process'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { DevServerRunner } from 'src/dev/dev-server'
 import type { DevServerOptions, ProbeOutcome } from 'src/dev/dev-server'
@@ -19,7 +19,6 @@ import type { UiDevOptions } from 'src/dev/ui-dev'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config'
-import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 
 import {
   FAKE_PORTLESS_BIN,
@@ -40,28 +39,6 @@ import {
 import type { FakeProxy, FakeProxyOptions } from './fixtures'
 
 /**
- * Seeds `getInfraKitConfig` for the NAMED-preset static-locality tests only: every other test in this
- * file relies on it rejecting (this suite runs from a temp fixture, never the real repo root) and
- * falling back to `{}`, which is why every other preset here is threaded in-memory (`presetDef`). Reset
- * to `null` before each test so that fallback stays the default; `importOriginal` keeps every other
- * export (notably `DEFAULT_DEV_PROXY_PORT`, imported for real above) untouched.
- */
-const presetConfigSeed = vi.hoisted(() => {
-  return { config: null as InfraKitConfig | null }
-})
-
-vi.mock('src/lib/infra-kit-config', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('src/lib/infra-kit-config')>()
-
-  return {
-    ...actual,
-    getInfraKitConfig: vi.fn(() => {
-      return presetConfigSeed.config ? Promise.resolve(presetConfigSeed.config) : actual.getInfraKitConfig()
-    }),
-  }
-})
-
-/**
  * Deterministic orchestration tier: a real monorepo fixture + the REAL ServerlessLocalRun
  * spawn, but the turbo build is replaced with an injected fake (2nd constructor arg) that
  * records its calls and refreshes each app's dist output. No chokidar, no watch, no timers
@@ -74,7 +51,6 @@ let cwdSnapshot: string
 beforeEach(() => {
   envSnapshot = snapshotEnv()
   cwdSnapshot = snapshotCwd()
-  presetConfigSeed.config = null
 })
 
 afterEach(() => {
@@ -191,65 +167,15 @@ describe('devServerRunner — an app that fails to start', () => {
   })
 })
 
-/**
- * A preset whose target key is not an `<app>/api`|`<app>/ui` package identity (e.g. a bare
- * `backoffice`) used to reach `resolvePreset`'s `parseTargetKey`, which throws a raw error — an
- * uncaught stack trace with no naming of the run or remediation. The `dev` path now validates the
- * chosen preset's keys BEFORE resolution, so the run refuses with a human-readable, named message.
- */
-describe('devServerRunner — a preset with an invalid target key', () => {
-  it('refuses with a named, human-readable error instead of an uncaught parseTargetKey throw', async () => {
+describe('devServerRunner — a name that is not an app', () => {
+  it('refuses with the apps as choices, so an agent picks one instead of guessing again', async () => {
     const root = temp.register(makeMonorepo([{ name: 'client', packageName: 'client-api', withHandler: true }]))
 
     spyStdoutWrite([])
     process.chdir(root)
 
-    // `backoffice` is a bare app name, not a package — resolvePreset would throw raw on it. The
-    // in-memory presetDef is the same seam the wizard uses; `preset` names the run in the message.
     const runner = new DevServerRunner(
-      { preset: 'broken', presetDef: { apps: { backoffice: {} } } },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      workingProxy(),
-    )
-
-    const error = await runner.start().then(
-      () => {
-        return null
-      },
-      (e: unknown) => {
-        return e as Error
-      },
-    )
-
-    // The guard's controlled refusal, naming the bad key and the expected `<app>/api|ui` form —
-    // not the raw `devServersPresets: invalid target` throw that escaped parseTargetKey before.
-    expect(error?.message).toContain('infra-kit dev: cannot run this preset')
-    expect(error?.message).toContain('backoffice')
-    expect(error?.message).toContain('<app>/api')
-
-    await runner.shutdown()
-  })
-})
-
-describe('devServerRunner — a name that is neither a preset nor an app', () => {
-  it('refuses with the presets and apps as choices, so an agent picks one instead of guessing again', async () => {
-    const root = temp.register(makeMonorepo([{ name: 'client', packageName: 'client-api', withHandler: true }]))
-
-    presetConfigSeed.config = {
-      envManagement: { provider: 'doppler', config: { name: 'test' } },
-      devServersPresets: { clientLocal: { apps: { 'client/api': {} } }, clientUICloud: { apps: {} } },
-    }
-
-    spyStdoutWrite([])
-    process.chdir(root)
-
-    const runner = new DevServerRunner(
-      { preset: 'nope' },
+      { app: 'nope' },
       undefined,
       undefined,
       undefined,
@@ -271,10 +197,10 @@ describe('devServerRunner — a name that is neither a preset nor an app', () =>
     expect(error).toBeInstanceOf(StructuredRefusalError)
     expect((error as StructuredRefusalError).structuredContent).toMatchObject({
       status: 'argument_required',
-      argument: 'preset',
-      choices: { properties: { preset: { enum: ['clientLocal', 'clientUICloud', 'client'] } } },
+      argument: 'app',
+      choices: { properties: { app: { enum: ['client'] } } },
     })
-    expect((error as Error).message).toContain('"nope" is neither a dev preset nor an app')
+    expect((error as Error).message).toContain('"nope" is not an app')
 
     await runner.shutdown()
   })
@@ -315,7 +241,7 @@ describe('devServerRunner — an app name and --reuse', () => {
     process.chdir(root)
 
     const runner = new DevServerRunner(
-      { preset: 'client', uiHealth: false },
+      { app: 'client', uiHealth: false },
       async () => {
         fs.writeFileSync(path.join(root, 'apps', 'client', 'api', 'dist', 'handler.js'), handlerSource(1))
       },
@@ -371,7 +297,7 @@ describe('devServerRunner — an app name and --reuse', () => {
     process.chdir(root)
 
     const runner = new DevServerRunner(
-      { preset: 'client', reuse: true },
+      { app: 'client', reuse: true },
       async () => {
         builds.push('build')
       },
@@ -402,7 +328,7 @@ describe('devServerRunner — an app name and --reuse', () => {
     process.chdir(root)
 
     const runner = new DevServerRunner(
-      { preset: 'client', reuse: true },
+      { app: 'client', reuse: true },
       async () => {
         builds.push('build')
       },
@@ -455,132 +381,9 @@ describe('devServerRunner — an app name and --reuse', () => {
 })
 
 /**
- * `validatePresetProxy` (the STATIC locality rule) used to run only under `infra-kit audit` and the
- * bare-invocation wizard — never on `infra-kit dev <preset>`, so a preset whose `local` pin has no
- * backing backend sailed straight through to the RUNTIME pairing check, which can only catch it after
- * the backend has already failed to start (or not at all, if the backend was never even attempted).
- * This suite pins it to a genuinely NAMED preset (`getInfraKitConfig` seeded via `presetConfigSeed`,
- * not the in-memory `presetDef` seam every other preset test here uses) — the one path the static
- * check is actually scoped to.
- */
-describe('devServerRunner — a named preset with a static proxy-locality violation', () => {
-  /** `client/ui` proxies `/api` to `client-api`; whether the preset also launches `client/api` varies per test. */
-  const withClientFixture = (): string => {
-    return temp.register(
-      makeMonorepo([
-        {
-          name: 'client',
-          packageName: 'client-api',
-          withHandler: true,
-          ui: {
-            packageName: 'client-ui',
-            proxy: {
-              routes: { '/api': { packageName: 'client-api', from: ['local', 'cloud'], default: 'cloud' } },
-            },
-          },
-        },
-      ]),
-    )
-  }
-
-  it('refuses BEFORE any server spawns when the pinned route has no local backend in the preset', async () => {
-    const root = withClientFixture()
-
-    presetConfigSeed.config = {
-      envManagement: { provider: 'doppler', config: { name: 'test' } },
-      devServersPresets: { uiOnly: { apps: { 'client/ui': { proxy: { '/api': 'local' } } } } },
-    }
-
-    spyStdoutWrite([])
-    process.chdir(root)
-
-    const uiSpawns: string[][] = []
-    const runner = new DevServerRunner(
-      { preset: 'uiOnly' },
-      undefined,
-      undefined,
-      ({ packageNames }) => {
-        uiSpawns.push(packageNames)
-
-        return { kill: async () => {} }
-      },
-      undefined,
-      undefined,
-      undefined,
-      workingProxy(),
-    )
-
-    const error = await runner.start().then(
-      () => {
-        return null
-      },
-      (e: unknown) => {
-        return e as Error
-      },
-    )
-
-    // Named, actionable, and naming the preset, the route, and the backend that would satisfy it —
-    // BEFORE anything runs, unlike the runtime check this complements.
-    expect(error?.message).toContain('infra-kit dev: cannot run this preset')
-    expect(error?.message).toContain('uiOnly')
-    expect(error?.message).toContain('/api')
-    expect(error?.message).toContain('client-api')
-
-    // No server (backend or frontend) was ever spawned — the refusal happens inside `resolveRunPlan`,
-    // before `bringUpProxy`/`buildAll`/`startAllApps` are reached.
-    expect(uiSpawns).toEqual([])
-
-    await runner.shutdown()
-  })
-
-  it('passes the static check (and boots) when the preset also launches the pinned route’s backend', async () => {
-    const root = withClientFixture()
-    const apiPort = await getFreePort()
-
-    process.env.CLIENT_PORT = String(apiPort)
-    presetConfigSeed.config = {
-      envManagement: { provider: 'doppler', config: { name: 'test' } },
-      devServersPresets: {
-        clientLocal: { apps: { 'client/ui': { proxy: { '/api': 'local' } }, 'client/api': {} } },
-      },
-    }
-
-    const fakeRunBuild = async (): Promise<void> => {
-      fs.writeFileSync(path.join(root, 'apps', 'client', 'api', 'dist', 'handler.js'), handlerSource(1))
-    }
-
-    spyStdoutWrite([])
-    process.chdir(root)
-
-    const runner = new DevServerRunner(
-      { preset: 'clientLocal' },
-      fakeRunBuild,
-      noopTurboChild,
-      () => {
-        return { kill: async () => {} }
-      },
-      undefined,
-      undefined,
-      undefined,
-      workingProxy(),
-    )
-
-    // The static check must not refuse a preset that DOES launch the backend its pin needs — proving
-    // this is a real locality check, not a blanket refusal of every `local` pin under a named preset.
-    await expect(runner.start()).resolves.toBeUndefined()
-
-    const health = (await (await fetch(`http://127.0.0.1:${apiPort}/__health`)).json()) as { app: string }
-
-    expect(health).toMatchObject({ app: 'client' })
-
-    await runner.shutdown()
-  })
-})
-
-/**
  * The silent-cloud bug, end to end.
  *
- * A `*Local` preset launches `<app>/api` + `<app>/ui` and the frontend's `/api` route names that
+ * A run that launches `<app>/api` + `<app>/ui` and the frontend's `/api` route names that
  * backend. When the backend dies on boot it writes no dev-context fragment, so the vite helper's
  * `pickSource` finds an empty local set and falls through to the route's `default: 'cloud'`. The
  * frontend then comes up healthy, proxying every `/api` request at the shared cloud backend — and
@@ -588,14 +391,8 @@ describe('devServerRunner — a named preset with a static proxy-locality violat
  * frontend beside it is now misrouted.
  */
 describe('devServerRunner — a local-pinned route whose backend failed', () => {
-  /**
-   * hulyo's `clientLocal`, verbatim, handed in as an in-memory `presetDef` (the same seam the wizard
-   * uses) rather than written to an `infra-kit.json` — the layered config resolves a named preset
-   * against the real repo root, not the temp fixture, so a named lookup here would never find it.
-   * `preset` still rides along, because it is what labels the run in the refusal message.
-   */
+  /** What `infra-kit dev client` plans for this fixture, handed in as an in-memory `presetDef`. */
   const CLIENT_LOCAL = {
-    preset: 'clientLocal',
     presetDef: { apps: { 'client/ui': { proxy: { '/api': 'local' as const } }, 'client/api': {} } },
   }
 
@@ -669,7 +466,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
       },
     )
 
-    expect(error?.message).toContain('clientLocal')
+    expect(error?.message).toContain('infra-kit dev: "*"')
     expect(error?.message).toContain('client/ui /api')
     expect(error?.message).toContain('https://dev.hulyo.co.il')
     expect(error?.message).toContain("config is missing field: 'connectionURL'")
@@ -885,7 +682,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     process.chdir(root)
 
     const runner = new DevServerRunner(
-      { preset: 'clientUICloud', presetDef: { apps: { 'client/ui': {}, 'client/api': {} } } },
+      { presetDef: { apps: { 'client/ui': {}, 'client/api': {} } } },
       fakeRunBuild,
       undefined,
       () => {
@@ -905,8 +702,8 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
   /**
    * The `--app` / `--self` hole, which a crash-keyed rule cannot see.
    *
-   * `resolveRunPlan` applies the include filter AFTER preset resolution, and it filters apis and UIs
-   * independently. So `--app client` on a preset that pairs `client/ui` with `backoffice/api` drops the
+   * `resolveRunPlan` applies the include filter AFTER plan resolution, and it filters apis and UIs
+   * independently. So `--app client` on a plan that pairs `client/ui` with `backoffice/api` drops the
    * backend entirely: it is never attempted, so it never lands in `failedApps`, so there is no crash to
    * key off — and `client/ui` comes up proxying `/api` at the shared cloud backend in total silence. The
    * rule keys on INTENT (`wanted`, captured pre-narrowing) precisely so this is caught.
@@ -944,7 +741,6 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     const uiSpawns: string[][] = []
     const runner = new DevServerRunner(
       {
-        preset: 'crossApp',
         presetDef: { apps: { 'client/ui': {}, 'backoffice/api': {} } },
         // `--app client` keeps client/ui and silently drops backoffice/api.
         include: ['client'],
@@ -987,8 +783,8 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
   /**
    * The false-positive direction, which the intent rule must not trip on.
    *
-   * A UI-only preset is how you deliberately develop a frontend against cloud. Its routes still declare
-   * `from: ['local','cloud']` — they are LOCAL-CAPABLE — but the preset names no api target and pins
+   * A UI-only plan is how you deliberately develop a frontend against cloud. Its routes still declare
+   * `from: ['local','cloud']` — they are LOCAL-CAPABLE — but the plan names no api target and pins
    * nothing, so nothing about this run intended a local backend. Refusing it would break the single most
    * common frontend workflow there is.
    */
@@ -1018,7 +814,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
 
     const runner = new DevServerRunner(
       // No api target, no `local` pin: the backend is simply not part of this run.
-      { preset: 'clientUICloud', presetDef: { apps: { 'client/ui': {} } } },
+      { presetDef: { apps: { 'client/ui': {} } } },
       fakeRunBuild,
       undefined,
       () => {
@@ -2675,7 +2471,7 @@ describe('devServerRunner — liveness monitor', () => {
   }, 15000)
 })
 
-describe('devServerRunner — frontends (default preset runs api + ui)', () => {
+describe('devServerRunner — frontends (default plan runs api + ui)', () => {
   it('warms UI deps, spawns the ui-dev child scoped to ui packages, and reaps it on shutdown', async () => {
     const root = temp.register(
       makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }]),
@@ -2709,7 +2505,7 @@ describe('devServerRunner — frontends (default preset runs api + ui)', () => {
     }
 
     process.chdir(root)
-    // No preset → default `*` runs everything the app exposes (api + ui). Working proxy injected (8th arg)
+    // No plan → default `*` runs everything the app exposes (api + ui). Working proxy injected (8th arg)
     // so the real boot is hermetic — no host portless daemon.
     const runner = new DevServerRunner(
       {},
@@ -4040,11 +3836,11 @@ describe('devServerRunner — watch engine and watcher wiring', () => {
 })
 
 describe('devServerRunner — a shared-package edit without a usable closure map', () => {
-  /** appx and appy both depend on `shared`; appy opts out of dep-triggered restarts. */
-  const OPT_OUT_APPY: DevServerOptions = {
+  /** appx and appy both depend on `shared`. */
+  const BOTH_APPS: DevServerOptions = {
     watch: true,
     livenessIntervalMs: 60_000,
-    presetDef: { apps: { 'appx/api': {}, 'appy/api': { watchDeps: false } } },
+    presetDef: { apps: { 'appx/api': {}, 'appy/api': {} } },
   }
 
   const setupShared = (): { root: string; sharedIndex: string } => {
@@ -4066,11 +3862,11 @@ describe('devServerRunner — a shared-package edit without a usable closure map
     return { root, sharedIndex: path.join(sharedDir, 'dist', 'index.js') }
   }
 
-  it('restarts EVERY app when `turbo --dry` fails — the fail-safe overrides a `watchDeps: false` opt-out', async () => {
+  it('restarts EVERY app when `turbo --dry` fails', async () => {
     const { root, sharedIndex } = setupShared()
     const { renderer, logs, messages } = makeLogRenderer()
     const runner = new DevServerRunner(
-      OPT_OUT_APPY,
+      BOTH_APPS,
       noopBuild,
       noopTurboChild,
       undefined,
@@ -4107,52 +3903,6 @@ describe('devServerRunner — a shared-package edit without a usable closure map
 
       expect(bothRestarted, 'the fail-safe skipped an app — a missing map must never drop a restart').toBe(true)
       expect(messages().filter(isRestartLine)[0]).toBe('🔄 Restarting 2 apps...')
-    } finally {
-      await runner.shutdown()
-    }
-  }, 15000)
-
-  it('leaves a `watchDeps: false` app alone once the closure map is in hand', async () => {
-    const { root, sharedIndex } = setupShared()
-    const { renderer, messages } = makeLogRenderer()
-    const runner = new DevServerRunner(
-      OPT_OUT_APPY,
-      noopBuild,
-      noopTurboChild,
-      undefined,
-      (pkg: string): Promise<string[]> => {
-        return Promise.resolve([pkg, 'shared'])
-      },
-      renderer,
-      undefined,
-      workingProxy(),
-    )
-
-    await runner.start()
-
-    const priv = runner as unknown as RunnerTeardownPrivates
-
-    try {
-      await priv.closureBuild
-      expect(priv.closureMap).not.toBeNull()
-
-      const beforeX = fragmentWrittenAt(root, 'appx')
-      const beforeY = fragmentWrittenAt(root, 'appy')
-
-      await sleep(1200)
-      fs.writeFileSync(sharedIndex, 'export const v = 2\n')
-
-      expect(
-        await waitFor(() => {
-          return fragmentWrittenAt(root, 'appx') > beforeX
-        }),
-        'the dependent never restarted',
-      ).toBe(true)
-      // A wrongly-scheduled appy timer gets its full debounce window to fire.
-      await sleep(700)
-
-      expect(fragmentWrittenAt(root, 'appy'), 'the opted-out app was restarted').toBe(beforeY)
-      expect(messages().filter(isRestartLine)).toEqual(['🔄 Restarting appx...'])
     } finally {
       await runner.shutdown()
     }

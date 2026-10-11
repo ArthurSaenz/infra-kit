@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { logger } from 'src/lib/logger'
 
-import { MANUAL_CHOICE, WIZARD_ORCA_VAR, auditManualPlan, loadBackends, runWizardFlow } from '../dev-wizard-run.js'
+import { WIZARD_ORCA_VAR, auditManualPlan, loadBackends, runWizardFlow } from '../dev-wizard-run.js'
 import type { LoadEnvVars, WizardChoice, WizardPrompts } from '../dev-wizard-run.js'
 import type { WizardModel } from '../dev-wizard.js'
 
 /** One full-stack app whose frontend proxies a two-option `/api` → its own `client-api` backend. */
-const model = (presets: string[] = []): WizardModel => {
+const model = (): WizardModel => {
   return {
     apps: [
       {
@@ -30,7 +30,6 @@ const model = (presets: string[] = []): WizardModel => {
         ],
       },
     ],
-    presets,
     environments: ['dev', 'staging'],
   }
 }
@@ -39,7 +38,6 @@ const model = (presets: string[] = []): WizardModel => {
 const apiOnlyModel = (): WizardModel => {
   return {
     apps: [{ name: 'worker', hasApi: true, hasUi: false, apiPackage: 'worker-api', backends: [] }],
-    presets: [],
     environments: ['dev', 'staging'],
   }
 }
@@ -332,7 +330,7 @@ describe('runWizardFlow — manual branch', () => {
 
   it('offers only the frontend (full-stack api is launched via a route, not the checkbox), unchecked', async () => {
     // Manual is opt-in: pre-checking meant the fast path (hit enter) booted the whole monorepo — the
-    // opposite of why someone picks "Manual" over a preset. A full-stack `client/api` is NOT a checkbox
+    // opposite of why someone reaches for the wizard. A full-stack `client/api` is NOT a checkbox
     // choice; it launches by answering a route local. This seam answers the checkbox the way inquirer
     // does — with the pre-checked choices — so the default is what's asserted.
     const offered: WizardChoice[] = []
@@ -369,42 +367,18 @@ describe('runWizardFlow — manual branch', () => {
   })
 })
 
-describe('runWizardFlow — step-0 + preset branch', () => {
-  it('picks a named preset and asks only about watch', async () => {
-    const result = await runWizardFlow(
-      scripted({ select: [['preset', 'full']], confirm: [['watch', true]] }),
-      model(['full']),
-    )
-
-    expect(result).toEqual({ preset: 'full', watch: true, orca: false })
-  })
-
-  it('choosing Manual at step-0 enters the manual matrix', async () => {
-    const result = await runWizardFlow(
-      scripted({
-        select: [
-          ['Start from a preset', MANUAL_CHOICE],
-          ['local or cloud', 'local'],
-        ],
-        checkbox: [['Which packages', ['client/ui']]],
-        confirm: [['watch', false]],
-      }),
-      model(['full']),
-    )
-
-    expect(result?.presetDef?.apps?.['client/api']).toEqual({})
-  })
-})
-
 // Watch is the default of `infra-kit dev`, so pressing Enter at the wizard must not quietly opt out of it.
 describe('runWizardFlow — watch defaults to yes', () => {
-  it.each<[string, WizardModel, Parameters<typeof scripted>[0]]>([
-    ['manual', model(), { checkbox: [['Which packages', ['client/ui']]], select: [['local or cloud', 'local']] }],
-    ['preset', model(['full']), { select: [['preset', 'full']] }],
-  ])('%s branch: the watch question is asked with default: true', async (_branch, wizardModel, answers) => {
-    const { prompts, asked } = recordConfirms(scripted({ ...answers, confirm: [['watch', true]] }))
+  it('asks the watch question with default: true', async () => {
+    const { prompts, asked } = recordConfirms(
+      scripted({
+        checkbox: [['Which packages', ['client/ui']]],
+        select: [['local or cloud', 'local']],
+        confirm: [['watch', true]],
+      }),
+    )
 
-    await runWizardFlow(prompts, wizardModel)
+    await runWizardFlow(prompts, model())
 
     const watchQuestions = asked.filter((cfg) => {
       return cfg.message.includes('watch')
@@ -488,7 +462,6 @@ describe('auditManualPlan', () => {
           ],
         },
       ],
-      presets: [],
       environments: ['dev'],
     }
 
@@ -519,7 +492,6 @@ describe('auditManualPlan', () => {
         },
         { name: 'payments', hasApi: true, hasUi: false, apiPackage: 'payments-api', backends: [] },
       ],
-      presets: [],
       environments: ['dev'],
     }
 

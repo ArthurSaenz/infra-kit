@@ -27,7 +27,7 @@ interface ToRemovalToolResultArgs {
  *   under `--json`.
  * - **CLI**: an `OperationError` so the process exits non-zero and names what was not removed.
  *
- * Callers run their IDE cleanup and `commandEcho.print()` BEFORE calling this, so the successful
+ * Callers run `commandEcho.print()` BEFORE calling this, so the successful
  * part of a batch is still reported and echoed.
  */
 export const toRemovalToolResult = (args: ToRemovalToolResultArgs): ToolsExecutionResult<RemovalStructuredContent> => {

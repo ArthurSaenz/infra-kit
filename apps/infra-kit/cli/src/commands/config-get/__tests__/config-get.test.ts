@@ -41,8 +41,7 @@ describe('configGet', () => {
     }
     seed.config = {
       envManagement: { provider: 'doppler', config: { name: 'my-proj' } },
-      dev: { web: { port: 3000 } },
-      devServersPresets: { default: {} },
+      worktrees: { openInOrca: true },
     }
   })
 
@@ -79,11 +78,11 @@ describe('configGet', () => {
   })
 
   it('reports one top-level key as `value`, null when no layer sets it', async () => {
-    const dev = await configGet({ key: 'dev' })
-    const ide = await configGet({ key: 'ide' })
+    const worktrees = await configGet({ key: 'worktrees' })
+    const protectedEnvs = await configGet({ key: 'protectedEnvs' })
 
-    expect(dev.structuredContent).toMatchObject({ key: 'dev', value: { web: { port: 3000 } } })
-    expect(ide.structuredContent).toMatchObject({ key: 'ide', value: null })
+    expect(worktrees.structuredContent).toMatchObject({ key: 'worktrees', value: { openInOrca: true } })
+    expect(protectedEnvs.structuredContent).toMatchObject({ key: 'protectedEnvs', value: null })
   })
 
   it('refuses a key the schema does not have, listing the real ones', async () => {

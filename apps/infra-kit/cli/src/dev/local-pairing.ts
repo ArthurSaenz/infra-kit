@@ -16,11 +16,10 @@
  *
  * Keying off crashes alone (the obvious formulation) misses two reachable paths that produce the exact
  * same silent cloud proxy:
- *   - `--app` / `--self` narrows the launch set AFTER preset resolution, so a preset's backend can be
+ *   - `--app` / `--self` narrows the launch set AFTER plan resolution, so a planned backend can be
  *     dropped and never even attempted — no crash, nothing to key off;
- *   - a preset can pin a route `local` while launching no backend for it at all. (`validatePresetProxy`
- *     catches THAT statically, but it runs only under `infra-kit audit` and the bare-invocation wizard —
- *     never on the `infra-kit dev <preset>` path, which is the one people actually type.)
+ *   - a plan can pin a route `local` while launching no backend for it at all. (`validatePresetProxy`
+ *     catches THAT statically, but only in the bare-invocation wizard.)
  * "Intended local, isn't up" covers all three with one predicate, crash included.
  *
  * A backend that this run LAUNCHED and that failed to boot is never allowed to fall back at all: under
@@ -54,7 +53,7 @@ export interface PairingRoute {
    * never reaches. Still degraded, still worth refusing; just a different failure to describe honestly.
    */
   default?: PairingSource
-  /** The preset pinned this route `local` via a `devServersPresets` proxy override — an explicit intent. */
+  /** The run plan pinned this route `local` — an explicit intent. */
   pinnedLocal?: boolean
 }
 
@@ -76,8 +75,8 @@ export interface PairingInputs {
   /** The frontends this run actually launched. */
   uis: readonly LaunchedUi[]
   /**
-   * Backend packages this run INTENDED to serve locally: every `<app>/api` the preset names, taken BEFORE
-   * `--app`/`--self` narrowing — narrowing changes what runs, never what the preset promised.
+   * Backend packages this run INTENDED to serve locally: every `<app>/api` the plan names, taken BEFORE
+   * `--app`/`--self` narrowing — narrowing changes what runs, never what the plan promised.
    */
   wanted: ReadonlySet<string>
   /** Backend packages that are actually up (i.e. have written a dev-context fragment). */
@@ -268,7 +267,7 @@ const wasAttempted = (d: DegradedRoute): boolean => {
  * the fragment it then writes, flipping the route back to `local` on its own).
  *
  * A backend the run NEVER LAUNCHED is not retryable by any amount of saving: `runRestart` only ever sees
- * the post-`--app`/`--self` app list, so a backend a narrowing flag dropped — or one a preset pinned
+ * the post-`--app`/`--self` app list, so a backend a narrowing flag dropped — or one a plan pinned
  * `local` without ever naming an api target for — is not in it and never will be. Telling that user to
  * "run with --watch" would be sending them to wait on a restart that cannot happen.
  */
@@ -276,8 +275,8 @@ const remedy = (d: DegradedRoute): string => {
   if (wasAttempted(d)) return `fix ${d.apiApp}/api and re-run (or drop --no-watch to retry it on the next save)`
 
   return (
-    `this run never launched "${d.packageName}" — drop the --app/--self narrowing, add its api to the ` +
-    `preset, or set "${d.route}" to "cloud" if you meant to develop against cloud`
+    `this run never launched "${d.packageName}" — drop the --app/--self narrowing, add its api to ` +
+    `--target, or set "${d.route}" to "cloud" if you meant to develop against cloud`
   )
 }
 
@@ -286,7 +285,7 @@ const remedy = (d: DegradedRoute): string => {
  * the whole failure mode is that the fallback is invisible, so the refusal names the route, where the
  * traffic would really have gone, why the backend isn't there, and what will actually fix it.
  *
- * `target` is the run's preset/target label, purely so the message can blame the thing the user typed.
+ * `target` is the run's target label, purely so the message can blame the thing the user typed.
  */
 export const formatPairingRefusal = (degraded: readonly DegradedRoute[], target: string): string => {
   const lines = degraded.map((d) => {

@@ -42,12 +42,10 @@ dev: {
   route can never resolve `local` and silently uses its `default`. (This exact drift shipped
   in travelist: routes said `back-office`/`api-handler`, packages are
   `sls-trvl-back-office`/`sls-trvl-api-handler`.)
-- `devServersPresets` keys in `infra-kit.json` are `<app>/ui` or `<app>/api` — a bare `<app>`
-  key fails validation loudly.
-- `ik dev <app>` runs the app plus every backend its local-capable routes name, pinned local — no
-  preset needed for that. A preset that pins a route `"local"` must also launch the backend it names.
 - All of the above is validated by `infra-kit audit --root` (exit 1 on failure). Both
   consumers run it in `qa` via the root `infra-kit-check-root` script — keep that wired in CI.
+- `ik dev <app>` runs the app plus every backend its local-capable routes name, pinned local.
+- `ik dev --target` keys are `<app>/ui` or `<app>/api` — a bare `<app>` key is refused loudly.
 
 ## portless (the HTTPS proxy)
 

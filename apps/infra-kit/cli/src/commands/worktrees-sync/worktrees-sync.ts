@@ -1,7 +1,6 @@
 import { z } from 'zod'
 
 import { getReleasePRs } from 'src/integrations/gh'
-import { removeIdeWorktreeFolders } from 'src/integrations/ide'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
@@ -66,13 +65,11 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
       projectRoot,
     })
 
-    await removeIdeWorktreeFolders({ projectRoot, worktreeDir, removedWorktrees: removal.removed })
-
     logRemovalResults(removal)
 
     commandEcho.print()
 
-    // Ordering is load-bearing: IDE cleanup and the echo line run first; only then does a failed
+    // Ordering is load-bearing: the echo line runs first; only then does a failed
     // branch throw (human) or become a `partial_failure` refusal (`--agent`).
     return toRemovalToolResult({ result: removal, operation: 'sync worktrees' })
   } catch (error) {

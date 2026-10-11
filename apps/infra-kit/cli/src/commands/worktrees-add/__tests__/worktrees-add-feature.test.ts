@@ -7,7 +7,7 @@ import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import type { FakeCommandResult } from 'src/lib/git-utils/__tests__/zx-command-mock'
-import { getInfraKitConfig, resolveConfiguredIdes, resolveOrcaLayout } from 'src/lib/infra-kit-config'
+import { getInfraKitConfig, resolveOrcaLayout } from 'src/lib/infra-kit-config'
 
 import { resolveFeatureBase, toFeatureBranch } from '../feature-worktrees'
 import { worktreesAdd } from '../worktrees-add'
@@ -62,17 +62,11 @@ vi.mock('src/lib/git-utils', () => {
 })
 
 vi.mock('src/lib/infra-kit-config', () => {
-  return { getInfraKitConfig: vi.fn(), resolveConfiguredIdes: vi.fn(), resolveOrcaLayout: vi.fn() }
+  return { getInfraKitConfig: vi.fn(), resolveOrcaLayout: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {
   return { getReleasePRsWithInfo: vi.fn() }
-})
-
-vi.mock('src/integrations/ide', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('src/integrations/ide')>()
-
-  return { ...actual, addIdeWorktreeFolders: vi.fn() }
 })
 
 vi.mock('src/lib/logger', () => {
@@ -114,7 +108,6 @@ beforeEach(() => {
   vi.mocked(getInfraKitConfig).mockResolvedValue({
     envManagement: { provider: 'doppler', config: { name: 'test' } },
   })
-  vi.mocked(resolveConfiguredIdes).mockReturnValue([])
   vi.mocked(resolveOrcaLayout).mockReturnValue('two-columns')
 })
 

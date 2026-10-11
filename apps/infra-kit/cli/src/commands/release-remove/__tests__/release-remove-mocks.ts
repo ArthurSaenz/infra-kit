@@ -6,7 +6,6 @@ import { getReleasePRsWithInfo } from 'src/integrations/gh'
 // imports from its leaf, and the real `gh`/Jira/`git worktree` call would run inside a "mocked" test.
 import { fetchPRByHead } from 'src/integrations/gh/pr-status'
 import type { PRStatus } from 'src/integrations/gh/pr-status'
-import { removeIdeWorktreeFolders } from 'src/integrations/ide'
 import { findVersionByName, loadJiraConfigOptional } from 'src/integrations/jira'
 import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
 import { getVersionRelatedIssueCounts, removeJiraVersion } from 'src/integrations/jira/remove-version'
@@ -134,7 +133,6 @@ export const installDefaults = (): void => {
   vi.mocked(getJiraDescriptions).mockResolvedValue(new Map<string, string>())
 
   vi.mocked(removeReleaseWorktreeIfPresent).mockResolvedValue([BRANCH])
-  vi.mocked(removeIdeWorktreeFolders).mockResolvedValue([])
   vi.mocked(listOrcaTerminals).mockResolvedValue({ terminals: [], truncated: false })
   vi.mocked(orcaCallerInsideTargets).mockResolvedValue(null)
 

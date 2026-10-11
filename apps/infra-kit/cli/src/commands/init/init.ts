@@ -4,9 +4,11 @@ import path from 'node:path'
 import process from 'node:process'
 
 import type { GuidanceWrite } from 'src/lib/agent-guidance'
+import { checkClaudeInChrome, isChromeEnabledByDefault } from 'src/lib/claude-chrome'
 import { seedCreatedMessage, seedUserProjectConfig } from 'src/lib/config-bootstrap'
 import { CONFIG_STUB, buildUserGlobalExample, buildVendorExample } from 'src/lib/config-templates'
 import { WORKTREES_DIR_SUFFIX, WORKTREE_SUBDIRS, getCacheRoot } from 'src/lib/constants'
+import { tightenTokenStoreModes } from 'src/lib/env-tokens'
 import { getMainRepoRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig, getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
 import { fallbackUpdateCommand, formatUpdateCommand } from 'src/lib/install-manager'
@@ -46,6 +48,7 @@ const LEGACY_SINGLE = '# infra-kit shell functions'
 
 /** Which of `initCore`'s steps an {@link InitStep} reports on. */
 export type InitStepName =
+  | 'chrome'
   | 'guidance'
   | 'mcp-proxies'
   | 'mcp-server'
@@ -53,6 +56,7 @@ export type InitStepName =
   | 'plugin-pointer'
   | 'project-config'
   | 'shell'
+  | 'token-perms'
   | 'user-config'
   | 'worktrees'
   | 'zshrc'
@@ -251,9 +255,77 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
     record(...(await reseedUserProjectConfig()))
   })
 
+  await withStep('token-perms', async () => {
+    record(await tightenTokenStorePerms())
+  })
+
+  await withStep('chrome', () => {
+    record(chromeEntry())
+  })
+
   record(...shellEntries())
 
   return report
+}
+
+/**
+ * Claude in Chrome, reported and never configured: both halves (the native host and the
+ * "Enabled by default" choice) belong to Claude Code's `/chrome`, whose state file a running session
+ * rewrites whole — so the only safe hand-off is the command a human runs.
+ */
+const chromeEntry = (): InitEntry => {
+  const host = checkClaudeInChrome()
+
+  if (host.status === 'skip') return { step: 'chrome', outcome: 'skipped', message: host.message, level: 'debug' }
+
+  if (host.status !== 'pass') {
+    return {
+      step: 'chrome',
+      outcome: 'manual',
+      message: `${host.message}, then choose "Enabled by default"`,
+      level: 'info',
+    }
+  }
+
+  if (!isChromeEnabledByDefault()) {
+    return {
+      step: 'chrome',
+      outcome: 'manual',
+      message:
+        'Claude in Chrome is set up but off by default — run `/chrome` inside Claude Code and choose "Enabled by default"',
+      level: 'info',
+    }
+  }
+
+  return {
+    step: 'chrome',
+    outcome: 'unchanged',
+    message: 'Claude in Chrome is set up and enabled by default',
+    level: 'debug',
+  }
+}
+
+/**
+ * Doctor's `tokens.json perms` row, repaired: the store holds live credentials, and anything other
+ * than `env-token-set` that touched it (an editor, a `cp -r`) can leave it world-readable.
+ */
+const tightenTokenStorePerms = async (): Promise<InitEntry> => {
+  const tightened = await tightenTokenStoreModes()
+
+  if (tightened === null) {
+    return { step: 'token-perms', outcome: 'skipped', message: 'No token store to protect', level: 'debug' }
+  }
+
+  if (tightened.length === 0) {
+    return { step: 'token-perms', outcome: 'unchanged', message: 'Token store is 0600 (0700 dirs)', level: 'debug' }
+  }
+
+  return {
+    step: 'token-perms',
+    outcome: 'written',
+    message: `Tightened the token store to 0600 (0700 dirs): ${tightened.join('; ')}`,
+    level: 'info',
+  }
 }
 
 /**

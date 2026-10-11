@@ -18,10 +18,10 @@ import { rawStdoutWrite } from 'src/dev/log-sink'
 import { killDescendantGroupsNow } from 'src/dev/managed-child'
 import { runOrcaDevServer } from 'src/dev/orca-dev'
 import { explainTargetKey } from 'src/dev/presets'
+import type { DevPreset } from 'src/dev/presets'
 import { exitCodeForSignal, registerSignalShutdown } from 'src/dev/signal-shutdown'
 import { installTerminalLiveness } from 'src/dev/terminal-liveness'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
-import type { DevPreset } from 'src/lib/infra-kit-config'
 
 /**
  * Exit code when the session dies because its own stdio is unwritable. Not 0 — the process did not stop
@@ -47,15 +47,12 @@ export interface DevCliOptions {
   app?: string
   /**
    * Comma-separated `<app>/<part>` target keys (`--target=client/api,client/ui`). The part-level
-   * selector `--app` cannot express: `--app=client` expands to every part `client` has. Same grammar as
-   * a `devServersPresets` key, so a wizard selection round-trips into a command you can paste.
+   * selector `--app` cannot express: `--app=client` expands to every part `client` has. A wizard
+   * selection round-trips into a command you can paste.
    */
   target?: string
-  /**
-   * Positional: a `devServersPresets` name, else an app folder (`infra-kit dev <app>` runs that app and the
-   * backends its routes can run locally).
-   */
-  preset?: string
+  /** Positional app folder (`infra-kit dev <app>` runs that app and the backends its routes can run locally). */
+  appName?: string
   /** `--reuse`: test-runner mode — see `DevServerOptions.reuse`. */
   reuse?: boolean
   orca?: boolean
@@ -71,10 +68,9 @@ export interface DevCliOptions {
 }
 
 /**
- * Turn `--target=<app>/<part>,…` into the in-memory preset the runner already understands, or
- * `undefined` when the flag is absent (leaving `preset`/`*` resolution untouched). Validated against the
- * same grammar as a `devServersPresets` key, but with a message that names the FLAG — a user typing
- * `--target=client` must not be told about `devServersPresets`.
+ * Turn `--target=<app>/<part>,…` into the in-memory run plan the runner already understands, or
+ * `undefined` when the flag is absent (leaving app/`*` resolution untouched). The message names the
+ * FLAG, so a user typing `--target=client` knows which input to fix.
  */
 const toPresetDef = (targets: string[] | null): DevPreset | undefined => {
   if (targets == null) return undefined
@@ -118,7 +114,7 @@ export const toDevServerOptions = (raw: DevCliOptions): DevServerOptions => {
   return {
     watch: raw.watch ?? true,
     include: splitList(raw.app),
-    preset: raw.preset,
+    app: raw.appName,
     presetDef: toPresetDef(splitList(raw.target)),
     orca: raw.orca ?? false,
     self: raw.self ?? false,
@@ -488,7 +484,7 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
 }
 
 /**
- * True when `infra-kit dev` was invoked BARE — no preset and no selection/mode flag — in an interactive
+ * True when `infra-kit dev` was invoked BARE — no app and no selection/mode flag — in an interactive
  * TTY (both stdin and stdout) and not `--json`. This is the ONLY condition that launches the wizard;
  * every flagged, piped, non-TTY, `--json`, or `--agent` invocation runs directly from the parsed flags, so no
  * existing script path changes behaviour.
@@ -498,7 +494,7 @@ export const shouldRunWizard = (raw: DevCliOptions, tty: boolean, json: boolean)
   // that quietly turns the picker into "run the entire repo" is a far bigger surprise than the one it would
   // avoid. The wizard carries it through instead (see `wizardToOptions`), so the user gets both.
   const bare =
-    !raw.preset && !raw.app && !raw.self && !raw.orca && raw.watch == null && !raw.verbose && !raw.routes && !raw.reuse
+    !raw.appName && !raw.app && !raw.self && !raw.orca && raw.watch == null && !raw.verbose && !raw.routes && !raw.reuse
 
   return bare && tty && !json
 }
@@ -509,7 +505,6 @@ const wizardToOptions = (result: WizardResult, raw: DevCliOptions): DevServerOpt
     watch: result.watch,
     orca: result.orca,
     include: result.include ?? null,
-    preset: result.preset,
     presetDef: result.presetDef,
     self: false,
     verbose: false,
@@ -584,8 +579,8 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
 
   program
     .name('infra-kit-dev-server')
-    .description('Run local dev servers for the apps in a named devServersPresets preset (or all apps)')
-    .argument('[preset]', 'Named preset from devServersPresets (omit to run every app)')
+    .description('Run local dev servers for an app (or all apps)')
+    .argument('[app]', 'An app — its api/ui plus the backends its routes can run locally (omit to run every app)')
     .option('-w, --watch', 'Rebuild and restart on file save (the default)')
     .option('--no-watch', 'Build once and never restart on save')
     .option('--app <names>', 'Further narrow to these app folder names (comma-separated)')
@@ -599,15 +594,15 @@ const parseAndRun = async (argv: string[]): Promise<void> => {
 
   program.parse(argv)
 
-  await runDevServer(toDevServerOptions({ ...program.opts<DevCliOptions>(), preset: program.args[0] }))
+  await runDevServer(toDevServerOptions({ ...program.opts<DevCliOptions>(), appName: program.args[0] }))
 }
 
 // Self-execute only when run directly (`node dist/dev-server.js`), not when the
 // `infra-kit dev` subcommand imports this module for its exported helpers.
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   parseAndRun(process.argv).catch((error: unknown) => {
-    // Message only, matching the `infra-kit dev` path: a bad preset name or target key is a
-    // config mistake, and its stack frames are noise.
+    // Message only, matching the `infra-kit dev` path: a bad app name or target key is a
+    // usage mistake, and its stack frames are noise.
     console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)
   })

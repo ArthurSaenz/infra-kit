@@ -199,7 +199,7 @@ describe('migrateConfigShapes', () => {
     })
   }
 
-  it('rewrites infra-kit.json without the legacy ide.config.mode, preserves the rest, and logs the ✓ line', async () => {
+  it('rewrites infra-kit.json without the unused ide key, preserves the rest, and logs the ✓ line', async () => {
     await withTmpRepo(async (tmp) => {
       const jsonPath = path.join(tmp, 'infra-kit.json')
 
@@ -215,9 +215,10 @@ describe('migrateConfigShapes', () => {
 
       const result = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))
 
-      expect(result.ide).toEqual({ provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } })
-      expect(result.envManagement).toEqual({ provider: 'doppler', config: { name: 'p' } })
-      expect(loggedLines()).toEqual([expect.stringMatching(/^✓ Migrated .*infra-kit\.json \(removed legacy "mode"\)$/)])
+      expect(result).toEqual({ envManagement: { provider: 'doppler', config: { name: 'p' } } })
+      expect(loggedLines()).toEqual([
+        expect.stringMatching(/^✓ Migrated .*infra-kit\.json \(removed the unused "ide" key .*\)$/),
+      ])
       expect(resetInfraKitConfigCache).toHaveBeenCalledTimes(1)
     })
   })
@@ -233,16 +234,11 @@ describe('migrateConfigShapes', () => {
 
       await migrateConfigShapes()
 
-      expect(JSON.parse(fs.readFileSync(userGlobalJson, 'utf-8')).ide).toEqual({
-        provider: 'cursor',
-        config: { workspaceConfigPath: 'ws' },
-      })
+      expect(JSON.parse(fs.readFileSync(userGlobalJson, 'utf-8'))).toEqual({})
     })
   })
 
-  // The `zed` provider is retired and the strict schema refuses it, so `setup` is the only way a
-  // machine whose user-global config still names it gets unstuck.
-  it('drops a single retired zed ide entirely, preserving every other key', async () => {
+  it('drops the unused dev key, preserving every other key', async () => {
     await withTmpRepo(async (tmp) => {
       const jsonPath = path.join(tmp, 'infra-kit.json')
 
@@ -250,7 +246,7 @@ describe('migrateConfigShapes', () => {
         jsonPath,
         JSON.stringify({
           envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: { provider: 'zed', config: {} },
+          dev: { client: { port: 3000 } },
           worktrees: { openInOrca: true },
         }),
       )
@@ -261,7 +257,7 @@ describe('migrateConfigShapes', () => {
         envManagement: { provider: 'doppler', config: { name: 'p' } },
         worktrees: { openInOrca: true },
       })
-      expect(loggedLines()).toEqual([expect.stringContaining('(removed the retired "zed" provider)')])
+      expect(loggedLines()).toEqual([expect.stringContaining('(removed the unused "dev" key')])
     })
   })
 
@@ -290,10 +286,7 @@ describe('migrateConfigShapes', () => {
 
       await migrateConfigShapes()
 
-      expect(JSON.parse(fs.readFileSync(userProjectJson, 'utf-8')).ide).toEqual({
-        provider: 'cursor',
-        config: { workspaceConfigPath: 'ws' },
-      })
+      expect(JSON.parse(fs.readFileSync(userProjectJson, 'utf-8'))).toEqual({})
     })
   })
 
@@ -346,6 +339,7 @@ describe('migrateConfigShapes', () => {
           environments: ['dev'],
           envManagement: { provider: 'doppler', config: { name: 'p' } },
           ide: { provider: 'zed', config: { mode: 'workspace' } },
+          devServersPresets: { shopLocal: {} },
         }),
       )
 
@@ -353,7 +347,7 @@ describe('migrateConfigShapes', () => {
 
       expect(loggedLines()).toEqual([
         expect.stringMatching(
-          /removed legacy "mode" and the retired "zed" provider and the retired "environments" key/,
+          /removed the unused "ide" key .* and the retired "environments" key .* and the unused "devServersPresets" key/,
         ),
       ])
     })
@@ -362,8 +356,7 @@ describe('migrateConfigShapes', () => {
   it('leaves an already-clean config byte-for-byte untouched, logs nothing, and keeps the cache (idempotent)', async () => {
     await withTmpRepo(async (tmp) => {
       const jsonPath = path.join(tmp, 'infra-kit.json')
-      const json =
-        '{"envManagement":{"provider":"doppler","config":{"name":"p"}},"ide":{"provider":"cursor","config":{"workspaceConfigPath":"ws"}}}'
+      const json = '{"envManagement":{"provider":"doppler","config":{"name":"p"}},"worktrees":{"openInOrca":true}}'
 
       writeFile(jsonPath, json)
 

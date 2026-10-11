@@ -118,13 +118,13 @@ describe('configPath', () => {
   })
 
   it('lists the raw top-level keys of a layer-3 that carries real overrides', async () => {
-    writeUserProject(JSON.stringify({ ide: { name: 'cursor' }, dev: { api: { port: 3000 } } }))
+    writeUserProject(JSON.stringify({ worktrees: { openInOrca: true }, protectedEnvs: 'disallow' }))
 
     const content = await runConfigPath()
 
     expect(content.hasOverrides).toBe(true)
-    expect(content.overrideKeys).toEqual(['ide', 'dev'])
-    expect(userProjectLine()).toContain('(2 override(s): ide, dev)')
+    expect(content.overrideKeys).toEqual(['worktrees', 'protectedEnvs'])
+    expect(userProjectLine()).toContain('(2 override(s): worktrees, protectedEnvs)')
   })
 
   it('reports an absent layer-3 with the [ ] marker and no overrides', async () => {

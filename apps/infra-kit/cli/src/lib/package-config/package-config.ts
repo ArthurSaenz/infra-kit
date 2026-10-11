@@ -56,10 +56,11 @@ export const E2E_SCRIPTS: Readonly<Record<string, string>> = {
 /**
  * Baseline rules for the monorepo root (`infra-kit audit --root`). Checks the
  * root commands, the workspace/turbo files, and that the turbo pipeline defines
- * the expected tasks — so the root's own config can also stay empty.
+ * the expected tasks — so the root's own config can also stay empty. No `dev` script: local dev
+ * runs through `infra-kit dev`, so no infra-kit repo root carries one.
  */
 export const ROOT_DEFAULT_RULES: Readonly<ResolvedPackageRules> = {
-  requiredScripts: ['build', 'dev', 'test', 'qa', 'infra-kit-check', 'fix'],
+  requiredScripts: ['build', 'test', 'qa', 'infra-kit-check', 'fix'],
   requiredFiles: ['turbo.json', 'pnpm-workspace.yaml'],
   turboTasks: ['build', 'test', 'ts-check', 'eslint-check', 'prettier-check', 'infra-kit-check'],
 }

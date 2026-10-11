@@ -15,12 +15,13 @@ vi.mock('../apply-config-migrations', { spy: true })
 const DIRTY = {
   environments: ['dev'],
   envManagement: { provider: 'doppler', config: { name: 'p' } },
-  ide: { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: 'ws' } },
+  ide: { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
+  worktrees: { openInOrca: true },
 }
 
 const CLEAN_AFTER = {
   envManagement: { provider: 'doppler', config: { name: 'p' } },
-  ide: { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
+  worktrees: { openInOrca: true },
 }
 
 let dir: string
@@ -61,7 +62,7 @@ describe('migrateConfigFile', () => {
     expect(outcome).toEqual({
       changed: true,
       result: CLEAN_AFTER,
-      notes: ['legacy "mode"', expect.any(String)],
+      notes: [expect.stringContaining('"ide"'), expect.any(String)],
       path: configPath,
     })
     expect(await fs.readFile(configPath, 'utf8')).toBe(`${JSON.stringify(CLEAN_AFTER, null, 2)}\n`)

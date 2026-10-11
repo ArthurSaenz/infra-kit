@@ -46,10 +46,6 @@ vi.mock('src/lib/worktrees', async (importOriginal) => {
   return { ...actual, removeWorktrees: vi.fn() }
 })
 
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
-})
-
 vi.mock('src/integrations/gh', () => {
   return { getReleasePRsWithInfo: vi.fn() }
 })
@@ -87,10 +83,6 @@ beforeEach(async () => {
   const { removeWorktrees } = await import('src/lib/worktrees')
 
   vi.mocked(removeWorktrees).mockResolvedValue({ removed: [], failed: [] })
-
-  const { removeIdeWorktreeFolders } = await import('src/integrations/ide')
-
-  vi.mocked(removeIdeWorktreeFolders).mockResolvedValue([])
 })
 
 afterEach(() => {

@@ -161,6 +161,57 @@ export const writeTokenStore = async (store: TokenStore): Promise<void> => {
 }
 
 /**
+ * Re-assert the store's 0600 / 0700 modes without rewriting it, for a store something other than
+ * {@link writeTokenStore} touched (an editor's save-and-rename, a `cp -r`, a synced dotfiles dir).
+ * Returns the paths it changed, or `null` when there is no store to protect.
+ *
+ * @example
+ * await tightenTokenStoreModes() // => ['~/.infra-kit/projects/api/tokens.json was 0644']
+ */
+export const tightenTokenStoreModes = async (): Promise<string[] | null> => {
+  // Outside a git repo there is no project, so no store either.
+  const storePath = await getTokenStorePath().catch(() => {
+    return null
+  })
+
+  if (storePath === null) return null
+
+  const projectDir = path.dirname(storePath)
+  const projectsDir = path.dirname(projectDir)
+  const userConfigDir = path.dirname(projectsDir)
+  const chain: Array<[target: string, mode: number]> = [
+    [userConfigDir, TOKEN_DIR_MODE],
+    [projectsDir, TOKEN_DIR_MODE],
+    [projectDir, TOKEN_DIR_MODE],
+    [storePath, TOKEN_FILE_MODE],
+  ]
+
+  const exists = await fs.stat(storePath).then(
+    () => {
+      return true
+    },
+    () => {
+      return false
+    },
+  )
+
+  if (!exists) return null
+
+  const tightened: string[] = []
+
+  for (const [target, mode] of chain) {
+    const actual = (await fs.stat(target)).mode & 0o777
+
+    if (actual === mode) continue
+
+    await fs.chmod(target, mode)
+    tightened.push(`${tildify(target)} was 0${actual.toString(8)}`)
+  }
+
+  return tightened
+}
+
+/**
  * Add or replace one environment's token, read-modify-write, stamping the current `version`. Inherits
  * {@link readTokenStore}'s refusals: a corrupt store is never silently overwritten.
  *

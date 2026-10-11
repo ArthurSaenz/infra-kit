@@ -44,8 +44,10 @@ class FakeTty extends EventEmitter {
     super()
   }
 
-  write(chunk: string): boolean {
+  // Ink 8 resolves `waitUntilExit()` from a `write('', callback)` barrier, so a dropped callback hangs unmount.
+  write(chunk: string, callback?: () => void): boolean {
     this.writes.push(chunk)
+    if (callback) queueMicrotask(callback)
 
     return true
   }

@@ -11,7 +11,7 @@ import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { zxCommandMock } from 'src/lib/git-utils/__tests__/zx-command-mock'
-import { getInfraKitConfig, resolveConfiguredIdes, resolveOrcaLayout } from 'src/lib/infra-kit-config'
+import { getInfraKitConfig, resolveOrcaLayout } from 'src/lib/infra-kit-config'
 
 import { worktreesAdd } from '../worktrees-add'
 
@@ -73,7 +73,7 @@ vi.mock('src/lib/git-utils', () => {
 })
 
 vi.mock('src/lib/infra-kit-config', () => {
-  return { getInfraKitConfig: vi.fn(), resolveConfiguredIdes: vi.fn(), resolveOrcaLayout: vi.fn() }
+  return { getInfraKitConfig: vi.fn(), resolveOrcaLayout: vi.fn() }
 })
 
 vi.mock('src/integrations/gh', () => {
@@ -81,11 +81,6 @@ vi.mock('src/integrations/gh', () => {
 })
 
 // `IDE_MODES` is read at module scope (the zod enum), so the real module has to survive.
-vi.mock('src/integrations/ide', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('src/integrations/ide')>()
-
-  return { ...actual, addIdeWorktreeFolders: vi.fn() }
-})
 
 // The Orca driver is mocked whole (no `importOriginal`: the real barrel pulls `zx` in before the
 // `$` mock's helper import is initialised). When `orca` resolves false NOTHING here may be called,
@@ -203,7 +198,6 @@ beforeEach(() => {
   vi.mocked(getInfraKitConfig).mockResolvedValue({
     envManagement: { provider: 'doppler', config: { name: 'test' } },
   })
-  vi.mocked(resolveConfiguredIdes).mockReturnValue([])
   vi.mocked(resolveOrcaLayout).mockReturnValue('two-columns')
   vi.mocked(probeOrca).mockResolvedValue('ready')
   vi.mocked(findOrcaRepo).mockResolvedValue({ registered: true, visibility: 'show' })

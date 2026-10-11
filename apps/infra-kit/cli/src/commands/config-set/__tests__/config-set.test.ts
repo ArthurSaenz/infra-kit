@@ -82,11 +82,11 @@ describe('config-set', () => {
 
   it('keeps the other keys already in the layer and reports the previous value', async () => {
     fs.mkdirSync(path.dirname(projectLayer), { recursive: true })
-    fs.writeFileSync(projectLayer, JSON.stringify({ protectedEnvs: 'disallow', devServersPresets: {} }))
+    fs.writeFileSync(projectLayer, JSON.stringify({ protectedEnvs: 'disallow', worktrees: {} }))
 
     const result = await configSet({ key: 'protectedEnvs', value: 'cli-only' })
 
-    expect(readJson(projectLayer)).toEqual({ protectedEnvs: 'cli-only', devServersPresets: {} })
+    expect(readJson(projectLayer)).toEqual({ protectedEnvs: 'cli-only', worktrees: {} })
     expect(result.structuredContent.previous).toBe('disallow')
   })
 
@@ -106,7 +106,9 @@ describe('config-set', () => {
   })
 
   it('refuses nested and unknown keys before touching disk', async () => {
-    await expect(configSet({ key: 'dev.port', value: '3000' })).rejects.toThrow(/replace the whole "dev" section/)
+    await expect(configSet({ key: 'worktrees.openInOrca', value: 'true' })).rejects.toThrow(
+      /replace the whole "worktrees" section/,
+    )
     await expect(configSet({ key: 'nope', value: '1' })).rejects.toThrow(/Unknown config key "nope"/)
 
     expect(fs.existsSync(projectLayer)).toBe(false)
@@ -127,16 +129,16 @@ describe('config-set', () => {
 describe('config-unset', () => {
   it('removes the key so the layer below shows through', async () => {
     fs.mkdirSync(path.dirname(projectLayer), { recursive: true })
-    fs.writeFileSync(projectLayer, JSON.stringify({ protectedEnvs: 'disallow', devServersPresets: {} }))
+    fs.writeFileSync(projectLayer, JSON.stringify({ protectedEnvs: 'disallow', worktrees: {} }))
 
     const result = await configUnset({ key: 'protectedEnvs' })
 
-    expect(readJson(projectLayer)).toEqual({ devServersPresets: {} })
+    expect(readJson(projectLayer)).toEqual({ worktrees: {} })
     expect(result.structuredContent).toMatchObject({ removed: true, previous: 'disallow' })
   })
 
   it('is a no-op for a key the layer does not hold', async () => {
-    const result = await configUnset({ key: 'ide' })
+    const result = await configUnset({ key: 'worktrees' })
 
     expect(result.structuredContent.removed).toBe(false)
     expect(fs.existsSync(projectLayer)).toBe(false)

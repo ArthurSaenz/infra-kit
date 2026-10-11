@@ -57,7 +57,7 @@ const DEPENDENCY_SIGNALS: ReadonlyArray<{ type: PackageType; packages: readonly 
 /**
  * Type implied by where the package sits, or `null` when the path carries no
  * declared semantics. `apps/<app>/{ui,api,tests}` is already load-bearing inside
- * infra-kit (`devServersPresets` keys must be `<app>/api` or `<app>/ui`), so this
+ * infra-kit (`infra-kit dev --target` keys must be `<app>/api` or `<app>/ui`), so this
  * is the repo's own convention rather than a heuristic — which is why it beats
  * the dependency signals.
  *

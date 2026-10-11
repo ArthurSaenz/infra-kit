@@ -93,10 +93,6 @@ vi.mock('src/integrations/gh/pr-status', () => {
   return { fetchPRByHead: vi.fn() }
 })
 
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
-})
-
 // Spread, so `buildJiraVersionUrl` stays real and the URL in the result is derived exactly as in
 // production; only the two lookup calls are replaced.
 vi.mock('src/integrations/jira', async (importOriginal) => {
@@ -148,15 +144,15 @@ beforeEach(() => {
 
 describe('release remove — re-run against an already-torn-down release', () => {
   /**
-   * The resume path is where a bare `✅ <label>` was maximally wrong: all six steps are legitimate
-   * no-ops, yet each logged bytes identical to a run that really removed six things.
+   * The resume path is where a bare `✅ <label>` was maximally wrong: all five steps are legitimate
+   * no-ops, yet each logged bytes identical to a run that really removed five things.
    *
    * §5.5 makes the log a reconstruction surface — "a partial run is reconstructable from the log
    * alone" — so a reader trusting it would conclude a release had just been torn down when nothing
    * was touched. The structured result stayed truthful throughout, which is exactly why nothing else
    * in this suite can catch a revert.
    */
-  it('logs each step with its outcome, so six no-ops do not read as six removals', async () => {
+  it('logs each step with its outcome, so five no-ops do not read as five removals', async () => {
     alreadyTornDown()
 
     await releaseRemove({ confirmedCommand: true, version: LABEL })
@@ -171,11 +167,9 @@ describe('release remove — re-run against an already-torn-down release', () =>
     for (const line of successLines as string[]) {
       expect(line).toMatch(/ — \S+$/)
     }
-    // The step with the most to lie about: an empty `removed` array is evidence of nothing, so
-    // `skipped` must be visible rather than collapsed into a bare success.
     expect(
       successLines.some((line) => {
-        return line.includes('configured editors — skipped')
+        return line.includes('remove the worktree — absent')
       }),
     ).toBe(true)
   })
@@ -198,14 +192,6 @@ describe('release remove — re-run against an already-torn-down release', () =>
     // Nothing was left for a human to finish: no version to remove, so none was requested.
     expect(removeJiraVersion).not.toHaveBeenCalled()
   })
-
-  it('reports the IDE step as skipped rather than claiming an editor diff it never made', async () => {
-    alreadyTornDown()
-
-    const result = await releaseRemove({ confirmedCommand: true, version: LABEL })
-
-    expect(result.structuredContent.ideFolders).toEqual({ outcome: 'skipped', providers: [] })
-  })
 })
 
 describe('release remove — --version is not validated against live worktrees', () => {
@@ -224,7 +210,7 @@ describe('release remove — --version is not validated against live worktrees',
 })
 
 describe('release remove — the typo case', () => {
-  it('throws on a version that never existed, instead of exiting 0 with six skipped steps', async () => {
+  it('throws on a version that never existed, instead of exiting 0 with five skipped steps', async () => {
     // Untouched repo: no worktree, no PR in any state, no branches, no fix version.
     vi.mocked(getCurrentWorktrees).mockResolvedValue([])
     vi.mocked(removeReleaseWorktreeIfPresent).mockResolvedValue([])

@@ -128,31 +128,21 @@ describe('getInfraKitConfig — auto-migration of a refused layer', () => {
     expect(warnSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('layer 1 with `ide.config.mode`: rewritten, the line names the project file', async () => {
-    await writeJson(mainPath, {
-      ...VALID,
-      ide: { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: './ws.code-workspace' } },
-    })
+  it.each([
+    ['ide', { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } }],
+    ['dev', { client: { port: 3000 } }],
+    ['devServersPresets', { shopLocal: { apps: { 'shop/ui': {} } } }],
+  ])('layer 1 with the unused `%s` key: rewritten, the line names the project file', async (key, value) => {
+    await writeJson(mainPath, { ...VALID, [key]: value })
 
     const cfg = await getInfraKitConfig()
 
-    expect(cfg.ide).toEqual({ provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } })
-    expect(await readJson(mainPath)).toEqual({
-      ...VALID,
-      ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } },
-    })
-    expect(warnSpy).toHaveBeenCalledTimes(1)
-    expect(warnSpy.mock.calls[0]?.[0]).toMatch(/^Migrated ~\/infra-kit\.json: removed legacy "mode"/)
-  })
-
-  it('a single retired `zed` entry: `ide` is dropped and the config resolves without one', async () => {
-    await writeJson(mainPath, { ...VALID, ide: { provider: 'zed', config: {} } })
-
-    const cfg = await getInfraKitConfig()
-
-    expect(cfg.ide).toBeUndefined()
+    expect(cfg).not.toHaveProperty(key)
     expect(await readJson(mainPath)).toEqual(VALID)
     expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(warnSpy.mock.calls[0]?.[0]).toMatch(
+      new RegExp(`^Migrated ~/infra-kit\\.json: removed the unused "${key}" key`),
+    )
   })
 
   it('the layer handed to the merge is the schema output, defaults applied — not the raw migrated object', async () => {

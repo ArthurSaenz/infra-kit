@@ -23,10 +23,7 @@ export interface RemoveReleaseWorktreeMessages {
  * release PR" surface error). Pre-remove any worktree for the release branch
  * so the local delete can succeed.
  *
- * Returns the branches actually removed (empty when none were present), because
- * `removeIdeWorktreeFolders` treats an empty `removedWorktrees` list as "nothing to clean up"
- * and returns immediately — a `void`-returning helper would make that step a silent no-op for
- * a caller chaining IDE-folder cleanup off this result.
+ * Returns the branches actually removed (empty when none were present).
  */
 export const removeReleaseWorktreeIfPresent = async (
   releaseBranch: string,

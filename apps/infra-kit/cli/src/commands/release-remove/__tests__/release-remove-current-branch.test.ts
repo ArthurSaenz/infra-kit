@@ -95,10 +95,6 @@ vi.mock('src/integrations/gh/pr-status', () => {
   return { fetchPRByHead: vi.fn() }
 })
 
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
-})
-
 // Spread, so `buildJiraVersionUrl` stays real and the URL in the result is derived exactly as in
 // production; only the two lookup calls are replaced.
 vi.mock('src/integrations/jira', async (importOriginal) => {
@@ -171,7 +167,7 @@ describe('release remove — the delete is verified, not assumed', () => {
 
     expect((error as Error).message).toContain(`${BRANCH} still exists after the delete`)
     expect((error as Error).message).toContain(`git branch -D ${BRANCH}`)
-    expect((error as Error).message).toContain('step 4 of 6 (delete the local branch)')
+    expect((error as Error).message).toContain('step 3 of 5 (delete the local branch)')
   })
 
   it('leaves the remote branch and the fix version alone when the local delete did not take', async () => {

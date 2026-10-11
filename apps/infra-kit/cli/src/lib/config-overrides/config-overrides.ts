@@ -20,7 +20,7 @@ export interface OverrideSummary {
  *
  * @example
  * await readOverrideSummary('/u/.infra-kit/projects/api/infra-kit.json', true)
- * // => { hasOverrides: true, overrideKeys: ['ide', 'dev'], unreadable: false }
+ * // => { hasOverrides: true, overrideKeys: ['worktrees', 'protectedEnvs'], unreadable: false }
  */
 // RAW keys, deliberately — `Object.keys(JSON.parse(raw))`, never the config loader's `loadLayer`.
 // That one throws on malformed JSON and on schema failure, and the schema object is strict, so a
@@ -59,8 +59,8 @@ export const readOverrideSummary = async (filePath: string, exists: boolean): Pr
  * failure (every command seeds layer 3, so an absent file is no longer "not yet created").
  *
  * @example
- * describeOverrides({ hasOverrides: true, overrideKeys: ['ide', 'dev'], unreadable: false })
- * // => '(2 override(s): ide, dev)'
+ * describeOverrides({ hasOverrides: true, overrideKeys: ['worktrees', 'protectedEnvs'], unreadable: false })
+ * // => '(2 override(s): worktrees, protectedEnvs)'
  */
 export const describeOverrides = (summary: OverrideSummary): string => {
   if (summary.unreadable) {

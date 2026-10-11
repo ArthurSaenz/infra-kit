@@ -5,9 +5,9 @@
  *
  * Discovers and runs API apps under each `apps/<app>/api` folder that contains `serverless.yml`.
  *
- * Ports: `{APP}_PORT`, then `process.env.PORT`, then `dev.<app>.port` from infra-kit.json. An app that
- * pins none of those binds an OS-assigned ephemeral port — there is no static default.
- * URL prefix: `dev.<app>.prefixUrl`, else `/api/v1`.
+ * Ports: `{APP}_PORT`, then `process.env.PORT`. An app that pins neither binds an OS-assigned
+ * ephemeral port — there is no static default.
+ * URL prefix: `/api/v1`.
  * Env vars should be provided via secrets manager (e.g. `doppler run -- pnpm dev-server`) or shell.
  *
  * This module is side-effect free on import: call `run()` (or construct `DevServerRunner`
@@ -41,8 +41,7 @@ import { readAppRelease } from 'src/lib/app-release'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
-import type { DevConfig, DevPreset, DevPresets, ProxySource } from 'src/lib/infra-kit-config'
-import { DEFAULT_DEV_PROXY_PORT, getInfraKitConfig } from 'src/lib/infra-kit-config'
+import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config'
 
 import { planAppRun } from './app-plan.js'
 import {
@@ -83,14 +82,9 @@ import {
 import type { ModuleGenerationHandle } from './module-generation.js'
 import { installOutputIntercept } from './output-intercept.js'
 import type { OutputIntercept } from './output-intercept.js'
-import {
-  findPortConflicts,
-  resolvePreferredPort as resolvePreferredPortPure,
-  resolvePrefixUrl as resolvePrefixUrlPure,
-} from './ports.js'
-import { buildPresetProxyContext } from './preset-proxy-context.js'
-import { deriveTargetLabel, resolvePreset, validatePresetKeys, validatePresetProxy } from './presets.js'
-import type { DiscoveredParts } from './presets.js'
+import { DEFAULT_PREFIX_URL, findPortConflicts, resolvePreferredPort as resolvePreferredPortPure } from './ports.js'
+import { deriveTargetLabel, resolvePreset } from './presets.js'
+import type { DevPreset, DiscoveredParts, ProxySource } from './presets.js'
 import {
   createPortlessDriver,
   formatPortlessCommand,
@@ -230,16 +224,16 @@ interface IApiAppConfig {
   packageName: string
   path: string
   /**
-   * EXPLICITLY-configured preferred port (`{APP}_PORT`/`PORT`/`dev.<app>.port`), or
+   * EXPLICITLY-configured preferred port (`{APP}_PORT`/`PORT`), or
    * `undefined` when unconfigured. Under dynamic allocation this is only a bind hint — the
    * ACTUAL port is the ephemeral one bound at start time (see {@link IAppServer.boundPort}).
    */
   preferredPort: number | undefined
   /**
-   * The same resolution with the bare `PORT` tier DENIED — `{APP}_PORT` or `dev.<app>.port` only.
+   * The same resolution with the bare `PORT` tier DENIED — `{APP}_PORT` only.
    *
-   * Both are resolved together in {@link DevServerRunner.discoverApiApps} because that is where
-   * `devConfig` is in scope, but the CHOICE between them cannot be made there: it depends on how many
+   * Both are resolved together in {@link DevServerRunner.discoverApiApps}, but the CHOICE between them
+   * cannot be made there: it depends on how many
    * apps this run actually launches, and narrowing to the run plan happens later
    * ({@link DevServerRunner.resolveRunPlan}). A bare `PORT` is not app-scoped, so in a multi-app run it
    * gives every app the same preferred port and {@link DevServerRunner.assertNoPortConflicts} then
@@ -248,18 +242,12 @@ interface IApiAppConfig {
    */
   appScopedPort: number | undefined
   prefixUrl: string
-  /**
-   * Whether this backend participates in dependency-closure watching (plan Phase 1): in
-   * `--watch`, a rebuild of a package in this app's closure restarts it. Default `true`;
-   * a preset `watchDeps: false` opts out (sticky). Resolved from the preset in {@link run}.
-   */
-  watchDeps: boolean
 }
 
 /**
  * Runner options, parsed by the CLI entry point (`--watch`, `--app`) and threaded
  * through `run()`. The entry owns flag parsing; the runner never reads `process.argv`
- * itself. App selection is `--app` only; ports come from env/config (see `resolvePreferredPort`).
+ * itself. App selection is `--app` only; ports come from env (see `resolvePreferredPort`).
  */
 export interface DevServerOptions {
   /**
@@ -271,16 +259,15 @@ export interface DevServerOptions {
   /** Only run these app folder names (null/empty = all discovered). Filters BOTH api and ui apps. */
   include?: string[] | null
   /**
-   * Named dev preset (`infra-kit dev <preset>`) from `devServersPresets` in the project's infra-kit config.
-   * It selects the launch targets (`apps/<app>/{api,ui}`); resolved by {@link file://./presets.ts}.
-   * Unset → run everything (`*`). `include` (`--app`/`--self`) further narrows the resolved set.
+   * App folder (`infra-kit dev <app>`): runs that app plus the backends its proxy routes can run
+   * locally ({@link planAppRun}). Unset → run everything (`*`). `include` (`--app`/`--self`) further
+   * narrows the resolved set.
    */
-  preset?: string
+  app?: string
   /**
-   * In-memory preset definition, produced by the interactive wizard (`infra-kit dev` with no args in a
-   * TTY). When set it is used verbatim as the run plan — it WINS over `preset` (the named lookup) and
-   * the default `*`. This is how the wizard expresses part-level selection (`<app>/ui` without
-   * `<app>/api`), which `include` (app-name-only) cannot. Unset on every non-wizard invocation.
+   * In-memory run plan, produced by the interactive wizard or `--target`. When set it is used verbatim
+   * — it WINS over `app` and the default `*`. This is how part-level selection (`<app>/ui` without
+   * `<app>/api`) is expressed, which `include` (app-name-only) cannot.
    */
   presetDef?: DevPreset
   /**
@@ -950,39 +937,20 @@ export class DevServerRunner {
   }
 
   /**
-   * Discover API apps and resolve each app's port + URL prefix. Delegates bare
-   * filesystem discovery to {@link discoverApiAppsBare} and per-app resolution to
-   * the pure `resolvePreferredPort` / `resolvePrefixUrl`, preserving the original behavior.
+   * Discover API apps and resolve each app's port. Delegates bare filesystem discovery to
+   * {@link discoverApiAppsBare} and per-app resolution to the pure `resolvePreferredPort`.
    */
-  private discoverApiApps(devConfig: DevConfig): IApiAppConfig[] {
+  private discoverApiApps(): IApiAppConfig[] {
     return discoverApiAppsBare(this.monorepoRoot).map((app) => {
       return {
         ...app,
-        preferredPort: this.resolvePreferredPort(app.name, devConfig),
+        preferredPort: this.resolvePreferredPort(app.name),
         // Resolved alongside, never instead: which of the two wins is decided in `resolveRunPlan`,
         // once the number of apps this run launches is known. See `IApiAppConfig.appScopedPort`.
-        appScopedPort: this.resolvePreferredPort(app.name, devConfig, false),
-        prefixUrl: this.resolvePrefixUrl(app.name, devConfig),
-        // Default participate; the resolved preset value overrides this in `run()`.
-        watchDeps: true,
+        appScopedPort: this.resolvePreferredPort(app.name, false),
+        prefixUrl: DEFAULT_PREFIX_URL,
       }
     })
-  }
-
-  /**
-   * Read the `dev` section from the resolved infra-kit config. Defensive: any
-   * failure (not in an infra-kit project, missing/invalid config) resolves to an
-   * empty map so the dev-server always falls back to env vars + built-in defaults
-   * rather than refusing to start.
-   */
-  private async loadDevConfig(): Promise<DevConfig> {
-    try {
-      const config = await getInfraKitConfig()
-
-      return config.dev ?? {}
-    } catch {
-      return {}
-    }
   }
 
   /** Thin delegator to the pure {@link normalizeAppIncludePure} over the runner's `--app` list. */
@@ -990,50 +958,26 @@ export class DevServerRunner {
     return normalizeAppIncludePure(this.options.include)
   }
 
-  /** Thin delegator to the pure {@link resolvePreferredPortPure}, threading env + config. */
-  private resolvePreferredPort(appName: string, devConfig: DevConfig, allowBarePort = true): number | undefined {
-    return resolvePreferredPortPure(appName, process.env, devConfig, allowBarePort)
-  }
-
-  /** Thin delegator to the pure {@link resolvePrefixUrlPure}. */
-  private resolvePrefixUrl(appName: string, devConfig: DevConfig): string {
-    return resolvePrefixUrlPure(appName, devConfig)
-  }
-
-  /** Load the top-level `devServersPresets` map from the resolved infra-kit config (defensive: `{}` on failure). */
-  private async loadDevPresets(): Promise<DevPresets> {
-    try {
-      return (await getInfraKitConfig()).devServersPresets ?? {}
-    } catch {
-      return {}
-    }
+  /** Thin delegator to the pure {@link resolvePreferredPortPure}, threading env. */
+  private resolvePreferredPort(appName: string, allowBarePort = true): number | undefined {
+    return resolvePreferredPortPure(appName, process.env, allowBarePort)
   }
 
   /**
-   * The preset definition to run: the named preset (`infra-kit dev <preset>`), else the app plan when the
-   * name is an app folder (`infra-kit dev <app>`, see {@link planAppRun}), or an `apps`-less preset when
-   * no name was given — which `resolvePreset` expands to every discovered app + part. A preset wins over an
-   * app of the same name: it was written on purpose, the app plan is derived.
+   * The plan to run: the in-memory one (wizard / `--target`), else the app plan for `infra-kit dev <app>`
+   * (see {@link planAppRun}), or an `apps`-less plan when no app was given — which `resolvePreset` expands
+   * to every discovered app + part.
    */
-  private async resolvePresetDef(
-    devPresets: DevPresets,
-    apiApps: IApiAppConfig[],
-    uiApps: DiscoveredUiApp[],
-  ): Promise<DevPreset> {
-    // A wizard-built in-memory preset wins over the named lookup: it already IS the resolved run plan.
+  private async resolvePresetDef(apiApps: IApiAppConfig[], uiApps: DiscoveredUiApp[]): Promise<DevPreset> {
     if (this.options.presetDef != null) {
       return this.options.presetDef
     }
 
-    const name = this.options.preset
+    const name = this.options.app
 
     if (name == null) {
       return {}
     }
-
-    const def = devPresets[name]
-
-    if (def) return def
 
     const plan = await planAppRun(name, apiApps, uiApps)
 
@@ -1049,99 +993,37 @@ export class DevServerRunner {
     }
 
     const [first, ...rest] = [
-      ...new Set([
-        ...Object.keys(devPresets),
-        ...[...apiApps, ...uiApps]
+      ...new Set(
+        [...apiApps, ...uiApps]
           .map((app) => {
             return app.name
           })
           .toSorted(),
-      ]),
+      ),
     ]
 
     if (first === undefined) {
       throw new OperationError(undefined, {
         operation: `run "${name}"`,
         remediation: 'omit the name to run every app',
-        stderrExcerpt: 'no devServersPresets are defined and no apps were discovered',
+        stderrExcerpt: 'no apps were discovered',
       })
     }
 
-    // Preset and app names are per-repo, so an agent gets them as choices instead of guessing again.
+    // App names are per-repo, so an agent gets them as choices instead of guessing again.
     throw new StructuredRefusalError(
       {
         status: 'argument_required',
-        argument: 'preset',
-        choices: z.toJSONSchema(z.object({ preset: z.enum([first, ...rest]) })),
+        argument: 'app',
+        choices: z.toJSONSchema(z.object({ app: z.enum([first, ...rest]) })),
         agentMode: agentMode.source,
       },
       2,
       {
         operation: 'pick what infra-kit dev runs',
-        remediation: `pass a preset or an app: ${[first, ...rest].join(', ')}`,
-        stderrExcerpt: `"${name}" is neither a dev preset nor an app`,
+        remediation: `pass an app: ${[first, ...rest].join(', ')}`,
+        stderrExcerpt: `"${name}" is not an app`,
       },
-    )
-  }
-
-  /**
-   * Refuse a preset whose target keys are not `<app>/api`|`<app>/ui` package identities BEFORE
-   * {@link resolvePreset} runs — its {@link parseTargetKey} throws a raw error on a bare key (e.g.
-   * `backoffice`), which would surface as an uncaught stack trace. {@link validatePresetKeys}
-   * collects the same issues without throwing, so the run can refuse with a named, actionable message.
-   */
-  private assertPresetKeysValid(def: DevPreset): void {
-    const name = this.options.preset ?? 'dev'
-    const issues = validatePresetKeys({ [name]: def })
-
-    if (issues.length === 0) {
-      return
-    }
-
-    throw new Error(
-      `infra-kit dev: cannot run this preset — ${issues
-        .map((issue) => {
-          return issue.message
-        })
-        .join('; ')}`,
-    )
-  }
-
-  /**
-   * Static locality pre-flight for a NAMED preset (`infra-kit dev <preset>`): refuse BEFORE any
-   * server spawns when one of its `local` proxy pins names a backend the preset itself does not
-   * launch. Shares the audit's context assembly ({@link buildPresetProxyContext}) so `infra-kit dev`
-   * and `infra-kit audit` can never disagree about what "satisfiable" means.
-   *
-   * A config that fails to load is not refused here — the frontend is about to load the very same
-   * file itself and will report it far better than this check can (mirrors the same call in
-   * {@link collectDegradedRoutes}).
-   */
-  private async assertPresetProxyLocalityValid(
-    name: string,
-    def: DevPreset,
-    discovered: DiscoveredParts,
-    apiAppsAll: IApiAppConfig[],
-  ): Promise<void> {
-    const presets: DevPresets = { [name]: def }
-    const { ctx, loadErrors } = await buildPresetProxyContext(this.monorepoRoot, presets, discovered, apiAppsAll)
-
-    if (loadErrors.length > 0) {
-      return
-    }
-
-    const issues = validatePresetProxy(presets, ctx)
-
-    if (issues.length === 0) {
-      return
-    }
-
-    throw new Error(
-      `infra-kit dev: cannot run this preset — ${issues
-        .map((issue) => {
-          return issue.message
-        })
-        .join('; ')}`,
     )
   }
 
@@ -1150,7 +1032,6 @@ export class DevServerRunner {
     const bootStart = Date.now()
     const include = this.normalizeAppInclude()
     const watch = this.options.watch ?? false
-    const devConfig = await this.loadDevConfig()
 
     process.env.POWERTOOLS_DEV ??= 'true'
     process.env.LOG_LEVEL ??= 'DEBUG'
@@ -1161,10 +1042,7 @@ export class DevServerRunner {
       this.renderer.narrate('👀 Watch mode: will rebuild and restart on file save')
     }
 
-    const { apps, uiApps, apiAppsAll, uiAppsAll, wantedLocalPkgs, presetProxy } = await this.resolveRunPlan(
-      devConfig,
-      include,
-    )
+    const { apps, uiApps, apiAppsAll, uiAppsAll, wantedLocalPkgs, presetProxy } = await this.resolveRunPlan(include)
 
     if (await this.endsBeforeBoot(apps, uiApps)) return
 
@@ -1191,10 +1069,9 @@ export class DevServerRunner {
     }
 
     // The label for what the user asked to run. Derived from the post-`--app` sets — not from
-    // `options.preset` (unset for the wizard's in-memory preset) nor from `include` (app names only).
-    // Hoisted above the refusal below so both it and the ready header name the run the same way.
+    // `include` (app names only). Hoisted above the refusal below so both it and the ready header name
+    // the run the same way.
     const target = deriveTargetLabel({
-      preset: this.options.preset,
       running: [
         ...apps.map((a) => {
           return `${a.name}/api`
@@ -1284,39 +1161,30 @@ export class DevServerRunner {
   }
 
   /**
-   * Resolve WHAT to run: discover the api/ui app parts, resolve the active preset against them, then
+   * Resolve WHAT to run: discover the api/ui app parts, resolve the active plan against them, then
    * narrow to the `--app`/`--self` include set. Returns both the filtered run sets (`apps`/`uiApps`)
    * and the full discovered sets (`apiAppsAll`/`uiAppsAll`), which the ready-header target label needs.
    */
-  private async resolveRunPlan(
-    devConfig: DevConfig,
-    include: string[] | null,
-  ): Promise<{
+  private async resolveRunPlan(include: string[] | null): Promise<{
     apps: IApiAppConfig[]
     uiApps: DiscoveredUiApp[]
     apiAppsAll: IApiAppConfig[]
     uiAppsAll: DiscoveredUiApp[]
     /**
-     * Backend packages the PRESET promised to serve locally, captured BEFORE `--app`/`--self` narrowing.
-     * Narrowing changes what runs; it does not change what the preset promised, and a backend dropped by
+     * Backend packages the PLAN promised to serve locally, captured BEFORE `--app`/`--self` narrowing.
+     * Narrowing changes what runs; it does not change what the plan promised, and a backend dropped by
      * a narrowing flag is never attempted — so it never lands in `failedApps` and a crash-keyed check
      * would say nothing while its frontend quietly proxied to cloud. See `local-pairing.ts`.
      */
     wantedLocalPkgs: Set<string>
-    /** The preset's declared per-route proxy overrides (`app → route → source`), for `pinnedLocal`. */
+    /** The plan's declared per-route proxy pins (`app → route → source`), for `pinnedLocal`. */
     presetProxy: Record<string, Record<string, ProxySource>>
   }> {
-    // What to run is a named preset (`infra-kit dev <preset>`), resolved against the discovered app
-    // parts (api/ui). No preset → run everything (`*`). `--app`/`--self` (`include`) further narrow it.
-    const apiAppsAll = this.discoverApiApps(devConfig)
+    // The plan is resolved against the discovered app parts (api/ui). No plan → run everything (`*`).
+    // `--app`/`--self` (`include`) further narrow it.
+    const apiAppsAll = this.discoverApiApps()
     const uiAppsAll = discoverUiAppsBare(this.monorepoRoot)
-    const devPresets = await this.loadDevPresets()
-    const presetDef = await this.resolvePresetDef(devPresets, apiAppsAll, uiAppsAll)
-
-    // Guard BEFORE resolvePreset: its parseTargetKey throws a raw error on a key that isn't an
-    // `<app>/api`|`<app>/ui` package (e.g. a bare `backoffice`), which surfaces as an uncaught stack
-    // trace. Collect the same issues gracefully here and refuse with a human-readable, named message.
-    this.assertPresetKeysValid(presetDef)
+    const presetDef = await this.resolvePresetDef(apiAppsAll, uiAppsAll)
 
     const discovered: DiscoveredParts = {
       api: apiAppsAll.map((a) => {
@@ -1327,21 +1195,10 @@ export class DevServerRunner {
       }),
     }
 
-    // Static proxy-locality pre-flight, scoped to the NAMED preset only (`infra-kit dev <preset>`):
-    // a `presetDef` built in-memory (the wizard, or `--target`) is either already audited before
-    // reaching here (wizard's `auditManualPlan`) or proxy-override-free (`--target` has no `.proxy`
-    // field to pin), so re-checking it here would either double-refuse or check nothing. Complements,
-    // never replaces, the RUNTIME pairing check below (`collectDegradedRoutes`): this one only sees
-    // the preset's static declaration, before anything runs — it cannot catch a backend that WAS
-    // launched but crashed, which is exactly what the runtime check is for.
-    if (this.options.presetDef == null && this.options.preset != null) {
-      await this.assertPresetProxyLocalityValid(this.options.preset, presetDef, discovered, apiAppsAll)
-    }
-
     const resolved = resolvePreset(presetDef, discovered)
 
     if (resolved.unmatched.length > 0) {
-      this.renderer.log(`⚠️  Preset targets not found (skipped): ${resolved.unmatched.join(', ')}`, 'warn')
+      this.renderer.log(`⚠️  Targets not found (skipped): ${resolved.unmatched.join(', ')}`, 'warn')
     }
 
     const apiNames = new Set(
@@ -1365,15 +1222,6 @@ export class DevServerRunner {
     const passesInclude = (name: string): boolean => {
       return !include || include.includes(name)
     }
-    const watchDepsByApp = new Map(
-      resolved.targets
-        .filter((t) => {
-          return t.part === 'api'
-        })
-        .map((t) => {
-          return [t.app, t.watchDeps] as const
-        }),
-    )
     // Split from the map below so the SURVIVOR COUNT is known before each app's port is chosen. The
     // choice cannot be made where the ports are resolved (`discoverApiApps`, over the full discovered
     // set): hulyo has 7 api apps, so a count taken there is never 1 even for `--app=client`.
@@ -1383,9 +1231,8 @@ export class DevServerRunner {
     const apps = selected.map((a) => {
       return {
         ...a,
-        watchDeps: watchDepsByApp.get(a.name) ?? a.watchDeps,
         // One app → today's precedence exactly, bare `PORT` included. Two or more → the shared bare
-        // `PORT` is dropped and each app falls to `dev.<app>.port` or an ephemeral bind, so a stray
+        // `PORT` is dropped and each app falls to `{APP}_PORT` or an ephemeral bind, so a stray
         // `PORT` in the shell can no longer manufacture the conflict that refuses the whole run.
         preferredPort: selected.length === 1 ? a.preferredPort : a.appScopedPort,
       }
@@ -1394,7 +1241,7 @@ export class DevServerRunner {
       return uiNames.has(a.name) && passesInclude(a.name)
     })
 
-    // Every api the PRESET names, pre-`passesInclude` — the promise, not the survivors.
+    // Every api the PLAN names, pre-`passesInclude` — the promise, not the survivors.
     const wantedLocalPkgs = new Set(
       apiAppsAll
         .filter((a) => {
@@ -1481,7 +1328,7 @@ export class DevServerRunner {
    *
    * No consumer is wired this way today — this is a guard against future wiring drift, not a fix for
    * a live bug. Logged through the same `warn`-level path every other boot warning uses (e.g. the
-   * unmatched-preset-targets line in {@link resolveRunPlan}), so it is `--json`/`--agent`-safe for free.
+   * unmatched-targets line in {@link resolveRunPlan}), so it is `--json`/`--agent`-safe for free.
    */
   private warnUiMissingVitePlugin(uiApps: DiscoveredUiApp[]): void {
     for (const ui of uiApps) {
@@ -1707,7 +1554,7 @@ export class DevServerRunner {
     this.renderer.log(`⚠️  Port conflict detected! ${duplicatePorts.join(', ')}`, 'error')
     this.renderer.log(`Conflicting apps: ${this.formatAppList(conflictingApps)}`, 'error')
     this.renderer.log('\n💡 Tip: give each app a distinct port via `{APP}_PORT` env (e.g. `CLIENT_PORT=`,', 'error')
-    this.renderer.log('   `SEARCH_ENGINE_PORT=`) or `dev.<app>.port` in infra-kit.json; or run a subset with', 'error')
+    this.renderer.log('   `SEARCH_ENGINE_PORT=`); or run a subset with', 'error')
     this.renderer.log('   `--app=<name>,<name>`.\n', 'error')
     throw new Error(`Port conflict detected: ${duplicatePorts.join(', ')}`)
   }
@@ -2690,9 +2537,8 @@ export class DevServerRunner {
     const targets = selectPackageRestartTargets(apps, this.closureMap, packageDir)
 
     if (targets === null) {
-      // Fail-safe: no closure map / no package identity → restart every launched app. Note this
-      // ignores per-app `watchDeps: false` opt-outs — opt-out is best-effort and yields to the
-      // fail-safe superset, so a `turbo --dry` failure never silently drops a needed restart.
+      // Fail-safe: no closure map / no package identity → restart every launched app, so a
+      // `turbo --dry` failure never silently drops a needed restart.
       this.markChanged('__packages__', filePath)
       this.scheduleDebounced('__packages__', () => {
         return this.restart(apps, this.takeChanged('__packages__'))
@@ -3212,7 +3058,7 @@ export class DevServerRunner {
    */
   private async endsBeforeBoot(apps: IApiAppConfig[], uiApps: DiscoveredUiApp[]): Promise<boolean> {
     if (apps.length === 0 && uiApps.length === 0) {
-      this.renderer.log('⚠️  No API or UI apps to run for this preset', 'warn')
+      this.renderer.log('⚠️  No API or UI apps to run', 'warn')
 
       return true
     }

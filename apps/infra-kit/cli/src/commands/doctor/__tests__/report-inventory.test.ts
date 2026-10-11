@@ -89,9 +89,6 @@ vi.mock('src/lib/infra-kit-config', () => {
         projectName: 'api',
       })
     }),
-    resolveConfiguredIdes: vi.fn(() => {
-      return [{ provider: 'cursor', config: { workspaceConfigPath: 'ws' } }]
-    }),
   }
 })
 

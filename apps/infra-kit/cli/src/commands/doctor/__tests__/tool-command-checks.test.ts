@@ -87,9 +87,6 @@ vi.mock('src/lib/infra-kit-config', () => {
         projectName: 'api',
       })
     }),
-    resolveConfiguredIdes: vi.fn(() => {
-      return []
-    }),
   }
 })
 

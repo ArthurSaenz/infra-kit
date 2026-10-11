@@ -9,7 +9,14 @@ import { isEnvAuthFailure } from 'src/lib/errors/env-auth-error'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig, resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 
-import { getTokenStorePath, readTokenStore, removeToken, setToken, writeTokenStore } from '../env-tokens'
+import {
+  getTokenStorePath,
+  readTokenStore,
+  removeToken,
+  setToken,
+  tightenTokenStoreModes,
+  writeTokenStore,
+} from '../env-tokens'
 import type { TokenStore } from '../env-tokens'
 
 vi.mock('src/lib/git-utils', () => {
@@ -180,6 +187,27 @@ describe('writeTokenStore', () => {
     await writeTokenStore(storeFor({ dev: 'dp.st.dev.xxxx' }))
 
     expect(modeOf(storePath)).toBe('600')
+  })
+})
+
+describe('tightenTokenStoreModes', () => {
+  // Reds on: a setup that reports the store as protected while leaving a hand-written 0644 in place.
+  it('tightens a hand-written store and its directory without rewriting it', async () => {
+    preSeedStore('{"envs":{"dev":"dp.st.dev.x"}}')
+    // eslint-disable-next-line sonarjs/file-permissions -- deliberately insecure: this IS the state under test
+    fs.chmodSync(storePath, 0o644)
+
+    const tightened = await tightenTokenStoreModes()
+
+    expect(tightened).toContain(`~/.infra-kit/projects/${repoName}/tokens.json was 0644`)
+    expect(modeOf(storePath)).toBe('600')
+    expect(modeOf(projectDir)).toBe('700')
+    expect(fs.readFileSync(storePath, 'utf-8')).toBe('{"envs":{"dev":"dp.st.dev.x"}}')
+    expect(await tightenTokenStoreModes()).toEqual([])
+  })
+
+  it('returns null when there is no store', async () => {
+    expect(await tightenTokenStoreModes()).toBeNull()
   })
 })
 

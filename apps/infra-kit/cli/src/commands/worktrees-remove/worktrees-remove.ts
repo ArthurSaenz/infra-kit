@@ -1,7 +1,6 @@
 import { z } from 'zod'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
-import { removeIdeWorktreeFolders } from 'src/integrations/ide'
 import { orcaCallerInsideTargets } from 'src/integrations/orca'
 import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
@@ -268,15 +267,12 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       pruneFolder: allSelected,
     })
 
-    await removeIdeWorktreeFolders({ projectRoot, worktreeDir, removedWorktrees: removal.removed })
-
     logRemovalResults(removal)
 
     commandEcho.print()
 
-    // Ordering is load-bearing: the echo line and the IDE cleanup for the branches that DID succeed
-    // run first; only then does a failed branch throw (human) or become a `partial_failure` refusal
-    // (`--agent`).
+    // Ordering is load-bearing: the echo line for the branches that DID succeed runs first; only then
+    // does a failed branch throw (human) or become a `partial_failure` refusal (`--agent`).
     return toRemovalToolResult({ result: removal, operation: 'remove worktrees' })
   } catch (error) {
     // A cancelled prompt (Ctrl-C / Esc) is a user back-out, not a failure: let it

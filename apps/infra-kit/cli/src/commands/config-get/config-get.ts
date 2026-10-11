@@ -15,7 +15,7 @@ export interface ConfigGetArgs {
  * the three override layers (project `infra-kit.json` → `~/.infra-kit/infra-kit.json` →
  * `~/.infra-kit/projects/<repo>/infra-kit.json`) are shallow-merged. Read-only introspection: it REUSES
  * {@link getInfraKitConfig} (never re-implements the loader), so an agent sees precisely the resolved
- * config, not a re-derived approximation, and can reason about dev presets / env management / proxy routes
+ * config, not a re-derived approximation, and can reason about env management / worktrees / protected envs
  * without shelling out.
  *
  * Throws the same "infra-kit.json not found" error the loader throws when run outside a configured repo —
@@ -59,7 +59,7 @@ const configGetOutputSchema = {
   config: z
     .record(z.string(), z.unknown())
     .describe(
-      'The fully resolved infra-kit configuration — the same object every command sees at runtime, after the project infra-kit.json, the user-global, and the user-scope per-project override layers are merged (later layers win). Top-level sections include envManagement, ide, worktrees, dev, devServersPresets, and protectedEnvs.',
+      'The fully resolved infra-kit configuration — the same object every command sees at runtime, after the project infra-kit.json, the user-global, and the user-scope per-project override layers are merged (later layers win). Top-level sections include envManagement, worktrees, and protectedEnvs.',
     ),
   configPath: z
     .string()

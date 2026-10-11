@@ -1,43 +1,33 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  DEFAULT_PREFIX_URL,
-  findPortConflicts,
-  parsePortString,
-  resolvePreferredPort,
-  resolvePrefixUrl,
-} from 'src/dev/ports'
+import { findPortConflicts, parsePortString, resolvePreferredPort } from 'src/dev/ports'
 
 /**
- * Pure port / prefix resolution. Every function is side-effect free, so these
- * specs pass `env` and `devConfig` in as plain objects — no fixtures, no cwd,
+ * Pure port resolution. Every function is side-effect free, so these
+ * specs pass `env` in as a plain object — no fixtures, no cwd,
  * no process.env mutation.
  */
 describe('resolvePreferredPort — explicit-only (no DEFAULT_PORT fallback)', () => {
   it('returns undefined when nothing is explicitly configured (no DEFAULT_PORT fallback)', () => {
-    expect(resolvePreferredPort('client', {}, {})).toBeUndefined()
+    expect(resolvePreferredPort('client', {})).toBeUndefined()
   })
 
-  it('returns dev.<app>.port from config when set', () => {
-    expect(resolvePreferredPort('client', {}, { client: { port: 3200 } })).toBe(3200)
-  })
-
-  it('lets PORT and {APP}_PORT take precedence, in that order', () => {
-    expect(resolvePreferredPort('client', { PORT: '3300' }, { client: { port: 3200 } })).toBe(3300)
-    expect(resolvePreferredPort('client', { PORT: '3300', CLIENT_PORT: '3400' }, {})).toBe(3400)
+  it('lets {APP}_PORT take precedence over PORT', () => {
+    expect(resolvePreferredPort('client', { PORT: '3300' })).toBe(3300)
+    expect(resolvePreferredPort('client', { PORT: '3300', CLIENT_PORT: '3400' })).toBe(3400)
   })
 
   it('preserves an explicit {APP}_PORT = 0 (ephemeral request), not undefined', () => {
-    expect(resolvePreferredPort('client', { CLIENT_PORT: '0' }, {})).toBe(0)
+    expect(resolvePreferredPort('client', { CLIENT_PORT: '0' })).toBe(0)
   })
 
   it('maps a hyphenated app name to UPPER_SNAKE_CASE for the {APP}_PORT key', () => {
-    expect(resolvePreferredPort('search-engine', { SEARCH_ENGINE_PORT: '3500' }, {})).toBe(3500)
+    expect(resolvePreferredPort('search-engine', { SEARCH_ENGINE_PORT: '3500' })).toBe(3500)
   })
 
   it('strips surrounding quotes on a {APP}_PORT env value', () => {
     // Secrets managers can export values wrapped in quotes.
-    expect(resolvePreferredPort('client', { CLIENT_PORT: '"3400"' }, {})).toBe(3400)
+    expect(resolvePreferredPort('client', { CLIENT_PORT: '"3400"' })).toBe(3400)
   })
 })
 
@@ -49,27 +39,13 @@ describe('resolvePreferredPort — explicit-only (no DEFAULT_PORT fallback)', ()
  */
 describe('resolvePreferredPort — allowBarePort gates ONLY the bare PORT tier', () => {
   it('drops a bare PORT when denied, and keeps it when allowed or omitted', () => {
-    expect(resolvePreferredPort('client', { PORT: '3300' }, {}, false)).toBeUndefined()
-    expect(resolvePreferredPort('client', { PORT: '3300' }, {}, true)).toBe(3300)
-    expect(resolvePreferredPort('client', { PORT: '3300' }, {})).toBe(3300)
+    expect(resolvePreferredPort('client', { PORT: '3300' }, false)).toBeUndefined()
+    expect(resolvePreferredPort('client', { PORT: '3300' }, true)).toBe(3300)
+    expect(resolvePreferredPort('client', { PORT: '3300' })).toBe(3300)
   })
 
   it('leaves the per-app {APP}_PORT tier untouched when the bare tier is denied', () => {
-    expect(resolvePreferredPort('client', { PORT: '3300', CLIENT_PORT: '3400' }, {}, false)).toBe(3400)
-  })
-
-  it('reaches the config tier when the bare tier is denied, rather than skipping to undefined', () => {
-    expect(resolvePreferredPort('client', { PORT: '3300' }, { client: { port: 3200 } }, false)).toBe(3200)
-  })
-})
-
-describe('resolvePrefixUrl — config over default', () => {
-  it('defaults to /api/v1 when nothing is configured', () => {
-    expect(resolvePrefixUrl('client', {})).toBe(DEFAULT_PREFIX_URL)
-  })
-
-  it('honors dev.<app>.prefixUrl over the default', () => {
-    expect(resolvePrefixUrl('client', { client: { prefixUrl: '/custom/v2' } })).toBe('/custom/v2')
+    expect(resolvePreferredPort('client', { PORT: '3300', CLIENT_PORT: '3400' }, false)).toBe(3400)
   })
 })
 

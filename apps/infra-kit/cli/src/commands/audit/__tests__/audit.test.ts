@@ -151,7 +151,7 @@ const makeWorkspace = (): string => {
   fs.writeFileSync(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n')
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'ws-root', type: 'module' }))
   // Marks the repo as an infra-kit project and carries the root audit rules. `envManagement` is the
-  // one required key; no `devServersPresets`, so the preset-proxy check returns null.
+  // one required key.
   fs.writeFileSync(
     path.join(root, 'infra-kit.json'),
     JSON.stringify({

@@ -45,11 +45,12 @@ import { portlessNodePath, readPortlessNodeSidecar } from 'src/dev/proxy/portles
 import type { PortlessNodeFs, PortlessNodeSidecar, PortlessNodeStat } from 'src/dev/proxy/portless-node'
 import { INFRA_KIT_ENV_TOKEN_VAR, resolveEnvToken } from 'src/integrations/doppler'
 import type { EnvTokenSource, ResolvedEnvToken } from 'src/integrations/doppler'
-import type { IdeProvider } from 'src/integrations/ide'
 import { probeOrca } from 'src/integrations/orca'
 import { inspectPackageGuidance, readGuidanceFile } from 'src/lib/agent-guidance'
 import { agentMode, resolveAgentModeSource } from 'src/lib/agent-mode'
 import type { ResolveAgentModeInput } from 'src/lib/agent-mode'
+import { checkClaudeInChrome } from 'src/lib/claude-chrome'
+import type { ChromeCheckDeps } from 'src/lib/claude-chrome'
 import { describeOverrides, readOverrideSummary } from 'src/lib/config-overrides'
 // The probe reports FACTS about an install and can neither name nor run a fix — the same one-way seam
 // as the registry import below. `lib/dependency-plan` is the module that turns a probe into a recipe,
@@ -68,7 +69,6 @@ import {
   getInfraKitConfig,
   getInfraKitConfigPaths,
   resetInfraKitConfigCache,
-  resolveConfiguredIdes,
 } from 'src/lib/infra-kit-config'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { isWithin, safeRealpath } from 'src/lib/install-manager'
@@ -295,10 +295,10 @@ const checkPnpmWorkspaceVirtualStore = async (): Promise<CheckResult> => {
  * The merged infra-kit config, read ONCE per `doctor()` run and threaded into every check that needs
  * it. Either half is populated, never both.
  *
- * Reading it once is not an optimization, it is the fix for a real race: `checkInfraKitConfigValid`
- * and `checkIdeInstalled` each called `resetInfraKitConfigCache()` and were dispatched together
- * inside one `Promise.all`, so they clobbered the same module-level cache slot — whichever reset
- * landed second could blow away a config the other had just populated. One read, no shared slot.
+ * Reading it once is not an optimization, it is the fix for a real race: two checks each called
+ * `resetInfraKitConfigCache()` and were dispatched together inside one `Promise.all`, so they
+ * clobbered the same module-level cache slot — whichever reset landed second could blow away a config
+ * the other had just populated. One read, no shared slot.
  */
 export interface DoctorConfig {
   config: InfraKitConfig | null
@@ -596,7 +596,7 @@ export const checkTokenStorePerms = async (fix: boolean, deps: EnvTokenCheckDeps
     return {
       name,
       status: 'fail',
-      message: `${describe}. Fix: run \`infra-kit doctor --fix\`, or chmod them by hand.`,
+      message: `${describe}. Fix: run \`infra-kit setup --skip-tools\` or \`infra-kit doctor --fix\`.`,
     }
   }
 
@@ -636,7 +636,7 @@ const defaultStatPath = (target: string): fs.Stats | null => {
  * @example
  * await checkUserOverridePath()
  * // { name: 'user override path', status: 'pass',
- * //   message: '~/.infra-kit/projects/api/infra-kit.json (2 override(s): ide, dev) — project: api' }
+ * //   message: '~/.infra-kit/projects/api/infra-kit.json (2 override(s): worktrees, mcp) — project: api' }
  * // absent  -> '… (not created — seed failed?) — project: api'
  * // empty   -> '… (empty — no overrides) — project: api'
  * // corrupt -> '… (unreadable — invalid JSON) — project: api'
@@ -669,8 +669,7 @@ export const checkUserOverridePath = async (): Promise<CheckResult> => {
  * Branches on whether the canonical `infra-kit.json` already exists so the
  * message is accurate: only the "no infra-kit.json yet" case means overrides are
  * not being applied; when both exist the legacy file is merely stale.
- * Informational pass (no warning) when the paths can't resolve — mirrors
- * {@link checkIdeInstalled}: nothing to surface if there's no resolvable target.
+ * A `skip` when the paths can't resolve: nothing to surface if there's no resolvable target.
  *
  * @example
  * await checkLegacyUserGlobalConfig()
@@ -705,90 +704,6 @@ export const checkLegacyUserGlobalConfig = async (): Promise<CheckResult> => {
     name,
     status: 'fail',
     message: `Stale legacy config.json found at ${tildify(legacyPath)} — ${tildify(paths.userGlobal)} is active; remove the old file.`,
-  }
-}
-
-interface IdeProbe {
-  ok: boolean
-  label: string
-  failMsg: string
-}
-
-const IDE_PROBE_META: Record<IdeProvider, { command: string[]; label: string; failMsg: string }> = {
-  cursor: {
-    command: ['cursor', '--version'],
-    label: 'Cursor',
-    failMsg: 'Cursor is not installed. Install from: https://cursor.com/',
-  },
-}
-
-const probeIde = async (provider: IdeProvider): Promise<IdeProbe> => {
-  const meta = IDE_PROBE_META[provider]
-
-  try {
-    await quietShell()`${meta.command}`
-
-    return { ok: true, label: meta.label, failMsg: meta.failMsg }
-  } catch {
-    return { ok: false, label: meta.label, failMsg: meta.failMsg }
-  }
-}
-
-/**
- * Check that every editor configured under `ide` is installed. Probes each binary (`cursor`)
- * named by the ALREADY-READ config ({@link readDoctorConfig}). Passes only if all configured editors
- * are present; fails listing any that are missing. Passes when no IDE is configured — an unconfigured
- * editor is a valid setup. A `skip` when the config can't be read, since then nothing was asked;
- * config validity is reported separately by `checkInfraKitConfigValid`.
- *
- * @example
- * await checkIdeInstalled({ config: { ide: [{ provider: 'cursor' }] }, error: null })
- * // => { name: 'ide installed', status: 'pass', message: 'Installed: Cursor' }
- */
-export const checkIdeInstalled = async (read: DoctorConfig): Promise<CheckResult> => {
-  const name = 'ide installed'
-
-  if (!read.config) {
-    return { name, status: 'skip', message: 'infra-kit config could not be read (see config check)' }
-  }
-
-  const providers = resolveConfiguredIdes(read.config).map((ide) => {
-    return ide.provider
-  })
-
-  if (providers.length === 0) {
-    return { name, status: 'pass', message: 'No IDE configured (ide unset)' }
-  }
-
-  const probes = await Promise.all(
-    providers.map((provider) => {
-      return probeIde(provider)
-    }),
-  )
-  const missing = probes.filter((probe) => {
-    return !probe.ok
-  })
-
-  if (missing.length === 0) {
-    return {
-      name,
-      status: 'pass',
-      message: `Installed: ${probes
-        .map((probe) => {
-          return probe.label
-        })
-        .join(', ')}`,
-    }
-  }
-
-  return {
-    name,
-    status: 'fail',
-    message: missing
-      .map((probe) => {
-        return probe.failMsg
-      })
-      .join('; '),
   }
 }
 
@@ -1064,117 +979,9 @@ export const checkClaudeCli = (): Promise<CheckResult> => {
   )
 }
 
-const CHROME_CHECK_NAME = 'claude in chrome'
-const CHROME_NATIVE_HOST = 'com.anthropic.claude_code_browser_extension'
-const CHROME_SETUP_HINT = 'run `/chrome` inside Claude Code to set up Claude in Chrome'
-
-/** Chrome reads a user-level native messaging host manifest from these directories only. */
-const CHROME_NATIVE_HOST_DIRS: Partial<Record<NodeJS.Platform, readonly string[]>> = {
-  darwin: ['Library', 'Application Support', 'Google', 'Chrome', 'NativeMessagingHosts'],
-  linux: ['.config', 'google-chrome', 'NativeMessagingHosts'],
-}
-
-export interface ChromeCheckDeps {
-  platform?: NodeJS.Platform
-  home?: string
-  readText?: (filePath: string) => string | null
-  isExecutable?: (filePath: string) => boolean
-}
-
-const defaultIsExecutable = (filePath: string): boolean => {
-  try {
-    fs.accessSync(filePath, fs.constants.X_OK)
-
-    return true
-  } catch {
-    return false
-  }
-}
-
-const parseJsonOrNull = (text: string): unknown => {
-  try {
-    return JSON.parse(text)
-  } catch {
-    return null
-  }
-}
-
-/**
- * The generated wrapper `exec`s the `claude` binary that ran `/chrome`. A Claude Code reinstall to
- * another location leaves the wrapper pointing at a path that is gone, and the extension then fails
- * to connect with no error on the Claude Code side.
- */
-const CHROME_WRAPPER_EXEC = /^exec\s+(?<target>\S+)\s+--chrome-native-host\b/m
-
-/**
- * The host half of the Claude in Chrome connection: Chrome can only reach Claude Code through the
- * native messaging host that `/chrome` registers. Whether the extension is CONNECTED right now is
- * visible to a live session only, so `/infra-kit:doctor` asks that half; this row answers "could it".
- *
- * Unregistered is a `warn`, not a `fail`: a machine that never set Chrome up is a choice, but the
- * browser-driven skills cannot run on it. Registered-but-broken is a `fail`.
- *
- * @example
- * checkClaudeInChrome({ platform: 'win32' }) // => { name: 'claude in chrome', status: 'skip', … }
- */
-export const checkClaudeInChrome = (deps: ChromeCheckDeps = {}): CheckResult => {
-  const platform = deps.platform ?? process.platform
-  const home = deps.home ?? os.homedir()
-  const readText = deps.readText ?? readTextFile
-  const isExecutable = deps.isExecutable ?? defaultIsExecutable
-  const dirSegments = CHROME_NATIVE_HOST_DIRS[platform]
-
-  if (dirSegments === undefined) {
-    return { name: CHROME_CHECK_NAME, status: 'skip', message: `no Chrome native host location known for ${platform}` }
-  }
-
-  const manifestPath = path.join(home, ...dirSegments, `${CHROME_NATIVE_HOST}.json`)
-  const manifestText = readText(manifestPath)
-
-  if (manifestText === null) {
-    return {
-      name: CHROME_CHECK_NAME,
-      status: 'warn',
-      message: `Chrome native host not registered — ${CHROME_SETUP_HINT}`,
-    }
-  }
-
-  const parsed = z.object({ path: z.string().min(1) }).safeParse(parseJsonOrNull(manifestText))
-
-  if (!parsed.success) {
-    return {
-      name: CHROME_CHECK_NAME,
-      status: 'fail',
-      message: `${tildify(manifestPath)} has no host path — ${CHROME_SETUP_HINT} again`,
-    }
-  }
-
-  const wrapper = parsed.data.path
-
-  if (!isExecutable(wrapper)) {
-    return {
-      name: CHROME_CHECK_NAME,
-      status: 'fail',
-      message: `Chrome native host ${tildify(wrapper)} is missing or not executable — ${CHROME_SETUP_HINT} again`,
-    }
-  }
-
-  const target = CHROME_WRAPPER_EXEC.exec(readText(wrapper) ?? '')?.groups?.target
-
-  if (target !== undefined && !isExecutable(target)) {
-    return {
-      name: CHROME_CHECK_NAME,
-      status: 'fail',
-      message: `Chrome native host runs ${tildify(target)}, which no longer exists — ${CHROME_SETUP_HINT} again`,
-    }
-  }
-
-  return {
-    name: CHROME_CHECK_NAME,
-    status: 'pass',
-    message: `Native host registered (${tildify(wrapper)}); /infra-kit:doctor checks the live connection`,
-  }
-}
+// Re-exported: the check moved to a lib so `setup` can read it without importing doctor.
+export { checkClaudeInChrome }
+export type { ChromeCheckDeps }
 
 /**
  * What the SERVED plugin copy carries by way of an MCP server — which, since the plugin went
@@ -2466,7 +2273,6 @@ export const doctor = async (
     checkTokenStorePerms(options.fix ?? false),
     checkUserOverridePath(),
     checkLegacyUserGlobalConfig(),
-    checkIdeInstalled(read),
   ])
 
   const portlessChecks = await checkPortless(options.portlessDeps)

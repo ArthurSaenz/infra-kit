@@ -16,7 +16,6 @@ import { defineMcpTool, textContent } from 'src/types'
 import { runAuditFix } from './fix'
 import type { FixedEntry } from './fix'
 import { checkMcpProxies } from './mcp-proxy-check'
-import { checkDevPresets } from './preset-proxy-check'
 
 // TODO [DO]: extract `audit` into its own standalone CLI tool, decoupled from infra-kit.
 
@@ -220,17 +219,7 @@ export const audit = async (options: AuditOptions = {}) => {
     results.push(await validatePackage(target.dir, target.baseline, { adoption, isRoot: target.isRoot, repoRoot }))
   }
 
-  // Root audit also validates project-level devServersPresets proxy locality (a `local`
-  // route override must have its backend launched by the preset). Skipped when the
-  // project declares no presets. Only meaningful at the root — presets live in the
-  // project infra-kit.json, not in any single package.
   if (options.root) {
-    const presetResult = await checkDevPresets(targets[0]!.dir)
-
-    if (presetResult) {
-      results.push(presetResult)
-    }
-
     // Root audit also keeps `.mcp.json`'s ik-mcp entries in step with the `mcp` block. With
     // `--fix` it rewrites drifted owned entries; it never removes anything (see mcp-proxy-check).
     const proxyResult = await checkMcpProxies(targets[0]!.dir, options.fix === true)

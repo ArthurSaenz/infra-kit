@@ -21,22 +21,18 @@ vi.mock('../migrate-config-file', { spy: true })
 // A stand-in for the override schema: strict (so a retired key is refused), with one defaulted
 // leaf so the returned `data` can be told apart from the raw migrated object.
 const schema = z.strictObject({
-  ide: z
-    .strictObject({
-      provider: z.literal('cursor'),
-      config: z.strictObject({ workspaceConfigPath: z.string().optional() }),
-    })
-    .optional(),
+  aliasRepo: z.string().optional(),
   worktrees: z.strictObject({ openInOrca: z.boolean().default(true) }).optional(),
 })
 
 const DIRTY = {
   environments: ['dev'],
-  ide: { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: 'ws' } },
+  ide: { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
+  aliasRepo: 'p',
   worktrees: {},
 }
 
-const CLEAN_AFTER = { ide: { provider: 'cursor', config: { workspaceConfigPath: 'ws' } }, worktrees: {} }
+const CLEAN_AFTER = { aliasRepo: 'p', worktrees: {} }
 
 let home: string
 let configPath: string
@@ -83,12 +79,12 @@ describe('tryAutoMigrateLayer', () => {
     // `worktrees.openInOrca` is not in the file: it proves `data` is the second parse, not the raw object.
     expect(outcome).toEqual({
       kind: 'migrated',
-      data: { ide: { provider: 'cursor', config: { workspaceConfigPath: 'ws' } }, worktrees: { openInOrca: true } },
+      data: { aliasRepo: 'p', worktrees: { openInOrca: true } },
     })
     expect(await readBack()).toBe(`${JSON.stringify(CLEAN_AFTER, null, 2)}\n`)
     expect(warnSpy).toHaveBeenCalledTimes(1)
     expect(warnSpy).toHaveBeenCalledWith(
-      `Migrated ~/infra-kit.json: removed legacy "mode" and the retired "environments" key (deploy targets now come from each workflow's workflow_dispatch options, auth from the token store) (retired by infra-kit ${packageJson.version})`,
+      `Migrated ~/infra-kit.json: removed the unused "ide" key (worktrees add/remove no longer edit a Cursor .code-workspace) and the retired "environments" key (deploy targets now come from each workflow's workflow_dispatch options, auth from the token store) (retired by infra-kit ${packageJson.version})`,
     )
     expect(debugSpy).not.toHaveBeenCalled()
   })
@@ -106,7 +102,7 @@ describe('tryAutoMigrateLayer', () => {
   })
 
   it('nothing to migrate (a plain typo key) → not-applicable, no write', async () => {
-    const typo = { ide: { provider: 'cursor', config: { workspaceConfigPath: 'ws' } }, worktree: {} }
+    const typo = { aliasRepo: 'p', worktree: {} }
     const layer = await writeLayer(typo)
 
     const outcome = await tryAutoMigrateLayer(layer, typo, raw, { schema })
@@ -207,16 +203,16 @@ describe('tryAutoMigrateLayer', () => {
     })
   })
 
-  it('a single retired zed entry: the whole ide key goes and the layer parses', async () => {
-    const zedOnly = { ide: { provider: 'zed', config: {} } }
-    const layer = await writeLayer(zedOnly)
+  it('a layer holding only a retired key: the key goes and the empty layer parses', async () => {
+    const ideOnly = { ide: { provider: 'zed', config: {} } }
+    const layer = await writeLayer(ideOnly)
 
-    const outcome = await tryAutoMigrateLayer(layer, zedOnly, raw, { schema })
+    const outcome = await tryAutoMigrateLayer(layer, ideOnly, raw, { schema })
 
     expect(outcome).toEqual({ kind: 'migrated', data: {} })
     expect(await readBack()).toBe('{}\n')
     expect(warnSpy).toHaveBeenCalledWith(
-      `Migrated ~/infra-kit.json: removed the retired "zed" provider (retired by infra-kit ${packageJson.version})`,
+      `Migrated ~/infra-kit.json: removed the unused "ide" key (worktrees add/remove no longer edit a Cursor .code-workspace) (retired by infra-kit ${packageJson.version})`,
     )
   })
 })

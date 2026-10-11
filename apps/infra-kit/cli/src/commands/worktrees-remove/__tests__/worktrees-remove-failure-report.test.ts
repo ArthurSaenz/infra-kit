@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
-import { removeIdeWorktreeFolders } from 'src/integrations/ide'
 import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
@@ -55,10 +54,6 @@ vi.mock('src/lib/worktrees', async (importOriginal) => {
   return { ...actual, removeWorktrees: vi.fn() }
 })
 
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
-})
-
 vi.mock('src/integrations/gh', () => {
   return { getReleasePRsWithInfo: vi.fn() }
 })
@@ -97,11 +92,10 @@ beforeEach(() => {
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue([])
   agentMode.source = null
   vi.mocked(removeWorktrees).mockResolvedValue({ removed: [], failed: [] })
-  vi.mocked(removeIdeWorktreeFolders).mockResolvedValue([])
 })
 
 describe('worktrees-remove failure report — CLI path', () => {
-  it('throws an OperationError naming the branch git refused, after IDE cleanup and the echo line', async () => {
+  it('throws an OperationError naming the branch git refused, after the echo line', async () => {
     vi.mocked(removeWorktrees).mockResolvedValue(PARTIAL_FAILURE)
 
     const printSpy = vi.spyOn(commandEcho, 'print')
@@ -118,13 +112,8 @@ describe('worktrees-remove failure report — CLI path', () => {
     expect((thrown as Error).message).toMatch(/release\/v1\.2\.6/)
     expect((thrown as Error).message).toMatch(/modified or untracked/)
 
-    // The successful half of the batch was still cleaned up in the IDE and echoed.
-    expect(removeIdeWorktreeFolders).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(removeIdeWorktreeFolders).mock.calls[0]?.[0].removedWorktrees).toEqual(['release/v1.2.5'])
+    // The successful half of the batch was still echoed.
     expect(printSpy).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(removeIdeWorktreeFolders).mock.invocationCallOrder[0]).toBeLessThan(
-      printSpy.mock.invocationCallOrder[0] as number,
-    )
   })
 
   it('passes projectRoot to the shared removal so it can ask git about registration', async () => {
@@ -149,8 +138,8 @@ describe('worktrees-remove failure report — CLI path', () => {
 describe('worktrees-remove failure report — agent path', () => {
   // The throw, not a returned `isError`: one refusal class for both surfaces, emitted by `entry/cli.ts`
   // under `--json`. It must be an `OperationError` subclass to survive this handler's rewrapping
-  // `catch`, and it must still run AFTER the IDE cleanup.
-  it('throws a partial_failure refusal with a schema-valid failedWorktrees, after the IDE cleanup', async () => {
+  // `catch`.
+  it('throws a partial_failure refusal with a schema-valid failedWorktrees', async () => {
     agentMode.source = 'flag'
     vi.mocked(removeWorktrees).mockResolvedValue(PARTIAL_FAILURE)
 
@@ -175,7 +164,6 @@ describe('worktrees-remove failure report — agent path', () => {
     expect(() => {
       return outputSchema.parse(structuredContent)
     }).not.toThrow()
-    expect(removeIdeWorktreeFolders).toHaveBeenCalledTimes(1)
   })
 
   it('declares failedWorktrees in the tool output schema', () => {

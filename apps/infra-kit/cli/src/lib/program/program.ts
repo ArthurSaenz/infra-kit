@@ -35,8 +35,6 @@ import { worktreesAdd } from 'src/commands/worktrees-add'
 import { worktreesList } from 'src/commands/worktrees-list'
 import { worktreesRemove } from 'src/commands/worktrees-remove'
 import { worktreesSync } from 'src/commands/worktrees-sync'
-import { IDE_MODES } from 'src/integrations/ide'
-import type { IdeMode } from 'src/integrations/ide'
 import { agentMode, resolveAgentModeSource } from 'src/lib/agent-mode'
 import { isLongRunningCommand } from 'src/lib/command-catalog'
 import { commandEcho } from 'src/lib/command-echo'
@@ -63,26 +61,6 @@ import { addDebugOption } from './debug-option'
 
 const collectReleaseSpec = (value: string, prev: string[]): string[] => {
   return [...prev, value]
-}
-
-const normalizeIdeMode = (value: unknown, flagName: '--ide' | '--cursor'): IdeMode | undefined => {
-  if (typeof value === 'undefined') {
-    return undefined
-  }
-
-  if (value === true) {
-    return 'workspace'
-  }
-
-  if (value === false) {
-    return 'none'
-  }
-
-  if (typeof value === 'string' && (IDE_MODES as readonly string[]).includes(value)) {
-    return value as IdeMode
-  }
-
-  throw new Error(`Invalid ${flagName} value "${String(value)}". Expected one of: ${IDE_MODES.join(', ')}.`)
 }
 
 // --- Command configurators (one source of options + action per command) ---
@@ -332,18 +310,11 @@ const configureWorktreesAdd = (cmd: Command): Command => {
       '-b, --base <branch>',
       'Base for new feature branches: dev (default; the default branch without one), main, or a release, e.g. 1.4.0',
     )
-    .option('-i, --ide [mode]', 'Editor mode for created worktrees: workspace (default) | none')
-    .option('--no-ide', 'Skip the editor (alias for --ide none)')
-    .option('-c, --cursor [mode]', 'Deprecated alias for --ide')
-    .option('--no-cursor', 'Deprecated alias for --no-ide')
     .option('-g, --github-desktop', 'Open created worktrees in GitHub Desktop')
     .option('--no-github-desktop', 'Skip GitHub Desktop prompt')
     .option('--orca', 'Open created worktrees in Orca (pane layout from worktrees.orca.layout)')
     .option('--no-orca', 'Skip the Orca prompt')
     .action(async (options) => {
-      // `--ide` wins over the deprecated `--cursor` alias when both are provided.
-      const ide = normalizeIdeMode(options.ide, '--ide') ?? normalizeIdeMode(options.cursor, '--cursor')
-
       emit(
         await worktreesAdd({
           confirmedCommand: options.yes,
@@ -351,7 +322,6 @@ const configureWorktreesAdd = (cmd: Command): Command => {
           versions: options.versions,
           feature: options.feature,
           base: options.base,
-          ide,
           githubDesktop: options.githubDesktop,
           orca: options.orca,
         }),
@@ -533,7 +503,7 @@ export const buildProgram = (): Command => {
   program
     .command('config-get')
     .description('Print the fully merged infra-kit config (project + user-global + per-project override layers)')
-    .argument('[key]', 'Print only this top-level key (e.g. ide)')
+    .argument('[key]', 'Print only this top-level key (e.g. worktrees)')
     .action(async (key) => {
       emit(await configGet({ key }))
     })
@@ -542,8 +512,8 @@ export const buildProgram = (): Command => {
   program
     .command('config-set')
     .description('Set a top-level key in this project’s per-machine config override (validated before it is kept)')
-    .argument('<key>', 'Top-level config key (e.g. protectedEnvs, ide)')
-    .argument('<value>', 'JSON value, or a bare string (e.g. cli-only, \'[{"provider":"orca"}]\')')
+    .argument('<key>', 'Top-level config key (e.g. protectedEnvs, worktrees)')
+    .argument('<value>', 'JSON value, or a bare string (e.g. cli-only, \'{"openInOrca":true}\')')
     .option('--global', 'Write ~/.infra-kit/infra-kit.json (every project on this machine) instead')
     .action(async (key, value, options) => {
       emit(await configSet({ key, value, global: options.global }))
@@ -692,11 +662,8 @@ export const buildProgram = (): Command => {
 
   program
     .command('dev')
-    .description('Run local dev servers for a preset or an app (or every app); api + ui')
-    .argument(
-      '[preset]',
-      'A devServersPresets name, or an app — its api/ui plus the backends its routes can run locally (omit to run every app)',
-    )
+    .description('Run local dev servers for an app (or every app); api + ui')
+    .argument('[app]', 'An app — its api/ui plus the backends its routes can run locally (omit to run every app)')
     .option('-w, --watch', 'Rebuild and restart on file save (the default)')
     .option('--no-watch', 'Build once and never restart on save')
     .option('--app <names>', 'Further narrow to these app folder names (comma-separated)')
@@ -719,16 +686,16 @@ export const buildProgram = (): Command => {
       '--no-ui-health',
       'Do not probe the frontends’ liveness (vite’s HMR ping); their rows carry no health dot (also: INFRA_KIT_NO_UI_HEALTH=1)',
     )
-    .action(async (preset, options) => {
+    .action(async (appName, options) => {
       // Lazy import so fastify/chokidar (and the whole dev stack, plus the wizard's inquirer/config
       // graph) never load on the eager cli graph — they land in a split chunk reached only for `dev`.
       const { runDevServerCli } = await import('src/entry/dev-server')
 
-      // A bare `infra-kit dev` in a TTY launches the interactive wizard; any flag/preset/pipe/--json
+      // A bare `infra-kit dev` in a TTY launches the interactive wizard; any flag/app/pipe/--json
       // runs directly. `runDevServerCli` owns that decision (see `shouldRunWizard`).
       const tty = Boolean(process.stdout.isTTY && process.stdin.isTTY)
 
-      await runDevServerCli({ ...options, preset }, tty, jsonOutput.enabled)
+      await runDevServerCli({ ...options, appName }, tty, jsonOutput.enabled)
     })
 
   // Read-only companion to `dev`: reports what dev currently has running from the on-disk dev-context

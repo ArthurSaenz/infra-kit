@@ -98,8 +98,9 @@ describe('section coverage', () => {
     // 35: `MCP server key` left — the `.mcp.json` leftover is reported by `setup` and `audit`, not doctor.
     // 36: `merge-dev resolutions` joined the project-config section.
     // 37: `claude in chrome` joined the plugin section.
-    expect(DOCTOR_CHECK_NAMES).toHaveLength(37)
-    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(37)
+    // 36: `ide installed` left with the `ide` config key.
+    expect(DOCTOR_CHECK_NAMES).toHaveLength(36)
+    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(36)
   })
 
   it('keeps the Claude Code plugin rows adjacent, in order, followed by the agent rows (O3)', () => {

@@ -13,9 +13,6 @@ vi.mock('src/lib/infra-kit-config', () => {
   return {
     getInfraKitConfig: vi.fn(),
     resetInfraKitConfigCache: vi.fn(),
-    resolveConfiguredIdes: vi.fn(() => {
-      return []
-    }),
     getInfraKitConfigPaths: vi.fn(() => {
       if (cfg.shouldThrow) {
         return Promise.reject(new Error('no repo'))

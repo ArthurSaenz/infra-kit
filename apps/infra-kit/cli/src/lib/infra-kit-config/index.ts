@@ -8,7 +8,6 @@ export {
   infraKitOverrideConfigSchema,
   resetInfraKitConfigCache,
   resetMergedConfigCache,
-  resolveConfiguredIdes,
   resolveOrcaLayout,
   resolveUserGlobalConfigPath,
   USER_CONFIG_DIR_NAME,
@@ -17,11 +16,6 @@ export {
 } from './infra-kit-config'
 export type {
   AuditRulesConfig,
-  ConfiguredIde,
-  DevAppConfig,
-  DevConfig,
-  DevPreset,
-  DevPresets,
   GetInfraKitConfigOptions,
   InfraKitConfig,
   InfraKitConfigPaths,
@@ -29,6 +23,5 @@ export type {
   McpProxySpec,
   OrcaLayout,
   ProtectedEnvsSetting,
-  ProxySource,
   VendorSourceConfig,
 } from './infra-kit-config'

@@ -300,6 +300,8 @@ const initStepSchema = z.object({
       'mcp-server',
       'mcp-proxies',
       'project-config',
+      'token-perms',
+      'chrome',
       'shell',
     ])
     .describe('Which init step this reports on'),

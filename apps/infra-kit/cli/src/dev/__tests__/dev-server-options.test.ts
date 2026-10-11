@@ -69,12 +69,12 @@ describe('toDevServerOptions — CLI flag parsing', () => {
     expect(toDevServerOptions({} satisfies DevCliOptions).livenessIntervalMs).toBeUndefined()
   })
 
-  it('passes the preset positional through', () => {
-    expect(toDevServerOptions({ preset: 'client-remote' } satisfies DevCliOptions).preset).toBe('client-remote')
+  it('passes the app positional through', () => {
+    expect(toDevServerOptions({ appName: 'client' } satisfies DevCliOptions).app).toBe('client')
   })
 
-  it('leaves preset undefined when none is given (run everything)', () => {
-    expect(toDevServerOptions({} satisfies DevCliOptions).preset).toBeUndefined()
+  it('leaves app undefined when none is given (run everything)', () => {
+    expect(toDevServerOptions({} satisfies DevCliOptions).app).toBeUndefined()
   })
 
   it('defaults orca to false when --orca is absent', () => {

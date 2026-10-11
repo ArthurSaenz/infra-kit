@@ -103,10 +103,6 @@ vi.mock('src/integrations/gh/pr-status', () => {
   return { fetchPRByHead: vi.fn() }
 })
 
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
-})
-
 vi.mock('src/integrations/jira', async (importOriginal) => {
   const actual = await importOriginal<typeof import('src/integrations/jira')>()
 

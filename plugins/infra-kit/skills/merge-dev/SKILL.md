@@ -1,6 +1,6 @@
 ---
 name: merge-dev
-description: Merge origin/dev into open release branches through infra-kit's release merge-dev, autonomously — clean merges pushed once they pass qa, real conflicts resolved and qa-verified by the agent in CLI-owned worktrees, with one human approval before any agent-resolved merge is pushed.
+description: Merge origin/dev into open release branches through infra-kit's release merge-dev, autonomously — clean merges pushed once they pass qa, real conflicts resolved, qa-verified and pushed by the agent in CLI-owned worktrees, with no human stop.
 argument-hint: [<version,...>] [--verify <cmd>]
 disable-model-invocation: true
 allowed-tools: Bash(infra-kit release list --json*)
@@ -32,18 +32,19 @@ push, the recorded-dev reclassify.
 
 ## 0. The autonomy contract
 
-The human invoking this skill is the go-ahead for the whole run. You drive it end to end without
-asking, with exactly **one** stop for the human:
+The human invoking this skill is the go-ahead for the whole run, pushes included — a merge into a
+release branch is only done once it is pushed. You drive it end to end with **no** stop for the
+human:
 
 - **Clean merges** (git merged them with no conflict) are pushed without asking, but only after the
   verify command (section 1) passes on each one. A branch that fails verify is not pushed.
 - **Conflicted branches** are handed off, resolved by you, and verified by you in a loop until
-  `--continue`'s preview is clean. Nothing you authored is pushed until the human has seen it.
-- **The one stop — approval 2 (section 6):** a single table of every resolved branch, its
-  resolution diff and its passing verify. The human's "go" pushes them all.
+  `--continue`'s preview is clean; then you commit and push them (section 6) without asking. The
+  passing verify is the gate, not a human.
 
-Do not ask which branches, do not ask before the first run, and do not stop mid-resolution to ask
-about a hunk: resolve it on your best judgement and flag it for approval 2 (section 4).
+Do not ask which branches, do not ask before the first run, do not stop mid-resolution to ask about a
+hunk, and do not ask whether to push: resolve on your best judgement, flag doubtful hunks in the
+report (section 4), and push.
 
 ## 1. Arguments and the verify command
 
@@ -124,12 +125,12 @@ Inside `worktreePath`:
 - Resolve **hunk by hunk**; on a real code conflict never take one side wholesale. Prefer keeping
   both intents: the release branch's fix and dev's change. A modify/delete conflict is resolved by
   explicitly keeping or removing the file.
-- Keep one line per file for approval 2: which side won each hunk and why.
+- Keep one line per file for the report: which side won each hunk and why.
 - **A hunk that needs a product decision** (both sides changed behaviour in incompatible ways): pick
   the reading most consistent with the release branch's purpose, and mark the file
   **⚠ needs review** with the question in one sentence. Do not stop to ask.
 
-Work through every `needs-agent` branch before approval 2; branches are independent, so one that
+Work through every `needs-agent` branch; branches are independent, so one that
 stays blocked never holds the others back.
 
 ## 5. The fix loop — `--continue` preview
@@ -154,36 +155,23 @@ exits 2 with a clean preview or a `blocked` row. Act on the code:
 **Budget:** at most **5** blocked previews per branch. On the 6th, stop that branch and report it
 blocked with the last `blocked` row — do not grind.
 
-A preview that is clean has already run `V` on that exact tree; the approved run reuses that result
+A preview that is clean has already run `V` on that exact tree; the `--yes` run reuses that result
 (`verify.reused: true`) instead of running the suite again.
 
-## 6. Approval 2 — the one stop
+## 6. Commit and push — no stop
 
-When every handed-off branch is either clean in its last preview or stopped, show the human **one**
-message:
+When every handed-off branch is either clean in its last preview or stopped, run each clean branch's
+`rerun` verbatim (`--continue --tree <branch>=<treeSha> … --yes`), batched as the CLI gave it — do
+not ask first. The CLI commits the merge, reuses the passing verify for that tree and pushes. Never
+edit a `--tree` value, and never run `--yes` on a tree whose last preview was not clean: the `--tree`
+binds the push to exactly the tree that passed verify.
 
-1. A table, one row per clean-preview branch: `diffStat`, the verify command and ✅, `lockfileMerged`
-   with `lockfileDiffStat` (`vsDev` should show only what the release branch itself added), and the
-   count of ⚠ files.
-2. Under it, per branch: your per-file lines from section 4, with every **⚠ needs review** question
-   first, and the `resolutionDiff` — hunks `rerere` pre-resolved labelled **"rerere (recorded
-   resolution)"**, never as your own work. When `resolutionDiffTruncated`, say so and give the
-   `git -C <worktreePath> diff --cached AUTO_MERGE` to read the rest.
-3. The stopped branches, one line each, so the human sees the whole run in one place.
+**`tree-changed` on that run** means the tree moved after the clean preview: preview again (it counts
+against the section 5 budget) and run the new `rerun` once it is clean. When its reason says a commit
+hook rewrote the tree, that commit is never pushable — report it with `--abort` plus a fresh hand-off.
 
-Ask once: push all, push some (they name which), or change something. On "go", run each clean
-branch's `rerun` verbatim (`--continue --tree <branch>=<treeSha> … --yes`), batched as the CLI gave
-it. Never edit a `--tree` value, and never run `--yes` for a tree the human has not seen.
-
-If the human asks for changes, edit, return to section 5, and come back here with a fresh preview —
-the new tree needs its own approval.
-
-**`tree-changed` on the approved run** means the tree moved after the human saw it: preview again
-and bring it back to approval 2. When its reason says a commit hook rewrote the approved tree, that
-commit is never pushable — report it with `--abort` plus a fresh hand-off.
-
-A **resolved** branch's `push-aborted` keeps its approved commit: the same `--continue` rerun resumes
-and pushes that commit. Run it once without asking again; report if it aborts a second time.
+A **resolved** branch's `push-aborted` keeps its commit: the same `--continue` rerun resumes and
+pushes that commit. Run it once more; report if it aborts a second time.
 
 ## 7. `--abort`
 
@@ -194,7 +182,12 @@ push or ref move.
 
 ## 8. Report
 
-End with one markdown table, one row per branch, including skipped rows:
+The report is where the human reviews your resolutions, after the push. Per resolved branch, list
+your per-file lines from section 4 with every **⚠ needs review** question first, the `diffStat`, and
+`lockfileMerged` with `lockfileDiffStat` (`vsDev` should show only what the release branch itself
+added). Label hunks `rerere` pre-resolved **"rerere (recorded resolution)"**, never as your own work.
+
+Then end with one markdown table, one row per branch, including skipped rows:
 
 | Branch           | Result               | Commit / reason                        | Next step          |
 | ---------------- | -------------------- | -------------------------------------- | ------------------ |
@@ -224,6 +217,7 @@ For a branch the hand-off cannot carry (`git-too-old`, a repeated `verify-mutate
 - Do not read exit 2 `confirmation_required`, or exit 1 with hand-off JSON, as a failure.
 - Do not edit outside `resolution.conflictPaths`, and never edit `pnpm-lock.yaml`.
 - Do not run `pnpm` in a resolution worktree while `pnpm-lock.yaml` carries conflict markers.
-- Do not run `--yes` on a `--continue` whose tree the human has not approved in section 6.
+- Do not ask whether to push — not for clean merges, not for resolved ones.
+- Do not run `--yes` on a `--continue` whose last preview was not clean.
 - Do not retry `hook-failed`, `git-too-old`, or a clean branch's `push-aborted` or verify failure.
 - Do not exceed the section 5 budget.

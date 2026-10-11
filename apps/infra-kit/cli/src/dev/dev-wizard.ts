@@ -11,7 +11,7 @@
  * include cannot express) — and is side-effect-free so the mapping is fully unit-testable. The impure
  * I/O (discovery, inquirer prompts, audit, launch) lives in {@link file://./dev-wizard-run.ts}.
  */
-import type { DevPreset, ProxySource } from 'src/lib/infra-kit-config'
+import type { DevPreset, ProxySource } from './presets.js'
 
 /**
  * One proxy route's per-route capability, carried through grouping so the wizard can decide whether it
@@ -58,7 +58,7 @@ export interface WizardApp {
   /**
    * This app's OWN `api` package name (from `apps/<app>/api`), or undefined when it has no api. Carried
    * so the audit can build a faithful `app → apiPackage` map for EVERY discovered api app — including
-   * api-only apps a frontend proxies to cross-app — mirroring the root audit (`preset-proxy-check.ts`).
+   * api-only apps a frontend proxies to cross-app.
    */
   apiPackage?: string
   /** Backends this app's frontend proxies to (empty for api-only apps or a frontend with no `dev.proxy`). */
@@ -71,8 +71,6 @@ export interface WizardApp {
 export interface WizardModel {
   /** All discovered apps (api and/or ui), sorted by name. */
   apps: WizardApp[]
-  /** `devServersPresets` names (drives the preset-or-manual step-0). */
-  presets: string[]
   /** Configured `environments` (the cloud-env `select` options). */
   environments: string[]
 }
@@ -101,7 +99,7 @@ export interface ManualSelection {
 
 /** The resolved run plan derived from a {@link ManualSelection}. */
 export interface DerivedPlan {
-  /** In-memory preset handed to the runner (`options.presetDef`). */
+  /** In-memory run plan handed to the runner (`options.presetDef`). */
   presetDef: DevPreset
   /** At least one route resolves to cloud → an env must be chosen (pre-flight gate). */
   anyCloudRoute: boolean
@@ -214,7 +212,7 @@ const frontendOverrides = (
  *   { apps: [{ name: 'client', hasApi: true, hasUi: true, backends: [{ packageName: 'client-api',
  *              cloudCapable: true, localCapable: true, ownerApp: 'client',
  *              routes: [{ path: '/api', localCapable: true, cloudCapable: true }] }] }],
- *     presets: [], environments: ['dev'] },
+ *     environments: ['dev'] },
  * ).targetKeys // => ['client/api', 'client/ui']
  */
 export const deriveManualPlan = (selection: ManualSelection, model: WizardModel): DerivedPlan => {
@@ -251,7 +249,7 @@ export const deriveManualPlan = (selection: ManualSelection, model: WizardModel)
   }
 
   return {
-    presetDef: { apps: presetApps, orca: selection.orca },
+    presetDef: { apps: presetApps },
     anyCloudRoute: anyCloud,
     targetKeys: Object.keys(presetApps).sort(),
   }

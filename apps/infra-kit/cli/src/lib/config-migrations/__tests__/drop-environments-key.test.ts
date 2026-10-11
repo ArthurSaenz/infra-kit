@@ -9,12 +9,12 @@ describe('drop-environments-key', () => {
     const { changed, result } = apply({
       envManagement: { provider: 'doppler', config: { name: 'p' } },
       environments: ['dev', 'staging'],
-      ide: { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
+      aliasRepo: 'p',
     })
 
     expect(changed).toBe(true)
     expect(result).not.toHaveProperty('environments')
-    expect(Object.keys(result)).toEqual(['envManagement', 'ide'])
+    expect(Object.keys(result)).toEqual(['envManagement', 'aliasRepo'])
     expect(result.envManagement).toEqual({ provider: 'doppler', config: { name: 'p' } })
   })
 

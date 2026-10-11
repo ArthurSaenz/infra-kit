@@ -30,57 +30,6 @@ const dopplerEnvManagementSchema = z.object({
 
 const envManagementSchema = z.discriminatedUnion('provider', [dopplerEnvManagementSchema])
 
-// ide
-// There is one attach style: each worktree is added to the configured editor's
-// workspace and opened (no per-window mode). Cursor needs a `.code-workspace`
-// path to reconcile its `folders` array against.
-// `.strict()`: a non-strict object would drop the retired `mode` key in memory and leave it on
-// disk forever. Refusing it sends the layer through the loader's migration retry, which deletes
-// it from the file.
-const cursorIdeConfigSchema = z
-  .object({
-    workspaceConfigPath: z.string().min(1),
-  })
-  .strict()
-
-const cursorIdeSchema = z
-  .object({
-    provider: z.literal('cursor'),
-    config: cursorIdeConfigSchema,
-  })
-  .strict()
-
-// Cursor is the only provider: `zed` was retired (Zed has no workspace file, so its only mutation
-// was a destructive `zed --reuse` relaunch that could never report a diff). Because this schema is
-// `.strict()`, a config that still names it is refused — `infra-kit setup` drops the entry.
-const ideSchema = z.discriminatedUnion('provider', [cursorIdeSchema])
-
-// `ide` accepts a single provider (back-compat) OR an array (the shape that
-// drove several editors at once). Normalized to an array everywhere via
-// `resolveConfiguredIdes`. Uniqueness-by-provider is enforced at parse time by a
-// `.superRefine` on the full config schema (see below) — not here, so the message
-// survives `z.union` error aggregation.
-const idesSchema = z.union([ideSchema, z.array(ideSchema).min(1)])
-
-// taskManager
-//
-// PARSED BUT NEVER READ. Nothing in this CLI consumes `config.taskManager` — every Jira call builds
-// its config from the JIRA_BASE_URL / JIRA_EMAIL / JIRA_TOKEN / JIRA_PROJECT_ID environment
-// variables (see `loadJiraConfig` in integrations/jira/api.ts). Keeping it validated is deliberate:
-// `infraKitConfigObject` is `.strict()` and `getInfraKitConfig()` runs as an unconditional guard on
-// most commands, so deleting the key would make every command throw in any consumer repo whose
-// infra-kit.json declares it. The trap it sets is real — a `projectId` here looks authoritative and
-// changing it does nothing — so the consumer-facing template carries the same warning.
-const jiraTaskManagerSchema = z.object({
-  provider: z.literal('jira'),
-  config: z.object({
-    baseUrl: z.string().url(),
-    projectId: z.number().int().positive(),
-  }),
-})
-
-const taskManagerSchema = z.discriminatedUnion('provider', [jiraTaskManagerSchema])
-
 // Orca pane layout for opened worktree workspaces. Named presets keep the config
 // typo-proof (an enum, not a free string) and let the opener switch on a single
 // value; extend the enum + the opener's switch to add a layout.
@@ -104,62 +53,9 @@ const worktreesConfigSchema = z
   })
   .strict()
 
-// dev-server per-app overrides. Maps an app folder name (e.g. `client`) to its
-// local dev port and/or URL prefix. Both keys optional. An app absent from the
-// map falls back to env (`{APP}_PORT` / `PORT`) then the built-in defaults, so
-// the map is intentionally NOT validated against the discovered apps here — an
-// unknown app name is simply ignored at resolve time (lib/dev), never a parse
-// error that would brick every command.
-const devAppConfigSchema = z
-  .object({
-    port: z.number().int().positive().optional(),
-    prefixUrl: z.string().min(1).optional(),
-  })
-  .strict()
-
-const devConfigSchema = z.record(z.string().min(1), devAppConfigSchema)
-
-// devServersPresets: named local-dev sessions, declared in the per-project infra-kit.json
-// (team presets committed; personal ones layered via the user-project override).
-// Each preset names launch targets (apps/<app>/{api,ui}), optional per-backend
-// `watchDeps`, per-route proxy-source overrides, and an `orca` layout flag; it is
-// consumed by `infra-kit dev <preset>` and resolved by src/dev/presets. Each target key
-// names exactly one workspace package (`<app>/api` or `<app>/ui`) — a bare `<app>` is a
-// folder, not a package, and is rejected. The SHAPE is strict (typos in a preset surface
-// as parse errors), but unknown app/route NAMES are intentionally NOT validated here —
-// they resolve at run time against the discovered apps, so a stale preset never bricks
-// every command.
-const proxySourceSchema = z.enum(['local', 'cloud'])
-
-const devPresetAppSchema = z
-  .object({
-    // api targets only: watch the backend's dist + shared-package subdeps and restart on change.
-    watchDeps: z.boolean().optional(),
-    // route path (e.g. `/api`) → source, overriding that route's config.ts default for this session.
-    proxy: z.record(z.string().min(1), proxySourceSchema).optional(),
-  })
-  .strict()
-
-const devPresetSchema = z
-  .object({
-    // Launch-target key — one package: `client/ui`, `client/api`, `*/api`. Omit `apps` = all.
-    apps: z.record(z.string().min(1), devPresetAppSchema).optional(),
-    // Run each launched target in its own Orca terminal (one worktree, N terminals).
-    orca: z.boolean().optional(),
-  })
-  .strict()
-
-const devPresetsSchema = z.record(z.string().min(1), devPresetSchema)
-
-// Base object shape, kept separate so `.partial()` (which only works on a plain
-// ZodObject, not the `.superRefine`-wrapped full schema) can derive the override
-// schema from it.
-//
 // `.strict()` for the same reason every leaf schema below is: this is the one config file humans
-// hand-edit, and a non-strict top level silently swallows the typo that matters most. `devServersPreset`
-// (missing `s`) or `dev-proxy` would parse clean and turn the feature off with no message. The `dev` and
-// `devServersPresets` values stay open `z.record`s — app and preset NAMES are user-chosen — so strictness
-// applies to the key set, not the contents.
+// hand-edit, and a non-strict top level silently swallows the typo that matters most. `worktree`
+// (missing `s`) or `dev-proxy` would parse clean and turn the feature off with no message.
 // GONE: `environments`. It answered three questions at once and was therefore wrong for two of them.
 // Where can I deploy? → each workflow's own `workflow_dispatch` `environment.options`, which GitHub
 // validates server-side (`lib/workflow-envs`). What can I authenticate to? → the token store
@@ -344,11 +240,7 @@ const aliasRepoSchema = z
 export const infraKitConfigObject = z
   .object({
     envManagement: envManagementSchema,
-    ide: idesSchema.optional(),
-    taskManager: taskManagerSchema.optional(),
     worktrees: worktreesConfigSchema.optional(),
-    dev: devConfigSchema.optional(),
-    devServersPresets: devPresetsSchema.optional(),
     protectedEnvs: protectedEnvsSchema.optional(),
     mcp: mcpProxiesSchema.optional(),
     vendorSource: vendorSourceSchema.nullable().optional(),
@@ -372,30 +264,7 @@ export const infraKitConfigObject = z
  */
 export const DEFAULT_DEV_PROXY_PORT = 443
 
-// Full schema = base object + a parse-time uniqueness check on the `ide` array.
-// This runs inside the *merged* `safeParse` in getInfraKitConfig, so it's the
-// gate for the final config. (The override layers use the `.partial()` form
-// below, which drops this object-level refinement — acceptable, the merged
-// parse is authoritative.)
-export const infraKitConfigSchema = infraKitConfigObject.superRefine((cfg, ctx) => {
-  if (!Array.isArray(cfg.ide)) return
-
-  const seen = new Set<string>()
-
-  for (const entry of cfg.ide) {
-    if (seen.has(entry.provider)) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'each IDE provider may appear at most once',
-        path: ['ide'],
-      })
-
-      return
-    }
-
-    seen.add(entry.provider)
-  }
-})
+export const infraKitConfigSchema = infraKitConfigObject
 
 export const infraKitOverrideConfigSchema = infraKitConfigObject.partial()
 
@@ -412,42 +281,6 @@ export type VendorSourceConfig = z.infer<typeof vendorSourceSchema>
 
 /** The root `audit` block: `audit --root` rules layered over the root baseline. */
 export type AuditRulesConfig = z.infer<typeof auditRulesSchema>
-
-/** Per-app dev-server overrides (`{ port?, prefixUrl? }`). */
-export type DevAppConfig = z.infer<typeof devAppConfigSchema>
-
-/** The full `dev` section: a map of app folder name to its {@link DevAppConfig}. */
-export type DevConfig = z.infer<typeof devConfigSchema>
-
-/** A proxy route's resolved source in a preset override (`'local' | 'cloud'`). */
-export type ProxySource = z.infer<typeof proxySourceSchema>
-
-/** A single dev preset (`{ apps?, orca? }`) from the `devServersPresets` map. */
-export type DevPreset = z.infer<typeof devPresetSchema>
-
-/** The `devServersPresets` map: preset name → {@link DevPreset}. */
-export type DevPresets = z.infer<typeof devPresetsSchema>
-
-/** A single resolved IDE entry (`{ provider, config }`). */
-export type ConfiguredIde = z.infer<typeof ideSchema>
-
-/**
- * Normalize the `ide` config (single object, array, or unset) into a flat list.
- * Validation-free: assumes already-parsed input (uniqueness is enforced by the
- * schema). The one source of truth for "which editors are configured."
- *
- * @example
- * resolveConfiguredIdes({ ide: { provider: 'cursor', config: {...} } }) // => [cursor]
- * resolveConfiguredIdes({ ide: [cursor] })                              // => [cursor]
- * resolveConfiguredIdes({})                                             // => []
- */
-export const resolveConfiguredIdes = (config: InfraKitConfig): ConfiguredIde[] => {
-  const ide = config.ide
-
-  if (!ide) return []
-
-  return Array.isArray(ide) ? ide : [ide]
-}
 
 /** An Orca pane layout preset (see {@link orcaLayouts}). */
 export type OrcaLayout = (typeof orcaLayouts)[number]
@@ -600,15 +433,15 @@ export const getInfraKitConfigPaths = async (): Promise<InfraKitConfigPaths> => 
  *   2. `~/.infra-kit/infra-kit.json`                       — user-global defaults
  *   3. `~/.infra-kit/projects/<repo-name>/infra-kit.json`  — user-scope per-project overrides
  *
- * Top-level keys (entire capability sections like `ide`, `envManagement`)
+ * Top-level keys (entire capability sections like `worktrees`, `envManagement`)
  * replace wholesale. Results are cached per file mtimes, so repeated reads in one
  * process are free and an edit is still picked up on the next call.
  *
  * @example
  * // infra-kit.json:           { "envManagement": { "provider": "doppler", "config": { "name": "p" } } }
- * // ~/.infra-kit/infra-kit.json: { "ide": { "provider": "cursor", "config": { "workspaceConfigPath": "./ws.code-workspace" } } }
+ * // ~/.infra-kit/infra-kit.json: { "worktrees": { "openInOrca": true } }
  * const cfg = await getInfraKitConfig()
- * // => { envManagement: {...}, ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } } }
+ * // => { envManagement: {...}, worktrees: { openInOrca: true } }
  * @example
  * // A reader whose stderr nobody watches: a retired key must fail as it does today, never be rewritten.
  * await getInfraKitConfig({ autoMigrate: 'off' })
@@ -830,9 +663,9 @@ export const withSetupHint = (error: Error): Error => {
  * await loadLayer({ label: '~/.infra-kit/infra-kit.json', path: '/missing.json', required: false, autoMigrate: 'write', mtimeMs: null })
  * // => null
  * @example
- * // /home/me/.infra-kit/infra-kit.json: '{ "ide": { "provider": "cursor", "config": { "workspaceConfigPath": "./ws.code-workspace" } } }'
+ * // /home/me/.infra-kit/infra-kit.json: '{ "worktrees": { "openInOrca": true } }'
  * await loadLayer({ label: '~/.infra-kit/infra-kit.json', path: '/home/me/.infra-kit/infra-kit.json', required: false, autoMigrate: 'write', mtimeMs: 1700000000000 })
- * // => { ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } } }
+ * // => { worktrees: { openInOrca: true } }
  */
 const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | null> => {
   const raw = await readIfExists(layer.path)

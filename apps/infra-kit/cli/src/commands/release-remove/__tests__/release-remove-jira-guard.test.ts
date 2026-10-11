@@ -105,10 +105,6 @@ vi.mock('src/integrations/gh/pr-status', () => {
   return { fetchPRByHead: vi.fn() }
 })
 
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
-})
-
 // Spread, so `buildJiraVersionUrl` stays real and the URL in the result is derived exactly as in
 // production; only the two lookup calls are replaced.
 vi.mock('src/integrations/jira', async (importOriginal) => {
@@ -246,7 +242,7 @@ describe('release remove — --move-issues-to', () => {
   })
 
   it('fails a typo’d target in PREFLIGHT, before the worktree is touched', async () => {
-    // Resolved in preflight rather than at step 6, so a bad target costs nothing: at step 6 the
+    // Resolved in preflight rather than at step 5, so a bad target costs nothing: at step 5 the
     // worktree, the PR and both branches would already be gone.
     const error = await releaseRemove({
       confirmedCommand: true,

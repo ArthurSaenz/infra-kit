@@ -10,7 +10,6 @@ import {
   getInfraKitConfig,
   getInfraKitConfigPaths,
   resetInfraKitConfigCache,
-  resolveConfiguredIdes,
   resolveOrcaLayout,
   vendorSourceSchema,
 } from '../infra-kit-config'
@@ -72,8 +71,6 @@ describe('getInfraKitConfig', () => {
       const cfg = await getInfraKitConfig()
 
       expect(cfg.envManagement.config.name).toBe('my-project')
-      expect(cfg.taskManager).toBeUndefined()
-      expect(cfg.ide).toBeUndefined()
     })
   })
 
@@ -93,127 +90,32 @@ describe('getInfraKitConfig', () => {
     })
   })
 
-  it('accepts ide and taskManager when provided', async () => {
+  it('rejects a config that still carries the removed `taskManager` key', async () => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
         JSON.stringify({
           envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } },
           taskManager: { provider: 'jira', config: { baseUrl: 'https://example.atlassian.net', projectId: 123 } },
         }),
       )
 
-      const cfg = await getInfraKitConfig()
-
-      const ide = resolveConfiguredIdes(cfg)[0]
-
-      if (!ide) {
-        throw new Error('expected one configured ide')
-      }
-
-      expect(ide.provider).toBe('cursor')
-
-      if (ide.provider === 'cursor') {
-        expect(ide.config.workspaceConfigPath).toBe('./ws.code-workspace')
-      }
-
-      expect(cfg.taskManager?.provider).toBe('jira')
+      await expect(getInfraKitConfig({ autoMigrate: 'off' })).rejects.toThrow(/Unrecognized key: "taskManager"/)
     })
   })
 
-  // Retired outright, not accepted-and-ignored: `infra-kit setup` rewrites the file, and the
-  // refusal has to name the field so the user knows which command to run.
-  it('refuses the retired zed ide provider', async () => {
+  it.each([
+    ['ide', { provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } }],
+    ['dev', { client: { port: 3000 } }],
+    ['devServersPresets', { shopLocal: { apps: { 'shop/ui': {} } } }],
+  ])('rejects a config that still carries the removed `%s` key', async (key, value) => {
     await withTmpRepo(async (tmp) => {
       fs.writeFileSync(
         path.join(tmp, 'infra-kit.json'),
-        JSON.stringify({
-          envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: { provider: 'zed', config: {} },
-        }),
+        JSON.stringify({ envManagement: { provider: 'doppler', config: { name: 'p' } }, [key]: value }),
       )
 
-      await expect(getInfraKitConfig({ autoMigrate: 'off' })).rejects.toThrow(/ide/)
-    })
-  })
-
-  it('refuses a legacy "mode" key rather than stripping it in memory', async () => {
-    await withTmpRepo(async (tmp) => {
-      fs.writeFileSync(
-        path.join(tmp, 'infra-kit.json'),
-        JSON.stringify({
-          envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: { provider: 'cursor', config: { mode: 'workspace', workspaceConfigPath: './ws.code-workspace' } },
-        }),
-      )
-
-      await expect(getInfraKitConfig({ autoMigrate: 'off' })).rejects.toThrow(/Unrecognized key: "mode"/)
-    })
-  })
-
-  it('accepts the array form of the ide config', async () => {
-    await withTmpRepo(async (tmp) => {
-      fs.writeFileSync(
-        path.join(tmp, 'infra-kit.json'),
-        JSON.stringify({
-          envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: [{ provider: 'cursor', config: { workspaceConfigPath: './ws.code-workspace' } }],
-        }),
-      )
-
-      const cfg = await getInfraKitConfig()
-
-      expect(
-        resolveConfiguredIdes(cfg).map((ide) => {
-          return ide.provider
-        }),
-      ).toEqual(['cursor'])
-    })
-  })
-
-  it('rejects an array with a duplicate provider at parse time', async () => {
-    await withTmpRepo(async (tmp) => {
-      fs.writeFileSync(
-        path.join(tmp, 'infra-kit.json'),
-        JSON.stringify({
-          envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: [
-            { provider: 'cursor', config: { workspaceConfigPath: './a.code-workspace' } },
-            { provider: 'cursor', config: { workspaceConfigPath: './b.code-workspace' } },
-          ],
-        }),
-      )
-
-      await expect(getInfraKitConfig()).rejects.toThrow(/each IDE provider may appear at most once/)
-    })
-  })
-
-  it('rejects an empty IDE array', async () => {
-    await withTmpRepo(async (tmp) => {
-      fs.writeFileSync(
-        path.join(tmp, 'infra-kit.json'),
-        JSON.stringify({
-          envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: [],
-        }),
-      )
-
-      await expect(getInfraKitConfig()).rejects.toThrow(/Invalid infra-kit\.json/)
-    })
-  })
-
-  it('rejects an unknown ide provider', async () => {
-    await withTmpRepo(async (tmp) => {
-      fs.writeFileSync(
-        path.join(tmp, 'infra-kit.json'),
-        JSON.stringify({
-          envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: { provider: 'vscode', config: {} },
-        }),
-      )
-
-      await expect(getInfraKitConfig()).rejects.toThrow(/Invalid infra-kit\.json/)
+      await expect(getInfraKitConfig({ autoMigrate: 'off' })).rejects.toThrow(`Unrecognized key: "${key}"`)
     })
   })
 
@@ -273,23 +175,6 @@ describe('getInfraKitConfig', () => {
       fs.writeFileSync(path.join(tmp, 'infra-kit.json'), '{ not valid json ')
 
       await expect(getInfraKitConfig()).rejects.toThrow(/Invalid JSON in infra-kit\.json/)
-    })
-  })
-
-  it('rejects cursor without workspaceConfigPath', async () => {
-    await withTmpRepo(async (tmp) => {
-      fs.writeFileSync(
-        path.join(tmp, 'infra-kit.json'),
-        JSON.stringify({
-          envManagement: { provider: 'doppler', config: { name: 'p' } },
-          ide: { provider: 'cursor', config: {} },
-        }),
-      )
-
-      // Cursor requires workspaceConfigPath; with the single|array union the
-      // inner message collapses to the union-level "Invalid input → at ide",
-      // but the config is still rejected (which is what matters).
-      await expect(getInfraKitConfig()).rejects.toThrow(/Invalid infra-kit\.json/)
     })
   })
 
@@ -635,42 +520,6 @@ describe('merged-config cache key (cwd/homedir collision safety)', () => {
       fs.rmSync(rootA, { recursive: true, force: true })
       fs.rmSync(rootB, { recursive: true, force: true })
     }
-  })
-})
-
-describe('resolveConfiguredIdes', () => {
-  const base = {
-    envManagement: { provider: 'doppler', config: { name: 'p' } },
-  } as InfraKitConfig
-
-  it('wraps a single ide object in an array', () => {
-    const cfg = {
-      ...base,
-      ide: { provider: 'cursor', config: { workspaceConfigPath: 'ws' } },
-    } as InfraKitConfig
-
-    expect(
-      resolveConfiguredIdes(cfg).map((ide) => {
-        return ide.provider
-      }),
-    ).toEqual(['cursor'])
-  })
-
-  it('returns an ide array as-is', () => {
-    const cfg = {
-      ...base,
-      ide: [{ provider: 'cursor', config: { workspaceConfigPath: 'ws' } }],
-    } as InfraKitConfig
-
-    expect(
-      resolveConfiguredIdes(cfg).map((ide) => {
-        return ide.provider
-      }),
-    ).toEqual(['cursor'])
-  })
-
-  it('returns an empty array when ide is unset', () => {
-    expect(resolveConfiguredIdes(base)).toEqual([])
   })
 })
 

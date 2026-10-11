@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
 import { getReleasePRs } from 'src/integrations/gh'
-import { removeIdeWorktreeFolders } from 'src/integrations/ide'
 import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
@@ -39,10 +38,6 @@ vi.mock('src/lib/worktrees', async (importOriginal) => {
   return { ...actual, removeWorktrees: vi.fn() }
 })
 
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
-})
-
 vi.mock('src/integrations/gh', () => {
   return { getReleasePRs: vi.fn() }
 })
@@ -73,7 +68,6 @@ beforeEach(() => {
   vi.mocked(getProjectRoot).mockResolvedValue(PROJECT_ROOT)
   agentMode.source = null
   vi.mocked(removeWorktrees).mockResolvedValue({ removed: [], failed: [] })
-  vi.mocked(removeIdeWorktreeFolders).mockResolvedValue([])
 })
 
 describe('worktrees-sync failure report', () => {
@@ -101,7 +95,6 @@ describe('worktrees-sync failure report', () => {
     expect(thrown).toBeInstanceOf(OperationError)
     expect((thrown as Error).message).toMatch(/release\/v1\.2\.5/)
     expect((thrown as Error).message).not.toMatch(/gh auth status/)
-    expect(removeIdeWorktreeFolders).toHaveBeenCalledTimes(1)
   })
 
   // The handler THROWS on the agent surface; it is the tool handler (`lib/tool-handler`) that renders

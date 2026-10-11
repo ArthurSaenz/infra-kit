@@ -25,7 +25,7 @@ import { ranCommand } from './release-remove-zx'
  * in (or short-circuited with) the confirm text would silently vanish on the flag every scripted
  * invocation passes.
  *
- * The third is the re-probe in `closePrStep`. Preflight's answer is separated from step 3 by an
+ * The third is the re-probe in `closePrStep`. Preflight's answer is separated from step 2 by an
  * interactive confirm of unbounded duration, so a PR merged inside that window would otherwise
  * surface as an opaque `gh pr close` failure AFTER the worktree was already removed. `fetchPRByHead`
  * therefore answers OPEN once and MERGED on the re-probe, and the test asserts both that the refusal
@@ -93,10 +93,6 @@ vi.mock('src/integrations/gh', () => {
 // `fetchPRByHead` run `gh pr list` during an earlier draft of this suite.
 vi.mock('src/integrations/gh/pr-status', () => {
   return { fetchPRByHead: vi.fn() }
-})
-
-vi.mock('src/integrations/ide', () => {
-  return { removeIdeWorktreeFolders: vi.fn() }
 })
 
 // Spread, so `buildJiraVersionUrl` stays real and the URL in the result is derived exactly as in
@@ -177,7 +173,7 @@ describe('release remove — MERGED PR refusal at preflight', () => {
   })
 })
 
-describe('release remove — MERGED between preflight and step 3', () => {
+describe('release remove — MERGED between preflight and step 2', () => {
   it('is refused by the re-probe with D3 text, not by an opaque `gh pr close` failure', async () => {
     // Preflight sees OPEN; the re-probe inside `closePrStep` sees the merge that landed during the
     // confirm. `mockResolvedValueOnce` is what makes the two answers distinguishable.
@@ -195,7 +191,7 @@ describe('release remove — MERGED between preflight and step 3', () => {
     expect(ranCommand(zx, 'gh pr close')).toBe(false)
     expect(fetchPRByHead).toHaveBeenCalledTimes(2)
 
-    // Everything after step 3 is unreached, so both branches and the fix version survive.
+    // Everything after step 2 is unreached, so both branches and the fix version survive.
     expect(deleteLocalBranch).not.toHaveBeenCalled()
     expect(deleteRemoteBranch).not.toHaveBeenCalled()
     expect(removeJiraVersion).not.toHaveBeenCalled()
@@ -212,8 +208,8 @@ describe('release remove — MERGED between preflight and step 3', () => {
 
     const { message } = error as Error
 
-    expect(message).toContain('step 3 of 6 (close the PR)')
-    expect(message).toContain('completed: worktree, ide-folders')
+    expect(message).toContain('step 2 of 5 (close the PR)')
+    expect(message).toContain('completed: worktree.')
     expect(message).toContain('The Jira fix version v1.2.5 was NOT removed')
     expect(message).toContain('Re-run `infra-kit release remove')
   })
