@@ -58,10 +58,8 @@ const planServices = (config: DeployConfig, kind: WorkflowKind): PlannedService[
   return Object.entries(config.services).flatMap(([name, service]) => {
     if (kind === 'all' && service.deployAll === false) return []
 
-    if (service.envs === undefined) return [{ name, service, gate: undefined }]
-
     const allowed = config.environments.filter((env) => {
-      return service.envs?.includes(env)
+      return (service.envs?.includes(env) ?? true) && !(service.skipEnvs?.includes(env) ?? false)
     })
 
     if (allowed.length === 0) return []

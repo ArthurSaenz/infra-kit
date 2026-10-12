@@ -23,6 +23,8 @@ const secretName = z.string().regex(/^[A-Z_][A-Z0-9_]*$/, 'must be an upper-case
 export const deployServiceSchema = z.strictObject({
   /** The only environments this service deploys to. Omitted = every environment. */
   envs: z.array(kebabName).nonempty().optional(),
+  /** Environments this service never deploys to; every other one is allowed. Exclusive with `envs`. */
+  skipEnvs: z.array(kebabName).nonempty().optional(),
   /** GitHub runner label. Omitted = the shared job's default (`ubuntu-24.04-arm`). */
   runner: z
     .string()
@@ -55,6 +57,12 @@ export const deployConfigSchema = z
   .superRefine((config, ctx) => {
     if (Object.keys(config.services).length === 0) {
       ctx.addIssue({ code: 'custom', path: ['services'], message: 'declare at least one service' })
+    }
+
+    for (const [name, service] of Object.entries(config.services)) {
+      if (service.envs !== undefined && service.skipEnvs !== undefined) {
+        ctx.addIssue({ code: 'custom', path: ['services', name], message: 'set envs or skipEnvs, not both' })
+      }
     }
 
     if (config.defaultEnvironment !== undefined && !config.environments.includes(config.defaultEnvironment)) {

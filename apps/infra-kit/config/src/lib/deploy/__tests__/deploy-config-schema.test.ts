@@ -15,6 +15,7 @@ describe('deployConfigSchema', () => {
       defaultEnvironment: 'stage',
       services: {
         'client-fe': { runner: 'macos-14', envs: ['dev'] },
+        'docs-fe': { skipEnvs: ['stage', 'prod'] },
         media: { workflow: '_deploy-media-jobs.yml', deployAll: false },
       },
       terraform: ['_terraform-apply-infrastructure-jobs.yml'],
@@ -30,6 +31,12 @@ describe('deployConfigSchema', () => {
     expect(deployConfigSchema.safeParse({ ...minimal, services: { 'client-be': { env: ['dev'] } } }).success).toBe(
       false,
     )
+  })
+
+  it('rejects envs and skipEnvs on one service', () => {
+    const services = { 'docs-fe': { envs: ['dev'], skipEnvs: ['stage'] } }
+
+    expect(deployConfigSchema.safeParse({ ...minimal, services }).success).toBe(false)
   })
 
   it('rejects a manifest without services', () => {

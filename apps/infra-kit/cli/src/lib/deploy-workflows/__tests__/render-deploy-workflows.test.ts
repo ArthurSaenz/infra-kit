@@ -32,7 +32,7 @@ const MANIFEST: DeployConfig = {
   services: {
     'client-be': {},
     'client-fe': { runner: 'macos-14' },
-    'docs-fe': { envs: ['dev', 'arthur'] },
+    'docs-fe': { skipEnvs: ['stage', 'prod'] },
     mobile: { envs: ['dev', 'prod'], runner: 'macos-14' },
     'prod-only': { envs: ['prod'] },
     media: { workflow: '_deploy-media-jobs.yml', deployAll: false },
