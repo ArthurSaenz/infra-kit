@@ -1,0 +1,53 @@
+import { describe, expect, it } from 'vitest'
+
+import { deployConfigSchema } from '../deploy-config-schema'
+
+const minimal = { environments: ['dev', 'stage'], services: { 'client-be': {} } }
+
+describe('deployConfigSchema', () => {
+  it('accepts a minimal manifest', () => {
+    expect(deployConfigSchema.safeParse(minimal).success).toBe(true)
+  })
+
+  it('accepts every per-service option', () => {
+    const result = deployConfigSchema.safeParse({
+      ...minimal,
+      defaultEnvironment: 'stage',
+      services: {
+        'client-fe': { runner: 'macos-14', envs: ['dev'] },
+        media: { workflow: '_deploy-media-jobs.yml', deployAll: false },
+      },
+      terraform: ['_terraform-apply-infrastructure-jobs.yml'],
+      notifySuccess: '_notify-success-jobs.yml',
+      extraEnv: ['MONITORING_IP'],
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects an unknown key, so a typo is never silently ignored', () => {
+    expect(deployConfigSchema.safeParse({ ...minimal, enviroments: ['dev'] }).success).toBe(false)
+    expect(deployConfigSchema.safeParse({ ...minimal, services: { 'client-be': { env: ['dev'] } } }).success).toBe(
+      false,
+    )
+  })
+
+  it('rejects a manifest without services', () => {
+    expect(deployConfigSchema.safeParse({ ...minimal, services: {} }).success).toBe(false)
+  })
+
+  it('rejects a default environment that is not offered', () => {
+    expect(deployConfigSchema.safeParse({ ...minimal, defaultEnvironment: 'prod' }).success).toBe(false)
+  })
+
+  it('rejects names that cannot become job ids, input keys or secret names', () => {
+    expect(deployConfigSchema.safeParse({ ...minimal, services: { Client_BE: {} } }).success).toBe(false)
+    expect(deployConfigSchema.safeParse({ ...minimal, environments: ['Dev'] }).success).toBe(false)
+    expect(deployConfigSchema.safeParse({ ...minimal, extraEnv: ['monitoring-ip'] }).success).toBe(false)
+  })
+
+  it('rejects a workflow reference that is a path rather than a file name', () => {
+    expect(deployConfigSchema.safeParse({ ...minimal, terraform: ['../x.yml'] }).success).toBe(false)
+    expect(deployConfigSchema.safeParse({ ...minimal, notifySuccess: 'other/_n.yml' }).success).toBe(false)
+  })
+})

@@ -8,6 +8,7 @@ import { configEdit, configPath } from 'src/commands/config'
 import { configGet } from 'src/commands/config-get'
 import { configSet } from 'src/commands/config-set'
 import { configUnset } from 'src/commands/config-unset'
+import { deploySync } from 'src/commands/deploy-sync'
 import { devStatus } from 'src/commands/dev-status'
 import { doctor, printDoctorReport } from 'src/commands/doctor'
 import { e2e } from 'src/commands/e2e'
@@ -619,6 +620,20 @@ export const buildProgram = (): Command => {
       })
 
       if (!allPassed || anyWriteFailed) {
+        process.exitCode = 1
+      }
+    })
+
+  program
+    .command('deploy-sync')
+    .description('Generate the deploy-all / deploy-selected workflows from infra-kit.deploy.ts')
+    .option('--check', 'Compare only; exit 1 when the committed workflows differ from the manifest')
+    .action(async (options) => {
+      const result = await deploySync({ check: options.check })
+
+      emit(result)
+
+      if (!result.structuredContent.ok) {
         process.exitCode = 1
       }
     })

@@ -1,0 +1,201 @@
+/* eslint-disable no-template-curly-in-string -- the expected YAML holds literal GitHub `${{ }}` expressions */
+import type { DeployConfig } from '@slip-stream-kit/config/internal'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { describe, expect, it } from 'vitest'
+import yaml from 'yaml'
+
+import { readWorkflowGates } from 'src/lib/workflow-gates'
+
+import { SHARED_DEPLOY_JOB, renderDeployWorkflows } from '../render-deploy-workflows'
+
+interface Job {
+  needs?: string[]
+  if?: string
+  uses: string
+  with?: Record<string, unknown>
+  secrets?: Record<string, string> | 'inherit'
+}
+
+interface Workflow {
+  name: string
+  concurrency: { group: string }
+  on: { workflow_dispatch: { inputs: Record<string, { type: string; default?: unknown; options?: string[] }> } }
+  jobs: Record<string, Job>
+}
+
+/** Shaped like travelist: a macOS service, an env-gated one, a local-workflow one kept out of deploy-all. */
+const MANIFEST: DeployConfig = {
+  environments: ['dev', 'arthur', 'stage'],
+  defaultEnvironment: 'arthur',
+  services: {
+    'client-be': {},
+    'client-fe': { runner: 'macos-14' },
+    'docs-fe': { envs: ['dev', 'arthur'] },
+    mobile: { envs: ['dev', 'prod'], runner: 'macos-14' },
+    'prod-only': { envs: ['prod'] },
+    media: { workflow: '_deploy-media-jobs.yml', deployAll: false },
+  },
+  terraform: ['_terraform-apply-initUser-jobs.yml', '_terraform-apply-infrastructure-jobs.yml'],
+  notifySuccess: '_notify-success-jobs.yml',
+  extraEnv: ['MONITORING_IP', 'TOKEN_FLUX_DB'],
+}
+
+const render = (config: DeployConfig = MANIFEST) => {
+  const [all, selected] = renderDeployWorkflows(config).map((workflow) => {
+    return { ...workflow, parsed: yaml.parse(workflow.content) as Workflow }
+  })
+
+  return { all: all!, selected: selected! }
+}
+
+describe('renderDeployWorkflows', () => {
+  it('writes the deploy-all and deploy-selected v2 files', () => {
+    const { all, selected } = render()
+
+    expect(all.path).toBe('.github/workflows/deploy-all-v2.yml')
+    expect(selected.path).toBe('.github/workflows/deploy-selected-v2.yml')
+    expect(all.parsed.concurrency.group).toBe('deploy-all-${{ inputs.environment }}')
+    expect(selected.parsed.concurrency.group).toBe('deploy-selected-${{ inputs.environment }}')
+  })
+
+  it('offers one checkbox per selectable service, plus the environment and the terraform skip', () => {
+    const { all, selected } = render()
+    const inputs = selected.parsed.on.workflow_dispatch.inputs
+
+    expect(Object.keys(inputs)).toEqual([
+      'environment',
+      'skip_terraform_deploy',
+      'client-be',
+      'client-fe',
+      'docs-fe',
+      'mobile',
+      'media',
+    ])
+    expect(inputs.environment).toMatchObject({ default: 'arthur', options: ['dev', 'arthur', 'stage'] })
+    expect(Object.keys(all.parsed.on.workflow_dispatch.inputs)).toEqual(['environment', 'skip_terraform_deploy'])
+  })
+
+  it('drops a service none of the offered environments may receive, and deployAll: false from deploy-all', () => {
+    const { all, selected } = render()
+
+    expect(Object.keys(selected.parsed.jobs)).not.toContain('deploy-prod-only')
+    expect(Object.keys(all.parsed.jobs)).not.toContain('deploy-media')
+    expect(Object.keys(selected.parsed.jobs)).toContain('deploy-media')
+  })
+
+  it('gates a service to the offered subset of its environments', () => {
+    const { selected } = render()
+
+    expect(selected.parsed.jobs['deploy-docs-fe']!.if).toContain(
+      `contains(fromJSON('["dev","arthur"]'), inputs.environment)`,
+    )
+    expect(selected.parsed.jobs['deploy-mobile']!.if).toContain(`contains(fromJSON('["dev"]'), inputs.environment)`)
+    expect(selected.parsed.jobs['deploy-client-be']!.if).not.toContain('fromJSON')
+    expect(selected.parsed.on.workflow_dispatch.inputs.mobile).toMatchObject({ type: 'boolean' })
+  })
+
+  it('runs a service only when ticked and terraform succeeded or was skipped', () => {
+    const { all, selected } = render()
+    const job = selected.parsed.jobs['deploy-client-be']!
+
+    expect(job.needs).toEqual(['terraform-apply-initUser', 'terraform-apply-infrastructure'])
+    expect(job.if).toMatch(/^\$\{\{ inputs\.client-be && !cancelled\(\) && /)
+    expect(job.if).toContain(`needs.terraform-apply-infrastructure.result == 'skipped'`)
+    expect(all.parsed.jobs['deploy-client-be']!.if).not.toContain('inputs.client-be')
+  })
+
+  it('sends script services to the pinned shared job with their runner and the explicit secrets', () => {
+    const { selected } = render()
+    const job = selected.parsed.jobs['deploy-client-fe']!
+
+    expect(job.uses).toBe(SHARED_DEPLOY_JOB)
+    expect(job.with).toEqual({
+      environment: '${{ inputs.environment }}',
+      ref: '${{ github.ref }}',
+      service: 'client-fe',
+      runner: 'macos-14',
+    })
+    expect(job.secrets).toMatchObject({
+      'aws-region': "${{ secrets[format('{0}_AWS_REGION', inputs.environment)] }}",
+      'extra-env': 'MONITORING_IP=${{ secrets.MONITORING_IP }}\nTOKEN_FLUX_DB=${{ secrets.TOKEN_FLUX_DB }}\n',
+    })
+    expect(selected.parsed.jobs['deploy-client-be']!.with).not.toHaveProperty('runner')
+  })
+
+  it('sends a workflow service to its own reusable workflow', () => {
+    const { selected } = render()
+
+    expect(selected.parsed.jobs['deploy-media']).toMatchObject({
+      uses: './.github/workflows/_deploy-media-jobs.yml',
+      with: { branch: '${{ github.ref }}', environment: '${{ inputs.environment }}' },
+      secrets: 'inherit',
+    })
+  })
+
+  it('notifies success only after a deploy succeeded and none failed', () => {
+    const { all } = render()
+    const notify = all.parsed.jobs['notify-success']!
+
+    expect(notify.needs).toEqual(['deploy-client-be', 'deploy-client-fe', 'deploy-docs-fe', 'deploy-mobile'])
+    expect(notify.if).toBe(
+      "${{ !cancelled() && contains(needs.*.result, 'success') && !contains(needs.*.result, 'failure') }}",
+    )
+  })
+
+  it('emits no terraform jobs, skip input or needs without terraform', () => {
+    const { selected } = render({ environments: ['dev'], services: { 'client-be': {} } })
+
+    expect(Object.keys(selected.parsed.on.workflow_dispatch.inputs)).toEqual(['environment', 'client-be'])
+    expect(selected.parsed.jobs['deploy-client-be']).not.toHaveProperty('needs')
+    expect(selected.parsed.jobs['deploy-client-be']!.if).toBe('${{ inputs.client-be }}')
+    expect(selected.content).not.toContain('skip TF')
+  })
+
+  it('renders the same bytes for the same manifest', () => {
+    expect(renderDeployWorkflows(MANIFEST)).toEqual(renderDeployWorkflows(structuredClone(MANIFEST)))
+  })
+
+  it('refuses a deploy-selected that would exceed the dispatch input limit', () => {
+    const services = Object.fromEntries(
+      Array.from({ length: 24 }, (_, index) => {
+        return [`svc-${index}`, {}]
+      }),
+    )
+
+    expect(() => {
+      return renderDeployWorkflows({ environments: ['dev'], services, terraform: ['_tf.yml'] })
+    }).toThrow(/26 dispatch inputs/)
+  })
+
+  // The CLI unions env gates across EVERY workflow in the repo; the generated files must add none, or
+  // `release deploy-*` would start refusing what v1 still deploys.
+  it('adds nothing to what the workflow-gates reader sees', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'deploy-sync-gates-'))
+    const dir = path.join(repo, '.github/workflows')
+
+    await fs.mkdir(dir, { recursive: true })
+
+    const v1 = `jobs:
+  deploy-mobile:
+    if: \${{ github.event.inputs.environment == 'dev' }}
+    uses: ./.github/workflows/_deploy-serverless-jobs.yml
+    with:
+      script_name: mobile
+`
+
+    await fs.writeFile(path.join(dir, 'deploy-selected-services.yml'), v1)
+
+    const before = await readWorkflowGates(repo)
+
+    for (const workflow of renderDeployWorkflows(MANIFEST)) {
+      await fs.writeFile(path.join(repo, workflow.path), workflow.content)
+      expect(workflow.content).not.toMatch(/inputs\.environment\s*==/)
+    }
+
+    expect(await readWorkflowGates(repo)).toEqual(before)
+
+    await fs.rm(repo, { recursive: true, force: true })
+  })
+})

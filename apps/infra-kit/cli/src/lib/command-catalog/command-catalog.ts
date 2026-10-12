@@ -482,6 +482,16 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mutating: true,
     groupPath: ['vendor', 'sync'],
   },
+  // Generates the repo's deploy workflows from infra-kit.deploy.ts. No palette row: a bare pick would
+  // rewrite tracked files from the menu, and the command is run beside an edit of the manifest anyway.
+  {
+    cliName: 'deploy-sync',
+    menuGroup: null,
+    mcpTool: null,
+    mcpExposed: false,
+    mutating: true,
+    groupPath: ['deploy-sync'],
+  },
 
   // --- Setup & Diagnostics (menu group) ---
   // `doctor` checks the machine; `audit` checks the REPO against its config rules. Both answer "is this
@@ -622,6 +632,9 @@ export const LOW_RISK_MUTATING_ALLOWLIST: readonly string[] = [
   // Rewrites only clean tracked vendor paths in local target checkouts (dirty ones block the target) and at
   // most commits locally; never pushes, so git undoes it. Still previews, and an agent applies only with `--yes`.
   'vendor-sync',
+  // Rewrites only the two generated workflow files in the working tree; never commits or pushes, so
+  // git undoes it, and `--check` is the read-only form.
+  'deploy-sync',
   // Writes dev-context fragments and portless routes under ~/.infra-kit and runs local servers in the
   // foreground until Ctrl-C; no remote/git effect.
   'dev',

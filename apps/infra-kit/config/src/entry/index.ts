@@ -7,6 +7,10 @@
 // actually be global. Splitting the config surface out is what makes `npm i -g infra-kit` real.
 //
 // Keep this entry minimal, and use relative imports so the emitted .d.ts stays portable.
+
+// Deploy manifest authoring (`infra-kit.deploy.ts`, read by `infra-kit deploy-sync`).
+export { defineDeployConfig } from '../lib/deploy/deploy-config-schema'
+export type { DeployConfig, DeployService } from '../lib/deploy/deploy-config-schema'
 export { defineConfig } from '../lib/package-config/package-config'
 export type {
   InfraKitDev,
