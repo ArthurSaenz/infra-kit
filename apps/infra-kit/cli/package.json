@@ -1,7 +1,7 @@
 {
   "name": "infra-kit",
   "type": "module",
-  "version": "0.18.1",
+  "version": "0.19.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ArthurSaenz/infra-kit.git",
