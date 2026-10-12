@@ -1,0 +1,130 @@
+# Shared deploy job for consumer monorepos (hulyo, travelist): one service, one environment, by running
+# the consumer's own `devops/scripts/deploy-<service>.sh`. This is the v2 pilot that runs IN PARALLEL with
+# each repo's `_deploy-serverless-jobs.yml`; the scripts stay the deploy, only the job around them moves here.
+#
+# Called cross-org, so `secrets: inherit` is unavailable and every secret is passed explicitly:
+# https://docs.github.com/en/actions/sharing-automations/reusing-workflows#passing-secrets-to-nested-workflows
+# Callers pin this file by commit SHA.
+name: ik-deploy-service
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      ref:
+        required: true
+        type: string
+      service:
+        description: 'Script suffix: runs devops/scripts/deploy-<service>.sh'
+        required: true
+        type: string
+      runner:
+        required: false
+        type: string
+        default: ubuntu-24.04-arm
+      timeout-minutes:
+        description: 'A timed-out step fails and keeps its logs; a cancelled job loses them'
+        required: false
+        type: number
+        default: 25
+    secrets:
+      aws-access-key-id:
+        required: true
+      aws-secret-access-key:
+        required: true
+      aws-region:
+        required: true
+      serverless-access-key:
+        required: false
+      slack-token:
+        required: false
+      slack-channel:
+        required: false
+      extra-env:
+        description: 'KEY=VALUE lines exported to the deploy step (repo-specific secrets such as MONITORING_IP)'
+        required: false
+
+permissions: {}
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.service }}
+    runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+    env:
+      TURBO_TELEMETRY_DISABLED: 1
+      # The build contract the scripts never set themselves: without VITE_DOMAIN_ENV the UIs fall back
+      # to the prod domain.
+      VITE_DOMAIN_ENV: ${{ inputs.environment }}
+      VITE_BRANCH_NAME: ${{ inputs.ref }}
+      VITE_COMMIT_HASH: ${{ github.sha }}
+      SLACK_ENABLED: ${{ secrets.slack-token != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up AWS CLI
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-access-key-id: ${{ secrets.aws-access-key-id }}
+          aws-secret-access-key: ${{ secrets.aws-secret-access-key }}
+          aws-region: ${{ secrets.aws-region }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Use Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .node-version
+          cache: 'pnpm'
+
+      - name: Export extra env
+        env:
+          EXTRA_ENV: ${{ secrets.extra-env }}
+        run: |
+          [ -z "$EXTRA_ENV" ] && exit 0
+          printf '%s\n' "$EXTRA_ENV" | while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            key="${line%%=*}"
+            if ! printf '%s' "$key" | grep -Eq '^[A-Z_][A-Z0-9_]*$'; then
+              echo "::error::extra-env line is not KEY=VALUE with an upper-case KEY"
+              exit 1
+            fi
+            delimiter="EOF_$(openssl rand -hex 8)"
+            printf '%s<<%s\n%s\n%s\n' "$key" "$delimiter" "${line#*=}" "$delimiter" >> "$GITHUB_ENV"
+          done
+
+      - name: Deploy application
+        timeout-minutes: ${{ inputs.timeout-minutes }}
+        env:
+          SERVICE: ${{ inputs.service }}
+          SERVERLESS_ACCESS_KEY: ${{ secrets.serverless-access-key }}
+        # `sh`, not `bash`: the v1 jobs run the scripts this way and the pilot must behave identically.
+        run: |
+          if ! printf '%s' "$SERVICE" | grep -Eq '^[a-z0-9-]+$'; then
+            echo "::error::service must match ^[a-z0-9-]+$"
+            exit 1
+          fi
+          script="./devops/scripts/deploy-${SERVICE}.sh"
+          if [ ! -f "$script" ]; then
+            echo "::error::$script does not exist on this ref"
+            exit 1
+          fi
+          sh "$script"
+
+      - name: Notify on failure
+        if: failure() && env.SLACK_ENABLED == 'true'
+        uses: rtCamp/action-slack-notify@33ca3be66c6f378fe1610fd1d5258632dbed5e58 # v2.4.0
+        env:
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_MESSAGE: '[deploy-v2] Deploy failed for ${{ inputs.service }} to ${{ inputs.environment }} - ${{ github.ref_name }} by ${{ github.actor }}'
+          SLACK_CHANNEL: ${{ secrets.slack-channel }}
+          SLACK_TOKEN: ${{ secrets.slack-token }}
