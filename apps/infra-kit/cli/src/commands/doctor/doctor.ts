@@ -49,6 +49,8 @@ import { probeOrca } from 'src/integrations/orca'
 import { inspectPackageGuidance, readGuidanceFile } from 'src/lib/agent-guidance'
 import { agentMode, resolveAgentModeSource } from 'src/lib/agent-mode'
 import type { ResolveAgentModeInput } from 'src/lib/agent-mode'
+import { autoSetupLogPath, readAutoSetupRecord } from 'src/lib/auto-setup/record'
+import type { AutoSetupRecord } from 'src/lib/auto-setup/record'
 import { checkClaudeInChrome } from 'src/lib/claude-chrome'
 import type { ChromeCheckDeps } from 'src/lib/claude-chrome'
 import { describeOverrides, readOverrideSummary } from 'src/lib/config-overrides'
@@ -1106,6 +1108,56 @@ export const checkClaudePlugin = (root: string | null, origin?: DoctorOrigin): C
     claudePluginServerCheck(inspectServedPluginServer(state)),
     { name: 'CLI version', status: 'pass', message: `infra-kit CLI ${packageJson.version}` },
   ]
+}
+
+/**
+ * The `background setup` row: what the last `setup --auto` pass did. Advisory in every state — a pass
+ * that left work behind is `warn`, never `fail`, because the machine still works and `infra-kit setup`
+ * is the fix; a pass that has not run for this version yet is `skip`, since it runs on its own.
+ *
+ * @example
+ * checkAutoSetup(null, '0.19.0') // => { name: 'background setup', status: 'skip', message: 'not run yet — …' }
+ */
+export const checkAutoSetup = (record: AutoSetupRecord | null, version: string): CheckResult => {
+  const name = 'background setup'
+
+  if (record === null) {
+    return { name, status: 'skip', message: 'not run yet — it runs after the next background update check' }
+  }
+
+  if (record.version !== version) {
+    return {
+      name,
+      status: 'skip',
+      message: `last ran for ${record.version}; runs for ${version} after the next background update check`,
+    }
+  }
+
+  if (record.finishedMs === null) {
+    return { name, status: 'skip', message: `a pass for ${version} is running, or was interrupted and will be retried` }
+  }
+
+  const left = record.runs.filter((run) => {
+    return run.status !== 'ok'
+  })
+
+  if (left.length === 0) {
+    return {
+      name,
+      status: 'pass',
+      message: `ran for ${version} on the machine and ${record.runs.length - 1} project(s)`,
+    }
+  }
+
+  return {
+    name,
+    status: 'warn',
+    message: `${left.length} run(s) left work for you (${left
+      .map((run) => {
+        return `${run.root ?? 'machine'}: ${run.status}`
+      })
+      .join(', ')}) — see ${tildify(autoSetupLogPath())}, or run: infra-kit setup`,
+  }
 }
 
 /** The raw inputs, spelled out so a pasted row explains its own verdict. */
@@ -2320,6 +2372,7 @@ export const doctor = async (
     ...portlessChecks,
     ...(await checkAgentFiles()),
     ...pluginChecks,
+    checkAutoSetup(readAutoSetupRecord(), packageJson.version),
   ]
 
   // NO rendering here, deliberately. `--json` must be one document on stdout with nothing human mixed

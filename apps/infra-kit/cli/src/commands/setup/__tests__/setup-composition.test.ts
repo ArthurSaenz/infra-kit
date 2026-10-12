@@ -10,6 +10,7 @@ import { runRecipe } from 'src/lib/dependency-install'
 import type { InstallOutcome } from 'src/lib/dependency-install'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
 import { logger } from 'src/lib/logger'
+import { trackedWrites } from 'src/lib/tracked-writes'
 
 import { captureStderr, noPortless, reportLines, stderrLines } from './setup-stderr'
 
@@ -242,6 +243,41 @@ describe('--skip-tools installs nothing, and cannot be talked into installing so
     )
 
     expect(vi.mocked(runRecipe)).not.toHaveBeenCalled()
+  })
+
+  // Reds on: an unattended run that converges tools, or that runs the init half with tracked writes allowed.
+  it('--unattended implies --skip-tools and withholds tracked writes for the init half', async () => {
+    let withheldDuringInit: boolean | null = null
+
+    vi.mocked(initCore).mockImplementationOnce(async () => {
+      withheldDuringInit = trackedWrites.withheld
+
+      return []
+    })
+
+    const { structuredContent } = await setup({ probeDeps: brewAndGhInstalled(), unattended: true })
+
+    expect(withheldDuringInit).toBe(true)
+    expect(vi.mocked(runRecipe)).not.toHaveBeenCalled()
+    expect(structuredContent.converged).toBe(false)
+  })
+
+  it('an interactive setup after an unattended one writes tracked files again', async () => {
+    await setup({ probeDeps: brewAndGhInstalled(), unattended: true })
+    await setup({ probeDeps: brewAndGhInstalled(), skipTools: true })
+
+    expect(trackedWrites.withheld).toBe(false)
+  })
+
+  it('refuses --unattended with --tools or --update, before the init half runs', async () => {
+    await expect(setup({ probeDeps: brewAndGhInstalled(), unattended: true, tools: ['gh'] })).rejects.toThrow(
+      /--unattended cannot be combined/,
+    )
+    await expect(setup({ probeDeps: brewAndGhInstalled(), unattended: true, update: true })).rejects.toThrow(
+      /--unattended cannot be combined/,
+    )
+
+    expect(vi.mocked(initCore)).not.toHaveBeenCalled()
   })
 
   /**

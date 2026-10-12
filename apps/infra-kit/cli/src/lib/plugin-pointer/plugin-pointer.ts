@@ -49,13 +49,14 @@ export const MARKETPLACE_ADD_COMMAND = `claude plugin marketplace add ${MARKETPL
 const DEFAULT_INDENT = '  '
 
 /** What `ensurePluginPointer` did. `unparseable` is the only outcome that wrote nothing on purpose. */
-export type PluginPointerStatus = 'added' | 'created' | 'unchanged' | 'unparseable'
+/** `withheld`: keys are missing, but the caller asked for no write — `added` lists what a write would add. */
+export type PluginPointerStatus = 'added' | 'created' | 'unchanged' | 'unparseable' | 'withheld'
 
 export interface PluginPointerResult {
   status: PluginPointerStatus
   /** The settings file that was inspected (written only for `added` / `created`). */
   path: string
-  /** Dotted paths of the keys this run added, in insertion order. Empty for every other status. */
+  /** Dotted paths of the keys this run added (or, when `withheld`, would add), in insertion order. Empty otherwise. */
   added: readonly string[]
 }
 
@@ -155,10 +156,17 @@ const createSettingsFile = (settingsPath: string): PluginPointerResult => {
  * // first run:  { status: 'added', added: ['extraKnownMarketplaces.infra-kit', 'enabledPlugins.infra-kit@infra-kit'] }
  * // second run: { status: 'unchanged', added: [] }  — no write, mtime untouched
  */
-export const ensurePluginPointer = (settingsPath: string): PluginPointerResult => {
+export const ensurePluginPointer = (
+  settingsPath: string,
+  { write = true }: { write?: boolean } = {},
+): PluginPointerResult => {
   const raw = readSettingsFile(settingsPath)
 
-  if (raw === null) return createSettingsFile(settingsPath)
+  if (raw === null) {
+    if (write) return createSettingsFile(settingsPath)
+
+    return { status: 'withheld', path: settingsPath, added: addPointerKeys({}) }
+  }
 
   let parsed: unknown
 
@@ -179,6 +187,8 @@ export const ensurePluginPointer = (settingsPath: string): PluginPointerResult =
   const added = addPointerKeys(parsed)
 
   if (added.length === 0) return { status: 'unchanged', path: settingsPath, added: [] }
+
+  if (!write) return { status: 'withheld', path: settingsPath, added }
 
   const indent = detectIndent(raw)
   const trailingNewline = raw.endsWith('\n') ? '\n' : ''

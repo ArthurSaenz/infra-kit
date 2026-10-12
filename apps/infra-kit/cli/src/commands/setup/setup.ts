@@ -33,6 +33,7 @@ import { DEPENDENCY_IDS } from 'src/lib/dependency-registry'
 import type { DependencyId } from 'src/lib/dependency-registry'
 import { logger } from 'src/lib/logger'
 import { printRunReport } from 'src/lib/render/run-report'
+import { trackedWrites } from 'src/lib/tracked-writes'
 import { defineMcpTool, textContent } from 'src/types'
 
 import { convergeDependencies, probeDependencies } from './converge'
@@ -55,6 +56,11 @@ export interface SetupOptions {
   portlessDeps?: PortlessServiceDeps
   /** `--ascii`: render the report with ASCII markers instead of unicode glyphs. */
   ascii?: boolean
+  /**
+   * `--unattended`: the run `setup --auto` starts in each project. `--skip-tools`, plus no write to a
+   * file the project tracks in git and no plugin install — those are reported as `manual` rows.
+   */
+  unattended?: boolean
 }
 
 /**
@@ -148,6 +154,9 @@ const convergePortlessService = async (deps: PortlessServiceDeps): Promise<Setup
  * asked not to install, and silently ignoring `--tools` runs against a set they did not choose. There is
  * no reading of the combination that does what someone typing it meant.
  */
+export const UNATTENDED_CONFLICT =
+  '--unattended cannot be combined with --tools or --update: an unattended run installs and updates nothing (it implies --skip-tools).'
+
 export const SKIP_TOOLS_CONFLICT =
   '--skip-tools cannot be combined with --tools or --update: --skip-tools installs and updates nothing at all, so narrowing what it would act on is a contradiction. Use one or the other.'
 
@@ -160,8 +169,10 @@ interface ResolvedRequest {
 const resolveRequest = (options: SetupOptions): ResolvedRequest => {
   const updateIds = Array.isArray(options.update) ? options.update : undefined
   const updating = options.update === true || updateIds !== undefined
-  const skipTools = options.skipTools === true
+  const unattended = options.unattended === true
+  const skipTools = options.skipTools === true || unattended
 
+  if (unattended && (options.tools !== undefined || updating)) throw new Error(UNATTENDED_CONFLICT)
   if (skipTools && (options.tools !== undefined || updating)) throw new Error(SKIP_TOOLS_CONFLICT)
 
   return {
@@ -248,6 +259,9 @@ const toInitStep = (entry: InitEntry): InitStep => {
 
 export const setup = async (options: SetupOptions = {}) => {
   const request = resolveRequest(options)
+
+  trackedWrites.withheld = options.unattended === true
+
   const init = await runInitHalf()
   const tools = await runDependencyHalf(request, options)
   const portless = await convergePortlessService(options.portlessDeps ?? realPortlessServiceDeps())

@@ -375,3 +375,30 @@ describe('ensurePluginPointer — unparseable input (I8)', () => {
     expect((JSON.parse(read()) as { enabledPlugins: unknown }).enabledPlugins).toBe('nope')
   })
 })
+
+describe('ensurePluginPointer — write: false (setup --unattended)', () => {
+  it('reports the keys a write would add, and leaves an existing file byte-identical', () => {
+    write(FIXTURE)
+
+    const result = ensurePluginPointer(settingsPath, { write: false })
+
+    expect(result.status).toBe('withheld')
+    expect(result.added).toEqual([`extraKnownMarketplaces.${MARKETPLACE_NAME}`, `enabledPlugins.${PLUGIN_KEY}`])
+    expect(read()).toBe(FIXTURE)
+  })
+
+  it('creates nothing when the file is absent', () => {
+    const result = ensurePluginPointer(settingsPath, { write: false })
+
+    expect(result.status).toBe('withheld')
+    expect(result.added).toHaveLength(2)
+    expect(fs.existsSync(settingsPath)).toBe(false)
+  })
+
+  it('is unchanged, not withheld, when both keys are already there', () => {
+    write(FIXTURE)
+    ensurePluginPointer(settingsPath)
+
+    expect(ensurePluginPointer(settingsPath, { write: false }).status).toBe('unchanged')
+  })
+})

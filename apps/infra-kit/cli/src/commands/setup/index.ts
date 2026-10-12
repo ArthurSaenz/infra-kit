@@ -1,4 +1,6 @@
+export { autoSetup, autoSetupCommand } from './auto-setup'
+export type { AutoSetupDeps, AutoSetupOutcome } from './auto-setup'
 export { convergeDependencies, probeDependencies } from './converge'
 export type { ConvergeOptions, SetupMode, ToolResult } from './converge'
-export { setup, setupMcpTool, SKIP_TOOLS_CONFLICT } from './setup'
+export { setup, setupMcpTool, SKIP_TOOLS_CONFLICT, UNATTENDED_CONFLICT } from './setup'
 export type { PortlessServiceDeps, SetupOptions } from './setup'

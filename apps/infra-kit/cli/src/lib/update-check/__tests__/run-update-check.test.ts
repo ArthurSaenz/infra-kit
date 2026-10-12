@@ -29,6 +29,7 @@ const harness = (overrides: Partial<RunUpdateCheckDeps> = {}) => {
   const runClaudeMock = vi.fn(() => {
     return { ok: true }
   })
+  const startAutoSetupMock = vi.fn()
   let released = 0
 
   const deps: RunUpdateCheckDeps = {
@@ -78,6 +79,8 @@ const harness = (overrides: Partial<RunUpdateCheckDeps> = {}) => {
     pathExists: () => {
       return true
     },
+    // Injected so no unit test starts a real detached `infra-kit setup --auto`.
+    startAutoSetup: startAutoSetupMock,
     ...overrides,
   }
 
@@ -93,6 +96,7 @@ const harness = (overrides: Partial<RunUpdateCheckDeps> = {}) => {
     spawnMock,
     pluginSpawnMock,
     runClaudeMock,
+    startAutoSetupMock,
     releasedCount: () => {
       return released
     },
@@ -886,5 +890,60 @@ describe('runUpdateCheck — plugin step', () => {
 
       expect(code, `${file} must not contain a dynamic import()`).not.toMatch(/\bimport\s*\(/)
     }
+  })
+})
+
+describe('runUpdateCheck → setup --auto hand-off', () => {
+  it.each<[string, Partial<RunUpdateCheckDeps>, UpdateCheckOutcome]>([
+    ['an install that landed', {}, 'installed'],
+    [
+      'an up-to-date check',
+      {
+        fetchLatest: async () => {
+          return '0.1.130'
+        },
+      },
+      'up-to-date',
+    ],
+    [
+      'a failed fetch',
+      {
+        fetchLatest: async () => {
+          return null
+        },
+      },
+      'fetch-failed',
+    ],
+  ])('hands off once after %s, so the child decides whether a pass is owed', async (_label, overrides, outcome) => {
+    const { deps, startAutoSetupMock } = harness(overrides)
+
+    await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe(outcome)
+
+    expect(startAutoSetupMock).toHaveBeenCalledTimes(1)
+    expect(startAutoSetupMock).toHaveBeenCalledWith({ env: deps.env })
+  })
+
+  it('does not hand off when another worker holds the lock', async () => {
+    const { deps, startAutoSetupMock } = harness({
+      acquireLock: () => {
+        return null
+      },
+    })
+
+    await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('already-running')
+
+    expect(startAutoSetupMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps the CLI outcome and releases the lock when the hand-off throws', async () => {
+    const { deps, releasedCount } = harness({
+      startAutoSetup: () => {
+        throw new Error('spawn exploded')
+      },
+    })
+
+    await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('installed')
+
+    expect(releasedCount()).toBe(1)
   })
 })

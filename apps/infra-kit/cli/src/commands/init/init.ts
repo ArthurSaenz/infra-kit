@@ -29,6 +29,8 @@ import type { McpRegistration, PluginInstallOutcome, PluginPointerResult } from 
 import { reconcileMcpProxies } from 'src/lib/plugin-pointer/mcp-proxy-registration'
 import type { McpProxyReconcileResult } from 'src/lib/plugin-pointer/mcp-proxy-registration'
 import { MCP_FILE_NAME, SERVERS_KEY } from 'src/lib/plugin-pointer/mcp-registration'
+import { shellQuote } from 'src/lib/shell-quote'
+import { trackedWrites } from 'src/lib/tracked-writes'
 import { fetchLatestVersion, pluginStepWithheld, readUpdateCache } from 'src/lib/update-check'
 
 import packageJson from '../../../package.json' with { type: 'json' }
@@ -252,7 +254,7 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
 
   // Close the legacy-yml migration gap so a single `dx-init` leaves EVERY example current.
   await withStep('project-config', async () => {
-    record(...(await reseedUserProjectConfig()))
+    record(...(await reseedUserProjectConfig(gitRoot)))
   })
 
   await withStep('token-perms', async () => {
@@ -358,9 +360,57 @@ export const logInitEntry = (entry: InitEntry): void => {
  * end-of-file via the shared managed-block utility — the historical `removeExistingBlock` + append
  * behavior, now centralized.
  */
+/** The nearest directory at or above `dir` holding a `.git`, or null. */
+const enclosingGitRoot = (dir: string): string | null => {
+  const parent = path.dirname(dir)
+
+  if (fs.existsSync(path.join(dir, '.git'))) return dir
+
+  return parent === dir ? null : enclosingGitRoot(parent)
+}
+
+/**
+ * Under `setup --unattended`, the verdict for a dotfile write before it happens: `unchanged` when the
+ * bytes would not change (no write, no mtime churn), `manual` when the file — through any symlink —
+ * lives in a git repository (a dotfiles checkout), and null when the write may go ahead.
+ */
+const unattendedDotfileVerdict = (
+  step: InitStepName,
+  filePath: string,
+  current: string | null,
+  updated: string,
+): InitEntry | null => {
+  if (!trackedWrites.withheld) return null
+
+  if (current === updated) {
+    return { step, outcome: 'unchanged', message: `Managed block in ${filePath} is up to date`, level: 'debug' }
+  }
+
+  let target = filePath
+
+  try {
+    target = fs.realpathSync(filePath)
+  } catch {
+    // Absent: a new file is created at `filePath` itself, so that is where the repo question is asked.
+  }
+
+  const repo = enclosingGitRoot(path.dirname(target))
+
+  if (repo === null) return null
+
+  // The rerun runs from $HOME, never from `repo`: inside the dotfiles checkout, setup would take it for
+  // a project and write its `.claude/settings.json`.
+  return withheldWriteEntry(step, os.homedir(), target, ['the infra-kit block updated'])
+}
+
+const readIfExists = (filePath: string): string | null => {
+  return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null
+}
+
 const writeShellBlock = (): InitEntry => {
   const zshrcPath = path.join(os.homedir(), '.zshrc')
-  const existing = fs.existsSync(zshrcPath) ? removeExistingBlock(fs.readFileSync(zshrcPath, 'utf-8')) : ''
+  const current = readIfExists(zshrcPath)
+  const existing = current === null ? '' : removeExistingBlock(current)
 
   const updated = upsertManagedBlock({
     content: existing,
@@ -369,6 +419,10 @@ const writeShellBlock = (): InitEntry => {
     endMarker: MARKER_END,
     placement: 'append-end',
   })
+
+  const withheld = unattendedDotfileVerdict('zshrc', zshrcPath, current, updated)
+
+  if (withheld !== null) return withheld
 
   fs.writeFileSync(zshrcPath, updated)
 
@@ -388,14 +442,18 @@ const writeShellBlock = (): InitEntry => {
  */
 const writeZshenvBlock = (): InitEntry => {
   const zshenvPath = path.join(os.homedir(), '.zshenv')
-  const existing = fs.existsSync(zshenvPath) ? fs.readFileSync(zshenvPath, 'utf-8') : ''
+  const current = readIfExists(zshenvPath)
 
   const updated = upsertManagedBlock({
-    content: existing,
+    content: current ?? '',
     body: buildZshenvBody(),
     startMarker: MARKER_START,
     endMarker: MARKER_END,
   })
+
+  const withheld = unattendedDotfileVerdict('zshenv', zshenvPath, current, updated)
+
+  if (withheld !== null) return withheld
 
   fs.writeFileSync(zshenvPath, updated)
 
@@ -534,8 +592,12 @@ export const seedUserGlobalConfig = (): InitEntry => {
 // once-per-process guard has ALREADY fired in preAction, so calling it here would be a silent
 // no-op — unusable as a re-seed hook. Its ungated replacement does not read `INFRA_KIT_NO_SEED`,
 // so without the check above the kill switch would be airtight on every path EXCEPT `initCore`.
-const reseedUserProjectConfig = async (): Promise<InitEntry[]> => {
+const reseedUserProjectConfig = async (gitRoot: string | null): Promise<InitEntry[]> => {
   if (process.env.INFRA_KIT_NO_SEED) return [projectConfigSkip('skipped', 'INFRA_KIT_NO_SEED is set')]
+
+  // Outside a repo there is no project to seed for — the same gate the plugin steps took, and a skip
+  // rather than the loader's "not a git repository" throw, which would read as a failure.
+  if (gitRoot === null) return [projectConfigSkip('skipped', 'not inside a git repository')]
 
   try {
     const paths = await getInfraKitConfigPaths()
@@ -677,9 +739,32 @@ const checkAgentGuidance = async (): Promise<{ root: string | null; entries: Ini
   return { root, entries: guidanceEntries(version, written) }
 }
 
+/**
+ * The command that makes the write an unattended run withheld — runnable from any directory, because
+ * whoever reads it (the next interactive command's notice, `auto-setup.log`) is rarely inside `root`.
+ *
+ * @example
+ * rerunSetupCommand('/Users/me/projects/api') // => 'cd /Users/me/projects/api && infra-kit setup --skip-tools'
+ */
+export const rerunSetupCommand = (root: string): string => {
+  return `cd ${shellQuote(root)} && infra-kit setup --skip-tools`
+}
+
+/** A tracked-file write `setup --unattended` did not make: `manual`, with the rerun as the command. */
+const withheldWriteEntry = (step: InitStepName, root: string, relative: string, what: readonly string[]): InitEntry => {
+  return {
+    step,
+    outcome: 'manual',
+    message: `${relative} needs ${what.join(', ')} — left for a human to commit; run: ${rerunSetupCommand(root)}`,
+    level: 'info',
+  }
+}
+
 /** One line per pointer outcome. `unparseable` already warned from inside the lib, so it says nothing here. */
 const pointerEntry = (root: string, result: PluginPointerResult): InitEntry => {
   const relative = path.relative(root, result.path)
+
+  if (result.status === 'withheld') return withheldWriteEntry('plugin-pointer', root, relative, result.added)
 
   if (result.status === 'created') {
     return {
@@ -969,6 +1054,26 @@ export const syncWorktreeScaffold = async (gitRoot: string | null): Promise<Init
 }
 
 /**
+ * The plugin under `setup --unattended`: never installed or updated from here. A project-scope install
+ * edits the tracked `.claude/settings.json`, and the update worker that started this run has already
+ * run `claude plugin update` in every recorded project.
+ */
+const unattendedInstallEntries = (root: string, installed: boolean): InitEntry[] => {
+  if (installed) {
+    return [
+      {
+        step: 'plugin-pointer',
+        outcome: 'skipped',
+        message: `Claude Code plugin ${PLUGIN_KEY} is installed; the update worker keeps it current`,
+        level: 'debug',
+      },
+    ]
+  }
+
+  return [withheldWriteEntry('plugin-pointer', root, '.claude/settings.json', [`the ${PLUGIN_KEY} plugin installed`])]
+}
+
+/**
  * Point this repo's Claude Code at the infra-kit plugin marketplace, INSTALL (or update) the plugin
  * so a teammate's whole setup is one command, then report what the repo's own `.mcp.json` says about
  * the retired MCP server (a leftover key is a chore to delete, never a write).
@@ -1000,12 +1105,24 @@ const syncPluginPointer = async (root: string | null, record: InitStepRecorder):
     // Recorded one at a time rather than returned as an array: the pointer library logs its own
     // refusals, and a batched return would print `initCore`'s lines after the libraries' — reordering
     // output that a partial failure makes visible.
-    record(pointerEntry(root, ensurePluginPointer(path.join(root, '.claude', 'settings.json'))))
+    record(
+      pointerEntry(
+        root,
+        ensurePluginPointer(path.join(root, '.claude', 'settings.json'), { write: !trackedWrites.withheld }),
+      ),
+    )
 
     // Resolved ahead of the (synchronous) installer, and only when there is an update to withhold: a
     // fresh install has nothing to gate, and an opt-out machine without the plugin must not pay a
     // registry fetch for a question nobody asked.
     const installed = resolvePluginInstall({ projectPath: root }).kind === 'installed'
+
+    if (trackedWrites.withheld) {
+      record(...unattendedInstallEntries(root, installed), mcpEntry(root, inspectLegacyMcpRegistration(root)))
+
+      return
+    }
+
     const staleness = installed ? await resolveCliStaleness() : NOT_STALE
 
     record(
@@ -1087,6 +1204,25 @@ const proxyEntry = (root: string, result: McpProxyReconcileResult): InitEntry[] 
   return entries
 }
 
+/** The read-only reconcile's verdicts: `drifted` is the write a human has to make, the rest as usual. */
+const withheldProxyEntries = (root: string, result: McpProxyReconcileResult): InitEntry[] => {
+  const drifted = result.entries.filter((entry) => {
+    return entry.status === 'drifted'
+  })
+  const rest = result.entries.filter((entry) => {
+    return entry.status !== 'drifted'
+  })
+  const others = proxyEntry(root, { ...result, entries: rest })
+
+  if (result.status !== 'ok' || drifted.length === 0) return others
+
+  const names = drifted.map((entry) => {
+    return `ik-mcp "${entry.name}"`
+  })
+
+  return [...others, withheldWriteEntry('mcp-proxies', root, path.relative(root, result.path), names)]
+}
+
 /**
  * Derive one `.mcp.json` entry per `mcp.<name>` in the project config, in its OWN step.
  *
@@ -1118,18 +1254,29 @@ const syncMcpProxies = async (root: string | null): Promise<InitEntry[]> => {
     proxies = (await getInfraKitConfig()).mcp
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
+    const firstLine = message.split('\n')[0] ?? message
+
+    // Under `--unattended` the loader withholds its own rewrite of a retired shape, so a load failure
+    // is usually that withheld migration: say so with the command, not as an opaque warning.
+    if (trackedWrites.withheld) {
+      return [withheldWriteEntry('mcp-proxies', root, 'infra-kit.json', [`a config fix or migration (${firstLine})`])]
+    }
 
     return [
       {
         step: 'mcp-proxies',
         outcome: 'warned',
-        message: `  ik-mcp entries not synced — infra-kit.json could not be loaded (${message.split('\n')[0] ?? message})`,
+        message: `  ik-mcp entries not synced — infra-kit.json could not be loaded (${firstLine})`,
         level: 'warn',
       },
     ]
   }
 
   if (!proxies || Object.keys(proxies).length === 0) return []
+
+  if (trackedWrites.withheld) {
+    return withheldProxyEntries(root, reconcileMcpProxies({ projectRoot: root, proxies, write: false }))
+  }
 
   return proxyEntry(root, reconcileMcpProxies({ projectRoot: root, proxies, write: true }))
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import type { AutoSetupRecord } from 'src/lib/auto-setup/record'
+
 import { maybeAutoUpdate } from '../auto-update'
 import type { AutoUpdateDeps } from '../auto-update'
 import { CHECK_INTERVAL_MS } from '../update-cache'
@@ -12,6 +14,7 @@ const HOMEBREW_CLI = '/opt/homebrew/Cellar/infra-kit/0.1.130/lib/node_modules/in
 const harness = (overrides: Partial<AutoUpdateDeps> = {}) => {
   const spawnChild = vi.fn()
   const notify = vi.fn()
+  const writeNotified = vi.fn()
 
   const deps: AutoUpdateDeps = {
     argv: ['node', GLOBAL_NPM_CLI, 'version'],
@@ -29,10 +32,18 @@ const harness = (overrides: Partial<AutoUpdateDeps> = {}) => {
     },
     spawnChild,
     notify,
+    // Injected so no unit test reads or stamps the developer's own auto-setup record.
+    readAutoSetup: () => {
+      return null
+    },
+    readNotified: () => {
+      return null
+    },
+    writeNotified,
     ...overrides,
   }
 
-  return { deps, spawnChild, notify }
+  return { deps, spawnChild, notify, writeNotified }
 }
 
 const cache = (overrides: Partial<UpdateCache> = {}): UpdateCache => {
@@ -196,5 +207,100 @@ describe('maybeAutoUpdate', () => {
     expect(() => {
       return maybeAutoUpdate('0.1.130', deps)
     }).not.toThrow()
+  })
+})
+
+describe('maybeAutoUpdate → background setup notice', () => {
+  const FINISHED = NOW - 1_000
+
+  const record = (overrides: Partial<AutoSetupRecord> = {}): AutoSetupRecord => {
+    return {
+      version: '0.1.130',
+      attempts: 1,
+      startedMs: NOW - 5_000,
+      finishedMs: FINISHED,
+      runs: [
+        { root: null, status: 'ok', notes: [] },
+        { root: '/p/api', status: 'attention', notes: ['cd /p/api && infra-kit setup --skip-tools'] },
+        {
+          root: '/p/web',
+          status: 'failed',
+          notes: ['timed out after 180s — run: cd /p/web && infra-kit setup --skip-tools'],
+        },
+      ],
+      ...overrides,
+    }
+  }
+
+  it('prints one line naming the counts and the log, then marks that record — never rewriting it', () => {
+    const { deps, notify, writeNotified } = harness({
+      readAutoSetup: () => {
+        return record()
+      },
+    })
+
+    maybeAutoUpdate('0.1.130', deps)
+
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(notify.mock.calls[0]?.[0]).toMatch(
+      /^infra-kit 0\.1\.130 background setup: 1 failed, 1 need you — see .*auto-setup\.log/,
+    )
+    expect(writeNotified).toHaveBeenCalledWith(FINISHED)
+  })
+
+  it('stays silent for a record already marked, and speaks again for a newer one', () => {
+    const marked = harness({
+      readAutoSetup: () => {
+        return record()
+      },
+      readNotified: () => {
+        return FINISHED
+      },
+    })
+    const newer = harness({
+      readAutoSetup: () => {
+        return record({ finishedMs: FINISHED + 1 })
+      },
+      readNotified: () => {
+        return FINISHED
+      },
+    })
+
+    maybeAutoUpdate('0.1.130', marked.deps)
+    maybeAutoUpdate('0.1.130', newer.deps)
+
+    expect(marked.notify).not.toHaveBeenCalled()
+    expect(newer.notify).toHaveBeenCalledTimes(1)
+  })
+
+  it.each<[string, Partial<AutoSetupRecord>]>([
+    ['every run is ok', { runs: [{ root: null, status: 'ok', notes: [] }] }],
+    ['the pass has not finished', { finishedMs: null }],
+    ['the record is for another version', { version: '0.1.129' }],
+  ])('stays silent when %s', (_label, overrides) => {
+    const { deps, notify } = harness({
+      readAutoSetup: () => {
+        return record(overrides)
+      },
+    })
+
+    maybeAutoUpdate('0.1.130', deps)
+
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('still spawns the worker when marking the record throws', () => {
+    const { deps, spawnChild } = harness({
+      readAutoSetup: () => {
+        return record()
+      },
+      writeNotified: () => {
+        throw new Error('EACCES')
+      },
+    })
+
+    maybeAutoUpdate('0.1.130', deps)
+
+    expect(spawnChild).toHaveBeenCalledTimes(1)
   })
 })

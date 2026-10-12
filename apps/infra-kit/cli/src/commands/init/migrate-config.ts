@@ -14,6 +14,7 @@ import {
 } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { fileExists, tildify } from 'src/lib/path-display'
+import { trackedWrites } from 'src/lib/tracked-writes'
 import { getFactoryConfigPath } from 'src/lib/vendor/factory-config'
 
 interface MigrateLayer {
@@ -59,8 +60,15 @@ export const migrateLegacyConfig = async (): Promise<void> => {
     return
   }
 
+  const projectLayer: MigrateLayer = {
+    label: 'infra-kit.json',
+    yml: legacyYmlPath(paths.main),
+    json: paths.main,
+    schema: infraKitConfigSchema,
+  }
   const layers: MigrateLayer[] = [
-    { label: 'infra-kit.json', yml: legacyYmlPath(paths.main), json: paths.main, schema: infraKitConfigSchema },
+    // The tracked pair (a new .json, a deleted .yml) is a hunk only a human can commit.
+    ...(trackedWrites.withheld ? [] : [projectLayer]),
     {
       label: '~/.infra-kit/infra-kit.json',
       // The user-global JSON filename changed (config.json → infra-kit.json), but
@@ -339,7 +347,10 @@ const resolveMigrationTargets = async (): Promise<string[]> => {
   try {
     const paths = await getInfraKitConfigPaths()
 
-    return [paths.main, paths.userGlobal, paths.userProject]
+    // The tracked layer is left to the loader, which reports a withheld rewrite with its setup hint.
+    return trackedWrites.withheld
+      ? [paths.userGlobal, paths.userProject]
+      : [paths.main, paths.userGlobal, paths.userProject]
   } catch {
     return [resolveUserGlobalConfigPath()]
   }

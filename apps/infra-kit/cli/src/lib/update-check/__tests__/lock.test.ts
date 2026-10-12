@@ -92,6 +92,17 @@ describe('acquireUpdateLock', () => {
     held?.()
   })
 
+  // Reds on: a reaped holder's late release unlinking the lock its successor now holds.
+  it('a late release never removes a lock another holder has taken since', () => {
+    const first = acquireUpdateLock({ lockPath, nowMs: NOW })
+
+    // The successor reaped and re-created the lock: the path now holds another pid.
+    fs.writeFileSync(lockPath, '999999')
+    first?.()
+
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe('999999')
+  })
+
   it('releasing twice is harmless', () => {
     const release = acquireUpdateLock({ lockPath, nowMs: NOW })
 

@@ -106,7 +106,11 @@ export const acquireUpdateLock = (deps: LockDeps = {}): (() => void) | null => {
     }
 
     try {
-      fs.rmSync(lockPath, { force: true })
+      // Only our own lock: if a holder outlived LOCK_STALE_MS, the next one reaped it and took the path,
+      // and unlinking THAT lock would let a third holder in beside it. Empty means our pid write failed.
+      const holder = fs.readFileSync(lockPath, 'utf8')
+
+      if (holder === String(process.pid) || holder === '') fs.rmSync(lockPath, { force: true })
     } catch {
       // Already gone; a later worker will reap it via LOCK_STALE_MS regardless.
     }

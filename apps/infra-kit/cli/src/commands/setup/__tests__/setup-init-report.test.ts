@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -367,5 +368,105 @@ describe('commands a human has to run reach the report as manual rows, and never
     ).not.toContain(formatUpdateCommand(updateCommand))
     expect(stderrLines().join('\n')).toContain(formatUpdateCommand(updateCommand))
     expect(process.exitCode ?? 0).toBe(0)
+  })
+})
+
+describe('setup --unattended writes no file the project tracks', () => {
+  // Reds on: an unattended run that creates `.claude/settings.json`, installs the plugin, or writes `.mcp.json`.
+  it('withholds the pointer, the plugin install and the ik-mcp entries as manual rows, and still does the machine steps', async () => {
+    fs.writeFileSync(
+      path.join(repo, 'infra-kit.json'),
+      `${JSON.stringify({
+        envManagement: { provider: 'doppler', config: { name: 'demo' } },
+        mcp: { grafana: { command: 'mcp-grafana', args: ['-t', 'stdio'], env: ['GRAFANA_URL'] } },
+      })}\n`,
+      'utf-8',
+    )
+    resetInfraKitConfigCache()
+
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), unattended: true })
+    const manual = structuredContent.init.filter((entry) => {
+      return entry.outcome === 'manual'
+    })
+
+    expect(fs.existsSync(path.join(repo, '.claude', 'settings.json'))).toBe(false)
+    expect(fs.existsSync(path.join(repo, '.mcp.json'))).toBe(false)
+    expect(vi.mocked(installPluginForProject)).not.toHaveBeenCalled()
+    expect(manual).toContainEqual({
+      step: 'plugin-pointer',
+      outcome: 'manual',
+      message: expect.stringContaining(`cd ${repo} && infra-kit setup --skip-tools`) as unknown as string,
+    })
+    expect(manual).toContainEqual({
+      step: 'mcp-proxies',
+      outcome: 'manual',
+      message: expect.stringContaining('ik-mcp "grafana"') as unknown as string,
+    })
+    // The machine half is not tracked by any project, so it still converges.
+    expect(fs.readFileSync(path.join(home, '.zshrc'), 'utf-8')).toContain('# -- infra-kit:begin --')
+  })
+
+  it('an interactive run afterwards writes the pointer as before', async () => {
+    await setup({ probeDeps: nothingInstalled(), unattended: true })
+    await setup({ probeDeps: nothingInstalled(), skipTools: true })
+
+    expect(fs.existsSync(path.join(repo, '.claude', 'settings.json'))).toBe(true)
+  })
+})
+
+describe('setup --unattended against a real git checkout', () => {
+  // Reds on: ANY writer reached by an unattended run touching a tracked file — the end-to-end property
+  // the mocked composition suite cannot see.
+  it('leaves `git status` clean in the project, a retired config shape included', async () => {
+    const git = (...args: string[]): string => {
+      // eslint-disable-next-line sonarjs/no-os-command-from-path -- a test fixture repo, the host's own git
+      return spawnSync('git', args, { cwd: repo, encoding: 'utf8' }).stdout
+    }
+
+    fs.writeFileSync(
+      path.join(repo, 'infra-kit.json'),
+      `${JSON.stringify({
+        envManagement: { provider: 'doppler', config: { name: 'demo' } },
+        envAutoLoad: true,
+        mcp: { grafana: { command: 'mcp-grafana', args: ['-t', 'stdio'], env: ['GRAFANA_URL'] } },
+      })}\n`,
+      'utf-8',
+    )
+    git('init', '-q')
+    git('add', '-A')
+    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init')
+    resetInfraKitConfigCache()
+
+    const { structuredContent } = await setup({ probeDeps: nothingInstalled(), unattended: true })
+
+    expect(git('status', '--porcelain', '--untracked-files=all')).toBe('')
+    expect(
+      structuredContent.init.some((entry) => {
+        return entry.outcome === 'manual' && entry.step === 'mcp-proxies'
+      }),
+    ).toBe(true)
+  })
+
+  it('withholds a ~/.zshrc that is a symlink into a dotfiles repository', async () => {
+    const dotfiles = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-dotfiles-'))
+
+    try {
+      fs.mkdirSync(path.join(dotfiles, '.git'))
+      fs.writeFileSync(path.join(dotfiles, 'zshrc'), '# mine\n', 'utf-8')
+      fs.symlinkSync(path.join(dotfiles, 'zshrc'), path.join(home, '.zshrc'))
+
+      const { structuredContent } = await setup({ probeDeps: nothingInstalled(), unattended: true })
+
+      expect(fs.readFileSync(path.join(dotfiles, 'zshrc'), 'utf-8')).toBe('# mine\n')
+      expect(structuredContent.init).toContainEqual({
+        step: 'zshrc',
+        outcome: 'manual',
+        message: expect.stringContaining(
+          `${fs.realpathSync(path.join(dotfiles, 'zshrc'))} needs the infra-kit block updated — left for a human to commit; run: cd ${home} && infra-kit setup --skip-tools`,
+        ) as unknown as string,
+      })
+    } finally {
+      fs.rmSync(dotfiles, { recursive: true, force: true })
+    }
   })
 })

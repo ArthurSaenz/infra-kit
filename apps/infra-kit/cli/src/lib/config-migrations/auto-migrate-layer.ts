@@ -1,8 +1,8 @@
 import type { z } from 'zod'
 
-import { isCI } from 'src/lib/agent-mode'
 import { logger } from 'src/lib/logger'
 import { tildify } from 'src/lib/path-display'
+import { trackedWritesWithheld } from 'src/lib/tracked-writes'
 
 import packageJson from '../../../package.json' with { type: 'json' }
 import { applyConfigMigrations } from './apply-config-migrations'
@@ -11,7 +11,7 @@ import { writeMigratedConfigFile } from './migrate-config-file'
 /** The slice of the loader's `ConfigLayer` the retry needs; passed in so this module never imports the loader (cycle). */
 export interface AutoMigrateLayer {
   path: string
-  /** The tracked project layer — the only one a CI checkout must not rewrite. */
+  /** The tracked project layer — the only one a CI checkout or an unattended setup must not rewrite. */
   required: boolean
   /** `'off'` for callers whose stderr nobody reads; they keep today's strict error instead of a rewritten file. */
   autoMigrate: 'write' | 'off'
@@ -22,7 +22,7 @@ export interface AutoMigrateLayer {
 export type AutoMigrateOutcome =
   /** `data` is the second `safeParse`'s output (defaults applied), never the raw migrated object. */
   | { kind: 'migrated'; data: Record<string, unknown> }
-  /** A migration WOULD fix the required layer, but CI withholds the write — the caller appends its setup hint. */
+  /** A migration WOULD fix the required layer, but CI or an unattended setup withholds the write — the caller appends its setup hint. */
   | { kind: 'ci-gated' }
   /** Policy off, nothing to migrate, still invalid afterwards, file moved, or the write failed: the caller throws its original error. */
   | { kind: 'not-applicable' }
@@ -59,7 +59,7 @@ export const tryAutoMigrateLayer = async (
     return { kind: 'not-applicable' }
   }
 
-  if (layer.required && isCI()) {
+  if (layer.required && trackedWritesWithheld()) {
     return { kind: 'ci-gated' }
   }
 

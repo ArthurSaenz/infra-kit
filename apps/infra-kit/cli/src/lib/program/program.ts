@@ -1,4 +1,4 @@
-import { Command, InvalidArgumentError } from 'commander'
+import { Command, InvalidArgumentError, Option } from 'commander'
 import { resolve } from 'node:path'
 import process from 'node:process'
 import { cd } from 'zx'
@@ -26,7 +26,7 @@ import { releaseCreate } from 'src/commands/release-create'
 import { deprecatedLocalDeploy, releaseDeployAll, releaseDeploySelected } from 'src/commands/release-deploy'
 import { releaseEdit } from 'src/commands/release-edit'
 import { releaseRemove } from 'src/commands/release-remove'
-import { setup } from 'src/commands/setup'
+import { autoSetupCommand, setup } from 'src/commands/setup'
 import { vendorCheck } from 'src/commands/vendor-check'
 import { vendorConfig } from 'src/commands/vendor-config'
 import { vendorSync } from 'src/commands/vendor-sync'
@@ -741,14 +741,36 @@ export const buildProgram = (): Command => {
     .option('--update [ids...]', 'Update what is already installed; never install a missing tool')
     .option('--skip-tools', 'Do the local setup only, then REPORT what each tool needs — installs nothing')
     .option('--ascii', 'Render the report with ASCII markers instead of unicode glyphs (row messages are unchanged)')
+    // Hidden: the update worker's entry points, not a human's. `--auto` runs `--unattended` for the machine
+    // and then in every infra-kit project, once per installed version (`commands/setup/auto-setup.ts`).
+    .addOption(
+      new Option('--unattended', 'Background run: no tool installs, no writes to git-tracked files').hideHelp(),
+    )
+    .addOption(
+      new Option('--auto', 'Unattended setup for the machine and every infra-kit project, once per version').hideHelp(),
+    )
     .action(
-      async (options: { tools?: string[]; update?: boolean | string[]; skipTools?: boolean; ascii?: boolean }) => {
+      async (options: {
+        tools?: string[]
+        update?: boolean | string[]
+        skipTools?: boolean
+        ascii?: boolean
+        unattended?: boolean
+        auto?: boolean
+      }) => {
+        if (options.auto) {
+          emit(await autoSetupCommand())
+
+          return
+        }
+
         emit(
           await setup({
             tools: options.tools as never,
             update: options.update as never,
             skipTools: options.skipTools,
             ascii: Boolean(options.ascii),
+            unattended: options.unattended,
           }),
         )
       },

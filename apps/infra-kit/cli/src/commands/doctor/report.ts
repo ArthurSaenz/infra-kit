@@ -105,6 +105,7 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
       'plugin version',
       'plugin MCP server',
       'CLI version',
+      'background setup',
       'claude in chrome',
       // The two agent rows close the section: how this shell would be classified, and whether the
       // repo's allowlist would let an agent bypass the `--yes` re-run on a mutating command.

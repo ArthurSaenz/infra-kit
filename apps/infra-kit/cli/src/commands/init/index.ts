@@ -11,6 +11,7 @@ export {
   initCore,
   InitStepError,
   logInitEntry,
+  rerunSetupCommand,
   SHELL_ACTIVATION_REMINDER,
 } from './init'
 export type { InitEntry, InitOutcome, InitReport, InitStep, InitStepName, InitStepSink } from './init'

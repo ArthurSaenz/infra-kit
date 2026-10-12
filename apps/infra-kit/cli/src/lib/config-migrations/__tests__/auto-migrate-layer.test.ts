@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
 import { logger } from 'src/lib/logger'
+import { trackedWrites } from 'src/lib/tracked-writes'
 
 import packageJson from '../../../../package.json' with { type: 'json' }
 import { applyConfigMigrations } from '../apply-config-migrations'
@@ -137,6 +138,21 @@ describe('tryAutoMigrateLayer', () => {
     expect(writeMigratedConfigFile).not.toHaveBeenCalled()
     expect(await readBack()).toBe(raw)
     expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('required layer under setup --unattended → gated like CI, file untouched', async () => {
+    trackedWrites.withheld = true
+
+    try {
+      const layer = await writeLayer(DIRTY)
+
+      const outcome = await tryAutoMigrateLayer({ ...layer, required: true }, DIRTY, raw, { schema })
+
+      expect(outcome).toEqual({ kind: 'ci-gated' })
+      expect(await readBack()).toBe(raw)
+    } finally {
+      trackedWrites.withheld = false
+    }
   })
 
   it('required layer outside CI → migrated', async () => {

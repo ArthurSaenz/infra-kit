@@ -10,8 +10,16 @@ import fs from 'node:fs'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
+import {
+  autoSetupLogPath,
+  readAutoSetupRecord,
+  readNotifiedMarker,
+  writeNotifiedMarker,
+} from 'src/lib/auto-setup/record'
+import type { AutoSetupRecord } from 'src/lib/auto-setup/record'
 import { formatUpdateCommand, safeRealpath } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
+import { tildify } from 'src/lib/path-display'
 
 import { autoUpdateSkipReason } from './guards'
 import { isNewerVersion } from './semver'
@@ -32,6 +40,9 @@ export interface AutoUpdateDeps {
   spawnChild?: (childPath: string) => void
   notify?: (line: string) => void
   fileExists?: (p: string) => boolean
+  readAutoSetup?: () => AutoSetupRecord | null
+  readNotified?: () => number | null
+  writeNotified?: (finishedMs: number) => void
 }
 
 /**
@@ -73,7 +84,7 @@ const defaultSelfRealPath = (): string => {
  * the users who most need it. `formatUpdateCommand` single-quotes such a token, which is safe precisely
  * because the quote characters themselves remain outside this charset.
  */
-const SAFE_COMMAND_TOKEN = /^[\w@./+ -]+$/i
+const SAFE_COMMAND_TOKEN = /^[\w@./+ -]+$/
 
 const isSafeCommandToken = (token: string): boolean => {
   return SAFE_COMMAND_TOKEN.test(token)
@@ -102,6 +113,41 @@ const notifyIfUninstallable = (
   notify(
     `infra-kit ${cache.latestVersion} is available (you have ${currentVersion}). Run: ${formatUpdateCommand(cache.updateCommand)}`,
   )
+}
+
+/**
+ * One line, once per finished record of the RUNNING version, when the last unattended setup left
+ * something for a human: the runs that need attention or failed, and the log that lists their commands.
+ *
+ * "Once" is a marker file holding the record's `finishedMs`, never a write to the record itself: the
+ * background pass may be writing a newer record at this very moment, and the startup path must not
+ * overwrite it with the copy it read.
+ */
+const notifyAutoSetup = (
+  record: AutoSetupRecord | null,
+  currentVersion: string,
+  notifiedFor: number | null,
+  notify: (line: string) => void,
+  markNotified: (finishedMs: number) => void,
+): void => {
+  if (record === null || record.finishedMs === null || record.version !== currentVersion) return
+  if (notifiedFor === record.finishedMs) return
+
+  const failed = record.runs.filter((run) => {
+    return run.status === 'failed'
+  }).length
+  const attention = record.runs.filter((run) => {
+    return run.status === 'attention'
+  }).length
+
+  if (failed + attention === 0) return
+
+  const parts = [failed > 0 ? `${failed} failed` : null, attention > 0 ? `${attention} need you` : null].filter(Boolean)
+
+  notify(
+    `infra-kit ${record.version} background setup: ${parts.join(', ')} — see ${tildify(autoSetupLogPath())}, or run: infra-kit setup`,
+  )
+  markNotified(record.finishedMs)
 }
 
 /**
@@ -137,6 +183,19 @@ export const maybeAutoUpdate = (currentVersion: string, deps: AutoUpdateDeps = {
     const cache = readCache()
 
     notifyIfUninstallable(cache, currentVersion, notify)
+
+    // Its own guard: a notice that cannot stamp its record must not cost the update check below.
+    try {
+      notifyAutoSetup(
+        (deps.readAutoSetup ?? readAutoSetupRecord)(),
+        currentVersion,
+        (deps.readNotified ?? readNotifiedMarker)(),
+        notify,
+        deps.writeNotified ?? writeNotifiedMarker,
+      )
+    } catch {
+      // Printed at most once more, next command.
+    }
 
     if (!isStale(cache, nowMs)) return
 

@@ -19,6 +19,8 @@ import { packageManagerInstallEnv } from 'src/lib/pm-env'
 import { acquireUpdateLock } from './lock'
 import { fetchLatestVersion } from './registry'
 import { isNewerVersion } from './semver'
+import { startAutoSetup } from './start-auto-setup'
+import type { StartAutoSetupDeps } from './start-auto-setup'
 import { writeUpdateCache } from './update-cache'
 import type { UpdateCache } from './update-cache'
 // Static, like every import in this file — see the module doc: on the `installed` path the plugin step
@@ -37,6 +39,8 @@ export const PARENT_POLL_INTERVAL_MS = 200
 export const PARENT_WAIT_TIMEOUT_MS = 5 * 60 * 1000
 
 export interface RunUpdateCheckDeps extends UpdatePluginDeps {
+  /** The hand-off to `setup --auto`; tests inject it so no real child starts. */
+  startAutoSetup?: (deps: StartAutoSetupDeps) => void
   env?: NodeJS.ProcessEnv
   nowMs?: number
   fetchLatest?: (env: NodeJS.ProcessEnv) => Promise<string | null>
@@ -190,6 +194,17 @@ export const runUpdateCheck = async (currentVersion: string, deps: RunUpdateChec
     // exception, decided by the cache the locked function wrote rather than by name: see
     // `pluginStepWithheld`.
     recordPluginUpdate(deps, written.last, currentVersion, writeCache)
+
+    // On every outcome, last: an install that landed owes a pass for the new version, and one that
+    // did not still owes the retry of a failed pass. `setup --auto` decides which, and returns at once
+    // when neither — see `autoSetupDue`.
+    const handOff = deps.startAutoSetup ?? startAutoSetup
+
+    try {
+      handOff({ env: deps.env })
+    } catch {
+      // The CLI outcome is already settled; a hand-off that did not start is retried next window.
+    }
 
     return outcome
   } finally {
