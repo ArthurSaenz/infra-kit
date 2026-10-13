@@ -322,17 +322,18 @@ describe('parseDopplerSecretsJson', () => {
 describe('env-load output schema — sessionId', () => {
   // A Bash-driven agent inherits the session id but never sees the shell that sources the file;
   // `sessionId` is how it tells which terminal just got the variables — and `null` when none did.
-  it('declares sessionId as a nullable string alongside the four original fields', () => {
+  it('declares sessionId as a nullable string alongside the original fields and configSource', () => {
     expect(Object.keys(envLoadMcpTool.outputSchema)).toEqual([
       'filePath',
       'variableCount',
       'project',
       'config',
+      'configSource',
       'sessionId',
     ])
 
     const schema = z.object(envLoadMcpTool.outputSchema)
-    const base = { filePath: '/f', variableCount: 1, project: 'p', config: 'dev' }
+    const base = { filePath: '/f', variableCount: 1, project: 'p', config: 'dev', configSource: 'argument' }
 
     expect(schema.safeParse({ ...base, sessionId: 'abcd1234' }).success).toBe(true)
     expect(schema.safeParse({ ...base, sessionId: null }).success).toBe(true)

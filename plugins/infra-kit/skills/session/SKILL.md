@@ -77,16 +77,24 @@ and that prompt is the approval — the CLI has no confirm step here, so there i
 preview round, and a `--yes` you add is an unknown flag. It exits 0 with
 `filePath`, `sessionId`, `variableCount`, `project` and `config`.
 
-**No token means the human has not chosen yet.** Ask with `AskUserQuestion`, one option per entry
-of the `Environments this project knows` block above — **every** entry, in the block's order, a
-`hasToken: false` entry annotated with `infra-kit env-token-set <env>` as its fix. The human's pick
-is the `-c`; the load then runs as above. Do not surface `source` — it records how we learned the
-environment exists, which helps nobody choose.
+**No token and a configured default: load the default.** When the `Environments this project knows`
+block carries a non-null `defaultEnv`, the human already chose, in their config. Run
+`infra-kit env-load --json --agent` with no `-c`: the CLI loads that environment and reports
+`"configSource": "default"`. Do not ask first. Name the environment that loaded in your reply, and
+say a different one is `/infra-kit:session <env>` away.
 
-The same picker arrives from the CLI itself: `infra-kit env-load --json --agent` with no `-c` exits
-2 with `{"status": "argument_required", "argument": "config", "choices": [...]}` and loads nothing;
-its `choices` rows (label, value, description) are the block above, and go into `AskUserQuestion`
-the same way. Never invent a name, never narrow the list, and never load without an explicit choice.
+**No token and no default means the human has not chosen yet.** Ask with `AskUserQuestion`, one
+option per entry of the `Environments this project knows` block above — **every** entry, in the
+block's order, a `hasToken: false` entry annotated with `infra-kit env-token-set <env>` as its fix.
+The human's pick is the `-c`; the load then runs as above. Do not surface `source` — it records how
+we learned the environment exists, which helps nobody choose. Mention once that
+`infra-kit config-set defaultEnv <env>` makes the pick this project's default for this machine.
+
+The same picker arrives from the CLI itself: with no `defaultEnv` set, `infra-kit env-load --json
+--agent` with no `-c` exits 2 with `{"status": "argument_required", "argument": "config", "choices":
+[...]}` and loads nothing; its `choices` rows (label, value, description) are the block above, and go
+into `AskUserQuestion` the same way. Never invent a name, never narrow the list, and never load
+without an explicit choice — the human's pick, a typed token, or the configured `defaultEnv`.
 
 **The fallback.** If either block above is not JSON, treat it as unknown and call `env-list` yourself,
 then ask the same way:
@@ -135,7 +143,8 @@ prompt, so nobody waits for one that never comes.
 - Do not `export` anything in a shell, and do not present a file you sourced as a loaded environment.
 - Never echo a variable's value. `env-list` reports token presence only, and `env-load.sh` holds
   single-quoted secrets — printing one puts it in the transcript.
-- Do not supply a `-c` the human did not name in order to skip the picker.
+- Do not supply a `-c` the human did not name in order to skip the picker. Omitting `-c` to take
+  the configured `defaultEnv` is not that: the human named it in their config.
 - Do not read exit 2 on an `argument_required` payload as a failure — it loaded nothing and is
   asking for `-c`. See section 3.
 - Never pass `--yes` to `env-load` or `env-clear`; neither takes it, and the host's prompt is the

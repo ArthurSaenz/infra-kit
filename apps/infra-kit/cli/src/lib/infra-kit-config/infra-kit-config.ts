@@ -237,9 +237,18 @@ const aliasRepoSchema = z
   .string()
   .regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/, 'must be a DNS label: a-z, 0-9 and inner "-", at most 63 characters')
 
+/**
+ * The environment `env-load` takes when none is named — the Doppler config name, verbatim. Meant for
+ * the per-project override (`infra-kit config-set defaultEnv <name>`): each developer's personal
+ * config differs, while the committed file can still carry a team-wide fallback such as `dev`. Not
+ * checked against `env-list`, which is local and may be incomplete; a wrong name fails at the load.
+ */
+const defaultEnvSchema = z.string().min(1)
+
 export const infraKitConfigObject = z
   .object({
     envManagement: envManagementSchema,
+    defaultEnv: defaultEnvSchema.optional(),
     worktrees: worktreesConfigSchema.optional(),
     protectedEnvs: protectedEnvsSchema.optional(),
     mcp: mcpProxiesSchema.optional(),

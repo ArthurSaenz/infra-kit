@@ -646,6 +646,52 @@ describe('worktrees.orca schema validation', () => {
       })
     })
   })
+
+  describe('defaultEnv', () => {
+    const writeLayer = (dir: string, contents: string): void => {
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, 'infra-kit.json'), contents)
+    }
+
+    it("lets a developer's per-project override replace the committed team default", async () => {
+      await withTmpRepo(async (tmp) => {
+        fs.writeFileSync(
+          path.join(tmp, 'infra-kit.json'),
+          JSON.stringify({ envManagement: { provider: 'doppler', config: { name: 'p' } }, defaultEnv: 'dev' }),
+        )
+        writeLayer(path.join(tmp, '.infra-kit'), JSON.stringify({ defaultEnv: 'global' }))
+        writeLayer(
+          path.join(tmp, '.infra-kit', 'projects', path.basename(tmp)),
+          JSON.stringify({ defaultEnv: 'roman' }),
+        )
+
+        expect((await getInfraKitConfig()).defaultEnv).toBe('roman')
+      })
+    })
+
+    it('keeps the committed value when the always-present layer 3 is empty', async () => {
+      await withTmpRepo(async (tmp) => {
+        fs.writeFileSync(
+          path.join(tmp, 'infra-kit.json'),
+          JSON.stringify({ envManagement: { provider: 'doppler', config: { name: 'p' } }, defaultEnv: 'dev' }),
+        )
+        writeLayer(path.join(tmp, '.infra-kit', 'projects', path.basename(tmp)), '{}\n')
+
+        expect((await getInfraKitConfig()).defaultEnv).toBe('dev')
+      })
+    })
+
+    it('rejects an empty name', async () => {
+      await withTmpRepo(async (tmp) => {
+        fs.writeFileSync(
+          path.join(tmp, 'infra-kit.json'),
+          JSON.stringify({ envManagement: { provider: 'doppler', config: { name: 'p' } }, defaultEnv: '' }),
+        )
+
+        await expect(getInfraKitConfig()).rejects.toThrow(/Invalid.*infra-kit/i)
+      })
+    })
+  })
 })
 
 describe('mcp is refused outside the project layer', () => {

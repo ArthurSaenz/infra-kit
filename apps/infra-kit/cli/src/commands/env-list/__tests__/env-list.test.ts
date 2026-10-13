@@ -25,8 +25,8 @@ vi.mock('src/lib/logger', () => {
 // `listProjectEnvs` (workflow union + token store) is its own module with its own tests
 // (`lib/project-envs/__tests__`) — mocked here so env-list's tests stay about rendering
 // and token-status, not workflow-YAML fixtures.
-vi.mock('src/lib/project-envs', () => {
-  return { listProjectEnvs: vi.fn() }
+vi.mock('src/lib/project-envs', async (importOriginal) => {
+  return { ...(await importOriginal<object>()), listProjectEnvs: vi.fn() }
 })
 
 const REPO_CONFIG = JSON.stringify({
@@ -225,5 +225,26 @@ describe('envList — empty state', () => {
     expect(output).not.toContain('env-token-set')
     // The populated-list header must never appear alongside the empty-state guidance.
     expect(output).not.toContain('Environments:')
+  })
+})
+
+describe('envList — defaultEnv', () => {
+  it('reports null and how to set one when no layer sets it', async () => {
+    const result = await envList()
+
+    expect(result.structuredContent.defaultEnv).toBeNull()
+    expect(printed()).toContain('infra-kit config-set defaultEnv <env>')
+  })
+
+  it("reports the per-project override's defaultEnv", async () => {
+    const layerThree = path.join(home, '.infra-kit', 'projects', path.basename(repo))
+
+    fs.mkdirSync(layerThree, { recursive: true })
+    fs.writeFileSync(path.join(layerThree, 'infra-kit.json'), JSON.stringify({ defaultEnv: 'roman' }))
+
+    const result = await envList()
+
+    expect(result.structuredContent.defaultEnv).toBe('roman')
+    expect(printed()).toContain('Default env: roman')
   })
 })

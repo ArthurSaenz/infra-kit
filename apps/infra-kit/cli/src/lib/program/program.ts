@@ -817,7 +817,10 @@ export const buildProgram = (): Command => {
   program
     .command('env-load')
     .description('Load Doppler env vars for a config. Source the returned file path to apply.')
-    .option('-c, --config <config>', 'Environment config name to load (e.g. dev, arthur)')
+    .option(
+      '-c, --config <config>',
+      'Environment config name to load (e.g. dev, arthur). Omitted: the picker opens on defaultEnv; headless runs load it',
+    )
     .action(async (options) => {
       emitSourcePath(await envLoad({ config: options.config }))
     })

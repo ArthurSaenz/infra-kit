@@ -194,7 +194,8 @@ describe('buildRootBody', () => {
 
   it('keeps the pre-existing command and convention text', () => {
     expect(rendered).toContain('# infra-kit')
-    expect(rendered).toContain('`ik env-load -c <config>`')
+    expect(rendered).toContain('`ik env-load [-c <config>]`')
+    expect(rendered).toContain("the project's `defaultEnv`")
     expect(rendered).toContain('`ik release merge-dev`')
     expect(rendered).toContain('Tickets are prefixed by area')
   })

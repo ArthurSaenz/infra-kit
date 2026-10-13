@@ -16,7 +16,7 @@ import {
   getDopplerProject,
   resolveEnvToken,
 } from 'src/integrations/doppler'
-import { agentMode, isAgentMode } from 'src/lib/agent-mode'
+import { agentMode, isAgentMode, isHeadless } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import {
   ENV_LOAD_FILE,
@@ -36,7 +36,7 @@ import { extractStderr } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
-import { listProjectEnvNames } from 'src/lib/project-envs'
+import { listProjectEnvNames, readDefaultEnv } from 'src/lib/project-envs'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { refuseMissingArguments } from 'src/lib/prompts/refuse-missing-arguments'
 import { defineMcpTool, textContent } from 'src/types'
@@ -208,59 +208,90 @@ const envLoadForm = createEnvLoadFormProvider()
 
 export const envLoad = async (args: EnvLoadArgs) => {
   const { config } = args
+  const defaultEnv = config ? null : await readDefaultEnv()
+
+  // A configured `defaultEnv` IS the choice an agent would otherwise be refused for: the human made it
+  // ahead of time, in their own config. A terminal still gets the picker, opened on that default.
+  if (!config && defaultEnv && isHeadless()) {
+    return loadSelectedConfig(defaultEnv, 'default')
+  }
 
   // Before the picker: an agent / `--json` run without `config` gets the form's env list as `choices`.
   await refuseMissingArguments({ provider: envLoadForm, params: args, operation: 'env-load', argument: 'config' })
 
-  let selectedConfig = ''
-
   if (config) {
-    selectedConfig = config
-  } else {
-    // No auth pre-probe before the picker: under token-only auth there is no account
-    // to validate, and the per-env token is only knowable AFTER a config is chosen.
-    // A missing/rejected token surfaces from the download with an actionable message.
-    //
-    // The choices are every env this project has — workflow-declared and token-only alike (see
-    // `lib/project-envs`). Deliberately NOT filtered to the envs we hold a token for: an env you cannot
-    // yet load is exactly the one you need to SEE, so that picking it tells you to run
-    // `infra-kit env-token-set <env>` rather than leaving you to wonder where it went.
-    //
-    // An agent that omits `config` is refused with `choices` by `refuseMissingArguments` above; landing
-    // here headless means the provider judged the arguments unformable, and the refusal has to name the
-    // source.
-    if (isAgentMode()) {
-      throw new StructuredRefusalError(
-        { status: 'argument_required', argument: 'config', agentMode: agentMode.source },
-        2,
-        {
-          operation: 'env-load',
-          remediation: 'call env-list, ask the human which environment, and re-call env-load with "config"',
-        },
-      )
-    }
+    return loadSelectedConfig(config, 'argument')
+  }
 
-    const envs = await listProjectEnvNames()
-
-    commandEcho.setInteractive()
-    selectedConfig = await withEscape(
-      (context) => {
-        return select(
-          {
-            message: 'Select environment config',
-            choices: envs.map((env) => {
-              return { name: env, value: env }
-            }),
-          },
-          context,
-        )
+  // No auth pre-probe before the picker: under token-only auth there is no account
+  // to validate, and the per-env token is only knowable AFTER a config is chosen.
+  // A missing/rejected token surfaces from the download with an actionable message.
+  //
+  // The choices are every env this project has — workflow-declared and token-only alike (see
+  // `lib/project-envs`). Deliberately NOT filtered to the envs we hold a token for: an env you cannot
+  // yet load is exactly the one you need to SEE, so that picking it tells you to run
+  // `infra-kit env-token-set <env>` rather than leaving you to wonder where it went.
+  //
+  // An agent that omits `config` is refused with `choices` by `refuseMissingArguments` above; landing
+  // here headless means the provider judged the arguments unformable, and the refusal has to name the
+  // source.
+  if (isAgentMode()) {
+    throw new StructuredRefusalError(
+      { status: 'argument_required', argument: 'config', agentMode: agentMode.source },
+      2,
+      {
+        operation: 'env-load',
+        remediation: 'call env-list, ask the human which environment, and re-call env-load with "config"',
       },
-      // Render to stderr so the prompt is visible when stdout is captured via $() in the shell function.
-      // Only env-load and env-clear use the $() stdout-capture shell pattern.
-      { output: process.stderr, whenHeadless: 'refuse' },
     )
   }
 
+  const envs = await listProjectEnvNames()
+
+  commandEcho.setInteractive()
+  const selectedConfig = await withEscape(
+    (context) => {
+      return select(
+        {
+          message: 'Select environment config',
+          choices: buildPickerChoices(envs, defaultEnv),
+          ...(defaultEnv ? { default: defaultEnv } : {}),
+        },
+        context,
+      )
+    },
+    // Render to stderr so the prompt is visible when stdout is captured via $() in the shell function.
+    // Only env-load and env-clear use the $() stdout-capture shell pattern.
+    { output: process.stderr, whenHeadless: 'refuse' },
+  )
+
+  return loadSelectedConfig(selectedConfig, 'picker')
+}
+
+/** How `env-load` arrived at its config: `-c`, the configured `defaultEnv`, or the terminal picker. */
+type ConfigSource = 'argument' | 'default' | 'picker'
+
+/**
+ * The picker rows, with the configured default marked — and prepended when the env list does not know
+ * it, because that list is local and may be incomplete, and a default the picker cannot show would
+ * leave the cursor nowhere.
+ *
+ * @example
+ * buildPickerChoices(['dev', 'stage'], 'roman')
+ * // => [{ name: 'roman (default)', value: 'roman' }, { name: 'dev', value: 'dev' }, { name: 'stage', value: 'stage' }]
+ */
+export const buildPickerChoices = (
+  envs: string[],
+  defaultEnv: string | null,
+): Array<{ name: string; value: string }> => {
+  const names = defaultEnv && !envs.includes(defaultEnv) ? [defaultEnv, ...envs] : envs
+
+  return names.map((env) => {
+    return { name: env === defaultEnv ? `${env} (default)` : env, value: env }
+  })
+}
+
+const loadSelectedConfig = async (selectedConfig: string, configSource: ConfigSource) => {
   commandEcho.addOption('--config', selectedConfig)
 
   const result = await writeEnvLoadFile({ config: selectedConfig })
@@ -275,6 +306,7 @@ export const envLoad = async (args: EnvLoadArgs) => {
     variableCount: result.variableCount,
     project: result.project,
     config: result.config,
+    configSource,
     // The terminal session the file was written FOR. A Bash-driven agent inherits the session id but
     // never sees the shell that sources the file; naming it here is how it can tell which terminal
     // just got the variables (and notice when there was none).
@@ -513,13 +545,13 @@ export const parseDopplerSecretsJson = (stdout: string): Array<[string, string]>
 export const envLoadMcpTool = defineMcpTool({
   name: 'env-load',
   description:
-    'Download the env vars for a Doppler config and write them to a temporary shell script. Does NOT mutate the calling process — returns the path to a script that must be sourced ("source <filePath>") for the vars to take effect. The infra-kit shell wrapper auto-sources; direct MCP callers must handle sourcing themselves or surface filePath to the user. This server picks the file up on its next tool call, so a tool that needs the variables can be called right after. Omit "config" and this server offers the human a form listing every environment env-list knows, token-less ones marked; a client that cannot render one gets a refusal naming the missing field — call env-list and ask the human, never guess.',
+    'Download the env vars for a Doppler config and write them to a temporary shell script. Does NOT mutate the calling process — returns the path to a script that must be sourced ("source <filePath>") for the vars to take effect. The infra-kit shell wrapper auto-sources; direct MCP callers must handle sourcing themselves or surface filePath to the user. This server picks the file up on its next tool call, so a tool that needs the variables can be called right after. Omit "config" and this server offers the human a form listing every environment env-list knows, token-less ones marked; a client that cannot render one gets a refusal naming the missing field — call env-list and ask the human, never guess. When the project config sets "defaultEnv", omitting "config" headless loads that environment instead of refusing, and "configSource" reports "default".',
   inputSchema: {
     config: z
       .string()
       .optional()
       .describe(
-        'Doppler config / environment name to load (e.g. "dev", "arthur"). Omit it to have the human choose from a form.',
+        'Doppler config / environment name to load (e.g. "dev", "arthur"). Omit it to load the configured "defaultEnv", or, with none set, to have the human choose from a form.',
       ),
   },
   formProvider: envLoadForm,
@@ -528,6 +560,9 @@ export const envLoadMcpTool = defineMcpTool({
     variableCount: z.number().describe('Number of variables loaded'),
     project: z.string().describe('Doppler project name'),
     config: z.string().describe('Doppler config name'),
+    configSource: z
+      .enum(['argument', 'default', 'picker'])
+      .describe('How the config was chosen: passed as "config", the configured "defaultEnv", or the terminal picker'),
     sessionId: z
       .string()
       .nullable()

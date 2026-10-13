@@ -6,7 +6,7 @@ import { INFRA_KIT_ENV_TOKEN_VAR } from 'src/integrations/doppler/token-resolver
 import { readTokenStore } from 'src/lib/env-tokens'
 import { logger } from 'src/lib/logger'
 import type { ProjectEnv, ProjectEnvSource } from 'src/lib/project-envs'
-import { listProjectEnvs } from 'src/lib/project-envs'
+import { listProjectEnvs, readDefaultEnv } from 'src/lib/project-envs'
 import { defineMcpTool, textContent } from 'src/types'
 
 /** One row of the token column: an env, where we learned it exists, and whether a token resolves. */
@@ -102,10 +102,12 @@ export const envList = async () => {
   const envs = await listProjectEnvs()
   const store = await readTokenStore()
   const envToken = process.env[INFRA_KIT_ENV_TOKEN_VAR]
+  const defaultEnv = await readDefaultEnv()
 
   const tokens = buildEnvTokenStatus(envs, store?.envs ?? {}, envToken)
 
-  logger.info(`Doppler project: ${project}\n`)
+  logger.info(`Doppler project: ${project}`)
+  logger.info(`Default env: ${defaultEnv ?? 'none — set one with `infra-kit config-set defaultEnv <env>`'}\n`)
 
   if (tokens.length === 0) {
     // Not an error — a repo can legitimately declare no dispatchable environment. But an empty list with
@@ -115,20 +117,29 @@ export const envList = async () => {
     logger.info(`  Declare them in a workflow's \`workflow_dispatch\` \`environment.options\`,`)
     logger.info('  or add a token for one manually.')
 
-    return buildResult({ project, envs: tokens })
+    return buildResult({ project, defaultEnv, envs: tokens })
   }
 
   for (const line of formatEnvTable(tokens)) {
     logger.info(line)
   }
 
-  return buildResult({ project, envs: tokens })
+  return buildResult({ project, defaultEnv, envs: tokens })
 }
 
 /** Shared tail for both exits above — the empty state is a first-class result, not an error. */
-const buildResult = ({ project, envs }: { project: string; envs: EnvTokenStatus[] }) => {
+const buildResult = ({
+  project,
+  defaultEnv,
+  envs,
+}: {
+  project: string
+  defaultEnv: string | null
+  envs: EnvTokenStatus[]
+}) => {
   const structuredContent = {
     project,
+    defaultEnv,
     configs: envs.map((row) => {
       return row.env
     }),
@@ -149,6 +160,10 @@ export const envListMcpTool = defineMcpTool({
   inputSchema: {},
   outputSchema: {
     project: z.string().describe('Detected Doppler project name'),
+    defaultEnv: z
+      .string()
+      .nullable()
+      .describe('The configured "defaultEnv" — what env-load takes when no config is named; null when unset'),
     configs: z.array(z.string()).describe('Every environment name known to this project'),
     tokens: z
       .array(

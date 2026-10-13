@@ -19,8 +19,8 @@ export const CONFIG_STUB = '{}\n'
 
 // The documented key set, shared verbatim by the layer-2 (user-global) and layer-3
 // (user-project) examples so the two can never disagree about what the schema is.
-// Covers ALL seven top-level keys of `infraKitConfigObject` — `config-templates.test.ts`
-// fails the build if an eighth is added to the schema and not documented here.
+// Covers ALL eight top-level keys of `infraKitConfigObject` — `config-templates.test.ts`
+// fails the build if a ninth is added to the schema and not documented here.
 //
 // Every line is a `//` comment: the surrounding braces are the only live JSON, so the
 // file always parses to `{}` once the comments are stripped.
@@ -28,6 +28,13 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   //   "provider": "doppler",
   //   "config": { "name": "my-doppler-project" }
   // },
+  //
+  // // The environment \`env-load\` (and \`/infra-kit:session\`) takes when none is named — a Doppler
+  // // config name, verbatim. Personal: set yours in the per-project override with
+  // // \`infra-kit config-set defaultEnv <name>\`. The committed infra-kit.json may carry a team-wide
+  // // fallback (e.g. "dev") that each developer's override replaces. A terminal picker opens on it;
+  // // an agent loads it without asking.
+  // "defaultEnv": "dev",
   //
   // "worktrees": {
   //   "openInGithubDesktop": false,
@@ -133,8 +140,8 @@ export const buildUserGlobalExample = (): string => {
 //
 // Merge is shallow: setting a top-level key replaces that whole section from
 // layer 1. Arrays do not concatenate. Top-level keys recognized:
-// envManagement, worktrees, protectedEnvs, mcp, vendorSource, audit, aliasRepo
-// (the last four project layer only). The schema is strict — an
+// envManagement, defaultEnv, worktrees, protectedEnvs, mcp, vendorSource, audit,
+// aliasRepo (the last four project layer only). The schema is strict — an
 // unrecognized top-level key is a parse error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real global
@@ -166,8 +173,8 @@ export const buildUserProjectExample = (projectName: string): string => {
 // Layer 3 (highest precedence) of the config merge chain. Shallow-merged on top of
 // <repo>/infra-kit.json (layer 1) and ~/.infra-kit/infra-kit.json (layer 2) — a
 // top-level key set here replaces that whole section wholesale; arrays do not
-// concatenate. Top-level keys recognized: envManagement, worktrees, protectedEnvs,
-// mcp, vendorSource, audit, aliasRepo (the last four project layer only — refused here). The schema is strict — an unrecognized top-level key is a parse
+// concatenate. Top-level keys recognized: envManagement, defaultEnv, worktrees,
+// protectedEnvs, mcp, vendorSource, audit, aliasRepo (the last four project layer only — refused here). The schema is strict — an unrecognized top-level key is a parse
 // error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real overrides

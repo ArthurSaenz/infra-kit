@@ -912,6 +912,10 @@ const SESSION_CLAUSES = [
   '**every** entry',
   '`{"status": "argument_required", "argument": "config", "choices": [...]}`',
   'never narrow the list, and never load without an explicit choice',
+  // A configured `defaultEnv` is the human's choice made ahead of time: loaded without asking.
+  'block carries a non-null `defaultEnv`, the human already chose, in their config',
+  '`"configSource": "default"`',
+  'infra-kit config-set defaultEnv <env>',
   // PM-5: a host that substitutes a placeholder for the injection leaves a non-JSON block.
   'not JSON, treat it as unknown and call `env-list` yourself',
   'infra-kit env-token-set <env>',
