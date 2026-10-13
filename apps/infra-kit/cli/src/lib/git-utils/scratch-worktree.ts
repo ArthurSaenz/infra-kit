@@ -115,12 +115,15 @@ export const assertPristineWorktree = async (cwd: string): Promise<void> => {
  * re-create the very defect (a rejection escaping a catch/finally and killing
  * the run) that this rewrite removes.
  *
- * `clean -fd`, not `-fdx`: ignored paths survive, so a `node_modules` installed
- * by `--verify` on one branch is reused by the next instead of being reinstalled
- * from cold. That makes the `qa` verify tier non-hermetic, which is a deliberate
- * trade recorded in the plan — the cheap `install` tier is unaffected, because it
- * reads the lockfile and manifests rather than executing installed code.
+ * Ignored files go too, except `node_modules`: an install by `--verify` on one
+ * branch is reused by the next instead of being reinstalled from cold, which is a
+ * deliberate trade — `pnpm install` reconciles it against the next lockfile.
  */
+// Every other ignored path is build output (`dist/`, `*.tsbuildinfo`, `.turbo/`), and a leftover
+// one is read as current: a dependency's stale `dist` from one release branch failed the next
+// branch's `ts-check` with types only the first branch has, while the same tree verified fresh
+// passed. Turbo's cache is no reason to keep them — in a linked worktree it shares the main
+// checkout's `.turbo/cache`, keyed by input hash, so a restore is correct for the branch at hand.
 export const resetScratchWorktree = async (cwd: string): Promise<void> => {
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
@@ -143,9 +146,10 @@ export const resetScratchWorktree = async (cwd: string): Promise<void> => {
   })
 
   // `reset --hard` leaves untracked files behind, which would fail the pristine
-  // assertion on the next iteration.
+  // assertion on the next iteration. `-e` still applies under `-x`, and an unanchored pattern
+  // keeps every workspace package's `node_modules`, not only the root one.
   await run(() => {
-    return $({ cwd, quiet: true })`git clean -fd`
+    return $({ cwd, quiet: true })`git clean -fdx -e node_modules`
   })
 }
 

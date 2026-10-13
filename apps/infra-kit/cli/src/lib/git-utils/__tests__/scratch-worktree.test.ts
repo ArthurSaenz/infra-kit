@@ -241,6 +241,36 @@ describe('resetScratchWorktree / assertPristineWorktree', () => {
     })
   })
 
+  it('removes ignored build output but keeps every node_modules for the next install', async () => {
+    const { repo } = await makeFixture()
+    const commonDir = path.resolve(repo, await git(repo, 'rev-parse', '--git-common-dir'))
+
+    await fs.appendFile(path.join(commonDir, 'info', 'exclude'), 'dist/\n*.tsbuildinfo\n.turbo/\nnode_modules/\n')
+
+    await withScratchWorktree({ cwd: repo }, async (worktree) => {
+      const at = (relative: string): string => {
+        return path.join(worktree.path, relative)
+      }
+      const kept = ['node_modules/dep/index.js', 'packages/lib/node_modules/dep/index.js']
+      const removed = ['packages/lib/dist/index.d.ts', 'packages/lib/tsconfig.tsbuildinfo', '.turbo/runs/run.json']
+
+      for (const file of [...kept, ...removed]) {
+        await fs.mkdir(path.dirname(at(file)), { recursive: true })
+        await fs.writeFile(at(file), 'x\n')
+      }
+
+      await resetScratchWorktree(worktree.path)
+
+      for (const file of kept) {
+        await expect(fs.access(at(file))).resolves.toBeUndefined()
+      }
+
+      for (const file of removed) {
+        await expect(fs.access(at(file))).rejects.toMatchObject({ code: 'ENOENT' })
+      }
+    })
+  })
+
   it('refuses a dirty scratch worktree rather than cascading', async () => {
     const { repo } = await makeFixture()
 

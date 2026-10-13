@@ -283,6 +283,58 @@ describe('verifyMerges', () => {
   })
 })
 
+describe('verifyMerges — between branches', () => {
+  it("does not leave one branch's ignored build output for the next branch's verify", async () => {
+    const repo = await makeFixture()
+    const commonDir = path.resolve(repo, await git(repo, 'rev-parse', '--git-common-dir'))
+
+    // Ignored, as `dist/` is in a real repo: a plain `clean -fd` keeps it.
+    await fs.appendFile(path.join(commonDir, 'info', 'exclude'), 'dist/\n')
+
+    const outcome = await withScratchWorktree({ cwd: repo }, async (worktree) => {
+      const entries = await planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: RELEASES })
+
+      return verifyMerges({
+        worktreePath: worktree.path,
+        refs: pushableRefs(entries),
+        command: 'test ! -e dist/stale && mkdir -p dist && touch dist/stale',
+      })
+    })
+
+    expect([...outcome.failed.entries()]).toEqual([])
+    expect(outcome.kept).toHaveLength(RELEASES.length)
+  })
+
+  it('gives a failure that printed only to stdout a non-empty reason', async () => {
+    const repo = await makeFixture()
+
+    // turbo and tsc report a failing check on stdout and can leave stderr empty.
+    const outcome = await withScratchWorktree({ cwd: repo }, async (worktree) => {
+      const entries = await planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: ['release/v1.0.0'] })
+
+      return verifyMerges({
+        worktreePath: worktree.path,
+        refs: pushableRefs(entries),
+        command: 'echo "error TS2305: no exported member"; exit 2',
+      })
+    })
+
+    expect(outcome.failed.get('release/v1.0.0')).toContain('TS2305')
+  })
+
+  it('names the exit code when the failing command printed nothing', async () => {
+    const repo = await makeFixture()
+
+    const outcome = await withScratchWorktree({ cwd: repo }, async (worktree) => {
+      const entries = await planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: ['release/v1.0.0'] })
+
+      return verifyMerges({ worktreePath: worktree.path, refs: pushableRefs(entries), command: 'exit 3' })
+    })
+
+    expect(outcome.failed.get('release/v1.0.0')).toContain('code 3')
+  })
+})
+
 describe('hook failures are distinguished from conflicts, in any locale', () => {
   it('reports hook-failed via git STATE, not prose — the hook never says "hook" and git speaks German', async () => {
     const repo = await makeFixture()

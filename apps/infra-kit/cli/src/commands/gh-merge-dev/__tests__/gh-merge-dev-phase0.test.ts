@@ -547,6 +547,42 @@ describe('--verify runs pre-push and never rolls back', () => {
     expect(failed?.pushed).toBe(false)
   })
 
+  it('reports verify-failed even when the failure carries an empty reason', async () => {
+    vi.mocked(verifyMerges).mockResolvedValue({
+      kept: [{ branch: 'release/v1.2.5', sha: 'sha0' }],
+      failed: new Map([['release/v1.2.6', '']]),
+    })
+
+    const result = await ghMergeDev({ all: true, verify: true, confirmedCommand: true })
+
+    const failed = result.structuredContent.results.find((entry) => {
+      return entry.branch === 'release/v1.2.6'
+    })
+
+    expect(failed).toMatchObject({ status: 'verify-failed', pushed: false })
+    expect(result.structuredContent.failedBranches).toEqual(['release/v1.2.6'])
+  })
+
+  it('keeps verify-failed for a refused branch when the push of the rest aborts', async () => {
+    vi.mocked(verifyMerges).mockResolvedValue({
+      kept: [{ branch: 'release/v1.2.5', sha: 'sha0' }],
+      failed: new Map([['release/v1.2.6', 'lockfile would change']]),
+    })
+    vi.mocked(pushAtomic).mockResolvedValue({ refspecs: [], pushed: false, stderr: '! [rejected] (fetch first)' })
+    vi.mocked(lsRemoteHead).mockResolvedValue(null)
+
+    const result = await ghMergeDev({ all: true, verify: true, confirmedCommand: true })
+
+    expect(
+      result.structuredContent.results.map((entry) => {
+        return [entry.branch, entry.status, entry.reason]
+      }),
+    ).toEqual([
+      ['release/v1.2.5', 'push-aborted', undefined],
+      ['release/v1.2.6', 'verify-failed', 'lockfile would change'],
+    ])
+  })
+
   it('is skipped entirely on a dry run', async () => {
     await ghMergeDev({ all: true, verify: true, dryRun: true, confirmedCommand: true })
 

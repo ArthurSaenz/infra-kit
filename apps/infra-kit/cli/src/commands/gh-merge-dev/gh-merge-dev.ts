@@ -412,6 +412,7 @@ const applyPush = async (args: {
   return {
     pushed: false,
     pushAborted: true,
+    verifyFailed,
     abortedBy: result.stderr?.split('\n')[0],
     observedLanded: landed.map((entry) => {
       return entry.branch
@@ -773,12 +774,15 @@ const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]
     })
     .map((entry) => {
       const wasPushable = Boolean(entry.mergeSha)
-      const verifyReason = args.verifyFailed?.get(entry.branch)
+      const failedVerify = verifyFailed?.has(entry.branch) ?? false
+      const verifyReason = verifyFailed?.get(entry.branch)
 
       // Verification refusal outranks the push outcome: the branch never reached
       // the push, so reporting it as `push-aborted` would name the wrong cause.
+      // Keyed on membership, not on the reason: an empty reason is falsy and would
+      // report a refused branch as `merged`.
       const pushOutcome: ResultStatus = pushAborted && wasPushable ? 'push-aborted' : entry.status
-      const status: ResultStatus = verifyReason ? 'verify-failed' : pushOutcome
+      const status: ResultStatus = failedVerify ? 'verify-failed' : pushOutcome
       const handOff = handOffs?.get(entry.branch)
 
       return {

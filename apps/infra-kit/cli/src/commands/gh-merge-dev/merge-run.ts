@@ -34,7 +34,32 @@ export interface MergePlanEntry {
 export const MERGE_MESSAGE_PREFIX = "Merge remote-tracking branch 'origin/dev' into "
 
 const stderrOf = (error: unknown): string => {
-  return String((error as { stderr?: string }).stderr ?? (error as { message?: string }).message ?? error).trim()
+  const { stderr, message } = error as { stderr?: string; message?: string }
+
+  return String(stderr?.trim() || message || error).trim()
+}
+
+const VERIFY_OUTPUT_CAP = 2048
+
+/**
+ * Never empty: a verification failure is reported by the presence of its reason in the report,
+ * so an empty one would read as a pass.
+ */
+// stdout is kept beside stderr because turbo and tsc print a failing check there and can leave
+// stderr empty. Tails, because the error is at the end of a long run's output.
+const verifyFailureReason = (error: unknown): string => {
+  const { stderr, stdout, exitCode } = error as { stderr?: string; stdout?: string; exitCode?: number | null }
+
+  const output = [stderr, stdout]
+    .map((stream) => {
+      return (stream ?? '').trim().slice(-VERIFY_OUTPUT_CAP)
+    })
+    .filter((stream) => {
+      return stream.length > 0
+    })
+    .join('\n')
+
+  return output || `the verify command exited with code ${exitCode ?? 'unknown'} and printed nothing`
 }
 
 /**
@@ -244,7 +269,7 @@ export const verifyMerges = async (args: {
 
       kept.push(ref)
     } catch (error) {
-      failed.set(ref.branch, stderrOf(error))
+      failed.set(ref.branch, verifyFailureReason(error))
     } finally {
       await resetScratchWorktree(worktreePath)
     }
