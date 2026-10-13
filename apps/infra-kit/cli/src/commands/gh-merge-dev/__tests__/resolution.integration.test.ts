@@ -511,6 +511,32 @@ describe('--continue (AC 3–13)', () => {
     expect(second.row.verify).toMatchObject({ ok: true, reused: true })
   })
 
+  it('ignored build output a FAILING --verify creates is not blamed on the resolver at the next preview', async () => {
+    const { repo } = await codeConflictFixture()
+    const wt = worktreeOf(repo, 'release/v1.0.0')
+
+    await handOff()
+    await resolve(repo, 'release/v1.0.0')
+
+    const failed = await preview('1.0.0', { verify: 'mkdir -p out && echo built > out/bundle.log && false' })
+
+    expect(failed.row.blocked).toMatchObject({ code: 'verify-failed' })
+
+    await resolve(repo, 'release/v1.0.0', 'resolved after the failure')
+    await write(wt, 'debug.log', 'hidden\n')
+
+    const tampered = await preview('1.0.0', { verify: 'true' })
+
+    expect(tampered.row.blocked).toMatchObject({ code: 'out-of-scope-edit', paths: ['debug.log'] })
+
+    await fs.rm(path.join(wt, 'debug.log'))
+
+    const clean = await preview('1.0.0', { verify: 'true' })
+
+    expect(clean.row.blocked).toBeUndefined()
+    expect(clean.row.verify).toMatchObject({ ok: true })
+  })
+
   it('a --verify that hides files behind a new .gitignore is still verify-mutated-tree', async () => {
     const { repo } = await codeConflictFixture()
 

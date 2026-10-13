@@ -895,7 +895,7 @@ const resolveIndex = async (cwd: string, record: ResolutionRecord): Promise<Bloc
 
 /**
  * Run verify unless this exact tree already passed this exact command, and record the ignored
- * build output it created so later scope checks do not read it as the resolver's.
+ * build output it created — passing or failing — so later scope checks do not read it as the resolver's.
  */
 // A `.gitignore` is never absorbed: an untracked self-ignoring one is how a resolver would hide
 // files from `git status`, which is what the ignored-set check exists to catch.
@@ -913,8 +913,8 @@ const verifyTree = async (
   const ignoredBefore = new Set(await ignoredPaths(wt))
   const verify = await runVerify(wt, command)
 
-  if (!verify.ok) return verify
-
+  // Recorded on a failure too: the fix loop's next `--continue` scope-checks before verifying again,
+  // and would otherwise blame the resolver for the failed run's `.eslintcache`/`.turbo/`/`*.tsbuildinfo`.
   const created = (await ignoredPaths(wt)).filter((file) => {
     return !ignoredBefore.has(file) && !isUnderNodeModules(file) && path.posix.basename(file) !== '.gitignore'
   })
