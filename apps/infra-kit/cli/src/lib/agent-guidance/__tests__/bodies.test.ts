@@ -41,18 +41,18 @@ const body = (type: PackageType, overrides: { hasReadme?: boolean; hasDesign?: b
  * check cannot see, and which `prettier-check` cannot see either once `prettier-fix`
  * has written the damage into the file. A count fails loudly on exactly that class.
  *
- * The budget is tight: `managed-block` wraps these in markers and the block budget
- * is 25. Adding a line to the shared region of the five resource files puts frontend
- * over it. e2e is the deliberate exception: its Structure / Naming /
+ * Every count includes the trailing blank line that keeps the end marker prettier-clean.
+ * The budget is tight: the prose budget is 25 lines, and frontend's prose is at it.
+ * Adding a line to the shared region of the five resource files puts frontend over. e2e is the deliberate exception: its Structure / Naming /
  * Tags sections are the suite's conventions, asked to live in the package CLAUDE.md
  * rather than behind a skill.
  */
 const LINE_COUNTS: Readonly<Record<PackageType, number>> = {
-  frontend: 25,
-  backend: 23,
-  lib: 23,
-  e2e: 69,
-  mobile: 24,
+  frontend: 26,
+  backend: 24,
+  lib: 24,
+  e2e: 70,
+  mobile: 25,
 }
 
 describe('buildPackageBody — every type', () => {
@@ -212,12 +212,12 @@ describe('buildRootBody', () => {
     expect(rendered).not.toContain('infra-kit init')
   })
 
-  it('renders exactly 39 lines', () => {
+  it('renders exactly 40 lines', () => {
     // Same net as the per-type counts, extended to the two resources `PACKAGE_TYPES`
     // does not reach. The root body carries no placeholder today, so this count is the
     // ONLY net against the prettier-inserts-a-line class here — the alternative backstop
     // is a snapshot whose update path is `vitest -u`.
-    expect(rendered.split('\n')).toHaveLength(39)
+    expect(rendered.split('\n')).toHaveLength(40)
   })
 
   it('keeps the pre-existing command and convention text', () => {

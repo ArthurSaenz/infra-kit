@@ -147,8 +147,8 @@ describe('resources — shared-region drift across the five type files', () => {
   const SHARED = sharedLines('lib')
 
   it('anchors the shared region at 18 lines', () => {
-    // A stated constant, not an incidental one. The rendered block budget is 25 and
-    // frontend already renders 25, so adding a line here puts it over.
+    // A stated constant, not an incidental one. The prose budget is 25 lines and
+    // frontend's prose already fills it, so adding a line here puts it over.
     // Whoever changes this number is the person who needs to know that.
     expect(SHARED).toHaveLength(18)
   })

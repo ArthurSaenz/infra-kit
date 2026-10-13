@@ -108,5 +108,6 @@ export const buildPackageBody = (args: BuildPackageBodyArgs): string => {
       : {}),
   })
 
-  return [buildVersionLine(version, type), '', body].join('\n')
+  // Trailing '': see buildRootBody.
+  return [buildVersionLine(version, type), '', body, ''].join('\n')
 }

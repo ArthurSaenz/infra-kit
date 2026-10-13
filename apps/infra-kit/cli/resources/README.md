@@ -54,8 +54,9 @@ changes the text around it.
 - **A shared-prose edit is a five-file diff.** Eighteen lines of every type file are
   identical across all five. The drift assertions in `resources.test.ts`
   fail until every copy matches, so the suite will not go green on four of five.
-- **Watch the line budget.** A rendered block may be 25 lines, and `frontend`
-  already renders 25. Adding one line to the shared region puts it over;
+- **Watch the line budget.** A rendered body may carry 25 lines of prose (plus the
+  version line and the trailing blank line before the end marker), and `frontend`
+  already uses all 25. Adding one line to the shared region puts it over;
   `bodies.test.ts` asserts exact counts and will say so. `e2e` is the deliberate
   exception: it carries the suite's conventions in full.
 - **Adding a package type** needs a `PackageType` entry, a `package/<type>.md`, and

@@ -110,7 +110,7 @@ If any branch is `needs-agent`, tell the human once, before the first edit, to r
 ## 4. Resolving conflicts in the worktree
 
 Before editing, run the read-only `git -C <worktreePath> rev-parse -q --verify AUTO_MERGE`. If it
-is missing, that worktree's git is below the floor — report the branch as blocked with the manual fallback (section 9)
+is missing, that worktree's git is below the floor — report the branch as blocked with the manual fallback
 (section 9) and move to the next branch.
 
 Inside `worktreePath`:

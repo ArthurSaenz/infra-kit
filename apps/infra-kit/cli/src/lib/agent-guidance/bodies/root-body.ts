@@ -24,5 +24,7 @@ export const buildRootBody = (version: string): string => {
   // shipping the literal token.
   const body = renderTemplate(RESOURCES['root/body'], {})
 
-  return [buildVersionLine(version), '', body].join('\n')
+  // The trailing '' leaves a blank line before the end marker: prettier separates a list from the HTML
+  // comment that follows it, and a consumer's prettier-check reads these files.
+  return [buildVersionLine(version), '', body, ''].join('\n')
 }
