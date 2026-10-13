@@ -99,6 +99,11 @@ export const readDeclaredPackageType = async (packageDir: string): Promise<Packa
   }
 }
 
+// The schema's refine enforces `e2e`'s exactly-one-of `target` / `server`, which zod's inferred type cannot carry.
+const asAuthoredConfig = (data: z.output<typeof packageConfigSchema>): InfraKitPackageConfig => {
+  return data as InfraKitPackageConfig
+}
+
 export const loadPackageConfig = async (
   packageDir: string,
   baseline: Readonly<ResolvedPackageRules> = DEFAULT_RULES,
@@ -117,7 +122,7 @@ export const loadPackageConfig = async (
     throw new Error(`Invalid ${PACKAGE_CONFIG_FILE} at ${configPath}: ${z.prettifyError(parsed.error)}`)
   }
 
-  return resolvePackageConfig(parsed.data, baseline)
+  return resolvePackageConfig(asAuthoredConfig(parsed.data), baseline)
 }
 
 /**
@@ -137,5 +142,5 @@ export const loadAuthoredPackageConfig = async (packageDir: string): Promise<Inf
     throw new Error(`Invalid ${PACKAGE_CONFIG_FILE} at ${configPath}: ${z.prettifyError(parsed.error)}`)
   }
 
-  return parsed.data
+  return asAuthoredConfig(parsed.data)
 }

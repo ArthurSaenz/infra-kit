@@ -36,7 +36,7 @@ export interface InfraKitPackageConfig {
   deployedUrlEnv?: string
   /** Local-dev configuration. Accepted-and-inert to the audit; consumed by the dev server. */
   dev?: InfraKitDev
-  /** Which app part this e2e package tests. Consumed by `infraKitE2e()` and the CLI, inert to the audit. */
+  /** Where this e2e package's suite runs. Consumed by `infraKitE2e()` and the CLI; `server: 'static'` also narrows the audit. */
   e2e?: InfraKitE2e
   /**
    * Explicit override for infra-kit's directory/dependency-based package-type detection (used to
@@ -110,17 +110,35 @@ export interface InfraKitDevEnv {
 }
 
 /**
- * The e2e package's target. `infraKitE2e()` (`@slip-stream-kit/config/playwright`) reads it: a run is local
- * by default — `target` on this worktree, served by `infra-kit dev <app>` — and cloud only when asked
- * (`INFRA_KIT_E2E=cloud`, or CI), against the URL in the target package's `deployedUrlEnv`.
+ * Where an e2e package's suite runs. With `target`, `infraKitE2e()` (`@slip-stream-kit/config/playwright`)
+ * reads it: a run is local by default — `target` on this worktree, served by `infra-kit dev <app>` — and
+ * cloud only when asked (`INFRA_KIT_E2E=cloud`, or CI), against the URL in the target package's `deployedUrlEnv`.
+ * With `server: 'static'`, see {@link InfraKitE2eStatic}.
  *
  * @example
  * // apps/client/tests/infra-kit.config.ts
  * export default defineConfig(() => ({ e2e: { target: 'client/ui' } }))
  */
-export interface InfraKitE2e {
+export type InfraKitE2e = InfraKitE2eTarget | InfraKitE2eStatic
+
+export interface InfraKitE2eTarget {
   /** The package under test, `<app>/ui` or `<app>/api`. */
   target: string
+  server?: never
+}
+
+/**
+ * A suite whose own `webServer` serves a static production build — e.g. one asserting the canonical and `og:`
+ * URLs a build inlines, which a dev server never produces. `infraKitE2e()` refuses it, `infra-kit e2e` does
+ * not list it, and the audit drops its `infraKitE2e` requirement; the other `playwright.config.ts` rules stay.
+ *
+ * @example
+ * // apps/client/tests/infra-kit.config.ts
+ * export default defineConfig(() => ({ e2e: { server: 'static' } }))
+ */
+export interface InfraKitE2eStatic {
+  server: 'static'
+  target?: never
 }
 
 /**

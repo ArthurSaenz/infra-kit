@@ -99,6 +99,12 @@ export const infraKitE2e = async (options: InfraKitE2eOptions = {}): Promise<Inf
     throw new Error(`${PREFIX} ${path.join(dir, 'infra-kit.config.ts')} declares no \`e2e\` block`)
   }
 
+  if (e2e.server === 'static') {
+    throw new Error(
+      `${PREFIX} ${path.join(dir, 'infra-kit.config.ts')} declares \`e2e: { server: 'static' }\` — the suite serves its own build, so its playwright.config.ts sets baseURL and webServer itself instead of calling infraKitE2e()`,
+    )
+  }
+
   const root = findWorkspaceRoot(dir)
   const [app] = e2e.target.split('/') as [string]
   const targetDir = path.join(root, 'apps', e2e.target)

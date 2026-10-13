@@ -86,6 +86,10 @@ CI — points at the URL the loaded environment holds under the target's `deploy
 starts nothing. The helper never writes that variable: the dev server it starts proxies the UI's cloud routes
 there.
 
+A suite that must run against a production build it serves itself (build-time canonical or `og:` URLs, say)
+declares `e2e: { server: 'static' }` instead of a `target` and sets `baseURL` and `webServer` itself:
+`infraKitE2e()` refuses it, `infra-kit e2e` does not list it, and `infra-kit audit` stops requiring the call.
+
 ```ts
 // vendor.config.ts
 import { defineVendorConfig } from '@slip-stream-kit/config'

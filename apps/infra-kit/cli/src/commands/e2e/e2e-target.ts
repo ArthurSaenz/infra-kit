@@ -1,4 +1,4 @@
-import type { InfraKitE2e } from '@slip-stream-kit/config'
+import type { InfraKitE2eTarget } from '@slip-stream-kit/config'
 import {
   describeProxyRoutes,
   loadDev,
@@ -65,10 +65,13 @@ export interface E2eTargetDeps {
 interface E2ePackage {
   app: string
   testsDir: string
-  e2e: InfraKitE2e
+  e2e: InfraKitE2eTarget
 }
 
-/** Every `apps/<app>/tests` package whose `infra-kit.config.ts` declares an `e2e` block. */
+/**
+ * Every `apps/<app>/tests` package whose `infra-kit.config.ts` declares an `e2e.target`. A `server: 'static'`
+ * suite is left out: it serves its own build, so there is no dev server to find or start for it.
+ */
 const discoverE2ePackages = async (root: string): Promise<E2ePackage[]> => {
   const appsDir = path.join(root, 'apps')
   const apps = fs.existsSync(appsDir) ? fs.readdirSync(appsDir).toSorted() : []
@@ -80,7 +83,9 @@ const discoverE2ePackages = async (root: string): Promise<E2ePackage[]> => {
     // vanish from the list and surface as "no package declares an e2e block".
     const config = await loadAuthoredPackageConfig(testsDir)
 
-    if (config?.e2e) found.push({ app, testsDir, e2e: config.e2e })
+    const e2e = config?.e2e
+
+    if (e2e?.target !== undefined) found.push({ app, testsDir, e2e: { target: e2e.target } })
   }
 
   return found

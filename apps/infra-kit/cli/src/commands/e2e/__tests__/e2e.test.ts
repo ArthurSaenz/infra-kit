@@ -659,6 +659,17 @@ describe('e2e — picking the package', () => {
     )
   })
 
+  it("leaves out a suite declaring server: 'static', which serves its own build", async () => {
+    writeConfig('apps/backoffice/tests/infra-kit.config.ts', { e2e: { server: 'static' } })
+
+    const result = await e2e(
+      { cloud: true, dryRun: true },
+      deps({ INFRA_KIT_ENV: 'dev', [CLIENT_URL]: 'https://dev.hulyo.co.il' }),
+    )
+
+    expect(result.structuredContent.app).toBe('client')
+  })
+
   it('takes --app over the cwd', async () => {
     const result = await e2e(
       { app: 'client', cloud: true, dryRun: true },

@@ -388,6 +388,33 @@ export default defineConfig({
     ])
   })
 
+  it("passes a suite declaring e2e.server 'static' without infraKitE2e, and still holds it to the other rules", async () => {
+    const root = makeTmpDir()
+    const dir = path.join(root, 'apps/client/tests')
+    const staticConfig = E2E_CONFIG.replace('const e2e = await infraKitE2e({ dir: import.meta.dirname })\n', '')
+
+    fs.mkdirSync(dir, { recursive: true })
+    writePackage(dir, {
+      packageJson: { name: 'e2e-client', type: 'module', scripts: { ...E2E_SCRIPTS } },
+      config: "export default { requiredScripts: [], requiredFiles: [], e2e: { server: 'static' } }",
+      files: { 'playwright.config.ts': staticConfig },
+    })
+
+    expect((await validatePackage(dir, undefined, { repoRoot: root })).passed).toBe(true)
+
+    fs.writeFileSync(path.join(dir, 'playwright.config.ts'), staticConfig.replace(/launchOptions: \{[^}]*\}, /u, ''))
+
+    const failed = (await validatePackage(dir, undefined, { repoRoot: root })).checks.filter((check) => {
+      return check.status === 'fail'
+    })
+
+    expect(
+      failed.map((check) => {
+        return check.name
+      }),
+    ).toEqual(['e2e-config:launch-options'])
+  })
+
   it('reaches an e2e package through its declared type when the path says nothing', async () => {
     const dir = makeTmpDir()
 

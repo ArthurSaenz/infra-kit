@@ -60,7 +60,15 @@ export const checkE2eScripts = (scripts: Record<string, string>): PackageCheck[]
   })
 }
 
-export const checkE2eConfig = async (packageDir: string): Promise<PackageCheck[]> => {
+/** What the package's `infra-kit.config.ts` says about its suite, as far as the convention checks care. */
+export interface E2eCheckOptions {
+  /** `e2e: { server: 'static' }`: the suite serves its own build, so it has no `infraKitE2e()` to call. */
+  staticServer?: boolean
+}
+
+const STATIC_SERVER_EXEMPT_RULE = 'infra-kit-e2e'
+
+export const checkE2eConfig = async (packageDir: string, options: E2eCheckOptions = {}): Promise<PackageCheck[]> => {
   const configPath = path.join(packageDir, PLAYWRIGHT_CONFIG_FILE)
   const content = await fs.readFile(configPath, 'utf-8').catch(() => {
     return null
@@ -74,6 +82,10 @@ export const checkE2eConfig = async (packageDir: string): Promise<PackageCheck[]
 
   return CONFIG_RULES.map((rule) => {
     const name = `e2e-config:${rule.name}`
+
+    if (options.staticServer && rule.name === STATIC_SERVER_EXEMPT_RULE) {
+      return { name, status: 'pass', message: "not required — e2e.server is 'static', the suite serves its own build" }
+    }
 
     return rule.pattern.test(content)
       ? { name, status: 'pass', message: 'present' }
@@ -221,10 +233,14 @@ export const checkE2eBasicAuthNaming = async (packageDir: string): Promise<Packa
 }
 
 /** Convention checks applied to every `e2e` package, on top of its `infra-kit.config.ts` rules. */
-export const checkE2e = async (packageDir: string, scripts: Record<string, string>): Promise<PackageCheck[]> => {
+export const checkE2e = async (
+  packageDir: string,
+  scripts: Record<string, string>,
+  options: E2eCheckOptions = {},
+): Promise<PackageCheck[]> => {
   return [
     ...checkE2eScripts(scripts),
-    ...(await checkE2eConfig(packageDir)),
+    ...(await checkE2eConfig(packageDir, options)),
     await checkE2eAuthIgnored(packageDir),
     await checkE2eBasicAuthNaming(packageDir),
   ]

@@ -161,4 +161,12 @@ describe('infraKitE2e — config errors', () => {
 
     await expect(infraKitE2e({ dir: testsDir, env: {} })).rejects.toThrow(/deployedUrlEnv/)
   })
+
+  it("refuses a suite declaring `server: 'static'`, whose own webServer serves its build", async () => {
+    writeE2e({ server: 'static' })
+
+    await expect(infraKitE2e({ dir: testsDir, env: {} })).rejects.toThrow(
+      /declares `e2e: \{ server: 'static' \}` — the suite serves its own build/,
+    )
+  })
 })

@@ -14,7 +14,7 @@ import {
   checkScripts,
   checkTurbo,
 } from './checks'
-import { readDeclaredPackageType, readPackageJson } from './loader'
+import { loadAuthoredPackageConfig, readDeclaredPackageType, readPackageJson } from './loader'
 import type { PackageCheck, PackageValidationResult } from './types'
 
 // Re-exported on the historical import path so consumers and tests that reach
@@ -68,6 +68,15 @@ const resolvePackageType = async (
   })
 }
 
+// A config that fails to load is already the failing `infra-kit.config.ts` check; here it only means "not declared".
+const declaresStaticServer = async (packageDir: string): Promise<boolean> => {
+  const config = await loadAuthoredPackageConfig(packageDir).catch(() => {
+    return undefined
+  })
+
+  return config?.e2e?.server === 'static'
+}
+
 /**
  * Validate a single directory against its rules — a package's `infra-kit.config.ts`, or with
  * `isRoot` the project `infra-kit.json` `audit` block: the config must be present and valid, every required script must be declared, every
@@ -112,7 +121,9 @@ export const validatePackage = async (
   // Type-level policy, deliberately outside `rules`: a package cannot opt out of the shared e2e
   // convention by emptying `requiredScripts`, which every consumer did while the checks were "temporarily" off.
   if (!options.isRoot && (await resolvePackageType(packageDir, pkgJson, options.repoRoot)) === 'e2e') {
-    checks.push(...(await checkE2e(packageDir, pkgJson.scripts ?? {})))
+    checks.push(
+      ...(await checkE2e(packageDir, pkgJson.scripts ?? {}, { staticServer: await declaresStaticServer(packageDir) })),
+    )
   }
 
   const passed = checks.every((check) => {

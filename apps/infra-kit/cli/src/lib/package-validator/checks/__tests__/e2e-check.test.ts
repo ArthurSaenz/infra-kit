@@ -180,6 +180,24 @@ describe('checkE2eConfig', () => {
     expect(checks[4]?.message).toContain('infraKitE2e()')
   })
 
+  it('drops only the infraKitE2e rule for a suite that serves its own static build', async () => {
+    const dir = makeTmpDir()
+
+    writeConfig(
+      dir,
+      CONFORMING_CONFIG.replace('const e2e = await infraKitE2e({ dir: import.meta.dirname })', '').replace(
+        'timeout: 30_000 + SLOW_MO * 100',
+        'timeout: 30_000',
+      ),
+    )
+
+    const checks = await checkE2eConfig(dir, { staticServer: true })
+
+    expect(failures(checks)).toEqual(['e2e-config:timeout-headroom'])
+    expect(checks[4]).toMatchObject({ name: 'e2e-config:infra-kit-e2e', status: 'pass' })
+    expect(checks[4]?.message).toContain("e2e.server is 'static'")
+  })
+
   it('accepts a larger base timeout as long as the headroom is there', async () => {
     const dir = makeTmpDir()
 

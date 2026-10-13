@@ -310,6 +310,24 @@ describe('packageConfigSchema — e2e', () => {
     expect(issue?.path).toEqual(['e2e', 'cloud'])
     expect(issue?.message).toMatch(/`e2e\.cloud` was removed: .*`deployedUrlEnv`/)
   })
+
+  it("accepts `server: 'static'` alone — a suite serving its own build has no dev-server target", () => {
+    expect(packageConfigSchema.safeParse({ e2e: { server: 'static' } }).success).toBe(true)
+  })
+
+  it.each([
+    ['neither', {}],
+    ['both', { target: 'client/ui', server: 'static' }],
+  ])('refuses %s of `target` and `server`, naming both', (_label, e2e) => {
+    const result = packageConfigSchema.safeParse({ e2e })
+
+    expect(result.success).toBe(false)
+    expect(result.error?.issues[0]?.message).toMatch(/exactly one of `target` .* or `server: 'static'`/)
+  })
+
+  it('rejects a server other than `static`', () => {
+    expect(packageConfigSchema.safeParse({ e2e: { server: 'dev' } }).success).toBe(false)
+  })
 })
 
 describe('packageConfigSchema — dev.env', () => {

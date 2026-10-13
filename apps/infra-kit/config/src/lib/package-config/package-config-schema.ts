@@ -100,12 +100,25 @@ export const packageConfigSchema = z
       .strictObject({
         target: z
           .string()
-          .regex(/^[^/\s]+\/(?:ui|api)$/, 'target must be `<app>/ui` or `<app>/api` (e.g. `client/ui`)'),
+          .regex(/^[^/\s]+\/(?:ui|api)$/, 'target must be `<app>/ui` or `<app>/api` (e.g. `client/ui`)')
+          .optional(),
+        server: z.literal('static').optional(),
         baseUrlEnv: retired(
           "`e2e.baseUrlEnv` was removed: the deployed URL is the target package's own `deployedUrlEnv`",
         ),
         cloud: retired("`e2e.cloud` was removed: the deployed URL is the target package's own `deployedUrlEnv`"),
       })
+      // One object with a refine rather than a union of two: a union reports a retired key as a bare
+      // "Invalid input" instead of its replacement message.
+      .refine(
+        (e2e) => {
+          return (e2e.target === undefined) !== (e2e.server === undefined)
+        },
+        {
+          message:
+            "`e2e` declares exactly one of `target` (the package `infra-kit dev` serves, e.g. `client/ui`) or `server: 'static'` (the suite serves its own build)",
+        },
+      )
       .optional(),
   })
   .refine(
