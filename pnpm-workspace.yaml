@@ -138,6 +138,9 @@ minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - '@slip-stream-kit/*'
   - infra-kit
+  # Exact versions from the starter sync (78ed5d8), younger than the cooldown until 2026-10-13; drop after.
+  - '@shadcn/lint@0.2.1'
+  - prettier@3.9.10
 catalogs:
   conflicts_zod_h4_4_3:
     zod: ^4.4.3
