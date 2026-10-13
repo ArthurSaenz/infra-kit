@@ -153,6 +153,36 @@ describe('renderDeployWorkflows', () => {
     expect(selected.content).not.toContain('skip TF')
   })
 
+  it('runs a pre-deploy job after terraform, even when terraform is skipped, and holds every service on it', () => {
+    const { all, selected } = render({ ...MANIFEST, preDeploy: ['_publish-layer-jobs.yml'] })
+    const publish = selected.parsed.jobs['publish-layer']!
+    const service = selected.parsed.jobs['deploy-client-be']!
+
+    expect(publish.needs).toEqual(['terraform-apply-initUser', 'terraform-apply-infrastructure'])
+    expect(publish.if).toContain(`needs.terraform-apply-initUser.result == 'skipped'`)
+    expect(publish.if).not.toContain('skip_terraform_deploy')
+    expect(publish).toMatchObject({ uses: './.github/workflows/_publish-layer-jobs.yml', secrets: 'inherit' })
+    expect(service.needs).toEqual(['terraform-apply-initUser', 'terraform-apply-infrastructure', 'publish-layer'])
+    expect(service.if).toContain(`needs.publish-layer.result == 'success'`)
+    expect(all.parsed.jobs['deploy-client-be']!.needs).toContain('publish-layer')
+    expect(all.parsed.jobs['notify-success']!.needs).not.toContain('publish-layer')
+  })
+
+  it('runs a pre-deploy job first when there is no terraform', () => {
+    const { selected } = render({
+      environments: ['dev'],
+      services: { 'client-be': {} },
+      preDeploy: ['_publish-layer-jobs.yml'],
+    })
+
+    expect(selected.parsed.jobs['publish-layer']).not.toHaveProperty('needs')
+    expect(selected.parsed.jobs['publish-layer']).not.toHaveProperty('if')
+    expect(selected.parsed.jobs['deploy-client-be']!.needs).toEqual(['publish-layer'])
+    expect(selected.parsed.jobs['deploy-client-be']!.if).toBe(
+      "${{ inputs.client-be && !cancelled() && needs.publish-layer.result == 'success' }}",
+    )
+  })
+
   it('renders the same bytes for the same manifest', () => {
     expect(renderDeployWorkflows(MANIFEST)).toEqual(renderDeployWorkflows(structuredClone(MANIFEST)))
   })

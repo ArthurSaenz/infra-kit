@@ -49,6 +49,11 @@ export const deployConfigSchema = z
     services: z.record(kebabName, deployServiceSchema),
     /** Reusable workflows applied before any service deploys; skippable per run. */
     terraform: z.array(localWorkflowFile).optional(),
+    /**
+     * Reusable workflows run after terraform (applied or skipped) and before any service, e.g. publishing
+     * a Lambda layer the services resolve at deploy time. Not skipped with terraform; a failure stops every service.
+     */
+    preDeploy: z.array(localWorkflowFile).optional(),
     /** Reusable workflow called once every deploy job finished without a failure. */
     notifySuccess: localWorkflowFile.optional(),
     /** Repo secrets exported, under the same name, to every deploy script. */
@@ -62,6 +67,12 @@ export const deployConfigSchema = z
     for (const [name, service] of Object.entries(config.services)) {
       if (service.envs !== undefined && service.skipEnvs !== undefined) {
         ctx.addIssue({ code: 'custom', path: ['services', name], message: 'set envs or skipEnvs, not both' })
+      }
+    }
+
+    for (const [index, file] of (config.preDeploy ?? []).entries()) {
+      if (config.terraform?.includes(file)) {
+        ctx.addIssue({ code: 'custom', path: ['preDeploy', index], message: 'already listed under terraform' })
       }
     }
 

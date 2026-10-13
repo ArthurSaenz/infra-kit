@@ -19,6 +19,7 @@ describe('deployConfigSchema', () => {
         media: { workflow: '_deploy-media-jobs.yml', deployAll: false },
       },
       terraform: ['_terraform-apply-infrastructure-jobs.yml'],
+      preDeploy: ['_publish-layer-jobs.yml'],
       notifySuccess: '_notify-success-jobs.yml',
       extraEnv: ['MONITORING_IP'],
     })
@@ -51,6 +52,12 @@ describe('deployConfigSchema', () => {
     expect(deployConfigSchema.safeParse({ ...minimal, services: { Client_BE: {} } }).success).toBe(false)
     expect(deployConfigSchema.safeParse({ ...minimal, environments: ['Dev'] }).success).toBe(false)
     expect(deployConfigSchema.safeParse({ ...minimal, extraEnv: ['monitoring-ip'] }).success).toBe(false)
+  })
+
+  it('rejects a pre-deploy workflow that is already a terraform one', () => {
+    const terraform = ['_tf.yml']
+
+    expect(deployConfigSchema.safeParse({ ...minimal, terraform, preDeploy: terraform }).success).toBe(false)
   })
 
   it('rejects a workflow reference that is a path rather than a file name', () => {

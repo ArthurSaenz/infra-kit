@@ -78,10 +78,29 @@ const envSecret = (suffix: string): string => {
   return gh(`secrets[format('{0}_${suffix}', inputs.environment)]`)
 }
 
+/** The jobs every service waits for: terraform may be skipped per run, pre-deploy jobs must succeed. */
+interface Upstream {
+  terraform: string[]
+  preDeploy: string[]
+}
+
+const upstreamJobs = (upstream: Upstream): string[] => {
+  return [...upstream.terraform, ...upstream.preDeploy]
+}
+
 const terraformOk = (terraformJobs: string[]): string[] => {
   return terraformJobs.map((job) => {
     return `(needs.${job}.result == 'success' || needs.${job}.result == 'skipped')`
   })
+}
+
+const upstreamOk = (upstream: Upstream): string[] => {
+  return [
+    ...terraformOk(upstream.terraform),
+    ...upstream.preDeploy.map((job) => {
+      return `needs.${job}.result == 'success'`
+    }),
+  ]
 }
 
 /**
@@ -89,7 +108,7 @@ const terraformOk = (terraformJobs: string[]): string[] => {
  * `inputs.environment == '<env>'`: the CLI's workflow-gates reader scans every workflow for the latter
  * and would start reading these files as another source of v1's gates.
  */
-const serviceCondition = (planned: PlannedService, kind: WorkflowKind, terraformJobs: string[]): string | undefined => {
+const serviceCondition = (planned: PlannedService, kind: WorkflowKind, upstream: Upstream): string | undefined => {
   const parts: string[] = []
 
   if (kind === 'selected') parts.push(`inputs.${planned.name}`)
@@ -97,7 +116,7 @@ const serviceCondition = (planned: PlannedService, kind: WorkflowKind, terraform
   if (planned.gate !== undefined)
     parts.push(`contains(fromJSON('${JSON.stringify(planned.gate)}'), inputs.environment)`)
 
-  if (terraformJobs.length > 0) parts.push('!cancelled()', ...terraformOk(terraformJobs))
+  if (upstreamJobs(upstream).length > 0) parts.push('!cancelled()', ...upstreamOk(upstream))
 
   return parts.length === 0 ? undefined : gh(parts.join(' && '))
 }
@@ -152,12 +171,7 @@ const sharedJobCall = (planned: PlannedService, extraEnv: string[]): string[] =>
   ]
 }
 
-const serviceJob = (
-  planned: PlannedService,
-  kind: WorkflowKind,
-  terraformJobs: string[],
-  extraEnv: string[],
-): string[] => {
+const serviceJob = (planned: PlannedService, kind: WorkflowKind, upstream: Upstream, extraEnv: string[]): string[] => {
   const call =
     planned.service.workflow === undefined
       ? sharedJobCall(planned, extraEnv)
@@ -166,8 +180,8 @@ const serviceJob = (
   return [
     '',
     `  deploy-${planned.name}:`,
-    ...needsLine(terraformJobs),
-    ...ifLine(serviceCondition(planned, kind, terraformJobs)),
+    ...needsLine(upstreamJobs(upstream)),
+    ...ifLine(serviceCondition(planned, kind, upstream)),
     ...call,
   ]
 }
@@ -235,6 +249,20 @@ const terraformJob = (file: string): string[] => {
   return ['', `  ${jobIdForWorkflow(file)}:`, `    if: ${unlessSkipped}`, ...localWorkflowCall(file)]
 }
 
+/** Runs even when terraform was skipped: what it prepares (a layer, an artefact) the services still read. */
+const preDeployJob = (file: string, terraformJobs: string[]): string[] => {
+  const condition =
+    terraformJobs.length === 0 ? undefined : gh(['!cancelled()', ...terraformOk(terraformJobs)].join(' && '))
+
+  return [
+    '',
+    `  ${jobIdForWorkflow(file)}:`,
+    ...needsLine(terraformJobs),
+    ...ifLine(condition),
+    ...localWorkflowCall(file),
+  ]
+}
+
 const notifyJob = (file: string, deployJobs: string[]): string[] => {
   return [
     '',
@@ -249,7 +277,11 @@ const notifyJob = (file: string, deployJobs: string[]): string[] => {
 const renderWorkflow = (config: DeployConfig, kind: WorkflowKind): GeneratedWorkflow => {
   const services = planServices(config, kind)
   const terraformFiles = config.terraform ?? []
-  const terraformJobs = terraformFiles.map(jobIdForWorkflow)
+  const preDeployFiles = config.preDeploy ?? []
+  const upstream: Upstream = {
+    terraform: terraformFiles.map(jobIdForWorkflow),
+    preDeploy: preDeployFiles.map(jobIdForWorkflow),
+  }
   const inputCount = 1 + (terraformFiles.length > 0 ? 1 : 0) + (kind === 'selected' ? services.length : 0)
 
   if (inputCount > MAX_DISPATCH_INPUTS) {
@@ -271,8 +303,11 @@ const renderWorkflow = (config: DeployConfig, kind: WorkflowKind): GeneratedWork
     '',
     'jobs:',
     ...terraformFiles.flatMap(terraformJob),
+    ...preDeployFiles.flatMap((file) => {
+      return preDeployJob(file, upstream.terraform)
+    }),
     ...services.flatMap((planned) => {
-      return serviceJob(planned, kind, terraformJobs, config.extraEnv ?? [])
+      return serviceJob(planned, kind, upstream, config.extraEnv ?? [])
     }),
     ...(config.notifySuccess === undefined ? [] : notifyJob(config.notifySuccess, deployJobs)),
   ]
