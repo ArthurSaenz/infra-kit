@@ -38,7 +38,7 @@ jobs:
       E2E_VISUAL: ${{ inputs.visual != 'skip' && inputs.visual || '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.branch }}
 
