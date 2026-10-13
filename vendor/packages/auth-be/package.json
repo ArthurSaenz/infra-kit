@@ -1,0 +1,43 @@
+{
+  "name": "@wl/auth-be",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm exec tsc -b",
+    "clean-cache": "rm -rf node_modules/.cache .eslintcache tsconfig.tsbuildinfo .turbo .swc",
+    "clean-artifacts": "rm -rf dist tsconfig.tsbuildinfo",
+    "ts-check": "tsc --noEmit",
+    "prettier-check": "pnpm exec prettier --check * --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
+    "prettier-fix": "pnpm exec prettier --write * --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
+    "eslint-check": "pnpm exec eslint --cache --quiet --report-unused-disable-directives ./src",
+    "eslint-fix": "pnpm exec eslint --cache --quiet --report-unused-disable-directives ./src --fix",
+    "test": "pnpm exec vitest run --reporter=minimal",
+    "test-watch": "pnpm exec vitest --watch --silent passed-only",
+    "test-ui": "pnpm exec vitest --ui --silent passed-only",
+    "test-report": "pnpm exec vitest run --coverage --silent passed-only",
+    "infra-kit-check": "pnpm exec infra-kit audit"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.3"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "catalog:",
+    "@wl/eslint-config": "workspace:*",
+    "@wl/ts-config": "workspace:*",
+    "@wl/vitest-config": "workspace:*",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=24.x"
+  }
+}
