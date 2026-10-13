@@ -7,6 +7,7 @@ node_modules
 build
 out
 **/storybook-static
+**/.mf
 
 # Turbo
 **/.turbo
@@ -53,6 +54,8 @@ vite.config.ts.timestamp-*.mjs
 **/blob-report/
 **/playwright/.cache/
 **/.playwright-mcp/
+# Saved storage state is a live session cookie.
+.auth/
 
 # Testing - Vitest / Coverage
 .coverage
@@ -60,6 +63,8 @@ coverage
 *.lcov
 .nyc_output
 **/.vitest/
+# Vitest browser-mode failure screenshots. Un-ignore a package's dir if it adopts `toMatchScreenshot` baselines.
+**/__screenshots__/
 
 # Logs
 *.log

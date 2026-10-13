@@ -6,6 +6,7 @@ import { boundaries } from './configs/boundaries.js'
 import { wlComponentsRecommended } from './configs/components.js'
 import { jsdoc, markdown } from './configs/docs.js'
 import { e2eBoundaries } from './configs/e2e-boundaries.js'
+import { e2ePlaywright } from './configs/e2e-playwright.js'
 import { frameworks } from './configs/frameworks/index.js'
 import { ignores } from './configs/ignores.js'
 import { shadcnConfig } from './configs/shadcn.js'
@@ -39,6 +40,7 @@ export const createConfig = async (userOptions: ConfigOptions = {}): Promise<Typ
     overrides,
     // e2e after the app layer: for files of a Playwright package its elements replace features/services/shared.
     ...(o.boundaries === false ? [] : [boundaries(o.boundaries), e2eBoundaries(o.boundaries)]),
+    e2ePlaywright(),
     ...fw.extraConfigs,
     ...(o.components ? wlComponentsRecommended : []),
     ...(o.jsdoc ? [jsdoc] : []),

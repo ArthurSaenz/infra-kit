@@ -43,16 +43,17 @@
   },
   "devDependencies": {
     "@antfu/eslint-config": "^9.5.1",
-    "@eslint-react/eslint-plugin": "^5.22.1",
-    "@shadcn/lint": "^0.2.0",
-    "@slip-stream-kit/eslint-plugin": "^0.14.0",
+    "@eslint-react/eslint-plugin": "^5.24.10",
+    "@shadcn/lint": "^0.2.1",
+    "@slip-stream-kit/eslint-plugin": "^0.18.1",
     "@types/node": "catalog:",
     "@wl/vitest-config": "workspace:*",
-    "eslint": "^10.11.0",
+    "eslint": "^10.12.0",
     "eslint-plugin-boundaries": "^7.2.0",
+    "eslint-plugin-playwright": "^2.12.1",
     "eslint-plugin-react-refresh": "0.5.7",
     "eslint-plugin-sonarjs": "^4.2.2",
-    "eslint-plugin-svelte": "^3.23.0",
+    "eslint-plugin-svelte": "^3.23.1",
     "typescript": "catalog:"
   }
 }

@@ -64,7 +64,17 @@ run_e2e_tests() {
     # Explicit rather than relying on CI being set: infraKitE2e then reads the deployed URL from the
     # target's deployedUrlEnv (exported by the caller) instead of starting a local dev server.
     export INFRA_KIT_E2E=cloud
-    pnpm --filter=e2e-${project} e2e-test
+    # No `--` separator: pnpm forwards args after the script name, and a literal `--` would reach
+    # playwright and end its option parsing.
+    local extra_args=()
+    if [ -n "$E2E_GREP" ]; then
+        extra_args=(--grep "$E2E_GREP")
+    fi
+    # E2E_VISUAL=run adds the `visual` project to the run; =update records only its baselines, on this runner's OS.
+    if [ "$E2E_VISUAL" = "update" ]; then
+        extra_args+=(--project=visual --update-snapshots)
+    fi
+    pnpm --filter=e2e-${project} e2e-test "${extra_args[@]}"
 
     echo -e "${GREEN}E2E tests completed for ${project}!${NC}"
 }

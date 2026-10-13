@@ -26,7 +26,7 @@ consumers calling `config()` / `config({ ignores })` are unaffected.
 | `jsdoc`       | `boolean`                       | `true`    | Size-gated JSDoc layer (PascalCase components exempt from `@example`/description — see below).      |
 | `markdown`    | `boolean`                       | `true`    | Markdown sonarjs-off layer.                                                                         |
 | `components`  | `boolean`                       | `true`    | White-label component conventions (`@wl`).                                                          |
-| `shadcn`      | `boolean`                       | `true`    | Tailwind design-system rules from [`@shadcn/lint`](https://github.com/shadcn-ui/lint).               |
+| `shadcn`      | `boolean`                       | `true`    | Tailwind design-system rules from [`@shadcn/lint`](https://github.com/shadcn-ui/lint).              |
 | `rules`       | `ConfigRules`                   | `{}`      | Consumer rule overrides, merged **last** (highest precedence). Omitted from the call when empty.    |
 | `userConfigs` | `FlatConfig[]`                  | `[]`      | Arbitrary consumer flat-configs appended **last**.                                                  |
 
@@ -88,6 +88,7 @@ src/
     base.ts         # antfu base options + sonarjs + the project rule overrides (incl. Phase-1)
     boundaries.ts   # Phase-2 relationship-aware boundaries (severity-parameterized)
     e2e-boundaries.ts # import direction inside Playwright packages (same toggle)
+    e2e-playwright.ts # eslint-plugin-playwright trust rules, Playwright packages only
     components.ts   # @wl component conventions
     shadcn.ts       # @shadcn/lint Tailwind design-system rules
     docs.ts         # JSDoc + markdown layers
@@ -181,6 +182,14 @@ import { cart } from '../cart/fixtures/cart.fixture'         // ❌ sibling doma
 ```
 
 It follows the `boundaries` toggle and severity. Source: `src/configs/e2e-boundaries.ts`.
+
+## E2E trust rules (Playwright packages)
+
+Same package scope as above, always on (override per rule through `rules`): `eslint-plugin-playwright`
+at `error` for `missing-playwright-await`, `no-focused-test`, `no-wait-for-timeout`, `no-force-option`,
+`no-conditional-expect`, `no-networkidle` and `expect-expect`. `expect-expect` also accepts calls named
+`expect*` / `assert*` / `verify*` (bare or as a method), so page-object assertion helpers count.
+Source: `src/configs/e2e-playwright.ts`.
 
 ## JSDoc layer (size-gated)
 

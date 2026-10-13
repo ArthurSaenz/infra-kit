@@ -45,7 +45,7 @@ const isE2ePackageDir = (dir: string): boolean => {
   return result
 }
 
-const isE2eSourceFile = (filePath: string): boolean => {
+export const isE2eSourceFile = (filePath: string): boolean => {
   return SOURCE_FILE.test(filePath) && isE2ePackageDir(path.dirname(filePath))
 }
 
