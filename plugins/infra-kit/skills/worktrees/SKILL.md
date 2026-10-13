@@ -13,12 +13,13 @@ The commands are `infra-kit worktrees add`, `worktrees list` and `worktrees remo
 through `Bash` with `--json --agent`.
 
 **Version floor.** Read the block above first. On `{"error": …}`, or a `version` below `0.14.0`, tell
-the human to update — `pnpm add -g infra-kit@latest`, or `infra-kit setup` from their terminal — and
-stop. An older CLI has no `--feature` flag.
+the human to update — `pnpm add -g infra-kit@<version>` with the version `pnpm view infra-kit version`
+prints (a bare `@latest` can reinstall the cached old one), or `infra-kit setup` from their terminal —
+and stop. An older CLI has no `--feature` flag.
 
-**cwd.** Every call runs from the main checkout — the directory Claude Code was launched in. If the
-shell was `cd`'d elsewhere, `cd` back first (the CLI also accepts `-C <dir>`). The CLI refuses to
-run from inside a linked worktree.
+**cwd.** `add`, `list` and `remove --feature` run from the main checkout — the directory Claude Code
+was launched in. If the shell was `cd`'d elsewhere, `cd` back first (the CLI also accepts `-C <dir>`);
+those calls refuse from inside a linked worktree. `remove --self` is the exception (section 5).
 
 **Not by hand, not `EnterWorktree`.** A raw `git worktree add` is blocked by this repo's hooks, and
 Claude Code's built-in `EnterWorktree` makes its own worktree under `.claude/worktrees/` that
@@ -92,6 +93,11 @@ Removal is `infra-kit worktrees remove --feature <name> --json --agent`: the sam
 The **branch and its commits survive**. What is lost is everything gitignored in the directory: a
 hydrated `.env`, `node_modules`, `dist`. git refuses a worktree with uncommitted or untracked files,
 and that branch comes back in `failedWorktrees`. Relay it, and do not force it.
+
+To close the worktree this session runs in, run `infra-kit worktrees remove --self --json --agent`
+from inside it: the same preview → approve → `rerun` protocol. The approved run hands the removal to
+an Orca tab of the main checkout, which closes every tab of the worktree — this session included — so
+finish your reply before approving.
 
 ## 6. What not to do
 

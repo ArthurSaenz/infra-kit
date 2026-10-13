@@ -7,7 +7,7 @@ The plugin is **skills only**. Its tool surface is the global `infra-kit` CLI on
 through the `Bash` tool: every procedure skill runs `infra-kit <command> --json --agent` from the
 directory Claude Code was launched in, reads the one JSON object the CLI prints on stdout, and
 relays it. The plugin holds no `mcpServers` entry, no server pointer and no copy of the CLI — the
-CLI's code, version and updates stay with the global install (`pnpm add -g infra-kit@latest`),
+CLI's code, version and updates stay with the global install (`pnpm add -g infra-kit@<version>`),
 and a skill's first line checks that install is at or above the version floor the skill was
 written against (`0.8.0` for this plugin version). The migration is recorded in
 `.omc/plans/mcp-to-cli-skills-migration.md`; the retired MCP-era plans live in `docs/archive/mcp/`.
@@ -172,7 +172,32 @@ From this repo's root, `pnpm run test:claude` runs every skill's `__tests__/*.te
 plugin manifest guard suite in `plugins/infra-kit/__tests__/`, and the hook suite. `pnpm run qa`
 invokes it last. `claude plugin validate ./plugins/infra-kit --strict --json` must exit 0.
 
+**Pass a glob, never a bare directory.** A `--require` preload in this
+environment's `NODE_OPTIONS` makes Node treat a directory argument as a CommonJS entry point, so
+`node --test <dir>` dies with `MODULE_NOT_FOUND` before discovering anything.
+
+Root `vitest.config.ts` scopes projects to `apps/*/*`, `packages/*`, `vendor/packages/*` and
+`vendor/configs/*`, so these tests can never reach turbo's `test` task. `qa` appends `test:claude`
+explicitly for exactly that reason.
+
 The manifest suite pins the transport: no `.mcp.json` in the plugin, no MCP tool name in any
 `SKILL.md`, and every `Bash(infra-kit …)` rule in every `allowed-tools` resolving to a read-only row
 of the CLI's command catalog (`apps/infra-kit/cli/src/lib/command-catalog/command-catalog.ts`, read
 textually) with no `--yes`.
+
+### comment-verifier: manual e2e checklist
+
+These acceptance rows are a model's output, so they are checked by hand, not by `node --test`.
+
+- **End to end:** run on `skills/comment-verifier/__fixtures__/restating-fix.ts`. `git diff --numstat` reads `0 3`, the
+  macOS realpath workaround comment survives verbatim, `--verify-fix` passes, and the reported
+  `ts-check` exit code is 0.
+- **Verdict before edits:** the report shows the full verdict, and every changed comment in a
+  captured file appears in it. A change with no entry is the failure this skill exists to prevent.
+- **A verdict reaching outside the snapshot is a stop:** name a file in the verdict that
+  `--snapshot` never captured, and the run reports `absent from the verification baseline`, exits
+  non-zero, and does not summarise as successful. The recovery is a re-snapshot, not a restore.
+- **Scope discipline:** on a list containing a file with obvious non-comment slop, such as an unused
+  local, the verdict contains no finding about it and the file's code is untouched.
+- **Nothing to do:** a run on `skills/comment-verifier/__fixtures__/clean.ts` edits nothing and prints `nothing to fix`.
+- **Keep-only verdict:** produces no edit and the same line.

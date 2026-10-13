@@ -16,10 +16,11 @@ The tool is `infra-kit e2e`. Everything below runs it through `Bash` with `--jso
 root of the release checkout — the directory Claude Code was launched in, or the release worktree
 section 2 picked, in which case every command carries the `cd <path> && ` prefix that section names.
 
-**Version floor.** On `{"error": …}` above, or a `version` below `0.17.3` (the first CLI whose
-`e2e --json` gives every run its own `outputDir`, folds `--repeat-each` repeats into `repeatFlaky`,
-reports `annotated[]`, and refuses with a structured `reason`), tell the human to update —
-`pnpm add -g infra-kit@latest` — and stop.
+**Version floor.** On `{"error": …}` above, or a `version` below `0.17.3` (the first CLI whose `e2e
+--json` gives every run its own `outputDir`, folds `--repeat-each` repeats into `repeatFlaky`, reports
+`annotated[]`, and refuses with a structured `reason`), tell the human to update — `pnpm add -g
+infra-kit@<version>` with the version `pnpm view infra-kit version` prints (a bare `@latest` can
+reinstall the cached old one), or `infra-kit setup` from their terminal — and stop.
 
 This skill **reports**; it does not repair. Never edit a spec, a Page Object, a snapshot or a config,
 never add `test.skip` / `fixme` / `fail`, never pass `--update-snapshots`, never widen a timeout or
@@ -27,7 +28,7 @@ add retries. Fixing a failure is `/infra-kit:e2e-architect`'s Diagnose procedure
 after reading the report.
 
 The phases run in order and each one ends by writing its outcome to the state file (section 2).
-Keep the terminal quiet: one short status line per phase, tables only where this file asks for one.
+Tell the human each phase's outcome briefly as it finishes; tables only where this file asks for one.
 
 **Reading a refusal.** `infra-kit e2e` refuses on stdout, exit 2: `argument_required`,
 `confirmation_required`, or `{"status": "refused", "reason", …}` where `reason` is one of:

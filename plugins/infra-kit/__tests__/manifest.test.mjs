@@ -871,7 +871,7 @@ const ABSENT_TOOLS_CLAUSE = 'tools are absent this is a subdirectory or legacy s
 // command is `version`, not `--version`), and the sentence that stops the skill below the floor.
 const VERSION_FLOOR_LINE =
   'CLI on PATH: !`zsh -c \'infra-kit version --json\' 2>/dev/null || echo \'{"error":"infra-kit not on PATH"}\'`'
-const VERSION_FLOOR_CLAUSES = ['a `version` below `0.8.0`', 'pnpm add -g infra-kit@latest']
+const VERSION_FLOOR_CLAUSES = ['a `version` below `0.8.0`', 'pnpm add -g infra-kit@<version>` with the version `pnpm view infra-kit version` prints']
 
 // The preview → approve → `--yes` protocol, spelled the same way in every skill that drives one of
 // the CLI's confirm-site commands (`release create|remove` here). `env-load`, `env-clear` and `setup`

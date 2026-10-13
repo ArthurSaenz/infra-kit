@@ -15,11 +15,17 @@ file is excluded from the reconciliation walk by path, so it needs no special-ca
 
 ## Placeholders
 
-| File                 | Placeholders                                                          |
-| -------------------- | --------------------------------------------------------------------- |
-| `package/*.md`       | `{{packageName}}`, `{{relDir}}`, `{{type}}`, and `- {{readmeBullet}}` |
-| `design/skeleton.md` | `{{packageName}}` — in the H1 only                                    |
-| `root/body.md`       | none                                                                  |
+| File                 | Placeholders                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------ |
+| `package/*.md`       | `{{packageName}}`, `{{relDir}}`, `{{type}}`, `- {{readmeBullet}}` and `- {{checksBullet}}` |
+| `package/lib.md`     | the above, plus `- {{surfaceBullet}}` and `- {{buildBullet}}`                              |
+| `package/e2e.md`     | the above, plus `- {{e2eDocBullet}}`                                                       |
+| `design/skeleton.md` | `{{packageName}}` — in the H1 only                                                         |
+| `root/body.md`       | none                                                                                       |
+
+A `- {{…Bullet}}` line disappears when its value is empty: the checks line names only the
+`ts-check` / `eslint-check` / `test` scripts the package defines, and the lib build and
+public-surface lines only a package with a `build` script or an `exports` / `bin` entry.
 
 Positions are not free. Each one below is measured against this repo's prettier, and
 the failure mode in every case is silent: prettier leaves the token in place and
@@ -45,12 +51,13 @@ changes the text around it.
   `dist` and node throws `ERR_UNKNOWN_FILE_EXTENSION` on a consumer's machine. Every
   test here runs from `src/`, where the broken form still works —
   `resource-bundle.test.ts` is the only thing that would catch it.
-- **A shared-prose edit is a five-file diff.** Eighteen of the ~22 lines in a type
-  file are identical across all five. The drift assertions in `resources.test.ts`
+- **A shared-prose edit is a five-file diff.** Eighteen lines of every type file are
+  identical across all five. The drift assertions in `resources.test.ts`
   fail until every copy matches, so the suite will not go green on four of five.
-- **Watch the line budget.** A rendered block may be 25 lines and three types
-  already render 24. Adding one line to the shared region puts them at the ceiling;
-  `bodies.test.ts` asserts exact counts and will say so.
+- **Watch the line budget.** A rendered block may be 25 lines, and `frontend`
+  already renders 25. Adding one line to the shared region puts it over;
+  `bodies.test.ts` asserts exact counts and will say so. `e2e` is the deliberate
+  exception: it carries the suite's conventions in full.
 - **Adding a package type** needs a `PackageType` entry, a `package/<type>.md`, and
   an import plus two record entries in `resources.ts`. The reconciliation test fails
   until all of them exist.
@@ -59,5 +66,5 @@ changes the text around it.
 
 Consumers run a globally-installed CLI, so the text reaches them through a publish —
 there is no runtime read of this directory. Bump the version, publish, then each
-developer runs `pnpm add -g infra-kit@latest` and re-runs `infra-kit audit --fix --root`
+developer runs `pnpm add -g infra-kit@<version>` and re-runs `infra-kit audit --fix --root`
 (`--fix --all` for the per-package blocks).

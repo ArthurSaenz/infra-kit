@@ -17,8 +17,9 @@ Three commands do the work, and this body is only the procedure that composes th
 `--json --agent`. Do not improvise with the doppler CLI or by exporting variables in Bash.
 
 **Version floor.** Read the first block above. On `{"error": …}`, or a `version` below `0.8.0`, tell
-the human to update — `pnpm add -g infra-kit@latest`, or `infra-kit setup` from their terminal — and
-stop. An older CLI answers none of the shapes below.
+the human to update — `pnpm add -g infra-kit@<version>` with the version `pnpm view infra-kit version`
+prints (a bare `@latest` can reinstall the cached old one), or `infra-kit setup` from their terminal —
+and stop. An older CLI answers none of the shapes below.
 
 **cwd.** Every call runs from the directory Claude Code was launched in — the repo root. If the shell
 was `cd`'d elsewhere, `cd` back first (the CLI also accepts `-C <dir>`).
@@ -27,8 +28,8 @@ was `cd`'d elsewhere, `cd` back first (the CLI also accepts `-C <dir>`).
 
 ## 1. What a session is
 
-A named context. Today it resolves to exactly one activation — the Doppler environment — and the
-name **is** the Doppler config name. There is no mapping table to consult.
+A named context. It resolves to exactly one activation — the Doppler environment — and the name
+**is** the Doppler config name. There is no mapping table to consult.
 
 The contract a second provider would implement, and the recipe for adding one, live in
 `docs/session-context-orchestrator.md`. They are written for whoever adds that provider, not for you.
@@ -87,8 +88,9 @@ say a different one is `/infra-kit:session <env>` away.
 option per entry of the `Environments this project knows` block above — **every** entry, in the
 block's order, a `hasToken: false` entry annotated with `infra-kit env-token-set <env>` as its fix.
 The human's pick is the `-c`; the load then runs as above. Do not surface `source` — it records how
-we learned the environment exists, which helps nobody choose. Mention once that
-`infra-kit config-set defaultEnv <env>` makes the pick this project's default for this machine.
+we learned the environment exists, which helps nobody choose. When the block carries a `defaultEnv`
+key at all (`null` included), mention once that `infra-kit config-set defaultEnv <env>` makes the pick
+this project's default for this machine; a CLI whose block has no such key has no such setting.
 
 The same picker arrives from the CLI itself: with no `defaultEnv` set, `infra-kit env-load --json
 --agent` with no `-c` exits 2 with `{"status": "argument_required", "argument": "config", "choices":

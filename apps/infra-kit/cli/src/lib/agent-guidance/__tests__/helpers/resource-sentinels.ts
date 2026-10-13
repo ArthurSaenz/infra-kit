@@ -24,7 +24,7 @@ export const SENTINELS: Readonly<Record<ResourceKey, string>> = {
   'root/body': 'This repository uses the **infra-kit** CLI for environment, worktree, and release workflows.',
   'package/frontend': 'dev URLs are proxied and port-free.',
   'package/backend': 'Module-scope state belongs in the handler entry file',
-  'package/lib': 'Changing that map is a breaking change for every dependent package.',
+  'package/lib': 'No app-specific logic belongs here.',
   'package/e2e': 'Selectors live in Page Objects, never inline in specs.',
   'package/mobile': 'The web build feeds the native shell, so a device run needs a rebuild first.',
   'design/skeleton': 'Replace every TODO below with the real design language.',

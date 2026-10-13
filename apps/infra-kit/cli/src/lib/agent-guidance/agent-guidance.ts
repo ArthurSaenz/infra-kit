@@ -274,6 +274,8 @@ export const syncPackageGuidance = async (
     hasReadme: hasExactFile(packageDir, README_FILE),
     hasDesign: hasExactFile(packageDir, DESIGN_FILE),
     hasE2eDoc: fs.existsSync(path.join(repoRoot, E2E_DOC_PATH)),
+    scripts: Object.keys(pkgJson.scripts ?? {}),
+    hasPublicSurface: pkgJson.exports !== undefined || pkgJson.bin !== undefined,
   })
 
   const written: GuidanceWrite[] = []

@@ -46,7 +46,7 @@ other three add nothing, so a `replacement` on them is a contradiction and is re
 - A `delete` **quotes the code line that already carries the information.** Without that quote the
   entry is an assertion, not an argument, and deleting a comment destroys information.
 - A `keep` **names which reserved category applies**: external quirk, ordering constraint, fail-safe
-  branch, or workaround.
+  branch, workaround, or business-logic definition.
 
 ## `textHash`, pinned
 
@@ -104,13 +104,12 @@ node "${CLAUDE_PLUGIN_ROOT}"/skills/comment-verifier/scripts/lint-comments.mjs -
 Exit 0 on pass, 1 on fail. It prints `{ ok, checked, failures: [{ file, line, reason, entry? }] }`.
 
 `ok` asserts **two** things: bytes were compared, and every difference among them was sanctioned.
-Both new failures below fall out of the first conjunct rather than being guards bolted onto the
+Both failures below fall out of the first conjunct rather than being guards bolted onto the
 second, which is why `checked` is load-bearing rather than informational:
 
 - **An empty baseline never verifies anything**, so `checked: 0` is always a failure. There is no
-  legitimate caller — phase 3 stops before phase 4 when the filtered verdict is empty — and a
-  `--baseline` naming a nonexistent or empty directory used to pass on the strength of comparing
-  nothing.
+  legitimate caller — phase 3 stops before phase 4 when the filtered verdict is empty — and that
+  includes a `--baseline` naming a nonexistent or empty directory.
 - **Every write-action entry must name a file present in the baseline.** A file the baseline never
   held has no "before" to compare against, so nothing that entry changed was examined. This is the
   same refusal `resolveRegions` already makes for an entry whose comment is missing, applied one

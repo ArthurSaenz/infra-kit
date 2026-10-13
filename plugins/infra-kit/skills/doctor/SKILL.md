@@ -18,9 +18,10 @@ was `cd`'d elsewhere, `cd` back first (the CLI also accepts `-C <dir>`).
 
 **The CLI on `PATH`, and its version.** The block above is the first finding. `{"error": …}` means no
 `infra-kit` on `PATH`; a `version` below `0.8.0` means a CLI that predates the skills-only plugin.
-Either way say so **first** and name the fix — `pnpm add -g infra-kit@latest`, or `infra-kit setup`
-from the human's own terminal — then go on: the report in step 1 comes from whatever CLI is there
-(or from none), and step 2 needs no CLI at all.
+Either way say so **first** and name the fix — `pnpm add -g infra-kit@<version>` with the version
+`pnpm view infra-kit version` prints (a bare `@latest` can reinstall the cached old one), or
+`infra-kit setup` from the human's own terminal — then go on: the report in step 1 comes from whatever
+CLI is there (or from none), and step 2 needs no CLI at all.
 
 Check whether `CLAUDE_CONFIG_DIR` is set. The infra-kit CLI does not honour it — it always reads
 `~/.claude` — so when that variable is set and points elsewhere, the CLI's plugin-related rows
@@ -116,7 +117,7 @@ Open with one line, the combined verdict, computed from the two totals lines:
 shape — the probe's totals plus the step 2b row. A count a totals line leaves out is zero; when the CLI half did not run, write
 `CLI: unavailable`. This is the only figure the skill composes, and it copies no rows.
 
-Then state the failing lines from both halves and what they mean together. Two combinations worth calling
+Then state the failing lines from both halves and what they mean together. Three combinations worth calling
 out explicitly, because neither half says it alone:
 
 - The CLI reports the plugin as installed, but the probe reports the loaded tree is not the recorded
@@ -143,10 +144,8 @@ Read its structured result:
   back to the launch directory (the cwd rule at the top) before any other `infra-kit` call.
 - `version` is the CLI every skill in this plugin drives. Below `0.8.0` the skills' `--agent --json`
   contract is not there; say so with the update command.
-- A CLI that still carries a served-server route in this result, or a repo whose `.mcp.json` still
-  registers an `infra-kit` key, is stale: the CLI's report says which and what to delete.
-  **Never run `infra-kit setup` from a CLI older than 0.7.7 in a repo whose `.mcp.json` no longer
-  carries the `infra-kit` key** — that CLI's `infra-kit setup` re-adds it.
+- A repo whose `.mcp.json` still registers an `infra-kit` key is stale: the CLI's report says which
+  and what to delete.
 
 ## Step 4 — offer fixes
 

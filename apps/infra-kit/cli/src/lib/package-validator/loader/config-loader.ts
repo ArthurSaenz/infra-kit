@@ -27,6 +27,8 @@ interface PackageJsonShape {
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
   peerDependencies?: Record<string, string>
+  exports?: unknown
+  bin?: unknown
 }
 
 /**

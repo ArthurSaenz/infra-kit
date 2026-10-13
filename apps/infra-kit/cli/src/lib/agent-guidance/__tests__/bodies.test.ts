@@ -41,16 +41,16 @@ const body = (type: PackageType, overrides: { hasReadme?: boolean; hasDesign?: b
  * check cannot see, and which `prettier-check` cannot see either once `prettier-fix`
  * has written the damage into the file. A count fails loudly on exactly that class.
  *
- * Headroom is one line: `managed-block` wraps these in markers and the block budget
- * is 25. Adding a line to the shared region of the five resource files puts three
- * types at the ceiling. e2e is the deliberate exception: its Structure / Naming /
+ * The budget is tight: `managed-block` wraps these in markers and the block budget
+ * is 25. Adding a line to the shared region of the five resource files puts frontend
+ * over it. e2e is the deliberate exception: its Structure / Naming /
  * Tags sections are the suite's conventions, asked to live in the package CLAUDE.md
  * rather than behind a skill.
  */
 const LINE_COUNTS: Readonly<Record<PackageType, number>> = {
   frontend: 25,
   backend: 23,
-  lib: 24,
+  lib: 23,
   e2e: 69,
   mobile: 24,
 }
@@ -129,6 +129,34 @@ describe('buildPackageBody — conditional bullets', () => {
     expect(withDoc).toContain('`docs/e2e-playwright.md`')
     expect(withDoc.split('\n')).toHaveLength(LINE_COUNTS.e2e + 1)
     expect(body('e2e')).not.toContain('e2e-playwright')
+  })
+
+  it('names only the checks, build step and public surface a lib package actually has', () => {
+    const lib = (scripts: string[], hasPublicSurface: boolean): string => {
+      return buildPackageBody({
+        version: VERSION,
+        type: 'lib',
+        packageName: PACKAGE_NAME,
+        relDir: REL_DIR,
+        hasReadme: true,
+        hasDesign: false,
+        scripts,
+        hasPublicSurface,
+      })
+    }
+
+    const bare = lib(['infra-kit-check'], false)
+
+    expect(bare).not.toContain('pnpm run ts-check')
+    expect(bare).not.toContain('pnpm run build')
+    expect(bare).not.toContain('public surface')
+    expect(bare.split('\n')).toHaveLength(LINE_COUNTS.lib - 3)
+
+    const partial = lib(['ts-check', 'test', 'build'], true)
+
+    expect(partial).toContain('`pnpm run ts-check && pnpm run test` — this package only.')
+    expect(partial).toContain('Run `pnpm run build`')
+    expect(partial.split('\n')).toHaveLength(LINE_COUNTS.lib)
   })
 
   it.each([...PACKAGE_TYPES])('%s names the shared e2e scripts only when it is an e2e package', (type) => {
@@ -215,7 +243,7 @@ describe('buildRootBody', () => {
   it('documents the CLI-on-PATH agent model: --agent --json, preview then --yes, no prefix allow', () => {
     expect(rendered).toContain('## Agents')
     expect(rendered).toContain('`infra-kit <command> --agent --json`')
-    expect(rendered).toContain('There is no MCP server')
+    expect(rendered).toContain('The `/infra-kit:*` skills are the entry points')
     expect(rendered).toContain(
       'A confirm-gated command (`release create|remove|edit|merge-dev|deploy-all|deploy-selected`, `release merge-dev --continue|--abort`, `worktrees add|remove|sync`, `vendor sync`) previews its plan',
     )

@@ -8,8 +8,9 @@ derived expressions of it, never second copies of the prose.
 > Comment the **why**, never the **what**. If a comment would only restate what the code already
 > says (a name, a type, an obvious assignment), delete it — and if code needs a comment to be
 > *understood*, prefer renaming/refactoring until it reads on its own. Reserve comments for the
-> genuinely non-obvious: external quirks, ordering constraints, fail-safe branches, workarounds.
-> Keep them compact. Focus on business-logic descriptions.
+> genuinely non-obvious: external quirks, ordering constraints, fail-safe branches, workarounds,
+> business-logic definitions. Keep them compact. When a comment explains a bug, outage, or upstream
+> issue, link the source of truth instead of describing it.
 
 ## Size
 
@@ -34,7 +35,9 @@ Every reviewed comment gets exactly one.
 | `keep` | The comment records something genuinely non-obvious. Naming which reserved category applies is what makes this a decision rather than a shrug. |
 
 The reserved categories for `keep` are **external quirk**, **ordering constraint**, **fail-safe
-branch**, and **workaround**. A `keep` that names none of them is not a `keep`.
+branch**, **workaround**, and **business-logic definition**. A `keep` that names none of them is not
+a `keep`. A comment that retells a bug, outage, or upstream issue is a `shorten` to a link to the
+source of truth.
 
 ## Corpus
 

@@ -24,6 +24,13 @@ export interface BuildPackageBodyArgs {
   hasDesign: boolean
   /** Whether `docs/e2e-playwright.md` exists at the repo root. Read by the e2e body only. */
   hasE2eDoc?: boolean
+  /**
+   * The package's `package.json` script names. A check, or the lib body's build step, is named only
+   * when the package defines it; omitted, every one is rendered.
+   */
+  scripts?: readonly string[]
+  /** Whether `package.json` declares `exports` or `bin`. Read by the lib body only; omitted = true. */
+  hasPublicSurface?: boolean
 }
 
 /** The version line, e.g. `<!-- infra-kit:package:version 0.4.0 frontend -->`. */
@@ -42,6 +49,33 @@ export const E2E_DOC_PATH = 'docs/e2e-playwright.md'
 
 const E2E_DOC_BULLET = `\`${E2E_DOC_PATH}\` at the repo root — env setup, run modes, \`E2E_SLOW_MO\`, traces after a failure.`
 
+const CHECK_SCRIPTS = ['ts-check', 'eslint-check', 'test'] as const
+
+const SURFACE_BULLET =
+  'The public surface is what `package.json` exposes — its `exports` map, or `bin` for a CLI; changing it is a breaking change for every dependent package.'
+
+const BUILD_BULLET = 'Run `pnpm run build` before a dependent package can see a change.'
+
+/**
+ * A package can be a bare config or data folder with no scripts and no entry point, and a step the
+ * package does not define is an instruction that fails — so each one is named only when it exists.
+ */
+const definesScript = (scripts: readonly string[] | undefined, script: string): boolean => {
+  return scripts?.includes(script) ?? true
+}
+
+const buildChecksBullet = (scripts: readonly string[] | undefined): string => {
+  const commands = CHECK_SCRIPTS.filter((script) => {
+    return definesScript(scripts, script)
+  }).map((script) => {
+    return `pnpm run ${script}`
+  })
+
+  if (commands.length === 0) return ''
+
+  return `\`${commands.join(' && ')}\` — this package only.`
+}
+
 /**
  * Render a package's guidance body — the text that goes *between* the package
  * markers, version line first. The body never contains a marker itself; the
@@ -56,15 +90,22 @@ const E2E_DOC_BULLET = `\`${E2E_DOC_PATH}\` at the repo root — env setup, run 
  * // => '<!-- infra-kit:package:version 0.4.0 frontend -->\n\n# @hulyo/client-ui\n…'
  */
 export const buildPackageBody = (args: BuildPackageBodyArgs): string => {
-  const { version, type, packageName, relDir, hasReadme, hasE2eDoc } = args
+  const { version, type, packageName, relDir, hasReadme, hasE2eDoc, scripts, hasPublicSurface = true } = args
 
-  // `renderTemplate` refuses a variable the template never uses, so the e2e-only one is keyed on type.
+  // `renderTemplate` refuses a variable the template never uses, so the type-only ones are keyed on type.
   const body = renderTemplate(RESOURCES[`package/${type}`], {
     packageName,
     relDir,
     type,
     readmeBullet: hasReadme ? README_BULLET : '',
+    checksBullet: buildChecksBullet(scripts),
     ...(type === 'e2e' ? { e2eDocBullet: hasE2eDoc ? E2E_DOC_BULLET : '' } : {}),
+    ...(type === 'lib'
+      ? {
+          surfaceBullet: hasPublicSurface ? SURFACE_BULLET : '',
+          buildBullet: definesScript(scripts, 'build') ? BUILD_BULLET : '',
+        }
+      : {}),
   })
 
   return [buildVersionLine(version, type), '', body].join('\n')

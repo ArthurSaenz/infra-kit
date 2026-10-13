@@ -54,10 +54,25 @@ export const PLACEHOLDERS: Readonly<Record<ResourceKey, readonly string[]>> = {
   // None since the MCP tool prefix left with the server; the line-count net in `bodies.test.ts` is
   // what guards this body against prettier now.
   'root/body': [],
-  'package/frontend': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
-  'package/backend': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
-  'package/lib': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
-  'package/e2e': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}', '{{e2eDocBullet}}'],
-  'package/mobile': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}'],
+  'package/frontend': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}', '{{checksBullet}}'],
+  'package/backend': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}', '{{checksBullet}}'],
+  'package/lib': [
+    '{{packageName}}',
+    '{{relDir}}',
+    '{{type}}',
+    '{{readmeBullet}}',
+    '{{checksBullet}}',
+    '{{surfaceBullet}}',
+    '{{buildBullet}}',
+  ],
+  'package/e2e': [
+    '{{packageName}}',
+    '{{relDir}}',
+    '{{type}}',
+    '{{readmeBullet}}',
+    '{{checksBullet}}',
+    '{{e2eDocBullet}}',
+  ],
+  'package/mobile': ['{{packageName}}', '{{relDir}}', '{{type}}', '{{readmeBullet}}', '{{checksBullet}}'],
   'design/skeleton': ['{{packageName}}'],
 }

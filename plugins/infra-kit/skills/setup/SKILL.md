@@ -11,8 +11,9 @@ The command is `infra-kit setup`. Everything below is about running that command
 with `--json --agent` on every call.
 
 **Version floor.** Read the block above first. On `{"error": …}`, or a `version` below `0.8.0`, tell
-the human to update — `pnpm add -g infra-kit@latest`, or `infra-kit setup` from their own terminal —
-and stop. An older CLI answers none of the shapes below.
+the human to update — `pnpm add -g infra-kit@<version>` with the version `pnpm view infra-kit version`
+prints (a bare `@latest` can reinstall the cached old one), or `infra-kit setup` from their own
+terminal — and stop. An older CLI answers none of the shapes below.
 
 **cwd.** Every call runs from the directory Claude Code was launched in — the repo root. If the shell
 was `cd`'d elsewhere, `cd` back first (the CLI also accepts `-C <dir>`).

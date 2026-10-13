@@ -122,8 +122,8 @@ ralph's success path finishes by cancelling, so **do not plan work after it in t
 
 `Skill("oh-my-claudecode:verify")` plus a fresh `verifier` agent, so the work is not reviewed by
 whoever did it. Walk the acceptance criteria from S2 — that list is the verification plan, which is
-the payoff for writing checkable criteria in the first place. Run `pnpm qa`, and `pnpm test:claude`
-if anything under the repo's `.claude/` tree or `plugins/` changed. Paste real command output,
+the payoff for writing checkable criteria in the first place. Run `pnpm qa`; when the repo defines a `test:claude`
+script that `qa` does not already run, run it too if anything under `.claude/` or `plugins/` changed. Paste real command output,
 never a summary.
 
 ## Plan-review gate contract
@@ -159,10 +159,7 @@ Plan and review both live under `.omc/`, which is gitignored, so neither shows u
 
 ## Contract drift
 
-- **Pipeline frontmatter is gone, and the body is the whole contract.** OMC's `pipeline` /
-  `next-skill` / `handoff` / `handoff-policy` keys rendered only when a user typed `/full-cycle`
-  with OMC's hook active; via the native Skill tool, model invocation, or with `DISABLE_OMC` set,
-  they were always inert. As a plugin skill they are dropped. **The body above is primary on every
-  route, and nothing else confirms it.**
+- **The body is the whole contract.** This skill carries no OMC `pipeline` / `next-skill` /
+  `handoff` frontmatter; nothing outside the body routes it, on any route.
 - **The frontmatter parser is a line-scanner.** Block-form lists parse to empty and a folded
   `description: >-` parses to the literal `>-`. `__tests__/frontmatter.test.mjs` guards both.

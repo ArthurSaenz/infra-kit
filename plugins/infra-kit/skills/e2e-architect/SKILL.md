@@ -62,7 +62,7 @@ Run the new or changed specs through `infra-kit e2e`, which targets this worktre
 way every other entry point does, five times over so a flaky spec fails here and not in CI:
 
 ```bash
-cd <app>/tests && pnpm exec infra-kit e2e --json -- src/tests/<domain> --repeat-each=5
+cd <app>/tests && pnpm exec infra-kit e2e --json --agent -- src/tests/<domain> --repeat-each=5
 ```
 
 Done when `exitCode` is 0, `summary.flaky` is 0, and the run left no state behind.
@@ -74,7 +74,7 @@ For a spec that fails. The package's `CLAUDE.md` Repair section is the policy; t
 1. Run the failing spec alone:
 
    ```bash
-   cd <app>/tests && pnpm exec infra-kit e2e --json -- <spec path> --grep "<test title>"
+   cd <app>/tests && pnpm exec infra-kit e2e --json --agent -- <spec path> --grep "<test title>"
    ```
 
 2. Read `failures[]` — `title`, `file:line`, `error` — and open the `tracePath` with

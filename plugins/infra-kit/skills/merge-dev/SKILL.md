@@ -19,9 +19,10 @@ The command is `infra-kit release merge-dev`. Everything below is about running 
 
 **Version floor.** Read the lines above first. On `{"error": …}` from either, or an `infra-kit
 version` below `0.11.15`, or a `git --version` below `2.42` (git needs to be that new for
-`AUTO_MERGE`, which the resolution hand-off reads per worktree), tell the human to update —
-`pnpm add -g infra-kit@latest` or `infra-kit setup` for the CLI, their system package manager for
-git — and stop.
+`AUTO_MERGE`, which the resolution hand-off reads per worktree), tell the human to update — `pnpm add
+-g infra-kit@<version>` with the version `pnpm view infra-kit version` prints (a bare `@latest` can
+reinstall the cached old one) or `infra-kit setup` for the CLI, their system package manager for git —
+and stop.
 
 **cwd.** Every call runs from the directory Claude Code was launched in — the repo root. If the
 shell was `cd`'d elsewhere, `cd` back first (the CLI also accepts `-C <dir>`).
@@ -109,7 +110,7 @@ If any branch is `needs-agent`, tell the human once, before the first edit, to r
 ## 4. Resolving conflicts in the worktree
 
 Before editing, run the read-only `git -C <worktreePath> rev-parse -q --verify AUTO_MERGE`. If it
-is missing, that worktree's git is below the floor — report the branch as blocked with Option D
+is missing, that worktree's git is below the floor — report the branch as blocked with the manual fallback (section 9)
 (section 9) and move to the next branch.
 
 Inside `worktreePath`:
@@ -144,13 +145,13 @@ exits 2 with a clean preview or a `blocked` row. Act on the code:
   a conflicted path, or caused by how you resolved one (a type error, a lint error, a failing test
   touching the merged code), fix it in the conflicted paths and preview again. When the fix would
   need a file outside `conflictPaths`, the hand-off cannot carry it: stop this branch and report it
-  as blocked with the failing output and Option D.
+  as blocked with the failing output and the manual fallback (section 9).
 - `out-of-scope-edit`: you touched a path outside `conflictPaths` — revert that edit by hand (edit
   the file back; no git command), preview again.
 - `tree-changed` on `pnpm-lock.yaml` saying **the registry moved**: the CLI already rebuilt it —
   preview again.
 - `verify-mutated-tree`, `parents-mismatch`, any other `tree-changed`, `git-too-old`: stop this
-  branch; report it with `--abort` plus a fresh hand-off, or Option D, as the next step.
+  branch; report it with `--abort` plus a fresh hand-off, or the manual fallback (section 9), as the next step.
 
 **Budget:** at most **5** blocked previews per branch. On the 6th, stop that branch and report it
 blocked with the last `blocked` row — do not grind.
@@ -193,7 +194,7 @@ Then end with one markdown table, one row per branch, including skipped rows:
 | ---------------- | -------------------- | -------------------------------------- | ------------------ |
 | `release/v1.2.3` | ✅ pushed (clean)    | `a1b2c3d`                              | —                  |
 | `release/v1.2.4` | ✅ pushed (resolved) | `e4f5a6b` · 2 files, 1 ⚠               | —                  |
-| `release/v1.3.0` | ⏸ blocked            | `verify-failed`: needs `src/other.ts`  | Option D           |
+| `release/v1.3.0` | ⏸ blocked            | `verify-failed`: needs `src/other.ts`  | manual fallback    |
 | `release/v1.4.0` | ❌ verify-failed     | `pnpm run qa` — the first failing line | fix on dev, re-run |
 | `release/v1.1.9` | ⏭ skipped            | hotfix (targets main)                  | —                  |
 
@@ -201,7 +202,7 @@ Then end with one markdown table, one row per branch, including skipped rows:
 pushed or already there). Below the table, one line of totals. Never report a branch as merged on
 the strength of exit 0 alone; read its own row in `results`.
 
-## 9. Option D — the manual fallback
+## 9. The manual fallback
 
 For a branch the hand-off cannot carry (`git-too-old`, a repeated `verify-mutated-tree` /
 `parents-mismatch`, or a fix that needs a file outside `conflictPaths`). Every step is the

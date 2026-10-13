@@ -10,13 +10,13 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash(node "${CLAUDE_PLUGIN_ROOT}"/
 
 - Everything is a self-contained feature
 - Separation: Dumb Components (UI) / Smart Components (Logic) / Services (State)
-- Features NEVER import from other features (compose at page level only)
+- Features never import runtime code from other features (`import type` is fine; compose at page level only)
 - Strict naming: `$` prefix for atoms, `Fx` suffix for async write-only atoms
 - All write-only atoms use object arguments with typed interface
 
 **Tech Stack:** React + TypeScript + Tailwind CSS + Jotai + `@wl/web-toolkit` (`cn`, `HttpClient`, `ServerError` at status 570, atom type-extraction utilities) + an app-level `httpClient` singleton at `#root/lib/http-client` built from `HttpClient` + `query-string` for URLs + Vitest + React Testing Library + Storybook
 
-## Project Discovery (ALWAYS DO FIRST)
+## Project Discovery (before creating or modifying)
 
 Before creating or modifying features, discover the actual project structure:
 
@@ -31,7 +31,7 @@ Before creating or modifying features, discover the actual project structure:
 
 ## Enforcement Rules (BLOCKING)
 
-All 7 rules are mandatory. Violation = STOP and fix. See [rules.md](./references/core/rules.md) for detailed examples and fix recipes, and [enforcement.md](./references/core/enforcement.md) for which layer catches each rule, the expanded Rules 6–7, and the WHY behind Rules 2–6.
+All 7 rules are mandatory: fix a violation before moving on. See [rules.md](./references/core/rules.md) for detailed examples and fix recipes, and [enforcement.md](./references/core/enforcement.md) for which layer catches each rule, the expanded Rules 6–7, and the WHY behind Rules 2–6.
 
 Rule 1 is the exception: feature independence, the three injection patterns, and cross-feature type extraction belong to the `fe-patterns` skill. Reach for it whenever the question crosses a feature boundary; everything inside one feature is this skill.
 
@@ -60,7 +60,7 @@ Instead of asking many questions upfront, **infer from context**:
 
 ### CREATE: New Features
 
-1. Run [Project Discovery](#project-discovery-always-do-first)
+1. Run [Project Discovery](#project-discovery-before-creating-or-modifying)
 2. Infer requirements → present plan → confirm
 3. Scaffold the feature — this substitutes every placeholder, renames the files, picks one services
    variant, and runs both validators. **Non-zero exit = STOP and fix before continuing.**
@@ -190,7 +190,7 @@ way. Do not re-add checks for:
 - One component per file
 
 **Do not assume every item above is live.** Some are shipped but switched off, and which ones
-changes over time — this section used to list two of them as enforced when they were not. Ask the
+changes over time. Ask the
 config for the file you are actually working on:
 
 ```bash

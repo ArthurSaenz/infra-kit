@@ -148,7 +148,7 @@ describe('resources — shared-region drift across the five type files', () => {
 
   it('anchors the shared region at 18 lines', () => {
     // A stated constant, not an incidental one. The rendered block budget is 25 and
-    // three types already render 24, so adding a line here puts them at the ceiling.
+    // frontend already renders 25, so adding a line here puts it over.
     // Whoever changes this number is the person who needs to know that.
     expect(SHARED).toHaveLength(18)
   })
