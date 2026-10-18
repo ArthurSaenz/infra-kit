@@ -1,7 +1,8 @@
 import fs from 'node:fs'
+import net from 'node:net'
 import path from 'node:path'
-import type { ConfigEnv, UserConfig } from 'vite'
-import { afterEach, describe, expect, it } from 'vitest'
+import type { ConfigEnv, UserConfig, ViteDevServer } from 'vite'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { cleanupRepos, createRepo } from '../../__tests__/fixtures'
 import type { InfraKitPluginOptions } from '../plugin'
@@ -106,6 +107,94 @@ describe('infraKit', () => {
     } finally {
       delete process.env.INFRA_KIT_UI_PORTS
     }
+  })
+
+  describe('loopback guard', () => {
+    interface FakeServer {
+      server: ViteDevServer
+      middlewares: unknown[]
+    }
+
+    const fakeServer = (httpServer: net.Server | null): FakeServer => {
+      const middlewares: unknown[] = []
+      const logger = { info: vi.fn(), warn: vi.fn() }
+      const server = {
+        httpServer,
+        middlewares: {
+          use: (fn: unknown) => {
+            return middlewares.push(fn)
+          },
+        },
+        config: { logger },
+        printUrls: vi.fn(),
+        watcher: { add: vi.fn(), on: vi.fn() },
+      } as unknown as ViteDevServer
+
+      return { server, middlewares }
+    }
+
+    const boot = async (
+      env: ConfigEnv,
+      httpServer: net.Server | null = net.createServer(),
+    ): Promise<FakeServer & { redirectOf: (host: string) => string | undefined }> => {
+      const repo = createRepo()
+
+      repo.writeFragment('client-api', LOCAL_ORIGIN)
+
+      const plugin = infraKit({ cwd: repo.dir, restartOnDevContextChange: false })
+
+      await (plugin.config as (config: UserConfig, env: ConfigEnv) => Promise<UserConfig>)({}, env)
+
+      const fake = fakeServer(httpServer)
+
+      ;(plugin.configureServer as (server: ViteDevServer) => void)(fake.server)
+
+      const redirectOf = (host: string): string | undefined => {
+        let location: string | undefined
+        const res = {
+          setHeader: (_name: string, value: string) => {
+            location = value
+          },
+          end: vi.fn(),
+        }
+
+        ;(fake.middlewares[0] as (req: unknown, res: unknown, next: () => void) => void)(
+          { url: '/orders', method: 'GET', headers: { host, accept: 'text/html' } },
+          res,
+          () => {},
+        )
+
+        return location
+      }
+
+      return { ...fake, redirectOf }
+    }
+
+    afterEach(() => {
+      delete process.env.INFRA_KIT_UI_PORTS
+    })
+
+    it('sends a loopback page load to the alias the runner registered', async () => {
+      process.env.INFRA_KIT_UI_PORTS = JSON.stringify({
+        'client-ui': { port: 5399, alias: 'main.client-ui.localhost' },
+      })
+
+      const { middlewares, redirectOf } = await boot(SERVE)
+
+      expect(middlewares).toHaveLength(1)
+      expect(redirectOf('127.0.0.1:5399')).toBe('https://main.client-ui.localhost/orders')
+    })
+
+    it('guards a bare vite that nothing placed', async () => {
+      const { middlewares } = await boot(SERVE)
+
+      expect(middlewares).toHaveLength(1)
+    })
+
+    it('stays out of vitest and of middleware mode', async () => {
+      expect((await boot({ command: 'serve', mode: 'test' })).middlewares).toHaveLength(0)
+      expect((await boot(SERVE, null)).middlewares).toHaveLength(0)
+    })
   })
 
   describe('dev.env', () => {

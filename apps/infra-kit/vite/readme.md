@@ -36,6 +36,14 @@ its route from `cloud` to `local`; the answer was already baked, and you restart
 watches `.infra-kit/dev-context/` and restarts only when the resolved proxy actually changed. A backend
 that dies demotes its route back to `cloud` the same way.
 
+**A guard against the raw loopback address.** The alias is the only address an app is meant to be opened on;
+`127.0.0.1:<port>` gives the page a different origin, so cookies, CORS and OAuth redirects behave unlike
+the real setup. Under `infra-kit dev`, a page opened on `127.0.0.1`, `localhost` or `[::1]` is redirected to
+the same path on the alias, and vite's URL list prints the alias under its own `Local:` line. A bare `vite`
+that nothing placed has no alias, so it answers a loopback page load with a page explaining how to start
+the app through `ik dev <app>`, plus a link that lets that browser continue anyway. Only page loads are
+touched: assets, HMR, the runner's health probe, vitest and middleware mode (Storybook) pass through.
+
 **No `command` to thread.** The plugin declares `apply: 'serve'`, and vite filters plugins by `apply`
 *before* it runs their `config` hooks — so on `build` this plugin does not exist. Forgetting to pass
 `{ command }` (which made a build fail-fast on a cloud route with no sourced env) is no longer possible,

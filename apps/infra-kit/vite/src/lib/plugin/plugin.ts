@@ -6,6 +6,9 @@ import type { Plugin, ViteDevServer } from 'vite'
 import type { RestartableServer } from '../dev-context/dev-context'
 import { resolveRestartSignature, watchDevContext } from '../dev-context/dev-context'
 import { mirrorOnIpv6Loopback } from '../ipv6-loopback/ipv6-loopback'
+import type { LoopbackGuardMode } from '../loopback-guard/loopback-guard'
+import { createLoopbackGuard } from '../loopback-guard/loopback-guard'
+import type { ResolvedDevServer } from '../server-config/server-config'
 import { hasPinnedPortConflict, mergeServerConfig } from '../server-config/server-config'
 
 /**
@@ -44,6 +47,40 @@ const asRestartable = (server: ViteDevServer): RestartableServer => {
 }
 
 /**
+ * How to treat a page opened on the raw loopback address. The runner's alias wins when it handed one over;
+ * no `strictPort` means nothing placed this UI, i.e. a bare `vite` outside `infra-kit dev`. A runner that
+ * placed the UI without an alias leaves loopback as the only address, so it gets no guard.
+ */
+const resolveGuardMode = (resolved: ResolvedDevServer): LoopbackGuardMode | null => {
+  const alias = (resolved.ws ?? resolved.hmr)?.host
+
+  if (alias) return { kind: 'redirect', alias }
+  if (resolved.strictPort !== true) return { kind: 'explain' }
+
+  return null
+}
+
+const installLoopbackGuard = (server: ViteDevServer, mode: LoopbackGuardMode): void => {
+  server.middlewares.use(createLoopbackGuard(mode))
+
+  const { logger } = server.config
+  const printUrls = server.printUrls.bind(server)
+
+  server.printUrls = () => {
+    printUrls()
+
+    if (mode.kind === 'redirect') {
+      logger.info(`  ➜  Alias:   https://${mode.alias}/ — open this one; loopback page loads redirect here`)
+    } else {
+      logger.warn(
+        '[infra-kit] this dev server was started outside `infra-kit dev`: no portless alias, so the proxy, ' +
+          'cookies and HMR differ from the real setup. Run `ik dev <app>` from the repo root instead.',
+      )
+    }
+  }
+}
+
+/**
  * The infra-kit vite plugin: a per-worktree dev port (or the one `infra-kit dev` assigned this UI),
  * HMR pointed at the portless HTTPS alias, and the `dev.proxy` map from the package's
  * `infra-kit.config.ts` — resolved live, and re-resolved whenever the local dev set changes.
@@ -65,6 +102,7 @@ export const infraKit = (options: InfraKitPluginOptions = {}): Plugin => {
 
   let signature = ''
   let pinnedPortConflict = false
+  let guardMode: LoopbackGuardMode | null = null
   let dispose: () => void = () => {}
 
   return {
@@ -77,6 +115,7 @@ export const infraKit = (options: InfraKitPluginOptions = {}): Plugin => {
 
       signature = await resolveRestartSignature(cwd, resolved.proxy)
       pinnedPortConflict = hasPinnedPortConflict(resolved, userConfig.server)
+      guardMode = mode === 'test' ? null : resolveGuardMode(resolved)
 
       return { server: mergeServerConfig(resolved, userConfig.server) }
     },
@@ -88,6 +127,11 @@ export const infraKit = (options: InfraKitPluginOptions = {}): Plugin => {
             'different port and registered its portless alias against THAT one. The pin wins — and the ' +
             'hero URL will 502. Remove server.port to let the runner place it.',
         )
+      }
+
+      // No `httpServer` is middleware mode (Storybook's vite builder): someone else owns the address.
+      if (server.httpServer && guardMode) {
+        installLoopbackGuard(server, guardMode)
       }
 
       if (server.httpServer) {
