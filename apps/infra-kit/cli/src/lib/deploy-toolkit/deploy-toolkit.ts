@@ -4,12 +4,14 @@ import type {
   DeployFrontendUiOptions,
   DeployHook,
   DeployHookContext,
+  DeployLambdaInvocation,
   DeployRetryOptions,
   DeployRunOptions,
   DeployToolkit,
 } from '@slip-stream-kit/config'
 import { execFile, spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { promisify } from 'node:util'
@@ -21,7 +23,32 @@ export const SERVERLESS_VERSION = '3.39.0'
 
 const MAX_BUFFER = 10 * 1024 * 1024
 
+// Finite and above Lambda's 900s ceiling, so a hung invocation cannot hang the deploy job.
+const LAMBDA_READ_TIMEOUT_SECONDS = 960
+const LAMBDA_CONNECT_TIMEOUT_SECONDS = 60
+
 type Env = Record<string, string | undefined>
+
+const truncate = (text: string, max = 500) => {
+  return text.length > max ? `${text.slice(0, max)}…` : text
+}
+
+/**
+ * Why an invocation failed, if it did: `aws lambda invoke` exits 0 when the handler throws, so the only
+ * signal is `FunctionError` in the metadata it prints. Metadata that does not parse counts as a failure.
+ *
+ * @example
+ * lambdaFailure('{"StatusCode":200,"FunctionError":"Unhandled"}') // => 'FunctionError=Unhandled'
+ */
+const lambdaFailure = (metadata: string): string | undefined => {
+  try {
+    const { FunctionError } = JSON.parse(metadata) as { FunctionError?: string }
+
+    return FunctionError === undefined ? undefined : `FunctionError=${FunctionError}`
+  } catch {
+    return `unparseable invoke metadata: ${truncate(metadata)}`
+  }
+}
 
 /** The side effects, injectable so a test can record every command instead of running it. */
 export interface ToolkitDeps {
@@ -369,6 +396,80 @@ export const createDeployToolkit = ({
     await runHook('Post-deployment', options.postDeploy, context)
   }
 
+  // Not awsEnv: its ten adaptive attempts would re-run a handler whose response timed out, and a
+  // post-deploy job (a migration, a catalog sync) must not run twice.
+  const invokeLambda = async (invocation: DeployLambdaInvocation, payload: string, region: string | undefined) => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'infra-kit-lambda-'))
+    const responseFile = path.join(dir, 'response.json')
+    const args = [
+      'lambda',
+      'invoke',
+      '--function-name',
+      invocation.functionName,
+      ...(region === undefined ? [] : ['--region', region]),
+      '--cli-binary-format',
+      'raw-in-base64-out',
+      '--payload',
+      invocation.payload ?? payload,
+      '--cli-read-timeout',
+      String(LAMBDA_READ_TIMEOUT_SECONDS),
+      '--cli-connect-timeout',
+      String(LAMBDA_CONNECT_TIMEOUT_SECONDS),
+      responseFile,
+    ]
+    const started = Date.now()
+
+    deps.log(`COMMAND: aws ${args.join(' ')}`)
+
+    try {
+      const failure = await deps
+        .capture('aws', args, { cwd: root, env: { ...env, AWS_PAGER: '' } })
+        .then(lambdaFailure, (error: unknown) => {
+          return `aws CLI failed: ${truncate(error instanceof Error ? error.message : String(error))}`
+        })
+      const body = await fs.readFile(responseFile, 'utf-8').catch(() => {
+        return ''
+      })
+      const seconds = ((Date.now() - started) / 1000).toFixed(1)
+      const response = failure !== undefined && body ? `; response: ${truncate(body)}` : ''
+
+      return {
+        outcome: `${invocation.functionName} (${seconds}s)`,
+        failure: failure === undefined ? undefined : failure + response,
+      }
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+  }
+
+  const invokeLambdas: DeployToolkit['invokeLambdas'] = async (options) => {
+    const { region, payload = '{}', blocking = [], steps = [] } = options
+
+    for (const invocation of blocking) {
+      const { outcome, failure } = await invokeLambda(invocation, payload, region)
+
+      if (failure !== undefined) throw new Error(`Lambda ${outcome} failed: ${failure}`)
+
+      deps.log(`Lambda ${outcome} OK`)
+    }
+
+    for (const step of steps) {
+      const results = await Promise.all(
+        step.map((invocation) => {
+          return invokeLambda(invocation, payload, region).catch((error: unknown) => {
+            return { outcome: invocation.functionName, failure: String(error) }
+          })
+        }),
+      )
+
+      for (const { outcome, failure } of results) {
+        deps.log(
+          failure === undefined ? `Lambda ${outcome} OK` : `Warning: Lambda ${outcome} failed, continuing: ${failure}`,
+        )
+      }
+    }
+  }
+
   return {
     root,
     service,
@@ -387,5 +488,6 @@ export const createDeployToolkit = ({
     pruneAndBuild,
     deployBackendApi,
     deployFrontendUi,
+    invokeLambdas,
   }
 }

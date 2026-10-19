@@ -130,6 +130,114 @@ describe('ssm', () => {
   })
 })
 
+describe('invokeLambdas', () => {
+  /** Answers `aws lambda invoke` per function: its metadata on stdout, its response in the out file. */
+  const lambdas = (responses: Record<string, { metadata?: string; body?: string; error?: Error }>) => {
+    const invoked: string[] = []
+    const lines: string[] = []
+    const { toolkit, calls } = fake({
+      capture: async (command, args, options) => {
+        calls.push({ command, args, ...options })
+
+        const name = args[args.indexOf('--function-name') + 1]!
+        const response = responses[name] ?? {}
+
+        invoked.push(name)
+
+        if (response.body !== undefined) await fs.writeFile(args.at(-1)!, response.body)
+        if (response.error) throw response.error
+
+        return response.metadata ?? '{"StatusCode":200}'
+      },
+      log: (text) => {
+        lines.push(text)
+      },
+    })
+
+    return { toolkit, calls, invoked, lines }
+  }
+
+  it('invokes synchronously with bounded timeouts, the region, and the default payload', async () => {
+    const { toolkit, calls } = lambdas({})
+
+    await toolkit.invokeLambdas({
+      region: 'eu-west-1',
+      payload: '{"source":"aws.events"}',
+      blocking: [{ functionName: 'a' }],
+    })
+
+    expect(line(calls[0])).toMatch(
+      /^aws lambda invoke --function-name a --region eu-west-1 --cli-binary-format raw-in-base64-out --payload \{"source":"aws.events"\} --cli-read-timeout 960 --cli-connect-timeout 60 \S+response\.json$/,
+    )
+    // No adaptive retries: a retried invoke would run a non-idempotent handler twice.
+    expect(calls[0]?.env).not.toHaveProperty('AWS_MAX_ATTEMPTS')
+  })
+
+  it("fails the deploy on a blocking handler's FunctionError, though the CLI exited 0, and stops there", async () => {
+    const { toolkit, invoked } = lambdas({
+      migrate: { metadata: '{"StatusCode":200,"FunctionError":"Unhandled"}', body: '{"errorMessage":"boom"}' },
+    })
+
+    await expect(
+      toolkit.invokeLambdas({
+        blocking: [{ functionName: 'migrate' }, { functionName: 'after' }],
+        steps: [[{ functionName: 'sync' }]],
+      }),
+    ).rejects.toThrow(
+      /Lambda migrate \(\d+\.\ds\) failed: FunctionError=Unhandled; response: \{"errorMessage":"boom"\}/,
+    )
+    expect(invoked).toEqual(['migrate'])
+  })
+
+  it('treats unparseable metadata as a failure', async () => {
+    const { toolkit } = lambdas({ a: { metadata: 'not json' } })
+
+    await expect(toolkit.invokeLambdas({ blocking: [{ functionName: 'a' }] })).rejects.toThrow(
+      'unparseable invoke metadata: not json',
+    )
+  })
+
+  it('runs best-effort steps in order, each step concurrently, and only warns on a failure', async () => {
+    const { toolkit, invoked, lines } = lambdas({
+      auth: { error: new Error('AccessDenied') },
+      shows: { metadata: '{"FunctionError":"Unhandled"}' },
+    })
+
+    await toolkit.invokeLambdas({
+      blocking: [{ functionName: 'migrate', payload: '{}' }],
+      steps: [
+        [{ functionName: 'auth' }],
+        [{ functionName: 'shows' }, { functionName: 'flights' }],
+        [{ functionName: 'publish' }],
+      ],
+    })
+
+    // Within a step the order is whichever invocation reaches the CLI first.
+    expect(invoked.slice(0, 2)).toEqual(['migrate', 'auth'])
+    expect(invoked.slice(2, 4).sort()).toEqual(['flights', 'shows'])
+    expect(invoked[4]).toBe('publish')
+    expect(
+      lines.filter((text) => {
+        return text.startsWith('Warning:')
+      }),
+    ).toEqual([
+      expect.stringMatching(/^Warning: Lambda auth \(\d+\.\ds\) failed, continuing: aws CLI failed: AccessDenied$/),
+      expect.stringMatching(/^Warning: Lambda shows \(\d+\.\ds\) failed, continuing: FunctionError=Unhandled$/),
+    ])
+  })
+
+  it('passes an invocation payload over the default', async () => {
+    const { toolkit, calls } = lambdas({})
+
+    await toolkit.invokeLambdas({
+      payload: '{"source":"aws.events"}',
+      steps: [[{ functionName: 'sitemap', payload: '{}' }]],
+    })
+
+    expect(calls[0]?.args[calls[0].args.indexOf('--payload') + 1]).toBe('{}')
+  })
+})
+
 describe('deployBackendApi', () => {
   it('runs the deploy-utils.sh steps in order, hooks around serverless, then redeploys the REST API', async () => {
     const { toolkit, calls } = fake()

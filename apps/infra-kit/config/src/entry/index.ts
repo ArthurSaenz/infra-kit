@@ -18,6 +18,8 @@ export type {
   DeployFrontendUiOptions,
   DeployHook,
   DeployHookContext,
+  DeployInvokeLambdasOptions,
+  DeployLambdaInvocation,
   DeployRetryOptions,
   DeployRunOptions,
   DeployScript,

@@ -93,6 +93,24 @@ export interface DeployFrontendUiOptions {
   postDeploy?: DeployHook
 }
 
+export interface DeployLambdaInvocation {
+  /** The physical name, e.g. `cronjobs-api-v1-dev-alpAuth`. */
+  functionName: string
+  /** JSON event; defaults to the call's `payload`, then `{}`. */
+  payload?: string
+}
+
+export interface DeployInvokeLambdasOptions {
+  /** Defaults to the aws CLI's configured region. */
+  region?: string
+  /** Default event for every invocation that names none. */
+  payload?: string
+  /** Run one by one, first; any failure fails the deploy. */
+  blocking?: DeployLambdaInvocation[]
+  /** Best-effort: run step by step, a step's invocations concurrently; a failure only warns. */
+  steps?: DeployLambdaInvocation[][]
+}
+
 export interface DeployToolkit {
   /** The repo root the script runs from. */
   root: string
@@ -116,4 +134,6 @@ export interface DeployToolkit {
   deployBackendApi: (options: DeployBackendApiOptions) => Promise<void>
   /** Build, `aws s3 sync`, CloudFront invalidation, optional post-deploy hook. */
   deployFrontendUi: (options: DeployFrontendUiOptions) => Promise<void>
+  /** Synchronous `aws lambda invoke`s, failing on the handler's error, not only the CLI's exit code. */
+  invokeLambdas: (options: DeployInvokeLambdasOptions) => Promise<void>
 }
