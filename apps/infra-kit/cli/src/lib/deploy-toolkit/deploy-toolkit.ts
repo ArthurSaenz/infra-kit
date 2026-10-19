@@ -214,10 +214,17 @@ export const createDeployToolkit = ({
     return attempt(1)
   }
 
-  const awsWithRetry = async (description: string, args: string[]) => {
+  const awsWithRetry = async (description: string, args: string[], withEnv: Env = env) => {
     deps.log(`COMMAND: aws ${args.join(' ')}`)
     await retry(description, () => {
-      return deps.run('aws', args, { cwd: root, env: awsEnv(env) })
+      return deps.run('aws', args, { cwd: root, env: awsEnv(withEnv) })
+    })
+  }
+
+  const aws: DeployToolkit['aws'] = async (args, options = {}) => {
+    await command(`aws ${args.slice(0, 2).join(' ')}`, 'aws', args, {
+      cwd: options.cwd,
+      env: awsEnv(options.env ?? env),
     })
   }
 
@@ -258,12 +265,16 @@ export const createDeployToolkit = ({
 
   const pruneAndBuild: DeployToolkit['pruneAndBuild'] = async (app, options: DeployBuildOptions) => {
     const out = path.join(root, 'out')
-    const task = options.buildTask ?? env.TURBO_BUILD_TASK ?? 'build'
+    const buildEnv = { ...env, ...options.buildEnv }
+    const task = options.buildTask ?? buildEnv.TURBO_BUILD_TASK ?? 'build'
 
     await fs.rm(out, { recursive: true, force: true })
-    await command(`Prune to ${app}`, 'turbo', ['prune', app])
-    await command('Install dependencies', 'pnpm', ['install'], { cwd: out })
-    await command(`Build ${app}`, 'pnpm', ['exec', 'turbo', task, `--filter=${app}`, '--env-mode=loose'], { cwd: out })
+    await command(`Prune to ${app}`, 'turbo', ['prune', app], { env: buildEnv })
+    await command('Install dependencies', 'pnpm', ['install'], { cwd: out, env: buildEnv })
+    await command(`Build ${app}`, 'pnpm', ['exec', 'turbo', task, `--filter=${app}`, '--env-mode=loose'], {
+      cwd: out,
+      env: buildEnv,
+    })
 
     if (options.installProd) {
       // Nested node_modules hold dev deps and recursive @pkg symlinks that serverless follows while
@@ -274,7 +285,7 @@ export const createDeployToolkit = ({
         'Install production dependencies',
         'pnpm',
         ['install', '--frozen-lockfile', '--node-linker=hoisted', '--prod'],
-        { cwd: out },
+        { cwd: out, env: buildEnv },
       )
       await command('Show node_modules size', 'du', ['-sm', './node_modules/'], { cwd: out })
     }
@@ -301,25 +312,29 @@ export const createDeployToolkit = ({
 
     await setupTools(true)
 
-    const outDir = await pruneAndBuild(app, { installProd: true })
+    // deploy-utils.sh exported these for the whole deploy, so serverless sees them too.
+    const deployEnv = { ...env, ...options.buildEnv }
+    const outDir = await pruneAndBuild(app, {
+      installProd: true,
+      buildTask: options.buildTask,
+      buildEnv: options.buildEnv,
+    })
     const context = { stage: options.stage, outDir, appDir: path.join(outDir, appPath) }
 
     await runHook('Pre-deployment', options.preDeploy, context)
     await command('Deploy with Serverless', 'serverless', ['deploy', '--stage', options.stage, '--force'], {
       cwd: context.appDir,
+      env: deployEnv,
     })
 
     if (options.restApiId === undefined) {
       deps.log(`Skipping API Gateway deployment for ${app}: no restApiId.`)
     } else {
-      await awsWithRetry('Create API Gateway deployment', [
-        'apigateway',
-        'create-deployment',
-        '--rest-api-id',
-        options.restApiId,
-        '--stage-name',
-        'api',
-      ])
+      await awsWithRetry(
+        'Create API Gateway deployment',
+        ['apigateway', 'create-deployment', '--rest-api-id', options.restApiId, '--stage-name', 'api'],
+        deployEnv,
+      )
     }
 
     await runHook('Post-deployment', options.postDeploy, context)
@@ -330,7 +345,12 @@ export const createDeployToolkit = ({
 
     await setupTools(false)
 
-    const outDir = await pruneAndBuild(app, { installProd: false })
+    const deployEnv = { ...env, ...options.buildEnv }
+    const outDir = await pruneAndBuild(app, {
+      installProd: false,
+      buildTask: options.buildTask,
+      buildEnv: options.buildEnv,
+    })
     const context = { stage: options.stage, outDir, appDir: path.join(outDir, appPath) }
     const destination = `s3://${options.bucket}${options.destPath ?? ''}`
     const source = options.sourcePath ?? './dist'
@@ -341,17 +361,21 @@ export const createDeployToolkit = ({
       ['s3', 'sync', source, destination, ...(options.syncFlags ?? []), '--only-show-errors'],
       {
         cwd: context.appDir,
-        env: awsEnv(env),
+        env: awsEnv(deployEnv),
       },
     )
-    await awsWithRetry('Invalidate CloudFront', [
-      'cloudfront',
-      'create-invalidation',
-      '--distribution-id',
-      options.cloudfrontId,
-      '--paths',
-      options.invalidationPath ?? '/*',
-    ])
+    await awsWithRetry(
+      'Invalidate CloudFront',
+      [
+        'cloudfront',
+        'create-invalidation',
+        '--distribution-id',
+        options.cloudfrontId,
+        '--paths',
+        options.invalidationPath ?? '/*',
+      ],
+      deployEnv,
+    )
     await runHook('Post-deployment', options.postDeploy, context)
   }
 
@@ -359,6 +383,7 @@ export const createDeployToolkit = ({
     root,
     service,
     ssm,
+    aws,
     run: (file, args, options = {}) => {
       return deps.run(file, args, { cwd: options.cwd ?? root, env: options.env ?? env })
     },

@@ -49,6 +49,8 @@ export interface DeployBuildOptions {
   installProd: boolean
   /** Turbo task; defaults to `TURBO_BUILD_TASK`, then `build`. */
   buildTask?: string
+  /** Extra environment for the install and the build, e.g. `{ ROBOTS_FILE: 'disallow' }`. */
+  buildEnv?: Record<string, string>
 }
 
 export interface DeployBackendApiOptions {
@@ -57,6 +59,10 @@ export interface DeployBackendApiOptions {
   app?: string
   /** App path inside the pruned workspace, e.g. `apps/client/api`. Default: the script's directory. */
   appPath?: string
+  /** Turbo task; defaults to `TURBO_BUILD_TASK`, then `build`. */
+  buildTask?: string
+  /** Extra environment for the install and the build. */
+  buildEnv?: Record<string, string>
   /** API Gateway REST API redeployed at stage `api` after serverless; omitted = none. */
   restApiId?: string
   /** After the build, before serverless, with production dependencies installed (DB migrations). */
@@ -70,6 +76,10 @@ export interface DeployFrontendUiOptions {
   app?: string
   /** App path inside the pruned workspace, e.g. `apps/client/ui`. Default: the script's directory. */
   appPath?: string
+  /** Turbo task, e.g. `build-mobile`; defaults to `TURBO_BUILD_TASK`, then `build`. */
+  buildTask?: string
+  /** Extra environment for the install and the build, e.g. `{ ROBOTS_FILE: 'disallow' }`. */
+  buildEnv?: Record<string, string>
   bucket: string
   cloudfrontId: string
   /** Relative to the app. Default `./dist`. */
@@ -92,6 +102,8 @@ export interface DeployToolkit {
   ssm: (names: string[]) => Promise<Record<string, string>>
   /** Runs a command with the terminal attached; rejects on a non-zero exit. */
   run: (command: string, args: string[], options?: DeployRunOptions) => Promise<void>
+  /** Runs the aws CLI in adaptive retry mode, logging the command, e.g. `aws(['s3', 'sync', from, to])`. */
+  aws: (args: string[], options?: DeployRunOptions) => Promise<void>
   /** Runs a command and resolves to its stdout. */
   capture: (command: string, args: string[], options?: DeployRunOptions) => Promise<string>
   /** Retries with exponential backoff and jitter. */

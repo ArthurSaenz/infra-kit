@@ -241,6 +241,44 @@ describe('deployFrontendUi', () => {
   })
 })
 
+describe('build options', () => {
+  it('builds the given task with the given env, and the deploy keeps that env as the .sh exports did', async () => {
+    const { toolkit, calls } = fake()
+
+    await toolkit.deployFrontendUi({
+      stage: 'dev',
+      app: 'website-ui',
+      appPath: 'apps/api',
+      bucket: 'mfe',
+      cloudfrontId: 'E1',
+      buildTask: 'build-mobile',
+      buildEnv: { VITE_ORIGIN_DOMAIN: 'https://dev.example.com' },
+    })
+
+    const build = calls.find((call) => {
+      return call.args.includes('build-mobile')
+    })
+    const sync = calls.find((call) => {
+      return call.args[0] === 's3'
+    })
+
+    expect(line(build)).toBe('pnpm exec turbo build-mobile --filter=website-ui --env-mode=loose')
+    expect(build?.env).toMatchObject({ VITE_ORIGIN_DOMAIN: 'https://dev.example.com', PATH: '/bin' })
+    expect(sync?.env).toMatchObject({ VITE_ORIGIN_DOMAIN: 'https://dev.example.com', AWS_RETRY_MODE: 'adaptive' })
+  })
+})
+
+describe('aws', () => {
+  it('runs the aws CLI in adaptive retry mode from the root', async () => {
+    const { toolkit, calls } = fake()
+
+    await toolkit.aws(['s3', 'sync', 's3://a/shows/', 's3://b/shows/'])
+
+    expect(line(calls[0])).toBe('aws s3 sync s3://a/shows/ s3://b/shows/')
+    expect(calls[0]).toMatchObject({ cwd: root, env: { AWS_RETRY_MODE: 'adaptive', AWS_PAGER: '' } })
+  })
+})
+
 describe('pruneAndBuild', () => {
   it('builds TURBO_BUILD_TASK when no task is passed', async () => {
     const calls: Call[] = []
