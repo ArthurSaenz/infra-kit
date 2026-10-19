@@ -14,7 +14,8 @@ import { buildProgram } from 'src/lib/program'
 
 /**
  * `humanOnly` promises a refusal under agent mode that `--yes` cannot lift. Every row carrying it runs
- * through the real Commander program with `--agent --yes`, and the assertion is on the refusal payload,
+ * through the real Commander program with `--agent`, plus `--yes` where the command has one (`deploy-run`
+ * never asks, so it has none), and the assertion is on the refusal payload,
  * not on exit 2: `release deliver` without a version also exits 2, through `argument_required`, which
  * would pass an exit-code check for the wrong reason.
  */
@@ -43,9 +44,10 @@ vi.mock('src/lib/logger', () => {
 /** Arguments a row needs to get past argument resolution and reach its agent check. */
 const ARGS_PAST_RESOLUTION: Record<string, string[]> = {
   'release-deliver': ['--version', '1.2.5'],
+  'deploy-run': ['client-be'],
 }
 
-const HUMAN_ONLY_REASON = /refused in agent mode regardless of --yes/
+const HUMAN_ONLY_REASON = /refused in agent mode/
 
 const overrideExitDeep = (cmd: Command): void => {
   cmd.exitOverride()
@@ -57,7 +59,17 @@ const runAgentYes = async (groupPath: string[], args: string[]): Promise<unknown
 
   overrideExitDeep(program)
 
-  return program.parseAsync(['node', 'infra-kit', ...groupPath, ...args, '--agent', '--yes']).catch((e: unknown) => {
+  const command = groupPath.reduce<Command | undefined>((parent, name) => {
+    return parent?.commands.find((child) => {
+      return child.name() === name
+    })
+  }, program)
+  const takesYes = command?.options.some((option) => {
+    return option.long === '--yes'
+  })
+  const argv = ['node', 'infra-kit', ...groupPath, ...args, '--agent', ...(takesYes ? ['--yes'] : [])]
+
+  return program.parseAsync(argv).catch((e: unknown) => {
     return e
   })
 }

@@ -11,6 +11,18 @@
 // Deploy manifest authoring (`infra-kit.deploy.ts`, read by `infra-kit deploy-sync`).
 export { defineDeployConfig } from '../lib/deploy/deploy-config-schema'
 export type { DeployConfig, DeployService } from '../lib/deploy/deploy-config-schema'
+// Deploy script authoring (`devops/scripts/deploy-<service>.ts`, run by `infra-kit deploy-run`).
+export type {
+  DeployBackendApiOptions,
+  DeployBuildOptions,
+  DeployFrontendUiOptions,
+  DeployHook,
+  DeployHookContext,
+  DeployRetryOptions,
+  DeployRunOptions,
+  DeployScript,
+  DeployToolkit,
+} from '../lib/deploy/deploy-script'
 export { defineConfig } from '../lib/package-config/package-config'
 export type {
   InfraKitDev,

@@ -8,6 +8,7 @@ import yaml from 'yaml'
 
 import { readWorkflowGates } from 'src/lib/workflow-gates'
 
+import packageJson from '../../../../package.json' with { type: 'json' }
 import { SHARED_DEPLOY_JOB, SHARED_INSTALL_JOB, renderDeployWorkflows } from '../render-deploy-workflows'
 
 interface Job {
@@ -118,6 +119,7 @@ describe('renderDeployWorkflows', () => {
       ref: '${{ github.ref }}',
       sha: '${{ github.sha }}',
       service: 'client-fe',
+      'infra-kit-version': packageJson.version,
       runner: 'macos-14',
     })
     expect(job.secrets).toMatchObject({

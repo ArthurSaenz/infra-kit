@@ -8,6 +8,7 @@ import { configEdit, configPath } from 'src/commands/config'
 import { configGet } from 'src/commands/config-get'
 import { configSet } from 'src/commands/config-set'
 import { configUnset } from 'src/commands/config-unset'
+import { deployRun } from 'src/commands/deploy-run'
 import { deploySync } from 'src/commands/deploy-sync'
 import { devStatus } from 'src/commands/dev-status'
 import { doctor, printDoctorReport } from 'src/commands/doctor'
@@ -622,6 +623,14 @@ export const buildProgram = (): Command => {
       if (!allPassed || anyWriteFailed) {
         process.exitCode = 1
       }
+    })
+
+  program
+    .command('deploy-run')
+    .description('Run devops/scripts/deploy-<service>.ts with the deploy toolkit (what the CI deploy job runs)')
+    .argument('<service>', 'The <service> of devops/scripts/deploy-<service>.ts, e.g. client-be')
+    .action(async (service: string) => {
+      emit(await deployRun({ service }))
     })
 
   program

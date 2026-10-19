@@ -484,6 +484,17 @@ export const commandCatalog: CommandCatalogEntry[] = [
   },
   // Generates the repo's deploy workflows from infra-kit.deploy.ts. No palette row: a bare pick would
   // rewrite tracked files from the menu, and the command is run beside an edit of the manifest anyway.
+  // Deploys with whatever AWS credentials are loaded and checks nothing itself: CI's deploy job runs it,
+  // a human may, an agent only through `local deploy-*`, whose gates ran first (see deploy-run.ts).
+  {
+    cliName: 'deploy-run',
+    menuGroup: null,
+    mcpTool: null,
+    mcpExposed: false,
+    mutating: true,
+    humanOnly: true,
+    groupPath: ['deploy-run'],
+  },
   {
     cliName: 'deploy-sync',
     menuGroup: null,

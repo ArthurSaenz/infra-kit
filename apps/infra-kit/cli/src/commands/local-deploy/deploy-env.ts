@@ -1,5 +1,7 @@
 import process from 'node:process'
 
+import { DEPLOY_VIA_LOCAL_DEPLOY } from 'src/lib/deploy-toolkit/deploy-via'
+
 /** Vars the deploy build reads. Everything else in `VITE_*` is ambient noise and gets stripped. */
 export interface DeployContract {
   VITE_DOMAIN_ENV: string
@@ -113,6 +115,9 @@ export const buildDeployEnv = (args: BuildEnvArgs): BuildEnvResult => {
       DEPLOY_SHA_LABEL: contract.VITE_COMMIT_HASH,
       // Deploy builds are not interactive and telemetry noise obscures the failure line we surface.
       TURBO_TELEMETRY_DISABLED: '1',
+      // A `.sh` that hands off to `infra-kit deploy-run` inherits the agent's environment; this tells
+      // deploy-run the gates above already ran, so it does not refuse the agent a second time.
+      INFRA_KIT_DEPLOY_VIA: DEPLOY_VIA_LOCAL_DEPLOY,
     },
     contract,
     stripped,

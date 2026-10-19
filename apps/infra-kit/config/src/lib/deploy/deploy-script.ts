@@ -1,0 +1,106 @@
+/**
+ * The contract of a consumer's `devops/scripts/deploy-<service>.ts`, run by `infra-kit deploy-run`.
+ *
+ * Types only, on purpose: a script imports them with `import type`, which Node's type stripping
+ * erases, so the script runs from a checkout with no `node_modules`. The implementation is the CLI's;
+ * the deploy job installs that CLI globally, at the version this repo's lockfile resolves
+ * `@slip-stream-kit/config` to, so a branch always deploys with the toolkit it was tested with.
+ *
+ * @example
+ * import type { DeployScript } from '@slip-stream-kit/config'
+ *
+ * export default (async ({ ssm, deployBackendApi }) => {
+ *   const { '/hulyo/environment': stage } = await ssm(['/hulyo/environment'])
+ *
+ *   await deployBackendApi({ stage: stage!, app: 'cronjobs-api', appPath: 'apps/cronjobs/api' })
+ * }) satisfies DeployScript
+ */
+export type DeployScript = (toolkit: DeployToolkit) => Promise<void>
+
+export interface DeployRunOptions {
+  /** Defaults to the repo root. */
+  cwd?: string
+  /** Defaults to the CLI's own environment. */
+  env?: Record<string, string | undefined>
+}
+
+export interface DeployRetryOptions {
+  /** Default 8. */
+  attempts?: number
+  /** First wait window; each later one doubles. Default 3. */
+  initialDelaySeconds?: number
+  /** Default 60. */
+  maxDelaySeconds?: number
+}
+
+export interface DeployHookContext {
+  stage: string
+  /** `<root>/out`, the pruned and built workspace. */
+  outDir: string
+  /** The app inside it, e.g. `<root>/out/apps/client/api`. */
+  appDir: string
+}
+
+export type DeployHook = (context: DeployHookContext) => Promise<void> | void
+
+export interface DeployBuildOptions {
+  /** Reinstall production dependencies only, hoisted, for serverless packaging. */
+  installProd: boolean
+  /** Turbo task; defaults to `TURBO_BUILD_TASK`, then `build`. */
+  buildTask?: string
+}
+
+export interface DeployBackendApiOptions {
+  stage: string
+  /** Turbo workspace name, e.g. `backend-api`. */
+  app: string
+  /** App path inside the pruned workspace, e.g. `apps/client/api`. */
+  appPath: string
+  /** API Gateway REST API redeployed at stage `api` after serverless; omitted = none. */
+  restApiId?: string
+  /** After the build, before serverless, with production dependencies installed (DB migrations). */
+  preDeploy?: DeployHook
+  postDeploy?: DeployHook
+}
+
+export interface DeployFrontendUiOptions {
+  stage: string
+  /** Turbo workspace name, e.g. `website-ui`. */
+  app: string
+  /** App path inside the pruned workspace, e.g. `apps/client/ui`. */
+  appPath: string
+  bucket: string
+  cloudfrontId: string
+  /** Relative to the app. Default `./dist`. */
+  sourcePath?: string
+  /** Extra `aws s3 sync` flags, e.g. `['--delete', '--cache-control', 'max-age=3600']`. */
+  syncFlags?: string[]
+  /** Bucket subfolder, e.g. `/mfe`. Default the bucket root. */
+  destPath?: string
+  /** Default `/*`. */
+  invalidationPath?: string
+  postDeploy?: DeployHook
+}
+
+export interface DeployToolkit {
+  /** The repo root the script runs from. */
+  root: string
+  /** The `<service>` of `deploy-<service>.ts`. */
+  service: string
+  /** SSM parameter values by name; throws when one does not exist. */
+  ssm: (names: string[]) => Promise<Record<string, string>>
+  /** Runs a command with the terminal attached; rejects on a non-zero exit. */
+  run: (command: string, args: string[], options?: DeployRunOptions) => Promise<void>
+  /** Runs a command and resolves to its stdout. */
+  capture: (command: string, args: string[], options?: DeployRunOptions) => Promise<string>
+  /** Retries with exponential backoff and jitter. */
+  retry: <T>(description: string, fn: () => Promise<T>, options?: DeployRetryOptions) => Promise<T>
+  /** Ends the deploy as skipped, exit 0: the service does not deploy to this environment. */
+  skip: (reason: string) => never
+  /** Prunes the monorepo to `app` in `<root>/out`, installs and builds it; resolves to that directory. */
+  pruneAndBuild: (app: string, options: DeployBuildOptions) => Promise<string>
+  /** Serverless deploy, then the REST API redeploy, with optional hooks around it. */
+  deployBackendApi: (options: DeployBackendApiOptions) => Promise<void>
+  /** Build, `aws s3 sync`, CloudFront invalidation, optional post-deploy hook. */
+  deployFrontendUi: (options: DeployFrontendUiOptions) => Promise<void>
+}
