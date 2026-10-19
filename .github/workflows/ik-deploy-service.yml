@@ -14,8 +14,14 @@ on:
         required: true
         type: string
       ref:
+        description: 'The dispatched branch, as the build reports it (VITE_BRANCH_NAME)'
         required: true
         type: string
+      sha:
+        description: 'The commit to check out. Pass github.sha so every service of one run builds the same commit even if the branch moves; omitted = the tip of ref'
+        required: false
+        type: string
+        default: ''
       service:
         description: 'Script suffix: runs devops/scripts/deploy-<service>.sh'
         required: true
@@ -61,13 +67,13 @@ jobs:
       # to the prod domain.
       VITE_DOMAIN_ENV: ${{ inputs.environment }}
       VITE_BRANCH_NAME: ${{ inputs.ref }}
-      VITE_COMMIT_HASH: ${{ github.sha }}
+      VITE_COMMIT_HASH: ${{ inputs.sha != '' && inputs.sha || github.sha }}
       SLACK_ENABLED: ${{ secrets.slack-token != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.sha != '' && inputs.sha || inputs.ref }}
           persist-credentials: false
 
       - name: Set up AWS CLI
@@ -98,8 +104,12 @@ jobs:
               echo "::error::extra-env line is not KEY=VALUE with an upper-case KEY"
               exit 1
             fi
+            value="${line#*=}"
+            # The runner masks a multi-line secret line by line, i.e. `KEY=value` whole, never the bare
+            # value; without this every later step would print it in its env header.
+            if [ -n "$value" ]; then echo "::add-mask::$value"; fi
             delimiter="EOF_$(openssl rand -hex 8)"
-            printf '%s<<%s\n%s\n%s\n' "$key" "$delimiter" "${line#*=}" "$delimiter" >> "$GITHUB_ENV"
+            printf '%s<<%s\n%s\n%s\n' "$key" "$delimiter" "$value" "$delimiter" >> "$GITHUB_ENV"
           done
 
       - name: Deploy application
