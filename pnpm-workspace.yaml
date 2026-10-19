@@ -106,13 +106,6 @@ supportedArchitectures:
 
 strictPeerDependencies: false
 
-# Pin TanStack to the set vendored @wl/docs-ui (react-start 1.168.9) type-checks against; a fresh
-# install otherwise drifts to react-router 1.170.7 / router-core 1.171.5 (fumadocs-core peer range)
-# and breaks ts-check. Matches the versions the other consumer repos resolve.
-overrides:
-  '@tanstack/react-router': 1.170.6
-  '@tanstack/router-core': 1.171.4
-
 publicHoistPattern:
   - '*types*'
   - '*eslint*'
@@ -138,9 +131,34 @@ minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - '@slip-stream-kit/*'
   - infra-kit
-  # Exact versions from the starter sync (78ed5d8), younger than the cooldown until 2026-10-13; drop after.
-  - '@shadcn/lint@0.2.1'
-  - prettier@3.9.10
+  # Exact versions from the starter sync (fcf4d22), younger than the cooldown until 2026-10-20; drop after.
+  - '@eslint-react/ast@5.28.1'
+  - '@eslint-react/core@5.28.1'
+  - '@eslint-react/eslint-plugin@5.28.1'
+  - '@eslint-react/eslint@5.28.1'
+  - '@eslint-react/jsx@5.28.1'
+  - '@eslint-react/shared@5.28.1'
+  - '@eslint-react/var@5.28.1'
+  - '@tanstack/react-start-client@1.168.43'
+  - '@tanstack/react-start-rsc@0.1.64'
+  - '@tanstack/react-start-server@1.167.51'
+  - '@tanstack/react-start@1.169.3'
+  - '@tanstack/react-router@1.170.45'
+  - '@tanstack/router-core@1.171.38'
+  - '@tanstack/router-generator@1.167.45'
+  - '@tanstack/router-plugin@1.168.47'
+  - '@tanstack/start-client-core@1.170.38'
+  - '@tanstack/start-plugin-core@1.171.54'
+  - '@tanstack/start-server-core@1.169.44'
+  - '@tanstack/start-static-server-functions@1.167.43'
+  - '@tanstack/start-storage-context@1.167.40'
+  - eslint-plugin-react-dom@5.28.1
+  - eslint-plugin-react-jsx@5.28.1
+  - eslint-plugin-react-naming-convention@5.28.1
+  - eslint-plugin-react-rsc@5.28.1
+  - eslint-plugin-react-web-api@5.28.1
+  - eslint-plugin-react-x@5.28.1
+  - eslint@10.13.0
 catalogs:
   conflicts_zod_h4_4_3:
     zod: ^4.4.3
