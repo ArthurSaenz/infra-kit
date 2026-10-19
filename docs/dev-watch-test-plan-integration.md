@@ -1,6 +1,6 @@
 # `infra-kit dev --watch` — real-process integration / e2e tests
 
-Status: DONE (2026-09-26) — I1–I11 all landed and green — the harness lives in its own public repo, [ArthurSaenz/infra-kit-sandbox](https://github.com/ArthurSaenz/infra-kit-sandbox), cloned as a sibling of infra-kit (`link:../infra-kit/apps/infra-kit/*`). It briefly lived in-repo at `sandbox/`; moved out so it behaves like a real consumer (own git root, own Layer-3 config). Companion: [dev-watch-test-plan-unit.md](./dev-watch-test-plan-unit.md).
+Status: RETIRED (2026-10-18) — the `infra-kit-sandbox` harness repo was deleted, so I1–I11 no longer run anywhere. Before that: DONE (2026-09-26), I1–I11 all landed and green, the harness living in its own public repo `ArthurSaenz/infra-kit-sandbox`, cloned as a sibling of infra-kit (`link:../infra-kit/apps/infra-kit/*`). It briefly lived in-repo at `sandbox/`; moved out so it behaves like a real consumer (own git root, own Layer-3 config). Companion: [dev-watch-test-plan-unit.md](./dev-watch-test-plan-unit.md).
 
 ## Why
 
@@ -57,7 +57,7 @@ sandbox turns out slow; everything that boots servers lives in the sandbox.
 
 ## Status per test
 
-All in [infra-kit-sandbox/e2e/](https://github.com/ArthurSaenz/infra-kit-sandbox/tree/main/e2e), run on every
+Historical: these lived in `infra-kit-sandbox/e2e/` (repo deleted 2026-10-18), run on every
 sandbox push/PR and weekly against infra-kit `main` by its `e2e` workflow (arm64 runner, portless installed as a
 systemd service with `sudo`).
 
