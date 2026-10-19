@@ -79,6 +79,7 @@ export const diffEntry = (
     writes,
     deletes,
     counts: { added, modified: writes.length - added, removed: deletes.length },
+    pruned: false,
   }
 }
 
@@ -209,10 +210,10 @@ const repoPlan = (source: SourceFacts, facts: RepoFacts): TargetPlan => {
 
     if (targetEntry.scope === 'release') return []
 
-    // A pruned entry is diffed against an empty source set, so every file it tracks becomes a delete.
-    const sourceSide = targetEntry.scope === 'prune' ? { ...sourceEntry, files: [] } : sourceEntry
+    if (targetEntry.scope === 'sync') return [diffEntry(sourceEntry, targetEntry, source.exclude)]
 
-    return [diffEntry(sourceSide, targetEntry, source.exclude)]
+    // Diffed against an empty source set, so every file it tracks becomes a delete.
+    return [{ ...diffEntry({ ...sourceEntry, files: [] }, targetEntry, source.exclude), pruned: true }]
   })
   const writeVendorMeta = entries.some((entry) => {
     return entry.vendored

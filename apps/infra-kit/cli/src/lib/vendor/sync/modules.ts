@@ -86,10 +86,51 @@ const dependencyNames = (manifest: Record<string, unknown>): string[] => {
   })
 }
 
+// A trailing word character or "-" means a longer name that merely starts with this one.
+const mentions = (text: string, name: string): boolean => {
+  let at = text.indexOf(name)
+
+  while (at >= 0) {
+    if (!/[\w-]/.test(text[at + name.length] ?? '')) return true
+
+    at = text.indexOf(name, at + 1)
+  }
+
+  return false
+}
+
+// Shell and CI files are where a deploy names a package it builds; prose files are left out because a
+// README mentioning a package is not a use of it.
+const RUNNER_PATHSPECS = ['*.sh', '*.yml', '*.yaml']
+
+const manifestUses = (rel: string, manifest: Record<string, unknown>, name: string): string[] => {
+  const uses = dependencyNames(manifest).includes(name) ? [`${rel} depends on ${name}`] : []
+  const scripts = manifest.scripts !== null && typeof manifest.scripts === 'object' ? manifest.scripts : {}
+
+  for (const [script, command] of Object.entries(scripts)) {
+    if (typeof command === 'string' && mentions(command, name)) uses.push(`${rel} script "${script}" runs ${name}`)
+  }
+
+  return uses
+}
+
+const runnerUses = async (targetRoot: string, name: string, outside: (rel: string) => boolean): Promise<string[]> => {
+  const args = ['grep', '-z', '-l', '-F', '-e', name, '--', ...RUNNER_PATHSPECS]
+  const files = splitNul(await runGit(targetRoot, args, { allowFailure: true }))
+
+  return files
+    .filter((rel) => {
+      return outside(rel) && mentions(readFileSync(path.join(targetRoot, rel), 'utf8'), name)
+    })
+    .map((rel) => {
+      return `${rel} uses ${name}`
+    })
+}
+
 /**
- * One line per target `package.json` that still depends on a package the prune would delete. A pruned
- * workspace package would otherwise leave a `workspace:` dependency nothing satisfies, and the target would
- * only find out at its next `pnpm install`.
+ * One line per place in the target that still uses a package the prune would delete: a `package.json`
+ * dependency or script, or a shell or CI file that names it. Deleting the package would otherwise leave the
+ * target broken in a way it only finds out at its next install, dev run or deploy.
  */
 export const pruneConflicts = async (
   sourceRoot: string,
@@ -107,25 +148,27 @@ export const pruneConflicts = async (
   const prunedRoots = pruned.map(({ target }) => {
     return `${target}/`
   })
-  const manifests = splitNul(await runGit(targetRoot, ['ls-files', '-z', '--', '*package.json'])).filter((rel) => {
-    const inPruned = prunedRoots.some((prefix) => {
+  const outsidePruned = (rel: string): boolean => {
+    return !prunedRoots.some((prefix) => {
       return rel.startsWith(prefix)
     })
-
-    return path.posix.basename(rel) === 'package.json' && !inPruned
+  }
+  const manifests = splitNul(await runGit(targetRoot, ['ls-files', '-z', '--', '*package.json'])).filter((rel) => {
+    return path.posix.basename(rel) === 'package.json' && outsidePruned(rel)
   })
+  const conflicts: string[] = []
 
-  return manifests.flatMap((rel) => {
-    const manifest = readJson(path.join(targetRoot, rel))
+  for (const [name, module] of owners) {
+    const uses = manifests.flatMap((rel) => {
+      const manifest = readJson(path.join(targetRoot, rel))
 
-    if (manifest === null) return []
+      return manifest === null ? [] : manifestUses(rel, manifest, name)
+    })
 
-    return dependencyNames(manifest)
-      .filter((dep) => {
-        return owners.has(dep)
-      })
-      .map((dep) => {
-        return `${rel} depends on ${dep}: add "${owners.get(dep)}" to vendorTarget.modules or drop the dependency`
-      })
-  })
+    uses.push(...(await runnerUses(targetRoot, name, outsidePruned)))
+
+    for (const use of uses) conflicts.push(`${use}: add "${module}" to vendorTarget.modules or stop using it`)
+  }
+
+  return conflicts.sort()
 }

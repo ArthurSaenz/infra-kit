@@ -128,6 +128,8 @@ export interface EntryPlan {
   writes: WriteOp[]
   deletes: string[]
   counts: EntryCounts
+  /** A dropped module under `vendor/`: the apply removes its whole directory, ignored build output included. */
+  pruned: boolean
 }
 
 export type TargetPlanStatus = 'skipped' | 'fail' | 'ok' | 'changed'

@@ -65,6 +65,7 @@ describe('vendor sync — vendorTarget modules', () => {
     async () => {
       await syncAndCommit()
       expect(exists(fx.targetA, ROUTE_ID)).toBe(true)
+      writeFile(fx.targetA, 'vendor/packages/docs-ui/node_modules/x/index.js', 'ignored build output\n')
 
       const plan = await syncAndCommit(CORE_ONLY)
       const notes = plan.notes.join('\n')
@@ -75,6 +76,7 @@ describe('vendor sync — vendorTarget modules', () => {
       expect(notes).toContain('.agents/skills/shadcn: not in vendorTarget.modules, left in place')
       expect(exists(fx.targetA, ROUTE_ID)).toBe(false)
       expect(exists(fx.targetA, ROUTE_I)).toBe(false)
+      expect(exists(fx.targetA, 'vendor/packages')).toBe(false)
       expect(exists(fx.targetA, '.agents/skills/shadcn/SKILL.md')).toBe(true)
 
       const { structuredContent } = await vendorCheck({ cwd: fx.targetA })
@@ -112,6 +114,29 @@ describe('vendor sync — vendorTarget modules', () => {
         'apps/web/package.json depends on @wl/docs-ui: add "docs" to vendorTarget.modules',
       )
       expect(git(fx.targetA, ['status', '--porcelain'])).toBe('')
+    },
+    TIMEOUT_MS,
+  )
+
+  it(
+    'fails the row when a root script or a deploy script still runs the package, but not on a prose mention',
+    async () => {
+      writeFile(fx.source, 'vendor/packages/docs-ui/package.json', '{ "name": "@wl/docs-ui" }\n')
+      commitAll(fx.source, 'source: docs-ui manifest')
+      await syncAndCommit()
+      writeFile(fx.targetA, 'package.json', '{ "scripts": { "docs": "pnpm --filter @wl/docs-ui dev" } }\n')
+      writeFile(fx.targetA, 'devops/deploy-docs.sh', 'pnpm exec turbo build --filter=@wl/docs-ui\n')
+      writeFile(fx.targetA, 'README.md', 'The site lives in @wl/docs-ui.\n')
+      writeFile(fx.targetA, 'ci.yml', 'run: pnpm --filter @wl/docs-ui-legacy build\n')
+      commitAll(fx.targetA, 'docs site wiring')
+
+      const { plan } = await preview(fx.source, fx.targetA, MODULE_SPEC, CORE_ONLY)
+
+      expect(plan.status).toBe('fail')
+      expect(plan.notes).toStrictEqual([
+        'devops/deploy-docs.sh uses @wl/docs-ui: add "docs" to vendorTarget.modules or stop using it',
+        'package.json script "docs" runs @wl/docs-ui: add "docs" to vendorTarget.modules or stop using it',
+      ])
     },
     TIMEOUT_MS,
   )

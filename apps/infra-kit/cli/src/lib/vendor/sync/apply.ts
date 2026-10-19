@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readlinkSync,
+  rmSync,
   rmdirSync,
   symlinkSync,
   unlinkSync,
@@ -188,6 +189,13 @@ export const applyTargetPlan = async ({ source, plan, onBeforeFirstWrite }: Appl
   for (const deletedPath of deleted) removeLeaf(path.join(targetRoot, deletedPath))
 
   await pruneEmptyDirs(targetRoot, deleted)
+
+  // Only ignored files can be left here: the preflight blocks a target with anything untracked under a pruned
+  // path. Left behind, they outlive the package's own .gitignore and surface as untracked on the next sync.
+  for (const entry of plan.entries) {
+    if (entry.pruned && entry.deletes.length > 0)
+      rmSync(path.join(targetRoot, entry.target), { recursive: true, force: true })
+  }
 
   const writes = plan.entries.flatMap((entry) => {
     return entry.writes
