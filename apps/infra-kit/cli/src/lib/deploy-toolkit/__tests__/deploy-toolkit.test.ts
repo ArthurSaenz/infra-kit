@@ -101,40 +101,32 @@ describe('retry', () => {
 })
 
 describe('ssm', () => {
-  it('reads every name in batches of ten with adaptive aws retries', async () => {
-    const names = Array.from({ length: 12 }, (_, index) => {
-      return `/hulyo/p${index}`
-    })
+  it('reads each name with get-parameter, which a deploy user without ssm:GetParameters may call', async () => {
     const { toolkit, calls } = fake({
       capture: async (command, args, options) => {
         calls.push({ command, args, ...options })
 
-        const requested = args.slice(args.indexOf('--names') + 1, args.indexOf('--output'))
-
-        return JSON.stringify({
-          Parameters: requested.map((name) => {
-            return { Name: name, Value: `v${name}` }
-          }),
-        })
+        return `v${args[args.indexOf('--name') + 1]}\n`
       },
     })
 
-    const values = await toolkit.ssm(names)
+    const values = await toolkit.ssm(['/hulyo/environment', '/hulyo/restId'])
 
-    expect(calls).toHaveLength(2)
-    expect(Object.keys(values)).toHaveLength(12)
-    expect(values['/hulyo/p11']).toBe('v/hulyo/p11')
+    expect(values).toEqual({ '/hulyo/environment': 'v/hulyo/environment', '/hulyo/restId': 'v/hulyo/restId' })
+    expect(line(calls[0])).toBe('aws ssm get-parameter --name /hulyo/environment --query Parameter.Value --output text')
     expect(calls[0]?.env).toMatchObject({ AWS_RETRY_MODE: 'adaptive', AWS_PAGER: '', PATH: '/bin' })
   })
 
-  it('throws on a missing parameter instead of deploying with "None"', async () => {
+  it('names the parameter it could not read instead of deploying without it', async () => {
     const { toolkit } = fake({
       capture: async () => {
-        return JSON.stringify({ Parameters: [], InvalidParameters: ['/hulyo/environment'] })
+        throw new Error('An error occurred (ParameterNotFound)')
       },
     })
 
-    await expect(toolkit.ssm(['/hulyo/environment'])).rejects.toThrow('SSM parameters not found: /hulyo/environment')
+    await expect(toolkit.ssm(['/hulyo/environment'])).rejects.toThrow(
+      'SSM parameter /hulyo/environment: An error occurred (ParameterNotFound)',
+    )
   })
 })
 

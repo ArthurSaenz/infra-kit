@@ -26,7 +26,7 @@ const deps: ToolkitDeps = {
     }
   },
   capture: async () => {
-    return JSON.stringify({ Parameters: [{ Name: '/hulyo/environment', Value: 'arthur' }] })
+    return 'arthur\n'
   },
   sleep: async () => {},
   random: () => {

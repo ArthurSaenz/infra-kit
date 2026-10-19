@@ -21,9 +21,6 @@ export const SERVERLESS_VERSION = '3.39.0'
 
 const MAX_BUFFER = 10 * 1024 * 1024
 
-/** `aws ssm get-parameters` accepts at most ten names per call. */
-const SSM_BATCH = 10
-
 type Env = Record<string, string | undefined>
 
 /** The side effects, injectable so a test can record every command instead of running it. */
@@ -228,33 +225,26 @@ export const createDeployToolkit = ({
     })
   }
 
+  // One `get-parameter` per name, as the .sh scripts read them: a deploy user may hold
+  // ssm:GetParameter without ssm:GetParameters (travelist's does).
   const ssm: DeployToolkit['ssm'] = async (names) => {
-    const batches = Array.from({ length: Math.ceil(names.length / SSM_BATCH) }, (_, index) => {
-      return names.slice(index * SSM_BATCH, (index + 1) * SSM_BATCH)
-    })
-    const responses = await Promise.all(
-      batches.map(async (batch) => {
-        const stdout = await deps.capture('aws', ['ssm', 'get-parameters', '--names', ...batch, '--output', 'json'], {
-          cwd: root,
-          env: awsEnv(env),
-        })
+    const values = await Promise.all(
+      names.map(async (name) => {
+        try {
+          const stdout = await deps.capture(
+            'aws',
+            ['ssm', 'get-parameter', '--name', name, '--query', 'Parameter.Value', '--output', 'text'],
+            { cwd: root, env: awsEnv(env) },
+          )
 
-        return JSON.parse(stdout) as { Parameters?: { Name: string; Value: string }[]; InvalidParameters?: string[] }
+          return [name, stdout.trim()] as const
+        } catch (error) {
+          throw new Error(`SSM parameter ${name}: ${error instanceof Error ? error.message : String(error)}`)
+        }
       }),
     )
-    const missing = responses.flatMap((response) => {
-      return response.InvalidParameters ?? []
-    })
 
-    if (missing.length > 0) throw new Error(`SSM parameters not found: ${missing.join(', ')}`)
-
-    return Object.fromEntries(
-      responses.flatMap((response) => {
-        return (response.Parameters ?? []).map((parameter) => {
-          return [parameter.Name, parameter.Value]
-        })
-      }),
-    )
+    return Object.fromEntries(values)
   }
 
   const setupTools = async (serverless: boolean) => {
