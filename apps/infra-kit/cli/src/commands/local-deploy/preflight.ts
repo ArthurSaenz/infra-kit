@@ -96,7 +96,7 @@ export const assertCleanTreeForSharedEnv = (args: { env: string; isShared: boole
 /**
  * Refuse while CI is already deploying to the same environment.
  *
- * `deploy-all.yml` sets `concurrency: group: deploy-all-<env>, cancel-in-progress: true`, which makes
+ * `deploy-all.yml` sets `concurrency: group: deploy-all-<env>`, which makes
  * CI runs mutually exclusive — but a local deploy is invisible to that group, so nothing stops the two
  * from interleaving. Serverless would fail loudly on a CloudFormation conflict; an S3 sync racing a
  * CloudFront invalidation would not, and would leave a half-updated bundle.

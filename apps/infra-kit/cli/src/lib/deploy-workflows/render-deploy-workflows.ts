@@ -6,7 +6,7 @@ import type { DeployConfig, DeployService } from '@slip-stream-kit/config/intern
  * `.github/workflows/ik-deploy-service.yml` or `ik-install-deps.yml` changes; `deploy-sync` then moves
  * every consumer forward.
  */
-const SHARED_JOBS_SHA = '39a5bfe7dad9b11cdcb4ac11dddc63a9f4f6fabb'
+const SHARED_JOBS_SHA = '678360ed207d80073a1cda7cb3c2a58799b9bc34'
 
 export const SHARED_DEPLOY_JOB = `ArthurSaenz/infra-kit/.github/workflows/ik-deploy-service.yml@${SHARED_JOBS_SHA}`
 
@@ -54,12 +54,17 @@ const kindNames = (config: DeployConfig, kind: WorkflowKind): KindNames => {
   return KINDS[config.replaceV1 === true ? 'v1' : 'pilot'][kind]
 }
 
-/** Every path `deploy-sync` may have written, under either naming: a switch leaves the other pair stale. */
-export const GENERATED_WORKFLOW_PATHS = Object.values(KINDS).flatMap((kinds) => {
-  return Object.values(kinds).map(({ file }) => {
+const workflowPaths = (naming: 'pilot' | 'v1'): string[] => {
+  return Object.values(KINDS[naming]).map(({ file }) => {
     return `.github/workflows/${file}`
   })
-})
+}
+
+/** The `-v2` pilot pair, which `replaceV1` leaves stale. */
+export const PILOT_WORKFLOW_PATHS = workflowPaths('pilot')
+
+/** The v1-named pair, which `replaceV1` generates and which delivery dispatches. */
+export const V1_WORKFLOW_PATHS = workflowPaths('v1')
 
 export interface GeneratedWorkflow {
   /** Repo-relative path. */
@@ -135,8 +140,8 @@ const upstreamOk = (upstream: Upstream): string[] => {
 
 /**
  * The env gate is written as `contains(fromJSON(...), inputs.environment)` and never as
- * `inputs.environment == '<env>'`: the CLI's workflow-gates reader scans every workflow for the latter
- * and would start reading these files as another source of v1's gates.
+ * `inputs.environment == '<env>'`: the workflow-gates reader in CLIs before deploy-sync's
+ * `replaceV1` scans every workflow for the latter, and consumers run whichever CLI is installed.
  */
 const serviceCondition = (planned: PlannedService, kind: WorkflowKind, upstream: Upstream): string => {
   const parts: string[] = []
@@ -329,7 +334,7 @@ const installJob = (): string[] => {
   ]
 }
 
-/** A duplicate job id is not a YAML error GitHub reports clearly: the later job silently replaces the earlier. */
+/** GitHub rejects a workflow with a duplicate job id only at dispatch; this fails at sync instead. */
 const assertUniqueJobIds = (ids: string[], file: string): void => {
   const seen = new Set<string>()
 
@@ -364,8 +369,10 @@ const renderWorkflow = (config: DeployConfig, kind: WorkflowKind): GeneratedWork
 
   // Only deploy-selected has an input per service, so only it can reach the cap.
   if (inputCount > MAX_DISPATCH_INPUTS) {
+    const fixed = terraformFiles.length > 0 ? `environment, ${SKIP_TERRAFORM_INPUT}` : 'environment'
+
     throw new Error(
-      `${file} would need ${inputCount} dispatch inputs (environment, ${SKIP_TERRAFORM_INPUT} and one checkbox per service); GitHub allows ${MAX_DISPATCH_INPUTS}. Fold services that always deploy together into one deploy script.`,
+      `${file} would need ${inputCount} dispatch inputs (${fixed} and one checkbox per service); GitHub allows ${MAX_DISPATCH_INPUTS}. Fold services that always deploy together into one deploy script.`,
     )
   }
 

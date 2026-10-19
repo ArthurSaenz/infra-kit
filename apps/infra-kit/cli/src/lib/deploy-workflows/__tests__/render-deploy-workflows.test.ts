@@ -204,7 +204,7 @@ describe('renderDeployWorkflows', () => {
       })
     }
 
-    expect(SHARED_INSTALL_JOB.split('@')[1]).toBe(SHARED_DEPLOY_JOB.split('@')[1])
+    expect(SHARED_INSTALL_JOB).toMatch(/@[0-9a-f]{40}$/)
     expect(all.parsed.jobs['notify-success']!.needs).not.toContain('install-deps')
   })
 
@@ -289,7 +289,7 @@ describe('renderDeployWorkflows', () => {
   // Once the generated files ARE what `release deploy-*` dispatches, their gates are the manifest's.
   it('feeds the manifest gates to the workflow-gates reader under replaceV1', async () => {
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'deploy-sync-gates-v1-'))
-    const config: DeployConfig = { ...MANIFEST, replaceV1: true }
+    const config: DeployConfig = { ...MANIFEST, environments: [...MANIFEST.environments, 'prod'], replaceV1: true }
 
     await fs.mkdir(path.join(repo, '.github/workflows'), { recursive: true })
     await fs.writeFile(path.join(repo, 'infra-kit.deploy.ts'), `export default ${JSON.stringify(config)}\n`)

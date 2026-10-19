@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { GENERATED_MARKER, loadDeployConfig, manifestGates } from 'src/lib/deploy-workflows'
+import { logger } from 'src/lib/logger'
 
 const WORKFLOWS_DIR = '.github/workflows'
 
@@ -80,7 +81,7 @@ export const readGatesFromWorkflow = async (
  * A file `infra-kit deploy-sync` generated is not scanned: its gates are read from the manifest it was
  * generated from, and only once the manifest `replaceV1` — before that the files are the `-v2` pilot,
  * which nothing the CLI runs dispatches. An unreadable manifest restricts nothing, as an unparseable
- * gate does.
+ * gate does, but says so: CI still applies the gates it no longer reports.
  */
 const collectFrom = async (projectRoot: string, files: string[]): Promise<Map<string, string[]>> => {
   const dir = path.resolve(projectRoot, WORKFLOWS_DIR)
@@ -110,7 +111,9 @@ const replacingManifestGates = async (projectRoot: string): Promise<Map<string, 
     const config = await loadDeployConfig(projectRoot)
 
     return config?.replaceV1 === true ? manifestGates(config) : new Map()
-  } catch {
+  } catch (error) {
+    logger.warn(`Deploy gates unavailable, nothing is refused before dispatch: ${(error as Error).message}`)
+
     return new Map()
   }
 }

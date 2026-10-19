@@ -1,10 +1,12 @@
 import { DEPLOY_CONFIG_FILE } from '@slip-stream-kit/config/internal'
+import type { DeployConfig } from '@slip-stream-kit/config/internal'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import {
   GENERATED_MARKER,
-  GENERATED_WORKFLOW_PATHS,
+  PILOT_WORKFLOW_PATHS,
+  V1_WORKFLOW_PATHS,
   loadDeployConfig,
   renderDeployWorkflows,
 } from 'src/lib/deploy-workflows'
@@ -46,33 +48,54 @@ const CHECK_LABEL: Record<FileStatus, string> = {
   removed: 'no longer generated',
 }
 
-/**
- * Files an earlier sync generated under the other naming (the `-v2` pilot pair once the manifest
- * `replaceV1`, or back). Only a file carrying the generated marker counts: a hand-written v1 file is
- * never removed.
- */
-const staleGeneratedFiles = async (
-  root: string,
-  current: { path: string }[],
-): Promise<{ path: string; absolute: string; status: 'removed' }[]> => {
-  const currentPaths = new Set(
-    current.map((file) => {
-      return file.path
-    }),
-  )
-  const candidates = GENERATED_WORKFLOW_PATHS.filter((filePath) => {
-    return !currentPaths.has(filePath)
-  })
+const generatedAmong = async (root: string, paths: string[]): Promise<{ path: string; absolute: string }[]> => {
   const found = await Promise.all(
-    candidates.map(async (filePath) => {
+    paths.map(async (filePath) => {
       const absolute = path.join(root, filePath)
       const content = await readIfExists(absolute)
 
-      return content?.startsWith(GENERATED_MARKER) ? [{ path: filePath, absolute, status: 'removed' as const }] : []
+      return content?.startsWith(GENERATED_MARKER) ? [{ path: filePath, absolute }] : []
     }),
   )
 
   return found.flat()
+}
+
+/**
+ * The generated `-v2` pilot pair, stale once the manifest `replaceV1`. Only a file carrying the
+ * generated marker counts, so a hand-written file is never removed.
+ */
+const stalePilotFiles = async (
+  root: string,
+  config: DeployConfig,
+): Promise<{ path: string; absolute: string; status: 'removed' }[]> => {
+  if (config.replaceV1 !== true) return []
+
+  return (await generatedAmong(root, PILOT_WORKFLOW_PATHS)).map((file) => {
+    return { ...file, status: 'removed' as const }
+  })
+}
+
+/**
+ * Turning `replaceV1` off must not delete the generated `deploy-all.yml`: delivery dispatches it, and
+ * the hand-written v1 file it replaced lives only in git history.
+ */
+const assertNoGeneratedV1Files = async (root: string, config: DeployConfig): Promise<void> => {
+  if (config.replaceV1 === true) return
+
+  const generated = await generatedAmong(root, V1_WORKFLOW_PATHS)
+
+  if (generated.length === 0) return
+
+  const paths = generated
+    .map((file) => {
+      return file.path
+    })
+    .join(', ')
+
+  throw new Error(
+    `${paths} ${generated.length === 1 ? 'was' : 'were'} generated under replaceV1, which ${DEPLOY_CONFIG_FILE} no longer sets. Restore the hand-written v1 workflows from git history (or set replaceV1 again) before syncing.`,
+  )
 }
 
 /**
@@ -98,6 +121,8 @@ export const deploySync = async (options: DeploySyncOptions = {}) => {
     return result({ status: 'missing-config', ok: Boolean(options.check), files: [] })
   }
 
+  await assertNoGeneratedV1Files(root, config)
+
   const files = await Promise.all(
     renderDeployWorkflows(config).map(async (workflow) => {
       const absolute = path.join(root, workflow.path)
@@ -111,7 +136,7 @@ export const deploySync = async (options: DeploySyncOptions = {}) => {
       return { ...workflow, absolute, status }
     }),
   )
-  const stale = await staleGeneratedFiles(root, files)
+  const stale = await stalePilotFiles(root, config)
 
   const changed = [
     ...files.filter((file) => {

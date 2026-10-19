@@ -22,7 +22,7 @@ export default {
 
 const REPLACING = MANIFEST.replace(
   "environments: ['dev', 'arthur'],",
-  "environments: ['dev', 'arthur'],\n  replaceV1: true,",
+  "environments: ['dev', 'arthur', 'prod'],\n  replaceV1: true,",
 )
 
 const ALL = '.github/workflows/deploy-all-v2.yml'
@@ -125,6 +125,23 @@ describe('deploySync', () => {
     await deploySync({ cwd: repo })
 
     expect(await fs.readFile(path.join(repo, ALL), 'utf-8')).toBe('name: hand-written\n')
+  })
+
+  it('refuses to sync once replaceV1 is turned off, rather than delete the deploy-all.yml delivery needs', async () => {
+    await writeManifest()
+    await fs.mkdir(path.join(repo, '.github/workflows'), { recursive: true })
+    await fs.writeFile(path.join(repo, V1_ALL), `${GENERATED_MARKER}: edit that file\n`)
+
+    await expect(deploySync({ cwd: repo })).rejects.toThrow(/deploy-all\.yml was generated under replaceV1/)
+    expect(await fs.readFile(path.join(repo, V1_ALL), 'utf-8')).toContain(GENERATED_MARKER)
+  })
+
+  it('refuses replaceV1 without prod, which delivery dispatches deploy-all.yml with', async () => {
+    await writeManifest(
+      MANIFEST.replace("environments: ['dev', 'arthur'],", "environments: ['dev', 'arthur'],\n  replaceV1: true,"),
+    )
+
+    await expect(deploySync({ cwd: repo })).rejects.toThrow(/replaceV1: environments must include 'prod'/)
   })
 
   it('rejects a gate on an unknown environment', async () => {

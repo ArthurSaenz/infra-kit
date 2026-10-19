@@ -15,8 +15,8 @@ import { DEFAULT_PROTECTED_ENVS } from 'src/lib/workflow-envs/protected-envs'
  * the deploy types loads fine. The schema is this CLI's own copy, so validation does not depend on
  * what the repo has installed either.
  *
- * @throws When the file exists but has no default export, fails the schema, or gates a service on an
- * environment it does not know.
+ * @throws When the file exists but has no default export, fails the schema, gates a service on an
+ * environment it does not know, or would replace v1 without the environments delivery dispatches.
  */
 export const loadDeployConfig = async (projectRoot: string): Promise<DeployConfig | undefined> => {
   const configPath = path.join(projectRoot, DEPLOY_CONFIG_FILE)
@@ -39,13 +39,27 @@ export const loadDeployConfig = async (projectRoot: string): Promise<DeployConfi
     throw new Error(`Invalid ${DEPLOY_CONFIG_FILE} at ${configPath}:\n${z.prettifyError(parsed.error)}`)
   }
 
-  const unknown = unknownGateEnvs(parsed.data)
+  const problems = [...unknownGateEnvs(parsed.data), ...undeliverableReplacement(parsed.data)]
 
-  if (unknown.length > 0) {
-    throw new Error(`Invalid ${DEPLOY_CONFIG_FILE} at ${configPath}:\n${unknown.join('\n')}`)
+  if (problems.length > 0) {
+    throw new Error(`Invalid ${DEPLOY_CONFIG_FILE} at ${configPath}:\n${problems.join('\n')}`)
   }
 
   return parsed.data
+}
+
+/**
+ * Delivery dispatches `deploy-all.yml -f environment=prod`, which GitHub refuses unless the choice input
+ * offers it, so a manifest taking over that file must offer every protected environment.
+ */
+const undeliverableReplacement = (config: DeployConfig): string[] => {
+  if (config.replaceV1 !== true) return []
+
+  return DEFAULT_PROTECTED_ENVS.filter((env) => {
+    return !config.environments.includes(env)
+  }).map((env) => {
+    return `✖ replaceV1: environments must include '${env}', which delivery dispatches deploy-all.yml with`
+  })
 }
 
 /**
