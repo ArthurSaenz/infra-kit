@@ -50,6 +50,17 @@ describe('deployConfigSchema', () => {
     expect(deployConfigSchema.safeParse({ ...minimal, services: { environment: {} } }).success).toBe(false)
   })
 
+  it('takes a repo-relative .ts deploy path, never beside a workflow, never escaping the repo', () => {
+    const service = (deploy: string, extra = {}) => {
+      return deployConfigSchema.safeParse({ ...minimal, services: { 'client-be': { deploy, ...extra } } }).success
+    }
+
+    expect(service('apps/client/api/deploy.ts')).toBe(true)
+    expect(service('apps/client/api/deploy.ts', { workflow: '_x.yml' })).toBe(false)
+    expect(service('../other/deploy.ts')).toBe(false)
+    expect(service('apps/client/api/deploy.sh')).toBe(false)
+  })
+
   it('rejects a manifest without services', () => {
     expect(deployConfigSchema.safeParse({ ...minimal, services: {} }).success).toBe(false)
   })

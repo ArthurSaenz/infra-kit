@@ -119,7 +119,6 @@ describe('renderDeployWorkflows', () => {
       ref: '${{ github.ref }}',
       sha: '${{ github.sha }}',
       service: 'client-fe',
-      'infra-kit-version': packageJson.version,
       runner: 'macos-14',
     })
     expect(job.secrets).toMatchObject({
@@ -127,6 +126,16 @@ describe('renderDeployWorkflows', () => {
       'extra-env': 'MONITORING_IP=${{ secrets.MONITORING_IP }}\nTOKEN_FLUX_DB=${{ secrets.TOKEN_FLUX_DB }}\n',
     })
     expect(selected.parsed.jobs['deploy-client-be']!.with).not.toHaveProperty('runner')
+  })
+
+  it('installs this CLI for a service with a TypeScript deploy, and only for it', () => {
+    const { selected } = render({
+      ...MANIFEST,
+      services: { ...MANIFEST.services, 'client-be': { deploy: 'apps/api/deploy.ts' } },
+    })
+
+    expect(selected.parsed.jobs['deploy-client-be']!.with).toMatchObject({ 'infra-kit-version': packageJson.version })
+    expect(selected.parsed.jobs['deploy-client-fe']!.with).not.toHaveProperty('infra-kit-version')
   })
 
   it('sends a workflow service to its own reusable workflow', () => {

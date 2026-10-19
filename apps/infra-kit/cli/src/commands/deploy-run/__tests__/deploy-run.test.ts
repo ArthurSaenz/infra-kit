@@ -16,8 +16,12 @@ vi.mock('src/lib/logger', () => {
 const commands: string[] = []
 
 const deps: ToolkitDeps = {
-  run: async (command, args) => {
+  run: async (command, args, options) => {
     commands.push([command, ...args].join(' '))
+
+    if (command === 'turbo' && args[0] === 'prune') {
+      await fs.mkdir(path.join(options.cwd, 'out', 'apps', 'client-api'), { recursive: true })
+    }
   },
   capture: async () => {
     return JSON.stringify({ Parameters: [{ Name: '/hulyo/environment', Value: 'arthur' }] })
@@ -29,13 +33,15 @@ const deps: ToolkitDeps = {
   log: () => {},
 }
 
-// Each test writes its script into its own repo: Node caches an imported module by path.
+// Each test gets its own repo: Node caches an imported module (manifest and script) by path.
 let repo: string
 
 beforeEach(async () => {
   commands.length = 0
   repo = await fs.mkdtemp(path.join(os.tmpdir(), 'deploy-run-'))
-  await fs.mkdir(path.join(repo, 'devops/scripts'), { recursive: true })
+  await fs.mkdir(path.join(repo, 'apps', 'client-api'), { recursive: true })
+  await fs.writeFile(path.join(repo, 'package.json'), JSON.stringify({ devDependencies: { turbo: '2.11.7' } }))
+  await fs.writeFile(path.join(repo, 'apps', 'client-api', 'package.json'), JSON.stringify({ name: 'backend-api' }))
 })
 
 afterEach(async () => {
@@ -43,63 +49,73 @@ afterEach(async () => {
   await fs.rm(repo, { recursive: true, force: true })
 })
 
-const writeScript = async (service: string, body: string) => {
-  await fs.writeFile(path.join(repo, 'devops/scripts', `deploy-${service}.ts`), body)
+/** `client-be` deploys with `apps/client-api/deploy.ts`, which holds `body`. */
+const setUp = async (body: string, deploy = 'apps/client-api/deploy.ts') => {
+  await fs.writeFile(
+    path.join(repo, 'infra-kit.deploy.ts'),
+    `export default { environments: ['dev'], services: { 'client-be': { deploy: '${deploy}' } } }\n`,
+  )
+  await fs.writeFile(path.join(repo, 'apps', 'client-api', 'deploy.ts'), body)
+}
+
+const run = (env: Record<string, string | undefined> = {}) => {
+  return deployRun({ service: 'client-be', cwd: repo, env, deps })
 }
 
 describe('deployRun', () => {
-  it('runs the script with the toolkit; its type-only import is erased at load', async () => {
-    await writeScript(
-      'client-be',
-      `import type { DeployScript } from '@slip-stream-kit/config'
+  it('runs the manifest deploy against the app it sits in; its type-only import is erased at load', async () => {
+    await setUp(`import type { DeployScript } from '@slip-stream-kit/config'
 
-export default (async ({ ssm, run, service }) => {
+export default (async ({ ssm, deployBackendApi }) => {
   const { '/hulyo/environment': stage } = await ssm(['/hulyo/environment'])
 
-  await run('echo', [service, stage ?? ''])
+  await deployBackendApi({ stage: stage! })
 }) satisfies DeployScript
-`,
-    )
+`)
 
-    const result = await deployRun({ service: 'client-be', cwd: repo, env: {}, deps })
+    const result = await run()
 
     expect(result.structuredContent).toEqual({ status: 'deployed', service: 'client-be' })
-    expect(commands).toEqual(['echo client-be arthur'])
+    expect(commands).toContain('turbo prune backend-api')
+    expect(commands).toContain('serverless deploy --stage arthur --force')
   })
 
   it('reports a skip as a skipped deploy, not a failure', async () => {
-    await writeScript('mobile', `export default async ({ skip }) => skip('mobile deploys to dev and prod only')\n`)
+    await setUp(`export default async ({ skip }) => skip('client-be is off on dev')\n`)
 
-    const result = await deployRun({ service: 'mobile', cwd: repo, env: {}, deps })
-
-    expect(result.structuredContent).toEqual({
+    expect((await run()).structuredContent).toEqual({
       status: 'skipped',
-      service: 'mobile',
-      reason: 'mobile deploys to dev and prod only',
+      service: 'client-be',
+      reason: 'client-be is off on dev',
     })
   })
 
   it('lets a failure through, so the deploy job fails', async () => {
-    await writeScript('docs-fe', `export default async () => { throw new Error('serverless deploy failed') }\n`)
+    await setUp(`export default async () => { throw new Error('serverless deploy failed') }\n`)
 
-    await expect(deployRun({ service: 'docs-fe', cwd: repo, env: {}, deps })).rejects.toThrow(
-      'serverless deploy failed',
-    )
+    await expect(run()).rejects.toThrow('serverless deploy failed')
   })
 
-  it('names the missing script and a script without a default function', async () => {
+  it('names a service without a deploy, a missing file, and a script without a default function', async () => {
     await expect(deployRun({ service: 'seo-fe', cwd: repo, env: {}, deps })).rejects.toThrow(
-      'deploy-seo-fe.ts does not exist',
+      'no infra-kit.deploy.ts in this repo',
     )
 
-    await writeScript('julyo-be', 'export const deploy = 1\n')
+    await setUp('export const deploy = 1\n', 'apps/client-api/missing.ts')
 
-    await expect(deployRun({ service: 'julyo-be', cwd: repo, env: {}, deps })).rejects.toThrow(
-      'no default-exported function',
+    await expect(run()).rejects.toThrow('missing.ts does not exist')
+    await expect(deployRun({ service: 'seo-fe', cwd: repo, env: {}, deps })).rejects.toThrow(
+      'seo-fe has no deploy script',
     )
   })
 
-  it('refuses a service name that is not a script suffix', async () => {
+  it('refuses a script without a default function', async () => {
+    await setUp('export const deploy = 1\n')
+
+    await expect(run()).rejects.toThrow('no default-exported function')
+  })
+
+  it('refuses a service name that is not a manifest key', async () => {
     await expect(deployRun({ service: '../x', cwd: repo, env: {}, deps })).rejects.toThrow(
       "invalid service name '../x'",
     )
@@ -107,20 +123,10 @@ export default (async ({ ssm, run, service }) => {
 
   it('refuses an agent, unless local deploy-* ran its gates and spawned the script', async () => {
     agentMode.source = 'flag'
-    await writeScript('backoffice-be', `export default async ({ run }) => { await run('true', []) }\n`)
+    await setUp(`export default async ({ run }) => { await run('true', []) }\n`)
 
-    await expect(deployRun({ service: 'backoffice-be', cwd: repo, env: {}, deps })).rejects.toBeInstanceOf(
-      StructuredRefusalError,
-    )
+    await expect(run()).rejects.toBeInstanceOf(StructuredRefusalError)
     expect(commands).toEqual([])
-
-    const viaLocal = await deployRun({
-      service: 'backoffice-be',
-      cwd: repo,
-      env: { INFRA_KIT_DEPLOY_VIA: 'local-deploy' },
-      deps,
-    })
-
-    expect(viaLocal.structuredContent.status).toBe('deployed')
+    expect((await run({ INFRA_KIT_DEPLOY_VIA: 'local-deploy' })).structuredContent.status).toBe('deployed')
   })
 })

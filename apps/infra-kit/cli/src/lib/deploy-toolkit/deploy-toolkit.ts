@@ -124,12 +124,46 @@ export const removeNodeModules = async (dir: string): Promise<void> => {
 interface ToolkitInput {
   root: string
   service: string
+  /** The deploy script's directory, relative to `root`: the app a deploy targets unless it names one. */
+  scriptDir?: string
   env?: Env
   deps?: ToolkitDeps
 }
 
 /**
- * The functions a `deploy-<service>.ts` script receives: the steps of the consumers' former
+ * The turbo workspace and path a deploy targets: what it names, else the app its script sits in.
+ *
+ * @example
+ * await resolveApp('/repo', 'apps/client/api', {}) // apps/client/api/package.json name: backend-api => { app: 'backend-api', appPath: 'apps/client/api' }
+ */
+export const resolveApp = async (
+  root: string,
+  scriptDir: string | undefined,
+  named: { app?: string; appPath?: string },
+): Promise<{ app: string; appPath: string }> => {
+  const appPath = named.appPath ?? scriptDir
+
+  if (appPath === undefined) {
+    throw new Error('pass app and appPath, or put the deploy script in the app it deploys')
+  }
+
+  if (named.app !== undefined) return { app: named.app, appPath }
+
+  try {
+    const manifest = JSON.parse(await fs.readFile(path.join(root, appPath, 'package.json'), 'utf-8')) as {
+      name?: string
+    }
+
+    if (manifest.name) return { app: manifest.name, appPath }
+  } catch {
+    // Falls through to the error below, which names the fix.
+  }
+
+  throw new Error(`${appPath} has no package.json name to deploy; pass app explicitly`)
+}
+
+/**
+ * The functions a service's TypeScript deploy receives: the steps of the consumers' former
  * `deploy-utils.sh`, with the same commands in the same order.
  */
 // What changed against deploy-utils.sh, and why:
@@ -141,6 +175,7 @@ interface ToolkitInput {
 export const createDeployToolkit = ({
   root,
   service,
+  scriptDir,
   env = process.env,
   deps = defaultToolkitDeps,
 }: ToolkitInput): DeployToolkit => {
@@ -262,10 +297,12 @@ export const createDeployToolkit = ({
   }
 
   const deployBackendApi: DeployToolkit['deployBackendApi'] = async (options: DeployBackendApiOptions) => {
+    const { app, appPath } = await resolveApp(root, scriptDir, options)
+
     await setupTools(true)
 
-    const outDir = await pruneAndBuild(options.app, { installProd: true })
-    const context = { stage: options.stage, outDir, appDir: path.join(outDir, options.appPath) }
+    const outDir = await pruneAndBuild(app, { installProd: true })
+    const context = { stage: options.stage, outDir, appDir: path.join(outDir, appPath) }
 
     await runHook('Pre-deployment', options.preDeploy, context)
     await command('Deploy with Serverless', 'serverless', ['deploy', '--stage', options.stage, '--force'], {
@@ -273,7 +310,7 @@ export const createDeployToolkit = ({
     })
 
     if (options.restApiId === undefined) {
-      deps.log(`Skipping API Gateway deployment for ${options.app}: no restApiId.`)
+      deps.log(`Skipping API Gateway deployment for ${app}: no restApiId.`)
     } else {
       await awsWithRetry('Create API Gateway deployment', [
         'apigateway',
@@ -289,10 +326,12 @@ export const createDeployToolkit = ({
   }
 
   const deployFrontendUi: DeployToolkit['deployFrontendUi'] = async (options: DeployFrontendUiOptions) => {
+    const { app, appPath } = await resolveApp(root, scriptDir, options)
+
     await setupTools(false)
 
-    const outDir = await pruneAndBuild(options.app, { installProd: false })
-    const context = { stage: options.stage, outDir, appDir: path.join(outDir, options.appPath) }
+    const outDir = await pruneAndBuild(app, { installProd: false })
+    const context = { stage: options.stage, outDir, appDir: path.join(outDir, appPath) }
     const destination = `s3://${options.bucket}${options.destPath ?? ''}`
     const source = options.sourcePath ?? './dist'
 

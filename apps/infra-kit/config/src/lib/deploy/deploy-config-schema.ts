@@ -38,6 +38,15 @@ export const deployServiceSchema = z.strictObject({
    * in the shared job. It is called with `branch` and `environment` inputs and `secrets: inherit`.
    */
   workflow: localWorkflowFile.optional(),
+  /**
+   * The service's TypeScript deploy, run by `infra-kit deploy-run`, as a repo-relative path; put it in
+   * the app it deploys (`apps/client/api/deploy.ts`) and it defaults to that app. Omitted =
+   * `devops/scripts/deploy-<service>.sh`.
+   */
+  deploy: z
+    .string()
+    .regex(/^(?!.*\.\.)[\w./-]+\.ts$/, 'must be a repo-relative .ts path, e.g. apps/client/api/deploy.ts')
+    .optional(),
   /** `false` leaves the service out of the deploy-all workflow; it stays selectable. */
   deployAll: z.boolean().optional(),
 })
@@ -83,6 +92,10 @@ export const deployConfigSchema = z
     for (const [name, service] of Object.entries(config.services)) {
       if (RESERVED_SERVICE_NAMES.has(name)) {
         ctx.addIssue({ code: 'custom', path: ['services', name], message: 'is a dispatch input of its own' })
+      }
+
+      if (service.workflow !== undefined && service.deploy !== undefined) {
+        ctx.addIssue({ code: 'custom', path: ['services', name], message: 'set workflow or deploy, not both' })
       }
 
       if (service.envs !== undefined && service.skipEnvs !== undefined) {

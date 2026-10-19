@@ -7,13 +7,12 @@ import { pathToFileURL } from 'node:url'
 import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { DEPLOY_VIA_LOCAL_DEPLOY, DeploySkipped, createDeployToolkit } from 'src/lib/deploy-toolkit'
 import type { ToolkitDeps } from 'src/lib/deploy-toolkit'
+import { loadDeployConfig } from 'src/lib/deploy-workflows'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { textContent } from 'src/types'
-
-const SCRIPTS_DIR = 'devops/scripts'
 
 interface DeployRunOptions {
   service: string
@@ -27,13 +26,29 @@ const result = (structuredContent: { status: 'deployed' | 'skipped'; service: st
   return { content: textContent(JSON.stringify(structuredContent, null, 2)), structuredContent }
 }
 
+/** The service's `deploy` path from infra-kit.deploy.ts, relative to the root. */
+const scriptFor = async (root: string, service: string): Promise<string> => {
+  const config = await loadDeployConfig(root)
+  const script = config?.services[service]?.deploy
+
+  if (script === undefined) {
+    throw new OperationError(undefined, {
+      operation: `deploy ${service}`,
+      remediation: `set services['${service}'].deploy in infra-kit.deploy.ts, e.g. 'apps/<app>/deploy.ts'`,
+      stderrExcerpt: config === undefined ? 'no infra-kit.deploy.ts in this repo' : `${service} has no deploy script`,
+    })
+  }
+
+  return script
+}
+
 const loadScript = async (scriptPath: string): Promise<DeployScript> => {
   try {
     await fs.access(scriptPath)
   } catch {
     throw new OperationError(undefined, {
       operation: `run ${path.basename(scriptPath)}`,
-      remediation: `create ${path.join(SCRIPTS_DIR, path.basename(scriptPath))}, or deploy this service with its .sh script`,
+      remediation: 'create it, or fix the deploy path in infra-kit.deploy.ts',
       stderrExcerpt: `${scriptPath} does not exist`,
     })
   }
@@ -52,14 +67,14 @@ const loadScript = async (scriptPath: string): Promise<DeployScript> => {
 }
 
 /**
- * Run the repo's `devops/scripts/deploy-<service>.ts` with the deploy toolkit: what the deploy job
- * runs for a service that has moved off its `.sh` script.
+ * Run a service's TypeScript deploy (its `deploy` in infra-kit.deploy.ts) with the deploy toolkit:
+ * what the deploy job runs for a service that has moved off its `.sh` script.
  *
  * Deploys with whatever AWS credentials the environment holds, so an agent may not call it directly;
  * agents deploy through `release deploy-*` or `local deploy-*`.
  *
  * @example
- * await deployRun({ service: 'client-be' }) // runs devops/scripts/deploy-client-be.ts
+ * await deployRun({ service: 'client-be' }) // services['client-be'].deploy: 'apps/client/api/deploy.ts'
  */
 export const deployRun = async (options: DeployRunOptions) => {
   const { service, env = process.env } = options
@@ -67,7 +82,7 @@ export const deployRun = async (options: DeployRunOptions) => {
   if (!/^[a-z0-9-]+$/.test(service)) {
     throw new OperationError(undefined, {
       operation: 'deploy-run',
-      remediation: 'pass the service as in devops/scripts/deploy-<service>.ts, e.g. client-be',
+      remediation: 'pass the service as infra-kit.deploy.ts names it, e.g. client-be',
       stderrExcerpt: `invalid service name '${service}'`,
     })
   }
@@ -82,10 +97,12 @@ export const deployRun = async (options: DeployRunOptions) => {
   }
 
   const root = options.cwd ?? (await getProjectRoot())
-  const script = await loadScript(path.join(root, SCRIPTS_DIR, `deploy-${service}.ts`))
+  const scriptPath = await scriptFor(root, service)
+  const script = await loadScript(path.join(root, scriptPath))
+  const toolkit = createDeployToolkit({ root, service, scriptDir: path.dirname(scriptPath), env, deps: options.deps })
 
   try {
-    await script(createDeployToolkit({ root, service, env, deps: options.deps }))
+    await script(toolkit)
   } catch (error) {
     if (!(error instanceof DeploySkipped)) throw error
 

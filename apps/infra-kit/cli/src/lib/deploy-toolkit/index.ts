@@ -2,6 +2,7 @@ export {
   createDeployToolkit,
   DeploySkipped,
   removeNodeModules,
+  resolveApp,
   SERVERLESS_VERSION,
   turboVersion,
 } from './deploy-toolkit'

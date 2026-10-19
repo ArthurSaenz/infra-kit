@@ -76,6 +76,22 @@ const stalePilotFiles = async (
   })
 }
 
+/** A `deploy` path that names no file would only fail when that service deploys. */
+const assertDeployScriptsExist = async (root: string, config: DeployConfig): Promise<void> => {
+  const missing = await Promise.all(
+    Object.entries(config.services).map(async ([name, service]) => {
+      if (service.deploy === undefined) return []
+
+      return (await readIfExists(path.join(root, service.deploy))) === undefined ? [`${name}: ${service.deploy}`] : []
+    }),
+  )
+  const names = missing.flat()
+
+  if (names.length > 0) {
+    throw new Error(`Deploy scripts named in ${DEPLOY_CONFIG_FILE} do not exist: ${names.join(', ')}`)
+  }
+}
+
 /**
  * Turning `replaceV1` off must not delete the generated `deploy-all.yml`: delivery dispatches it, and
  * the hand-written v1 file it replaced lives only in git history.
@@ -122,6 +138,7 @@ export const deploySync = async (options: DeploySyncOptions = {}) => {
   }
 
   await assertNoGeneratedV1Files(root, config)
+  await assertDeployScriptsExist(root, config)
 
   const files = await Promise.all(
     renderDeployWorkflows(config).map(async (workflow) => {

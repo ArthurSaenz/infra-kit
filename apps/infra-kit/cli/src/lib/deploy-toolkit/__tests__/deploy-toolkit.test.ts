@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { DeploySkipped, createDeployToolkit, removeNodeModules, turboVersion } from '../deploy-toolkit'
+import { DeploySkipped, createDeployToolkit, removeNodeModules, resolveApp, turboVersion } from '../deploy-toolkit'
 import type { ToolkitDeps } from '../deploy-toolkit'
 
 interface Call {
@@ -264,6 +264,25 @@ describe('skip', () => {
     expect(() => {
       return toolkit.skip('mobile deploys to dev and prod only')
     }).toThrow(DeploySkipped)
+  })
+})
+
+describe('resolveApp', () => {
+  it('takes what the deploy names, else the app its script sits in', async () => {
+    await fs.mkdir(path.join(root, 'apps', 'api'), { recursive: true })
+    await fs.writeFile(path.join(root, 'apps', 'api', 'package.json'), JSON.stringify({ name: 'backend-api' }))
+
+    expect(await resolveApp(root, 'apps/api', {})).toEqual({ app: 'backend-api', appPath: 'apps/api' })
+    expect(await resolveApp(root, 'apps/api', { app: 'mobile-app' })).toEqual({
+      app: 'mobile-app',
+      appPath: 'apps/api',
+    })
+    expect(await resolveApp(root, undefined, { app: 'x', appPath: 'apps/x' })).toEqual({ app: 'x', appPath: 'apps/x' })
+  })
+
+  it('asks for app and appPath when the script sits in no app', async () => {
+    await expect(resolveApp(root, undefined, {})).rejects.toThrow('pass app and appPath')
+    await expect(resolveApp(root, 'devops/scripts', {})).rejects.toThrow('devops/scripts has no package.json name')
   })
 })
 

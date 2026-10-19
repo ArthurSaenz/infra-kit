@@ -144,6 +144,14 @@ describe('deploySync', () => {
     await expect(deploySync({ cwd: repo })).rejects.toThrow(/replaceV1: environments must include 'prod'/)
   })
 
+  it('refuses a deploy path that names no file', async () => {
+    await writeManifest(
+      `export default { environments: ['dev'], services: { 'client-be': { deploy: 'apps/api/deploy.ts' } } }\n`,
+    )
+
+    await expect(deploySync({ cwd: repo })).rejects.toThrow('do not exist: client-be: apps/api/deploy.ts')
+  })
+
   it('rejects a gate on an unknown environment', async () => {
     await writeManifest(
       `export default { environments: ['dev', 'stage'], services: { 'docs-fe': { skipEnvs: ['stagee'] } } }\n`,
