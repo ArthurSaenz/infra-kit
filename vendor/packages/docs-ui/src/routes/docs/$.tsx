@@ -27,7 +27,7 @@ export const Route = createFileRoute('/docs/$')({
 // navigation on the static (S3) site reads the cached file instead of calling a live server.
 const serverLoader = createServerFn({ method: 'GET' })
   .middleware([staticFunctionMiddleware])
-  .inputValidator((slugs: string[]) => {
+  .validator((slugs: string[]) => {
     return slugs
   })
   .handler(async ({ data: slugs }) => {

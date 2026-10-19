@@ -65,6 +65,7 @@ coverage
 **/.vitest/
 # Vitest browser-mode failure screenshots. Un-ignore a package's dir if it adopts `toMatchScreenshot` baselines.
 **/__screenshots__/
+!vendor/packages/data-table/src/__tests__/__screenshots__/
 
 # Logs
 *.log

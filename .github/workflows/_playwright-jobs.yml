@@ -19,10 +19,6 @@ on:
         required: false
         type: string
         default: ''
-      visual:
-        required: false
-        type: string
-        default: 'skip'
 
 jobs:
   test:
@@ -35,7 +31,6 @@ jobs:
       E2E_BACKOFFICE_LOGIN_EMAIL: ${{ secrets.E2E_BACKOFFICE_LOGIN_EMAIL }}
       E2E_BACKOFFICE_LOGIN_PASSWORD: ${{ secrets.E2E_BACKOFFICE_LOGIN_PASSWORD }}
       E2E_GREP: ${{ inputs.grep }}
-      E2E_VISUAL: ${{ inputs.visual != 'skip' && inputs.visual || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -61,13 +56,4 @@ jobs:
         with:
           name: playwright-report-${{ inputs.project }}-${{ inputs.environment }}
           path: ./apps/${{ inputs.project }}/tests/playwright-report/
-          retention-days: 30
-
-      # Commit these under the matching src/visual/**/*.visual.spec.ts-snapshots/ dirs after reviewing them.
-      - name: Upload recorded linux baselines
-        uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() && inputs.visual == 'update' }}
-        with:
-          name: visual-baselines-${{ inputs.project }}-linux
-          path: ./apps/${{ inputs.project }}/tests/src/visual/**/*-linux.png
           retention-days: 30

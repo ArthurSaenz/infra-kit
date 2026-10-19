@@ -70,10 +70,6 @@ run_e2e_tests() {
     if [ -n "$E2E_GREP" ]; then
         extra_args=(--grep "$E2E_GREP")
     fi
-    # E2E_VISUAL=run adds the `visual` project to the run; =update records only its baselines, on this runner's OS.
-    if [ "$E2E_VISUAL" = "update" ]; then
-        extra_args+=(--project=visual --update-snapshots)
-    fi
     pnpm --filter=e2e-${project} e2e-test "${extra_args[@]}"
 
     echo -e "${GREEN}E2E tests completed for ${project}!${NC}"
