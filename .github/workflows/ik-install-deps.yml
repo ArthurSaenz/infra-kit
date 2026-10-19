@@ -17,7 +17,7 @@ on:
         type: string
         default: ''
       runner:
-        description: 'Must match the deploy jobs: the setup-node cache key includes the OS and architecture'
+        description: 'The setup-node cache key includes the OS and architecture, so only deploy jobs on this runner restore what it saves'
         required: false
         type: string
         default: ubuntu-24.04-arm

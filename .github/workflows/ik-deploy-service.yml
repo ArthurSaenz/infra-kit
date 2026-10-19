@@ -1,6 +1,6 @@
 # Shared deploy job for consumer monorepos (hulyo, travelist): one service, one environment, by running
-# the consumer's own `devops/scripts/deploy-<service>.sh`. This is the v2 pilot that runs IN PARALLEL with
-# each repo's `_deploy-serverless-jobs.yml`; the scripts stay the deploy, only the job around them moves here.
+# the consumer's own `devops/scripts/deploy-<service>.sh`. It takes over from each repo's
+# `_deploy-serverless-jobs.yml`; the scripts stay the deploy, only the job around them moves here.
 #
 # Called cross-org, so `secrets: inherit` is unavailable and every secret is passed explicitly:
 # https://docs.github.com/en/actions/sharing-automations/reusing-workflows#passing-secrets-to-nested-workflows
@@ -18,7 +18,7 @@ on:
         required: true
         type: string
       sha:
-        description: 'The commit to check out. Pass github.sha so every service of one run builds the same commit even if the branch moves; omitted = the tip of ref'
+        description: 'The commit to check out. Pass github.sha so every service through this job builds the dispatched commit even if the branch moves; omitted = the tip of ref'
         required: false
         type: string
         default: ''
@@ -107,7 +107,13 @@ jobs:
             value="${line#*=}"
             # The runner masks a multi-line secret line by line, i.e. `KEY=value` whole, never the bare
             # value; without this every later step would print it in its env header.
-            if [ -n "$value" ]; then echo "::add-mask::$value"; fi
+            # The runner decodes %25, %0D and %0A in a command before registering the mask, so they are
+            # encoded first, as @actions/core's setSecret does; otherwise a `%25` value is never masked.
+            if [ -n "$value" ]; then
+              escaped="${value//%/%25}"
+              escaped="${escaped//$'\r'/%0D}"
+              echo "::add-mask::$escaped"
+            fi
             delimiter="EOF_$(openssl rand -hex 8)"
             printf '%s<<%s\n%s\n%s\n' "$key" "$delimiter" "$value" "$delimiter" >> "$GITHUB_ENV"
           done
