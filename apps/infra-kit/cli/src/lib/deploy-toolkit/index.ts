@@ -1,5 +1,6 @@
 export {
   createDeployToolkit,
+  defaultToolkitDeps,
   DeploySkipped,
   removeNodeModules,
   resolveApp,

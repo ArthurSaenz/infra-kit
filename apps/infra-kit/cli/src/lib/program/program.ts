@@ -627,7 +627,9 @@ export const buildProgram = (): Command => {
 
   program
     .command('deploy-run')
-    .description("Run a service's deploy script from infra-kit.deploy.ts (what the CI deploy job runs)")
+    .description(
+      'Deploy a service: its deploy.ts from infra-kit.deploy.ts, else its devops/scripts .sh (what the CI deploy job runs)',
+    )
     .argument('<service>', 'The service as infra-kit.deploy.ts names it, e.g. client-be')
     .action(async (service: string) => {
       emit(await deployRun({ service }))

@@ -119,6 +119,7 @@ describe('renderDeployWorkflows', () => {
       ref: '${{ github.ref }}',
       sha: '${{ github.sha }}',
       service: 'client-fe',
+      'infra-kit-version': packageJson.version,
       runner: 'macos-14',
     })
     expect(job.secrets).toMatchObject({
@@ -128,14 +129,15 @@ describe('renderDeployWorkflows', () => {
     expect(selected.parsed.jobs['deploy-client-be']!.with).not.toHaveProperty('runner')
   })
 
-  it('installs this CLI for a service with a TypeScript deploy, and only for it', () => {
+  it('deploys every service with this CLI, with a TypeScript deploy or a .sh', () => {
     const { selected } = render({
       ...MANIFEST,
       services: { ...MANIFEST.services, 'client-be': { deploy: 'apps/api/deploy.ts' } },
     })
 
-    expect(selected.parsed.jobs['deploy-client-be']!.with).toMatchObject({ 'infra-kit-version': packageJson.version })
-    expect(selected.parsed.jobs['deploy-client-fe']!.with).not.toHaveProperty('infra-kit-version')
+    for (const job of ['deploy-client-be', 'deploy-client-fe']) {
+      expect(selected.parsed.jobs[job]!.with).toMatchObject({ 'infra-kit-version': packageJson.version })
+    }
   })
 
   it('sends a workflow service to its own reusable workflow', () => {
