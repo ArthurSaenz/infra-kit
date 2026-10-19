@@ -7,6 +7,7 @@ import { readManifest } from '../manifest'
 import { VENDOR_DIR } from '../skip-sets'
 import { fingerprintOnDisk, fingerprintSourceFile } from './fingerprint'
 import { runGit, splitNul } from './git'
+import { entryScopes, pruneConflicts } from './modules'
 import {
   VENDOR_MANIFEST_PATH,
   VENDOR_README_PATH,
@@ -18,7 +19,15 @@ import {
 import { guardedPaths } from './plan'
 import { vendorReadme } from './readme'
 import { listTrackedFiles } from './tracked-files'
-import type { ChangelogFacts, SourceFacts, SyncSpec, TargetEntryFacts, TargetFacts, TargetRef } from './types'
+import type {
+  ChangelogFacts,
+  EntryScope,
+  SourceFacts,
+  SyncSpec,
+  TargetEntryFacts,
+  TargetFacts,
+  TargetRef,
+} from './types'
 
 /**
  * Gather everything the plan needs from the source repo: HEAD, its repo name, and the fingerprinted tracked
@@ -72,7 +81,11 @@ export const parsePorcelainZ = (stdout: string): string[] => {
   return paths
 }
 
-const dirtyPaths = async (source: SourceFacts, root: string): Promise<string[]> => {
+const dirtyPaths = async (source: SourceFacts, scopes: readonly EntryScope[], root: string): Promise<string[]> => {
+  const guarded = guardedPaths(source, scopes)
+
+  if (guarded.length === 0) return []
+
   const stdout = await runGit(root, [
     '--literal-pathspecs',
     'status',
@@ -80,7 +93,7 @@ const dirtyPaths = async (source: SourceFacts, root: string): Promise<string[]> 
     '-z',
     '--untracked-files=all',
     '--',
-    ...guardedPaths(source),
+    ...guarded,
   ])
 
   // An excluded path is never written or deleted, so its state cannot block the sync.
@@ -89,13 +102,20 @@ const dirtyPaths = async (source: SourceFacts, root: string): Promise<string[]> 
   })
 }
 
-const probeEntries = async (source: SourceFacts, root: string): Promise<TargetEntryFacts[]> => {
+const probeEntries = async (
+  source: SourceFacts,
+  scopes: readonly EntryScope[],
+  root: string,
+): Promise<TargetEntryFacts[]> => {
   return Promise.all(
-    source.entries.map(async ({ entry, files }) => {
+    source.entries.map(async ({ entry, files }, index) => {
+      const scope = scopes[index]!
       const tracked = await listTrackedFiles(root, entry.target, source.exclude)
       const onDisk: TargetEntryFacts['onDisk'] = {}
+      // Only a copied entry is compared byte for byte; a pruned or released one never writes.
+      const compared = scope === 'sync' ? files : []
 
-      for (const file of withoutExcluded(files, source.exclude)) {
+      for (const file of withoutExcluded(compared, source.exclude)) {
         const targetPath = rebasePath(file.path, entry)
 
         onDisk[targetPath] = fingerprintOnDisk(path.join(root, targetPath))
@@ -103,6 +123,7 @@ const probeEntries = async (source: SourceFacts, root: string): Promise<TargetEn
 
       return {
         target: entry.target,
+        scope,
         tracked: tracked.map((file) => {
           return file.path
         }),
@@ -142,14 +163,25 @@ const readManifestMeta = (root: string): { commit: string; source: string } | nu
   }
 }
 
-const probeChangelog = async (source: SourceFacts, manifestSha: string | null): Promise<ChangelogFacts> => {
+const probeChangelog = async (
+  source: SourceFacts,
+  scopes: readonly EntryScope[],
+  manifestSha: string | null,
+): Promise<ChangelogFacts> => {
   if (manifestSha === null) return { kind: 'unknown-sha' }
 
   if ((await revParseVerify(source.root, manifestSha)) === null) return { kind: 'unresolvable', sha: manifestSha }
 
-  const copyPaths = source.entries.map(({ entry }) => {
-    return entry.path
-  })
+  const copyPaths = source.entries
+    .filter((_facts, index) => {
+      return scopes[index] === 'sync'
+    })
+    .map(({ entry }) => {
+      return entry.path
+    })
+
+  if (copyPaths.length === 0) return { kind: 'log', sha: manifestSha, lines: [] }
+
   const stdout = await runGit(source.root, [
     '--literal-pathspecs',
     'log',
@@ -209,15 +241,25 @@ export const probeTarget = async (source: SourceFacts, ref: TargetRef): Promise<
     return { ...ref, kind: 'not-git', reason: `it sits inside the repo at ${top.toplevel}` }
   }
 
+  const scopes = entryScopes(source.entries, ref.selection ?? { kind: 'all' })
+
+  if ('reason' in scopes) return { ...ref, kind: 'bad-selection', reason: scopes.reason }
+
   const manifest = readManifestMeta(ref.root)
   const manifestSha = manifest?.commit ?? null
   const [branch, dirty, entries, headMeta, changelog] = await Promise.all([
     currentBranch(ref.root),
-    dirtyPaths(source, ref.root),
-    probeEntries(source, ref.root),
+    dirtyPaths(source, scopes, ref.root),
+    probeEntries(source, scopes, ref.root),
     headVendorMeta(ref.root),
-    probeChangelog(source, manifestSha),
+    probeChangelog(source, scopes, manifestSha),
   ])
+  // Only a prune that would delete something can strand a dependency.
+  const pruned = entries.flatMap((entry, index) => {
+    return entry.scope === 'prune' && entry.tracked.length > 0
+      ? [{ facts: source.entries[index]!, target: entry.target }]
+      : []
+  })
 
   return {
     ...ref,
@@ -230,5 +272,6 @@ export const probeTarget = async (source: SourceFacts, ref: TargetRef): Promise<
     manifestPresent: manifest !== null,
     manifestSource: manifest?.source ?? null,
     changelog,
+    pruneConflicts: await pruneConflicts(source.root, ref.root, pruned),
   }
 }

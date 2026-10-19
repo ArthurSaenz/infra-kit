@@ -90,8 +90,10 @@ const worktreesConfigSchema = z
 // default, so nothing here demonstrates the trap: this comment is the only warning.
 const protectedEnvsSchema = z.enum(['disallow', 'allow', 'cli-only'])
 
-/** A POSIX environment-variable name. Comma-free by construction, which is what keeps the derived
- *  `ik-mcp` argv unambiguous. */
+/**
+ * A POSIX environment-variable name. Comma-free by construction, which is what keeps the derived
+ *  `ik-mcp` argv unambiguous.
+ */
 const envVarName = z.string().regex(/^[A-Z_]\w*$/i, 'must be a POSIX environment-variable name')
 
 /**
@@ -193,10 +195,16 @@ const repoRelativePathSchema = z
     }
   })
 
+const vendorModuleNameSchema = z
+  .string()
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'must be kebab-case: a-z, 0-9 and inner "-"')
+
 const vendorCopyEntrySchema = z
   .object({
     path: repoRelativePathSchema,
     target: repoRelativePathSchema.optional(),
+    // Without a module the entry is core and reaches every target; with one, only targets that list it.
+    module: vendorModuleNameSchema.optional(),
   })
   .strict()
 
@@ -209,6 +217,16 @@ export const vendorSourceSchema = z
     copy: z.array(vendorCopyEntrySchema).min(1),
     // Matched against each path segment on both sides of the diff, so a slash could never match.
     exclude: z.array(z.string().regex(/^[^/\\]+$/, 'must be a single path segment, without "/"')).optional(),
+  })
+  .strict()
+
+/**
+ * The `vendorSource` modules this repo takes on top of the core entries. Absent means every module, so a
+ * target that never declared one keeps receiving the whole source set.
+ */
+export const vendorTargetSchema = z
+  .object({
+    modules: z.array(vendorModuleNameSchema),
   })
   .strict()
 
@@ -253,6 +271,7 @@ export const infraKitConfigObject = z
     protectedEnvs: protectedEnvsSchema.optional(),
     mcp: mcpProxiesSchema.optional(),
     vendorSource: vendorSourceSchema.nullable().optional(),
+    vendorTarget: vendorTargetSchema.optional(),
     audit: auditRulesSchema.optional(),
     aliasRepo: aliasRepoSchema.optional(),
   })
@@ -288,6 +307,8 @@ export type McpProxies = z.infer<typeof mcpProxiesSchema>
 
 export type VendorSourceConfig = z.infer<typeof vendorSourceSchema>
 
+export type VendorTargetConfig = z.infer<typeof vendorTargetSchema>
+
 /** The root `audit` block: `audit --root` rules layered over the root baseline. */
 export type AuditRulesConfig = z.infer<typeof auditRulesSchema>
 
@@ -322,9 +343,11 @@ export interface InfraKitConfigPaths {
 }
 
 interface CacheEntry {
-  /** `cwd + homedir` — see {@link pathsCacheKey}. Required alongside `mtimes`: mtimes alone can
+  /**
+   * `cwd + homedir` — see {@link pathsCacheKey}. Required alongside `mtimes`: mtimes alone can
    * collide across two different repo roots (or two homedirs), which would serve one repo's config
-   * to a request for another inside one process (a test suite, a `dev` session re-reading config). */
+   * to a request for another inside one process (a test suite, a `dev` session re-reading config).
+   */
   key: string
   mtimes: Record<keyof Omit<InfraKitConfigPaths, 'projectName'>, number | null>
   value: InfraKitConfig
@@ -762,6 +785,13 @@ const buildVendorSourceLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMi
   ].join('\n')
 }
 
+const buildVendorTargetLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>): string => {
+  return [
+    `"vendorTarget" is not allowed in ${layer.label} (${layer.path}): \`vendor sync\` reads it from the target repository's committed infra-kit.json only, so a per-machine copy would never be seen and would only make this clone disagree with the others.`,
+    "Move the block to the target repository's own infra-kit.json and commit it there.",
+  ].join('\n')
+}
+
 const buildAuditLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>): string => {
   return [
     `"audit" is not allowed in ${layer.label} (${layer.path}): the root audit gates CI, so a per-machine copy would make this machine pass or fail a different check list than CI.`,
@@ -781,7 +811,8 @@ type LayerRejectionMessageBuilder = (layer: Omit<ConfigLayer, 'autoMigrate' | 'm
 /**
  * Keys only the committed project layer may carry. `mcp` feeds the committed `.mcp.json`, and the
  * shallow layer merge would let a per-machine block replace the project's wholesale and then be
- * derived into the shared file. `vendorSource` decides which repo is the sync source. `audit` is
+ * derived into the shared file. `vendorSource` decides which repo is the sync source, `vendorTarget`
+ * what a target takes from it. `audit` is
  * what CI enforces at the root. `aliasRepo` names the dev host, which the helpers read from the project
  * file alone.
  */
@@ -789,6 +820,7 @@ const PROJECT_LAYER_ONLY_KEYS: Readonly<Record<string, LayerRejectionMessageBuil
   aliasRepo: buildAliasRepoLayerRejectionMessage,
   mcp: buildMcpLayerRejectionMessage,
   vendorSource: buildVendorSourceLayerRejectionMessage,
+  vendorTarget: buildVendorTargetLayerRejectionMessage,
   audit: buildAuditLayerRejectionMessage,
 }
 

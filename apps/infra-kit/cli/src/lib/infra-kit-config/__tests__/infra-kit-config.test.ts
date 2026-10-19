@@ -12,6 +12,7 @@ import {
   resetInfraKitConfigCache,
   resolveOrcaLayout,
   vendorSourceSchema,
+  vendorTargetSchema,
 } from '../infra-kit-config'
 import type { InfraKitConfig } from '../infra-kit-config'
 
@@ -878,6 +879,16 @@ describe('vendorSource', () => {
     expect(vendorSourceSchema.safeParse({ copy: [{ path: '.claude', target: '../out' }] }).success).toBe(false)
   })
 
+  it('accepts a kebab-case module on an entry', () => {
+    const block = { copy: [{ path: 'vendor/packages/auth-be', module: 'auth' }] }
+
+    expect(vendorSourceSchema.parse(block)).toStrictEqual(block)
+  })
+
+  it.each(['Auth', 'auth_be', '-auth', ''])('refuses the module name "%s"', (module) => {
+    expect(vendorSourceSchema.safeParse({ copy: [{ path: '.claude', module }] }).success).toBe(false)
+  })
+
   it('refuses an exclude entry with a slash', () => {
     expect(vendorSourceSchema.safeParse({ copy: [{ path: '.claude' }], exclude: ['a/b'] }).success).toBe(false)
   })
@@ -905,6 +916,42 @@ describe('vendorSource', () => {
       fs.writeFileSync(path.join(layerThreeDir, 'infra-kit.json'), JSON.stringify({ vendorSource: null }))
 
       await expect(getInfraKitConfig()).rejects.toThrow(/"vendorSource" is not allowed in .*\.infra-kit\/projects/)
+    })
+  })
+})
+
+describe('vendorTarget', () => {
+  const writeProjectLayer = (tmp: string, extra: Record<string, unknown>): void => {
+    fs.writeFileSync(path.join(tmp, 'infra-kit.json'), JSON.stringify({ ...JSON.parse(VALID_JSON), ...extra }))
+  }
+
+  it('parses the block from the project layer', async () => {
+    await withTmpRepo(async (tmp) => {
+      writeProjectLayer(tmp, { vendorTarget: { modules: ['auth'] } })
+
+      expect((await getInfraKitConfig()).vendorTarget).toStrictEqual({ modules: ['auth'] })
+    })
+  })
+
+  it('accepts an empty module list: core entries only', () => {
+    expect(vendorTargetSchema.parse({ modules: [] })).toStrictEqual({ modules: [] })
+  })
+
+  it('refuses an unknown key and a non-kebab module', () => {
+    expect(vendorTargetSchema.safeParse({ modules: [], exclude: [] }).success).toBe(false)
+    expect(vendorTargetSchema.safeParse({ modules: ['Web Toolkit'] }).success).toBe(false)
+  })
+
+  it('refuses the block in the per-project override', async () => {
+    await withTmpRepo(async (tmp) => {
+      writeProjectLayer(tmp, {})
+
+      const layerThreeDir = path.join(tmp, '.infra-kit', 'projects', path.basename(tmp))
+
+      fs.mkdirSync(layerThreeDir, { recursive: true })
+      fs.writeFileSync(path.join(layerThreeDir, 'infra-kit.json'), JSON.stringify({ vendorTarget: { modules: [] } }))
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/"vendorTarget" is not allowed in .*\.infra-kit\/projects/)
     })
   })
 })

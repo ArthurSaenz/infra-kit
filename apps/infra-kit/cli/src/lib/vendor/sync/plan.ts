@@ -6,6 +6,7 @@ import { rebasePath, uniqueSorted, withoutExcluded } from './paths'
 import type {
   ChangelogFacts,
   EntryPlan,
+  EntryScope,
   SourceEntryFacts,
   SourceFacts,
   TargetEntryFacts,
@@ -95,15 +96,24 @@ const emptyPlan = (ref: TargetRef, status: TargetPlan['status'], message: string
   }
 }
 
-/** The pathspecs a target's preflight covers: every copy target. */
-export const guardedPaths = (source: SourceFacts): string[] => {
-  return source.entries.map((facts) => {
-    return facts.entry.target
-  })
+/** The pathspecs a target's preflight covers: every copy target the sync writes or deletes under. */
+export const guardedPaths = (source: SourceFacts, scopes: readonly EntryScope[]): string[] => {
+  return source.entries
+    .filter((_facts, index) => {
+      return scopes[index] !== 'release'
+    })
+    .map((facts) => {
+      return facts.entry.target
+    })
 }
 
-const blockedPlan = (source: SourceFacts, ref: TargetRef, dirty: readonly string[]): TargetPlan => {
-  const statusArgv = ['git', '-C', ref.root, '--literal-pathspecs', 'status', '--', ...guardedPaths(source)]
+const blockedPlan = (
+  source: SourceFacts,
+  ref: TargetRef,
+  scopes: readonly EntryScope[],
+  dirty: readonly string[],
+): TargetPlan => {
+  const statusArgv = ['git', '-C', ref.root, '--literal-pathspecs', 'status', '--', ...guardedPaths(source, scopes)]
 
   return emptyPlan(ref, 'fail', `blocked: ${dirty.length} uncommitted path(s) under synced paths`, [
     ...truncated(dirty, MAX_LISTED_PATHS),
@@ -166,13 +176,43 @@ const recoveryPathsFor = (entries: readonly EntryPlan[], facts: RepoFacts, write
   return uniqueSorted([...paths, ...(writeVendorMeta ? facts.headVendorMeta : [])])
 }
 
+const releasedNotes = (facts: RepoFacts): string[] => {
+  return facts.entries
+    .filter((entry) => {
+      return entry.scope === 'release' && entry.tracked.length > 0
+    })
+    .map((entry) => {
+      return `${entry.target}: not in vendorTarget.modules, left in place for this repo to own`
+    })
+}
+
 const repoPlan = (source: SourceFacts, facts: RepoFacts): TargetPlan => {
-  if (facts.dirty.length > 0) return blockedPlan(source, facts, facts.dirty)
+  const scopes = facts.entries.map((entry) => {
+    return entry.scope
+  })
 
-  const entries = source.entries.map((sourceEntry, index) => {
-    const targetEntry = facts.entries[index] ?? { target: sourceEntry.entry.target, tracked: [], onDisk: {} }
+  if (facts.dirty.length > 0) return blockedPlan(source, facts, scopes, facts.dirty)
 
-    return diffEntry(sourceEntry, targetEntry, source.exclude)
+  if (facts.pruneConflicts.length > 0) {
+    return emptyPlan(facts, 'fail', 'blocked: a module this repo dropped is still a dependency', [
+      ...truncated(facts.pruneConflicts, MAX_LISTED_PATHS),
+    ])
+  }
+
+  const entries = source.entries.flatMap((sourceEntry, index) => {
+    const targetEntry = facts.entries[index] ?? {
+      target: sourceEntry.entry.target,
+      scope: 'sync' as const,
+      tracked: [],
+      onDisk: {},
+    }
+
+    if (targetEntry.scope === 'release') return []
+
+    // A pruned entry is diffed against an empty source set, so every file it tracks becomes a delete.
+    const sourceSide = targetEntry.scope === 'prune' ? { ...sourceEntry, files: [] } : sourceEntry
+
+    return [diffEntry(sourceSide, targetEntry, source.exclude)]
   })
   const writeVendorMeta = entries.some((entry) => {
     return entry.vendored
@@ -194,12 +234,22 @@ const repoPlan = (source: SourceFacts, facts: RepoFacts): TargetPlan => {
   const entryNotes = entries.map(entryNote).filter((note): note is string => {
     return note !== null
   })
+  const prunedPackages = facts.entries.some((entry) => {
+    return entry.scope === 'prune' && entry.tracked.length > 0
+  })
+  const installHint = prunedPackages ? ['vendored modules removed: run pnpm install to update the lockfile'] : []
 
   return {
     ...base,
     status: 'changed',
     message: `${totalsMessage(entries)} on ${facts.branch}`,
-    notes: [...entryNotes, ...(metaStale ? ['vendor/README.md and manifest rewritten'] : []), ...changelog.notes],
+    notes: [
+      ...entryNotes,
+      ...installHint,
+      ...releasedNotes(facts),
+      ...(metaStale ? ['vendor/README.md and manifest rewritten'] : []),
+      ...changelog.notes,
+    ],
     warnings: [...sourceSwitch, ...changelog.warnings],
     recoveryPaths: recoveryPathsFor(entries, facts, writeVendorMeta),
   }
@@ -219,6 +269,8 @@ export const buildTargetPlan = (source: SourceFacts, facts: TargetFacts): Target
       return emptyPlan(facts, 'skipped', 'this is the source repo')
     case 'not-git':
       return emptyPlan(facts, 'fail', `not a git repo: ${facts.reason}`)
+    case 'bad-selection':
+      return emptyPlan(facts, 'fail', `vendorTarget: ${facts.reason}`)
     case 'repo':
       return repoPlan(source, facts)
   }

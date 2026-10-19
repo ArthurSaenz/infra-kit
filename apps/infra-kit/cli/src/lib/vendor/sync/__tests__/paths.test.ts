@@ -23,10 +23,10 @@ describe('resolveCopyEntry', () => {
   it.each([
     [
       { path: 'tools/x/', target: 'vendor/x/' },
-      { path: 'tools/x', target: 'vendor/x', vendored: true },
+      { path: 'tools/x', target: 'vendor/x', vendored: true, module: null },
     ],
-    [{ path: './vendor/configs' }, { path: 'vendor/configs', target: 'vendor/configs', vendored: true }],
-    [{ path: 'a//b' }, { path: 'a/b', target: 'a/b', vendored: false }],
+    [{ path: './vendor/configs' }, { path: 'vendor/configs', target: 'vendor/configs', vendored: true, module: null }],
+    [{ path: 'a//b' }, { path: 'a/b', target: 'a/b', vendored: false, module: null }],
   ])('canonicalizes %o even though the schema already refuses it', (entry, expected) => {
     expect(resolveCopyEntry(entry)).toEqual(expected)
   })

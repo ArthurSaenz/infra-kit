@@ -32,13 +32,13 @@ const toCanonical = (repoPath: string): string => {
  * Fill in each entry's default target and its vendored flag.
  *
  * @example
- * resolveCopyEntry({ path: 'vendor/configs' }) // => { path: 'vendor/configs', target: 'vendor/configs', vendored: true }
+ * resolveCopyEntry({ path: 'vendor/configs' }) // => { path: 'vendor/configs', target: 'vendor/configs', vendored: true, module: null }
  */
 export const resolveCopyEntry = (entry: CopyEntry): ResolvedCopyEntry => {
   const source = toCanonical(entry.path)
   const target = entry.target === undefined ? source : toCanonical(entry.target)
 
-  return { path: source, target, vendored: isVendoredTarget(target) }
+  return { path: source, target, vendored: isVendoredTarget(target), module: entry.module ?? null }
 }
 
 /** The sync's only entry point into a spec, so every path it probes, diffs or writes is canonical. */

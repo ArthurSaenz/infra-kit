@@ -94,6 +94,16 @@ const CONFIG_KEY_DOCS = `  // "envManagement": {                            // r
   //   "exclude": ["serverless-config"]
   // }
   //
+  // // What this repo takes from the \`ik vendor sync\` source: its core entries (no "module") plus
+  // // the modules listed here. Absent means every module. Dropping a module removes its files under
+  // // vendor/; a dropped path outside vendor/ is left in place for this repo to own.
+  // //
+  // // PROJECT LAYER ONLY. REFUSED here and in the per-project override — the sync reads the target's
+  // // committed infra-kit.json alone, so a per-machine copy would never be seen.
+  // "vendorTarget": {
+  //   "modules": ["web-toolkit", "auth"]
+  // }
+  //
   // // Rules \`ik audit --root\` checks the repo root against; each key replaces its built-in
   // // baseline. Packages keep theirs in their own infra-kit.config.ts.
   // //
@@ -140,8 +150,8 @@ export const buildUserGlobalExample = (): string => {
 //
 // Merge is shallow: setting a top-level key replaces that whole section from
 // layer 1. Arrays do not concatenate. Top-level keys recognized:
-// envManagement, defaultEnv, worktrees, protectedEnvs, mcp, vendorSource, audit,
-// aliasRepo (the last four project layer only). The schema is strict — an
+// envManagement, defaultEnv, worktrees, protectedEnvs, mcp, vendorSource,
+// vendorTarget, audit, aliasRepo (the last five project layer only). The schema is strict — an
 // unrecognized top-level key is a parse error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real global
@@ -174,7 +184,7 @@ export const buildUserProjectExample = (projectName: string): string => {
 // <repo>/infra-kit.json (layer 1) and ~/.infra-kit/infra-kit.json (layer 2) — a
 // top-level key set here replaces that whole section wholesale; arrays do not
 // concatenate. Top-level keys recognized: envManagement, defaultEnv, worktrees,
-// protectedEnvs, mcp, vendorSource, audit, aliasRepo (the last four project layer only — refused here). The schema is strict — an unrecognized top-level key is a parse
+// protectedEnvs, mcp, vendorSource, vendorTarget, audit, aliasRepo (the last five project layer only — refused here). The schema is strict — an unrecognized top-level key is a parse
 // error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real overrides

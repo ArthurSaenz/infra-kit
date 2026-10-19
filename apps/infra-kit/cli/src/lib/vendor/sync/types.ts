@@ -6,6 +6,8 @@ export interface CopyEntry {
   path: string
   /** Defaults to `path`. */
   target?: string
+  /** Absent means core: every target receives it. */
+  module?: string
 }
 
 export interface SyncSpec {
@@ -19,7 +21,15 @@ export interface ResolvedCopyEntry {
   target: string
   /** True when the target lives under `vendor/`: only vendored entries feed the integrity manifest. */
   vendored: boolean
+  module: string | null
 }
+
+/** What a target asked for in its `vendorTarget` block; `all` when it has none. */
+export type ModuleSelection =
+  { kind: 'all' } | { kind: 'modules'; modules: string[] } | { kind: 'invalid'; reason: string }
+
+/** How one source entry reaches one target: copied, deleted from `vendor/`, or left to the target. */
+export type EntryScope = 'sync' | 'prune' | 'release'
 
 /** The three blob modes a copy can carry; gitlinks (`160000`) are never copied. */
 export type GitFileMode = '100644' | '100755' | '120000'
@@ -55,6 +65,7 @@ export interface SourceFacts {
 
 export interface TargetEntryFacts {
   target: string
+  scope: EntryScope
   /** Target repo-relative tracked paths under the entry, excludes already dropped. */
   tracked: string[]
   /** Disk state at each rebased source path; `null` when nothing is there. */
@@ -67,12 +78,15 @@ export type ChangelogFacts =
 export interface TargetRef {
   name: string
   root: string
+  /** Absent means `all`, the same as a target without a `vendorTarget` block. */
+  selection?: ModuleSelection
 }
 
 export type TargetFacts =
   | (TargetRef & { kind: 'missing' })
   | (TargetRef & { kind: 'source' })
   | (TargetRef & { kind: 'not-git'; reason: string })
+  | (TargetRef & { kind: 'bad-selection'; reason: string })
   | (TargetRef & {
       kind: 'repo'
       branch: string
@@ -86,6 +100,8 @@ export type TargetFacts =
       /** The source name the target's manifest records; `null` without a readable manifest. */
       manifestSource: string | null
       changelog: ChangelogFacts
+      /** Target `package.json` dependencies on a package the prune would delete. */
+      pruneConflicts: string[]
     })
 
 export interface WriteOp {

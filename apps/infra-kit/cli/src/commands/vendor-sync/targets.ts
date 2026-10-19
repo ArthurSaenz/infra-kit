@@ -6,13 +6,15 @@ import type { FactoryConfig } from 'src/lib/vendor/factory-config-schema'
 import { buildTargetPlan, probeTarget } from 'src/lib/vendor/sync'
 import type { SourceFacts, TargetPlan, TargetRef } from 'src/lib/vendor/sync'
 
+import { readTargetSelection } from './selection'
+
 /**
  * Resolve the factory targets under `workspaceDir`, narrowed to `requested` when any are named. An unknown
  * name refuses instead of warning: a typo would otherwise sync nothing and exit green.
  *
  * @example
  * selectTargets({ workspaceDir: '~/projects', targets: ['a', 'b'] }, ['b'])
- * // => [{ name: 'b', root: '/Users/me/projects/b' }]
+ * // => [{ name: 'b', root: '/Users/me/projects/b', selection: { kind: 'all' } }]
  */
 export const selectTargets = (factory: FactoryConfig, requested: readonly string[]): TargetRef[] => {
   const unknown = requested.filter((name) => {
@@ -40,7 +42,9 @@ export const selectTargets = (factory: FactoryConfig, requested: readonly string
       : factory.targets
 
   return names.map((name) => {
-    return { name, root: path.join(workspace, name) }
+    const root = path.join(workspace, name)
+
+    return { name, root, selection: readTargetSelection(root) }
   })
 }
 

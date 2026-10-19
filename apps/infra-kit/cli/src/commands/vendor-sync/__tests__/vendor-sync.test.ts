@@ -355,7 +355,11 @@ describe('vendorSync — gates', () => {
     await vendorSync({ targets: ['travelist'] })
 
     expect(probeTarget).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(probeTarget).mock.calls[0]![1]).toEqual({ name: 'travelist', root: '/work/travelist' })
+    expect(vi.mocked(probeTarget).mock.calls[0]![1]).toEqual({
+      name: 'travelist',
+      root: '/work/travelist',
+      selection: { kind: 'all' },
+    })
   })
 })
 
@@ -422,6 +426,7 @@ describe('vendorSync --manifest-only', () => {
       manifestPresent: true,
       manifestSource: 'starter',
       changelog: { kind: 'unknown-sha' },
+      pruneConflicts: [],
     }
   }
 

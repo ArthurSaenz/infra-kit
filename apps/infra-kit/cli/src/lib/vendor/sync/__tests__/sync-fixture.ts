@@ -6,7 +6,7 @@ import path from 'node:path'
 import process from 'node:process'
 
 import { applyTargetPlan, buildTargetPlan, probeSource, probeTarget } from 'src/lib/vendor/sync'
-import type { ApplyResult, SourceFacts, SyncSpec, TargetPlan } from 'src/lib/vendor/sync'
+import type { ApplyResult, ModuleSelection, SourceFacts, SyncSpec, TargetPlan } from 'src/lib/vendor/sync'
 
 /**
  * Real-git fixture for the `vendor sync` integration tests: one source repo and two target repos, built with
@@ -196,9 +196,10 @@ export const preview = async (
   sourceRoot: string,
   targetRoot: string,
   spec: SyncSpec = SPEC,
+  selection?: ModuleSelection,
 ): Promise<PreviewResult> => {
   const source = await probeSource(sourceRoot, spec)
-  const facts = await probeTarget(source, { name: path.basename(targetRoot), root: targetRoot })
+  const facts = await probeTarget(source, { name: path.basename(targetRoot), root: targetRoot, selection })
 
   return { source, plan: buildTargetPlan(source, facts) }
 }

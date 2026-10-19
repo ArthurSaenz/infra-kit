@@ -44,6 +44,7 @@ const repo = (entries: TargetEntryFacts[], overrides: Partial<RepoFacts> = {}): 
     manifestPresent: true,
     manifestSource: 'starter',
     changelog: { kind: 'log', sha: 'abc1234def', lines: ['abc1234 tweak'] },
+    pruneConflicts: [],
     ...overrides,
   }
 }
@@ -73,9 +74,12 @@ describe('buildTargetPlan — row status', () => {
   it('blocks a dirty tracked path and names it plus the git status argv', () => {
     const plan = buildTargetPlan(
       source([claude]),
-      repo([{ target: '.claude', tracked: ['.claude/a.md'], onDisk: { '.claude/a.md': file('edited') } }], {
-        dirty: ['.claude/a.md'],
-      }),
+      repo(
+        [{ target: '.claude', scope: 'sync', tracked: ['.claude/a.md'], onDisk: { '.claude/a.md': file('edited') } }],
+        {
+          dirty: ['.claude/a.md'],
+        },
+      ),
     )
 
     expect(plan.status).toBe('fail')
@@ -87,7 +91,7 @@ describe('buildTargetPlan — row status', () => {
   it('is ok when the diff is empty', () => {
     const plan = buildTargetPlan(
       source([claude]),
-      repo([{ target: '.claude', tracked: ['.claude/a.md'], onDisk: { '.claude/a.md': file('A') } }]),
+      repo([{ target: '.claude', scope: 'sync', tracked: ['.claude/a.md'], onDisk: { '.claude/a.md': file('A') } }]),
     )
 
     expect(plan.status).toBe('ok')
@@ -105,6 +109,7 @@ describe('buildTargetPlan — row status', () => {
       repo([
         {
           target: '.claude',
+          scope: 'sync',
           tracked: ['.claude/same.md', '.claude/changed.md', '.claude/stale.md'],
           onDisk: { '.claude/same.md': file('S'), '.claude/changed.md': file('old'), '.claude/new.md': null },
         },
@@ -132,7 +137,7 @@ describe('buildTargetPlan — row status', () => {
   it('warns instead of listing commits when the manifest sha is unknown', () => {
     const plan = buildTargetPlan(
       source([claude]),
-      repo([{ target: '.claude', tracked: [], onDisk: { '.claude/a.md': null } }], {
+      repo([{ target: '.claude', scope: 'sync', tracked: [], onDisk: { '.claude/a.md': null } }], {
         changelog: { kind: 'unknown-sha' },
       }),
     )
@@ -144,7 +149,9 @@ describe('buildTargetPlan — row status', () => {
   it('warns when the manifest names a different source than this sync', () => {
     const plan = buildTargetPlan(
       source([claude]),
-      repo([{ target: '.claude', tracked: [], onDisk: { '.claude/a.md': null } }], { manifestSource: 'old-starter' }),
+      repo([{ target: '.claude', scope: 'sync', tracked: [], onDisk: { '.claude/a.md': null } }], {
+        manifestSource: 'old-starter',
+      }),
     )
 
     expect(plan.status).toBe('changed')
@@ -158,7 +165,12 @@ describe('buildTargetPlan — row status', () => {
     ])
     const plan = diffEntry(
       entry,
-      { target: 'bin', tracked: ['bin/run', 'bin/link'], onDisk: { 'bin/run': file('R'), 'bin/link': file('x') } },
+      {
+        target: 'bin',
+        scope: 'sync',
+        tracked: ['bin/run', 'bin/link'],
+        onDisk: { 'bin/run': file('R'), 'bin/link': file('x') },
+      },
       [],
     )
 
@@ -176,6 +188,7 @@ describe('diffEntry — excludes', () => {
       entry,
       {
         target: 'vendor/configs',
+        scope: 'sync',
         tracked: ['vendor/configs/eslint/index.js', 'vendor/configs/serverless-config/consumer.ts'],
         onDisk: { 'vendor/configs/eslint/index.js': file('E') },
       },
@@ -200,7 +213,14 @@ describe('vendored inference', () => {
     const vendored = buildTargetPlan(
       source([sourceEntry('vendor/configs', [sourceFile('vendor/configs/a.js', 'A')])]),
       repo(
-        [{ target: 'vendor/configs', tracked: ['vendor/configs/a.js'], onDisk: { 'vendor/configs/a.js': file('A') } }],
+        [
+          {
+            target: 'vendor/configs',
+            scope: 'sync',
+            tracked: ['vendor/configs/a.js'],
+            onDisk: { 'vendor/configs/a.js': file('A') },
+          },
+        ],
         {
           readmeCurrent: false,
         },
@@ -208,7 +228,7 @@ describe('vendored inference', () => {
     )
     const plain = buildTargetPlan(
       source([sourceEntry('.claude', [sourceFile('.claude/a.md', 'A')])]),
-      repo([{ target: '.claude', tracked: ['.claude/a.md'], onDisk: { '.claude/a.md': file('A') } }], {
+      repo([{ target: '.claude', scope: 'sync', tracked: ['.claude/a.md'], onDisk: { '.claude/a.md': file('A') } }], {
         readmeCurrent: false,
       }),
     )
