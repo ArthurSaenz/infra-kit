@@ -1,0 +1,14 @@
+# build + generated output
+dist
+.output
+.nitro
+.tanstack
+
+# fumadocs-mdx generated collections
+.source
+
+# caches
+node_modules
+.turbo
+*.tsbuildinfo
+.eslintcache
