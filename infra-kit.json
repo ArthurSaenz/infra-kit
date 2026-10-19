@@ -4,5 +4,6 @@
     "config": {
       "name": "infra-kit"
     }
-  }
+  },
+  "vendorTarget": { "modules": ["devops-scripts"] }
 }
