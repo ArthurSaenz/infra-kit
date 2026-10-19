@@ -8,7 +8,7 @@ import packageJson from '../../../package.json' with { type: 'json' }
  * `.github/workflows/ik-deploy-service.yml` or `ik-install-deps.yml` changes; `deploy-sync` then moves
  * every consumer forward.
  */
-const SHARED_JOBS_SHA = '9a33a1e85e5b868036100055fc24c1cdd5674f13'
+const SHARED_JOBS_SHA = 'b16ab9c88dc04a2237481f439da5e489ffda7844'
 
 export const SHARED_DEPLOY_JOB = `ArthurSaenz/infra-kit/.github/workflows/ik-deploy-service.yml@${SHARED_JOBS_SHA}`
 
