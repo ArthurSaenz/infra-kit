@@ -8,7 +8,7 @@ import yaml from 'yaml'
 
 import { readWorkflowGates } from 'src/lib/workflow-gates'
 
-import { SHARED_DEPLOY_JOB, renderDeployWorkflows } from '../render-deploy-workflows'
+import { SHARED_DEPLOY_JOB, SHARED_INSTALL_JOB, renderDeployWorkflows } from '../render-deploy-workflows'
 
 interface Job {
   needs?: string[]
@@ -20,6 +20,7 @@ interface Job {
 
 interface Workflow {
   name: string
+  'run-name': string
   concurrency: { group: string }
   on: { workflow_dispatch: { inputs: Record<string, { type: string; default?: unknown; options?: string[] }> } }
   jobs: Record<string, Job>
@@ -100,8 +101,9 @@ describe('renderDeployWorkflows', () => {
     const { all, selected } = render()
     const job = selected.parsed.jobs['deploy-client-be']!
 
-    expect(job.needs).toEqual(['terraform-apply-initUser', 'terraform-apply-infrastructure'])
+    expect(job.needs).toEqual(['install-deps', 'terraform-apply-initUser', 'terraform-apply-infrastructure'])
     expect(job.if).toMatch(/^\$\{\{ inputs\.client-be && !cancelled\(\) && /)
+    expect(job.if).toContain(`needs.install-deps.result == 'success'`)
     expect(job.if).toContain(`needs.terraform-apply-infrastructure.result == 'skipped'`)
     expect(all.parsed.jobs['deploy-client-be']!.if).not.toContain('inputs.client-be')
   })
@@ -114,6 +116,7 @@ describe('renderDeployWorkflows', () => {
     expect(job.with).toEqual({
       environment: '${{ inputs.environment }}',
       ref: '${{ github.ref }}',
+      sha: '${{ github.sha }}',
       service: 'client-fe',
       runner: 'macos-14',
     })
@@ -144,12 +147,14 @@ describe('renderDeployWorkflows', () => {
     )
   })
 
-  it('emits no terraform jobs, skip input or needs without terraform', () => {
+  it('emits no terraform jobs or skip input without terraform, and still installs first', () => {
     const { selected } = render({ environments: ['dev'], services: { 'client-be': {} } })
 
     expect(Object.keys(selected.parsed.on.workflow_dispatch.inputs)).toEqual(['environment', 'client-be'])
-    expect(selected.parsed.jobs['deploy-client-be']).not.toHaveProperty('needs')
-    expect(selected.parsed.jobs['deploy-client-be']!.if).toBe('${{ inputs.client-be }}')
+    expect(selected.parsed.jobs['deploy-client-be']!.needs).toEqual(['install-deps'])
+    expect(selected.parsed.jobs['deploy-client-be']!.if).toBe(
+      "${{ inputs.client-be && !cancelled() && needs.install-deps.result == 'success' }}",
+    )
     expect(selected.content).not.toContain('skip TF')
   })
 
@@ -162,7 +167,12 @@ describe('renderDeployWorkflows', () => {
     expect(publish.if).toContain(`needs.terraform-apply-initUser.result == 'skipped'`)
     expect(publish.if).not.toContain('skip_terraform_deploy')
     expect(publish).toMatchObject({ uses: './.github/workflows/_publish-layer-jobs.yml', secrets: 'inherit' })
-    expect(service.needs).toEqual(['terraform-apply-initUser', 'terraform-apply-infrastructure', 'publish-layer'])
+    expect(service.needs).toEqual([
+      'install-deps',
+      'terraform-apply-initUser',
+      'terraform-apply-infrastructure',
+      'publish-layer',
+    ])
     expect(service.if).toContain(`needs.publish-layer.result == 'success'`)
     expect(all.parsed.jobs['deploy-client-be']!.needs).toContain('publish-layer')
     expect(all.parsed.jobs['notify-success']!.needs).not.toContain('publish-layer')
@@ -177,10 +187,57 @@ describe('renderDeployWorkflows', () => {
 
     expect(selected.parsed.jobs['publish-layer']).not.toHaveProperty('needs')
     expect(selected.parsed.jobs['publish-layer']).not.toHaveProperty('if')
-    expect(selected.parsed.jobs['deploy-client-be']!.needs).toEqual(['publish-layer'])
+    expect(selected.parsed.jobs['deploy-client-be']!.needs).toEqual(['install-deps', 'publish-layer'])
     expect(selected.parsed.jobs['deploy-client-be']!.if).toBe(
-      "${{ inputs.client-be && !cancelled() && needs.publish-layer.result == 'success' }}",
+      "${{ inputs.client-be && !cancelled() && needs.install-deps.result == 'success' && needs.publish-layer.result == 'success' }}",
     )
+  })
+
+  it('installs once, beside terraform, through the pinned shared install job', () => {
+    const { all, selected } = render()
+
+    for (const workflow of [all, selected]) {
+      expect(workflow.parsed.jobs['install-deps']).toEqual({
+        uses: SHARED_INSTALL_JOB,
+        with: { ref: '${{ github.ref }}', sha: '${{ github.sha }}' },
+        secrets: { 'slack-token': '${{ secrets.SLACK_TOKEN }}', 'slack-channel': '${{ secrets.SLACK_CHANNEL }}' },
+      })
+    }
+
+    expect(SHARED_INSTALL_JOB.split('@')[1]).toBe(SHARED_DEPLOY_JOB.split('@')[1])
+    expect(all.parsed.jobs['notify-success']!.needs).not.toContain('install-deps')
+  })
+
+  it('passes the deploy step timeout only when the manifest sets one', () => {
+    const { selected } = render({ ...MANIFEST, deployTimeoutMinutes: 60 })
+
+    expect(selected.parsed.jobs['deploy-client-be']!.with).toMatchObject({ 'timeout-minutes': 60 })
+    expect(render().selected.parsed.jobs['deploy-client-be']!.with).not.toHaveProperty('timeout-minutes')
+  })
+
+  it('titles a deploy-selected run with the ticked services, as v1 does', () => {
+    const { all, selected } = render()
+
+    expect(selected.parsed['run-name']).toContain("${{ inputs.client-be && 'client-be ' || '' }}")
+    expect(selected.parsed['run-name']).toContain("${{ inputs.media && 'media ' || '' }}")
+    expect(all.parsed['run-name']).not.toContain('inputs.client-be')
+  })
+
+  it('takes over the v1 file names, titles and concurrency groups under replaceV1', () => {
+    const { all, selected } = render({ ...MANIFEST, replaceV1: true })
+
+    expect(all.path).toBe('.github/workflows/deploy-all.yml')
+    expect(selected.path).toBe('.github/workflows/deploy-selected-services.yml')
+    expect(all.parsed.name).toBe('01 ⚙️ Deploy all')
+    expect(selected.parsed.name).toBe('02 ⚙️ Deploy selected services')
+    expect(all.parsed['run-name']).toMatch(/^01 ⚙️ Deploy all \[\$\{\{ inputs\.environment \}\}\]/)
+    expect(all.parsed.concurrency.group).toBe('deploy-all-${{ inputs.environment }}')
+  })
+
+  it('refuses two jobs with one id', () => {
+    expect(() => {
+      return renderDeployWorkflows({ ...MANIFEST, preDeploy: ['_deploy-media-jobs.yml'] })
+    }).toThrow(/job `deploy-media` twice/)
   })
 
   it('renders the same bytes for the same manifest', () => {
@@ -199,7 +256,7 @@ describe('renderDeployWorkflows', () => {
     }).toThrow(/26 dispatch inputs/)
   })
 
-  // The CLI unions env gates across EVERY workflow in the repo; the generated files must add none, or
+  // The CLI unions env gates across EVERY workflow in the repo; the pilot files must add none, or
   // `release deploy-*` would start refusing what v1 still deploys.
   it('adds nothing to what the workflow-gates reader sees', async () => {
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'deploy-sync-gates-'))
@@ -225,6 +282,27 @@ describe('renderDeployWorkflows', () => {
     }
 
     expect(await readWorkflowGates(repo)).toEqual(before)
+
+    await fs.rm(repo, { recursive: true, force: true })
+  })
+
+  // Once the generated files ARE what `release deploy-*` dispatches, their gates are the manifest's.
+  it('feeds the manifest gates to the workflow-gates reader under replaceV1', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'deploy-sync-gates-v1-'))
+    const config: DeployConfig = { ...MANIFEST, replaceV1: true }
+
+    await fs.mkdir(path.join(repo, '.github/workflows'), { recursive: true })
+    await fs.writeFile(path.join(repo, 'infra-kit.deploy.ts'), `export default ${JSON.stringify(config)}\n`)
+
+    for (const workflow of renderDeployWorkflows(config)) {
+      await fs.writeFile(path.join(repo, workflow.path), workflow.content)
+    }
+
+    expect(Object.fromEntries(await readWorkflowGates(repo))).toEqual({
+      'docs-fe': ['dev', 'arthur'],
+      mobile: ['dev', 'prod'],
+      'prod-only': ['prod'],
+    })
 
     await fs.rm(repo, { recursive: true, force: true })
   })

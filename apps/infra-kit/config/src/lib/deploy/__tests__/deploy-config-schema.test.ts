@@ -40,6 +40,16 @@ describe('deployConfigSchema', () => {
     expect(deployConfigSchema.safeParse({ ...minimal, services }).success).toBe(false)
   })
 
+  it('accepts replaceV1 and a deploy timeout within the GitHub job cap', () => {
+    expect(deployConfigSchema.safeParse({ ...minimal, replaceV1: true, deployTimeoutMinutes: 60 }).success).toBe(true)
+    expect(deployConfigSchema.safeParse({ ...minimal, deployTimeoutMinutes: 0 }).success).toBe(false)
+    expect(deployConfigSchema.safeParse({ ...minimal, deployTimeoutMinutes: 361 }).success).toBe(false)
+  })
+
+  it('rejects a service named after a dispatch input every workflow has', () => {
+    expect(deployConfigSchema.safeParse({ ...minimal, services: { environment: {} } }).success).toBe(false)
+  })
+
   it('rejects a manifest without services', () => {
     expect(deployConfigSchema.safeParse({ ...minimal, services: {} }).success).toBe(false)
   })

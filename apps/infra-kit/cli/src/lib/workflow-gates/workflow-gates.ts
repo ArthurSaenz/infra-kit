@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
+import { GENERATED_MARKER, loadDeployConfig, manifestGates } from 'src/lib/deploy-workflows'
+
 const WORKFLOWS_DIR = '.github/workflows'
 
 /** `script_name: client-be` — ties a job block to the script it runs. */
@@ -46,7 +48,7 @@ export const readWorkflowGates = async (projectRoot: string): Promise<Map<string
   }
 
   return collectFrom(
-    dir,
+    projectRoot,
     files.filter((entry) => {
       return entry.endsWith('.yml') || entry.endsWith('.yaml')
     }),
@@ -69,12 +71,21 @@ export const readGatesFromWorkflow = async (
   projectRoot: string,
   workflowFile: string,
 ): Promise<Map<string, string[]>> => {
-  return collectFrom(path.resolve(projectRoot, WORKFLOWS_DIR), [workflowFile])
+  return collectFrom(projectRoot, [workflowFile])
 }
 
-/** Union the gates of the given workflow files. An unreadable file contributes nothing. */
-const collectFrom = async (dir: string, files: string[]): Promise<Map<string, string[]>> => {
+/**
+ * Union the gates of the given workflow files. An unreadable file contributes nothing.
+ *
+ * A file `infra-kit deploy-sync` generated is not scanned: its gates are read from the manifest it was
+ * generated from, and only once the manifest `replaceV1` — before that the files are the `-v2` pilot,
+ * which nothing the CLI runs dispatches. An unreadable manifest restricts nothing, as an unparseable
+ * gate does.
+ */
+const collectFrom = async (projectRoot: string, files: string[]): Promise<Map<string, string[]>> => {
+  const dir = path.resolve(projectRoot, WORKFLOWS_DIR)
   const gates = new Map<string, string[]>()
+  let readsManifest = false
 
   for (const file of files) {
     let source: string
@@ -85,10 +96,30 @@ const collectFrom = async (dir: string, files: string[]): Promise<Map<string, st
       continue
     }
 
-    collectGates(source, gates)
+    if (source.startsWith(GENERATED_MARKER)) readsManifest = true
+    else collectGates(source, gates)
   }
 
+  if (readsManifest) mergeGates(gates, await replacingManifestGates(projectRoot))
+
   return gates
+}
+
+const replacingManifestGates = async (projectRoot: string): Promise<Map<string, string[]>> => {
+  try {
+    const config = await loadDeployConfig(projectRoot)
+
+    return config?.replaceV1 === true ? manifestGates(config) : new Map()
+  } catch {
+    return new Map()
+  }
+}
+
+/** A service appearing in several sources is allowed wherever ANY of them allows it. */
+const mergeGates = (gates: Map<string, string[]>, more: Map<string, string[]>): void => {
+  for (const [service, envs] of more) {
+    gates.set(service, [...new Set([...(gates.get(service) ?? []), ...envs])])
+  }
 }
 
 /**
@@ -114,8 +145,7 @@ const collectGates = (source: string, gates: Map<string, string[]>): void => {
 
     if (envs.length === 0) continue
 
-    // A service appearing in several workflows is allowed wherever ANY of them allows it.
-    gates.set(service, [...new Set([...(gates.get(service) ?? []), ...envs])])
+    mergeGates(gates, new Map([[service, envs]]))
   }
 }
 

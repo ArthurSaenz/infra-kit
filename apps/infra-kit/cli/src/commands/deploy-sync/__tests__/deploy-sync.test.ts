@@ -3,6 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { GENERATED_MARKER } from 'src/lib/deploy-workflows'
+
 import { deploySync } from '../deploy-sync'
 
 vi.mock('src/lib/logger', () => {
@@ -18,8 +20,15 @@ export default {
 } satisfies DeployConfig
 `
 
+const REPLACING = MANIFEST.replace(
+  "environments: ['dev', 'arthur'],",
+  "environments: ['dev', 'arthur'],\n  replaceV1: true,",
+)
+
 const ALL = '.github/workflows/deploy-all-v2.yml'
 const SELECTED = '.github/workflows/deploy-selected-v2.yml'
+const V1_ALL = '.github/workflows/deploy-all.yml'
+const V1_SELECTED = '.github/workflows/deploy-selected-services.yml'
 
 let repo: string
 
@@ -80,6 +89,56 @@ describe('deploySync', () => {
   it('a repo without a manifest fails a write but passes --check', async () => {
     expect((await deploySync({ cwd: repo })).structuredContent).toMatchObject({ status: 'missing-config', ok: false })
     expect((await deploySync({ cwd: repo, check: true })).structuredContent.ok).toBe(true)
+  })
+
+  // Each manifest gets its own repo: the loader imports it once per process, as the CLI does.
+  it('under replaceV1 writes the v1 names and removes the generated pilot pair', async () => {
+    await writeManifest(REPLACING)
+    await fs.mkdir(path.join(repo, '.github/workflows'), { recursive: true })
+    await fs.writeFile(path.join(repo, ALL), `${GENERATED_MARKER}: edit that file\n`)
+    await fs.writeFile(path.join(repo, SELECTED), `${GENERATED_MARKER}: edit that file\n`)
+    await fs.writeFile(path.join(repo, V1_ALL), 'name: hand-written v1\n')
+
+    const checked = await deploySync({ cwd: repo, check: true })
+
+    expect(checked.structuredContent.ok).toBe(false)
+    expect(checked.structuredContent.files).toContainEqual({ path: ALL, status: 'removed' })
+    expect(await fs.readFile(path.join(repo, ALL), 'utf-8')).toContain(GENERATED_MARKER)
+
+    const written = await deploySync({ cwd: repo })
+
+    expect(written.structuredContent.files).toEqual([
+      { path: V1_ALL, status: 'updated' },
+      { path: V1_SELECTED, status: 'created' },
+      { path: ALL, status: 'removed' },
+      { path: SELECTED, status: 'removed' },
+    ])
+    await expect(fs.access(path.join(repo, ALL))).rejects.toThrow()
+    expect((await deploySync({ cwd: repo, check: true })).structuredContent.ok).toBe(true)
+  })
+
+  it('never removes a pilot-named file it did not generate', async () => {
+    await writeManifest(REPLACING)
+    await fs.mkdir(path.join(repo, '.github/workflows'), { recursive: true })
+    await fs.writeFile(path.join(repo, ALL), 'name: hand-written\n')
+
+    await deploySync({ cwd: repo })
+
+    expect(await fs.readFile(path.join(repo, ALL), 'utf-8')).toBe('name: hand-written\n')
+  })
+
+  it('rejects a gate on an unknown environment', async () => {
+    await writeManifest(
+      `export default { environments: ['dev', 'stage'], services: { 'docs-fe': { skipEnvs: ['stagee'] } } }\n`,
+    )
+
+    await expect(deploySync({ cwd: repo })).rejects.toThrow(/services\.docs-fe\.skipEnvs: unknown environment 'stagee'/)
+  })
+
+  it('accepts a gate on prod, which is delivered and so never offered', async () => {
+    await writeManifest(`export default { environments: ['dev'], services: { 'docs-fe': { skipEnvs: ['prod'] } } }\n`)
+
+    expect((await deploySync({ cwd: repo })).structuredContent.ok).toBe(true)
   })
 
   it('rejects an invalid manifest with the offending key', async () => {

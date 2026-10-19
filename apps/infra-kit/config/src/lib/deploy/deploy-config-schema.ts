@@ -20,6 +20,9 @@ const localWorkflowFile = z
 
 const secretName = z.string().regex(/^[A-Z_][A-Z0-9_]*$/, 'must be an upper-case secret name, e.g. MONITORING_IP')
 
+/** Service names become dispatch inputs, so they must not shadow the ones every workflow has. */
+const RESERVED_SERVICE_NAMES = new Set(['environment'])
+
 export const deployServiceSchema = z.strictObject({
   /** The only environments this service deploys to. Omitted = every environment. */
   envs: z.array(kebabName).nonempty().optional(),
@@ -58,6 +61,19 @@ export const deployConfigSchema = z
     notifySuccess: localWorkflowFile.optional(),
     /** Repo secrets exported, under the same name, to every deploy script. */
     extraEnv: z.array(secretName).optional(),
+    /**
+     * Minutes the deploy step of the shared job may run. Omitted = the shared job's default, 25. A
+     * timed-out step fails and keeps its logs, where a job cancelled at GitHub's 360-minute cap loses them.
+     */
+    deployTimeoutMinutes: z.number().int().min(1).max(360).optional(),
+    /**
+     * Generate under the v1 names, `deploy-all.yml` and `deploy-selected-services.yml`, replacing the
+     * hand-written files. Those are the files `infra-kit release deploy-*` dispatches, so the manifest
+     * becomes what the CLI deploys and reads its service gates from. Omitted = the `-v2` pilot files,
+     * which the CLI ignores. A repo that delivers prod needs `prod` in `environments` first: delivery
+     * dispatches `deploy-all.yml` with it.
+     */
+    replaceV1: z.boolean().optional(),
   })
   .superRefine((config, ctx) => {
     if (Object.keys(config.services).length === 0) {
@@ -65,6 +81,10 @@ export const deployConfigSchema = z
     }
 
     for (const [name, service] of Object.entries(config.services)) {
+      if (RESERVED_SERVICE_NAMES.has(name)) {
+        ctx.addIssue({ code: 'custom', path: ['services', name], message: 'is a dispatch input of its own' })
+      }
+
       if (service.envs !== undefined && service.skipEnvs !== undefined) {
         ctx.addIssue({ code: 'custom', path: ['services', name], message: 'set envs or skipEnvs, not both' })
       }
