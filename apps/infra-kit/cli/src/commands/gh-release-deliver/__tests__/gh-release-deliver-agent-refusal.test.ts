@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchOpenPRsByHead } from 'src/integrations/gh'
+import { fetchOpenPRsByHead, fetchPRByNumber } from 'src/integrations/gh'
 import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
@@ -45,8 +45,21 @@ vi.mock('src/lib/logger', () => {
   return { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }
 })
 
+// The `--json` human reaches the merge preflight (it sits before the confirm), whose RC probe
+// parses `gh pr list` stdout — an empty list keeps that leg on its no-RC-merged path.
 vi.mock('zx', () => {
-  return { $: Object.assign(vi.fn(), { quiet: false }) }
+  return {
+    $: Object.assign(
+      vi.fn(() => {
+        return Promise.resolve({ stdout: '[]' })
+      }),
+      { quiet: false },
+    ),
+  }
+})
+
+vi.mock('../merge-preflight', () => {
+  return { assertDeliveryMergesClean: vi.fn() }
 })
 
 vi.mock('@inquirer/confirm')
@@ -61,9 +74,16 @@ beforeEach(() => {
   vi.clearAllMocks()
   commandEcho.reset()
   vi.mocked(assertManagementContext).mockResolvedValue(undefined)
-  vi.mocked(fetchOpenPRsByHead).mockResolvedValue([
-    { number: 42, state: 'OPEN', title: 'Release v1.2.5', baseRefName: 'dev', headRefName: 'release/v1.2.5' },
-  ])
+  const releasePr = {
+    number: 42,
+    state: 'OPEN',
+    title: 'Release v1.2.5',
+    baseRefName: 'dev',
+    headRefName: 'release/v1.2.5',
+  } as const
+
+  vi.mocked(fetchOpenPRsByHead).mockResolvedValue([releasePr])
+  vi.mocked(fetchPRByNumber).mockResolvedValue(releasePr)
 })
 
 afterEach(() => {

@@ -63,6 +63,11 @@ vi.mock('src/lib/git-utils', () => {
   return { deleteLocalBranch: vi.fn(), deleteRemoteBranch: vi.fn(), getProjectRoot: vi.fn() }
 })
 
+// Rehearsed against real git in its own test; here every merge is presumed clean.
+vi.mock('../merge-preflight', () => {
+  return { assertDeliveryMergesClean: vi.fn() }
+})
+
 vi.mock('src/lib/worktrees', () => {
   return { removeReleaseWorktreeIfPresent: vi.fn() }
 })

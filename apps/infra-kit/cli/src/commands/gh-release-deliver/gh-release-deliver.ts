@@ -33,6 +33,8 @@ import { removeReleaseWorktreeIfPresent } from 'src/lib/worktrees'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
+import { assertDeliveryMergesClean } from './merge-preflight'
+
 interface GhReleaseDeliverArgs extends RequiredConfirmedOptionArg {
   version: string
 }
@@ -413,6 +415,15 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
       stderrExcerpt: 'release deliver is CLI-only: refused in agent mode regardless of --yes',
     })
   }
+
+  // Before the confirm, so a conflict costs nothing: past it, the first failing merge leaves a
+  // half-delivered release (and the main → dev sync runs after the prod deploy is dispatched).
+  await assertDeliveryMergesClean({
+    releaseBranch: selectedReleaseBranch,
+    releaseType,
+    releaseMerged: (await fetchPRByNumber(prNumber)).state === 'MERGED',
+    rcMerged: releaseType !== 'hotfix' && (await fetchMergedRcPRForVersion(releaseId)) !== null,
+  })
 
   await confirmOrExit(
     confirmedCommand,
