@@ -33,7 +33,7 @@ jobs:
       E2E_GREP: ${{ inputs.grep }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.branch }}
 
