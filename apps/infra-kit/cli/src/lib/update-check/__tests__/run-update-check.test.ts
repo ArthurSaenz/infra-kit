@@ -26,9 +26,11 @@ const harness = (overrides: Partial<RunUpdateCheckDeps> = {}) => {
   const writes: UpdateCache[] = []
   const spawnMock = vi.fn(okSpawn)
   const pluginSpawnMock = vi.fn(okSpawn)
+
   const runClaudeMock = vi.fn(() => {
     return { ok: true }
   })
+
   const startAutoSetupMock = vi.fn()
   let released = 0
 
@@ -303,6 +305,7 @@ describe('runUpdateCheck', () => {
   it('gives up instead of installing when a long-lived parent outlasts the wait timeout', async () => {
     // `infra-kit dev` runs for hours; the child must not linger, and must never install underneath it.
     let clockMs = NOW
+
     const { deps, spawnMock } = harness({
       parentPid: 4242,
       isProcessAlive: () => {
@@ -375,6 +378,7 @@ describe('runUpdateCheck', () => {
     const installedVersion = vi.fn(() => {
       return '0.1.131'
     })
+
     const { deps } = harness({
       installedVersion,
       spawnSync: (() => {
@@ -434,6 +438,7 @@ describe('runUpdateCheck', () => {
 
       return okSpawn()
     })
+
     const { deps, cliWrites } = harness({ parentPid: 4242, spawnSync: spawnMock as unknown as typeof spawnSync })
 
     await expect(runUpdateCheck('0.1.130', deps)).resolves.toBe('installed')
@@ -586,6 +591,7 @@ describe('runUpdateCheck — plugin step', () => {
   /** Every overrides set above, plus an order log of writes, spawns and the lock release. */
   const orderedHarness = (overrides: Partial<RunUpdateCheckDeps>) => {
     const order: string[] = []
+
     const built = harness({
       ...overrides,
       writeCache: (cache) => {
@@ -828,6 +834,7 @@ describe('runUpdateCheck — plugin step', () => {
 
   it('records failed when any project update exits non-zero, after giving every project its turn', async () => {
     const seen: string[] = []
+
     const { deps, writes } = harness({
       listPluginInstallations: () => {
         return [record('/repo/a'), record('/repo/b')]
@@ -850,6 +857,7 @@ describe('runUpdateCheck — plugin step', () => {
     // shell a reaped lock and the concurrent-install pile-up the lock exists to prevent.
     let clockMs = NOW
     const spawned: string[] = []
+
     const { deps, writes } = harness({
       clock: () => {
         return clockMs

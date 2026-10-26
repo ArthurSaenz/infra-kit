@@ -29,9 +29,9 @@ const makeApp = (handlers: string[]): string => {
 
   const yml = ['service: t', 'functions:']
 
-  handlers.forEach((h, i) => {
+  for (const [i, h] of handlers.entries()) {
     yml.push(`  fn${i}:`, `    handler: ${h}`)
-  })
+  }
   fs.writeFileSync(path.join(dir, 'serverless.yml'), `${yml.join('\n')}\n`)
 
   return fs.realpathSync(dir)

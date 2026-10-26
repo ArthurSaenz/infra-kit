@@ -41,12 +41,12 @@ const renderedHeight = (visible: PaletteItem[]): number => {
   let height = 0
   let previousGroup = ''
 
-  visible.forEach((entry, position) => {
+  for (const [position, entry] of visible.entries()) {
     const startsGroup = entry.group !== previousGroup
 
     height += 1 + (startsGroup ? 1 : 0) + (startsGroup && position > 0 ? 1 : 0)
     previousGroup = entry.group
-  })
+  }
 
   return height
 }
@@ -71,6 +71,7 @@ describe('paletteWindow', () => {
 
   it('scrolls down just far enough to keep the cursor visible', () => {
     const view = paletteWindow(catalog, 0, 24, 24, { groupOf })
+
     const names = view.visible.map((entry) => {
       return entry.name
     })
@@ -90,6 +91,7 @@ describe('paletteWindow', () => {
     const branches = Array.from({ length: 30 }, (_, i) => {
       return { label: `release/v1.${i}.0`, value: `release/v1.${i}.0` }
     })
+
     const view = paletteWindow(branches, 0, 0, 24, { chromeRows: CHROME_ROWS })
 
     // 24 rows − 6 chrome = 18 branches, one row each. A header charge would make this 17 or fewer.
@@ -109,11 +111,14 @@ describe('paletteWindow', () => {
   it('never exceeds its row budget at any terminal height', () => {
     for (let rows = 1; rows <= 40; rows += 1) {
       const layout = listLayout(rows)
+
       const view = paletteWindow(catalog, 0, 0, rows, {
         chromeRows: layout.chromeRows,
         groupOf: layout.groups ? groupOf : undefined,
       })
+
       const budget = Math.max(0, rows - layout.chromeRows)
+
       const height = layout.groups
         ? renderedHeight(view.visible)
         : // Compact frames draw no headers, so each item is exactly one row.

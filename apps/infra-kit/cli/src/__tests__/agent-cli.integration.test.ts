@@ -215,6 +215,7 @@ describe('ac5: protectedEnvs "cli-only"', () => {
     '--yes',
     '--json',
   ]
+
   const AGENT_REFUSAL = '"prod" is withheld from agents in this project (protectedEnvs: "cli-only")'
 
   // `assertDeployable` throws a structured `refused` (exit 2, nothing ran): the payload on stdout
@@ -280,12 +281,14 @@ describe('worktrees remove', () => {
     ensureReleaseWorktree(fixture)
 
     const argv = ['worktrees', 'remove', '--versions', FIXTURE_RELEASE.ref, '--json']
+
     const run = await runCliOnPty({
       cliPath,
       fixture,
       args: argv,
       env: { CLAUDECODE: undefined, INFRA_KIT_AGENT: undefined },
     })
+
     const json = expectJson(run)
 
     expect(run.code).toBe(2)
@@ -323,6 +326,7 @@ describe('session-env overlay', () => {
   const sessionDir = (): string => {
     return join(fixture.env.XDG_CACHE_HOME!, 'infra-kit', FIXTURE_SESSION)
   }
+
   /** Every load file carries these five after its own pairs (see `buildEnvLoadFileLines`). */
   const METADATA_COUNT = 5
 

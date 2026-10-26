@@ -232,6 +232,7 @@ export const resolveProxyRoutes = (input: ProxyResolutionInputs): ResolvedProxyR
       .map(([route, spec]): ResolvedProxyRoute => {
         const source: PairingSource =
           spec.from.includes('local') && running.has(spec.packageName) ? 'local' : resolveUnserved(spec, held)
+
         const target = source === 'local' ? localOrigin(spec.packageName) : ui.cloudUrl
 
         return { uiApp: ui.app, route, packageName: spec.packageName, source, target }

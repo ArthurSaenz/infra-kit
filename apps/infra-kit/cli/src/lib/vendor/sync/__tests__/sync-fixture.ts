@@ -59,6 +59,7 @@ const LEAKY_ENV = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIR
 /** Isolate git from the machine's config; returns the restore function. */
 export const isolateGitEnv = (): (() => void) => {
   const keys = [...Object.keys(ISOLATED_ENV), ...LEAKY_ENV]
+
   const saved = new Map(
     keys.map((key) => {
       return [key, process.env[key]]

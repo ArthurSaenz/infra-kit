@@ -103,6 +103,7 @@ const wrapText = (text: string, width: number): string[] => {
   const words = text.split(/\s+/).filter((word) => {
     return word.length > 0
   })
+
   const lines: string[] = []
   let current = ''
 
@@ -224,15 +225,18 @@ const formatRollup = (
   }
 
   const ratio = `${counts.ok + counts.changed}/${total}`
+
   const parts = countParts(counts, (count) => {
     return `warning${count === 1 ? '' : 's'}`
   })
+
   const text = [
     palette.dim(ratio),
     ...parts.map((part) => {
       return palette[part.status](part.plain)
     }),
   ].join(` ${glyphs.separator} `)
+
   // Each joined part costs the space, the single-column separator, and the space.
   const plainWidth = parts.reduce((width, part) => {
     return width + part.plain.length + 3
@@ -273,9 +277,11 @@ const formatRow = (row: RunRow, nameWidth: number, palette: Palette, glyphs: Gly
   const messageWidth = Math.max(MIN_MESSAGE_WIDTH, width - messageColumn)
   const [first, ...rest] = wrapText(row.message, messageWidth)
   const hanging = ' '.repeat(messageColumn)
+
   const paint = (text: string): string => {
     return loud ? text : palette.dim(text)
   }
+
   // `trimEnd` so a row with an empty message (or an empty note) leaves no trailing whitespace.
   const head = `${ROW_INDENT}${colour(glyphs[row.status])} ${name}  ${paint(first ?? '')}`.trimEnd()
 
@@ -300,15 +306,18 @@ const formatSummary = (
 ): string[] => {
   const counts = tally(rows)
   const rule = glyphs.rule.repeat(Math.max(12, Math.min(width - INDENT.length, 56)))
+
   const parts = countParts(counts, () => {
     return 'warned'
   })
+
   const totals = [
     palette.ok(`${counts.ok} passed`),
     ...parts.map((part) => {
       return palette[part.status](part.plain)
     }),
   ].join(` ${glyphs.separator} `)
+
   const hints = (report.hints ?? []).map((hint) => {
     return `  ${palette.dim(hint)}`
   })
@@ -329,12 +338,15 @@ export const formatRunReport = (report: RunReport, options: RunReportOptions = {
   const width = options.width ?? 80
   const palette = createPalette(options.color ?? false)
   const glyphs = (options.unicode ?? true) ? RUN_REPORT_GLYPHS.unicode : RUN_REPORT_GLYPHS.ascii
+
   const sections = report.sections.filter((section) => {
     return section.rows.length > 0
   })
+
   const rows = sections.flatMap((section) => {
     return section.rows
   })
+
   const title = palette.bold(report.title)
 
   if (rows.length === 0) return [title, '', `${INDENT}${palette.dim(report.emptyMessage ?? 'Nothing ran.')}`]
@@ -346,6 +358,7 @@ export const formatRunReport = (report: RunReport, options: RunReportOptions = {
       return row.name.length
     }),
   )
+
   const body = sections.flatMap((section): string[] => {
     return [
       formatSectionHeader(section, palette, glyphs, width),

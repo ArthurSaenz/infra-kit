@@ -186,6 +186,7 @@ describe('--update updates what is present and never installs what is absent', (
   // Reds on: dropping `update` in the merge, which silently turns update-only into converge.
   it('updates the present tool and skips the absent one, naming why', async () => {
     const { structuredContent } = await setup({ probeDeps: brewAndGhInstalled(), update: true })
+
     const handed = vi.mocked(runRecipe).mock.calls.flatMap((call) => {
       return call[0].steps.map((step) => {
         return step.join(' ')
@@ -291,6 +292,7 @@ describe('--skip-tools installs nothing, and cannot be talked into installing so
   it('fails closed on a misspelled flag: no command anywhere opts out of unknown-option errors', () => {
     const root = path.resolve(import.meta.dirname, '../../..')
     const offenders: string[] = []
+
     const walk = (dir: string): void => {
       for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, item.name)
@@ -362,6 +364,7 @@ describe('the report follows every streamed line, and the reminder follows the r
         throw new Error('spawn exploded')
       },
     })
+
     const tools = structuredContent.report.find((section) => {
       return section.label === 'Tools'
     })
@@ -404,6 +407,7 @@ describe('manual rows never affect the exit code or allSucceeded', () => {
       portlessDeps: noPortless(),
       run: await refuseAll(),
     })
+
     const rows = structuredContent.report.flatMap((section) => {
       return section.rows
     })

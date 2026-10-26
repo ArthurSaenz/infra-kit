@@ -164,6 +164,7 @@ export const createDeployFormProvider = (args: DeployFormProviderArgs): Argument
     if (envs.length === 0) return null
 
     const shared = envs.filter(isSharedEnv)
+
     const personal = envs.filter((env) => {
       return !isSharedEnv(env)
     })

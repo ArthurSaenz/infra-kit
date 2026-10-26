@@ -131,6 +131,7 @@ export const appliedDelta = (preview: RunReport, applied: RunReport, syncedTarge
       })
     }),
   )
+
   const sections = applied.sections.map((section): RunSection => {
     return {
       label: section.label,

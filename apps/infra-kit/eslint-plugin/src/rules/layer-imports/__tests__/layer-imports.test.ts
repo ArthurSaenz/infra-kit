@@ -24,6 +24,7 @@ const ruleTester = new RuleTester({
 
 // Virtual paths: no package exists on disk, so the innermost `src/` is the package's source root.
 const feature = '/virtual/app/src/features/user/containers/user-container.tsx'
+
 const order =
   'lib, components, shared, assets, styles, data → core, entities → features → pages, routes → app, renderer, mobile'
 

@@ -191,6 +191,7 @@ describe('migrateConfigFile', () => {
   it('leaves identical final bytes when two writers race on the same content', async () => {
     const raw = await writeDirty()
     const { mtimeMs } = await fs.stat(configPath)
+
     const write = (): Promise<void> => {
       return writeMigratedConfigFile({ path: configPath, raw, migrated: CLEAN_AFTER, expectedMtimeMs: mtimeMs })
     }

@@ -215,6 +215,7 @@ describe('module generation hook — bookkeeping', () => {
 
   it('keeps counting generations without the count ever gating anything', () => {
     const { root } = makeGraph()
+
     const handle = installModuleGeneration({
       root,
       selfDist: selfDistDir(),
@@ -243,6 +244,7 @@ describe('module generation hook — the byte budget', () => {
   const budgetHandle = (opts: Partial<InstallOptions> & { samples: number[] }): ModuleGenerationHandle => {
     const { root } = makeGraph()
     let index = 0
+
     const handle = installModuleGeneration({
       root,
       selfDist: selfDistDir(),
@@ -262,6 +264,7 @@ describe('module generation hook — the byte budget', () => {
 
     return handle
   }
+
   const verdicts = (handle: ModuleGenerationHandle, count: number): string[] => {
     return Array.from({ length: count }, () => {
       return handle.budgetState()
@@ -309,6 +312,7 @@ describe('module generation hook — the byte budget', () => {
 
   it('never touches `busted` — the D3 regression that would print a green restart over stale code', () => {
     const { root } = makeGraph()
+
     const handle = installModuleGeneration({
       root,
       selfDist: selfDistDir(),

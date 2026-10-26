@@ -133,6 +133,7 @@ const declaredFlags = (cliName: string): Set<string> => {
   const entry = commandCatalog.find((candidate) => {
     return candidate.cliName === cliName
   })
+
   const leaf = entry ? resolveLeaf(buildProgram().commands, entry.groupPath) : undefined
 
   return new Set(
@@ -181,6 +182,7 @@ describe('the site table tracks the code it makes claims about', () => {
         return site.key
       }),
     )
+
     const stale = Object.keys(POLICY_SITES).filter((key) => {
       return !live.has(key)
     })

@@ -185,9 +185,11 @@ describe('registerSignalShutdown', () => {
 
     const h = harness()
     let resolveTeardown = (): void => {}
+
     const teardown = new Promise<void>((resolve) => {
       resolveTeardown = resolve
     })
+
     const onSignal = vi.fn().mockReturnValue(teardown)
 
     registerSignalShutdown({ onSignal, ...h.seams })
@@ -383,6 +385,7 @@ describe('registerSignalShutdown', () => {
       SIGTERM: process.listenerCount('SIGTERM'),
       SIGHUP: process.listenerCount('SIGHUP'),
     }
+
     const exits: number[] = []
 
     registerSignalShutdown({

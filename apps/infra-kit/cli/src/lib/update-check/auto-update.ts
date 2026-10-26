@@ -136,6 +136,7 @@ const notifyAutoSetup = (
   const failed = record.runs.filter((run) => {
     return run.status === 'failed'
   }).length
+
   const attention = record.runs.filter((run) => {
     return run.status === 'attention'
   }).length
@@ -167,11 +168,13 @@ export const maybeAutoUpdate = (currentVersion: string, deps: AutoUpdateDeps = {
     const selfRealPath = deps.selfRealPath ?? defaultSelfRealPath()
     const readCache = deps.readCache ?? readUpdateCache
     const spawnChild = deps.spawnChild ?? defaultSpawnChild
+
     const fileExists =
       deps.fileExists ??
       ((p: string) => {
         return fs.existsSync(p)
       })
+
     const notify =
       deps.notify ??
       ((line: string) => {

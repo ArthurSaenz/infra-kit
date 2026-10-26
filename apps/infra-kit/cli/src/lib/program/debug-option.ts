@@ -33,5 +33,7 @@ export const addDebugOption = (cmd: Command): void => {
     cmd.option('--debug', 'Raise the log level to debug (logs stay on stderr)')
   }
 
-  cmd.commands.forEach(addDebugOption)
+  for (const child of cmd.commands) {
+    addDebugOption(child)
+  }
 }

@@ -34,6 +34,7 @@ export const defaultLazyNpmRoot = (): string | undefined => {
       stdio: ['ignore', 'pipe', 'ignore'],
       shell: process.platform === 'win32',
     })
+
     const trimmed = out.trim()
 
     return trimmed === '' ? undefined : trimmed

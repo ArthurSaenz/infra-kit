@@ -185,6 +185,7 @@ const withStep = async <T>(step: InitStepName, body: () => Promise<T> | T): Prom
 // two skip announcements) exactly where they have always been. A trailing replay would reorder them.
 export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
   const report: InitReport = []
+
   const record = (...entries: InitEntry[]): void => {
     for (const entry of entries) {
       report.push(entry)
@@ -670,9 +671,11 @@ const guidanceEntries = (version: string, planned: GuidanceWrite[]): InitEntry[]
   const failed = planned.filter((file) => {
     return file.action === 'failed'
   })
+
   const drifted = planned.filter((file) => {
     return file.action !== 'unchanged' && file.action !== 'failed'
   })
+
   const entries: InitEntry[] = []
 
   if (drifted.length === 0) {
@@ -884,6 +887,7 @@ const cliStaleEntries = (staleness: CliStaleness): InitEntry[] => {
   const behind = staleness.stale
     ? `CLI ${packageJson.version} is behind ${staleness.latestVersion}, update it first with the command below`
     : `CLI ${packageJson.version} is behind the published version, update it first`
+
   const prose: InitEntry = {
     step: 'plugin-pointer',
     outcome: 'warned',
@@ -1209,9 +1213,11 @@ const withheldProxyEntries = (root: string, result: McpProxyReconcileResult): In
   const drifted = result.entries.filter((entry) => {
     return entry.status === 'drifted'
   })
+
   const rest = result.entries.filter((entry) => {
     return entry.status !== 'drifted'
   })
+
   const others = proxyEntry(root, { ...result, entries: rest })
 
   if (result.status !== 'ok' || drifted.length === 0) return others

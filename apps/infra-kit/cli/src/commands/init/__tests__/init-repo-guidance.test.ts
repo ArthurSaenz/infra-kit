@@ -41,6 +41,7 @@ vi.mock('src/lib/logger', () => {
 
 const CHECK_FAILURE =
   /^1 agent-instruction files could not be checked — run: infra-kit audit --root && infra-kit audit --all$/
+
 const DRIFT_SUMMARY = /^3 agent-instruction files differ from infra-kit .+ — setup does not rewrite them; run:$/
 const CURRENT_SUMMARY = /^Agent-instruction files current \(infra-kit .+\)$/
 

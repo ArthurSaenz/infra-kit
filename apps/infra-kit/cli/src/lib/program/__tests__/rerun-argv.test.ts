@@ -36,7 +36,9 @@ interface Parsed {
 
 const overrideExitDeep = (cmd: Command): void => {
   cmd.exitOverride()
-  cmd.commands.forEach(overrideExitDeep)
+  for (const child of cmd.commands) {
+    overrideExitDeep(child)
+  }
 }
 
 /** Parse `userArgs` against a fresh program whose target leaf records what it was handed. */
@@ -46,6 +48,7 @@ const parseLeaf = async (groupPath: string[], userArgs: string[]): Promise<Parse
   overrideExitDeep(program)
 
   let parsed: Parsed | null = null
+
   const leaf = groupPath.reduce<Command>((node, name) => {
     return node.commands.find((candidate) => {
       return candidate.name() === name
@@ -130,15 +133,15 @@ describe('rerunArgv round-trips through the program', () => {
     const errors: string[] = []
 
     overrideExitDeep(program)
-    program.commands.forEach((group) => {
-      group.commands.forEach((leaf) => {
+    for (const group of program.commands) {
+      for (const leaf of group.commands) {
         leaf.configureOutput({
           writeErr: (text) => {
             errors.push(text)
           },
         })
-      })
-    })
+      }
+    }
 
     await expect(
       program.parseAsync([

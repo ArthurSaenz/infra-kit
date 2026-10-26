@@ -83,6 +83,7 @@ const findViolations = (filename: string, ignore: readonly string[]): Violation[
   const dirs = filename.split('/')
   const basename = dirs.pop()!
   const location = locationViolation(dirs, basename)
+
   const suffix: Violation | null = SPEC_SUFFIX.test(basename)
     ? { messageId: 'specSuffix', data: { basename, target: basename.replace(SPEC_SUFFIX, '.test$1') } }
     : null

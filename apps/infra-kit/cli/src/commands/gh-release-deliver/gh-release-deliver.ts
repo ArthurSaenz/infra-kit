@@ -65,9 +65,12 @@ const runStep = async <T>(operation: string, remediation: string, fn: () => Prom
  */
 const fetchMergedRcPRForVersion = async (id: ReleaseId): Promise<PRStatus | null> => {
   const expectedTitle = formatRcTitle(id)
+
   const result =
     await $`gh pr list --head dev --base main --state merged --json number,state,title,baseRefName,headRefName --limit 20`
+
   const prs = JSON.parse(result.stdout) as PRStatus[]
+
   const match = prs.find((pr) => {
     return pr.title === expectedTitle
   })
@@ -84,6 +87,7 @@ const fetchMergedRcPRForVersion = async (id: ReleaseId): Promise<PRStatus | null
 const fetchOpenDevToMainPR = async (): Promise<PRStatus | null> => {
   const result =
     await $`gh pr list --head dev --base main --state open --json number,state,title,baseRefName,headRefName --limit 5`
+
   const prs = JSON.parse(result.stdout) as PRStatus[]
 
   return prs[0] ?? null

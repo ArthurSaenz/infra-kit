@@ -12,12 +12,14 @@ import {
 // 2026-06-27). The "[31m" prefix is the real ANSI color on "Doppler Error:".
 const PROJECT_NOT_FOUND_STDERR =
   "Unable to download secrets\n[31mDoppler Error:[0m Could not find requested project 'infra-kit'\n"
+
 const CONFIG_NOT_FOUND_STDERR =
   "Unable to download secrets\n[31mDoppler Error:[0m Could not find requested config 'bogus-cfg'\n"
 
 // The two REAL auth-class stderr strings (SPIKE-0 Q1/Q4, live against doppler v3.76.0
 // with a service token): a revoked/garbage token, and a token scoped to another config.
 const INVALID_TOKEN_STDERR = 'Unable to download secrets\nDoppler Error: Invalid Auth token\n'
+
 const MIS_SCOPED_TOKEN_STDERR =
   "Unable to download secrets\nDoppler Error: This token does not have access to requested config 'dev_personal'\n"
 

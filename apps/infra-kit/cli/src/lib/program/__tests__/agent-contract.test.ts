@@ -38,7 +38,9 @@ let tmp: string
 
 const overrideExitDeep = (cmd: Command): void => {
   cmd.exitOverride()
-  cmd.commands.forEach(overrideExitDeep)
+  for (const child of cmd.commands) {
+    overrideExitDeep(child)
+  }
 }
 
 /** Parse `argv` with the target leaf's action swapped for a no-op, so only the hooks run. */
@@ -141,11 +143,13 @@ describe('--agent and the environment resolve agentMode.source in preAction', ()
 
   it('is registered on the root and on every catalog leaf, and listed in --help', () => {
     const program = buildProgram()
+
     const hasAgent = (cmd: Command): boolean => {
       return cmd.options.some((option) => {
         return option.long === '--agent'
       })
     }
+
     const everyNode = (cmd: Command): Command[] => {
       return [cmd, ...cmd.commands.flatMap(everyNode)]
     }

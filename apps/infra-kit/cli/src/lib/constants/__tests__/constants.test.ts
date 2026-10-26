@@ -157,6 +157,7 @@ describe('parseUnsetNamesFromEnvFile', () => {
 
   const writeRealLoadFile = (dir: string): string => {
     const file = path.join(dir, 'env-load.sh')
+
     const lines = buildEnvLoadFileLines({
       pairs: [['JIRA_TOKEN', 'secret']],
       config: 'dev',

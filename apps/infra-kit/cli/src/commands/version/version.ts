@@ -42,6 +42,7 @@ export const version = async () => {
   logger.info(cliVersion)
 
   const repoRoot = await rootOrNull(getProjectRoot)
+
   // Keyed off the resolved root so a `null` there is a `null` here too, not a second git failure.
   const mainRepoRoot =
     repoRoot === null

@@ -23,6 +23,7 @@ const page = (host: string, url = '/', extra: Record<string, string> = {}): Inco
 
 const run = (mode: LoopbackGuardMode, req: IncomingMessage): { res: FakeResponse; next: ReturnType<typeof vi.fn> } => {
   const res: FakeResponse = { statusCode: 200, headers: {}, body: undefined, ended: false }
+
   const fake = {
     get statusCode() {
       return res.statusCode
@@ -38,6 +39,7 @@ const run = (mode: LoopbackGuardMode, req: IncomingMessage): { res: FakeResponse
       res.ended = true
     },
   } as unknown as ServerResponse
+
   const next = vi.fn()
 
   createLoopbackGuard(mode)(req, fake, next)

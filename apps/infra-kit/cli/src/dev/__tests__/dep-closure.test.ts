@@ -44,6 +44,7 @@ describe('buildClosureMap — invert per-app closures into dependents-by-package
         { name: 'appY', packageName: 'appY-api' },
       ]),
     )
+
     const pkgADist = addPackage(root, 'pkgA', 'pkgA')
     const pkgCDist = addPackage(root, 'pkgC', 'pkgC')
 
@@ -154,6 +155,7 @@ describe('parseDryRunPackages — captured turbo --dry=json payloads', () => {
 
 describe('selectPackageRestartTargets — scope a package change to its dependents', () => {
   const apps = [{ name: 'appX' }, { name: 'appY' }]
+
   const map: ClosureMap = {
     dependentsByPackageDir: new Map([
       ['/repo/packages/pkgA/dist', new Set(['appX'])],

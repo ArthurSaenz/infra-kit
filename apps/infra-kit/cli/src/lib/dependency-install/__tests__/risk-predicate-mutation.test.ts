@@ -54,6 +54,7 @@ const buildMutant = async (name: string, mutate: (source: string) => string) => 
             const original = await import('node:fs/promises').then((fs) => {
               return fs.readFile(args.path, 'utf8')
             })
+
             const mutated = mutate(original)
 
             expect({ file: args.path, changed: mutated !== original }).toEqual({ file: args.path, changed: true })
@@ -125,6 +126,7 @@ describe('mutation: each detection conjunct is load-bearing', () => {
         "if (false) reasons.push('manager-absent')",
       )
     })
+
     const noBrew: RiskContext = { owner: null, present: ['npm'] }
 
     expect(assessRecipe(specFor('gh').bootstrapInstall, noBrew).executable).toBe(false)
@@ -138,6 +140,7 @@ describe('mutation: each detection conjunct is load-bearing', () => {
         "if (false) reasons.push('manager-mismatch')",
       )
     })
+
     // A script-installed aws handed `brew upgrade awscli`: the split-brain that installs a second aws.
     const recipe = specFor('aws').updateFor(AWS_KEG)
     const scriptOwned: RiskContext = { owner: 'script', present: ['homebrew', 'script'] }
@@ -163,6 +166,7 @@ describe('mutation: the executor’s two guards are independent, not one guard w
 
   it('neutering the MCP guard alone still does not run a dangerous recipe', () => {
     const { calls, spawn } = spawnSpy()
+
     // `agentMode: () => false` IS the neutered guard. The recipe verdict is what refuses here, so the two
     // guards genuinely stop different things — if they were redundant, this would spawn.
     const outcome = runRecipe(specFor('brew').bootstrapInstall, PERMISSIVE, {
@@ -179,6 +183,7 @@ describe('mutation: the executor’s two guards are independent, not one guard w
 
   it('a safe recipe with the MCP guard neutered DOES run, proving the guard was what stopped it', () => {
     const { calls, spawn } = spawnSpy()
+
     const outcome = runRecipe(specFor('gh').bootstrapInstall, PERMISSIVE, {
       spawnSync: spawn,
       agentMode: () => {
@@ -207,6 +212,7 @@ describe('mutation: there is no confirmation bypass to honour', () => {
     // guard here: `deps` is defaulted, so `runRecipe.length` is 2 and would stay 2 after any optional
     // parameter was added — which is precisely the shape a confirmation flag would take.
     const declared = /export interface InstallDeps \{([\s\S]*?)\n\}/.exec(source)?.[1] ?? ''
+
     const fields = [...declared.matchAll(/^\s{2}(\w+)\??:/gm)].map((match) => {
       return match[1]
     })

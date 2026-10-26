@@ -63,6 +63,7 @@ export const fetchLatestVersion = async (
   fetchFn: typeof fetch = fetch,
 ): Promise<string | null> => {
   const controller = new AbortController()
+
   const timer = setTimeout(() => {
     controller.abort()
   }, FETCH_TIMEOUT_MS)

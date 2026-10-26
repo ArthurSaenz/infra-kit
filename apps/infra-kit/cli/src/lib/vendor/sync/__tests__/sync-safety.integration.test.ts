@@ -176,6 +176,7 @@ describe('vendor sync over real git repos: safety', () => {
 
       const roots = [fx.source, fx.targetA, fx.targetB]
       const before = allStatus(roots)
+
       const previews = await Promise.all(
         [fx.targetA, fx.targetB].map((target) => {
           return preview(fx.source, target)

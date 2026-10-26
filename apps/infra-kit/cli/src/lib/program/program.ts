@@ -905,7 +905,9 @@ export const buildProgram = (): Command => {
   // runs. In JSON mode we lower the logger to `warn` so the human-oriented info
   // lines stop cluttering stderr while errors still surface; the structured
   // payload is written to stdout by `emit`. No handler logic is affected.
-  program.commands.forEach(addJsonOption)
+  for (const command of program.commands) {
+    addJsonOption(command)
+  }
 
   // `--agent` rides the same recursion as `--json`, on the root too, so a skill can put it anywhere in
   // the line. Read in the hook below, never off `process.argv`.

@@ -251,6 +251,7 @@ describe('resetScratchWorktree / assertPristineWorktree', () => {
       const at = (relative: string): string => {
         return path.join(worktree.path, relative)
       }
+
       const kept = ['node_modules/dep/index.js', 'packages/lib/node_modules/dep/index.js']
       const removed = ['packages/lib/dist/index.d.ts', 'packages/lib/tsconfig.tsbuildinfo', '.turbo/runs/run.json']
 

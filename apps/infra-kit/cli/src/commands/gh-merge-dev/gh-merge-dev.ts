@@ -172,11 +172,13 @@ const resolveRequestedBranches = (
     })
 
   const availableSet = new Set(available)
+
   const skippedReasons = new Map(
     skipped.map((entry) => {
       return [entry.branch, entry.reason] as const
     }),
   )
+
   const selected = new Set<string>()
 
   for (const token of tokens) {
@@ -471,6 +473,7 @@ const resolutionResponse = (outcome: ResolutionRunOutcome) => {
     : results.filter((entry) => {
         return entry.status !== 'aborted'
       })
+
   const failed = counted.filter((entry) => {
     return !SUCCESS_STATUSES.has(entry.status)
   })

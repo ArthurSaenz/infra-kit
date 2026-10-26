@@ -43,5 +43,7 @@ export const addJsonOption = (cmd: Command): void => {
     cmd.option('--json', 'Output the structured result as JSON on stdout (human logs stay on stderr)')
   }
 
-  cmd.commands.forEach(addJsonOption)
+  for (const child of cmd.commands) {
+    addJsonOption(child)
+  }
 }

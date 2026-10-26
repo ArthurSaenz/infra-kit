@@ -235,9 +235,11 @@ export class ServerlessLocalRun {
   private loadRoutes(): Promise<void>[] {
     const serverlessYmlPath = path.join(this.serverConfig.controllersPath, 'serverless.yml')
     const fileContents = fs.readFileSync(serverlessYmlPath, 'utf8')
+
     const data = parseYaml(fileContents) as {
       functions: Record<string, { events?: Array<{ http?: { method: string; path: string } }>; handler?: string }>
     }
+
     const p: Promise<void>[] = []
 
     if (!data?.functions) return p
@@ -305,6 +307,7 @@ export class ServerlessLocalRun {
     // first. That is inference, not declaration; the fallback bucket is named precisely so the wrong
     // guess is never made silently.
     const serviceTag = this.serverConfig.serviceTag
+
     const importHandler = async (): Promise<
       Record<string, (event: APIGatewayProxyEvent, ctx: Context, log: ILogger) => HandlerResult>
     > => {
@@ -313,6 +316,7 @@ export class ServerlessLocalRun {
         (event: APIGatewayProxyEvent, ctx: Context, log: ILogger) => HandlerResult
       >
     }
+
     const action = serviceTag == null ? await importHandler() : await runAttributed(serviceTag, importHandler)
 
     this.controllers[routeKey] = { action, handler }
@@ -340,6 +344,7 @@ export class ServerlessLocalRun {
           this.getContext(),
           traceLogger,
         )
+
         const responseBody = JSON.parse(retVal.body)
 
         reply.headers(retVal.headers ?? {})

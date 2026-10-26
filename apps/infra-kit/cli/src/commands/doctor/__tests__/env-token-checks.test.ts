@@ -214,6 +214,7 @@ describe('checkTokenStorePerms — the credential file is 0600 behind 0700 dirs'
 
   it('--fix tightens every loose path and reports a pass', async () => {
     const chmods: Array<[string, number]> = []
+
     const result = await checkTokenStorePerms(
       true,
       permDeps({ ...tightPaths(), [STORE]: 0o644, [PROJECTS_DIR]: 0o755 }, chmods),
@@ -346,6 +347,7 @@ describe('the token checks never print two failures for one root cause', () => {
 
     const read = configured()
     const deps = depsFor({})
+
     // Both fixtures, merged: `depsFor` carries the resolver and an (agreeing) empty store, `storeDeps`
     // carries the store PATH and the env-var seam. Without the latter the presence check would spawn
     // `git rev-parse` and read the real `INFRA_KIT_ENV_TOKEN` off the developer's shell.
@@ -354,6 +356,7 @@ describe('the token checks never print two failures for one root cause', () => {
       await checkEnvTokensConfigured(read, deps),
       await checkTokenStorePerms(false, permDeps({})),
     ]
+
     const failed = results.filter((result) => {
       return result.status === 'fail'
     })
@@ -373,6 +376,7 @@ describe('the token checks never print two failures for one root cause', () => {
  */
 describe('no doctor message ever contains a token value', () => {
   const tokenMaps: TokenMap[] = [{ dev: 'store' }, { dev: 'env' }, { prod: 'store' }, {}]
+
   /** Every state `checkTokenStorePresent` renders — including a POPULATED store, whose values are tokens. */
   const stores: Array<TokenStore | null | 'corrupt'> = [
     null,

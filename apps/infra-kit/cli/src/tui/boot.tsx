@@ -43,6 +43,7 @@ import type { PaletteItem } from './types'
 // hung forever.
 const renderToStderr = async (element: ReactElement): Promise<void> => {
   const stdout = safeStderr()
+
   const { waitUntilExit } = render(element, {
     stdout,
     // Ink's default is `exitOnCtrlC: true`, which intercepts the 0x03 byte in its own App and calls

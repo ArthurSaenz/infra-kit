@@ -53,6 +53,7 @@ export interface SuspendDeps {
 //    stops the job again, silently. Same as vim.
 export const suspendForeground = (deps: SuspendDeps = {}): void => {
   const platform = deps.platform ?? process.platform
+
   const kill =
     deps.kill ??
     ((pid: number, signal: NodeJS.Signals) => {

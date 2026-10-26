@@ -125,6 +125,7 @@ describe('exitForError — the entry/cli.ts catch', () => {
   it('a cancellation wins over everything, even when it is also a StructuredRefusalError-shaped object', () => {
     // Branch ORDER is the contract: the cancellation branch stays first and untouched.
     const h = harness()
+
     const cancelled = Object.assign(new PromptCancelledError(), {
       structuredContent: { status: 'refused' },
       exitCode: 2,

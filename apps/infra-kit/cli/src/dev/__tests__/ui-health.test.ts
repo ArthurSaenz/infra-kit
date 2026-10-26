@@ -100,6 +100,7 @@ const makeHealthRenderer = (): {
   const logs: string[] = []
   let captured: ReadySummary | null = null
   const noop = (): void => {}
+
   const renderer: DevUi = {
     narrate: noop,
     log: (message: string) => {
@@ -143,6 +144,7 @@ const makeProbe = (fallback: ProbeOutcome = 'ok'): ProbeScript => {
   const queues = new Map<string, ProbeOutcome[]>()
   const held = new Map<string, ProbeOutcome>()
   const calls: ProbeTarget[] = []
+
   const probe: HealthProbe = (target) => {
     calls.push(target)
     const next = queues.get(target.tag)?.shift()
@@ -242,6 +244,7 @@ const boot = async (
   proxy: PortlessDriver = workingProxy(),
 ): Promise<Harness> => {
   const root = temp.register(makeMonorepo(apps))
+
   const fakeRunBuild = async (): Promise<void> => {
     for (const app of apps) {
       if (!app.withHandler) continue
@@ -251,6 +254,7 @@ const boot = async (
 
   let fireExit: (() => void) | null = null
   let fireTaskFailure: ((packageName: string) => void) | null = null
+
   const fakeUiDev = (opts: {
     onUnexpectedExit?: (detail: string) => void
     onTaskFailure?: (packageName: string) => void
@@ -267,6 +271,7 @@ const boot = async (
 
   process.chdir(root)
   const { renderer, frames, logs, ready } = makeHealthRenderer()
+
   const runner = new DevServerRunner(
     options,
     fakeRunBuild,
@@ -368,6 +373,7 @@ describe('ui health — a foreign answer is never red, and never silent twice', 
       const states = h.frames.slice(1, 7).map((frame) => {
         return frame.health['shop/ui']
       })
+
       const warnsAt = h.frames.slice(1, 7).map((frame) => {
         return warnsMatching(frame.logs, 'liveness cannot be verified').length
       })
@@ -521,6 +527,7 @@ describe('ui health — the boot frame tells the truth about the backends', () =
     // Vite is spawned AFTER the ready frame, so a `● down` here would be a claim about a server that has
     // not been asked a single question yet — the one false red this design refuses to ship.
     const probe = makeProbe()
+
     const h = await boot(
       [
         { name: 'shop', api: false, ui: { packageName: 'shop-ui' } },
@@ -783,6 +790,7 @@ describe('ui health — restarts', () => {
     // The alias registration is what fails: portless accepts the boot registration and refuses the restart's.
     let refuse = false
     const base = makeFakeProxy(true).driver
+
     const flaky: PortlessDriver = {
       ...base,
       registerAlias: (name, port) => {
@@ -820,7 +828,9 @@ describe('ui health — restarts', () => {
         { name: 'broken', packageName: 'broken-api', withHandler: true },
       ]),
     )
+
     const brokenHandler = path.join(root, 'apps', 'broken', 'api', 'dist', 'handler.js')
+
     const fakeRunBuild = async (): Promise<void> => {
       fs.writeFileSync(path.join(root, 'apps', 'shop', 'api', 'dist', 'handler.js'), handlerSource(1))
       fs.writeFileSync(brokenHandler, 'throw new Error("config is missing field: \'connectionURL\'")\n')
@@ -828,6 +838,7 @@ describe('ui health — restarts', () => {
 
     process.chdir(root)
     const { renderer, frames, ready } = makeHealthRenderer()
+
     const runner = new DevServerRunner(
       {},
       fakeRunBuild,
@@ -928,6 +939,7 @@ describe('ui health — a UI with no managed port', () => {
     // the runner owns no port to probe. `unknown` (no dot) is the honest answer — but the row still has to
     // be able to REPORT, and this is precisely the app most likely to be misconfigured.
     const probe = makeProbe()
+
     const h = await boot(
       [{ name: 'shop', api: false, ui: { packageName: 'shop-ui', viteConfig: false } }],
       probe.probe,

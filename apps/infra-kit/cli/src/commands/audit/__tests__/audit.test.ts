@@ -451,6 +451,7 @@ describe('audit --root — leftover .mcp.json key', () => {
     projectRoot.value = root
 
     let result: Awaited<ReturnType<typeof audit>> | undefined
+
     const lines = await captureLog(async () => {
       result = await audit({ root: true })
     })

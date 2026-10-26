@@ -149,6 +149,7 @@ describe('runWizardFlow — manual branch', () => {
 
   it('full-stack local: frontend + /api answered local → presetDef with both parts, no env prompt', async () => {
     const doppler = fakeEnvVars({ CLIENT_URL: 'https://dev.example.com' })
+
     const result = await runWizardFlow(
       scripted({
         checkbox: [['Which packages', ['client/ui']]],
@@ -334,6 +335,7 @@ describe('runWizardFlow — manual branch', () => {
     // choice; it launches by answering a route local. This seam answers the checkbox the way inquirer
     // does — with the pre-checked choices — so the default is what's asserted.
     const offered: WizardChoice[] = []
+
     const prompts: WizardPrompts = {
       ...scripted({}),
       checkbox: (cfg) => {

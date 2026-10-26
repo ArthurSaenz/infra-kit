@@ -65,6 +65,7 @@ describe('proxySignature', () => {
       '/api': { target: 'https://a.test', changeOrigin: true, secure: false },
       '/ws': { target: 'https://b.test', changeOrigin: true },
     })
+
     const b = proxySignature({
       '/ws': { changeOrigin: true, target: 'https://b.test' },
       '/api': { secure: false, changeOrigin: true, target: 'https://a.test' },

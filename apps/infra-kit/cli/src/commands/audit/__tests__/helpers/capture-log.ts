@@ -17,6 +17,7 @@ import { logger } from 'src/lib/logger'
  */
 export const captureLog = async (run: () => Promise<unknown>): Promise<string[]> => {
   const lines: string[] = []
+
   const spy = vi.spyOn(logger, 'info').mockImplementation((...args: unknown[]) => {
     lines.push(String(args[0]))
   })

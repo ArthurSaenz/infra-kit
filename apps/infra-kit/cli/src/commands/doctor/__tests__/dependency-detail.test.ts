@@ -34,6 +34,7 @@ const mixedInstall = (): ProbeDeps => {
     brew: cellarBin('brew', '4.4.0', 'brew'),
     gh: cellarBin('gh', '2.62.0', 'gh'),
   }
+
   const versions: Record<string, string> = { brew: '4.4.0', gh: '2.62.0', aws: '2.19.5' }
 
   return {

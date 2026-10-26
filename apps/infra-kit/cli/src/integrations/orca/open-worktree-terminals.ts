@@ -70,6 +70,7 @@ const tryCreate = async (argv: string[]): Promise<CreateOutcome> => {
 
 const createWithPoll = async (argv: string[], cwd: string, poll: OrcaOpenPoll): Promise<string> => {
   const attempts = poll.exhausted ? 1 : poll.attempts
+
   const schedule = Array.from({ length: attempts }, (_, index) => {
     return index + 1
   })

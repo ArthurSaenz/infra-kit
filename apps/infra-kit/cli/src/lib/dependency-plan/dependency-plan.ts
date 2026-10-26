@@ -42,6 +42,7 @@ export interface DependencyPlan {
  */
 export const presentManagers = (states: readonly DependencyState[]): DependencyManager[] => {
   const present: DependencyManager[] = []
+
   const brewPresent = states.some((state) => {
     return state.id === 'brew' && state.present
   })
@@ -109,11 +110,13 @@ export const planDependencies = async (
   // happens to hold only because `brew` is declared first in the registry. Reordering two rows there
   // would otherwise break installs silently.
   const ordered = installOrder(ids)
+
   const byId = new Map(
     states.map((state) => {
       return [state.id, state]
     }),
   )
+
   const plans = ordered
     .filter((id) => {
       return ids.includes(id)

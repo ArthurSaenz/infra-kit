@@ -260,6 +260,7 @@ export const describeLocalTarget = async (location: E2eLocation, deps: E2eTarget
   const probe = deps.healthProbe ?? defaultHealthProbe
   const localContext = readLocalContext(location.targetDir)
   const dev = location.kind === 'ui' ? await loadDev(location.targetDir) : undefined
+
   const described = dev?.proxy
     ? describeProxyRoutes({
         proxy: dev.proxy,
@@ -271,6 +272,7 @@ export const describeLocalTarget = async (location: E2eLocation, deps: E2eTarget
         },
       })
     : []
+
   const ports = new Map(
     [...localContext.info].map(([name, info]) => {
       return [name, info.port] as const

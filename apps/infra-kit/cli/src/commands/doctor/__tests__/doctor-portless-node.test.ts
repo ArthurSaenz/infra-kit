@@ -101,12 +101,15 @@ const depsFor = (machine: Machine): PortlessCheckDeps => {
 
 const run = async (machine: Machine): Promise<{ node: CheckResult; installLine: string; checks: CheckResult[] }> => {
   const checks = await checkPortless(depsFor(machine))
+
   const node = checks.find((check) => {
     return check.name === 'portless node'
   })
+
   const serving = checks.find((check) => {
     return check.name.startsWith('portless serving TLS')
   })
+
   const installLine = /`(sudo [^`]+ service install)`/.exec(serving?.message ?? '')?.[1]
 
   if (node === undefined || installLine === undefined) throw new Error('missing node row or install line')
@@ -184,6 +187,7 @@ describe('portless node', () => {
     ['a parse failure', fileEntry({ content: JSON.stringify({ method: 'tarball', version: 'v1' }) })],
   ])('n5: a regular file whose sidecar is %s gets its own message — never "Node undefined"', async (_, sidecar) => {
     const node = fileEntry({ ino: 7, dev: 1, size: EXEC_SIZE })
+
     const { node: row, installLine } = await run({
       nodeFs: fakeNodeFs({ [EXEC_PATH]: node, [NODE]: node, ...(sidecar === undefined ? {} : { [SIDECAR]: sidecar }) }),
     })
@@ -263,6 +267,7 @@ describe('portless node', () => {
     ['the wrong version', { version: 'v22.0.0', status: 0, signal: null }, 'printed v22.0.0'],
   ])('n7: a consistent copy that does not run as this Node — %s', async (_, probe, reason) => {
     const spawned: string[] = []
+
     const { node, installLine } = await run({
       nodeFs: copyFs(),
       nodeVersionOf: (target) => {

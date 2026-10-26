@@ -212,9 +212,12 @@ describe('program — the retired env auto-load surface is gone, not hidden', ()
   const parseRefused = async (argv: string[]): Promise<{ code: string; exitCode: number }> => {
     const program = buildProgram()
     const silence = { writeErr: () => {}, writeOut: () => {} }
+
     const prepare = (cmd: Command): void => {
       cmd.exitOverride().configureOutput(silence)
-      cmd.commands.forEach(prepare)
+      for (const child of cmd.commands) {
+        prepare(child)
+      }
     }
 
     prepare(program)
@@ -254,7 +257,9 @@ describe('program — --debug is registered, so the log level is reachable at al
    */
   const overrideExitDeep = (cmd: Command): void => {
     cmd.exitOverride()
-    cmd.commands.forEach(overrideExitDeep)
+    for (const child of cmd.commands) {
+      overrideExitDeep(child)
+    }
   }
 
   const parseWithDebug = async (groupPath: string[]): Promise<void> => {
@@ -297,6 +302,7 @@ describe('program — --debug is registered, so the log level is reachable at al
     }
 
     const program = buildProgram()
+
     const missing = everyNode(program)
       .filter((cmd) => {
         return !hasDebug(cmd)

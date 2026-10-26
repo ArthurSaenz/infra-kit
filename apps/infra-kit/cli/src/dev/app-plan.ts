@@ -31,6 +31,7 @@ export const planAppRun = async (app: string, apiApps: PlanApi[], uiApps: PlanUi
   const ownApi = apiApps.find((api) => {
     return api.name === app
   })
+
   const ui = uiApps.find((candidate) => {
     return candidate.name === app
   })

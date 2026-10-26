@@ -461,6 +461,7 @@ interface DevContextFragment {
 const REPO_ALIAS_WHY =
   'dev aliases are now scoped by repo (`<release>.<package>.<repo>.localhost`), and only that helper aims ' +
   'Playwright at them. An older one would test whatever another repo serves on the old repo-less host.'
+
 const HTTPS_WHY =
   'dev URLs are now HTTPS, and only that `infraKitDev` helper understands them. An older one would proxy ' +
   'plain HTTP at a TLS listener, silently.'
@@ -478,6 +479,7 @@ export const isBelowVersion = (version: string, floor: string): boolean => {
       return Number.parseInt(part, 10) || 0
     })
   }
+
   const a = parse(version)
   const b = parse(floor)
 
@@ -1210,6 +1212,7 @@ export class DevServerRunner {
           return t.app
         }),
     )
+
     const uiNames = new Set(
       resolved.targets
         .filter((t) => {
@@ -1219,15 +1222,18 @@ export class DevServerRunner {
           return t.app
         }),
     )
+
     const passesInclude = (name: string): boolean => {
       return !include || include.includes(name)
     }
+
     // Split from the map below so the SURVIVOR COUNT is known before each app's port is chosen. The
     // choice cannot be made where the ports are resolved (`discoverApiApps`, over the full discovered
     // set): hulyo has 7 api apps, so a count taken there is never 1 even for `--app=client`.
     const selected = apiAppsAll.filter((a) => {
       return apiNames.has(a.name) && passesInclude(a.name)
     })
+
     const apps = selected.map((a) => {
       return {
         ...a,
@@ -1237,6 +1243,7 @@ export class DevServerRunner {
         preferredPort: selected.length === 1 ? a.preferredPort : a.appScopedPort,
       }
     })
+
     const uiApps = uiAppsAll.filter((a) => {
       return uiNames.has(a.name) && passesInclude(a.name)
     })
@@ -1281,11 +1288,13 @@ export class DevServerRunner {
       const config = await loadPackageConfig(ui.path).catch(() => {
         return undefined
       })
+
       const dev = config?.dev
 
       if (!dev?.proxy) continue
 
       const overrides = presetProxy[ui.name] ?? {}
+
       const routes = Object.fromEntries(
         Object.entries(dev.proxy.routes).map(([route, spec]) => {
           return [route, { ...spec, pinnedLocal: overrides[route] === 'local' }]
@@ -1545,6 +1554,7 @@ export class DevServerRunner {
       .map((app) => {
         return { name: app.name, port: app.preferredPort! }
       })
+
     const { duplicatePorts, conflictingApps } = findPortConflicts(explicitApps)
 
     if (duplicatePorts.length === 0) {
@@ -1566,6 +1576,7 @@ export class DevServerRunner {
         return `--filter=${a.packageName}`
       })
       .join(' ')
+
     // With `--watch`, always bypass Turbo cache so `tsc` runs and `dist/` matches disk (otherwise watch restarts can be no-ops).
     const buildCmd = `pnpm exec turbo run build ${filters} --env-mode=loose --output-logs=errors-only --no-update-notifier${watch ? ' --force' : ''}`
 
@@ -1842,6 +1853,7 @@ export class DevServerRunner {
       // launching shell held another; `infra-kit e2e` compares it with its own before trusting the split.
       env: process.env[INFRA_KIT_ENV_VAR] ?? '',
     }
+
     const target = path.join(this.devContextDir, `${app.name}.json`)
     const tmp = path.join(this.devContextDir, `${app.name}.json.${process.pid}.tmp`)
 
@@ -2055,6 +2067,7 @@ export class DevServerRunner {
             // measure THIS process, not the one watch just killed, or the panel would claim an uptime
             // for a server that has been alive for two seconds.
             const previous = this.appServers[idx]
+
             const entry: IAppServer = {
               app,
               ...restarted,
@@ -2078,6 +2091,7 @@ export class DevServerRunner {
         }
       }),
     )
+
     // Show each restarted app's CURRENT bound port: an ephemeral-port app rebinds a fresh port on
     // restart, and the server table is printed only once at boot — so this line is the only place the
     // new port surfaces in the default (quiet) terminal.
@@ -2118,6 +2132,7 @@ export class DevServerRunner {
     const allHealthy = probed.every((p) => {
       return p.healthy
     })
+
     const labels = probed
       .map((p) => {
         return p.label
@@ -2134,6 +2149,7 @@ export class DevServerRunner {
     const anyRestarted = outcomes.some((o) => {
       return o.entry !== null
     })
+
     const stale = anyRestarted ? this.resolveStaleFiles(staleFiles, targets) : []
 
     // NOT `✅ Restarted`. The fastify server really was replaced — but the changed module was not
@@ -2251,11 +2267,13 @@ export class DevServerRunner {
 
   private async forceRebuild(pkgDir: string, stale: StaleSource[]): Promise<void> {
     const pkgName = readPackageName(pkgDir)
+
     const files = stale
       .map(({ file }) => {
         return path.relative(pkgDir, file)
       })
       .join(', ')
+
     const now = new Date()
 
     this.renderer.log(`👀 ${pkgName}: last build missed a save of ${files}; forcing a rebuild`, 'debug')
@@ -2849,6 +2867,7 @@ export class DevServerRunner {
     if (summary == null) return
 
     const now = Date.now()
+
     const byTag = new Map<string, IAppServer>(
       this.appServers.map((server) => {
         return [`${server.app.name}/api`, server]
@@ -3016,6 +3035,7 @@ export class DevServerRunner {
    */
   private async findServedApps(apps: IApiAppConfig[], uiApps: DiscoveredUiApp[]): Promise<string[]> {
     const routes = listPortlessRoutes()
+
     const checks = [
       ...apps.map((app) => {
         return {
@@ -3037,6 +3057,7 @@ export class DevServerRunner {
         }
       }),
     ]
+
     const served = await Promise.all(
       checks.map(async (check) => {
         return check.port > 0 && (await this.healthProbe(check)) === 'ok'
@@ -3113,10 +3134,12 @@ export class DevServerRunner {
         return app.packageName
       }),
     )
+
     const cloudBound: string[] = []
 
     for (const ui of uiApps) {
       const config = await loadPackageConfig(ui.path)
+
       const routes = Object.entries(config?.dev?.proxy?.routes ?? {}).filter(([, route]) => {
         return !route.from.includes('local') || !launched.has(route.packageName)
       })

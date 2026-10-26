@@ -126,6 +126,7 @@ export const describeStaleFiles = (files: string[]): string => {
   const named = files.slice(0, MAX_NAMED_STALE).map((f) => {
     return path.basename(f)
   })
+
   const rest = files.length - named.length
 
   return rest > 0 ? `${named.join(', ')} (+${rest} more)` : named.join(', ')

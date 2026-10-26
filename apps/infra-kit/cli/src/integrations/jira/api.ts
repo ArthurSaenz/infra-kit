@@ -32,6 +32,7 @@ export const assertJiraOk = async (response: Response, context: string): Promise
   }
 
   const body = await response.text()
+
   const error = new JiraApiError({
     status: response.status,
     seraphLoginReason: readSeraphLoginReason(response),
@@ -140,6 +141,7 @@ export const getProjectVersions = async (config: JiraConfig): Promise<JiraVersio
  */
 export const findVersionByName = async (versionName: string, config: JiraConfig): Promise<JiraVersion | null> => {
   const versions = await getProjectVersions(config)
+
   const version = versions.find((v) => {
     return v.name === versionName
   })

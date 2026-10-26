@@ -15,6 +15,7 @@ vi.mock('src/lib/logger', () => {
 })
 
 const PROXIES = { grafana: { command: 'mcp-grafana', args: ['-t', 'stdio'], env: ['GRAFANA_URL'], unset: [] } }
+
 const DERIVED = {
   type: 'stdio',
   command: 'ik-mcp',

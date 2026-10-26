@@ -297,6 +297,7 @@ describe('buildDesignSkeleton', () => {
       'Components',
       "Do's and Don'ts",
     ]
+
     const positions = sections.map((section) => {
       return rendered.indexOf(`## ${section}`)
     })

@@ -107,6 +107,7 @@ export const prepareGitForRelease = async (type: ReleaseType = 'regular'): Promi
       quiet: true,
       nothrow: true,
     })`git rev-list --left-right --count origin/${baseBranch}...${baseBranch}`
+
     const [behind = '?', ahead = '?'] = counts.exitCode === 0 ? counts.stdout.trim().split(/\s+/) : []
     const diverged = ahead !== '0' || behind !== '0'
 
@@ -197,6 +198,7 @@ const ensureJiraVersion = async (args: EnsureJiraVersionArgs): Promise<JiraVersi
   }
 
   const wanted = description || ''
+
   const changes = {
     ...(wanted !== '' && wanted !== (existing.description ?? '') ? { description: wanted } : {}),
     ...(releaseDate !== undefined && releaseDate !== (existing.releaseDate ?? '') ? { releaseDate } : {}),
@@ -224,12 +226,14 @@ export const createSingleRelease = async (args: CreateSingleReleaseArgs): Promis
   // 1. Ensure the Jira version exists (mandatory). For versioned releases this is
   // "v1.2.3" (byte-identical to before); for named releases it is "<name>".
   const versionName = formatJiraName(id)
+
   const jiraVersion = await ensureJiraVersion({
     versionName,
     jiraConfig,
     description,
     ...(releaseDate === undefined ? {} : { releaseDate }),
   })
+
   const jiraVersionUrl = buildJiraVersionUrl(jiraConfig, jiraVersion)
 
   // 2. Create GitHub release branch

@@ -198,6 +198,7 @@ describe('id namespace (N1)', () => {
 
   it('never forwards the replayed handshake answer to the client', async () => {
     const relayed: unknown[] = []
+
     const upstream = createUpstream(spec(), {
       readyTimeoutMs: 5000,
       extraEnv: { FAKE_SPAWN_LOG: path.join(dir, 'spawns.jsonl'), FAKE_METHOD_LOG: path.join(dir, 'methods.jsonl') },
@@ -216,6 +217,7 @@ describe('id namespace (N1)', () => {
 
   it('relays a server-initiated notification to the client', async () => {
     const relayed: { method?: string }[] = []
+
     const upstream = createUpstream(spec(), {
       readyTimeoutMs: 5000,
       extraEnv: { FAKE_TAG: 'srv' },
@@ -342,6 +344,7 @@ describe('child environment', () => {
 describe('server-initiated requests', () => {
   it('refuses them rather than relaying an id from the upstream’s namespace', async () => {
     const relayed: { method?: string }[] = []
+
     const upstream = createUpstream(spec(), {
       readyTimeoutMs: 5000,
       onServerMessage: (message) => {

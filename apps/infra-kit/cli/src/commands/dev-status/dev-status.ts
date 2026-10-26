@@ -86,12 +86,14 @@ export const devStatus = async (deps: DevStatusDeps = {}) => {
 
   const active = apps.length > 0
   const contextDir = snapshot.fragmentDir ?? null
+
   // `isDirectory`, NOT a bare `existsSync`: a plain FILE at this path also "exists", but the reader's
   // `readdirSync` then throws ENOTDIR and is swallowed into an empty result — which would report
   // `contextDirExists: true` for a path that could not be read at all. This field's entire job is to
   // separate "resolved" from "readable", so it must not count a non-directory as the latter.
   const contextDirExists =
     contextDir !== null && (fs.statSync(contextDir, { throwIfNoEntry: false })?.isDirectory() ?? false)
+
   const where = contextDir === null ? 'nothing (no .infra-kit anchor exists up-tree)' : contextDir
 
   if (!active) {

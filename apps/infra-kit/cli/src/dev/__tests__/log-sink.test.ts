@@ -196,6 +196,7 @@ describe('rawStdoutWrite', () => {
 describe('rawStdoutWrite / rawStderrWrite — the terminal-liveness gate', () => {
   it('drops the chunk once the stream has died, returning true (never false: false reads as backpressure)', async () => {
     const proto = Object.getPrototypeOf(process.stdout) as { write: NodeJS.WriteStream['write'] }
+
     const real = vi.spyOn(proto, 'write').mockImplementation((() => {
       return true
     }) as never)

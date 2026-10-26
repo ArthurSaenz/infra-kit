@@ -35,6 +35,7 @@ describe('formatAlignedRows', () => {
         return left.length
       }),
     )
+
     const expected = rows.map(([left, right]) => {
       return `${left.padEnd(width)}  ${right}`
     })

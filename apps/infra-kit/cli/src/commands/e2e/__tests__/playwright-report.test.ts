@@ -54,6 +54,7 @@ describe('summarizePlaywrightReport', () => {
         ],
       }
     }
+
     const raw = {
       config: { rootDir: '/repo/tests' },
       suites: [
@@ -101,6 +102,7 @@ describe('summarizePlaywrightReport', () => {
     const test = (extra: object) => {
       return { projectName: 'chromium', status: 'expected', results: [{ status: 'passed', retry: 0 }], ...extra }
     }
+
     const raw = {
       config: { rootDir: '/repo/tests' },
       suites: [

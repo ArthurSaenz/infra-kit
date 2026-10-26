@@ -66,6 +66,7 @@ interface Machine {
 
 const depsFor = (machine: Machine): PortlessCheckDeps => {
   const { files } = machine
+
   const realpath = (target: string): string => {
     if (machine.linkTarget == null) return target
     if (target === LINK) return machine.linkTarget
@@ -134,6 +135,7 @@ const depsFor = (machine: Machine): PortlessCheckDeps => {
 
 const serviceTargetRow = async (machine: Machine): Promise<CheckResult> => {
   const checks = await checkPortless(depsFor(machine))
+
   const row = checks.find((check) => {
     return check.name === 'portless service target'
   })
@@ -252,6 +254,7 @@ describe('portless service target', () => {
 
   it('fails when the link points inside the repo doctor is run from', async () => {
     const localTarget = path.join(CWD, 'node_modules', 'portless')
+
     const machine = converged({
       linkTarget: localTarget,
       files: {
@@ -274,6 +277,7 @@ describe('portless service target', () => {
     // checkout — and just as gone the day the worktree is removed.
     const repo = '/Users/x/work/mono'
     const localTarget = path.join(repo, 'node_modules', 'portless')
+
     const machine = converged({
       cwd: path.join(repo, 'apps', 'x'),
       repoRoot: repo,
@@ -410,6 +414,7 @@ describe('portless service target', () => {
     const home = '/Users/r&d'
     const linkCli = path.join(home, '.infra-kit', 'portless', 'dist', 'cli.js')
     const target = '/Users/r&d/global/node_modules/portless'
+
     const deps = depsFor({
       files: {
         [DARWIN_SERVICE_PLIST_PATH]: launchdPlist([EXEC_PATH, linkCli, 'proxy']),
@@ -418,6 +423,7 @@ describe('portless service target', () => {
         [path.join(target, 'package.json')]: PACKAGE_JSON,
       },
     })
+
     const checks = await checkPortless({
       ...deps,
       home,
@@ -432,6 +438,7 @@ describe('portless service target', () => {
         return p === path.join(target, 'package.json') ? PACKAGE_JSON : null
       },
     })
+
     const row = checks.find((check) => {
       return check.name === 'portless service target'
     })
@@ -561,15 +568,18 @@ describe('portless service target — stable node', () => {
     const linkCli = path.join(home, '.infra-kit', 'portless', 'dist', 'cli.js')
     const target = '/home/u/.local/share/pnpm/global/5/node_modules/portless'
     const nodeFs = stableNodeFs(home, 'linux')
+
     const files = {
       [LINUX_SERVICE_UNIT_PATH]: systemdUnit([stableNode, linkCli, 'proxy', 'start', '--port', '443']),
       [stableNode]: 'ELF',
       [path.join(target, 'dist', 'cli.js')]: 'js',
       [path.join(target, 'package.json')]: PACKAGE_JSON,
     }
+
     const realpath = (p: string): string => {
       return p.startsWith(`${home}/.infra-kit/portless`) ? target + p.slice(`${home}/.infra-kit/portless`.length) : p
     }
+
     const checks = await checkPortless({
       ...depsFor({ platform: 'linux', files, nodeFs }),
       home,
@@ -582,6 +592,7 @@ describe('portless service target — stable node', () => {
         return files[realpath(p)] ?? null
       },
     })
+
     const row = checks.find((check) => {
       return check.name === 'portless service target'
     })
@@ -606,6 +617,7 @@ describe('installDaemonCmd', () => {
 
   const servingRow = async (deps: PortlessCheckDeps): Promise<CheckResult> => {
     const checks = await checkPortless(deps)
+
     const row = checks.find((check) => {
       return check.name.startsWith('portless serving TLS')
     })

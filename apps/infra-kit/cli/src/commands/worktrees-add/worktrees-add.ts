@@ -390,6 +390,7 @@ const selectFeatureTargets = async (options: WorktreeManagementArgs): Promise<Wo
   commandEcho.addOption('--base', resolvedBase)
 
   const currentWorktrees = await getCurrentWorktrees('feature')
+
   const toCreate = plans.filter((plan) => {
     if (!currentWorktrees.includes(plan.branch)) return true
 
@@ -681,6 +682,7 @@ const createWorktrees = async (targets: WorktreeTarget[], worktreeDir: string): 
       created.push(result.value)
     } else {
       const branch = targets[index]?.branch
+
       const err = new OperationError(result.reason, {
         operation: `git worktree add for ${branch}`,
         remediation: 'check the branch name and that the parent dir is writable',

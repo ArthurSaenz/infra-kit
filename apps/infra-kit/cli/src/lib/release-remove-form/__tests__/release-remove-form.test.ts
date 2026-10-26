@@ -34,6 +34,7 @@ const REGULAR: ReleasePRInfo = {
   titleMismatch: false,
   dualBase: false,
 }
+
 const HOTFIX: ReleasePRInfo = {
   branch: 'release/v1.2.6',
   number: 2,
@@ -44,6 +45,7 @@ const HOTFIX: ReleasePRInfo = {
   titleMismatch: false,
   dualBase: false,
 }
+
 const JUNK: ReleasePRInfo = {
   branch: 'release/Bad_Name',
   number: 3,
@@ -54,12 +56,14 @@ const JUNK: ReleasePRInfo = {
   titleMismatch: false,
   dualBase: false,
 }
+
 const DESCRIPTION = 'Checkout redesign, phase one'
 
 const LABELS = ['1.2.5', '1.2.6']
 
 const EMPTY_LINE = 'Tool execution form options empty (open release PRs): release-remove'
 const FAILED_LINE = 'Tool execution form enumeration failed (gh pr list): release-remove'
+
 const timedOutLine = (budgetMs: number): string => {
   return `Tool execution form enumeration timed out (gh pr list, ${budgetMs / 1000} s): release-remove`
 }
@@ -110,11 +114,13 @@ const schemaWithin = async (
   provider: ReturnType<typeof createReleaseRemoveFormProvider>,
 ): Promise<z.ZodObject<z.ZodRawShape> | null> => {
   let guardTimer: ReturnType<typeof setTimeout> | undefined
+
   const guard = new Promise<'OUTRAN_THE_TEST'>((resolve) => {
     guardTimer = setTimeout(() => {
       resolve('OUTRAN_THE_TEST')
     }, 200)
   })
+
   const raced = await Promise.race([provider.buildRequestedSchema({}), guard])
 
   clearTimeout(guardTimer)

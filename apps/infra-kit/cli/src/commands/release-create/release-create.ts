@@ -69,6 +69,7 @@ const resolveOrExit = (entries: ReleaseInput[], known: SemVer[]): ReleaseEntry[]
 export const promptForVersionInput = async (running: SemVer[], type: ReleaseType): Promise<string> => {
   const suggestion = suggestNextVersion(running, type)
   const defaultHint = suggestion ? ` [${suggestion}]` : ''
+
   // The suggestion stays in the MESSAGE and is applied by the empty-answer fallback below —
   // deliberately not inquirer's `default:`, which prefills the editable buffer and would change
   // both what the user sees and what an empty submit returns.
@@ -80,6 +81,7 @@ export const promptForVersionInput = async (running: SemVer[], type: ReleaseType
       { whenHeadless: 'refuse' },
     )
   ).trim()
+
   const versionInput = versionAnswer === '' ? (suggestion ?? '') : versionAnswer
 
   if (versionInput === '') {
@@ -148,6 +150,7 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
 
   let baseKnown: SemVer[] | null = null
   const running: SemVer[] = []
+
   const ensureRunning = async (): Promise<SemVer[]> => {
     if (baseKnown === null) {
       baseKnown = await ensureKnown()
@@ -162,6 +165,7 @@ const promptForReleasesInteractive = async (ensureKnown: () => Promise<SemVer[]>
 
   while (addAnother) {
     const ordinal = entries.length + 1
+
     const kind = await withEscape(
       (context) => {
         return select<'version' | 'name'>(
@@ -440,6 +444,7 @@ export const releaseCreate = async (args: ReleaseCreateArgs) => {
   const jiraConfig = await loadJiraConfig()
 
   let known: SemVer[] | null = null
+
   const ensureKnown = async (): Promise<SemVer[]> => {
     if (known === null) known = await loadExistingVersions()
 

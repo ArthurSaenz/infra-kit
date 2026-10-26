@@ -91,6 +91,7 @@ describe('assertNotSymlink', () => {
 
 describe('marker-boundary integrity', () => {
   const body = 'BODY'
+
   const upsert = (content: string, nextBody: string): string => {
     return upsertManagedBlock({
       content,

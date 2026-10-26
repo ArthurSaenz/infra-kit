@@ -129,11 +129,13 @@ describe('r3 — the [next] hint', () => {
     const provider = createReleaseFormProvider({ hintBudgetMs: 5 })
 
     let guardTimer: ReturnType<typeof setTimeout> | undefined
+
     const guard = new Promise<string>((resolve) => {
       guardTimer = setTimeout(() => {
         resolve('OUTRAN_THE_TEST')
       }, 200)
     })
+
     // Raced in the TEST too, so a missing deadline wrapper fails as an assertion rather than hanging
     // until the runner's own timeout — which reads as infrastructure flake, not as a defect.
     const raced = await Promise.race([provider.buildRequestedSchema({}), guard])
@@ -234,6 +236,7 @@ describe('r5b — an invalid date passes the form and is refused on the re-run b
     expect(merged).toStrictEqual({ releases: [{ version: '1.64.0', type: 'regular', releaseDate: '2026-02-30' }] })
 
     const [entry] = (merged as { releases: ReleaseInput[] }).releases
+
     const spec = formatReleaseSpec({
       id: { kind: 'version', semver: { major: 1, minor: 64, patch: 0 }, raw: '1.64.0' },
       type: 'regular',

@@ -64,6 +64,7 @@ afterEach(async () => {
 /** A real `node:http` server on an OS-assigned port on 127.0.0.1, closed in `afterEach`. */
 const startServer = async (handler: http.RequestListener): Promise<TestServer> => {
   const requests: string[] = []
+
   const server = http.createServer((req, res) => {
     requests.push(req.url ?? '')
     handler(req, res)
@@ -121,6 +122,7 @@ describe('defaultHealthProbe — a frontend (vite’s HMR ping)', () => {
     const server = await startServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/html' }).end('<!doctype html>')
     })
+
     const outcome = await probe(uiTarget(server.port))
 
     expect(outcome).not.toBe('ok')
@@ -144,6 +146,7 @@ describe('defaultHealthProbe — a frontend (vite’s HMR ping)', () => {
     const server = await startServer(() => {
       // Deliberately never responds: the request is accepted and left hanging.
     })
+
     const started = Date.now()
 
     expect(await probe(uiTarget(server.port))).toBe('refused')
@@ -183,6 +186,7 @@ describe('defaultHealthProbe — a frontend (vite’s HMR ping)', () => {
     // OUR vite. The verdict alone is not the invariant: the probe must not FOLLOW it. Only a request
     // counter on the second origin can prove that, so `other` is a real second `node:http` server.
     const other = await startServer(viteLike)
+
     const server = await startServer((_req, res) => {
       res.writeHead(302, { location: `http://127.0.0.1:${other.port}/` }).end()
     })

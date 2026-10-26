@@ -45,6 +45,7 @@ export const absent = (): OrcaReply => {
 export const routes = (table: Record<string, OrcaReply | OrcaResponder>): OrcaResponder => {
   return (argv) => {
     const joined = argv.join(' ')
+
     const key = Object.keys(table).find((prefix) => {
       return joined.startsWith(prefix)
     })
@@ -75,7 +76,7 @@ export const orcaCli: OrcaCliState = {
 const flattenTemplate = (strings: TemplateStringsArray, values: unknown[]): string[] => {
   const words: string[] = []
 
-  strings.forEach((chunk, index) => {
+  for (const [index, chunk] of strings.entries()) {
     words.push(...chunk.split(/\s+/))
 
     const value = values[index]
@@ -85,7 +86,7 @@ const flattenTemplate = (strings: TemplateStringsArray, values: unknown[]): stri
     } else if (value !== undefined) {
       words.push(String(value))
     }
-  })
+  }
 
   return words.filter((word) => {
     return word.length > 0

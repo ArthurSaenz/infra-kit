@@ -31,6 +31,7 @@ export const BranchMultiPicker = (props: BranchMultiPickerProps) => {
   const { items, onSubmit, onCancel, required = true, allowSelectAll = true } = props
 
   const T = BRANCH_MULTI_PICKER_TEXT
+
   const labelWidth = items.reduce((max, item) => {
     return Math.max(max, item.label.length)
   }, 0)
@@ -38,10 +39,12 @@ export const BranchMultiPicker = (props: BranchMultiPickerProps) => {
   const { exit } = useApp()
   const { rows } = useWindowSize()
   const { filtered, activeIndex, query, handleNavigation, clearQuery } = useListFilter(items, filterText)
+
   // Selection keyed by value so it persists across filter changes.
   const [selected, setSelected] = useState<Set<string>>(() => {
     return new Set()
   })
+
   const [showRequiredHint, setShowRequiredHint] = useState(false)
   // First branch in the visible window; kept in state so the list scrolls by the minimum needed.
   const [windowStart, setWindowStart] = useState(0)

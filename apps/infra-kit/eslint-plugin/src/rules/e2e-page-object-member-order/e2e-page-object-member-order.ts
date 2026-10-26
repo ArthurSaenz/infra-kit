@@ -78,9 +78,11 @@ const buildFix = (sourceCode: SourceCode, members: Member[]): Rule.ReportFixer =
     const spans = members.map((_, index) => {
       return [attachedStart(sourceCode, members[index]!), members[index]!.range![1]] as [number, number]
     })
+
     const texts = spans.map(([start, end]) => {
       return sourceCode.text.slice(start, end)
     })
+
     const order = members
       .map((member, index) => {
         return { index, rank: GROUPS.indexOf(groupOf(member as TsMember)) }

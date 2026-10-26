@@ -179,6 +179,7 @@ export const tightenTokenStoreModes = async (): Promise<string[] | null> => {
   const projectDir = path.dirname(storePath)
   const projectsDir = path.dirname(projectDir)
   const userConfigDir = path.dirname(projectsDir)
+
   const chain: Array<[target: string, mode: number]> = [
     [userConfigDir, TOKEN_DIR_MODE],
     [projectsDir, TOKEN_DIR_MODE],

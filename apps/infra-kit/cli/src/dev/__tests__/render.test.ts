@@ -16,6 +16,7 @@ const makeRenderer = (
 ): { r: DevRenderer; out: string[]; log: string[] } => {
   const out: string[] = []
   const log: string[] = []
+
   const r = new DevRenderer({
     write: (t) => {
       return out.push(t)
@@ -502,6 +503,7 @@ describe('degraded-route row', () => {
       ...degradedSummary(),
       degraded: [{ route: '/api', tag: 'client/ui', fallback: 'local' }],
     }
+
     const footer = new DevRenderer({ isTTY: false }).formatFooterLines(summary).join('\n')
 
     expect(footer).toContain('● dead alias (local backend down)')
@@ -631,6 +633,7 @@ describe('render — the health dot (all five arms)', () => {
       endpoints: [{ tag: 'client/api', url: 'https://x.localhost/api/v1', health: 'ok', errors: 3 }],
       uiRefs: [],
     })
+
     const tty = new DevRenderer({ isTTY: true })
 
     expect(tty.formatHeaderLines(broken).join('\n')).not.toContain('\x1B[31mclient/api')

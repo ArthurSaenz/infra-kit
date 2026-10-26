@@ -55,6 +55,7 @@ const countOf = (haystack: string, needle: string): number => {
 const makeUi = (over: { verbose?: boolean } = {}) => {
   const appendLog: string[] = []
   const stdoutWrites: string[] = []
+
   const fakeStdout = {
     write: (text: string): boolean => {
       stdoutWrites.push(text)
@@ -62,12 +63,15 @@ const makeUi = (over: { verbose?: boolean } = {}) => {
       return true
     },
   } as unknown as NodeJS.WriteStream
+
   let instance: InkInstance | null = null
+
   const renderSeam = (tree: ReactElement): InkInstance => {
     instance = render(tree)
 
     return instance
   }
+
   const ui = new PersistentInkDevUi({
     appendLog: (text) => {
       appendLog.push(text)
@@ -252,6 +256,7 @@ describe('persistentInkDevUi — default stdout is scrollback-safe', () => {
 
   it('hands Ink a stream that strips the scrollback-erasing escape', () => {
     const written: string[] = []
+
     const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown): boolean => {
       written.push(String(chunk))
 

@@ -83,6 +83,7 @@ export const probeEnvToken = async ({ childEnv, project, config }: EnvTokenProbe
     })`doppler secrets get ${SCOPE_KEY} --plain --project ${project} --config ${config}`.timeout(
       DOPPLER_PROBE_TIMEOUT_MS,
     )
+
     const scopedTo = result.stdout.trim()
 
     // Exit 0 with a DIFFERENT config would mean the CLI's own scope enforcement let a mis-scoped token

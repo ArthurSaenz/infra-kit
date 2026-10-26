@@ -213,6 +213,7 @@ describe('gh-merge-dev against occupied worktrees', () => {
     // a dry run that quietly moved some other ref would slip past a narrow check.
     const localRefsBefore = await git(repo, 'show-ref')
     const worktreesBefore = await git(repo, 'worktree', 'list', '--porcelain')
+
     const originBefore = await Promise.all(
       RELEASES.map((branch) => {
         return git(repo, 'rev-parse', `origin/${branch}`)

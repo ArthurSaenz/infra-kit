@@ -62,6 +62,7 @@ const installAt = (dir: string, name: string, version: string): void => {
 
 const makeRepo = (spec: HelperSpec): string => {
   const root = temp.register(fs.mkdtempSync(path.join(fs.realpathSync('/tmp'), 'floor-')))
+
   const devDependencies = Object.fromEntries(
     (spec.declares ?? []).map((name) => {
       return [name, '^0.1.0']
@@ -84,6 +85,7 @@ const makeRepo = (spec: HelperSpec): string => {
 
   if (spec.nested) {
     const uiDir = path.join(root, 'apps', 'client', 'ui')
+
     const nestedDeps = Object.fromEntries(
       spec.nested.declares.map((name) => {
         return [name, '^0.1.0']

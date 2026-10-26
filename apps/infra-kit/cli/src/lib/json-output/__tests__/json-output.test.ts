@@ -69,7 +69,9 @@ describe('json-output', () => {
         })
       })
 
-      program.commands.forEach(addJsonOption)
+      for (const command of program.commands) {
+        addJsonOption(command)
+      }
       program.hook('preAction', (_thisCommand, actionCommand) => {
         jsonOutput.enabled = Boolean(actionCommand.optsWithGlobals().json)
       })

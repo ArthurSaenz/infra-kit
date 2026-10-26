@@ -65,6 +65,7 @@ const nodeDeps = (fs: FakeNodeFs, overrides: Partial<EnsurePortlessNodeDeps> = {
 /** A converged pair: link in place, node hardlinked (same inode as `EXEC`) with a sidecar that matches. */
 const convergedStable = (): PortlessStableDeps => {
   const exec = fileEntry({ ino: 7, dev: 3, size: 100 })
+
   const sidecar = JSON.stringify({
     method: 'hardlink',
     version: 'v24.21.0',
@@ -184,6 +185,7 @@ describe('ensurePortlessLink', () => {
 
   it('portless not resolvable → skipped-unresolved, before the global gate is even consulted', () => {
     const fs = fakeLinkFs()
+
     const isGlobal = vi.fn(() => {
       return true
     })
@@ -457,6 +459,7 @@ describe('realPortlessStableDeps', () => {
 describe('serviceInstallCommand', () => {
   const FALLBACK_BIN = '/deep/node_modules/portless/dist/cli.js'
   const LINK_CLI = `${LINK}/dist/cli.js`
+
   const linkResolves = (target: string): boolean => {
     return target === LINK_CLI
   }

@@ -47,12 +47,14 @@ describe('catalog integrity', () => {
     const liveIdList = allDetectors.map((d) => {
       return d.id
     })
+
     const liveIds = new Set<string>(liveIdList)
     const declaredIds = new Set<string>(DETECTOR_IDS)
 
     const staleDeclared = [...declaredIds].filter((id) => {
       return !liveIds.has(id)
     })
+
     const undeclaredLive = [...liveIds].filter((id) => {
       return !declaredIds.has(id)
     })
@@ -143,6 +145,7 @@ describe('detector fields', () => {
 
   it('ai-agentic detectors are measurable (concrete option) or proposed', () => {
     const measurableTypes = ['number', 'enum', 'string[]']
+
     const aiAgentic = allDetectors.filter((d) => {
       return d.group === DetectorGroup.aiAgentic
     })
@@ -166,19 +169,19 @@ describe('detector fields', () => {
 describe('examples are syntactically valid TypeScript (anti-rot)', () => {
   it('every good example transpiles with no syntax errors', () => {
     for (const d of allDetectors) {
-      d.examples.forEach((ex, i) => {
+      for (const [i, ex] of d.examples.entries()) {
         expect(syntaxErrorCount(ex.good), `${d.id} good example #${i} has syntax errors`).toBe(0)
-      })
+      }
     }
   })
 
   it('every bad example parses (transpiles without throwing)', () => {
     for (const d of allDetectors) {
-      d.examples.forEach((ex, i) => {
+      for (const [i, ex] of d.examples.entries()) {
         expect(() => {
           return ts.transpileModule(ex.bad, { compilerOptions: { isolatedModules: true } })
         }, `${d.id} bad example #${i}`).not.toThrow()
-      })
+      }
     }
   })
 })
@@ -189,6 +192,7 @@ describe('layer / segment models', () => {
       const names = model.layers.map((l) => {
         return l.name
       })
+
       const orders = model.layers.map((l) => {
         return l.order
       })

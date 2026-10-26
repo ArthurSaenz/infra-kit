@@ -64,6 +64,7 @@ describe('mergeServerConfig', () => {
       hmr: { protocol: 'wss', host: 'main.client-ui.localhost', clientPort: 443 },
       proxy: {},
     }
+
     const merged = mergeServerConfig(legacy, undefined)
 
     expect(merged.ws).toEqual({ protocol: 'wss', host: 'main.client-ui.localhost', clientPort: 443 })

@@ -36,7 +36,9 @@ const firstFunction = (code: string): ComponentFunction => {
 
     for (const value of Object.values(candidate as unknown as Record<string, unknown>)) {
       if (Array.isArray(value)) {
-        value.forEach(visit)
+        for (const item of value) {
+          visit(item)
+        }
       } else {
         visit(value)
       }

@@ -243,17 +243,20 @@ export const installModuleGeneration = (opts: InstallOptions): ModuleGenerationH
     root: opts.root,
     selfDist: opts.selfDist,
   }
+
   const stopBytes = opts.stopBytes ?? DEFAULT_STOP_BYTES
   const stopEnabled = opts.stopEnabled ?? true
   // DERIVED, not chosen. Stating an independent warn threshold would add a second number nothing
   // justifies; half the budget is a relationship, and it needs no defending of its own.
   const warnBytes = stopBytes / 2
   const warnStrideBytes = opts.warnStrideBytes ?? stopBytes / 8
+
   const sampleRss =
     opts.sampleRss ??
     ((): number => {
       return process.memoryUsage.rss()
     })
+
   /** Consecutive over-budget samples. Two are required, so one GC-timing spike cannot end a session. */
   let overBudgetStreak = 0
   /** The sample the last warning was issued at — the floor the stride is measured from. */

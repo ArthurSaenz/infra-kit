@@ -94,7 +94,7 @@ const collectTopLevel = (body: Array<ESTree.Statement | ESTree.ModuleDeclaration
   const declIndexByName = new Map<string, number>()
   const importedNames = new Set<string>()
 
-  body.forEach((statement, index) => {
+  for (const [index, statement] of body.entries()) {
     if (statement.type === 'ImportDeclaration') {
       importIndices.push(index)
 
@@ -102,7 +102,7 @@ const collectTopLevel = (body: Array<ESTree.Statement | ESTree.ModuleDeclaration
         importedNames.add(specifier.local.name)
       }
 
-      return
+      continue
     }
 
     const declaration = unwrapExport(statement)
@@ -121,7 +121,7 @@ const collectTopLevel = (body: Array<ESTree.Statement | ESTree.ModuleDeclaration
 
       components.push({ index, name, propsName })
     }
-  })
+  }
 
   return { importIndices, components, declIndexByName, importedNames }
 }
@@ -246,6 +246,7 @@ const findAnchorViolations = (
 
   const firstPropsImported =
     firstPropsIndex === undefined && firstPropsName !== null && importedNames.has(firstPropsName)
+
   const importsBeforeComponent = importIndices.every((importIndex) => {
     return importIndex < first.index
   })

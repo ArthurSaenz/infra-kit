@@ -111,6 +111,7 @@ describe('refuseMissingArguments', () => {
         return Promise.resolve(null)
       },
     })
+
     const error = await refusal({ provider: nothing, params: {}, operation: 'deploy', argument: 'env' })
 
     expect(error.structuredContent).toEqual({ status: 'argument_required', argument: 'env', agentMode: 'env' })
@@ -125,6 +126,7 @@ describe('refuseMissingArguments', () => {
         return Promise.reject(new Error('boom'))
       },
     })
+
     const error = await refusal({
       provider: broken,
       params: {},

@@ -199,6 +199,7 @@ describe('commandPalette', () => {
   describe('ctrl-z (wiring only — terminal state is proven in scripts/qa/suspend-pty.sh)', () => {
     it('calls onSuspend once', async () => {
       const onSuspend = vi.fn()
+
       const { stdin } = render(
         <CommandPalette items={items} onSelect={vi.fn()} onCancel={vi.fn()} onSuspend={onSuspend} />,
       )
@@ -212,6 +213,7 @@ describe('commandPalette', () => {
     it('does not cancel or select — the palette stays mounted so the filter survives the suspend', async () => {
       const onCancel = vi.fn()
       const onSelect = vi.fn()
+
       const { lastFrame, stdin } = render(
         <CommandPalette items={items} onSelect={onSelect} onCancel={onCancel} onSuspend={vi.fn()} />,
       )
@@ -241,6 +243,7 @@ describe('commandPalette', () => {
       const withSuspend = render(
         <CommandPalette items={items} onSelect={vi.fn()} onCancel={vi.fn()} onSuspend={vi.fn()} />,
       )
+
       const without = render(<CommandPalette items={items} onSelect={vi.fn()} onCancel={vi.fn()} />)
 
       expect(withSuspend.lastFrame() ?? '').toContain('Ctrl-Z')

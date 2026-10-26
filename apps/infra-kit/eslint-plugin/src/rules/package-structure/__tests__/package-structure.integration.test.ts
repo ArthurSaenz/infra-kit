@@ -40,6 +40,7 @@ let linter: Linter
 
 const lint = (relPath: string, options?: Options): Linter.LintMessage[] => {
   const ruleConfig: Linter.RuleEntry = options ? ['error', options] : 'error'
+
   const config: Linter.Config = {
     files: ['**/*.{ts,tsx,js,jsx}'],
     plugins: { '@wl': { rules: { 'package-structure': packageStructure } } },

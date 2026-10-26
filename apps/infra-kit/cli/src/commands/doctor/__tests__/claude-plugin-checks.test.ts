@@ -207,6 +207,7 @@ describe('checkClaudePlugin', () => {
  */
 describe('plugin version — fetched-but-not-applied advisory', () => {
   const ADVISORY = 'fetched but not applied'
+
   const UPDATE_COMMAND =
     'claude plugin marketplace update infra-kit && claude plugin update infra-kit@infra-kit --scope project'
 
@@ -304,6 +305,7 @@ describe('plugin version — fetched-but-not-applied advisory', () => {
    */
   it('never compares the served plugin against the CLI version (source guard)', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'doctor.ts'), 'utf-8')
+
     const rowSource = /const fetchedNotAppliedAdvisory[\s\S]*?\nconst claudePluginVersionCheck[\s\S]*?\n\}\n/.exec(
       source,
     )?.[0]

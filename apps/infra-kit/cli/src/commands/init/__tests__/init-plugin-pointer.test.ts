@@ -791,6 +791,7 @@ describe('setup --skip-tools — plugin update withheld behind a stale CLI', () 
     writeCache({ latestVersion: NEWER, updateCommand: ['brew', 'upgrade', 'infra-kit'] })
 
     const entries = await runInitEntries()
+
     const withheld = entries.findIndex((entry) => {
       return entry.message.startsWith('Claude Code plugin not updated')
     })

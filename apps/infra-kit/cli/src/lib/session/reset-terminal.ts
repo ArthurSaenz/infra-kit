@@ -65,6 +65,7 @@ export const resetTerminal = (opts: { entersAltScreen?: boolean }, deps?: ResetT
     ((text: string) => {
       process.stderr.write(text)
     })
+
   const stdin = deps?.stdin ?? process.stdin
 
   // DECSTBM homes the cursor, so the scroll-region reset is bracketed by save/restore: the cursor must

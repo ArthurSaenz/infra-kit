@@ -320,9 +320,11 @@ export const detectInstallManager = (input: DetectInstallManagerInput): InstallM
 
 const detectUnpinned = (input: DetectInstallManagerInput): InstallManagerInfo => {
   const { selfRealPath, env, realpath, lazyNpmRoot } = input
+
   const toInfo = (hit: Matcher): InstallManagerInfo => {
     return { manager: hit.manager, updateCommand: hit.updateCommand, canSelfSpawn: hit.canSelfSpawn }
   }
+
   const matches = ({ test }: Matcher): boolean => {
     return test({ selfRealPath, env, realpath })
   }

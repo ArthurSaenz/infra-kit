@@ -34,6 +34,7 @@ export const selectTargets = (factory: FactoryConfig, requested: readonly string
   }
 
   const workspace = expandTilde(factory.workspaceDir)
+
   const names =
     requested.length > 0
       ? factory.targets.filter((name) => {

@@ -187,6 +187,7 @@ describe('cognitiveComplexity', () => {
       sourceType: 'module',
       loc: true,
     }) as unknown as ESTree.Program
+
     const statement = program.body[0]
     const init = statement?.type === 'VariableDeclaration' ? statement.declarations[0]?.init : null
 

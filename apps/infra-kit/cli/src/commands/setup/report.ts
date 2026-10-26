@@ -146,6 +146,7 @@ const initStepRow = (step: InitStepName, entries: readonly InitEntry[]): RunRow 
   const statuses = entries.map((entry) => {
     return initEntryStatus(entry.outcome)
   })
+
   // Chosen by MAPPED status, never by pino `level`: the plugin commands are `info`-level `manual`
   // entries, and selecting by level would drop the one thing the human has to copy.
   const notes = entries
@@ -153,9 +154,11 @@ const initStepRow = (step: InitStepName, entries: readonly InitEntry[]): RunRow 
       return NOTE_STATUSES.has(initEntryStatus(entry.outcome))
     })
     .map(entryText)
+
   const summarised = entries.filter((entry) => {
     return !NOTE_STATUSES.has(initEntryStatus(entry.outcome)) && !isReminder(entry)
   })
+
   const row: RunRow = {
     name: step,
     status: worstStatus(statuses),

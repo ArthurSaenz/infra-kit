@@ -110,6 +110,7 @@ describe('doctor with a corrupt tokens.json', () => {
   it('does not throw — it still runs every other check and reports the store error as a FAIL', async () => {
     const result = await doctor()
     const checks = result.structuredContent.checks
+
     const tokens = checks.find((check) => {
       return check.name === 'env tokens configured'
     })

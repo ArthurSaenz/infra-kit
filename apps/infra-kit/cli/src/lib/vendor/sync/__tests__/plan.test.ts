@@ -104,6 +104,7 @@ describe('buildTargetPlan — row status', () => {
       sourceFile('.claude/changed.md', 'new'),
       sourceFile('.claude/new.md', 'N'),
     ])
+
     const plan = buildTargetPlan(
       source([entry]),
       repo([
@@ -163,6 +164,7 @@ describe('buildTargetPlan — row status', () => {
       { path: 'bin/run', mode: '100755', fingerprint: { kind: 'file', executable: true, sha: 'R' } },
       { path: 'bin/link', mode: '120000', fingerprint: { kind: 'link', text: '../x' } },
     ])
+
     const plan = diffEntry(
       entry,
       {
@@ -184,6 +186,7 @@ describe('diffEntry — excludes', () => {
       sourceFile('vendor/configs/eslint/index.js', 'E'),
       sourceFile('vendor/configs/serverless-config/source-only.ts', 'S'),
     ])
+
     const plan = diffEntry(
       entry,
       {
@@ -226,6 +229,7 @@ describe('vendored inference', () => {
         },
       ),
     )
+
     const plain = buildTargetPlan(
       source([sourceEntry('.claude', [sourceFile('.claude/a.md', 'A')])]),
       repo([{ target: '.claude', scope: 'sync', tracked: ['.claude/a.md'], onDisk: { '.claude/a.md': file('A') } }], {

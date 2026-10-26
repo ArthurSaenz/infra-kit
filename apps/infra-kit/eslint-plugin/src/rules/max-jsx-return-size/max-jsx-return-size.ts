@@ -280,7 +280,9 @@ export const maxJsxReturnSize: Rule.RuleModule = {
 
     return {
       Program(program) {
-        collectComponents(program.body).forEach(checkComponent)
+        for (const component of collectComponents(program.body)) {
+          checkComponent(component)
+        }
       },
     }
   },

@@ -53,6 +53,7 @@ const writeLoad = (
   { config = 'dev' }: { config?: string } = {},
 ): string => {
   const file = path.join(dir, 'env-load.sh')
+
   const lines = buildEnvLoadFileLines({
     pairs,
     config,

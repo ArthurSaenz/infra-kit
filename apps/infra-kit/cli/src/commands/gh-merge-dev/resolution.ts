@@ -229,6 +229,7 @@ const writeRecord = async (cwd: string, record: ResolutionRecord): Promise<void>
 
 const listRecords = async (cwd: string): Promise<ResolutionRecord[]> => {
   const dir = await recordsDir(cwd)
+
   const names = await fs.readdir(dir).catch(() => {
     return [] as string[]
   })
@@ -490,6 +491,7 @@ const describeResolution = async (
   record: ResolutionRecord,
 ): Promise<Pick<ContinuePlanRow, 'diffStat' | 'resolutionDiff' | 'resolutionDiffTruncated' | 'lockfileDiffStat'>> => {
   const diffStat = (await git(cwd, ['diff', '--cached', '--stat', record.autoMergeTree])).trim()
+
   const lockfileStat = async (against: string): Promise<string> => {
     return (await git(cwd, ['diff', '--cached', '--stat', against, '--', LOCKFILE])).trim()
   }
@@ -499,6 +501,7 @@ const describeResolution = async (
   const lockfileDiffStat = record.conflictPaths.includes(LOCKFILE)
     ? { vsDev: await lockfileStat(record.devSha), vsBase: await lockfileStat(record.baseSha) }
     : undefined
+
   const raw = await git(cwd, ['diff', '--cached', record.autoMergeTree, '--', '.', `:(exclude)${LOCKFILE}`])
   const rerere = new Set(record.rererePreResolved)
 
@@ -647,6 +650,7 @@ const selectRecords = async (args: {
 }): Promise<ResolutionRecord[]> => {
   const { cwd, versions, all } = args
   const records = await listRecords(cwd)
+
   const available = records.map((record) => {
     return record.branch
   })
@@ -662,6 +666,7 @@ const selectRecords = async (args: {
 
     return tokens.map((token) => {
       const branch = formatBranchName(parseReleaseRef(token))
+
       const record = records.find((candidate) => {
         return candidate.branch === branch
       })
@@ -726,6 +731,7 @@ const blockRow = (row: ContinuePlanRow, code: BlockedCode, detail: string, paths
  */
 const prepareBranch = async (cwd: string, record: ResolutionRecord, extraVerify?: string): Promise<ContinuePlanRow> => {
   const wt = record.worktreePath
+
   const row: ContinuePlanRow = {
     branch: record.branch,
     worktreePath: wt,
@@ -767,6 +773,7 @@ const prepareCommitted = async (
 
   const parents = mergeHead ? [] : await commitParents(wt)
   const tree = mergeHead ? null : await revParseQuiet(wt, 'HEAD^{tree}')
+
   const isApprovedCommit =
     parents.length === 2 &&
     parents[0] === record.baseSha &&
@@ -1042,6 +1049,7 @@ const commitApproved = async (
   approvedTree: string | undefined,
 ): Promise<{ sha: string } | ResolutionResultEntry> => {
   const wt = record.worktreePath
+
   const fail = (status: ResolutionResultStatus, reason: string, extra: Partial<ResolutionResultEntry> = {}) => {
     return { branch: row.branch, status, conflictPaths: row.conflictPaths, pushed: false, reason, ...extra }
   }
@@ -1134,6 +1142,7 @@ const reclassifyAgainstRecord = async (
   // A non-forced push would reject a moved branch anyway; a force-REWIND to an ancestor is the case
   // it would not — the push would fast-forward and resurrect the dropped commits.
   const rewound = remote !== null && (await isAncestor(cwd, remote, record.baseSha))
+
   const blocked: Blocked = {
     code: 'parents-mismatch',
     detail: `origin/${record.branch} ${rewound ? 'was rewound' : 'moved'} to ${remote ?? 'nothing'} since the hand-off at ${record.baseSha}`,
@@ -1194,6 +1203,7 @@ export const continueResolutions = async (args: {
   renderRows(rows)
 
   const plan = { branches: rows }
+
   const ready = rows.filter((row): row is ContinuePlanRow & { treeSha: string } => {
     return !row.blocked && row.treeSha !== undefined
   })
@@ -1230,6 +1240,7 @@ export const continueResolutions = async (args: {
 /** `branch=tree[,branch=tree…]`, one or many — the `--tree` value a preview's `rerun` carries. */
 export const parseTrees = (specs: string | string[] | undefined): Map<string, string> => {
   const trees = new Map<string, string>()
+
   const tokens = (Array.isArray(specs) ? specs : [specs ?? '']).flatMap((spec) => {
     return spec.split(',')
   })

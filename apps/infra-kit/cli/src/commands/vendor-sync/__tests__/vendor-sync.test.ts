@@ -400,6 +400,7 @@ describe('vendorSync — apply failures', () => {
       .mockResolvedValueOnce({ touched: ['vendor/a'], manifestWritten: true })
 
     const result = await vendorSync({ confirmedCommand: true })
+
     const hulyo = result.structuredContent.report.find((section) => {
       return section.label === 'hulyo'
     })!

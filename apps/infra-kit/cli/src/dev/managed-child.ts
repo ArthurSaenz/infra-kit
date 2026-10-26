@@ -332,6 +332,7 @@ export const collectForceReapTargets = (
   registrySnapshots: readonly (readonly GroupSnapshot[])[],
 ): number[] => {
   const live = doomedGroupsOf(rootPid, rows)
+
   const fromRegistry = registrySnapshots.flatMap((snapshot) => {
     return validSnapshotPgids(snapshot, rows)
   })
@@ -355,6 +356,7 @@ export const collectForceReapTargets = (
  */
 export const killDescendantGroupsNow = (): void => {
   const rows = snapshotProcRows()
+
   const registrySnapshots = [...registry].map((getGroups) => {
     return getGroups()
   })
@@ -481,6 +483,7 @@ export function superviseChild(
     const ownPgid = rows.find((row) => {
       return row.pid === process.pid
     })?.pgid
+
     const next = snapshotGroups(pid, rows, ownPgid)
 
     if (next.length > 0) groups = next

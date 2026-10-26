@@ -38,6 +38,7 @@ afterEach(async () => {
 const recorder = () => {
   const bindErrors: string[] = []
   const errors: string[] = []
+
   const handlers: MirrorHandlers = {
     onBindError: (err) => {
       bindErrors.push(err.code ?? err.message)

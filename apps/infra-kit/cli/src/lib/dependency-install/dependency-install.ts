@@ -183,9 +183,11 @@ const outputLines = (stream: unknown): string[] => {
 const lastWords = (result: ReturnType<typeof spawnSync>): string => {
   const stderr = outputLines(result.stderr)
   const stdout = outputLines(result.stdout)
+
   const named = [...stderr, ...stdout].filter((line) => {
     return ERROR_SHAPED.test(line)
   })
+
   const fallback = stderr.length > 0 ? stderr : stdout
 
   return (named.length > 0 ? named : fallback).slice(-FAILURE_CONTEXT_LINES).join(' / ')

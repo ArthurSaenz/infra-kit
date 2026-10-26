@@ -95,6 +95,7 @@ describe('loadPackageConfig', () => {
 
   it('accepts a top-level deployedUrlEnv beside cloud-capable routes', async () => {
     const dir = makeTmpDir()
+
     const config = {
       deployedUrlEnv: 'CLIENT_URL',
       dev: {
@@ -136,6 +137,7 @@ describe('loadPackageConfig', () => {
 
   it('refuses a cloud-capable route when no deployedUrlEnv names where cloud is', async () => {
     const dir = makeTmpDir()
+
     const config = {
       dev: {
         proxy: {
@@ -369,6 +371,7 @@ export default defineConfig({
     })
 
     const result = await validatePackage(dir, undefined, { repoRoot: root })
+
     const failed = result.checks.filter((check) => {
       return check.status === 'fail'
     })

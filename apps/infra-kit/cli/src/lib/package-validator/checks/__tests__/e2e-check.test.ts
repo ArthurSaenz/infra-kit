@@ -77,6 +77,7 @@ describe('checkE2eScripts', () => {
         return script !== 'e2e-test-ui-demo'
       }),
     )
+
     const check = checkE2eScripts(rest).find((candidate) => {
       return candidate.name === 'e2e-script:e2e-test-ui-demo'
     })
@@ -88,6 +89,7 @@ describe('checkE2eScripts', () => {
 
   it('fails a script whose value drifts, even by a flag', () => {
     const scripts = { ...E2E_SCRIPTS, 'e2e-test-chrome': 'pnpm exec playwright test --project=chromium --headed' }
+
     const check = checkE2eScripts(scripts).find((candidate) => {
       return candidate.name === 'e2e-script:e2e-test-chrome'
     })

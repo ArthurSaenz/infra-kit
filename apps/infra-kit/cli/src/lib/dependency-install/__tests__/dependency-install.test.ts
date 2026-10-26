@@ -31,6 +31,7 @@ const silent = (): void => {}
 describe('recipe safety and caller authority are separate refusals', () => {
   it('never spawns the Homebrew bootstrap, even from a CLI with a human present', () => {
     const spawn = spawnOk()
+
     const outcome = runRecipe(specFor('brew').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn,
       agentMode: notInMcp,
@@ -46,6 +47,7 @@ describe('recipe safety and caller authority are separate refusals', () => {
 
   it('never spawns a SAFE recipe when this process is serving MCP', () => {
     const spawn = spawnOk()
+
     const outcome = runRecipe(specFor('gh').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn,
       agentMode: () => {
@@ -86,6 +88,7 @@ describe('the child environment', () => {
 
   it('scrubs every variable that would change how Homebrew’s installer behaves', () => {
     const spawn = spawnOk()
+
     const env = {
       PATH: '/usr/bin',
       NONINTERACTIVE: '1',
@@ -193,6 +196,7 @@ describe('multi-step recipes', () => {
 describe('failure reporting', () => {
   it('names a missing binary rather than collapsing it into an exit code', () => {
     const spawn = vi.fn().mockReturnValue({ status: null, signal: null, error: new Error('spawn ENOENT') })
+
     const outcome = runRecipe(specFor('portless').bootstrapInstall, BREW_PRESENT, {
       spawnSync: spawn as never,
       agentMode: notInMcp,

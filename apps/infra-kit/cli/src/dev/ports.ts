@@ -82,9 +82,11 @@ export function findPortConflicts(apps: Array<{ name: string; port: number }>): 
   const ports = apps.map((a) => {
     return a.port
   })
+
   const duplicatePorts = ports.filter((port, index) => {
     return ports.indexOf(port) !== index
   })
+
   const conflictingApps = apps.filter((a) => {
     return duplicatePorts.includes(a.port)
   })

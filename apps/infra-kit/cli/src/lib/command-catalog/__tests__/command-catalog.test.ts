@@ -177,6 +177,7 @@ describe('command catalog — the plugin skills name no MCP tool and allow only 
 
   it('names no plugin-prefixed tool in any SKILL.md', () => {
     const re = new RegExp(scanPatterns().pluginToolName, 'g')
+
     const named = skillFiles().flatMap(([skill, body]) => {
       return [...body.matchAll(re)].map((match) => {
         return [skill, match[1]]
@@ -190,6 +191,7 @@ describe('command catalog — the plugin skills name no MCP tool and allow only 
     const prefixes = scanPatterns().legacyToolPrefix.map((fragments) => {
       return fragments.join('')
     })
+
     const named = skillFiles().filter(([, body]) => {
       return prefixes.some((prefix) => {
         return body.includes(prefix)
@@ -212,6 +214,7 @@ describe('command catalog — the plugin skills name no MCP tool and allow only 
   it('lists no allowed-tools pattern that reaches a mutating catalog row', () => {
     const offending = skillFiles().flatMap(([skill, body]) => {
       const line = /^allowed-tools:(.*)$/m.exec(body)?.[1] ?? ''
+
       const patterns = [...line.matchAll(/Bash\((?:[^()]|\([^()]*\))*\)/g)].map((match) => {
         return match[0]
       })
@@ -563,6 +566,7 @@ describe('command catalog — menu grouping', () => {
 
   it('every catalog entry carries a groupPath whose first token is a real top-level command', () => {
     const program = buildProgram()
+
     const topLevel = new Set(
       program.commands.map((cmd) => {
         return cmd.name()

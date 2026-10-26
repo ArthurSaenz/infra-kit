@@ -27,5 +27,7 @@ export const addAgentOption = (cmd: Command): void => {
     )
   }
 
-  cmd.commands.forEach(addAgentOption)
+  for (const child of cmd.commands) {
+    addAgentOption(child)
+  }
 }

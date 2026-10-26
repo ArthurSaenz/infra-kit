@@ -109,6 +109,7 @@ describe('autoSetup', () => {
   // Reds on: a pass that only records at the end — a kill mid-pass would leave no attempt spent.
   it('writes a provisional record before the first child starts', async () => {
     const seenBeforeFirstChild: AutoSetupRecord[] = []
+
     const { deps, records } = harness({
       runSetupChild: async () => {
         seenBeforeFirstChild.push(...records)
@@ -132,6 +133,7 @@ describe('autoSetup', () => {
     const runSetupChild = vi.fn(async (_input: RunSetupChildInput) => {
       return ok()
     })
+
     const { deps, released } = harness({
       runSetupChild,
       writeRecord: () => {
@@ -224,11 +226,13 @@ describe('autoSetup', () => {
 
   it('counts attempts per version and resets them on a new one', async () => {
     const failedRuns = [{ root: '/p/api', status: 'failed' as const, notes: ['x'] }]
+
     const same = harness({
       readRecord: () => {
         return { version: '0.19.0', attempts: 1, startedMs: OLD_START, finishedMs: OLD_START, runs: failedRuns }
       },
     })
+
     const next = harness({
       readRecord: () => {
         return { version: '0.18.1', attempts: 3, startedMs: OLD_START, finishedMs: OLD_START, runs: failedRuns }
@@ -244,11 +248,13 @@ describe('autoSetup', () => {
 
   it('records the projects past the time budget as failed without starting them', async () => {
     let now = NOW
+
     const runSetupChild = vi.fn(async () => {
       now += AUTO_SETUP_BUDGET_MS
 
       return ok()
     })
+
     const { deps, final } = harness({
       clock: () => {
         return now
@@ -276,6 +282,7 @@ describe('autoSetup', () => {
   it('drops machine-level notes from project runs, but never empties a failed run', async () => {
     const chrome = { step: 'chrome', outcome: 'manual', message: 'run /chrome' }
     const zshrc = { step: 'zshrc', outcome: 'failed', message: 'EACCES ~/.zshrc' }
+
     const { deps, final } = harness({
       discoverProjects: () => {
         return ['/p/api', '/p/web']
@@ -314,6 +321,7 @@ describe('autoSetup', () => {
     const runSetupChild = vi.fn(async (_input: RunSetupChildInput) => {
       return ok()
     })
+
     const { deps } = harness({ runSetupChild })
 
     await autoSetup(deps)
@@ -360,6 +368,7 @@ describe('runInProcessGroup (real processes)', () => {
       "spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'inherit' })",
       'setTimeout(() => {}, 60000)',
     ].join(';')
+
     const startedMs = Date.now()
 
     const result = await runInProcessGroup({

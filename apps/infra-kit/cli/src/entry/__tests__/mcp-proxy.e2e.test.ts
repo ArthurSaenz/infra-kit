@@ -438,6 +438,7 @@ describe('ik-mcp end to end', () => {
     )
 
     const grafana = startShim(derivedArgv('grafana', GRAFANA_ENV), envFile)
+
     const other = startShim(derivedArgv('other', ['OTHER_TOKEN']), envFile, {
       FAKE_SPAWN_LOG: path.join(dir, 'other-spawns.jsonl'),
       FAKE_LEAK_PROBE: 'GRAFANA_SERVICE_ACCOUNT_TOKEN',

@@ -75,6 +75,7 @@ describe('upsertManagedBlock', () => {
 
   it('append-end relocates an existing mid-file block to end-of-file', () => {
     const content = `intro\n\n${START}\nold\n${END}\n\nuser tail`
+
     const result = upsertManagedBlock({
       content,
       body: 'fresh',
@@ -88,6 +89,7 @@ describe('upsertManagedBlock', () => {
 
   it('append-end lands the block at end-of-file when absent', () => {
     const content = 'existing user content'
+
     const result = upsertManagedBlock({
       content,
       body: 'b',

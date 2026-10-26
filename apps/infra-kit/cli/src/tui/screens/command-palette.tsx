@@ -37,6 +37,7 @@ export const CommandPalette = (props: CommandPaletteProps) => {
     tiny: 'terminal too short — resize to pick a command',
     more: '…',
   }
+
   const nameWidth = 24
 
   const { exit, suspendTerminal } = useApp()
@@ -76,6 +77,7 @@ export const CommandPalette = (props: CommandPaletteProps) => {
   // the viewport corrupts the cursor (see palette-window.ts) — every row here is budgeted, and every
   // row below is `wrap="truncate"` so one command is always exactly one row.
   const layout = listLayout(rows)
+
   const view = paletteWindow(filtered, windowStart, activeIndex, rows, {
     chromeRows: layout.chromeRows,
     // A compact frame drops group headers, so they must not be budgeted for either.

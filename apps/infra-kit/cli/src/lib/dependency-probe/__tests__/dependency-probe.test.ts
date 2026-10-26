@@ -37,6 +37,7 @@ describe('probeDependency: present vs onPath', () => {
 
   it('is present and onPath when the PATH run succeeds', async () => {
     const runCommand = vi.fn().mockResolvedValue({ stdout: 'gh version 2.40.0 (2023-12-05)\nhttps://x' })
+
     const deps = emptyDeps({
       runCommand,
       resolveBinPath: vi.fn().mockResolvedValue('/opt/homebrew/Cellar/gh/2.40.0/bin/gh'),
@@ -121,6 +122,7 @@ describe('version parsing from real --version output shapes', () => {
 
   it('parses a version off the second, absolute-path run when present && !onPath', async () => {
     const runCommand = vi.fn().mockRejectedValueOnce(new Error('not on PATH')).mockReturnValueOnce(ok('v3.63.0'))
+
     const deps = emptyDeps({
       runCommand,
       resolveBinPath: vi.fn().mockResolvedValue('/Users/x/.local/bin/doppler'),

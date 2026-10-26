@@ -179,8 +179,10 @@ const localWorkflowCall = (file: string): string[] => {
 const sharedJobCall = (planned: PlannedService, config: DeployConfig): string[] => {
   const extraEnv = config.extraEnv ?? []
   const runner = planned.service.runner === undefined ? [] : [`      runner: ${planned.service.runner}`]
+
   const timeout =
     config.deployTimeoutMinutes === undefined ? [] : [`      timeout-minutes: ${config.deployTimeoutMinutes}`]
+
   const extra =
     extraEnv.length === 0
       ? []
@@ -258,8 +260,10 @@ const dispatchInputs = (config: DeployConfig, kind: WorkflowKind, services: Plan
       return `          - ${env}`
     }),
   ]
+
   const terraform =
     (config.terraform ?? []).length > 0 ? booleanInput(SKIP_TERRAFORM_INPUT, 'Skip terraform deployment') : []
+
   const perService =
     kind === 'all'
       ? []
@@ -283,8 +287,10 @@ const selectedServicesTitle = (services: PlannedService[]): string => {
 
 const header = (config: DeployConfig, kind: WorkflowKind, services: PlannedService[]): string[] => {
   const { title, concurrency } = kindNames(config, kind)
+
   const skipTf =
     (config.terraform ?? []).length > 0 ? gh(`inputs.${SKIP_TERRAFORM_INPUT} && '' — skip TF'' || ''''`) : ''
+
   const checked = kind === 'selected' ? ` — ${selectedServicesTitle(services)}` : ''
 
   return [
@@ -364,10 +370,12 @@ const renderWorkflow = (config: DeployConfig, kind: WorkflowKind): GeneratedWork
   const services = planServices(config, kind)
   const terraformFiles = config.terraform ?? []
   const preDeployFiles = config.preDeploy ?? []
+
   const upstream: Upstream = {
     terraform: terraformFiles.map(jobIdForWorkflow),
     preDeploy: preDeployFiles.map(jobIdForWorkflow),
   }
+
   const { file } = kindNames(config, kind)
   const inputCount = 1 + (terraformFiles.length > 0 ? 1 : 0) + (kind === 'selected' ? services.length : 0)
 

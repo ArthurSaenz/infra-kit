@@ -574,12 +574,14 @@ export const checkTokenStorePerms = async (fix: boolean, deps: EnvTokenCheckDeps
   const projectDir = path.dirname(target)
   const projectsDir = path.dirname(projectDir)
   const userConfigDir = path.dirname(projectsDir)
+
   const audited: Array<{ target: string; expected: number; actual: number | null }> = [
     { target: userConfigDir, expected: TOKEN_DIR_MODE, actual: modeOf(userConfigDir, statPath) },
     { target: projectsDir, expected: TOKEN_DIR_MODE, actual: modeOf(projectsDir, statPath) },
     { target: projectDir, expected: TOKEN_DIR_MODE, actual: modeOf(projectDir, statPath) },
     { target, expected: TOKEN_FILE_MODE, actual: modeOf(target, statPath) },
   ]
+
   const loose = audited.filter((entry) => {
     return entry.actual !== null && entry.actual !== entry.expected
   })
@@ -794,6 +796,7 @@ export const checkAgentFiles = async (): Promise<CheckResult[]> => {
   const notARepo: CheckResult[] = [
     { name: 'CLAUDE.md block', status: 'skip', message: 'no infra-kit config in this repo' },
   ]
+
   let mainConfigPath: string
 
   try {
@@ -808,9 +811,11 @@ export const checkAgentFiles = async (): Promise<CheckResult[]> => {
   const claudePath = path.join(root, 'CLAUDE.md')
   const content = fs.existsSync(claudePath) ? fs.readFileSync(claudePath, 'utf-8') : ''
   const present = hasManagedBlock(content, AGENTS_MARKER_START, AGENTS_MARKER_END)
+
   const message = present
     ? 'CLAUDE.md block present'
     : 'infra-kit block missing from CLAUDE.md. Run: infra-kit setup --skip-tools'
+
   const staleness = await packageGuidanceStaleness(root, packageJson.version)
 
   return [
@@ -950,6 +955,7 @@ const claudePluginInstalledCheck = (state: PluginInstallState, origin: DoctorOri
   const paths = state.installations.map((entry) => {
     return entry.projectPath === null ? '(unnamed project)' : tildify(entry.projectPath)
   })
+
   const extra = paths.length - MAX_LISTED_PROJECTS
   const suffix = extra > 0 ? ` and ${extra} more` : ''
   const others = `${paths.slice(0, MAX_LISTED_PROJECTS).join(', ')}${suffix}`
@@ -1190,6 +1196,7 @@ export const checkAgentMode = (input: ResolveAgentModeInput): CheckResult => {
   const name = 'Agent mode'
   const source = resolveAgentModeSource(input)
   const inputs = describeAgentModeInputs(input)
+
   const because = (): string => {
     if (source === 'flag') return 'the --agent flag, which beats every environment value'
     if (input.env.INFRA_KIT_AGENT === '1') return 'INFRA_KIT_AGENT=1'
@@ -1307,6 +1314,7 @@ export const checkMergeDevResolutions = async (root: string | null, now = Date.n
 
     return `${entry.branch} (${describeAge(entry.createdAt, now)}, ${where})`
   })
+
   const versions = pending
     .map((entry) => {
       return entry.branch
@@ -1439,17 +1447,20 @@ const checkPortlessCaChain = async (
   seams: ServiceInstallSeams,
 ): Promise<CheckResult> => {
   const name = 'portless CA chain valid'
+
   const servernames = [
     'localhost',
     ...routes.slice(0, 1).map((route) => {
       return route.name
     }),
   ]
+
   const results = await Promise.all(
     servernames.map(async (servername) => {
       return { servername, result: await handshake(DEFAULT_DEV_PROXY_PORT, servername) }
     }),
   )
+
   const failed = results.filter((entry) => {
     return !entry.result.ok
   })
@@ -1532,6 +1543,7 @@ const checkPortlessStaleRoutes = async (
       return { route, live: await isListening(route.port) }
     }),
   )
+
   const stale = probed
     .filter((entry) => {
       return !entry.live
@@ -1755,8 +1767,10 @@ const resolvePortlessNodeHealth = (seams: ServiceTargetSeams): PortlessNodeVerdi
   }
 
   const exec = statOrUndefined(seams.nodeFs.statSync, seams.execPath)
+
   const describesProcess =
     sidecar.version === seams.version && sidecar.arch === seams.arch && sidecar.platform === seams.platform
+
   const sameInode = exec !== undefined && current.ino === exec.ino && current.dev === exec.dev
   const consistentCopy = sidecar.method === 'copy' && exec !== undefined && sidecar.sourceSize === exec.size
 
@@ -1876,10 +1890,13 @@ const parseClock = (iso: string): Date | null => {
  */
 const predatedTargets = (target: string, version: string, seams: ServiceTargetSeams): string | null => {
   const started = daemonStartedAt(seams)
+
   const before = (at: Date | null): boolean => {
     return started !== null && at !== null && started.getTime() < at.getTime()
   }
+
   const sidecar = seams.stableNodeSidecar
+
   const subjects = [
     ...(sidecar !== null && before(parseClock(sidecar.versionChangedAt)) ? [`Node ${sidecar.version}`] : []),
     ...(before(seams.mtime(path.join(target, 'package.json'))) ? [`portless ${version}`] : []),
@@ -2146,10 +2163,12 @@ export const checkPortless = async (deps: PortlessCheckDeps = {}): Promise<Check
     status: 'pass',
     message: 'portless is resolvable from node_modules',
   }
+
   // The node row runs first: its verdict is what every remediation below renders `service install` through.
   const { seams, node } = resolveHealthySeams(deps, bin)
   const routes = readRoutes()
   const serving = await checkPortlessServing(isProxyServing, bin, seams)
+
   // Nothing is answering on :443 — there is no certificate to validate, so the chain check would only add a
   // second, derivative failure to the one the user must fix first.
   const chain: CheckResult =
@@ -2201,6 +2220,7 @@ export const pruneStalePortlessRoutes = async (deps: PruneRoutesDeps = {}): Prom
       return { name: route.name, port: route.port, live: await isListening(route.port) }
     }),
   )
+
   const { prunable, withheld } = decidePrune(probed, devRunning())
 
   if (withheld.length > 0) {
@@ -2244,6 +2264,7 @@ export const doctor = async (
   // Started here and awaited inside `withDetail`, so the probe runs ALONGSIDE the ~95 checks rather
   // than in front of them.
   const details = probeDependencyDetails(options.probeDeps ?? defaultProbeDeps())
+
   const withDetail = async (id: DependencyId, check: Promise<CheckResult>): Promise<CheckResult> => {
     const [result, detail] = await Promise.all([check, details])
     const found = detail.get(id)
@@ -2333,6 +2354,7 @@ export const doctor = async (
   // never prints a "stale route" failure beside the line that just cleaned it up.
   if (options.fix) {
     const pruned = await pruneStalePortlessRoutes()
+
     const index = portlessChecks.findIndex((check) => {
       return check.name === pruned.name
     })
@@ -2352,6 +2374,7 @@ export const doctor = async (
   const repoRoot = await resolveCheckedRepoRoot()
   const gitRoot = await resolveGitRoot()
   const origin: DoctorOrigin = { projectDir: process.env.CLAUDE_PROJECT_DIR || null, cwd: process.cwd(), gitRoot }
+
   const pluginChecks: CheckResult[] = [
     // First in the section: the binary the install step drives. Read the prerequisite before the
     // rows whose failure it explains.

@@ -28,6 +28,7 @@ afterEach(async () => {
 const fake = (overrides: Partial<ToolkitDeps> = {}) => {
   const calls: Call[] = []
   const sleeps: number[] = []
+
   const deps: ToolkitDeps = {
     run: async (command, args, options) => {
       calls.push({ command, args, ...options })
@@ -50,6 +51,7 @@ const fake = (overrides: Partial<ToolkitDeps> = {}) => {
     log: () => {},
     ...overrides,
   }
+
   const toolkit = createDeployToolkit({ root, service: 'client-be', env: { PATH: '/bin' }, deps })
 
   return { toolkit, deps, calls, sleeps }
@@ -66,6 +68,7 @@ describe('retry', () => {
         return 1
       },
     })
+
     const outcomes = [new Error('TooManyRequestsException'), new Error('TooManyRequestsException')]
 
     const value = await toolkit.retry('flaky', async () => {
@@ -135,6 +138,7 @@ describe('invokeLambdas', () => {
   const lambdas = (responses: Record<string, { metadata?: string; body?: string; error?: Error }>) => {
     const invoked: string[] = []
     const lines: string[] = []
+
     const { toolkit, calls } = fake({
       capture: async (command, args, options) => {
         calls.push({ command, args, ...options })
@@ -274,6 +278,7 @@ describe('deployBackendApi', () => {
   it('retries a throttled API Gateway deployment', async () => {
     const throttles = [new Error('TooManyRequestsException'), new Error('TooManyRequestsException')]
     const base = fake()
+
     const { toolkit, calls } = fake({
       run: async (command, args, options) => {
         await base.deps.run(command, args, options)
@@ -358,6 +363,7 @@ describe('build options', () => {
     const build = calls.find((call) => {
       return call.args.includes('build-mobile')
     })
+
     const sync = calls.find((call) => {
       return call.args[0] === 's3'
     })
@@ -382,11 +388,13 @@ describe('aws', () => {
 describe('pruneAndBuild', () => {
   it('builds TURBO_BUILD_TASK when no task is passed', async () => {
     const calls: Call[] = []
+
     const { deps } = fake({
       run: async (command, args, options) => {
         calls.push({ command, args, ...options })
       },
     })
+
     const toolkit = createDeployToolkit({ root, service: 'mobile', env: { TURBO_BUILD_TASK: 'build-mobile' }, deps })
 
     await toolkit.pruneAndBuild('mobile-app', { installProd: false })

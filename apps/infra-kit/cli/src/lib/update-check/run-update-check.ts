@@ -176,6 +176,7 @@ export const runUpdateCheck = async (currentVersion: string, deps: RunUpdateChec
   // onto it instead of reading the file back (a holder, not a `let`: TypeScript cannot see a closure
   // assignment and would narrow a `let` to its initial `null`).
   const written: { last: UpdateCache | null } = { last: null }
+
   const recordingWriteCache: typeof writeUpdateCache = (cache) => {
     written.last = cache
     writeCache(cache)
@@ -250,6 +251,7 @@ const recordPluginUpdate = (
   const outcome = pluginStepWithheld(base?.latestVersion ?? null, currentVersion)
     ? 'skipped-cli-stale'
     : updatePlugin(deps)
+
   const checkedMs = (deps.clock ?? Date.now)()
 
   // `finish()` writes on every path the locked function returns through, so `base` is only null if that

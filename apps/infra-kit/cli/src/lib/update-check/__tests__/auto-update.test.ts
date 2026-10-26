@@ -257,6 +257,7 @@ describe('maybeAutoUpdate → background setup notice', () => {
         return FINISHED
       },
     })
+
     const newer = harness({
       readAutoSetup: () => {
         return record({ finishedMs: FINISHED + 1 })

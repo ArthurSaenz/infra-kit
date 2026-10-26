@@ -59,6 +59,7 @@ describe('message data', () => {
   const lint = (type: PackageType, relDir: string, options?: Options): string[] => {
     const filename = path.join(packageDirOf(type), 'src', relDir, 'a.ts')
     const ruleConfig: Linter.RuleEntry = options ? ['error', options] : 'error'
+
     const config: Linter.Config = {
       files: ['**/*.{ts,tsx,js,jsx}'],
       plugins: { '@wl': { rules: { 'package-structure': packageStructure } } },

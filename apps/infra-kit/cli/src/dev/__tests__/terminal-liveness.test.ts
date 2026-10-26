@@ -82,6 +82,7 @@ describe('installTerminalLiveness', () => {
   it('latches on the ASYNC error event a failed stdio write really produces, with zero uncaught faults', async () => {
     const stdout = new FakeStdio('EIO')
     const deaths: string[] = []
+
     const liveness = install({
       streams: [asStream(stdout)],
       onDeath: (stream, error) => {
@@ -148,6 +149,7 @@ describe('installTerminalLiveness', () => {
     for (const code of ['EAGAIN', 'EINTR']) {
       const stdout = new FakeStdio(code)
       const deaths: string[] = []
+
       const liveness = install({
         streams: [asStream(stdout)],
         onDeath: () => {

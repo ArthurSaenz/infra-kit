@@ -151,6 +151,7 @@ describe('installPluginForProject — already installed → update', () => {
     writeInstalledRecord()
 
     const { runner, calls } = recordingRunner()
+
     const cliIsStale = (): boolean => {
       return true
     }
@@ -166,6 +167,7 @@ describe('installPluginForProject — already installed → update', () => {
     writeInstalledRecord()
 
     const { runner, calls } = recordingRunner()
+
     const cliIsStale = (): boolean => {
       return false
     }
@@ -178,6 +180,7 @@ describe('installPluginForProject — already installed → update', () => {
     registerMarketplace()
 
     const { runner, calls } = recordingRunner()
+
     const cliIsStale = (): boolean => {
       throw new Error('asked on the install path')
     }
@@ -307,6 +310,7 @@ describe('installPluginForProject — success', () => {
     registerMarketplace()
 
     const calls: ClaudeCommand[] = []
+
     const runner: ClaudeRunner = (command): ClaudeCommandResult => {
       calls.push(command)
       if (command.args.join(' ') === PLUGIN_INSTALL_ARGV.join(' ')) writeInstalledRecord()

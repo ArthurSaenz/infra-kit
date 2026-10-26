@@ -209,6 +209,7 @@ describe('checkAgentGuidance', () => {
 
   it('passes a CLAUDE.md with no block before adoption and fails it after', () => {
     const dir = packageWithGuidance('# hand-written guidance\n')
+
     const expected =
       'CLAUDE.md has no infra-kit block (expected <!-- infra-kit:package:begin --> … <!-- infra-kit:package:end -->) — run: infra-kit audit --fix'
 
@@ -222,6 +223,7 @@ describe('checkAgentGuidance', () => {
 
   it('passes a malformed block before adoption and fails it after', () => {
     const dir = packageWithGuidance('<!-- infra-kit:package:end -->\nbody\n<!-- infra-kit:package:begin -->\n')
+
     const expected =
       'CLAUDE.md block is malformed (end marker precedes start, or body is empty) — run: infra-kit audit --fix'
 
@@ -234,6 +236,7 @@ describe('checkAgentGuidance', () => {
 
   it('passes a pasted root block before adoption and fails it after', () => {
     const dir = packageWithGuidance(rootBlock)
+
     const expected =
       'CLAUDE.md carries the ROOT infra-kit block (<!-- infra-kit:begin -->); a package needs the package block — run: infra-kit audit --fix'
 

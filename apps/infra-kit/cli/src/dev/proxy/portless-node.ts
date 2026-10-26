@@ -331,8 +331,10 @@ export const ensurePortlessNode = (deps: EnsurePortlessNodeDeps): PortlessNodeRe
       return new Date()
     },
   } = deps
+
   const node = portlessNodePath(home)
   const sidecarPath = portlessNodeSidecar(home)
+
   const result = (outcome: PortlessNodeOutcome, method: PortlessNodeResult['method']): PortlessNodeResult => {
     return { kind: 'node', outcome, node, source: execPath, version, method }
   }

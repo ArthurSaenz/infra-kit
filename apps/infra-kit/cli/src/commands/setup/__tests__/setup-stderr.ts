@@ -71,6 +71,7 @@ export const reportLines = (): string[] => {
  */
 export const noPortless = (): PortlessServiceDeps => {
   const home = '/nowhere'
+
   const isGlobal = (): boolean => {
     return false
   }

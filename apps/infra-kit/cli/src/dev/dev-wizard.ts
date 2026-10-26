@@ -217,9 +217,11 @@ const frontendOverrides = (
  */
 export const deriveManualPlan = (selection: ManualSelection, model: WizardModel): DerivedPlan => {
   const apps = byName(model)
+
   const uiKeys = selection.targets.filter((t) => {
     return t.endsWith('/ui')
   })
+
   const apiOnlyKeys = selection.targets.filter((t) => {
     return t.endsWith('/api')
   })

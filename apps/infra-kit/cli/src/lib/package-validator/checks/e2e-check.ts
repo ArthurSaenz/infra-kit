@@ -70,6 +70,7 @@ const STATIC_SERVER_EXEMPT_RULE = 'infra-kit-e2e'
 
 export const checkE2eConfig = async (packageDir: string, options: E2eCheckOptions = {}): Promise<PackageCheck[]> => {
   const configPath = path.join(packageDir, PLAYWRIGHT_CONFIG_FILE)
+
   const content = await fs.readFile(configPath, 'utf-8').catch(() => {
     return null
   })
@@ -188,16 +189,19 @@ const stripComments = (source: string): string => {
  */
 export const checkE2eBasicAuthNaming = async (packageDir: string): Promise<PackageCheck> => {
   const name = 'e2e-env:basic-auth'
+
   const files = [
     ...(await listSourceFiles(packageDir, false)),
     ...(await listSourceFiles(path.join(packageDir, 'src'), true)),
   ]
+
   const renames: string[] = []
 
   for (const file of files) {
     const content = await fs.readFile(file, 'utf-8').catch(() => {
       return ''
     })
+
     const drifted = new Set(
       [...stripComments(content).matchAll(BASIC_AUTH_NAME_PATTERN)]
         .map((match) => {

@@ -17,6 +17,7 @@ export function isDependencyAllowed(model: LayerModel, from: string, to: string)
   const fromLayer = model.layers.find((layer) => {
     return layer.name === from
   })
+
   const toLayer = model.layers.find((layer) => {
     return layer.name === to
   })

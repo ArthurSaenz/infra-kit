@@ -379,6 +379,7 @@ export function classifyDistChange(
   packageDistDirs: string[],
 ): ChangeClassification {
   const normalized = path.normalize(changedPath)
+
   const isInside = (dir: string): boolean => {
     const normalizedDir = path.normalize(dir)
 

@@ -59,6 +59,7 @@ const readPackageName = (dir: string): string | undefined => {
 /** The unique `tasks[].package` set from a `turbo run … --dry=json` stdout payload. */
 export const parseDryRunPackages = (stdout: string): string[] => {
   const parsed = JSON.parse(stdout) as { tasks?: Array<{ package?: unknown }> }
+
   const names = (parsed.tasks ?? [])
     .map((t) => {
       return t.package

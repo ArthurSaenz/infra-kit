@@ -56,6 +56,7 @@ const parsed = parseProxyArgv(process.argv.slice(2))
 const degraded: string | null = parsed.ok
   ? null
   : `${parsed.problem} — run \`ik setup\` to regenerate this .mcp.json entry`
+
 const spec: ProxySpec | null = parsed.ok ? parsed.spec : null
 
 const upstream: Upstream | null =

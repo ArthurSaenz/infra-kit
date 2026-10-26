@@ -244,6 +244,7 @@ describe('tools', () => {
       }),
       tool({ id: 'git', action: 'skipped', commands: [], detail: 'nothing to do' }),
     ]
+
     const probe = section(toSetupReport(input({ tools }), { skipTools: true }), 'Tools (probe: nothing installed)')
 
     expect(probe?.rows).toEqual([

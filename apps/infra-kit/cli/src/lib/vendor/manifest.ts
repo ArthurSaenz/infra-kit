@@ -143,6 +143,7 @@ export const compareToManifest = (vendorRoot: string, manifest: VendorManifest):
       return !isSkippedPath(rel)
     }),
   )
+
   const actualFiles = walkVendorTree(vendorRoot)
 
   const modified: string[] = []
@@ -160,6 +161,7 @@ export const compareToManifest = (vendorRoot: string, manifest: VendorManifest):
   }
 
   const actualSet = new Set(actualFiles)
+
   const removed = Object.keys(expected).filter((rel) => {
     return !actualSet.has(rel)
   })

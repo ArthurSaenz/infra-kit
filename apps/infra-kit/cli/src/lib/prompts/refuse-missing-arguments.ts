@@ -57,13 +57,16 @@ export const refuseMissingArguments = async (input: RefuseMissingArgumentsInput)
   if (!isHeadless() || !input.provider.isFormable(input.params)) return
 
   const schema = await requestedSchema(input)
+
   const params =
     typeof input.params === 'object' && input.params !== null ? (input.params as Record<string, unknown>) : {}
+
   // A form may re-offer a field round 1 already carried (the deploy form keeps `version` editable);
   // the flag named is the first one the caller actually left out.
   const missing = (schema === null ? [] : Object.keys(schema.shape)).filter((field) => {
     return params[field] === undefined || params[field] === ''
   })
+
   const argument = typeof input.argument === 'string' ? input.argument : input.argument(missing)
   const choices = schema === null ? undefined : z.toJSONSchema(schema)
 

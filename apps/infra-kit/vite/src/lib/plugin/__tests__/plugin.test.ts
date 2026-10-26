@@ -118,6 +118,7 @@ describe('infraKit', () => {
     const fakeServer = (httpServer: net.Server | null): FakeServer => {
       const middlewares: unknown[] = []
       const logger = { info: vi.fn(), warn: vi.fn() }
+
       const server = {
         httpServer,
         middlewares: {
@@ -151,6 +152,7 @@ describe('infraKit', () => {
 
       const redirectOf = (host: string): string | undefined => {
         let location: string | undefined
+
         const res = {
           setHeader: (_name: string, value: string) => {
             location = value

@@ -137,6 +137,7 @@ const addTargetOptions = (branches: string[]): void => {
   const features = branches.filter((branch) => {
     return branch.startsWith('feature/')
   })
+
   const releases = branches.filter((branch) => {
     return !features.includes(branch)
   })
@@ -192,6 +193,7 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
       getCurrentWorktrees('release'),
       getCurrentWorktrees('feature'),
     ])
+
     const currentWorktrees = [...releaseWorktrees, ...featureWorktrees]
 
     if (currentWorktrees.length === 0) {

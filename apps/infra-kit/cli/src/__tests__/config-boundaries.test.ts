@@ -22,6 +22,7 @@ const eslint = new ESLint({ cwd: PROJECT })
 
 const restrictedFor = async (file: string): Promise<{ names: string[]; groups: string[] }> => {
   const config = await eslint.calculateConfigForFile(path.join(PROJECT, file))
+
   const [, options] = (config.rules?.['no-restricted-imports'] ?? []) as [
     unknown,
     { paths?: { name: string }[]; patterns?: { group: string[] }[] } | undefined,

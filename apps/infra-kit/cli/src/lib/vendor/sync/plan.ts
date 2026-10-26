@@ -56,6 +56,7 @@ export const diffEntry = (
   }
 
   const sourceSet = new Set(targetPaths)
+
   const deletes = withoutExcluded(
     target.tracked.map((trackedPath) => {
       return { path: trackedPath }
@@ -215,29 +216,36 @@ const repoPlan = (source: SourceFacts, facts: RepoFacts): TargetPlan => {
     // Diffed against an empty source set, so every file it tracks becomes a delete.
     return [{ ...diffEntry({ ...sourceEntry, files: [] }, targetEntry, source.exclude), pruned: true }]
   })
+
   const writeVendorMeta = entries.some((entry) => {
     return entry.vendored
   })
+
   const fileChanges = entries.some((entry) => {
     return entry.writes.length + entry.deletes.length > 0
   })
+
   const metaStale = writeVendorMeta && (!facts.readmeCurrent || !facts.manifestPresent)
   const base = { ...emptyPlan(facts, 'ok', 'up to date'), branch: facts.branch, entries, writeVendorMeta }
 
   if (!fileChanges && !metaStale) return base
 
   const changelog = changelogLines(facts.changelog, source.name)
+
   // A warn, not a block: the preview is shown before the confirm, so switching sources stays a human decision.
   const sourceSwitch =
     facts.manifestSource !== null && facts.manifestSource !== source.name
       ? [`vendor/ was last synced from ${facts.manifestSource}, not ${source.name}: this sync replaces it`]
       : []
+
   const entryNotes = entries.map(entryNote).filter((note): note is string => {
     return note !== null
   })
+
   const prunedPackages = facts.entries.some((entry) => {
     return entry.scope === 'prune' && entry.tracked.length > 0
   })
+
   const installHint = prunedPackages ? ['vendored modules removed: run pnpm install to update the lockfile'] : []
 
   return {

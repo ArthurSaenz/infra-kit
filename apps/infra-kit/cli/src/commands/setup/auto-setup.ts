@@ -281,6 +281,7 @@ const dropMachineNotes = (runs: AutoSetupRun[]): AutoSetupRun[] => {
   const machineRun = runs.find((run) => {
     return run.root === null
   })
+
   const machineNotes = new Set(machineRun?.notes ?? [])
 
   return runs.map((run) => {
@@ -354,6 +355,7 @@ const autoSetupLocked = async (deps: Required<AutoSetupDeps>): Promise<AutoSetup
   const deadlineMs = startedMs + AUTO_SETUP_BUDGET_MS
   const machine = await runOne(null, deps.home, deps, deadlineMs)
   const listed = listProjects(deps)
+
   const runs: AutoSetupRun[] = [
     listed.error === null
       ? machine

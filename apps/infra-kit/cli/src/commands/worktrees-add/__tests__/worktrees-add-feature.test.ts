@@ -241,6 +241,7 @@ describe('worktrees add --feature', () => {
       const error = await worktreesAdd({ confirmedCommand: true, feature: 'checkout-v2' }).catch((e: unknown) => {
         return e
       })
+
       const { message } = error as Error
 
       expect(message).toContain('could not ask origin whether dev exists')
@@ -255,6 +256,7 @@ describe('worktrees add --feature', () => {
       const error = await worktreesAdd({ confirmedCommand: true, feature: 'checkout-v2' }).catch((e: unknown) => {
         return e
       })
+
       const { message } = error as Error
 
       expect(message).toMatch(/origin\/dev not found/)

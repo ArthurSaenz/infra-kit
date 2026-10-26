@@ -96,6 +96,7 @@ const tallestFrame = (writes: string[]): number => {
 const drawAt = async (element: ReactElement, columns: number, rows: number) => {
   const stdout = new FakeTty(columns, rows)
   const stdin = new FakeStdin()
+
   const instance = render(element, {
     stdout: stdout as unknown as NodeJS.WriteStream,
     stdin: stdin as unknown as NodeJS.ReadStream,

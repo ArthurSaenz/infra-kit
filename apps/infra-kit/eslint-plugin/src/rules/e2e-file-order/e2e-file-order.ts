@@ -250,6 +250,7 @@ const declaredNames = (statement: Statement): string[] => {
 /** A lib file's private statements that sit above one of its exports. */
 const libCandidates = (body: Statement[]): Misplaced | null => {
   const exportedNames = locallyExportedNames(body)
+
   const isExported = (statement: Statement): boolean => {
     return (
       statement.type.startsWith('Export') ||
@@ -258,6 +259,7 @@ const libCandidates = (body: Statement[]): Misplaced | null => {
       })
     )
   }
+
   const lastExport = body.findLastIndex(isExported)
 
   if (lastExport === -1) {
@@ -397,9 +399,11 @@ const buildFix = (sourceCode: SourceCode, body: Statement[], movable: number[]):
     const spans = movable.map((index) => {
       return statementSpan(sourceCode, body[index]!)
     })
+
     const moved = spans.map(([start, end]) => {
       return sourceCode.text.slice(start, end)
     })
+
     const end = sourceCode.text.length
     const separator = sourceCode.text.endsWith('\n') ? '\n' : '\n\n'
 

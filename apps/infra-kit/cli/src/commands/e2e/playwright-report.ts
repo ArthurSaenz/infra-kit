@@ -158,6 +158,7 @@ const failureOf = (
   const failed = lastFailedRun.results.findLast((result) => {
     return result.status !== 'passed' && result.status !== 'skipped'
   })
+
   const failedEveryRun = failedRuns.length === runs.length && lastFailedRun.status === 'unexpected'
 
   return {
@@ -198,6 +199,7 @@ export const summarizePlaywrightReport = (
         return [...annotationTypes(test)]
       }),
     )
+
     const declaresFail = tests.some((test) => {
       return test.expectedStatus === 'failed'
     })

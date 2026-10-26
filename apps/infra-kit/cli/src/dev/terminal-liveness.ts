@@ -122,6 +122,7 @@ export const installTerminalLiveness = ({
 
   for (const [index, stream] of streams.entries()) {
     const name = streamName(stream, index)
+
     const listener = (raw: unknown): void => {
       const error = (raw ?? new Error('stdio error')) as NodeJS.ErrnoException
 

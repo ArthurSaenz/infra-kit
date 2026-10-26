@@ -189,6 +189,7 @@ const runInteractiveMenu = async (): Promise<string | null> => {
 const runSessionShell = async (): Promise<void> => {
   const { runCommandPalette } = await import('src/tui/boot')
   const cliPath = fileURLToPath(import.meta.url)
+
   // Keyed by the SAME string the palette rows carry — the space-joined group path — so a pick resolves
   // by what it displays. Keying by `cliName` worked only while every command had a flat alias to name it.
   const catalogByName = new Map(

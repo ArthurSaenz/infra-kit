@@ -117,6 +117,7 @@ describe('newReportPath / readAndUnlinkReport', () => {
       },
       pid: 42,
     })
+
     const b = newReportPath({
       tmpdir: () => {
         return '/fake'
@@ -166,6 +167,7 @@ describe('newReportPath / readAndUnlinkReport', () => {
 
   it('returns null (and still unlinks) on unparseable content', () => {
     const unlinked: string[] = []
+
     const record = readAndUnlinkReport('/fake/bad.json', {
       exists: () => {
         return true

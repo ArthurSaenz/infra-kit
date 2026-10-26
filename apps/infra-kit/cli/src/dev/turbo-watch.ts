@@ -112,6 +112,7 @@ export const defaultTurboWatchFactory: TurboWatchFactory = ({
 }) => {
   const filters = buildTurboWatchFilters(depInclusive, depClosure)
   const out = openLog ? openLog(logFile) : fs.openSync(logFile, 'a')
+
   const child = spawn(
     'pnpm',
     [

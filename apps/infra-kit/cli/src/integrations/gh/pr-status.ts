@@ -20,6 +20,7 @@ export interface PRStatus {
 export const fetchPRByHead = async (head: string): Promise<PRStatus | null> => {
   const result =
     await $`gh pr list --head ${head} --state all --json number,state,title,baseRefName,headRefName --limit 1`
+
   const prs = JSON.parse(result.stdout) as PRStatus[]
 
   return prs[0] ?? null

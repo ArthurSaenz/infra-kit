@@ -121,6 +121,7 @@ const forEachAssignment = (
   const lines = content.split('\n').map((line) => {
     return line.endsWith('\r') ? line.slice(0, -1) : line
   })
+
   let index = 0
   let inQuote = false
 

@@ -66,6 +66,7 @@ describe('--json output carries no terminal escapes', () => {
       undefined,
       workingProxy(),
     )
+
     const out: string[] = []
 
     process.stdout.write = ((chunk: unknown): boolean => {

@@ -92,6 +92,7 @@ describe('serverlessLocalRun — boot + HTTP->Lambda transform', () => {
     running.push(await boot(apiDir, port))
 
     const res = await fetch(`http://127.0.0.1:${port}${PREFIX}/ping`)
+
     const body = (await res.json()) as {
       event: { httpMethod: string; path: string; requestContext: { httpMethod: string; resourcePath: string } }
     }
@@ -328,6 +329,7 @@ describe('serverlessLocalRun — route key includes the HTTP method', () => {
     running.push(await boot(apiDir, port))
 
     const getBody = (await (await fetch(`http://127.0.0.1:${port}${PREFIX}/thing`)).json()) as { route: string }
+
     const postBody = (await (await fetch(`http://127.0.0.1:${port}${PREFIX}/thing`, { method: 'POST' })).json()) as {
       route: string
     }
@@ -388,6 +390,7 @@ describe('serverlessLocalRun — injected handler logger (real Powertools)', () 
     // Spy the console methods directly — Node's Console dispatches writes through internal symbols
     // that a process.stdout.write spy would miss.
     const captured: string[] = []
+
     const collect = (...args: unknown[]): void => {
       captured.push(
         args
@@ -397,6 +400,7 @@ describe('serverlessLocalRun — injected handler logger (real Powertools)', () 
           .join(' '),
       )
     }
+
     const spies = (['log', 'info', 'debug', 'warn', 'error'] as const).map((method) => {
       return vi.spyOn(console, method).mockImplementation(collect as never)
     })

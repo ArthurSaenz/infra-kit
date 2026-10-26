@@ -133,6 +133,7 @@ describe('update-check worker isolation', () => {
     expect(metafile, 'the build must have produced a metafile').toBeDefined()
 
     const outputs = metafile!.outputs
+
     const entryKey = Object.keys(outputs).find((key) => {
       return key.endsWith('/update-check.js')
     })
@@ -200,6 +201,7 @@ describe('update-check worker isolation', () => {
     expect(metafile, 'the build must have produced a metafile').toBeDefined()
 
     const outputs = metafile!.outputs
+
     const entryKey = Object.keys(outputs).find((key) => {
       return key.endsWith('/mcp-proxy.js')
     })

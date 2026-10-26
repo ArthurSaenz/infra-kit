@@ -1003,6 +1003,7 @@ export const infraKitDev = async (
   // at a hostname nothing resolves would break hot reload on a path that works today.
   const ws: InfraKitViteWs | undefined =
     managed?.alias == null ? undefined : { protocol: 'wss', host: managed.alias, clientPort: HTTPS_PORT }
+
   const server = { port, host, ...(strictPort ? { strictPort } : {}), ...(ws ? { ws } : {}) }
   const config = await loadPackageConfig(cwd)
   const dev = config?.dev
@@ -1016,6 +1017,7 @@ export const infraKitDev = async (
   const env = process.env[INFRA_KIT_ENV]
   const cloud = readCloudOrigin(config?.deployedUrlEnv)
   const authHeader = buildBasicAuthHeader(process.env, options.basicAuth)
+
   const getRelease = once(() => {
     return readRelease(cwd)
   })

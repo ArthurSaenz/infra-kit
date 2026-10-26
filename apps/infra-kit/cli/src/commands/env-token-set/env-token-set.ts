@@ -236,6 +236,7 @@ const pickTokenEnv = async (): Promise<string> => {
   }
 
   const [envs, store] = await Promise.all([listProjectEnvs(), readTokenStore()])
+
   const width = Math.max(
     0,
     ...envs.map(({ env }) => {
@@ -500,6 +501,7 @@ export const envTokenSetFromFile = async ({ fromFile, force }: EnvTokenSetFromFi
   if (Object.keys(accepted).length > 0) await setTokens(accepted)
 
   const storePath = await getTokenStorePath()
+
   const width = Math.max(
     ...rows.map(({ env }) => {
       return env.length

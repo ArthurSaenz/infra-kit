@@ -144,6 +144,7 @@ export const checkClaudeInChrome = (deps: ChromeCheckDeps = {}): ChromeCheck => 
 export const isChromeEnabledByDefault = (deps: Pick<ChromeCheckDeps, 'home' | 'readText'> = {}): boolean => {
   const home = deps.home ?? os.homedir()
   const readText = deps.readText ?? readTextFile
+
   const state = z
     .object({ claudeInChromeDefaultEnabled: z.boolean().optional() })
     .safeParse(parseJsonOrNull(readText(path.join(home, '.claude.json')) ?? ''))

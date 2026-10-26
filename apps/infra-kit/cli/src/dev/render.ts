@@ -547,6 +547,7 @@ export class DevRenderer implements DevUi {
 
     const failedCount = summary.failed?.length ?? 0
     const elapsed = formatElapsed(summary.elapsedMs)
+
     const status =
       failedCount > 0
         ? this.color(ANSI.red, `${failedCount} failed · started in ${elapsed}`)
@@ -730,6 +731,7 @@ export class DevRenderer implements DevUi {
    */
   formatFooterLines(summary: ReadySummary): string[] {
     const tagWidth = this.tagWidth(summary)
+
     const rows = summary.endpoints.map((e) => {
       const dot = this.healthDot(e.health)
       const status = this.statusFields(e)

@@ -190,6 +190,7 @@ const probeChangelog = async (
     '--',
     ...copyPaths,
   ])
+
   const lines = stdout.split('\n').filter((line) => {
     return line.length > 0
   })
@@ -247,6 +248,7 @@ export const probeTarget = async (source: SourceFacts, ref: TargetRef): Promise<
 
   const manifest = readManifestMeta(ref.root)
   const manifestSha = manifest?.commit ?? null
+
   const [branch, dirty, entries, headMeta, changelog] = await Promise.all([
     currentBranch(ref.root),
     dirtyPaths(source, scopes, ref.root),
@@ -254,6 +256,7 @@ export const probeTarget = async (source: SourceFacts, ref: TargetRef): Promise<
     headVendorMeta(ref.root),
     probeChangelog(source, scopes, manifestSha),
   ])
+
   // Only a prune that would delete something can strand a dependency.
   const pruned = entries.flatMap((entry, index) => {
     return entry.scope === 'prune' && entry.tracked.length > 0

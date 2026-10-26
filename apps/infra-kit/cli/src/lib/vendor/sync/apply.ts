@@ -90,6 +90,7 @@ const pruneEmptyDirs = async (targetRoot: string, deleted: readonly string[]): P
   if (deleted.length === 0) return
 
   const tracked = await trackedDirectories(targetRoot, new Set(deleted))
+
   const candidates = [
     ...new Set(
       deleted.map((deletedPath) => {
@@ -129,6 +130,7 @@ export const manifestPathsAfterApply = (
   deleted: readonly string[],
 ): string[] => {
   const deletedSet = new Set(deleted)
+
   const fromSource = entries
     .filter((entry) => {
       return entry.vendored
@@ -136,9 +138,11 @@ export const manifestPathsAfterApply = (
     .flatMap((entry) => {
       return entry.targetPaths
     })
+
   const surviving = trackedVendor.filter((trackedPath) => {
     return !deletedSet.has(trackedPath)
   })
+
   const relative = [...fromSource, VENDOR_README_PATH, ...surviving]
     .map(toVendorRelative)
     .filter((rel): rel is string => {
@@ -182,6 +186,7 @@ export const applyTargetPlan = async ({ source, plan, onBeforeFirstWrite }: Appl
   onBeforeFirstWrite?.(recoveryArgv(plan))
 
   const targetRoot = path.resolve(plan.root)
+
   const deleted = plan.entries.flatMap((entry) => {
     return entry.deletes
   })

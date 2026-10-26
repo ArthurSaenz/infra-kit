@@ -328,6 +328,7 @@ describe('checkPortless', () => {
         },
       }),
     )
+
     const printed = messagesOf(checks)
 
     for (const bare of BARE_FORMS) {
@@ -354,6 +355,7 @@ describe('checkPortless', () => {
         },
       }),
     )
+
     const evaluated = await checkPortless(healthyDeps())
 
     expect(unresolved).toHaveLength(7)

@@ -134,6 +134,7 @@ const makeHarness = (options: { withLiveness: boolean }): Harness => {
     },
     stdout: stdout as unknown as NodeJS.WriteStream,
   })
+
   const runner = new DevServerRunner(
     {},
     undefined,
@@ -361,6 +362,7 @@ describe('devServerRunner.shutdown — idempotent (L0)', () => {
     }
 
     const unhandled: unknown[] = []
+
     const onUnhandled = (reason: unknown): void => {
       unhandled.push(reason)
     }

@@ -359,6 +359,7 @@ describe('worktrees-add — the CLI direction still prompts', () => {
     const escape = setTimeout(() => {
       stdin.write(Buffer.from([0x1b]))
     }, 300)
+
     // Backstop: if Esc were dead, answer the prompt instead of hanging the suite.
     const cancelRescue = rescue(stdin)
 

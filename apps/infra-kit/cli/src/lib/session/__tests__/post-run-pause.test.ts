@@ -364,6 +364,7 @@ describe('awaitPostRunKey exits', () => {
 
   it('restores the terminal and propagates when the hint write throws', async () => {
     const boom = new Error('lost the tty')
+
     const h = harness({
       onWrite: () => {
         throw boom
@@ -389,6 +390,7 @@ describe('awaitPostRunKey exits', () => {
 describe('awaitPostRunKey suspend', () => {
   const suspendHarness = (over: HarnessOpts = {}) => {
     const stops = { count: 0 }
+
     const h = harness({
       ...over,
       suspend: () => {
@@ -473,11 +475,13 @@ describe('awaitPostRunKey suspend', () => {
 
   it('re-formats the hint from a fresh columns() read, so a resize while stopped shortens it', async () => {
     const width = { value: 80 }
+
     const h = suspendHarness({
       columns: () => {
         return width.value
       },
     })
+
     const pending = awaitPostRunKey(h.ctx, h.deps)
 
     await after(20)

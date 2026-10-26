@@ -123,11 +123,13 @@ const messageOf = (diagnostic: TsDiagnostic): string => {
 /** The errors the last build recorded, or `undefined` for a clean one. */
 export const summarizeBuildErrors = (info: BuildInfo, pkgDir: string): BuildErrors | undefined => {
   const { data } = info
+
   const fileOf = (fileId: number): string | undefined => {
     const name = data.fileNames?.[fileId - 1]
 
     return name === undefined ? undefined : path.relative(pkgDir, path.resolve(info.dir, name))
   }
+
   const diagnosed: BuildErrors[] = []
   const unchecked: BuildErrors[] = []
 

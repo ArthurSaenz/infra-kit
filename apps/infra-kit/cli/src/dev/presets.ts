@@ -184,6 +184,7 @@ export const resolvePreset = (preset: DevPreset, discovered: DiscoveredParts): R
   }
 
   const targets = [...state.targets.values()]
+
   const localApps = [
     ...new Set(
       targets
@@ -224,6 +225,7 @@ export const deriveTargetLabel = (input: TargetLabelInput): string => {
   }
 
   const running = new Set(input.running)
+
   const isEverything = input.discovered.every((key) => {
     return running.has(key)
   })
@@ -322,6 +324,7 @@ const checkLocalRoute = ({ app, route, launchedPkgs, ctx }: CheckLocalRouteArgs)
  */
 export const validatePresetProxy = (plan: DevPreset, ctx: PresetProxyContext): PresetProxyIssue[] => {
   const resolved = resolvePreset(plan, ctx.discovered)
+
   const launchedPkgs = new Set(
     resolved.localApps
       .map((app) => {

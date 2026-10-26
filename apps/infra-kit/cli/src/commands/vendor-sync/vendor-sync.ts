@@ -173,6 +173,7 @@ const finish = ({ mode, report, outcomes, source, print }: FinishInput) => {
   const plans = outcomes.map((outcome) => {
     return outcome.plan
   })
+
   const structuredContent = {
     mode,
     source: { root: source.root, name: source.name, headSha: source.headSha },
@@ -221,12 +222,15 @@ const prepare = async (options: VendorSyncOptions): Promise<Prepared> => {
  */
 export const vendorSync = async (options: VendorSyncOptions = {}) => {
   const { source, sourceRows, plans } = await prepare(options)
+
   const outcomes = plans.map((plan): TargetOutcome => {
     return { plan, applied: false }
   })
+
   const reportOptions = { commit: options.commit, manifestOnly: options.manifestOnly }
   const previewMode: SyncMode = options.check ? 'check' : 'preview'
   const preview = syncReport(sourceRows, outcomes, { ...reportOptions, mode: previewMode })
+
   const nothingToApply = !plans.some((plan) => {
     return plan.status === 'changed'
   })

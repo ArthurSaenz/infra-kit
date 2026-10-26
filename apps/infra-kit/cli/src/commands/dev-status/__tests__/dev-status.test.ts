@@ -58,6 +58,7 @@ describe('devStatus', () => {
     // Injected probe: the ONLY liveness signal. If dev-status tried to start anything, this stub would not
     // be the sole source of `live`, and there is no process spawn seam to reach anyway.
     const probed: number[] = []
+
     const isListening = vi.fn(async (port: number) => {
       probed.push(port)
 
@@ -81,6 +82,7 @@ describe('devStatus', () => {
     const web = result.structuredContent.apps.find((a) => {
       return a.app === 'web'
     })!
+
     const api = result.structuredContent.apps.find((a) => {
       return a.app === 'api'
     })!
@@ -302,6 +304,7 @@ describe('devStatus', () => {
         return FRAGMENT_BASE.writtenAt
       },
     })
+
     const resource = readDevContext(nested)
 
     expect(tool.structuredContent.contextDir).toBe(resource.fragmentDir)
@@ -326,6 +329,7 @@ describe('devStatus', () => {
     fs.utimesSync(file, tenMinAgoSec, tenMinAgoSec)
 
     const now = tenMinAgoSec * 1000 + 600_000 // exactly 600s after the mtime
+
     const isListening = vi.fn(async () => {
       return true
     })

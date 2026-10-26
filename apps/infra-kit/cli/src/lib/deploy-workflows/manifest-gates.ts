@@ -19,6 +19,7 @@ export const manifestGates = (config: DeployConfig): Map<string, string[]> => {
     }
 
     const skipped = service.skipEnvs ?? []
+
     const allowed = config.environments.filter((env) => {
       return !skipped.includes(env)
     })

@@ -244,6 +244,7 @@ export const readMarketplacePluginVersion = ({ home }: Pick<PluginInstallationQu
     path.join('marketplaces', MARKETPLACE_NAME, 'plugins', PLUGIN_NAME, '.claude-plugin', 'plugin.json'),
     home,
   )
+
   const manifest = readJsonFile(manifestPath)
 
   return isPlainObject(manifest) ? readString(manifest, 'version') : null

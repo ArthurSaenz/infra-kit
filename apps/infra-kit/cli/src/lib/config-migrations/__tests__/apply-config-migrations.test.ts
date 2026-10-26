@@ -69,6 +69,7 @@ describe('applyConfigMigrations', () => {
       ide: [{ provider: 'zed', config: { mode: 'windows' } }],
       devServersPresets: { shopLocal: {} },
     })
+
     const twice = applyConfigMigrations(once.result)
 
     expect(once.changed).toBe(true)

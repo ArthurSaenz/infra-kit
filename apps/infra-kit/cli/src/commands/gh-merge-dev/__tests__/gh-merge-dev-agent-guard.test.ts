@@ -78,6 +78,7 @@ vi.mock('../merge-run', async (importOriginal) => {
 
 vi.mock('zx', () => {
   const settled = { stdout: '', stderr: '', exitCode: 0 }
+
   const tag = (): Promise<typeof settled> => {
     return Promise.resolve(settled)
   }

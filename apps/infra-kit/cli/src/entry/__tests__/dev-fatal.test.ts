@@ -34,6 +34,7 @@ const seams = (): { exits: number[]; reaps: number[]; exit: (code: number) => vo
 describe('createFatalHandler', () => {
   it('boot (runner == null): reaps the descendant groups and exits — it must not swallow the error', () => {
     const { exits, reaps, exit, forceReap } = seams()
+
     const onFatal = createFatalHandler({
       getRunner: () => {
         return null
@@ -52,6 +53,7 @@ describe('createFatalHandler', () => {
     const { exits, reaps, exit, forceReap } = seams()
     const filed: string[] = []
     let resolveTeardown = (): void => {}
+
     const runner = {
       shutdown: () => {
         return new Promise<void>((resolve) => {
@@ -62,6 +64,7 @@ describe('createFatalHandler', () => {
         filed.push(detail)
       },
     }
+
     const onFatal = createFatalHandler({
       getRunner: () => {
         return runner
@@ -89,6 +92,7 @@ describe('createFatalHandler', () => {
   it('force-quits a wedged teardown on the deadline rather than spinning forever', () => {
     const { exits, reaps, exit, forceReap } = seams()
     let fireDeadline = (): void => {}
+
     const onFatal = createFatalHandler({
       getRunner: () => {
         return {
@@ -141,6 +145,7 @@ describe('createFatalHandler', () => {
     })
 
     const unhandled: unknown[] = []
+
     const onUnhandled = (reason: unknown): void => {
       unhandled.push(reason)
     }
@@ -165,6 +170,7 @@ describe('createFatalHandler', () => {
 
   it('is once-only: terminal death arrives through several channels, and the reap must not run twice', () => {
     const { exits, reaps, exit, forceReap } = seams()
+
     const onFatal = createFatalHandler({
       getRunner: () => {
         return null

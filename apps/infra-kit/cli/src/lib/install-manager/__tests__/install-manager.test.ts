@@ -617,6 +617,7 @@ describe('isGlobalInstall', () => {
     const resolveLink: RealpathFn = (dir) => {
       return dir.startsWith('/link/') ? dir.replace('/link/', '/real/') : dir
     }
+
     const self = '/real/home/Library/pnpm/global/v11/8a83-1/node_modules/infra-kit/dist/cli.js'
 
     expect(
@@ -671,6 +672,7 @@ describe('shouldWarnLocalInstall', () => {
   const HOME = '/Users/x'
   const PNPM_HOME = `${HOME}/Library/pnpm`
   const PNPM_GLOBAL_SELF = `${PNPM_HOME}/global/v11/8a83-1/node_modules/.pnpm/infra-kit@0.5.6/node_modules/infra-kit/dist/cli.js`
+
   const nothing = (): boolean => {
     return false
   }

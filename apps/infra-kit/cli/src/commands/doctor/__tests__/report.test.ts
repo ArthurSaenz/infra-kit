@@ -58,6 +58,7 @@ describe('groupChecks', () => {
 
   it('puts an unmapped name in the Other bucket rather than dropping it', () => {
     const sections = groupChecks([pass('gh installed'), pass('some brand new check')])
+
     const other = sections.find((section) => {
       return section.label === OTHER_SECTION
     })
@@ -125,6 +126,7 @@ describe('section coverage', () => {
 describe('formatDoctorReport', () => {
   it('renders a section header with an all-pass rollup', () => {
     const lines = formatDoctorReport([pass('gh installed'), pass('aws installed')])
+
     const header = lines.find((line) => {
       return line.includes('Tools & CLIs')
     })
@@ -134,6 +136,7 @@ describe('formatDoctorReport', () => {
 
   it('renders a mixed rollup showing the failure count', () => {
     const lines = formatDoctorReport([pass('gh installed'), fail('aws installed')])
+
     const header = lines.find((line) => {
       return line.includes('Tools & CLIs')
     })
@@ -161,6 +164,7 @@ describe('formatDoctorReport', () => {
 
     it('renders its own rollup, apart from the failure count', () => {
       const lines = formatDoctorReport([pass('claude CLI'), warn('Agent allowlist')])
+
       const header = strip(
         lines.find((line) => {
           return line.includes('Claude Code plugin')
@@ -246,6 +250,7 @@ describe('formatDoctorReport', () => {
 
   it('leaves no trailing whitespace on any line', () => {
     const lines = formatDoctorReport([pass('gh installed', ''), fail('portless routes')], { width: 100 })
+
     const trailing = lines.filter((line) => {
       return line !== line.trimEnd()
     })
@@ -338,6 +343,7 @@ describe('section header right-alignment', () => {
   it('never wraps: no rendered section header exceeds the width', () => {
     const labels = ['Tools & CLIs', 'Shell & integration', 'Dev proxy (portless)']
     const checks = [pass('gh installed'), fail('portless routes'), pass('zshrc init block')]
+
     const overlong = formatDoctorReport(checks, { width: 70 })
       .map((line) => {
         return strip(line)
@@ -366,9 +372,11 @@ describe('long messages at a narrow width', () => {
 
   const rows = (): string[] => {
     const lines = formatDoctorReport([fail('portless serving TLS on :443', LONG)], { width: 40, color: false })
+
     const start = lines.findIndex((line) => {
       return line.includes('portless serving TLS')
     })
+
     // Stop at the blank line that closes the section, so the summary rule (indented 2) is not
     // mistaken for a wrapped continuation of the message.
     const end = lines.findIndex((line, index) => {
@@ -390,6 +398,7 @@ describe('long messages at a narrow width', () => {
 
   it('keeps the long path token intact on a single line', () => {
     const path = '/opt/homebrew/lib/node_modules/infra-kit/node_modules/portless/dist/cli.js'
+
     const holder = rows().find((line) => {
       return line.includes(path)
     })
@@ -402,6 +411,7 @@ describe('long messages at a narrow width', () => {
     const first = rendered[0] ?? ''
     const messageColumn = first.indexOf('No portless daemon')
     const continuations = rendered.slice(1)
+
     const indents = continuations.map((line) => {
       return line.search(/\S/)
     })

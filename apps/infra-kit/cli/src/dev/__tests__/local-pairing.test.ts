@@ -98,6 +98,7 @@ describe('findDegradedRoutes', () => {
       routes: { '/api': { packageName: 'backend-api', from: ['local'] } },
       cloudUrl: 'https://dev.hulyo.co.il',
     }
+
     const [degraded] = findDegradedRoutes(crashed({ uis: [ui] }))
 
     expect(degraded?.fallback).toBe('local')
@@ -192,6 +193,7 @@ describe('formatPairingRefusal', () => {
       app: 'client',
       routes: { '/api': { packageName: 'backend-api', from: ['local', 'cloud'], default: 'cloud' } },
     }
+
     const message = formatPairingRefusal(findDegradedRoutes(crashed({ uis: [ui] })), 'clientLocal')
 
     expect(message).toContain('to the cloud backend')

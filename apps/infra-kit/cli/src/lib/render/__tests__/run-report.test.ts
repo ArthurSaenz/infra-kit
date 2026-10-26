@@ -66,6 +66,7 @@ describe('glyphs', () => {
     ).filter((line) => {
       return line.includes('MESSAGE')
     })
+
     const offsets = lines.map((line) => {
       return line.indexOf('MESSAGE')
     })
@@ -158,11 +159,13 @@ describe('notes', () => {
   it('prints each note verbatim on its own hanging line, never wrapped, even past the width', () => {
     const rows = [{ ...row('portless', 'manual', 'run this once'), notes: [NOTE, 'second  note'] }]
     const lines = formatRunReport(report(rows), { width: 40 })
+
     const messageColumn = (
       lines.find((line) => {
         return line.includes('run this once')
       }) ?? ''
     ).indexOf('run this once')
+
     const noteLines = lines.filter((line) => {
       return line.includes('sudo') || line.includes('second')
     })
@@ -200,6 +203,7 @@ describe('colour', () => {
       const line = lines.find((candidate) => {
         return candidate.includes(`row-${status}`)
       }) as string
+
       const nameEscaped = new RegExp(`${ESC}\\[[0-9;]*mrow-${status}`).test(line)
       const messageDimmed = line.includes(`${ESC}[2m${status} message`)
       const loud = status === 'warn' || status === 'fail'
@@ -244,6 +248,7 @@ describe('shared chrome fixture', () => {
       path.join(findRepoRoot(), 'plugins/infra-kit/skills/doctor/__tests__/__fixtures__/run-report-chrome.txt'),
       'utf8',
     )
+
     const chrome: RunReport = {
       title: 'infra-kit chrome fixture',
       sections: [

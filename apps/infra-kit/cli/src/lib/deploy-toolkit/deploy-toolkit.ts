@@ -118,6 +118,7 @@ export const turboVersion = async (root: string): Promise<string> => {
     dependencies?: Record<string, string>
     devDependencies?: Record<string, string>
   }
+
   const range = manifest.devDependencies?.turbo ?? manifest.dependencies?.turbo
   const version = range?.replace(/^[\^~=v]+/, '')
 
@@ -331,11 +332,13 @@ export const createDeployToolkit = ({
 
     // deploy-utils.sh exported these for the whole deploy, so serverless sees them too.
     const deployEnv = { ...env, ...options.buildEnv }
+
     const outDir = await pruneAndBuild(app, {
       installProd: true,
       buildTask: options.buildTask,
       buildEnv: options.buildEnv,
     })
+
     const context = { stage: options.stage, outDir, appDir: path.join(outDir, appPath) }
 
     await runHook('Pre-deployment', options.preDeploy, context)
@@ -363,11 +366,13 @@ export const createDeployToolkit = ({
     await setupTools(false)
 
     const deployEnv = { ...env, ...options.buildEnv }
+
     const outDir = await pruneAndBuild(app, {
       installProd: false,
       buildTask: options.buildTask,
       buildEnv: options.buildEnv,
     })
+
     const context = { stage: options.stage, outDir, appDir: path.join(outDir, appPath) }
     const destination = `s3://${options.bucket}${options.destPath ?? ''}`
     const source = options.sourcePath ?? './dist'
@@ -401,6 +406,7 @@ export const createDeployToolkit = ({
   const invokeLambda = async (invocation: DeployLambdaInvocation, payload: string, region: string | undefined) => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'infra-kit-lambda-'))
     const responseFile = path.join(dir, 'response.json')
+
     const args = [
       'lambda',
       'invoke',
@@ -417,6 +423,7 @@ export const createDeployToolkit = ({
       String(LAMBDA_CONNECT_TIMEOUT_SECONDS),
       responseFile,
     ]
+
     const started = Date.now()
 
     deps.log(`COMMAND: aws ${args.join(' ')}`)
@@ -427,9 +434,11 @@ export const createDeployToolkit = ({
         .then(lambdaFailure, (error: unknown) => {
           return `aws CLI failed: ${truncate(error instanceof Error ? error.message : String(error))}`
         })
+
       const body = await fs.readFile(responseFile, 'utf-8').catch(() => {
         return ''
       })
+
       const seconds = ((Date.now() - started) / 1000).toFixed(1)
       const response = failure !== undefined && body ? `; response: ${truncate(body)}` : ''
 

@@ -36,6 +36,7 @@ describe.runIf(present(REPOS.hulyo))('hulyo', () => {
 
   it('reads the real env restrictions', async () => {
     const services = await discoverServices(REPOS.hulyo)
+
     const byName = new Map(
       services.map((service) => {
         return [service.name, service]
@@ -64,6 +65,7 @@ describe.runIf(present(REPOS.hulyo))('hulyo', () => {
 
   it('resolves the SSM prefix the scripts read, not the checkout directory name', async () => {
     const services = await discoverServices(REPOS.hulyo)
+
     const byName = new Map(
       services.map((service) => {
         return [service.name, service]
@@ -83,6 +85,7 @@ describe.runIf(present(REPOS.hulyo))('hulyo', () => {
 describe.runIf(present(REPOS.travelist))('travelist', () => {
   it('honours workflow gates even where the script has no guard', async () => {
     const services = await discoverServices(REPOS.travelist)
+
     const byName = new Map(
       services.map((service) => {
         return [service.name, service]

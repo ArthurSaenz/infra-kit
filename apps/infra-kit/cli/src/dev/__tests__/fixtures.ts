@@ -209,6 +209,7 @@ function writeUi(root: string, app: AppSpec & { ui: NonNullable<AppSpec['ui']> }
     templates: { local: 'https://<release>.<packageName>.localhost' },
     routes: ui.proxy.routes,
   }
+
   const deployedUrlEnv = ui.proxy.deployedUrlEnv ?? deployedUrlEnvOf(app.name)
 
   // A plain object export (not a function): `loadDev` accepts either, and this keeps the fixture free of
@@ -407,6 +408,7 @@ export const makeFakeProxy = (
   const ensuredPorts: number[] = []
   const serviceInstalled = options?.serviceInstalled ?? 'no'
   const notPortless = options?.notPortless ?? false
+
   const driver: PortlessDriver = {
     binPath: () => {
       return available ? FAKE_PORTLESS_BIN : null

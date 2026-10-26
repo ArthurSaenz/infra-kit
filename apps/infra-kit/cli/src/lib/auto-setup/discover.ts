@@ -46,6 +46,7 @@ const defaultRealpath = (target: string): string => {
  */
 export const mainCheckoutOf = (root: string, readGitFile: (gitPath: string) => string | null): string => {
   const pointer = readGitFile(path.join(root, '.git'))
+
   const line = pointer
     ?.split('\n')
     .map((entry) => {
@@ -54,6 +55,7 @@ export const mainCheckoutOf = (root: string, readGitFile: (gitPath: string) => s
     .find((entry) => {
       return entry.startsWith('gitdir:')
     })
+
   const gitdir = line?.slice('gitdir:'.length).trim()
 
   if (!gitdir) return root

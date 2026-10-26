@@ -180,6 +180,7 @@ type ResolvedDeps = Required<
  */
 const runOne = async (command: SessionCommand, deps: ResolvedDeps, enterChildPhase: () => void): Promise<string> => {
   const reportPath = newReportPath()
+
   const childEnv: NodeJS.ProcessEnv = {
     ...deps.env,
     [SESSION_REPORT_ENV]: reportPath,
@@ -187,6 +188,7 @@ const runOne = async (command: SessionCommand, deps: ResolvedDeps, enterChildPha
     // worker; opt them all out. The parent's own startup check (before the palette) still runs.
     INFRA_KIT_NO_AUTO_UPDATE: '1',
   }
+
   const start = deps.now()
 
   let result: { code: number | null; signal: NodeJS.Signals | null } = { code: 1, signal: null }
@@ -431,6 +433,7 @@ export const installSessionSignals = (getPhase: () => SessionPhase, deps: Sessio
 
     exitSession(deps)
   }
+
   const onSigterm = (): void => {
     const phase = getPhase()
 
@@ -458,10 +461,12 @@ export const installSessionSignals = (getPhase: () => SessionPhase, deps: Sessio
     // A genuine external `kill` during a child. Let the child finish and its entry commit, then stop.
     quitRequested = true
   }
+
   const onSighup = (): void => {
     // The tty is gone. There is nothing left to render into and no user to render for.
     deps.exit(129)
   }
+
   const onSigtstp = (): void => {
     if (getPhase() !== 'child') {
       // Palette or pause: ignore, or we would suspend leaving a partial Ink frame — or a raw tty and a
@@ -587,6 +592,7 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
         resetTerminal(opts)
       }),
   }
+
   const write =
     deps.write ??
     ((text: string) => {
@@ -651,6 +657,7 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
       return false
     },
   }
+
   const sessionSignals =
     deps.installSignals === false
       ? noopSignals
@@ -672,6 +679,7 @@ export const runSession = async (items: SessionPaletteItem[], deps: RunSessionDe
       return sessionSignals.quitRequested()
     },
   }
+
   const afterRun = deps.afterRun ?? defaultAfterRun(write, resolved)
 
   try {

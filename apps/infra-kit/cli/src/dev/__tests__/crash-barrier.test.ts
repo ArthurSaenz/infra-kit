@@ -42,6 +42,7 @@ describe('registerCrashBarrier', () => {
   it('default reporter writes message and stack to stderr and never throws', () => {
     const handlers = new Map<string, (error: unknown) => void>()
     const writes: string[] = []
+
     const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
       writes.push(String(chunk))
 

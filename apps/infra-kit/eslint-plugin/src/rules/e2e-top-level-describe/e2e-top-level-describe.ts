@@ -70,6 +70,7 @@ const buildFix = (sourceCode: SourceCode, moved: TopLevelCall[], block: ESTree.B
   return (fixer) => {
     // The describe is top-level, so an empty body indents one level from column 0.
     const indent = ' '.repeat(block.body[0]?.loc?.start.column ?? 2)
+
     const texts = moved.map(({ statement }) => {
       const [start] = removalRange(sourceCode, statement)
 
@@ -146,9 +147,11 @@ export const e2eTopLevelDescribe: Rule.RuleModule = {
     return {
       Program(program) {
         const calls = topLevelCalls(program.body as Statement[])
+
         const describes = calls.filter(({ call }) => {
           return playwrightCallKind(call) === 'describe'
         })
+
         const tests = calls.filter(({ call }) => {
           return (
             playwrightCallKind(call) === 'test' &&
@@ -157,6 +160,7 @@ export const e2eTopLevelDescribe: Rule.RuleModule = {
             })
           )
         })
+
         const setup = calls.filter((entry) => {
           return !describes.includes(entry) && !tests.includes(entry)
         })

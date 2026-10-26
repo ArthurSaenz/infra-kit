@@ -224,6 +224,7 @@ describe.skipIf(!fs.existsSync('/bin/zsh'))('the ~/.zshenv block, under a real /
   it('9. a broken load file: the parse error surfaces, the earlier assignments land, and allexport does not leak', () => {
     // The last `KEY='value'` line loses its closing quote, so `set -a` runs and `set +a` never does.
     const lines = loadLines(STANDARD_PAIRS)
+
     const lastValueIdx = lines.findLastIndex((line) => {
       return /^[A-Z_]+='.*'$/.test(line)
     })
@@ -239,6 +240,7 @@ describe.skipIf(!fs.existsSync('/bin/zsh'))('the ~/.zshenv block, under a real /
       // eslint-disable-next-line no-template-curly-in-string
       '/bin/sh -c \'printf "after=[%s]\\n" "${AFTER_BLOCK:-}"\'',
     ].join('\n')
+
     const result = zsh(script)
 
     expect(result.stderr).toContain("unmatched '")

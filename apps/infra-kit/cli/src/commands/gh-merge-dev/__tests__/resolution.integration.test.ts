@@ -309,6 +309,7 @@ describe('--keep-conflicts hand-off (AC 2)', () => {
     await resolve(repo, 'release/v1.0.0', 'work in progress')
 
     const again = await handOff()
+
     const second = again.results.find((candidate) => {
       return candidate.branch === 'release/v1.0.0'
     })
@@ -896,6 +897,7 @@ describe('--continue (AC 3–13)', () => {
       await git(repo, 'switch', '-q', 'dev')
 
       const handed = await handOff()
+
       const entry = handed.results.find((candidate) => {
         return candidate.branch === 'release/v1.0.0'
       })
@@ -1092,6 +1094,7 @@ describe('lockfile-only conflict (AC 3, S0-PASS)', () => {
       'infra-kit',
       'merge-dev-resolutions',
     )
+
     const [stateName] = await fs.readdir(stateDir)
     const stateFile = path.join(stateDir, stateName as string)
     const state = JSON.parse(await fs.readFile(stateFile, 'utf8'))

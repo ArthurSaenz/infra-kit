@@ -30,6 +30,7 @@ export const buildDesignSkeleton = (packageName: string): string => {
   const rendered = renderTemplate(RESOURCES['design/skeleton'], { packageName })
 
   const nameLine = `name: ${packageName}`
+
   // Function replacement, not a string: a string second argument treats `$&`, `` $` ``
   // and `$'` in the value as replacement patterns, and `packageName` falls back to the
   // directory basename, which is not constrained to npm name syntax.

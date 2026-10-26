@@ -292,6 +292,7 @@ describe('ensurePortlessNode — the copy fallback', () => {
 
   it('linkSync EACCES and copyFileSync EACCES → failed; the tmp is unlinked and nothing else is touched', () => {
     const stale = fileEntry({ ino: 99, dev: 3 })
+
     const nodeFs = fakeNodeFs(
       { [EXEC]: exec(), [NODE]: stale, [SIDECAR]: sidecarEntry() },
       {
@@ -311,6 +312,7 @@ describe('ensurePortlessNode — the copy fallback', () => {
 
   it('copyFileSync ENOSPC mid-way → failed; the partial tmp is unlinked, node file and sidecar untouched', () => {
     const stale = fileEntry({ ino: 99, dev: 3 })
+
     const nodeFs = fakeNodeFs(
       { [EXEC]: exec(), [NODE]: stale, [SIDECAR]: sidecarEntry() },
       {
@@ -331,6 +333,7 @@ describe('ensurePortlessNode — the copy fallback', () => {
 
   it('copy path, sidecar matching version/arch/platform AND sourceSize → unchanged, zero mutating calls', () => {
     const copy = fileEntry({ ino: 42, dev: 3, size: EXEC_SIZE })
+
     const nodeFs = fakeNodeFs({
       [EXEC]: exec(),
       [NODE]: copy,
@@ -343,6 +346,7 @@ describe('ensurePortlessNode — the copy fallback', () => {
 
   it('copy path, same version but a different sourceSize (a different build) → refreshed', () => {
     const copy = fileEntry({ ino: 42, dev: 3, size: EXEC_SIZE })
+
     const nodeFs = fakeNodeFs({
       [EXEC]: exec(),
       [NODE]: copy,
@@ -458,6 +462,7 @@ describe('ensurePortlessNode — the orphan sweep', () => {
     const unlinks = nodeFs.calls.filter((call) => {
       return call.startsWith('unlink')
     })
+
     const linkAt = nodeFs.calls.findIndex((call) => {
       return call.startsWith('link')
     })
@@ -497,6 +502,7 @@ describe('ensurePortlessNode — the orphan sweep', () => {
 
   it('sweep skipped (readdir throws) AND a stale tmp under THIS pid is a hardlink of the live node → link EEXIST, copy refuses (EXCL), failed; the live inode is never opened for writing', () => {
     const live = exec()
+
     const nodeFs = fakeNodeFs(
       { [EXEC]: live, [TMP]: live },
       {
@@ -517,6 +523,7 @@ describe('ensurePortlessNode — the orphan sweep', () => {
 
   it('the sweep does not run on the fast path', () => {
     const source = exec()
+
     const nodeFs = fakeNodeFs({
       [EXEC]: source,
       [NODE]: source,
@@ -569,6 +576,7 @@ describe('ensurePortlessNode — refusals and gates', () => {
 
   it('platform win32 → skipped-platform, before the global gate is even consulted', () => {
     const nodeFs = fakeNodeFs({ [EXEC]: exec() })
+
     const isGlobal = vi.fn(() => {
       return true
     })
@@ -607,9 +615,11 @@ describe('stableNodeCandidate', () => {
 
   it('is null for a copy-path file even with a perfect sidecar — and never reads the sidecar', () => {
     const copy = fileEntry({ ino: 42, dev: 3, size: EXEC_SIZE })
+
     const readFileSync = vi.fn(() => {
       return sidecarJson({ method: 'copy', sourceSize: EXEC_SIZE })
     })
+
     const nodeFs = fakeNodeFs(
       { [EXEC]: exec(), [NODE]: copy, [SIDECAR]: sidecarEntry({ method: 'copy', sourceSize: EXEC_SIZE }) },
       { readFileSync },

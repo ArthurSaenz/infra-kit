@@ -278,6 +278,7 @@ describe('doctor check inventory', () => {
 describe('doctor --json payload', () => {
   it('marks exactly the FIXABLE_NAMES rows fixable', async () => {
     const { checks } = (await runDoctor()).structuredContent
+
     const fixable = checks
       .filter((check) => {
         return check.fixable
@@ -316,6 +317,7 @@ describe('the Agent allowlist row is gated on the git root', () => {
     gitTopLevel = ensureGitOnlyFixture()
 
     const { checks } = (await runDoctor()).structuredContent
+
     const row = checks.find((check) => {
       return check.name === 'Agent allowlist'
     })
@@ -331,6 +333,7 @@ describe('the Agent allowlist row is gated on the git root', () => {
     gitTopLevel = ''
 
     const { checks } = (await runDoctor()).structuredContent
+
     const row = checks.find((check) => {
       return check.name === 'Agent allowlist'
     })

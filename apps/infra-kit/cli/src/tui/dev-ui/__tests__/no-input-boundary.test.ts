@@ -35,6 +35,7 @@ describe('dev-ui boot components — no useInput', () => {
       // Flag an actual USE, not the prose in the invariant comments (which reference `useInput` by name):
       // a call `useInput(` or an `import { … useInput … } from 'ink'`. Both are linear regexes.
       const callsUseInput = /\buseInput\s*\(/.test(source)
+
       const importsUseInput = source.split('\n').some((line) => {
         return line.includes('useInput') && /from\s*['"]ink['"]/.test(line)
       })

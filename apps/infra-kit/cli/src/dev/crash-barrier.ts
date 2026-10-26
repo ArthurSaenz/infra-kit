@@ -82,6 +82,7 @@ const writeStderr = (message: string): void => {
  */
 export const formatFault = (event: FaultEvent, error: unknown, kept = true): string => {
   const detail = error instanceof Error ? `${error.message}\n${error.stack ?? '(no stack)'}` : String(error)
+
   // `kept` is not cosmetic. On the fatal path the session is NOT kept alive, and a trailing "kept alive"
   // there is a lie filed into the one log a post-mortem will actually read. Defaulted to `true` so the
   // survive path — the barrier's entire reason for existing — is byte-identical to before.

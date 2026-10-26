@@ -113,6 +113,7 @@ const confirmTarget = async (args: {
 }): Promise<boolean> => {
   const { env, isShared, names, accountId } = args
   const count = names.length
+
   const message = isShared
     ? `"${env}" is a SHARED environment — deploying ${count} service(s) from this machine. Continue?`
     : `Deploy ${count} service(s) to ${env} from this machine?`

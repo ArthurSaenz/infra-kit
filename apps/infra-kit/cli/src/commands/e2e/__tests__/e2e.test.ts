@@ -164,6 +164,7 @@ describe('e2e — local (the default)', () => {
     const runPlaywright = vi.fn(async (_target: E2eTarget, _args: string[]) => {
       return 0
     })
+
     const result = await e2e(
       { playwrightArgs: ['--project=chromium'] },
       deps({ INFRA_KIT_ENV: 'dev', [CLIENT_URL]: 'https://dev.hulyo.co.il' }, { runPlaywright }),
@@ -207,6 +208,7 @@ describe('e2e — local (the default)', () => {
     writeBackendFragment(await backendServer())
 
     const result = await e2e({ dryRun: true }, deps({ INFRA_KIT_ENV: 'dev' }))
+
     const media = result.structuredContent.routes.find((route) => {
       return route.path === '/media'
     })
@@ -222,6 +224,7 @@ describe('e2e — local (the default)', () => {
     const runPlaywright = vi.fn(async (_target: E2eTarget, _args: string[]) => {
       return 0
     })
+
     const result = await e2e({}, deps({ INFRA_KIT_ENV: 'dev' }, { runPlaywright }))
 
     expect(result.structuredContent).toMatchObject({
@@ -307,6 +310,7 @@ describe('e2e — local (the default)', () => {
     const runPlaywright = vi.fn(async () => {
       return 0
     })
+
     const result = await e2e({}, deps({}, { runPlaywright }))
 
     expect(result.structuredContent.mode).toBe('local')
@@ -325,6 +329,7 @@ describe('e2e — local (the default)', () => {
     const runPlaywright = vi.fn(async () => {
       return 0
     })
+
     const error = await e2e({}, deps({}, { runPlaywright })).catch((caught: unknown) => {
       return caught
     })
@@ -346,6 +351,7 @@ describe('e2e — local (the default)', () => {
     fs.writeFileSync(lockPath, '999999999')
 
     let heldDuringRun = ''
+
     const runPlaywright = vi.fn(async () => {
       heldDuringRun = fs.readFileSync(lockPath, 'utf8')
 
@@ -370,12 +376,14 @@ describe('e2e — per-test results for a machine reader', () => {
     registerUi(await viteServer())
 
     let reportFile = ''
+
     const runPlaywright = vi.fn(async (_target: E2eTarget, _args: string[], env: Record<string, string>) => {
       reportFile = env.PLAYWRIGHT_JSON_OUTPUT_FILE ?? ''
       fs.writeFileSync(reportFile, REPORT)
 
       return 1
     })
+
     const result = await e2e({ playwrightArgs: ['src/tests/checkout'] }, deps({}, { runPlaywright }))
 
     const outputDir = result.structuredContent.outputDir ?? ''
@@ -412,6 +420,7 @@ describe('e2e — per-test results for a machine reader', () => {
     const runPlaywright = vi.fn(async () => {
       return 0
     })
+
     const first = await e2e({}, deps({}, { runPlaywright }))
     const second = await e2e({}, deps({}, { runPlaywright }))
 
@@ -424,6 +433,7 @@ describe('e2e — per-test results for a machine reader', () => {
     const runPlaywright = vi.fn(async (_target: E2eTarget, _args: string[]) => {
       return 0
     })
+
     const result = await e2e({ playwrightArgs: ['--output', '../qa/full'] }, deps({}, { runPlaywright }))
 
     expect(runPlaywright.mock.calls[0]?.[1]).toEqual(['--reporter=line,json', '--output', '../qa/full'])
@@ -436,6 +446,7 @@ describe('e2e — per-test results for a machine reader', () => {
     const runPlaywright = vi.fn(async () => {
       return 0
     })
+
     const result = await e2e({ playwrightArgs: ['--reporter=dot'] }, deps({}, { runPlaywright }))
 
     expect(runPlaywright.mock.calls[0]).toEqual([expect.anything(), ['--reporter=dot'], {}])
@@ -448,6 +459,7 @@ describe('e2e — per-test results for a machine reader', () => {
     const runPlaywright = vi.fn(async () => {
       return 1
     })
+
     const result = await e2e({}, deps({}, { runPlaywright }))
 
     expect(result.structuredContent).toMatchObject({ exitCode: 1, report: 'unavailable', summary: null, failures: [] })
@@ -460,6 +472,7 @@ describe('e2e — per-test results for a machine reader', () => {
     const runPlaywright = vi.fn(async () => {
       return 0
     })
+
     const result = await e2e({ playwrightArgs: ['src/tests/checkout'] }, deps({}, { runPlaywright }))
 
     expect(runPlaywright.mock.calls[0]).toEqual([expect.anything(), ['src/tests/checkout'], {}])
@@ -494,6 +507,7 @@ describe('e2e — --cloud', () => {
     const runPlaywright = vi.fn(async () => {
       return 0
     })
+
     const error = await e2e(
       { cloud: true },
       deps({ INFRA_KIT_ENV: 'dev', [CLIENT_URL]: 'https://dev.hulyo.co.il' }, { runPlaywright }),
@@ -512,6 +526,7 @@ describe('e2e — --cloud', () => {
     const runPlaywright = vi.fn(async (_target: E2eTarget, _args: string[]) => {
       return 1
     })
+
     const result = await e2e(
       { cloud: true, yes: true },
       deps({ INFRA_KIT_ENV: 'dev', [CLIENT_URL]: 'https://dev.hulyo.co.il' }, { runPlaywright }),

@@ -44,6 +44,7 @@ describe('listProjectEnvs', () => {
     vi.mocked(readTokenStore).mockResolvedValue(store({ dev: 'dp.st.dev.x', prod_observability: 'dp.st.obs.y' }))
 
     const result = await listProjectEnvs()
+
     const observability = result.find((entry) => {
       return entry.env === 'prod_observability'
     })

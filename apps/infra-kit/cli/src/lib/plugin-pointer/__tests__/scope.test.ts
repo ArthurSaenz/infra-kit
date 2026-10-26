@@ -86,6 +86,7 @@ const scanFile = (file: string): Hit[] => {
 /** Hits sorted by path, then line: `readdirSync` order is filesystem-defined and not a fixture. */
 const scan = (root: string): { visited: number; hits: Hit[] } => {
   const files = walkSourceFiles(root)
+
   const hits = files
     .flatMap((file) => {
       return scanFile(file)

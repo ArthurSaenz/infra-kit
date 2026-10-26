@@ -161,6 +161,7 @@ const openDevTab = async (root: string, title: string, commands: string[]): Prom
     '--command',
     commands[0]!,
   ])
+
   const handles = [created.terminal.handle]
 
   try {
@@ -184,9 +185,9 @@ const openDevTab = async (root: string, title: string, commands: string[]): Prom
 const logDevTab = (apps: DiscoveredApiApp[], commands: string[], title: string): void => {
   logger.info(`🧩 Opened Orca tab "${title}" with ${apps.length} pane(s):`)
 
-  apps.forEach((app, index) => {
+  for (const [index, app] of apps.entries()) {
     logger.info(`   • ${app.name} (${commands[index]})`)
-  })
+  }
 }
 
 /**
@@ -232,12 +233,14 @@ export const runOrcaDevServer = async (options: DevServerOptions): Promise<OrcaD
   // A wizard run hands down its in-memory preset, so each pane reproduces the exact parts that were
   // ticked. A plain `--orca` has no presetDef and falls back to `--app=<name>` (every part), unchanged.
   const targetsByApp = paneTargetsByApp(options.presetDef)
+
   const commands = buildPaneCommands(
     apps.map((app) => {
       return { app: app.name, targets: targetsByApp.get(app.name) }
     }),
     options.watch ?? false,
   )
+
   const title = `${path.basename(root)} dev`
   const handles = await openDevTab(root, title, commands)
 

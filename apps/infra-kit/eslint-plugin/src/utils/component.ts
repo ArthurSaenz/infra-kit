@@ -118,14 +118,20 @@ export const collectOwnReturnArguments = (node: ComponentFunction): ESTree.Expre
     }
 
     if (current.type === 'BlockStatement') {
-      current.body.forEach(visit)
+      for (const statement of current.body) {
+        visit(statement)
+      }
 
       return
     }
 
     if (current.type === 'SwitchStatement') {
-      for (const switchCase of current.cases) {
-        switchCase.consequent.forEach(visit)
+      const statements = current.cases.flatMap((switchCase) => {
+        return switchCase.consequent
+      })
+
+      for (const statement of statements) {
+        visit(statement)
       }
 
       return
@@ -150,7 +156,9 @@ export const collectOwnReturnArguments = (node: ComponentFunction): ESTree.Expre
     }
   }
 
-  node.body.body.forEach(visit)
+  for (const statement of node.body.body) {
+    visit(statement)
+  }
 
   return args
 }

@@ -45,6 +45,7 @@ const okRun: PortlessRun = () => {
 /** A `run` seam that records every argv it was called with. */
 const recordingRun = (): { run: PortlessRun; calls: string[][] } => {
   const calls: string[][] = []
+
   const run: PortlessRun = (args) => {
     calls.push(args)
 
@@ -149,6 +150,7 @@ describe('portless driver — isProxyServing (probe only, never starts)', () => 
 
   it('is false when nothing is listening — the TCP pre-filter short-circuits the wire probe', async () => {
     let probed = false
+
     const driver = createPortlessDriver({
       run: okRun,
       isListening: () => {
@@ -184,6 +186,7 @@ describe('portless driver — isProxyServing (probe only, never starts)', () => 
 
   it('forwards the tls flag to the probe — a plain-HTTP daemon on :443 must not pass as HTTPS', async () => {
     const seen: Array<[number, boolean]> = []
+
     const driver = createPortlessDriver({
       run: okRun,
       isListening: () => {
@@ -221,6 +224,7 @@ describe('portless driver — probeProxy (classifying WHY the proxy is not servi
 
   it('reports `daemon-down` when nothing is even accepting TCP — the wire probe is never reached', async () => {
     let probed = false
+
     const driver = createPortlessDriver({
       run: okRun,
       isListening: () => {
@@ -253,6 +257,7 @@ describe('portless driver — probeProxy (classifying WHY the proxy is not servi
 
   it('forwards the tls flag to the wire probe, same as isProxyServing', async () => {
     const seen: Array<[number, boolean]> = []
+
     const driver = createPortlessDriver({
       run: okRun,
       isListening: () => {
@@ -279,6 +284,7 @@ describe('portless driver — isServiceInstalled (OS service detection)', () => 
   it('is `yes` on darwin when the launchd plist is present at the exact path portless writes', async () => {
     await withPlatform('darwin', () => {
       const seenPaths: string[] = []
+
       const result = defaultIsServiceInstalled((path) => {
         seenPaths.push(path)
 
@@ -325,6 +331,7 @@ describe('portless driver — isServiceInstalled (OS service detection)', () => 
     // nothing — `unknown` is the honest answer, and the `exists` seam is never even consulted to produce it.
     await withPlatform('win32', () => {
       let called = false
+
       const result = defaultIsServiceInstalled(() => {
         called = true
 
@@ -359,6 +366,7 @@ describe('portless driver — best-effort degradation', () => {
     const failRun: PortlessRun = () => {
       return Promise.reject(new Error('portless: not found'))
     }
+
     const driver = createPortlessDriver({ run: failRun })
 
     await expect(driver.isAvailable()).resolves.toBe(false)
@@ -372,6 +380,7 @@ describe('portless driver — best-effort degradation', () => {
     const run = vi.fn<PortlessRun>(() => {
       return Promise.resolve()
     })
+
     const driver = createPortlessDriver({ run })
 
     await driver.isAvailable()
@@ -389,6 +398,7 @@ describe('portless driver — best-effort degradation', () => {
 
       return Promise.resolve()
     }
+
     const driver = createPortlessDriver({ run })
 
     await expect(driver.registerAlias('x.y', 1)).resolves.toBe(false)
@@ -400,6 +410,7 @@ describe('portless driver — default TCP liveness probe (real seam)', () => {
   // the exact "vitest passes, production probe broken" trap. Uses a real ephemeral loopback server.
   it('resolves true against a listening port and false once it is closed', async () => {
     const server = net.createServer()
+
     const port = await new Promise<number>((resolve, reject) => {
       server.once('error', reject)
       server.listen(0, '127.0.0.1', () => {
@@ -440,6 +451,7 @@ describe('defaultIsProxyServing — wire-probe identity (real seam)', () => {
     body: (port: number) => Promise<void>,
   ): Promise<void> => {
     const server = http.createServer(handler)
+
     const port = await new Promise<number>((resolve, reject) => {
       server.once('error', reject)
       server.listen(0, '127.0.0.1', () => {
@@ -501,6 +513,7 @@ describe('defaultIsProxyServing — wire-probe identity (real seam)', () => {
 
   it('is false when nothing is listening at all', async () => {
     const server = net.createServer()
+
     const port = await new Promise<number>((resolve) => {
       server.listen(0, '127.0.0.1', () => {
         const addr = server.address()
@@ -600,11 +613,13 @@ describe('portless driver — default run seam vs the real portless guard (end-t
    */
   const withEnvAndCwd = async (env: Record<string, string>, body: () => Promise<void>): Promise<void> => {
     const keys = ['npm_command', 'npm_config_user_agent', 'npm_lifecycle_event', 'PNPM_SCRIPT_SRC_DIR']
+
     const saved = Object.fromEntries(
       keys.map((k) => {
         return [k, process.env[k]]
       }),
     )
+
     const cwd = process.cwd()
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'portless-guard-'))
 
@@ -644,6 +659,7 @@ describe('portless driver — default run seam vs the real portless guard (end-t
     // Without this, the two tests above could pass vacuously (guard asleep) and never catch a regression.
     await withEnvAndCwd({ npm_command: 'exec' }, async () => {
       const bin = resolvePortlessBin()!
+
       const raw: PortlessRun = async (args) => {
         await promisify(execFile)(process.execPath, [bin, ...args], { env: process.env, encoding: 'utf-8' })
       }

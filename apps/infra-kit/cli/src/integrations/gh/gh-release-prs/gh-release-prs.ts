@@ -111,6 +111,7 @@ const fetchAllReleasePRs = async (): Promise<DiscoveredPR[]> => {
       return pr.headRefName
     }),
   )
+
   const dualHeads = new Set(
     hotfixList
       .filter((pr) => {

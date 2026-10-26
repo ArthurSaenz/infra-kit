@@ -40,14 +40,17 @@ const EDITABLE_FIELDS = ['description', 'releaseDate'] as const
 
 const pickReleaseBranch = async (): Promise<{ branch: string; type: ReleaseType }> => {
   const releasePRsInfo = await getReleasePRsWithInfo()
+
   const branches = releasePRsInfo.map((pr) => {
     return pr.branch
   })
+
   const types = new Map<string, ReleaseType>(
     releasePRsInfo.map((pr) => {
       return [pr.branch, pr.type]
     }),
   )
+
   const descriptions = await getJiraDescriptions()
 
   const branch = await pickReleaseBranchPrompt(formatBranchPickerItems({ branches, descriptions, types }))
@@ -57,6 +60,7 @@ const pickReleaseBranch = async (): Promise<{ branch: string; type: ReleaseType 
 
 const verifyReleasePRExists = async (selectedBranch: string): Promise<ReleaseType> => {
   const releasePRsInfo = await getReleasePRsWithInfo()
+
   const prInfo = releasePRsInfo.find((pr) => {
     return pr.branch === selectedBranch
   })
@@ -77,6 +81,7 @@ const verifyReleasePRExists = async (selectedBranch: string): Promise<ReleaseTyp
  */
 export const promptDescription = async (current: string): Promise<string> => {
   const hint = current === '' ? '(no current description)' : `current: "${current}"`
+
   // SINGLE-LINE message on purpose. The hint used to sit on its own line via an embedded `\n`,
   // which zx wrote raw and inquirer cannot: inquirer re-renders on every keystroke and derives
   // its ANSI erase-line count from the rendered message, so a manual newline miscounts and
@@ -89,6 +94,7 @@ export const promptDescription = async (current: string): Promise<string> => {
     // A headless run without `--description` is told the flag to pass.
     { whenHeadless: { refuse: 'description' } },
   )
+
   // `.trim()`, where the zx version only stripped a trailing newline. Whitespace-only input now
   // means keep-current instead of overwriting the description with blanks.
   const trimmed = answer.trim()
@@ -103,6 +109,7 @@ export const promptDescription = async (current: string): Promise<string> => {
  */
 export const promptReleaseDate = async (current: string | null): Promise<string | null> => {
   const hint = current === null ? '(no current date)' : `current: ${current}`
+
   const answer = await withEscape(
     (context) => {
       return input(
@@ -115,6 +122,7 @@ export const promptReleaseDate = async (current: string | null): Promise<string 
     },
     { whenHeadless: { refuse: 'releaseDate' } },
   )
+
   const trimmed = answer.trim()
 
   return trimmed === '' ? current : assertIsoDate(trimmed)
@@ -233,6 +241,7 @@ export const releaseEdit = async (args: ReleaseEditArgs) => {
   const changedFields = EDITABLE_FIELDS.filter((field) => {
     return next[field] !== previous[field]
   })
+
   const descriptionChanged = changedFields.includes('description')
   const dateChanged = changedFields.includes('releaseDate')
 

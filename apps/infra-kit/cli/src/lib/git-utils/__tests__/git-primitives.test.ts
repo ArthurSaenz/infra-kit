@@ -167,6 +167,7 @@ const ranLocalDelete = (): boolean => {
     return c.includes('branch -D')
   })
 }
+
 const ranRemoteDelete = (): boolean => {
   return git.calls.some((c) => {
     return c.includes('push origin --delete')

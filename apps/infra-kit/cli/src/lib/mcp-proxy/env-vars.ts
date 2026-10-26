@@ -65,6 +65,7 @@ export const readListedVars = (names: readonly string[], filePath: string = reso
   const fileVars = isInEnvLoadScope(path.join(path.dirname(filePath), ENV_LOAD_ROOT_FILE), process.cwd())
     ? parseVarsFromEnvFile(filePath)
     : {}
+
   const vars: ProxyVars = {}
 
   for (const name of names) {

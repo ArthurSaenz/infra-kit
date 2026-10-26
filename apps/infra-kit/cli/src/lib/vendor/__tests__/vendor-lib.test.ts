@@ -150,6 +150,7 @@ describe('manifest read/write/compare', () => {
   it('ignores skipped paths still recorded by a manifest written before the skip rule', () => {
     write('a.js', 'a')
     const manifest = writeManifest(tmp, { source: 's', commit: 'c' })
+
     // A pre-rule manifest carried a checksum for the generated file; the walk no longer emits it.
     const stale = {
       ...manifest,

@@ -115,6 +115,7 @@ const BIN = `${TARGET}/dist/cli.js`
 
 const DRIFTED_ARGV1 =
   '/Users/ada/Library/pnpm/global/v11/8a83-1/node_modules/.pnpm/infra-kit@0.5.5/node_modules/portless/dist/cli.js'
+
 /** The plist word `service install` bakes in today: the package manager's node, gone at the next re-mint. */
 const DEEP_NODE = '/Users/ada/Library/pnpm/global/v11/8a83-1/node_modules/.pnpm/node@runtime/bin/node'
 
@@ -160,9 +161,11 @@ interface Fixture {
 const portlessDeps = (fixture: Fixture): PortlessServiceDeps & { nodeFs: FakeNodeFs } => {
   const home = fixture.home ?? HOME
   const linkCli = path.join(home, '.infra-kit', 'portless', 'dist', 'cli.js')
+
   const isGlobal = (): boolean => {
     return fixture.isGlobal ?? true
   }
+
   const link: EnsurePortlessLinkDeps = {
     resolveBin: () => {
       return fixture.resolvedBin === undefined ? BIN : fixture.resolvedBin
@@ -171,6 +174,7 @@ const portlessDeps = (fixture: Fixture): PortlessServiceDeps & { nodeFs: FakeNod
     home,
     fs: fakeLinkFs(fixture.linkFs),
   }
+
   const nodeFs = fakeNodeFs({ [EXEC_PATH]: execEntry(), ...fixture.nodeFs })
 
   return {
@@ -463,6 +467,7 @@ describe('setup converges the portless link and node and prints the sudo line on
   // One verdict feeds both the state and the printed line, so the copy is spawned ONCE per run.
   it('renders a consistent copy that runs as this Node through the stable node, spawning it once', async () => {
     const nodeVersionOf = vi.fn(runsAsThisNode)
+
     const deps = portlessDeps({
       linkFs: { [HOME_LINK]: { kind: 'symlink', target: TARGET } },
       nodeFs: {

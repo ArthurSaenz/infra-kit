@@ -42,6 +42,7 @@ const detachReadableReader = (): void => {
 /** Count `'pause'` events across `run`, restoring the listener set afterwards. */
 const countPauseEvents = async (run: () => void | Promise<void>): Promise<number> => {
   let events = 0
+
   const onPause = (): void => {
     events += 1
   }

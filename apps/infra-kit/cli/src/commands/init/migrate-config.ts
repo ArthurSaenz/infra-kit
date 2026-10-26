@@ -66,6 +66,7 @@ export const migrateLegacyConfig = async (): Promise<void> => {
     json: paths.main,
     schema: infraKitConfigSchema,
   }
+
   const layers: MigrateLayer[] = [
     // The tracked pair (a new .json, a deleted .yml) is a hunk only a human can commit.
     ...(trackedWrites.withheld ? [] : [projectLayer]),
@@ -163,6 +164,7 @@ export const migrateUserGlobalConfigFilename = async (): Promise<void> => {
   }
 
   const dir = path.dirname(paths.userGlobal)
+
   // The config.json → infra-kit.json rename carries forward a user's REAL config and
   // is load-bearing. The example-file rename is now largely redundant: seedUserGlobalConfig
   // rewrites infra-kit.example.jsonc unconditionally moments later, so a renamed legacy

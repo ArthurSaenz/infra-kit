@@ -87,6 +87,7 @@ export const resolvePortlessBin = (): string | null => {
 
 /** Resolve portless's CLI once per process — the on-disk location never changes within a run. */
 let cachedBin: string | null | undefined
+
 const portlessBin = (): string | null => {
   if (cachedBin === undefined) cachedBin = resolvePortlessBin()
 
@@ -229,6 +230,7 @@ export type ProxyProbeOutcome = 'serving' | 'daemon-down' | 'not-portless'
 export const defaultIsListening: IsListening = (port) => {
   return new Promise((resolve) => {
     const socket = net.connect({ host: LOOPBACK, port })
+
     const finish = (result: boolean): void => {
       socket.destroy()
       resolve(result)
@@ -269,6 +271,7 @@ export const defaultIsListening: IsListening = (port) => {
 export const defaultIsProxyServing: IsProxyServing = (port, tls) => {
   return new Promise((resolve) => {
     const request = tls ? https.request : http.request
+
     const req = request(
       {
         host: LOOPBACK,

@@ -214,6 +214,7 @@ describe('runSession loop', () => {
   it('re-reads the terminal width for every run, so a mid-session resize is honoured', async () => {
     const log: string[] = []
     const written: string[] = []
+
     const spawn = fakeSpawnFor(
       [
         { code: 0, writeReport: true },
@@ -221,6 +222,7 @@ describe('runSession loop', () => {
       ],
       log,
     )
+
     const widths = [40, 30]
 
     await runSession(items, {
@@ -327,6 +329,7 @@ describe('runSession loop', () => {
   it('degrades a synchronous spawn throw to a failed entry and keeps the loop alive', async () => {
     const log: string[] = []
     const written: string[] = []
+
     const throwingSpawn = (() => {
       log.push('spawn')
 
@@ -396,6 +399,7 @@ describe('runSession loop', () => {
       const log: string[] = []
       const written: string[] = []
       const resets: { entersAltScreen?: boolean }[] = []
+
       const throwingSpawn = (() => {
         throw new Error('spawn boom')
       }) as never
@@ -468,6 +472,7 @@ describe('runSession loop', () => {
       const exits: number[] = []
       const raised: NodeJS.Signals[] = []
       const quitFlags: boolean[] = []
+
       const spawn = ((): EventEmitter => {
         log.push('spawn')
         // An external `kill` while the child owns the tty. DEFERRED in that phase, so the child finishes
@@ -603,6 +608,7 @@ describe('runSession loop', () => {
       const exits: number[] = []
       const realOn = process.on.bind(process)
       const realOff = process.off.bind(process)
+
       const capture = vi.spyOn(process, 'on').mockImplementation(((event: string, handler: () => void) => {
         if (!event.startsWith('SIG')) return realOn(event as 'exit', handler)
 
@@ -610,6 +616,7 @@ describe('runSession loop', () => {
 
         return process
       }) as never)
+
       const release = vi.spyOn(process, 'off').mockImplementation(((event: string, handler: () => void) => {
         if (!event.startsWith('SIG')) return realOff(event as 'exit', handler)
 
@@ -617,6 +624,7 @@ describe('runSession loop', () => {
 
         return process
       }) as never)
+
       const exit = vi.spyOn(process, 'exit').mockImplementation(((code: number) => {
         exits.push(code)
       }) as never)
@@ -661,6 +669,7 @@ describe('runSession loop', () => {
         const log: string[] = []
         const written: string[] = []
         const resets: { entersAltScreen?: boolean }[] = []
+
         const spawn = ((): EventEmitter => {
           log.push('spawn')
           // An external `kill` while the child holds the tty. DEFERRED in this phase — which is what pins

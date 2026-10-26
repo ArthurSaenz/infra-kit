@@ -70,6 +70,7 @@ export const e2eTestTags: Rule.RuleModule = {
 
     const options = (context.options[0] ?? {}) as Options
     const allowed = new Set(options.allowed ?? DEFAULT_ALLOWED_TAGS)
+
     const allowedList = [...allowed]
       .map((tag) => {
         return `\`${tag}\``

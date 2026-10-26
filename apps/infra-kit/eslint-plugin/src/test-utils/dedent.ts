@@ -15,8 +15,10 @@ export const dedent = (strings: TemplateStringsArray, ...values: unknown[]): str
   const raw = strings.reduce((acc, part, i) => {
     return acc + part + (i < values.length ? String(values[i]) : '')
   }, '')
+
   const body = raw.replace(/^\n/, '').replace(/\n[ \t]*$/, '')
   const lines = body.split('\n')
+
   const indents = lines
     .filter((line) => {
       return line.trim() !== ''
@@ -24,6 +26,7 @@ export const dedent = (strings: TemplateStringsArray, ...values: unknown[]): str
     .map((line) => {
       return line.match(/^[ \t]*/)?.[0].length ?? 0
     })
+
   const common = indents.length > 0 ? Math.min(...indents) : 0
 
   return lines

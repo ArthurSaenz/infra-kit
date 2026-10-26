@@ -75,6 +75,7 @@ export const resolvePackageType = (packageRoot: string): PackageType => {
   }
 
   const declaredType = mtimeMs >= 0 ? readDeclaredType(fs.readFileSync(configPath, 'utf8')) : undefined
+
   const type = detectPackageType({
     packageDir: packageRoot,
     repoRoot: findRepoRoot(packageRoot) ?? packageRoot,

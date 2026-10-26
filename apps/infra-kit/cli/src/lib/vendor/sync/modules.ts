@@ -148,14 +148,17 @@ export const pruneConflicts = async (
   const prunedRoots = pruned.map(({ target }) => {
     return `${target}/`
   })
+
   const outsidePruned = (rel: string): boolean => {
     return !prunedRoots.some((prefix) => {
       return rel.startsWith(prefix)
     })
   }
+
   const manifests = splitNul(await runGit(targetRoot, ['ls-files', '-z', '--', '*package.json'])).filter((rel) => {
     return path.posix.basename(rel) === 'package.json' && outsidePruned(rel)
   })
+
   const conflicts: string[] = []
 
   for (const [name, module] of owners) {

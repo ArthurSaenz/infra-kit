@@ -101,6 +101,7 @@ export const proxySignature = (proxy: InfraKitViteProxy): string => {
  */
 export const restartSignature = (proxy: InfraKitViteProxy, devEnv: InfraKitDevEnv | undefined): string => {
   const unset = [...(devEnv?.unset ?? [])].sort()
+
   const set = Object.entries(devEnv?.set ?? {}).sort(([a], [b]) => {
     return a < b ? -1 : 1
   })

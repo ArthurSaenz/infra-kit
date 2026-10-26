@@ -97,6 +97,7 @@ export const writeSessionReport = (
 
   const summary = record.summary ?? (summaryLines.length > 0 ? [...summaryLines] : undefined)
   const payload: SessionReportRecord = { ...record, ...(summary ? { summary } : {}) }
+
   const write =
     deps?.write ??
     ((file: string, data: string) => {
@@ -158,6 +159,7 @@ export const readAndUnlinkReport = (
     ((file: string) => {
       return fs.readFileSync(file, 'utf-8')
     })
+
   const unlink =
     deps?.unlink ??
     ((file: string) => {

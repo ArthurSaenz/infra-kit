@@ -14,6 +14,7 @@ export type CommitResult = { ok: true } | { ok: false; output: string }
 
 const gitOutput = (error: unknown): string => {
   const { stdout, stderr } = error as { stdout?: unknown; stderr?: unknown }
+
   const combined = [stdout, stderr]
     .filter((part): part is string => {
       return typeof part === 'string' && part.trim().length > 0

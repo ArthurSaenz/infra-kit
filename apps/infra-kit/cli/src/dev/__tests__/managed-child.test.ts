@@ -108,6 +108,7 @@ describe('collectForceReapTargets', () => {
       // `ppid` walk from `self` can never reach it.
       { pid: 20, ppid: 1, pgid: 20, lstart: 'Mon Jul 13 13:00:01 2026' },
     ]
+
     const registrySnapshot = [{ pgid: 20, leaderStart: 'Mon Jul 13 13:00:01 2026' }]
 
     expect(collectForceReapTargets(self, rows, [registrySnapshot])).toEqual([20])
@@ -119,6 +120,7 @@ describe('collectForceReapTargets', () => {
       // Same pgid as the snapshot, but a NEWER leader — a stranger now owns it.
       { pid: 20, ppid: 1, pgid: 20, lstart: 'Mon Jul 13 19:45:00 2026' },
     ]
+
     const registrySnapshot = [{ pgid: 20, leaderStart: 'Mon Jul 13 13:00:01 2026' }]
 
     expect(collectForceReapTargets(self, rows, [registrySnapshot])).toEqual([])
@@ -139,6 +141,7 @@ describe('collectForceReapTargets', () => {
       { pid: self, ppid: 1, pgid: self, lstart: 'x' },
       { pid: 10, ppid: self, pgid: 10, lstart: 'y' },
     ]
+
     const registrySnapshot = [{ pgid: 10, leaderStart: 'y' }]
 
     expect(collectForceReapTargets(self, rows, [registrySnapshot])).toEqual([10])
@@ -209,6 +212,7 @@ const spawnEngineWithTask = async (): Promise<{ child: ReturnType<typeof spawn>;
     fs.writeFileSync(${JSON.stringify(taskPidFile)}, String(task.pid))
     setInterval(() => {}, 1000)
   `
+
   const child = spawn(process.execPath, ['-e', engineSrc], { detached: true, stdio: 'ignore' })
   const deadline = Date.now() + 10_000
 
@@ -261,11 +265,13 @@ describe('superviseChild', () => {
     // parent-written pid file alone would race, letting a default-disposition SIGTERM kill it
     // and silently skip the SIGKILL escalation this test exists to cover.
     const readyFile = `${pidFile}.ready`
+
     const grandchild = `
       process.on('SIGTERM', () => {})
       require('node:fs').writeFileSync(${JSON.stringify(readyFile)}, 'ok')
       setInterval(() => {}, 1000)
     `
+
     const parent = `
       const { spawn } = require('node:child_process')
       const fs = require('node:fs')
@@ -422,6 +428,7 @@ describe('killDescendantGroupsNow — registry-sourced reap of a reparented desc
     // this override) sees the real table.
     // Held in a ref so the poll below reads a value the exit handler mutates from outside the loop.
     const ps = { calls: 0 }
+
     const blindOnce = (): ReturnType<typeof parseProcRows> => {
       ps.calls += 1
 
@@ -475,6 +482,7 @@ describe('superviseChild onUnexpectedExit', () => {
 
   it('fires when the child dies on its own', async () => {
     const calls: string[] = []
+
     const child = spawn(process.execPath, ['-e', 'setTimeout(() => process.exit(3), 50)'], {
       detached: true,
       stdio: 'ignore',
@@ -496,6 +504,7 @@ describe('superviseChild onUnexpectedExit', () => {
 
   it('does NOT fire when kill() drove the exit', async () => {
     const calls: string[] = []
+
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
       detached: true,
       stdio: 'ignore',

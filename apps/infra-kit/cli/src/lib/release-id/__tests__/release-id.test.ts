@@ -284,6 +284,7 @@ describe('isReleaseBranch', () => {
 describe('compareReleaseIds', () => {
   it('sorts pure-version arrays in numeric semver order (not lexicographic)', () => {
     const ids = [version(1, 10, 0), version(1, 9, 0), version(2, 0, 0), version(1, 9, 5)]
+
     const sorted = [...ids].sort((a, b) => {
       return compareReleaseIds(a, b)
     })
@@ -310,6 +311,7 @@ describe('compareReleaseIds', () => {
 
   it('produces a versions-block-then-names-block when sorted', () => {
     const ids = [name('zeta'), version(2, 0, 0), name('alpha'), version(1, 0, 0)]
+
     const sorted = [...ids].sort((a, b) => {
       return compareReleaseIds(a, b)
     })
@@ -359,9 +361,11 @@ describe('compareReleaseIds', () => {
 
   it('is stable and deterministic across repeated sorts', () => {
     const ids = [name('b'), version(1, 0, 0), name('a'), version(0, 5, 0), name('c')]
+
     const first = [...ids].sort((a, b) => {
       return compareReleaseIds(a, b)
     })
+
     const second = [...ids].sort((a, b) => {
       return compareReleaseIds(a, b)
     })

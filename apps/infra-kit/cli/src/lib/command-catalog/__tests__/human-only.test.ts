@@ -51,7 +51,9 @@ const HUMAN_ONLY_REASON = /refused in agent mode/
 
 const overrideExitDeep = (cmd: Command): void => {
   cmd.exitOverride()
-  cmd.commands.forEach(overrideExitDeep)
+  for (const child of cmd.commands) {
+    overrideExitDeep(child)
+  }
 }
 
 const runAgentYes = async (groupPath: string[], args: string[]): Promise<unknown> => {
@@ -64,9 +66,11 @@ const runAgentYes = async (groupPath: string[], args: string[]): Promise<unknown
       return child.name() === name
     })
   }, program)
+
   const takesYes = command?.options.some((option) => {
     return option.long === '--yes'
   })
+
   const argv = ['node', 'infra-kit', ...groupPath, ...args, '--agent', ...(takesYes ? ['--yes'] : [])]
 
   return program.parseAsync(argv).catch((e: unknown) => {

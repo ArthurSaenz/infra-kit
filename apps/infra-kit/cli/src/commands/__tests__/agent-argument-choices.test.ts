@@ -222,6 +222,7 @@ describe('argument_required + choices at the form-backed guards', () => {
   it('release deploy-selected with only --version: names `env` (the first field left out), choices = the form', async () => {
     const params = { version: '1.2.5' }
     const error = await refusalFrom(ghReleaseDeploySelected(params))
+
     const choices = (await expectedChoices(ghReleaseDeploySelectedMcpTool.formProvider, params)) as {
       properties: Record<string, unknown>
     }

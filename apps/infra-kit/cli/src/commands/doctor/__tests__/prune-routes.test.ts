@@ -84,6 +84,7 @@ describe('pruneStalePortlessRoutes', () => {
     { name: 'feat-x.client-api', port: 3010 },
     { name: 'main.client-ui', port: 3020 },
   ]
+
   /** Only :3020 answers — :3010 is the route a SIGKILLed runner left behind. */
   const isListening = async (port: number): Promise<boolean> => {
     return port === 3020

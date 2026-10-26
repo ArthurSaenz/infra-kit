@@ -82,6 +82,7 @@ describe('devServerRunner — an app that fails to start', () => {
         { name: 'beta', packageName: 'beta-api', withHandler: true },
       ]),
     )
+
     const alphaPort = await getFreePort()
     const betaPort = await getFreePort()
 
@@ -226,6 +227,7 @@ describe('devServerRunner — an app name and --reuse', () => {
       ]),
     )
   }
+
   const API_ROUTE = {
     '/api': { packageName: 'client-api', from: ['local', 'cloud'] as ('local' | 'cloud')[], default: 'cloud' as const },
   }
@@ -352,6 +354,7 @@ describe('devServerRunner — an app name and --reuse', () => {
     spyStdoutWrite([])
 
     const { runner, builds } = reuseWithCloudRoute()
+
     const error = await runner.start().then(
       () => {
         return null
@@ -442,6 +445,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     // A spy in the uiDevFactory slot: a refusal that still spawned vite would leave a frontend running
     // against cloud — the exact outcome being refused.
     const uiSpawns: string[][] = []
+
     const runner = new DevServerRunner(
       CLIENT_LOCAL,
       fakeRunBuild,
@@ -517,6 +521,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     // The real, published vite helper — the code a consumer's frontend actually runs — reading the
     // dev-context this runner left on disk. This is the decision the whole bug is about.
     const { proxy } = await infraKitDev({ cwd: path.join(root, 'apps', 'client', 'ui') })
+
     const fragment = JSON.parse(
       fs.readFileSync(path.join(root, '.infra-kit', 'dev-context', 'client.json'), 'utf-8'),
     ) as { origin: string }
@@ -551,6 +556,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     // A renderer that captures every repaint: `refresh` is the ONLY seam that can show the degraded row
     // going away, since the header is committed once and never revised.
     const painted: ReadySummary[] = []
+
     const capturing: DevUi = {
       narrate: () => {},
       log: () => {},
@@ -564,6 +570,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
       },
       dispose: () => {},
     }
+
     const latestDegraded = (): ReadySummary['degraded'] => {
       return painted.at(-1)?.degraded
     }
@@ -595,6 +602,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     // helper's route back to `local`, so it is also the thing under test.
     const fragment = path.join(root, '.infra-kit', 'dev-context', 'client.json')
     const heldOrigin = (JSON.parse(fs.readFileSync(fragment, 'utf-8')) as { origin: string }).origin
+
     // `port: 0` is the HELD fragment: the route is pinned to the alias, nothing is bound behind it yet.
     const boundPort = (): number | null => {
       try {
@@ -739,6 +747,7 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     process.chdir(root)
 
     const uiSpawns: string[][] = []
+
     const runner = new DevServerRunner(
       {
         presetDef: { apps: { 'client/ui': {}, 'backoffice/api': {} } },
@@ -862,7 +871,9 @@ describe('devServerRunner — the ready header lists each frontend’s resolved 
     const fakeRunBuild = async (): Promise<void> => {
       fs.writeFileSync(path.join(root, 'apps', 'client', 'api', 'dist', 'handler.js'), handlerSource(1))
     }
+
     const { renderer, summary } = makeCapturingRenderer()
+
     const runner = new DevServerRunner(
       { presetDef: { apps: { 'client/ui': { proxy: { '/api': 'local' as const } }, 'client/api': {} } } },
       fakeRunBuild,
@@ -880,6 +891,7 @@ describe('devServerRunner — the ready header lists each frontend’s resolved 
 
     try {
       const s = summary()
+
       const ui =
         s.endpoints.find((e) => {
           return e.tag === 'client/ui'
@@ -932,9 +944,11 @@ describe('devServerRunner — start/shutdown lifecycle (fake build, real spawn)'
 
     // Fake build: record the command and (re)write fresh dist output for each app.
     const buildCalls: string[] = []
+
     const apiDirs = ['alpha', 'beta'].map((name) => {
       return path.join(root, 'apps', name, 'api')
     })
+
     const fakeRunBuild = async (cmd: string): Promise<void> => {
       buildCalls.push(cmd)
       for (const dir of apiDirs) {
@@ -966,6 +980,7 @@ describe('devServerRunner — start/shutdown lifecycle (fake build, real spawn)'
       app: string
       port: number
     }
+
     const betaHealth = (await (await fetch(`http://127.0.0.1:${betaPort}/__health`)).json()) as {
       app: string
       port: number
@@ -1126,6 +1141,7 @@ describe('start — a bare PORT must not manufacture a conflict across apps', ()
         { name: 'backoffice', packageName: 'backoffice-api', withHandler: true },
       ]),
     )
+
     const fakeRunBuild = writeHandlers(root, ['client', 'backoffice'])
 
     // Two apps are DISCOVERED but only one is launched, which is the case the count must be taken on:
@@ -1170,9 +1186,11 @@ describe('start — --app selection + env-resolved port', () => {
         { name: 'backoffice', packageName: 'backoffice-api', withHandler: true },
       ]),
     )
+
     const apiDirs = ['client', 'backoffice'].map((name) => {
       return path.join(root, 'apps', name, 'api')
     })
+
     const fakeRunBuild = async (): Promise<void> => {
       for (const dir of apiDirs) {
         fs.writeFileSync(path.join(dir, 'dist', 'handler.js'), handlerSource(1))
@@ -1231,6 +1249,7 @@ const bootAndCaptureStdout = async (
   process.env[`${appName.replace(/-/g, '_').toUpperCase()}_PORT`] = String(port)
 
   const apiDir = path.join(root, 'apps', appName, 'api')
+
   const fakeRunBuild = async (): Promise<void> => {
     fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
   }
@@ -1424,6 +1443,7 @@ const setupProxyRunner = async (
 
   process.env[`${appName.toUpperCase()}_PORT`] = String(port)
   const apiDir = path.join(root, 'apps', appName, 'api')
+
   const fakeRunBuild = async (): Promise<void> => {
     fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
   }
@@ -1431,6 +1451,7 @@ const setupProxyRunner = async (
   process.chdir(root)
   const fake = makeFakeProxy(available, daemonOk, undefined, proxyOptions)
   const { driver } = fake
+
   // ctor positions: options, runBuild, turboWatchFactory, uiDevFactory, dryRunner, renderer, healthProbe, proxy
   //
   // `portlessLink` pinned to a home that holds no `~/.infra-kit/portless`: the refusal messages under test
@@ -1615,12 +1636,14 @@ describe('devServerRunner — Layer B portless aliases', () => {
     // now, against the portless THIS process ships.
     const home = '/Users/dev'
     const linkCli = `${home}/.infra-kit/portless/dist/cli.js`
+
     const portlessLink = {
       home,
       exists: (target: string): boolean => {
         return target === linkCli
       },
     }
+
     const neverInstalled = await setupProxyRunner(
       temp,
       'client',
@@ -1633,6 +1656,7 @@ describe('devServerRunner — Layer B portless aliases', () => {
         portlessLink,
       },
     )
+
     const notInstalledError = await neverInstalled.runner.start().then(
       () => {
         return new Error('start() resolved, but an un-provisioned machine must refuse to boot')
@@ -1660,6 +1684,7 @@ describe('devServerRunner — Layer B portless aliases', () => {
       { serviceInstalled: 'yes' },
       { portlessLink },
     )
+
     const stoppedError = await stopped.runner.start().then(
       () => {
         return new Error('start() resolved, but a dead daemon must refuse to boot')
@@ -1699,6 +1724,7 @@ describe('devServerRunner — Layer B portless aliases', () => {
         return target === linkCli
       },
     }
+
     const expectedLine = `sudo ${stableNode} ${linkCli} service install`
 
     const neverInstalled = await setupProxyRunner(
@@ -1711,6 +1737,7 @@ describe('devServerRunner — Layer B portless aliases', () => {
       undefined,
       { portlessLink },
     )
+
     const notInstalledError = await neverInstalled.runner.start().then(
       () => {
         return new Error('start() resolved, but an un-provisioned machine must refuse to boot')
@@ -1735,6 +1762,7 @@ describe('devServerRunner — Layer B portless aliases', () => {
       { serviceInstalled: 'yes' },
       { portlessLink },
     )
+
     const stoppedError = await stopped.runner.start().then(
       () => {
         return new Error('start() resolved, but a dead daemon must refuse to boot')
@@ -1752,6 +1780,7 @@ describe('devServerRunner — Layer B portless aliases', () => {
     const { runner } = await setupProxyRunner(temp, 'client', 'feat-x', true, undefined, daemonNeverStarts, undefined, {
       portlessLink: { home: NO_LINK_HOME },
     })
+
     const error = await runner.start().then(
       () => {
         return new Error('start() resolved, but an un-provisioned machine must refuse to boot')
@@ -1829,6 +1858,7 @@ describe('devServerRunner — Layer B portless aliases', () => {
 
     try {
       const raw = fs.readFileSync(path.join(root, '.infra-kit', 'dev-context', 'client.json'), 'utf-8')
+
       const fragment = JSON.parse(raw) as {
         v?: number
         release?: string
@@ -1870,6 +1900,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     // Fake build: boot build only. In turbo mode the on-change rebuild is owned by the
     // (faked) turbo engine, so runBuild must NOT be called again after boot.
     const buildCalls: string[] = []
+
     const fakeRunBuild = async (cmd: string): Promise<void> => {
       buildCalls.push(cmd)
       fs.writeFileSync(distHandler, handlerSource(1))
@@ -1880,6 +1911,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     let killed = false
     let spawnedPackages: string[] | null = null
     let spawnedUiClosure: string[] | null = null
+
     const fakeTurboWatch = (opts: { depInclusive: string[]; depClosure: string[] }): { kill: () => Promise<void> } => {
       spawnedPackages = opts.depInclusive
       spawnedUiClosure = opts.depClosure
@@ -1896,6 +1928,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     // Hermetic `--dry` closure source (Option B): records which app packages it was asked to
     // resolve, so watch mode never shells out to real turbo in the fixture.
     const dryCalls: string[] = []
+
     const fakeDryRunner = (packageName: string): Promise<string[]> => {
       dryCalls.push(packageName)
 
@@ -1990,8 +2023,10 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     const fakeRunBuild = async (): Promise<void> => {
       fs.writeFileSync(distHandler, handlerSource(1))
     }
+
     const logs: string[] = []
     const noop = (): void => {}
+
     const renderer: DevUi = {
       narrate: noop,
       log: (message) => {
@@ -2057,6 +2092,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
         { name: 'appy', packageName: 'appy-api', withHandler: true },
       ]),
     )
+
     const realRoot = fs.realpathSync(root)
 
     // A shared package that ONLY appx depends on (per the injected closure below).
@@ -2074,6 +2110,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
         fs.writeFileSync(path.join(realRoot, 'apps', app, 'api', 'dist', 'handler.js'), handlerSource(1))
       }
     }
+
     // appx depends on `shared`; appy does not — so a `shared` rebuild must restart appx only.
     const dryRunner = (packageName: string): Promise<string[]> => {
       return Promise.resolve(packageName === 'appx-api' ? ['appx-api', 'shared'] : ['appy-api'])
@@ -2155,6 +2192,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     const bootBuild = async (): Promise<void> => {
       fs.writeFileSync(appxDistHandler, handlerSource(1))
     }
+
     // appx depends on `shared`, per the injected closure — the same shape as the scoping test above.
     const dryRunner = (): Promise<string[]> => {
       return Promise.resolve(['appx-api', 'shared'])
@@ -2162,6 +2200,7 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
 
     const logs: string[] = []
     const noop = (): void => {}
+
     const renderer: DevUi = {
       narrate: noop,
       log: (message) => {
@@ -2243,8 +2282,10 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     const bootBuild = async (): Promise<void> => {
       fs.writeFileSync(path.join(appyDist, 'handler.js'), handlerSource(1))
     }
+
     const logs: string[] = []
     const noop = (): void => {}
+
     const renderer: DevUi = {
       narrate: noop,
       log: (message) => {
@@ -2323,11 +2364,14 @@ describe('devServerRunner — watch mode (dist-watch, build-less restart)', () =
     const bootBuild = async (): Promise<void> => {
       fs.writeFileSync(appzDistHandler, handlerSource(1))
     }
+
     const dryRunner = (): Promise<string[]> => {
       return Promise.resolve(['appz-api', 'shared'])
     }
+
     const logs: string[] = []
     const noop = (): void => {}
+
     const renderer: DevUi = {
       narrate: noop,
       log: (message) => {
@@ -2397,8 +2441,10 @@ describe('devServerRunner — liveness monitor', () => {
     const fakeRunBuild = async (): Promise<void> => {
       fs.writeFileSync(distHandler, handlerSource(1))
     }
+
     const logs: string[] = []
     const noop = (): void => {}
+
     const renderer: DevUi = {
       narrate: noop,
       log: (message) => {
@@ -2415,6 +2461,7 @@ describe('devServerRunner — liveness monitor', () => {
     // no further transitions — proving both edges fire exactly once.
     const verdicts: ProbeOutcome[] = ['ok', 'refused', 'refused', 'ok']
     let i = 0
+
     const scriptedProbe = (): Promise<ProbeOutcome> => {
       const v = verdicts[i] ?? 'ok'
 
@@ -2444,6 +2491,7 @@ describe('devServerRunner — liveness monitor', () => {
         const down = logs.some((l) => {
           return l.includes('omega/api unhealthy')
         })
+
         const up = logs.some((l) => {
           return l.includes('omega/api recovered')
         })
@@ -2457,6 +2505,7 @@ describe('devServerRunner — liveness monitor', () => {
       const downs = logs.filter((l) => {
         return l.includes('omega/api unhealthy')
       })
+
       const ups = logs.filter((l) => {
         return l.includes('omega/api recovered')
       })
@@ -2476,12 +2525,14 @@ describe('devServerRunner — frontends (default plan runs api + ui)', () => {
     const root = temp.register(
       makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }]),
     )
+
     const apiDir = path.join(root, 'apps', 'shop', 'api')
     const shopPort = await getFreePort()
 
     process.env.SHOP_PORT = String(shopPort)
 
     const buildCalls: string[] = []
+
     const fakeRunBuild = async (cmd: string): Promise<void> => {
       buildCalls.push(cmd)
       fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
@@ -2491,6 +2542,7 @@ describe('devServerRunner — frontends (default plan runs api + ui)', () => {
     let uiKilled = false
     let uiPackages: string[] | null = null
     let uiConcurrency = 0
+
     const fakeUiDev = (opts: { packageNames: string[]; concurrency: number }): { kill: () => Promise<void> } => {
       uiPackages = opts.packageNames
       uiConcurrency = opts.concurrency
@@ -2549,6 +2601,7 @@ describe('devServerRunner — frontends (default plan runs api + ui)', () => {
     const root = temp.register(
       makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }]),
     )
+
     const apiDir = path.join(root, 'apps', 'shop', 'api')
 
     process.env.SHOP_PORT = String(await getFreePort())
@@ -2559,6 +2612,7 @@ describe('devServerRunner — frontends (default plan runs api + ui)', () => {
 
     let depInclusive: string[] | null = null
     let depClosure: string[] | null = null
+
     const fakeTurboWatch = (opts: { depInclusive: string[]; depClosure: string[] }): { kill: () => Promise<void> } => {
       depInclusive = opts.depInclusive
       depClosure = opts.depClosure
@@ -2612,6 +2666,7 @@ const makeCapturingRenderer = (): {
   const bootSteps: string[] = []
   const narrations: string[] = []
   const noop = (): void => {}
+
   const renderer: DevUi = {
     narrate: (message) => {
       narrations.push(message)
@@ -2671,6 +2726,7 @@ const bootWithUi = async (
   }
 
   let uiEnv: Record<string, string> | undefined
+
   const fakeUiDev = (opts: { env?: Record<string, string> }): { kill: () => Promise<void> } => {
     uiEnv = opts.env
 
@@ -2684,6 +2740,7 @@ const bootWithUi = async (
   process.chdir(root)
   const { renderer, summary, bootSteps, narrations } = makeCapturingRenderer()
   const { driver, registered } = makeFakeProxy(proxyAvailable)
+
   const runner = new DevServerRunner(
     {},
     fakeRunBuild,
@@ -2922,6 +2979,7 @@ describe('devServerRunner — shutdown ordering (aliases before the child reap)'
     // the next start. `removed` alone cannot catch a regression here: it records WHICH aliases went, not
     // WHEN. One shared `events` sink across all three fakes is what makes the order observable.
     const events: string[] = []
+
     const root = temp.register(
       makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }]),
     )
@@ -2935,6 +2993,7 @@ describe('devServerRunner — shutdown ordering (aliases before the child reap)'
     const fakeRunBuild = async (): Promise<void> => {
       fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
     }
+
     const killRecorder = (label: string) => {
       return (): { kill: () => Promise<void> } => {
         return {
@@ -2946,9 +3005,11 @@ describe('devServerRunner — shutdown ordering (aliases before the child reap)'
         }
       }
     }
+
     const fakeDryRunner = (pkg: string): Promise<string[]> => {
       return Promise.resolve([pkg])
     }
+
     const { driver, removed } = makeFakeProxy(true, undefined, events)
 
     process.chdir(root)
@@ -3063,6 +3124,7 @@ describe('devServerRunner — teardown re-entry (a restart must never resurrect 
     const fakeRunBuild = async (): Promise<void> => {
       fs.writeFileSync(path.join(apiDir, 'dist', 'handler.js'), handlerSource(1))
     }
+
     const slowKill = (): { kill: () => Promise<void> } => {
       return {
         kill: async (): Promise<void> => {
@@ -3072,9 +3134,11 @@ describe('devServerRunner — teardown re-entry (a restart must never resurrect 
         },
       }
     }
+
     const fakeDryRunner = (pkg: string): Promise<string[]> => {
       return Promise.resolve([pkg])
     }
+
     const { driver, registered, removed } = makeFakeProxy(true)
 
     process.chdir(root)
@@ -3093,6 +3157,7 @@ describe('devServerRunner — teardown re-entry (a restart must never resurrect 
     await runner.start()
 
     const priv = runner as unknown as RunnerTeardownPrivates
+
     const apps = priv.appServers.map((e) => {
       return e.app
     })
@@ -3130,6 +3195,7 @@ describe('devServerRunner — teardown re-entry (a restart must never resurrect 
     await runner.start()
 
     const priv = runner as unknown as RunnerTeardownPrivates
+
     const apps = priv.appServers.map((e) => {
       return e.app
     })
@@ -3154,6 +3220,7 @@ describe('devServerRunner — reportFault must never touch a disposed renderer',
 
     const logCalls: string[] = []
     const noop = (): void => {}
+
     const renderer: DevUi = {
       narrate: noop,
       log: (message) => {
@@ -3166,6 +3233,7 @@ describe('devServerRunner — reportFault must never touch a disposed renderer',
     }
 
     const sinkWrites: Array<{ service: string; detail: string }> = []
+
     const fakeSink = {
       dir: '/fake/log/dir',
       write: (service: string, detail: string) => {
@@ -3274,6 +3342,7 @@ describe('devServerRunner — watch must not claim a reload it did not perform',
 
     const logs: string[] = []
     const noop = (): void => {}
+
     const renderer: DevUi = {
       narrate: noop,
       log: (message) => {
@@ -3314,6 +3383,7 @@ describe('devServerRunner — watch must not claim a reload it did not perform',
         return l.includes('Restarted appx')
       })
     }
+
     const deadline = Date.now() + 8000
 
     while (Date.now() < deadline && !find()) {
@@ -3436,8 +3506,10 @@ describe('devServerRunner — the reload budget stops the session rather than ha
     const bootBuild = async (): Promise<void> => {
       fs.writeFileSync(distHandler, handlerSource(1))
     }
+
     const logs: string[] = []
     const noop = (): void => {}
+
     const renderer: DevUi = {
       narrate: noop,
       log: (message) => {
@@ -3448,6 +3520,7 @@ describe('devServerRunner — the reload budget stops the session rather than ha
       ready: noop,
       dispose: noop,
     }
+
     const exitCodes: number[] = []
 
     process.chdir(root)
@@ -3535,6 +3608,7 @@ describe('devServerRunner — the module-scoped log sink is unhooked only by its
   it('keeps a second runner logging after the first one tears down', async () => {
     const dirA = temp.register(fs.mkdtempSync(path.join(os.tmpdir(), 'ik-sink-a-')))
     const dirB = temp.register(fs.mkdtempSync(path.join(os.tmpdir(), 'ik-sink-b-')))
+
     const build = (sink: DevLogSink): DevServerRunner => {
       return new DevServerRunner(
         {},
@@ -3561,6 +3635,7 @@ describe('devServerRunner — the module-scoped log sink is unhooked only by its
     // the identity guard refused to unhook a sink that was never the first runner's to clear. Drop the
     // guard and only ONE line survives: the first teardown nulls the global before the second speaks.
     const runnerLog = fs.readFileSync(path.join(dirB, 'runner.log'), 'utf-8')
+
     const shutdownLines = runnerLog.split('\n').filter((line) => {
       return line.includes('Shutting down')
     })
@@ -3682,6 +3757,7 @@ const bootOmega = async (
 describe('devServerRunner — watch engine and watcher wiring', () => {
   it('warns once when `turbo watch build` dies on its own, and stays silent for the exit teardown causes', async () => {
     let reportExit: TurboWatchOptions['onUnexpectedExit']
+
     const { runner, messages } = await bootOmega({
       options: { watch: true },
       turboWatch: (opts) => {
@@ -3690,6 +3766,7 @@ describe('devServerRunner — watch engine and watcher wiring', () => {
         return noopTurboChild()
       },
     })
+
     const engineLines = (): string[] => {
       return messages().filter((l) => {
         return l.includes('Watch engine')
@@ -3716,6 +3793,7 @@ describe('devServerRunner — watch engine and watcher wiring', () => {
 
   it('never restarts on tsc bookkeeping or sourcemaps, while a real module in the same dist still does', async () => {
     const { runner, messages, distDir } = await bootOmega({ options: { watch: true } })
+
     const restartLines = (): string[] => {
       return messages().filter(isRestartLine)
     }
@@ -3812,6 +3890,7 @@ describe('devServerRunner — watch engine and watcher wiring', () => {
     // a no-op against output that does not match the source on disk.
     const bootBuildCommand = async (watch: boolean): Promise<string | undefined> => {
       const commands: string[] = []
+
       const { runner } = await bootOmega({
         options: { watch },
         runBuild: async (cmd) => {
@@ -3852,6 +3931,7 @@ describe('devServerRunner — a shared-package edit without a usable closure map
         ]),
       ),
     )
+
     const sharedDir = path.join(root, 'packages', 'shared')
 
     fs.mkdirSync(path.join(sharedDir, 'dist'), { recursive: true })
@@ -3865,6 +3945,7 @@ describe('devServerRunner — a shared-package edit without a usable closure map
   it('restarts EVERY app when `turbo --dry` fails', async () => {
     const { root, sharedIndex } = setupShared()
     const { renderer, logs, messages } = makeLogRenderer()
+
     const runner = new DevServerRunner(
       BOTH_APPS,
       noopBuild,
@@ -3914,6 +3995,7 @@ describe('devServerRunner — the UI dev child', () => {
     const root = temp.register(
       makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }]),
     )
+
     // Nested: the sink GCs sibling log dirs and plants a `latest` link in its parent.
     const logDir = path.join(temp.register(fs.mkdtempSync(path.join(os.tmpdir(), 'ik-ui-route-'))), 'logs')
     let uiOpts: UiDevOptions | undefined
@@ -3964,6 +4046,7 @@ describe('devServerRunner — the UI dev child', () => {
     const root = temp.register(
       makeMonorepo([{ name: 'shop', packageName: 'shop-api', withHandler: true, ui: { packageName: 'shop-ui' } }]),
     )
+
     const { renderer, logs } = makeLogRenderer()
     let uiPackages: string[] | null = null
 
@@ -4011,9 +4094,11 @@ describe('devServerRunner — the restart chain', () => {
     const startOneApp = priv.startOneApp.bind(runner)
     const events: string[] = []
     let releaseFirst: () => void = () => {}
+
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve
     })
+
     let calls = 0
 
     priv.startOneApp = async (app) => {
@@ -4056,6 +4141,7 @@ describe('devServerRunner — the restart chain', () => {
 
   it('reports a restart that throws as ● down, without probing the port it never bound', async () => {
     let probes = 0
+
     // Always `ok`: had the failed restart been probed, the summary could only have said `● up`.
     const { runner, priv, apps, logs, messages, distDir } = await bootOmega({
       healthProbe: () => {
@@ -4091,6 +4177,7 @@ describe('devServerRunner — the restart chain', () => {
     process.env.INFRA_KIT_DEV_STOP_BYTES = '1'
 
     const exitCodes: number[] = []
+
     const { runner, priv, apps, logs, messages } = await bootOmega({
       options: {
         watch: true,
@@ -4167,6 +4254,7 @@ describe('devServerRunner — a build that emitted through errors, or missed the
         return Promise.resolve('ok')
       },
     })
+
     const priv = booted.priv as RunnerFreshnessPrivates
     const appDist = priv.watchedDistDirs[0]!
 
@@ -4179,6 +4267,7 @@ describe('devServerRunner — a build that emitted through errors, or missed the
 
   it('restarts onto a type-error build under a warning naming the error, then goes green once fixed', async () => {
     const { runner, priv, apps, logs, appDir, changed } = await bootWatched()
+
     const restartLines = (): LoggedLine[] => {
       return logs.filter((l) => {
         return l.message.includes('Restarted omega')
@@ -4215,12 +4304,14 @@ describe('devServerRunner — a build that emitted through errors, or missed the
   it('forces ONE rebuild of a package whose build missed the last save, touching the source first', async () => {
     const calls: string[] = []
     let onBuild = (): void => {}
+
     const { runner, priv, apps, logs, appDir, changed } = await bootWatched((cmd) => {
       calls.push(cmd)
       onBuild()
 
       return Promise.resolve()
     })
+
     const source = path.join(appDir, 'src', 'handler.ts')
     const bootCalls = calls.length
 
@@ -4265,11 +4356,13 @@ describe('devServerRunner — a build that emitted through errors, or missed the
 
   it('ignores a buildinfo older than the dist that triggered the restart — a turbo cache restore', async () => {
     const calls: string[] = []
+
     const { runner, priv, apps, logs, appDir, changed } = await bootWatched((cmd) => {
       calls.push(cmd)
 
       return Promise.resolve()
     })
+
     const source = path.join(appDir, 'src', 'handler.ts')
     const bootCalls = calls.length
 
@@ -4300,13 +4393,16 @@ describe('devServerRunner — a build that emitted through errors, or missed the
 
   it('warns when the forced rebuild is still stale, and never forces the same save twice', async () => {
     const calls: string[] = []
+
     const { runner, priv, apps, logs, appDir, changed } = await bootWatched((cmd) => {
       calls.push(cmd)
 
       return Promise.resolve()
     })
+
     const source = path.join(appDir, 'src', 'handler.ts')
     const bootCalls = calls.length
+
     const warnings = (): string[] => {
       return logs
         .filter((l) => {

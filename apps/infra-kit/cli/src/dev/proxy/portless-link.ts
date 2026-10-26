@@ -92,6 +92,7 @@ export interface ServiceInstallSeams {
 export const serviceInstallCommand = (bin: string, seams: ServiceInstallSeams): string => {
   // Resolved before the candidate check: `dev` passes `{ home }` only, and the candidate must never stat `undefined`.
   const execPath = seams.execPath ?? process.execPath
+
   // Written out rather than `??`-chained: a `null` verdict ("resolved, unhealthy") must reach `execPath`
   // directly and never fall through to a candidate check that would contradict doctor's spawn.
   const stableNode =

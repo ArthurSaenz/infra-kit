@@ -85,6 +85,7 @@ const assertDeployScriptsExist = async (root: string, config: DeployConfig): Pro
       return (await readIfExists(path.join(root, service.deploy))) === undefined ? [`${name}: ${service.deploy}`] : []
     }),
   )
+
   const names = missing.flat()
 
   if (names.length > 0) {
@@ -153,6 +154,7 @@ export const deploySync = async (options: DeploySyncOptions = {}) => {
       return { ...workflow, absolute, status }
     }),
   )
+
   const stale = await stalePilotFiles(root, config)
 
   const changed = [
@@ -161,6 +163,7 @@ export const deploySync = async (options: DeploySyncOptions = {}) => {
     }),
     ...stale,
   ]
+
   const summary = [...files, ...stale].map(({ path: filePath, status }) => {
     return { path: filePath, status }
   })

@@ -118,6 +118,7 @@ describe('release-picker — argument_required for an agent, with NO choices', (
     const single = await pickReleaseBranch(items).catch((e: unknown) => {
       return e
     })
+
     const multi = await pickReleaseBranches(items).catch((e: unknown) => {
       return e
     })

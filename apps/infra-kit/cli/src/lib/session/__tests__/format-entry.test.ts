@@ -10,6 +10,7 @@ const base = {
 
 /** The SGR escape sequences chalk emits at level 1, spelled once so the expectations stay readable. */
 const ESC = '\u001B'
+
 const SGR = {
   bold: `${ESC}[1m`,
   boldOff: `${ESC}[22m`,

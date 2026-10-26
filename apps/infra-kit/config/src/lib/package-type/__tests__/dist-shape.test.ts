@@ -33,6 +33,7 @@ describe('dist/package-type.js shape', () => {
     expect(metafile, 'the build must have produced a metafile').toBeDefined()
 
     const outputs = metafile!.outputs
+
     const entryKey = Object.keys(outputs).find((key) => {
       return key.endsWith('/package-type.js')
     })

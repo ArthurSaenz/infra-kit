@@ -130,6 +130,7 @@ describe('resources — prettier is the adversary', () => {
 const sharedLines = (type: PackageType): string[] => {
   const lines = RESOURCES[`package/${type}`].split('\n')
   const rulesAt = lines.indexOf('## Rules')
+
   const lastContent = lines.findLastIndex((line) => {
     return line !== ''
   })

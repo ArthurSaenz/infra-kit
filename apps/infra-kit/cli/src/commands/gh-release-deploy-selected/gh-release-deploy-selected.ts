@@ -241,6 +241,7 @@ export const ghReleaseDeploySelected = async (args: GhReleaseDeploySelectedArgs)
     const serviceFlags = selectedServices.flatMap((svc) => {
       return ['-f', `${svc}=true`]
     })
+
     const skipTerraformFlag = shouldSkipTerraform ? ['-f', 'skip_terraform_deploy=true'] : []
 
     await $`gh workflow run deploy-selected-services.yml --ref ${selectedReleaseBranch} -f environment=${selectedEnv} ${serviceFlags} ${skipTerraformFlag}`

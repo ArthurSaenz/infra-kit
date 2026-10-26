@@ -13,9 +13,11 @@ export const spawnForwardingSignals = (command: string, args: string[], options:
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, options)
     const forwarded: NodeJS.Signals[] = process.stdin.isTTY ? ['SIGTERM', 'SIGHUP'] : ['SIGINT', 'SIGTERM', 'SIGHUP']
+
     const forward = (signal: NodeJS.Signals) => {
       child.kill(signal)
     }
+
     const stopForwarding = () => {
       for (const signal of forwarded) process.off(signal, forward)
     }

@@ -22,9 +22,11 @@ describe('parseBranchChoices', () => {
     const labels = result.map((r) => {
       return r.label
     })
+
     const kinds = result.map((r) => {
       return r.id.kind
     })
+
     const branches = result.map((r) => {
       return r.branch
     })

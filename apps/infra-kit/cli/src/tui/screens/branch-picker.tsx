@@ -27,6 +27,7 @@ export const BranchPicker = (props: BranchPickerProps) => {
   const { items, onSelect, onCancel } = props
 
   const T = BRANCH_PICKER_TEXT
+
   const labelWidth = items.reduce((max, item) => {
     return Math.max(max, item.label.length)
   }, 0)

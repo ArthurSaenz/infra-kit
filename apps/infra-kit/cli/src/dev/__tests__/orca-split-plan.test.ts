@@ -53,8 +53,8 @@ describe('buildOrcaSplitPlan', () => {
       }),
     ).toEqual(expect.arrayContaining(commands.slice(1)))
 
-    steps.forEach((step, index) => {
+    for (const [index, step] of steps.entries()) {
       expect(step.from).toBeLessThanOrEqual(index)
-    })
+    }
   })
 })

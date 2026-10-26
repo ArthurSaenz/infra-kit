@@ -149,6 +149,7 @@ describe('the MCP payload reports what the init half did', () => {
   // Reds on: reverting `initCore` to `Promise<void>` / logger-only — `init` would arrive empty.
   it('carries one entry per step, with outcomes, for every step that ran', async () => {
     const { structuredContent } = await setup({ probeDeps: nothingInstalled(), skipTools: true })
+
     const steps = structuredContent.init.map((entry) => {
       return entry.step
     })
@@ -253,6 +254,7 @@ describe('the MCP payload reports what the init half did', () => {
     fs.mkdirSync(path.join(repo, 'CLAUDE.md'))
 
     const { structuredContent } = await setup({ probeDeps: nothingInstalled(), skipTools: true })
+
     const guidance = structuredContent.init.filter((entry) => {
       return entry.step === 'guidance'
     })
@@ -287,9 +289,11 @@ describe('the MCP payload reports what the init half did', () => {
     await setup({ probeDeps: nothingInstalled(), skipTools: true, portlessDeps: noPortless() })
 
     const lines = stderrLines()
+
     const zshrc = lines.findIndex((line) => {
       return line.includes(' zshrc ') && line.includes('Added infra-kit shell functions')
     })
+
     const tools = lines.findIndex((line) => {
       return line.includes(' doppler ')
     })
@@ -326,6 +330,7 @@ describe('commands a human has to run reach the report as manual rows, and never
       skipTools: true,
       portlessDeps: noPortless(),
     })
+
     const lines = stderrLines()
 
     expect(rowFor(structuredContent.report, 'plugin-pointer')).toMatchObject({
@@ -356,6 +361,7 @@ describe('commands a human has to run reach the report as manual rows, and never
       skipTools: true,
       portlessDeps: noPortless(),
     })
+
     const row = rowFor(structuredContent.report, 'plugin-pointer')
 
     // `warn` outranks `manual`: the row shows the sentence and the bare command as two notes.
@@ -385,6 +391,7 @@ describe('setup --unattended writes no file the project tracks', () => {
     resetInfraKitConfigCache()
 
     const { structuredContent } = await setup({ probeDeps: nothingInstalled(), unattended: true })
+
     const manual = structuredContent.init.filter((entry) => {
       return entry.outcome === 'manual'
     })

@@ -232,6 +232,7 @@ describe('validatePresetProxy', () => {
         return 'orphan-api'
       },
     }
+
     const plan = { apps: { 'client/ui': { proxy: { '/api': 'local' as const } } } }
     const issues = validatePresetProxy(plan, ctx)
 

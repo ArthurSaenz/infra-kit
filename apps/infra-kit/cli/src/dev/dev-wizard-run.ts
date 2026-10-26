@@ -124,6 +124,7 @@ const groupBackends = (
       cloudCapable: def.from.includes('cloud'),
       default: def.default,
     }
+
     const existing = byPkg.get(def.packageName)
 
     if (existing) {
@@ -179,21 +180,25 @@ export const gatherWizardModel = async (root: string): Promise<WizardModel> => {
       return [a.packageName, a.name] as const
     }),
   )
+
   const apiPkgByName = new Map(
     apiApps.map((a) => {
       return [a.name, a.packageName] as const
     }),
   )
+
   const uiNames = new Set(
     uiApps.map((a) => {
       return a.name
     }),
   )
+
   const apiNames = new Set(
     apiApps.map((a) => {
       return a.name
     }),
   )
+
   const allNames = [...new Set([...apiNames, ...uiNames])].sort()
 
   const apps: WizardApp[] = await Promise.all(
@@ -250,6 +255,7 @@ const buildPartChoices = (model: WizardModel): WizardChoice[] => {
           return r.path
         })
       })
+
       const description = paths.length > 0 ? `frontend — proxies ${[...paths].sort().join(', ')}` : 'frontend'
 
       choices.push({ name: `${app.name}/ui`, value: `${app.name}/ui`, description })
@@ -280,6 +286,7 @@ const buildAuditContext = (model: WizardModel): PresetProxyContext => {
         return a.name
       }),
   }
+
   const apiPkgByApp: Record<string, string> = {}
   const routeToPkg = new Map<string, string>()
 
@@ -341,6 +348,7 @@ const promptRouteSources = async (
       return [a.name, a] as const
     }),
   )
+
   const sources: Record<string, ProxySource> = {}
 
   for (const key of uiKeys) {
@@ -444,6 +452,7 @@ const applyCloudEnv = async (
 
     return app?.deployedUrlEnv ? [app.deployedUrlEnv] : []
   })
+
   const values = names.length > 0 ? await loadEnvVars(env, names) : new Map<string, string>()
 
   process.env[INFRA_KIT_ENV_VAR] = env
@@ -483,9 +492,11 @@ const runManualBranch = async (
   const uiKeys = selectedTargets.filter((t) => {
     return t.endsWith('/ui')
   })
+
   const sources = await promptRouteSources(prompts, model, uiKeys)
 
   const watch = await prompts.confirm({ message: '👀 Rebuild & restart on save (watch)?', default: true })
+
   const orca = asksOrca()
     ? await prompts.confirm({ message: '🧩 Run each app in its own Orca pane?', default: false })
     : false
