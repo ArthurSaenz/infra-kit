@@ -2,6 +2,7 @@ import type { TypedFlatConfigItem } from '@antfu/eslint-config'
 import type { Linter } from 'eslint'
 import sonarjs from 'eslint-plugin-sonarjs'
 
+import { GLOB_SRC_ALL, GLOB_SVELTE } from '../globs.js'
 import type { ConfigRules } from '../types.js'
 
 /** Base antfu options shared by every mode. Framework flags (react/svelte) are merged in the factory. */
@@ -40,6 +41,9 @@ export const overrides: TypedFlatConfigItem = {
       { blankLine: 'always', prev: '*', next: 'return' },
       { blankLine: 'always', prev: ['const', 'let'], next: '*' },
       { blankLine: 'any', prev: ['const', 'let'], next: ['const', 'let'] },
+      // Later entries win, so these carve multi-line declarations out of the `any` above.
+      { blankLine: 'always', prev: ['singleline-const', 'singleline-let'], next: ['multiline-const', 'multiline-let'] },
+      { blankLine: 'always', prev: ['multiline-const', 'multiline-let'], next: '*' },
     ],
     'style/jsx-one-expression-per-line': 'off',
     'style/brace-style': 'off',
@@ -87,4 +91,15 @@ export const overrides: TypedFlatConfigItem = {
       },
     ],
   } as ConfigRules,
+}
+
+/**
+ * Rules turned ON, scoped to code: a rule that is on must support every language its block matches, and the
+ * unscoped `overrides` block also matches the JSON/YAML files antfu lints (`rules do not support the language`).
+ */
+export const sourceOverrides: TypedFlatConfigItem = {
+  files: [GLOB_SRC_ALL, GLOB_SVELTE],
+  rules: {
+    'unicorn/no-for-each': 'error',
+  },
 }

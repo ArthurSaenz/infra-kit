@@ -66,6 +66,7 @@ export const makePathToSlugs = (params: { appContentRel: string }) => {
     }
 
     let parts = noExt.split('/').filter(Boolean)
+
     const anchor = parts.findIndex((s) => {
       return s === 'apps' || s === 'packages' || s === 'configs'
     })
@@ -82,6 +83,7 @@ export const makePathToSlugs = (params: { appContentRel: string }) => {
           return !GROUP_DROP.has(p)
         })
         .join('-') || 'general'
+
     const docSlugs = docParts.map((s) => {
       return s.toLowerCase()
     })

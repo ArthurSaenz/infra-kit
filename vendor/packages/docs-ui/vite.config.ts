@@ -26,6 +26,7 @@ export default defineConfig(async () => {
   // Seed every aggregated doc URL so prerendering is deterministic even if a page
   // is not reachable by link crawling.
   const docUrls = await getAllDocUrls()
+
   const pages = [
     { path: '/' },
     { path: '/docs' },

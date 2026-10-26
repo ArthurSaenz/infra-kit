@@ -1,7 +1,7 @@
 import antfu from '@antfu/eslint-config'
 import type { TypedFlatConfigItem } from '@antfu/eslint-config'
 
-import { antfuBaseOptions, overrides, sonarjsRecommended } from './configs/base.js'
+import { antfuBaseOptions, overrides, sonarjsRecommended, sourceOverrides } from './configs/base.js'
 import { boundaries } from './configs/boundaries.js'
 import { wlComponentsRecommended } from './configs/components.js'
 import { jsdoc, markdown } from './configs/docs.js'
@@ -38,6 +38,7 @@ export const createConfig = async (userOptions: ConfigOptions = {}): Promise<Typ
     { ...antfuBaseOptions, ...fw.antfuFlags },
     sonarjsRecommended,
     overrides,
+    sourceOverrides,
     // e2e after the app layer: for files of a Playwright package its elements replace features/services/shared.
     ...(o.boundaries === false ? [] : [boundaries(o.boundaries), e2eBoundaries(o.boundaries)]),
     e2ePlaywright(),
