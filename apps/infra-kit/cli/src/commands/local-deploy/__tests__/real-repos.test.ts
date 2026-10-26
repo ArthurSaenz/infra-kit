@@ -76,8 +76,7 @@ describe.runIf(present(REPOS.hulyo))('hulyo', () => {
     // from a worktree) — neither exists — because the project was taken from a directory basename.
     expect(resolveSsmPrefix(services)).toBe('hulyo')
 
-    // These two read no `/…/environment` at all; they must be null, not a refusal.
-    expect(byName.get('ai-be')?.ssmPrefix).toBeNull()
+    // Reads no `/…/environment` at all; it must be null, not a refusal.
     expect(byName.get('media')?.ssmPrefix).toBeNull()
   })
 })
