@@ -127,7 +127,7 @@ export const validatePackage = async (
   }
 
   const passed = checks.every((check) => {
-    return check.status === 'pass'
+    return check.status !== 'fail'
   })
 
   return { packageDir, packageName, checks, passed }

@@ -60,5 +60,9 @@ export const checkMcpProxies = async (root: string, fix: boolean): Promise<Packa
           return { name: `mcp:${entry.name}`, status: 'fail', message: entry.message }
         })
 
-  return { packageDir: root, packageName: 'mcp', checks, passed: failures.length === 0 }
+  const passed = checks.every((check) => {
+    return check.status !== 'fail'
+  })
+
+  return { packageDir: root, packageName: 'mcp', checks, passed }
 }

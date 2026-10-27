@@ -244,6 +244,44 @@ const syncDesignFile = (
   }
 }
 
+/** What {@link buildPackageGuidance} resolves for one package. */
+export interface PackageGuidance {
+  body: string
+  type: PackageType
+  packageName: string
+}
+
+/**
+ * The guidance body `syncPackageGuidance` would write for one package, without writing it. Shared
+ * with the audit's drift check, which must compare against exactly what `--fix` produces.
+ *
+ * @example
+ * await buildPackageGuidance('/repo/apps/client/ui', { repoRoot: '/repo', version: '0.4.0' })
+ * // => { body: '<!-- infra-kit:package:version 0.4.0 frontend -->\n…', type: 'frontend', packageName: '@x/ui' }
+ */
+export const buildPackageGuidance = async (
+  packageDir: string,
+  { repoRoot, version, declaredType }: Pick<SyncPackageGuidanceOptions, 'repoRoot' | 'version' | 'declaredType'>,
+): Promise<PackageGuidance> => {
+  const pkgJson = await readPackageJson(packageDir)
+  const packageName = pkgJson.name ?? path.basename(packageDir)
+  const type = detectPackageType({ packageDir, repoRoot, pkgJson, declaredType })
+
+  const body = buildPackageBody({
+    version,
+    type,
+    packageName,
+    relDir: path.relative(repoRoot, packageDir).split(path.sep).join('/'),
+    hasReadme: hasExactFile(packageDir, README_FILE),
+    hasDesign: hasExactFile(packageDir, DESIGN_FILE),
+    hasE2eDoc: fs.existsSync(path.join(repoRoot, E2E_DOC_PATH)),
+    scripts: Object.keys(pkgJson.scripts ?? {}),
+    hasPublicSurface: pkgJson.exports !== undefined || pkgJson.bin !== undefined,
+  })
+
+  return { body, type, packageName }
+}
+
 /**
  * Write (or refresh) one workspace package's guidance block in its own `CLAUDE.md`, selecting
  * the body by detected package type and preserving every hand-authored byte outside the
@@ -262,22 +300,7 @@ export const syncPackageGuidance = async (
   { repoRoot, version, design, declaredType, dryRun = false }: SyncPackageGuidanceOptions,
 ): Promise<GuidanceWrite[]> => {
   const claudePath = path.join(packageDir, CLAUDE_FILE)
-  const pkgJson = await readPackageJson(packageDir)
-  const packageName = pkgJson.name ?? path.basename(packageDir)
-  const type = detectPackageType({ packageDir, repoRoot, pkgJson, declaredType })
-
-  const body = buildPackageBody({
-    version,
-    type,
-    packageName,
-    relDir: path.relative(repoRoot, packageDir).split(path.sep).join('/'),
-    hasReadme: hasExactFile(packageDir, README_FILE),
-    hasDesign: hasExactFile(packageDir, DESIGN_FILE),
-    hasE2eDoc: fs.existsSync(path.join(repoRoot, E2E_DOC_PATH)),
-    scripts: Object.keys(pkgJson.scripts ?? {}),
-    hasPublicSurface: pkgJson.exports !== undefined || pkgJson.bin !== undefined,
-  })
-
+  const { body, type, packageName } = await buildPackageGuidance(packageDir, { repoRoot, version, declaredType })
   const written: GuidanceWrite[] = []
 
   try {

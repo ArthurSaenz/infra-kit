@@ -34,7 +34,7 @@ const stubAudit = (structuredContent: AuditResult['structuredContent']): void =>
 
 /** A passing single-package result — the baseline every case varies from. */
 const passingContent = (): AuditResult['structuredContent'] => {
-  return { allPassed: true, packages: [{ name: '@ws/a', passed: true, checks: [] }] }
+  return { allPassed: true, warnCount: 0, packages: [{ name: '@ws/a', passed: true, checks: [] }] }
 }
 
 const runAudit = async (...argv: string[]): Promise<void> => {
@@ -54,7 +54,7 @@ afterEach(() => {
 
 describe('audit action — exit code', () => {
   it('reds the run when the post-fix audit failed', async () => {
-    stubAudit({ allPassed: false, packages: [{ name: '@ws/a', passed: false, checks: [] }] })
+    stubAudit({ allPassed: false, warnCount: 0, packages: [{ name: '@ws/a', passed: false, checks: [] }] })
 
     await runAudit()
 
@@ -83,6 +83,24 @@ describe('audit action — exit code', () => {
     })
 
     await runAudit('--fix')
+
+    expect(process.exitCode).toBeUndefined()
+  })
+
+  it('exits 0 when the only findings are warnings', async () => {
+    stubAudit({
+      allPassed: true,
+      warnCount: 1,
+      packages: [
+        {
+          name: '@ws/a',
+          passed: true,
+          checks: [{ name: 'empty-rules', status: 'warn', message: 'requiredScripts: []' }],
+        },
+      ],
+    })
+
+    await runAudit()
 
     expect(process.exitCode).toBeUndefined()
   })

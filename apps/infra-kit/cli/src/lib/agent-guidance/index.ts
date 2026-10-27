@@ -1,7 +1,18 @@
 export { findWorkspaceRoot, resetAdoptionCache, resolveAdoption } from './adoption'
 export type { AdoptionState } from './adoption'
-export { LEGACY_IMPORT_END, LEGACY_IMPORT_START, syncPackageGuidance, syncRootGuidance } from './agent-guidance'
-export type { GuidanceWrite, SyncPackageGuidanceOptions, SyncRootGuidanceOptions } from './agent-guidance'
+export {
+  buildPackageGuidance,
+  LEGACY_IMPORT_END,
+  LEGACY_IMPORT_START,
+  syncPackageGuidance,
+  syncRootGuidance,
+} from './agent-guidance'
+export type {
+  GuidanceWrite,
+  PackageGuidance,
+  SyncPackageGuidanceOptions,
+  SyncRootGuidanceOptions,
+} from './agent-guidance'
 export { buildDesignSkeleton } from './bodies/design-skeleton'
 export { buildPackageBody } from './bodies/package-body'
 export type { BuildPackageBodyArgs } from './bodies/package-body'

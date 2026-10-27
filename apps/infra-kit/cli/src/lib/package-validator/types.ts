@@ -2,7 +2,8 @@
 export interface PackageCheck {
   /** Stable identifier for the check, e.g. `infra-kit.config.ts`, `script:build`. */
   name: string
-  status: 'pass' | 'fail'
+  /** `warn` reports drift without failing the audit: only `fail` makes `passed` false. */
+  status: 'pass' | 'warn' | 'fail'
   message: string
 }
 

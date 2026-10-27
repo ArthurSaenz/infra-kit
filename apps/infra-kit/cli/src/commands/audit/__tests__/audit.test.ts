@@ -78,9 +78,10 @@ describe('audit', () => {
   })
 
   it('collapses a passing audit to a single summary line', async () => {
-    const dir = makeTmpPackage('export default { requiredScripts: [], requiredFiles: [] }', {
+    const dir = makeTmpPackage("export default { requiredScripts: ['build'], requiredFiles: ['package.json'] }", {
       name: '@x/quiet',
       type: 'module',
+      scripts: { build: 'tsc' },
     })
 
     const lines = await captureLog(() => {
@@ -92,7 +93,7 @@ describe('audit', () => {
   })
 
   it('prints only the failing checks, plus the summary', async () => {
-    const dir = makeTmpPackage('export default { requiredScripts: ["build"], requiredFiles: [] }', {
+    const dir = makeTmpPackage('export default { requiredScripts: ["build"], requiredFiles: ["package.json"] }', {
       name: '@x/loud',
       type: 'module',
     })
@@ -106,9 +107,40 @@ describe('audit', () => {
         return line.startsWith('[FAIL] ')
       }),
     ).toEqual(['[FAIL] @x/loud script:build: missing "build" in package.json scripts'])
-    // Three checks now: infra-kit.config.ts, agent-guidance, script:build.
-    expect(lines.at(-1)).toBe('❌ audit failed — 1/3 checks, 1 target')
+    // Four checks: infra-kit.config.ts, agent-guidance, script:build, file:package.json.
+    expect(lines.at(-1)).toBe('❌ audit failed — 1/4 checks, 1 target')
     expect(lines).toHaveLength(2)
+  })
+
+  it('prints a warning as [WARN], counts it apart, and keeps the audit passing', async () => {
+    const dir = makeTmpPackage("export default { requiredScripts: [], requiredFiles: ['package.json'] }", {
+      name: '@x/warned',
+      type: 'module',
+    })
+
+    const lines = await captureLog(async () => {
+      const result = await audit({ cwd: dir })
+
+      expect(result.structuredContent.allPassed).toBe(true)
+      expect(result.structuredContent.warnCount).toBe(1)
+      expect(result.structuredContent.packages[0]?.passed).toBe(true)
+    })
+
+    expect(lines[0]).toMatch(/^\[WARN\] @x\/warned empty-rules: infra-kit\.config\.ts sets requiredScripts: \[\]/u)
+    expect(lines.at(-1)).toBe('✅ audit passed — 4 checks, 1 target (1 warning)')
+    expect(lines).toHaveLength(2)
+  })
+
+  it('publishes warnCount 0 on a run with no warnings', async () => {
+    const dir = makeTmpPackage("export default { requiredFiles: ['package.json'] }", {
+      name: '@x/plain',
+      type: 'module',
+      scripts: { build: 'x', 'ts-check': 'x', 'eslint-check': 'x', 'prettier-check': 'x', test: 'x' },
+    })
+
+    const result = await audit({ cwd: dir })
+
+    expect(result.structuredContent.warnCount).toBe(0)
   })
 })
 
@@ -329,7 +361,7 @@ describe('audit --root — rules from infra-kit.json', () => {
     return result.structuredContent.packages.flatMap((pkg) => {
       return pkg.checks
         .filter((check) => {
-          return check.status !== 'pass'
+          return check.status === 'fail'
         })
         .map((check) => {
           return check.name

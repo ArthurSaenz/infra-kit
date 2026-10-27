@@ -78,7 +78,16 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
       'orca installed',
     ],
   ],
-  [SECTION_SHELL, ['zshrc init block', 'zshenv session block', 'pnpm enableGlobalVirtualStore', 'CLAUDE.md block']],
+  [
+    SECTION_SHELL,
+    [
+      'zshrc init block',
+      'zshenv session block',
+      'pnpm enableGlobalVirtualStore',
+      'CLAUDE.md block',
+      'Guidance version',
+    ],
+  ],
   [
     SECTION_CONFIG,
     ['infra-kit config valid', 'user override path', 'legacy user-global config', 'merge-dev resolutions'],

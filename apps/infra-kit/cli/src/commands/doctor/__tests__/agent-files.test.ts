@@ -73,6 +73,7 @@ describe('checkAgentFiles', () => {
       async () => {
         await expect(checkAgentFiles()).resolves.toEqual([
           { name: 'CLAUDE.md block', status: 'skip', message: 'no infra-kit config in this repo' },
+          { name: 'Guidance version', status: 'skip', message: 'no infra-kit config in this repo' },
         ])
       },
       { repo: false },
@@ -85,8 +86,9 @@ describe('checkAgentFiles', () => {
 
       const checks = await checkAgentFiles()
 
-      expect(checks).toHaveLength(1)
+      expect(checks).toHaveLength(2)
       expect(statusOf(checks, 'CLAUDE.md block')).toBe('pass')
+      expect(statusOf(checks, 'Guidance version')).toBe('pass')
       // The legacy AGENTS.md and .cursor/rules checks no longer exist.
       expect(statusOf(checks, 'AGENTS.md block')).toBeUndefined()
       expect(statusOf(checks, '.cursor/rules block')).toBeUndefined()
