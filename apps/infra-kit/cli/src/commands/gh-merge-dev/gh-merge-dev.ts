@@ -25,7 +25,7 @@ import type { RequiredConfirmedOptionArg } from 'src/types'
 
 import { DEFAULT_VERIFY_COMMAND, planMergeRun, pushableRefs, reclassify, verifyMerges } from './merge-run'
 import type { MergePlanEntry, MergeStatus } from './merge-run'
-import { abortResolutions, continueResolutions, handOffConflicts, isLockfileOnly, parseTrees } from './resolution'
+import { abortResolutions, continueResolutions, handOffBranches, isLockfileOnly, parseTrees } from './resolution'
 import type { Blocked, HandOffOutcome, Resolution, ResolutionResultStatus, ResolutionRunOutcome } from './resolution'
 import { registerRunCleanup } from './run-cleanup'
 
@@ -694,17 +694,29 @@ const planConfirmAndPush = async (args: {
 
   const pushOutcome = await applyPush({ cwd, worktreePath: worktree.path, entries, selected, verify })
 
-  const conflicted = entries
-    .filter((entry) => {
-      return selected.includes(entry.branch) && entry.status === 'conflict'
-    })
-    .map((entry) => {
-      return entry.branch
-    })
+  const branchesWhere = (predicate: (entry: MergePlanEntry) => boolean): string[] => {
+    return entries
+      .filter((entry) => {
+        return selected.includes(entry.branch) && predicate(entry)
+      })
+      .map((entry) => {
+        return entry.branch
+      })
+  }
+
+  const conflicted = branchesWhere((entry) => {
+    return entry.status === 'conflict'
+  })
+
+  // Only a real merge: a fast-forward that fails verify is dev itself failing, which no merge
+  // commit can fix — and `git merge --no-commit` would fast-forward instead of stopping.
+  const verifyRefused = branchesWhere((entry) => {
+    return entry.status === 'merged' && (pushOutcome.verifyFailed?.has(entry.branch) ?? false)
+  })
 
   const handOffs =
-    keepConflicts && plannedDevSha && conflicted.length > 0
-      ? await handOffConflicts({ cwd, branches: conflicted, devSha: plannedDevSha })
+    keepConflicts && plannedDevSha && conflicted.length + verifyRefused.length > 0
+      ? await handOffBranches({ cwd, conflicted, verifyFailed: verifyRefused, devSha: plannedDevSha, verify })
       : undefined
 
   return { entries, selected, declined: false, ...pushOutcome, handOffs }
@@ -737,6 +749,13 @@ const nextStepLine = (entry: MergeDevResultEntry, worktrees: WorktreeEntry[]): s
   }
 
   return `# ${entry.branch} — ${entry.status}\n${reproduceCommand(entry.branch, worktrees)}\n`
+}
+
+/** A verify failure whose hand-off also failed must name both causes. */
+const joinReasons = (verifyReason: string | undefined, handOffReason: string | undefined): string | undefined => {
+  if (verifyReason !== undefined && handOffReason) return `${verifyReason}\nhand-off: ${handOffReason}`
+
+  return verifyReason ?? handOffReason
 }
 
 /** Turn the run's outcome into the printed report and the structured result. */
@@ -794,7 +813,7 @@ const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]
         mergeSha: entry.mergeSha,
         conflictPaths: entry.conflictPaths,
         pushed: pushedBranches.has(entry.branch),
-        reason: verifyReason ?? handOff?.reason ?? entry.reason,
+        reason: joinReasons(verifyReason, handOff?.reason) ?? entry.reason,
         ...(handOff?.resolution ? { resolution: handOff.resolution } : {}),
       }
     })
@@ -890,7 +909,7 @@ export const ghMergeDevMcpTool = defineMcpTool({
       .boolean()
       .optional()
       .describe(
-        'On the confirmed run, after the clean branches are pushed, leave each conflicted branch mid-merge in a detached worktree under `<root>-worktrees/merge-dev/` for resolution. Excludes `continue`, `abort` and `dryRun`.',
+        'On the confirmed run, after the clean branches are pushed, leave each conflicted branch — and each clean merge that failed `verify` — mid-merge in a detached worktree under `<root>-worktrees/merge-dev/` for resolution. Excludes `continue`, `abort` and `dryRun`.',
       ),
     continue: z
       .boolean()
@@ -943,12 +962,15 @@ export const ghMergeDevMcpTool = defineMcpTool({
               baseSha: z.string(),
               devSha: z.string(),
               conflictPaths: z.array(z.string()),
+              editablePaths: z.array(z.string()).optional(),
               lockfileOnly: z.boolean(),
               rererePreResolved: z.array(z.string()),
-              state: z.enum(['needs-agent', 'lockfile-only', 'exists']),
+              state: z.enum(['needs-agent', 'lockfile-only', 'verify-failed', 'exists']),
             })
             .optional()
-            .describe('The `keepConflicts` hand-off for a conflicted branch'),
+            .describe(
+              'The `keepConflicts` hand-off for a conflicted branch, or for a clean merge that failed verify (`verify-failed`: edit only `editablePaths`)',
+            ),
           blocked: z
             .object({
               code: z.enum([

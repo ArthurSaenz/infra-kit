@@ -39,17 +39,21 @@ const INSTALL_FOR_EXTRA_VERIFY = 'pnpm install --frozen-lockfile'
 const RESOLUTION_DIFF_CAP = 64 * 1024
 const REASON_CAP = 4096
 
-export type ResolutionState = 'needs-agent' | 'lockfile-only' | 'exists'
+export type ResolutionState = 'needs-agent' | 'lockfile-only' | 'verify-failed' | 'exists'
 
 export interface Resolution {
   worktreePath: string
   baseSha: string
   devSha: string
   conflictPaths: string[]
+  /** Present on a `verify-failed` hand-off: the paths its fix may edit. */
+  editablePaths?: string[]
   lockfileOnly: boolean
   rererePreResolved: string[]
   state: ResolutionState
 }
+
+type HandOffKind = 'conflict' | 'verify-failed'
 
 /** The state file: `<git-common-dir>/infra-kit/merge-dev-resolutions/<slug>.json`. */
 interface ResolutionRecord {
@@ -60,7 +64,19 @@ interface ResolutionRecord {
   /** The dev commit merged in. Recorded, because dev moving after the hand-off must not matter. */
   devSha: string
   conflictPaths: string[]
-  /** `AUTO_MERGE` right after the merge stopped: git's merge with markers, i.e. everything NOT the resolver's. */
+  /**
+   * A clean merge handed off because verify failed: every path either side changed since the merge
+   * base, the lockfile excepted. Replaces `conflictPaths` as the scope; absent on a conflict hand-off.
+   */
+  editablePaths?: string[]
+  /** Both sides changed the lockfile, so git's clean text merge of it is unproven: the CLI rebuilds it. */
+  lockfileBothSides?: boolean
+  /** The verify a `verify-failed` hand-off failed — the default for every `--continue` of it. */
+  handOffVerify?: string
+  /**
+   * `AUTO_MERGE` right after the merge stopped: git's merge with markers, i.e. everything NOT the
+   * resolver's. A `verify-failed` hand-off has no conflict, so it records the clean merge's tree.
+   */
   autoMergeTree: string
   rererePreResolved: string[]
   ignoredAtHandoff: string[]
@@ -277,10 +293,46 @@ const toResolution = (record: ResolutionRecord, state: ResolutionState): Resolut
     baseSha: record.baseSha,
     devSha: record.devSha,
     conflictPaths: record.conflictPaths,
+    ...(record.editablePaths ? { editablePaths: record.editablePaths } : {}),
     lockfileOnly: record.lockfileOnly,
     rererePreResolved: record.rererePreResolved,
     state,
   }
+}
+
+const scopeOf = (record: ResolutionRecord): string[] => {
+  return record.editablePaths ?? record.conflictPaths
+}
+
+const isManifest = (file: string): boolean => {
+  return path.posix.basename(file) === 'package.json'
+}
+
+/** The lockfile the index carries is the CLI's own rebuild, not git's merge of it. */
+const lockfileRebuilt = (record: ResolutionRecord): boolean => {
+  return record.conflictPaths.includes(LOCKFILE) || record.lockfileBlob !== undefined
+}
+
+/**
+ * Whether `--continue` rebuilds the lockfile from dev — and so may change it. Never the resolver's:
+ * on a clean hand-off git's merge of it stands unless both sides changed it or a manifest was edited.
+ */
+// Rebuilding on every manifest dev touched would re-resolve the release's ranged pins for a failure
+// the lockfile had no part in. Once rebuilt it stays the CLI's, so reverting the manifest edit
+// cannot leave a hand-made lockfile behind.
+const lockfileIsCliOwned = async (cwd: string, record: ResolutionRecord): Promise<boolean> => {
+  if (!record.editablePaths) return record.conflictPaths.includes(LOCKFILE)
+  if (record.lockfileBothSides || record.lockfileBlob !== undefined) return true
+
+  const staged = nulFields(
+    await git(cwd, ['diff', '--cached', '--name-only', '-z', '--no-renames', record.autoMergeTree]),
+  )
+
+  return [...(await worktreeSideChanges(cwd)), ...staged].some(isManifest)
+}
+
+const outOfScopeDetail = (record: ResolutionRecord): string => {
+  return record.editablePaths ? 'only the editable paths may change' : 'only the conflicted paths may change'
 }
 
 /** Remove the worktree, its registration and its state file. Never throws. */
@@ -359,7 +411,10 @@ const isUnderNodeModules = (file: string): boolean => {
 // - `ls-files -v` catches assume-unchanged (lowercase tag) and skip-worktree (`S`), both of which
 //   make `git status` blind to an edit of that path.
 const scopeViolations = async (cwd: string, record: ResolutionRecord): Promise<string[]> => {
-  const allowed = new Set(record.conflictPaths)
+  const allowed = new Set(scopeOf(record))
+
+  if (record.editablePaths && (await lockfileIsCliOwned(cwd, record))) allowed.add(LOCKFILE)
+
   const knownIgnored = new Set([...record.ignoredAtHandoff, ...(record.ignoredByVerify ?? [])])
 
   const staged = nulFields(
@@ -418,11 +473,11 @@ const hiddenByIndexFlags = async (cwd: string): Promise<string[]> => {
  * Staged files that still carry a conflict marker; the lockfile is rebuilt separately. Throws when
  * git itself failed, so a broken check can never read as "no markers".
  */
-const markerPaths = async (cwd: string): Promise<string[]> => {
+const markerPaths = async (cwd: string, against: string): Promise<string[]> => {
   const exclude = `:(exclude)${LOCKFILE}`
 
   try {
-    await git(cwd, ['diff', '--cached', '--check', 'HEAD', '--', '.', exclude])
+    await git(cwd, ['diff', '--cached', '--check', against, '--', '.', exclude])
 
     return []
   } catch (error) {
@@ -471,6 +526,15 @@ const commitParents = async (cwd: string): Promise<string[]> => {
   return (await git(cwd, ['rev-list', '--parents', '-n', '1', 'HEAD'])).trim().split(' ').slice(1)
 }
 
+/** A hand-off's own verify minus the install `verifyCommand` already runs first. */
+const withoutInstall = (command: string | undefined): string | undefined => {
+  const prefix = `${INSTALL_FOR_EXTRA_VERIFY} && `
+
+  if (command === INSTALL_FOR_EXTRA_VERIFY) return undefined
+
+  return command?.startsWith(prefix) ? command.slice(prefix.length) : command
+}
+
 const verifyCommand = (extra: string | undefined): string => {
   return extra ? `${INSTALL_FOR_EXTRA_VERIFY} && ${extra}` : INSTALL_CHECK_COMMAND
 }
@@ -498,7 +562,7 @@ const describeResolution = async (
 
   // The lockfile's own diff is too large to review; its size against each side is what a human can
   // judge — against dev it should show only what the release branch itself added.
-  const lockfileDiffStat = record.conflictPaths.includes(LOCKFILE)
+  const lockfileDiffStat = lockfileRebuilt(record)
     ? { vsDev: await lockfileStat(record.devSha), vsBase: await lockfileStat(record.baseSha) }
     : undefined
 
@@ -533,28 +597,125 @@ export interface HandOffOutcome {
 }
 
 /**
- * Leave each conflicted branch mid-merge in its own detached worktree for someone to resolve, and
- * record what `--continue` needs to check that resolution. Git only: no pnpm, no network.
+ * Leave each conflicted branch, and each clean merge that failed verify, mid-merge in its own
+ * detached worktree for someone to resolve, and record what `--continue` needs to check that
+ * resolution. Git only: no pnpm, no network.
  *
- * `devSha` is the dev commit the plan saw, so the hand-off reproduces exactly the conflict the
+ * `devSha` is the dev commit the plan saw, so the hand-off reproduces exactly the merge the
  * operator approved even if dev moved since.
  */
-export const handOffConflicts = async (args: {
+export const handOffBranches = async (args: {
   cwd: string
-  branches: string[]
+  conflicted: string[]
+  verifyFailed: string[]
   devSha: string
+  /** The verify the `verifyFailed` branches failed. */
+  verify?: string
 }): Promise<Map<string, HandOffOutcome>> => {
-  const { cwd, branches, devSha } = args
+  const { cwd, conflicted, verifyFailed, devSha, verify } = args
   const outcomes = new Map<string, HandOffOutcome>()
 
-  for (const branch of branches) {
-    outcomes.set(branch, await handOffOne(cwd, branch, devSha))
+  for (const branch of conflicted) {
+    outcomes.set(branch, await handOffOne(cwd, branch, devSha, 'conflict'))
+  }
+
+  for (const branch of verifyFailed) {
+    outcomes.set(branch, await handOffOne(cwd, branch, devSha, 'verify-failed', verify))
   }
 
   return outcomes
 }
 
-const handOffOne = async (cwd: string, branch: string, devSha: string): Promise<HandOffOutcome> => {
+/** A verify fix's scope: every path either side changed since their merge base, the lockfile excepted. */
+const pathsEitherSideChanged = async (
+  cwd: string,
+  baseSha: string,
+  devSha: string,
+): Promise<Pick<ResolutionRecord, 'editablePaths' | 'lockfileBothSides'>> => {
+  const changedSince = async (from: string, to: string): Promise<string[]> => {
+    return nulFields(await git(cwd, ['diff', '--name-only', '-z', '--no-renames', `${from}...${to}`]))
+  }
+
+  const devSide = await changedSince(baseSha, devSha)
+  const releaseSide = await changedSince(devSha, baseSha)
+
+  const editable = [...new Set([...devSide, ...releaseSide])].filter((file) => {
+    return file !== LOCKFILE
+  })
+
+  return {
+    editablePaths: editable.sort(),
+    lockfileBothSides: devSide.includes(LOCKFILE) && releaseSide.includes(LOCKFILE),
+  }
+}
+
+/** What a hand-off records beyond the shared fields, or why the merge no longer fits its kind. */
+const describeHandOff = async (
+  worktreePath: string,
+  kind: HandOffKind,
+  baseSha: string,
+  devSha: string,
+): Promise<
+  | { reason: string }
+  | Pick<
+      ResolutionRecord,
+      'conflictPaths' | 'editablePaths' | 'lockfileBothSides' | 'autoMergeTree' | 'rererePreResolved' | 'lockfileOnly'
+    >
+> => {
+  const unmerged = await unmergedPaths(worktreePath)
+
+  if (kind === 'verify-failed') {
+    if (unmerged.length > 0) return { reason: 'the merge now conflicts — re-run release merge-dev' }
+
+    // "Already up to date" (a teammate merged dev meanwhile) and `merge.ff=only` both exit without
+    // leaving a merge in progress, which every later `--continue` would read as parents-mismatch.
+    const head = await revParseQuiet(worktreePath, 'HEAD')
+    const mergeHead = await revParseQuiet(worktreePath, 'MERGE_HEAD')
+
+    if (head !== baseSha || mergeHead !== devSha) {
+      return { reason: 'the merge no longer reproduces (already up to date?) — re-run release merge-dev' }
+    }
+
+    return {
+      conflictPaths: [],
+      ...(await pathsEitherSideChanged(worktreePath, baseSha, devSha)),
+      // git writes no AUTO_MERGE for a clean merge; the index already is that merge.
+      autoMergeTree: await writeTree(worktreePath),
+      rererePreResolved: [],
+      lockfileOnly: false,
+    }
+  }
+
+  if (unmerged.length === 0) return { reason: 'the merge no longer conflicts — re-run release merge-dev' }
+
+  const autoMergeTree = await revParseQuiet(worktreePath, 'AUTO_MERGE')
+
+  if (!autoMergeTree) {
+    const version = (await git(worktreePath, ['--version'])).trim()
+
+    return { reason: `git-too-old: the scope check needs AUTO_MERGE, written by git ≥ 2.42 (found ${version})` }
+  }
+
+  return {
+    conflictPaths: unmerged,
+    autoMergeTree,
+    rererePreResolved: await rererePreResolvedPaths(worktreePath, unmerged),
+    lockfileOnly: isLockfileOnly(unmerged),
+  }
+}
+
+const HAND_OFF_STATE: Record<HandOffKind, ResolutionState> = {
+  conflict: 'needs-agent',
+  'verify-failed': 'verify-failed',
+}
+
+const handOffOne = async (
+  cwd: string,
+  branch: string,
+  devSha: string,
+  kind: HandOffKind,
+  verify?: string,
+): Promise<HandOffOutcome> => {
   const existing = await readRecord(await recordPath(cwd, branch))
 
   if (existing) {
@@ -590,44 +751,29 @@ const handOffOne = async (cwd: string, branch: string, devSha: string): Promise<
       return undefined
     })
 
-    const unmerged = await unmergedPaths(worktreePath)
+    const described = await describeHandOff(worktreePath, kind, baseSha, devSha)
 
-    if (unmerged.length === 0) {
+    if ('reason' in described) {
       await discard()
 
-      return { reason: 'the merge no longer conflicts — re-run release merge-dev' }
+      return described
     }
-
-    const autoMergeTree = await revParseQuiet(worktreePath, 'AUTO_MERGE')
-
-    if (!autoMergeTree) {
-      await discard()
-
-      const version = (await git(cwd, ['--version'])).trim()
-
-      return { reason: `git-too-old: the scope check needs AUTO_MERGE, written by git ≥ 2.42 (found ${version})` }
-    }
-
-    const rererePreResolved = await rererePreResolvedPaths(worktreePath, unmerged)
-    const lockfileOnly = isLockfileOnly(unmerged)
 
     const record: ResolutionRecord = {
       branch,
       worktreePath,
       baseSha,
       devSha,
-      conflictPaths: unmerged,
-      autoMergeTree,
-      rererePreResolved,
+      ...described,
+      ...(kind === 'verify-failed' && verify ? { handOffVerify: verify } : {}),
       ignoredAtHandoff: await ignoredPaths(worktreePath),
-      lockfileOnly,
       cliVersion: packageJson.version,
       createdAt: new Date().toISOString(),
     }
 
     await writeRecord(cwd, record)
 
-    return { resolution: toResolution(record, lockfileOnly ? 'lockfile-only' : 'needs-agent') }
+    return { resolution: toResolution(record, record.lockfileOnly ? 'lockfile-only' : HAND_OFF_STATE[kind]) }
   } catch (error) {
     await discard()
 
@@ -749,7 +895,11 @@ const prepareBranch = async (cwd: string, record: ResolutionRecord, extraVerify?
   const head = await revParseQuiet(wt, 'HEAD')
   const mergeHead = await revParseQuiet(wt, 'MERGE_HEAD')
 
-  if (head === record.baseSha && mergeHead === record.devSha) return prepareUncommitted(cwd, record, row, extraVerify)
+  // Without it, an untouched `verify-failed` hand-off would pass on the install check alone and push
+  // the very merge that failed.
+  const verify = extraVerify ?? withoutInstall(record.handOffVerify)
+
+  if (head === record.baseSha && mergeHead === record.devSha) return prepareUncommitted(cwd, record, row, verify)
 
   return prepareCommitted(record, row, head, mergeHead)
 }
@@ -794,7 +944,7 @@ const prepareCommitted = async (
   const violations = await scopeViolations(wt, record)
 
   if (violations.length > 0) {
-    return blockRow(row, 'out-of-scope-edit', 'only the conflicted paths may change', violations)
+    return blockRow(row, 'out-of-scope-edit', outOfScopeDetail(record), violations)
   }
 
   return {
@@ -802,7 +952,7 @@ const prepareCommitted = async (
     committed: true,
     mergeSha: head,
     treeSha: tree,
-    lockfileMerged: record.conflictPaths.includes(LOCKFILE),
+    lockfileMerged: lockfileRebuilt(record),
     ...(await describeResolution(wt, record)),
   }
 }
@@ -828,6 +978,14 @@ const rebuildLockfile = async (cwd: string, record: ResolutionRecord): Promise<B
   const wt = record.worktreePath
   const stagedBefore = await stagedBlob(wt, LOCKFILE)
   const previousRebuild = record.lockfileBlob
+
+  // A clean merge stages git's own text merge of the lockfile: until the CLI's first rebuild, that
+  // blob is the hand-off's, not a foreign edit.
+  const isHandOffBlob =
+    previousRebuild === undefined &&
+    record.editablePaths !== undefined &&
+    stagedBefore === (await revParseQuiet(wt, `${record.autoMergeTree}:${LOCKFILE}`))
+
   const merged = await mergeLockfile(wt, record.devSha)
 
   if (!merged.ok) return { code: 'verify-failed', detail: merged.reason, paths: [LOCKFILE] }
@@ -839,7 +997,7 @@ const rebuildLockfile = async (cwd: string, record: ResolutionRecord): Promise<B
     await writeRecord(cwd, record)
   }
 
-  if (stagedBefore !== null && stagedBefore !== rebuilt) {
+  if (stagedBefore !== null && stagedBefore !== rebuilt && !isHandOffBlob) {
     return stagedBefore === previousRebuild
       ? {
           code: 'tree-changed',
@@ -864,9 +1022,18 @@ const rebuildLockfile = async (cwd: string, record: ResolutionRecord): Promise<B
 const resolveIndex = async (cwd: string, record: ResolutionRecord): Promise<Blocked | null> => {
   const wt = record.worktreePath
 
+  // An editable scope can span hundreds of paths; staging only the ones touched keeps `git add` short.
+  const editable = new Set(record.editablePaths)
+
+  const toStage = record.editablePaths
+    ? (await worktreeSideChanges(wt)).filter((file) => {
+        return editable.has(file)
+      })
+    : record.conflictPaths
+
   await stageConflictPaths(
     wt,
-    record.conflictPaths.filter((file) => {
+    toStage.filter((file) => {
       return file !== LOCKFILE
     }),
   )
@@ -874,7 +1041,7 @@ const resolveIndex = async (cwd: string, record: ResolutionRecord): Promise<Bloc
   const violations = await scopeViolations(wt, record)
 
   if (violations.length > 0) {
-    return { code: 'out-of-scope-edit', detail: 'only the conflicted paths may change', paths: violations }
+    return { code: 'out-of-scope-edit', detail: outOfScopeDetail(record), paths: violations }
   }
 
   const stillUnmerged = (await unmergedPaths(wt)).filter((file) => {
@@ -888,7 +1055,8 @@ const resolveIndex = async (cwd: string, record: ResolutionRecord): Promise<Bloc
   let markers: string[]
 
   try {
-    markers = await markerPaths(wt)
+    // A clean merge's own content may carry a `=======` line; only the resolver's lines count there.
+    markers = await markerPaths(wt, record.editablePaths ? record.autoMergeTree : 'HEAD')
   } catch (error) {
     return { code: 'markers-remaining', detail: `the marker check could not run: ${stderrOf(error)}` }
   }
@@ -897,7 +1065,7 @@ const resolveIndex = async (cwd: string, record: ResolutionRecord): Promise<Bloc
     return { code: 'markers-remaining', detail: 'conflict markers are still staged', paths: markers }
   }
 
-  return record.conflictPaths.includes(LOCKFILE) ? rebuildLockfile(cwd, record) : null
+  return (await lockfileIsCliOwned(wt, record)) ? rebuildLockfile(cwd, record) : null
 }
 
 /**
@@ -944,7 +1112,7 @@ const prepareUncommitted = async (
 
   if (blocked) return { ...row, blocked }
 
-  const lockfileMerged = record.conflictPaths.includes(LOCKFILE)
+  const lockfileMerged = lockfileRebuilt(record)
   const treeSha = await writeTree(wt)
 
   // Before any commit, always: it also installs the `node_modules` a commit hook may shell into.
