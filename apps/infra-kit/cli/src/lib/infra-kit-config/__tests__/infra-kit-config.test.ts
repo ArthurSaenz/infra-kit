@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Import AFTER the mock is declared so the module picks up the mocked dep.
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { getMainRepoRoot, getProjectRoot, getRepoName } from 'src/lib/git-utils'
 
 import {
@@ -1027,6 +1028,105 @@ describe('aliasRepo', () => {
       fs.writeFileSync(path.join(layerThreeDir, 'infra-kit.json'), JSON.stringify({ aliasRepo: 'trvl' }))
 
       await expect(getInfraKitConfig()).rejects.toThrow(/"aliasRepo" is not allowed in .*\.infra-kit\/projects/)
+    })
+  })
+})
+
+describe('$schema and configVersion', () => {
+  const writeLayer = (tmp: string, which: 'global' | 'project', contents: object): void => {
+    const dir =
+      which === 'global' ? path.join(tmp, '.infra-kit') : path.join(tmp, '.infra-kit', 'projects', path.basename(tmp))
+
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'infra-kit.json'), JSON.stringify(contents))
+  }
+
+  const withMain = (extra: object): string => {
+    return JSON.stringify({ ...JSON.parse(VALID_JSON), ...extra })
+  }
+
+  it('accepts both keys in layer 1', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), withMain({ $schema: 'https://x/s.json', configVersion: 1 }))
+
+      const cfg = await getInfraKitConfig()
+
+      expect(cfg.$schema).toBe('https://x/s.json')
+      expect(cfg.configVersion).toBe(1)
+    })
+  })
+
+  it.each(['global', 'project'] as const)('accepts $schema in the %s layer', async (which) => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
+      writeLayer(tmp, which, { $schema: 'https://x/s.json' })
+
+      expect((await getInfraKitConfig()).$schema).toBe('https://x/s.json')
+    })
+  })
+
+  it.each(['global', 'project'] as const)('refuses configVersion in the %s layer', async (which) => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
+      writeLayer(tmp, which, { configVersion: 1 })
+
+      await expect(getInfraKitConfig()).rejects.toThrow(/"configVersion" is not allowed in/)
+    })
+  })
+
+  it('refuses a layer-1 configVersion newer than supported with a structured exit-2 refusal', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), withMain({ configVersion: 2 }))
+
+      const err = await getInfraKitConfig().catch((error: unknown) => {
+        return error
+      })
+
+      expect(err).toBeInstanceOf(StructuredRefusalError)
+      expect((err as StructuredRefusalError).exitCode).toBe(2)
+      expect((err as StructuredRefusalError).structuredContent).toMatchObject({
+        status: 'refused',
+        reason: 'config-version-unsupported',
+        configVersion: 2,
+        supportedConfigVersion: 1,
+      })
+    })
+  })
+
+  it('refuses a newer layer-1 file that also carries keys this CLI does not know, and leaves it untouched', async () => {
+    await withTmpRepo(async (tmp) => {
+      const file = path.join(tmp, 'infra-kit.json')
+      const newer = withMain({ configVersion: 2, someFutureKey: { enabled: true } })
+
+      fs.writeFileSync(file, newer)
+
+      const err = await getInfraKitConfig().catch((error: unknown) => {
+        return error
+      })
+
+      expect(err).toBeInstanceOf(StructuredRefusalError)
+      expect((err as StructuredRefusalError).structuredContent).toMatchObject({ reason: 'config-version-unsupported' })
+      expect(fs.readFileSync(file, 'utf-8')).toBe(newer)
+    })
+  })
+
+  it.each([0, -1, 1.5, '1'])('rejects an invalid configVersion %j', async (bad) => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), withMain({ configVersion: bad }))
+
+      await expect(getInfraKitConfig({ autoMigrate: 'off' })).rejects.toThrow(/configVersion/)
+    })
+  })
+
+  it('leaves both keys absent when nothing sets them', async () => {
+    await withTmpRepo(async (tmp) => {
+      fs.writeFileSync(path.join(tmp, 'infra-kit.json'), VALID_JSON)
+      writeLayer(tmp, 'project', {})
+
+      const cfg = await getInfraKitConfig()
+
+      expect('$schema' in cfg).toBe(false)
+      expect('configVersion' in cfg).toBe(false)
     })
   })
 })

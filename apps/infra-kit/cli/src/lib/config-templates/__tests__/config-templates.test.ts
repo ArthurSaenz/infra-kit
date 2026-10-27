@@ -28,8 +28,10 @@ describe('config templates', () => {
     expect(JSON.parse(CONFIG_STUB)).toEqual({})
   })
 
-  it('knows all nine top-level schema keys', () => {
+  it('knows all eleven top-level schema keys', () => {
     expect(SCHEMA_KEYS).toEqual([
+      '$schema',
+      'configVersion',
       'envManagement',
       'defaultEnv',
       'worktrees',

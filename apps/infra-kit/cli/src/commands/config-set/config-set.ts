@@ -20,7 +20,10 @@ export type ConfigScope = 'project' | 'global'
 // A function, not a module-level constant: the command catalog imports this module, and suites that
 // mock the config loader would otherwise need `infraKitConfigObject` in every mock just to load.
 export const configKeys = (): string[] => {
-  return Object.keys(infraKitConfigObject.shape)
+  // Not settable here: `$schema` is file metadata and `configVersion` is refused outside layer 1.
+  return Object.keys(infraKitConfigObject.shape).filter((key) => {
+    return key !== '$schema' && key !== 'configVersion'
+  })
 }
 
 /**

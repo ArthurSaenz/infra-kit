@@ -4,10 +4,11 @@ import path from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
 
-import { isAgentMode } from 'src/lib/agent-mode'
+import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { assertNever } from 'src/lib/assert-never'
 import { tryAutoMigrateLayer } from 'src/lib/config-migrations'
 import { USER_CONFIG_DIR_NAME } from 'src/lib/constants'
+import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { PROTECTED_CHILD_ENV_NAMES } from 'src/lib/mcp-proxy/protected-env'
 
@@ -263,8 +264,15 @@ const aliasRepoSchema = z
  */
 const defaultEnvSchema = z.string().min(1)
 
+/** The `configVersion` this CLI can read; a layer-1 file declaring a higher one was written by a newer CLI. */
+export const SUPPORTED_CONFIG_VERSION = 1
+
 export const infraKitConfigObject = z
   .object({
+    // Editor-tooling pointer; no default (`.partial()` keeps a ZodDefault). Accepted in every layer.
+    $schema: z.string().optional(),
+    // Layer 1 only: `assertNoProjectLayerOnlyKeys` refuses it in the personal layers.
+    configVersion: z.number().int().positive().optional(),
     envManagement: envManagementSchema,
     defaultEnv: defaultEnvSchema.optional(),
     worktrees: worktreesConfigSchema.optional(),
@@ -731,6 +739,12 @@ const loadLayer = async (layer: ConfigLayer): Promise<Record<string, unknown> | 
     assertNoProjectLayerOnlyKeys(layer, parsedRaw)
   }
 
+  // Before the strict parse: a file from a newer CLI usually carries keys this one does not know, and
+  // the strict error (or an auto-migrate rewrite of a newer file) would hide the real cause.
+  if (layer.required && isRecord(parsedRaw)) {
+    assertConfigVersionSupported(parsedRaw, layer.path)
+  }
+
   const result = infraKitOverrideConfigSchema.safeParse(parsedRaw)
 
   if (result.success) {
@@ -799,6 +813,13 @@ const buildAuditLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigrate' 
   ].join('\n')
 }
 
+const buildConfigVersionLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>): string => {
+  return (
+    `"configVersion" is not allowed in ${layer.label} (${layer.path}): it versions the committed project file's shape, so a per-machine copy would describe nothing. ` +
+    `Remove it from this file.`
+  )
+}
+
 const buildAliasRepoLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>): string => {
   return [
     `"aliasRepo" is not allowed in ${layer.label} (${layer.path}): the vite and Playwright helpers read it from the project infra-kit.json only, so a per-machine copy would register a dev host they never aim at.`,
@@ -818,10 +839,36 @@ type LayerRejectionMessageBuilder = (layer: Omit<ConfigLayer, 'autoMigrate' | 'm
  */
 const PROJECT_LAYER_ONLY_KEYS: Readonly<Record<string, LayerRejectionMessageBuilder>> = {
   aliasRepo: buildAliasRepoLayerRejectionMessage,
+  configVersion: buildConfigVersionLayerRejectionMessage,
   mcp: buildMcpLayerRejectionMessage,
   vendorSource: buildVendorSourceLayerRejectionMessage,
   vendorTarget: buildVendorTargetLayerRejectionMessage,
   audit: buildAuditLayerRejectionMessage,
+}
+
+// Nothing ran, so exit 2 and a payload an agent can act on: the file is newer than this CLI.
+const assertConfigVersionSupported = (layer1: Record<string, unknown>, filePath: string): void => {
+  const { configVersion } = layer1
+
+  if (typeof configVersion !== 'number' || configVersion <= SUPPORTED_CONFIG_VERSION) return
+
+  throw new StructuredRefusalError(
+    {
+      status: 'refused',
+      reason: 'config-version-unsupported',
+      configVersion,
+      supportedConfigVersion: SUPPORTED_CONFIG_VERSION,
+      agentMode: agentMode.source,
+    },
+    2,
+    {
+      operation: 'load infra-kit.json',
+      // `@latest` is not enough: pnpm serves a stale cached tag, so name the published version.
+      remediation:
+        'update the infra-kit CLI: `pnpm add -g infra-kit@<version>` with the version `pnpm view infra-kit version` prints, then re-run',
+      stderrExcerpt: `${filePath} declares configVersion ${configVersion}; this CLI reads up to ${SUPPORTED_CONFIG_VERSION}`,
+    },
+  )
 }
 
 // Refused loudly rather than silently ignored: each key's message says why a per-machine copy is
