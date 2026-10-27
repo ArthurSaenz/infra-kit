@@ -21,6 +21,9 @@ export const MANIFEST_SKIP_DIRS: ReadonlySet<string> = new Set([
   '.omc',
   '__screenshots__',
   '.vitest-attachments',
+  // Vitest 4+ writes browser-mode screenshots under `.vitest/attachments` (git-ignored); a failed local run
+  // otherwise reads as vendor drift.
+  '.vitest',
   '.output',
   '.source',
   '.nitro',

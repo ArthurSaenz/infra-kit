@@ -66,6 +66,7 @@ describe('walkVendorTree', () => {
     write('node_modules/pkg/index.js', 'x')
     write('dist/out.js', 'x')
     write('.vitest-attachments/blob', 'x')
+    write('packages/data-table/.vitest/attachments/failure.png', 'x')
     write('.sync-manifest.json', '{}')
     write('.eslintcache', 'x')
     write('log.txt', 'x')
