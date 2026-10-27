@@ -4,6 +4,7 @@ import process from 'node:process'
 import { cd } from 'zx'
 
 import { audit } from 'src/commands/audit'
+import { DEFAULT_SINCE_DAYS, changeStats } from 'src/commands/change-stats'
 import { configEdit, configPath } from 'src/commands/config'
 import { configGet } from 'src/commands/config-get'
 import { configSet } from 'src/commands/config-set'
@@ -182,6 +183,14 @@ const parseReleaseDateOption = (raw: string): string => {
 
     throw err
   }
+}
+
+const parsePositiveDays = (raw: string): number => {
+  const days = Number(raw)
+
+  if (!Number.isInteger(days) || days <= 0) throw new InvalidArgumentError('Expected a positive whole number of days.')
+
+  return days
 }
 
 const configureReleaseEdit = (cmd: Command): Command => {
@@ -807,6 +816,16 @@ export const buildProgram = (): Command => {
     .description('Print the installed infra-kit CLI version')
     .action(async () => {
       emit(await version())
+    })
+
+  program
+    .command('change-stats')
+    .description(
+      'Change-failure baseline for this git repo: agent vs human commits, revert and 72h follow-up-fix rates',
+    )
+    .option('--since <days>', `Window in days, ending now (default ${DEFAULT_SINCE_DAYS})`, parsePositiveDays)
+    .action(async (options: { since?: number }) => {
+      emit(await changeStats({ since: options.since }))
     })
 
   program

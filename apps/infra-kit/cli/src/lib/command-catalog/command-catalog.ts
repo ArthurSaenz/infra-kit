@@ -1,6 +1,7 @@
 import type { z } from 'zod'
 
 import { auditMcpTool } from 'src/commands/audit'
+import { changeStatsMcpTool } from 'src/commands/change-stats'
 import { configGetMcpTool } from 'src/commands/config-get'
 import { devStatusMcpTool } from 'src/commands/dev-status'
 import { doctorMcpTool } from 'src/commands/doctor'
@@ -574,6 +575,17 @@ export const commandCatalog: CommandCatalogEntry[] = [
     mcpExposed: true,
     mutating: false,
     groupPath: ['version'],
+  },
+
+  // Read-only git-history report (roadmap P2 baseline). Off the palette: a periodic measurement, not a
+  // daily action.
+  {
+    cliName: 'change-stats',
+    menuGroup: null,
+    mcpTool: changeStatsMcpTool,
+    mcpExposed: false,
+    mutating: false,
+    groupPath: ['change-stats'],
   },
 
   // --- Not menu items (groups, long-running, or internal) ---

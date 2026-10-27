@@ -401,6 +401,7 @@ describe('command catalog — CLI/MCP name parity', () => {
     'worktrees-remove': 'worktrees-remove',
     'worktrees-sync': 'worktrees-sync',
     audit: 'audit',
+    'change-stats': 'change-stats',
     doctor: 'doctor',
     version: 'version',
     'env-status': 'env-status',
