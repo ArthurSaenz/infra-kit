@@ -1568,8 +1568,8 @@ installs software**, and three things follow: `setup` takes `menuGroup: null` so
 affordance is lost (§5, and the cheapest decision here to reverse); `init` is preserved rather than
 aliased, so no existing instruction changes meaning (§1); and the plugin's `setup` is a command that
 routes installs through the gated MCP tool, carrying no Bash grant at all (Scenario 4). `report.ts` gains one row, a deliberate
-and reviewed diff. The plugin ships two setup/diagnostics skills among eight; the other six
-(`fe-architect`, `fe-patterns`, `e2e-architect`, `comment-verifier`, `full-cycle`, `update-toolchain`) are
+and reviewed diff. The plugin ships two setup/diagnostics skills among seven; the other five
+(`fe-architect`, `fe-patterns`, `e2e-architect`, `comment-verifier`, `update-toolchain`) are
 a different domain — "only two" is a claim about the bootstrap/diagnostics surface, not about
 `EXPECTED_SKILLS` cardinality.
 

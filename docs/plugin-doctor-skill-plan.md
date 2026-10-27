@@ -268,8 +268,8 @@ for every skill in this plugin, which is a pre-existing question, not one this s
 
 **Phase 0 (original spike definition).** Confirm `${CLAUDE_PLUGIN_ROOT}` is populated for a Bash call
 issued *from inside a skill*. It is absent from this session's Bash env, and it could only be
-confirmed injected for plugin MCP servers and hook commands. Five shipped skills already depend
-on it (`fe-architect`, `comment-verifier`, `e2e-architect`, `fe-patterns`, `full-cycle` — all
+confirmed injected for plugin MCP servers and hook commands. Four shipped skills already depend
+on it (`fe-architect`, `comment-verifier`, `e2e-architect`, `fe-patterns` — all
 declare it in `allowed-tools`), which is strong circumstantial evidence but not proof.
 
 **The spike must test the child environment, not pattern interpolation.** Those five skills prove

@@ -22,7 +22,6 @@ const EXPECTED_SKILLS = [
   'e2e-architect',
   'fe-architect',
   'fe-patterns',
-  'full-cycle',
   'merge-dev',
   'release-create',
   'release-remove',
@@ -63,9 +62,9 @@ const PLUGIN_TOOL_NAME_RE = new RegExp(SCAN_PATTERNS.pluginToolName, 'g')
 // Filesystem helpers
 // ---------------------------------------------------------------------------
 
-/** Every file under `dir`, skipping this suite's fixture tree and any installed dependency tree. */
+/** Every file under `dir`, skipping this suite's fixture tree and any installed or gitignored runtime tree. */
 function walkFiles(dir) {
-  if (EXEMPT_DIRS.has(dir) || dir.endsWith(`${sep}node_modules`)) return []
+  if (EXEMPT_DIRS.has(dir) || dir.endsWith(`${sep}node_modules`) || dir.endsWith(`${sep}.omc`)) return []
   const out = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name)
@@ -78,7 +77,8 @@ function walkFiles(dir) {
 function skillDirs() {
   if (!existsSync(SKILLS_DIR)) return []
   return readdirSync(SKILLS_DIR, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
+    // `.omc/` is OMC session state a Claude session started inside `skills/` leaves behind (gitignored).
+    .filter((e) => e.isDirectory() && e.name !== '.omc')
     .map((e) => e.name)
     .sort()
 }

@@ -415,9 +415,9 @@ gate Unit 8.
 
 **Steps.**
 
-1. **Frontmatter**, copying `full-cycle`'s style exactly. The OMC parser is a line scanner, not a
+1. **Frontmatter**, copying `comment-verifier`'s style exactly. The OMC parser is a line scanner, not a
    YAML parser: a block list parses to empty and a folded `>-` scalar parses to the literal marker,
-   both silently (`full-cycle/SKILL.md:170-171` records this). So lists are inline flow style
+   both silently (the comment-verifier frontmatter test records this). So lists are inline flow style
    (`aliases: [comment-verify]`) and `description` is a single-line plain scalar.
    `description` must carry the literal trigger phrases a user would type: "review comments",
    "comment policy", "why not what", and the Ukrainian "коментарі". Avoid the word "clean", so the
@@ -488,7 +488,7 @@ gate Unit 8.
 - `node --test .claude/skills/comment-verifier/__tests__/` passes. Root `vitest.config.ts` scopes
   projects to `apps/*/*`, `packages/*`, `vendor/packages/*` and `vendor/configs/*`, so skill tests
   are **not** part of `pnpm run qa`; this command is the whole gate, exactly as it is for
-  `full-cycle`'s two `node:test` files. Wiring them into qa is a follow-up in §7.
+  `comment-verifier`'s two `node:test` files. Wiring them into qa is a follow-up in §7.
 - The frontmatter test asserts the exact key set, that `description` is a single-line plain scalar,
   that every list value is inline flow style, and that `description` contains all four trigger
   phrases including "коментарі".
@@ -800,7 +800,7 @@ from the base config's `@wl` (use `@ik`), and enable `@ik/max-jsdoc-summary-line
 - RuleTester suites for both new rules, with the valid cases in Units 7 and 8. The false-positive
   cases matter more than the true positives and must be literal corpus text, not paraphrase.
 - `__tests__/frontmatter.test.mjs` — `node:test`, no OMC install required, modelled on
-  `full-cycle`'s. Asserts the key set, a single-line plain-scalar `description`, inline flow lists,
+  `comment-verifier`'s. Asserts the key set, a single-line plain-scalar `description`, inline flow lists,
   and the four trigger phrases.
 - `__tests__/fix-pass.test.mjs` — the verdict filter as a pure function, no ESLint and no agent.
 - `--verify-fix` tests — a constructed working tree with an unsanctioned comment removal must fail;
@@ -864,7 +864,7 @@ from the base config's `@wl` (use `@ik`), and enable `@ik/max-jsdoc-summary-line
 - Give `vendor/.sync-manifest.json` a supported refresh path, since `writeManifest` already exists
   with no caller. That unblocks Unit 9's blocked path and fixes the currently red `vendor check`.
 - Wire `.claude/skills/**/__tests__/` into `pnpm run qa`. Root `vitest.config.ts` scopes projects to
-  `apps/*/*`, `packages/*`, `vendor/packages/*` and `vendor/configs/*`, so today both `full-cycle`'s
+  `apps/*/*`, `packages/*`, `vendor/packages/*` and `vendor/configs/*`, so today both `comment-verifier`'s
   tests and this skill's run only when invoked by hand.
 
 ---
