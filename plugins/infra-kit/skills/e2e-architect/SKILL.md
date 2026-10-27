@@ -59,7 +59,7 @@ sibling specs rather than letting one file sprawl. Mocks, data builders and doma
 ### 3. Verify
 
 Run the new or changed specs through `infra-kit e2e`, which targets this worktree's dev server the
-way every other entry point does, five times over so a flaky spec fails here and not in CI:
+way every other entry point does, five times over so a flaky spec fails here and not in the release QA pass:
 
 ```bash
 cd <app>/tests && pnpm exec infra-kit e2e --json --agent -- src/tests/<domain> --repeat-each=5

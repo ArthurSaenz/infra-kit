@@ -185,7 +185,7 @@ const stripComments = (source: string): string => {
 
 /**
  * One basic-auth pair across every suite and repo: it is what the dev proxy injects (`@slip-stream-kit/config/vite`)
- * and what the shared CI job exports, so a per-app name works in one place and silently sends no credentials in the other.
+ * and what the loaded env provides, so a per-app name works in one place and silently sends no credentials in the other.
  */
 export const checkE2eBasicAuthNaming = async (packageDir: string): Promise<PackageCheck> => {
   const name = 'e2e-env:basic-auth'
