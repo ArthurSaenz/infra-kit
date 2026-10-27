@@ -594,7 +594,7 @@ const assertFloorAt = (repoRoot: string, helper: (typeof HELPER_PACKAGES)[number
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(helperDir, 'package.json'), 'utf-8')) as { version?: string }
 
-    if (typeof pkg.version !== 'string') throw new Error('no version field')
+    if (typeof pkg.version !== 'string') throw new TypeError('no version field')
     version = pkg.version
   } catch {
     throw new Error(
