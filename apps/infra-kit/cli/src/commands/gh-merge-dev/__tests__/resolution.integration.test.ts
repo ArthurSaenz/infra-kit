@@ -1203,6 +1203,74 @@ describe('a clean merge that fails verify is handed off', () => {
     expect(await originSha(repo, 'release/v1.2.0')).toBe(before)
   })
 
+  it('a second run names both the verify failure and the hand-off already in progress, and keeps its work', async () => {
+    const { repo } = await codeConflictFixture()
+
+    await handOffWithVerify()
+
+    const wt = worktreeOf(repo, 'release/v1.2.0')
+
+    await write(wt, 'release-1-2.txt', 'work in progress\n')
+
+    const again = await handOffWithVerify()
+
+    const entry = again.results.find((candidate) => {
+      return candidate.branch === 'release/v1.2.0'
+    })
+
+    expect(entry).toMatchObject({ status: 'verify-failed', pushed: false, resolution: { state: 'exists' } })
+
+    const [verifyReason, handOffReason] = entry?.reason?.split('\nhand-off: ') ?? []
+
+    expect(verifyReason).toBeTruthy()
+    expect(handOffReason).toMatch(/^resolution-exists: /)
+    expect(await fs.readFile(path.join(wt, 'release-1-2.txt'), 'utf8')).toBe('work in progress\n')
+  })
+
+  it('--abort drops the hand-off and pushes nothing', async () => {
+    const { repo } = await codeConflictFixture()
+
+    await handOffWithVerify()
+
+    const before = await originSha(repo, 'release/v1.2.0')
+    const wt = worktreeOf(repo, 'release/v1.2.0')
+    const result = await ghMergeDev({ abort: true, versions: '1.2.0', confirmedCommand: true })
+
+    expect(result.structuredContent.results).toMatchObject([{ branch: 'release/v1.2.0', status: 'aborted' }])
+    expect(await exists(wt)).toBe(false)
+    expect(await isRegistered(repo, wt)).toBe(false)
+    expect(await exists(statePathOf(repo, 'release/v1.2.0'))).toBe(false)
+    expect(await originSha(repo, 'release/v1.2.0')).toBe(before)
+  })
+
+  it('a push that fails once resumes from the committed fix and pushes the same sha', async () => {
+    const { repo, origin } = await codeConflictFixture()
+
+    await handOffWithVerify()
+
+    const baseSha = await git(repo, 'rev-parse', 'origin/release/v1.2.0')
+    const devSha = await git(repo, 'rev-parse', 'origin/dev')
+
+    await installHook(
+      origin,
+      'pre-receive',
+      'if [ ! -f "$GIT_DIR/rejected-once" ]; then touch "$GIT_DIR/rejected-once"; echo "rejected once" >&2; exit 1; fi',
+    )
+    await write(worktreeOf(repo, 'release/v1.2.0'), 'release-1-2.txt', 'fixed\n')
+
+    expect((await preview('1.2.0')).row.blocked).toBeUndefined()
+
+    const first = await confirmContinue('1.2.0')
+
+    expect(first.results).toMatchObject([{ status: 'push-aborted', pushed: false }])
+
+    const mergeSha = first.results[0]?.mergeSha
+    const second = await confirmContinue('1.2.0')
+
+    expect(second.results).toMatchObject([{ status: 'merged', pushed: true, mergeSha }])
+    expect(await git(repo, 'rev-list', '--parents', '-n', '1', mergeSha!)).toBe(`${mergeSha} ${baseSha} ${devSha}`)
+  }, 30_000)
+
   it('a fast-forward that fails verify is dev failing: reported, never handed off', async () => {
     const { repo } = await codeConflictFixture()
 
@@ -1332,6 +1400,62 @@ describe('a clean merge that fails verify is handed off', () => {
 
     expect(pushed.results).toMatchObject([{ branch: 'release/v3.0.0', status: 'merged', pushed: true }])
     expect(await git(repo, 'show', `${await originSha(repo, 'release/v3.0.0')}:pnpm-lock.yaml`)).toContain('b2')
+  }, 30_000)
+
+  it('a lockfile both sides changed is rebuilt by the CLI even when the fix touches no manifest', async () => {
+    const workspaceDep = (name: string): string => {
+      return `{"name":"${name}","version":"1.0.0","dependencies":{"b":"workspace:*"}}\n`
+    }
+
+    const lockfileOnly = async (repo: string): Promise<void> => {
+      await $({ cwd: repo, quiet: true })`pnpm install --lockfile-only --ignore-scripts`
+    }
+
+    const { repo } = await makeFixture({
+      base: {
+        'package.json': '{"name":"root","private":true}\n',
+        'pnpm-workspace.yaml': 'packages:\n  - packages/*\n',
+        '.gitignore': 'node_modules\n',
+        'note.txt': 'base\n',
+        'packages/a/package.json': '{"name":"a","version":"1.0.0"}\n',
+        'packages/b/package.json': '{"name":"b","version":"1.0.0"}\n',
+        'packages/c/package.json': '{"name":"c","version":"1.0.0"}\n',
+      },
+      prepareBase: lockfileOnly,
+      releases: {
+        'release/v4.0.0': async (repo) => {
+          await write(repo, 'packages/a/package.json', workspaceDep('a'))
+          await write(repo, 'note.txt', 'broken\n')
+          await lockfileOnly(repo)
+        },
+      },
+      dev: async (repo) => {
+        await write(repo, 'packages/c/package.json', workspaceDep('c'))
+        await lockfileOnly(repo)
+      },
+    })
+
+    const result = (
+      await ghMergeDev({ all: true, keepConflicts: true, verify: 'grep -q fixed note.txt', confirmedCommand: true })
+    ).structuredContent
+
+    expect(result.results[0]?.resolution).toMatchObject({ state: 'verify-failed', conflictPaths: [] })
+
+    await write(worktreeOf(repo, 'release/v4.0.0'), 'note.txt', 'fixed\n')
+
+    const { row } = await preview('4.0.0')
+
+    expect(row.blocked).toBeUndefined()
+    expect(row.lockfileMerged).toBe(true)
+
+    const pushed = await confirmContinue('4.0.0')
+
+    expect(pushed.results).toMatchObject([{ branch: 'release/v4.0.0', status: 'merged', pushed: true }])
+
+    const lockfile = await git(repo, 'show', `${await originSha(repo, 'release/v4.0.0')}:pnpm-lock.yaml`)
+
+    expect(lockfile).toContain('packages/a:\n    dependencies:')
+    expect(lockfile).toContain('packages/c:\n    dependencies:')
   }, 30_000)
 })
 
