@@ -32,9 +32,13 @@ const PERSONAL_ENV = 'arthur'
 const SERVICE: DeployService = {
   name: 'client-be',
   scriptPath: '/fake-repo/devops/scripts/deploy-client-be.sh',
+  runner: 'sh',
   allowedEnvs: null,
   ssmPrefix: 'fake',
 }
+
+/** What discovery returns; a test swaps it to reach the deploy-run spawn. */
+let discovered: DeployService[] = [SERVICE]
 
 /** A `zx` result: awaitable for `` $`x` `` and `.quiet()`-able for `` $`x`.quiet() ``. */
 const zxResult = (stdout: string) => {
@@ -115,7 +119,7 @@ vi.mock('../service-discovery', async (importOriginal) => {
   return {
     ...actual,
     discoverServices: () => {
-      return Promise.resolve([SERVICE])
+      return Promise.resolve(discovered)
     },
   }
 })
@@ -124,7 +128,7 @@ vi.mock('node:child_process', () => {
   // Reached only when the guard is correctly SKIPPED, i.e. on the passing path. Without it the fixed
   // code would `spawn('/bin/sh', ['/fake-repo/…'])` for real.
   return {
-    spawn: () => {
+    spawn: vi.fn(() => {
       return {
         on: (event: string, handler: (code?: number) => void) => {
           if (event === 'close')
@@ -133,7 +137,7 @@ vi.mock('node:child_process', () => {
             })
         },
       }
-    },
+    }),
   }
 })
 
@@ -151,6 +155,7 @@ vi.mock('src/lib/command-echo', async (importOriginal) => {
 })
 
 const { localDeployAll, localDeploySelected, localDeploySelectedMcpTool } = await import('../local-deploy')
+const { spawn } = await import('node:child_process')
 
 const realStdin = Object.getOwnPropertyDescriptor(process, 'stdin')
 
@@ -171,6 +176,7 @@ const installStdin = () => {
 }
 
 afterEach(() => {
+  discovered = [SERVICE]
   if (realStdin) Object.defineProperty(process, 'stdin', realStdin)
   agentMode.source = null
   vi.restoreAllMocks()
@@ -222,5 +228,23 @@ describe('local deploy for a Bash-driven agent — the confirm site propagates c
       agentMode: 'flag',
     })
     expect((error as StructuredRefusalError).exitCode).toBe(2)
+  })
+})
+
+describe('local deploy of a manifest deploy.ts service', () => {
+  it('spawns deploy-run through this same CLI, marked so it does not re-refuse the agent', async () => {
+    agentMode.source = 'flag'
+    discovered = [{ ...SERVICE, scriptPath: '/fake-repo/apps/client/api/deploy.ts', runner: 'deploy-run' }]
+
+    await localDeployAll({ env: PERSONAL_ENV, confirmedCommand: true })
+
+    expect(spawn).toHaveBeenCalledWith(
+      process.execPath,
+      [process.argv[1], 'deploy-run', SERVICE.name],
+      expect.objectContaining({
+        cwd: '/fake-repo',
+        env: expect.objectContaining({ INFRA_KIT_DEPLOY_VIA: 'local-deploy' }),
+      }),
+    )
   })
 })

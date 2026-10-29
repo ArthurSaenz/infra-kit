@@ -1,6 +1,8 @@
+import type { DeployConfig } from '@slip-stream-kit/config/internal'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
+import { loadDeployConfig, manifestGates } from 'src/lib/deploy-workflows'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { intersectGates, readWorkflowGates } from 'src/lib/workflow-gates'
 
@@ -37,6 +39,48 @@ const SSM_READ_PATTERN = /aws\s+ssm\s+get-parameter\s+--name[=\s]+(?<arg>[^\s)]+
 const SSM_ENVIRONMENT_PATTERN =
   /aws\s+ssm\s+get-parameter\s+--name[=\s]+["']?\/(?<prefix>[\w.-]+)\/environment["']?(?![\w./-])/
 
+/**
+ * A deploy.ts names the parameter as a whole string literal, e.g. `ssm(['/hulyo/environment', …])`;
+ * the backreference closes on the same quote, which is what keeps `/hulyo/environment_v2` out.
+ */
+const TS_ENVIRONMENT_PATTERN = /(["'`])\/(?<prefix>[\w.-]+)\/environment\1/
+
+/** A template literal building the environment parameter (`` `/${project}/environment` ``). */
+const TS_TEMPLATE_ENVIRONMENT_PATTERN = /`[^`]*\$\{[^`]*\/environment[^`]*`/
+
+/** How one script language marks comments and names the environment parameter. */
+interface ScriptDialect {
+  commentPrefixes: string[]
+  literalPrefix: (text: string) => string | undefined
+  isUnparseable: (text: string) => boolean
+}
+
+const SH_DIALECT: ScriptDialect = {
+  commentPrefixes: ['#'],
+  literalPrefix: (text) => {
+    return SSM_ENVIRONMENT_PATTERN.exec(text)?.groups?.prefix
+  },
+  isUnparseable: (text) => {
+    const arg = SSM_READ_PATTERN.exec(text)?.groups?.arg
+
+    return arg !== undefined && mightReadEnvironment(arg)
+  },
+}
+
+/**
+ * A parameter held in a variable is not detected here: the toolkit's `ssm()` takes any expression,
+ * so only a template literal naming `/environment` is recognisably an environment read.
+ */
+const TS_DIALECT: ScriptDialect = {
+  commentPrefixes: ['//', '/*', '*'],
+  literalPrefix: (text) => {
+    return TS_ENVIRONMENT_PATTERN.exec(text)?.groups?.prefix
+  },
+  isUnparseable: (text) => {
+    return TS_TEMPLATE_ENVIRONMENT_PATTERN.test(text)
+  },
+}
+
 /** One non-comment line of a deploy script, with its 1-based position so a refusal can point at it. */
 export interface ScriptLine {
   line: number
@@ -60,8 +104,10 @@ export type SsmPrefix = string | null | SsmPrefixUnparseable
 export interface DeployService {
   /** `client-be`, `docs-fe`, `media` — the identity CI already uses as `script_name`. */
   name: string
-  /** Absolute path to the script this service runs. */
+  /** Absolute path to the script this service runs: its manifest `deploy` file, or its `.sh`. */
   scriptPath: string
+  /** `deploy-run` hands `scriptPath` (a deploy.ts) to `infra-kit deploy-run`; `sh` runs it directly. */
+  runner: 'sh' | 'deploy-run'
   /**
    * Environments this service may deploy to, or `null` when it declares no restriction.
    *
@@ -92,12 +138,32 @@ export interface DeployService {
  * do not exist (ticking either fails the job), while `media` exists on disk with no `script_name` at
  * all because it has a dedicated workflow. Disk is the truth; the YAML has drifted from it.
  *
+ * A repo with an `infra-kit.deploy.ts` is read from that instead: it is what CI deploys from, and the
+ * v1 scripts are deleted once each service has a deploy.ts.
+ *
  * Sorted by name so the picker and `--dry-run` output are stable.
  *
  * @example
  * await discoverServices('/repo') // => [{ name: 'ai-be', … }, { name: 'backoffice-be', … }, …]
  */
 export const discoverServices = async (projectRoot: string): Promise<DeployService[]> => {
+  const config = await loadDeployConfig(projectRoot)
+
+  // Both sources are read because they drift: travelist gates `mobile` and `media` in the workflow
+  // but has no `skip_unless_env_enabled` in either script, so trusting the script alone would let
+  // `--all` include services CI refuses.
+  const gates = await readWorkflowGates(projectRoot)
+
+  const services =
+    config === undefined ? await scriptServices(projectRoot, gates) : await manifestServices(projectRoot, config, gates)
+
+  return services.sort((left, right) => {
+    return left.name.localeCompare(right.name)
+  })
+}
+
+/** Every `devops/scripts/deploy-<service>.sh`, for a repo without a deploy manifest. */
+const scriptServices = async (projectRoot: string, gates: Map<string, string[]>): Promise<DeployService[]> => {
   const scriptsDir = path.resolve(projectRoot, SCRIPTS_DIR)
 
   let entries: string[]
@@ -108,36 +174,83 @@ export const discoverServices = async (projectRoot: string): Promise<DeployServi
     return []
   }
 
-  // Both sources are read because they drift: travelist gates `mobile` and `media` in the workflow
-  // but has no `skip_unless_env_enabled` in either script, so trusting the script alone would let
-  // `--all` include services CI refuses.
-  const gates = await readWorkflowGates(projectRoot)
+  return Promise.all(
+    entries.flatMap((entry) => {
+      const name = SCRIPT_PATTERN.exec(entry)?.groups?.service
+
+      return name === undefined ? [] : [scriptService(name, path.resolve(scriptsDir, entry), gates)]
+    }),
+  )
+}
+
+const scriptService = async (
+  name: string,
+  scriptPath: string,
+  gates: Map<string, string[]>,
+): Promise<DeployService> => {
+  const lines = codeLines(await readScript(scriptPath), SH_DIALECT)
+
+  return {
+    name,
+    scriptPath,
+    runner: 'sh',
+    allowedEnvs: intersectGates(readAllowedEnvs(lines), gates.get(name)),
+    ssmPrefix: readSsmPrefix(lines, SH_DIALECT),
+  }
+}
+
+/**
+ * The manifest's services: a `deploy` runs through `infra-kit deploy-run`, as in CI; one without
+ * falls back to its `.sh` (media's workflow runs `deploy-media.sh`), and is not offered without one.
+ *
+ * The manifest's `envs`/`skipEnvs` gate on top of the workflow gates, which still include the v1
+ * workflows CI dispatches until the manifest `replaceV1`.
+ */
+const manifestServices = async (
+  projectRoot: string,
+  config: DeployConfig,
+  gates: Map<string, string[]>,
+): Promise<DeployService[]> => {
+  const declared = manifestGates(config)
 
   const services = await Promise.all(
-    entries
-      .map((entry) => {
-        return { entry, match: SCRIPT_PATTERN.exec(entry) }
-      })
-      .filter((candidate) => {
-        return candidate.match !== null
-      })
-      .map(async ({ entry, match }) => {
-        const scriptPath = path.resolve(scriptsDir, entry)
-        const name = match?.groups?.service ?? ''
-        const lines = codeLines(await readScript(scriptPath))
+    Object.entries(config.services).map(async ([name, service]): Promise<DeployService | null> => {
+      if (service.deploy === undefined) {
+        const scriptPath = path.resolve(projectRoot, SCRIPTS_DIR, `deploy-${name}.sh`)
 
-        return {
-          name,
-          scriptPath,
-          allowedEnvs: intersectGates(readAllowedEnvs(lines), gates.get(name)),
-          ssmPrefix: readSsmPrefix(lines),
-        }
-      }),
+        if (!(await exists(scriptPath))) return null
+
+        const legacy = await scriptService(name, scriptPath, gates)
+
+        return { ...legacy, allowedEnvs: intersectGates(legacy.allowedEnvs, declared.get(name)) }
+      }
+
+      const scriptPath = path.resolve(projectRoot, service.deploy)
+      const lines = codeLines(await readScript(scriptPath), TS_DIALECT)
+
+      return {
+        name,
+        scriptPath,
+        runner: 'deploy-run',
+        allowedEnvs: intersectGates(declared.get(name) ?? null, gates.get(name)),
+        ssmPrefix: readSsmPrefix(lines, TS_DIALECT),
+      }
+    }),
   )
 
-  return services.sort((left, right) => {
-    return left.name.localeCompare(right.name)
+  return services.filter((service) => {
+    return service !== null
   })
+}
+
+const exists = async (file: string): Promise<boolean> => {
+  try {
+    await fs.access(file)
+
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -161,14 +274,18 @@ const readScript = async (scriptPath: string): Promise<string> => {
  * several times in its own docblock, and a consumer script may well explain a guard or an SSM read
  * above the call. Numbering survives the filter so a refusal can cite `script:line`.
  */
-const codeLines = (source: string): ScriptLine[] => {
+const codeLines = (source: string, dialect: ScriptDialect): ScriptLine[] => {
   return source
     .split('\n')
     .map((text, index) => {
       return { line: index + 1, text }
     })
     .filter(({ text }) => {
-      return !text.trimStart().startsWith('#')
+      const trimmed = text.trimStart()
+
+      return !dialect.commentPrefixes.some((prefix) => {
+        return trimmed.startsWith(prefix)
+      })
     })
 }
 
@@ -213,28 +330,36 @@ const mightReadEnvironment = (arg: string): boolean => {
  * the top, so a second read would be a copy-paste that the >1-prefix refusal in
  * {@link resolveSsmPrefix} is the right place to catch across scripts.
  */
-const readSsmPrefix = (lines: ScriptLine[]): SsmPrefix => {
+const readSsmPrefix = (lines: ScriptLine[], dialect: ScriptDialect): SsmPrefix => {
   for (const { line, text } of lines) {
-    const prefix = SSM_ENVIRONMENT_PATTERN.exec(text)?.groups?.prefix
+    const prefix = dialect.literalPrefix(text)
 
     if (prefix !== undefined) return prefix
 
-    const arg = SSM_READ_PATTERN.exec(text)?.groups?.arg
-
-    if (arg !== undefined && mightReadEnvironment(arg)) return { unparseable: { line, text: text.trim() } }
+    if (dialect.isUnparseable(text)) return { unparseable: { line, text: text.trim() } }
   }
 
   return null
 }
 
-/** Script basenames per distinct prefix, so a refusal can name the offenders without their full paths. */
+/**
+ * How a refusal names a service's script without its full path. A deploy.ts is qualified by its
+ * service, since every app's is called `deploy.ts`.
+ */
+const scriptLabel = (service: DeployService): string => {
+  const basename = path.basename(service.scriptPath)
+
+  return service.runner === 'sh' ? basename : `${service.name} (${basename})`
+}
+
+/** Script labels per distinct prefix, so a refusal can name the offenders. */
 const groupByPrefix = (services: DeployService[]): Map<string, string[]> => {
   const groups = new Map<string, string[]>()
 
   for (const service of services) {
     if (typeof service.ssmPrefix !== 'string') continue
 
-    groups.set(service.ssmPrefix, [...(groups.get(service.ssmPrefix) ?? []), path.basename(service.scriptPath)])
+    groups.set(service.ssmPrefix, [...(groups.get(service.ssmPrefix) ?? []), scriptLabel(service)])
   }
 
   return groups
@@ -247,7 +372,7 @@ const assertLiteralPrefixes = (services: DeployService[]): void => {
 
     const { line, text } = service.ssmPrefix.unparseable
 
-    return [`${path.basename(service.scriptPath)}:${line}: ${text}`]
+    return [`${scriptLabel(service)}:${line}: ${text}`]
   })
 
   if (offenders.length === 0) return
@@ -284,7 +409,7 @@ export const resolveSsmPrefix = (services: DeployService[]): string => {
     throw new OperationError(undefined, {
       operation: 'resolve the SSM project prefix',
       remediation:
-        'add `aws ssm get-parameter --name "/<project>/environment"` to at least one devops/scripts/deploy-*.sh',
+        'read the literal "/<project>/environment" in at least one deploy script: a deploy.ts in infra-kit.deploy.ts, or `aws ssm get-parameter --name "/<project>/environment"` in a devops/scripts/deploy-*.sh',
       stderrExcerpt: `none of ${services.length} deploy scripts reads /<project>/environment`,
     })
   }

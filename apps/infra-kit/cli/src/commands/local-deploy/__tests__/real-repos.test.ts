@@ -18,6 +18,26 @@ const present = (repo: string): boolean => {
   return fs.existsSync(`${repo}/devops/scripts`)
 }
 
+const hasManifest = (repo: string): boolean => {
+  return fs.existsSync(`${repo}/infra-kit.deploy.ts`)
+}
+
+/** Once the v1 `.sh` scripts go, only media's stays, behind its own workflow. */
+const expectManifestRunners = async (repo: string): Promise<void> => {
+  const services = await discoverServices(repo)
+
+  const shell = services.flatMap((service) => {
+    return service.runner === 'sh' ? [service.name] : []
+  })
+
+  expect(shell).toStrictEqual(['media'])
+  const clientBe = services.find((service) => {
+    return service.name === 'client-be'
+  })
+
+  expect(clientBe?.runner).toBe('deploy-run')
+}
+
 describe.runIf(present(REPOS.hulyo))('hulyo', () => {
   it('discovers real services, excluding the workflow phantoms', async () => {
     const names = (await discoverServices(REPOS.hulyo)).map((service) => {
@@ -79,6 +99,9 @@ describe.runIf(present(REPOS.hulyo))('hulyo', () => {
     // Reads no `/…/environment` at all; it must be null, not a refusal.
     expect(byName.get('media')?.ssmPrefix).toBeNull()
   })
+  it.runIf(hasManifest(REPOS.hulyo))('runs manifest deploy.ts services through deploy-run', async () => {
+    await expectManifestRunners(REPOS.hulyo)
+  })
 })
 
 describe.runIf(present(REPOS.travelist))('travelist', () => {
@@ -111,5 +134,9 @@ describe.runIf(present(REPOS.travelist))('travelist', () => {
 
   it('resolves the SSM prefix the scripts read', async () => {
     expect(resolveSsmPrefix(await discoverServices(REPOS.travelist))).toBe('travelist')
+  })
+
+  it.runIf(hasManifest(REPOS.travelist))('runs manifest deploy.ts services through deploy-run', async () => {
+    await expectManifestRunners(REPOS.travelist)
   })
 })

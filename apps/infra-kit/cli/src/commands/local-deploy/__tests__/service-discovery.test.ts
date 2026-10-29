@@ -150,7 +150,11 @@ describe('eligibility', () => {
   })
 
   it('treats a null allow-list as deploy-anywhere', () => {
-    expect(isEligible({ name: 'x', scriptPath: '/x', allowedEnvs: null, ssmPrefix: null }, 'anything')).toBe(true)
-    expect(isEligible({ name: 'x', scriptPath: '/x', allowedEnvs: ['dev'], ssmPrefix: null }, 'anything')).toBe(false)
+    expect(
+      isEligible({ name: 'x', scriptPath: '/x', runner: 'sh', allowedEnvs: null, ssmPrefix: null }, 'anything'),
+    ).toBe(true)
+    expect(
+      isEligible({ name: 'x', scriptPath: '/x', runner: 'sh', allowedEnvs: ['dev'], ssmPrefix: null }, 'anything'),
+    ).toBe(false)
   })
 })

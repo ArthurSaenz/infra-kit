@@ -154,6 +154,19 @@ const confirmTarget = async (args: {
 }
 
 /**
+ * The argv that deploys one service.
+ *
+ * A deploy.ts goes through this same CLI (node binary and entry), not whatever `infra-kit` is on
+ * PATH, so the deploy runs under the version that just preflighted it. `INFRA_KIT_DEPLOY_VIA` in the
+ * child env is what keeps `deploy-run` from refusing an agent a second time.
+ */
+const deployCommand = (service: DeployService): [string, string[]] => {
+  if (service.runner === 'sh') return [SHELL, [service.scriptPath]]
+
+  return [process.execPath, [process.argv[1] ?? '', 'deploy-run', service.name]]
+}
+
+/**
  * Run one deploy script with the resolved contract, streaming its output.
  *
  * `stdio: 'inherit'` rather than captured: these scripts run for minutes and echo their own
@@ -161,7 +174,8 @@ const confirmTarget = async (args: {
  */
 const runDeployScript = (service: DeployService, childEnv: NodeJS.ProcessEnv, cwd: string): Promise<number> => {
   return new Promise((resolve, reject) => {
-    const child = spawn(SHELL, [service.scriptPath], { cwd, env: childEnv, stdio: 'inherit' })
+    const [command, commandArgs] = deployCommand(service)
+    const child = spawn(command, commandArgs, { cwd, env: childEnv, stdio: 'inherit' })
 
     child.on('error', reject)
     child.on('close', (code) => {
@@ -314,7 +328,8 @@ const resolveNames = async (args: {
 /**
  * The shared body of `local deploy-all` and `local deploy-selected`.
  *
- * Both run the repo's own `devops/scripts/deploy-*.sh` — the same scripts CI runs — but supply the
+ * Both run the repo's own deploys — the same ones CI runs: `infra-kit deploy-run` per
+ * infra-kit.deploy.ts, else `devops/scripts/deploy-*.sh` — but supply the
  * build contract the workflow YAML normally provides, and refuse first when the target does not match
  * the AWS account the shell is pointed at. The only difference between the two commands is which
  * services they end up with; every gate applies identically.
@@ -328,8 +343,8 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
   if (services.length === 0) {
     throw new OperationError(undefined, {
       operation: 'discover deployable services',
-      remediation: 'run this from a repo that has devops/scripts/deploy-*.sh',
-      stderrExcerpt: `no deploy scripts found under ${projectRoot}/devops/scripts`,
+      remediation: 'run this from a repo that has infra-kit.deploy.ts or devops/scripts/deploy-*.sh',
+      stderrExcerpt: `no deployable services found under ${projectRoot}`,
     })
   }
 
@@ -415,7 +430,7 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
         formatContract(built),
         'Commands:',
         ...chosen.map((entry) => {
-          return `  ${SHELL} ${entry.scriptPath}`
+          return `  ${deployCommand(entry).flat().join(' ')}`
         }),
         '',
         'Dry run: preflight and contract only — says nothing about whether the deploy would succeed.',
@@ -497,7 +512,7 @@ export const localDeploySelected = async (args: LocalDeployArgs) => {
 
 /** Shared by both tools — the local counterpart of what `deploy-all.yml` sets in its `env:` block. */
 const SHARED_TOOL_NOTE =
-  'Runs the repo\'s own devops/scripts/deploy-*.sh on THIS machine instead of dispatching CI. Supplies the build contract (VITE_DOMAIN_ENV/BRANCH/COMMIT) that the workflow YAML normally provides and that the scripts do not set themselves, and refuses unless the requested environment matches the AWS account the shell is authenticated to. "prod" is refused by default — it is delivered, not deployed — and is reachable only if this project sets `protectedEnvs` in infra-kit.json; "cli-only" allows it in a terminal but still refuses it here. Services the environment forbids are refused, matching the workflow\'s own per-service gates. Use dryRun first.'
+  'Runs the repo\'s own deploys (infra-kit.deploy.ts via deploy-run, else devops/scripts/deploy-*.sh) on THIS machine instead of dispatching CI. Supplies the build contract (VITE_DOMAIN_ENV/BRANCH/COMMIT) that the workflow YAML normally provides and that the scripts do not set themselves, and refuses unless the requested environment matches the AWS account the shell is authenticated to. "prod" is refused by default — it is delivered, not deployed — and is reachable only if this project sets `protectedEnvs` in infra-kit.json; "cli-only" allows it in a terminal but still refuses it here. Services the environment forbids are refused, matching the workflow\'s own per-service gates. Use dryRun first.'
 
 const sharedInput = {
   // Shared by BOTH local tools, so this one `.optional()` relaxes `local-deploy-selected` too — which
@@ -565,7 +580,9 @@ export const localDeploySelectedMcpTool = defineMcpTool({
     service: z
       .array(z.string())
       .min(1)
-      .describe('Service names as in devops/scripts/deploy-<name>.sh, e.g. ["client-be"]. Required for MCP.'),
+      .describe(
+        'Service names as in infra-kit.deploy.ts or devops/scripts/deploy-<name>.sh, e.g. ["client-be"]. Required for MCP.',
+      ),
   },
   outputSchema: sharedOutput,
   handler: localDeploySelected,
