@@ -57,16 +57,8 @@ pushes to `dev` on its own in Finalize — do not ask for confirmation. The huma
    `npm view`, so the version lookup uses the same resolver that `pnpm install` uses.)
 3. If the latest version matches the OLD version, Turbo is already up-to-date — skip to Phase 4.
 4. Update `devDependencies.turbo` in `package.json` to `<new version>` (pin exactly — no `^` prefix).
-5. Update the `turbo@<old>` references in `devops/scripts/lib/deploy-utils.sh` to `turbo@<new>`.
-
-   > Robustness note: Turbo's version is NOT single-location, and the two locations can hold
-   > different values (for example, `package.json` may pin `turbo@2.10.0` while `deploy-utils.sh`
-   > pins `turbo@2.9.18`). Treat the `deploy-utils.sh` Turbo pin as an INDEPENDENT version source:
-   > grep the literal `turbo@<version>` token in that file and rewrite it to `turbo@<new>`
-   > regardless of the `package.json` OLD value, so a desync does not cause a silent miss.
-
-6. Run `pnpm install` to update the lockfile.
-7. Verify: grep the entire repo for the OLD Turbo version (excluding `pnpm-lock.yaml` and
+5. Run `pnpm install` to update the lockfile.
+6. Verify: grep the entire repo for the OLD Turbo version (excluding `pnpm-lock.yaml` and
    `node_modules/`) — expect zero hits.
 
 ## Phase 4: Update @slip-stream-kit packages

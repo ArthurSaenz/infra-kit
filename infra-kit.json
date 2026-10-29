@@ -5,5 +5,5 @@
       "name": "infra-kit"
     }
   },
-  "vendorTarget": { "modules": ["devops-scripts"] }
+  "vendorTarget": { "modules": [] }
 }
