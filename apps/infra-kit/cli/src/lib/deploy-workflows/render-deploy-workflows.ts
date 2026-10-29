@@ -91,8 +91,14 @@ const planServices = (config: DeployConfig, kind: WorkflowKind): PlannedService[
   return Object.entries(config.services).flatMap(([name, service]) => {
     if (kind === 'all' && service.deployAll === false) return []
 
+    const deployAllEnvs = kind === 'all' && Array.isArray(service.deployAll) ? service.deployAll : undefined
+
     const allowed = config.environments.filter((env) => {
-      return (service.envs?.includes(env) ?? true) && !(service.skipEnvs?.includes(env) ?? false)
+      return (
+        (service.envs?.includes(env) ?? true) &&
+        !(service.skipEnvs?.includes(env) ?? false) &&
+        (deployAllEnvs?.includes(env) ?? true)
+      )
     })
 
     if (allowed.length === 0) return []

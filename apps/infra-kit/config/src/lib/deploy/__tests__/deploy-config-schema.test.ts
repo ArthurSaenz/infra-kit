@@ -17,6 +17,7 @@ describe('deployConfigSchema', () => {
         'client-fe': { runner: 'macos-14', envs: ['dev'] },
         'docs-fe': { skipEnvs: ['stage', 'prod'] },
         media: { workflow: '_deploy-media-jobs.yml', deployAll: false },
+        'media-prod': { workflow: '_deploy-media-jobs.yml', deployAll: ['prod'] },
       },
       terraform: ['_terraform-apply-infrastructure-jobs.yml'],
       preDeploy: ['_publish-layer-jobs.yml'],

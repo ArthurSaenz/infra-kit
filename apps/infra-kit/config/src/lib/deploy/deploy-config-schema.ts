@@ -47,8 +47,11 @@ export const deployServiceSchema = z.strictObject({
     .string()
     .regex(/^(?!.*\.\.)[\w./-]+\.ts$/, 'must be a repo-relative .ts path, e.g. apps/client/api/deploy.ts')
     .optional(),
-  /** `false` leaves the service out of the deploy-all workflow; it stays selectable. */
-  deployAll: z.boolean().optional(),
+  /**
+   * `false` leaves the service out of the deploy-all workflow; a list keeps it in deploy-all for those
+   * environments only, e.g. `['prod']`. Either way it stays selectable wherever it may deploy.
+   */
+  deployAll: z.union([z.boolean(), z.array(kebabName).nonempty()]).optional(),
 })
 
 export const deployConfigSchema = z

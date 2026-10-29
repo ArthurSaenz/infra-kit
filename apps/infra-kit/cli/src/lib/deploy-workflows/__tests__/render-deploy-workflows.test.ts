@@ -87,6 +87,16 @@ describe('renderDeployWorkflows', () => {
     expect(Object.keys(selected.parsed.jobs)).toContain('deploy-media')
   })
 
+  it('gates a deployAll list in deploy-all only, leaving deploy-selected open', () => {
+    const { all, selected } = render({
+      ...MANIFEST,
+      services: { ...MANIFEST.services, media: { workflow: '_deploy-media-jobs.yml', deployAll: ['stage'] } },
+    })
+
+    expect(all.parsed.jobs['deploy-media']!.if).toContain(`contains(fromJSON('["stage"]'), inputs.environment)`)
+    expect(selected.parsed.jobs['deploy-media']!.if).not.toContain('fromJSON')
+  })
+
   it('gates a service to the offered subset of its environments', () => {
     const { selected } = render()
 
