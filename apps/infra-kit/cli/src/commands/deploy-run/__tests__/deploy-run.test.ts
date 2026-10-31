@@ -85,6 +85,19 @@ export default (async ({ ssm, deployBackendApi }) => {
     expect(commands).toContain('serverless deploy --stage arthur --force')
   })
 
+  it("hands the script the manifest's project, so a shared script reads /<project>/... parameters", async () => {
+    // eslint-disable-next-line no-template-curly-in-string
+    await setUp('export default async ({ project, run }) => run(`echo`, [`/${project}/s3/docs/bucket_name`])\n')
+    await fs.writeFile(
+      path.join(repo, 'infra-kit.deploy.ts'),
+      `export default { project: 'hulyo', environments: ['dev'], services: { 'client-be': { deploy: 'apps/client-api/deploy.ts' } } }\n`,
+    )
+
+    await run()
+
+    expect(commands).toContain('echo /hulyo/s3/docs/bucket_name')
+  })
+
   it('reports a skip as a skipped deploy, not a failure', async () => {
     await setUp(`export default async ({ skip }) => skip('client-be is off on dev')\n`)
 

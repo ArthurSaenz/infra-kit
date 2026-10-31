@@ -149,6 +149,7 @@ export const removeNodeModules = async (dir: string): Promise<void> => {
 interface ToolkitInput {
   root: string
   service: string
+  project?: string
   /** The deploy script's directory, relative to `root`: the app a deploy targets unless it names one. */
   scriptDir?: string
   env?: Env
@@ -200,6 +201,7 @@ export const resolveApp = async (
 export const createDeployToolkit = ({
   root,
   service,
+  project,
   scriptDir,
   env = process.env,
   deps = defaultToolkitDeps,
@@ -482,6 +484,7 @@ export const createDeployToolkit = ({
   return {
     root,
     service,
+    project,
     ssm,
     aws,
     run: (file, args, options = {}) => {

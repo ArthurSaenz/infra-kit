@@ -103,6 +103,15 @@ describe('retry', () => {
   })
 })
 
+describe('project', () => {
+  it("exposes the manifest's SSM project, undefined when it sets none", () => {
+    const deps = fake().deps
+
+    expect(createDeployToolkit({ root, service: 'docs-fe', project: 'hulyo', deps }).project).toBe('hulyo')
+    expect(createDeployToolkit({ root, service: 'docs-fe', deps }).project).toBeUndefined()
+  })
+})
+
 describe('ssm', () => {
   it('reads each name with get-parameter, which a deploy user without ssm:GetParameters may call', async () => {
     const { toolkit, calls } = fake({

@@ -56,6 +56,14 @@ export const deployServiceSchema = z.strictObject({
 
 export const deployConfigSchema = z
   .strictObject({
+    /**
+     * The `<project>` in this repo's `/<project>/...` SSM parameters, e.g. `hulyo`, so a deploy script
+     * shared across repos reads its parameters without hard-coding the prefix.
+     */
+    project: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]*$/, 'must be lower-case letters, digits and dashes, e.g. hulyo')
+      .optional(),
     /** The environments the generated workflows offer, in dispatch-menu order. */
     environments: z.array(kebabName).nonempty(),
     /** Preselected in the dispatch menu. Omitted = the first environment. */

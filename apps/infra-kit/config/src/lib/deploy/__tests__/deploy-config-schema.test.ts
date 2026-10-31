@@ -47,6 +47,19 @@ describe('deployConfigSchema', () => {
     expect(deployConfigSchema.safeParse({ ...minimal, deployTimeoutMinutes: 361 }).success).toBe(false)
   })
 
+  it('takes an SSM project prefix of lower-case letters, digits and dashes', () => {
+    const project = (value: string) => {
+      return deployConfigSchema.safeParse({ ...minimal, project: value }).success
+    }
+
+    expect(project('hulyo')).toBe(true)
+    expect(project('travelist-2')).toBe(true)
+    expect(project('Hulyo')).toBe(false)
+    expect(project('/hulyo')).toBe(false)
+    expect(project('hu_lyo')).toBe(false)
+    expect(project('')).toBe(false)
+  })
+
   it('rejects a service named after a dispatch input every workflow has', () => {
     expect(deployConfigSchema.safeParse({ ...minimal, services: { environment: {} } }).success).toBe(false)
   })

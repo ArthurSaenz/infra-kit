@@ -437,6 +437,18 @@ export const resolveSsmPrefix = (services: DeployService[]): string => {
 }
 
 /**
+ * The SSM prefix preflight probes: the manifest's `project` when it sets one, else the scan of
+ * {@link resolveSsmPrefix}. A script shared across repos builds its names from `project`, so its
+ * template literal is no reason to refuse once the manifest names the prefix.
+ *
+ * @example
+ * await resolveProject('/hulyo-monorepo', services) // infra-kit.deploy.ts project: 'hulyo' => 'hulyo'
+ */
+export const resolveProject = async (projectRoot: string, services: DeployService[]): Promise<string> => {
+  return (await loadDeployConfig(projectRoot))?.project ?? resolveSsmPrefix(services)
+}
+
+/**
  * Whether a service will actually deploy to an environment.
  *
  * Mirrors `skip_unless_env_enabled`: a service with no allow-list goes anywhere.

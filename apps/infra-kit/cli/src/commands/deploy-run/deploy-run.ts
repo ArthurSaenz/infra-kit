@@ -140,14 +140,23 @@ export const deployRun = async (options: DeployRunOptions) => {
   const deps = options.deps ?? defaultToolkitDeps
   const { INFRA_KIT_EXTRA_ENV, ...inherited } = env
   const scriptEnv = { ...inherited, ...extraEnv(INFRA_KIT_EXTRA_ENV, deps.log) }
-  const scriptPath = (await loadDeployConfig(root))?.services[service]?.deploy
+  const config = await loadDeployConfig(root)
+  const scriptPath = config?.services[service]?.deploy
 
   if (scriptPath === undefined) {
     // `sh`, not `bash`: the v1 jobs run the scripts this way.
     await deps.run('sh', [await legacyScriptFor(root, service)], { cwd: root, env: scriptEnv })
   } else {
     const script = await loadScript(path.join(root, scriptPath))
-    const toolkit = createDeployToolkit({ root, service, scriptDir: path.dirname(scriptPath), env: scriptEnv, deps })
+
+    const toolkit = createDeployToolkit({
+      root,
+      service,
+      project: config?.project,
+      scriptDir: path.dirname(scriptPath),
+      env: scriptEnv,
+      deps,
+    })
 
     try {
       await script(toolkit)

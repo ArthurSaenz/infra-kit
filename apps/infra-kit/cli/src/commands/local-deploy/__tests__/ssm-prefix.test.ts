@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 
-import { discoverServices, resolveSsmPrefix } from '../service-discovery'
+import { discoverServices, resolveProject, resolveSsmPrefix } from '../service-discovery'
 
 /**
  * The refusal paths of `resolveSsmPrefix`, each in its own repo.
@@ -87,5 +87,17 @@ describe('resolveSsmPrefix', () => {
     // Line 1 is the shebang, line 2 the prelude, line 3 the read.
     await expect(resolveIn(repo)).rejects.toThrow(/deploy-x\.sh:3\b/)
     await expect(resolveIn(repo)).rejects.toThrow(/literal/)
+  })
+})
+
+describe('resolveProject without infra-kit.deploy.ts', () => {
+  it('keeps the scan and its refusals, with no manifest to name the project', async () => {
+    const agreeing = await repoWith({ 'deploy-a.sh': SSM_READ('"/hulyo/environment"') })
+    const silent = await repoWith({ 'deploy-a.sh': 'echo a\n' })
+
+    expect(await resolveProject(agreeing, await discoverServices(agreeing))).toBe('hulyo')
+    await expect(resolveProject(silent, await discoverServices(silent))).rejects.toThrow(
+      /none of 1 deploy scripts reads/,
+    )
   })
 })

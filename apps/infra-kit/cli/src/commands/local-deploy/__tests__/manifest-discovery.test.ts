@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 
-import { discoverServices, resolveSsmPrefix } from '../service-discovery'
+import { discoverServices, resolveProject, resolveSsmPrefix } from '../service-discovery'
 import type { DeployService } from '../service-discovery'
 
 const repos: string[] = []
@@ -169,5 +169,34 @@ describe('resolveSsmPrefix with infra-kit.deploy.ts', () => {
     expect(() => {
       return resolveSsmPrefix(services)
     }).toThrow(/none of 1 deploy scripts reads/)
+  })
+})
+
+describe('resolveProject', () => {
+  // eslint-disable-next-line no-template-curly-in-string
+  const SHARED_DEPLOY_TS = 'await ssm([`/${project}/environment`, `/${project}/s3/docs/bucket_name`])\n'
+
+  it("takes the manifest's project without scanning, so a shared script's template literal passes", async () => {
+    const repo = await repoWith(
+      { project: 'hulyo', environments: ENVIRONMENTS, services: { 'docs-fe': { deploy: 'docs/deploy.ts' } } },
+      { 'docs/deploy.ts': SHARED_DEPLOY_TS },
+    )
+
+    expect(await resolveProject(repo, await discoverServices(repo))).toBe('hulyo')
+  })
+
+  it('falls back to the scan, and its refusals, when the manifest sets no project', async () => {
+    const shared = await repoWith(
+      { environments: ENVIRONMENTS, services: { 'docs-fe': { deploy: 'docs/deploy.ts' } } },
+      { 'docs/deploy.ts': SHARED_DEPLOY_TS },
+    )
+
+    const literal = await repoWith(
+      { environments: ENVIRONMENTS, services: { a: { deploy: 'a/deploy.ts' } } },
+      { 'a/deploy.ts': DEPLOY_TS },
+    )
+
+    await expect(resolveProject(shared, await discoverServices(shared))).rejects.toThrow(/docs-fe \(deploy\.ts\):1:/)
+    expect(await resolveProject(literal, await discoverServices(literal))).toBe('hulyo')
   })
 })

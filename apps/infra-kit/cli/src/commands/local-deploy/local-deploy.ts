@@ -22,7 +22,7 @@ import type { ArgumentFormProvider } from 'src/types'
 import { buildDeployEnv, contractRecord, formatContract } from './deploy-env'
 import type { BuildEnvResult } from './deploy-env'
 import { runPreflight } from './preflight'
-import { discoverServices, eligibleServices, isEligible, resolveSsmPrefix } from './service-discovery'
+import { discoverServices, eligibleServices, isEligible, resolveProject } from './service-discovery'
 import type { DeployService } from './service-discovery'
 
 /** The workflow whose `environment` choices seed the picker. Advisory only — `--env` always wins. */
@@ -350,7 +350,7 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
 
   // After the no-scripts guard so that refusal keeps precedence, and before any picker so a
   // repo whose scripts cannot be preflighted is refused without first asking for a target.
-  const project = resolveSsmPrefix(services)
+  const project = await resolveProject(projectRoot, services)
 
   // Before the env picker: an agent / `--json` run without `--env` gets this workflow's environments
   // as `choices` — the same `env`-only form both local commands describe.

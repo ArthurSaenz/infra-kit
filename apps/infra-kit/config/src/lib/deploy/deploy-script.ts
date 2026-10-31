@@ -116,6 +116,8 @@ export interface DeployToolkit {
   root: string
   /** The manifest's service key, e.g. `client-be`. */
   service: string
+  /** The manifest's `project`, the SSM prefix in `/<project>/...`; undefined when the manifest does not set it. */
+  project: string | undefined
   /** SSM parameter values by name; throws when one does not exist. */
   ssm: (names: string[]) => Promise<Record<string, string>>
   /** Runs a command with the terminal attached; rejects on a non-zero exit. */
