@@ -22,7 +22,7 @@ const hasManifest = (repo: string): boolean => {
   return fs.existsSync(`${repo}/infra-kit.deploy.ts`)
 }
 
-/** Once the v1 `.sh` scripts go, only media's stays, behind its own workflow. */
+/** With every v1 `.sh` gone, media included, each service runs its deploy.ts. */
 const expectManifestRunners = async (repo: string): Promise<void> => {
   const services = await discoverServices(repo)
 
@@ -30,7 +30,7 @@ const expectManifestRunners = async (repo: string): Promise<void> => {
     return service.runner === 'sh' ? [service.name] : []
   })
 
-  expect(shell).toStrictEqual(['media'])
+  expect(shell).toStrictEqual([])
   const clientBe = services.find((service) => {
     return service.name === 'client-be'
   })
