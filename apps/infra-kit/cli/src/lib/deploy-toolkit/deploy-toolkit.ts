@@ -16,6 +16,8 @@ import path from 'node:path'
 import process from 'node:process'
 import { promisify } from 'node:util'
 
+import { importFromApp } from './import-from-app'
+
 const execFileAsync = promisify(execFile)
 
 /** Serverless 4 needs a licence key; every consumer still packages with 3. */
@@ -313,6 +315,17 @@ export const createDeployToolkit = ({
     return out
   }
 
+  const hookContext = (stage: string, outDir: string, appDir: string): DeployHookContext => {
+    return {
+      stage,
+      outDir,
+      appDir,
+      importFromApp: (specifier) => {
+        return importFromApp(appDir, specifier)
+      },
+    }
+  }
+
   const runHook = async (label: string, hook: DeployHook | undefined, context: DeployHookContext) => {
     if (hook === undefined) return
 
@@ -341,7 +354,7 @@ export const createDeployToolkit = ({
       buildEnv: options.buildEnv,
     })
 
-    const context = { stage: options.stage, outDir, appDir: path.join(outDir, appPath) }
+    const context = hookContext(options.stage, outDir, path.join(outDir, appPath))
 
     await runHook('Pre-deployment', options.preDeploy, context)
     await command('Deploy with Serverless', 'serverless', ['deploy', '--stage', options.stage, '--force'], {
@@ -375,7 +388,7 @@ export const createDeployToolkit = ({
       buildEnv: options.buildEnv,
     })
 
-    const context = { stage: options.stage, outDir, appDir: path.join(outDir, appPath) }
+    const context = hookContext(options.stage, outDir, path.join(outDir, appPath))
     const destination = `s3://${options.bucket}${options.destPath ?? ''}`
     const source = options.sourcePath ?? './dist'
 

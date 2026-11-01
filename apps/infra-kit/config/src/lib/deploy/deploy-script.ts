@@ -40,6 +40,14 @@ export interface DeployHookContext {
   outDir: string
   /** The app inside it, e.g. `<root>/out/apps/client/api`. */
   appDir: string
+  /**
+   * Imports a package as the app's own code would, from the installed `out/`. A plain `import()` in a hook
+   * resolves from the deploy script, which is loaded from the root checkout that is never installed.
+   *
+   * @example
+   * const { publishSiteIndexManifest } = await importFromApp<typeof SiteIndexDeploy>('@wl/site-index/deploy')
+   */
+  importFromApp: <T>(specifier: string) => Promise<T>
 }
 
 export type DeployHook = (context: DeployHookContext) => Promise<void> | void
