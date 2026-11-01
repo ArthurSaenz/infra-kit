@@ -146,4 +146,13 @@ export interface DeployToolkit {
   deployFrontendUi: (options: DeployFrontendUiOptions) => Promise<void>
   /** Synchronous `aws lambda invoke`s, failing on the handler's error, not only the CLI's exit code. */
   invokeLambdas: (options: DeployInvokeLambdasOptions) => Promise<void>
+  /**
+   * Imports a package as code inside `appDir` would, e.g. `<root>/out/apps/client/ui` after `pruneAndBuild`.
+   * A plain `import()` resolves from the deploy script, which is loaded from the root checkout that is never
+   * installed. A hook gets the same function bound to its own app as `context.importFromApp`.
+   *
+   * @example
+   * const { publishSiteIndexManifest } = await importFromApp<typeof SiteIndexDeploy>(appDir, '@wl/site-index/deploy')
+   */
+  importFromApp: <T>(appDir: string, specifier: string) => Promise<T>
 }

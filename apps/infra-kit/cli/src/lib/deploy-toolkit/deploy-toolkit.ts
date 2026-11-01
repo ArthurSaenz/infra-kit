@@ -514,5 +514,6 @@ export const createDeployToolkit = ({
     deployBackendApi,
     deployFrontendUi,
     invokeLambdas,
+    importFromApp,
   }
 }
