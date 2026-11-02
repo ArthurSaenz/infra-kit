@@ -19,7 +19,7 @@ jobs:
       CI_RUN: ${{ github.event.inputs.ci_run }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.branch }}
 
