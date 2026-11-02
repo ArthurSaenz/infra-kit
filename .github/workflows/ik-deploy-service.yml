@@ -1,4 +1,4 @@
-# Shared deploy job for consumer monorepos (hulyo, travelist): one service, one environment, by
+# Shared deploy job for consumer monorepos (hulyo, travelist, nomadream): one service, one environment, by
 # `infra-kit deploy-run <service>`, which runs the service's deploy.ts or its devops/scripts .sh. It takes
 # over from each repo's `_deploy-serverless-jobs.yml`.
 #
@@ -39,13 +39,21 @@ on:
         required: false
         type: number
         default: 25
+      doppler-project:
+        description: 'Load the job environment from this Doppler project (config = environment): AWS keys, an optional AWS_DEPLOY_ROLE_ARN, Slack and the scripts'' secrets. Empty = the aws-* secrets'
+        required: false
+        type: string
+        default: ''
     secrets:
+      # Optional so a Doppler caller passes none; without Doppler the AWS step fails on a missing key.
       aws-access-key-id:
-        required: true
+        required: false
       aws-secret-access-key:
-        required: true
+        required: false
       aws-region:
-        required: true
+        required: false
+      doppler-token:
+        required: false
       serverless-access-key:
         required: false
       slack-token:
@@ -80,12 +88,27 @@ jobs:
           ref: ${{ inputs.sha != '' && inputs.sha || inputs.ref }}
           persist-credentials: false
 
+      - name: Fetch Doppler secrets
+        if: inputs.doppler-project != ''
+        uses: DopplerHQ/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534 # v2.0.0
+        with:
+          doppler-token: ${{ secrets.doppler-token }}
+          doppler-project: ${{ inputs.doppler-project }}
+          doppler-config: ${{ inputs.environment }}
+          inject-env-vars: true
+
+      # Keys from the secrets, else from Doppler. An AWS_DEPLOY_ROLE_ARN from Doppler is assumed: keys that
+      # live in a management account deploy into the environment's member account. Empty = no assume.
       - name: Set up AWS CLI
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          aws-access-key-id: ${{ secrets.aws-access-key-id }}
-          aws-secret-access-key: ${{ secrets.aws-secret-access-key }}
-          aws-region: ${{ secrets.aws-region }}
+          aws-access-key-id: ${{ secrets.aws-access-key-id || env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.aws-secret-access-key || env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.aws-region || env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: deploy-${{ inputs.environment }}-${{ inputs.service }}
+          # OrganizationAccountAccessRole's default trust policy permits sts:AssumeRole, not sts:TagSession.
+          role-skip-session-tagging: true
 
       - name: Install pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -106,14 +129,15 @@ jobs:
         run: infra-kit deploy-run "$SERVICE"
         env:
           SERVICE: ${{ inputs.service }}
-          SERVERLESS_ACCESS_KEY: ${{ secrets.serverless-access-key }}
+          # A step env beats the Doppler-injected one, so an absent secret must not blank it.
+          SERVERLESS_ACCESS_KEY: ${{ secrets.serverless-access-key || env.SERVERLESS_ACCESS_KEY }}
           INFRA_KIT_EXTRA_ENV: ${{ secrets.extra-env }}
 
       - name: Notify on failure
-        if: failure() && env.SLACK_ENABLED == 'true'
+        if: failure() && (env.SLACK_ENABLED == 'true' || env.SLACK_TOKEN != '')
         uses: rtCamp/action-slack-notify@33ca3be66c6f378fe1610fd1d5258632dbed5e58 # v2.4.0
         env:
           SLACK_COLOR: ${{ job.status }}
           SLACK_MESSAGE: '[deploy-v2] Deploy failed for ${{ inputs.service }} to ${{ inputs.environment }} - ${{ github.ref_name }} by ${{ github.actor }}'
-          SLACK_CHANNEL: ${{ secrets.slack-channel }}
-          SLACK_TOKEN: ${{ secrets.slack-token }}
+          SLACK_CHANNEL: ${{ secrets.slack-channel || env.SLACK_CHANNEL }}
+          SLACK_TOKEN: ${{ secrets.slack-token || env.SLACK_TOKEN }}

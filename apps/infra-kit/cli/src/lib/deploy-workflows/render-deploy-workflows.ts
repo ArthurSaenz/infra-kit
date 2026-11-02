@@ -1,4 +1,5 @@
 import type { DeployConfig, DeployService } from '@slip-stream-kit/config/internal'
+import { serviceDependencies } from '@slip-stream-kit/config/internal'
 
 import packageJson from '../../../package.json' with { type: 'json' }
 
@@ -79,6 +80,8 @@ interface PlannedService {
   service: DeployService
   /** The offered environments it may deploy to; `undefined` = all of them, so no gate is emitted. */
   gate: string[] | undefined
+  /** A `runsBefore` step: the services in this workflow whose deploy runs it. No checkbox of its own. */
+  triggers: string[] | undefined
 }
 
 /** `_terraform-apply-initUser-jobs.yml` → `terraform-apply-initUser`. */
@@ -88,7 +91,7 @@ const jobIdForWorkflow = (file: string): string => {
 
 /** Services in manifest order, each with its env gate narrowed to the environments this workflow offers. */
 const planServices = (config: DeployConfig, kind: WorkflowKind): PlannedService[] => {
-  return Object.entries(config.services).flatMap(([name, service]) => {
+  const planned = Object.entries(config.services).flatMap(([name, service]): PlannedService[] => {
     if (kind === 'all' && service.deployAll === false) return []
 
     const deployAllEnvs = kind === 'all' && Array.isArray(service.deployAll) ? service.deployAll : undefined
@@ -103,7 +106,32 @@ const planServices = (config: DeployConfig, kind: WorkflowKind): PlannedService[
 
     if (allowed.length === 0) return []
 
-    return [{ name, service, gate: allowed.length === config.environments.length ? undefined : allowed }]
+    return [
+      { name, service, gate: allowed.length === config.environments.length ? undefined : allowed, triggers: undefined },
+    ]
+  })
+
+  const names = new Set(
+    planned.map((entry) => {
+      return entry.name
+    }),
+  )
+
+  return planned.flatMap((entry) => {
+    if (entry.service.runsBefore === undefined) return [entry]
+
+    const triggers = entry.service.runsBefore.filter((name) => {
+      return names.has(name)
+    })
+
+    // None of its services is in this workflow, so there is nothing for the step to run before.
+    return triggers.length === 0 ? [] : [{ ...entry, triggers }]
+  })
+}
+
+const selectable = (services: PlannedService[]): PlannedService[] => {
+  return services.filter((planned) => {
+    return planned.triggers === undefined
   })
 }
 
@@ -151,17 +179,37 @@ const upstreamOk = (upstream: Upstream): string[] => {
  * `inputs.environment == '<env>'`: the workflow-gates reader in CLIs before deploy-sync's
  * `replaceV1` scans every workflow for the latter, and consumers run whichever CLI is installed.
  */
-const serviceCondition = (planned: PlannedService, kind: WorkflowKind, upstream: Upstream): string => {
+const serviceCondition = (
+  planned: PlannedService,
+  kind: WorkflowKind,
+  upstream: Upstream,
+  dependencies: string[],
+): string => {
   const parts: string[] = []
 
-  if (kind === 'selected') parts.push(`inputs.${planned.name}`)
+  if (kind === 'selected') {
+    parts.push(
+      planned.triggers === undefined
+        ? `inputs.${planned.name}`
+        : `(${planned.triggers
+            .map((name) => {
+              return `inputs.${name}`
+            })
+            .join(' || ')})`,
+    )
+  }
 
   if (planned.gate !== undefined)
     parts.push(`contains(fromJSON('${JSON.stringify(planned.gate)}'), inputs.environment)`)
 
-  parts.push('!cancelled()', ...upstreamOk(upstream))
+  // A dependency left unselected or gated out is skipped, which lets this service go ahead.
+  parts.push('!cancelled()', ...upstreamOk(upstream), ...terraformOk(dependencies.map(deployJob)))
 
   return gh(parts.join(' && '))
+}
+
+const deployJob = (service: string): string => {
+  return `deploy-${service}`
 }
 
 const needsLine = (jobs: string[]): string[] => {
@@ -212,10 +260,15 @@ const sharedJobCall = (planned: PlannedService, config: DeployConfig): string[] 
     `      infra-kit-version: ${packageJson.version}`,
     ...runner,
     ...timeout,
+    ...(config.doppler === undefined ? [] : [`      doppler-project: ${config.doppler.project}`]),
     '    secrets:',
-    `      aws-access-key-id: ${envSecret('AWS_ACCESS_KEY_ID')}`,
-    `      aws-secret-access-key: ${envSecret('AWS_SECRET_ACCESS_KEY')}`,
-    `      aws-region: ${envSecret('AWS_REGION')}`,
+    ...(config.doppler === undefined
+      ? [
+          `      aws-access-key-id: ${envSecret('AWS_ACCESS_KEY_ID')}`,
+          `      aws-secret-access-key: ${envSecret('AWS_SECRET_ACCESS_KEY')}`,
+          `      aws-region: ${envSecret('AWS_REGION')}`,
+        ]
+      : [`      doppler-token: ${envSecret('DOPPLER_TOKEN')}`]),
     `      serverless-access-key: ${gh('secrets.SERVERLESS_ACCESS_KEY')}`,
     `      slack-token: ${gh('secrets.SLACK_TOKEN')}`,
     `      slack-channel: ${gh('secrets.SLACK_CHANNEL')}`,
@@ -228,6 +281,7 @@ const serviceJob = (
   kind: WorkflowKind,
   upstream: Upstream,
   config: DeployConfig,
+  dependencies: string[],
 ): string[] => {
   const call =
     planned.service.workflow === undefined
@@ -236,9 +290,9 @@ const serviceJob = (
 
   return [
     '',
-    `  deploy-${planned.name}:`,
-    ...needsLine(upstreamJobs(upstream)),
-    ...ifLine(serviceCondition(planned, kind, upstream)),
+    `  ${deployJob(planned.name)}:`,
+    ...needsLine([...upstreamJobs(upstream), ...dependencies.map(deployJob)]),
+    ...ifLine(serviceCondition(planned, kind, upstream, dependencies)),
     ...call,
   ]
 }
@@ -273,7 +327,7 @@ const dispatchInputs = (config: DeployConfig, kind: WorkflowKind, services: Plan
   const perService =
     kind === 'all'
       ? []
-      : services.flatMap((planned) => {
+      : selectable(services).flatMap((planned) => {
           const only = planned.gate === undefined ? '' : ` (${planned.gate.join(', ')} only)`
 
           return booleanInput(planned.name, `Deploy ${planned.name}${only}`)
@@ -284,7 +338,7 @@ const dispatchInputs = (config: DeployConfig, kind: WorkflowKind, services: Plan
 
 /** `client-be client-fe `: the checked services, as v1's deploy-selected titles its runs. */
 const selectedServicesTitle = (services: PlannedService[]): string => {
-  return services
+  return selectable(services)
     .map((planned) => {
       return gh(`inputs.${planned.name} && ''${planned.name} '' || ''''`)
     })
@@ -383,7 +437,8 @@ const renderWorkflow = (config: DeployConfig, kind: WorkflowKind): GeneratedWork
   }
 
   const { file } = kindNames(config, kind)
-  const inputCount = 1 + (terraformFiles.length > 0 ? 1 : 0) + (kind === 'selected' ? services.length : 0)
+
+  const inputCount = 1 + (terraformFiles.length > 0 ? 1 : 0) + (kind === 'selected' ? selectable(services).length : 0)
 
   // Only deploy-selected has an input per service, so only it can reach the cap.
   if (inputCount > MAX_DISPATCH_INPUTS) {
@@ -395,8 +450,22 @@ const renderWorkflow = (config: DeployConfig, kind: WorkflowKind): GeneratedWork
   }
 
   const deployJobs = services.map((planned) => {
-    return `deploy-${planned.name}`
+    return deployJob(planned.name)
   })
+
+  const planned = new Set(
+    services.map((entry) => {
+      return entry.name
+    }),
+  )
+
+  const dependencies = serviceDependencies(config.services)
+
+  const dependenciesOf = (name: string): string[] => {
+    return (dependencies.get(name) ?? []).filter((dependency) => {
+      return planned.has(dependency)
+    })
+  }
 
   assertUniqueJobIds(
     [
@@ -422,8 +491,8 @@ const renderWorkflow = (config: DeployConfig, kind: WorkflowKind): GeneratedWork
     ...preDeployFiles.flatMap((file) => {
       return preDeployJob(file, upstream.terraform)
     }),
-    ...services.flatMap((planned) => {
-      return serviceJob(planned, kind, upstream, config)
+    ...services.flatMap((entry) => {
+      return serviceJob(entry, kind, upstream, config, dependenciesOf(entry.name))
     }),
     ...(config.notifySuccess === undefined ? [] : notifyJob(config.notifySuccess, deployJobs)),
   ]

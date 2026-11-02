@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { discoverServices, eligibleServices, isEligible, resolveSsmPrefix } from '../service-discovery'
+import { discoverServices, eligibleServices, isEligible, orderForDeploy, resolveSsmPrefix } from '../service-discovery'
 import type { DeployService } from '../service-discovery'
 
 let repo: string
@@ -156,5 +156,40 @@ describe('eligibility', () => {
     expect(
       isEligible({ name: 'x', scriptPath: '/x', runner: 'sh', allowedEnvs: ['dev'], ssmPrefix: null }, 'anything'),
     ).toBe(false)
+  })
+})
+
+describe('orderForDeploy', () => {
+  const service = (name: string, extra: Partial<DeployService> = {}): DeployService => {
+    return { name, scriptPath: `/r/${name}.ts`, runner: 'deploy-run', allowedEnvs: null, ssmPrefix: null, ...extra }
+  }
+
+  const migrate = service('db-migrate', { runsBefore: ['client-be', 'backoffice-be'] })
+  const clientBe = service('client-be', { dependsOn: ['db-migrate'] })
+  const aiBe = service('ai-be', { dependsOn: ['client-be'] })
+  const clientFe = service('client-fe')
+  const every = [aiBe, clientBe, clientFe, migrate]
+
+  const names = (services: DeployService[]): string[] => {
+    return services.map((entry) => {
+      return entry.name
+    })
+  }
+
+  it('adds the step a chosen service runs after, and puts every service after what it depends on', () => {
+    expect(names(orderForDeploy([aiBe, clientFe, clientBe], every, 'dev'))).toEqual([
+      'db-migrate',
+      'client-be',
+      'ai-be',
+      'client-fe',
+    ])
+  })
+
+  it('leaves the step out when none of its services deploys, and keeps the chosen order', () => {
+    expect(names(orderForDeploy([clientFe, aiBe], every, 'dev'))).toEqual(['client-fe', 'ai-be'])
+  })
+
+  it('never offers a step as a service of its own', () => {
+    expect(names(eligibleServices(every, 'dev'))).toEqual(['ai-be', 'client-be', 'client-fe'])
   })
 })

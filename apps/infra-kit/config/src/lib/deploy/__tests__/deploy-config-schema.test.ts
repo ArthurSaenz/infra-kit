@@ -99,4 +99,41 @@ describe('deployConfigSchema', () => {
     expect(deployConfigSchema.safeParse({ ...minimal, terraform: ['../x.yml'] }).success).toBe(false)
     expect(deployConfigSchema.safeParse({ ...minimal, notifySuccess: 'other/_n.yml' }).success).toBe(false)
   })
+
+  it('accepts service order and a Doppler project', () => {
+    const result = deployConfigSchema.safeParse({
+      ...minimal,
+      services: {
+        'db-migrate': { runsBefore: ['client-be', 'backoffice-be'] },
+        'client-be': {},
+        'backoffice-be': {},
+        'ai-be': { after: ['client-be'] },
+      },
+      doppler: { project: 'nomadream' },
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects an order that names an unknown service or the service itself', () => {
+    const unknown = { 'client-be': { after: ['ai-be'] } }
+    const itself = { 'client-be': { runsBefore: ['client-be'] } }
+
+    expect(deployConfigSchema.safeParse({ ...minimal, services: unknown }).success).toBe(false)
+    expect(deployConfigSchema.safeParse({ ...minimal, services: itself }).success).toBe(false)
+  })
+
+  it('rejects an order cycle, including one closed by a runsBefore step', () => {
+    const direct = { a: { after: ['b'] }, b: { after: ['a'] } }
+    const viaStep = { migrate: { runsBefore: ['api'], after: ['api'] }, api: {} }
+
+    expect(deployConfigSchema.safeParse({ ...minimal, services: direct }).success).toBe(false)
+    expect(deployConfigSchema.safeParse({ ...minimal, services: viaStep }).success).toBe(false)
+  })
+
+  it('rejects deployAll on a runsBefore step', () => {
+    const services = { migrate: { runsBefore: ['client-be'], deployAll: false }, 'client-be': {} }
+
+    expect(deployConfigSchema.safeParse({ ...minimal, services }).success).toBe(false)
+  })
 })

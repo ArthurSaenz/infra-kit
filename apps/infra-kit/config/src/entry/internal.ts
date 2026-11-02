@@ -12,7 +12,7 @@
 //
 // No stability guarantee: `infra-kit` and `@slip-stream-kit/config` are released in lockstep, so
 // this surface may change in any release.
-export { DEPLOY_CONFIG_FILE, deployConfigSchema } from '../lib/deploy/deploy-config-schema'
+export { DEPLOY_CONFIG_FILE, deployConfigSchema, serviceDependencies } from '../lib/deploy/deploy-config-schema'
 export type { DeployConfig, DeployService } from '../lib/deploy/deploy-config-schema'
 export { packageConfigSchema } from '../lib/package-config/package-config-schema'
 export { DEV_SERVING_MARKER, E2E_MODE_ENV } from '../lib/playwright/playwright'

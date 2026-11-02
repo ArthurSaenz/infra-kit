@@ -1,4 +1,5 @@
 import type { DeployConfig } from '@slip-stream-kit/config/internal'
+import { serviceDependencies } from '@slip-stream-kit/config/internal'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -127,6 +128,10 @@ export interface DeployService {
    * only place the real name lives, so it is read from them.
    */
   ssmPrefix: SsmPrefix
+  /** Services this one deploys after (manifest `after`, and the steps that run before it). */
+  dependsOn?: string[]
+  /** A manifest `runsBefore` step: never offered, it joins a deploy that includes one of these services. */
+  runsBefore?: string[]
 }
 
 /**
@@ -212,6 +217,17 @@ const manifestServices = async (
   gates: Map<string, string[]>,
 ): Promise<DeployService[]> => {
   const declared = manifestGates(config)
+  const dependencies = serviceDependencies(config.services)
+
+  const order = (
+    name: string,
+    service: DeployConfig['services'][string],
+  ): Pick<DeployService, 'dependsOn' | 'runsBefore'> => {
+    return {
+      ...((dependencies.get(name) ?? []).length === 0 ? {} : { dependsOn: dependencies.get(name) }),
+      ...(service.runsBefore === undefined ? {} : { runsBefore: [...service.runsBefore] }),
+    }
+  }
 
   const services = await Promise.all(
     Object.entries(config.services).map(async ([name, service]): Promise<DeployService | null> => {
@@ -222,7 +238,11 @@ const manifestServices = async (
 
         const legacy = await scriptService(name, scriptPath, gates)
 
-        return { ...legacy, allowedEnvs: intersectGates(legacy.allowedEnvs, declared.get(name)) }
+        return {
+          ...legacy,
+          allowedEnvs: intersectGates(legacy.allowedEnvs, declared.get(name)),
+          ...order(name, service),
+        }
       }
 
       const scriptPath = path.resolve(projectRoot, service.deploy)
@@ -234,6 +254,7 @@ const manifestServices = async (
         runner: 'deploy-run',
         allowedEnvs: intersectGates(declared.get(name) ?? null, gates.get(name)),
         ssmPrefix: readSsmPrefix(lines, TS_DIALECT),
+        ...order(name, service),
       }
     }),
   )
@@ -471,6 +492,59 @@ export const isEligible = (service: DeployService, env: string): boolean => {
  */
 export const eligibleServices = (services: DeployService[], env: string): DeployService[] => {
   return services.filter((service) => {
-    return isEligible(service, env)
+    return service.runsBefore === undefined && isEligible(service, env)
   })
+}
+
+/**
+ * The chosen services plus every step that runs before one of them, each after what it depends on, as
+ * the generated workflows order them. Otherwise the chosen order holds.
+ *
+ * @example
+ * orderForDeploy([aiBe, clientBe], every, 'prod').map((s) => s.name) // => ['db-migrate', 'client-be', 'ai-be']
+ */
+export const orderForDeploy = (chosen: DeployService[], services: DeployService[], env: string): DeployService[] => {
+  const chosenNames = new Set(
+    chosen.map((service) => {
+      return service.name
+    }),
+  )
+
+  const steps = services.filter((service) => {
+    return (
+      !chosenNames.has(service.name) &&
+      isEligible(service, env) &&
+      (service.runsBefore ?? []).some((name) => {
+        return chosenNames.has(name)
+      })
+    )
+  })
+
+  const included = new Map(
+    [...steps, ...chosen].map((service) => {
+      return [service.name, service]
+    }),
+  )
+
+  const ordered: DeployService[] = []
+  const placed = new Set<string>()
+
+  // The manifest schema refuses cycles, so the recursion ends.
+  const place = (service: DeployService): void => {
+    if (placed.has(service.name)) return
+
+    placed.add(service.name)
+
+    for (const dependency of service.dependsOn ?? []) {
+      const entry = included.get(dependency)
+
+      if (entry !== undefined) place(entry)
+    }
+
+    ordered.push(service)
+  }
+
+  for (const service of chosen) place(service)
+
+  return ordered
 }

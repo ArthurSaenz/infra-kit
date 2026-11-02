@@ -52,7 +52,79 @@ export const deployServiceSchema = z.strictObject({
    * environments only, e.g. `['prod']`. Either way it stays selectable wherever it may deploy.
    */
   deployAll: z.union([z.boolean(), z.array(kebabName).nonempty()]).optional(),
+  /**
+   * Services this one waits for in the same run, e.g. two services that redeploy one API Gateway stage.
+   * A dependency that fails stops it; one that was not selected or not offered here does not.
+   */
+  after: z.array(kebabName).nonempty().optional(),
+  /**
+   * Makes the service a step rather than a checkbox, e.g. DB migrations: it runs whenever one of these
+   * services deploys, before them, and its failure stops them.
+   */
+  runsBefore: z.array(kebabName).nonempty().optional(),
 })
+
+type ServiceMap = Record<string, z.infer<typeof deployServiceSchema>>
+
+/** Every service mapped to the ones it waits for, whether named by its `after` or by a step's `runsBefore`. */
+export const serviceDependencies = (services: ServiceMap): Map<string, string[]> => {
+  const dependencies = new Map(
+    Object.entries(services).map(([name, service]) => {
+      return [name, [...(service.after ?? [])]]
+    }),
+  )
+
+  for (const [step, service] of Object.entries(services)) {
+    for (const target of service.runsBefore ?? []) dependencies.get(target)?.push(step)
+  }
+
+  return dependencies
+}
+
+const checkServiceOrder = (services: ServiceMap, ctx: z.RefinementCtx): void => {
+  for (const [name, service] of Object.entries(services)) {
+    for (const key of ['after', 'runsBefore'] as const) {
+      for (const [index, other] of (service[key] ?? []).entries()) {
+        if (other === name) {
+          ctx.addIssue({ code: 'custom', path: ['services', name, key, index], message: 'names the service itself' })
+        } else if (!(other in services)) {
+          ctx.addIssue({ code: 'custom', path: ['services', name, key, index], message: `no service '${other}'` })
+        }
+      }
+    }
+
+    if (service.runsBefore !== undefined && service.deployAll !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['services', name],
+        message: 'a runsBefore step deploys with its services, so deployAll does not apply',
+      })
+    }
+  }
+
+  const dependencies = serviceDependencies(services)
+  const done = new Set<string>()
+  const visiting = new Set<string>()
+
+  const visit = (name: string, chain: string[]): void => {
+    if (done.has(name)) return
+
+    if (visiting.has(name)) {
+      ctx.addIssue({ code: 'custom', path: ['services'], message: `order cycle: ${[...chain, name].join(' → ')}` })
+
+      return
+    }
+
+    visiting.add(name)
+
+    for (const dependency of dependencies.get(name) ?? []) visit(dependency, [...chain, name])
+
+    visiting.delete(name)
+    done.add(name)
+  }
+
+  for (const name of dependencies.keys()) visit(name, [])
+}
 
 export const deployConfigSchema = z
   .strictObject({
@@ -94,6 +166,16 @@ export const deployConfigSchema = z
      * dispatches `deploy-all.yml` with it.
      */
     replaceV1: z.boolean().optional(),
+    /**
+     * The deploy job reads its environment from this Doppler project, config = the dispatched environment,
+     * with the token in the `<env>_DOPPLER_TOKEN` secret: AWS keys (and an `AWS_DEPLOY_ROLE_ARN` to
+     * assume), Slack and every secret the deploy scripts read. No AWS secrets are passed then.
+     */
+    doppler: z
+      .strictObject({
+        project: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/, 'must be a Doppler project name, e.g. nomadream'),
+      })
+      .optional(),
   })
   .superRefine((config, ctx) => {
     if (Object.keys(config.services).length === 0) {
@@ -113,6 +195,8 @@ export const deployConfigSchema = z
         ctx.addIssue({ code: 'custom', path: ['services', name], message: 'set envs or skipEnvs, not both' })
       }
     }
+
+    checkServiceOrder(config.services, ctx)
 
     for (const [index, file] of (config.preDeploy ?? []).entries()) {
       if (config.terraform?.includes(file)) {

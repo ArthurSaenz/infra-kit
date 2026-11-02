@@ -22,7 +22,7 @@ import type { ArgumentFormProvider } from 'src/types'
 import { buildDeployEnv, contractRecord, formatContract } from './deploy-env'
 import type { BuildEnvResult } from './deploy-env'
 import { runPreflight } from './preflight'
-import { discoverServices, eligibleServices, isEligible, resolveProject } from './service-discovery'
+import { discoverServices, eligibleServices, isEligible, orderForDeploy, resolveProject } from './service-discovery'
 import type { DeployService } from './service-discovery'
 
 /** The workflow whose `environment` choices seed the picker. Advisory only — `--env` always wins. */
@@ -386,7 +386,7 @@ const runLocalDeploy = async (args: LocalDeployArgs, selection: Selection) => {
   }
 
   const names = await resolveNames({ selection, eligible, service, env: selectedEnv })
-  const chosen = assertServicesUsable({ names, services, env: selectedEnv })
+  const chosen = orderForDeploy(assertServicesUsable({ names, services, env: selectedEnv }), services, selectedEnv)
 
   if (selection === 'selected') {
     for (const name of names) {

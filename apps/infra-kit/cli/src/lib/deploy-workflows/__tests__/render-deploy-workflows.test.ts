@@ -329,4 +329,79 @@ describe('renderDeployWorkflows', () => {
 
     await fs.rm(repo, { recursive: true, force: true })
   })
+
+  describe('service order and Doppler', () => {
+    /** Shaped like nomadream: migrations before both backends, ai-be after client-be, env from Doppler. */
+    const ORDERED: DeployConfig = {
+      environments: ['dev', 'prod'],
+      services: {
+        'db-migrate': { runsBefore: ['client-be', 'backoffice-be'] },
+        'client-be': {},
+        'ai-be': { after: ['client-be'] },
+        'backoffice-be': {},
+        'client-fe': {},
+      },
+      doppler: { project: 'nomadream' },
+    }
+
+    const okResult = (job: string): string => {
+      return `(needs.${job}.result == 'success' || needs.${job}.result == 'skipped')`
+    }
+
+    it('gives a runsBefore step no checkbox and runs it when one of its services is ticked', () => {
+      const { all, selected } = render(ORDERED)
+      const step = selected.parsed.jobs['deploy-db-migrate']!
+
+      expect(Object.keys(selected.parsed.on.workflow_dispatch.inputs)).toEqual([
+        'environment',
+        'client-be',
+        'ai-be',
+        'backoffice-be',
+        'client-fe',
+      ])
+      expect(step.if).toMatch(/^\$\{\{ \(inputs\.client-be \|\| inputs\.backoffice-be\) && !cancelled\(\)/)
+      expect(selected.parsed['run-name']).not.toContain('db-migrate')
+      expect(all.parsed.jobs['deploy-db-migrate']!.if).not.toContain('inputs.')
+    })
+
+    it('holds a service on its dependencies, going ahead when one was skipped', () => {
+      const { all, selected } = render(ORDERED)
+
+      for (const workflow of [all, selected]) {
+        const clientBe = workflow.parsed.jobs['deploy-client-be']!
+        const aiBe = workflow.parsed.jobs['deploy-ai-be']!
+
+        expect(clientBe.needs).toEqual(['install-deps', 'deploy-db-migrate'])
+        expect(clientBe.if).toContain(okResult('deploy-db-migrate'))
+        expect(aiBe.needs).toEqual(['install-deps', 'deploy-client-be'])
+        expect(aiBe.if).toContain(okResult('deploy-client-be'))
+        expect(workflow.parsed.jobs['deploy-backoffice-be']!.needs).toEqual(['install-deps', 'deploy-db-migrate'])
+        expect(workflow.parsed.jobs['deploy-client-fe']!.needs).toEqual(['install-deps'])
+      }
+    })
+
+    it('drops a step and a dependency that the workflow does not run', () => {
+      const config: DeployConfig = {
+        ...ORDERED,
+        services: { ...ORDERED.services, 'client-be': { deployAll: false }, 'backoffice-be': { deployAll: false } },
+      }
+
+      const { all } = render(config)
+
+      expect(all.parsed.jobs['deploy-db-migrate']).toBeUndefined()
+      expect(all.parsed.jobs['deploy-ai-be']!.needs).toEqual(['install-deps'])
+    })
+
+    it('passes the Doppler project and token instead of the AWS secrets', () => {
+      const { selected } = render(ORDERED)
+      const job = selected.parsed.jobs['deploy-client-be']!
+
+      expect(job.with).toMatchObject({ 'doppler-project': 'nomadream' })
+      expect(job.secrets).toMatchObject({
+        'doppler-token': "${{ secrets[format('{0}_DOPPLER_TOKEN', inputs.environment)] }}",
+      })
+      expect(job.secrets).not.toHaveProperty('aws-access-key-id')
+      expect(render().selected.parsed.jobs['deploy-client-be']!.with).not.toHaveProperty('doppler-project')
+    })
+  })
 })
