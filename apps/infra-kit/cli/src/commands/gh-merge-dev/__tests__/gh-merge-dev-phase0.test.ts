@@ -16,6 +16,19 @@ import { ghMergeDev } from '../gh-merge-dev'
 import { planMergeRun, reclassify, verifyMerges } from '../merge-run'
 import type { MergePlanEntry } from '../merge-run'
 
+// The repo's git flow is read from infra-kit.json, which this suite's mocks never serve.
+vi.mock('src/lib/git-flow', async (importOriginal) => {
+  return {
+    ...(await importOriginal<typeof import('src/lib/git-flow')>()),
+    resolveGitFlow: vi.fn(async () => {
+      return 'dev'
+    }),
+    resolveIntegrationBranch: vi.fn(async () => {
+      return 'dev'
+    }),
+  }
+})
+
 /**
  * Orchestration-level tests for `ghMergeDev`.
  *

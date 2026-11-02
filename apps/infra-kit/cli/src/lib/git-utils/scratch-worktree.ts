@@ -156,20 +156,21 @@ export const resetScratchWorktree = async (cwd: string): Promise<void> => {
 /**
  * Create the scratch worktree, hand it to `fn`, and always remove it.
  *
- * Anchored on `origin/dev` rather than on the first candidate branch: a branch
- * deleted on origin between the PR listing and the fetch would make the initial
- * `add` fail, and a preflight throw there would kill the run for every *other*
- * branch too. `origin/dev` is verified by the caller immediately beforehand.
+ * Anchored on the integration ref (`origin/dev`, or `origin/main` in the main git
+ * flow) rather than on the first candidate branch: a branch deleted on origin
+ * between the PR listing and the fetch would make the initial `add` fail, and a
+ * preflight throw there would kill the run for every *other* branch too. The
+ * anchor is verified by the caller immediately beforehand.
  *
  * A stale registration left by a hard kill (`fatal: … is a missing but already
  * registered worktree`) is recovered once via `git worktree prune`, because
  * otherwise the command would be broken on that machine every subsequent run.
  */
 export const withScratchWorktree = async <T>(
-  args: { cwd: string; anchor?: string },
+  args: { cwd: string; anchor: string },
   fn: (worktree: ScratchWorktree) => Promise<T>,
 ): Promise<T> => {
-  const { cwd, anchor = 'origin/dev' } = args
+  const { cwd, anchor } = args
   const worktreePath = await scratchWorktreePath(cwd)
 
   const add = async (): Promise<void> => {

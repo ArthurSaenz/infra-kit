@@ -11,6 +11,8 @@ import {
 } from 'src/integrations/jira'
 import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { PRODUCTION_BRANCH, resolveGitFlow } from 'src/lib/git-flow'
+import type { GitFlow } from 'src/lib/git-flow'
 import { logger } from 'src/lib/logger'
 // Type-only cross-layer import: src/lib/prompts/types.ts is intentionally a
 // zero-import leaf so it can be imported from any layer (including this one)
@@ -19,36 +21,56 @@ import type { BranchPickerItem } from 'src/lib/prompts/types'
 import { displayLabel, formatBranchName, formatJiraName, parseBranchName, parseReleaseRef } from 'src/lib/release-id'
 import type { ReleaseId } from 'src/lib/release-id'
 
-/** Sentinel ref for deploying from the `dev` branch instead of a release branch. */
-export const DEV_REF = 'dev'
-
 export type ReleaseType = 'regular' | 'hotfix'
 
 /**
- * The one home of the base↔type mapping: `getBaseBranch` reads it forward, `releaseTypeFromBase`
- * reads it backward, so the two directions cannot drift apart.
+ * The one home of the base↔type mapping, per git flow: `getBaseBranch` reads it forward,
+ * `releaseTypeFromBase` reads it backward, so the two directions cannot drift apart. The `main`
+ * flow has no hotfix: with every release based on `main`, a hotfix could not be told apart from a
+ * regular release by the branch it merges into, and the base is what classifies a release PR.
  */
-const BASE_BRANCH_BY_TYPE: Record<ReleaseType, string> = {
-  regular: 'dev',
-  hotfix: 'main',
+const BASE_BRANCH_BY_TYPE: Record<GitFlow, Partial<Record<ReleaseType, string>>> = {
+  dev: { regular: 'dev', hotfix: PRODUCTION_BRANCH },
+  main: { regular: PRODUCTION_BRANCH },
 }
 
 /**
- * Get the base branch for a release type.
- * Regular releases branch from/to dev, hotfixes branch from/to main.
+ * The release types the flow supports, in picker order.
+ *
+ * @example
+ * releaseTypesOf('main') // => ['regular']
  */
-export const getBaseBranch = (type: ReleaseType): string => {
-  return BASE_BRANCH_BY_TYPE[type]
+export const releaseTypesOf = (flow: GitFlow): ReleaseType[] => {
+  return Object.keys(BASE_BRANCH_BY_TYPE[flow]) as ReleaseType[]
+}
+
+/**
+ * Get the base branch for a release type: in the `dev` flow regular releases branch from/to dev and
+ * hotfixes from/to main; in the `main` flow every release is regular and based on main.
+ *
+ * @throws When the flow has no such type — a hotfix in the `main` flow.
+ */
+export const getBaseBranch = (type: ReleaseType, flow: GitFlow): string => {
+  const base = BASE_BRANCH_BY_TYPE[flow][type]
+
+  if (base === undefined) {
+    throw new OperationError(undefined, {
+      operation: `use a ${type} release`,
+      remediation: `this repo sets "gitFlow": "${flow}" in infra-kit.json, which has only ${releaseTypesOf(flow).join(' and ')} releases — create it as a regular release`,
+    })
+  }
+
+  return base
 }
 
 /**
  * Classify a PR by the branch it will actually merge into — the fact, where the title is only a
- * label (`detectReleaseType`). `null` for a base outside the release set: discovery is
+ * label (`detectReleaseType`). `null` for a base outside the flow's release set: discovery is
  * base-constrained so it treats that as impossible, while a caller that fetched by head has no
  * such constraint and must refuse rather than guess.
  */
-export const releaseTypeFromBase = (base: string): ReleaseType | null => {
-  const entry = Object.entries(BASE_BRANCH_BY_TYPE).find(([, branch]) => {
+export const releaseTypeFromBase = (base: string, flow: GitFlow): ReleaseType | null => {
+  const entry = Object.entries(BASE_BRANCH_BY_TYPE[flow]).find(([, branch]) => {
     return branch === base
   })
 
@@ -91,7 +113,7 @@ export interface ReleaseCreationResult {
 // between left every later `$` call in the process silent — including the ones whose stderr the
 // failure report is built from.
 export const prepareGitForRelease = async (type: ReleaseType = 'regular'): Promise<string> => {
-  const baseBranch = getBaseBranch(type)
+  const baseBranch = getBaseBranch(type, await resolveGitFlow())
   const git = $({ quiet: true })
 
   await git`git fetch origin`
@@ -365,13 +387,11 @@ export const resolveReleaseBranch = (versionArg: string): string => {
 }
 
 /**
- * Render the human display label for a release branch. Returns the `dev`
- * sentinel unchanged; otherwise derives `1.2.3` | `<name>` from the branch.
- * Falls back to the raw branch when it does not parse as a release id.
+ * Render the human display label for a release branch: `1.2.3` | `<name>`. Falls back to the raw
+ * branch when it does not parse as a release id — which is how the integration-branch deploy
+ * target (`dev`, or `main` in the main flow) keeps its own name.
  */
 export const releaseLabelFromBranch = (branch: string): string => {
-  if (branch === DEV_REF) return DEV_REF
-
   const id = parseBranchName(branch)
 
   return id ? displayLabel(id) : branch

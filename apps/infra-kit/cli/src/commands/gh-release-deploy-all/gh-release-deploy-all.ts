@@ -176,7 +176,7 @@ export const ghReleaseDeployAllMcpTool = defineMcpTool({
       .string()
       .optional()
       .describe(
-        'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/<name> branch. Pass "dev" to deploy from the dev branch instead. Omit it to be offered the open releases.',
+        'Accepts a release version (e.g. "1.2.5") OR a release name (e.g. "checkout-redesign") — resolves to the release/vX.Y.Z or release/<name> branch. Pass "dev" to deploy from the dev branch instead ("main" in a repo with "gitFlow": "main"). Omit it to be offered the open releases.',
       ),
     env: z
       .string()

@@ -22,6 +22,7 @@ import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import type { OperationErrorContext } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
+import { resolveGitFlow } from 'src/lib/git-flow'
 import { assertBaseBranchSwitchable, assertManagementContext } from 'src/lib/git-guard'
 import {
   branchExists,
@@ -433,7 +434,7 @@ const buildPlan = async (branch: string, args: ReleaseRemoveArgs): Promise<Relea
     // The base only has to get HEAD off the release branch, so a stale MERGED/CLOSED PR to `main`
     // under a reused branch name (newest-first lookup) is tolerated here — the same exposure this
     // had via the title, not a regression.
-    baseBranch: pr?.baseRefName ?? getBaseBranch('regular'),
+    baseBranch: pr?.baseRefName ?? getBaseBranch('regular', await resolveGitFlow()),
     worktreePath,
     worktreePresent,
     orcaTerminalCount: worktreePresent ? await probeOrcaTerminals(worktreePath) : 0,

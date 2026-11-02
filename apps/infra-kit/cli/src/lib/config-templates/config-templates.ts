@@ -71,6 +71,15 @@ const CONFIG_KEY_DOCS = `  // // Editor tooling only — a JSON Schema URL for c
   // // grants yourself production access with no trace in the repo.
   // "protectedEnvs": "disallow"
   //
+  // // Which branch releases and features are cut from. "dev" (the default): an integration branch —
+  // // regular releases branch off dev and merge back, \`release deliver\` promotes dev to main and
+  // // syncs main back, hotfixes branch off main. "main": no integration branch — features and
+  // // releases branch off main and merge straight into it, and there is no separate hotfix type.
+  // //
+  // // PROJECT LAYER ONLY. REFUSED here and in the per-project override: every teammate's releases
+  // // must travel the same branches.
+  // "gitFlow": "dev"
+  //
   // // MCP servers fronted by \`ik-mcp\`, the credential-agnostic stdio proxy: one entry per server,
   // // naming the command to spawn and the env-var NAMES it reads from the \`ik env-load\` session
   // // file. \`ik setup\` derives a committed \`.mcp.json\` entry from each; \`ik audit\` guards drift.
@@ -158,8 +167,8 @@ export const buildUserGlobalExample = (): string => {
 //
 // Merge is shallow: setting a top-level key replaces that whole section from
 // layer 1. Arrays do not concatenate. Top-level keys recognized:
-// $schema, configVersion, envManagement, defaultEnv, worktrees, protectedEnvs, mcp,
-// vendorSource, vendorTarget, audit, aliasRepo (configVersion and the last five project layer
+// $schema, configVersion, envManagement, defaultEnv, worktrees, protectedEnvs, gitFlow, mcp,
+// vendorSource, vendorTarget, audit, aliasRepo (configVersion, gitFlow and the last five project layer
 // only). The schema is strict — an
 // unrecognized top-level key is a parse error, not a silently ignored one.
 //
@@ -193,7 +202,7 @@ export const buildUserProjectExample = (projectName: string): string => {
 // <repo>/infra-kit.json (layer 1) and ~/.infra-kit/infra-kit.json (layer 2) — a
 // top-level key set here replaces that whole section wholesale; arrays do not
 // concatenate. Top-level keys recognized: $schema, configVersion, envManagement, defaultEnv, worktrees,
-// protectedEnvs, mcp, vendorSource, vendorTarget, audit, aliasRepo (configVersion and the last five project layer only — refused here). The schema is strict — an unrecognized top-level key is a parse
+// protectedEnvs, gitFlow, mcp, vendorSource, vendorTarget, audit, aliasRepo (configVersion, gitFlow and the last five project layer only — refused here). The schema is strict — an unrecognized top-level key is a parse
 // error, not a silently ignored one.
 //
 // This .example.jsonc is reference only — it is NOT loaded. Put real overrides

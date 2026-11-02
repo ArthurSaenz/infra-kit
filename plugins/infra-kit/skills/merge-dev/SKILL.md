@@ -17,6 +17,10 @@ Root `qa` script: !`node -e 'const s=require("./package.json").scripts||{};conso
 The command is `infra-kit release merge-dev`. Everything below is about running that command through
 `Bash`, with `--json --agent` on every call.
 
+In a repo whose `infra-kit.json` sets `"gitFlow": "main"` there is no `dev`: the command merges
+`origin/main` into the open releases instead, and every `dev` / `origin/dev` below reads as `main` /
+`origin/main`.
+
 **Version floor.** Read the lines above first. On `{"error": …}` from either, or an `infra-kit
 version` below `0.11.15`, or a `git --version` below `2.42` (git needs to be that new for
 `AUTO_MERGE`, which the resolution hand-off reads per worktree), tell the human to update — `pnpm add

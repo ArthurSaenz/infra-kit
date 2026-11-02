@@ -15,6 +15,8 @@ import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
 import { formatZxError } from 'src/lib/errors/format-zx-error'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
+import { PRODUCTION_BRANCH, resolveGitFlow } from 'src/lib/git-flow'
+import type { GitFlow } from 'src/lib/git-flow'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { deleteLocalBranch, deleteRemoteBranch, getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
@@ -101,7 +103,7 @@ interface ResolvedTarget {
   prNumber: number
 }
 
-const resolveTargetFromVersion = async (version: string): Promise<ResolvedTarget> => {
+const resolveTargetFromVersion = async (version: string, flow: GitFlow): Promise<ResolvedTarget> => {
   const selectedReleaseBranch = resolveReleaseBranch(version)
   const open = await fetchOpenPRsByHead(selectedReleaseBranch)
 
@@ -130,12 +132,15 @@ const resolveTargetFromVersion = async (version: string): Promise<ResolvedTarget
     })
   }
 
-  const releaseType = releaseTypeFromBase(pr.baseRefName)
+  const releaseType = releaseTypeFromBase(pr.baseRefName, flow)
 
   if (!releaseType) {
+    const bases = flow === 'dev' ? 'dev nor main' : `${PRODUCTION_BRANCH} (this repo's "gitFlow": "main")`
+    const retarget = flow === 'dev' ? '<dev|main>' : PRODUCTION_BRANCH
+
     throw new OperationError(undefined, {
       operation: `deliver release ${selectedReleaseBranch}`,
-      remediation: `PR #${pr.number} targets '${pr.baseRefName}', which is neither dev nor main; retarget it ('gh pr edit ${pr.number} --base <dev|main>')`,
+      remediation: `PR #${pr.number} targets '${pr.baseRefName}', which is ${flow === 'dev' ? 'neither' : 'not'} ${bases}; retarget it ('gh pr edit ${pr.number} --base ${retarget}')`,
     })
   }
 
@@ -189,12 +194,13 @@ interface MergeReleasePRArgs {
   selectedReleaseBranch: string
   releaseType: ReleaseType
   prNumber: number
+  flow: GitFlow
 }
 
 const mergeReleasePR = async (args: MergeReleasePRArgs): Promise<void> => {
-  const { selectedReleaseBranch, releaseType, prNumber } = args
+  const { selectedReleaseBranch, releaseType, prNumber, flow } = args
 
-  const mergeTarget = getBaseBranch(releaseType)
+  const mergeTarget = getBaseBranch(releaseType, flow)
 
   // Re-probed by number, and merged by number below: the target was resolved before an
   // interactive confirm of unbounded duration, and `gh pr merge <branch>` would run its own
@@ -387,9 +393,15 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
   // only the worktree + clean-tree legs apply.
   await assertManagementContext({ operation: 'deliver release' })
 
+  const flow = await resolveGitFlow()
+
   const { selectedReleaseBranch, releaseType, prNumber } = version
-    ? await resolveTargetFromVersion(version)
+    ? await resolveTargetFromVersion(version, flow)
     : await resolveTargetInteractively()
+
+  // Only a regular release of the dev flow lands on `dev` first; everything else merges straight
+  // into `main`, so there is no RC PR to promote and no `dev` to sync back.
+  const viaIntegration = flow === 'dev' && releaseType !== 'hotfix'
 
   // selectedReleaseBranch is always a release branch (operator ref strictly
   // parsed, or picked from discovery-filtered choices) so this cannot be null.
@@ -424,9 +436,10 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
   // half-delivered release (and the main → dev sync runs after the prod deploy is dispatched).
   await assertDeliveryMergesClean({
     releaseBranch: selectedReleaseBranch,
-    releaseType,
+    viaIntegration,
+    syncsDev: flow === 'dev',
     releaseMerged: (await fetchPRByNumber(prNumber)).state === 'MERGED',
-    rcMerged: releaseType !== 'hotfix' && (await fetchMergedRcPRForVersion(releaseId)) !== null,
+    rcMerged: viaIntegration && (await fetchMergedRcPRForVersion(releaseId)) !== null,
   })
 
   await confirmOrExit(
@@ -449,14 +462,17 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
     operation: `remove worktree for ${selectedReleaseBranch} before merge`,
     remediation: `run manually: git worktree remove ${deliverWorktreeDir}/${selectedReleaseBranch} (use --force if uncommitted changes)`,
   })
-  await mergeReleasePR({ selectedReleaseBranch, releaseType, prNumber })
+  await mergeReleasePR({ selectedReleaseBranch, releaseType, prNumber, flow })
 
-  if (releaseType !== 'hotfix') {
+  if (viaIntegration) {
     await ensureRcPRMerged(releaseId)
   }
 
   await dispatchDeployWorkflow()
-  await syncMainIntoDev()
+
+  if (flow === 'dev') {
+    await syncMainIntoDev()
+  }
   await removeDeliveredReleaseBranch(selectedReleaseBranch)
 
   $.quiet = false
@@ -484,7 +500,7 @@ export const ghReleaseDeliver = async (args: GhReleaseDeliverArgs) => {
 export const ghReleaseDeliverMcpTool = defineMcpTool({
   name: 'gh-release-deliver',
   description:
-    'Deliver a release to production. For hotfixes: squash-merges the release branch to main and dispatches the deploy-all workflow. For regular releases: squash-merges to dev, opens an RC PR, merges dev into main, dispatches the deploy-all workflow, then syncs main back to dev. Also releases the matching Jira fix version if Jira is configured. Dispatches the deploy workflow fire-and-forget — the tool returns once the workflow is accepted by GitHub, not when the deployment finishes. PR-merge steps are idempotent: re-running after a partial failure skips PRs that are already merged. Irreversible production operation: the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. "version" is required when invoked via MCP (the picker is unreachable without a TTY).',
+    'Deliver a release to production. For hotfixes, and for every release in a repo with "gitFlow": "main" (no dev branch, no RC PR, no back-sync): squash-merges the release branch to main and dispatches the deploy-all workflow. For regular releases: squash-merges to dev, opens an RC PR, merges dev into main, dispatches the deploy-all workflow, then syncs main back to dev. Also releases the matching Jira fix version if Jira is configured. Dispatches the deploy workflow fire-and-forget — the tool returns once the workflow is accepted by GitHub, not when the deployment finishes. PR-merge steps are idempotent: re-running after a partial failure skips PRs that are already merged. Irreversible production operation: the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. "version" is required when invoked via MCP (the picker is unreachable without a TTY).',
   // The catalog's declaration must match the `confirmOrExit` call this command already makes; under
   // agent mode deliver is refused outright regardless of `--yes`. Not read at runtime.
   requiresHumanConfirm: true,

@@ -20,6 +20,19 @@ import {
   moveTargetVersion,
 } from './release-remove-mocks'
 
+// The repo's git flow is read from infra-kit.json, which this suite's mocks never serve.
+vi.mock('src/lib/git-flow', async (importOriginal) => {
+  return {
+    ...(await importOriginal<typeof import('src/lib/git-flow')>()),
+    resolveGitFlow: vi.fn(async () => {
+      return 'dev'
+    }),
+    resolveIntegrationBranch: vi.fn(async () => {
+      return 'dev'
+    }),
+  }
+})
+
 /**
  * @fileoverview
  * D2b/D2c/D2d — the three Jira refusals, which are three guards and not one.

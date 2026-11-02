@@ -5,6 +5,19 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 import { ghReleaseDeploySelected } from '../gh-release-deploy-selected'
 
+// The repo's git flow is read from infra-kit.json, which this suite's mocks never serve.
+vi.mock('src/lib/git-flow', async (importOriginal) => {
+  return {
+    ...(await importOriginal<typeof import('src/lib/git-flow')>()),
+    resolveGitFlow: vi.fn(async () => {
+      return 'dev'
+    }),
+    resolveIntegrationBranch: vi.fn(async () => {
+      return 'dev'
+    }),
+  }
+})
+
 // The response shape cannot distinguish "refused" from "refused but dispatched" — dispatch is
 // fire-and-forget, so a run that shipped nothing still returns `success: true`. Record the rendered
 // argv instead, and assert on it.

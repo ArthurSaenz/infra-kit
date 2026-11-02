@@ -10,6 +10,19 @@ import type { ArgumentFormProvider } from 'src/types'
 
 import { createDeployFormProvider } from '../deploy-form'
 
+// The repo's git flow is read from infra-kit.json, which this suite's mocks never serve.
+vi.mock('src/lib/git-flow', async (importOriginal) => {
+  return {
+    ...(await importOriginal<typeof import('src/lib/git-flow')>()),
+    resolveGitFlow: vi.fn(async () => {
+      return 'dev'
+    }),
+    resolveIntegrationBranch: vi.fn(async () => {
+      return 'dev'
+    }),
+  }
+})
+
 vi.mock('src/lib/git-utils', async (importOriginal) => {
   return { ...(await importOriginal<object>()), getProjectRoot: vi.fn() }
 })

@@ -2,9 +2,23 @@ import { execFileSync } from 'node:child_process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { quote } from 'zx'
 
+import { resolveGitFlow } from 'src/lib/git-flow'
 import { logger } from 'src/lib/logger'
 
 import { createReleaseBranch, getReleasePRs, getReleasePRsWithInfo } from '../gh-release-prs'
+
+// The repo's git flow is read from infra-kit.json, which this suite's mocks never serve.
+vi.mock('src/lib/git-flow', async (importOriginal) => {
+  return {
+    ...(await importOriginal<typeof import('src/lib/git-flow')>()),
+    resolveGitFlow: vi.fn(async () => {
+      return 'dev'
+    }),
+    resolveIntegrationBranch: vi.fn(async () => {
+      return 'dev'
+    }),
+  }
+})
 
 interface FakePR {
   number: number
@@ -65,7 +79,7 @@ vi.mock('zx', async (importOriginal) => {
       return Promise.resolve({ stdout: '', exitCode: 0 })
     }
 
-    const listed = command.includes('--base main') ? responses.hotfix : responses.release
+    const listed = command.includes('--base main') || values.includes('main') ? responses.hotfix : responses.release
     const gate = responses.listGate ?? Promise.resolve()
 
     return gate.then(() => {
@@ -441,11 +455,47 @@ describe('discovery concurrency', () => {
 
     const pending = getReleasePRs()
 
-    expect(listCalls()).toBe(2)
+    // The gate is still shut, so reaching two calls proves neither waited on the other.
+    await vi.waitFor(() => {
+      expect(listCalls()).toBe(2)
+    })
 
     open()
 
     await expect(pending).resolves.toEqual(['release/v1.0.0'])
+  })
+})
+
+describe('discovery in the main git flow', () => {
+  beforeEach(() => {
+    responses.calls = []
+    responses.listGate = null
+  })
+
+  it('lists only PRs to main, as regular releases, ignoring a leftover dev', async () => {
+    vi.mocked(resolveGitFlow).mockResolvedValueOnce('main')
+    responses.hotfix = [
+      pr({
+        headRefName: 'release/v2.0.0',
+        createdAt: '2026-01-01T00:00:00Z',
+        baseRefName: 'main',
+        title: 'Release v2.0.0',
+      }),
+    ]
+    responses.release = [pr({ headRefName: 'release/v1.0.0', createdAt: '2026-01-01T00:00:00Z' })]
+
+    const infos = await getReleasePRsWithInfo()
+
+    expect(
+      responses.calls.filter((call) => {
+        return call.strings.join('').includes('gh pr list')
+      }),
+    ).toHaveLength(1)
+    expect(
+      infos.map((info) => {
+        return [info.branch, info.type, info.dualBase]
+      }),
+    ).toEqual([['release/v2.0.0', 'regular', false]])
   })
 })
 

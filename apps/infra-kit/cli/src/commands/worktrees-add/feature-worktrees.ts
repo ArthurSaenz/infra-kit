@@ -3,6 +3,7 @@ import select from '@inquirer/select'
 import { $ } from 'zx'
 
 import { OperationError } from 'src/lib/errors/operation-error'
+import { PRODUCTION_BRANCH, resolveGitFlow } from 'src/lib/git-flow'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { formatBranchName, parseReleaseRef } from 'src/lib/release-id'
 
@@ -58,13 +59,17 @@ const readDefaultBranch = async (): Promise<string | null> => {
 const LS_REMOTE_NO_MATCH = 2
 
 /**
- * The base when none is passed: `dev`, or the repo's default branch in a repo without one (infra-kit
- * itself has only `main`). Falls back to `dev` when neither resolves, so the base check names it.
+ * The base when none is passed: `main` in a repo with `"gitFlow": "main"`; otherwise `dev`, or the
+ * repo's default branch in a repo without one (infra-kit itself has only `main`). Falls back to `dev`
+ * when neither resolves, so the base check names it.
  *
  * @throws When origin cannot be asked (network, auth): cutting from the default branch then would be a
  *   silent guess in a repo that may well have `dev`.
  */
 export const defaultFeatureBase = async (): Promise<string> => {
+  // Config before the probe: a main-flow repo may still carry a stale `origin/dev`.
+  if ((await resolveGitFlow()) === 'main') return PRODUCTION_BRANCH
+
   // A full ref: a bare `dev` pattern also matches any `*/dev` branch. ls-remote, not fetch, because
   // planFeatureWorktrees fetches whichever base this picks.
   const probe = await $({
@@ -97,6 +102,13 @@ export const resolveFeatureBase = async (base: string | undefined): Promise<stri
   const trimmed = base?.trim()
 
   if (!trimmed) return defaultFeatureBase()
+
+  if (trimmed === DEFAULT_FEATURE_BASE && (await resolveGitFlow()) === 'main') {
+    throw new OperationError(undefined, {
+      operation: 'create feature worktree',
+      remediation: `this repo sets "gitFlow": "main" in infra-kit.json, so features branch off main — drop --base or pass --base main`,
+    })
+  }
 
   if (trimmed === DEFAULT_FEATURE_BASE || trimmed === MAIN_BRANCH || trimmed === (await readDefaultBranch())) {
     return trimmed

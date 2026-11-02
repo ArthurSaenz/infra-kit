@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
+import { resolveIntegrationBranch } from 'src/lib/git-flow'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { releaseBranchLabels } from 'src/lib/release-utils'
@@ -23,9 +24,6 @@ import type { ArgumentFormProvider } from 'src/types'
  * load-bearing, and each is pinned by a test that asserts a non-null schema rather than "a refusal
  * came back".
  */
-
-/** The literal `resolveDeployBranch` accepts for "deploy from the dev branch, not a release". */
-const DEV_VERSION = 'dev'
 
 /** The arguments a deploy tool can have filled in by a form. */
 export type DeployFormField = 'version' | 'env' | 'services'
@@ -139,18 +137,19 @@ export const createDeployFormProvider = (args: DeployFormProviderArgs): Argument
   const versionField = async (params: Record<string, unknown>): Promise<z.ZodTypeAny | null> => {
     const labels = await orEmpty(releaseLabels())
 
-    // Checked BEFORE `dev` is appended, deliberately: with it the list is never empty, so an empty
+    // Checked BEFORE the integration branch is appended, deliberately: with it the list is never empty, so an empty
     // check afterwards could never fire and a `gh` outage would render a one-option dropdown that
     // looks like "there are no open releases".
     if (labels.length === 0) return null
 
     const current = roundOneString(params, 'version')
+    const integration = await resolveIntegrationBranch()
 
     return z
-      .enum([...new Set([...labels, DEV_VERSION])])
+      .enum([...new Set([...labels, integration])])
       .optional()
       .describe(
-        `Which release to deploy from. "${DEV_VERSION}" deploys from the dev branch instead of a release branch. ${
+        `Which release to deploy from. "${integration}" deploys from the ${integration} branch instead of a release branch. ${
           current === undefined
             ? 'Leaving it blank sends no version, and the tool will refuse rather than guess one.'
             : `Leave it blank to keep the caller's "${current}".`

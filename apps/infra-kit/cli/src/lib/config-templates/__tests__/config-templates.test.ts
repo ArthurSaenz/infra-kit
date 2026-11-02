@@ -28,7 +28,7 @@ describe('config templates', () => {
     expect(JSON.parse(CONFIG_STUB)).toEqual({})
   })
 
-  it('knows all eleven top-level schema keys', () => {
+  it('knows all twelve top-level schema keys', () => {
     expect(SCHEMA_KEYS).toEqual([
       '$schema',
       'configVersion',
@@ -36,6 +36,7 @@ describe('config templates', () => {
       'defaultEnv',
       'worktrees',
       'protectedEnvs',
+      'gitFlow',
       'mcp',
       'vendorSource',
       'vendorTarget',

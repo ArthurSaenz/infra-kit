@@ -37,8 +37,8 @@ prefix is optional in the name and added when missing; spaces become `-`.
 - **Existing branch** (local, or on `origin` — someone's PR): checked out as it is. `--base` is not
   applied to it, and the preview says so.
 
-`--base` is `dev` by default, or the repo's default branch (`main`) in a repo with no `dev`. `--base
-main` and any release branch work too: `1.4.0`, `release/v1.4.0`, or a named release such as
+`--base` is `dev` by default, or `main` in a repo whose `infra-kit.json` sets `"gitFlow": "main"` (there
+`--base dev` is refused) or that has no `dev`. `--base main` and any release branch work too: `1.4.0`, `release/v1.4.0`, or a named release such as
 `checkout-redesign`. A base missing from `origin` is refused before anything is
 created.
 

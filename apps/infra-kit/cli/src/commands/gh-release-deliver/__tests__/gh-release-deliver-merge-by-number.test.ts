@@ -9,6 +9,19 @@ import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 
 import { ghReleaseDeliver } from '../gh-release-deliver'
 
+// The repo's git flow is read from infra-kit.json, which this suite's mocks never serve.
+vi.mock('src/lib/git-flow', async (importOriginal) => {
+  return {
+    ...(await importOriginal<typeof import('src/lib/git-flow')>()),
+    resolveGitFlow: vi.fn(async () => {
+      return 'dev'
+    }),
+    resolveIntegrationBranch: vi.fn(async () => {
+      return 'dev'
+    }),
+  }
+})
+
 /**
  * Deliver classifies the release by the PR's BASE branch, never its title, and merges the PR it
  * resolved — by number, after a by-number re-probe — rather than letting `gh pr merge <branch>`

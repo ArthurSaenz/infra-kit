@@ -9,6 +9,19 @@ import { jsonOutput } from 'src/lib/json-output'
 
 import { ghReleaseDeliver } from '../gh-release-deliver'
 
+// The repo's git flow is read from infra-kit.json, which this suite's mocks never serve.
+vi.mock('src/lib/git-flow', async (importOriginal) => {
+  return {
+    ...(await importOriginal<typeof import('src/lib/git-flow')>()),
+    resolveGitFlow: vi.fn(async () => {
+      return 'dev'
+    }),
+    resolveIntegrationBranch: vi.fn(async () => {
+      return 'dev'
+    }),
+  }
+})
+
 /**
  * `release deliver` is CLI-only (plan §3.3): under agent mode it refuses REGARDLESS of `--yes`,
  * from a site-local guard placed before the shared `confirmOrExit` — whose own `confirmedCommand`

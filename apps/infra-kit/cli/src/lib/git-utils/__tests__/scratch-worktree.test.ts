@@ -170,7 +170,7 @@ describe('withScratchWorktree', () => {
 
     expect(switchError).toMatch(/is already used by worktree at/)
 
-    const seen = await withScratchWorktree({ cwd: repo }, async (worktree) => {
+    const seen = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, async (worktree) => {
       await git(worktree.path, 'checkout', '--detach', 'origin/release/v1.0.0')
 
       return git(worktree.path, 'rev-parse', 'HEAD')
@@ -184,7 +184,7 @@ describe('withScratchWorktree', () => {
     const before = await worktreePaths(repo)
 
     await expect(
-      withScratchWorktree({ cwd: repo }, async () => {
+      withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, async () => {
         throw new Error('boom')
       }),
     ).rejects.toThrow('boom')
@@ -202,7 +202,7 @@ describe('withScratchWorktree', () => {
 
     // Without prune-and-retry this is `fatal: … is a missing but already
     // registered worktree`, and the command stays broken on that machine forever.
-    const ok = await withScratchWorktree({ cwd: repo }, async (worktree) => {
+    const ok = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, async (worktree) => {
       return git(worktree.path, 'rev-parse', '--abbrev-ref', 'HEAD')
     })
 
@@ -214,7 +214,7 @@ describe('resetScratchWorktree / assertPristineWorktree', () => {
   it('clears a conflicted merge so the NEXT branch is unaffected — the cascade guard', async () => {
     const { repo } = await makeFixture()
 
-    await withScratchWorktree({ cwd: repo }, async (worktree) => {
+    await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, async (worktree) => {
       // Branch 1 conflicts: both sides edited a.txt.
       await git(worktree.path, 'checkout', '--detach', 'origin/release/v1.0.0')
       await expect(git(worktree.path, 'merge', 'origin/release/v1.1.0', '--no-edit')).rejects.toBeDefined()
@@ -232,7 +232,7 @@ describe('resetScratchWorktree / assertPristineWorktree', () => {
   it('removes untracked files that `reset --hard` alone would leave behind', async () => {
     const { repo } = await makeFixture()
 
-    await withScratchWorktree({ cwd: repo }, async (worktree) => {
+    await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, async (worktree) => {
       await fs.writeFile(path.join(worktree.path, 'stray.txt'), 'left over\n')
 
       await resetScratchWorktree(worktree.path)
@@ -247,7 +247,7 @@ describe('resetScratchWorktree / assertPristineWorktree', () => {
 
     await fs.appendFile(path.join(commonDir, 'info', 'exclude'), 'dist/\n*.tsbuildinfo\n.turbo/\nnode_modules/\n')
 
-    await withScratchWorktree({ cwd: repo }, async (worktree) => {
+    await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, async (worktree) => {
       const at = (relative: string): string => {
         return path.join(worktree.path, relative)
       }
@@ -275,7 +275,7 @@ describe('resetScratchWorktree / assertPristineWorktree', () => {
   it('refuses a dirty scratch worktree rather than cascading', async () => {
     const { repo } = await makeFixture()
 
-    await withScratchWorktree({ cwd: repo }, async (worktree) => {
+    await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, async (worktree) => {
       await fs.writeFile(path.join(worktree.path, 'a.txt'), 'uncommitted\n')
 
       await expect(assertPristineWorktree(worktree.path)).rejects.toBeInstanceOf(OperationError)

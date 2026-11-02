@@ -15,5 +15,6 @@ export {
   releaseLabelFromBranch,
   type ReleaseType,
   releaseTypeFromBase,
+  releaseTypesOf,
   resolveReleaseBranch,
 } from './release-utils'

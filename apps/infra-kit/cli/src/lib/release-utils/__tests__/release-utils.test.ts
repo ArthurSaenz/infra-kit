@@ -3,12 +3,40 @@ import { describe, expect, it } from 'vitest'
 import { OperationError } from 'src/lib/errors/operation-error'
 
 import {
-  DEV_REF,
   formatBranchPickerItems,
+  getBaseBranch,
   parseBranchChoices,
   releaseLabelFromBranch,
+  releaseTypeFromBase,
+  releaseTypesOf,
   resolveReleaseBranch,
 } from '../release-utils'
+
+describe('git flow ↔ release base', () => {
+  it('dev flow: regular on dev, hotfix on main, both ways', () => {
+    expect(getBaseBranch('regular', 'dev')).toBe('dev')
+    expect(getBaseBranch('hotfix', 'dev')).toBe('main')
+    expect(releaseTypeFromBase('dev', 'dev')).toBe('regular')
+    expect(releaseTypeFromBase('main', 'dev')).toBe('hotfix')
+    expect(releaseTypesOf('dev')).toEqual(['regular', 'hotfix'])
+  })
+
+  it('main flow: one release type, based on main', () => {
+    expect(getBaseBranch('regular', 'main')).toBe('main')
+    expect(releaseTypeFromBase('main', 'main')).toBe('regular')
+    expect(releaseTypesOf('main')).toEqual(['regular'])
+  })
+
+  it('main flow: a PR to a leftover dev is not a release', () => {
+    expect(releaseTypeFromBase('dev', 'main')).toBeNull()
+  })
+
+  it('main flow: refuses a hotfix, naming the setting', () => {
+    expect(() => {
+      return getBaseBranch('hotfix', 'main')
+    }).toThrow(/"gitFlow": "main"/)
+  })
+})
 
 describe('parseBranchChoices', () => {
   it('parses version and name branches and drops junk', () => {
@@ -150,7 +178,7 @@ describe('resolveReleaseBranch', () => {
 
 describe('releaseLabelFromBranch', () => {
   it('passes through the dev sentinel unchanged', () => {
-    expect(releaseLabelFromBranch(DEV_REF)).toBe('dev')
+    expect(releaseLabelFromBranch('dev')).toBe('dev')
   })
 
   it('labels version and name branches', () => {

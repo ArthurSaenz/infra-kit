@@ -34,7 +34,8 @@ work around.
   linked worktree.
 - **A clean working tree.** Uncommitted changes are refused; the human commits or stashes.
 - **No other worktree holding the base branch.** Regular releases branch off `dev`, hotfixes off
-  `main`. If a linked worktree has that branch checked out, the command refuses and names the path.
+  `main` — or every release off `main` when `infra-kit.json` sets `"gitFlow": "main"`, which has no
+  hotfix type (`--hotfix` is refused there). If a linked worktree has that branch checked out, the command refuses and names the path.
 - **Jira configured.** Every release gets a matching fix version, so `JIRA_BASE_URL`,
   `JIRA_EMAIL`, `JIRA_PROJECT_ID` and `JIRA_TOKEN` (or `JIRA_API_TOKEN`) must be loaded for this
   session (`/infra-kit:session <env>` or `ik env-load` in the terminal that launched Claude Code);

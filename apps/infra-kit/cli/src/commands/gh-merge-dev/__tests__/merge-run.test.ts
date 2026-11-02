@@ -95,8 +95,8 @@ describe('planMergeRun', () => {
   it('merges every clean branch and collects a sha for each', async () => {
     const repo = await makeFixture()
 
-    const entries = await withScratchWorktree({ cwd: repo }, (worktree) => {
-      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: RELEASES })
+    const entries = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, (worktree) => {
+      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: RELEASES, integrationRef: 'origin/dev' })
     })
 
     expect(
@@ -114,8 +114,8 @@ describe('planMergeRun', () => {
   it('tHE CASCADE: a conflict on branch 2 leaves branches 1 and 3 correct', async () => {
     const repo = await makeFixture({ conflicting: ['release/v1.1.0'] })
 
-    const entries = await withScratchWorktree({ cwd: repo }, (worktree) => {
-      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: RELEASES })
+    const entries = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, (worktree) => {
+      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: RELEASES, integrationRef: 'origin/dev' })
     })
 
     // Without resetScratchWorktree in the per-branch finally, branch 3 fails with
@@ -141,8 +141,13 @@ describe('planMergeRun', () => {
     await git(repo, 'switch', '-q', 'dev')
     await git(repo, 'fetch', '-q', 'origin')
 
-    const entries = await withScratchWorktree({ cwd: repo }, (worktree) => {
-      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: ['release/v1.0.0'] })
+    const entries = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, (worktree) => {
+      return planMergeRun({
+        cwd: repo,
+        worktreePath: worktree.path,
+        branches: ['release/v1.0.0'],
+        integrationRef: 'origin/dev',
+      })
     })
 
     expect(entries[0]?.status).toBe('up-to-date')
@@ -158,8 +163,13 @@ describe('planMergeRun', () => {
     await git(repo, 'push', '-q', 'origin', 'origin/dev~1:refs/heads/release/vff')
     await git(repo, 'fetch', '-q', 'origin')
 
-    const entries = await withScratchWorktree({ cwd: repo }, (worktree) => {
-      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: ['release/vff'] })
+    const entries = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, (worktree) => {
+      return planMergeRun({
+        cwd: repo,
+        worktreePath: worktree.path,
+        branches: ['release/vff'],
+        integrationRef: 'origin/dev',
+      })
     })
 
     expect(entries[0]?.status).toBe('fast-forward')
@@ -172,8 +182,8 @@ describe('planMergeRun', () => {
     await git(repo, 'push', '-q', 'origin', '--delete', 'release/v1.1.0')
     await git(repo, 'fetch', '-q', 'origin', '--prune')
 
-    const entries = await withScratchWorktree({ cwd: repo }, (worktree) => {
-      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: RELEASES })
+    const entries = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, (worktree) => {
+      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: RELEASES, integrationRef: 'origin/dev' })
     })
 
     // `merge-base --is-ancestor` exits 128 on an unknown ref, so without the
@@ -188,8 +198,13 @@ describe('planMergeRun', () => {
   it('writes the on-branch merge subject, not "into HEAD"', async () => {
     const repo = await makeFixture()
 
-    const entries = await withScratchWorktree({ cwd: repo }, (worktree) => {
-      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: ['release/v1.0.0'] })
+    const entries = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, (worktree) => {
+      return planMergeRun({
+        cwd: repo,
+        worktreePath: worktree.path,
+        branches: ['release/v1.0.0'],
+        integrationRef: 'origin/dev',
+      })
     })
 
     const subject = await git(repo, 'log', '-1', '--format=%s', String(entries[0]?.mergeSha))
@@ -204,8 +219,13 @@ describe('planMergeRun', () => {
   it('leaves the scratch worktree pristine after a conflict', async () => {
     const repo = await makeFixture({ conflicting: ['release/v1.0.0'] })
 
-    await withScratchWorktree({ cwd: repo }, async (worktree) => {
-      await planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: ['release/v1.0.0'] })
+    await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, async (worktree) => {
+      await planMergeRun({
+        cwd: repo,
+        worktreePath: worktree.path,
+        branches: ['release/v1.0.0'],
+        integrationRef: 'origin/dev',
+      })
 
       expect(await git(worktree.path, 'status', '--porcelain')).toBe('')
     })
@@ -216,8 +236,8 @@ describe('reclassify', () => {
   it('drops a branch a teammate merged mid-run instead of letting it abort the push', async () => {
     const repo = await makeFixture()
 
-    const entries = await withScratchWorktree({ cwd: repo }, (worktree) => {
-      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: RELEASES })
+    const entries = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, (worktree) => {
+      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: RELEASES, integrationRef: 'origin/dev' })
     })
 
     // A teammate merges dev into release/v1.1.0 themselves and pushes, after we
@@ -227,7 +247,7 @@ describe('reclassify', () => {
     await git(repo, 'push', '-q', 'origin', 'release/v1.1.0')
     await git(repo, 'switch', '-q', 'dev')
 
-    const { kept, nowUpToDate } = await reclassify(repo, pushableRefs(entries))
+    const { kept, nowUpToDate } = await reclassify(repo, pushableRefs(entries), 'origin/dev')
 
     // Without this, --atomic would reject the whole push over that one ref and
     // NOTHING would merge — the all-or-nothing guarantee turned against us.
@@ -242,11 +262,11 @@ describe('reclassify', () => {
   it('keeps every branch when nothing moved', async () => {
     const repo = await makeFixture()
 
-    const entries = await withScratchWorktree({ cwd: repo }, (worktree) => {
-      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: RELEASES })
+    const entries = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, (worktree) => {
+      return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: RELEASES, integrationRef: 'origin/dev' })
     })
 
-    const { kept, nowUpToDate } = await reclassify(repo, pushableRefs(entries))
+    const { kept, nowUpToDate } = await reclassify(repo, pushableRefs(entries), 'origin/dev')
 
     expect(nowUpToDate).toEqual([])
     expect(kept).toHaveLength(3)
@@ -260,8 +280,13 @@ describe('verifyMerges', () => {
     process.env.IK_MERGE_RUN_PASSTHROUGH = 'yes'
 
     try {
-      const outcome = await withScratchWorktree({ cwd: repo }, async (worktree) => {
-        const entries = await planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: ['release/v1.0.0'] })
+      const outcome = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, async (worktree) => {
+        const entries = await planMergeRun({
+          cwd: repo,
+          worktreePath: worktree.path,
+          branches: ['release/v1.0.0'],
+          integrationRef: 'origin/dev',
+        })
 
         // The tier itself is the assertion: it passes only when the variable reaches the child.
         return verifyMerges({
@@ -291,8 +316,13 @@ describe('verifyMerges — between branches', () => {
     // Ignored, as `dist/` is in a real repo: a plain `clean -fd` keeps it.
     await fs.appendFile(path.join(commonDir, 'info', 'exclude'), 'dist/\n')
 
-    const outcome = await withScratchWorktree({ cwd: repo }, async (worktree) => {
-      const entries = await planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: RELEASES })
+    const outcome = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, async (worktree) => {
+      const entries = await planMergeRun({
+        cwd: repo,
+        worktreePath: worktree.path,
+        branches: RELEASES,
+        integrationRef: 'origin/dev',
+      })
 
       return verifyMerges({
         worktreePath: worktree.path,
@@ -309,8 +339,13 @@ describe('verifyMerges — between branches', () => {
     const repo = await makeFixture()
 
     // turbo and tsc report a failing check on stdout and can leave stderr empty.
-    const outcome = await withScratchWorktree({ cwd: repo }, async (worktree) => {
-      const entries = await planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: ['release/v1.0.0'] })
+    const outcome = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, async (worktree) => {
+      const entries = await planMergeRun({
+        cwd: repo,
+        worktreePath: worktree.path,
+        branches: ['release/v1.0.0'],
+        integrationRef: 'origin/dev',
+      })
 
       return verifyMerges({
         worktreePath: worktree.path,
@@ -325,8 +360,13 @@ describe('verifyMerges — between branches', () => {
   it('names the exit code when the failing command printed nothing', async () => {
     const repo = await makeFixture()
 
-    const outcome = await withScratchWorktree({ cwd: repo }, async (worktree) => {
-      const entries = await planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: ['release/v1.0.0'] })
+    const outcome = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, async (worktree) => {
+      const entries = await planMergeRun({
+        cwd: repo,
+        worktreePath: worktree.path,
+        branches: ['release/v1.0.0'],
+        integrationRef: 'origin/dev',
+      })
 
       return verifyMerges({ worktreePath: worktree.path, refs: pushableRefs(entries), command: 'exit 3' })
     })
@@ -356,8 +396,13 @@ describe('hook failures are distinguished from conflicts, in any locale', () => 
     process.env.LC_ALL = 'de_DE.UTF-8'
 
     try {
-      const entries = await withScratchWorktree({ cwd: repo }, (worktree) => {
-        return planMergeRun({ cwd: repo, worktreePath: worktree.path, branches: ['release/v1.0.0'] })
+      const entries = await withScratchWorktree({ cwd: repo, anchor: 'origin/dev' }, (worktree) => {
+        return planMergeRun({
+          cwd: repo,
+          worktreePath: worktree.path,
+          branches: ['release/v1.0.0'],
+          integrationRef: 'origin/dev',
+        })
       })
 
       expect(entries[0]?.status).toBe('hook-failed')

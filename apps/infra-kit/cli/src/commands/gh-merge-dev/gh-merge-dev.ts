@@ -6,6 +6,7 @@ import type { ReleasePRInfo } from 'src/integrations/gh'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { isCommandDeclined } from 'src/lib/errors/command-declined-error'
 import { OperationError } from 'src/lib/errors/operation-error'
+import { resolveIntegrationBranch } from 'src/lib/git-flow'
 import { assertRepoWithOrigin } from 'src/lib/git-guard'
 import {
   getMainRepoRoot,
@@ -264,12 +265,12 @@ const renderPlan = (entries: MergePlanEntry[], skipped: SkippedEntry[]): void =>
  * Printing it back to the operator would hand them the broken workflow we just
  * fixed.
  */
-const reproduceCommand = (branch: string, worktrees: WorktreeEntry[]): string => {
+const reproduceCommand = (branch: string, worktrees: WorktreeEntry[], integrationRef: string): string => {
   const held = worktrees.find((entry) => {
     return entry.branch === branch
   })
 
-  return held ? `git -C ${held.path} merge origin/dev` : `git switch ${branch} && git merge origin/dev`
+  return held ? `git -C ${held.path} merge ${integrationRef}` : `git switch ${branch} && git merge ${integrationRef}`
 }
 
 interface RunOutcome {
@@ -327,8 +328,9 @@ const applyPush = async (args: {
   entries: MergePlanEntry[]
   selected: string[]
   verify?: string
+  integrationRef: string
 }): Promise<Pick<RunOutcome, 'pushed' | 'pushAborted' | 'abortedBy' | 'observedLanded' | 'verifyFailed'>> => {
-  const { cwd, worktreePath, entries, selected, verify } = args
+  const { cwd, worktreePath, entries, selected, verify, integrationRef } = args
 
   const chosen = entries.filter((entry) => {
     return selected.includes(entry.branch)
@@ -340,7 +342,7 @@ const applyPush = async (args: {
     }
   }
 
-  const first = await reclassify(cwd, pushableRefs(chosen))
+  const first = await reclassify(cwd, pushableRefs(chosen), integrationRef)
 
   announceDropped(first.nowUpToDate)
 
@@ -362,7 +364,7 @@ const applyPush = async (args: {
     // minutes, and a teammate merging during it makes the first reclassification
     // stale — under `--atomic` a single stale ref aborts the push for EVERY
     // branch, which is the exact failure reclassification exists to prevent.
-    const second = await reclassify(cwd, outcome.kept)
+    const second = await reclassify(cwd, outcome.kept, integrationRef)
 
     announceDropped(second.nowUpToDate)
     kept = second.kept
@@ -571,7 +573,11 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
 
   const toPlan = versions === undefined ? candidates : resolveRequestedBranches(versions, candidates, skipped)
 
-  const outcome = await withScratchWorktree({ cwd }, async (worktree): Promise<RunOutcome> => {
+  // `origin/main` in the main git flow: there, merge-dev brings what other deliveries put on main
+  // into the releases still open.
+  const integrationRef = `origin/${await resolveIntegrationBranch()}`
+
+  const outcome = await withScratchWorktree({ cwd, anchor: integrationRef }, async (worktree): Promise<RunOutcome> => {
     // The worktree exists from here until the push completes, which spans the
     // confirmation prompt. Registering its removal means a Ctrl-C in that window
     // still releases it — `finally` alone does not run when Node takes the
@@ -592,6 +598,7 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
         verify: verifyCommand,
         keepConflicts,
         confirmedCommand,
+        integrationRef,
       })
     } finally {
       unregister()
@@ -618,6 +625,7 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
     dryRun,
     worktrees,
     skipped,
+    integrationRef,
   })
 }
 
@@ -633,14 +641,27 @@ const planConfirmAndPush = async (args: {
   verify?: string
   keepConflicts: boolean
   confirmedCommand: boolean | undefined
+  integrationRef: string
 }): Promise<RunOutcome> => {
-  const { cwd, worktree, toPlan, candidates, skipped, all, versions, dryRun, verify, keepConflicts, confirmedCommand } =
-    args
+  const {
+    cwd,
+    worktree,
+    toPlan,
+    candidates,
+    skipped,
+    all,
+    versions,
+    dryRun,
+    verify,
+    keepConflicts,
+    confirmedCommand,
+    integrationRef,
+  } = args
 
   // Read beside the plan, with no fetch between: the hand-off must reproduce the conflict the
   // operator approved, even if dev moves before it runs.
-  const plannedDevSha = keepConflicts ? await revParseVerify(cwd, 'origin/dev') : null
-  const entries = await planMergeRun({ cwd, worktreePath: worktree.path, branches: toPlan })
+  const plannedDevSha = keepConflicts ? await revParseVerify(cwd, integrationRef) : null
+  const entries = await planMergeRun({ cwd, worktreePath: worktree.path, branches: toPlan, integrationRef })
   const idle = { entries, pushed: false, pushAborted: false, declined: false }
 
   renderPlan(entries, skipped)
@@ -679,7 +700,7 @@ const planConfirmAndPush = async (args: {
     // that removes it — leaking one on the most ordinary non-happy path there is.
     await confirmOrExit(
       confirmedCommand,
-      `Are you sure you want to merge dev into these branches: ${selected.join(', ')}?`,
+      `Are you sure you want to merge ${integrationRef} into these branches: ${selected.join(', ')}?`,
       { throwOnDecline: true, plan: previewPlan(entries, selected, skipped) },
     )
   } catch (error) {
@@ -692,7 +713,7 @@ const planConfirmAndPush = async (args: {
     commandEcho.addOption('--yes', true)
   }
 
-  const pushOutcome = await applyPush({ cwd, worktreePath: worktree.path, entries, selected, verify })
+  const pushOutcome = await applyPush({ cwd, worktreePath: worktree.path, entries, selected, verify, integrationRef })
 
   const branchesWhere = (predicate: (entry: MergePlanEntry) => boolean): string[] => {
     return entries
@@ -716,7 +737,14 @@ const planConfirmAndPush = async (args: {
 
   const handOffs =
     keepConflicts && plannedDevSha && conflicted.length + verifyRefused.length > 0
-      ? await handOffBranches({ cwd, conflicted, verifyFailed: verifyRefused, devSha: plannedDevSha, verify })
+      ? await handOffBranches({
+          cwd,
+          conflicted,
+          verifyFailed: verifyRefused,
+          devSha: plannedDevSha,
+          integrationRef,
+          verify,
+        })
       : undefined
 
   return { entries, selected, declined: false, ...pushOutcome, handOffs }
@@ -743,12 +771,12 @@ const previewPlan = (entries: MergePlanEntry[], selected: string[], skipped: Ski
 }
 
 /** What to do about a branch that did not merge: the hand-off's worktree, or the manual recipe. */
-const nextStepLine = (entry: MergeDevResultEntry, worktrees: WorktreeEntry[]): string => {
+const nextStepLine = (entry: MergeDevResultEntry, worktrees: WorktreeEntry[], integrationRef: string): string => {
   if (entry.resolution) {
     return `# ${entry.branch} — ${entry.status}, left to resolve in ${entry.resolution.worktreePath} (then --continue)\n`
   }
 
-  return `# ${entry.branch} — ${entry.status}\n${reproduceCommand(entry.branch, worktrees)}\n`
+  return `# ${entry.branch} — ${entry.status}\n${reproduceCommand(entry.branch, worktrees, integrationRef)}\n`
 }
 
 /** A verify failure whose hand-off also failed must name both causes. */
@@ -759,7 +787,9 @@ const joinReasons = (verifyReason: string | undefined, handOffReason: string | u
 }
 
 /** Turn the run's outcome into the printed report and the structured result. */
-const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]; skipped: SkippedEntry[] }) => {
+const report = (
+  args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]; skipped: SkippedEntry[]; integrationRef: string },
+) => {
   const {
     entries,
     selected,
@@ -772,6 +802,7 @@ const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]
     verifyFailed,
     handOffs,
     skipped,
+    integrationRef,
   } = args
 
   const pushedBranches = new Set(
@@ -845,7 +876,7 @@ const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]
   } else if (failed.length > 0) {
     logger.info(`\n⚠️  ${failed.length} branch(es) did not merge.\n`)
     for (const entry of failed) {
-      logger.info(nextStepLine(entry, worktrees))
+      logger.info(nextStepLine(entry, worktrees, integrationRef))
     }
   } else {
     logger.info('✅ All merges completed successfully!\n')
@@ -883,7 +914,7 @@ const report = (args: RunOutcome & { dryRun: boolean; worktrees: WorktreeEntry[]
 export const ghMergeDevMcpTool = defineMcpTool({
   name: 'gh-merge-dev',
   description:
-    'Merge origin/dev into open regular release branches and push them in one atomic push. A release PR is classified by its base branch, not its title: a PR to main is a hotfix and is skipped, as is any row whose title disagrees with its base or whose head has open PRs to both dev and main — every skipped row is reported in `skipped` with its reason. Merges happen in a disposable scratch worktree, so no existing checkout is touched and the branches may be checked out elsewhere. When invoked via MCP, pass all=true or an explicit versions list — the branch picker is unreachable without a TTY, and the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. Irreversible once pushed.',
+    'Merge origin/dev (origin/main in a repo with "gitFlow": "main") into open regular release branches and push them in one atomic push. A release PR is classified by its base branch, not its title: a PR to main is a hotfix and is skipped, as is any row whose title disagrees with its base or whose head has open PRs to both dev and main — every skipped row is reported in `skipped` with its reason. Merges happen in a disposable scratch worktree, so no existing checkout is touched and the branches may be checked out elsewhere. When invoked via MCP, pass all=true or an explicit versions list — the branch picker is unreachable without a TTY, and the confirmation prompt is auto-skipped for MCP calls, so the caller is responsible for gating. Irreversible once pushed.',
   requiresHumanConfirm: true,
   inputSchema: {
     all: z

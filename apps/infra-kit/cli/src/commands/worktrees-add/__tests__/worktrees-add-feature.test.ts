@@ -12,6 +12,19 @@ import { getInfraKitConfig, resolveOrcaLayout } from 'src/lib/infra-kit-config'
 import { resolveFeatureBase, toFeatureBranch } from '../feature-worktrees'
 import { worktreesAdd } from '../worktrees-add'
 
+// The repo's git flow is read from infra-kit.json, which this suite's mocks never serve.
+vi.mock('src/lib/git-flow', async (importOriginal) => {
+  return {
+    ...(await importOriginal<typeof import('src/lib/git-flow')>()),
+    resolveGitFlow: vi.fn(async () => {
+      return 'dev'
+    }),
+    resolveIntegrationBranch: vi.fn(async () => {
+      return 'dev'
+    }),
+  }
+})
+
 /**
  * The feature leg of `worktrees add`: how a `--feature` name becomes a branch, which of the three
  * `git worktree add` forms it gets, and that a bad base or a mixed release+feature call stops before git.

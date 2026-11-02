@@ -1300,7 +1300,13 @@ describe('a clean merge that fails verify is handed off', () => {
     await git(teammate, 'push', '-q', 'origin', 'HEAD:refs/heads/release/v1.2.0')
     await git(repo, 'fetch', '-q', 'origin')
 
-    const outcomes = await handOffBranches({ cwd: repo, conflicted: [], verifyFailed: ['release/v1.2.0'], devSha })
+    const outcomes = await handOffBranches({
+      cwd: repo,
+      conflicted: [],
+      verifyFailed: ['release/v1.2.0'],
+      devSha,
+      integrationRef: 'origin/dev',
+    })
 
     expect(outcomes.get('release/v1.2.0')).toEqual({ reason: expect.stringContaining('no longer reproduces') })
     expect(await exists(worktreeOf(repo, 'release/v1.2.0'))).toBe(false)

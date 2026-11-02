@@ -1,5 +1,7 @@
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { commandEcho } from 'src/lib/command-echo'
+import { OperationError } from 'src/lib/errors/operation-error'
+import { resolveIntegrationBranch } from 'src/lib/git-flow'
 import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import { formatBranchPickerItems, getJiraDescriptions, resolveReleaseBranch } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
@@ -7,7 +9,8 @@ import type { ReleaseType } from 'src/lib/release-utils'
 /**
  * Resolve the release branch a workflow dispatch should target.
  *
- * `version` accepts a version (`1.2.5`), a release name (`checkout-redesign`), or the literal `dev`.
+ * `version` accepts a version (`1.2.5`), a release name (`checkout-redesign`), or the integration
+ * branch of the repo's git flow — `dev`, or `main` with `"gitFlow": "main"`.
  * When it is omitted the open release PRs are offered in the searchable picker, annotated with their
  * Jira descriptions and release types — so `--version` stays optional for a human while a headless
  * run without it is refused (interactive pickers are unavailable without a TTY).
@@ -15,7 +18,16 @@ import type { ReleaseType } from 'src/lib/release-utils'
  * Shared by `deploy-all` and `deploy-selected`, which carried byte-identical copies of this block.
  */
 export const resolveDeployBranch = async (version?: string): Promise<string> => {
-  if (version) return version === 'dev' ? 'dev' : resolveReleaseBranch(version)
+  const integration = await resolveIntegrationBranch()
+
+  if (version === 'dev' && integration !== 'dev') {
+    throw new OperationError(undefined, {
+      operation: 'resolve the deploy branch',
+      remediation: `this repo sets "gitFlow": "${integration}" in infra-kit.json and has no dev branch to deploy — pass --version ${integration}, or a release`,
+    })
+  }
+
+  if (version) return version === integration ? integration : resolveReleaseBranch(version)
 
   commandEcho.setInteractive()
 
@@ -34,7 +46,7 @@ export const resolveDeployBranch = async (version?: string): Promise<string> => 
   const descriptions = await getJiraDescriptions()
 
   return pickReleaseBranch([
-    { value: 'dev', label: 'dev' },
+    { value: integration, label: integration },
     ...formatBranchPickerItems({ branches, descriptions, types: releaseTypes }),
   ])
 }

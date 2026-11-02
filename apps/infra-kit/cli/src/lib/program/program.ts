@@ -225,7 +225,7 @@ const withDeploySourceOptions = (cmd: Command): Command => {
     .option('-f, --from <where>', `Where the deploy runs: ${DEPLOY_SOURCES.join(' | ')} (required)`)
     .option(
       '-v, --version <version>',
-      'With --from ci: version (e.g. 1.2.5) or release name to deploy; "dev" deploys from the dev branch. Prompts when omitted',
+      'With --from ci: version (e.g. 1.2.5) or release name to deploy; "dev" ("main" with gitFlow main) deploys from that branch. Prompts when omitted',
     )
     .option('-e, --env <env>', 'Specify the environment to deploy to, e.g. dev')
     .option('-y, --yes', 'Skip confirmation prompt')

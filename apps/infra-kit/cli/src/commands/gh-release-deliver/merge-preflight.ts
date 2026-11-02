@@ -1,7 +1,6 @@
 import { $ } from 'zx'
 
 import { OperationError } from 'src/lib/errors/operation-error'
-import type { ReleaseType } from 'src/lib/release-utils'
 
 interface MergeTreeResult {
   tree: string
@@ -53,10 +52,13 @@ const refuseOnConflict = (step: string, merge: MergeTreeResult): void => {
 
 interface DeliveryMergePlan {
   releaseBranch: string
-  releaseType: ReleaseType
+  /** The release lands on `dev` and reaches `main` through the RC PR; otherwise it merges into `main`. */
+  viaIntegration: boolean
+  /** The repo has a `dev` that delivery syncs `main` back into — false in the `main` git flow. */
+  syncsDev: boolean
   /** A prior run already squash-merged the release PR (and deleted the branch). */
   releaseMerged: boolean
-  /** A prior run already merged the dev → main RC PR. Ignored for hotfixes. */
+  /** A prior run already merged the dev → main RC PR. Ignored unless `viaIntegration`. */
   rcMerged: boolean
 }
 
@@ -66,12 +68,12 @@ interface DeliveryMergePlan {
  * mid-run — worst case in the main → dev sync, after the prod deploy was already dispatched.
  */
 export const assertDeliveryMergesClean = async (plan: DeliveryMergePlan): Promise<void> => {
-  const { releaseBranch, releaseType, releaseMerged, rcMerged } = plan
+  const { releaseBranch, viaIntegration, syncsDev, releaseMerged, rcMerged } = plan
   const release = `origin/${releaseBranch}`
 
-  await $({ quiet: true })`git fetch origin main dev ${releaseMerged ? [] : [releaseBranch]}`
+  await $({ quiet: true })`git fetch origin main ${syncsDev ? ['dev'] : []} ${releaseMerged ? [] : [releaseBranch]}`
 
-  if (releaseType === 'hotfix') {
+  if (!viaIntegration) {
     let main = 'origin/main'
 
     if (!releaseMerged) {
@@ -81,7 +83,9 @@ export const assertDeliveryMergesClean = async (plan: DeliveryMergePlan): Promis
       main = await squashCommit(merge.tree, 'origin/main')
     }
 
-    refuseOnConflict('syncing main back into dev', await mergeTree('origin/dev', main))
+    if (syncsDev) {
+      refuseOnConflict('syncing main back into dev', await mergeTree('origin/dev', main))
+    }
 
     return
   }

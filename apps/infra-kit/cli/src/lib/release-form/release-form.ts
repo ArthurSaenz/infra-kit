@@ -1,7 +1,10 @@
 import { z } from 'zod'
 
 import { withDeadline } from 'src/lib/deadline'
+import { resolveGitFlow } from 'src/lib/git-flow'
 import { logger } from 'src/lib/logger'
+import { releaseTypesOf } from 'src/lib/release-utils'
+import type { ReleaseType } from 'src/lib/release-utils'
 import { classifyReleaseToken, loadExistingVersions, suggestNextVersion } from 'src/lib/version-utils'
 import type { ArgumentFormProvider } from 'src/types'
 
@@ -104,6 +107,8 @@ export const createReleaseFormProvider = (options: { hintBudgetMs?: number } = {
     buildRequestedSchema: async (): Promise<z.ZodObject<z.ZodRawShape> | null> => {
       // The ONLY collapse to `null` on this path; it abandons the git child rather than cancelling it.
       const hint = await withDeadline(computeHint(), hintBudgetMs)
+      const flow = await resolveGitFlow()
+      const [firstType, ...otherTypes] = releaseTypesOf(flow)
 
       // Property order is the wizard's: type before the token. Both are REQUIRED on the wire — what a
       // host sends for an untouched optional select on Accept is unmeasured, and if it were `""` the
@@ -111,9 +116,11 @@ export const createReleaseFormProvider = (options: { hintBudgetMs?: number } = {
       // `.min(1)`/`.regex()` on `release`: neither is a measured wire shape; blank is `toArgs`'s job.
       return z.object({
         type: z
-          .enum(['regular', 'hotfix'])
+          .enum([firstType as ReleaseType, ...otherTypes])
           .describe(
-            'Release type. "regular" branches off dev and bumps the minor; "hotfix" branches off main and bumps the patch.',
+            flow === 'main'
+              ? 'Release type. This repo sets "gitFlow": "main", so every release is "regular": it branches off main and bumps the minor.'
+              : 'Release type. "regular" branches off dev and bumps the minor; "hotfix" branches off main and bumps the patch.',
           ),
         release: z
           .string()

@@ -31,7 +31,16 @@ export interface MergePlanEntry {
   durationMs?: number
 }
 
-export const MERGE_MESSAGE_PREFIX = "Merge remote-tracking branch 'origin/dev' into "
+/**
+ * The message `git switch <branch> && git merge <integrationRef>` would write, so a merge made here
+ * reads the same as one the operator makes by hand.
+ *
+ * @example
+ * mergeMessage('origin/dev', 'release/v1.2.0') // => "Merge remote-tracking branch 'origin/dev' into release/v1.2.0"
+ */
+export const mergeMessage = (integrationRef: string, branch: string): string => {
+  return `Merge remote-tracking branch '${integrationRef}' into ${branch}`
+}
 
 const stderrOf = (error: unknown): string => {
   const { stderr, message } = error as { stderr?: string; message?: string }
@@ -129,10 +138,12 @@ export interface PlanMergeRunArgs {
   /** Scratch detached worktree; merges happen here and nowhere else. */
   worktreePath: string
   branches: string[]
+  /** `origin/<integration branch>` of the repo's git flow — `origin/dev`, or `origin/main`. */
+  integrationRef: string
 }
 
 /**
- * Merge `origin/dev` into each branch inside the scratch worktree, collecting a
+ * Merge `integrationRef` (`origin/dev`, or `origin/main` in the main git flow) into each branch inside the scratch worktree, collecting a
  * sha per success — and pushing nothing.
  *
  * Producing the plan and performing the merge are the SAME operation on purpose.
@@ -147,20 +158,20 @@ export interface PlanMergeRunArgs {
  * first`, and branches k+1…N report an error that branch k caused.
  */
 export const planMergeRun = async (args: PlanMergeRunArgs): Promise<MergePlanEntry[]> => {
-  const { cwd, worktreePath, branches } = args
+  const { cwd, worktreePath, branches, integrationRef } = args
   const entries: MergePlanEntry[] = []
 
-  const devSha = await revParseVerify(cwd, 'origin/dev')
+  const devSha = await revParseVerify(cwd, integrationRef)
 
   if (!devSha) {
     return branches.map((branch) => {
-      return { branch, status: 'error' as const, reason: 'origin/dev does not resolve' }
+      return { branch, status: 'error' as const, reason: `${integrationRef} does not resolve` }
     })
   }
 
   for (const branch of branches) {
     const startedAt = Date.now()
-    const entry = await planOne({ cwd, worktreePath, branch, devSha })
+    const entry = await planOne({ cwd, worktreePath, branch, devSha, integrationRef })
 
     entries.push({ ...entry, durationMs: Date.now() - startedAt })
   }
@@ -173,8 +184,9 @@ const planOne = async (args: {
   worktreePath: string
   branch: string
   devSha: string
+  integrationRef: string
 }): Promise<MergePlanEntry> => {
-  const { cwd, worktreePath, branch, devSha } = args
+  const { cwd, worktreePath, branch, devSha, integrationRef } = args
   const remoteRef = `origin/${branch}`
 
   // Must precede is-ancestor: `merge-base --is-ancestor` exits 128 on an unknown
@@ -183,7 +195,7 @@ const planOne = async (args: {
     return { branch, status: 'error', reason: `${remoteRef} does not exist on origin` }
   }
 
-  if (await isAncestor(cwd, 'origin/dev', remoteRef)) {
+  if (await isAncestor(cwd, integrationRef, remoteRef)) {
     return { branch, status: 'up-to-date' }
   }
 
@@ -196,9 +208,9 @@ const planOne = async (args: {
     // "… into HEAD", which would differ from the operator's own
     // `git switch <B> && git merge origin/dev` — and reproducibility by a command
     // they already know is the reason this engine was chosen.
-    const message = `${MERGE_MESSAGE_PREFIX}${branch}`
+    const message = mergeMessage(integrationRef, branch)
 
-    await $({ cwd: worktreePath, quiet: true })`git merge origin/dev --no-edit -m ${message}`
+    await $({ cwd: worktreePath, quiet: true })`git merge ${integrationRef} --no-edit -m ${message}`
 
     const mergeSha = (await $({ cwd: worktreePath, quiet: true })`git rev-parse HEAD`).stdout.trim()
 
@@ -293,7 +305,7 @@ export interface ReclassifyResult {
  * branch, no checkout — so it is safe to run twice when a long `--verify` pass sits between the
  * plan and the push.
  *
- * `devRef` is `origin/dev` for a plain run; a resolved hand-off passes the dev sha it recorded,
+ * `devRef` is the integration ref (`origin/dev`, or `origin/main`) for a plain run; a resolved hand-off passes the dev sha it recorded,
  * because that — not wherever dev has moved since — is what its merge commit carries.
  */
 // Two independent reasons it is mandatory:
@@ -308,7 +320,7 @@ export interface ReclassifyResult {
 export const reclassify = async (
   cwd: string,
   refs: { branch: string; sha: string }[],
-  devRef = 'origin/dev',
+  devRef: string,
 ): Promise<ReclassifyResult> => {
   await $({ cwd, quiet: true })`git fetch origin --prune`
 

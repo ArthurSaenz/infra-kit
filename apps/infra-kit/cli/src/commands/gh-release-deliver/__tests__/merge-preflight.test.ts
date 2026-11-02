@@ -48,7 +48,8 @@ afterEach(() => {
 const run = (overrides: Partial<Parameters<typeof assertDeliveryMergesClean>[0]> = {}) => {
   return assertDeliveryMergesClean({
     releaseBranch: BRANCH,
-    releaseType: 'regular',
+    viaIntegration: true,
+    syncsDev: true,
     releaseMerged: false,
     rcMerged: false,
     ...overrides,
@@ -113,7 +114,7 @@ describe('assertDeliveryMergesClean — hotfix', () => {
     await commit('a.txt', 'dev\n')
     await push(BRANCH, 'dev')
 
-    await expect(run({ releaseType: 'hotfix' })).resolves.toBeUndefined()
+    await expect(run({ viaIntegration: false })).resolves.toBeUndefined()
   })
 
   it('refuses when the squashed hotfix would conflict syncing main into dev', async () => {
@@ -123,7 +124,7 @@ describe('assertDeliveryMergesClean — hotfix', () => {
     await commit('a.txt', 'dev\n')
     await push(BRANCH, 'dev')
 
-    const error = await run({ releaseType: 'hotfix' })
+    const error = await run({ viaIntegration: false })
 
     expect(error).toBeInstanceOf(OperationError)
     expect((error as OperationError).message).toContain('syncing main back into dev')
@@ -131,6 +132,36 @@ describe('assertDeliveryMergesClean — hotfix', () => {
   })
 
   it('resume after the hotfix merged and its branch was deleted: no fetch of the gone branch', async () => {
-    await expect(run({ releaseType: 'hotfix', releaseMerged: true })).resolves.toBeUndefined()
+    await expect(run({ viaIntegration: false, releaseMerged: true })).resolves.toBeUndefined()
+  })
+})
+
+describe('assertDeliveryMergesClean — main git flow', () => {
+  const runMainFlow = (overrides: Partial<Parameters<typeof assertDeliveryMergesClean>[0]> = {}) => {
+    return run({ viaIntegration: false, syncsDev: false, ...overrides })
+  }
+
+  it('ignores a stale dev that would conflict: there is no back-sync to rehearse', async () => {
+    await $`git checkout -qb ${BRANCH} main`
+    await commit('a.txt', 'release\n')
+    await $`git checkout -q dev`
+    await commit('a.txt', 'stale dev\n')
+    await push(BRANCH, 'dev')
+
+    await expect(runMainFlow()).resolves.toBeUndefined()
+  })
+
+  it('refuses when the release conflicts with main, naming the file', async () => {
+    await $`git checkout -qb ${BRANCH} main`
+    await commit('a.txt', 'release\n')
+    await $`git checkout -q main`
+    await commit('a.txt', 'main moved\n')
+    await push(BRANCH, 'main')
+
+    const error = await runMainFlow()
+
+    expect(error).toBeInstanceOf(OperationError)
+    expect((error as OperationError).message).toContain(`merging ${BRANCH} into main`)
+    expect((error as OperationError).message).toContain('a.txt')
   })
 })

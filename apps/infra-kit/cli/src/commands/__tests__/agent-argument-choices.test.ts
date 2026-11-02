@@ -21,6 +21,19 @@ import { getJiraDescriptions } from 'src/lib/release-utils'
 import { loadExistingVersions } from 'src/lib/version-utils/load-existing-versions'
 import type { ArgumentFormProvider } from 'src/types'
 
+// The repo's git flow is read from infra-kit.json, which this suite's mocks never serve.
+vi.mock('src/lib/git-flow', async (importOriginal) => {
+  return {
+    ...(await importOriginal<typeof import('src/lib/git-flow')>()),
+    resolveGitFlow: vi.fn(async () => {
+      return 'dev'
+    }),
+    resolveIntegrationBranch: vi.fn(async () => {
+      return 'dev'
+    }),
+  }
+})
+
 /**
  * @fileoverview
  * Choices parity (plan §3.4): a Bash-driven agent that omits a picker argument at one of the five

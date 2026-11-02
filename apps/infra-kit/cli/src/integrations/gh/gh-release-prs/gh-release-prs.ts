@@ -1,6 +1,8 @@
 import { $ } from 'zx'
 
 import { OperationError } from 'src/lib/errors/operation-error'
+import { PRODUCTION_BRANCH, resolveGitFlow } from 'src/lib/git-flow'
+import type { GitFlow } from 'src/lib/git-flow'
 import { assertCleanCheckout } from 'src/lib/git-guard'
 import { logger } from 'src/lib/logger'
 import { compareReleaseIds, formatBranchName, formatPrTitle, parseBranchName } from 'src/lib/release-id'
@@ -89,7 +91,21 @@ const warnIfTruncated = (prs: ReleasePR[], source: string): void => {
  * Searches both dev (regular) and main (hotfix) base branches.
  * Returns deduplicated ReleasePR objects.
  */
-const fetchAllReleasePRs = async (): Promise<DiscoveredPR[]> => {
+const fetchAllReleasePRs = async (flow: GitFlow): Promise<DiscoveredPR[]> => {
+  // The main flow has one release base, so there is no second list and no dual head to flag.
+  if (flow === 'main') {
+    const prs =
+      await $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --base ${PRODUCTION_BRANCH} --json number,title,headRefName,state,baseRefName,createdAt`
+
+    const list: ReleasePR[] = JSON.parse(prs.stdout)
+
+    warnIfTruncated(list, `release PR discovery (base ${PRODUCTION_BRANCH})`)
+
+    return list.map((pr) => {
+      return { ...pr, dualBase: false }
+    })
+  }
+
   // Issued together, not awaited in turn: one search runs 0.8–1.5 s on a consumer repo, and the
   // argument form that enumerates through here has 2.5 s for the pair (`lib/release-remove-form`).
   const [releasePRs, hotfixPRs] = await Promise.all([
@@ -151,9 +167,9 @@ export const NO_OPEN_RELEASE_PRS_OPERATION = 'find open release PRs'
  * deterministic order. Shared core of the two public variants below; wraps the
  * gh calls so a fetch failure surfaces as an OperationError.
  */
-const loadSortedReleasePRs = async (): Promise<DiscoveredPR[]> => {
+const loadSortedReleasePRs = async (flow: GitFlow): Promise<DiscoveredPR[]> => {
   try {
-    const prs = await fetchAllReleasePRs()
+    const prs = await fetchAllReleasePRs(flow)
 
     if (prs.length === 0) {
       throw new OperationError(undefined, {
@@ -185,7 +201,7 @@ const loadSortedReleasePRs = async (): Promise<DiscoveredPR[]> => {
  * @returns [release/v1.18.22, release/v1.18.23, release/checkout-redesign]
  */
 export const getReleasePRs = async (): Promise<string[]> => {
-  const prs = await loadSortedReleasePRs()
+  const prs = await loadSortedReleasePRs(await resolveGitFlow())
 
   return prs.map((pr) => {
     return pr.headRefName
@@ -197,8 +213,8 @@ export const getReleasePRs = async (): Promise<string[]> => {
  * so it decides; the title is cross-checked and a disagreement is flagged, never resolved here —
  * the writers (merge-dev, deliver) decide what a flag means for them.
  */
-const classifyReleasePR = (pr: DiscoveredPR): ReleasePRInfo => {
-  const type = releaseTypeFromBase(pr.baseRefName)
+const classifyReleasePR = (pr: DiscoveredPR, flow: GitFlow): ReleasePRInfo => {
+  const type = releaseTypeFromBase(pr.baseRefName, flow)
 
   // Both discovery queries pin `--base`, so an unmapped base can only mean the query and the
   // mapping drifted apart. Guessing a type would let the writers act on the wrong branch.
@@ -240,9 +256,12 @@ const classifyReleasePR = (pr: DiscoveredPR): ReleasePRInfo => {
  * creation date). Unparseable head refs are filtered out.
  */
 export const getReleasePRsWithInfo = async (): Promise<ReleasePRInfo[]> => {
-  const prs = await loadSortedReleasePRs()
+  const flow = await resolveGitFlow()
+  const prs = await loadSortedReleasePRs(flow)
 
-  return prs.map(classifyReleasePR)
+  return prs.map((pr) => {
+    return classifyReleasePR(pr, flow)
+  })
 }
 
 interface UpdateReleasePRBodyArgs {
@@ -333,7 +352,7 @@ export const createReleaseBranch = async (
 ): Promise<{ branchName: string; prUrl: string }> => {
   const { id, jiraVersionUrl, type, description, baseSha } = args
   const prTitle = formatPrTitle(id, type)
-  const baseBranch = getBaseBranch(type)
+  const baseBranch = getBaseBranch(type, await resolveGitFlow())
   const git = $({ quiet: true })
 
   const branchName = formatBranchName(id)

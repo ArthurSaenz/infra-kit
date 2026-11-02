@@ -264,6 +264,13 @@ const aliasRepoSchema = z
  */
 const defaultEnvSchema = z.string().min(1)
 
+/**
+ * Which branch releases and features are cut from: `dev` (an integration branch promoted to `main`
+ * on delivery) or `main` (no integration branch). Absent means `dev`, applied by `resolveGitFlow`
+ * — never a `.default()`, see `protectedEnvs`.
+ */
+const gitFlowSchema = z.enum(['dev', 'main'])
+
 /** The `configVersion` this CLI can read; a layer-1 file declaring a higher one was written by a newer CLI. */
 export const SUPPORTED_CONFIG_VERSION = 1
 
@@ -277,6 +284,7 @@ export const infraKitConfigObject = z
     defaultEnv: defaultEnvSchema.optional(),
     worktrees: worktreesConfigSchema.optional(),
     protectedEnvs: protectedEnvsSchema.optional(),
+    gitFlow: gitFlowSchema.optional(),
     mcp: mcpProxiesSchema.optional(),
     vendorSource: vendorSourceSchema.nullable().optional(),
     vendorTarget: vendorTargetSchema.optional(),
@@ -827,19 +835,28 @@ const buildAliasRepoLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigra
   ].join('\n')
 }
 
+const buildGitFlowLayerRejectionMessage = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>): string => {
+  return [
+    `"gitFlow" is not allowed in ${layer.label} (${layer.path}): it decides which branch every teammate's releases are cut from and delivered through, so a per-machine copy would ship this clone's releases down a different branch than everyone else's.`,
+    'Move it to the project infra-kit.json and commit it there.',
+  ].join('\n')
+}
+
 type LayerRejectionMessageBuilder = (layer: Omit<ConfigLayer, 'autoMigrate' | 'mtimeMs'>) => string
 
 /**
- * Keys only the committed project layer may carry. `mcp` feeds the committed `.mcp.json`, and the
- * shallow layer merge would let a per-machine block replace the project's wholesale and then be
- * derived into the shared file. `vendorSource` decides which repo is the sync source, `vendorTarget`
- * what a target takes from it. `audit` is
- * what CI enforces at the root. `aliasRepo` names the dev host, which the helpers read from the project
- * file alone.
+ * Keys only the committed project layer may carry: each one must read the same on every clone.
+ *
+ * `mcp` feeds the committed `.mcp.json`, and the shallow layer merge would let a per-machine block
+ * replace the project's wholesale and then be derived into the shared file. `vendorSource` decides
+ * which repo is the sync source, `vendorTarget` what a target takes from it. `audit` is what CI
+ * enforces at the root. `aliasRepo` names the dev host, which the helpers read from the project file
+ * alone. `gitFlow` decides the branches every teammate's releases travel.
  */
 const PROJECT_LAYER_ONLY_KEYS: Readonly<Record<string, LayerRejectionMessageBuilder>> = {
   aliasRepo: buildAliasRepoLayerRejectionMessage,
   configVersion: buildConfigVersionLayerRejectionMessage,
+  gitFlow: buildGitFlowLayerRejectionMessage,
   mcp: buildMcpLayerRejectionMessage,
   vendorSource: buildVendorSourceLayerRejectionMessage,
   vendorTarget: buildVendorTargetLayerRejectionMessage,

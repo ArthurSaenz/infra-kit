@@ -26,7 +26,7 @@ import { formatBranchPickerItems } from 'src/lib/release-utils'
 
 import packageJson from '../../../package.json' with { type: 'json' }
 import { LOCKFILE, mergeLockfile } from './lockfile-merge'
-import { MERGE_MESSAGE_PREFIX, reclassify } from './merge-run'
+import { mergeMessage, reclassify } from './merge-run'
 import { registerRunCleanup } from './run-cleanup'
 
 /** The mandatory check before any resolution commit; it also creates the `node_modules` hooks need. */
@@ -609,18 +609,20 @@ export const handOffBranches = async (args: {
   conflicted: string[]
   verifyFailed: string[]
   devSha: string
+  /** `origin/<integration branch>` the run merged — names the merge in the hand-off's message. */
+  integrationRef: string
   /** The verify the `verifyFailed` branches failed. */
   verify?: string
 }): Promise<Map<string, HandOffOutcome>> => {
-  const { cwd, conflicted, verifyFailed, devSha, verify } = args
+  const { cwd, conflicted, verifyFailed, devSha, integrationRef, verify } = args
   const outcomes = new Map<string, HandOffOutcome>()
 
   for (const branch of conflicted) {
-    outcomes.set(branch, await handOffOne(cwd, branch, devSha, 'conflict'))
+    outcomes.set(branch, await handOffOne(cwd, branch, devSha, integrationRef, 'conflict'))
   }
 
   for (const branch of verifyFailed) {
-    outcomes.set(branch, await handOffOne(cwd, branch, devSha, 'verify-failed', verify))
+    outcomes.set(branch, await handOffOne(cwd, branch, devSha, integrationRef, 'verify-failed', verify))
   }
 
   return outcomes
@@ -713,6 +715,7 @@ const handOffOne = async (
   cwd: string,
   branch: string,
   devSha: string,
+  integrationRef: string,
   kind: HandOffKind,
   verify?: string,
 ): Promise<HandOffOutcome> => {
@@ -743,11 +746,13 @@ const handOffOne = async (
     await fs.mkdir(path.dirname(worktreePath), { recursive: true })
     await git(cwd, ['worktree', 'add', '--detach', worktreePath, baseSha])
 
+    const message = mergeMessage(integrationRef, branch)
+
     // `--no-commit`: if the conflict no longer reproduces, nothing may be committed here without review.
     await $({
       cwd: worktreePath,
       quiet: true,
-    })`git merge --no-commit ${devSha} -m ${MERGE_MESSAGE_PREFIX + branch}`.catch(() => {
+    })`git merge --no-commit ${devSha} -m ${message}`.catch(() => {
       return undefined
     })
 
