@@ -1,2 +1,2 @@
-export { vendorSync } from './vendor-sync'
+export { vendorSync, vendorSyncOutputSchema } from './vendor-sync'
 export type { VendorSyncOptions } from './vendor-sync'

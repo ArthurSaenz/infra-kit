@@ -1,1 +1,1 @@
-export { deployRun } from './deploy-run'
+export { deployRun, deployRunOutputSchema } from './deploy-run'

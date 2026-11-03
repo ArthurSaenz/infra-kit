@@ -1,3 +1,5 @@
+import { z } from 'zod'
+
 import { getDopplerProject } from 'src/integrations/doppler'
 import { getTokenStorePath, readTokenStore, removeToken } from 'src/lib/env-tokens'
 import { logger } from 'src/lib/logger'
@@ -22,6 +24,14 @@ const buildRevokeNotice = (project: string, env: string): string[] => {
     `Removing it locally does NOT revoke it — the token still works anywhere else it is stored.`,
     `Revoke it in Doppler (project "${project}", config "${env}"): ${DOPPLER_DASHBOARD_URL}/${project}`,
   ]
+}
+
+/** `env-token-remove --json`. */
+export const envTokenRemoveOutputSchema = {
+  env: z.string(),
+  removed: z.boolean(),
+  storePath: z.string(),
+  revokeUrl: z.string(),
 }
 
 /**
@@ -51,7 +61,7 @@ export const envTokenRemove = async ({ env }: EnvTokenRemoveArgs) => {
     logger.warn(line)
   }
 
-  const structuredContent = {
+  const structuredContent: z.infer<z.ZodObject<typeof envTokenRemoveOutputSchema>> = {
     env,
     removed: existed,
     storePath,

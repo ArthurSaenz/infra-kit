@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "command": "e2e",
+  "app": "client",
+  "testsDir": "apps/client/tests",
+  "target": "client/ui",
+  "packageName": "@app/client-tests",
+  "mode": "local",
+  "baseUrl": "https://release-1-2-3.client-ui.localhost",
+  "deployedUrlEnv": "CLIENT_URL",
+  "release": "release-1-2-3",
+  "env": "dev",
+  "servedEnv": "dev",
+  "localUrl": "https://release-1-2-3.client-ui.localhost",
+  "served": true,
+  "devCommand": null,
+  "routes": [
+    {
+      "path": "/api",
+      "packageName": "@app/backend-api",
+      "source": "local",
+      "target": "https://release-1-2-3.backend-api.localhost",
+      "live": true
+    },
+    { "path": "/media", "packageName": "@app/media-api", "source": "cloud", "target": null, "live": null }
+  ],
+  "playwrightArgs": ["--output", "/tmp/qa/runs/client-full"],
+  "ran": true,
+  "exitCode": 1,
+  "report": "collected",
+  "outputDir": "/tmp/qa/runs/client-full",
+  "summary": { "expected": 41, "unexpected": 1, "flaky": 1, "skipped": 2, "repeatFlaky": 0 },
+  "failures": [
+    {
+      "title": "checkout › pays with a saved card",
+      "file": "src/checkout/checkout.spec.ts",
+      "line": 42,
+      "project": "chromium",
+      "status": "unexpected",
+      "retry": 1,
+      "runs": 1,
+      "failedRuns": 1,
+      "error": "expect(locator).toBeVisible() failed",
+      "tracePath": "/tmp/qa/runs/client-full/checkout-pays/trace.zip"
+    }
+  ],
+  "annotated": [{ "file": "src/search/search.spec.ts", "fail": 0, "fixme": 1, "skip": 1 }],
+  "errors": []
+}

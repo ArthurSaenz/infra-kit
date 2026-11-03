@@ -1,0 +1,3772 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`--json contract > matches the committed contract snapshot 1`] = `
+{
+  "commands": {
+    "audit": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "allPassed": {
+          "description": "Whether every audited package passed all checks (warnings do not fail it)",
+          "type": "boolean",
+        },
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "packages": {
+          "description": "Per-package check results",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "checks": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                    "status": {
+                      "enum": [
+                        "pass",
+                        "warn",
+                        "fail",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "name",
+                    "status",
+                    "message",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "name": {
+                "type": "string",
+              },
+              "passed": {
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "name",
+              "passed",
+              "checks",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "warnCount": {
+          "description": "How many checks reported a warning",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "allPassed",
+        "warnCount",
+        "packages",
+      ],
+      "type": "object",
+    },
+    "change-stats": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "classes": {
+          "additionalProperties": false,
+          "properties": {
+            "agent": {
+              "additionalProperties": false,
+              "properties": {
+                "changes": {
+                  "description": "Non-revert commits — the revert-rate denominator",
+                  "type": "number",
+                },
+                "commits": {
+                  "description": "Non-merge commits in range for this class",
+                  "type": "number",
+                },
+                "followUpFixRate": {
+                  "additionalProperties": false,
+                  "description": "Changes at least 72h old followed within 72h by a fix-subject commit touching a shared file",
+                  "properties": {
+                    "ci95": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "high": {
+                              "type": "number",
+                            },
+                            "low": {
+                              "type": "number",
+                            },
+                          },
+                          "required": [
+                            "low",
+                            "high",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                      "description": "Wilson 95% score interval; null when n is 0",
+                    },
+                    "hits": {
+                      "description": "Changes that hit the metric",
+                      "type": "number",
+                    },
+                    "n": {
+                      "description": "Changes the rate is computed over",
+                      "type": "number",
+                    },
+                    "rate": {
+                      "description": "hits / n, rounded to 4 places; null when n is 0",
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "hits",
+                    "n",
+                    "rate",
+                    "ci95",
+                  ],
+                  "type": "object",
+                },
+                "revertRate": {
+                  "additionalProperties": false,
+                  "description": "Changes later reverted by an in-range commit",
+                  "properties": {
+                    "ci95": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "high": {
+                              "type": "number",
+                            },
+                            "low": {
+                              "type": "number",
+                            },
+                          },
+                          "required": [
+                            "low",
+                            "high",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                      "description": "Wilson 95% score interval; null when n is 0",
+                    },
+                    "hits": {
+                      "description": "Changes that hit the metric",
+                      "type": "number",
+                    },
+                    "n": {
+                      "description": "Changes the rate is computed over",
+                      "type": "number",
+                    },
+                    "rate": {
+                      "description": "hits / n, rounded to 4 places; null when n is 0",
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "hits",
+                    "n",
+                    "rate",
+                    "ci95",
+                  ],
+                  "type": "object",
+                },
+                "reverts": {
+                  "description": "Of those, revert commits (excluded from both rate denominators)",
+                  "type": "number",
+                },
+              },
+              "required": [
+                "commits",
+                "reverts",
+                "changes",
+                "revertRate",
+                "followUpFixRate",
+              ],
+              "type": "object",
+            },
+            "human": {
+              "additionalProperties": false,
+              "properties": {
+                "changes": {
+                  "description": "Non-revert commits — the revert-rate denominator",
+                  "type": "number",
+                },
+                "commits": {
+                  "description": "Non-merge commits in range for this class",
+                  "type": "number",
+                },
+                "followUpFixRate": {
+                  "additionalProperties": false,
+                  "description": "Changes at least 72h old followed within 72h by a fix-subject commit touching a shared file",
+                  "properties": {
+                    "ci95": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "high": {
+                              "type": "number",
+                            },
+                            "low": {
+                              "type": "number",
+                            },
+                          },
+                          "required": [
+                            "low",
+                            "high",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                      "description": "Wilson 95% score interval; null when n is 0",
+                    },
+                    "hits": {
+                      "description": "Changes that hit the metric",
+                      "type": "number",
+                    },
+                    "n": {
+                      "description": "Changes the rate is computed over",
+                      "type": "number",
+                    },
+                    "rate": {
+                      "description": "hits / n, rounded to 4 places; null when n is 0",
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "hits",
+                    "n",
+                    "rate",
+                    "ci95",
+                  ],
+                  "type": "object",
+                },
+                "revertRate": {
+                  "additionalProperties": false,
+                  "description": "Changes later reverted by an in-range commit",
+                  "properties": {
+                    "ci95": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "high": {
+                              "type": "number",
+                            },
+                            "low": {
+                              "type": "number",
+                            },
+                          },
+                          "required": [
+                            "low",
+                            "high",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                      "description": "Wilson 95% score interval; null when n is 0",
+                    },
+                    "hits": {
+                      "description": "Changes that hit the metric",
+                      "type": "number",
+                    },
+                    "n": {
+                      "description": "Changes the rate is computed over",
+                      "type": "number",
+                    },
+                    "rate": {
+                      "description": "hits / n, rounded to 4 places; null when n is 0",
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "hits",
+                    "n",
+                    "rate",
+                    "ci95",
+                  ],
+                  "type": "object",
+                },
+                "reverts": {
+                  "description": "Of those, revert commits (excluded from both rate denominators)",
+                  "type": "number",
+                },
+              },
+              "required": [
+                "commits",
+                "reverts",
+                "changes",
+                "revertRate",
+                "followUpFixRate",
+              ],
+              "type": "object",
+            },
+            "total": {
+              "additionalProperties": false,
+              "properties": {
+                "changes": {
+                  "description": "Non-revert commits — the revert-rate denominator",
+                  "type": "number",
+                },
+                "commits": {
+                  "description": "Non-merge commits in range for this class",
+                  "type": "number",
+                },
+                "followUpFixRate": {
+                  "additionalProperties": false,
+                  "description": "Changes at least 72h old followed within 72h by a fix-subject commit touching a shared file",
+                  "properties": {
+                    "ci95": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "high": {
+                              "type": "number",
+                            },
+                            "low": {
+                              "type": "number",
+                            },
+                          },
+                          "required": [
+                            "low",
+                            "high",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                      "description": "Wilson 95% score interval; null when n is 0",
+                    },
+                    "hits": {
+                      "description": "Changes that hit the metric",
+                      "type": "number",
+                    },
+                    "n": {
+                      "description": "Changes the rate is computed over",
+                      "type": "number",
+                    },
+                    "rate": {
+                      "description": "hits / n, rounded to 4 places; null when n is 0",
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "hits",
+                    "n",
+                    "rate",
+                    "ci95",
+                  ],
+                  "type": "object",
+                },
+                "revertRate": {
+                  "additionalProperties": false,
+                  "description": "Changes later reverted by an in-range commit",
+                  "properties": {
+                    "ci95": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "high": {
+                              "type": "number",
+                            },
+                            "low": {
+                              "type": "number",
+                            },
+                          },
+                          "required": [
+                            "low",
+                            "high",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                      "description": "Wilson 95% score interval; null when n is 0",
+                    },
+                    "hits": {
+                      "description": "Changes that hit the metric",
+                      "type": "number",
+                    },
+                    "n": {
+                      "description": "Changes the rate is computed over",
+                      "type": "number",
+                    },
+                    "rate": {
+                      "description": "hits / n, rounded to 4 places; null when n is 0",
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "hits",
+                    "n",
+                    "rate",
+                    "ci95",
+                  ],
+                  "type": "object",
+                },
+                "reverts": {
+                  "description": "Of those, revert commits (excluded from both rate denominators)",
+                  "type": "number",
+                },
+              },
+              "required": [
+                "commits",
+                "reverts",
+                "changes",
+                "revertRate",
+                "followUpFixRate",
+              ],
+              "type": "object",
+            },
+          },
+          "required": [
+            "agent",
+            "human",
+            "total",
+          ],
+          "type": "object",
+        },
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "comparison": {
+          "additionalProperties": false,
+          "properties": {
+            "followUpFixRate": {
+              "additionalProperties": false,
+              "properties": {
+                "difference": {
+                  "description": "agent rate − human rate",
+                  "type": [
+                    "number",
+                    "null",
+                  ],
+                },
+                "intervalsOverlap": {
+                  "description": "Whether the two Wilson intervals overlap",
+                  "type": [
+                    "boolean",
+                    "null",
+                  ],
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "suppressed": {
+                  "description": "True when either class has n below minN",
+                  "type": "boolean",
+                },
+              },
+              "required": [
+                "suppressed",
+                "reason",
+                "difference",
+                "intervalsOverlap",
+              ],
+              "type": "object",
+            },
+            "minN": {
+              "type": "number",
+            },
+            "revertRate": {
+              "additionalProperties": false,
+              "properties": {
+                "difference": {
+                  "description": "agent rate − human rate",
+                  "type": [
+                    "number",
+                    "null",
+                  ],
+                },
+                "intervalsOverlap": {
+                  "description": "Whether the two Wilson intervals overlap",
+                  "type": [
+                    "boolean",
+                    "null",
+                  ],
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "suppressed": {
+                  "description": "True when either class has n below minN",
+                  "type": "boolean",
+                },
+              },
+              "required": [
+                "suppressed",
+                "reason",
+                "difference",
+                "intervalsOverlap",
+              ],
+              "type": "object",
+            },
+          },
+          "required": [
+            "minN",
+            "revertRate",
+            "followUpFixRate",
+          ],
+          "type": "object",
+        },
+        "from": {
+          "description": "ISO start of the window",
+          "type": "string",
+        },
+        "heuristics": {
+          "additionalProperties": false,
+          "properties": {
+            "agentTrailers": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "fixSubjectPattern": {
+              "type": "string",
+            },
+            "followUpIgnoredFiles": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "followUpWindowHours": {
+              "type": "number",
+            },
+            "mergesExcluded": {
+              "type": "boolean",
+            },
+          },
+          "required": [
+            "agentTrailers",
+            "fixSubjectPattern",
+            "followUpWindowHours",
+            "followUpIgnoredFiles",
+            "mergesExcluded",
+          ],
+          "type": "object",
+        },
+        "repoRoot": {
+          "description": "git toplevel the stats were read from",
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "sinceDays": {
+          "type": "number",
+        },
+        "until": {
+          "description": "ISO end of the window (now)",
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "repoRoot",
+        "sinceDays",
+        "from",
+        "until",
+        "classes",
+        "comparison",
+        "heuristics",
+      ],
+      "type": "object",
+    },
+    "config edit": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "editor": {
+          "type": "string",
+        },
+        "path": {
+          "description": "The per-project override file that was opened",
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "path",
+        "editor",
+      ],
+      "type": "object",
+    },
+    "config path": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "hasOverrides": {
+          "type": "boolean",
+        },
+        "layers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "exists": {
+                "type": "boolean",
+              },
+              "label": {
+                "type": "string",
+              },
+              "path": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "label",
+              "path",
+              "exists",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "overrideKeys": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "projectName": {
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "projectName",
+        "layers",
+        "hasOverrides",
+        "overrideKeys",
+      ],
+      "type": "object",
+    },
+    "config-get": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "config": {
+          "additionalProperties": {},
+          "description": "The fully resolved infra-kit configuration — the same object every command sees at runtime, after the project infra-kit.json, the user-global, and the user-scope per-project override layers are merged (later layers win). Top-level sections include envManagement, worktrees, and protectedEnvs.",
+          "propertyNames": {
+            "type": "string",
+          },
+          "type": "object",
+        },
+        "configPath": {
+          "description": "Absolute path to the project-level infra-kit.json (the base layer / committed source of truth).",
+          "type": "string",
+        },
+        "key": {
+          "description": "The top-level key asked for, when one was.",
+          "type": "string",
+        },
+        "projectName": {
+          "description": "Repository name the config is keyed to (the main-repo basename; shared across all worktrees of the repo).",
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "value": {
+          "description": "The merged value of \`key\` (null when no layer sets it).",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "config",
+        "configPath",
+        "projectName",
+      ],
+      "type": "object",
+    },
+    "config-set": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "key": {
+          "type": "string",
+        },
+        "path": {
+          "description": "The layer file written",
+          "type": "string",
+        },
+        "previous": {
+          "description": "The value the layer held before, or null",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "scope": {
+          "enum": [
+            "project",
+            "global",
+          ],
+          "type": "string",
+        },
+        "value": {
+          "description": "The parsed value written",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "key",
+        "value",
+        "previous",
+        "scope",
+        "path",
+      ],
+      "type": "object",
+    },
+    "config-unset": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "key": {
+          "type": "string",
+        },
+        "path": {
+          "description": "The layer file edited",
+          "type": "string",
+        },
+        "previous": {
+          "description": "The value the layer held before, or null",
+        },
+        "removed": {
+          "type": "boolean",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "scope": {
+          "enum": [
+            "project",
+            "global",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "key",
+        "removed",
+        "previous",
+        "scope",
+        "path",
+      ],
+      "type": "object",
+    },
+    "deploy-run": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "reason": {
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "service": {
+          "type": "string",
+        },
+        "status": {
+          "enum": [
+            "deployed",
+            "skipped",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "status",
+        "service",
+      ],
+      "type": "object",
+    },
+    "deploy-sync": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "files": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+              },
+              "status": {
+                "enum": [
+                  "created",
+                  "updated",
+                  "unchanged",
+                  "removed",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "path",
+              "status",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "ok": {
+          "type": "boolean",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "status": {
+          "enum": [
+            "written",
+            "unchanged",
+            "drift",
+            "missing-config",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "status",
+        "ok",
+        "files",
+      ],
+      "type": "object",
+    },
+    "dev-status": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "active": {
+          "description": "True when at least one dev-context fragment exists on disk (an infra-kit dev session has apps registered). False means no active dev session was found — this is a clean result, NOT an error.",
+          "type": "boolean",
+        },
+        "apps": {
+          "description": "One entry per dev-context fragment on disk, sorted by app name. Empty when no dev session is active.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "ageSeconds": {
+                "description": "Seconds since the fragment was last written on disk. A large value with live:false means a stale/abandoned fragment.",
+                "type": "number",
+              },
+              "alias": {
+                "description": "Registered portless hostname for the app.",
+                "type": "string",
+              },
+              "app": {
+                "description": "App folder name (the fragment filename without .json).",
+                "type": "string",
+              },
+              "env": {
+                "description": "INFRA_KIT_ENV the dev session runs with — where its UIs proxy cloud routes. Null when none was loaded, or the fragment predates the field.",
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "fragmentMtime": {
+                "description": "ISO 8601 filesystem mtime of the fragment file — the AUTHORITATIVE freshness signal.",
+                "type": "string",
+              },
+              "live": {
+                "description": "Whether a TCP connection to the app port succeeds RIGHT NOW (a real engine liveness probe, not an inference). A fresh fragment with live:false is a crashed or killed dev server whose fragment was not cleaned up.",
+                "type": "boolean",
+              },
+              "origin": {
+                "description": "Authoritative local origin the vite helper proxies to for this app.",
+                "type": "string",
+              },
+              "package": {
+                "description": "The app package name the vite helper reads to decide a local route.",
+                "type": "string",
+              },
+              "pid": {
+                "description": "PID of the dev-server process that wrote the fragment (ownership / staleness metadata).",
+                "type": "number",
+              },
+              "port": {
+                "description": "The actual bound port the dev server is listening on.",
+                "type": "number",
+              },
+              "release": {
+                "description": "Release slug the runner recorded for this worktree.",
+                "type": "string",
+              },
+              "writtenAt": {
+                "description": "ISO 8601 time the runner self-reported writing the fragment (writer clock — may be wrong; prefer fragmentMtime). Null when the fragment did not record it.",
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+            },
+            "required": [
+              "app",
+              "package",
+              "port",
+              "pid",
+              "alias",
+              "origin",
+              "release",
+              "env",
+              "writtenAt",
+              "fragmentMtime",
+              "ageSeconds",
+              "live",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "contextDir": {
+          "description": "The RESOLVED dev-context fragment directory — found by searching UPWARD from the working directory. This is where the read looked, NOT proof anything is there: when no fragment directory exists the resolver derives one from an up-tree \`.infra-kit\`, so this can name a path (even under $HOME) that was never written to. Check contextDirExists before drawing any conclusion from it. Null when no \`.infra-kit\` anchor exists up-tree at all.",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "contextDirExists": {
+          "description": "Whether contextDir actually exists on disk. False with a non-null contextDir means the path was DERIVED, not read — the usual state in a repo where \`infra-kit dev\` has never run. Distinguishes "looked and found nothing" from "had nowhere to look".",
+          "type": "boolean",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "active",
+        "contextDir",
+        "contextDirExists",
+        "apps",
+      ],
+      "type": "object",
+    },
+    "doctor": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "allPassed": {
+          "description": "Whether no check failed (warnings and skips do not count)",
+          "type": "boolean",
+        },
+        "checks": {
+          "description": "List of all check results",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "additionalProperties": false,
+                "description": "Probe facts about an external dependency. Never a fix: no action, no commands",
+                "properties": {
+                  "manager": {
+                    "description": "Which package manager owns this install, read from its resolved path",
+                    "type": "string",
+                  },
+                  "onPath": {
+                    "description": "The binary resolves on PATH",
+                    "type": "boolean",
+                  },
+                  "present": {
+                    "description": "The tool is installed somewhere findable — on PATH or not",
+                    "type": "boolean",
+                  },
+                  "version": {
+                    "description": "The version the tool reported, or null",
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                },
+                "required": [
+                  "manager",
+                  "version",
+                  "present",
+                  "onPath",
+                ],
+                "type": "object",
+              },
+              "fixable": {
+                "description": "Whether \`infra-kit doctor --fix\` repairs this row",
+                "type": "boolean",
+              },
+              "message": {
+                "description": "Details about the check result",
+                "type": "string",
+              },
+              "name": {
+                "description": "Name of the check",
+                "type": "string",
+              },
+              "status": {
+                "description": "Check result; warn is advisory and never fails the run; skip is not evaluated; the message says why; never a failure",
+                "enum": [
+                  "pass",
+                  "fail",
+                  "warn",
+                  "skip",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "name",
+              "status",
+              "message",
+              "fixable",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "cliVersion": {
+          "description": "Version of the infra-kit CLI that produced this report",
+          "type": "string",
+        },
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "checks",
+        "allPassed",
+        "cliVersion",
+      ],
+      "type": "object",
+    },
+    "e2e": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "annotated": {
+          "description": "Per spec file, the tests that passed or skipped while asserting little, as Playwright ran them; empty unless report is collected.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "fail": {
+                "description": "test.fail — green only while the bug it registers exists.",
+                "type": "number",
+              },
+              "file": {
+                "type": "string",
+              },
+              "fixme": {
+                "description": "test.fixme — skipped as unfinished.",
+                "type": "number",
+              },
+              "skip": {
+                "description": "test.skip, declared or called at runtime, conditional ones included.",
+                "type": "number",
+              },
+            },
+            "required": [
+              "file",
+              "fail",
+              "fixme",
+              "skip",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "app": {
+          "type": "string",
+        },
+        "baseUrl": {
+          "description": "The URL the run was pointed at: the local alias, or the deployed URL.",
+          "type": "string",
+        },
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "deployedUrlEnv": {
+          "description": "The target’s variable holding its deployed URL; a cloud run reads it. Null when it declares none.",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "devCommand": {
+          "description": "Local runs with nothing served: the dev command the Playwright config starts, and stops after.",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "env": {
+          "description": "INFRA_KIT_ENV of this process; the env a cloud run targets.",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "errors": {
+          "description": "Run-level errors with no test to blame (config, global setup, a spec that fails to import), ANSI stripped and truncated; empty unless report is collected.",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "exitCode": {
+          "description": "Playwright’s exit code; null when it did not run.",
+          "type": [
+            "number",
+            "null",
+          ],
+        },
+        "failures": {
+          "description": "One entry per test and project that failed, needed a retry, or failed in some repeat; empty unless report is collected.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "description": "The failure message, ANSI stripped, truncated to 2000 characters.",
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "failedRuns": {
+                "description": "How many of those runs failed.",
+                "type": "number",
+              },
+              "file": {
+                "type": "string",
+              },
+              "line": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
+              "project": {
+                "type": "string",
+              },
+              "retry": {
+                "description": "The retry index of the failed attempt reported here.",
+                "type": "number",
+              },
+              "runs": {
+                "description": "How many times the test ran in this project — its --repeat-each repeats.",
+                "type": "number",
+              },
+              "status": {
+                "description": "flaky: failed, then passed on a retry or in another --repeat-each repeat.",
+                "enum": [
+                  "unexpected",
+                  "flaky",
+                ],
+                "type": "string",
+              },
+              "title": {
+                "description": "Describe path and test title, joined with ›.",
+                "type": "string",
+              },
+              "tracePath": {
+                "description": "The failed attempt’s trace.zip; open with \`playwright show-trace\`.",
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+            },
+            "required": [
+              "title",
+              "file",
+              "line",
+              "project",
+              "status",
+              "retry",
+              "runs",
+              "failedRuns",
+              "error",
+              "tracePath",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "localUrl": {
+          "description": "This worktree’s address for the target, whether or not anything serves it.",
+          "type": "string",
+        },
+        "mode": {
+          "description": "local (default): this worktree’s dev server. cloud (--cloud): the deployed app at env.",
+          "enum": [
+            "local",
+            "cloud",
+          ],
+          "type": "string",
+        },
+        "outputDir": {
+          "description": "Where this run’s traces and attachments live — its own directory, so a later run cannot delete them. Null unless report is collected or unavailable.",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "packageName": {
+          "type": "string",
+        },
+        "playwrightArgs": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "ran": {
+          "description": "False for --dry-run.",
+          "type": "boolean",
+        },
+        "release": {
+          "description": "This worktree’s release slug — the first label of every local alias.",
+          "type": "string",
+        },
+        "report": {
+          "description": "Per-test results: collected from Playwright’s JSON reporter under --json/agent mode; caller-reporter when playwrightArgs carried its own --reporter; unavailable when the run wrote no readable report; off otherwise.",
+          "enum": [
+            "off",
+            "caller-reporter",
+            "unavailable",
+            "collected",
+          ],
+          "type": "string",
+        },
+        "routes": {
+          "description": "Served local UI runs only: the dev proxy’s route-by-route local/cloud split, local backends probed.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "live": {
+                "type": [
+                  "boolean",
+                  "null",
+                ],
+              },
+              "packageName": {
+                "type": "string",
+              },
+              "path": {
+                "type": "string",
+              },
+              "source": {
+                "enum": [
+                  "local",
+                  "cloud",
+                ],
+                "type": "string",
+              },
+              "target": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+            },
+            "required": [
+              "path",
+              "packageName",
+              "source",
+              "target",
+              "live",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "served": {
+          "description": "Whether this worktree’s dev server already served the target when the run began.",
+          "type": "boolean",
+        },
+        "servedEnv": {
+          "description": "Served local runs: the INFRA_KIT_ENV the running dev session recorded — where its cloud routes go. Null when nothing served the target or the session recorded none. A local run refuses when it differs from env.",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "expected": {
+                  "type": "number",
+                },
+                "flaky": {
+                  "type": "number",
+                },
+                "repeatFlaky": {
+                  "type": "number",
+                },
+                "skipped": {
+                  "type": "number",
+                },
+                "unexpected": {
+                  "type": "number",
+                },
+              },
+              "required": [
+                "expected",
+                "unexpected",
+                "flaky",
+                "skipped",
+                "repeatFlaky",
+              ],
+              "type": "object",
+            },
+            {
+              "type": "null",
+            },
+          ],
+          "description": "Playwright’s counts by outcome, one per run (each --repeat-each repeat counts), plus repeatFlaky: tests that passed in some repeats and failed in others. Null unless report is collected.",
+        },
+        "target": {
+          "description": "The package under test, \`<app>/ui\` or \`<app>/api\`.",
+          "type": "string",
+        },
+        "testsDir": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "app",
+        "testsDir",
+        "target",
+        "packageName",
+        "mode",
+        "baseUrl",
+        "deployedUrlEnv",
+        "release",
+        "env",
+        "servedEnv",
+        "localUrl",
+        "served",
+        "devCommand",
+        "routes",
+        "playwrightArgs",
+        "ran",
+        "exitCode",
+        "report",
+        "outputDir",
+        "summary",
+        "failures",
+        "annotated",
+        "errors",
+      ],
+      "type": "object",
+    },
+    "env-clear": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "filePath": {
+          "description": "Path to the file that must be sourced to apply",
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "unsetStatements": {
+          "description": "Unset statements generated",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "variableCount": {
+          "description": "Number of variables cleared",
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "filePath",
+        "variableCount",
+        "unsetStatements",
+      ],
+      "type": "object",
+    },
+    "env-list": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "configs": {
+          "description": "Every environment name known to this project",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "defaultEnv": {
+          "description": "The configured "defaultEnv" — what env-load takes when no config is named; null when unset",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "project": {
+          "description": "Detected Doppler project name",
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "tokens": {
+          "description": "Per-environment token presence — never the token value",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "env": {
+                "description": "Environment / Doppler config name",
+                "type": "string",
+              },
+              "hasToken": {
+                "description": "Whether a service token resolves locally for this environment",
+                "type": "boolean",
+              },
+              "source": {
+                "description": "Where we learned this environment exists — a workflow declaration, or a token we hold",
+                "enum": [
+                  "gh-workflow",
+                  "token-only",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "env",
+              "source",
+              "hasToken",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "project",
+        "defaultEnv",
+        "configs",
+        "tokens",
+      ],
+      "type": "object",
+    },
+    "env-load": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "config": {
+          "description": "Doppler config name",
+          "type": "string",
+        },
+        "configSource": {
+          "description": "How the config was chosen: passed as "config", the configured "defaultEnv", or the terminal picker",
+          "enum": [
+            "argument",
+            "default",
+            "picker",
+          ],
+          "type": "string",
+        },
+        "filePath": {
+          "description": "Path to the file that must be sourced to apply variables",
+          "type": "string",
+        },
+        "project": {
+          "description": "Doppler project name",
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "sessionId": {
+          "description": "The INFRA_KIT_SESSION the file was written for; null when the process had no session",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "variableCount": {
+          "description": "Number of variables loaded",
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "filePath",
+        "variableCount",
+        "project",
+        "config",
+        "configSource",
+        "sessionId",
+      ],
+      "type": "object",
+    },
+    "env-status": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "sessionConfig": {
+          "description": "Doppler config name of the loaded session (environment name)",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "sessionId": {
+          "description": "Current terminal session ID",
+          "type": "string",
+        },
+        "sessionLoadedAt": {
+          "description": "ISO 8601 timestamp of when the env was loaded",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "sessionLoadedCount": {
+          "description": "Number of cached vars active in the current session",
+          "type": "number",
+        },
+        "sessionProject": {
+          "description": "Doppler project name of the loaded session",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "sessionTotalCount": {
+          "description": "Total number of cached var names",
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "sessionId",
+        "sessionLoadedCount",
+        "sessionTotalCount",
+        "sessionConfig",
+        "sessionProject",
+        "sessionLoadedAt",
+      ],
+      "type": "object",
+    },
+    "env-token-list": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "tokens": {
+          "description": "One row per declared environment",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "env": {
+                "description": "Environment / Doppler config name",
+                "type": "string",
+              },
+              "present": {
+                "description": "Whether a token is configured for this environment",
+                "type": "boolean",
+              },
+              "redactedToken": {
+                "description": "Redacted token — last 4 chars at most, never the raw value",
+                "type": "string",
+              },
+              "source": {
+                "description": ""store", "env:INFRA_KIT_ENV_TOKEN", or "-" when absent",
+                "type": "string",
+              },
+              "status": {
+                "description": "Only with check=true: valid | revoked | mis-scoped | unreachable",
+                "type": "string",
+              },
+            },
+            "required": [
+              "env",
+              "source",
+              "redactedToken",
+              "present",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "tokens",
+      ],
+      "type": "object",
+    },
+    "env-token-remove": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "env": {
+          "type": "string",
+        },
+        "removed": {
+          "type": "boolean",
+        },
+        "revokeUrl": {
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "storePath": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "env",
+        "removed",
+        "storePath",
+        "revokeUrl",
+      ],
+      "type": "object",
+    },
+    "env-token-set": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "description": "The grouped command path that ran, e.g. \`release create\`",
+              "type": "string",
+            },
+            "env": {
+              "type": "string",
+            },
+            "previousRedactedToken": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "redactedToken": {
+              "type": "string",
+            },
+            "schemaVersion": {
+              "const": 1,
+              "type": "number",
+            },
+            "scopeVerified": {
+              "type": "boolean",
+            },
+            "source": {
+              "enum": [
+                "stdin",
+                "env",
+                "prompt",
+              ],
+              "type": "string",
+            },
+            "status": {
+              "enum": [
+                "stored",
+                "replaced",
+                "unchanged",
+                "kept",
+              ],
+              "type": "string",
+            },
+            "storePath": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schemaVersion",
+            "command",
+            "env",
+            "status",
+            "source",
+            "redactedToken",
+            "previousRedactedToken",
+            "storePath",
+            "scopeVerified",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "description": "The grouped command path that ran, e.g. \`release create\`",
+              "type": "string",
+            },
+            "failedCount": {
+              "type": "number",
+            },
+            "rows": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "env": {
+                    "type": "string",
+                  },
+                  "error": {
+                    "type": "string",
+                  },
+                  "redactedToken": {
+                    "type": "string",
+                  },
+                  "scopeVerified": {
+                    "type": "boolean",
+                  },
+                  "status": {
+                    "enum": [
+                      "stored",
+                      "replaced",
+                      "unchanged",
+                      "failed",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "env",
+                  "status",
+                  "redactedToken",
+                  "scopeVerified",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "schemaVersion": {
+              "const": 1,
+              "type": "number",
+            },
+            "storePath": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schemaVersion",
+            "command",
+            "storePath",
+            "rows",
+            "failedCount",
+          ],
+          "type": "object",
+        },
+      ],
+    },
+    "local deploy-all": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "accountId": {
+          "description": "AWS account the deploy targeted",
+          "type": "string",
+        },
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "contract": {
+          "additionalProperties": {
+            "type": "string",
+          },
+          "description": "Build contract passed to the scripts",
+          "propertyNames": {
+            "type": "string",
+          },
+          "type": "object",
+        },
+        "deployed": {
+          "description": "Services that completed successfully",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "dryRun": {
+          "description": "Whether this was a dry run",
+          "type": "boolean",
+        },
+        "environment": {
+          "description": "Environment deployed to",
+          "type": "string",
+        },
+        "failed": {
+          "description": "Services that failed",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "services": {
+          "description": "Services requested",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "strippedVars": {
+          "description": "Ambient VITE_* names removed from the build env",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "success": {
+          "description": "Whether every requested service deployed",
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "environment",
+        "accountId",
+        "services",
+        "deployed",
+        "failed",
+        "contract",
+        "strippedVars",
+        "dryRun",
+        "success",
+      ],
+      "type": "object",
+    },
+    "local deploy-selected": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "accountId": {
+          "description": "AWS account the deploy targeted",
+          "type": "string",
+        },
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "contract": {
+          "additionalProperties": {
+            "type": "string",
+          },
+          "description": "Build contract passed to the scripts",
+          "propertyNames": {
+            "type": "string",
+          },
+          "type": "object",
+        },
+        "deployed": {
+          "description": "Services that completed successfully",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "dryRun": {
+          "description": "Whether this was a dry run",
+          "type": "boolean",
+        },
+        "environment": {
+          "description": "Environment deployed to",
+          "type": "string",
+        },
+        "failed": {
+          "description": "Services that failed",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "services": {
+          "description": "Services requested",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "strippedVars": {
+          "description": "Ambient VITE_* names removed from the build env",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "success": {
+          "description": "Whether every requested service deployed",
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "environment",
+        "accountId",
+        "services",
+        "deployed",
+        "failed",
+        "contract",
+        "strippedVars",
+        "dryRun",
+        "success",
+      ],
+      "type": "object",
+    },
+    "release create": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "createdBranches": {
+          "description": "List of created release branch names",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "failedReleases": {
+          "description": "List of releases that failed with error messages",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "description": "Error message",
+                "type": "string",
+              },
+              "version": {
+                "description": "Version number that failed",
+                "type": "string",
+              },
+            },
+            "required": [
+              "version",
+              "error",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "failureCount": {
+          "description": "Number of releases that failed",
+          "type": "number",
+        },
+        "releases": {
+          "description": "Detailed information for each created release with URLs",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "branchName": {
+                "description": "Release branch name",
+                "type": "string",
+              },
+              "jiraVersionUrl": {
+                "description": "Jira version URL",
+                "type": "string",
+              },
+              "prUrl": {
+                "description": "GitHub PR URL",
+                "type": "string",
+              },
+              "releaseDate": {
+                "description": "The release date the Jira fix version now carries (yyyy-mm-dd), or null when it has none",
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "type": {
+                "description": "Release type",
+                "enum": [
+                  "regular",
+                  "hotfix",
+                ],
+                "type": "string",
+              },
+              "version": {
+                "description": "Version number",
+                "type": "string",
+              },
+            },
+            "required": [
+              "version",
+              "type",
+              "branchName",
+              "prUrl",
+              "jiraVersionUrl",
+              "releaseDate",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "successCount": {
+          "description": "Number of releases created successfully",
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "createdBranches",
+        "successCount",
+        "failureCount",
+        "releases",
+        "failedReleases",
+      ],
+      "type": "object",
+    },
+    "release deliver": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "releaseBranch": {
+          "description": "The release branch that was delivered",
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "success": {
+          "description": "Whether the delivery was successful",
+          "type": "boolean",
+        },
+        "type": {
+          "description": "Release type",
+          "enum": [
+            "regular",
+            "hotfix",
+          ],
+          "type": "string",
+        },
+        "version": {
+          "description": "The version that was delivered",
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "releaseBranch",
+        "version",
+        "type",
+        "success",
+      ],
+      "type": "object",
+    },
+    "release deploy-all": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "environment": {
+          "description": "The environment deployed to",
+          "type": "string",
+        },
+        "releaseBranch": {
+          "description": "The release branch that was deployed",
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "skipTerraformDeploy": {
+          "description": "Whether terraform deployment was skipped",
+          "type": "boolean",
+        },
+        "success": {
+          "description": "Whether the deployment was successful",
+          "type": "boolean",
+        },
+        "version": {
+          "description": "The version that was deployed",
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "releaseBranch",
+        "version",
+        "environment",
+        "skipTerraformDeploy",
+        "success",
+      ],
+      "type": "object",
+    },
+    "release deploy-selected": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "environment": {
+          "description": "The environment deployed to",
+          "type": "string",
+        },
+        "releaseBranch": {
+          "description": "The release branch that was deployed",
+          "type": "string",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "services": {
+          "description": "The services that were deployed",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "skipTerraformDeploy": {
+          "description": "Whether terraform deployment was skipped",
+          "type": "boolean",
+        },
+        "success": {
+          "description": "Whether the deployment was successful",
+          "type": "boolean",
+        },
+        "version": {
+          "description": "The version that was deployed",
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "releaseBranch",
+        "version",
+        "environment",
+        "services",
+        "skipTerraformDeploy",
+        "success",
+      ],
+      "type": "object",
+    },
+    "release edit": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "description": "Release branch name (e.g. "release/v1.2.5" or "release/checkout-redesign")",
+          "type": "string",
+        },
+        "changed": {
+          "description": "Whether anything actually changed",
+          "type": "boolean",
+        },
+        "changedFields": {
+          "description": "The fields whose value actually changed",
+          "items": {
+            "enum": [
+              "description",
+              "releaseDate",
+            ],
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "jiraVersionUrl": {
+          "description": "Jira fix version URL",
+          "type": "string",
+        },
+        "newDescription": {
+          "description": "The description after the update",
+          "type": "string",
+        },
+        "newReleaseDate": {
+          "description": "The planned release date after the update, or null",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "previousDescription": {
+          "description": "The description before the update",
+          "type": "string",
+        },
+        "previousReleaseDate": {
+          "description": "The planned release date before the update, or null",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "version": {
+          "description": "Release version",
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "version",
+        "branch",
+        "jiraVersionUrl",
+        "previousDescription",
+        "newDescription",
+        "previousReleaseDate",
+        "newReleaseDate",
+        "changedFields",
+        "changed",
+      ],
+      "type": "object",
+    },
+    "release list": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "count": {
+          "description": "Number of release branches",
+          "type": "number",
+        },
+        "releases": {
+          "description": "List of all release branches",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "description": "Jira version description",
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "releaseDate": {
+                "description": "Planned release date of the Jira version (yyyy-mm-dd)",
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "titleMismatch": {
+                "description": "The PR title names a different release type than its base branch",
+                "type": "boolean",
+              },
+              "type": {
+                "description": "Release type",
+                "enum": [
+                  "regular",
+                  "hotfix",
+                ],
+                "type": "string",
+              },
+              "version": {
+                "description": "Release version",
+                "type": "string",
+              },
+            },
+            "required": [
+              "version",
+              "type",
+              "description",
+              "releaseDate",
+              "titleMismatch",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "releases",
+        "count",
+      ],
+      "type": "object",
+    },
+    "release merge-dev": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "atomicPush": {
+          "additionalProperties": false,
+          "description": "Outcome of the single all-or-nothing push",
+          "properties": {
+            "aborted": {
+              "type": "boolean",
+            },
+            "abortedBy": {
+              "type": "string",
+            },
+            "attempted": {
+              "type": "boolean",
+            },
+          },
+          "required": [
+            "attempted",
+            "aborted",
+          ],
+          "type": "object",
+        },
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "dryRun": {
+          "description": "True when nothing was pushed because this was a plan-only run",
+          "type": "boolean",
+        },
+        "failedBranches": {
+          "description": "List of branches that did not merge",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "failedMerges": {
+          "description": "Number of branches that did not",
+          "type": "number",
+        },
+        "results": {
+          "description": "Per-branch terminal state",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "blocked": {
+                "additionalProperties": false,
+                "description": "Why a \`continue\` run did not commit this resolution",
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "unmerged-paths",
+                      "markers-remaining",
+                      "out-of-scope-edit",
+                      "verify-failed",
+                      "verify-mutated-tree",
+                      "parents-mismatch",
+                      "git-too-old",
+                      "tree-changed",
+                    ],
+                    "type": "string",
+                  },
+                  "detail": {
+                    "type": "string",
+                  },
+                  "paths": {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                },
+                "required": [
+                  "code",
+                  "detail",
+                ],
+                "type": "object",
+              },
+              "branch": {
+                "type": "string",
+              },
+              "conflictPaths": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "mergeSha": {
+                "type": "string",
+              },
+              "pushed": {
+                "type": "boolean",
+              },
+              "reason": {
+                "type": "string",
+              },
+              "resolution": {
+                "additionalProperties": false,
+                "description": "The \`keepConflicts\` hand-off for a conflicted branch, or for a clean merge that failed verify (\`verify-failed\`: edit only \`editablePaths\`)",
+                "properties": {
+                  "baseSha": {
+                    "type": "string",
+                  },
+                  "conflictPaths": {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "devSha": {
+                    "type": "string",
+                  },
+                  "editablePaths": {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "lockfileOnly": {
+                    "type": "boolean",
+                  },
+                  "rererePreResolved": {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "state": {
+                    "enum": [
+                      "needs-agent",
+                      "lockfile-only",
+                      "verify-failed",
+                      "exists",
+                    ],
+                    "type": "string",
+                  },
+                  "worktreePath": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "worktreePath",
+                  "baseSha",
+                  "devSha",
+                  "conflictPaths",
+                  "lockfileOnly",
+                  "rererePreResolved",
+                  "state",
+                ],
+                "type": "object",
+              },
+              "status": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "branch",
+              "status",
+              "pushed",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "skipped": {
+          "description": "Every discovered release PR that was not a merge candidate, with why. Empty only when nothing was discovered.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "type": "string",
+              },
+              "reason": {
+                "enum": [
+                  "hotfix (targets main)",
+                  "title/base mismatch",
+                  "open PRs to both dev and main",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "branch",
+              "reason",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "successfulMerges": {
+          "description": "Number of branches that reached their desired state",
+          "type": "number",
+        },
+        "totalBranches": {
+          "description": "Total number of branches processed",
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "successfulMerges",
+        "failedMerges",
+        "failedBranches",
+        "totalBranches",
+        "dryRun",
+        "atomicPush",
+        "results",
+        "skipped",
+      ],
+      "type": "object",
+    },
+    "release remove": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "baseBranch": {
+          "description": "The branch HEAD was moved to before the local delete",
+          "type": "string",
+        },
+        "branch": {
+          "description": "The release branch that was targeted",
+          "type": "string",
+        },
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "jira": {
+          "description": ""removed" when the fix version was deleted; "absent" when Jira knows none for this release (the resume path); "skipped" only on the CLI with --skip-jira",
+          "enum": [
+            "removed",
+            "absent",
+            "skipped",
+          ],
+          "type": "string",
+        },
+        "jiraVersion": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                },
+                "name": {
+                  "type": "string",
+                },
+                "url": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "id",
+                "name",
+                "url",
+              ],
+              "type": "object",
+            },
+            {
+              "type": "null",
+            },
+          ],
+          "description": "The fix version this release owned, captured before removal — the id is the only handle that survives it",
+        },
+        "localBranch": {
+          "description": "Whether a local branch was deleted or none existed",
+          "enum": [
+            "deleted",
+            "absent",
+          ],
+          "type": "string",
+        },
+        "localTipSha": {
+          "description": "The local tip before deletion — the handle that restores the branch",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "pr": {
+          "description": "What happened to the release pull request",
+          "enum": [
+            "closed",
+            "already-closed",
+            "absent",
+          ],
+          "type": "string",
+        },
+        "prNumber": {
+          "description": "The pull request number, or null when none exists",
+          "type": [
+            "number",
+            "null",
+          ],
+        },
+        "remoteBranch": {
+          "description": "Whether the origin branch was deleted or none existed",
+          "enum": [
+            "deleted",
+            "absent",
+          ],
+          "type": "string",
+        },
+        "remoteTipSha": {
+          "description": "The origin tip before deletion",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "version": {
+          "description": "The release label (e.g. "1.2.5")",
+          "type": "string",
+        },
+        "worktree": {
+          "description": "Whether a git worktree was removed or none existed",
+          "enum": [
+            "removed",
+            "absent",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "branch",
+        "version",
+        "baseBranch",
+        "worktree",
+        "pr",
+        "prNumber",
+        "localBranch",
+        "localTipSha",
+        "remoteBranch",
+        "remoteTipSha",
+        "jira",
+        "jiraVersion",
+      ],
+      "type": "object",
+    },
+    "setup": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "allSucceeded": {
+              "description": "Whether no tool failed (a refusal is not a failure)",
+              "type": "boolean",
+            },
+            "changed": {
+              "description": "Whether anything was installed or updated",
+              "type": "boolean",
+            },
+            "command": {
+              "description": "The grouped command path that ran, e.g. \`release create\`",
+              "type": "string",
+            },
+            "converged": {
+              "description": "Whether the dependency step could act at all (false under skipTools)",
+              "type": "boolean",
+            },
+            "init": {
+              "description": "One entry per init step, in the order they ran",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "message": {
+                    "description": "The same line a human running this would have read",
+                    "type": "string",
+                  },
+                  "outcome": {
+                    "description": "What that step did: changed something, found nothing to change, did not run, left a command for a human to run (the message carries it), failed non-fatally, or threw and ended the init half (setup exits 1)",
+                    "enum": [
+                      "written",
+                      "unchanged",
+                      "skipped",
+                      "manual",
+                      "warned",
+                      "failed",
+                    ],
+                    "type": "string",
+                  },
+                  "step": {
+                    "description": "Which init step this reports on",
+                    "enum": [
+                      "zshrc",
+                      "zshenv",
+                      "migrations",
+                      "user-config",
+                      "guidance",
+                      "worktrees",
+                      "plugin-pointer",
+                      "mcp-server",
+                      "mcp-proxies",
+                      "project-config",
+                      "token-perms",
+                      "chrome",
+                      "shell",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "step",
+                  "outcome",
+                  "message",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "portlessService": {
+              "additionalProperties": false,
+              "description": "The portless link, node, and system-service step — run on every setup, never gated on the tool options",
+              "properties": {
+                "command": {
+                  "description": "The sudo \`service install\` command a human has to run; present if and only if service is absent or drifted, null otherwise",
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "link": {
+                  "description": "What the ~/.infra-kit/portless link step did",
+                  "enum": [
+                    "created",
+                    "repointed",
+                    "unchanged",
+                    "skipped-local",
+                    "skipped-unresolved",
+                    "failed",
+                  ],
+                  "type": "string",
+                },
+                "node": {
+                  "description": "What the ~/.infra-kit/node step did",
+                  "enum": [
+                    "created",
+                    "refreshed",
+                    "unchanged",
+                    "skipped-local",
+                    "skipped-platform",
+                    "failed",
+                  ],
+                  "type": "string",
+                },
+                "service": {
+                  "description": "The installed portless system service against the link and node: not installed, already running through both, installed but pointing elsewhere, or not judged because portless is not installed",
+                  "enum": [
+                    "absent",
+                    "converged",
+                    "drifted",
+                    "skipped",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "link",
+                "node",
+                "service",
+                "command",
+              ],
+              "type": "object",
+            },
+            "report": {
+              "description": "The exact rows of the table printed on stderr; setup exits 1 iff a row is fail",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "label": {
+                    "description": "Section heading",
+                    "type": "string",
+                  },
+                  "rows": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "message": {
+                          "description": "The row message, as printed",
+                          "type": "string",
+                        },
+                        "name": {
+                          "description": "Init step, tool id, or portless part",
+                          "type": "string",
+                        },
+                        "notes": {
+                          "description": "Lines printed under the row, verbatim: the manual commands, warnings and failures",
+                          "items": {
+                            "type": "string",
+                          },
+                          "type": "array",
+                        },
+                        "status": {
+                          "description": "ok: nothing to change; changed: changed something; skipped: did not run; manual: not run by the CLI, the notes hold the command a human runs; warn: advisory problem; fail: failed (setup exits 1)",
+                          "enum": [
+                            "ok",
+                            "changed",
+                            "skipped",
+                            "manual",
+                            "warn",
+                            "fail",
+                          ],
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "name",
+                        "status",
+                        "message",
+                      ],
+                      "type": "object",
+                    },
+                    "type": "array",
+                  },
+                },
+                "required": [
+                  "label",
+                  "rows",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "schemaVersion": {
+              "const": 1,
+              "type": "number",
+            },
+            "tools": {
+              "description": "One result per requested dependency",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "description": "What happened",
+                    "enum": [
+                      "installed",
+                      "updated",
+                      "skipped",
+                      "refused",
+                      "failed",
+                    ],
+                    "type": "string",
+                  },
+                  "before": {
+                    "additionalProperties": false,
+                    "description": "The tool’s state before this run",
+                    "properties": {
+                      "manager": {
+                        "type": "string",
+                      },
+                      "onPath": {
+                        "type": "boolean",
+                      },
+                      "present": {
+                        "type": "boolean",
+                      },
+                      "version": {
+                        "type": [
+                          "string",
+                          "null",
+                        ],
+                      },
+                    },
+                    "required": [
+                      "present",
+                      "onPath",
+                      "version",
+                      "manager",
+                    ],
+                    "type": "object",
+                  },
+                  "commands": {
+                    "description": "The exact commands, one per step — printed even when refused",
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "detail": {
+                    "description": "Why, in one line",
+                    "type": "string",
+                  },
+                  "id": {
+                    "description": "Dependency id",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "action",
+                  "before",
+                  "commands",
+                  "detail",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+          },
+          "required": [
+            "schemaVersion",
+            "command",
+            "init",
+            "tools",
+            "portlessService",
+            "converged",
+            "changed",
+            "report",
+            "allSucceeded",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "description": "The grouped command path that ran, e.g. \`release create\`",
+              "type": "string",
+            },
+            "outcome": {
+              "enum": [
+                "ran",
+                "not-due",
+                "already-running",
+              ],
+              "type": "string",
+            },
+            "schemaVersion": {
+              "const": 1,
+              "type": "number",
+            },
+          },
+          "required": [
+            "schemaVersion",
+            "command",
+            "outcome",
+          ],
+          "type": "object",
+        },
+      ],
+    },
+    "vendor check": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "added": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "fileCount": {
+          "type": "number",
+        },
+        "modified": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "ok": {
+          "description": "Whether the vendor tree matches its manifest (false → CI should fail)",
+          "type": "boolean",
+        },
+        "removed": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "status": {
+          "enum": [
+            "clean",
+            "drift",
+            "skipped",
+            "missing-manifest",
+            "unknown-schema",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "status",
+        "ok",
+        "fileCount",
+        "modified",
+        "added",
+        "removed",
+      ],
+      "type": "object",
+    },
+    "vendor sync": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "changed": {
+          "type": "boolean",
+        },
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "failed": {
+          "type": "boolean",
+        },
+        "mode": {
+          "enum": [
+            "preview",
+            "check",
+            "applied",
+          ],
+          "type": "string",
+        },
+        "report": {
+          "description": "The printed report sections",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string",
+              },
+              "rows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                    "notes": {
+                      "items": {
+                        "type": "string",
+                      },
+                      "type": "array",
+                    },
+                    "status": {
+                      "enum": [
+                        "ok",
+                        "changed",
+                        "skipped",
+                        "manual",
+                        "warn",
+                        "fail",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "name",
+                    "status",
+                    "message",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+            },
+            "required": [
+              "label",
+              "rows",
+            ],
+            "type": "object",
+          },
+          "readOnly": true,
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "source": {
+          "additionalProperties": false,
+          "properties": {
+            "headSha": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "name": {
+              "type": "string",
+            },
+            "root": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "root",
+            "name",
+            "headSha",
+          ],
+          "type": "object",
+        },
+        "targets": {
+          "items": {
+            "additionalProperties": {},
+            "properties": {
+              "applied": {
+                "type": "boolean",
+              },
+              "name": {
+                "type": "string",
+              },
+              "root": {
+                "type": "string",
+              },
+              "status": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "name",
+              "root",
+              "status",
+              "applied",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "mode",
+        "source",
+        "targets",
+        "changed",
+        "failed",
+        "report",
+      ],
+      "type": "object",
+    },
+    "version": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "cwd": {
+          "description": "The working directory of this process",
+          "type": "string",
+        },
+        "mainRepoRoot": {
+          "description": "The main checkout a linked worktree belongs to (equals repoRoot outside worktrees); null with repoRoot",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "projectDir": {
+          "description": "CLAUDE_PROJECT_DIR as Claude Code set it for this process, or null",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "repoRoot": {
+          "description": "git toplevel of cwd — the worktree itself in a linked worktree; null when git cannot answer",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "version": {
+          "description": "Installed infra-kit CLI version (from package.json)",
+          "type": "string",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "version",
+        "cwd",
+        "repoRoot",
+        "mainRepoRoot",
+        "projectDir",
+      ],
+      "type": "object",
+    },
+    "worktrees add": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "count": {
+          "description": "Number of git worktrees created",
+          "type": "number",
+        },
+        "createdWorktrees": {
+          "description": "List of created git worktree branches",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "features": {
+          "description": "Created feature worktrees: source "new" = cut from origin/<base>; "local" / "remote" = an existing branch checked out as-is (base not applied)",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "base": {
+                "type": "string",
+              },
+              "branch": {
+                "type": "string",
+              },
+              "source": {
+                "enum": [
+                  "new",
+                  "local",
+                  "remote",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "branch",
+              "base",
+              "source",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "kind": {
+          "description": "Which kind of worktree the run created",
+          "enum": [
+            "release",
+            "feature",
+          ],
+          "type": "string",
+        },
+        "orcaHidden": {
+          "description": "Created worktrees whose Orca terminals opened on a row the sidebar HIDES (the repo hides external worktrees); fix names the in-app steps to reveal it",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "type": "string",
+              },
+              "fix": {
+                "type": "string",
+              },
+              "path": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "branch",
+              "path",
+              "fix",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "orcaOpened": {
+          "description": "Created worktrees that got an Orca terminal tab on a row the sidebar shows, with the layout applied",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "type": "string",
+              },
+              "layout": {
+                "enum": [
+                  "full",
+                  "single-pane",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "branch",
+              "layout",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "orcaSkipped": {
+          "description": "Created worktrees NOT opened in Orca and why: orca_absent / orca_unreachable (config-derived ask, Orca down), orca_worktree_not_selectable (Orca had not scanned the fresh worktree yet), orca_error (code carries the Orca error code)",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "type": "string",
+              },
+              "code": {
+                "type": "string",
+              },
+              "reason": {
+                "enum": [
+                  "already_open",
+                  "orca_unreachable",
+                  "orca_absent",
+                  "orca_worktree_not_selectable",
+                  "orca_error",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "branch",
+              "reason",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "kind",
+        "features",
+        "createdWorktrees",
+        "count",
+        "orcaOpened",
+        "orcaSkipped",
+        "orcaHidden",
+      ],
+      "type": "object",
+    },
+    "worktrees list": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "count": {
+          "description": "Number of release worktrees",
+          "type": "number",
+        },
+        "features": {
+          "description": "Branches of feature worktrees (feature/<name>)",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "worktrees": {
+          "description": "Release worktrees with details",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "description": "Jira version description",
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "type": {
+                "description": "Release type",
+                "enum": [
+                  "regular",
+                  "hotfix",
+                ],
+                "type": "string",
+              },
+              "version": {
+                "description": "Release version",
+                "type": "string",
+              },
+            },
+            "required": [
+              "version",
+              "type",
+              "description",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "worktrees",
+        "count",
+        "features",
+      ],
+      "type": "object",
+    },
+    "worktrees remove": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "count": {
+          "description": "Number of git worktrees removed",
+          "type": "number",
+        },
+        "failedWorktrees": {
+          "description": "Branches whose worktree could NOT be removed (git refused, or an unsweepable leftover remained)",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "handedOff": {
+          "additionalProperties": false,
+          "description": "--self only: the worktree whose removal now runs in an Orca tab of the main checkout",
+          "properties": {
+            "branch": {
+              "type": "string",
+            },
+            "terminal": {
+              "type": "string",
+            },
+            "worktreePath": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "branch",
+            "worktreePath",
+            "terminal",
+          ],
+          "type": "object",
+        },
+        "removedWorktrees": {
+          "description": "List of removed git worktree branches",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "removedWorktrees",
+        "failedWorktrees",
+        "count",
+      ],
+      "type": "object",
+    },
+    "worktrees sync": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "count": {
+          "description": "Number of worktrees removed during sync",
+          "type": "number",
+        },
+        "failedWorktrees": {
+          "description": "Branches whose worktree could NOT be removed (git refused, or an unsweepable leftover remained)",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "removedWorktrees": {
+          "description": "List of removed worktree branches",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "removedWorktrees",
+        "failedWorktrees",
+        "count",
+      ],
+      "type": "object",
+    },
+  },
+  "refusal": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": {},
+    "properties": {
+      "command": {
+        "description": "The grouped command path that ran, e.g. \`release create\`",
+        "type": "string",
+      },
+      "schemaVersion": {
+        "const": 1,
+        "type": "number",
+      },
+      "status": {
+        "enum": [
+          "confirmation_required",
+          "argument_required",
+          "partial_failure",
+          "refused",
+        ],
+        "type": "string",
+      },
+    },
+    "required": [
+      "schemaVersion",
+      "command",
+      "status",
+    ],
+    "type": "object",
+  },
+}
+`;

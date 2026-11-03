@@ -1,1 +1,1 @@
-export { deploySync } from './deploy-sync'
+export { deploySync, deploySyncOutputSchema } from './deploy-sync'

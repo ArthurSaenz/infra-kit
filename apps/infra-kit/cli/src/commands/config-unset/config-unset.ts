@@ -1,3 +1,5 @@
+import { z } from 'zod'
+
 import { SCOPE_LABELS, assertConfigKey, editConfigLayer } from 'src/lib/config-layer'
 import type { ConfigScope } from 'src/lib/config-layer'
 import { logger } from 'src/lib/logger'
@@ -7,6 +9,15 @@ import { textContent } from 'src/types'
 export interface ConfigUnsetArgs {
   key: string
   global?: boolean
+}
+
+/** `config-unset --json`. */
+export const configUnsetOutputSchema = {
+  key: z.string(),
+  removed: z.boolean(),
+  previous: z.unknown().describe('The value the layer held before, or null'),
+  scope: z.enum(['project', 'global']),
+  path: z.string().describe('The layer file edited'),
 }
 
 /**
@@ -38,7 +49,13 @@ export const configUnset = async ({ key, global }: ConfigUnsetArgs) => {
       : `${key} is not set in the ${SCOPE_LABELS[scope]} (${tildify(file)}) — nothing to remove`,
   )
 
-  const structuredContent = { key, removed: changed, previous: previous ?? null, scope, path: file }
+  const structuredContent: z.infer<z.ZodObject<typeof configUnsetOutputSchema>> = {
+    key,
+    removed: changed,
+    previous: previous ?? null,
+    scope,
+    path: file,
+  }
 
   return {
     content: textContent(JSON.stringify(structuredContent, null, 2)),

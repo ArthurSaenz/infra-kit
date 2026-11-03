@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import { homedir } from 'node:os'
 import process from 'node:process'
+import { z } from 'zod'
 
 import { unattendedChildEnv } from 'src/lib/auto-setup/child-env'
 import { discoverInfraKitProjects } from 'src/lib/auto-setup/discover'
@@ -407,9 +408,16 @@ export const autoSetup = async (deps: AutoSetupDeps = {}): Promise<AutoSetupOutc
   }
 }
 
+/** `setup --auto --json`. */
+export const autoSetupOutputSchema = {
+  outcome: z.enum(['ran', 'not-due', 'already-running']),
+}
+
 /** `setup --auto` as a command result, for the `--json` payload a test or a human reads. */
 export const autoSetupCommand = async (deps: AutoSetupDeps = {}) => {
   const outcome = await autoSetup(deps)
 
-  return { content: textContent(JSON.stringify({ outcome })), structuredContent: { outcome } }
+  const structuredContent: z.infer<z.ZodObject<typeof autoSetupOutputSchema>> = { outcome }
+
+  return { content: textContent(JSON.stringify(structuredContent)), structuredContent }
 }

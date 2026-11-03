@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
+import { z } from 'zod'
 
 import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { DEPLOY_VIA_LOCAL_DEPLOY, DeploySkipped, createDeployToolkit, defaultToolkitDeps } from 'src/lib/deploy-toolkit'
@@ -22,7 +23,14 @@ interface DeployRunOptions {
   deps?: ToolkitDeps
 }
 
-const result = (structuredContent: { status: 'deployed' | 'skipped'; service: string; reason?: string }) => {
+/** `deploy-run --json`. */
+export const deployRunOutputSchema = {
+  status: z.enum(['deployed', 'skipped']),
+  service: z.string(),
+  reason: z.string().optional(),
+}
+
+const result = (structuredContent: z.infer<z.ZodObject<typeof deployRunOutputSchema>>) => {
   return { content: textContent(JSON.stringify(structuredContent, null, 2)), structuredContent }
 }
 

@@ -1,4 +1,4 @@
-export { autoSetup, autoSetupCommand } from './auto-setup'
+export { autoSetup, autoSetupCommand, autoSetupOutputSchema } from './auto-setup'
 export type { AutoSetupDeps, AutoSetupOutcome } from './auto-setup'
 export { convergeDependencies, probeDependencies } from './converge'
 export type { ConvergeOptions, SetupMode, ToolResult } from './converge'

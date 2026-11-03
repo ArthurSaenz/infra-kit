@@ -158,6 +158,38 @@ const planPayload = (plans: readonly TargetPlan[]) => {
   })
 }
 
+/** `vendor sync --json`. */
+export const vendorSyncOutputSchema = {
+  mode: z.enum(['preview', 'check', 'applied']),
+  source: z.object({ root: z.string(), name: z.string(), headSha: z.string().nullable() }),
+  targets: z.array(
+    z.looseObject({
+      name: z.string(),
+      root: z.string(),
+      status: z.string(),
+      applied: z.boolean(),
+    }),
+  ),
+  changed: z.boolean(),
+  failed: z.boolean(),
+  report: z
+    .array(
+      z.object({
+        label: z.string(),
+        rows: z.array(
+          z.object({
+            name: z.string(),
+            status: z.enum(['ok', 'changed', 'skipped', 'manual', 'warn', 'fail']),
+            message: z.string(),
+            notes: z.array(z.string()).optional(),
+          }),
+        ),
+      }),
+    )
+    .readonly()
+    .describe('The printed report sections'),
+}
+
 interface FinishInput {
   mode: SyncMode
   report: RunReport
@@ -174,7 +206,7 @@ const finish = ({ mode, report, outcomes, source, print }: FinishInput) => {
     return outcome.plan
   })
 
-  const structuredContent = {
+  const structuredContent: z.infer<z.ZodObject<typeof vendorSyncOutputSchema>> = {
     mode,
     source: { root: source.root, name: source.name, headSha: source.headSha },
     targets: planPayload(plans).map((row, index) => {

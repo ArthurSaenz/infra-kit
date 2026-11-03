@@ -4,6 +4,7 @@ import password from '@inquirer/password'
 import select from '@inquirer/select'
 import fs from 'node:fs/promises'
 import process from 'node:process'
+import { z } from 'zod'
 import { $ } from 'zx'
 
 import {
@@ -370,7 +371,7 @@ export const envTokenSet = async ({ env: givenEnv, stdin, fromEnv, force }: EnvT
     )
   }
 
-  const structuredContent = {
+  const structuredContent: z.infer<z.ZodObject<typeof envTokenSetOutputSchema>> = {
     env,
     status,
     source,
@@ -440,6 +441,32 @@ export const parseTokenFile = (raw: string): TokenFileEntry[] => {
   }
 
   return entries
+}
+
+/** `env-token-set <env> --json`. */
+export const envTokenSetOutputSchema = {
+  env: z.string(),
+  status: z.enum(['stored', 'replaced', 'unchanged', 'kept']),
+  source: z.enum(['stdin', 'env', 'prompt']),
+  redactedToken: z.string(),
+  previousRedactedToken: z.string().nullable(),
+  storePath: z.string(),
+  scopeVerified: z.boolean(),
+}
+
+/** `env-token-set --from-file <file> --json`. */
+export const envTokenSetFromFileOutputSchema = {
+  storePath: z.string(),
+  rows: z.array(
+    z.object({
+      env: z.string(),
+      status: z.enum(['stored', 'replaced', 'unchanged', 'failed']),
+      redactedToken: z.string(),
+      scopeVerified: z.boolean(),
+      error: z.string().optional(),
+    }),
+  ),
+  failedCount: z.number(),
 }
 
 /** One row of a bulk import. `failed` rows carry the refusal's first line, never the token. */
@@ -530,7 +557,11 @@ export const envTokenSetFromFile = async ({ fromFile, force }: EnvTokenSetFromFi
 
   if (failedCount > 0) process.exitCode = 1
 
-  const structuredContent = { storePath, rows, failedCount }
+  const structuredContent: z.infer<z.ZodObject<typeof envTokenSetFromFileOutputSchema>> = {
+    storePath,
+    rows,
+    failedCount,
+  }
 
   return {
     content: textContent(JSON.stringify(structuredContent, null, 2)),

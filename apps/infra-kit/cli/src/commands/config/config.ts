@@ -1,4 +1,5 @@
 import process from 'node:process'
+import { z } from 'zod'
 import { $ } from 'zx'
 
 import { seedCreatedMessage, seedUserProjectConfig } from 'src/lib/config-bootstrap'
@@ -7,6 +8,20 @@ import { getInfraKitConfigPaths, resetInfraKitConfigCache } from 'src/lib/infra-
 import { logger } from 'src/lib/logger'
 import { fileExists, tildify } from 'src/lib/path-display'
 import type { ToolsExecutionResult } from 'src/types'
+
+/** `config path --json`. */
+export const configPathOutputSchema = {
+  projectName: z.string(),
+  layers: z.array(z.object({ label: z.string(), path: z.string(), exists: z.boolean() })),
+  hasOverrides: z.boolean(),
+  overrideKeys: z.array(z.string()),
+}
+
+/** `config edit --json`. */
+export const configEditOutputSchema = {
+  path: z.string().describe('The per-project override file that was opened'),
+  editor: z.string(),
+}
 
 /**
  * Print the file paths that participate in the config merge chain along with existence markers, so
@@ -54,7 +69,7 @@ export const configPath = async (): Promise<ToolsExecutionResult> => {
     logger.info(`${marker} ${row.label.padEnd(22)} ${tildify(row.path)}${suffix}`)
   }
 
-  const structuredContent = {
+  const structuredContent: z.infer<z.ZodObject<typeof configPathOutputSchema>> = {
     projectName: paths.projectName,
     layers: rows.map((r) => {
       return { label: r.label, path: r.path, exists: r.exists }
@@ -105,7 +120,7 @@ export const configEdit = async (): Promise<ToolsExecutionResult> => {
 
   resetInfraKitConfigCache()
 
-  const structuredContent = { path: paths.userProject, editor }
+  const structuredContent: z.infer<z.ZodObject<typeof configEditOutputSchema>> = { path: paths.userProject, editor }
 
   return {
     content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],

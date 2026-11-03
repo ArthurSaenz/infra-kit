@@ -1,1 +1,1 @@
-export { configEdit, configPath } from './config'
+export { configEdit, configEditOutputSchema, configPath, configPathOutputSchema } from './config'

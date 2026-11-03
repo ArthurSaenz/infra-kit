@@ -2,6 +2,7 @@ import { DEPLOY_CONFIG_FILE } from '@slip-stream-kit/config/internal'
 import type { DeployConfig } from '@slip-stream-kit/config/internal'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { z } from 'zod'
 
 import {
   GENERATED_MARKER,
@@ -13,8 +14,6 @@ import {
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { textContent } from 'src/types'
-
-type DeploySyncStatus = 'written' | 'unchanged' | 'drift' | 'missing-config'
 
 type FileStatus = 'created' | 'updated' | 'unchanged' | 'removed'
 
@@ -33,11 +32,14 @@ const readIfExists = async (filePath: string): Promise<string | undefined> => {
   }
 }
 
-const result = (structuredContent: {
-  status: DeploySyncStatus
-  ok: boolean
-  files: { path: string; status: FileStatus }[]
-}) => {
+/** `deploy-sync --json`. */
+export const deploySyncOutputSchema = {
+  status: z.enum(['written', 'unchanged', 'drift', 'missing-config']),
+  ok: z.boolean(),
+  files: z.array(z.object({ path: z.string(), status: z.enum(['created', 'updated', 'unchanged', 'removed']) })),
+}
+
+const result = (structuredContent: z.infer<z.ZodObject<typeof deploySyncOutputSchema>>) => {
   return { content: textContent(JSON.stringify(structuredContent, null, 2)), structuredContent }
 }
 
