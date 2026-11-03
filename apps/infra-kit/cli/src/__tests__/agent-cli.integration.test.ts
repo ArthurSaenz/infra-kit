@@ -130,7 +130,16 @@ describe('agent-mode refusals (spawned cli.js)', () => {
   it('ac2: `worktrees add --versions <v> --yes --agent --json` creates the worktree and reports the wire shape', async () => {
     removeReleaseWorktree(fixture)
 
-    const run = await cli(['worktrees', 'add', '--versions', FIXTURE_RELEASE.ref, '--yes', '--agent', '--json'])
+    // Not a refusal: this run does the work (git worktree add, the fixture's install), so the 2s
+    // per-spawn deadline that catches a refusal hanging on a prompt does not apply. Measured 1.2s
+    // inside a full cli run, past 2s when other qa shares the machine (failed full qa, 2026-11-03).
+    const run = await runCli({
+      cliPath,
+      fixture,
+      args: ['worktrees', 'add', '--versions', FIXTURE_RELEASE.ref, '--yes', '--agent', '--json'],
+      deadlineMs: 10_000,
+    })
+
     const json = expectJson(run)
 
     expect(run.code).toBe(0)

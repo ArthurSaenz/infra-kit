@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { $ } from 'zx'
 
 import { isAncestor, lsRemoteHead, pushAtomic, revParseVerify } from '../merge-refs'
@@ -22,7 +22,7 @@ const git = async (cwd: string, ...args: string[]): Promise<string> => {
 }
 
 /** Bare origin + clone, `dev` ahead, and three release branches forked off an older dev. */
-const makeFixture = async (): Promise<{ repo: string; origin: string }> => {
+const buildFixture = async (): Promise<{ root: string; repo: string; origin: string }> => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ik-refs-'))
 
   tmpRoots.push(root)
@@ -58,6 +58,29 @@ const makeFixture = async (): Promise<{ repo: string; origin: string }> => {
   await git(repo, 'commit', '-qm', 'dev work')
   await git(repo, 'push', '-q', 'origin', 'dev')
   await git(repo, 'fetch', '-q', 'origin')
+
+  return { root, repo, origin }
+}
+
+// Built once: under a full qa run the ~25 git spawns of a fresh fixture took up to 1.6s of a test's
+// 5s budget, and every test here starts from the same history.
+let template: Awaited<ReturnType<typeof buildFixture>>
+
+beforeAll(async () => {
+  template = await buildFixture()
+})
+
+/** A private copy of the template, its clone's origin re-pointed at the copy's bare repo. */
+const makeFixture = async (): Promise<{ repo: string; origin: string }> => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ik-refs-'))
+
+  tmpRoots.push(root)
+  await fs.cp(template.root, root, { recursive: true })
+
+  const origin = path.join(root, 'origin.git')
+  const repo = path.join(root, 'work')
+
+  await git(repo, 'config', 'remote.origin.url', origin)
 
   return { repo, origin }
 }

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { $ } from 'zx'
 
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
@@ -22,6 +22,13 @@ import { commitMerge, handOffBranches } from '../resolution'
  * check, commit, hook, pnpm run and push is real — an injected executor would hide exactly the
  * git behaviour these checks depend on.
  */
+
+// Each test drives ~130 real git spawns through the code under test (counted with a PATH shim on the AC 13
+// test, 2026-11-03) — that is the product's own work, not fixture cost. Measured per test: max 2.2s
+// alone, 2.5s inside a full cli run, and past the 5s default whenever other packages' qa (or another
+// session's) shares the machine, which reddened every full qa on 2026-09-27, 10-13 and 11-03. 15s is
+// ~6x the alone maximum: room for contention, still a hang detector.
+vi.setConfig({ testTimeout: 15_000 })
 
 vi.mock('src/integrations/gh', () => {
   return { getReleasePRsWithInfo: vi.fn() }
@@ -133,6 +140,13 @@ const makeFixture = async (spec: FixtureSpec): Promise<Fixture> => {
 
   const releases = Object.keys(spec.releases)
 
+  wireMocks(repo, releases)
+
+  return { root, origin, repo, releases }
+}
+
+/** Point the repo-root lookup and the PR listing at `repo` — per test, since `beforeEach` clears mocks. */
+const wireMocks = (repo: string, releases: string[]): void => {
   vi.mocked(getMainRepoRoot).mockResolvedValue(repo)
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue(
     releases.map((branch, index) => {
@@ -148,8 +162,25 @@ const makeFixture = async (spec: FixtureSpec): Promise<Fixture> => {
       }
     }),
   )
+}
 
-  return { root, origin, repo, releases }
+/**
+ * A private copy of `template`: the whole root (bare origin + clone) copied, and the clone's origin
+ * re-pointed at the copy's. One `git config` instead of the ~25 spawns a fresh fixture costs.
+ */
+const copyFixture = async (template: Fixture): Promise<Fixture> => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ik-res-'))
+
+  tmpRoots.push(root)
+  await fs.cp(template.root, root, { recursive: true })
+
+  const origin = path.join(root, 'origin.git')
+  const repo = path.join(root, 'work')
+
+  await git(repo, 'config', 'remote.origin.url', origin)
+  wireMocks(repo, template.releases)
+
+  return { root, origin, repo, releases: template.releases }
 }
 
 const conflictOn = (content: string): Edit => {
@@ -158,8 +189,19 @@ const conflictOn = (content: string): Edit => {
   }
 }
 
+/**
+ * Built once, in `beforeAll` (below), so no test pays for it; tests only ever get copies. Most of the
+ * file uses this history, and building it fresh was ~25 git spawns per test on top of the ~130 the
+ * code under test makes — measured 2026-11-03: the file alone went from 81.6s to 60.1s summed test time.
+ */
+let codeConflictTemplate: Fixture
+
 /** `release/v1.0.0` and `release/v1.1.0` conflict with dev on `conflict.txt`; `release/v1.2.0` merges clean. */
 const codeConflictFixture = (): Promise<Fixture> => {
+  return copyFixture(codeConflictTemplate)
+}
+
+const buildCodeConflictFixture = (): Promise<Fixture> => {
   return makeFixture({
     base: {
       'package.json': '{"name":"fx","private":true}\n',
@@ -251,6 +293,10 @@ const installHook = async (dir: string, name: string, body: string): Promise<voi
 }
 
 let sessionSeq = 0
+
+beforeAll(async () => {
+  codeConflictTemplate = await buildCodeConflictFixture()
+})
 
 beforeEach(() => {
   vi.clearAllMocks()
