@@ -5,11 +5,12 @@ import path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { InitStepName } from 'src/commands/init'
 import { setup } from 'src/commands/setup'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
+import type { InitStepName } from 'src/lib/init'
+import { migrateConfigShapes } from 'src/lib/init/migrate-config'
 import { formatUpdateCommand } from 'src/lib/install-manager'
 import {
   MARKETPLACE_ADD_COMMAND,
@@ -19,7 +20,6 @@ import {
 } from 'src/lib/plugin-pointer'
 import { readUpdateCache } from 'src/lib/update-check'
 
-import { migrateConfigShapes } from '../../init/migrate-config'
 import { captureStderr, noPortless, stderrLines } from './setup-stderr'
 
 /**
@@ -31,7 +31,7 @@ import { captureStderr, noPortless, stderrLines } from './setup-stderr'
  * through it alone performed every local write and told the agent nothing.
  */
 
-vi.mock('../../init/migrate-config', () => {
+vi.mock('src/lib/init/migrate-config', () => {
   return {
     migrateConfigShapes: vi.fn(async () => {}),
     migrateFactoryConfigToJson: vi.fn(async () => {}),

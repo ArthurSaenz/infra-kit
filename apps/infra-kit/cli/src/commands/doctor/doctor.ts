@@ -12,11 +12,6 @@ import { decidePrune, isDevSessionRunning } from 'src/commands/doctor/prune-rout
 import { FIXABLE_NAMES } from 'src/commands/doctor/report'
 import { parseServiceArgv } from 'src/commands/doctor/service-file'
 import { listPendingResolutions } from 'src/commands/gh-merge-dev/resolution'
-import { buildZshenvBlock } from 'src/commands/init'
-// `resolveGitRoot` is the WRITER's gate, imported rather than re-derived so the reader's row set and
-// the writer's reach cannot drift apart (see the gate comment beside the plugin rows below).
-import { AGENTS_MARKER_END, AGENTS_MARKER_START, resolveGitRoot } from 'src/commands/init/agent-files'
-import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
 import {
   DARWIN_SERVICE_LABEL,
   DARWIN_SERVICE_PLIST_PATH,
@@ -73,6 +68,11 @@ import {
   resetInfraKitConfigCache,
 } from 'src/lib/infra-kit-config'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
+import { buildZshenvBlock } from 'src/lib/init'
+// `resolveGitRoot` is the WRITER's gate, imported rather than re-derived so the reader's row set and
+// the writer's reach cannot drift apart (see the gate comment beside the plugin rows below).
+import { AGENTS_MARKER_END, AGENTS_MARKER_START, resolveGitRoot } from 'src/lib/init/agent-files'
+import { MARKER_END, MARKER_START, buildShellBlock } from 'src/lib/init/init'
 import { isWithin, safeRealpath } from 'src/lib/install-manager'
 import { extractVersion, hasManagedBlock } from 'src/lib/managed-block'
 import { discoverPackages } from 'src/lib/package-validator/loader'

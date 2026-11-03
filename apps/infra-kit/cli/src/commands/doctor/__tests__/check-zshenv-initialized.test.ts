@@ -3,8 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { buildZshenvBlock } from 'src/commands/init'
-import { MARKER_END, MARKER_START } from 'src/commands/init/init'
+import { buildZshenvBlock } from 'src/lib/init'
+import { MARKER_END, MARKER_START } from 'src/lib/init/init'
 
 import { checkZshenvInitialized } from '../doctor'
 

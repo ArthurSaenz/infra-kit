@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { MARKER_END, MARKER_START, buildShellBlock } from 'src/commands/init/init'
+import { MARKER_END, MARKER_START, buildShellBlock } from 'src/lib/init/init'
 
 import { checkZshrcInitialized } from '../doctor'
 

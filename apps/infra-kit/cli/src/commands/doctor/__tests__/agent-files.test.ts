@@ -3,9 +3,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { writeAgentFiles } from 'src/commands/init/agent-files'
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
+import { writeAgentFiles } from 'src/lib/init/agent-files'
 
 import { checkAgentFiles } from '../doctor'
 

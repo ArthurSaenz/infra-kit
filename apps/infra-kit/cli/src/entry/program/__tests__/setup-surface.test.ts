@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { initCore } from 'src/commands/init'
 import { resolveLeaf } from 'src/entry/command-catalog/palette'
 import { buildProgram } from 'src/entry/program'
 import { runRecipe } from 'src/lib/dependency-install'
 import type { InstallOutcome } from 'src/lib/dependency-install'
 import { probeAll } from 'src/lib/dependency-probe'
 import type { DependencyState } from 'src/lib/dependency-probe'
+import { initCore } from 'src/lib/init'
 
 /**
  * @fileoverview
@@ -22,8 +22,8 @@ import type { DependencyState } from 'src/lib/dependency-probe'
  * passing on a build where the FLAG never reaches that argument.
  */
 
-vi.mock('src/commands/init', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('src/commands/init')>()
+vi.mock('src/lib/init', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('src/lib/init')>()
 
   // Only the core is faked, so everything `setup` does around it still runs. `initCore`'s own writes
   // (.zshrc, the plugin install) all live below this seam.

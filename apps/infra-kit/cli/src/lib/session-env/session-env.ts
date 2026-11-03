@@ -17,7 +17,7 @@ import { PROTECTED_CHILD_ENV_NAMES } from 'src/lib/mcp-proxy/protected-env'
 
 /**
  * What the session dir says is loaded right now, read the way `~/.zshenv` reads it
- * (src/commands/init/init.ts): env-load.sh wins unless env-clear.sh is strictly newer, and
+ * (src/lib/init/init.ts): env-load.sh wins unless env-clear.sh is strictly newer, and
  * applies only inside the directories its `env-load.root` sidecar names.
  * `signature` identifies the file the state came from so an unchanged file is never
  * re-parsed; `no-session` carries none because nothing is ever applied for it.

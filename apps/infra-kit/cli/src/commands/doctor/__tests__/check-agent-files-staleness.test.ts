@@ -3,10 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { writeAgentFiles } from 'src/commands/init/agent-files'
 import { PACKAGE_MARKER_END, PACKAGE_MARKER_START, PACKAGE_VERSION_PREFIX } from 'src/lib/agent-guidance'
 import { getProjectRoot, getRepoName } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
+import { writeAgentFiles } from 'src/lib/init/agent-files'
 
 import packageJson from '../../../../package.json' with { type: 'json' }
 import { checkAgentFiles } from '../doctor'

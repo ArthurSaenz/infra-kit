@@ -221,7 +221,7 @@ export const parseUnsetNamesFromEnvFile = (filePath: string): string[] => {
 /**
  * Root cache dir for infra-kit across all sessions. Resolved from
  * $XDG_CACHE_HOME when set, falling back to ~/.cache/infra-kit. Keep in sync
- * with the shell block emitted by `infra-kit setup` (src/commands/init/init.ts).
+ * with the shell block emitted by `infra-kit setup` (src/lib/init/init.ts).
  */
 export const getCacheRoot = (): string => {
   const xdg = process.env.XDG_CACHE_HOME

@@ -71,7 +71,7 @@ export interface InstallPluginOptions {
    * the update and reports `skipped-cli-stale`. Injected rather than computed here because the answer
    * lives in the update cache, and `lib/update-check` already imports this directory
    * (`update-plugin.ts` → `install-state`), so reading it from here would close an import cycle. The
-   * caller (`commands/init`) reads the cache; this file stays a `claude` driver.
+   * caller (`lib/init`) reads the cache; this file stays a `claude` driver.
    */
   cliIsStale?: () => boolean
 }

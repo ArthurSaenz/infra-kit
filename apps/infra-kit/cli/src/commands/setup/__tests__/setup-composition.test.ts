@@ -3,12 +3,12 @@ import path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { InitStepError, initCore } from 'src/commands/init'
-import type { InitEntry, InitStepSink } from 'src/commands/init'
 import { setup } from 'src/commands/setup'
 import { runRecipe } from 'src/lib/dependency-install'
 import type { InstallOutcome } from 'src/lib/dependency-install'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
+import { InitStepError, initCore } from 'src/lib/init'
+import type { InitEntry, InitStepSink } from 'src/lib/init'
 import { logger } from 'src/lib/logger'
 import { trackedWrites } from 'src/lib/tracked-writes'
 
@@ -24,8 +24,8 @@ import { captureStderr, noPortless, reportLines, stderrLines } from './setup-std
  * asserted it against an injected fake would pass on a build that ignored the injection.
  */
 
-vi.mock('src/commands/init', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('src/commands/init')>()
+vi.mock('src/lib/init', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('src/lib/init')>()
 
   return { ...actual, initCore: vi.fn() }
 })

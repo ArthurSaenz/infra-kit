@@ -1,6 +1,6 @@
 /**
  * The annotated JSONC reference templates for every infra-kit config file, in one
- * place. Extracted from `commands/init` (layers 2 + vendor) and `commands/config`
+ * place. Extracted from `lib/init` (layers 2 + vendor) and `commands/config`
  * (layer 3), which each carried a private copy that drifted out of sync with the
  * schema.
  *

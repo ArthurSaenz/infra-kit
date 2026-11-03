@@ -16,7 +16,6 @@ import fs from 'node:fs'
 import { homedir } from 'node:os'
 import process from 'node:process'
 
-import { rerunSetupCommand } from 'src/commands/init'
 import { unattendedChildEnv } from 'src/lib/auto-setup/child-env'
 import { discoverInfraKitProjects } from 'src/lib/auto-setup/discover'
 import {
@@ -27,6 +26,7 @@ import {
   writeAutoSetupRecord,
 } from 'src/lib/auto-setup/record'
 import type { AutoSetupRecord, AutoSetupRun } from 'src/lib/auto-setup/record'
+import { rerunSetupCommand } from 'src/lib/init'
 import { acquireUpdateLock } from 'src/lib/update-check/lock'
 import { textContent } from 'src/types'
 

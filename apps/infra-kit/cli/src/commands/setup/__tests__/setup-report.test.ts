@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ServiceTargetState } from 'src/commands/doctor/doctor'
-import { SHELL_ACTIVATION_REMINDER } from 'src/commands/init/init'
-import type { InitEntry, InitOutcome } from 'src/commands/init/init'
 import type { PortlessLinkOutcome } from 'src/dev/proxy/portless-link'
 import type { PortlessNodeOutcome, PortlessNodeResult } from 'src/dev/proxy/portless-node'
+import { SHELL_ACTIVATION_REMINDER } from 'src/lib/init/init'
+import type { InitEntry, InitOutcome } from 'src/lib/init/init'
 import type { RunRow, RunSection, RunStatus } from 'src/lib/render/run-report'
 
 import type { ToolResult } from '../converge'

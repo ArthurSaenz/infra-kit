@@ -3,7 +3,7 @@ import os from 'node:os'
 
 /**
  * Shared path-display helpers for CLI output. Extracted from `commands/config`
- * and `commands/init/migrate-config` (which each had private copies) so config
+ * and `lib/init/migrate-config` (which each had private copies) so config
  * surfaces print paths consistently. Keep this dependency-light (node builtins
  * only) — it is imported by several commands.
  */

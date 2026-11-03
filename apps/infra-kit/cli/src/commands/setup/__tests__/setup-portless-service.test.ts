@@ -4,8 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { launchdPlist, systemdUnit } from 'src/commands/doctor/__tests__/service-fixtures'
 import type { ServiceTargetDeps } from 'src/commands/doctor/doctor'
-import { InitStepError, initCore } from 'src/commands/init'
-import type { InitEntry, InitStepSink } from 'src/commands/init'
 import { setup } from 'src/commands/setup'
 import type { PortlessServiceDeps } from 'src/commands/setup'
 import {
@@ -22,6 +20,8 @@ import type { PortlessNodeSidecar } from 'src/dev/proxy/portless-node'
 import { runRecipe } from 'src/lib/dependency-install'
 import type { InstallOutcome } from 'src/lib/dependency-install'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
+import { InitStepError, initCore } from 'src/lib/init'
+import type { InitEntry, InitStepSink } from 'src/lib/init'
 
 import { captureStderr, stderrLines } from './setup-stderr'
 
@@ -39,8 +39,8 @@ import { captureStderr, stderrLines } from './setup-stderr'
  * suite is about the THIRD step `setup` runs, not about the other two.
  */
 
-vi.mock('src/commands/init', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('src/commands/init')>()
+vi.mock('src/lib/init', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('src/lib/init')>()
 
   return { ...actual, initCore: vi.fn() }
 })

@@ -16,8 +16,6 @@ import { z } from 'zod'
 
 import { portlessServiceTargetState } from 'src/commands/doctor/doctor'
 import type { ServiceTargetDeps, ServiceTargetState } from 'src/commands/doctor/doctor'
-import { InitStepError, SHELL_ACTIVATION_REMINDER, initCore } from 'src/commands/init'
-import type { InitEntry, InitStep, InitStepName } from 'src/commands/init'
 import {
   ensurePortlessLink,
   portlessLinkCliPath,
@@ -31,6 +29,8 @@ import type { runRecipe } from 'src/lib/dependency-install'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
 import { DEPENDENCY_IDS } from 'src/lib/dependency-registry'
 import type { DependencyId } from 'src/lib/dependency-registry'
+import { InitStepError, SHELL_ACTIVATION_REMINDER, initCore } from 'src/lib/init'
+import type { InitEntry, InitStep, InitStepName } from 'src/lib/init'
 import { logger } from 'src/lib/logger'
 import { printRunReport } from 'src/lib/render/run-report'
 import { trackedWrites } from 'src/lib/tracked-writes'
