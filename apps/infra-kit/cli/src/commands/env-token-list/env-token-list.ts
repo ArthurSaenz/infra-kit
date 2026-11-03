@@ -1,8 +1,12 @@
 import process from 'node:process'
 import { z } from 'zod'
 
-import { buildDopplerChildEnv } from 'src/commands/env-load'
-import { INFRA_KIT_ENV_TOKEN_VAR, getDopplerProject, probeEnvToken } from 'src/integrations/doppler'
+import {
+  INFRA_KIT_ENV_TOKEN_VAR,
+  buildDopplerChildEnv,
+  getDopplerProject,
+  probeEnvToken,
+} from 'src/integrations/doppler'
 import type { EnvTokenProbeOutcome } from 'src/integrations/doppler'
 import { readTokenStore } from 'src/lib/env-tokens'
 import { logger } from 'src/lib/logger'

@@ -422,7 +422,7 @@ const recapSources = (plan: DerivedPlan, model: WizardModel): void => {
 export type LoadEnvVars = (env: string, names: string[]) => Promise<Map<string, string>>
 
 const loadEnvVarsFromDoppler: LoadEnvVars = async (env, names) => {
-  const { downloadEnvSecrets } = await import('src/commands/env-load/env-load')
+  const { downloadEnvSecrets } = await import('src/integrations/doppler/secrets-download')
   const secrets = await downloadEnvSecrets(env)
 
   return new Map(

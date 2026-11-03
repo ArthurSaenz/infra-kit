@@ -4,7 +4,7 @@
  * Translate Doppler `secrets download` not-found failures into actionable,
  * point-at-the-fix guidance. Pure (no I/O) so the classification + message policy
  * is unit-testable without spawning the Doppler CLI — mirroring the pure-helper
- * pattern in `commands/env-load/env-load.ts`.
+ * pattern in `./secrets-download.ts`.
  *
  * Observed Doppler output on a not-found download (verified 2026-06-27, doppler
  * v3.76.0), exit 1, written to STDERR (stdout empty):

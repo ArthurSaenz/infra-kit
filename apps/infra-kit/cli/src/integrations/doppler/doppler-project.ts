@@ -46,8 +46,7 @@ interface EnvTokenProbeArgs {
   /**
    * The child environment carrying the token — built by `buildDopplerChildEnv`, which scrubs the
    * inherited `DOPPLER_*` vars and sets ours. Passed in rather than built here so the token travels
-   * by ENV and never by argv (`ps` shows argv to every user on the box), and so this module stays
-   * free of a cycle back through `commands/env-load`.
+   * by ENV and never by argv (`ps` shows argv to every user on the box).
    */
   childEnv: NodeJS.ProcessEnv
   project: string

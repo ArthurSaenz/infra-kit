@@ -6,8 +6,14 @@ import fs from 'node:fs/promises'
 import process from 'node:process'
 import { $ } from 'zx'
 
-import { assertTokenScope, buildDopplerChildEnv, parseDopplerSecretsJson } from 'src/commands/env-load'
-import { classifyDopplerAuthFailure, classifyDopplerFailure, getDopplerProject } from 'src/integrations/doppler'
+import {
+  assertTokenScope,
+  buildDopplerChildEnv,
+  classifyDopplerAuthFailure,
+  classifyDopplerFailure,
+  getDopplerProject,
+  parseDopplerSecretsJson,
+} from 'src/integrations/doppler'
 import { agentMode, isHeadless } from 'src/lib/agent-mode'
 import { assertNever } from 'src/lib/assert-never'
 import { commandEcho } from 'src/lib/command-echo'
