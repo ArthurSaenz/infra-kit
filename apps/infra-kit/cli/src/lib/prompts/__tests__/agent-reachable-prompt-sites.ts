@@ -2,8 +2,8 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 
-import { commandCatalog } from 'src/lib/command-catalog'
-import type { CatalogMcpTool } from 'src/lib/command-catalog/command-catalog'
+import { commandCatalog } from 'src/entry/command-catalog'
+import type { CatalogMcpTool } from 'src/entry/command-catalog/command-catalog'
 
 /**
  * @fileoverview

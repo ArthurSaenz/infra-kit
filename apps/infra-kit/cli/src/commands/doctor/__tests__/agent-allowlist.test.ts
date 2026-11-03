@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { commandCatalog } from 'src/lib/command-catalog'
+import { commandCatalog } from 'src/entry/command-catalog'
 
 import {
   INVOCATIONS,
@@ -100,19 +100,21 @@ describe('globReaches', () => {
 
 describe('mutatingCommandsReachedBy', () => {
   it('reaches every mutating command from a whole-CLI allow, in catalog order', () => {
-    expect(mutatingCommandsReachedBy('Bash(infra-kit:*)')).toEqual(MUTATING)
-    expect(mutatingCommandsReachedBy('Bash')).toEqual(MUTATING)
+    expect(mutatingCommandsReachedBy('Bash(infra-kit:*)', commandCatalog)).toEqual(MUTATING)
+    expect(mutatingCommandsReachedBy('Bash', commandCatalog)).toEqual(MUTATING)
   })
 
   it('reaches through every invocation spelling', () => {
     for (const invocation of INVOCATIONS) {
-      expect(mutatingCommandsReachedBy(`Bash(${invocation}:*)`), invocation).toEqual(MUTATING)
-      expect(mutatingCommandsReachedBy(`Bash(${invocation} release remove:*)`), invocation).toEqual(['release remove'])
+      expect(mutatingCommandsReachedBy(`Bash(${invocation}:*)`, commandCatalog), invocation).toEqual(MUTATING)
+      expect(mutatingCommandsReachedBy(`Bash(${invocation} release remove:*)`, commandCatalog), invocation).toEqual([
+        'release remove',
+      ])
     }
   })
 
   it('reaches a group through its group prefix', () => {
-    expect(mutatingCommandsReachedBy('Bash(infra-kit worktrees:*)')).toEqual([
+    expect(mutatingCommandsReachedBy('Bash(infra-kit worktrees:*)', commandCatalog)).toEqual([
       'worktrees add',
       'worktrees remove',
       'worktrees sync',
@@ -120,35 +122,38 @@ describe('mutatingCommandsReachedBy', () => {
   })
 
   it('reaches the flat cliName spelling as well as the grouped argv', () => {
-    expect(mutatingCommandsReachedBy('Bash(ik release-remove:*)')).toEqual(['release remove'])
+    expect(mutatingCommandsReachedBy('Bash(ik release-remove:*)', commandCatalog)).toEqual(['release remove'])
   })
 
   it('reaches nothing from a read-only allow', () => {
     for (const command of READ_ONLY) {
-      expect(mutatingCommandsReachedBy(`Bash(infra-kit ${command}:*)`), command).toEqual([])
+      expect(mutatingCommandsReachedBy(`Bash(infra-kit ${command}:*)`, commandCatalog), command).toEqual([])
     }
   })
 
   /** A group row is read-only itself, but an allow on it covers its mutating children. */
   it('reaches the mutating children of a read-only group row', () => {
-    expect(mutatingCommandsReachedBy('Bash(infra-kit vendor:*)')).toEqual(['vendor config', 'vendor sync'])
-    expect(mutatingCommandsReachedBy('Bash(infra-kit vendor check:*)')).toEqual([])
+    expect(mutatingCommandsReachedBy('Bash(infra-kit vendor:*)', commandCatalog)).toEqual([
+      'vendor config',
+      'vendor sync',
+    ])
+    expect(mutatingCommandsReachedBy('Bash(infra-kit vendor check:*)', commandCatalog)).toEqual([])
   })
 
   /** A broad allow on the package manager is a true positive: `pnpm exec infra-kit … --yes` runs under it. */
   it('reaches through a bare pnpm allow', () => {
-    expect(mutatingCommandsReachedBy('Bash(pnpm:*)')).toEqual(MUTATING)
+    expect(mutatingCommandsReachedBy('Bash(pnpm:*)', commandCatalog)).toEqual(MUTATING)
   })
 
   it('reaches nothing from an unrelated allow or another tool', () => {
-    expect(mutatingCommandsReachedBy('Bash(git:*)')).toEqual([])
-    expect(mutatingCommandsReachedBy('Bash(pnpm run:*)')).toEqual([])
-    expect(mutatingCommandsReachedBy('Bash(npx infra-kit:*)')).toEqual([])
-    expect(mutatingCommandsReachedBy('Read(**)')).toEqual([])
+    expect(mutatingCommandsReachedBy('Bash(git:*)', commandCatalog)).toEqual([])
+    expect(mutatingCommandsReachedBy('Bash(pnpm run:*)', commandCatalog)).toEqual([])
+    expect(mutatingCommandsReachedBy('Bash(npx infra-kit:*)', commandCatalog)).toEqual([])
+    expect(mutatingCommandsReachedBy('Read(**)', commandCatalog)).toEqual([])
   })
 
   it('names each command once, whichever invocations reach it', () => {
-    const reached = mutatingCommandsReachedBy('Bash(*infra-kit*)')
+    const reached = mutatingCommandsReachedBy('Bash(*infra-kit*)', commandCatalog)
 
     expect(new Set(reached).size).toBe(reached.length)
   })
@@ -204,7 +209,7 @@ describe('readAllowPatterns / inspectAgentAllowlist', () => {
     write('.claude/settings.json', '{ "permissions": { "allow": ["Bash(git:*)", "Bash(ik env-clear:*)"] } }')
     write('.claude/settings.local.json', '{ "permissions": { "allow": ["Bash(infra-kit release:*)"] } }')
 
-    expect(inspectAgentAllowlist(repo)).toEqual({
+    expect(inspectAgentAllowlist(repo, commandCatalog)).toEqual({
       present: ['.claude/settings.json', '.claude/settings.local.json'],
       unreadable: [],
       hits: [

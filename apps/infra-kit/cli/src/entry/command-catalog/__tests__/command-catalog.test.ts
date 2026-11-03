@@ -3,7 +3,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { mutatingCommandsReachedBy } from 'src/commands/doctor/agent-allowlist'
-import { buildProgram, commandPath } from 'src/lib/program'
+import { buildProgram, commandPath } from 'src/entry/program'
 
 import {
   LOW_RISK_MUTATING_ALLOWLIST,
@@ -220,7 +220,7 @@ describe('command catalog — the plugin skills name no MCP tool and allow only 
       })
 
       return patterns.flatMap((pattern) => {
-        const reached = mutatingCommandsReachedBy(pattern)
+        const reached = mutatingCommandsReachedBy(pattern, commandCatalog)
 
         return reached.length === 0 ? [] : [{ skill, pattern, reached }]
       })

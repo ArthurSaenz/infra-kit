@@ -166,7 +166,7 @@ describe('commandEcho ownership', () => {
     const src = path.resolve(__dirname, '../../..')
 
     const offenders = sourceFiles(src).filter((file) => {
-      return /commandEcho\.start\(/u.test(readFileSync(file, 'utf8')) && !file.endsWith('lib/program/program.ts')
+      return /commandEcho\.start\(/u.test(readFileSync(file, 'utf8')) && !file.endsWith('entry/program/program.ts')
     })
 
     const relative = offenders.map((file) => {

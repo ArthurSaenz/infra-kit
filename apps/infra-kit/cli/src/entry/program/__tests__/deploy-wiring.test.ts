@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { commandCatalog } from 'src/lib/command-catalog'
-import { buildPaletteItems, resolveLeaf } from 'src/lib/command-catalog/palette'
-import { buildProgram } from 'src/lib/program/program'
+import { commandCatalog } from 'src/entry/command-catalog'
+import { buildPaletteItems, resolveLeaf } from 'src/entry/command-catalog/palette'
+import { buildProgram } from 'src/entry/program/program'
 import { canPromptForDeploySource, resolveDeploySource } from 'src/lib/release-deploy'
 
 const leaf = (path: string[]) => {

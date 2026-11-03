@@ -2,7 +2,7 @@ import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ghMergeDev } from 'src/commands/gh-merge-dev'
-import { buildProgram } from 'src/lib/program'
+import { buildProgram } from 'src/entry/program'
 
 /**
  * The exit-code contract for `infra-kit release merge-dev`.

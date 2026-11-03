@@ -9,16 +9,16 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 import { bootPortlessLink } from 'src/dev/proxy/portless-link'
-import { commandCatalog } from 'src/lib/command-catalog'
-import { buildPaletteItems as buildPaletteItemsFromCommands } from 'src/lib/command-catalog/palette'
-import type { PaletteItem } from 'src/lib/command-catalog/palette'
+import { commandCatalog } from 'src/entry/command-catalog'
+import { buildPaletteItems as buildPaletteItemsFromCommands } from 'src/entry/command-catalog/palette'
+import type { PaletteItem } from 'src/entry/command-catalog/palette'
+import { buildProgram } from 'src/entry/program'
+import { exitForError } from 'src/entry/program/exit-for-error'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { safeRealpath, shouldWarnLocalInstall } from 'src/lib/install-manager'
 import { logger } from 'src/lib/logger'
 import { suppressTypelessPackageJsonWarning } from 'src/lib/node-warnings'
 import { setParsedArgv } from 'src/lib/parsed-argv'
-import { buildProgram } from 'src/lib/program'
-import { exitForError } from 'src/lib/program/exit-for-error'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { formatAlignedRows } from 'src/lib/render'
 import { applySessionEnv } from 'src/lib/session-env'
@@ -57,7 +57,7 @@ const runProgram = async (argv: string[] = process.argv): Promise<void> => {
   try {
     await program.parseAsync(argv)
   } catch (error) {
-    // Lives in lib/program/exit-for-error so it can be tested; this module runs at import time.
+    // Lives in entry/program/exit-for-error so it can be tested; this module runs at import time.
     exitForError(error)
   }
 }

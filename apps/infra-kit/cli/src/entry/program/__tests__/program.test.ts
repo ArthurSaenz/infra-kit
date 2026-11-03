@@ -3,8 +3,8 @@ import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { commandCatalog } from 'src/lib/command-catalog'
-import { resolveLeaf } from 'src/lib/command-catalog/palette'
+import { commandCatalog } from 'src/entry/command-catalog'
+import { resolveLeaf } from 'src/entry/command-catalog/palette'
 import { commandEcho } from 'src/lib/command-echo'
 import { logger } from 'src/lib/logger'
 

@@ -36,7 +36,7 @@ export const buildEnvClearLines = (varNames: string[]): string[] => {
 
 /**
  * Clear loaded env vars. Returns the path of a file that must be sourced to apply; the CLI action
- * prints it and the env-clear shell alias sources it (see `lib/program`). Throws when no env is
+ * prints it and the env-clear shell alias sources it (see `entry/program`). Throws when no env is
  * loaded — a clear needs something to clear.
  */
 export const envClear = async () => {

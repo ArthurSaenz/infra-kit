@@ -1,9 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { commandCatalog } from 'src/lib/command-catalog'
-import type { CommandCatalogEntry } from 'src/lib/command-catalog'
-
 /**
  * @fileoverview
  *
@@ -30,6 +27,16 @@ export const SETTINGS_FILES = ['.claude/settings.json', '.claude/settings.local.
  * block defines; the `pnpm` forms are what a consumer's scripts and the root CLAUDE.md name.
  */
 export const INVOCATIONS = ['infra-kit', 'ik', 'pnpm exec infra-kit', 'pnpm exec ik', 'pnpm infra-kit'] as const
+
+/**
+ * The slice of a command-catalog row this check reads. The catalog itself is composed in `entry/` from
+ * every command, doctor included, so it is passed in rather than imported.
+ */
+export interface AllowlistCatalogEntry {
+  cliName: string
+  groupPath: readonly string[]
+  mutating: boolean
+}
 
 export interface AllowlistHit {
   file: (typeof SETTINGS_FILES)[number]
@@ -89,16 +96,10 @@ export const globReaches = (glob: string, command: string): boolean => {
 }
 
 /** `release remove` and — when it differs — the flat `release-remove`, so a pattern spelling either is caught. */
-const spellingsOf = (entry: CommandCatalogEntry): string[] => {
+const spellingsOf = (entry: AllowlistCatalogEntry): string[] => {
   const grouped = entry.groupPath.join(' ')
 
   return grouped === entry.cliName ? [grouped] : [grouped, entry.cliName]
-}
-
-const mutatingEntries = (): CommandCatalogEntry[] => {
-  return commandCatalog.filter((entry) => {
-    return entry.mutating
-  })
 }
 
 /**
@@ -107,16 +108,19 @@ const mutatingEntries = (): CommandCatalogEntry[] => {
  * `ik …` is one finding, not two.
  *
  * @example
- * mutatingCommandsReachedBy('Bash(infra-kit worktrees:*)') // => ['worktrees add', 'worktrees remove', 'worktrees sync']
- * mutatingCommandsReachedBy('Bash(infra-kit release list:*)') // => []
- * mutatingCommandsReachedBy('Read(**)') // => []
+ * mutatingCommandsReachedBy('Bash(infra-kit worktrees:*)', commandCatalog) // => ['worktrees add', 'worktrees remove', 'worktrees sync']
+ * mutatingCommandsReachedBy('Bash(infra-kit release list:*)', commandCatalog) // => []
+ * mutatingCommandsReachedBy('Read(**)', commandCatalog) // => []
  */
-export const mutatingCommandsReachedBy = (pattern: string): string[] => {
+export const mutatingCommandsReachedBy = (pattern: string, catalog: readonly AllowlistCatalogEntry[]): string[] => {
   const glob = bashGlobOf(pattern)
 
   if (glob === null) return []
 
-  return mutatingEntries()
+  return catalog
+    .filter((entry) => {
+      return entry.mutating
+    })
     .filter((entry) => {
       return INVOCATIONS.some((invocation) => {
         return spellingsOf(entry).some((spelling) => {
@@ -179,11 +183,11 @@ export interface AllowlistInspection {
  * Every offending pattern across both project settings files, in file order then list order.
  *
  * @example
- * inspectAgentAllowlist('/repo')
+ * inspectAgentAllowlist('/repo', commandCatalog)
  * // => { present: ['.claude/settings.local.json'], unreadable: [],
  * //      hits: [{ file: '.claude/settings.local.json', pattern: 'Bash(infra-kit:*)', commands: ['dev', …] }] }
  */
-export const inspectAgentAllowlist = (root: string): AllowlistInspection => {
+export const inspectAgentAllowlist = (root: string, catalog: readonly AllowlistCatalogEntry[]): AllowlistInspection => {
   const inspection: AllowlistInspection = { present: [], unreadable: [], hits: [] }
 
   for (const file of SETTINGS_FILES) {
@@ -199,7 +203,7 @@ export const inspectAgentAllowlist = (root: string): AllowlistInspection => {
     }
 
     for (const pattern of read.patterns) {
-      const commands = mutatingCommandsReachedBy(pattern)
+      const commands = mutatingCommandsReachedBy(pattern, catalog)
 
       if (commands.length > 0) inspection.hits.push({ file, pattern, commands })
     }

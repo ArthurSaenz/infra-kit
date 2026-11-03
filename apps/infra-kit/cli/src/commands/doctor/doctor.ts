@@ -98,6 +98,7 @@ import { defineMcpTool, textContent } from 'src/types'
 
 import packageJson from '../../../package.json' with { type: 'json' }
 import { SETTINGS_FILES, inspectAgentAllowlist } from './agent-allowlist'
+import type { AllowlistCatalogEntry } from './agent-allowlist'
 
 /**
  * What the probe knows about one external tool, riding along on the row that already answers "is it
@@ -1260,12 +1261,12 @@ const describeReachedCommands = (commands: string[]): string => {
  * choose it deliberately.
  *
  * @example
- * checkAgentAllowlist('/repo-allowing-Bash(infra-kit:*)')
+ * checkAgentAllowlist('/repo-allowing-Bash(infra-kit:*)', commandCatalog)
  * // => { name: 'Agent allowlist', status: 'warn', message: '.claude/settings.local.json allows "Bash(infra-kit:*)", which reaches …' }
  */
-export const checkAgentAllowlist = (root: string): CheckResult => {
+export const checkAgentAllowlist = (root: string, catalog: readonly AllowlistCatalogEntry[]): CheckResult => {
   const name = 'Agent allowlist'
-  const { present, unreadable, hits } = inspectAgentAllowlist(root)
+  const { present, unreadable, hits } = inspectAgentAllowlist(root, catalog)
 
   if (hits.length > 0) {
     const findings = hits.map((hit) => {
@@ -1300,6 +1301,17 @@ export const checkAgentAllowlist = (root: string): CheckResult => {
     status: 'pass',
     message: `no permissions.allow pattern in ${present.join(' or ')} reaches a mutating infra-kit command`,
   }
+}
+
+const agentAllowlistRow = (
+  gitRoot: string | null,
+  catalog: readonly AllowlistCatalogEntry[] | undefined,
+): CheckResult => {
+  if (gitRoot === null) return { name: 'Agent allowlist', status: 'skip', message: 'no git root' }
+
+  if (catalog === undefined) return { name: 'Agent allowlist', status: 'skip', message: 'no command catalog supplied' }
+
+  return checkAgentAllowlist(gitRoot, catalog)
 }
 
 const describeAge = (createdAt: string, now: number): string => {
@@ -2282,7 +2294,13 @@ export const pruneStalePortlessRoutes = async (deps: PruneRoutesDeps = {}): Prom
  * Check installation and authentication status of gh, doppler, and aws CLIs
  */
 export const doctor = async (
-  options: { fix?: boolean; probeDeps?: ProbeDeps; portlessDeps?: PortlessCheckDeps } = {},
+  options: {
+    fix?: boolean
+    probeDeps?: ProbeDeps
+    portlessDeps?: PortlessCheckDeps
+    /** The command catalog the `Agent allowlist` row matches against; without it the row is a `skip`. */
+    catalog?: readonly AllowlistCatalogEntry[]
+  } = {},
 ) => {
   // ONE read, before anything is dispatched: the checks below used to reset the shared config cache
   // concurrently from inside the `Promise.all`. See `readDoctorConfig`.
@@ -2410,9 +2428,7 @@ export const doctor = async (
     // `flag` is the resolved source, not a re-parse of argv: `preAction` has already run, and a
     // `--agent` on this very invocation is what set it.
     checkAgentMode({ env: process.env, stdinIsTTY: process.stdin.isTTY === true, flag: agentMode.source === 'flag' }),
-    gitRoot === null
-      ? { name: 'Agent allowlist', status: 'skip', message: 'no git root' }
-      : checkAgentAllowlist(gitRoot),
+    agentAllowlistRow(gitRoot, options.catalog),
   ]
 
   const checks: CheckResult[] = [

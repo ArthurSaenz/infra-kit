@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { commandCatalog } from 'src/entry/command-catalog'
 import { resolvePluginInstall } from 'src/lib/plugin-pointer'
 
 import {
@@ -427,7 +428,7 @@ describe('plugin section source guards', () => {
    * place the code is set.
    */
   it('never drives the exit code — only plugin installed does (source guard)', () => {
-    const source = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'lib', 'program', 'program.ts'), 'utf-8')
+    const source = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'entry', 'program', 'program.ts'), 'utf-8')
     const action = /const pluginMissing = [\s\S]*?process\.exitCode = 1/.exec(source)?.[0]
 
     expect(action).toBeDefined()
@@ -505,7 +506,7 @@ describe('checkAgentAllowlist', () => {
   }
 
   it('passes, naming both files, when neither exists', () => {
-    const check = checkAgentAllowlist(repo)
+    const check = checkAgentAllowlist(repo, commandCatalog)
 
     expect(check.status).toBe('pass')
     expect(check.message).toContain('no .claude/settings.json or .claude/settings.local.json at the repo root')
@@ -516,7 +517,7 @@ describe('checkAgentAllowlist', () => {
       permissions: { allow: ['Bash(infra-kit release list:*)', 'Bash(ik worktrees list:*)', 'Bash(git status:*)'] },
     })
 
-    const check = checkAgentAllowlist(repo)
+    const check = checkAgentAllowlist(repo, commandCatalog)
 
     expect(check.status).toBe('pass')
     expect(check.message).toContain('no permissions.allow pattern in .claude/settings.json reaches')
@@ -525,7 +526,7 @@ describe('checkAgentAllowlist', () => {
   it('warns on a prefix allow, naming the file, the pattern and what it reaches', () => {
     writeSettings('.claude/settings.local.json', { permissions: { allow: ['Bash(infra-kit release remove:*)'] } })
 
-    const check = checkAgentAllowlist(repo)
+    const check = checkAgentAllowlist(repo, commandCatalog)
 
     expect(check.status).toBe('warn')
     expect(check.message).toContain('.claude/settings.local.json allows "Bash(infra-kit release remove:*)"')
@@ -537,7 +538,7 @@ describe('checkAgentAllowlist', () => {
   it('caps the named commands and counts the rest on a whole-CLI allow', () => {
     writeSettings('.claude/settings.json', { permissions: { allow: ['Bash(infra-kit:*)'] } })
 
-    const check = checkAgentAllowlist(repo)
+    const check = checkAgentAllowlist(repo, commandCatalog)
 
     expect(check.status).toBe('warn')
     expect(check.message).toMatch(
@@ -549,7 +550,7 @@ describe('checkAgentAllowlist', () => {
     writeSettings('.claude/settings.json', { permissions: { allow: ['Bash(pnpm exec infra-kit worktrees:*)'] } })
     writeSettings('.claude/settings.local.json', { permissions: { allow: ['Bash(ik env-load:*)'] } })
 
-    const check = checkAgentAllowlist(repo)
+    const check = checkAgentAllowlist(repo, commandCatalog)
 
     expect(check.status).toBe('warn')
     expect(check.message.indexOf('.claude/settings.json allows')).toBeLessThan(
@@ -563,7 +564,7 @@ describe('checkAgentAllowlist', () => {
     fs.mkdirSync(path.join(repo, '.claude'), { recursive: true })
     fs.writeFileSync(path.join(repo, '.claude', 'settings.local.json'), '{ nope', 'utf-8')
 
-    const check = checkAgentAllowlist(repo)
+    const check = checkAgentAllowlist(repo, commandCatalog)
 
     expect(check.status).toBe('warn')
     expect(check.message).toContain('Could not read permissions.allow from .claude/settings.local.json')
@@ -663,7 +664,7 @@ describe('report placement', () => {
       await checkClaudeCli(),
       ...checkClaudePlugin(repo),
       checkAgentMode({ env: {}, stdinIsTTY: true, flag: false }),
-      checkAgentAllowlist(repo),
+      checkAgentAllowlist(repo, commandCatalog),
     ])
 
     expect(sections).toHaveLength(1)

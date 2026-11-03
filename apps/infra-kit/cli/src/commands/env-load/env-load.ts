@@ -169,7 +169,7 @@ export const resolveEnvLoadRoots = (projectRoot: string, cwd = process.cwd()): s
 /**
  * Download Doppler secrets for a resolved config and atomically write env-load.sh
  * to the session cache dir. Does NOT print to stdout — the path line belongs to the
- * CLI action in `lib/program`.
+ * CLI action in `entry/program`.
  */
 export const writeEnvLoadFile = async ({ config }: WriteEnvLoadFileArgs): Promise<EnvLoadFileResult> => {
   const project = await getDopplerProject()
@@ -296,9 +296,9 @@ const loadSelectedConfig = async (selectedConfig: string, configSource: ConfigSo
 
   const result = await writeEnvLoadFile({ config: selectedConfig })
 
-  // The path the zsh wrapper captures is printed by the CLI action in `lib/program`, not here: the
+  // The path the zsh wrapper captures is printed by the CLI action in `entry/program`, not here: the
   // handler's stdout stays empty so a `--json` caller gets exactly one document; `emitSourcePath` in
-  // `lib/program` owns the path line and its ordering. Logs go to stderr for the same reason.
+  // `entry/program` owns the path line and its ordering. Logs go to stderr for the same reason.
   commandEcho.print()
 
   const structuredContent = {

@@ -38,8 +38,8 @@ import { worktreesAdd } from 'src/commands/worktrees-add'
 import { worktreesList } from 'src/commands/worktrees-list'
 import { worktreesRemove } from 'src/commands/worktrees-remove'
 import { worktreesSync } from 'src/commands/worktrees-sync'
+import { commandCatalog, isLongRunningCommand } from 'src/entry/command-catalog'
 import { agentMode, resolveAgentModeSource } from 'src/lib/agent-mode'
-import { isLongRunningCommand } from 'src/lib/command-catalog'
 import { commandEcho } from 'src/lib/command-echo'
 import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
 import { addJsonOption, emit, jsonOutput } from 'src/lib/json-output'
@@ -660,7 +660,7 @@ export const buildProgram = (): Command => {
     )
     .option('--ascii', 'Render the report with ASCII markers instead of unicode glyphs (check messages are unchanged)')
     .action(async (options) => {
-      const result = await doctor({ fix: Boolean(options.fix) })
+      const result = await doctor({ fix: Boolean(options.fix), catalog: commandCatalog })
 
       // Presentation lives here, not in `doctor()`: that function returns a structured result and
       // owns no terminal. Skipped entirely under `--json` so stdout carries the payload and nothing else.

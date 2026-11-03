@@ -3,7 +3,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /**
- * Raw-source guard, in the `lib/program/__tests__/program.test.ts` idiom: `entry/cli.ts` runs at
+ * Raw-source guard, in the `entry/program/__tests__/program.test.ts` idiom: `entry/cli.ts` runs at
  * import time, so the placement of `applySessionEnv()` can only be pinned by reading the file.
  *
  * The placement IS the correctness: inside `runProgram`, every command process overlays itself from

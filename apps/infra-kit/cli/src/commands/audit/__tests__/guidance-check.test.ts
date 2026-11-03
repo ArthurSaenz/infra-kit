@@ -4,10 +4,10 @@ import path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { buildProgram } from 'src/entry/program'
 import { buildRootBody, resetAdoptionCache, syncPackageGuidance } from 'src/lib/agent-guidance'
 import { ROOT_MARKER_END, ROOT_MARKER_START, ROOT_VERSION_PREFIX } from 'src/lib/agent-guidance/markers'
 import { buildManagedBlock } from 'src/lib/managed-block'
-import { buildProgram } from 'src/lib/program'
 
 import packageJson from '../../../../package.json' with { type: 'json' }
 import { audit } from '../audit'

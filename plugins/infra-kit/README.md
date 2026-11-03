@@ -181,7 +181,7 @@ explicitly for exactly that reason.
 
 The manifest suite pins the transport: no `.mcp.json` in the plugin, no MCP tool name in any
 `SKILL.md`, and every `Bash(infra-kit …)` rule in every `allowed-tools` resolving to a read-only row
-of the CLI's command catalog (`apps/infra-kit/cli/src/lib/command-catalog/command-catalog.ts`, read
+of the CLI's command catalog (`apps/infra-kit/cli/src/entry/command-catalog/command-catalog.ts`, read
 textually) with no `--yes`.
 
 ### comment-verifier: manual e2e checklist

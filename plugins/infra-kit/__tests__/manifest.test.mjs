@@ -636,7 +636,7 @@ const COMMAND_CATALOG = join(
   'infra-kit',
   'cli',
   'src',
-  'lib',
+  'entry',
   'command-catalog',
   'command-catalog.ts',
 )

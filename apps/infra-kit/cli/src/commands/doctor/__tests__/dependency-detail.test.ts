@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { commandCatalog } from 'src/lib/command-catalog'
+import { commandCatalog } from 'src/entry/command-catalog'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
 import { DEPENDENCY_IDS } from 'src/lib/dependency-registry'
 import type { DependencyId } from 'src/lib/dependency-registry'

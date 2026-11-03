@@ -364,7 +364,7 @@ export const commandCatalog: CommandCatalogEntry[] = [
   // shell's report discriminator holds. The bare `vendor`/`config` GROUPS are menuGroup:null — a bare
   // group prints help and exits non-zero, which the shell would misreport. Their useful leaves
   // (vendor-check/diff/config, config-path/edit) are surfaced in the Vendor/Configuration groups below,
-  // each with a hidden flat Commander alias (see src/lib/program/program.ts) so the palette can
+  // each with a hidden flat Commander alias (see src/entry/program/program.ts) so the palette can
   // introspect + single-token dispatch.
   {
     cliName: 'env-status',

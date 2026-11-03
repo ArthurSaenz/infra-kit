@@ -3,14 +3,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { commandCatalog } from 'src/entry/command-catalog'
+import { buildProgram } from 'src/entry/program'
 import { fetchOpenPRsByHead } from 'src/integrations/gh'
 import { agentMode } from 'src/lib/agent-mode'
-import { commandCatalog } from 'src/lib/command-catalog'
 import { commandEcho } from 'src/lib/command-echo'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
 import { jsonOutput } from 'src/lib/json-output'
-import { buildProgram } from 'src/lib/program'
 
 /**
  * `humanOnly` promises a refusal under agent mode that `--yes` cannot lift. Every row carrying it runs

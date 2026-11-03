@@ -5,6 +5,7 @@ import process from 'node:process'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 import { fakeNodeFs } from 'src/dev/proxy/__tests__/portless-link-fixtures'
+import { commandCatalog } from 'src/entry/command-catalog'
 import { logger } from 'src/lib/logger'
 
 import packageJson from '../../../../package.json' with { type: 'json' }
@@ -229,8 +230,9 @@ afterAll(() => {
  * checkout: `isGlobal` false (the row is the skip), an EMPTY fake fs (the health resolution behind the
  * skip must never `lstat` the author's real `~/.infra-kit/node`), and a `nodeVersionOf` that never spawns.
  */
-const runDoctor = () => {
-  return doctor({
+const runDoctorOptions = () => {
+  return {
+    catalog: commandCatalog,
     portlessDeps: {
       isGlobal: () => {
         return false
@@ -240,7 +242,11 @@ const runDoctor = () => {
         return { version: process.version, status: 0, signal: null }
       },
     },
-  })
+  }
+}
+
+const runDoctor = () => {
+  return doctor(runDoctorOptions())
 }
 
 const producedNames = async (): Promise<string[]> => {
@@ -313,6 +319,18 @@ describe('the Agent allowlist row is gated on the git root', () => {
    * so this fails if the row is ever answered against `process.cwd()` — the failure mode a real git
    * seam, or a blank-stdout one without the refusal, would silently pass.
    */
+  it('is a skip when no command catalog is injected — doctor never imports the catalog', async () => {
+    gitTopLevel = ensureGitOnlyFixture()
+
+    const { checks } = (await doctor({ ...runDoctorOptions(), catalog: undefined })).structuredContent
+
+    expect(
+      checks.find((check) => {
+        return check.name === 'Agent allowlist'
+      }),
+    ).toMatchObject({ status: 'skip', message: 'no command catalog supplied' })
+  })
+
   it('answers against the mocked root, not the directory vitest was launched from', async () => {
     gitTopLevel = ensureGitOnlyFixture()
 

@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { initCore } from 'src/commands/init'
-import { resolveLeaf } from 'src/lib/command-catalog/palette'
+import { resolveLeaf } from 'src/entry/command-catalog/palette'
+import { buildProgram } from 'src/entry/program'
 import { runRecipe } from 'src/lib/dependency-install'
 import type { InstallOutcome } from 'src/lib/dependency-install'
 import { probeAll } from 'src/lib/dependency-probe'
 import type { DependencyState } from 'src/lib/dependency-probe'
-import { buildProgram } from 'src/lib/program'
 
 /**
  * @fileoverview
