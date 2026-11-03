@@ -8,8 +8,9 @@ import { assertManagementContext } from 'src/lib/git-guard'
 import { getCurrentWorktrees, getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import type { FakeCommandResult } from 'src/lib/git-utils/__tests__/zx-command-mock'
 import { getInfraKitConfig, resolveOrcaLayout } from 'src/lib/infra-kit-config'
+import { toFeatureBranch } from 'src/lib/worktrees'
 
-import { resolveFeatureBase, toFeatureBranch } from '../feature-worktrees'
+import { resolveFeatureBase } from '../feature-worktrees'
 import { worktreesAdd } from '../worktrees-add'
 
 // The repo's git flow is read from infra-kit.json, which this suite's mocks never serve.

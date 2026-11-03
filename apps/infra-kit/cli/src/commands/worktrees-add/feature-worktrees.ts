@@ -6,13 +6,12 @@ import { OperationError } from 'src/lib/errors/operation-error'
 import { PRODUCTION_BRANCH, resolveGitFlow } from 'src/lib/git-flow'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { formatBranchName, parseReleaseRef } from 'src/lib/release-id'
+import { FEATURE_PREFIX, toFeatureBranch } from 'src/lib/worktrees'
 
 export const DEFAULT_FEATURE_BASE = 'dev'
 
 /** Accepted as a base even when `origin/HEAD` records no default branch. */
 const MAIN_BRANCH = 'main'
-
-const FEATURE_PREFIX = 'feature/'
 
 export type WorktreeKind = 'release' | 'feature'
 
@@ -28,23 +27,6 @@ export interface FeatureWorktreePlan {
   branch: string
   base: string
   source: FeatureBranchSource
-}
-
-/**
- * Normalize a feature name to its branch, accepting it with or without the prefix.
- *
- * @example
- * toFeatureBranch(' Checkout V2 ') // => 'feature/checkout-v2'
- * toFeatureBranch('feature/checkout-v2') // => 'feature/checkout-v2'
- */
-export const toFeatureBranch = (name: string): string => {
-  const slug = name
-    .trim()
-    .replace(/^feature\//, '')
-    .toLowerCase()
-    .replaceAll(/\s+/g, '-')
-
-  return `${FEATURE_PREFIX}${slug}`
 }
 
 /** The branch `origin/HEAD` points at, or null when the clone records none. */

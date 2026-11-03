@@ -17,11 +17,10 @@ import { pickReleaseBranches } from 'src/lib/prompts/release-picker'
 import { formatBranchName, parseReleaseRef } from 'src/lib/release-id'
 import { formatBranchPickerItems, getJiraDescriptions, releaseBranchLabels } from 'src/lib/release-utils'
 import type { ReleaseType } from 'src/lib/release-utils'
-import { logRemovalResults, removeWorktrees, toRemovalToolResult } from 'src/lib/worktrees'
+import { logRemovalResults, removeWorktrees, toFeatureBranch, toRemovalToolResult } from 'src/lib/worktrees'
 import { defineMcpTool, textContent } from 'src/types'
 import type { RequiredConfirmedOptionArg } from 'src/types'
 
-import { toFeatureBranch } from '../worktrees-add/feature-worktrees'
 import { worktreesRemoveSelf } from './remove-self'
 
 // Constants

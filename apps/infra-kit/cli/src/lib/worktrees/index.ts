@@ -1,3 +1,4 @@
+export { FEATURE_PREFIX, toFeatureBranch } from './feature-branch'
 export { logRemovalResults } from './log-removal-results'
 export { toRemovalToolResult } from './removal-tool-result'
 export type { RemovalStructuredContent } from './removal-tool-result'
