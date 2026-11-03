@@ -1,3 +1,4 @@
+export { readAuditExclude } from './audit-exclude'
 export {
   loadAuthoredPackageConfig,
   loadPackageConfig,
@@ -5,5 +6,5 @@ export {
   readDeclaredPackageType,
   readPackageJson,
 } from './config-loader'
-export { discoverPackages } from './package-discovery'
+export { discoverPackages, partitionPackages } from './package-discovery'
 export { findPackageRoot } from './package-root'

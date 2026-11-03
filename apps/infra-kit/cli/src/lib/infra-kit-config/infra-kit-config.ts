@@ -245,6 +245,12 @@ const auditRulesSchema = z
       })
       .strict()
       .optional(),
+    /**
+     * Workspace packages `audit --all` and `audit --fix --all` skip: repo-relative globs in the
+     * `pnpm-workspace.yaml` dialect (`*` matches one segment). For packages another tool generates and
+     * owns, which stay in the workspace for `pnpm install` but carry no scripts or guidance of their own.
+     */
+    exclude: z.array(z.string().min(1)).optional(),
   })
   .strict()
 

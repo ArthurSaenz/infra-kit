@@ -1,3 +1,4 @@
+import path from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
 
@@ -6,9 +7,9 @@ import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 import { ROOT_DEFAULT_RULES } from 'src/lib/package-config'
 import type { ResolvedPackageRules } from 'src/lib/package-config'
-import { discoverPackages, validatePackage } from 'src/lib/package-validator'
+import { validatePackage } from 'src/lib/package-validator'
 import type { PackageCheck, PackageValidationResult } from 'src/lib/package-validator'
-import { findPackageRoot } from 'src/lib/package-validator/loader'
+import { findPackageRoot, partitionPackages, readAuditExclude } from 'src/lib/package-validator/loader'
 import { MARKETPLACE_NAME, inspectLegacyMcpRegistration } from 'src/lib/plugin-pointer'
 import { MCP_FILE_NAME } from 'src/lib/plugin-pointer/mcp-registration'
 import { defineMcpTool, textContent } from 'src/types'
@@ -52,6 +53,8 @@ interface AuditStructuredContent {
    * though the tool `outputSchema` never documents it.
    */
   fixed?: FixedEntry[]
+  /** Present only on an `--all` run: the packages `audit.exclude` skipped, repo-relative. */
+  excluded?: string[]
 }
 
 /**
@@ -77,20 +80,26 @@ interface AuditTarget {
  * `root` → the monorepo root with {@link ROOT_DEFAULT_RULES}; `all` → every
  * discovered non-vendor package; otherwise the package walked up from cwd.
  */
-const resolveTargets = async (options: AuditOptions): Promise<AuditTarget[]> => {
+const resolveTargets = async (options: AuditOptions): Promise<{ targets: AuditTarget[]; excluded?: string[] }> => {
   if (options.root) {
-    return [{ dir: await getProjectRoot(), baseline: ROOT_DEFAULT_RULES, isRoot: true }]
+    return { targets: [{ dir: await getProjectRoot(), baseline: ROOT_DEFAULT_RULES, isRoot: true }] }
   }
 
   if (options.all) {
-    const dirs = await discoverPackages(await getProjectRoot())
+    const root = await getProjectRoot()
+    const { packages, excluded } = await partitionPackages(root, await readAuditExclude())
 
-    return dirs.map((dir) => {
-      return { dir }
-    })
+    return {
+      targets: packages.map((dir) => {
+        return { dir }
+      }),
+      excluded: excluded.map((dir) => {
+        return path.relative(root, dir).split(path.sep).join('/')
+      }),
+    }
   }
 
-  return [{ dir: await findPackageRoot(options.cwd ?? process.cwd()) }]
+  return { targets: [{ dir: await findPackageRoot(options.cwd ?? process.cwd()) }] }
 }
 
 /**
@@ -254,7 +263,14 @@ export const audit = async (options: AuditOptions = {}) => {
   // Fix first, check second — the `eslint --fix` model. `runAuditFix` re-probes adoption after
   // writing, so the `resolveAdoption` below sees the files this run just created.
   const fixed = options.fix ? await applyFix(options, workspaceRoot) : undefined
-  const targets = await resolveTargets(options)
+  const { targets, excluded } = await resolveTargets(options)
+
+  if (excluded && excluded.length > 0) {
+    logger.info(
+      `${excluded.length} package${excluded.length === 1 ? '' : 's'} excluded by infra-kit.json audit.exclude`,
+    )
+  }
+
   const adoption = await resolveAdoption(workspaceRoot)
 
   const repoRoot = await resolveRepoRoot()
@@ -307,6 +323,7 @@ export const audit = async (options: AuditOptions = {}) => {
   // document `fixed`, and it stays accurate for the handler's own result only while a fix-less
   // call never produces one.
   if (fixed) structuredContent.fixed = fixed
+  if (excluded) structuredContent.excluded = excluded
 
   return {
     content: textContent(JSON.stringify(structuredContent, null, 2)),
@@ -337,6 +354,10 @@ const auditOutputSchema = {
       }),
     )
     .describe('Per-package check results'),
+  excluded: z
+    .array(z.string())
+    .optional()
+    .describe('On an `all` run: the repo-relative packages infra-kit.json `audit.exclude` skipped'),
 }
 
 // MCP Tool Registration

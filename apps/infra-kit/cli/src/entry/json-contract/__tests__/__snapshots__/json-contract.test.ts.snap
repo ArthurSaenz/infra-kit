@@ -15,6 +15,13 @@ exports[`--json contract > matches the committed contract snapshot 1`] = `
           "description": "The grouped command path that ran, e.g. \`release create\`",
           "type": "string",
         },
+        "excluded": {
+          "description": "On an \`all\` run: the repo-relative packages infra-kit.json \`audit.exclude\` skipped",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
         "packages": {
           "description": "Per-package check results",
           "items": {

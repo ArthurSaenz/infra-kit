@@ -8,7 +8,12 @@ import { logger } from 'src/lib/logger'
 // Deep loader path, NOT the `src/lib/package-validator` barrel: that barrel reaches
 // `checks/index` → `agent-guidance-check` → `lib/agent-guidance`, and this module already
 // imports that subtree. The loader imports nothing from `agent-guidance`, so this edge is safe.
-import { discoverPackages, findPackageRoot, readDeclaredPackageType } from 'src/lib/package-validator/loader'
+import {
+  findPackageRoot,
+  partitionPackages,
+  readAuditExclude,
+  readDeclaredPackageType,
+} from 'src/lib/package-validator/loader'
 
 import packageJson from '../../../package.json' with { type: 'json' }
 import { migrateRootAuditConfig, stampRootConfig } from './migrate-root-config'
@@ -74,7 +79,7 @@ const syncOnePackage = async (
 /**
  * Run the sync over the resolved scope, which mirrors `audit`'s exactly: `--root` is the root
  * block (after moving a retired root `infra-kit.config.ts` into `infra-kit.json` and stamping its
- * `$schema`/`configVersion`), `--all` is every discovered package and never the root, and no flag is the single
+ * `$schema`/`configVersion`), `--all` is every package `audit.exclude` keeps, never the root, and no flag is the single
  * package walked up from cwd. Nothing here throws on a per-file error — a failure comes back as
  * an entry with `action: 'failed'`, because a run that aborted halfway could leave exactly one
  * well-formed block behind, adopting the workspace and reddening every package it never reached.
@@ -91,7 +96,9 @@ const syncScope = async (options: AuditFixOptions, repoRoot: string): Promise<Gu
   if (options.all) {
     const written: GuidanceWrite[] = []
 
-    for (const packageDir of await discoverPackages(repoRoot)) {
+    const { packages } = await partitionPackages(repoRoot, await readAuditExclude())
+
+    for (const packageDir of packages) {
       written.push(...(await syncOnePackage(packageDir, repoRoot, options.design)))
     }
 

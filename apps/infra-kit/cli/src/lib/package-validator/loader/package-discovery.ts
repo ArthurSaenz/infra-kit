@@ -96,3 +96,33 @@ export const discoverPackages = async (projectRoot: string): Promise<string[]> =
 
   return [...found].sort()
 }
+
+/**
+ * {@link discoverPackages}, split by the root `audit.exclude` globs (same dialect as the workspace
+ * patterns). `excluded` lists the discovered packages a glob matched, so a run can say what it skipped.
+ *
+ * @example
+ * await partitionPackages('/repo', ['apps/special/ui/pages/*'])
+ * // => { packages: ['/repo/apps/special/ui'], excluded: ['/repo/apps/special/ui/pages/xmas'] }
+ */
+export const partitionPackages = async (
+  projectRoot: string,
+  exclude: readonly string[],
+): Promise<{ packages: string[]; excluded: string[] }> => {
+  const discovered = await discoverPackages(projectRoot)
+  const matched = new Set<string>()
+
+  for (const pattern of exclude) {
+    for (const dir of await expandGlob(projectRoot, pattern.endsWith('/') ? pattern.slice(0, -1) : pattern))
+      matched.add(dir)
+  }
+
+  return {
+    packages: discovered.filter((dir) => {
+      return !matched.has(dir)
+    }),
+    excluded: discovered.filter((dir) => {
+      return matched.has(dir)
+    }),
+  }
+}

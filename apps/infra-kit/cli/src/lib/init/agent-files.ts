@@ -6,7 +6,7 @@ import { syncPackageGuidance, syncRootGuidance } from 'src/lib/agent-guidance'
 import type { GuidanceWrite, WriteAction } from 'src/lib/agent-guidance'
 import { getProjectRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
-import { discoverPackages, readDeclaredPackageType } from 'src/lib/package-validator/loader'
+import { partitionPackages, readAuditExclude, readDeclaredPackageType } from 'src/lib/package-validator/loader'
 
 import packageJson from '../../../package.json' with { type: 'json' }
 
@@ -228,7 +228,7 @@ export interface SyncRepoGuidanceResult {
 }
 
 /**
- * Discover the workspace packages under `root`, degrading to "no packages" when the
+ * Discover the workspace packages under `root` that `audit.exclude` keeps, degrading to "no packages" when the
  * workspace cannot be read.
  *
  * `discoverPackages` reads `pnpm-workspace.yaml` and rejects with `ENOENT` when there
@@ -237,7 +237,7 @@ export interface SyncRepoGuidanceResult {
  */
 const discoverWorkspacePackages = async (root: string): Promise<string[]> => {
   try {
-    return await discoverPackages(root)
+    return (await partitionPackages(root, await readAuditExclude())).packages
   } catch (err) {
     logger.debug({ err, msg: 'Skipped per-package agent guidance — no workspace packages could be discovered.' })
 

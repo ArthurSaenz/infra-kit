@@ -43,6 +43,12 @@ const makeTmpPackage = (config: string, packageJson: Record<string, unknown>): s
   return dir
 }
 
+// `audit --all` reads infra-kit.json for `audit.exclude`, and the config cache keys on mtimes only, so a
+// workspace written in the same tick as the previous one would read that one's config.
+beforeEach(() => {
+  resetInfraKitConfigCache()
+})
+
 afterEach(() => {
   while (tmpDirs.length > 0) {
     const dir = tmpDirs.pop()
@@ -605,5 +611,62 @@ describe('audit — the MCP surface cannot mutate the repo', () => {
     const result = await auditMcpTool.handler({ all: true, confirmedCommand: false })
 
     expect('fixed' in (result.structuredContent ?? {})).toBe(false)
+  })
+})
+
+describe('audit --all — infra-kit.json audit.exclude', () => {
+  beforeEach(() => {
+    resetAdoptionCache()
+    resetInfraKitConfigCache()
+  })
+
+  /** {@link makeWorkspace} with `packages/b` excluded, and no infra-kit.config.ts in it to prove it is never read. */
+  const makeExcludingWorkspace = (): string => {
+    const root = makeWorkspace()
+    const configPath = path.join(root, 'infra-kit.json')
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as { audit: Record<string, unknown> }
+
+    fs.writeFileSync(configPath, JSON.stringify({ ...config, audit: { ...config.audit, exclude: ['packages/b'] } }))
+    fs.rmSync(path.join(root, 'packages', 'b', 'infra-kit.config.ts'))
+    projectRoot.value = root
+
+    return root
+  }
+
+  it('skips the excluded package, lists it, and prints one line with the count', async () => {
+    makeExcludingWorkspace()
+
+    let result: AuditResult | undefined
+
+    const lines = await captureLog(async () => {
+      result = await audit({ all: true })
+    })
+
+    expect(result?.structuredContent.allPassed).toBe(true)
+    expect(
+      result?.structuredContent.packages.map((pkg) => {
+        return pkg.name
+      }),
+    ).toEqual(['@ws/a'])
+    expect(result?.structuredContent.excluded).toEqual(['packages/b'])
+    expect(lines).toContain('1 package excluded by infra-kit.json audit.exclude')
+  })
+
+  it('writes no guidance block into an excluded package under --fix', async () => {
+    const root = makeExcludingWorkspace()
+
+    await captureLog(() => {
+      return audit({ all: true, fix: true })
+    })
+
+    expect(fs.existsSync(path.join(root, 'packages', 'a', 'CLAUDE.md'))).toBe(true)
+    expect(fs.existsSync(path.join(root, 'packages', 'b', 'CLAUDE.md'))).toBe(false)
+  })
+
+  it('publishes an empty `excluded` on an --all run that excludes nothing, and none outside --all', async () => {
+    projectRoot.value = makeWorkspace()
+
+    expect((await audit({ all: true })).structuredContent.excluded).toEqual([])
+    expect('excluded' in (await audit({ root: true })).structuredContent).toBe(false)
   })
 })
