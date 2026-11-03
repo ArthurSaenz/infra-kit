@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "source": "starter-workspace",
-  "commit": "9c3ccf423cd80ceada7f035ca7e72d40caa81825",
-  "syncedAt": "2026-11-02T10:02:12.568Z",
+  "commit": "543b4b2e832802fb323e8745efc058e9acc48883",
+  "syncedAt": "2026-11-03T08:56:26.174Z",
   "fileCount": 82,
   "files": {
     "README.md": "0bed88c32d333f3f57105c60aaf0540b562652ef10ee2f31cc3192b3d9d6592e",
@@ -63,7 +63,7 @@
     "packages/docs-ui/deploy.ts": "a3c93541dd7cbb5232791301dcac1623d872817f76f0808410613828ddda38e4",
     "packages/docs-ui/eslint.config.js": "625973b0248c74bb6e6b7a0e199ef4b2af2f20c54d478802893c0256c89e7c0f",
     "packages/docs-ui/infra-kit.config.ts": "027ce858f85a51e5672f840ea90f418fe65bf09882641df033fc941733220176",
-    "packages/docs-ui/package.json": "88a7c6ff35d96fe692d9529d3e5337c8efc923eead382b8ad1ec6b770407ccda",
+    "packages/docs-ui/package.json": "ae4c1d3e7dcc8b6cfd4cbf2a007156417bed8feb927778eeef58a07a134dc8d7",
     "packages/docs-ui/source.config.ts": "02904f1e56a418c338b3dde85d871332058f8bf525998115ca277bedce356177",
     "packages/docs-ui/src/components/mdx.tsx": "253d1084e0f621d16e2fe738fee400bfe11ddff11cc094d9f1ddbb47a264db37",
     "packages/docs-ui/src/components/not-found.tsx": "b4f87a221905e94eedd7a6bc321bc86b0e98773a57f26c26d421be6ada95835c",

@@ -52,6 +52,8 @@ playwright/.cache/
 
 ## Misc
 Dockerfile
+# Extensionless shell stubs put on PATH by tests: prettier has no parser for them
+**/__fixtures__/bin/
 .DS_Store
 google-services.json
 categories-data-manifest.json
