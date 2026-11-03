@@ -7,6 +7,7 @@ import { omitKey } from './omit-key'
  */
 export const dropTopLevelKey = ({ key, id, note }: { key: string; id: string; note: string }): ConfigMigration => {
   return {
+    kind: 'drop',
     id,
     note,
     apply: (parsed) => {

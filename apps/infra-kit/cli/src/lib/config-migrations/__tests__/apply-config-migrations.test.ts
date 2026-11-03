@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
 import { applyConfigMigrations } from '../apply-config-migrations'
-import { CONFIG_MIGRATIONS } from '../registry'
+import { SUPPORTED_CONFIG_VERSION } from 'src/lib/infra-kit-config'
+
+import { CONFIG_MIGRATIONS, MIGRATED_CONFIG_VERSION } from '../registry'
 
 describe('applyConfigMigrations', () => {
+  // A `rename`/`reshape` that introduces configVersion N ships with a loader that reads N; otherwise
+  // `audit --fix --root` would stamp a version this very CLI refuses.
+  it('never migrates past the configVersion this CLI reads', () => {
+    expect(MIGRATED_CONFIG_VERSION).toBe(SUPPORTED_CONFIG_VERSION)
+  })
+
   it('folds the registry in its declared order', () => {
     expect(
       CONFIG_MIGRATIONS.map((migration) => {

@@ -21,3 +21,14 @@ export const CONFIG_MIGRATIONS: readonly ConfigMigration[] = [
   dropDevPresetsKeyMigration,
   dropDevKeyMigration,
 ]
+
+/**
+ * The `configVersion` a file is at once every step has run: the highest `toVersion` of a `rename` or
+ * `reshape`, else 1 (a `drop` only prunes, so it never moves the version).
+ */
+export const MIGRATED_CONFIG_VERSION = Math.max(
+  1,
+  ...CONFIG_MIGRATIONS.flatMap((migration) => {
+    return migration.kind === 'drop' ? [] : [migration.toVersion]
+  }),
+)
