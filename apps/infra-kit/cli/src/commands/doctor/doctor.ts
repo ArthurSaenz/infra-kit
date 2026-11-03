@@ -11,7 +11,6 @@ import { decidePrune, isDevSessionRunning } from 'src/commands/doctor/prune-rout
 // own comment requires of its hint.
 import { FIXABLE_NAMES } from 'src/commands/doctor/report'
 import { parseServiceArgv } from 'src/commands/doctor/service-file'
-import { listPendingResolutions } from 'src/commands/gh-merge-dev/resolution'
 import {
   DARWIN_SERVICE_LABEL,
   DARWIN_SERVICE_PLIST_PATH,
@@ -75,6 +74,7 @@ import { AGENTS_MARKER_END, AGENTS_MARKER_START, resolveGitRoot } from 'src/lib/
 import { MARKER_END, MARKER_START, buildShellBlock } from 'src/lib/init/init'
 import { isWithin, safeRealpath } from 'src/lib/install-manager'
 import { extractVersion, hasManagedBlock } from 'src/lib/managed-block'
+import { listPendingResolutions } from 'src/lib/merge-dev-records'
 import { discoverPackages } from 'src/lib/package-validator/loader'
 import { tildify } from 'src/lib/path-display'
 import {
