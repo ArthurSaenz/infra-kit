@@ -319,6 +319,23 @@ describe('the Agent allowlist row is gated on the git root', () => {
    * so this fails if the row is ever answered against `process.cwd()` — the failure mode a real git
    * seam, or a blank-stdout one without the refusal, would silently pass.
    */
+  // `audit --fix --root` is the one writer of `$schema`/`configVersion`; a read-only diagnostic must not
+  // stamp, reformat or migrate the committed file.
+  it('leaves infra-kit.json byte-identical, an unstamped one included', async () => {
+    const file = path.join(ensureFixture(), 'infra-kit.json')
+    const unstamped = '{\n    "envManagement": { "provider": "doppler", "config": { "name": "api" } }\n}'
+
+    fs.writeFileSync(file, unstamped)
+
+    try {
+      await runDoctor()
+
+      expect(fs.readFileSync(file, 'utf8')).toBe(unstamped)
+    } finally {
+      fs.writeFileSync(file, '{}')
+    }
+  })
+
   it('is a skip when no command catalog is injected — doctor never imports the catalog', async () => {
     gitTopLevel = ensureGitOnlyFixture()
 

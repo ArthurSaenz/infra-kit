@@ -428,6 +428,11 @@ describe('audit --root — rules from infra-kit.json', () => {
     const result = await audit({ root: true, fix: true })
 
     expect(fs.existsSync(path.join(root, 'infra-kit.config.ts'))).toBe(false)
+    // `--fix --root` is where `$schema` and `configVersion` get stamped.
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'infra-kit.json'), 'utf8'))).toMatchObject({
+      $schema: expect.stringMatching(/^https:\/\/unpkg\.com\/infra-kit@[^/]+\/dist\/infra-kit\.schema\.json$/u),
+      configVersion: 1,
+    })
     expect(JSON.parse(fs.readFileSync(path.join(root, 'infra-kit.json'), 'utf8')).audit).toEqual({
       requiredScripts: ['build'],
       requiredFiles: ['package.json'],

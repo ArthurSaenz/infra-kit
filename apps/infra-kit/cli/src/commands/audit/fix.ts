@@ -11,7 +11,7 @@ import { logger } from 'src/lib/logger'
 import { discoverPackages, findPackageRoot, readDeclaredPackageType } from 'src/lib/package-validator/loader'
 
 import packageJson from '../../../package.json' with { type: 'json' }
-import { migrateRootAuditConfig } from './migrate-root-config'
+import { migrateRootAuditConfig, stampRootConfig } from './migrate-root-config'
 
 /**
  * One file a `--fix` run touched, as it appears in `audit()`'s
@@ -73,7 +73,8 @@ const syncOnePackage = async (
 
 /**
  * Run the sync over the resolved scope, which mirrors `audit`'s exactly: `--root` is the root
- * block (after moving a retired root `infra-kit.config.ts` into `infra-kit.json`), `--all` is every discovered package and never the root, and no flag is the single
+ * block (after moving a retired root `infra-kit.config.ts` into `infra-kit.json` and stamping its
+ * `$schema`/`configVersion`), `--all` is every discovered package and never the root, and no flag is the single
  * package walked up from cwd. Nothing here throws on a per-file error — a failure comes back as
  * an entry with `action: 'failed'`, because a run that aborted halfway could leave exactly one
  * well-formed block behind, adopting the workspace and reddening every package it never reached.
@@ -82,6 +83,7 @@ const syncScope = async (options: AuditFixOptions, repoRoot: string): Promise<Gu
   if (options.root) {
     return [
       ...(await migrateRootAuditConfig(repoRoot)),
+      ...(await stampRootConfig(repoRoot, packageJson.version)),
       ...(await syncRootGuidance(repoRoot, { version: packageJson.version })),
     ]
   }
