@@ -92,3 +92,36 @@ describe('eslint no-restricted-imports survives config composition', () => {
     COLD_CONFIG_LOAD_BUDGET_MS,
   )
 })
+
+describe('eslint layer boundary composes with the no-React boundary', () => {
+  it(
+    'resolves BOTH @ik/layer-imports and the src/tui ban on a command file',
+    async () => {
+      const config = await eslint.calculateConfigForFile(path.join(PROJECT, 'src/commands/setup/setup.ts'))
+      const [severity, options] = (config.rules?.['@ik/layer-imports'] ?? []) as [unknown, Record<string, unknown>]
+
+      // Severity resolves to 2 (`error`); a `warn` here would let a cross-layer import ship.
+      expect(severity).toBe(2)
+      expect(options).toEqual({
+        layers: [['lib', 'integrations'], ['dev'], ['tui'], ['commands'], ['entry']],
+        rootAlias: 'src',
+        isolate: ['commands'],
+      })
+
+      const { groups } = await restrictedFor('src/commands/setup/setup.ts')
+
+      expect(groups).toContain('src/tui')
+    },
+    COLD_CONFIG_LOAD_BUDGET_MS,
+  )
+
+  it(
+    'applies the layer boundary below the machine paths too',
+    async () => {
+      const config = await eslint.calculateConfigForFile(path.join(PROJECT, 'src/dev/dev-server.ts'))
+
+      expect(config.rules?.['@ik/layer-imports']?.[0]).toBe(2)
+    },
+    COLD_CONFIG_LOAD_BUDGET_MS,
+  )
+})

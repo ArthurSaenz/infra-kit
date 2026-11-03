@@ -4,6 +4,13 @@
 - Retiring a key = schema edit + one registry entry + one test. Never leave a retired key "accepted and ignored" in the schema; the loader's strict refusal is the safety net for anything the registry does not know.
 - The tracked project layer is not rewritten under `CI` (the strict error carries a setup hint instead). `infra-kit setup` runs the same registry explicitly.
 
+## Source layers
+
+- `src/` is layered, lowest first: `lib` + `integrations` → `dev` → `tui` → `commands` → `entry`. A folder imports only its own level or below; `@ik/layer-imports` in `eslint.config.js` enforces it (dynamic `import()` included, type-only imports exempt, tests exempt).
+- One command never imports another (`isolate: ['commands']`). Code two commands share moves down into `lib/` (or `integrations/`, `dev/proxy/` when it needs those); a command-specific piece such as an argument form lives under its command.
+- `entry/` is the composition root: `entry/program` and `entry/command-catalog` import every command. When a lower layer needs something only a higher one can build, the higher one passes it in — `doctor({ catalog })`, `run(options, createDevUi)`, `registerBranchPickers(...)` in `entry/cli.ts`.
+- Moves are `git mv` with no re-export shim left behind.
+
 <!-- infra-kit:package:begin -->
 <!-- infra-kit:package:version 0.21.0 lib -->
 

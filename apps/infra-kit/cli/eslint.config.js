@@ -12,9 +12,8 @@ const MACHINE_PATH_GLOBS = [
   'src/entry/cli.ts',
   'src/commands/**/*.ts',
   'src/commands/**/*.tsx',
-  // The release-picker shim is the one lib module that legally reaches the TUI —
-  // but only through a dynamic import(). Linting it here means an accidental
-  // static ink/react/src/tui import fails at edit time, not just in the
+  // The release-picker shim loads the TUI through a loader `entry/cli.ts` registers. Linting it here
+  // means an accidental static ink/react/src/tui import fails at edit time, not just in the
   // hand-maintained no-react-boundary test.
   'src/lib/prompts/**/*.ts',
   // The session shell is the eager CLI chunk: it must not statically depend on the lazily-imported
@@ -162,8 +161,41 @@ const enableMaxJsdocSummaryLines = {
   },
 }
 
+/**
+ * The `src/` layer order (cli/CLAUDE.md, "Source layers"): lowest first, a folder imports only its own
+ * level or below, and one command never imports another. `rootAlias: 'src'` because every module here
+ * imports `src/...`; with the plugin's `#root` default the rule would resolve nothing and pass silently.
+ *
+ * It composes with `noTuiOnMachinePaths` rather than replacing it: that object sets
+ * `no-restricted-imports`, this one sets `@ik/layer-imports`, and flat config replaces only a rule set
+ * twice. `config-boundaries.test.ts` pins both on one command file.
+ */
+const layerBoundary = {
+  files: ['src/**/*.{ts,tsx}'],
+  plugins: {
+    '@ik': ikPlugin,
+  },
+  rules: {
+    '@ik/layer-imports': [
+      'error',
+      {
+        layers: [['lib', 'integrations'], ['dev'], ['tui'], ['commands'], ['entry']],
+        rootAlias: 'src',
+        isolate: ['commands'],
+      },
+    ],
+  },
+}
+
 // `config()` returns a Promise resolving to the flat-config array; ESLint awaits
 // the default export, so resolve it and append our local boundary rules.
 export default config().then((base) => {
-  return [...base, noTuiOnMachinePaths, noRawStdinReaders, enableMaxJsdocLines, enableMaxJsdocSummaryLines]
+  return [
+    ...base,
+    noTuiOnMachinePaths,
+    noRawStdinReaders,
+    enableMaxJsdocLines,
+    enableMaxJsdocSummaryLines,
+    layerBoundary,
+  ]
 })
