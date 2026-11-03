@@ -688,6 +688,12 @@ package, and test files (`__tests__/`, `*.test.*`, `*.spec.*`) are skipped: a te
 environment (global styles, providers) like an entry point and is not part of the runtime graph.
 
 Imports between features are left to `eslint-plugin-boundaries`; this rule only judges direction.
+`isolate` adds one sibling rule for folders whose children are independent units — with
+`isolate: ['commands']`, `src/commands/setup/**` may not import `src/commands/doctor/**`:
+
+```
+`commands/setup` cannot import `src/commands/doctor/doctor` from its sibling `commands/doctor`: folders under `commands/` are isolated from each other. Move the shared code down into a lower layer, or pass it in from above.
+```
 
 ```js
 {
@@ -705,6 +711,7 @@ Imports between features are left to `eslint-plugin-boundaries`; this rule only 
 | `allowTypeImports` | `boolean`    | `true`           | Whether type-only imports may point at a higher layer.               |
 | `rootAlias`        | `string`     | `'#root'`        | The alias that maps to `src/`.                                       |
 | `ignore`           | `string[]`   | `[]`             | Globs; the rule is skipped for matching files.                       |
+| `isolate`          | `string[]`   | `[]`             | Folders whose subfolders may not import each other.                  |
 
 ### `feature-public-api`
 

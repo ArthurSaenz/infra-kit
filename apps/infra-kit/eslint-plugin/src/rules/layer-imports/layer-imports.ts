@@ -19,6 +19,8 @@ export interface Options {
   rootAlias?: string
   /** Globs; the rule is skipped for matching files. */
   ignore?: string[]
+  /** Folders whose subfolders may not import each other (`commands/a` → `commands/b`). */
+  isolate?: string[]
 }
 
 // `renderer` and `mobile` are entry points like `app`: they mount pages, nothing imports them.
@@ -85,6 +87,11 @@ export const layerImports: Rule.RuleModule = {
             items: { type: 'string' },
             description: 'Optional globs; the rule is skipped for matching files.',
           },
+          isolate: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Folders whose subfolders may not import each other (`commands/a` → `commands/b`).',
+          },
         },
         additionalProperties: false,
       },
@@ -92,6 +99,8 @@ export const layerImports: Rule.RuleModule = {
     messages: {
       upward:
         '`{{fromLayer}}` cannot import `{{specifier}}` from the higher layer `{{toLayer}}`. Layers import only their own level or below: {{order}}. Move the shared code down into a lower layer, or pass it in from above.',
+      sibling:
+        '`{{fromLayer}}/{{fromUnit}}` cannot import `{{specifier}}` from its sibling `{{fromLayer}}/{{toUnit}}`: folders under `{{fromLayer}}/` are isolated from each other. Move the shared code down into a lower layer, or pass it in from above.',
     },
   },
 
@@ -106,7 +115,7 @@ export const layerImports: Rule.RuleModule = {
 
     const layers = options.layers ?? DEFAULT_LAYERS
     const levels = levelIndex(layers)
-    const fromLayer = fileDirsUnderSrc(filename, srcDir)[0]
+    const [fromLayer, fromUnit] = fileDirsUnderSrc(filename, srcDir)
     const fromLevel = fromLayer === undefined ? undefined : levels.get(fromLayer)
 
     // A file directly in `src/` (main.tsx) or in an unlisted folder has no level to compare against.
@@ -116,6 +125,7 @@ export const layerImports: Rule.RuleModule = {
 
     const allowTypeImports = options.allowTypeImports ?? true
     const rootAlias = options.rootAlias ?? DEFAULT_ROOT_ALIAS
+    const isolated = fromUnit !== undefined && (options.isolate ?? []).includes(fromLayer)
 
     const check = (node: Rule.Node): void => {
       const source = readImportSource(node)
@@ -124,8 +134,18 @@ export const layerImports: Rule.RuleModule = {
         return
       }
 
-      const toLayer = resolveUnderSrc(filename, srcDir, source.specifier, rootAlias)?.[0]
+      const [toLayer, toUnit] = resolveUnderSrc(filename, srcDir, source.specifier, rootAlias) ?? []
       const toLevel = toLayer === undefined ? undefined : levels.get(toLayer)
+
+      if (isolated && toLayer === fromLayer && toUnit !== undefined && toUnit !== fromUnit) {
+        context.report({
+          node: source.node,
+          messageId: 'sibling',
+          data: { fromLayer, fromUnit: fromUnit!, toUnit, specifier: source.specifier },
+        })
+
+        return
+      }
 
       if (toLevel === undefined || toLevel <= fromLevel) {
         return

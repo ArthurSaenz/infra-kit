@@ -30,6 +30,26 @@ const order =
 
 ruleTester.run('layer-imports', layerImports, {
   valid: [
+    {
+      code: "import { doctor } from 'src/commands/doctor'",
+      filename: '/virtual/cli/src/commands/setup/setup.ts',
+      options: [{ rootAlias: 'src' }],
+    },
+    {
+      code: "import { report } from 'src/commands/setup/report'",
+      filename: '/virtual/cli/src/commands/setup/setup.ts',
+      options: [{ rootAlias: 'src', layers: [['lib'], ['commands']], isolate: ['commands'] }],
+    },
+    {
+      code: "import type { Row } from 'src/commands/doctor/doctor'",
+      filename: '/virtual/cli/src/commands/setup/setup.ts',
+      options: [{ rootAlias: 'src', layers: [['lib'], ['commands']], isolate: ['commands'] }],
+    },
+    {
+      code: "import { x } from 'src/lib/x'",
+      filename: '/virtual/cli/src/commands/setup/setup.ts',
+      options: [{ rootAlias: 'src', layers: [['lib'], ['commands']], isolate: ['commands'] }],
+    },
     { code: "import { cn } from '#root/lib/utils'", filename: feature },
     { code: "import { Button } from '../../../components/button'", filename: feature },
     { code: "import { orderService } from '#root/features/order'", filename: feature },
@@ -63,6 +83,34 @@ ruleTester.run('layer-imports', layerImports, {
     { code: "import { paths } from '#root/pages/paths'", filename: '/virtual/app/src/lib/paths.test.ts' },
   ],
   invalid: [
+    {
+      code: "import { doctor } from 'src/commands/doctor/doctor'",
+      filename: '/virtual/cli/src/commands/setup/setup.ts',
+      options: [{ rootAlias: 'src', layers: [['lib'], ['commands']], isolate: ['commands'] }],
+      errors: [
+        {
+          message:
+            '`commands/setup` cannot import `src/commands/doctor/doctor` from its sibling `commands/doctor`: folders under `commands/` are isolated from each other. Move the shared code down into a lower layer, or pass it in from above.',
+        },
+      ],
+    },
+    {
+      code: "import { x } from '../../doctor/doctor'",
+      filename: '/virtual/cli/src/commands/setup/nested/x.ts',
+      options: [{ rootAlias: 'src', layers: [['lib'], ['commands']], isolate: ['commands'] }],
+      errors: [
+        {
+          messageId: 'sibling',
+          data: { fromLayer: 'commands', fromUnit: 'setup', toUnit: 'doctor', specifier: '../../doctor/doctor' },
+        },
+      ],
+    },
+    {
+      code: "const m = await import('src/commands/doctor')",
+      filename: '/virtual/cli/src/commands/setup/setup.ts',
+      options: [{ rootAlias: 'src', layers: [['lib'], ['commands']], isolate: ['commands'] }],
+      errors: [{ messageId: 'sibling' }],
+    },
     {
       code: "import { navigate } from '#root/app/navigation'",
       filename: feature,
