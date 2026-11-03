@@ -13,11 +13,12 @@ const RULE_KEYS: readonly RuleKey[] = ['requiredScripts', 'requiredFiles']
 /**
  * An explicit `[]` replaces the defaults wholesale (see `resolvePackageConfig`), so it switches the
  * check off rather than relaxing it — which is how every consumer silenced audit "temporarily".
- * An absent key inherits the defaults and is never reported.
+ * An absent key inherits the defaults and is never reported. A `fail`, not a `warn`: a warn let every new
+ * package ship with the check off.
  *
  * @example
  * findEmptyRules({ requiredScripts: [] }, DEFAULT_RULES, 'infra-kit.config.ts')
- * // => [{ name: 'empty-rules', status: 'warn', message: 'infra-kit.config.ts sets requiredScripts: [] …' }]
+ * // => [{ name: 'empty-rules', status: 'fail', message: 'infra-kit.config.ts sets requiredScripts: [] …' }]
  */
 export const findEmptyRules = (
   authored: Partial<Record<RuleKey, readonly string[]>>,
@@ -29,7 +30,7 @@ export const findEmptyRules = (
   }).map((key): PackageCheck => {
     return {
       name: EMPTY_RULES_CHECK,
-      status: 'warn',
+      status: 'fail',
       message: `${source} sets ${key}: [], which disables the check instead of relaxing it — delete the key to inherit the defaults (${baseline[key].join(', ')}), or list what this target really has`,
     }
   })

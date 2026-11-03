@@ -74,12 +74,16 @@ const makeWorkspace = (): string => {
 
   tmpDirs.push(root)
   fs.writeFileSync(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*/*\n  - packages/*\n')
-  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'ws-root', type: 'module' }))
+  fs.writeFileSync(
+    path.join(root, 'package.json'),
+    JSON.stringify({ name: 'ws-root', type: 'module', scripts: { build: 'true' } }),
+  )
+  // Minimal rule lists the fixture satisfies — never `[]`, which audit fails as a disabled check.
   fs.writeFileSync(
     path.join(root, 'infra-kit.json'),
     JSON.stringify({
       envManagement: { provider: 'doppler', config: { name: 'ws-root' } },
-      audit: { requiredScripts: [], requiredFiles: [], turbo: { requiredTasks: [] } },
+      audit: { requiredScripts: ['build'], requiredFiles: ['package.json'], turbo: { requiredTasks: [] } },
     }),
   )
   fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# root notes\n')
@@ -91,9 +95,15 @@ const makeWorkspace = (): string => {
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(
       path.join(dir, 'package.json'),
-      JSON.stringify({ name: `@ws/${path.basename(relDir)}`, ...(isE2e ? { scripts: E2E_SCRIPTS } : {}) }),
+      JSON.stringify({
+        name: `@ws/${path.basename(relDir)}`,
+        scripts: { build: 'true', ...(isE2e ? E2E_SCRIPTS : {}) },
+      }),
     )
-    fs.writeFileSync(path.join(dir, 'infra-kit.config.ts'), 'export default { requiredScripts: [], requiredFiles: [] }')
+    fs.writeFileSync(
+      path.join(dir, 'infra-kit.config.ts'),
+      "export default { requiredScripts: ['build'], requiredFiles: ['package.json'] }",
+    )
 
     // The e2e type carries convention checks no config can switch off, so the fixture has to satisfy them.
     if (isE2e) fs.writeFileSync(path.join(dir, 'playwright.config.ts'), E2E_PLAYWRIGHT_CONFIG)

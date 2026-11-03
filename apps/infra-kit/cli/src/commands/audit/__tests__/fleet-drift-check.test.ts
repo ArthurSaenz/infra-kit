@@ -26,7 +26,7 @@ describe('findFleetDrift', () => {
     ])
   })
 
-  it('(a) warns on a kit package pinned at more than one range', () => {
+  it('(a) fails on a kit package pinned at more than one range', () => {
     const checks = findFleetDrift(
       [
         site('apps/a/package.json', '@slip-stream-kit/config', '^0.34.0'),
@@ -37,11 +37,11 @@ describe('findFleetDrift', () => {
     )
 
     expect(names(checks)).toEqual(['dependency-drift:catalog'])
-    expect(checks[0]!.status).toBe('warn')
+    expect(checks[0]!.status).toBe('fail')
     expect(checks[0]!.message).toContain('pinned at more than one range')
   })
 
-  it('(a) warns on a kit package that bypasses its catalog entry', () => {
+  it('(a) fails on a kit package that bypasses its catalog entry', () => {
     const checks = findFleetDrift(
       [
         site('apps/a/package.json', '@slip-stream-kit/vite', 'catalog:'),
@@ -52,6 +52,7 @@ describe('findFleetDrift', () => {
     )
 
     expect(names(checks)).toEqual(['dependency-drift:catalog'])
+    expect(checks[0]!.status).toBe('fail')
     expect(checks[0]!.message).toContain('apps/b/package.json "^0.34.0" bypass it')
   })
 

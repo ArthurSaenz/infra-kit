@@ -31,7 +31,8 @@ globally.
 // infra-kit.config.ts
 import { defineConfig } from '@slip-stream-kit/config'
 
-export default defineConfig(() => ({ requiredScripts: [], requiredFiles: [] }))
+// Omit a key to inherit the defaults; a list replaces them. An empty list fails `infra-kit audit`.
+export default defineConfig(() => ({ requiredScripts: ['build', 'test'] }))
 ```
 
 ```ts

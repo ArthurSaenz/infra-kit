@@ -1,10 +1,9 @@
 import { defineConfig } from '@slip-stream-kit/config'
 
-// TEMPORARY: script/file checks disabled for now — the audit only verifies this
-// config is present. Restore real requiredScripts/requiredFiles later.
+// A YAML-only package: no TypeScript toolchain, so the defaults name scripts and files it cannot have.
 export default defineConfig(() => {
   return {
-    requiredScripts: [],
-    requiredFiles: [],
+    requiredScripts: ['infra-kit-check'],
+    requiredFiles: ['serverless.common.yml'],
   }
 })

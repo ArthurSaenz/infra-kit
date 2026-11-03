@@ -87,7 +87,7 @@ const describeSites = (sites: DependencySite[]): string => {
     .join(', ')
 }
 
-/** (a) a kit package not on its catalog entry, or pinned at more than one range. The only `--fix`able kind. */
+/** (a) a kit package not on its catalog entry, or pinned at more than one range. The only `--fix`able kind, so the only one that fails. */
 const catalogDrift = (kitSites: DependencySite[], catalogs: Catalogs): PackageCheck[] => {
   return [...groupByName(kitSites)].flatMap(([name, sites]): PackageCheck[] => {
     if (catalogs.default[name] !== undefined) {
@@ -100,7 +100,7 @@ const catalogDrift = (kitSites: DependencySite[], catalogs: Catalogs): PackageCh
       return [
         {
           name: `${DRIFT_CHECK}:catalog`,
-          status: 'warn',
+          status: 'fail',
           message: `${name} has a catalog entry (${catalogs.default[name]}) but ${describeSites(offCatalog)} bypass it — run \`ik audit --fix --root\` to rewrite them to "catalog:", then pnpm install`,
         },
       ]
@@ -118,7 +118,7 @@ const catalogDrift = (kitSites: DependencySite[], catalogs: Catalogs): PackageCh
     return [
       {
         name: `${DRIFT_CHECK}:catalog`,
-        status: 'warn',
+        status: 'fail',
         message: `${name} is pinned at more than one range: ${describeSites(sites)} — add one entry to the pnpm-workspace.yaml catalog, then run \`ik audit --fix --root\``,
       },
     ]

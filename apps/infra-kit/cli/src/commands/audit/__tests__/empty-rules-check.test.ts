@@ -31,14 +31,14 @@ afterEach(() => {
 })
 
 describe('findEmptyRules', () => {
-  it('warns once per explicitly empty key and names the defaults it switched off', () => {
+  it('fails once per explicitly empty key and names the defaults it switched off', () => {
     const checks = findEmptyRules({ requiredScripts: [], requiredFiles: [] }, DEFAULT_RULES, 'infra-kit.config.ts')
 
     expect(
       checks.map((check) => {
         return check.status
       }),
-    ).toEqual(['warn', 'warn'])
+    ).toEqual(['fail', 'fail'])
     expect(checks[0]!.message).toContain('requiredScripts: []')
     expect(checks[0]!.message).toContain(DEFAULT_RULES.requiredScripts.join(', '))
     expect(checks[1]!.message).toContain('requiredFiles: []')

@@ -55,8 +55,9 @@ afterEach(() => {
 
 describe('audit', () => {
   it('passes a package that satisfies its resolved rules', async () => {
-    const dir = makeTmpPackage('export default { requiredScripts: [], requiredFiles: [] }', {
+    const dir = makeTmpPackage("export default { requiredScripts: ['build'], requiredFiles: ['package.json'] }", {
       name: '@x/ok',
+      scripts: { build: 'tsc' },
       type: 'module',
     })
 
@@ -112,22 +113,22 @@ describe('audit', () => {
     expect(lines).toHaveLength(2)
   })
 
-  it('prints a warning as [WARN], counts it apart, and keeps the audit passing', async () => {
+  it('fails an explicitly empty rule list, which would switch the check off', async () => {
     const dir = makeTmpPackage("export default { requiredScripts: [], requiredFiles: ['package.json'] }", {
-      name: '@x/warned',
+      name: '@x/emptied',
       type: 'module',
     })
 
     const lines = await captureLog(async () => {
       const result = await audit({ cwd: dir })
 
-      expect(result.structuredContent.allPassed).toBe(true)
-      expect(result.structuredContent.warnCount).toBe(1)
-      expect(result.structuredContent.packages[0]?.passed).toBe(true)
+      expect(result.structuredContent.allPassed).toBe(false)
+      expect(result.structuredContent.warnCount).toBe(0)
+      expect(result.structuredContent.packages[0]?.passed).toBe(false)
     })
 
-    expect(lines[0]).toMatch(/^\[WARN\] @x\/warned empty-rules: infra-kit\.config\.ts sets requiredScripts: \[\]/u)
-    expect(lines.at(-1)).toBe('✅ audit passed — 4 checks, 1 target (1 warning)')
+    expect(lines[0]).toMatch(/^\[FAIL\] @x\/emptied empty-rules: infra-kit\.config\.ts sets requiredScripts: \[\]/u)
+    expect(lines.at(-1)).toBe('❌ audit failed — 1/4 checks, 1 target')
     expect(lines).toHaveLength(2)
   })
 
@@ -181,14 +182,17 @@ const makeWorkspace = (): string => {
 
   tmpDirs.push(root)
   fs.writeFileSync(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n')
-  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'ws-root', type: 'module' }))
+  fs.writeFileSync(
+    path.join(root, 'package.json'),
+    JSON.stringify({ name: 'ws-root', type: 'module', scripts: { build: 'true' } }),
+  )
   // Marks the repo as an infra-kit project and carries the root audit rules. `envManagement` is the
-  // one required key.
+  // one required key. The rule lists are minimal but never `[]`: an empty list is itself a failure.
   fs.writeFileSync(
     path.join(root, 'infra-kit.json'),
     JSON.stringify({
       envManagement: { provider: 'doppler', config: { name: 'ws-root' } },
-      audit: { requiredScripts: [], requiredFiles: [], turbo: { requiredTasks: [] } },
+      audit: { requiredScripts: ['build'], requiredFiles: ['package.json'], turbo: { requiredTasks: [] } },
     }),
   )
 
@@ -196,8 +200,14 @@ const makeWorkspace = (): string => {
     const dir = path.join(root, 'packages', name)
 
     fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: `@ws/${name}`, type: 'module' }))
-    fs.writeFileSync(path.join(dir, 'infra-kit.config.ts'), 'export default { requiredScripts: [], requiredFiles: [] }')
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: `@ws/${name}`, type: 'module', scripts: { build: 'true' } }),
+    )
+    fs.writeFileSync(
+      path.join(dir, 'infra-kit.config.ts'),
+      "export default { requiredScripts: ['build'], requiredFiles: ['package.json'] }",
+    )
   }
 
   gitInit(root)
@@ -372,7 +382,9 @@ describe('audit --root — rules from infra-kit.json', () => {
   it('enforces the audit block over the root baseline', async () => {
     const root = makeWorkspace()
 
-    writeProjectConfig(root, { audit: { requiredScripts: ['qa'], requiredFiles: [], turbo: { requiredTasks: [] } } })
+    writeProjectConfig(root, {
+      audit: { requiredScripts: ['qa'], requiredFiles: ['package.json'], turbo: { requiredTasks: [] } },
+    })
     projectRoot.value = root
 
     const result = await audit({ root: true })
@@ -409,7 +421,7 @@ describe('audit --root — rules from infra-kit.json', () => {
     writeProjectConfig(root, {})
     fs.writeFileSync(
       path.join(root, 'infra-kit.config.ts'),
-      'export default () => ({ requiredScripts: [], requiredFiles: [], turbo: { requiredTasks: [] } })',
+      "export default () => ({ requiredScripts: ['build'], requiredFiles: ['package.json'], turbo: { requiredTasks: [] } })",
     )
     projectRoot.value = root
 
@@ -417,8 +429,8 @@ describe('audit --root — rules from infra-kit.json', () => {
 
     expect(fs.existsSync(path.join(root, 'infra-kit.config.ts'))).toBe(false)
     expect(JSON.parse(fs.readFileSync(path.join(root, 'infra-kit.json'), 'utf8')).audit).toEqual({
-      requiredScripts: [],
-      requiredFiles: [],
+      requiredScripts: ['build'],
+      requiredFiles: ['package.json'],
       turbo: { requiredTasks: [] },
     })
     expect(result.structuredContent.allPassed).toBe(true)

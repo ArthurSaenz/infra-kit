@@ -275,15 +275,18 @@ describe('audit stays soft', () => {
   // legs used to leak `fatal:`, and Step 1's `{ quiet: true }` is what silences them. audit's default
   // path never reads infra-kit.json (it validates against infra-kit.config.ts), so it stays soft. The
   // config is a self-contained object export (no `@slip-stream-kit/config` import to resolve) with
-  // empty rules so the package passes with only a package.json + config present.
+  // minimal rules the package.json satisfies — an empty list would fail as a disabled check.
   it('i8: audit in a standalone package exits 0 with no fatal: lines', async () => {
     const cwd = mkTmp('standalone-pkg')
 
     writeFileSync(
       join(cwd, 'package.json'),
-      JSON.stringify({ name: 'standalone-pkg', type: 'module', version: '0.0.0' }),
+      JSON.stringify({ name: 'standalone-pkg', type: 'module', version: '0.0.0', scripts: { build: 'true' } }),
     )
-    writeFileSync(join(cwd, 'infra-kit.config.ts'), 'export default { requiredScripts: [], requiredFiles: [] }\n')
+    writeFileSync(
+      join(cwd, 'infra-kit.config.ts'),
+      "export default { requiredScripts: ['build'], requiredFiles: ['package.json'] }\n",
+    )
 
     const result = await runCli(['audit'], { cwd, env: cleanEnv() })
 
