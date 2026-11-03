@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { configKeys } from 'src/commands/config-set'
+import { configKeys } from 'src/lib/config-layer'
 import { getInfraKitConfig, getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { defineMcpTool, textContent } from 'src/types'

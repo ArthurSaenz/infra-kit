@@ -5,10 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { configUnset } from 'src/commands/config-unset'
 import { agentMode } from 'src/lib/agent-mode'
+import { parseConfigValue } from 'src/lib/config-layer'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 
-import { configSet, parseConfigValue } from '../config-set'
+import { configSet } from '../config-set'
 
 vi.mock('src/lib/git-utils', () => {
   return { getProjectRoot: vi.fn(), getMainRepoRoot: vi.fn(), getRepoName: vi.fn() }

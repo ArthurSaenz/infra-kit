@@ -1,5 +1,5 @@
-import { SCOPE_LABELS, assertConfigKey, editConfigLayer } from 'src/commands/config-set'
-import type { ConfigScope } from 'src/commands/config-set'
+import { SCOPE_LABELS, assertConfigKey, editConfigLayer } from 'src/lib/config-layer'
+import type { ConfigScope } from 'src/lib/config-layer'
 import { logger } from 'src/lib/logger'
 import { tildify } from 'src/lib/path-display'
 import { textContent } from 'src/types'
