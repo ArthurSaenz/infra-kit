@@ -138,6 +138,8 @@ describe('agent-mode refusals (spawned cli.js)', () => {
     // The three `orca*` arrays are part of the wire shape even when nothing was opened: the fixture
     // hides the developer's `orca` from PATH, so headless-false resolution leaves them empty.
     expect(json).toStrictEqual({
+      schemaVersion: 1,
+      command: 'worktrees add',
       kind: 'release',
       createdWorktrees: [FIXTURE_RELEASE.branch],
       count: 1,
@@ -309,6 +311,8 @@ describe('worktrees remove', () => {
 
     expect(run.code).toBe(1)
     expect(json).toStrictEqual({
+      schemaVersion: 1,
+      command: 'worktrees remove',
       status: 'partial_failure',
       removedWorktrees: [],
       failedWorktrees: [FIXTURE_RELEASE.branch],

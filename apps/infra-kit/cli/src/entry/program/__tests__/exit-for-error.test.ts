@@ -67,6 +67,7 @@ const refusal = new StructuredRefusalError({ status: 'argument_required', argume
 
 afterEach(() => {
   jsonOutput.enabled = false
+  jsonOutput.command = ''
 })
 
 describe('exitForError — the entry/cli.ts catch', () => {
@@ -89,12 +90,23 @@ describe('exitForError — the entry/cli.ts catch', () => {
 
   it('a StructuredRefusalError under --json emits the payload to stdout and exits with ITS code', () => {
     jsonOutput.enabled = true
+    jsonOutput.command = 'release create'
 
     const h = harness()
 
     expect(h.exitCodeFor(refusal)).toBe(2)
     expect(h.stdout).toEqual([
-      `${JSON.stringify({ status: 'argument_required', argument: 'version', agentMode: 'flag' }, null, 2)}\n`,
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          command: 'release create',
+          status: 'argument_required',
+          argument: 'version',
+          agentMode: 'flag',
+        },
+        null,
+        2,
+      )}\n`,
     ])
     expect(h.stderr).toEqual([refusal.message])
   })

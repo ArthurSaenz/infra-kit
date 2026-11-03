@@ -949,6 +949,7 @@ export const buildProgram = (): Command => {
     // for `release list --json` Commander binds the post-subcommand flag to the
     // parent `release` group, so the leaf's own `opts()` would not carry it.
     jsonOutput.enabled = Boolean(actionCommand.optsWithGlobals().json)
+    jsonOutput.command = commandPath(actionCommand)
 
     if (jsonOutput.enabled) {
       logger.level = 'warn'

@@ -6,11 +6,13 @@ import { addJsonOption, emit, jsonOutput } from '../json-output'
 describe('json-output', () => {
   afterEach(() => {
     jsonOutput.enabled = false
+    jsonOutput.command = ''
   })
 
   describe('emit', () => {
-    it('writes structuredContent as pretty JSON when enabled', () => {
+    it('writes structuredContent as pretty JSON inside the envelope when enabled', () => {
       jsonOutput.enabled = true
+      jsonOutput.command = 'version'
       const writes: string[] = []
 
       const result = emit({ structuredContent: { version: '1.2.3' } }, (text) => {
@@ -20,9 +22,21 @@ describe('json-output', () => {
       expect(writes).toHaveLength(1)
       const [payload = ''] = writes
 
-      expect(JSON.parse(payload)).toEqual({ version: '1.2.3' })
+      expect(JSON.parse(payload)).toEqual({ schemaVersion: 1, command: 'version', version: '1.2.3' })
       // returns the result unchanged for pass-through use (emit(await handler()))
       expect(result).toEqual({ structuredContent: { version: '1.2.3' } })
+    })
+
+    it('leaves a non-object payload as it is — there is no top level to merge the envelope into', () => {
+      jsonOutput.enabled = true
+      jsonOutput.command = 'x'
+      const writes: string[] = []
+
+      emit({ structuredContent: ['a'] }, (text) => {
+        writes.push(text)
+      })
+
+      expect(JSON.parse(writes[0] ?? '')).toEqual(['a'])
     })
 
     it('is a no-op when json mode is disabled', () => {
@@ -74,6 +88,7 @@ describe('json-output', () => {
       }
       program.hook('preAction', (_thisCommand, actionCommand) => {
         jsonOutput.enabled = Boolean(actionCommand.optsWithGlobals().json)
+        jsonOutput.command = 'group leaf'
       })
 
       return program
@@ -87,7 +102,7 @@ describe('json-output', () => {
       expect(writes).toHaveLength(1)
       const [payload = ''] = writes
 
-      expect(JSON.parse(payload)).toEqual({ ok: true })
+      expect(JSON.parse(payload)).toEqual({ schemaVersion: 1, command: 'group leaf', ok: true })
     })
 
     it('emits nothing for `group leaf` without --json', async () => {

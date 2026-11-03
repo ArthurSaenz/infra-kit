@@ -1,1 +1,1 @@
-export { addJsonOption, emit, jsonOutput } from './json-output'
+export { addJsonOption, emit, JSON_SCHEMA_VERSION, jsonEnvelopeShape, jsonOutput, withEnvelope } from './json-output'
