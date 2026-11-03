@@ -3,6 +3,7 @@ import {
   copyFileSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   readlinkSync,
   rmSync,
@@ -13,6 +14,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 
+import { localBlockOf, withLocalBlock } from '../local-block'
 import { writeManifest } from '../manifest'
 import { VENDOR_DIR, isSkippedPath } from '../skip-sets'
 import { fingerprintOnDisk } from './fingerprint'
@@ -48,6 +50,9 @@ const writeOne = (sourceRoot: string, targetRoot: string, op: WriteOp): void => 
   const to = path.join(targetRoot, op.target)
 
   mkdirSync(path.dirname(to), { recursive: true })
+
+  const localBlock = fingerprintOnDisk(to)?.kind === 'file' ? localBlockOf(readFileSync(to)) : null
+
   // Removing first means a link is never written through and a file-vs-link swap is a plain replace.
   removeLeaf(to)
 
@@ -57,7 +62,8 @@ const writeOne = (sourceRoot: string, targetRoot: string, op: WriteOp): void => 
     return
   }
 
-  copyFileSync(from, to)
+  if (localBlock === null) copyFileSync(from, to)
+  else writeFileSync(to, withLocalBlock(readFileSync(from), localBlock))
   chmodSync(to, op.mode === '100755' ? 0o755 : 0o644)
 }
 

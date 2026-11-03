@@ -1,7 +1,7 @@
 import { lstatSync, readlinkSync } from 'node:fs'
 import path from 'node:path'
 
-import { sha256 } from '../hash'
+import { mirroredSha256 } from '../hash'
 import type { Fingerprint, SourceFile, TrackedFile } from './types'
 
 const MISSING_CODES: ReadonlySet<string> = new Set(['ENOENT', 'ENOTDIR'])
@@ -24,7 +24,7 @@ export const fingerprintOnDisk = (absolutePath: string): Fingerprint | null => {
   if (stat.isSymbolicLink()) return { kind: 'link', text: readlinkSync(absolutePath) }
 
   // Git only records the owner-execute bit, so group/other bits must not make two files differ.
-  if (stat.isFile()) return { kind: 'file', executable: (stat.mode & 0o100) !== 0, sha: sha256(absolutePath) }
+  if (stat.isFile()) return { kind: 'file', executable: (stat.mode & 0o100) !== 0, sha: mirroredSha256(absolutePath) }
 
   return { kind: 'other' }
 }
@@ -39,7 +39,7 @@ export const fingerprintSourceFile = (repoRoot: string, file: TrackedFile): Sour
   const fingerprint: Fingerprint =
     file.mode === '120000'
       ? { kind: 'link', text: readlinkSync(absolutePath) }
-      : { kind: 'file', executable: file.mode === '100755', sha: sha256(absolutePath) }
+      : { kind: 'file', executable: file.mode === '100755', sha: mirroredSha256(absolutePath) }
 
   return { ...file, fingerprint }
 }

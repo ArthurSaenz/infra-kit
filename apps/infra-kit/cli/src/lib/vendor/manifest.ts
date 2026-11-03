@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
 
-import { sha256 } from './hash'
+import { mirroredSha256 } from './hash'
 import { isSkippedPath } from './skip-sets'
 import { walkVendorTree } from './walk'
 
@@ -61,7 +61,7 @@ export const buildFilesMap = (vendorRoot: string, paths?: readonly string[]): Re
 
   for (const rel of relativePaths) {
     try {
-      files[rel] = sha256(path.join(vendorRoot, rel))
+      files[rel] = mirroredSha256(path.join(vendorRoot, rel))
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause)
 
@@ -155,7 +155,7 @@ export const compareToManifest = (vendorRoot: string, manifest: VendorManifest):
       continue
     }
 
-    if (sha256(path.join(vendorRoot, rel)) !== expected[rel]) {
+    if (mirroredSha256(path.join(vendorRoot, rel)) !== expected[rel]) {
       modified.push(rel)
     }
   }
