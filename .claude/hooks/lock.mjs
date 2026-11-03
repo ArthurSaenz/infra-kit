@@ -7,7 +7,20 @@
 // optimization, since `finally` does not run on the SIGKILL the harness sends at its timeout.
 
 import { randomUUID } from 'node:crypto';
-import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  closeSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 // There is no stdlib sync sleep, and a spin loop would fight the tool processes for the same core.
@@ -15,7 +28,7 @@ const sleepSync = (ms) => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 };
 
-const envInt = (name, fallback) => {
+export const envInt = (name, fallback) => {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
   const parsed = Number.parseInt(raw, 10);
@@ -190,4 +203,54 @@ export const holdsLock = (handle) => {
 export const releaseLock = (handle) => {
   if (!holdsLock(handle)) return;
   rmSync(handle.lockPath, { force: true });
+};
+
+// ------------------------------------------------------------------------------------- wait log
+
+// Per user, not per checkout or per TMPDIR: every repo carrying these hooks must land in ONE log,
+// and a session launched with its own TMPDIR would silently split it.
+// CLAUDE_HOOK_LOG_DIR is a TEST SEAM only, like the CLAUDE_HOOK_LOCK_* overrides above.
+export const waitLogDir = () => process.env.CLAUDE_HOOK_LOG_DIR || join(homedir(), '.cache', 'claude-hooks');
+
+const WAIT_LOG = 'waits.jsonl';
+const ROTATE_BYTES = 256 * 1024;
+const KEEP_ROTATED = 4;
+const ROTATED = /^waits\.(\d+)\.\d+\.jsonl$/;
+
+// Rename, never read-modify-write: concurrent gates append without holding any lock, and a rename
+// is atomic, so a racing append lands whole in either file. The name is unique per rotator, so two
+// gates rotating at once cannot rename over each other's history.
+const rotateIfLarge = (dir, path) => {
+  try {
+    if (statSync(path).size <= ROTATE_BYTES) return;
+    renameSync(path, join(dir, `waits.${Date.now()}.${process.pid}.jsonl`));
+  } catch (err) {
+    if (err.code === 'ENOENT') return; // nothing to rotate, or another gate already did
+    throw err;
+  }
+
+  const rotated = readdirSync(dir)
+    .map((name) => ({ name, at: Number(ROTATED.exec(name)?.[1]) }))
+    .filter(({ at }) => Number.isFinite(at))
+    .sort((a, b) => a.at - b.at);
+
+  for (const { name } of rotated.slice(0, -KEEP_ROTATED)) rmSync(join(dir, name), { force: true });
+};
+
+/**
+ * Append one JSON line to the per-user wait log. Never throws: a log that cannot be written must not
+ * block a gate, so the failure is reported on stderr and the gate carries on.
+ */
+export const appendWaitRecord = (record) => {
+  try {
+    const dir = waitLogDir();
+    const path = join(dir, WAIT_LOG);
+
+    mkdirSync(dir, { recursive: true });
+    rotateIfLarge(dir, path);
+    // One write per line through O_APPEND: lines from concurrent gates interleave whole, never torn.
+    appendFileSync(path, `${JSON.stringify({ ts: Date.now(), ...record })}\n`);
+  } catch (err) {
+    process.stderr.write(`claude-hooks: wait log not written (${err.code ?? err.message})\n`);
+  }
 };

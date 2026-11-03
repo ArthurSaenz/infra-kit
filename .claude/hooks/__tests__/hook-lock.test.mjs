@@ -20,7 +20,7 @@ import {
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { HOOKS_DIR } from './helpers.mjs';
-import { acquireLock, holdsLock, releaseLock, trySteal } from '../lock.mjs';
+import { acquireLock, appendWaitRecord, holdsLock, releaseLock, trySteal } from '../lock.mjs';
 
 const REPO_ROOT = resolve(HOOKS_DIR, '..', '..');
 
@@ -579,5 +579,99 @@ test('the pipeline lock and the qa lock are different files', () => {
     releaseLock(qa);
   } finally {
     cleanup();
+  }
+});
+
+// -------------------------------------------------------------------------------------- wait log
+
+const withLogDir = (fn) => {
+  const dir = join(REPO_ROOT, '.omc', `.tmp-waits-${randomUUID()}`);
+  const previous = process.env.CLAUDE_HOOK_LOG_DIR;
+  process.env.CLAUDE_HOOK_LOG_DIR = dir;
+  try {
+    return fn(dir);
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_HOOK_LOG_DIR;
+    else process.env.CLAUDE_HOOK_LOG_DIR = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
+
+const readLog = (dir) =>
+  readFileSync(join(dir, 'waits.jsonl'), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+
+test('the wait log appends one JSON line per record, stamped with ts', () => {
+  withLogDir((dir) => {
+    appendWaitRecord({ event: 'start', id: 'a' });
+    appendWaitRecord({ event: 'end', id: 'a', outcome: 'ran' });
+
+    const records = readLog(dir);
+    assert.deepEqual(records.map(({ event }) => event), ['start', 'end']);
+    assert.ok(records.every(({ ts }) => Number.isInteger(ts)));
+  });
+});
+
+// Gates append without holding any lock. O_APPEND keeps each line whole; a read-modify-write would
+// drop or tear lines under exactly this load.
+test('concurrent appenders lose no line', async () => {
+  const dir = join(REPO_ROOT, '.omc', `.tmp-waits-${randomUUID()}`);
+  const writer = `
+    import { appendWaitRecord } from ${JSON.stringify(join(HOOKS_DIR, 'lock.mjs'))};
+    for (let n = 0; n < 200; n += 1) appendWaitRecord({ event: 'probe', writer: process.argv[1], n });
+  `;
+
+  try {
+    await Promise.all(
+      [0, 1, 2, 3].map(
+        (writerId) =>
+          new Promise((resolve_, reject) => {
+            const child = spawn('node', ['--input-type=module', '-e', writer, String(writerId)], {
+              env: { ...process.env, CLAUDE_HOOK_LOG_DIR: dir },
+            });
+            child.on('exit', (code) => (code === 0 ? resolve_() : reject(new Error(`writer exited ${code}`))));
+          }),
+      ),
+    );
+
+    const records = readLog(dir);
+    assert.equal(records.length, 800);
+    for (const writerId of ['0', '1', '2', '3']) {
+      assert.equal(records.filter(({ writer }) => writer === writerId).length, 200, `writer ${writerId}`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an oversized log is rotated by rename and only the newest 4 rotations are kept', () => {
+  withLogDir((dir) => {
+    mkdirSync(dir, { recursive: true });
+    for (const at of [1, 2, 3, 4, 5]) writeFileSync(join(dir, `waits.${at}.1.jsonl`), '{}\n');
+    writeFileSync(join(dir, 'waits.jsonl'), `${'x'.repeat(256 * 1024)}\n`);
+
+    appendWaitRecord({ event: 'start', id: 'after-rotation' });
+
+    assert.deepEqual(readLog(dir).map(({ id }) => id), ['after-rotation'], 'the live file starts fresh');
+    const rotated = readdirSync(dir).filter((name) => /^waits\.\d+\.\d+\.jsonl$/.test(name));
+    assert.equal(rotated.length, 4);
+    assert.ok(!rotated.includes('waits.1.1.jsonl') && !rotated.includes('waits.2.1.jsonl'), 'oldest dropped');
+  });
+});
+
+test('an unwritable log dir is reported, never thrown', () => {
+  const blocker = join(REPO_ROOT, '.omc', `.tmp-waits-file-${randomUUID()}`);
+  writeFileSync(blocker, 'not a directory');
+  const previous = process.env.CLAUDE_HOOK_LOG_DIR;
+  process.env.CLAUDE_HOOK_LOG_DIR = join(blocker, 'nested');
+
+  try {
+    assert.doesNotThrow(() => appendWaitRecord({ event: 'start', id: 'x' }));
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_HOOK_LOG_DIR;
+    else process.env.CLAUDE_HOOK_LOG_DIR = previous;
+    rmSync(blocker, { force: true });
   }
 });

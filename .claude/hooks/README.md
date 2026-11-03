@@ -128,14 +128,14 @@ Why a few things are the way they are. Kept here rather than inline because each
 incident, a measurement — and the code sites only need the rule. Anything a person editing a
 specific line must know stayed in that line's comment.
 
-### The quality gate queues, it never refuses (`quality-gates.mjs:35`)
+### The quality gate queues, it never refuses (`quality-gates.mjs:191`)
 
 `waitMs: 0` plus a block on contention meant a peer holding the lock failed a task that was itself
 fine. Parallel subagents then ping-ponged exit 2 at each other through the model. The gate now waits
 60s and allows on timeout — the next completion re-runs `qa` over the whole monorepo anyway, so a
 skipped run is far cheaper than a task that cannot finish.
 
-### `waitMs` means what it says, and for a while did not (`lock.mjs:113`)
+### `waitMs` means what it says, and for a while did not (`lock.mjs:126`)
 
 The acquire loop was bounded by an attempt count *as well as* by the deadline, and the count was
 almost always the smaller of the two: 100 attempts x a 50ms poll capped **every** wait at ~5s. So the
@@ -162,7 +162,42 @@ verbatim. The test that used to assert "a contended edit degrades to silence" wa
 down; it now asserts the opposite, channel included.
 
 The same measurement puts a question over `quality-gates.mjs`'s skip notice, which is a plain
-`process.stderr.write` on a hook that then exits 0.
+`process.stderr.write` on a hook that then exits 0. That is why the gate's skips also go to the wait
+log below, which is the record that counts.
+
+### The gate stops its own qa, and logs every run (`quality-gates.mjs:25`)
+
+The harness SIGKILLs the gate at 600s. A SIGKILL runs no `finally`, so the run left no trace, and
+turbo puts each task in its own process group, so whatever qa had started kept running after the
+gate was gone. The gate now runs qa detached and stops it itself at 570s from hook start: SIGINT to
+the group, SIGKILL after 10s, then each process from a tree snapshot taken before the first signal
+(turbo's tasks are unreachable by group or, once turbo dies, by parent pid). The deadline counts
+from hook start, so lock waits are already paid for, and it only fires where the harness would have
+killed anyway. A stopped qa allows, like a skip. SIGTERM, SIGINT and SIGHUP sent to the gate go to
+qa's group, because `detached` means qa no longer dies with the gate.
+
+Every gate appends to `~/.cache/claude-hooks/waits.jsonl` (`lock.mjs:244`), per user so that every
+repo and worktree carrying these hooks lands in one file: a `start` record when it has its lock
+(`waitedMs`, `lock: false` for a skip) and an `end` record from `finally` with `outcome` `ran`,
+`failed`, `skipped`, `timeout` or `interrupted`, plus `orphans`, the count reaped one by one. A
+`start` with no `end` is a gate the harness killed. The file rotates by rename at 256KB and keeps
+four rotations. Tests write to a scratch dir through `hookEnv()` in `__tests__/helpers.mjs`.
+`CLAUDE_HOOK_LOG_DIR`, `CLAUDE_HOOK_QA_DEADLINE_MS` and `CLAUDE_HOOK_QA_GRACE_MS` are test seams,
+not switches: the deadline and grace ignore values under 1s and 100ms, so neither can turn the gate
+into an instant allow.
+
+Skip, timeout and kill rates per repo (pinned by `quality-gates.test.mjs` on a fixture log):
+
+<!-- wait-log-query -->
+```sh
+cat ~/.cache/claude-hooks/waits*.jsonl | jq -s '
+  group_by(.id)
+  | map({repo: (map(select(.event == "start"))[0].repo // "?"),
+         outcome: (map(select(.event == "end"))[0].outcome // "killed")})
+  | group_by(.repo)
+  | map({repo: .[0].repo, total: length,
+         outcomes: (group_by(.outcome) | map({key: .[0].outcome, value: length}) | from_entries)})'
+```
 
 ### Stage 3b has never fired, and stays (`edit-pipeline.mjs:217`)
 
