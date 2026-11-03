@@ -4,6 +4,7 @@ import path from 'node:path'
 import process from 'node:process'
 
 import { applyConfigMigrations } from './apply-config-migrations'
+import { editToMatch } from './json-text-edit'
 import type { MigrationResult } from './types'
 
 /**
@@ -15,6 +16,17 @@ export class ConfigFileChangedError extends Error {
   constructor(filePath: string) {
     super(`${filePath} changed on disk since it was read`)
     this.name = 'ConfigFileChangedError'
+  }
+}
+
+/**
+ * The migrated config could not be written as an edit of the file's own text. Re-serialising instead
+ * would reformat a committed file (every inline array re-wrapped), so nothing is written.
+ */
+export class ConfigTextEditError extends Error {
+  constructor(filePath: string) {
+    super(`${filePath} could not be migrated without reformatting it — remove the retired key by hand`)
+    this.name = 'ConfigTextEditError'
   }
 }
 
@@ -43,8 +55,10 @@ export const detectIndent = (raw: string): string => {
 const PERMISSION_BITS = 0o7777
 
 /**
- * Serialise `migrated` over `path` — atomically, keeping the file's mode and indentation, and
- * refusing when the file moved on since it was read. Never applies the registry: the caller has
+ * Write `migrated` over `path` as an edit of `raw` (`editToMatch`: removed keys cut with their comma,
+ * every other byte kept) — atomically, keeping the file's mode, and refusing when the file moved on
+ * since it was read. Throws {@link ConfigTextEditError} rather than re-serialise when the edit cannot
+ * be made textually. Never applies the registry: the caller has
  * already done that (the loader on its retry, {@link migrateConfigFile} on the setup path), so
  * the registry runs exactly once per file whichever way in. Does not log — each caller owns its
  * own line. Throws on any fs error; callers decide.
@@ -59,11 +73,11 @@ export const writeMigratedConfigFile = async ({
   migrated,
   expectedMtimeMs,
 }: WriteMigratedConfigFileOptions): Promise<void> => {
-  await writeConfigFileText({
-    path: filePath,
-    content: `${JSON.stringify(migrated, null, detectIndent(raw))}\n`,
-    expectedMtimeMs,
-  })
+  const content = editToMatch(raw, migrated, detectIndent(raw))
+
+  if (content === null) throw new ConfigTextEditError(filePath)
+
+  await writeConfigFileText({ path: filePath, content, expectedMtimeMs })
 }
 
 /**

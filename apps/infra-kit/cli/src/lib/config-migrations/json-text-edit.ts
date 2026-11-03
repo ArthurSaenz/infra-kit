@@ -3,12 +3,15 @@
  *
  * Edits to a committed `infra-kit.json` that keep every byte they do not mean to change. Re-serialising
  * the parsed object would re-wrap every inline array a formatter left on one line, so each consumer's
- * `--fix` would come with a diff its prettier then reverts. These locate top-level members in the raw
- * text and splice only the members they add or the scalar values they replace.
+ * `--fix` (or retired-key migration) would come with a diff its prettier then reverts. These locate
+ * object members in the raw text and splice only the members they add, remove or replace.
  */
+import { isDeepStrictEqual } from 'node:util'
 
 interface TopLevelMember {
   key: string
+  /** Index of the key's opening quote. */
+  keyStart: number
   /** Index of the value's first character. */
   valueStart: number
   /** Index one past the value's last character. */
@@ -74,10 +77,8 @@ const skipValue = (raw: string, from: number): number => {
   return index
 }
 
-/** The top-level object's braces and members, or null when `raw` is not a JSON object. */
-const scanTopLevel = (raw: string): TopLevelScan | null => {
-  const open = skipWhitespace(raw, 0)
-
+/** The braces and members of the object that opens at `open`, or null when there is none. */
+const scanObjectAt = (raw: string, open: number): TopLevelScan | null => {
   if (raw[open] !== '{') return null
 
   const members: TopLevelMember[] = []
@@ -91,12 +92,17 @@ const scanTopLevel = (raw: string): TopLevelScan | null => {
     const valueStart = skipWhitespace(raw, skipWhitespace(raw, keyEnd) + 1)
     const valueEnd = skipValue(raw, valueStart)
 
-    members.push({ key, valueStart, valueEnd })
+    members.push({ key, keyStart: index, valueStart, valueEnd })
     index = skipWhitespace(raw, valueEnd)
     if (raw[index] === ',') index = skipWhitespace(raw, index + 1)
   }
 
   return raw[index] === '}' ? { open, close: index, members } : null
+}
+
+/** The top-level object's braces and members, or null when `raw` is not a JSON object. */
+const scanTopLevel = (raw: string): TopLevelScan | null => {
+  return scanObjectAt(raw, skipWhitespace(raw, 0))
 }
 
 const lineBreakOf = (raw: string): string => {
@@ -188,4 +194,147 @@ export const replaceTopLevelValue = (raw: string, key: string, value: unknown): 
   if (member === undefined) return null
 
   return `${raw.slice(0, member.valueStart)}${JSON.stringify(value)}${raw.slice(member.valueEnd)}`
+}
+
+interface Splice {
+  start: number
+  end: number
+  text: string
+}
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** The whitespace that opens the line holding `index`. */
+const lineIndentAt = (raw: string, index: number): string => {
+  const lineStart = raw.lastIndexOf('\n', index - 1) + 1
+
+  return /^[ \t]*/u.exec(raw.slice(lineStart))![0]
+}
+
+/**
+ * The spans that delete the members at `doomed` (indices into `members`), each with the comma that
+ * separated it: a run before a kept member goes up to that member's key; a trailing run takes the comma
+ * after the last kept member instead; an object losing every member keeps only its braces.
+ */
+const deletionSplices = (scan: TopLevelScan, doomed: ReadonlySet<number>): Splice[] => {
+  const { members } = scan
+  const splices: Splice[] = []
+  let index = 0
+
+  while (index < members.length) {
+    if (!doomed.has(index)) {
+      index += 1
+      continue
+    }
+
+    let last = index
+
+    while (doomed.has(last + 1)) last += 1
+
+    const next = members[last + 1]
+
+    if (next !== undefined) splices.push({ start: members[index]!.keyStart, end: next.keyStart, text: '' })
+    else if (index > 0) splices.push({ start: members[index - 1]!.valueEnd, end: members[last]!.valueEnd, text: '' })
+    else splices.push({ start: scan.open + 1, end: scan.close, text: '' })
+
+    index = last + 1
+  }
+
+  return splices
+}
+
+/**
+ * The splices that turn the object at `scan` (parsed as `current`) into `target`: removed members are
+ * deleted, nested objects recursed into, any other changed value replaced. Null when `target` adds a
+ * key to a nested object — the one edit this does not make.
+ */
+const splicesToMatch = (
+  raw: string,
+  scan: TopLevelScan,
+  current: Record<string, unknown>,
+  target: Record<string, unknown>,
+  indentUnit: string,
+): Splice[] | null => {
+  const doomed = new Set<number>()
+  const splices: Splice[] = []
+
+  for (const [index, member] of scan.members.entries()) {
+    if (!(member.key in target)) {
+      doomed.add(index)
+      continue
+    }
+
+    const before = current[member.key]
+    const after = target[member.key]
+
+    if (isDeepStrictEqual(before, after)) continue
+
+    const inner = isPlainObject(before) && isPlainObject(after) ? scanObjectAt(raw, member.valueStart) : null
+
+    if (inner !== null) {
+      const nested = splicesToMatch(
+        raw,
+        inner,
+        before as Record<string, unknown>,
+        after as Record<string, unknown>,
+        indentUnit,
+      )
+
+      if (nested === null) return null
+      splices.push(...nested)
+      continue
+    }
+
+    const rendered = JSON.stringify(after, null, indentUnit)
+      .split('\n')
+      .join(`${lineBreakOf(raw)}${lineIndentAt(raw, member.keyStart)}`)
+
+    splices.push({ start: member.valueStart, end: member.valueEnd, text: rendered })
+  }
+
+  return splices.concat(deletionSplices(scan, doomed))
+}
+
+/**
+ * `raw` edited until it parses to `target`, every byte outside the changed members unchanged: removed
+ * keys are cut with their comma (at any depth), changed values replaced, new top-level keys appended.
+ * Null when the edit cannot be made textually, or does not parse back to `target` — the caller writes
+ * nothing then, rather than re-serialising the file.
+ *
+ * @example
+ * editToMatch('{\n  "ide": {},\n  "a": [1, 2]\n}\n', { a: [1, 2] }, '  ') // => '{\n  "a": [1, 2]\n}\n'
+ */
+export const editToMatch = (raw: string, target: Record<string, unknown>, indentUnit: string): string | null => {
+  const scan = scanTopLevel(raw)
+  const current: unknown = scan === null ? null : JSON.parse(raw)
+
+  if (scan === null || !isPlainObject(current)) return null
+
+  const splices = splicesToMatch(raw, scan, current, target, indentUnit)
+
+  if (splices === null) return null
+
+  const edited = [...splices]
+    .sort((a, b) => {
+      return b.start - a.start
+    })
+    .reduce((text, splice) => {
+      return `${text.slice(0, splice.start)}${splice.text}${text.slice(splice.end)}`
+    }, raw)
+
+  const added = Object.entries(target).filter(([key]) => {
+    return !(key in current)
+  })
+
+  const result = appendTopLevelMembers(edited, added, indentUnit)
+
+  if (result === null) return null
+
+  try {
+    return isDeepStrictEqual(JSON.parse(result), target) ? result : null
+  } catch {
+    return null
+  }
 }

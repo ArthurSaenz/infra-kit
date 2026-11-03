@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { appendTopLevelMembers, prependTopLevelMembers, replaceTopLevelValue } from '../json-text-edit'
+import { appendTopLevelMembers, editToMatch, prependTopLevelMembers, replaceTopLevelValue } from '../json-text-edit'
 
 const PRETTY = '{\n  "a": [1, 2],\n  "b": { "c": "x,}" }\n}\n'
 
@@ -38,5 +38,36 @@ describe('json-text-edit', () => {
 
   it('refuses text that is not a JSON object', () => {
     expect(prependTopLevelMembers('[1]', [['v', 1]], '  ')).toBeNull()
+  })
+
+  describe('editToMatch', () => {
+    const RAW =
+      '{\n  "ide": { "a": [1, 2] },\n  "keep": [1, 2],\n  "nested": { "drop": true, "stay": ["x", "y"] },\n  "tail": 1\n}\n'
+
+    it('cuts a leading member with its comma', () => {
+      expect(editToMatch(RAW, { keep: [1, 2], nested: { drop: true, stay: ['x', 'y'] }, tail: 1 }, '  ')).toBe(
+        '{\n  "keep": [1, 2],\n  "nested": { "drop": true, "stay": ["x", "y"] },\n  "tail": 1\n}\n',
+      )
+    })
+
+    it('cuts a trailing member with the comma before it', () => {
+      expect(
+        editToMatch(RAW, { ide: { a: [1, 2] }, keep: [1, 2], nested: { drop: true, stay: ['x', 'y'] } }, '  '),
+      ).toBe('{\n  "ide": { "a": [1, 2] },\n  "keep": [1, 2],\n  "nested": { "drop": true, "stay": ["x", "y"] }\n}\n')
+    })
+
+    it('cuts a nested key and leaves its inline siblings as they were', () => {
+      expect(editToMatch(RAW, { ide: { a: [1, 2] }, keep: [1, 2], nested: { stay: ['x', 'y'] }, tail: 1 }, '  ')).toBe(
+        '{\n  "ide": { "a": [1, 2] },\n  "keep": [1, 2],\n  "nested": { "stay": ["x", "y"] },\n  "tail": 1\n}\n',
+      )
+    })
+
+    it('empties an object down to its braces', () => {
+      expect(editToMatch('{\n  "ide": 1\n}\n', {}, '  ')).toBe('{}\n')
+    })
+
+    it('returns null for an edit it does not make, a nested key added', () => {
+      expect(editToMatch('{ "a": { "b": 1 } }', { a: { b: 1, c: 2 } }, '  ')).toBeNull()
+    })
   })
 })

@@ -1,9 +1,10 @@
 export { applyConfigMigrations } from './apply-config-migrations'
 export { tryAutoMigrateLayer } from './auto-migrate-layer'
 export type { AutoMigrateLayer, AutoMigrateOutcome } from './auto-migrate-layer'
-export { appendTopLevelMembers, prependTopLevelMembers, replaceTopLevelValue } from './json-text-edit'
+export { appendTopLevelMembers, editToMatch, prependTopLevelMembers, replaceTopLevelValue } from './json-text-edit'
 export {
   ConfigFileChangedError,
+  ConfigTextEditError,
   detectIndent,
   migrateConfigFile,
   writeConfigFileText,

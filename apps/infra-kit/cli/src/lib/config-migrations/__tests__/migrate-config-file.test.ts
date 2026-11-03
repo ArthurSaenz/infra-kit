@@ -5,7 +5,12 @@ import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { applyConfigMigrations } from '../apply-config-migrations'
-import { ConfigFileChangedError, migrateConfigFile, writeMigratedConfigFile } from '../migrate-config-file'
+import {
+  ConfigFileChangedError,
+  ConfigTextEditError,
+  migrateConfigFile,
+  writeMigratedConfigFile,
+} from '../migrate-config-file'
 
 // Spy mode keeps the real fold and lets the writer's "never applies the registry" contract be
 // asserted as a call count — a plain `vi.spyOn` on the namespace would not intercept the writer's
@@ -84,12 +89,48 @@ describe('migrateConfigFile', () => {
     expect(await fs.readFile(configPath, 'utf8')).toBe(`${JSON.stringify(CLEAN_AFTER, null, '\t')}\n`)
   })
 
-  it('falls back to 2 spaces for a single-line file', async () => {
+  it('keeps a single-line file on one line — only the retired member goes', async () => {
     await fs.writeFile(configPath, JSON.stringify(DIRTY))
 
     await migrateConfigFile(configPath)
 
-    expect(await fs.readFile(configPath, 'utf8')).toBe(`${JSON.stringify(CLEAN_AFTER, null, 2)}\n`)
+    expect(await fs.readFile(configPath, 'utf8')).toBe(JSON.stringify(CLEAN_AFTER))
+  })
+
+  // The fleet regression's other half: re-serialising re-wrapped every inline array prettier left.
+  it('cuts a retired key from a prettier-formatted file and keeps every other byte', async () => {
+    const kept = [
+      '{',
+      '  "envManagement": { "provider": "doppler", "config": { "name": "p" } },',
+      '  "audit": { "requiredScripts": ["build", "test"], "requiredFiles": ["turbo.json"] }',
+      '}',
+      '',
+    ]
+
+    const withRetired = [kept[0], '  "ide": { "provider": "cursor" },', ...kept.slice(1)].join('\n')
+
+    await fs.writeFile(configPath, withRetired)
+
+    await migrateConfigFile(configPath)
+
+    expect(await fs.readFile(configPath, 'utf8')).toBe(kept.join('\n'))
+  })
+
+  it('writes nothing when the migration cannot be made as a text edit', async () => {
+    const raw = '{\n  "a": { "b": 1 }\n}\n'
+
+    await fs.writeFile(configPath, raw)
+    const { mtimeMs } = await fs.stat(configPath)
+
+    await expect(
+      writeMigratedConfigFile({
+        path: configPath,
+        raw,
+        migrated: { a: { b: 1, added: true } },
+        expectedMtimeMs: mtimeMs,
+      }),
+    ).rejects.toBeInstanceOf(ConfigTextEditError)
+    expect(await fs.readFile(configPath, 'utf8')).toBe(raw)
   })
 
   it('leaves a clean file byte-for-byte untouched with its mtime unchanged', async () => {
