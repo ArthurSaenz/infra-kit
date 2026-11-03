@@ -5,5 +5,8 @@ import { defineNodeConfig } from '@wl/vitest-config'
 export default defineNodeConfig(import.meta.dirname, {
   test: {
     include: ['__tests__/**/*.test.{js,ts,mjs}'],
+    // Each file's first case builds the whole flat config (seconds on its own); under `turbo run qa`
+    // contention that alone passes the 5s default.
+    testTimeout: 30_000,
   },
 })

@@ -16,8 +16,6 @@ export const tempDisabledRules = (o: ResolvedOptions): TypedFlatConfigItem => ({
     // @wl rules (defined in configs/components.ts), muted here until adoption completes.
     ...(o.components
       ? {
-          '@wl/max-jsx-return-size': 'off',
-          '@wl/max-components-per-file': 'off',
           '@wl/require-jsdoc-example': 'off',
         }
       : {}),

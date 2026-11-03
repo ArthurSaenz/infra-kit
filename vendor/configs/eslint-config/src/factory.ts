@@ -1,6 +1,7 @@
 import antfu from '@antfu/eslint-config'
 import type { TypedFlatConfigItem } from '@antfu/eslint-config'
 
+import { architecture } from './configs/architecture.js'
 import { antfuBaseOptions, overrides, sonarjsRecommended, sourceOverrides } from './configs/base.js'
 import { boundaries } from './configs/boundaries.js'
 import { wlComponentsRecommended } from './configs/components.js'
@@ -43,6 +44,7 @@ export const createConfig = async (userOptions: ConfigOptions = {}): Promise<Typ
     ...(o.boundaries === false ? [] : [boundaries(o.boundaries), e2eBoundaries(o.boundaries)]),
     e2ePlaywright(),
     ...fw.extraConfigs,
+    ...(o.architecture && fw === frameworks.react ? architecture(o.restrictedSyntax) : []),
     ...(o.components ? wlComponentsRecommended : []),
     ...(o.jsdoc ? [jsdoc] : []),
     ...(o.markdown ? [markdown] : []),

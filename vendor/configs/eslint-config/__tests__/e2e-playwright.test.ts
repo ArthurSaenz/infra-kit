@@ -118,3 +118,32 @@ describe('e2e playwright rules: scoped to Playwright packages', () => {
     expect(await ruleIds('app/src/features/a/home.spec.ts', source)).toEqual([])
   })
 })
+
+describe('e2e playwright rules: fixtures are not React', () => {
+  const FIXTURE = code`
+    export const fixtures = {
+      request: async (_args: object, use: (value: number) => Promise<void>) => {
+        await use(1)
+      },
+    }
+  `
+
+  const hookMessages = async (relPath: string) => {
+    const abs = path.join(root, relPath)
+
+    mkdirSync(path.dirname(abs), { recursive: true })
+    writeFileSync(abs, FIXTURE)
+
+    const [result] = await eslint.lintText(FIXTURE, { filePath: abs })
+
+    return only(result?.messages ?? [], 'react-hooks/rules-of-hooks')
+  }
+
+  it('does not read a fixture `use` callback as a hook in an e2e package', async () => {
+    expect(await hookMessages('e2e/src/fixtures/base.fixture.ts')).toHaveLength(0)
+  })
+
+  it('still checks the same code outside an e2e package', async () => {
+    expect(await hookMessages('app/src/lib/fixtures.ts')).toHaveLength(1)
+  })
+})

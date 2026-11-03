@@ -5,6 +5,22 @@ import sonarjs from 'eslint-plugin-sonarjs'
 import { GLOB_SRC_ALL, GLOB_SVELTE } from '../globs.js'
 import type { ConfigRules } from '../types.js'
 
+/**
+ * Public-API boundary: feature/service internals are blocked; the negated `index` globs re-include the barrel
+ * (gitignore glob semantics). Exported because a later `no-restricted-imports` block replaces these options
+ * rather than merging, so it has to repeat them.
+ */
+export const publicApiPatterns = [
+  {
+    group: ['**/features/*/**', '!**/features/*/index', '!**/features/*/index.*'],
+    message: "Importing private modules from a feature is prohibited. Use the feature's public API (index.ts) instead.",
+  },
+  {
+    group: ['**/services/*/**', '!**/services/*/index', '!**/services/*/index.*'],
+    message: "Importing private modules from a service is prohibited. Use the service's public API (index.ts) instead.",
+  },
+]
+
 /** Base antfu options shared by every mode. Framework flags (react/svelte) are merged in the factory. */
 export const antfuBaseOptions = { lessOpinionated: true }
 
@@ -71,25 +87,7 @@ export const overrides: TypedFlatConfigItem = {
     // prettier lowercases hex literals; let it win over unicorn/number-literal-case.
     'unicorn/number-literal-case': 'off',
 
-    // Public-API boundary: feature/service internals are blocked; the `!**/index*` negations re-include
-    // the barrel (gitignore glob semantics). Cross-element relations are the Phase-2 boundaries layer.
-    'no-restricted-imports': [
-      'error',
-      {
-        patterns: [
-          {
-            group: ['**/features/*/**', '!**/features/*/index', '!**/features/*/index.*'],
-            message:
-              "Importing private modules from a feature is prohibited. Use the feature's public API (index.ts) instead.",
-          },
-          {
-            group: ['**/services/*/**', '!**/services/*/index', '!**/services/*/index.*'],
-            message:
-              "Importing private modules from a service is prohibited. Use the service's public API (index.ts) instead.",
-          },
-        ],
-      },
-    ],
+    'no-restricted-imports': ['error', { patterns: publicApiPatterns }],
   } as ConfigRules,
 }
 

@@ -60,3 +60,6 @@ categories-data-manifest.json
 routeTree.gen.ts
 hulyo_key_store
 travelist-keystore
+
+# Bulk-suppression baselines are rewritten by `eslint --suppress-*` in its own format
+**/eslint-suppressions.json
