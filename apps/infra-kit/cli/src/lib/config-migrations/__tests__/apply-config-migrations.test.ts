@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { applyConfigMigrations } from '../apply-config-migrations'
 import { SUPPORTED_CONFIG_VERSION } from 'src/lib/infra-kit-config'
 
+import { applyConfigMigrations } from '../apply-config-migrations'
 import { CONFIG_MIGRATIONS, MIGRATED_CONFIG_VERSION } from '../registry'
 
 describe('applyConfigMigrations', () => {
