@@ -1,4 +1,3 @@
-import { Logger } from '@aws-lambda-powertools/logger'
 import type { APIGatewayProxyEvent, APIGatewayProxyEventQueryStringParameters, Context } from 'aws-lambda'
 import fastify from 'fastify'
 import * as fs from 'node:fs'
@@ -8,6 +7,7 @@ import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { parse as parseYaml } from 'yaml'
 
+import { createDevLogger } from './dev-logger.js'
 import type { ILogger } from './interfaces.js'
 import { enterAttribution, runAttributed } from './log-attribution.js'
 
@@ -57,8 +57,8 @@ const resolveLambdaTimeoutMs = (): number => {
 
 /**
  * Whether to emit a one-line `<method> <url> → <status> <ms>ms` log per request.
- * Off by default; opt in with `DEV_SERVER_REQUEST_LOG=1` (kept out of the Powertools
- * JSON logger so the line stays terminal-readable). Mirrors the env-reader precedent
+ * Off by default; opt in with `DEV_SERVER_REQUEST_LOG=1` (kept out of the JSON
+ * dev logger so the line stays terminal-readable). Mirrors the env-reader precedent
  * of {@link resolveLambdaTimeoutMs}.
  */
 const isRequestLogEnabled = (): boolean => {
@@ -68,7 +68,7 @@ const isRequestLogEnabled = (): boolean => {
 export class ServerlessLocalRun {
   /** Busts Node ESM `import()` cache on each new server instance (watch restart). */
   private readonly importCacheBust: string
-  private readonly logger: Logger
+  private readonly logger: ILogger
   private readonly server: ReturnType<typeof fastify>
   private readonly controllers: Record<
     string,
@@ -83,7 +83,7 @@ export class ServerlessLocalRun {
 
   constructor(private readonly serverConfig: IServerConfig) {
     this.importCacheBust = `${Date.now()}`
-    this.logger = new Logger({ serviceName: 'LocalServer', logLevel: 'DEBUG' })
+    this.logger = createDevLogger('LocalServer')
     this.serverConfig.prefixUrl = this.serverConfig.prefixUrl ?? ''
     this.server = fastify({ logger: false })
 

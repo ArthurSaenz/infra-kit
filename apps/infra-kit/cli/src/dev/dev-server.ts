@@ -1035,6 +1035,9 @@ export class DevServerRunner {
     const include = this.normalizeAppInclude()
     const watch = this.options.watch ?? false
 
+    // Read by the apps' own Powertools loggers, not by ours. `POWERTOOLS_DEV` routes them through the
+    // global console, so `output-intercept` files each line under its real level; without it, Powertools
+    // writes through a private Console and the level is only inferred from the fd (stderr = warn).
     process.env.POWERTOOLS_DEV ??= 'true'
     process.env.LOG_LEVEL ??= 'DEBUG'
 

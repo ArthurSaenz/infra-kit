@@ -12,12 +12,13 @@
  *
  * ## Why this has to exist
  *
- * The backend runs IN-PROCESS: `ServerlessLocalRun` is fastify + `@aws-lambda-powertools/logger` in the
- * same node process, and the runner sets `POWERTOOLS_DEV=true`, which makes Powertools bind the GLOBAL
- * `console`. So a handler's `console.log` AND every Powertools line reach `process.stdout` through
- * channels no seam of ours owns. There is no other place to catch them. (Reassigning the Powertools
- * `Logger`'s console does NOT work: handlers are given a `createChild()` logger, and `createChild`
- * re-derives its console from the global — the parent's is never consulted.)
+ * The backend runs IN-PROCESS: `ServerlessLocalRun` (fastify) loads the app's handlers into the same node
+ * process. The app's own `@aws-lambda-powertools/logger` instances run with `POWERTOOLS_DEV=true` (set
+ * by the runner), which makes Powertools bind the GLOBAL `console`; the runner's `createDevLogger` writes
+ * there too. So a handler's `console.log` AND every logger line reach `process.stdout` through channels
+ * no seam of ours owns. There is no other place to catch them. (Reassigning a Powertools `Logger`'s
+ * console does NOT work: `createChild` re-derives its console from the global — the parent's is never
+ * consulted.)
  *
  * ## Why this is not the classifier that was rejected
  *

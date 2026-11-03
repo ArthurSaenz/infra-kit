@@ -365,12 +365,8 @@ describe('serverlessLocalRun — route key includes the HTTP method', () => {
   })
 })
 
-describe('serverlessLocalRun — injected handler logger (real Powertools)', () => {
+describe('serverlessLocalRun — injected handler logger', () => {
   it('lets a handler call info/debug/warn/error + createChild().info() without throwing, emitting output', async () => {
-    const prevDev = process.env.POWERTOOLS_DEV
-
-    process.env.POWERTOOLS_DEV = 'true'
-
     writeHandler(
       apiDir,
       [
@@ -386,7 +382,7 @@ describe('serverlessLocalRun — injected handler logger (real Powertools)', () 
       ].join('\n'),
     )
 
-    // Powertools DEV routes through the global console (info/debug -> stdout, warn/error -> stderr).
+    // The dev logger writes through the global console (info/debug -> stdout, warn/error -> stderr).
     // Spy the console methods directly — Node's Console dispatches writes through internal symbols
     // that a process.stdout.write spy would miss.
     const captured: string[] = []
@@ -415,11 +411,6 @@ describe('serverlessLocalRun — injected handler logger (real Powertools)', () 
     } finally {
       for (const spy of spies) {
         spy.mockRestore()
-      }
-      if (prevDev == null) {
-        delete process.env.POWERTOOLS_DEV
-      } else {
-        process.env.POWERTOOLS_DEV = prevDev
       }
     }
 
