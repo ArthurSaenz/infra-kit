@@ -7,10 +7,10 @@ const localDeploySelected = vi.fn()
 const warn = vi.fn()
 const addOption = vi.fn()
 
-vi.mock('src/commands/gh-release-deploy-all', () => {
+vi.mock('src/commands/release-deploy/gh-release-deploy-all', () => {
   return { ghReleaseDeployAll }
 })
-vi.mock('src/commands/gh-release-deploy-selected', () => {
+vi.mock('src/commands/release-deploy/gh-release-deploy-selected', () => {
   return { ghReleaseDeploySelected }
 })
 vi.mock('src/commands/local-deploy', () => {

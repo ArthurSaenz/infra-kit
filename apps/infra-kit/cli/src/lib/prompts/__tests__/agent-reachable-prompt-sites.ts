@@ -154,7 +154,7 @@ const definedToolName = (node: ts.Node, source: ts.SourceFile): string | null =>
  * Tool name -> the file whose `defineMcpTool({ name: … })` declares it.
  *
  * Derived, not tabulated: the catalog's `cliName` is NOT the directory name (`release-deploy-all`
- * lives in `commands/gh-release-deploy-all/`), so a path convention would have been wrong for four
+ * lives in `commands/release-deploy/gh-release-deploy-all/`), so a path convention would have been wrong for four
  * tools on the day it was written.
  */
 const declaringFiles = (): Map<string, string> => {

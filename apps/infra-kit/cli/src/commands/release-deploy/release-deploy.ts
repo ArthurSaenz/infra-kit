@@ -1,5 +1,5 @@
-import { ghReleaseDeployAll } from 'src/commands/gh-release-deploy-all'
-import { ghReleaseDeploySelected } from 'src/commands/gh-release-deploy-selected'
+import { ghReleaseDeployAll } from 'src/commands/release-deploy/gh-release-deploy-all'
+import { ghReleaseDeploySelected } from 'src/commands/release-deploy/gh-release-deploy-selected'
 // import { localDeployAll, localDeploySelected } from 'src/commands/local-deploy'
 import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'

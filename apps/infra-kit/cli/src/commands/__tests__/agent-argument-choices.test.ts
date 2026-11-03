@@ -5,9 +5,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { z } from 'zod'
 
 import { envLoad, envLoadMcpTool } from 'src/commands/env-load'
-import { ghReleaseDeployAll, ghReleaseDeployAllMcpTool } from 'src/commands/gh-release-deploy-all'
-import { ghReleaseDeploySelected, ghReleaseDeploySelectedMcpTool } from 'src/commands/gh-release-deploy-selected'
 import { releaseCreate, releaseCreateMcpTool } from 'src/commands/release-create'
+import { ghReleaseDeployAll, ghReleaseDeployAllMcpTool } from 'src/commands/release-deploy/gh-release-deploy-all'
+import {
+  ghReleaseDeploySelected,
+  ghReleaseDeploySelectedMcpTool,
+} from 'src/commands/release-deploy/gh-release-deploy-selected'
 import { releaseRemove, releaseRemoveMcpTool } from 'src/commands/release-remove'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { agentMode } from 'src/lib/agent-mode'
