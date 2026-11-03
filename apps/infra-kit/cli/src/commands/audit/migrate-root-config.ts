@@ -149,7 +149,8 @@ export const stampRootConfig = async (repoRoot: string, version: string): Promis
     const stampedBy = stampedSchemaVersion(current.$schema)
 
     const keepSchema =
-      (current.$schema !== undefined && stampedBy === null) || (stampedBy !== null && isNewerVersion(stampedBy, version))
+      (current.$schema !== undefined && stampedBy === null) ||
+      (stampedBy !== null && isNewerVersion(stampedBy, version))
 
     const $schema = keepSchema ? current.$schema : configSchemaUrl(version)
 
