@@ -22,9 +22,19 @@ const isAlive = (pid: number): boolean => {
   }
 }
 
-const tryCreate = (lockPath: string): boolean => {
+export interface RunLockHolder {
+  pid: number
+  startedAt?: number
+  command?: string
+}
+
+const tryCreate = (lockPath: string, command: string): boolean => {
   try {
-    fs.writeFileSync(lockPath, String(process.pid), { flag: 'wx' })
+    // Line 1 stays the bare pid: older CLIs in other worktrees read the file with `Number.parseInt`, which
+    // stops at the newline, so they still see the live pid and refuse instead of deleting this lock.
+    fs.writeFileSync(lockPath, `${process.pid}\n${JSON.stringify({ startedAt: Date.now(), command })}`, {
+      flag: 'wx',
+    })
 
     return true
   } catch (error) {
@@ -33,11 +43,25 @@ const tryCreate = (lockPath: string): boolean => {
   }
 }
 
-const holderOf = (lockPath: string): number | null => {
+const parseDetails = (line: string | undefined): Omit<RunLockHolder, 'pid'> => {
   try {
-    const pid = Number.parseInt(fs.readFileSync(lockPath, 'utf8'), 10)
+    const parsed = JSON.parse(line ?? '') as { startedAt?: unknown; command?: unknown } | null
 
-    return Number.isInteger(pid) && pid > 0 ? pid : null
+    return {
+      ...(typeof parsed?.startedAt === 'number' && { startedAt: parsed.startedAt }),
+      ...(typeof parsed?.command === 'string' && { command: parsed.command }),
+    }
+  } catch {
+    return {}
+  }
+}
+
+const holderOf = (lockPath: string): RunLockHolder | null => {
+  try {
+    const [pidLine, detailsLine] = fs.readFileSync(lockPath, 'utf8').split('\n')
+    const pid = Number.parseInt(pidLine!, 10)
+
+    return Number.isInteger(pid) && pid > 0 ? { pid, ...parseDetails(detailsLine) } : null
   } catch {
     return null
   }
@@ -47,24 +71,27 @@ const holderOf = (lockPath: string): number | null => {
  * Take the package's run lock, or name the live process holding it. A lock left by a killed run is
  * taken over: its pid no longer answers.
  */
-export const acquireRunLock = (testsDir: string): { release: () => void } | { holder: number } => {
+export const acquireRunLock = (
+  testsDir: string,
+  command: string,
+): { release: () => void } | { holder: RunLockHolder } => {
   const lockPath = runLockPath(testsDir)
 
   fs.mkdirSync(path.dirname(lockPath), { recursive: true })
 
-  if (!tryCreate(lockPath)) {
+  if (!tryCreate(lockPath, command)) {
     const holder = holderOf(lockPath)
 
-    if (holder !== null && holder !== process.pid && isAlive(holder)) return { holder }
+    if (holder !== null && holder.pid !== process.pid && isAlive(holder.pid)) return { holder }
 
     fs.rmSync(lockPath, { force: true })
     // Lost to another run taking the same stale lock in the same instant.
-    if (!tryCreate(lockPath)) return { holder: holderOf(lockPath) ?? 0 }
+    if (!tryCreate(lockPath, command)) return { holder: holderOf(lockPath) ?? { pid: 0 } }
   }
 
   return {
     release: () => {
-      if (holderOf(lockPath) === process.pid) fs.rmSync(lockPath, { force: true })
+      if (holderOf(lockPath)?.pid === process.pid) fs.rmSync(lockPath, { force: true })
     },
   }
 }

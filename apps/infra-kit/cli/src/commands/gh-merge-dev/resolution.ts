@@ -1399,7 +1399,7 @@ export const continueResolutions = async (args: {
     await confirmOrExit(
       confirmedCommand,
       `Commit and push the resolved merges for: ${[...approved.keys()].join(', ')}?`,
-      { plan, throwOnDecline: true, rerun: rerunWithTrees(approved) },
+      { plan, rerun: rerunWithTrees(approved) },
     )
   } catch (error) {
     if (!isCommandDeclined(error)) throw error
@@ -1596,7 +1596,7 @@ export const abortResolutions = async (args: {
           return record.branch
         })
         .join(', ')}?`,
-      { plan, throwOnDecline: true },
+      { plan },
     )
   } catch (error) {
     if (!isCommandDeclined(error)) throw error

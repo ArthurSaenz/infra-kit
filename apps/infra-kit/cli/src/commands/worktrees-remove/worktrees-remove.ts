@@ -5,6 +5,7 @@ import { orcaCallerInsideTargets } from 'src/integrations/orca'
 import { agentMode, isAgentMode } from 'src/lib/agent-mode'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
+import { isCommandDeclined } from 'src/lib/errors/command-declined-error'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
@@ -277,10 +278,10 @@ export const worktreesRemove = async (options: WorktreeManagementArgs) => {
     // does a failed branch throw (human) or become a `partial_failure` refusal (`--agent`).
     return toRemovalToolResult({ result: removal, operation: 'remove worktrees' })
   } catch (error) {
-    // A cancelled prompt (Ctrl-C / Esc) is a user back-out, not a failure: let it
+    // A cancelled prompt (Ctrl-C / Esc) or a declined confirm is a user back-out, not a failure: let it
     // reach the top-level boundary untouched so it exits cleanly, instead of being
     // logged as an error with a misleading remediation.
-    if (isPromptCancellation(error)) throw error
+    if (isPromptCancellation(error) || isCommandDeclined(error)) throw error
 
     // Our own guard failures (unmatched target, `--all` under `--agent`) already carry an actionable
     // remediation;

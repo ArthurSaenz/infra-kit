@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { CommandDeclinedError } from 'src/lib/errors/command-declined-error'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { PromptCancelledError } from 'src/lib/errors/prompt-cancelled-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
@@ -76,6 +77,14 @@ describe('exitForError — the entry/cli.ts catch', () => {
     expect(h.info).toEqual(['Operation cancelled.'])
     expect(h.stderr).toEqual([])
     expect(h.stdout).toEqual([])
+  })
+
+  it('a declined confirm exits 0 like a cancellation — "no" is a successful outcome', () => {
+    const h = harness()
+
+    expect(h.exitCodeFor(new CommandDeclinedError())).toBe(0)
+    expect(h.info).toEqual(['Operation cancelled.'])
+    expect(h.stderr).toEqual([])
   })
 
   it('a StructuredRefusalError under --json emits the payload to stdout and exits with ITS code', () => {

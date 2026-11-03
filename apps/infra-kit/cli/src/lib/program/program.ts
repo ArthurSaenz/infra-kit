@@ -42,7 +42,6 @@ import { agentMode, resolveAgentModeSource } from 'src/lib/agent-mode'
 import { isLongRunningCommand } from 'src/lib/command-catalog'
 import { commandEcho } from 'src/lib/command-echo'
 import { ensureUserProjectConfig } from 'src/lib/config-bootstrap'
-import { isCommandDeclined } from 'src/lib/errors/command-declined-error'
 import { addJsonOption, emit, jsonOutput } from 'src/lib/json-output'
 import { logger } from 'src/lib/logger'
 import { InvalidReleaseDateError, assertIsoDate } from 'src/lib/release-date'
@@ -401,25 +400,13 @@ const configureVendorSync = (cmd: Command): Command => {
     .option('--commit', 'Commit exactly the synced paths in each target after it syncs')
     .option('--manifest-only', 'Rewrite vendor/README.md and vendor/.sync-manifest.json only; copy nothing')
     .action(async (targets: string[], options) => {
-      let result: Awaited<ReturnType<typeof vendorSync>>
-
-      try {
-        result = await vendorSync({
-          targets,
-          confirmedCommand: options.yes,
-          check: options.check,
-          commit: options.commit,
-          manifestOnly: options.manifestOnly,
-        })
-      } catch (error) {
-        // `throwOnDecline` exists so a "no" unwinds instead of `process.exit(0)`; the decline itself
-        // is still a clean exit, not an error.
-        if (!isCommandDeclined(error)) throw error
-
-        logger.info('Operation cancelled.')
-
-        return
-      }
+      const result = await vendorSync({
+        targets,
+        confirmedCommand: options.yes,
+        check: options.check,
+        commit: options.commit,
+        manifestOnly: options.manifestOnly,
+      })
 
       emit(result)
 

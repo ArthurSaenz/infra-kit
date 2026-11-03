@@ -19,6 +19,7 @@ import type { OrcaOpenedLayout, OrcaProbe, OrcaRepoVisibility } from 'src/integr
 import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX, WORKTREE_SUBDIRS } from 'src/lib/constants'
+import { isCommandDeclined } from 'src/lib/errors/command-declined-error'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
@@ -233,10 +234,10 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
       structuredContent,
     }
   } catch (error) {
-    // A cancelled prompt (Ctrl-C / Esc) is a user back-out, not a failure: let it
+    // A cancelled prompt (Ctrl-C / Esc) or a declined confirm is a user back-out, not a failure: let it
     // reach the top-level boundary untouched so it exits cleanly, instead of being
     // logged as an error with a misleading "branches already exist" remediation.
-    if (isPromptCancellation(error)) throw error
+    if (isPromptCancellation(error) || isCommandDeclined(error)) throw error
 
     // A refusal with a payload (the confirm site's `confirmation_required`, the explicit-`--orca`
     // refusals) must reach the boundary intact: rewrapped, its `structuredContent` and exit code

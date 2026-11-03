@@ -15,7 +15,7 @@ import type { ProtectedEnvAccess } from 'src/lib/workflow-envs'
 import { e2e } from '../e2e'
 import type { E2eDeps } from '../e2e'
 import type { E2eTarget } from '../e2e-target'
-import { runLockPath } from '../run-lock'
+import { acquireRunLock, runLockPath } from '../run-lock'
 
 // Everything here is real except Playwright itself: a git worktree on disk, the consumer configs, the
 // dev-context fragments, portless's routes.json, and loopback servers that answer the way vite and a
@@ -360,8 +360,67 @@ describe('e2e — local (the default)', () => {
 
     await e2e({}, deps({}, { runPlaywright }))
 
-    expect(heldDuringRun).toBe(String(process.pid))
+    expect(heldDuringRun.split('\n')[0]).toBe(String(process.pid))
+    expect(JSON.parse(heldDuringRun.split('\n')[1]!)).toEqual({
+      startedAt: expect.any(Number),
+      command: 'ik e2e --app client',
+    })
     expect(fs.existsSync(lockPath)).toBe(false)
+  })
+
+  it('writes a lock an older CLI still reads as the live pid', () => {
+    const testsDir = path.join(root, 'apps/client/tests')
+    const lockPath = runLockPath(testsDir)
+    const lock = acquireRunLock(testsDir, 'ik e2e --app client')
+
+    // The pre-details holderOf: the whole file through parseInt.
+    const oldHolderOf = (file: string): number | null => {
+      const pid = Number.parseInt(fs.readFileSync(file, 'utf8'), 10)
+
+      return Number.isInteger(pid) && pid > 0 ? pid : null
+    }
+
+    expect(oldHolderOf(lockPath)).toBe(process.pid)
+    ;(lock as { release: () => void }).release()
+  })
+
+  it('names only the pid when a legacy bare-pid lock is held by a live process', async () => {
+    registerUi(await viteServer())
+
+    const lockPath = runLockPath(path.join(root, 'apps/client/tests'))
+
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true })
+    fs.writeFileSync(lockPath, String(process.ppid))
+
+    const error = (await e2e({}, deps({})).catch((caught: unknown) => {
+      return caught
+    })) as StructuredRefusalError
+
+    expect(error.structuredContent).toEqual({ status: 'refused', reason: 'run_in_progress', pid: process.ppid })
+    expect(error.message).toContain(`(pid ${process.ppid})`)
+  })
+
+  it('names pid, age and command when a new-format lock is held by a live process', async () => {
+    registerUi(await viteServer())
+
+    const lockPath = runLockPath(path.join(root, 'apps/client/tests'))
+    const startedAt = Date.now() - 252_000
+
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true })
+    fs.writeFileSync(lockPath, `${process.ppid}\n${JSON.stringify({ startedAt, command: 'ik e2e --app client' })}`)
+
+    const error = (await e2e({}, deps({})).catch((caught: unknown) => {
+      return caught
+    })) as StructuredRefusalError
+
+    expect(error.structuredContent).toEqual({
+      status: 'refused',
+      reason: 'run_in_progress',
+      pid: process.ppid,
+      startedAt,
+      command: 'ik e2e --app client',
+    })
+    expect(error.message).toMatch(new RegExp(`\\(pid ${process.ppid}, 25\\ds, ik e2e --app client\\)`))
   })
 })
 

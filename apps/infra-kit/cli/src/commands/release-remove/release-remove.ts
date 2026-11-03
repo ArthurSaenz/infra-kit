@@ -885,15 +885,9 @@ export const releaseRemove = async (options: ReleaseRemoveArgs) => {
     if (moveIssuesTo) commandEcho.addOption('--move-issues-to', moveIssuesTo)
     if (skipJira) commandEcho.addOption('--skip-jira', true)
 
-    // `throwOnDecline` because the default `process.exit(0)` would make a decline indistinguishable
-    // from a legitimate "already fully removed, every step skipped" success — and an operator
-    // scripting `release remove && …` would proceed as though a release had been torn down.
-    // It also makes the "acquire nothing before the confirm" ordering above load-bearing.
-    //
     // `plan` is the same secret-free projection the debug line above logs: an agent refused here gets
     // the structured form of the confirm text, not prose to parse.
     await confirmOrExit(confirmedCommand, buildConfirmMessage(plan, Boolean(skipJira)), {
-      throwOnDecline: true,
       plan: { ...describePlan(plan), skipJira: Boolean(skipJira) },
     })
 

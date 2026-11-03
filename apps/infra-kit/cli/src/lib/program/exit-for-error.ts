@@ -1,5 +1,6 @@
 import process from 'node:process'
 
+import { isCommandDeclined } from 'src/lib/errors/command-declined-error'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { emit } from 'src/lib/json-output'
@@ -17,7 +18,8 @@ const DEFAULT_DEPS: ExitForErrorDeps = { exit: process.exit, emit, logger }
  * The top-level catch of `entry/cli.ts`: turn whatever escaped `parseAsync` into a message and an exit
  * code. Three branches, in this order:
  *
- * 1. a prompt cancellation (Ctrl-C / Esc) exits 0 — a deliberate back-out, not a failure;
+ * 1. a prompt cancellation (Ctrl-C / Esc) or a declined confirm exits 0 — a deliberate back-out, not a
+ *    failure;
  * 2. a `StructuredRefusalError` emits its payload (stdout, `--json` only), logs its message and exits
  *    with the error's own code;
  * 3. anything else logs its message and exits 1.
@@ -26,7 +28,7 @@ const DEFAULT_DEPS: ExitForErrorDeps = { exit: process.exit, emit, logger }
  * process seams injectable. `deps` exist for the test; production callers pass nothing.
  */
 export const exitForError = (error: unknown, deps: ExitForErrorDeps = DEFAULT_DEPS): never => {
-  if (isPromptCancellation(error)) {
+  if (isPromptCancellation(error) || isCommandDeclined(error)) {
     deps.logger.info('Operation cancelled.')
 
     return deps.exit(0)

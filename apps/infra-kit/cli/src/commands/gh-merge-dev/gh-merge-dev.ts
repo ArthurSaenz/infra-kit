@@ -695,13 +695,10 @@ const planConfirmAndPush = async (args: {
   }
 
   try {
-    // `throwOnDecline` is load-bearing here, not stylistic: the scratch worktree
-    // is alive at this point, and `process.exit(0)` would skip the `finally`
-    // that removes it — leaking one on the most ordinary non-happy path there is.
     await confirmOrExit(
       confirmedCommand,
       `Are you sure you want to merge ${integrationRef} into these branches: ${selected.join(', ')}?`,
-      { throwOnDecline: true, plan: previewPlan(entries, selected, skipped) },
+      { plan: previewPlan(entries, selected, skipped) },
     )
   } catch (error) {
     if (!isCommandDeclined(error)) throw error

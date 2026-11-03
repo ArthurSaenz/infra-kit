@@ -43,11 +43,8 @@ import { BRANCH, LABEL, installDefaults } from './release-remove-mocks'
  * The config module is kept REAL here (git-utils points at a config-less tmpdir) so the missing-config
  * message under test is the one production throws, not a fixture.
  *
- * The decline is the other half, and it names its own false-success: `confirmOrExit`’s DEFAULT is
- * `process.exit(0)`, which would make "the operator said no" indistinguishable from "already fully
- * removed, every step skipped" — same exit code, same absence of mutations. An operator scripting
- * `release remove && …` would then proceed as though a release had been torn down. The command opts
- * into `throwOnDecline`, so a decline must arrive as a `CommandDeclinedError` with nothing mutated.
+ * The decline is the other half: it must arrive as a `CommandDeclinedError` with nothing mutated, so
+ * the command's own cleanup runs before the boundary exits.
  */
 
 vi.mock('zx', async (importOriginal) => {

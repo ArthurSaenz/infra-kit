@@ -7,14 +7,9 @@ import { CommandDeclinedError } from 'src/lib/errors/command-declined-error'
 import { confirmOrExit } from '../confirm-or-exit'
 
 /**
- * `confirmOrExit` calls `process.exit(0)` on a decline, and `process.exit` skips
- * every `finally`. For a command that acquires a resource before it prompts — the
- * merge-dev scratch worktree is the motivating case — that makes the single most
- * ordinary non-happy path the one that leaks.
- *
- * The opt-in exists so those commands can unwind. Seven commands share this
- * helper, so the default must not move; the first test is the regression guard
- * for the other six.
+ * A decline throws instead of exiting: `process.exit` skips every `finally`, and a command that acquires
+ * a resource before it prompts (the merge-dev scratch worktree) would leak it on the most ordinary
+ * non-happy path. `exitForError` turns the throw into exit 0.
  */
 
 vi.mock('@inquirer/confirm', () => {
@@ -38,29 +33,14 @@ beforeEach(() => {
 })
 
 describe('confirmOrExit — decline handling', () => {
-  it('defaults to process.exit(0), so the six existing callers are unchanged', async () => {
+  it('throws a catchable decline — and does NOT exit', async () => {
     vi.mocked(confirm).mockResolvedValue(false as never)
 
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('exited')
     }) as never)
 
-    await expect(confirmOrExit(undefined, 'proceed?')).rejects.toThrow('exited')
-    expect(exit).toHaveBeenCalledWith(0)
-
-    exit.mockRestore()
-  })
-
-  it('throws a catchable decline when the caller opts in — and does NOT exit', async () => {
-    vi.mocked(confirm).mockResolvedValue(false as never)
-
-    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error('exited')
-    }) as never)
-
-    await expect(confirmOrExit(undefined, 'proceed?', { throwOnDecline: true })).rejects.toBeInstanceOf(
-      CommandDeclinedError,
-    )
+    await expect(confirmOrExit(undefined, 'proceed?')).rejects.toBeInstanceOf(CommandDeclinedError)
 
     // The whole point: the process must survive so the caller's `finally` runs.
     expect(exit).not.toHaveBeenCalled()
@@ -75,7 +55,7 @@ describe('confirmOrExit — decline handling', () => {
 
     const run = async (): Promise<void> => {
       try {
-        await confirmOrExit(undefined, 'proceed?', { throwOnDecline: true })
+        await confirmOrExit(undefined, 'proceed?')
       } finally {
         released = true
       }
@@ -83,12 +63,11 @@ describe('confirmOrExit — decline handling', () => {
 
     await expect(run()).rejects.toBeInstanceOf(CommandDeclinedError)
 
-    // Against the default (`process.exit`) path this stays false — that is the leak.
     expect(released).toBe(true)
   })
 
   it('is a no-op when the command was pre-confirmed (the MCP shape)', async () => {
-    await expect(confirmOrExit(true, 'proceed?', { throwOnDecline: true })).resolves.toBeUndefined()
+    await expect(confirmOrExit(true, 'proceed?')).resolves.toBeUndefined()
     expect(confirm).not.toHaveBeenCalled()
   })
 })

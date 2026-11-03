@@ -2,7 +2,7 @@ import confirm from '@inquirer/confirm'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { logger } from 'src/lib/logger'
+import { CommandDeclinedError } from 'src/lib/errors/command-declined-error'
 
 import { commandEcho } from '../command-echo'
 import { confirmOrExit } from '../confirm-or-exit'
@@ -13,7 +13,7 @@ import { confirmOrExit } from '../confirm-or-exit'
  * extraction stays byte-identical to the inlined idiom:
  *   - `confirmedCommand` truthy (CLI `--yes` / MCP) → no prompt, no exit
  *   - interactive + accepted → prompt shown, echo marked interactive, no exit
- *   - interactive + declined → cancel log + `process.exit(0)`
+ *   - interactive + declined → `CommandDeclinedError`, never `process.exit`
  */
 
 vi.mock('@inquirer/confirm', () => {
@@ -71,14 +71,13 @@ describe('confirmOrExit', () => {
     expect(exitSpy).not.toHaveBeenCalled()
   })
 
-  it('logs cancellation and exits(0) when the user declines', async () => {
+  it('throws a decline and does not exit when the user declines', async () => {
     confirmMock.mockResolvedValue(false)
 
-    await confirmOrExit(false, 'Proceed?')
+    await expect(confirmOrExit(false, 'Proceed?')).rejects.toBeInstanceOf(CommandDeclinedError)
 
     expect(setInteractiveSpy).toHaveBeenCalledTimes(1)
-    expect(logger.info).toHaveBeenCalledWith('Operation cancelled. Exiting...')
-    expect(exitSpy).toHaveBeenCalledWith(0)
+    expect(exitSpy).not.toHaveBeenCalled()
   })
 
   it('treats undefined confirmedCommand as interactive', async () => {

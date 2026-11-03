@@ -250,7 +250,6 @@ export const vendorSync = async (options: VendorSyncOptions = {}) => {
 
   await confirmOrExit(options.confirmedCommand, `Sync vendored files from ${source.name} into these targets?`, {
     plan: planPayload(plans),
-    throwOnDecline: true,
   })
 
   const applied = await applyAll(source, plans, options)

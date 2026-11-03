@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { getReleasePRs } from 'src/integrations/gh'
 import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { WORKTREES_DIR_SUFFIX } from 'src/lib/constants'
+import { isCommandDeclined } from 'src/lib/errors/command-declined-error'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
@@ -73,10 +74,10 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
     // branch throw (human) or become a `partial_failure` refusal (`--agent`).
     return toRemovalToolResult({ result: removal, operation: 'sync worktrees' })
   } catch (error) {
-    // A cancelled prompt (Ctrl-C / Esc) is a user back-out, not a failure: let it
+    // A cancelled prompt (Ctrl-C / Esc) or a declined confirm is a user back-out, not a failure: let it
     // reach the top-level boundary untouched so it exits cleanly, instead of being
     // logged as an error with a misleading remediation.
-    if (isPromptCancellation(error)) throw error
+    if (isPromptCancellation(error) || isCommandDeclined(error)) throw error
 
     // A failed-removal report already names the branch and the fix; re-wrapping it with the
     // remote-connectivity remediation below would point the user at the wrong problem.

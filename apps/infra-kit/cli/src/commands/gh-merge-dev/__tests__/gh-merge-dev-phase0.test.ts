@@ -308,18 +308,6 @@ describe('ordering and lifecycle', () => {
     expect(result.structuredContent.atomicPush.attempted).toBe(false)
   })
 
-  it('opts into throwOnDecline, because the scratch worktree is alive at the prompt', async () => {
-    await ghMergeDev({ all: true, confirmedCommand: false })
-
-    // Without this, `confirmOrExit` calls process.exit(0), which skips the
-    // `finally` that removes the worktree — leaking one on every decline.
-    expect(confirmOrExit).toHaveBeenCalledWith(
-      false,
-      expect.any(String),
-      expect.objectContaining({ throwOnDecline: true }),
-    )
-  })
-
   it('drops a branch a teammate merged mid-run rather than aborting the push', async () => {
     vi.mocked(reclassify).mockResolvedValue({
       kept: [{ branch: 'release/v1.2.5', sha: 'sha0' }],

@@ -230,16 +230,21 @@ const withOwnOutputDir = (target: E2eTarget, args: string[]): { args: string[]; 
 const holdRunLock = (target: E2eTarget): (() => void) => {
   if (target.mode === 'cloud') return () => {}
 
-  const lock = acquireRunLock(target.testsDir)
+  const lock = acquireRunLock(target.testsDir, `ik e2e --app ${target.app}`)
 
   if ('holder' in lock) {
+    const { pid, startedAt, command } = lock.holder
+
+    const age = startedAt === undefined ? undefined : `${Math.floor((Date.now() - startedAt) / 1000)}s`
+    const who = [`pid ${pid}`, age, command].filter(Boolean).join(', ')
+
     throw e2eRefusal(
       'run_in_progress',
-      { pid: lock.holder },
+      { pid, startedAt, command },
       {
         operation: `run ${target.app} e2e locally`,
-        remediation: `wait for it to finish (or stop process ${lock.holder}), then re-run`,
-        stderrExcerpt: `another local e2e run of ${target.app} (pid ${lock.holder}) is using its dev server`,
+        remediation: `wait for it to finish (or stop process ${pid}), then re-run`,
+        stderrExcerpt: `another local e2e run of ${target.app} (${who}) is using its dev server`,
       },
     )
   }
