@@ -16,30 +16,31 @@ Three layers enforce this architecture. Knowing which one owns a rule tells you 
 attention: **do not re-audit by hand what CI already fails on, and never assume CI covers a rule
 it does not implement.**
 
-| Layer | Mechanism | Runs |
-|-------|-----------|------|
-| Lint | The repo's ESLint config | `pnpm run qa` / CI |
-| Scripts | `scripts/{validate_feature,analyze_imports,check_structure}.mjs` | On demand — nothing runs them automatically |
-| Agent | This document. No tooling exists; if the agent misses it, nothing catches it | Every review |
+| Layer   | Mechanism                                                                    | Runs                                        |
+| ------- | ---------------------------------------------------------------------------- | ------------------------------------------- |
+| Lint    | The repo's ESLint config                                                     | `pnpm run qa` / CI                          |
+| Scripts | `scripts/{validate_feature,analyze_imports,check_structure}.mjs`             | On demand — nothing runs them automatically |
+| Agent   | This document. No tooling exists; if the agent misses it, nothing catches it | Every review                                |
 
-**"Agent-only" is the important column.** Rule 6 (purity) and Rule 7 have no mechanical
-enforcement whatsoever — they are the reason the expanded sections below exist.
+**"Agent-only" is the important column.** Rule 7 has no mechanical enforcement whatsoever, and lint
+covers Rule 6 only partly — that is why the expanded sections below exist.
 
 ### Who owns each rule
 
-| Rule | Name | Violation = | Owned by |
-|------|------|-------------|----------|
-| 1 | No cross-feature imports | Hidden dependency, breaks feature isolation | Lint + `validate_feature.mjs` + `analyze_imports.mjs` |
-| 2 | Service export naming | Ambiguous API, merge conflicts | `validate_feature.mjs` |
-| 3 | Atom `$` prefix | Indistinguishable from regular variables | `validate_feature.mjs` |
-| 4 | Async write-only `Fx` suffix | Cannot tell sync from async at call site | `validate_feature.mjs` |
-| 5 | Object arguments for write-only atoms | Primitive/positional args — brittle call sites, unsafe refactors | `validate_feature.mjs` |
-| 6 | Dumb component `className` + `cn()` | Cannot compose styles | **agent-only** |
-| 6 | Dumb component purity (no atoms/services) | Impure components untestable, unreusable | **agent-only** |
-| 7 | Container state handling | Runtime crashes, poor UX | **agent-only** |
+| Rule | Name                                      | Violation =                                                      | Owned by                                                                    |
+| ---- | ----------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 1    | No cross-feature imports                  | Hidden dependency, breaks feature isolation                      | Lint + `validate_feature.mjs` + `analyze_imports.mjs`                       |
+| 2    | Service export naming                     | Ambiguous API, merge conflicts                                   | `validate_feature.mjs`                                                      |
+| 3    | Atom `$` prefix                           | Indistinguishable from regular variables                         | Lint + `validate_feature.mjs`                                               |
+| 4    | Async write-only `Fx` suffix              | Cannot tell sync from async at call site                         | Lint + `validate_feature.mjs`                                               |
+| 5    | Object arguments for write-only atoms     | Primitive/positional args — brittle call sites, unsafe refactors | Lint + `validate_feature.mjs`                                               |
+| 6    | Dumb component `className` + `cn()`       | Cannot compose styles                                            | Lint (props type and root element)                                          |
+| 6    | Dumb component purity (no atoms/services) | Impure components untestable, unreusable                         | Lint (hooks, imports, effects) + **agent** (UI-only vs business `useState`) |
+| 7    | Container state handling                  | Runtime crashes, poor UX                                         | **agent-only**                                                              |
 
 Lint also owns several component conventions next door to these rules — props interface naming and
-typing, destructuring layout, file order, one-component-per-file, stories. Before reporting one as a
+typing, destructuring layout, file order, one-component-per-file, stories, component name matching
+the file, which files a feature and its `services/` may hold, and no hooks declared in services. Before reporting one as a
 finding, check whether lint already has it.
 
 ### Do not trust a severity written down here
@@ -105,38 +106,49 @@ business logic, state management, or external data access.
 
 ```typescript
 // ❌ ALL of these are BLOCKING violations in a *-component.tsx file
-import { useAtomValue, useSetAtom, useAtom } from 'jotai'   // state management
-import { featureService } from '../services'                // feature services
-import { httpClient } from '#root/lib/http-client'          // direct API calls
-import { calculateDiscount } from '../services/libs'        // business logic
-import { trackEvent } from '../analytics'                   // analytics (side effect)
-import { someService } from '#root/features/other-feature'  // cross-feature service
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+
+// analytics (side effect)
+import { someService } from '#root/features/other-feature'
+
+// feature services
+import { httpClient } from '#root/lib/http-client'
+
+// business logic
+import { trackEvent } from '../analytics'
+// state management
+import { featureService } from '../services'
+// direct API calls
+import { calculateDiscount } from '../services/libs'
+
+// cross-feature service
 ```
 
 ### Allowed in Dumb Components
 
-| Import/Hook | Why Allowed |
-|-------------|-------------|
-| `useState` | UI-only state (dropdown open, tooltip visible, input focus) |
-| `useRef` | DOM references (scroll position, input focus, measurements) |
-| `useMemo` | Performance optimization of derived JSX/values from props |
-| `useCallback` | Stable references for event handlers derived from props |
-| `cn()` from `@wl/web-toolkit` | Style composition utility (required by Rule 6) |
-| Third-party UI libraries | Headless UI, Radix, etc. — pure UI concerns |
-| `React.forwardRef` | DOM ref forwarding |
+| Import/Hook                                                    | Why Allowed                                                                                             |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `useState`                                                     | UI-only state (dropdown open, tooltip visible, input focus)                                             |
+| `useRef`                                                       | DOM references (scroll position, input focus, measurements)                                             |
+| `useMemo`                                                      | Performance optimization of derived JSX/values from props                                               |
+| `useCallback`                                                  | Stable references for event handlers derived from props                                                 |
+| `useId`, `useEffect`, `useLayoutEffect`, `useImperativeHandle` | DOM and lifecycle wiring — but an effect that fetches, calls the http client or tracks analytics is not |
+| `cn()` from `@wl/web-toolkit`                                  | Style composition utility (required by Rule 6)                                                          |
+| Third-party UI libraries                                       | Headless UI, Radix, etc. — pure UI concerns                                                             |
+| `React.forwardRef`                                             | DOM ref forwarding                                                                                      |
 
 ### What is NOT UI-Only State
 
 The test is not "does it use `useState`" but "does the value describe the screen, or the work".
 
-| `useState` holding… | Verdict | Why |
-|---|---|---|
-| `isDropdownOpen`, `tooltipPosition` | ✅ dumb | Purely visual; nothing outside the component cares |
-| `searchInput` (controlled value) | ✅ dumb | The input's own display state |
-| `scrollRef` (`useRef`) | ✅ dumb | DOM handle |
-| `isSubmitting` | ❌ smart | A submission is a business process with an outcome |
-| `error` | ❌ smart | Errors originate outside the component |
-| `data` | ❌ smart | Fetching is an external dependency |
+| `useState` holding…                 | Verdict  | Why                                                |
+| ----------------------------------- | -------- | -------------------------------------------------- |
+| `isDropdownOpen`, `tooltipPosition` | ✅ dumb  | Purely visual; nothing outside the component cares |
+| `searchInput` (controlled value)    | ✅ dumb  | The input's own display state                      |
+| `scrollRef` (`useRef`)              | ✅ dumb  | DOM handle                                         |
+| `isSubmitting`                      | ❌ smart | A submission is a business process with an outcome |
+| `error`                             | ❌ smart | Errors originate outside the component             |
+| `data`                              | ❌ smart | Fetching is an external dependency                 |
 
 ### Violation and Fix
 
@@ -145,13 +157,21 @@ The tell is the prop: a dumb component taking an **id** has to go fetch somethin
 
 ```tsx
 // ❌ features/user/components/user-card-component.tsx — a dumb component
-import { useAtomValue } from 'jotai'                 // ← prohibited in this file
-interface UserCardComponentProps { userId: string; className?: string }
+import { useAtomValue } from 'jotai'
+
+// ← prohibited in this file
+interface UserCardComponentProps {
+  userId: string
+  className?: string
+}
 // … const user = useAtomValue(userService.$users).find((u) => u.id === userId)
 //     both the atom access and the filtering belong in the container
 
 // ✅ same file — takes the resolved entity, nothing else changes
-interface UserCardComponentProps { user: User; className?: string }
+interface UserCardComponentProps {
+  user: User
+  className?: string
+}
 
 // ✅ features/user/containers/user-card-container.tsx — the work moves here
 const users = useAtomValue(userService.$users)
@@ -197,12 +217,12 @@ this rule.
 Four guards, in this order, before any content renders. The **condition** is the rule; what each
 branch renders is the application's business.
 
-| # | Guard condition | Why it sits here |
-|---|---|---|
-| 1 | `isLoading && !data` | Runs first so error/empty cannot fire during the initial fetch, when `error` is null but `data` is null too |
-| 2 | `error` | Once loading has finished, a failure wins regardless of what `data` holds |
-| 3 | `!data \|\| data.length === 0` | Loaded successfully but with nothing to show — a distinct state from failure, and a distinct message to the user |
-| 4 | *(none — content)* | Every edge case is now excluded, so TypeScript narrows `data` to non-null; no `!` assertion or optional chaining needed |
+| #   | Guard condition                | Why it sits here                                                                                                        |
+| --- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| 1   | `isLoading && !data`           | Runs first so error/empty cannot fire during the initial fetch, when `error` is null but `data` is null too             |
+| 2   | `error`                        | Once loading has finished, a failure wins regardless of what `data` holds                                               |
+| 3   | `!data \|\| data.length === 0` | Loaded successfully but with nothing to show — a distinct state from failure, and a distinct message to the user        |
+| 4   | _(none — content)_             | Every edge case is now excluded, so TypeScript narrows `data` to non-null; no `!` assertion or optional chaining needed |
 
 Order is not stylistic. Swap 1 and 2 and a slow first fetch renders an error state; swap 2 and 3
 and a failed request shows "no items found".

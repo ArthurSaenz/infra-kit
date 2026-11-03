@@ -413,10 +413,10 @@ const E = () => <div /> // reported here: "This file declares 5 components (max 
 Only **top-level** declarations are counted. A multi-declarator statement
 (`const A = () => …, B = () => …`) counts each component separately. Re-exports
 (`export { X } from './x'`) declare nothing and are not counted, and
-`styled.div\`…\`` tagged templates are not component functions, so they are not
+`styled.div\`…\``tagged templates are not component functions, so they are not
 counted either. Nested / in-render components are intentionally out of scope —
 that is a different concern (component identity / re-render stability), better
-served by `react/no-unstable-nested-components`.
+served by`react/no-unstable-nested-components`.
 
 Detection uses the same heuristic as the other rules (PascalCase name through
 `memo`/`forwardRef`/`observer` wrappers, or a JSX return). A consequence worth
@@ -762,6 +762,138 @@ outside, so the public API is the right entry for them.
 | `rootAlias` | `string`   | `'#root'` | The alias that maps to `src/`.                 |
 | `ignore`    | `string[]` | `[]`      | Globs; the rule is skipped for matching files. |
 
+### `atom-naming`
+
+Jotai atoms declared at module top level follow the fe-architect naming rules:
+
+- a readable atom (primitive, derived, read-write, `atomFamily`) starts with **`$`**;
+- a write-only atom (`atom(null, write)`) has no `$` and ends with **`Fx`** when `write` is `async`, **`Atom`** otherwise;
+- the write function takes at most one argument after `get, set`, typed as a named **`*Args`** type.
+
+```ts
+// ❌ Incorrect
+export const isOpen = atom(false)
+export const toggleOpenedCard = atom(null, (get, set, currentId: string) => {})
+export const startSearch = atom(null, async (_get, set, args: Omit<SearchArg, 'navigate'>) => {})
+
+// ✅ Correct
+export const $isOpen = atom(false)
+export const toggleOpenedCardAtom = atom(null, (get, set, args: ToggleOpenedCardArgs) => {})
+export const startSearchFx = atom(null, async (_get, set, args: StartSearchArgs) => {})
+```
+
+No autofix: renaming an exported atom touches every importer. A write function passed by reference
+(`atom(null, fn)`) accepts either suffix, and an untyped argument passes (tsc already types it).
+
+#### Options
+
+| Option           | Type       | Default  |
+| ---------------- | ---------- | -------- |
+| `readablePrefix` | `string`   | `'$'`    |
+| `asyncSuffix`    | `string`   | `'Fx'`   |
+| `syncSuffix`     | `string`   | `'Atom'` |
+| `argsSuffix`     | `string`   | `'Args'` |
+| `paths`/`ignore` | `string[]` | `[]`     |
+
+### `no-hooks-in-services`
+
+A service is atoms and pure functions. A `use*` function declared in `services/**`, `services.ts`,
+`service.ts` or `entities/**/model.ts` is reported; the hook belongs in a container or `lib/`.
+Backend and e2e packages are skipped (backends have `src/services/` too).
+
+```ts
+// ❌ services/main.ts
+export const useCatalogComments = (module: ECategory) => { … }
+
+// ✅ services/main.ts
+export const loadCatalogDataFx = atom(null, async (_get, set, args: LoadCatalogDataArgs) => { … })
+```
+
+`paths` replaces the default locations; `ignore` skips files.
+
+### `feature-files`
+
+`package-structure` judges a feature's folders; this rule judges its files.
+
+- Feature root: `index`, `types`, `services`, `analytics`, `constants`, `translates` (`.ts`/`.tsx`), plus `extraRootFiles`.
+- `services/` direct children: `main`, `api`, `libs`, `index`, `types`, `constants`, plus `extraServiceFiles`.
+- A feature has `services.ts` **or** `services/`, not both.
+- A service file renders nothing: JSX in it is reported.
+
+Tests, stories and `.d.ts` files are skipped, as are backend and e2e packages.
+
+```
+"service.ts" is not an allowed feature-root file. Allowed: index.ts, types.ts, services.ts, analytics.ts, constants.ts, translates.ts.
+```
+
+#### Options
+
+| Option              | Type       | Default | Description                          |
+| ------------------- | ---------- | ------- | ------------------------------------ |
+| `extraRootFiles`    | `string[]` | `[]`    | Extra root names, without extension. |
+| `extraServiceFiles` | `string[]` | `[]`    | Extra `services/` names, likewise.   |
+| `paths`/`ignore`    | `string[]` | `[]`    | Globs restricting / skipping files.  |
+
+### `component-name-matches-file`
+
+The exported component is named after its file in PascalCase: `abroad-slider-component.tsx` →
+`AbroadSliderComponent`, `julyo-baggage-container.tsx` → `JulyoBaggageContainer`. A file under
+`components/` ends with `-component.tsx`, one under `containers/` with `-container.tsx`.
+
+```tsx
+// ❌ components/abroad-slider-component.tsx
+export const AbroadSlider = (props: AbroadSliderProps) => …
+
+// ✅
+export const AbroadSliderComponent = (props: AbroadSliderComponentProps) => …
+```
+
+A suggestion renames the component inside the file; importers are left to you. With several exported
+components one matching name is enough. `index.tsx`, stories and tests are skipped.
+
+It runs on `**/features/**`, `**/*-component.tsx` and `**/*-container.tsx` by default (`paths` replaces that).
+`ignore` defaults to `**/pages/**`, `**/routes/**`, `**/renderer/**`, `**/primitives/**`; a value you
+pass **replaces** that default.
+
+### `component-classname`
+
+A dumb component (`features/*/components/**`, `*-component.tsx`) accepts `className` and merges it
+into its root element.
+
+```tsx
+// ❌
+export interface BadgeComponentProps { label: string }
+export const BadgeComponent = (props: BadgeComponentProps) => <span className="rounded">{props.label}</span>
+
+// ✅
+export interface BadgeComponentProps { label: string; className?: string }
+export const BadgeComponent = (props: BadgeComponentProps) => {
+  const { label, className } = props
+
+  return <span className={cn('rounded', className)}>{label}</span>
+}
+```
+
+The fix adds `className?: string` to an in-file props type. The root is checked only for a single
+non-Fragment JSX return; a spread attribute passes. `cn(styles.root, className)` passes, so CSS
+modules need no option. Imported or generic props types are skipped. Options: `paths`, `ignore`.
+
+### `dumb-component-purity`
+
+A dumb component renders props. In its scope (same as `component-classname`) only these hooks are
+allowed: `useState`, `useRef`, `useMemo`, `useCallback`, `useId`, `useEffect`, `useLayoutEffect`,
+`useImperativeHandle`, plus `allowHooks`. Any other hook — including a `#root/lib` wrapper around
+state — is reported, and so is `fetch`, `httpClient.*` or an analytics call inside an effect.
+
+```
+"useFeatureFlag" is not in the allowed hook list for dumb components. Call it in the container and pass the value as a prop.
+```
+
+| Option           | Type       | Default | Description                                   |
+| ---------------- | ---------- | ------- | --------------------------------------------- |
+| `allowHooks`     | `string[]` | `[]`    | Added to the defaults (e.g. `useMediaQuery`). |
+| `paths`/`ignore` | `string[]` | scope   | `paths` replaces the default scope.           |
+
 ### `e2e-file-layout`
 
 Hold an **e2e package** to its file layout: specs are `*.spec.ts` at the root of a domain folder
@@ -1020,7 +1152,7 @@ Counting rules:
   block exactly. `@param`/`@returns`/`@throws` lines charge the prose budget.
 - **Both budgets can report on the same block** — they are checked independently.
 
-**Why two budgets.** `@wl/require-jsdoc-example` *mandates* an `@example` on
+**Why two budgets.** `@wl/require-jsdoc-example` _mandates_ an `@example` on
 functions at cognitive complexity ≥ 12. If a rule-mandated example were charged
 against the prose budget, those functions could be pushed into a state with no
 compliant answer. Charging examples to their own budget is the contract that
@@ -1028,11 +1160,11 @@ keeps the two rules from deadlocking; it is pinned by an integration test.
 
 #### Options
 
-| Option            | Default                                            | Description                                                                 |
-| ----------------- | -------------------------------------------------- | --------------------------------------------------------------------------- |
-| `maxLines`        | `15`                                               | Prose ceiling — total lines minus the `@example` bodies.                    |
-| `maxExampleLines` | `10`                                               | Combined ceiling for the block's `@example` bodies.                         |
-| `exemptTags`      | `['fileoverview', 'module', 'packageDocumentation']` | Tags that exempt a block entirely.                                          |
+| Option            | Default                                              | Description                                              |
+| ----------------- | ---------------------------------------------------- | -------------------------------------------------------- |
+| `maxLines`        | `15`                                                 | Prose ceiling — total lines minus the `@example` bodies. |
+| `maxExampleLines` | `10`                                                 | Combined ceiling for the block's `@example` bodies.      |
+| `exemptTags`      | `['fileoverview', 'module', 'packageDocumentation']` | Tags that exempt a block entirely.                       |
 
 Only counts strictly greater than a ceiling report (`lines === max` is allowed).
 
@@ -1075,7 +1207,7 @@ documents).
 
 There is no autofix, and there will not be one: shortening a block means
 deleting sentences, and the longest blocks in a codebase are usually its most
-valuable documentation. The part of this problem that *is* mechanically fixable —
+valuable documentation. The part of this problem that _is_ mechanically fixable —
 blank-line padding and `{type}` annotations — is already handled by
 `jsdoc/tag-lines` and `jsdoc/no-types`, which do have fixers. Run those first;
 what remains is a judgement call for a human.
@@ -1141,9 +1273,9 @@ Counting rules:
 
 #### Options
 
-| Option            | Default                                              | Description                                                                             |
-| ----------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `maxSummaryLines` | `5`                                                  | Prose ceiling for the summary paragraph.                                                |
+| Option            | Default                                              | Description                                                                              |
+| ----------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `maxSummaryLines` | `5`                                                  | Prose ceiling for the summary paragraph.                                                 |
 | `exemptTags`      | `['fileoverview', 'module', 'packageDocumentation']` | Tags that exempt a block entirely. Same list as `max-jsdoc-lines`, so one tag does both. |
 
 ```js

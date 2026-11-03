@@ -131,6 +131,22 @@ plugin.configs.recommended = [
       [`${PLUGIN_NAME}/no-feature-self-import`]: 'error',
     },
   },
+  // fe-architect naming and purity rules. Each gates itself on path and package type (backend and e2e
+  // packages are skipped), so one repo-wide block is enough.
+  {
+    files: ['**/*.{ts,tsx}'],
+    plugins: {
+      [PLUGIN_NAME]: plugin,
+    },
+    rules: {
+      [`${PLUGIN_NAME}/atom-naming`]: 'error',
+      [`${PLUGIN_NAME}/no-hooks-in-services`]: 'error',
+      [`${PLUGIN_NAME}/feature-files`]: 'error',
+      [`${PLUGIN_NAME}/component-name-matches-file`]: 'error',
+      [`${PLUGIN_NAME}/component-classname`]: 'error',
+      [`${PLUGIN_NAME}/dumb-component-purity`]: 'error',
+    },
+  },
   // The e2e rules gate themselves on the package type, so a repo-wide glob costs one cached type
   // lookup per file elsewhere.
   {

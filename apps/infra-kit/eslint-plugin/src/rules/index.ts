@@ -2,8 +2,12 @@ import type { Rule } from 'eslint'
 
 // Each './<rule>' resolves to './<rule>/index.ts' (the rule's folder barrel) under
 // `moduleResolution: bundler`; a future switch to node16/nodenext would require explicit paths.
+import { atomNaming } from './atom-naming'
 import { componentArrowFunction } from './component-arrow-function'
+import { componentClassname } from './component-classname'
 import { componentFileOrder } from './component-file-order'
+import { componentNameMatchesFile } from './component-name-matches-file'
+import { dumbComponentPurity } from './dumb-component-purity'
 import { e2eDescribeOrder } from './e2e-describe-order'
 import { e2eFileLayout } from './e2e-file-layout'
 import { e2eFileOrder } from './e2e-file-order'
@@ -11,6 +15,7 @@ import { e2ePageObjectMemberOrder } from './e2e-page-object-member-order'
 import { e2eTestTags } from './e2e-test-tags'
 import { e2eTestTitle } from './e2e-test-title'
 import { e2eTopLevelDescribe } from './e2e-top-level-describe'
+import { featureFiles } from './feature-files'
 import { featurePublicApi } from './feature-public-api'
 import { layerImports } from './layer-imports'
 import { maxComponentsPerFile } from './max-components-per-file'
@@ -18,6 +23,7 @@ import { maxJsdocLines } from './max-jsdoc-lines'
 import { maxJsdocSummaryLines } from './max-jsdoc-summary-lines'
 import { maxJsxReturnSize } from './max-jsx-return-size'
 import { noFeatureSelfImport } from './no-feature-self-import'
+import { noHooksInServices } from './no-hooks-in-services'
 import { packageStructure } from './package-structure'
 import { propsDestructuringBlankLine } from './props-destructuring-blank-line'
 import { propsDestructuringNewline } from './props-destructuring-newline'
@@ -52,4 +58,10 @@ export const rules: Record<string, Rule.RuleModule> = {
   'e2e-top-level-describe': e2eTopLevelDescribe,
   'e2e-test-tags': e2eTestTags,
   'e2e-test-title': e2eTestTitle,
+  'atom-naming': atomNaming,
+  'no-hooks-in-services': noHooksInServices,
+  'feature-files': featureFiles,
+  'component-name-matches-file': componentNameMatchesFile,
+  'component-classname': componentClassname,
+  'dumb-component-purity': dumbComponentPurity,
 }
