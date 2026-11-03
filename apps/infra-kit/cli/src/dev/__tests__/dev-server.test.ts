@@ -636,7 +636,14 @@ describe('devServerRunner — a local-pinned route whose backend failed', () => 
     // part of that scan and dropped. Writing once made this test pass alone and fail under a loaded
     // machine, where the watcher takes longer to become ready — a false red on a real fix. Saving again
     // is also exactly what a developer does, so nothing is being papered over.
+    //
+    // Spaced well past the 400ms debounce + 200ms settle: chokidar ≥6 reports every settled write, so
+    // re-saving on each 250ms tick re-arms the trailing debounce forever and the restart never fires.
+    let lastSave = 0
+
     const save = (): void => {
+      if (Date.now() - lastSave < 1500) return
+      lastSave = Date.now()
       fs.writeFileSync(path.join(root, 'apps', 'client', 'api', 'dist', 'handler.js'), handlerSource(1))
     }
 

@@ -2475,7 +2475,7 @@ export class DevServerRunner {
       ignored: (p: string): boolean => {
         return p.endsWith('.tsbuildinfo') || p.endsWith('.map')
       },
-      ...(usePoll ? { usePolling: true, interval: 400 } : {}),
+      ...(usePoll ? { backend: 'polling', pollingInterval: 400 } : {}),
     })
 
     this.watcher = watcher

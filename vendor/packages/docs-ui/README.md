@@ -58,10 +58,16 @@ The build runs in SPA mode with prerendering enabled, so the output is fully sta
 server is required at runtime. The static assets (SPA shell + prerendered pages) are emitted to
 `.output/public`.
 
-```bash
-pnpm --filter @wl/docs-ui build
-aws s3 sync vendor/packages/docs-ui/.output/public s3://<your-docs-bucket> --delete
+`deploy.ts` is the consumer's `docs-fe` deploy, run by `infra-kit deploy-run docs-fe`:
+
+```ts
+// infra-kit.deploy.ts
+project: 'hulyo', // the SSM prefix: deploy.ts reads /<project>/s3/docs/bucket_name and /<project>/cloudfront/docs/id
+services: { 'docs-fe': { skipEnvs: ['stage', 'prod'], deploy: 'vendor/packages/docs-ui/deploy.ts' } },
 ```
+
+It builds from the full checkout (never a `turbo prune`), syncs `.output/public` to the bucket and
+invalidates CloudFront.
 
 Configure the bucket/CloudFront for SPA fallback: serve existing static files as-is and rewrite
 remaining 404s to `/_shell.html` so client-side routes resolve.

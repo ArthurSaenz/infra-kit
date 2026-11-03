@@ -41,6 +41,7 @@ node_modules
 ## Mobile / native
 **/ios/App/**
 **/android/app/**
+**/android/**/build/
 gradlew
 
 ## Playwright

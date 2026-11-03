@@ -112,7 +112,7 @@ export const createDocsAggregation = (params: { appDir: string; contentRel?: str
    * i.e. the docs site's content lives across the WHOLE monorepo, not inside this package. This is
    * incompatible with `turbo prune` — pruning keeps only @wl/docs-ui's dependency graph and drops
    * the `apps/<app>/docs`, `packages/<pkg>/docs` and `spec/docs` trees, so a pruned build produces an empty docs site.
-   * The docs deploy (devops/scripts/deploy-docs-fe.sh) MUST build from the full checkout, not a prune.
+   * The docs deploy (this package's deploy.ts) MUST build from the full checkout, not a prune.
    */
   const includeGlobs = [
     'apps/*/**/docs/**/*.{md,mdx}',
