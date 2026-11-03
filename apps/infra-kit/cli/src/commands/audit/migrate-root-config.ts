@@ -1,8 +1,15 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import type { GuidanceWrite } from 'src/lib/agent-guidance'
-import { writeMigratedConfigFile } from 'src/lib/config-migrations'
+import {
+  appendTopLevelMembers,
+  detectIndent,
+  prependTopLevelMembers,
+  replaceTopLevelValue,
+  writeConfigFileText,
+} from 'src/lib/config-migrations'
 import { SUPPORTED_CONFIG_VERSION, configSchemaUrl } from 'src/lib/infra-kit-config'
 import { PACKAGE_CONFIG_FILE, loadAuthoredPackageConfig } from 'src/lib/package-validator/loader'
 import { isNewerVersion } from 'src/lib/update-check/semver'
@@ -86,12 +93,13 @@ export const migrateRootAuditConfig = async (repoRoot: string): Promise<Guidance
         )
       }
 
-      await writeMigratedConfigFile({
-        path: jsonPath,
-        raw,
-        migrated: { ...current, audit: rules },
-        expectedMtimeMs: stat.mtimeMs,
-      })
+      const content = appendTopLevelMembers(raw, [['audit', rules]], detectIndent(raw))
+
+      if (content === null || !isDeepStrictEqual(JSON.parse(content), { ...current, audit: rules })) {
+        return failed(jsonPath, 'could not add the "audit" block without rewriting the file — add it by hand')
+      }
+
+      await writeConfigFileText({ path: jsonPath, content, expectedMtimeMs: stat.mtimeMs })
       written.push({ path: jsonPath, action: 'updated' })
     } catch (err) {
       return failed(jsonPath, (err as Error).message)
@@ -116,8 +124,27 @@ const stampedSchemaVersion = (schema: unknown): string | null => {
 }
 
 /**
+ * `raw` with each stamp key's value replaced where the key exists, and the missing ones inserted first
+ * (so the editor pointer and the version read before anything they describe). Every other byte is kept.
+ */
+const stampText = (raw: string, stamp: { $schema: unknown; configVersion: number }): string | null => {
+  const missing: [string, unknown][] = []
+  let text: string | null = raw
+
+  for (const [key, value] of Object.entries(stamp)) {
+    const replaced: string | null = text === null ? null : replaceTopLevelValue(text, key, value)
+
+    if (replaced === null) missing.push([key, value])
+    else text = replaced
+  }
+
+  return text === null ? null : prependTopLevelMembers(text, missing, detectIndent(raw))
+}
+
+/**
  * Stamp `$schema` (a version-pinned URL of this CLI's generated schema) and `configVersion` at the top of
- * the committed `infra-kit.json` — layer 1, the only layer that may carry `configVersion`. This and
+ * the committed `infra-kit.json` — layer 1, the only layer that may carry `configVersion` — changing no
+ * other byte of it, so a prettier-formatted file stays formatted. This and
  * `audit --fix --root` are the only writers of either key: the loader only reads them, and `doctor`
  * never writes the file.
  *
@@ -156,17 +183,17 @@ export const stampRootConfig = async (repoRoot: string, version: string): Promis
 
     if (current.$schema === $schema && current.configVersion === SUPPORTED_CONFIG_VERSION) return []
 
-    const rest = Object.entries(current).filter(([key]) => {
-      return key !== '$schema' && key !== 'configVersion'
-    })
+    const content = stampText(raw, { $schema, configVersion: SUPPORTED_CONFIG_VERSION })
 
-    await writeMigratedConfigFile({
-      path: jsonPath,
-      raw,
-      // First, so the editor pointer and the version read before anything they describe.
-      migrated: { $schema, configVersion: SUPPORTED_CONFIG_VERSION, ...Object.fromEntries(rest) },
-      expectedMtimeMs: stat.mtimeMs,
-    })
+    // The splice is checked, not trusted: a file the scanner misread would otherwise be written broken.
+    if (
+      content === null ||
+      !isDeepStrictEqual(JSON.parse(content), { ...current, $schema, configVersion: SUPPORTED_CONFIG_VERSION })
+    ) {
+      return failed(jsonPath, 'could not insert $schema/configVersion without rewriting the file — add them by hand')
+    }
+
+    await writeConfigFileText({ path: jsonPath, content, expectedMtimeMs: stat.mtimeMs })
 
     return [{ path: jsonPath, action: 'updated' }]
   } catch (err) {

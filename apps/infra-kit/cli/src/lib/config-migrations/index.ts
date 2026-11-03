@@ -1,7 +1,14 @@
 export { applyConfigMigrations } from './apply-config-migrations'
 export { tryAutoMigrateLayer } from './auto-migrate-layer'
 export type { AutoMigrateLayer, AutoMigrateOutcome } from './auto-migrate-layer'
-export { ConfigFileChangedError, migrateConfigFile, writeMigratedConfigFile } from './migrate-config-file'
+export { appendTopLevelMembers, prependTopLevelMembers, replaceTopLevelValue } from './json-text-edit'
+export {
+  ConfigFileChangedError,
+  detectIndent,
+  migrateConfigFile,
+  writeConfigFileText,
+  writeMigratedConfigFile,
+} from './migrate-config-file'
 export type { FileMigrationResult, WriteMigratedConfigFileOptions } from './migrate-config-file'
 export { renameTopLevelKey } from './migrations/rename-top-level-key'
 export { CONFIG_MIGRATIONS, MIGRATED_CONFIG_VERSION } from './registry'

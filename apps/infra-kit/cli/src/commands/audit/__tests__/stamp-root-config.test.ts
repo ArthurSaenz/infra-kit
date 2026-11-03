@@ -43,6 +43,45 @@ describe('stampRootConfig', () => {
     ])
   })
 
+  // The fleet regression: a JSON.stringify rewrite re-wrapped every inline array, a diff prettier reverts.
+  it('changes no byte of a prettier-formatted file beyond the two lines it inserts', async () => {
+    const original = [
+      '{',
+      '  "envManagement": { "provider": "doppler", "config": { "name": "api" } },',
+      '  "audit": { "requiredScripts": ["build", "test"], "requiredFiles": ["turbo.json"] },',
+      '  "vendorTarget": { "modules": ["docs", "lint"] }',
+      '}',
+      '',
+    ].join('\n')
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'stamp-root-pretty-'))
+
+    tmpDirs.push(root)
+    fs.writeFileSync(path.join(root, 'infra-kit.json'), original)
+
+    await stampRootConfig(root, '0.42.0')
+
+    const lines = read(root).split('\n')
+
+    expect(lines.slice(1, 3)).toEqual([
+      `  "$schema": "${configSchemaUrl('0.42.0')}",`,
+      `  "configVersion": ${SUPPORTED_CONFIG_VERSION},`,
+    ])
+    expect([lines[0], ...lines.slice(3)].join('\n')).toBe(original)
+  })
+
+  it('re-stamps an older $schema in place, keeping a 4-space file and every other byte', async () => {
+    const original = `{\n    "$schema": "${configSchemaUrl('0.40.0')}",\n    "configVersion": 1,\n    "gitFlow": "main",\n    "envManagement": { "provider": "doppler", "config": { "name": "api" } }\n}\n`
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'stamp-root-restamp-'))
+
+    tmpDirs.push(root)
+    fs.writeFileSync(path.join(root, 'infra-kit.json'), original)
+
+    await stampRootConfig(root, '0.42.0')
+
+    expect(read(root)).toBe(original.replace(configSchemaUrl('0.40.0'), configSchemaUrl('0.42.0')))
+  })
+
   it('writes nothing on a second run', async () => {
     const root = repoWith({ envManagement: ENV })
 

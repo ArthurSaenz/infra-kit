@@ -34,8 +34,8 @@ export interface FileMigrationResult extends MigrationResult {
 const DEFAULT_INDENT = 2
 
 // The first indented line decides, so a hand-edited 4-space file is not reformatted wholesale.
-const detectIndent = (raw: string): string | number => {
-  return /^([ \t]+)\S/m.exec(raw)?.[1] ?? DEFAULT_INDENT
+export const detectIndent = (raw: string): string => {
+  return /^([ \t]+)\S/m.exec(raw)?.[1] ?? ' '.repeat(DEFAULT_INDENT)
 }
 
 // Group / other permission bits and the setuid/sticky family; the file-type bits above them are not
@@ -59,12 +59,32 @@ export const writeMigratedConfigFile = async ({
   migrated,
   expectedMtimeMs,
 }: WriteMigratedConfigFileOptions): Promise<void> => {
+  await writeConfigFileText({
+    path: filePath,
+    content: `${JSON.stringify(migrated, null, detectIndent(raw))}\n`,
+    expectedMtimeMs,
+  })
+}
+
+/**
+ * Write `content` over `path` with the same guarantees as {@link writeMigratedConfigFile} — atomic, mode
+ * kept, refused when the file moved on since it was read — for a caller that edited the text itself
+ * (`json-text-edit`) and must not have it re-serialised.
+ */
+export const writeConfigFileText = async ({
+  path: filePath,
+  content,
+  expectedMtimeMs,
+}: {
+  path: string
+  content: string
+  expectedMtimeMs: number
+}): Promise<void> => {
   const target = await fs.realpath(filePath)
   const dir = path.dirname(target)
   const base = path.basename(target)
   // pid + random: two racing CLIs never share a tmp name, and a reader never sees a torn file.
   const tmp = path.join(dir, `.${base}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`)
-  const content = `${JSON.stringify(migrated, null, detectIndent(raw))}\n`
 
   try {
     await fs.writeFile(tmp, content, 'utf8')
