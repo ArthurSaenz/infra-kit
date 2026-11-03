@@ -20,6 +20,7 @@ import { logger } from 'src/lib/logger'
 import { suppressTypelessPackageJsonWarning } from 'src/lib/node-warnings'
 import { setParsedArgv } from 'src/lib/parsed-argv'
 import { withEscape } from 'src/lib/prompts/escapable-context'
+import { registerBranchPickers } from 'src/lib/prompts/release-picker'
 import { formatAlignedRows } from 'src/lib/render'
 import { applySessionEnv } from 'src/lib/session-env'
 import { captureSessionReportPath } from 'src/lib/session/report'
@@ -37,6 +38,11 @@ suppressTypelessPackageJsonWarning()
 // running command can write its report while no descendant (gh / git / a hook / $EDITOR) inherits the
 // var and clobbers the file. A no-op for a normal top-level invocation (the var is unset).
 captureSessionReportPath()
+
+// A dynamic import, so React loads only when a command actually opens a picker.
+registerBranchPickers(() => {
+  return import('src/tui/boot')
+})
 
 const program = buildProgram()
 

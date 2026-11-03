@@ -7,6 +7,32 @@ import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 
 import type { BranchPickerItem } from './types'
 
+/** The Ink pickers, as `src/tui/boot` exports them. */
+export interface BranchPickers {
+  runBranchPicker: (items: BranchPickerItem[]) => Promise<string | null>
+  runBranchMultiPicker: (
+    items: BranchPickerItem[],
+    opts?: { required?: boolean; allowSelectAll?: boolean },
+  ) => Promise<string[] | null>
+}
+
+// lib/ sits below tui/, so the entry registers the Ink pickers (behind its own dynamic import) instead
+// of this module importing them.
+let loadPickers: (() => Promise<BranchPickers>) | null = null
+
+/** Called once by `entry/cli.ts` with `() => import('src/tui/boot')`. */
+export const registerBranchPickers = (loader: () => Promise<BranchPickers>): void => {
+  loadPickers = loader
+}
+
+const branchPickers = (): Promise<BranchPickers> => {
+  if (loadPickers === null) {
+    throw new Error('no branch picker registered: entry/cli.ts registers the Ink pickers at startup')
+  }
+
+  return loadPickers()
+}
+
 /**
  * Gate the interactive Ink picker: throw, without ever loading React, when nobody can answer it
  * (`isHeadless()`) or when there is no interactive input (`stdin.isTTY`).
@@ -49,12 +75,12 @@ const assertInteractive = (argument: 'version' | 'versions') => {
  * Prompt for a single release branch via the searchable Ink picker. Throws an
  * `OperationError` on non-interactive/`--json`/`--agent` runs (see `assertInteractive`)
  * and a `PromptCancelledError` if the user backs out with Esc/Ctrl-C. The Ink
- * TUI is reached only through a dynamic import so React never loads on the
- * bail paths.
+ * TUI is loaded only after the guard, through the registered loader, so React
+ * never loads on the bail paths.
  */
 export const pickReleaseBranch = async (items: BranchPickerItem[]): Promise<string> => {
   assertInteractive('version')
-  const { runBranchPicker } = await import('src/tui/boot')
+  const { runBranchPicker } = await branchPickers()
   const value = await runBranchPicker(items)
 
   if (value === null) throw new PromptCancelledError()
@@ -72,7 +98,7 @@ export const pickReleaseBranches = async (
   opts?: { required?: boolean; allowSelectAll?: boolean },
 ): Promise<string[]> => {
   assertInteractive('versions')
-  const { runBranchMultiPicker } = await import('src/tui/boot')
+  const { runBranchMultiPicker } = await branchPickers()
   const values = await runBranchMultiPicker(items, opts)
 
   if (values === null) throw new PromptCancelledError()

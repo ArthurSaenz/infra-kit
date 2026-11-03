@@ -17,7 +17,11 @@ vi.mock('src/tui/boot', () => {
   return { runBranchPicker, runBranchMultiPicker }
 })
 
-const { pickReleaseBranch, pickReleaseBranches } = await import('../release-picker')
+const { pickReleaseBranch, pickReleaseBranches, registerBranchPickers } = await import('../release-picker')
+
+registerBranchPickers(() => {
+  return import('src/tui/boot')
+})
 
 const items: BranchPickerItem[] = [{ value: 'release/1.2.3', label: 'release/1.2.3' }]
 
