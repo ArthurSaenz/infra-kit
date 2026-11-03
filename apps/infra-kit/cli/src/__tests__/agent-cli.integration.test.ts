@@ -7,8 +7,8 @@ import { z } from 'zod'
 import { buildCliBundle } from 'src/__tests__/helpers/build-cli-bundle'
 import { buildEnvClearLines } from 'src/commands/env-clear/env-clear'
 import { buildEnvLoadFileLines } from 'src/commands/env-load'
+import { createReleaseRemoveFormProvider } from 'src/commands/release-remove/release-remove-form'
 import { ENV_CLEAR_FILE, ENV_LOAD_FILE } from 'src/lib/constants'
-import { createReleaseRemoveFormProvider } from 'src/lib/release-remove-form'
 
 import {
   FIXTURE_RELEASE,

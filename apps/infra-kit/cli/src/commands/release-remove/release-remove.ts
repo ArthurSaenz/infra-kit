@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { $ } from 'zx'
 
+import { createReleaseRemoveFormProvider } from 'src/commands/release-remove/release-remove-form'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 // Leaf module, not the `src/integrations/gh` barrel — and the same rule for the two freshly hoisted
 // collaborators below. A hoisted helper's barrel now re-exports a module that imports ITS siblings
@@ -40,7 +41,6 @@ import { refuseMissingArguments } from 'src/lib/prompts/refuse-missing-arguments
 import { pickReleaseBranch } from 'src/lib/prompts/release-picker'
 import { displayLabel, formatJiraName, parseBranchName } from 'src/lib/release-id'
 import type { ReleaseId } from 'src/lib/release-id'
-import { createReleaseRemoveFormProvider } from 'src/lib/release-remove-form'
 import {
   formatBranchPickerItems,
   getBaseBranch,

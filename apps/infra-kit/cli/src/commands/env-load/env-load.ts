@@ -7,6 +7,7 @@ import process from 'node:process'
 import { z } from 'zod'
 import { $ } from 'zx'
 
+import { createEnvLoadFormProvider } from 'src/commands/env-load/env-load-form'
 import {
   DopplerAuthError,
   INFRA_KIT_ENV_TOKEN_VAR,
@@ -31,7 +32,6 @@ import {
   atomicWriteFileSync,
   getSessionCacheDir,
 } from 'src/lib/constants'
-import { createEnvLoadFormProvider } from 'src/lib/env-load-form'
 import { extractStderr } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { getProjectRoot } from 'src/lib/git-utils'

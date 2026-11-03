@@ -10,7 +10,7 @@ import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { listProjectEnvs } from 'src/lib/project-envs'
 
-import { buildEnvTokenStatus, envList } from '../env-list'
+import { envList } from '../env-list'
 
 const DEV_TOKEN = 'dp.st.dev.LIST_CANARY_dev_00001111'
 
@@ -69,50 +69,6 @@ afterEach(() => {
   resetInfraKitConfigCache()
   fs.rmSync(home, { recursive: true, force: true })
   fs.rmSync(repo, { recursive: true, force: true })
-})
-
-describe('buildEnvTokenStatus', () => {
-  it('reports hasToken from the store, present or absent, without any fix hint', () => {
-    expect(
-      buildEnvTokenStatus(
-        [
-          { env: 'dev', source: 'gh-workflow' },
-          { env: 'prod', source: 'gh-workflow' },
-        ],
-        { dev: 'dp.st.dev.xxxx' },
-        undefined,
-      ),
-    ).toEqual([
-      { env: 'dev', source: 'gh-workflow', hasToken: true },
-      { env: 'prod', source: 'gh-workflow', hasToken: false },
-    ])
-  })
-
-  it('treats INFRA_KIT_ENV_TOKEN as covering every env, same as resolveEnvToken precedence', () => {
-    expect(
-      buildEnvTokenStatus(
-        [
-          { env: 'dev', source: 'gh-workflow' },
-          { env: 'prod', source: 'token-only' },
-        ],
-        {},
-        'dp.st.from-env.xxxx',
-      ),
-    ).toEqual([
-      { env: 'dev', source: 'gh-workflow', hasToken: true },
-      { env: 'prod', source: 'token-only', hasToken: true },
-    ])
-  })
-
-  it('carries the source through unchanged (gh-workflow vs token-only)', () => {
-    expect(buildEnvTokenStatus([{ env: 'prod_observability', source: 'token-only' }], {}, undefined)).toEqual([
-      {
-        env: 'prod_observability',
-        source: 'token-only',
-        hasToken: false,
-      },
-    ])
-  })
 })
 
 describe('envList — token column', () => {

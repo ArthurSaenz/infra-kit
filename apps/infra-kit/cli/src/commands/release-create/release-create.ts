@@ -4,6 +4,7 @@ import select from '@inquirer/select'
 import process from 'node:process'
 import { z } from 'zod'
 
+import { createReleaseFormProvider } from 'src/commands/release-create/release-form'
 import { loadJiraConfig } from 'src/integrations/jira'
 // Imported from the leaf module, not the `src/integrations/jira` barrel, and deliberately so:
 // `isJiraApiError` is a pure `instanceof` guard with no I/O. Tests mock that barrel to stub NETWORK
@@ -20,7 +21,6 @@ import { logger } from 'src/lib/logger'
 import { withEscape } from 'src/lib/prompts/escapable-context'
 import { refuseMissingArguments } from 'src/lib/prompts/refuse-missing-arguments'
 import { isoDateSchema, validateOptionalIsoDate } from 'src/lib/release-date'
-import { createReleaseFormProvider } from 'src/lib/release-form'
 import { InvalidReleaseNameError, displayLabel, validateName } from 'src/lib/release-id'
 import { createSingleRelease, getBaseBranch, prepareGitForRelease, releaseTypesOf } from 'src/lib/release-utils'
 import type { ReleaseCreationResult, ReleaseType } from 'src/lib/release-utils'

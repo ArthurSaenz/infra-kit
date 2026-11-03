@@ -1,3 +1,5 @@
+export { buildEnvTokenStatus } from './env-token-status'
+export type { EnvTokenStatus } from './env-token-status'
 export {
   getTokenStorePath,
   readTokenStore,

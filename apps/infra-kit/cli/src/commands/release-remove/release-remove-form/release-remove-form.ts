@@ -16,7 +16,7 @@ import type { ArgumentFormProvider } from 'src/types'
  * open release PRs, with their type and Jira description — as ONE required select, feeding the
  * confirm gate.
  *
- * Same seam as `lib/deploy-form` and `lib/release-form`, same silent failure modes — the tests assert
+ * Same seam as `lib/deploy-form` and `commands/release-create/release-form`, same silent failure modes — the tests assert
  * `!== null` on the wire shape for that reason. Unlike `release-form`, the enumeration here CAN come
  * back with nothing to offer, and it can do so for three reasons a human acts on differently (no
  * open release PRs / `gh` failed / `gh` was too slow), so each reason is its own log line and none

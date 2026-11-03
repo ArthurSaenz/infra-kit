@@ -71,7 +71,7 @@ export const validateOptionalIsoDate = (raw: string): true | string => {
 }
 
 /**
- * The tool-schema form of the same rule. The agent form (`lib/release-form`) deliberately does NOT
+ * The tool-schema form of the same rule. The agent form (`commands/release-create/release-form`) deliberately does NOT
  * use it: form fields carry no measured wire shape, and the re-run's `parseReleaseSpec` is where an
  * invalid date is refused.
  */

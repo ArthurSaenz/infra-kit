@@ -1,10 +1,9 @@
 import process from 'node:process'
 import { z } from 'zod'
 
-import { buildEnvTokenStatus } from 'src/commands/env-list'
 import { INFRA_KIT_ENV_TOKEN_VAR } from 'src/integrations/doppler/token-resolver'
 import { INFRA_KIT_SESSION_VAR } from 'src/lib/constants'
-import { readTokenStore } from 'src/lib/env-tokens'
+import { buildEnvTokenStatus, readTokenStore } from 'src/lib/env-tokens'
 import { logger } from 'src/lib/logger'
 import type { ProjectEnv } from 'src/lib/project-envs'
 import { listProjectEnvs } from 'src/lib/project-envs'
