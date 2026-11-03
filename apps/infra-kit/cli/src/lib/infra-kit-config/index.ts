@@ -1,4 +1,6 @@
 export {
+  CONFIG_SCHEMA_FILE,
+  configSchemaUrl,
   DEFAULT_DEV_PROXY_PORT,
   DEFAULT_ORCA_LAYOUT,
   getInfraKitConfig,
@@ -10,6 +12,7 @@ export {
   resetMergedConfigCache,
   resolveOrcaLayout,
   resolveUserGlobalConfigPath,
+  SUPPORTED_CONFIG_VERSION,
   USER_CONFIG_DIR_NAME,
   vendorSourceSchema,
   vendorTargetSchema,

@@ -274,6 +274,24 @@ const gitFlowSchema = z.enum(['dev', 'main'])
 /** The `configVersion` this CLI can read; a layer-1 file declaring a higher one was written by a newer CLI. */
 export const SUPPORTED_CONFIG_VERSION = 1
 
+/**
+ * Where the generated JSON Schema for `infra-kit.json` sits in the published `infra-kit` package. The
+ * committed source is `schema/infra-kit.schema.json`; the build copies it into `dist/`, the only
+ * directory the tarball carries.
+ */
+export const CONFIG_SCHEMA_FILE = 'dist/infra-kit.schema.json'
+
+/**
+ * The `$schema` URL stamped into a project's `infra-kit.json`: pinned to the CLI version that stamped it,
+ * so an editor validates against the schema that CLI reads, not whatever `latest` has become.
+ *
+ * @example
+ * configSchemaUrl('0.42.0') // => 'https://unpkg.com/infra-kit@0.42.0/dist/infra-kit.schema.json'
+ */
+export const configSchemaUrl = (version: string): string => {
+  return `https://unpkg.com/infra-kit@${version}/${CONFIG_SCHEMA_FILE}`
+}
+
 export const infraKitConfigObject = z
   .object({
     // Editor-tooling pointer; no default (`.partial()` keeps a ZodDefault). Accepted in every layer.

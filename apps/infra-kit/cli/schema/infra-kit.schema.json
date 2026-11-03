@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "configVersion": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "envManagement": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "const": "doppler"
+            },
+            "config": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": ["name"]
+            }
+          },
+          "required": ["provider", "config"]
+        }
+      ]
+    },
+    "defaultEnv": {
+      "type": "string",
+      "minLength": 1
+    },
+    "worktrees": {
+      "type": "object",
+      "properties": {
+        "openInGithubDesktop": {
+          "type": "boolean"
+        },
+        "openInOrca": {
+          "type": "boolean"
+        },
+        "orca": {
+          "type": "object",
+          "properties": {
+            "layout": {
+              "type": "string",
+              "enum": ["two-columns", "three-pane"]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "protectedEnvs": {
+      "type": "string",
+      "enum": ["disallow", "allow", "cli-only"]
+    },
+    "gitFlow": {
+      "type": "string",
+      "enum": ["dev", "main"]
+    },
+    "mcp": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "env": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z_]\\w*$"
+            }
+          },
+          "unset": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z_]\\w*$"
+            }
+          }
+        },
+        "required": ["command", "env"],
+        "additionalProperties": false
+      }
+    },
+    "vendorSource": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "copy": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "target": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "module": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+                  }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+              }
+            },
+            "exclude": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[^/\\\\]+$"
+              }
+            }
+          },
+          "required": ["copy"],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "vendorTarget": {
+      "type": "object",
+      "properties": {
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        }
+      },
+      "required": ["modules"],
+      "additionalProperties": false
+    },
+    "audit": {
+      "type": "object",
+      "properties": {
+        "requiredScripts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "requiredFiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "turbo": {
+          "type": "object",
+          "properties": {
+            "requiredTasks": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "aliasRepo": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+    }
+  },
+  "required": ["envManagement"],
+  "additionalProperties": false,
+  "title": "infra-kit.json"
+}

@@ -89,6 +89,10 @@ if (isMain) {
     console.log('✅ Build was completed successfully: ', fileName, '-', +(stat.size / 1024 / 1024).toPrecision(3), 'MB')
   }
 
+  // The tarball carries `dist/` only, and every stamped `infra-kit.json` points its `$schema` at this
+  // copy on unpkg (`configSchemaUrl`).
+  fs.copyFileSync(resolve(PKG_DIR, 'schema/infra-kit.schema.json'), resolve(OUT_DIR, 'infra-kit.schema.json'))
+
   // No declaration emit. `infra-kit` publishes a `bin` and nothing importable — its package.json
   // carries no `main`/`types`/`exports` at all. The library surface consumers used to import from here
   // (`defineConfig`, `infraKitDev`) moved to `@slip-stream-kit/config`, which emits and verifies its
