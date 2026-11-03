@@ -11,7 +11,7 @@ import { pathToFileURL } from 'node:url'
 
 import { formatFault, registerCrashBarrier } from 'src/dev/crash-barrier'
 import { run } from 'src/dev/dev-server'
-import type { DevServerOptions, DevServerRunner } from 'src/dev/dev-server'
+import type { CreateDevUi, DevServerOptions, DevServerRunner } from 'src/dev/dev-server'
 import type { WizardResult } from 'src/dev/dev-wizard-run'
 import { resolveSelfAppName } from 'src/dev/discovery'
 import { rawStdoutWrite } from 'src/dev/log-sink'
@@ -65,6 +65,28 @@ export interface DevCliOptions {
    * the frontends are never probed and their rows carry no health dot.
    */
   uiHealth?: boolean
+}
+
+/**
+ * The persistent Ink UI, imported dynamically so React never loads on the non-TTY / `--json` / `--agent`
+ * chunks. It covers both shapes of session, branching at `DevUi.ready` on whether a UI child owns the TTY.
+ */
+const createInkDevUi: CreateDevUi = async ({ appendLog, verbose, panel }) => {
+  const { PersistentInkDevUi } = await import('src/tui/dev-ui/persistent-ink-dev-ui')
+  const { createSafeStream } = await import('src/tui/safe-stderr')
+
+  return new PersistentInkDevUi({
+    appendLog,
+    verbose,
+    // Composition order is load-bearing. The BYPASS proxy (`panel`) is inside: its `write` reaches the
+    // real terminal, stepping over the interceptor's patch. The SCRUB proxy is outside: it strips the
+    // `ESC[3J` that an overflowing Ink frame emits, which would wipe the user's scrollback.
+    //
+    // Inverting them breaks silently: `createSafeStream` resolves `target.write` at CALL time, so
+    // wrapping the raw `process.stdout` would route every frame through the patch and into a log file —
+    // a blank screen with no error anywhere.
+    stdout: createSafeStream(panel),
+  })
 }
 
 /**
@@ -422,16 +444,19 @@ export const runDevServer = async (rawOptions: DevServerOptions): Promise<void> 
   const bootSignalGuard = installBootSignalGuard()
 
   try {
-    runner = await run({
-      ...options,
-      // The runner tears itself down but cannot END the process: `doShutdown` has no `process.exit`, and
-      // the reload-budget stop reaches neither the signal handler nor the fatal one. Left unwired it
-      // would hand the user a live terminal with every server already dead. Same destination as every
-      // other exit here — `process.exit` — so a budget stop and a Ctrl-C finish the same way.
-      onExitRequest: (code: number): void => {
-        process.exit(code)
+    runner = await run(
+      {
+        ...options,
+        // The runner tears itself down but cannot END the process: `doShutdown` has no `process.exit`, and
+        // the reload-budget stop reaches neither the signal handler nor the fatal one. Left unwired it
+        // would hand the user a live terminal with every server already dead. Same destination as every
+        // other exit here — `process.exit` — so a budget stop and a Ctrl-C finish the same way.
+        onExitRequest: (code: number): void => {
+          process.exit(code)
+        },
       },
-    })
+      createInkDevUi,
+    )
   } finally {
     bootSignalGuard.remove()
   }
@@ -528,16 +553,16 @@ export const runDevServerCli = async (raw: DevCliOptions, tty: boolean, json: bo
 
     // Warm the Ink dev-UI chunks BEFORE the wizard blocks on human input.
     //
-    // `splitting: true` emits these as CONTENT-HASHED sibling chunks, and `selectDevUi` imports them only
-    // AFTER the wizard returns (src/dev/dev-server.ts). That leaves a window as long as the user takes to
+    // `splitting: true` emits these as CONTENT-HASHED sibling chunks, and `createInkDevUi` imports them
+    // only AFTER the wizard returns. That leaves a window as long as the user takes to
     // answer — minutes, realistically — in which those files are still un-imported. If the background
     // auto-updater installs a new version during it, npm UNLINKS the old hashes (measured: 7 chunk files
     // vanished across a real 0.1.133 → 0.1.134 install), and the deferred import dies on
     // ERR_MODULE_NOT_FOUND the instant the user presses enter.
     //
-    // Importing them up-front collapses that window to nothing: ESM caches by URL, so `selectDevUi`'s
+    // Importing them up-front collapses that window to nothing: ESM caches by URL, so `createInkDevUi`'s
     // later import resolves from memory even if the file is gone by then. This is a warm, not a use —
-    // failure is ignored, because `selectDevUi` will import them again and surface any real error there.
+    // failure is ignored, because `createInkDevUi` will import them again and surface any real error there.
     // Costs nothing on any other path: it runs only on the bare interactive TTY that is about to load
     // this exact UI anyway.
     const warmed = Promise.all([import('src/tui/dev-ui/persistent-ink-dev-ui'), import('src/tui/safe-stderr')]).catch(
@@ -559,7 +584,7 @@ export const runDevServerCli = async (raw: DevCliOptions, tty: boolean, json: bo
     if (result == null) return
 
     // Settle the warm before starting: from here on the chunks are resident, so a `dist/` swap mid-session
-    // can no longer strand the deferred import in `selectDevUi`.
+    // can no longer strand the deferred import in `createInkDevUi`.
     await warmed
 
     // The wizard only runs on a bare interactive TTY, so tty=true, json=false — thread them so `run()`

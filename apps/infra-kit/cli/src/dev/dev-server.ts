@@ -3581,15 +3581,6 @@ export class DevServerRunner {
 }
 
 /**
- * Select the terminal UI for this run: the persistent Ink UI on an interactive TTY (dynamically imported
- * so React never loads on the non-TTY / `--json` / `--agent` chunks), else the plain {@link DevRenderer}
- * (returned as `undefined` so the runner constructs its own default). `--json`/`--agent` always forces plain —
- * Ink must never seize a machine-readable stream.
- *
- * {@link PersistentInkDevUi} covers both shapes of session, branching at {@link DevUi.ready} on whether a
- * UI child owns the TTY, so there is nothing left to gate on here.
- */
-/**
  * Whether this run owns the terminal — the single gate for BOTH the live UI and the output interception.
  *
  * Derived once and shared, never re-derived: a `--json` / `--agent` / piped run must keep a byte-clean stdout,
@@ -3599,26 +3590,32 @@ export const ownsTerminal = (options: DevServerOptions): boolean => {
   return (options.tty ?? Boolean(process.stdout.isTTY)) && !options.json
 }
 
-const selectDevUi = async (options: DevServerOptions): Promise<DevUi | undefined> => {
+/** What {@link CreateDevUi} gets from the runner to build the live UI. */
+export interface DevUiInputs {
+  /** File tee — the same appender the runner hands the plain renderer. */
+  appendLog: (text: string) => void
+  verbose: boolean
+  /** A stdout whose `write` bypasses the output interceptor, so frames reach the terminal. */
+  panel: NodeJS.WriteStream
+}
+
+/**
+ * Builds the live terminal UI. Injected by `entry/dev-server.ts`: `dev/` sits below `tui/` and never
+ * imports it, and the entry keeps it behind a dynamic import so React stays off the machine paths.
+ */
+export type CreateDevUi = (inputs: DevUiInputs) => Promise<DevUi>
+
+/**
+ * Select the terminal UI for this run: the injected live UI when the run owns the terminal, else the plain
+ * {@link DevRenderer} (returned as `undefined` so the runner constructs its own default). `--json`/`--agent`
+ * always forces plain — Ink must never seize a machine-readable stream.
+ */
+export const selectDevUi = async (options: DevServerOptions, createDevUi: CreateDevUi): Promise<DevUi | undefined> => {
   if (!ownsTerminal(options)) {
     return undefined
   }
 
-  const { PersistentInkDevUi } = await import('src/tui/dev-ui/persistent-ink-dev-ui')
-  const { createSafeStream } = await import('src/tui/safe-stderr')
-
-  return new PersistentInkDevUi({
-    appendLog: appendRunnerLog,
-    verbose: options.verbose ?? false,
-    // Composition order is load-bearing. The BYPASS proxy is inside (its `write` reaches the real
-    // terminal, stepping over the interceptor's patch); the SCRUB proxy is outside (it strips the
-    // `ESC[3J` that an overflowing Ink frame emits, which would wipe the user's scrollback).
-    //
-    // Inverting them breaks silently: `createSafeStream` resolves `target.write` at CALL time, so
-    // wrapping the raw `process.stdout` would route every frame through the patch and into a log file —
-    // a blank screen with no error anywhere.
-    stdout: createSafeStream(panelStream()),
-  })
+  return createDevUi({ appendLog: appendRunnerLog, verbose: options.verbose ?? false, panel: panelStream() })
 }
 
 /**
@@ -3626,8 +3623,8 @@ const selectDevUi = async (options: DevServerOptions): Promise<DevUi | undefined
  * (the CLI entry point) can wire signal handlers to `shutdown()` and own process exit.
  * Selects the boot UI (Ink on a TTY, plain otherwise) before constructing the runner.
  */
-export async function run(options: DevServerOptions = {}): Promise<DevServerRunner> {
-  const renderer = await selectDevUi(options)
+export async function run(options: DevServerOptions, createDevUi: CreateDevUi): Promise<DevServerRunner> {
+  const renderer = await selectDevUi(options, createDevUi)
   // Positions: options, runBuild, turboWatchFactory, uiDevFactory, dryRunner, renderer — pass `undefined`
   // for the injectable seams so their ctor defaults apply; only the renderer is chosen here.
   const runner = new DevServerRunner(options, undefined, undefined, undefined, undefined, renderer)
