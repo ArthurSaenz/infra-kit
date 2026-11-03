@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ServiceTargetState } from 'src/commands/doctor/doctor'
 import type { PortlessLinkOutcome } from 'src/dev/proxy/portless-link'
 import type { PortlessNodeOutcome, PortlessNodeResult } from 'src/dev/proxy/portless-node'
+import type { ServiceTargetState } from 'src/dev/proxy/portless-service-target'
 import { SHELL_ACTIVATION_REMINDER } from 'src/lib/init/init'
 import type { InitEntry, InitOutcome } from 'src/lib/init/init'
 import type { RunRow, RunSection, RunStatus } from 'src/lib/render/run-report'

@@ -5,9 +5,10 @@ import { describe, expect, it } from 'vitest'
 import { fakeNodeFs, fileEntry, hardlinkNodeFs, sidecarFor } from 'src/dev/proxy/__tests__/portless-link-fixtures'
 import type { FakeNodeFs, NodeEntry } from 'src/dev/proxy/__tests__/portless-link-fixtures'
 import type { PortlessNodeSidecar } from 'src/dev/proxy/portless-node'
+import type { NodeVersionProbe } from 'src/dev/proxy/portless-service-target'
 
 import { checkPortless } from '../doctor'
-import type { CheckResult, NodeVersionProbe, PortlessCheckDeps } from '../doctor'
+import type { CheckResult, PortlessCheckDeps } from '../doctor'
 
 /**
  * One fixture per row of the plan's §5.5 N-table, driven through the `nodeFs` / `nodeVersionOf` /

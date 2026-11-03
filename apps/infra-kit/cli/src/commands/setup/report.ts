@@ -5,9 +5,9 @@
  * Pure: it takes what the run returned and produces rows. It prints nothing and decides nothing about
  * the exit code, beyond giving `setup` the rows that rule reads.
  */
-import type { ServiceTargetState } from 'src/commands/doctor/doctor'
 import type { PortlessLinkOutcome } from 'src/dev/proxy/portless-link'
 import type { PortlessNodeResult } from 'src/dev/proxy/portless-node'
+import type { ServiceTargetState } from 'src/dev/proxy/portless-service-target'
 import { assertNever } from 'src/lib/assert-never/assert-never'
 import { SHELL_ACTIVATION_REMINDER } from 'src/lib/init/init'
 import type { InitEntry, InitOutcome, InitStepName } from 'src/lib/init/init'

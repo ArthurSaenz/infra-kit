@@ -14,8 +14,6 @@
 import process from 'node:process'
 import { z } from 'zod'
 
-import { portlessServiceTargetState } from 'src/commands/doctor/doctor'
-import type { ServiceTargetDeps, ServiceTargetState } from 'src/commands/doctor/doctor'
 import {
   ensurePortlessLink,
   portlessLinkCliPath,
@@ -25,6 +23,8 @@ import {
 import type { EnsurePortlessLinkDeps, PortlessLinkOutcome } from 'src/dev/proxy/portless-link'
 import { ensurePortlessNode } from 'src/dev/proxy/portless-node'
 import type { EnsurePortlessNodeDeps, PortlessNodeResult } from 'src/dev/proxy/portless-node'
+import { portlessServiceTargetState } from 'src/dev/proxy/portless-service-target'
+import type { ServiceTargetDeps, ServiceTargetState } from 'src/dev/proxy/portless-service-target'
 import type { runRecipe } from 'src/lib/dependency-install'
 import type { ProbeDeps } from 'src/lib/dependency-probe'
 import { DEPENDENCY_IDS } from 'src/lib/dependency-registry'

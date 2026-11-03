@@ -2,8 +2,6 @@ import path from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { launchdPlist, systemdUnit } from 'src/commands/doctor/__tests__/service-fixtures'
-import type { ServiceTargetDeps } from 'src/commands/doctor/doctor'
 import { setup } from 'src/commands/setup'
 import type { PortlessServiceDeps } from 'src/commands/setup'
 import {
@@ -15,8 +13,10 @@ import {
   sidecarFor,
 } from 'src/dev/proxy/__tests__/portless-link-fixtures'
 import type { FakeNodeFs, LinkEntry, NodeEntry } from 'src/dev/proxy/__tests__/portless-link-fixtures'
+import { launchdPlist, systemdUnit } from 'src/dev/proxy/__tests__/service-fixtures'
 import type { EnsurePortlessLinkDeps } from 'src/dev/proxy/portless-link'
 import type { PortlessNodeSidecar } from 'src/dev/proxy/portless-node'
+import type { ServiceTargetDeps } from 'src/dev/proxy/portless-service-target'
 import { runRecipe } from 'src/lib/dependency-install'
 import type { InstallOutcome } from 'src/lib/dependency-install'
 import type { ProbeDeps } from 'src/lib/dependency-probe'

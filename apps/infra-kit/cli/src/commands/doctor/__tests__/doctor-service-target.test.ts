@@ -4,12 +4,12 @@ import { describe, expect, it } from 'vitest'
 
 import { fakeNodeFs, hardlinkNodeFs } from 'src/dev/proxy/__tests__/portless-link-fixtures'
 import type { FakeNodeFs } from 'src/dev/proxy/__tests__/portless-link-fixtures'
+import { launchdPlist, systemdUnit } from 'src/dev/proxy/__tests__/service-fixtures'
 import { DARWIN_SERVICE_PLIST_PATH, LINUX_SERVICE_UNIT_PATH } from 'src/dev/proxy/portless-driver'
 import type { HandshakeResult, PortlessRoute } from 'src/dev/proxy/portless-driver'
 
 import { checkPortless } from '../doctor'
 import type { CheckResult, PortlessCheckDeps } from '../doctor'
-import { launchdPlist, systemdUnit } from './service-fixtures'
 
 /**
  * One fixture per row of the plan's §5.5 table, driven entirely through seams: no real disk, no real
