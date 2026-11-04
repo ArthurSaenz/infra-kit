@@ -31,6 +31,7 @@ import { propsTypeName } from './props-type-name'
 import { propsTypeReference } from './props-type-reference'
 import { requireComponentStories } from './require-component-stories'
 import { requireJsdocExample } from './require-jsdoc-example'
+import { servicesNamespaceImport } from './services-namespace-import'
 import { testLocation } from './test-location'
 
 export const rules: Record<string, Rule.RuleModule> = {
@@ -61,6 +62,7 @@ export const rules: Record<string, Rule.RuleModule> = {
   'atom-naming': atomNaming,
   'no-hooks-in-services': noHooksInServices,
   'feature-files': featureFiles,
+  'services-namespace-import': servicesNamespaceImport,
   'component-name-matches-file': componentNameMatchesFile,
   'component-classname': componentClassname,
   'dumb-component-purity': dumbComponentPurity,

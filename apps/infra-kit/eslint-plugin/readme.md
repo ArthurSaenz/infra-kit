@@ -834,6 +834,41 @@ Tests, stories and `.d.ts` files are skipped, as are backend and e2e packages.
 | `extraServiceFiles` | `string[]` | `[]`    | Extra `services/` names, likewise.   |
 | `paths`/`ignore`    | `string[]` | `[]`    | Globs restricting / skipping files.  |
 
+### `services-namespace-import`
+
+🔧 Automatically fixable.
+
+A relative import of a `services` module (`./services`, `../services`, `../services/index`) is a
+namespace import named `service`, so every call site reads as `service.<member>` and a `vi.mock` of the
+module replaces what the code actually reads. `import type` and inline `type` specifiers are allowed.
+
+```ts
+// ❌ Incorrect
+import { $isOpen, fetchItemsFx } from '../services'
+import * as services from '../services'
+// ✅ Correct
+import * as service from '../services'
+import type { Item } from '../services'
+```
+
+```
+Import `../services` as a namespace — `import * as service from '../services'` — and read members as `service.<member>`.
+Name the `../services` namespace `service`, not `services`.
+```
+
+Autofix rewrites the import and prefixes every reference (`{ foo }` becomes `{ foo: service.foo }`). It
+stands down — the report stays — when a reference is a JSX tag or a local re-export, when `service` is
+already bound or shadowed where a reference sits, or when a file imports two different services modules.
+Tests and stories are checked too; `index.*` barrels (which publish the services under a module-specific
+name) and backend and e2e packages are skipped.
+
+#### Options
+
+| Option           | Type       | Default     | Description                         |
+| ---------------- | ---------- | ----------- | ----------------------------------- |
+| `name`           | `string`   | `'service'` | The namespace binding.              |
+| `paths`/`ignore` | `string[]` | `[]`        | Globs restricting / skipping files. |
+
 ### `component-name-matches-file`
 
 The exported component is named after its file in PascalCase: `abroad-slider-component.tsx` →

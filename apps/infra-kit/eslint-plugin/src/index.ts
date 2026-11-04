@@ -142,6 +142,7 @@ plugin.configs.recommended = [
       [`${PLUGIN_NAME}/atom-naming`]: 'error',
       [`${PLUGIN_NAME}/no-hooks-in-services`]: 'error',
       [`${PLUGIN_NAME}/feature-files`]: 'error',
+      [`${PLUGIN_NAME}/services-namespace-import`]: 'error',
       [`${PLUGIN_NAME}/component-name-matches-file`]: 'error',
       [`${PLUGIN_NAME}/component-classname`]: 'error',
       [`${PLUGIN_NAME}/dumb-component-purity`]: 'error',
