@@ -47,7 +47,7 @@ it livable. Rules 2–7 govern the inside of a feature and live in `fe-architect
 | Pattern | When to Use | Prop Type |
 |---------|-------------|-----------|
 | Element | Simple slots, no customization (icons, badges) | `React.ReactElement` |
-| Component | The receiving feature controls what props to pass | `React.ComponentType<Props>` |
+| Component | The receiving feature controls what props to pass | `components: Pick<XComponents, 'Foo'>`, never a flat `ComponentType` prop |
 | Render Function | The consumer needs the feature's own data, or closures | `(props) => ReactElement` |
 
 > Start with Element. Escalate to Component when the receiver must pass props. Escalate to Render
