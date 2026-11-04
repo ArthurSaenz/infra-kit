@@ -106,8 +106,8 @@ Why one bag:
 - One name makes every injection point greppable, and stories or tests stub a single object.
 - `Pick` keeps each receiver's dependency honest: a row that renders `Avatar` does not depend on the
   rest of the bag, and its story does not have to stub the rest.
-- Lint can see it: `@wl/eslint-config` flags a `ComponentType` member of a `*Props` type unless it
-  sits under `components`.
+- Lint can see it: `@wl/eslint-config` flags a `*Props` member outside `components` when it is typed
+  `ComponentType`, or when it has a PascalCase key and is typed `typeof X`.
 
 What stays out of the bag:
 - `ReactNode` / `ReactElement` slots (`children`, `header`): the parent renders them, so they are Pattern 1.
