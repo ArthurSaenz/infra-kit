@@ -131,6 +131,12 @@ minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - '@slip-stream-kit/*'
   - infra-kit
+  # Exact versions from the starter sync (f5e6f4c), younger than the cooldown until 2026-11-05; drop after.
+  - '@boundaries/config@1.0.0'
+  - '@boundaries/elements@3.3.1'
+  - '@boundaries/policies@1.0.0'
+  - '@shadcn/lint@0.2.4'
+  - 'eslint-plugin-boundaries@7.4.1'
   # Exact versions from the starter sync (fcf4d22), younger than the cooldown until 2026-10-20; drop after.
   - '@eslint-react/ast@5.28.1'
   - '@eslint-react/core@5.28.1'
