@@ -78,17 +78,43 @@ interface DashboardContainerProps {
 
 Pass a component type. The receiving feature instantiates it and controls props.
 
-```tsx
-// app/pages/projects-page.tsx — passes the type, not an instance
-<ProjectListContainer AvatarComponent={UserAvatarComponent} />
+Injected component types always travel in a single `components` prop, never as flat props. The
+`*Components` interface lists every injectable component, and each receiver declares only the keys
+it renders with `Pick`:
 
-// features/project-list/containers/project-list-container.tsx
-interface ProjectListContainerProps {
-  AvatarComponent?: React.ComponentType<{ userId: string; size?: 'sm' | 'md' }>
+```tsx
+// app/pages/projects-page.tsx: the page builds the bag once and passes it down
+const components: ProjectListComponents = { Avatar: UserAvatarComponent }
+<ProjectListContainer components={components} />
+
+// features/project-list/types.ts
+export interface ProjectListComponents {
+  Avatar: React.ComponentType<{ userId: string; size?: 'sm' | 'md' }>
+}
+
+// features/project-list/components/project-row-component.tsx
+interface ProjectRowProps {
+  project: Project
+  components: Pick<ProjectListComponents, 'Avatar'>
 }
 // … the receiving feature decides the props and when to render, once per row:
-{AvatarComponent && <AvatarComponent userId={project.ownerId} size="sm" />}
+const { Avatar } = components
+<Avatar userId={project.ownerId} size="sm" />
 ```
+
+Why one bag:
+- One name makes every injection point greppable, and stories or tests stub a single object.
+- `Pick` keeps each receiver's dependency honest: a row that renders `Avatar` does not depend on the
+  rest of the bag, and its story does not have to stub the rest.
+- Lint can see it: `@wl/eslint-config` flags a `*Props` member outside `components` when it is typed
+  `ComponentType`, or when it has a PascalCase key and is typed `typeof X`.
+
+What stays out of the bag:
+- `ReactNode` / `ReactElement` slots (`children`, `header`): the parent renders them, so they are Pattern 1.
+- Render functions (`renderItem`): Pattern 3.
+- Polymorphic `as?: ElementType`: it picks the host element and injects nothing.
+- UI-kit primitives (`Button`, `Modal`): import them directly. The bag is for what the receiver may
+  not import itself, such as another feature's container.
 
 **When to use:**
 - The receiving feature needs to control WHAT data the injected component receives
