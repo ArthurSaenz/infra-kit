@@ -33,6 +33,21 @@ const ANTFU_RESTRICTED_GLOBALS = [
 
 export type RestrictedSyntax = string | { selector: string; message: string }
 
+const COMPONENT_TYPE =
+  'TSTypeReference:matches([typeName.name=/^(ComponentType|ComponentClass)$/], [typeName.right.name=/^(ComponentType|ComponentClass)$/])'
+
+// `ElementType` stays allowed: a polymorphic `as` prop picks the host element, it injects nothing.
+const PROPS_MEMBER = `:matches(TSInterfaceDeclaration[id.name=/Props$/] > TSInterfaceBody, TSTypeAliasDeclaration[id.name=/Props$/] > TSTypeLiteral) > TSPropertySignature`
+const FLAT_PROP_TYPE = `${PROPS_MEMBER}[key.name!='components'] > TSTypeAnnotation`
+// Without type info `typeof X` is opaque; a PascalCase key is what marks it as a component.
+const PASCAL_PROP_TYPE = `${PROPS_MEMBER}[key.name=/^[A-Z]/] > TSTypeAnnotation`
+const FLAT_INJECTED_COMPONENT = [
+  `${FLAT_PROP_TYPE} > ${COMPONENT_TYPE}`,
+  `${FLAT_PROP_TYPE} > TSUnionType > ${COMPONENT_TYPE}`,
+  `${PASCAL_PROP_TYPE} > TSTypeQuery`,
+  `${PASCAL_PROP_TYPE} > TSUnionType > TSTypeQuery`,
+].join(', ')
+
 const FE_RESTRICTED_SYNTAX: RestrictedSyntax[] = [
   {
     selector: "MemberExpression[object.type='MetaProperty'][property.name='env']",
@@ -55,6 +70,11 @@ const FE_RESTRICTED_SYNTAX: RestrictedSyntax[] = [
   {
     selector: 'TSTypeReference[typeName.name=/^(FC|FunctionComponent)$/]',
     message: 'Type props with a `{Component}Props` interface instead of `FC`.',
+  },
+  {
+    selector: FLAT_INJECTED_COMPONENT,
+    message:
+      "Inject components through one `components` prop, e.g. `components: Pick<XComponents, 'Foo'>`. ReactNode slots and render functions stay flat props.",
   },
 ]
 

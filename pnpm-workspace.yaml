@@ -137,6 +137,13 @@ minimumReleaseAgeExclude:
   - '@boundaries/policies@1.0.0'
   - '@shadcn/lint@0.2.4'
   - 'eslint-plugin-boundaries@7.4.1'
+  # Exact versions from the starter sync (38e03d6), younger than the cooldown until 2026-11-06; drop after.
+  - '@fumadocs/tailwind@0.1.5'
+  - '@shadcn/lint@0.2.5'
+  - 'eslint-plugin-playwright@2.12.2'
+  - 'fumadocs-core@16.17.10'
+  - 'fumadocs-ui@16.17.10'
+  - 'nitro@3.0.261102-rc'
   # Exact versions from the starter sync (fcf4d22), younger than the cooldown until 2026-10-20; drop after.
   - '@eslint-react/ast@5.28.1'
   - '@eslint-react/core@5.28.1'

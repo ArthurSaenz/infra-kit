@@ -144,6 +144,77 @@ describe('architecture: platform access', () => {
     expectFlagged(messages, 'no-restricted-syntax', 'React.FC')
   })
 
+  it('flags a component injected as a flat prop', async () => {
+    const messages = await lintCase({
+      fileName: 'src/features/hotels/components/hotel-view-component.tsx',
+      source: code`
+        import type { ComponentType } from 'react'
+
+        export interface HotelViewProps {
+          Summary: ComponentType<{ id: string }>
+        }
+      `,
+    })
+
+    expectFlagged(messages, 'no-restricted-syntax', '`components` prop')
+  })
+
+  it('flags an optional React.ComponentType on a props type alias', async () => {
+    const messages = await lintCase({
+      fileName: 'src/features/hotels/components/hotel-view-component.tsx',
+      source: code`
+        import type React from 'react'
+
+        export type HotelViewProps = { Summary?: React.ComponentType | undefined }
+      `,
+    })
+
+    expectFlagged(messages, 'no-restricted-syntax', '`components` prop')
+  })
+
+  it('flags a PascalCase prop typed as `typeof` a component', async () => {
+    const messages = await lintCase({
+      fileName: 'src/features/packages/containers/packages-details-container.tsx',
+      source: code`
+        import { FlightsDetailsComponent } from '../components/flights-details-component'
+
+        export interface PackagesDetailsProps {
+          FlightsDetails: typeof FlightsDetailsComponent
+          schema: typeof FlightsDetailsComponent
+        }
+      `,
+    })
+
+    expectFlagged(messages, 'no-restricted-syntax', '`components` prop')
+  })
+
+  it('allows the components bag, slots, render functions and polymorphic `as`', async () => {
+    const messages = await lintCase({
+      fileName: 'src/features/hotels/components/hotel-view-component.tsx',
+      source: code`
+        import type { ComponentType, ElementType, ReactNode } from 'react'
+
+        export interface HotelComponents {
+          Summary: ComponentType<{ id: string }>
+          Gallery: ComponentType
+        }
+
+        export interface HotelViewProps {
+          components: Pick<HotelComponents, 'Summary'>
+          header: ReactNode
+          renderFooter: (id: string) => ReactNode
+          as?: ElementType
+        }
+
+        export interface HotelCardProps {
+          components: { Badge: ComponentType }
+        }
+      `,
+    })
+
+    expectClean(messages, 'no-restricted-syntax')
+  })
+
   it("keeps antfu's own restricted syntax", async () => {
     const messages = await lintCase({ fileName: 'src/features/a/types.ts', source: 'export const enum E { A }\n' })
 

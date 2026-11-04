@@ -31,9 +31,9 @@
     "@tanstack/react-router": "1.170.46",
     "@tanstack/react-start": "1.169.4",
     "@tanstack/start-static-server-functions": "^1.167.44",
-    "fumadocs-core": "16.17.9",
+    "fumadocs-core": "16.17.10",
     "fumadocs-mdx": "15.4.10",
-    "fumadocs-ui": "16.17.9",
+    "fumadocs-ui": "16.17.10",
     "lucide-react": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
@@ -41,7 +41,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@slip-stream-kit/config": "^0.41.0",
+    "@slip-stream-kit/config": "^0.44.0",
     "@tailwindcss/vite": "catalog:",
     "@types/mdx": "2.0.14",
     "@types/node": "catalog:",
@@ -50,7 +50,7 @@
     "@vitejs/plugin-react": "catalog:",
     "@wl/eslint-config": "workspace:*",
     "@wl/vitest-config": "workspace:*",
-    "nitro": "3.0.261029-rc",
+    "nitro": "3.0.261102-rc",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:"
