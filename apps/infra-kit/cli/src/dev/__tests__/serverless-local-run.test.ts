@@ -191,6 +191,54 @@ describe('serverlessLocalRun — Lambda context', () => {
   })
 })
 
+describe('serverlessLocalRun — Lambda response shape', () => {
+  it('sends every multiValueHeaders value, so both Set-Cookie headers reach the client', async () => {
+    writeHandler(
+      apiDir,
+      [
+        'export const ping = async () => ({',
+        '  statusCode: 200,',
+        "  headers: { 'content-type': 'application/json' },",
+        "  multiValueHeaders: { 'Set-Cookie': ['a=1; Path=/', 'b=2; Path=/api'] },",
+        '  body: JSON.stringify({ ok: true }),',
+        '})',
+        '',
+      ].join('\n'),
+    )
+
+    running.push(await boot(apiDir, port))
+
+    const res = await fetch(`http://127.0.0.1:${port}${PREFIX}/ping`)
+
+    expect(res.status).toBe(200)
+    expect(res.headers.getSetCookie()).toEqual(['a=1; Path=/', 'b=2; Path=/api'])
+  })
+
+  it('passes an empty-body redirect through instead of failing on JSON.parse', async () => {
+    writeHandler(
+      apiDir,
+      [
+        'export const ping = async () => ({',
+        '  statusCode: 302,',
+        "  headers: { Location: '/' },",
+        "  multiValueHeaders: { 'Set-Cookie': ['a=1'] },",
+        "  body: '',",
+        '})',
+        '',
+      ].join('\n'),
+    )
+
+    running.push(await boot(apiDir, port))
+
+    const res = await fetch(`http://127.0.0.1:${port}${PREFIX}/ping`, { redirect: 'manual' })
+
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/')
+    expect(res.headers.getSetCookie()).toEqual(['a=1'])
+    expect(await res.text()).toBe('')
+  })
+})
+
 describe('serverlessLocalRun — start() error paths', () => {
   it('rejects when a handler string points at a missing controller file', async () => {
     writeServerless(

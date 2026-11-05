@@ -43,7 +43,23 @@ const isAddressInUse = (error: unknown): boolean => {
   return (error as { code?: string } | null)?.code === 'EADDRINUSE'
 }
 
-type HandlerResult = Promise<{ body: string; headers: Record<string, string>; statusCode: number }>
+type HandlerResult = Promise<{
+  body: string
+  headers?: Record<string, string>
+  multiValueHeaders?: Record<string, string[]>
+  statusCode: number
+}>
+
+/** A redirect's empty body and a non-JSON body pass through as they are, the way API Gateway sends them. */
+const parseBody = (body: string | undefined): unknown => {
+  if (!body) return undefined
+
+  try {
+    return JSON.parse(body)
+  } catch {
+    return body
+  }
+}
 
 /** Default simulated Lambda timeout; overridable via `DEV_SERVER_TIMEOUT_MS`. */
 const DEFAULT_LAMBDA_TIMEOUT_MS = 30_000
@@ -329,8 +345,8 @@ export class ServerlessLocalRun {
       handler: async (
         request: { body?: unknown; query?: unknown; params?: unknown; headers?: unknown },
         reply: {
-          headers: (h: Record<string, string>) => unknown
-          code: (n: number) => { send: (body: unknown) => void }
+          headers: (h: Record<string, string | string[]>) => unknown
+          code: (n: number) => { send: (body?: unknown) => void }
         },
       ) => {
         const controller = this.controllers[routeKey]
@@ -345,11 +361,10 @@ export class ServerlessLocalRun {
           traceLogger,
         )
 
-        const responseBody = JSON.parse(retVal.body)
+        // API Gateway sends both maps; Set-Cookie can only ride in multiValueHeaders, one entry per cookie.
+        reply.headers({ ...retVal.headers, ...retVal.multiValueHeaders })
 
-        reply.headers(retVal.headers ?? {})
-
-        return reply.code(retVal?.statusCode ?? 500).send(responseBody)
+        return reply.code(retVal?.statusCode ?? 500).send(parseBody(retVal.body))
       },
     })
   }
