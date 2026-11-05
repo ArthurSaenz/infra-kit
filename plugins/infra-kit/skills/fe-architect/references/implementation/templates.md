@@ -331,7 +331,7 @@ import type { Meta, StoryObj } from '@storybook/react'
 import { FeatureNameComponent } from '../components/feature-name-component'
 
 const meta = {
-  title: 'Features/FeatureName/FeatureNameComponent',
+  title: 'features/feature-name/feature-name-component',
   component: FeatureNameComponent,
   tags: ['autodocs'],
 } satisfies Meta<typeof FeatureNameComponent>

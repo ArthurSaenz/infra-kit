@@ -244,7 +244,7 @@ import type { Meta, StoryObj } from '@storybook/react'
 import { FeatureNameComponent } from '../components/feature-name-component'
 
 const meta = {
-  title: 'Features/FeatureName/FeatureNameComponent',
+  title: 'features/feature-name/feature-name-component',
   component: FeatureNameComponent,
   tags: ['autodocs'],
 } satisfies Meta<typeof FeatureNameComponent>
@@ -271,7 +271,7 @@ export const Empty: Story = {
 
 - **Only dumb components** get stories (never containers)
 - **File location:** `__stories__/[name].stories.tsx`
-- **Title format:** `Features/[FeatureName]/[ComponentName]`
+- **Title format:** `features/[feature-folder]/[component-file]` — shared components use `components/…` (enforced by `@wl/story-title-prefix`)
 - **Always include:** Default, edge cases (long text, empty, many items)
 - **Use `autodocs` tag** for auto-generated documentation
 - **Use realistic mock data**, not "test" or "placeholder"

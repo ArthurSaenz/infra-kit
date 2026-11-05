@@ -8,7 +8,7 @@ import type { Meta, StoryObj } from '@storybook/react'
 import { FeatureNameComponent } from '../components/feature-name-component'
 
 const meta: Meta<typeof FeatureNameComponent> = {
-  title: 'Features/FeatureName/FeatureNameComponent',
+  title: 'features/feature-name/feature-name-component',
   component: FeatureNameComponent,
   tags: ['autodocs'],
   argTypes: {

@@ -62,6 +62,16 @@ plugin.configs.recommended = [
       [`${PLUGIN_NAME}/props-type-name`]: 'off',
     },
   },
+  // Judged by the story's `src/` location and package type, so it needs the plugin registered on its own.
+  {
+    files: ['**/*.stories.{ts,tsx,js,jsx}'],
+    plugins: {
+      [PLUGIN_NAME]: plugin,
+    },
+    rules: {
+      [`${PLUGIN_NAME}/story-title-prefix`]: 'error',
+    },
+  },
   // Dumb presentational files (`*-component.tsx`) follow the one-component-per-file
   // convention the props/order/stories rules already assume, so they get a tighter
   // ceiling of 1. This MUST come AFTER the global `**/*.tsx` block: flat config

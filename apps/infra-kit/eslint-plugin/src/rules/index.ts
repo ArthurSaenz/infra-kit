@@ -32,6 +32,7 @@ import { propsTypeReference } from './props-type-reference'
 import { requireComponentStories } from './require-component-stories'
 import { requireJsdocExample } from './require-jsdoc-example'
 import { servicesNamespaceImport } from './services-namespace-import'
+import { storyTitlePrefix } from './story-title-prefix'
 import { testLocation } from './test-location'
 
 export const rules: Record<string, Rule.RuleModule> = {
@@ -46,6 +47,7 @@ export const rules: Record<string, Rule.RuleModule> = {
   'max-jsdoc-lines': maxJsdocLines,
   'max-jsdoc-summary-lines': maxJsdocSummaryLines,
   'require-component-stories': requireComponentStories,
+  'story-title-prefix': storyTitlePrefix,
   'require-jsdoc-example': requireJsdocExample,
   'package-structure': packageStructure,
   'test-location': testLocation,

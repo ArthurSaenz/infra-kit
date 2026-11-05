@@ -526,6 +526,47 @@ story is satisfied when any candidate (`.tsx`, `.jsx`, `.ts`, `.js`) exists on d
 - **Unanchored globs.** `paths`/`ignore` patterns match anywhere in the path, so anchor them
   (e.g. start with `**/`) when you need precision.
 
+### `story-title-prefix`
+
+💡 Has suggestions.
+
+Require a Storybook `title` to **start with where the story sits in `src/`**, so the sidebar groups
+stories the way the code does. The first segment(s) are fixed:
+
+| Story file                         | Package type | Title must start with |
+| ---------------------------------- | ------------ | --------------------- |
+| `src/features/<name>/**`           | any          | `features/<name>/`    |
+| `src/components/**`                | frontend     | `components/`         |
+| `src/<layer>/**` (`lib`, `pages`…) | frontend     | `<layer>/`            |
+| `src/**` outside `features/`       | lib          | `components/`         |
+| `src/*` or `src/__stories__/**`    | any          | `components/`         |
+
+```tsx
+// src/features/layouts/__stories__/footer.stories.tsx
+
+// ❌ Incorrect
+const meta = { title: 'components/templates/footer' } satisfies Meta
+
+// ✅ Correct
+const meta = { title: 'features/layouts/footer' } satisfies Meta
+```
+
+The prefix is case-sensitive and the feature name must equal its folder. The title is read from
+`export default { … }` or from the top-level `const` it exports. A meta without a `title` is
+reported (Storybook's auto-title would expose `__stories__` in the sidebar). A computed title is
+skipped. The suggestion replaces the wrong prefix (`features/<x>/` counts as two segments, anything
+else as one). It is a suggestion and not an autofix, because the rest of the title may need a manual
+rename. Backend, e2e and mobile packages are skipped, using the same package-type resolution as
+`package-structure`.
+
+#### Options
+
+| Option   | Type       | Default | Description                                    |
+| -------- | ---------- | ------- | ---------------------------------------------- |
+| `ignore` | `string[]` | `[]`    | Globs; the rule is skipped for matching files. |
+
+The recommended preset enables it on `*.stories.{ts,tsx,js,jsx}`.
+
 ### `package-structure`
 
 Allowlist the **layers under a package's `src/`**, and the **segments inside them**, per package
