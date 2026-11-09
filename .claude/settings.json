@@ -69,7 +69,6 @@
     ]
   },
   "enabledPlugins": {
-    "oh-my-claudecode@omc": true,
     "chrome-devtools-mcp@chrome-devtools-plugins": true,
     "playwright@claude-plugins-official": true,
     "context7@claude-plugins-official": true,
@@ -84,12 +83,6 @@
       "source": {
         "source": "github",
         "repo": "ChromeDevTools/chrome-devtools-mcp"
-      }
-    },
-    "omc": {
-      "source": {
-        "source": "git",
-        "url": "https://github.com/Yeachan-Heo/oh-my-claudecode.git"
       }
     },
     "infra-kit": {
