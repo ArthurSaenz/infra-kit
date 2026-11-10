@@ -202,7 +202,9 @@ export const parseDopplerSecretsJson = (stdout: string): Array<[string, string]>
   try {
     parsed = JSON.parse(stdout)
   } catch {
-    throw new Error(`doppler returned non-JSON output for env-load (got: ${JSON.stringify(stdout.slice(0, 80))})`)
+    // The length only, never an excerpt: output that fails to parse can still BE the secrets (a notice
+    // printed ahead of the JSON), and this message reaches the terminal, `--json` and agent transcripts.
+    throw new Error(`doppler returned non-JSON output for env-load (${stdout.length} characters)`)
   }
 
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {

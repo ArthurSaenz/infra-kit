@@ -95,6 +95,18 @@ describe('readTokenStore', () => {
     await expect(readTokenStore()).resolves.toBeNull()
   })
 
+  // Regression: any read error used to mean "no store", so the next write dropped every other token.
+  it('throws — never reads as empty — when the store exists but cannot be read', async () => {
+    preSeedStore(JSON.stringify(storeFor({ dev: 'dp.st.dev.xxxx' })))
+    fs.chmodSync(storePath, 0o000)
+
+    try {
+      await expect(readTokenStore()).rejects.toThrow(/Cannot read the token store at .*tokens\.json/)
+    } finally {
+      fs.chmodSync(storePath, 0o600)
+    }
+  })
+
   it('parses a valid store', async () => {
     preSeedStore(JSON.stringify(storeFor({ dev: 'dp.st.dev.xxxx' })))
 

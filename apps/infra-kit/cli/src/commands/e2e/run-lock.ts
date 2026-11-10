@@ -32,9 +32,20 @@ const tryCreate = (lockPath: string, command: string): boolean => {
   try {
     // Line 1 stays the bare pid: older CLIs in other worktrees read the file with `Number.parseInt`, which
     // stops at the newline, so they still see the live pid and refuse instead of deleting this lock.
-    fs.writeFileSync(lockPath, `${process.pid}\n${JSON.stringify({ startedAt: Date.now(), command })}`, {
-      flag: 'wx',
-    })
+    //
+    // Written to a private file and LINKED into place, never created with `wx` and then filled: `wx`
+    // makes the lock visible while still empty, and a second run reading it in that gap sees no pid,
+    // takes it for a stale lock and deletes it. `link` fails with EEXIST exactly as `wx` does, but the
+    // name only ever appears with its content.
+    const staged = `${lockPath}.${process.pid}.tmp`
+
+    fs.writeFileSync(staged, `${process.pid}\n${JSON.stringify({ startedAt: Date.now(), command })}`)
+
+    try {
+      fs.linkSync(staged, lockPath)
+    } finally {
+      fs.rmSync(staged, { force: true })
+    }
 
     return true
   } catch (error) {

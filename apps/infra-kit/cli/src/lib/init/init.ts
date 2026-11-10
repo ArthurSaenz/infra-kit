@@ -7,7 +7,7 @@ import type { GuidanceWrite } from 'src/lib/agent-guidance'
 import { checkClaudeInChrome, isChromeEnabledByDefault } from 'src/lib/claude-chrome'
 import { seedCreatedMessage, seedUserProjectConfig } from 'src/lib/config-bootstrap'
 import { CONFIG_STUB, buildUserGlobalExample, buildVendorExample } from 'src/lib/config-templates'
-import { WORKTREES_DIR_SUFFIX, WORKTREE_SUBDIRS, getCacheRoot } from 'src/lib/constants'
+import { WORKTREES_DIR_SUFFIX, WORKTREE_SUBDIRS, atomicWriteFileSync, getCacheRoot } from 'src/lib/constants'
 import { tightenTokenStoreModes } from 'src/lib/env-tokens'
 import { getMainRepoRoot } from 'src/lib/git-utils'
 import { getInfraKitConfig, getInfraKitConfigPaths } from 'src/lib/infra-kit-config'
@@ -425,7 +425,9 @@ const writeShellBlock = (): InitEntry => {
 
   if (withheld !== null) return withheld
 
-  fs.writeFileSync(zshrcPath, updated)
+  // Atomic: a truncate-then-write killed midway (or read by a concurrent `setup --auto`) loses the
+  // user's whole rc file.
+  atomicWriteFileSync(zshrcPath, updated)
 
   return {
     step: 'zshrc',
@@ -456,7 +458,7 @@ const writeZshenvBlock = (): InitEntry => {
 
   if (withheld !== null) return withheld
 
-  fs.writeFileSync(zshenvPath, updated)
+  atomicWriteFileSync(zshenvPath, updated)
 
   return {
     step: 'zshenv',
@@ -1318,7 +1320,7 @@ export const removeExistingBlock = (content: string): string => {
 
   if (legacyIdx === -1) return content
 
-  // eslint-disable-next-line sonarjs/super-linear-regex
+  // eslint-disable-next-line sonarjs/super-linear-regex -- the input is a local file the user owns, not untrusted text
   const before = content.slice(0, legacyIdx).replace(/\n+$/, '')
   const afterLines = content.slice(legacyIdx).split('\n')
 
@@ -1341,7 +1343,7 @@ export const buildShellBody = (): string => {
   const runCmd = 'pnpm exec infra-kit'
 
   return [
-    // eslint-disable-next-line no-template-curly-in-string
+    // eslint-disable-next-line no-template-curly-in-string -- a literal `${…}` for the shell or YAML, not a JS template
     'if [[ -z "${INFRA_KIT_SESSION}" ]]; then',
     '  export INFRA_KIT_SESSION=$(head -c 4 /dev/urandom | xxd -p)',
     'fi',
@@ -1375,20 +1377,20 @@ export const buildZshenvBody = (): string => {
     '# Only the canonical 8-hex id .zshrc mints is honoured. Load wins a tie with clear.',
     '# A load applies only at or under a directory its env-load.root names (no file: anywhere).',
     '# Prints nothing of its own.',
-    // eslint-disable-next-line no-template-curly-in-string
+    // eslint-disable-next-line no-template-curly-in-string -- a literal `${…}` for the shell or YAML, not a JS template
     'if [[ -n "${INFRA_KIT_SESSION:-}" ]]; then',
     '  () {',
     '    emulate -L zsh -o extendedglob',
-    // eslint-disable-next-line no-template-curly-in-string
+    // eslint-disable-next-line no-template-curly-in-string -- a literal `${…}` for the shell or YAML, not a JS template
     '    [[ "${INFRA_KIT_SESSION:-}" == [0-9a-f](#c8) ]] || return',
-    // eslint-disable-next-line no-template-curly-in-string
+    // eslint-disable-next-line no-template-curly-in-string -- a literal `${…}` for the shell or YAML, not a JS template
     '    local _ik_dir="${XDG_CACHE_HOME:-$HOME/.cache}/infra-kit/$INFRA_KIT_SESSION"',
     '    local _ik_load="$_ik_dir/env-load.sh" _ik_clear="$_ik_dir/env-clear.sh"',
     '    if [[ -r "$_ik_load" && ! "$_ik_clear" -nt "$_ik_load" ]]; then',
-    // eslint-disable-next-line no-template-curly-in-string
+    // eslint-disable-next-line no-template-curly-in-string -- a literal `${…}` for the shell or YAML, not a JS template
     '      local _ik_roots="$_ik_dir/env-load.root" _ik_pwd=${PWD:A} _ik_root',
     '      if [[ -r "$_ik_roots" ]]; then',
-    // eslint-disable-next-line no-template-curly-in-string
+    // eslint-disable-next-line no-template-curly-in-string -- a literal `${…}` for the shell or YAML, not a JS template
     '        for _ik_root in "${(@f)$(<$_ik_roots)}"; do',
     '          [[ -n "$_ik_root" && ( "$_ik_pwd" == "$_ik_root" || "$_ik_pwd" == "$_ik_root"/* ) ]] && break',
     '          _ik_root=',

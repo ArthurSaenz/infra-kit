@@ -83,6 +83,22 @@ describe('acquireUpdateLock', () => {
     reclaimed?.()
   })
 
+  // Regression: two reapers could both delete — the second one removing the first one's fresh lock.
+  it('does not reap while another reaper holds the marker', () => {
+    acquireUpdateLock({ lockPath, nowMs: NOW })
+    fs.writeFileSync(`${lockPath}.reaping`, '')
+
+    expect(acquireUpdateLock({ lockPath, nowMs: NOW + LOCK_STALE_MS + 60_000 })).toBeNull()
+    expect(fs.existsSync(lockPath)).toBe(true)
+  })
+
+  it('leaves no reaper marker behind after reaping', () => {
+    acquireUpdateLock({ lockPath, nowMs: NOW })
+
+    expect(acquireUpdateLock({ lockPath, nowMs: NOW + LOCK_STALE_MS + 60_000 })).not.toBeNull()
+    expect(fs.readdirSync(path.dirname(lockPath))).toEqual(['update-check.lock'])
+  })
+
   it('does NOT reap a lock that is still inside the staleness window', () => {
     // A worker waiting out a long `infra-kit dev` parent legitimately holds the lock for minutes.
     const held = acquireUpdateLock({ lockPath, nowMs: NOW })

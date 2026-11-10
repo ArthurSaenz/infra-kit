@@ -81,13 +81,22 @@ export const seedUserProjectConfig = async (paths: InfraKitConfigPaths): Promise
 
   await fs.mkdir(path.dirname(configPath), { recursive: true })
 
-  const createdConfig = !(await fileExists(configPath))
+  // JSON can't carry comments, so seed an empty-but-valid config and drop the annotated guidance
+  // next to it in a non-loaded .example.jsonc. The existence check keeps the steady state at zero
+  // writes; `wx` closes the gap after it, where a concurrent `config-set` would otherwise be
+  // overwritten with the stub.
+  const createdConfig =
+    !(await fileExists(configPath)) &&
+    (await fs.writeFile(configPath, CONFIG_STUB, { encoding: 'utf-8', flag: 'wx' }).then(
+      () => {
+        return true
+      },
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === 'EEXIST') return false
 
-  if (createdConfig) {
-    // JSON can't carry comments, so seed an empty-but-valid config and drop the annotated guidance
-    // next to it in a non-loaded .example.jsonc.
-    await fs.writeFile(configPath, CONFIG_STUB, 'utf-8')
-  }
+        throw error
+      },
+    ))
 
   const example = buildUserProjectExample(paths.projectName)
   const refreshedExample = (await readFileOrNull(examplePath)) !== example

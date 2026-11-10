@@ -119,6 +119,16 @@ describe('parseDopplerSecretsJson', () => {
     ])
   })
 
+  // Regression: the message quoted the first 80 characters — which is where the first secret sits when
+  // doppler prints a notice ahead of the JSON.
+  it('never quotes the unparseable output, which may hold secret values', () => {
+    const leaked = 'notice\n{"API_KEY":"sk-live-123"'
+
+    expect(() => {
+      return parseDopplerSecretsJson(leaked)
+    }).toThrow(expect.objectContaining({ message: expect.not.stringContaining('sk-live-123') }))
+  })
+
   it('throws on non-JSON output', () => {
     expect(() => {
       return parseDopplerSecretsJson('<html>nope</html>')

@@ -65,6 +65,13 @@ interface EnvLoadFileLinesArgs {
  */
 const CREDENTIAL_SECRET_KEYS = new Set<string>(['DOPPLER_TOKEN', INFRA_KIT_ENV_TOKEN_VAR])
 
+/**
+ * Names that locate the session's own files. Sourced from Doppler they would move the terminal to
+ * another session dir: the next `env-load` / `env-clear` then reads and writes somewhere else. The
+ * Node-side overlay refuses the same names (`NEVER_OVERLAID` in `lib/session-env`).
+ */
+const SESSION_PLUMBING_KEYS = new Set<string>([INFRA_KIT_SESSION_VAR, 'XDG_CACHE_HOME'])
+
 /** Warn at most once per process: a project carrying a token secret would otherwise warn on every load. */
 let credentialFilterWarned = false
 
@@ -96,8 +103,18 @@ export const buildEnvLoadFileLines = ({
   loadedAt,
 }: EnvLoadFileLinesArgs): string[] => {
   const emitted = pairs.filter(([key]) => {
-    return !CREDENTIAL_SECRET_KEYS.has(key)
+    return !CREDENTIAL_SECRET_KEYS.has(key) && !SESSION_PLUMBING_KEYS.has(key)
   })
+
+  const plumbing = pairs.flatMap(([key]) => {
+    return SESSION_PLUMBING_KEYS.has(key) ? [key] : []
+  })
+
+  if (plumbing.length > 0) {
+    logger.warn(
+      `infra-kit: not exporting ${plumbing.join(', ')} from Doppler — it decides where this session's env files live.`,
+    )
+  }
 
   warnFilteredCredentialKeys(
     pairs

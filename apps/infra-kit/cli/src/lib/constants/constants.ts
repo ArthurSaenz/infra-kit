@@ -246,14 +246,29 @@ export const getSessionCacheDir = (): string => {
  * Write content atomically: write to a pid-suffixed temp file in the same
  * directory, then rename. fs.renameSync is atomic on a single filesystem, so
  * concurrent writers can't produce a half-written secret file.
+ *
+ * A symlinked `filePath` (a dotfiles-managed `~/.zshrc` or `~/.infra-kit/infra-kit.json`) is written
+ * THROUGH: the rename lands on the link's target, because renaming onto the link itself would replace
+ * it with a regular file and silently detach the dotfiles copy. Without `mode`, an existing file keeps
+ * its own and a new one gets 0644.
  */
-export const atomicWriteFileSync = (filePath: string, content: string, mode: number): void => {
-  const tmpPath = `${filePath}.tmp.${process.pid}`
-
-  fs.writeFileSync(tmpPath, content, { mode })
+export const atomicWriteFileSync = (filePath: string, content: string, mode?: number): void => {
+  let target = filePath
+  let existingMode: number | undefined
 
   try {
-    fs.renameSync(tmpPath, filePath)
+    target = fs.realpathSync(filePath)
+    existingMode = fs.statSync(target).mode & 0o777
+  } catch {
+    // Absent (or a dangling link): created at `filePath` itself.
+  }
+
+  const tmpPath = `${target}.tmp.${process.pid}`
+
+  fs.writeFileSync(tmpPath, content, { mode: mode ?? existingMode ?? 0o644 })
+
+  try {
+    fs.renameSync(tmpPath, target)
   } catch (error) {
     fs.rmSync(tmpPath, { force: true })
     throw error

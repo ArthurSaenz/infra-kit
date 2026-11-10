@@ -291,4 +291,21 @@ describe('atomicWriteFileSync', () => {
       expect(fs.readFileSync(file, 'utf-8')).toBe('NEW=2\n')
     })
   })
+
+  // Regression: the rename used to land on the link, turning a dotfiles-managed file into a detached copy.
+  it('writes through a symlink, keeping the link and updating its target', () => {
+    withTmpDir((dir) => {
+      const target = path.join(dir, 'dotfiles.json')
+      const link = path.join(dir, 'link.json')
+
+      fs.writeFileSync(target, 'old', { mode: 0o640 })
+      fs.symlinkSync(target, link)
+
+      atomicWriteFileSync(link, 'new')
+
+      expect(fs.lstatSync(link).isSymbolicLink()).toBe(true)
+      expect(fs.readFileSync(target, 'utf-8')).toBe('new')
+      expect(fs.statSync(target).mode & 0o777).toBe(0o640)
+    })
+  })
 })

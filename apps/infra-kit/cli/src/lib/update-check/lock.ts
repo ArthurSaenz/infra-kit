@@ -43,12 +43,40 @@ export interface LockDeps {
   lockPath?: string
 }
 
-/** Delete a lock whose mtime predates the staleness window. Best-effort: losing the race is harmless. */
+/** A reaper marker older than this was left by a reaper killed mid-reap, not by one still at work. */
+const REAPER_STALE_MS = 60 * 1000
+
+/**
+ * Delete a lock whose mtime predates the staleness window. Best-effort: losing the race is harmless.
+ *
+ * ONE reaper at a time, behind its own `wx` marker. Two workers can both see the same stale lock; with
+ * an unguarded stat-then-delete the slower one removed the lock the faster one had just re-created, and
+ * a second `npm install -g` started over the first. A worker that finds the marker taken does not
+ * reap at all — its retry then fails against whatever lock stands, and it stands down.
+ */
 const reapIfStale = (lockPath: string, nowMs: number): void => {
+  const marker = `${lockPath}.reaping`
+  let fd: number
+
+  try {
+    fd = fs.openSync(marker, 'wx', 0o600)
+  } catch {
+    try {
+      if (nowMs - fs.statSync(marker).mtimeMs > REAPER_STALE_MS) fs.rmSync(marker, { force: true })
+    } catch {
+      // The other reaper finished and removed it. Nothing to do.
+    }
+
+    return
+  }
+
   try {
     if (nowMs - fs.statSync(lockPath).mtimeMs > LOCK_STALE_MS) fs.rmSync(lockPath, { force: true })
   } catch {
-    // Vanished under us — another worker reaped it. Nothing to do.
+    // Vanished under us — its holder released it. Nothing to do.
+  } finally {
+    fs.closeSync(fd)
+    fs.rmSync(marker, { force: true })
   }
 }
 

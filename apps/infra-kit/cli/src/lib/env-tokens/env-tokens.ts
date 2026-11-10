@@ -96,8 +96,15 @@ export const readTokenStore = async (): Promise<TokenStore | null> => {
 
   try {
     raw = await fs.readFile(storePath, 'utf-8')
-  } catch {
-    return null
+  } catch (error) {
+    // Only "no file" is "no store". An unreadable one (EACCES, EISDIR) read as empty would make the
+    // next `setTokens` rename a fresh file over it and drop every other env's token.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+
+    throw new EnvAuthError(
+      `Cannot read the token store at ${storePath}: ${error instanceof Error ? error.message : String(error)}`,
+      null,
+    )
   }
 
   // Every refusal below is an EnvAuthError, not a plain Error. A broken store is the MOST durable
