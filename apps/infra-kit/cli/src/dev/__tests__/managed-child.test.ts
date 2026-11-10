@@ -101,6 +101,11 @@ describe('collectDoomedGroups', () => {
 describe('collectForceReapTargets', () => {
   const self = process.pid
 
+  // Regression: with no `ps` rows the own group is unknown, and the root — this process — was returned.
+  it('never names this own group of this process when `ps` returned nothing', () => {
+    expect(collectForceReapTargets(self, [], [])).toEqual([])
+  })
+
   it('reaps a registry-sourced group unreachable from process.pid — a reparented survivor', () => {
     const rows = [
       { pid: self, ppid: 1, pgid: self, lstart: 'Mon Jul 13 13:00:00 2026' },

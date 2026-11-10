@@ -270,7 +270,11 @@ const doomedGroupsOf = (rootPid: number, rows: ProcRow[]): number[] => {
     return row.pid === process.pid
   })?.pgid
 
-  return collectDoomedGroups(rootPid, rows, ownPgid)
+  // `ownPgid` is unknown when `ps` failed (empty `rows`), and the root is always in the result — so a
+  // force reap rooted at this process would SIGKILL its own group. A group whose id is our pid is ours.
+  return collectDoomedGroups(rootPid, rows, ownPgid).filter((pgid) => {
+    return pgid !== process.pid
+  })
 }
 
 /** Is the process group led by `pgid` still alive? (`kill(-pgid, 0)` throws ESRCH when gone.) */
@@ -589,7 +593,10 @@ export function superviseChild(
       // fresh read, not to guess by dropping the one record we have.
       if (rows.length > 0 && !isChildOf(pid, process.pid, rows)) return
 
-      const doomed = doomedGroupsOf(pid, rows)
+      // The live walk alone misses a task group whose intermediate parent already died (reparented to
+      // init) while this child still looks alive — and the `exit` handler's record-based reap is skipped
+      // once `killing` is set. The rolling record is start-time-validated, so a recycled pgid stays safe.
+      const doomed = [...new Set([...doomedGroupsOf(pid, rows), ...validSnapshotPgids(groups, rows)])]
 
       // Negative pid → the whole group (detached made the child a group leader). Turbo forwards
       // this to its tasks; the extra task groups are signalled directly in case it doesn't.

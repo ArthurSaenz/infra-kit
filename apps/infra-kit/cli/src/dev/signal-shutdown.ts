@@ -289,6 +289,10 @@ export const registerSignalShutdown = ({
       try {
         await onSignal(signal)
       } catch (error) {
+        // A teardown that threw stopped at that step: every reap after it never ran, and the detached
+        // turbo / vite groups would outlive this exit holding their ports. Before the report, whose
+        // write can itself throw (EPIPE).
+        forceReap()
         writeTeardownFailure(signal, error)
       } finally {
         // `finally`, so the exit survives anything the catch body might later throw: a process must

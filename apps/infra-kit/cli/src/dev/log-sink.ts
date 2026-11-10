@@ -228,6 +228,49 @@ const gcOldLogDirs = (devRoot: string, now: number): void => {
 }
 
 /**
+ * Sweep every OTHER session's `dev/` too. The session id is minted per terminal, so a run's own
+ * `<session>/dev/` is revisited only by later runs in the same terminal — a closed terminal's logs were
+ * never collected, and they accumulate at up to services × the byte cap per run.
+ *
+ * Only when `dir` is the real `<cacheRoot>/<session>/dev/<pid>`: a caller-supplied dir (a test's tmp
+ * dir) has unknown grandparents, and this ends in a recursive delete.
+ */
+const gcOtherSessions = (dir: string, now: number): void => {
+  const cacheRoot = getCacheRoot()
+  const ownDevRoot = path.dirname(dir)
+
+  if (path.dirname(path.dirname(ownDevRoot)) !== cacheRoot) return
+
+  let sessions: fs.Dirent[]
+
+  try {
+    sessions = fs.readdirSync(cacheRoot, { withFileTypes: true })
+  } catch {
+    return
+  }
+
+  for (const session of sessions) {
+    const devRoot = path.join(cacheRoot, session.name, 'dev')
+
+    if (!session.isDirectory() || devRoot === ownDevRoot) continue
+
+    gcOldLogDirs(devRoot, now)
+
+    try {
+      const latest = path.join(devRoot, 'latest')
+
+      // `existsSync` follows the link: false means the run it pointed at was just swept.
+      if (!fs.existsSync(latest)) fs.rmSync(latest, { force: true })
+
+      // Succeeds only on an empty dir, which is the point: a swept-clean `dev/` goes, anything else stays.
+      fs.rmdirSync(devRoot)
+    } catch {
+      // Not empty, or already gone.
+    }
+  }
+}
+
+/**
  * Hard per-service byte cap. A logging LOOP — the crash barrier reporting a fault whose report is itself
  * the fault — wrote 455 GB of `runner.log` at 50k–127k lines/sec and filled a 926 GB disk. The loop itself
  * is fixed at its source (`terminal-liveness.ts`); this is the net under ANY future one, whatever its cause.
@@ -273,6 +316,7 @@ export class DevLogSink {
     this.maxBytes = maxBytes
     fs.mkdirSync(this.dir, { recursive: true })
     gcOldLogDirs(path.dirname(this.dir), Date.now())
+    gcOtherSessions(this.dir, Date.now())
     this.linkLatest()
   }
 

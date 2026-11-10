@@ -3,7 +3,7 @@
  * already shells out to `pnpm exec turbo …`; the args are fixed literals plus discovered package
  * names, never shell-interpolated. Matches the file-level disable in `scripts/build.js`.
  */
-/* eslint-disable sonarjs/no-os-command-from-path */
+/* eslint-disable sonarjs/no-os-command-from-path -- runs the user's own CLI, which only PATH can locate */
 /**
  * @fileoverview
  *
@@ -69,6 +69,13 @@ export interface TurboWatchOptions {
    * the same moment, which is not a property a test can own.
    */
   openLog?: (path: string) => number
+  /**
+   * Take the child's output as text instead of handing it `logFile`'s descriptor. The runner passes
+   * its log sink here so the engine's output counts against the per-service byte cap: a descriptor
+   * the child writes to directly is the one stream no cap can see, and a rebuild loop grows it
+   * without bound. When set, `logFile` and `openLog` are unused.
+   */
+  appendLog?: (text: string) => void
 }
 
 /**
@@ -109,26 +116,53 @@ export const defaultTurboWatchFactory: TurboWatchFactory = ({
   logFile,
   onUnexpectedExit,
   openLog,
+  appendLog,
 }) => {
   const filters = buildTurboWatchFilters(depInclusive, depClosure)
-  const out = openLog ? openLog(logFile) : fs.openSync(logFile, 'a')
 
-  const child = spawn(
-    'pnpm',
-    [
-      'exec',
-      'turbo',
-      'watch',
-      'build',
-      ...filters,
-      '--continue=dependencies-successful',
-      '--env-mode=loose',
-      // Same reason as `ui-dev.ts`: under GITHUB_ACTIONS `auto` groups output and drops the task prefix, which
-      // would leave the watch log unattributable.
-      '--log-order=stream',
-    ],
-    { cwd, detached: true, stdio: ['ignore', out, out] },
-  )
+  const args = [
+    'exec',
+    'turbo',
+    'watch',
+    'build',
+    ...filters,
+    '--continue=dependencies-successful',
+    '--env-mode=loose',
+    // Same reason as `ui-dev.ts`: under GITHUB_ACTIONS `auto` groups output and drops the task prefix, which
+    // would leave the watch log unattributable.
+    '--log-order=stream',
+  ]
+
+  if (appendLog) {
+    const piped = spawn('pnpm', args, { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+
+    // Both pipes are drained unconditionally: a piped child whose output is never read blocks once
+    // the OS pipe buffer fills, and a blocked watch engine stops rebuilding without saying so.
+    //
+    // Whole lines only: `appendLog` ends every write with a newline, and a pipe chunk ends wherever
+    // the read happened to — forwarded raw, one long `tsc` error became several lines, only the first
+    // of them carrying turbo's `<pkg>:build:` prefix.
+    for (const stream of [piped.stdout, piped.stderr]) {
+      let pending = ''
+
+      stream.setEncoding('utf-8')
+      stream.on('data', (chunk: string) => {
+        const lines = (pending + chunk).split('\n')
+
+        pending = lines.pop() ?? ''
+
+        if (lines.length > 0) appendLog(`${lines.join('\n')}\n`)
+      })
+      stream.on('end', () => {
+        if (pending !== '') appendLog(pending)
+      })
+    }
+
+    return superviseChild(piped, undefined, onUnexpectedExit)
+  }
+
+  const out = openLog ? openLog(logFile) : fs.openSync(logFile, 'a')
+  const child = spawn('pnpm', args, { cwd, detached: true, stdio: ['ignore', out, out] })
 
   // `spawn` has already duplicated the descriptor into the child by the time it returns, so the
   // parent's copy is dead weight — nothing here ever writes through it. It was never closed: neither

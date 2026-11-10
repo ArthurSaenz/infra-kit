@@ -451,4 +451,20 @@ describe('registerSignalShutdown', () => {
       expect(exits).toEqual([130])
     })
   })
+
+  // Regression: a rejected teardown skipped its own reaps, and the exit left turbo / vite holding ports.
+  it('reaps the descendant groups when the teardown rejects', async () => {
+    spyStderr([])
+
+    const h = harness()
+
+    registerSignalShutdown({ onSignal: vi.fn().mockRejectedValue(new Error('watcher.close failed')), ...h.seams })
+    h.fire('SIGINT')
+
+    await vi.waitFor(() => {
+      expect(h.exits).toEqual([130])
+    })
+
+    expect(h.reaps).toBe(1)
+  })
 })

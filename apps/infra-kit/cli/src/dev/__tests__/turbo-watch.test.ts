@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 
 import { buildTurboWatchFilters, defaultTurboWatchFactory } from '../turbo-watch'
@@ -134,4 +135,43 @@ describe('defaultTurboWatchFactory — the watch-log descriptor', () => {
       fs.rmSync(dir, { recursive: true, force: true })
     }
   }, 20000)
+})
+
+describe('defaultTurboWatchFactory — output through the caller', () => {
+  // Regression: the child wrote to the log's descriptor directly, so its output was the one stream the
+  // sink's byte cap never saw.
+  it('pipes both streams to `appendLog` instead of handing the child a file', () => {
+    const stdout = new PassThrough()
+    const stderr = new PassThrough()
+    const chunks: string[] = []
+
+    spawnMock.mockClear()
+    spawnMock.mockReturnValueOnce({ stdout, stderr })
+    superviseChildMock.mockImplementationOnce((child: unknown) => {
+      return child
+    })
+
+    defaultTurboWatchFactory({
+      depInclusive: ['omega-api'],
+      depClosure: [],
+      cwd: '/repo',
+      logFile: os.devNull,
+      openLog: () => {
+        throw new Error('the log file must not be opened when the caller takes the output')
+      },
+      appendLog: (text) => {
+        chunks.push(text)
+      },
+    })
+
+    stdout.write('built omega-api\n')
+    stderr.write('TS2304: nope\n')
+    // One line arriving in two reads must reach the log as ONE line.
+    stdout.write('src/a.ts(1,1): error TS23')
+    stdout.write('04: Cannot find name\nnext')
+    stdout.end()
+
+    expect(spawnMock.mock.calls[0]?.[2]).toEqual({ cwd: '/repo', detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    expect(chunks).toEqual(['built omega-api\n', 'TS2304: nope\n', 'src/a.ts(1,1): error TS2304: Cannot find name\n'])
+  })
 })
