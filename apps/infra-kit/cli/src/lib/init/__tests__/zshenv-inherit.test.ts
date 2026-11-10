@@ -21,7 +21,7 @@ const SESSION = 'abcd1234'
 
 const PROBE =
   "printf 'cfg=[%s] FOO=[%s] dir=[%s] load=[%s] clear=[%s]\\n' " +
-  // eslint-disable-next-line no-template-curly-in-string
+  // eslint-disable-next-line no-template-curly-in-string -- a literal `${…}` for the shell or YAML, not a JS template
   '"${INFRA_KIT_ENV_CONFIG:-}" "${FOO:-}" "${dir:-}" "${load:-}" "${clear:-}"'
 
 const LOADED = 'cfg=[arthur] FOO=[from-load] dir=[D] load=[L] clear=[C]\n'
@@ -237,7 +237,7 @@ describe.skipIf(!fs.existsSync('/bin/zsh'))('the ~/.zshenv block, under a real /
       "if [[ -o allexport ]]; then printf 'allexport=[on]\\n'; else printf 'allexport=[off]\\n'; fi",
       // Assigned AFTER the block: visible to a grandchild only if allexport survived the function.
       'AFTER_BLOCK=1',
-      // eslint-disable-next-line no-template-curly-in-string
+      // eslint-disable-next-line no-template-curly-in-string -- a literal `${…}` for the shell or YAML, not a JS template
       '/bin/sh -c \'printf "after=[%s]\\n" "${AFTER_BLOCK:-}"\'',
     ].join('\n')
 

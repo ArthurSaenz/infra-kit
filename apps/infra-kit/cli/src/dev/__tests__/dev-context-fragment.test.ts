@@ -75,7 +75,7 @@ const gitInit = (dir: string, branch: string): void => {
     { cwd: dir },
   )
 }
-/* eslint-enable sonarjs/no-os-command-from-path */
+/* eslint-enable sonarjs/no-os-command-from-path -- closes the block disabled above */
 
 /** Minimal structural view of the runner internals a restart test needs. */
 interface RunnerInternals {

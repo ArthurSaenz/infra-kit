@@ -69,7 +69,7 @@ export type ClaudeRunner = (command: ClaudeCommand) => ClaudeCommandResult
 export const defaultClaudeRunner: ClaudeRunner = (command) => {
   // PATH lookup is the point: `claude` is installed by its own installer to a location this CLI does
   // not know and must not guess, and "is it on PATH" is exactly the question step (b) asks.
-  // eslint-disable-next-line sonarjs/no-os-command-from-path
+  // eslint-disable-next-line sonarjs/no-os-command-from-path -- runs the user's own CLI, which only PATH can locate
   const result = spawnSync(CLAUDE_BIN, [...command.args], {
     cwd: command.cwd,
     encoding: 'utf-8',

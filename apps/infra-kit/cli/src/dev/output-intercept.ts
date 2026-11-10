@@ -3,7 +3,7 @@
  * console method — including the ones `no-console` exists to keep out of application code. The rule is
  * disabled here and NOWHERE else: any other file reaching for `console.log` should still be stopped.
  */
-/* eslint-disable no-console */
+/* eslint-disable no-console -- this module is the console boundary of the dev server */
 /**
  * @fileoverview
  *

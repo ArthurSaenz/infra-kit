@@ -9,12 +9,12 @@ describe('buildZshenvBody — the ~/.zshenv session-env block', () => {
   const body = buildZshenvBody()
 
   it('z1: is a no-op in a fresh terminal, and the `:-` survives nounset', () => {
-    // eslint-disable-next-line no-template-curly-in-string
+    // eslint-disable-next-line no-template-curly-in-string -- a literal `${…}` for the shell or YAML, not a JS template
     expect(body).toContain('if [[ -n "${INFRA_KIT_SESSION:-}" ]]; then')
   })
 
   it('z2: resolves the session dir exactly as getCacheRoot does', () => {
-    // eslint-disable-next-line no-template-curly-in-string
+    // eslint-disable-next-line no-template-curly-in-string -- a literal `${…}` for the shell or YAML, not a JS template
     expect(body).toContain('${XDG_CACHE_HOME:-$HOME/.cache}/infra-kit/$INFRA_KIT_SESSION')
   })
 
@@ -61,7 +61,7 @@ describe('buildZshenvBody — the ~/.zshenv session-env block', () => {
   })
 
   it('z10: honours only the canonical lowercase 8-hex id', () => {
-    // eslint-disable-next-line no-template-curly-in-string
+    // eslint-disable-next-line no-template-curly-in-string -- a literal `${…}` for the shell or YAML, not a JS template
     expect(body).toContain('[[ "${INFRA_KIT_SESSION:-}" == [0-9a-f](#c8) ]] || return')
   })
 

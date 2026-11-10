@@ -2,7 +2,7 @@
  * Writes through the GLOBAL console on purpose: `output-intercept.ts` owns those methods and routes each
  * line to the right per-service log file. A private Console or a direct stream write would bypass it.
  */
-/* eslint-disable no-console */
+/* eslint-disable no-console -- this module is the console boundary of the dev server */
 import type { ILogger, LogAttributes } from './interfaces.js'
 
 type Level = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'CRITICAL'

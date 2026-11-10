@@ -54,7 +54,7 @@ export const readRepoIdentity = (cwd: string): RepoIdentity => {
   let commonDir: string
 
   try {
-    // eslint-disable-next-line sonarjs/no-os-command-from-path
+    // eslint-disable-next-line sonarjs/no-os-command-from-path -- runs the user's own CLI, which only PATH can locate
     commonDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
       cwd,
       encoding: 'utf-8',

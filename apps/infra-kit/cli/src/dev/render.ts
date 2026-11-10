@@ -235,7 +235,7 @@ const CLEAR_LINE = '\r\x1B[2K'
  * SGR color codes (`ESC [ … m`) and OSC-8 hyperlink wrappers (`ESC ] 8 ; ; … ESC \`), non-greedy.
  * Matching the ESC control character is the whole point here — this pattern exists to remove it.
  */
-// eslint-disable-next-line sonarjs/no-control-regex, no-control-regex
+// eslint-disable-next-line sonarjs/no-control-regex, no-control-regex -- ANSI escape sequences start with a control character
 const ANSI_PATTERN = /\x1B\[[0-9;]*m|\x1B\]8;;.*?\x1B\\/g
 
 /**

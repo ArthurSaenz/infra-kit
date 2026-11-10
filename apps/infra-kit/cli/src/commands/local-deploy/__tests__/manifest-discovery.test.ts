@@ -144,7 +144,7 @@ describe('resolveSsmPrefix with infra-kit.deploy.ts', () => {
   it('refuses a template literal building the parameter, naming service:line', async () => {
     const repo = await repoWith(
       { environments: ENVIRONMENTS, services: { a: { deploy: 'a/deploy.ts' } } },
-      // eslint-disable-next-line no-template-curly-in-string
+      // eslint-disable-next-line no-template-curly-in-string -- source text of a deploy.ts fixture, evaluated by the code under test
       { 'a/deploy.ts': "const project = 'hulyo'\nawait ssm([`/${project}/environment`])\n" },
     )
 
@@ -173,7 +173,7 @@ describe('resolveSsmPrefix with infra-kit.deploy.ts', () => {
 })
 
 describe('resolveProject', () => {
-  // eslint-disable-next-line no-template-curly-in-string
+  // eslint-disable-next-line no-template-curly-in-string -- source text of a deploy.ts fixture, evaluated by the code under test
   const SHARED_DEPLOY_TS = 'await ssm([`/${project}/environment`, `/${project}/s3/docs/bucket_name`])\n'
 
   it("takes the manifest's project without scanning, so a shared script's template literal passes", async () => {

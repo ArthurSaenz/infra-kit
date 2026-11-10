@@ -189,6 +189,16 @@ const layerBoundary = {
 
 // `config()` returns a Promise resolving to the flat-config array; ESLint awaits
 // the default export, so resolve it and append our local boundary rules.
+/**
+ * Fast refresh is a browser dev-server feature: Vite swaps a component module in place. The Ink TUI
+ * runs in a terminal and is never hot-reloaded, so the rule's cost here — a second file for every
+ * constant a screen shares with its test — buys nothing.
+ */
+const noFastRefreshInTui = {
+  files: ['src/tui/**/*.tsx'],
+  rules: { 'react-refresh/only-export-components': 'off' },
+}
+
 export default config().then((base) => {
   return [
     ...base,
@@ -197,5 +207,6 @@ export default config().then((base) => {
     enableMaxJsdocLines,
     enableMaxJsdocSummaryLines,
     layerBoundary,
+    noFastRefreshInTui,
   ]
 })

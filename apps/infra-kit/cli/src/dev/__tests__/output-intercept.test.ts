@@ -3,7 +3,7 @@
  * captured into its service's file instead of reaching the terminal. A test that could not call it could
  * not test it.
  */
-/* eslint-disable no-console */
+/* eslint-disable no-console -- the test exercises console output itself */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'

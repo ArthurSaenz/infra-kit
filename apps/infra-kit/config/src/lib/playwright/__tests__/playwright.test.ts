@@ -33,7 +33,7 @@ beforeEach(() => {
   writeTargetConfig({ deployedUrlEnv: 'CLIENT_URL' })
   writeE2e({ target: 'client/ui' })
   const git = (...args: string[]) => {
-    // eslint-disable-next-line sonarjs/no-os-command-from-path
+    // eslint-disable-next-line sonarjs/no-os-command-from-path -- the test runs the developer's own tools, which only PATH locates
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: root })
   }
 

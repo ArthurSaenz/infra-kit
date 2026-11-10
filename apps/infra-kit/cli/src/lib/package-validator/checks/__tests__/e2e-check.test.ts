@@ -226,7 +226,7 @@ describe('checkE2eAuthIgnored', () => {
   const gitRepo = (gitignore: string | null): string => {
     const dir = makeTmpDir()
 
-    // eslint-disable-next-line sonarjs/no-os-command-from-path
+    // eslint-disable-next-line sonarjs/no-os-command-from-path -- the test runs the developer's own tools, which only PATH locates
     execFileSync('git', ['init', '-q'], { cwd: dir })
     if (gitignore !== null) fs.writeFileSync(path.join(dir, '.gitignore'), gitignore)
 

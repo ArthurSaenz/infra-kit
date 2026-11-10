@@ -62,7 +62,7 @@ const gitInit = (dir: string): void => {
     stdio: 'ignore',
   })
 }
-/* eslint-enable sonarjs/no-os-command-from-path */
+/* eslint-enable sonarjs/no-os-command-from-path -- closes the block disabled above */
 
 /**
  * A pnpm workspace holding one package per {@link EXPECTED_TYPES} entry, committed to git.

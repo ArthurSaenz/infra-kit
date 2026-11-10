@@ -86,7 +86,7 @@ export default (async ({ ssm, deployBackendApi }) => {
   })
 
   it("hands the script the manifest's project, so a shared script reads /<project>/... parameters", async () => {
-    // eslint-disable-next-line no-template-curly-in-string
+    // eslint-disable-next-line no-template-curly-in-string -- source text of a deploy.ts fixture, evaluated by the code under test
     await setUp('export default async ({ project, run }) => run(`echo`, [`/${project}/s3/docs/bucket_name`])\n')
     await fs.writeFile(
       path.join(repo, 'infra-kit.deploy.ts'),

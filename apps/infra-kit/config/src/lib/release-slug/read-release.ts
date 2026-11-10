@@ -14,7 +14,7 @@ import { DEFAULT_RELEASE_SLUG, slugifyRelease } from './release-slug'
  */
 export const readRelease = (cwd: string): string => {
   try {
-    // eslint-disable-next-line sonarjs/no-os-command-from-path
+    // eslint-disable-next-line sonarjs/no-os-command-from-path -- runs the user's own CLI, which only PATH can locate
     const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
       cwd,
       encoding: 'utf-8',

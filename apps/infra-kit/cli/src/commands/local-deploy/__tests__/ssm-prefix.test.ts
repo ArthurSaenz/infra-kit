@@ -78,7 +78,7 @@ describe('resolveSsmPrefix', () => {
   // neither may degrade to "no script reads it": the refusal has to point at the line.
   it.each([
     // Shell syntax on purpose — the `${…}` is what the script would write, not a missed template.
-    // eslint-disable-next-line no-template-curly-in-string
+    // eslint-disable-next-line no-template-curly-in-string -- a literal `${…}` for the shell or YAML, not a JS template
     ['an expansion inside the path', 'PROJECT=hulyo\n', '"/${PROJECT}/environment"'],
     ['a bare variable holding the whole name', 'PARAM=/x/environment\n', '"$PARAM"'],
   ])('refuses %s, naming script:line and asking for a literal', async (_label, prelude, name) => {

@@ -3,7 +3,7 @@
  * shells out to `pnpm exec turbo …`); args are fixed literals plus discovered package names, never
  * shell-interpolated. Matches the file-level disable in `scripts/build.js`.
  */
-/* eslint-disable sonarjs/no-os-command-from-path */
+/* eslint-disable sonarjs/no-os-command-from-path -- runs the user's own CLI, which only PATH can locate */
 /**
  * @fileoverview
  *
@@ -161,7 +161,7 @@ const CSI_ESCAPE = /\u001B\[[0-9;?]*[\u0020-\u002F]*[\u0040-\u007E]/g
  * that piping the child was meant to end. LF cannot appear here: `pumpLines` already split on it.
  */
 const CONTROL_CHARS = /[\u0000-\u0008\u000B-\u001F\u007F]/g
-/* eslint-enable no-control-regex, sonarjs/no-control-regex */
+/* eslint-enable no-control-regex, sonarjs/no-control-regex -- closes the block disabled above */
 
 /**
  * Make a raw child line safe for the renderer's tail: drop terminal escapes (which would fight the

@@ -71,7 +71,7 @@ describe('resources — reconciliation with the exported record', () => {
     for (const sentinel of Object.values(SENTINELS)) {
       // ASCII only: esbuild's default charset escapes everything else, and every
       // bullet in these files carries an em dash.
-      // eslint-disable-next-line no-control-regex
+      // eslint-disable-next-line no-control-regex -- the ASCII range under test starts at \x00
       expect(sentinel).toMatch(/^[\x00-\x7F]*$/)
       // No backtick: esbuild emits these resources as template literals, so a
       // backtick in the markdown is written as `\``. Measured — an inline code span

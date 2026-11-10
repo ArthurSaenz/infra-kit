@@ -85,7 +85,7 @@ const seedRepo = () => {
   write('apps/client/ui/package.json', JSON.stringify({ name: '@hulyo/client-ui' }))
   writeConfig('apps/client/ui/infra-kit.config.ts', { deployedUrlEnv: CLIENT_URL, dev: { proxy: CLIENT_PROXY } })
   const git = (...args: string[]) => {
-    // eslint-disable-next-line sonarjs/no-os-command-from-path
+    // eslint-disable-next-line sonarjs/no-os-command-from-path -- the test runs the developer's own tools, which only PATH locates
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: root })
   }
 

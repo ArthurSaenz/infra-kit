@@ -1,4 +1,4 @@
-/* eslint-disable sonarjs/no-os-command-from-path */
+/* eslint-disable sonarjs/no-os-command-from-path -- runs the user's own CLI, which only PATH can locate */
 /**
  * `npm root -g`, the LAZY fallback for {@link detectInstallManager}.
  *

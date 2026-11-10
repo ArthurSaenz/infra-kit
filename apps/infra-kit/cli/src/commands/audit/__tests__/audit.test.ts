@@ -177,7 +177,7 @@ const ROOT_BLOCK = ['<!-- infra-kit:begin -->', 'root guidance', '<!-- infra-kit
 const gitInit = (dir: string): void => {
   execFileSync('git', ['init', '--quiet'], { cwd: dir, stdio: 'ignore' })
 }
-/* eslint-enable sonarjs/no-os-command-from-path */
+/* eslint-enable sonarjs/no-os-command-from-path -- closes the block disabled above */
 
 /**
  * A pnpm workspace with `packages/a` and `packages/b`. Realpath'd so the paths the adoption

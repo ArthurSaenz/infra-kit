@@ -9,7 +9,7 @@ import { resolveEnvLoadRoots } from '../env-load'
 let temp: string
 
 const git = (cwd: string, ...args: string[]) => {
-  // eslint-disable-next-line sonarjs/no-os-command-from-path
+  // eslint-disable-next-line sonarjs/no-os-command-from-path -- the test runs the developer's own tools, which only PATH locates
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, stdio: 'ignore' })
 }
 

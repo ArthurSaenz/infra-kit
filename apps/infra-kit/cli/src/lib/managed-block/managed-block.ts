@@ -64,7 +64,7 @@ export const removeManagedBlock = (content: string, startMarker: string, endMark
 
   if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) return null
 
-  // eslint-disable-next-line sonarjs/super-linear-regex
+  // eslint-disable-next-line sonarjs/super-linear-regex -- the input is a local file the user owns, not untrusted text
   const before = content.slice(0, startIdx).replace(/\n+$/, '')
   const after = content.slice(endIdx + endMarker.length).replace(/^\n+/, '')
 
@@ -133,7 +133,7 @@ export const upsertManagedBlock = ({
   // append-end, or replace-in-place with no existing block: drop any stale block
   // then append the fresh one at end-of-file.
   const stripped = present ? (removeManagedBlock(content, startMarker, endMarker) ?? content) : content
-  // eslint-disable-next-line sonarjs/super-linear-regex
+  // eslint-disable-next-line sonarjs/super-linear-regex -- the input is a local file the user owns, not untrusted text
   const base = stripped.replace(/\n+$/, '')
 
   return base.length > 0 ? `${base}\n${block}\n` : `${block}\n`
