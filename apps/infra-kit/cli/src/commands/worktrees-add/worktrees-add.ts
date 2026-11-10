@@ -1,4 +1,4 @@
-/* eslint-disable sonarjs/cognitive-complexity */
+/* eslint-disable sonarjs/cognitive-complexity -- known debt: one handler still orchestrates the release and feature flows */
 import confirm from '@inquirer/confirm'
 import path from 'node:path'
 import { z } from 'zod'
@@ -67,7 +67,7 @@ const OPERATION = 'create worktrees'
 //
 // The guard lives in `withEscape` keyed on `isAgentMode()`, never `process.stdin.isTTY`: the agent
 // signal is declared (`--agent`/env), and an isTTY key would misfire on the zsh wrappers' `$(…)`
-// captures. And never on `confirmedCommand`, which carries the CLI's `--yes` (`program.ts:109`): keying
+// captures. And never on `confirmedCommand`, which carries the CLI's `--yes` (`entry/program/register/worktrees.ts`): keying
 // on that would stop `worktrees add --yes` prompting on a terminal, breaking the documented order for
 // a human in order to fix it for an agent.
 //
@@ -163,7 +163,7 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
 
       commandEcho.print()
 
-      const empty = { kind, createdWorktrees: [], count: 0, features: [], ...emptyOrcaOutcomes() }
+      const empty = { kind, createdWorktrees: [], count: 0, failedWorktrees: [], features: [], ...emptyOrcaOutcomes() }
 
       return {
         content: textContent(JSON.stringify(empty, null, 2)),
@@ -193,7 +193,7 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
     // poll always sees a registered repo).
     const registration = orcaPreflight ? await registerOrcaRepo(orcaPreflight, mainRepoRoot) : null
 
-    const createdWorktrees = await createWorktrees(selection.targets, worktreeDir)
+    const { created: createdWorktrees, failed: failedWorktrees } = await createWorktrees(selection.targets, worktreeDir)
 
     logResults(createdWorktrees)
 
@@ -223,6 +223,7 @@ export const worktreesAdd = async (options: WorktreeManagementArgs) => {
       kind,
       createdWorktrees,
       count: createdWorktrees.length,
+      failedWorktrees,
       features: selection.features.filter((plan) => {
         return createdWorktrees.includes(plan.branch)
       }),
@@ -661,39 +662,65 @@ const categorizeWorktrees = (args: CategorizeWorktreesArgs): { branchesToCreate:
   return { branchesToCreate }
 }
 
+export interface FailedWorktree {
+  branch: string
+  /** `add`: no worktree was created. `install`: the worktree exists, its dependencies do not. */
+  stage: 'add' | 'install'
+  reason: string
+}
+
 /**
  * Create worktrees for the specified targets
  */
-const createWorktrees = async (targets: WorktreeTarget[], worktreeDir: string): Promise<string[]> => {
-  const results = await Promise.allSettled(
-    targets.map(async (target) => {
+const createWorktrees = async (
+  targets: WorktreeTarget[],
+  worktreeDir: string,
+): Promise<{ created: string[]; failed: FailedWorktree[] }> => {
+  const outcomes = await Promise.all(
+    targets.map(async (target): Promise<{ created: string } | { failed: FailedWorktree }> => {
       const worktreePath = `${worktreeDir}/${target.branch}`
 
-      await target.add(worktreePath)
-      await $({ cwd: worktreePath })`pnpm install`
+      try {
+        await target.add(worktreePath)
+      } catch (error) {
+        const err = new OperationError(error, {
+          operation: `git worktree add for ${target.branch}`,
+          remediation:
+            'check the branch name and that the parent dir is writable; a branch created moments ago needs `git fetch origin` first',
+        })
 
-      return target.branch
+        logger.error({ error, msg: err.message })
+
+        return { failed: { branch: target.branch, stage: 'add', reason: err.message } }
+      }
+
+      // Its own failure, not "worktree add failed": the worktree IS registered now, so a re-run skips
+      // it as existing and would never install — the only path to a working tree is the command below.
+      try {
+        await $({ cwd: worktreePath })`pnpm install`
+      } catch (error) {
+        const err = new OperationError(error, {
+          operation: `install dependencies in the new worktree for ${target.branch}`,
+          remediation: `the worktree was created — run \`pnpm install\` in ${worktreePath}`,
+        })
+
+        logger.error({ error, msg: err.message })
+
+        return { failed: { branch: target.branch, stage: 'install', reason: err.message } }
+      }
+
+      return { created: target.branch }
     }),
   )
 
-  const created: string[] = []
-
-  for (const [index, result] of results.entries()) {
-    if (result.status === 'fulfilled') {
-      created.push(result.value)
-    } else {
-      const branch = targets[index]?.branch
-
-      const err = new OperationError(result.reason, {
-        operation: `git worktree add for ${branch}`,
-        remediation: 'check the branch name and that the parent dir is writable',
-      })
-
-      logger.error({ error: result.reason, msg: err.message })
-    }
+  return {
+    created: outcomes.flatMap((outcome) => {
+      return 'created' in outcome ? [outcome.created] : []
+    }),
+    failed: outcomes.flatMap((outcome) => {
+      return 'failed' in outcome ? [outcome.failed] : []
+    }),
   }
-
-  return created
 }
 
 /**
@@ -769,6 +796,11 @@ export const worktreesAddMcpTool = defineMcpTool({
       ),
     createdWorktrees: z.array(z.string()).describe('List of created git worktree branches'),
     count: z.number().describe('Number of git worktrees created'),
+    failedWorktrees: z
+      .array(z.object({ branch: z.string(), stage: z.enum(['add', 'install']), reason: z.string() }))
+      .describe(
+        'Targets that did not end as a usable worktree: stage "add" = nothing was created; "install" = the worktree exists but `pnpm install` failed in it (reason names the path to run it in)',
+      ),
     orcaOpened: z
       .array(
         z.object({

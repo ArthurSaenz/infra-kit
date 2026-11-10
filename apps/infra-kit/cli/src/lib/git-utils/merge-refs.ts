@@ -54,7 +54,10 @@ export const isAncestor = async (cwd: string, ancestor: string, descendant: stri
 
 /** The sha `origin` currently holds for a branch, or `null` when it has none. */
 export const lsRemoteHead = async (cwd: string, branch: string): Promise<string | null> => {
-  const result = await $({ cwd, quiet: true })`git ls-remote --heads origin ${branch}`
+  // The full ref, not `--heads <branch>`: that form tail-matches, so `backup/release/v1.2.5` answered
+  // for `release/v1.2.5`.
+  const ref = `refs/heads/${branch}`
+  const result = await $({ cwd, quiet: true })`git ls-remote origin ${ref}`
   const line = result.stdout.trim().split('\n')[0]
 
   return line ? (line.split(/\s+/)[0] ?? null) : null

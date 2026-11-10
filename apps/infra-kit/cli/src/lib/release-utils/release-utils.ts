@@ -1,6 +1,7 @@
+import process from 'node:process'
 import { $ } from 'zx'
 
-import { createReleaseBranch } from 'src/integrations/gh'
+import { createReleaseBranch, fetchOpenPRsByHead } from 'src/integrations/gh'
 import {
   buildJiraVersionUrl,
   createJiraVersion,
@@ -13,6 +14,7 @@ import type { JiraConfig, JiraVersion } from 'src/integrations/jira'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { PRODUCTION_BRANCH, resolveGitFlow } from 'src/lib/git-flow'
 import type { GitFlow } from 'src/lib/git-flow'
+import { lsRemoteHead } from 'src/lib/git-utils/merge-refs'
 import { logger } from 'src/lib/logger'
 // Type-only cross-layer import: src/lib/prompts/types.ts is intentionally a
 // zero-import leaf so it can be imported from any layer (including this one)
@@ -248,6 +250,40 @@ export const createSingleRelease = async (args: CreateSingleReleaseArgs): Promis
   // 1. Ensure the Jira version exists (mandatory). For versioned releases this is
   // "v1.2.3" (byte-identical to before); for named releases it is "<name>".
   const versionName = formatJiraName(id)
+
+  // Before the first write. Without it a release that already has a branch on origin got its live
+  // Jira description and date overwritten by `ensureJiraVersion`'s reuse, then a rejected push, and a
+  // cleanup that could not tell "our push landed" from "it was already there" — and advised deleting it.
+  const branchName = formatBranchName(id)
+
+  if ((await lsRemoteHead(process.cwd(), branchName)) !== null) {
+    // The two ways a branch can already be there need opposite advice, and only the PR tells them
+    // apart. `null` = gh could not answer; then neither is claimed.
+    const openPRs = await fetchOpenPRsByHead(branchName).catch(() => {
+      return null
+    })
+
+    const liveRelease = openPRs !== null && openPRs.length > 0
+    const leftover = openPRs !== null && openPRs.length === 0
+
+    const leftoverAdvice = `a previous run left it without a PR — open one with \`gh pr create --head ${branchName}\`, or remove it (\`git push origin --delete ${branchName}\`, \`git branch -D ${branchName}\`) and re-run`
+
+    const unknownAdvice = `check \`gh pr list --head ${branchName}\`: with an open PR it is a live release (\`infra-kit release edit\`); without one, ${leftoverAdvice}`
+
+    if (liveRelease) {
+      throw new OperationError(undefined, {
+        operation: `create release branch ${branchName}`,
+        stderrExcerpt: `${branchName} is a live release: open PR #${openPRs[0]?.number}`,
+        remediation: 'change it with `infra-kit release edit`, or pick another version',
+      })
+    }
+
+    throw new OperationError(undefined, {
+      operation: `create release branch ${branchName}`,
+      stderrExcerpt: `${branchName} already exists on origin`,
+      remediation: leftover ? leftoverAdvice : unknownAdvice,
+    })
+  }
 
   const jiraVersion = await ensureJiraVersion({
     versionName,

@@ -176,6 +176,32 @@ describe('getReleasePRsWithInfo (discovery + sort)', () => {
     responses.hotfix = []
   })
 
+  // Regression: with nothing open, `worktrees sync` (the sweep) and the listings failed with
+  // "open a release PR first" — exactly when every release worktree was stale.
+  it('answers nothing-open with [] under allowEmpty, and refuses without it', async () => {
+    await expect(getReleasePRsWithInfo({ allowEmpty: true })).resolves.toEqual([])
+    await expect(getReleasePRs({ allowEmpty: true })).resolves.toEqual([])
+    await expect(getReleasePRs()).rejects.toThrow(/find open release PRs/)
+  })
+
+  // The lists are selected by base alone, so feature PRs come back too: none of them is a release.
+  it('treats a listing with only non-release heads as nothing open', async () => {
+    responses.release = [pr({ headRefName: 'feature/checkout', title: 'Checkout', createdAt: '2026-01-01T00:00:00Z' })]
+
+    await expect(getReleasePRs()).rejects.toThrow(/find open release PRs/)
+    await expect(getReleasePRs({ allowEmpty: true })).resolves.toEqual([])
+  })
+
+  // The worktree sweep deletes what is absent from this list, so a full page is refused, not warned.
+  it('refuses a full page under requireComplete', async () => {
+    responses.release = Array.from({ length: 200 }, (_, index) => {
+      return pr({ headRefName: `release/v1.0.${index}`, createdAt: '2026-01-01T00:00:00Z' })
+    })
+
+    await expect(getReleasePRs({ requireComplete: true })).rejects.toThrow(/page limit/)
+    await expect(getReleasePRs()).resolves.toHaveLength(200)
+  })
+
   it('returns branch/title/createdAt in the locked order with junk filtered', async () => {
     responses.release = [
       pr({ headRefName: 'release/beta-feature', createdAt: '2026-02-02T00:00:00Z', title: 'Release beta-feature' }),

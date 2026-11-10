@@ -7,7 +7,7 @@ import { commandEcho } from 'src/lib/command-echo'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { assertManagementContext } from 'src/lib/git-guard'
-import { getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
+import { getCurrentWorktrees, getProjectRoot, listWorktrees } from 'src/lib/git-utils'
 import { removeWorktrees } from 'src/lib/worktrees'
 
 import { worktreesSync, worktreesSyncMcpTool } from '../worktrees-sync'
@@ -57,6 +57,10 @@ const STALE_FAILURE = {
 
 const outputSchema = z.object(worktreesSyncMcpTool.outputSchema)
 
+const mainCheckout = (branch: string) => {
+  return { path: PROJECT_ROOT, branch, detached: false, bare: false, prunable: false, locked: false }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   commandEcho.reset()
@@ -66,6 +70,7 @@ beforeEach(() => {
   vi.mocked(getCurrentWorktrees).mockResolvedValue(['release/v1.2.5'])
   vi.mocked(getReleasePRs).mockResolvedValue([])
   vi.mocked(getProjectRoot).mockResolvedValue(PROJECT_ROOT)
+  vi.mocked(listWorktrees).mockResolvedValue([mainCheckout('main')])
   agentMode.source = null
   vi.mocked(removeWorktrees).mockResolvedValue({ removed: [], failed: [] })
 })
@@ -79,6 +84,16 @@ describe('worktrees-sync failure report', () => {
       branches: ['release/v1.2.5'],
       projectRoot: PROJECT_ROOT,
     })
+  })
+
+  // Regression: the main checkout standing on a merged release branch was "removed" from a path
+  // that never existed, and reported as such.
+  it('never sweeps the branch the main checkout itself is on', async () => {
+    vi.mocked(listWorktrees).mockResolvedValue([mainCheckout('release/v1.2.5')])
+
+    await worktreesSync({ confirmedCommand: true })
+
+    expect(vi.mocked(removeWorktrees).mock.calls[0]?.[0]).toMatchObject({ branches: [] })
   })
 
   it('cLI: throws an OperationError naming the branch, without the remote-connectivity rewrap', async () => {

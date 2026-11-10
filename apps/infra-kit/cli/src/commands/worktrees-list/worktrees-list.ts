@@ -64,7 +64,10 @@ export const worktreesList = async () => {
 }
 
 const describeReleaseWorktrees = async (currentWorktrees: string[]): Promise<WorktreeInfo[]> => {
-  const [releasePRsInfo, jiraDescriptions] = await Promise.all([getReleasePRsWithInfo(), getJiraDescriptions()])
+  const [releasePRsInfo, jiraDescriptions] = await Promise.all([
+    getReleasePRsWithInfo({ allowEmpty: true }),
+    getJiraDescriptions(),
+  ])
 
   const releaseTypes = new Map<string, ReleaseType>(
     releasePRsInfo.map((pr) => {

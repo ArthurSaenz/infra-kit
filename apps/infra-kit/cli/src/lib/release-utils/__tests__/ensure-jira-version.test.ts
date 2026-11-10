@@ -11,7 +11,13 @@ const mocks = vi.hoisted(() => {
     createJiraVersion: vi.fn(),
     updateJiraVersion: vi.fn(),
     createReleaseBranch: vi.fn(),
+    lsRemoteHead: vi.fn(),
+    fetchOpenPRsByHead: vi.fn(),
   }
+})
+
+vi.mock('src/lib/git-utils/merge-refs', () => {
+  return { lsRemoteHead: mocks.lsRemoteHead }
 })
 
 vi.mock('src/integrations/jira', async (importOriginal) => {
@@ -26,7 +32,7 @@ vi.mock('src/integrations/jira', async (importOriginal) => {
 })
 
 vi.mock('src/integrations/gh', () => {
-  return { createReleaseBranch: mocks.createReleaseBranch }
+  return { createReleaseBranch: mocks.createReleaseBranch, fetchOpenPRsByHead: mocks.fetchOpenPRsByHead }
 })
 
 const jiraConfig = {
@@ -61,10 +67,50 @@ const run = (description?: string, releaseDate?: string) => {
   })
 }
 
+describe('createSingleRelease — a branch a failed run left behind', () => {
+  // The same refusal must NOT send the operator to `release edit`: there is no PR for it to edit.
+  it('names the leftover and how to finish or remove it', async () => {
+    vi.clearAllMocks()
+    mocks.lsRemoteHead.mockResolvedValue('b'.repeat(40))
+    mocks.fetchOpenPRsByHead.mockResolvedValue([])
+
+    const message = await run().then(
+      () => {
+        return ''
+      },
+      (caught: unknown) => {
+        return (caught as Error).message
+      },
+    )
+
+    expect(message).toMatch(/left it without a PR/)
+    expect(message).toMatch(/gh pr create --head release\/v1\.2\.3/)
+    expect(message).not.toMatch(/release edit/)
+    expect(mocks.findVersionByName).not.toHaveBeenCalled()
+  })
+})
+
 describe('createSingleRelease — Jira fix version reuse', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.createReleaseBranch.mockResolvedValue({ branchName: 'release/v1.2.3', prUrl: 'https://gh/pr/1' })
+    mocks.lsRemoteHead.mockResolvedValue(null)
+  })
+
+  // Regression: reuse overwrote a LIVE release's Jira description, then the rejected push's cleanup
+  // advised deleting its branch.
+  it('refuses before touching Jira when the release branch already exists on origin', async () => {
+    mocks.lsRemoteHead.mockResolvedValue('b'.repeat(40))
+    mocks.findVersionByName.mockResolvedValue(version({ description: 'live' }))
+
+    mocks.fetchOpenPRsByHead.mockResolvedValue([{ number: 7 }])
+
+    await expect(run('new text')).rejects.toThrow(/live release: open PR #7.*release edit/)
+
+    expect(mocks.lsRemoteHead).toHaveBeenCalledWith(expect.any(String), 'release/v1.2.3')
+    expect(mocks.findVersionByName).not.toHaveBeenCalled()
+    expect(mocks.updateJiraVersion).not.toHaveBeenCalled()
+    expect(mocks.createReleaseBranch).not.toHaveBeenCalled()
   })
 
   it('creates the version when none exists', async () => {

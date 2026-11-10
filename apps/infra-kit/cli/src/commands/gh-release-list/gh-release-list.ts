@@ -10,7 +10,7 @@ import { defineMcpTool, textContent } from 'src/types'
  * List all open release branches
  */
 export const ghReleaseList = async () => {
-  const releasePRs = await getReleasePRsWithInfo()
+  const releasePRs = await getReleasePRsWithInfo({ allowEmpty: true })
 
   // Skip branches that do not parse as release ids (lenient discovery source).
   const releases = releasePRs.flatMap((pr) => {
@@ -50,8 +50,12 @@ export const ghReleaseList = async () => {
     return `${label}${description}${shipsOn}${mismatchMarker}`
   })
 
-  logger.info('All release branches: \n')
-  logger.info(`\n${formattedLines.join('\n')}\n`)
+  if (releases.length === 0) {
+    logger.info('No open release branches.')
+  } else {
+    logger.info('All release branches: \n')
+    logger.info(`\n${formattedLines.join('\n')}\n`)
+  }
 
   const structuredContent = {
     releases: releases.map((release) => {

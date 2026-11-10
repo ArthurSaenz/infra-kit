@@ -174,6 +174,16 @@ describe('release-edit — each flag writes exactly its own field', () => {
     })
   })
 
+  // Regression: Jira was written first, so a failed PR edit left Jira "done" and every re-run said
+  // "No change" over a stale PR body.
+  it('leaves Jira untouched when the PR body update fails, so a re-run retries both', async () => {
+    vi.mocked(updateReleasePRBody).mockRejectedValueOnce(new Error('gh: HTTP 401'))
+
+    await expect(releaseEdit({ version: '1.2.5', description: 'new', confirmedCommand: true })).rejects.toThrow(/401/)
+
+    expect(updateJiraVersion).not.toHaveBeenCalled()
+  })
+
   it('both flags make ONE PUT carrying both fields', async () => {
     const result = await releaseEdit({
       version: '1.2.5',

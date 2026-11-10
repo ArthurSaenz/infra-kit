@@ -319,12 +319,36 @@ const dispatchDeployWorkflow = async (): Promise<void> => {
   $.quiet = true
 }
 
+/**
+ * Switch to `branch` and bring it to exactly `origin/<branch>`, or throw.
+ *
+ * `--ff-only`, then an equality check: the sync below ends in a push, and a plain `git pull` would
+ * carry a commit that exists only in this checkout onto `origin/dev` (rebased under
+ * `pull.rebase=true`, merged otherwise) — unreviewed, during a production delivery.
+ */
+const switchToOriginTip = async (branch: string): Promise<void> => {
+  await $`git switch ${branch}`
+  await $`git pull --ff-only`
+
+  const local = (await $`git rev-parse HEAD`).stdout.trim()
+  const remoteRef = `origin/${branch}`
+  const remote = (await $`git rev-parse ${remoteRef}`).stdout.trim()
+
+  if (local !== remote) {
+    throw new Error(
+      `local ${branch} (${local.slice(0, 8)}) is not origin/${branch} (${remote.slice(0, 8)}) — it carries commits that were never pushed`,
+    )
+  }
+}
+
 const syncMainIntoDev = async (): Promise<void> => {
   await runStep(
     `sync main back into dev`,
-    `run manually: git switch main && git pull && git switch dev && git pull && git merge main --no-edit && git push`,
+    `run manually once local main and dev match origin: git switch main && git pull --ff-only && git switch dev && git pull --ff-only && git merge main --no-edit && git push`,
     async () => {
-      await $`git switch main && git pull && git switch dev && git pull && git merge main --no-edit && git push`
+      await switchToOriginTip('main')
+      await switchToOriginTip('dev')
+      await $`git merge main --no-edit && git push`
     },
   )
 }

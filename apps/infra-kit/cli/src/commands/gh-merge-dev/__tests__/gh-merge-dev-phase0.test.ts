@@ -9,7 +9,7 @@ import { commandEcho, confirmOrExit } from 'src/lib/command-echo'
 import { CommandDeclinedError } from 'src/lib/errors/command-declined-error'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertRepoWithOrigin } from 'src/lib/git-guard'
-import { lsRemoteHead, pushAtomic, withScratchWorktree } from 'src/lib/git-utils'
+import { lsRemoteHead, pushAtomic, revParseVerify, withScratchWorktree } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 
 import { ghMergeDev } from '../gh-merge-dev'
@@ -59,6 +59,7 @@ vi.mock('src/lib/git-utils', () => {
     withScratchWorktree: vi.fn(),
     pushAtomic: vi.fn(),
     lsRemoteHead: vi.fn(),
+    revParseVerify: vi.fn(),
     listWorktrees: vi.fn().mockResolvedValue([]),
   }
 })
@@ -174,6 +175,8 @@ const planned = (branches: string[]): MergePlanEntry[] => {
   })
 }
 
+const PLANNED_DEV_SHA = 'd'.repeat(40)
+
 beforeEach(() => {
   vi.clearAllMocks()
   commandEcho.reset()
@@ -181,6 +184,7 @@ beforeEach(() => {
   vi.mocked(getReleasePRsWithInfo).mockResolvedValue(PRS)
   vi.mocked(confirmOrExit).mockResolvedValue(undefined)
   vi.mocked(pushAtomic).mockResolvedValue({ refspecs: [], pushed: true })
+  vi.mocked(revParseVerify).mockResolvedValue(PLANNED_DEV_SHA)
 
   // Run the callback against a stand-in worktree, and prove the lifecycle wrapper
   // is what the command actually goes through.
@@ -279,6 +283,9 @@ describe('ordering and lifecycle', () => {
     // Reclassification is not optional: without it, one branch a teammate merged
     // mid-run would abort the atomic push for every other branch.
     expect(reclassify).toHaveBeenCalledTimes(1)
+    // Regression: the re-check asked about the MOVING `origin/dev`, so a branch a teammate hand-merged
+    // at the planned sha was kept once dev advanced, and its rejected push aborted every branch.
+    expect(vi.mocked(reclassify).mock.calls[0]?.[2]).toBe(PLANNED_DEV_SHA)
     expect(pushAtomic).toHaveBeenCalledTimes(1)
   })
 
@@ -314,9 +321,19 @@ describe('ordering and lifecycle', () => {
       nowUpToDate: ['release/v1.2.6'],
     })
 
-    await ghMergeDev({ all: true, confirmedCommand: true })
+    const result = await ghMergeDev({ all: true, confirmedCommand: true })
 
     expect(pushAtomic).toHaveBeenCalledWith('/repo', [{ branch: 'release/v1.2.5', sha: 'sha0' }])
+
+    // Regression: the dropped branch was reported `pushed: true` — a lie about a push that never named it.
+    expect(
+      result.structuredContent.results.map((entry) => {
+        return [entry.branch, entry.status, entry.pushed]
+      }),
+    ).toEqual([
+      ['release/v1.2.5', 'merged', true],
+      ['release/v1.2.6', 'up-to-date', false],
+    ])
   })
 
   it('reports push-aborted for every pushable branch when the atomic push is rejected', async () => {

@@ -152,6 +152,7 @@ describe('agent-mode refusals (spawned cli.js)', () => {
       kind: 'release',
       createdWorktrees: [FIXTURE_RELEASE.branch],
       count: 1,
+      failedWorktrees: [],
       features: [],
       orcaOpened: [],
       orcaSkipped: [],

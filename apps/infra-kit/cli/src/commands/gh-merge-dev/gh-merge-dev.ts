@@ -281,6 +281,10 @@ interface RunOutcome {
   abortedBy?: string
   /** Branches origin turned out to already carry despite the push reporting failure. */
   observedLanded?: string[]
+  /** Branches a teammate merged while we planned: dropped from the push, already up to date on origin. */
+  droppedUpToDate?: string[]
+  /** The branches whose merge origin carries after this run. Absent when no push was attempted. */
+  landedBranches?: string[]
   /** branch → why verification refused it, when --verify ran. */
   verifyFailed?: Map<string, string>
   /** branch → the `--keep-conflicts` hand-off, for each conflicted branch. */
@@ -328,21 +332,35 @@ const applyPush = async (args: {
   entries: MergePlanEntry[]
   selected: string[]
   verify?: string
-  integrationRef: string
-}): Promise<Pick<RunOutcome, 'pushed' | 'pushAborted' | 'abortedBy' | 'observedLanded' | 'verifyFailed'>> => {
-  const { cwd, worktreePath, entries, selected, verify, integrationRef } = args
+  /**
+   * The dev sha the plan merged. NOT the moving `origin/<integration>`: `reclassify` fetches, and once
+   * dev has advanced, a branch a teammate hand-merged at the planned sha no longer contains the new
+   * tip — it would be kept, its push rejected, and `--atomic` would abort every branch with it.
+   */
+  plannedDevRef: string
+}): Promise<
+  Pick<
+    RunOutcome,
+    'pushed' | 'pushAborted' | 'abortedBy' | 'observedLanded' | 'verifyFailed' | 'droppedUpToDate' | 'landedBranches'
+  >
+> => {
+  const { cwd, worktreePath, entries, selected, verify, plannedDevRef } = args
 
   const chosen = entries.filter((entry) => {
     return selected.includes(entry.branch)
   })
 
+  const droppedUpToDate: string[] = []
+
   const announceDropped = (branches: string[]): void => {
+    droppedUpToDate.push(...branches)
+
     for (const branch of branches) {
       logger.info(`ℹ️ ${branch} was merged by someone else while we planned — dropping it from the push`)
     }
   }
 
-  const first = await reclassify(cwd, pushableRefs(chosen), integrationRef)
+  const first = await reclassify(cwd, pushableRefs(chosen), plannedDevRef)
 
   announceDropped(first.nowUpToDate)
 
@@ -364,13 +382,15 @@ const applyPush = async (args: {
     // minutes, and a teammate merging during it makes the first reclassification
     // stale — under `--atomic` a single stale ref aborts the push for EVERY
     // branch, which is the exact failure reclassification exists to prevent.
-    const second = await reclassify(cwd, outcome.kept, integrationRef)
+    const second = await reclassify(cwd, outcome.kept, plannedDevRef)
 
     announceDropped(second.nowUpToDate)
     kept = second.kept
   }
 
-  if (kept.length === 0) return { pushed: false, pushAborted: false, verifyFailed }
+  if (kept.length === 0) {
+    return { pushed: false, pushAborted: false, verifyFailed, droppedUpToDate, landedBranches: [] }
+  }
 
   // Printed BEFORE the push so the transcript names what was in flight: an atomic
   // push that lands server-side but whose response is lost would otherwise leave
@@ -385,7 +405,17 @@ const applyPush = async (args: {
 
   const result = await pushAtomic(cwd, kept)
 
-  if (result.pushed) return { pushed: true, pushAborted: false, verifyFailed }
+  if (result.pushed) {
+    return {
+      pushed: true,
+      pushAborted: false,
+      verifyFailed,
+      droppedUpToDate,
+      landedBranches: kept.map((ref) => {
+        return ref.branch
+      }),
+    }
+  }
 
   // `--atomic` is all-or-nothing for REFS, not for our knowledge of them. A push
   // that lands server-side but whose response is lost — a dropped connection, or
@@ -419,6 +449,10 @@ const applyPush = async (args: {
     verifyFailed,
     abortedBy: result.stderr?.split('\n')[0],
     observedLanded: landed.map((entry) => {
+      return entry.branch
+    }),
+    droppedUpToDate,
+    landedBranches: landed.map((entry) => {
       return entry.branch
     }),
   }
@@ -606,6 +640,7 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
   })
 
   const { entries, selected, pushed, pushAborted, abortedBy, declined, verifyFailed, handOffs } = outcome
+  const { droppedUpToDate, landedBranches } = outcome
 
   // One cheap porcelain read, so a failed branch's printed recipe names the
   // worktree it actually lives in rather than a  that would fail.
@@ -622,6 +657,8 @@ export const ghMergeDev = async (args: GhMergeDevArgs) => {
     declined,
     verifyFailed,
     handOffs,
+    droppedUpToDate,
+    landedBranches,
     dryRun,
     worktrees,
     skipped,
@@ -659,8 +696,9 @@ const planConfirmAndPush = async (args: {
   } = args
 
   // Read beside the plan, with no fetch between: the hand-off must reproduce the conflict the
-  // operator approved, even if dev moves before it runs.
-  const plannedDevSha = keepConflicts ? await revParseVerify(cwd, integrationRef) : null
+  // operator approved, even if dev moves before it runs — and the pre-push re-check must ask about
+  // the dev these merges CARRY, not wherever `origin/dev` has moved since (see `applyPush`).
+  const plannedDevSha = await revParseVerify(cwd, integrationRef)
   const entries = await planMergeRun({ cwd, worktreePath: worktree.path, branches: toPlan, integrationRef })
   const idle = { entries, pushed: false, pushAborted: false, declined: false }
 
@@ -710,7 +748,14 @@ const planConfirmAndPush = async (args: {
     commandEcho.addOption('--yes', true)
   }
 
-  const pushOutcome = await applyPush({ cwd, worktreePath: worktree.path, entries, selected, verify, integrationRef })
+  const pushOutcome = await applyPush({
+    cwd,
+    worktreePath: worktree.path,
+    entries,
+    selected,
+    verify,
+    plannedDevRef: plannedDevSha ?? integrationRef,
+  })
 
   const branchesWhere = (predicate: (entry: MergePlanEntry) => boolean): string[] => {
     return entries
@@ -800,22 +845,30 @@ const report = (
     handOffs,
     skipped,
     integrationRef,
+    droppedUpToDate,
+    landedBranches,
   } = args
 
+  const dropped = new Set(droppedUpToDate)
+
+  // What origin carries, when the push step ran: it knows which refs were in the refspec set (a
+  // branch a teammate merged meanwhile was dropped from it) and, after an aborted push, which ones
+  // landed anyway. The derivation below is the fallback for outcomes that never reached the push.
   const pushedBranches = new Set(
-    pushed
-      ? entries
-          .filter((entry) => {
-            // Having a merge sha is not the same as having been pushed: a branch
-            // verification refused was dropped from the refspec set before the
-            // push was assembled, so reporting it as pushed would be a lie about
-            // an irreversible operation.
-            return selected.includes(entry.branch) && entry.mergeSha && !verifyFailed?.has(entry.branch)
-          })
-          .map((entry) => {
-            return entry.branch
-          })
-      : [],
+    landedBranches ??
+      (pushed
+        ? entries
+            .filter((entry) => {
+              // Having a merge sha is not the same as having been pushed: a branch
+              // verification refused was dropped from the refspec set before the
+              // push was assembled, so reporting it as pushed would be a lie about
+              // an irreversible operation.
+              return selected.includes(entry.branch) && entry.mergeSha && !verifyFailed?.has(entry.branch)
+            })
+            .map((entry) => {
+              return entry.branch
+            })
+        : []),
   )
 
   const results: MergeDevResultEntry[] = entries
@@ -832,7 +885,10 @@ const report = (
       // Keyed on membership, not on the reason: an empty reason is falsy and would
       // report a refused branch as `merged`.
       const pushOutcome: ResultStatus = pushAborted && wasPushable ? 'push-aborted' : entry.status
-      const status: ResultStatus = failedVerify ? 'verify-failed' : pushOutcome
+      // A branch someone else merged while we planned was never in the push: it is up to date on
+      // origin, by their merge and not ours — neither `merged` nor `push-aborted`.
+      const landedOutcome: ResultStatus = dropped.has(entry.branch) ? 'up-to-date' : pushOutcome
+      const status: ResultStatus = failedVerify ? 'verify-failed' : landedOutcome
       const handOff = handOffs?.get(entry.branch)
 
       return {

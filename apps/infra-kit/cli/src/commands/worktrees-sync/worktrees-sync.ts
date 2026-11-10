@@ -7,7 +7,7 @@ import { isCommandDeclined } from 'src/lib/errors/command-declined-error'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { assertManagementContext } from 'src/lib/git-guard'
-import { getCurrentWorktrees, getProjectRoot } from 'src/lib/git-utils'
+import { getCurrentWorktrees, getProjectRoot, listWorktrees } from 'src/lib/git-utils'
 import { getInfraKitConfig } from 'src/lib/infra-kit-config'
 import { logger } from 'src/lib/logger'
 import { isReleaseBranch } from 'src/lib/release-id'
@@ -42,7 +42,26 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
 
     const worktreeDir = `${projectRoot}${WORKTREES_DIR_SUFFIX}`
 
-    const releasePRsList = await getReleasePRs()
+    const releasePRsList = await getReleasePRs({ allowEmpty: true, requireComplete: true })
+
+    // git lists the main checkout first. Standing on a release branch it is not a worktree to sweep:
+    // there is nothing at `<root>-worktrees/<branch>`, and the removal reported it "removed" anyway.
+    const mainCheckoutBranch = (await listWorktrees(projectRoot))[0]?.branch ?? null
+
+    const { branchesToRemove } = categorizeWorktrees({
+      releasePRsList,
+      currentWorktrees: currentWorktrees.filter((branch) => {
+        return branch !== mainCheckoutBranch
+      }),
+    })
+
+    // Named BEFORE the confirm: with no open release PR every release worktree is selected, and a
+    // generic "proceed?" would approve a sweep the operator never saw.
+    logger.info(
+      branchesToRemove.length === 0
+        ? 'No release worktree to remove — every one still has an open PR.'
+        : `Release worktrees to remove (no open PR): ${branchesToRemove.join(', ')}`,
+    )
 
     // Ask for confirmation
     await confirmOrExit(confirmedCommand, 'Are you sure you want to proceed with these worktree changes?')
@@ -51,11 +70,6 @@ export const worktreesSync = async (options: WorktreeSyncArgs) => {
     if (!confirmedCommand) {
       commandEcho.addOption('--yes', true)
     }
-
-    const { branchesToRemove } = categorizeWorktrees({
-      releasePRsList,
-      currentWorktrees,
-    })
 
     // Shared with worktrees-remove: same verify-then-sweep recovery for a leftover a post-exit hook
     // re-created, same {removed, failed} reporting. Branches are removed concurrently, exactly as

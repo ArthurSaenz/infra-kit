@@ -286,6 +286,13 @@ export const releaseEdit = async (args: ReleaseEditArgs) => {
 
   commandEcho.addOption('--yes', true)
 
+  // The PR body FIRST, Jira last. "Changed" is read from Jira, so Jira is the record of completion:
+  // written first, a failed `gh pr edit` left a stale PR body that every re-run skipped as "No change".
+  // In this order a failure of either step leaves Jira unchanged, and the re-run redoes both.
+  if (descriptionChanged) {
+    await updateReleasePRBody({ branch: selectedBranch, body: buildReleasePrBody(jiraVersionUrl, next.description) })
+  }
+
   await updateJiraVersion(
     {
       versionId: jiraVersion.id,
@@ -294,10 +301,6 @@ export const releaseEdit = async (args: ReleaseEditArgs) => {
     },
     jiraConfig,
   )
-
-  if (descriptionChanged) {
-    await updateReleasePRBody({ branch: selectedBranch, body: buildReleasePrBody(jiraVersionUrl, next.description) })
-  }
 
   logger.info(`✅ Updated ${changedFields.join(' and ')} for ${versionName}`)
   logger.info(`🔗  Jira Version: ${jiraVersionUrl}`)

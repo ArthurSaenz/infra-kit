@@ -1,7 +1,6 @@
 import confirm from '@inquirer/confirm'
 import input from '@inquirer/input'
 import select from '@inquirer/select'
-import process from 'node:process'
 import { z } from 'zod'
 
 import { createReleaseFormProvider } from 'src/commands/release-create/release-form'
@@ -85,9 +84,12 @@ export const promptForVersionInput = async (running: SemVer[], type: ReleaseType
 
   const versionInput = versionAnswer === '' ? (suggestion ?? '') : versionAnswer
 
+  // Thrown, never `process.exit`: the caller's `finally` blocks and the top-level exit path must run.
   if (versionInput === '') {
-    logger.error('No version provided. Exiting...')
-    process.exit(1)
+    throw new OperationError(undefined, {
+      operation: 'read the release version',
+      remediation: `type a version such as ${VERSION_PROMPT_HINT}, or pass --release <spec>`,
+    })
   }
 
   return versionInput
@@ -104,17 +106,19 @@ const promptForNameInput = async (): Promise<string> => {
   ).trim()
 
   if (name === '') {
-    logger.error('No name provided. Exiting...')
-    process.exit(1)
+    throw new OperationError(undefined, {
+      operation: 'read the release name',
+      remediation: 'type a kebab-case name such as "checkout-redesign", or pass --release <spec>',
+    })
   }
 
   try {
     validateName(name)
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
-
-    logger.error(`${reason} Exiting...`)
-    process.exit(1)
+    throw new OperationError(err, {
+      operation: `use "${name}" as a release name`,
+      stderrExcerpt: err instanceof Error ? err.message : String(err),
+    })
   }
 
   return name
@@ -392,12 +396,18 @@ const executeOne = async (
     // sent operators to check two things that were both fine.
     const jiraFailure = isJiraApiError(error) ? error : undefined
 
+    // A refusal raised with its own next step keeps it: the generic advice below would replace the one
+    // sentence that says what to do about THIS failure (see the existing-branch refusal).
+    const ownRemediation = error instanceof OperationError ? error.remediation : undefined
+
+    const fallbackRemediation =
+      jiraFailure?.kind === 'auth'
+        ? 'reissue the Atlassian API token and update JIRA_TOKEN'
+        : 'verify the version or name is unique and the base branch is clean'
+
     const err = new OperationError(error, {
       operation: `create release ${prTitleLabel} (${entry.type})`,
-      remediation:
-        jiraFailure?.kind === 'auth'
-          ? 'reissue the Atlassian API token and update JIRA_TOKEN'
-          : 'verify the version or name is unique and the base branch is clean',
+      remediation: ownRemediation ?? fallbackRemediation,
       stderrExcerpt: jiraFailure?.message,
     })
 

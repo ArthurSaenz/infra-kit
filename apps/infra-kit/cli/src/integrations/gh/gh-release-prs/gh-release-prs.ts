@@ -77,13 +77,15 @@ const PR_DISCOVERY_LIMIT = 200
  * indistinguishable from a truncated one, and a silently short list reads as
  * "there are no other releases".
  */
-const warnIfTruncated = (prs: ReleasePR[], source: string): void => {
-  if (prs.length < PR_DISCOVERY_LIMIT) return
+const warnIfTruncated = (prs: ReleasePR[], source: string): boolean => {
+  if (prs.length < PR_DISCOVERY_LIMIT) return false
 
   logger.warn(
     { source, limit: PR_DISCOVERY_LIMIT },
     `⚠️ ${source} returned ${PR_DISCOVERY_LIMIT} PRs — the page is full, so older release PRs may be missing`,
   )
+
+  return true
 }
 
 /**
@@ -91,7 +93,7 @@ const warnIfTruncated = (prs: ReleasePR[], source: string): void => {
  * Searches both dev (regular) and main (hotfix) base branches.
  * Returns deduplicated ReleasePR objects.
  */
-const fetchAllReleasePRs = async (flow: GitFlow): Promise<DiscoveredPR[]> => {
+const fetchAllReleasePRs = async (flow: GitFlow): Promise<{ prs: DiscoveredPR[]; truncated: boolean }> => {
   // The main flow has one release base, so there is no second list and no dual head to flag.
   if (flow === 'main') {
     const prs =
@@ -99,11 +101,14 @@ const fetchAllReleasePRs = async (flow: GitFlow): Promise<DiscoveredPR[]> => {
 
     const list: ReleasePR[] = JSON.parse(prs.stdout)
 
-    warnIfTruncated(list, `release PR discovery (base ${PRODUCTION_BRANCH})`)
+    const truncated = warnIfTruncated(list, `release PR discovery (base ${PRODUCTION_BRANCH})`)
 
-    return list.map((pr) => {
-      return { ...pr, dualBase: false }
-    })
+    return {
+      prs: list.map((pr) => {
+        return { ...pr, dualBase: false }
+      }),
+      truncated,
+    }
   }
 
   // Issued together, not awaited in turn: one search runs 0.8–1.5 s on a consumer repo, and the
@@ -116,8 +121,8 @@ const fetchAllReleasePRs = async (flow: GitFlow): Promise<DiscoveredPR[]> => {
   const releaseList: ReleasePR[] = JSON.parse(releasePRs.stdout)
   const hotfixList: ReleasePR[] = JSON.parse(hotfixPRs.stdout)
 
-  warnIfTruncated(releaseList, 'release PR discovery (base dev)')
-  warnIfTruncated(hotfixList, 'hotfix PR discovery (base main)')
+  const releaseTruncated = warnIfTruncated(releaseList, 'release PR discovery (base dev)')
+  const hotfixTruncated = warnIfTruncated(hotfixList, 'hotfix PR discovery (base main)')
 
   // GitHub allows one open PR per head/base *pair*, so a head can be in both lists. Such a head
   // must not read as a plain regular release: merge-dev would push `dev` onto a branch that also
@@ -142,7 +147,7 @@ const fetchAllReleasePRs = async (flow: GitFlow): Promise<DiscoveredPR[]> => {
   const all: ReleasePR[] = [...hotfixList, ...releaseList]
   const seen = new Set<string>()
 
-  return all
+  const prs = all
     .filter((pr) => {
       if (seen.has(pr.headRefName)) return false
 
@@ -153,6 +158,8 @@ const fetchAllReleasePRs = async (flow: GitFlow): Promise<DiscoveredPR[]> => {
     .map((pr) => {
       return { ...pr, dualBase: dualHeads.has(pr.headRefName) }
     })
+
+  return { prs, truncated: releaseTruncated || hotfixTruncated }
 }
 
 /**
@@ -162,23 +169,49 @@ const fetchAllReleasePRs = async (flow: GitFlow): Promise<DiscoveredPR[]> => {
  */
 export const NO_OPEN_RELEASE_PRS_OPERATION = 'find open release PRs'
 
+export interface DiscoveryOptions {
+  /**
+   * Answer "nothing open" with `[]` instead of the refusal. For the callers where none IS an answer —
+   * a listing, and the worktree sweep, which has the most to remove exactly when no release is open.
+   * A picker keeps the refusal: it has nothing to offer.
+   */
+  allowEmpty?: boolean
+  /**
+   * Refuse a listing that hit the page limit instead of warning about it. For a caller that DELETES
+   * what is absent from the list (the worktree sweep): there a missing open release is data loss.
+   */
+  requireComplete?: boolean
+}
+
 /**
  * Fetch, guard against empty, and sort all open release PRs in the locked
  * deterministic order. Shared core of the two public variants below; wraps the
  * gh calls so a fetch failure surfaces as an OperationError.
  */
-const loadSortedReleasePRs = async (flow: GitFlow): Promise<DiscoveredPR[]> => {
+const loadSortedReleasePRs = async (flow: GitFlow, options: DiscoveryOptions = {}): Promise<DiscoveredPR[]> => {
   try {
-    const prs = await fetchAllReleasePRs(flow)
+    const { prs, truncated } = await fetchAllReleasePRs(flow)
 
-    if (prs.length === 0) {
+    if (truncated && options.requireComplete) {
+      throw new OperationError(undefined, {
+        operation: 'list every open release PR',
+        stderrExcerpt: `the listing hit its ${PR_DISCOVERY_LIMIT}-PR page limit, so an open release PR may be missing from it`,
+        remediation: 'close or merge stale PRs on the release base branch, then re-run',
+      })
+    }
+
+    // Checked AFTER the sort drops non-release heads: the lists are selected by base alone, so a
+    // repo with open feature PRs and no release PR is "none" too.
+    const sorted = sortReleasePRs(prs)
+
+    if (sorted.length === 0 && !options.allowEmpty) {
       throw new OperationError(undefined, {
         operation: NO_OPEN_RELEASE_PRS_OPERATION,
         remediation: 'open a release PR first, or check you are in the right repo',
       })
     }
 
-    return sortReleasePRs(prs)
+    return sorted
   } catch (error) {
     if (error instanceof OperationError) throw error
 
@@ -200,8 +233,8 @@ const loadSortedReleasePRs = async (flow: GitFlow): Promise<DiscoveredPR[]> => {
  *
  * @returns [release/v1.18.22, release/v1.18.23, release/checkout-redesign]
  */
-export const getReleasePRs = async (): Promise<string[]> => {
-  const prs = await loadSortedReleasePRs(await resolveGitFlow())
+export const getReleasePRs = async (options: DiscoveryOptions = {}): Promise<string[]> => {
+  const prs = await loadSortedReleasePRs(await resolveGitFlow(), options)
 
   return prs.map((pr) => {
     return pr.headRefName
@@ -255,9 +288,9 @@ const classifyReleasePR = (pr: DiscoveredPR, flow: GitFlow): ReleasePRInfo => {
  * order (version branches first by semver ascending, then named branches by PR
  * creation date). Unparseable head refs are filtered out.
  */
-export const getReleasePRsWithInfo = async (): Promise<ReleasePRInfo[]> => {
+export const getReleasePRsWithInfo = async (options: DiscoveryOptions = {}): Promise<ReleasePRInfo[]> => {
   const flow = await resolveGitFlow()
-  const prs = await loadSortedReleasePRs(flow)
+  const prs = await loadSortedReleasePRs(flow, options)
 
   return prs.map((pr) => {
     return classifyReleasePR(pr, flow)

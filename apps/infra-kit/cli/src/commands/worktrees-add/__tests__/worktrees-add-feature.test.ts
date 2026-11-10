@@ -141,6 +141,24 @@ describe('feature names and bases', () => {
 const DEV_PROBE = 'git ls-remote --exit-code origin refs/heads/dev'
 
 describe('worktrees add --feature', () => {
+  // Regression: a failed install was logged as "git worktree add failed" and the result said only
+  // `count: 0` — while the worktree stayed registered, so a re-run skipped it and never installed.
+  it('reports a worktree whose install failed as its own stage, naming where to run it', async () => {
+    branchIsNew(FEATURE)
+    failing.add('pnpm install')
+
+    try {
+      const result = await worktreesAdd({ confirmedCommand: true, feature: 'checkout-v2' })
+
+      expect(result.structuredContent.createdWorktrees).toEqual([])
+      expect(result.structuredContent.failedWorktrees).toEqual([
+        { branch: FEATURE, stage: 'install', reason: expect.stringContaining(FEATURE_PATH) },
+      ])
+    } finally {
+      failing.delete('pnpm install')
+    }
+  })
+
   it('cuts a new branch from origin/dev with no upstream and reports it', async () => {
     branchIsNew(FEATURE)
 

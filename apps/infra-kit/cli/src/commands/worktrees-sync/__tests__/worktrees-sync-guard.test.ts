@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getReleasePRs } from 'src/integrations/gh'
 import { assertManagementContext } from 'src/lib/git-guard'
-import { getCurrentWorktrees } from 'src/lib/git-utils'
+import { getCurrentWorktrees, listWorktrees } from 'src/lib/git-utils'
 import { resetInfraKitConfigCache } from 'src/lib/infra-kit-config'
 
 import { worktreesSync } from '../worktrees-sync'
@@ -51,6 +51,7 @@ beforeEach(async () => {
   vi.mocked(getProjectRoot).mockResolvedValue(tmp)
   vi.mocked(getMainRepoRoot).mockResolvedValue(tmp)
   vi.mocked(getCurrentWorktrees).mockResolvedValue([])
+  vi.mocked(listWorktrees).mockResolvedValue([])
   vi.mocked(getReleasePRs).mockResolvedValue([])
   vi.mocked(assertManagementContext).mockResolvedValue(undefined)
   homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmp)
