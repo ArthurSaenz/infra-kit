@@ -951,3 +951,15 @@ inside the merge→publish window. The doctor skill rule "no `launch` field in `
 - Close-out: reviewer (architect, thorough) APPROVED all 7 stories; 3 prose fixes + deslop (dead buildServerEntry removed) in bb1f2cc;
   post-deslop regression 1136/1136 (CLI suites) + 320/320 (plugin). Branch graph: main ← do/mcp-via-plugin-step0 (…5059e57) ←
   do/mcp-via-plugin-migration (dc7d12b, 8fb7396, f353a16, bb1f2cc). Nothing pushed.
+
+## 2026-10-27 ralph: software-factory roadmap F0 + R1
+PRD: .omc/state/sessions/21f087f5-6429-41b7-b67a-e7b2294005bd/prd.json (plan .omc/plans/software-factory-roadmap.md)
+Defaults taken: Q3 (root infra-kit pins) = warn only; Q5 (CI qa backstop) = accept, no change.
+Dispatched in parallel: F0 (all repos, commits own paths), P0+P8, P1, P2, P4b-1 (no commits; integrated at R1 gate).
+Pre-existing dirty files owned by another session — never stage: gh-merge-dev/*, gh-release-prs/*, agent-cli-fixture.ts, merge-dev SKILL.md, pnpm-lock.yaml.
+F0 done: commits starter 3633aaa, hulyo bb406bc47, travelist 31e939c1a5, nomadream cab7b303, bridge 8c656ac, infra-kit b3ac908. Consumer docs keep 'CI→cloud' default wording (published infraKitE2e behaviour).
+P4b-1 done (infra-kit-config.ts, config-set.ts, tests); refusal reason config-version-unsupported.
+P0+P8 done; manifest.test.mjs now skips .omc/ (stale OMC state in skills/ broke 5 tests). P8 audit --fix regeneration deferred to R1 gate.
+P2 done: change-stats. Baselines 90d (agent vs human 72h follow-up-fix): infra-kit 7.4% vs 2.1%, hulyo 11.1% vs 1.8%, travelist 22.1% vs 17.7%; revert ~0-1%.
+Architect APPROVE R1 after fixes (configVersion check before strict parse, plural, guidance-check try/catch, groupByName, censoring comment). Bridge --all e2e-config failure is pre-existing (F5a).
+R1 0.35.0 pushed + staged (run 40492955055). Also committed pending lockfile catch-up d7b77be (9fd9a7b left it out; Release/plugin-ci were failing frozen install).
