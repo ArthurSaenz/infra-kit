@@ -66,8 +66,7 @@ const git = (cwd: string, env: Record<string, string>, args: string[]): void => 
  * fails loudly on anything else, so a new `gh` call in the code under test surfaces as a red test
  * naming the argv rather than as a mysterious empty list.
  *
- * `$*` joins the argv with single spaces, which is what the `case` patterns below match on. zx
- * expands `--search "Release in:title"` to one argv element, so it appears here without quotes.
+ * `$*` joins the argv with single spaces, which is what the `case` patterns below match on.
  */
 const fakeGhScript = (logPath: string): string => {
   return `#!/bin/sh
@@ -78,10 +77,10 @@ case "$*" in
     ;;
   'auth status')
     ;;
-  *'Release in:title'*)
+  'pr list --limit '*'--base dev '*)
     printf '%s\\n' '[{"number":1,"title":"${FIXTURE_RELEASE.prTitle}","headRefName":"${FIXTURE_RELEASE.branch}","state":"OPEN","baseRefName":"dev","createdAt":"2026-09-01T00:00:00Z"}]'
     ;;
-  *'Hotfix in:title'*)
+  'pr list --limit '*'--base main '*)
     echo '[]'
     ;;
   'pr list --head ${FIXTURE_RELEASE.branch} '*)

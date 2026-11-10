@@ -90,7 +90,7 @@ const warnIfTruncated = (prs: ReleasePR[], source: string): boolean => {
 
 /**
  * Fetch all open release/hotfix PRs from GitHub.
- * Searches both dev (regular) and main (hotfix) base branches.
+ * Lists both dev (regular) and main (hotfix) base branches.
  * Returns deduplicated ReleasePR objects.
  */
 const fetchAllReleasePRs = async (flow: GitFlow): Promise<{ prs: DiscoveredPR[]; truncated: boolean }> => {
@@ -111,11 +111,14 @@ const fetchAllReleasePRs = async (flow: GitFlow): Promise<{ prs: DiscoveredPR[];
     }
   }
 
-  // Issued together, not awaited in turn: one search runs 0.8–1.5 s on a consumer repo, and the
+  // Selected by base only, never by title: a title search silently dropped a `Hotfix …` PR on
+  // `dev` from both lists, before `classifyReleasePR` could flag the mismatch. Non-release heads
+  // are dropped by `parseBranchName` in `sortReleasePRs`.
+  // Issued together, not awaited in turn: one list runs 0.8–1.5 s on a consumer repo, and the
   // argument form that enumerates through here has 2.5 s for the pair (`lib/release-remove-form`).
   const [releasePRs, hotfixPRs] = await Promise.all([
-    $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --search "Release in:title" --base dev --json number,title,headRefName,state,baseRefName,createdAt`,
-    $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --search "Hotfix in:title" --base main --json number,title,headRefName,state,baseRefName,createdAt`,
+    $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --base dev --json number,title,headRefName,state,baseRefName,createdAt`,
+    $`gh pr list --limit ${PR_DISCOVERY_LIMIT} --base main --json number,title,headRefName,state,baseRefName,createdAt`,
   ])
 
   const releaseList: ReleasePR[] = JSON.parse(releasePRs.stdout)

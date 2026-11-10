@@ -450,6 +450,20 @@ describe('discovery page size (gh pr list --limit)', () => {
 
     expect(vi.mocked(logger.warn)).not.toHaveBeenCalled()
   })
+
+  // Regression: a `--search "<Release|Hotfix> in:title"` per base made hulyo's
+  // `Hotfix julyo-order-be` PR on dev (#1363) invisible to every discovery consumer.
+  // The mock ignores --search, so the titleMismatch rows above hold only while
+  // the real query keeps every title — this pins that.
+  it('selects by base alone, never filtering by title', async () => {
+    responses.release = [pr({ headRefName: 'release/v1.0.0', createdAt: '2026-01-01T00:00:00Z' })]
+
+    await getReleasePRs()
+
+    for (const command of listCommands()) {
+      expect(command).not.toContain('--search')
+    }
+  })
 })
 
 describe('discovery concurrency', () => {
