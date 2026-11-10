@@ -63,7 +63,7 @@ describe('deprecated local aliases', () => {
   })
 
   it('keeps --service registered on the alias its forwarding depends on', () => {
-    // program.ts forwards `options.service` into the merged args as `services`. Drop or rename this
+    // register/release.ts forwards `options.service` into the merged args as `services`. Drop or rename this
     // flag and that forwarding silently yields undefined — a deploy-everything on a -selected command.
     expect(optionFlags(['local', 'deploy-selected'])).toContain('--service')
   })

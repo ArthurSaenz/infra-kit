@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import { buildProgram } from 'src/entry/program'
 
-import { MENU_GROUPS, getMenuGroupEntries } from '../command-catalog'
+import { MENU_GROUPS } from '../catalog-entry'
+import { getMenuGroupEntries } from '../command-catalog'
 import { buildPaletteItems, resolveLeaf } from '../palette'
 
 /**

@@ -8,7 +8,8 @@ import { resolveLeaf } from 'src/entry/command-catalog/palette'
 import { commandEcho } from 'src/lib/command-echo'
 import { logger } from 'src/lib/logger'
 
-import { buildProgram, commandPath } from '../program'
+import { commandPath } from '../command-path'
+import { buildProgram } from '../program'
 
 // The preAction hook's other leg touches the outside world: the layer-3 seed writes to $HOME. It is not
 // under test here, and a test that seeds a real home dir is a test that changes the machine it runs on.

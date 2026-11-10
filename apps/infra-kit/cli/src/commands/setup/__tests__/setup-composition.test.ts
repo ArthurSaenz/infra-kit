@@ -286,7 +286,7 @@ describe('--skip-tools installs nothing, and cannot be talked into installing so
    * silently-dropped flag. Commander errors on an unknown option unless a command opts out with
    * `allowUnknownOption`, so this asserts the CLI has no such opt-out anywhere.
    *
-   * Reds on: adding `allowUnknownOption()` to `program.ts` or any command — after which
+   * Reds on: adding `allowUnknownOption()` to `buildProgram` or any command — after which
    * `infra-kit setup --skip-tool` (one letter short) would parse as flagless `setup` and INSTALL.
    */
   it('fails closed on a misspelled flag: no command anywhere opts out of unknown-option errors', () => {

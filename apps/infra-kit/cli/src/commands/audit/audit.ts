@@ -49,7 +49,7 @@ interface AuditStructuredContent {
   packages: { name: string; passed: boolean; checks: PackageValidationResult['checks'] }[]
   /**
    * Present only on a `--fix` run, which is why it is optional rather than conditionally
-   * spread: `program.ts` destructures it, so the property has to exist on the type even
+   * spread: `entry/program/register/diagnostics.ts` destructures it, so the property has to exist on the type even
    * though the tool `outputSchema` never documents it.
    */
   fixed?: FixedEntry[]

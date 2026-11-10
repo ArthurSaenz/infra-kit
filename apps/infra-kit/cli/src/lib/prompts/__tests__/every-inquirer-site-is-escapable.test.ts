@@ -240,7 +240,7 @@ describe('no raw readline outside the prompts module', () => {
 // SCOPE — agent-reachable sites, and what an agent reaches is the Bash surface, not a tool list: every
 // command is one `Bash(infra-kit …)` away, so a prompt in a command that never carried a tool
 // (`env-token-set`) or in a command with no `commands/<cmd>/<cmd>.ts` at all (`dev`, wired inline in
-// `program.ts` off `entry/dev-server.ts`, whose closure holds the wizard) must declare its answer like
+// `entry/program/register/dev.ts` off `entry/dev-server.ts`, whose closure holds the wizard) must declare its answer like
 // any other. The one prompt outside the rule is `entry/cli.ts`'s palette — not a command, and a human
 // typed the bare `infra-kit` that opens it. Reachability, and the ways it over-approximates, are
 // documented in `./agent-reachable-prompt-sites`.

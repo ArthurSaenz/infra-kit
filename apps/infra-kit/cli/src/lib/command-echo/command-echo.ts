@@ -15,7 +15,7 @@ const createCommandEcho = () => {
      * Bind the echo to the command about to run, and clear the previous one's recording.
      *
      * `cliPath` must be the argv Commander actually parsed (`release create`), which is why the ONLY
-     * caller is program.ts's `preAction` hook, feeding it `commandPath(actionCommand)`. Commands used to
+     * caller is the `preAction` hook in entry/program/lifecycle.ts, feeding it `commandPath(actionCommand)`. Commands used to
      * name themselves here, and that is precisely how the printed line rotted: they passed the flat
      * `release-create`, which stopped being a command the day the flat aliases were dropped, so the
      * "equivalent command" we told the user to retype no longer parsed. Commander is the only thing that

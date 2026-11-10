@@ -1,2 +1,3 @@
-export { commandCatalog, getMenuGroupEntries, isLongRunningCommand, MENU_GROUPS } from './command-catalog'
-export type { CommandCatalogEntry, MenuGroup } from './command-catalog'
+export { MENU_GROUPS } from './catalog-entry'
+export type { CommandCatalogEntry, MenuGroup } from './catalog-entry'
+export { commandCatalog, getMenuGroupEntries, isLongRunningCommand } from './command-catalog'

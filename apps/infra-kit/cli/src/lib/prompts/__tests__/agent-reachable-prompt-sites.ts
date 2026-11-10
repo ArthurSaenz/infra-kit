@@ -3,7 +3,7 @@ import path from 'node:path'
 import ts from 'typescript'
 
 import { commandCatalog } from 'src/entry/command-catalog'
-import type { CatalogMcpTool } from 'src/entry/command-catalog/command-catalog'
+import type { CatalogMcpTool } from 'src/entry/command-catalog/catalog-entry'
 
 /**
  * @fileoverview
@@ -206,7 +206,7 @@ const commandEntryFiles = (): string[] => {
 }
 
 /**
- * `dev` has no `commands/dev/dev.ts`: `program.ts` wires it inline through a dynamic import of this
+ * `dev` has no `commands/dev/dev.ts`: `entry/program/register/dev.ts` wires it inline through a dynamic import of this
  * entry, so its whole graph (the wizard included) hangs off a file the directory convention never
  * sees. It is still one `Bash(infra-kit dev)` away.
  */

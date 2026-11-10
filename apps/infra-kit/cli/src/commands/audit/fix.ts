@@ -162,7 +162,7 @@ const toFixedEntry = (file: GuidanceWrite): FixedEntry => {
  *
  * Sets no exit code — `audit()`'s standing invariant is that it never touches `process.exitCode`,
  * it returns a result. The `fixed` entries carrying `action: 'failed'` are the signal;
- * `program.ts` turns them into an exit code.
+ * `entry/program/register/diagnostics.ts` turns them into an exit code.
  *
  * The adoption cache is dropped on both sides of the sync: before, so the pre-fix verdict is the
  * real working-tree state rather than a memo from earlier in the process, and after, so the

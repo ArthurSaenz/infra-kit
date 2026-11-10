@@ -253,7 +253,7 @@ describe('g8 — every `{ refuse: <argument> }` names a field the owning tool de
 
   it('finds that field REGISTERED as a flag on every owning tool-less command', () => {
     // Same claim, other surface: a command with no tool has no `inputSchema`, so the only thing that
-    // makes "pass `stdin`" true is the `--stdin` option in `entry/program/program.ts` — a file that,
+    // makes "pass `stdin`" true is the `--stdin` option in `entry/program/register/env.ts` — a file that,
     // again, never mentions prompts.
     const broken = promptSites
       .filter((site) => {

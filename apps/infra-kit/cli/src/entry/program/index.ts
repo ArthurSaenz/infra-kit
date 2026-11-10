@@ -1,1 +1,2 @@
-export { buildProgram, commandPath } from './program'
+export { commandPath } from './command-path'
+export { buildProgram } from './program'

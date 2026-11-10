@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
+import type { CommandCatalogEntry } from 'src/entry/command-catalog/catalog-entry'
 import { LOW_RISK_MUTATING_ALLOWLIST, commandCatalog } from 'src/entry/command-catalog/command-catalog'
-import type { CommandCatalogEntry } from 'src/entry/command-catalog/command-catalog'
 
 /**
  * @fileoverview

@@ -41,7 +41,7 @@ import { worktreesAdd } from '../worktrees-add'
 // `@inquirer/confirm` and `withEscape` are likewise NOT mocked: they are the things that
 // produce the bytes under measurement. Only surrounding I/O is stubbed.
 //
-// The third test is the counterweight, and it is load-bearing. `program.ts` maps the
+// The third test is the counterweight, and it is load-bearing. `entry/program/register/worktrees.ts` maps the
 // CLI's `--yes` onto `confirmedCommand`, so a guard keyed on `confirmedCommand` rather
 // than `isAgentMode()` would silently stop `worktrees add --yes` prompting on a terminal —
 // fixing the agent direction by breaking the CLI one.

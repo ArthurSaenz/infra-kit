@@ -158,15 +158,15 @@ describe('commandEcho ownership', () => {
    * that names its own echo compiles, passes its own tests, and prints a `pnpm exec` line that the CLI
    * rejects — which is exactly how `release-create` survived the removal of the flat aliases.
    *
-   * Only Commander knows the argv it parsed, so only program.ts's `preAction` may call `start()`. The
+   * Only Commander knows the argv it parsed, so only the `preAction` hook in entry/program/lifecycle.ts may call `start()`. The
    * scan is over the source tree rather than a list of known commands, so a NEW command that reintroduces
    * the habit fails here without anyone remembering to add it.
    */
-  it('lets nothing but program.ts bind a command path', () => {
+  it('lets nothing but the preAction hook bind a command path', () => {
     const src = path.resolve(__dirname, '../../..')
 
     const offenders = sourceFiles(src).filter((file) => {
-      return /commandEcho\.start\(/u.test(readFileSync(file, 'utf8')) && !file.endsWith('entry/program/program.ts')
+      return /commandEcho\.start\(/u.test(readFileSync(file, 'utf8')) && !file.endsWith('entry/program/lifecycle.ts')
     })
 
     const relative = offenders.map((file) => {

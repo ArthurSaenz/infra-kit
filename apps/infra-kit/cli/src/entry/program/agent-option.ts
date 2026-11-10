@@ -2,7 +2,7 @@
  * @fileoverview
  * Registration of the global `--agent` flag on the Commander tree.
  *
- * Registration only — the flag is READ by the `preAction` hook in program.ts, which feeds it to
+ * Registration only — the flag is READ by the `preAction` hook in lifecycle.ts, which feeds it to
  * `resolveAgentModeSource` (lib/agent-mode). It lives beside `debug-option.ts` for the same reason
  * that file gives: option registration is a Commander-surface concern.
  */

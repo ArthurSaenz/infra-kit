@@ -1,6 +1,7 @@
 import type { Command } from 'commander'
 
-import { MENU_GROUPS, getMenuGroupEntries } from './command-catalog'
+import { MENU_GROUPS } from './catalog-entry'
+import { getMenuGroupEntries } from './command-catalog'
 
 /**
  * The flat, grouped command list behind every no-arg surface: the Ink palette, the Inquirer fallback,

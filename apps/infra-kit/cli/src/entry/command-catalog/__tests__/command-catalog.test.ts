@@ -5,14 +5,14 @@ import { describe, expect, it } from 'vitest'
 import { mutatingCommandsReachedBy } from 'src/commands/doctor/agent-allowlist'
 import { buildProgram, commandPath } from 'src/entry/program'
 
+import { MENU_GROUPS } from '../catalog-entry'
+import type { CommandCatalogEntry } from '../catalog-entry'
 import {
   LOW_RISK_MUTATING_ALLOWLIST,
-  MENU_GROUPS,
   commandCatalog,
   getMenuGroupEntries,
   isLongRunningCommand,
 } from '../command-catalog'
-import type { CommandCatalogEntry } from '../command-catalog'
 import { resolveLeaf } from '../palette'
 
 /**

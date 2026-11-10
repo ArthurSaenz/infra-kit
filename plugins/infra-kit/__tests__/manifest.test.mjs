@@ -630,16 +630,17 @@ test('T2: no SKILL.md under plugins/ names a plugin-served MCP tool', () => {
 // spell `mutating: false` before the field does (the `doctor` row).
 // ---------------------------------------------------------------------------
 
-const COMMAND_CATALOG = join(
-  REPO_ROOT,
-  'apps',
-  'infra-kit',
-  'cli',
-  'src',
-  'entry',
-  'command-catalog',
-  'command-catalog.ts',
-)
+// The catalog rows live beside each domain's Commander wiring; `command-catalog.ts` only composes them.
+const COMMAND_CATALOG_DIR = join(REPO_ROOT, 'apps', 'infra-kit', 'cli', 'src', 'entry', 'program', 'register')
+
+/** Every `register/<domain>.ts`, as one text. */
+function readCatalogSources() {
+  return readdirSync(COMMAND_CATALOG_DIR)
+    .filter((file) => file.endsWith('.ts'))
+    .sort()
+    .map((file) => readText(join(COMMAND_CATALOG_DIR, file)))
+    .join('\n')
+}
 
 /** `groupPath.join(' ')` → `mutating`, for every `{ cliName, …, mutating, …, groupPath }` row. */
 function readCatalog(text) {
@@ -689,8 +690,8 @@ function cliRuleErrors(rule, catalog) {
 }
 
 test('U20: every Bash( rule in every allowed-tools is an infra-kit read-only row, a bundled script, or a non-CLI head', () => {
-  assert.ok(existsSync(COMMAND_CATALOG), `${rel(COMMAND_CATALOG)} is missing`)
-  const catalog = readCatalog(readText(COMMAND_CATALOG))
+  assert.ok(existsSync(COMMAND_CATALOG_DIR), `${rel(COMMAND_CATALOG_DIR)} is missing`)
+  const catalog = readCatalog(readCatalogSources())
   assert.ok(catalog.get('release list') === false, 'the catalog parse must see `release list` as read-only')
   assert.ok(catalog.get('release remove') === true, 'the catalog parse must see `release remove` as mutating')
 

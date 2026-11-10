@@ -17,7 +17,7 @@ import { initCore } from 'src/lib/init'
  * `lib/dependency-install` is mocked at the MODULE boundary rather than through `setup`'s injectable
  * `run` seam, because "installs nothing" is the invariant under test and a test asserting it against an
  * injected fake would pass on a build that ignored the injection. Driving through `parseAsync` rather
- * than calling the actions directly is the other half of that: the wiring in `program.ts` IS the thing
+ * than calling the actions directly is the other half of that: the wiring in `entry/program/register/` IS the thing
  * being pinned, so a test that imported `setup` and called it with `{ skipTools: true }` would keep
  * passing on a build where the FLAG never reaches that argument.
  */

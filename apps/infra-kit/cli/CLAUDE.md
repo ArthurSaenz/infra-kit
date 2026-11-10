@@ -11,6 +11,15 @@
 - `entry/` is the composition root: `entry/program` and `entry/command-catalog` import every command. When a lower layer needs something only a higher one can build, the higher one passes it in — `doctor({ catalog })`, `run(options, createDevUi)`, `registerBranchPickers(...)` in `entry/cli.ts`.
 - Moves are `git mv` with no re-export shim left behind.
 
+## Adding a command
+
+- The handler lives in `src/commands/<name>/` and returns a structured result; it never calls `process.exit` (throw an `OperationError` / `StructuredRefusalError`, so `finally` blocks and the top-level exit path run).
+- Its Commander wiring (options, action, exit code) AND its catalog entry (menu group, `mutating`, tool schema) go into ONE domain module under `src/entry/program/register/` — `release`, `worktrees`, `config`, `deploy`, `vendor`, `dev`, `env`, `diagnostics`. `program.ts` composes the wiring, `command-catalog.ts` composes the `<domain>Catalog` arrays; `lifecycle.ts` holds the flags and hooks every command shares.
+- A batch command whose run partly failed reports it through `emitOutcome` (`entry/program/emit-outcome.ts`): `status: "partial_failure"` beside the payload, exit 1. An unexpected failure reaches `--json` as `{ status: "error", message }`.
+- `dev/dev-server.ts` holds the runner's lifecycle only — boot, restart, watch wiring, teardown. Everything with its own rules lives beside it and is unit-tested alone: `run-plan.ts` (what a run launches), `health-ledger.ts` (row health), `row-activity.ts` (req/min, first error), `restart-scheduler.ts` (debounce and changed files), `dist-build-tracker.ts` (which build wrote a change, lost-save recovery), `dev-context-store.ts` (fragments), `helper-version-floor.ts`, `launch-script.ts`, `runner-types.ts`. New runner state goes into such a module, not into the class.
+- A `doctor` check goes into `src/commands/doctor/checks/<domain>.ts` (`agent`, `claude-plugin`, `env-tokens`, `portless`), returns a `CheckResult` (`check-result.ts`), is called from `doctor.ts`, and is placed in a report section via `SECTION_MEMBERS` in `report.ts`.
+- A mutating command that is deliberately ungated is named in `LOW_RISK_MUTATING_ALLOWLIST` (`src/entry/command-catalog/command-catalog.ts`).
+
 <!-- infra-kit:package:begin -->
 <!-- infra-kit:package:version 0.21.0 lib -->
 
