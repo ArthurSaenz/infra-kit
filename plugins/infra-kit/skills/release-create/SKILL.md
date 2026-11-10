@@ -75,8 +75,8 @@ changed argument deserves a fresh plan.
 
 **The other exits.** `{"status": "refused"}` (exit 2) is a state only the human can clear — relay
 the message and stop. `{"status": "partial_failure"}` (exit 1) means something ran and part of it
-failed — relay the payload whole (section 3, batches). Non-JSON stdout, or exit 1 with no JSON, is a
-crash: stop and show stderr.
+failed — relay the payload whole (section 3, batches). `{"status": "error", "message"}` (exit 1) is an unexpected failure: relay `message` and stop.
+Non-JSON stdout, or exit 1 with no JSON (an older CLI), is a crash: stop and show stderr.
 
 ## 3. What goes in `-r`
 

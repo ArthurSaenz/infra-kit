@@ -69,8 +69,10 @@ Do not edit `rerun` by hand.
 
 **The result.** `createdWorktrees` lists the branches created, and `features[]` gives each
 `branch`, `base` and `source` (`new` | `local` | `remote`). A name that already has a worktree is
-skipped with nothing created. Report its path from `worktrees list` instead. A branch missing from
-`createdWorktrees` failed in `git worktree add` or `pnpm install`; stderr says which.
+skipped with nothing created. Report its path from `worktrees list` instead. A target that did not end
+as a usable worktree is in `failedWorktrees[]` with a `stage` — `add` (nothing was created) or
+`install` (the worktree exists, `pnpm install` failed in it; `reason` names the path to run it in) —
+and the command exits 1 with `status: "partial_failure"` beside the payload.
 
 ## 4. After creating it
 

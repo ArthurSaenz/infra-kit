@@ -78,8 +78,8 @@ width and reads as broken text in the chat, so do not paste it.
 
 Transcribe; never compose. Every row goes in, in array order, and you drop, merge, re-group and
 reword nothing. A table built from anything other than `report` is a second copy, and it drifts.
-Skip the streamed `running` lines. When there is no JSON (a crash), show stderr unchanged in a code
-fence.
+Skip the streamed `running` lines. When there is no JSON, or the JSON is `{"status": "error", "message"}` (a crash), show stderr
+unchanged in a code fence.
 
 ### How to read the result
 
@@ -104,7 +104,8 @@ stdout is one JSON document:
 
 **The exit rule.** Exit 1 iff `report` has a `fail` row; a `manual` row never counts. Exit 2 with
 `{"status": "refused"}` is a usage error or a state only the human can clear: relay it and stop.
-Non-JSON stdout, or exit 1 with no JSON, is a crash: stop and show stderr.
+`{"status": "error", "message"}` (exit 1) is an unexpected failure: relay `message` and stop.
+Non-JSON stdout, or exit 1 with no JSON (an older CLI), is a crash: stop and show stderr.
 
 Then act on the JSON. **Name every `manual` row in `report` — tools, init and portless alike — and
 hand the human the command in its notes.** That one rule covers five sources: the refused tool

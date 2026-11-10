@@ -3444,6 +3444,34 @@ exports[`--json contract > matches the committed contract snapshot 1`] = `
           },
           "type": "array",
         },
+        "failedWorktrees": {
+          "description": "Targets that did not end as a usable worktree: stage "add" = nothing was created; "install" = the worktree exists but \`pnpm install\` failed in it (reason names the path to run it in)",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "type": "string",
+              },
+              "reason": {
+                "type": "string",
+              },
+              "stage": {
+                "enum": [
+                  "add",
+                  "install",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "branch",
+              "stage",
+              "reason",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
         "features": {
           "description": "Created feature worktrees: source "new" = cut from origin/<base>; "local" / "remote" = an existing branch checked out as-is (base not applied)",
           "items": {
@@ -3571,6 +3599,7 @@ exports[`--json contract > matches the committed contract snapshot 1`] = `
         "features",
         "createdWorktrees",
         "count",
+        "failedWorktrees",
         "orcaOpened",
         "orcaSkipped",
         "orcaHidden",
@@ -3764,6 +3793,7 @@ exports[`--json contract > matches the committed contract snapshot 1`] = `
           "argument_required",
           "partial_failure",
           "refused",
+          "error",
         ],
         "type": "string",
       },

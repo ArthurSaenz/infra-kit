@@ -43,8 +43,9 @@ Tell the human each phase's outcome briefly as it finishes; tables only where th
 | `protected_env`       | `env` is protected                                             | relay and stop                         |
 | `run_in_progress`     | another local run of this package holds its dev server (`pid`) | wait for it; never run two at once     |
 
-Anything else — exit ≠ 0 with empty stdout — is a crash or a config error: relay stderr. Never retry a
-refusal unchanged, and never report one as a test result.
+Anything else — exit ≠ 0 with `status: "error"` and a `message` (or empty stdout, from an older CLI) —
+is a crash or a config error: relay the message. Never retry a refusal unchanged, and never report one
+as a test result.
 
 ## 1. Arguments and language
 

@@ -36,10 +36,13 @@ const enveloped = (shape: z.ZodRawShape) => {
   return z.object({ ...jsonEnvelopeShape, ...shape })
 }
 
-/** What any command writes instead of its payload when it refuses (`exitForError`). */
+/**
+ * What any command writes instead of its payload when it does not complete (`exitForError`): one of
+ * the four refusals, or `error` — an unexpected failure, which carries only `message`.
+ */
 export const jsonRefusalSchema = z.looseObject({
   ...jsonEnvelopeShape,
-  status: z.enum(['confirmation_required', 'argument_required', 'partial_failure', 'refused']),
+  status: z.enum(['confirmation_required', 'argument_required', 'partial_failure', 'refused', 'error']),
 })
 
 const EXPLICIT: Record<string, z.ZodType> = {

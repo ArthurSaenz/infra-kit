@@ -94,8 +94,9 @@ only for the same tree and the same command, so changing it re-runs the whole su
    `<root>-worktrees/merge-dev/<branch-slug>` — detached, mid-merge, with a state file recording
    `baseSha`, `devSha` and `conflictPaths` (or `editablePaths`).
 3. **Exit 1 with parseable JSON `results` is the expected hand-off, not a failure** — the CLI exits 1
-   whenever a branch was handed off, so CI sees an incomplete run. Only non-JSON stdout, or exit 1
-   with no JSON, is a crash: stop and show stderr.
+   whenever a branch was handed off, so CI sees an incomplete run. Exit 1 with
+   `{"status": "error", "message"}` (no `results`) is an unexpected failure: relay `message` and stop.
+   Non-JSON stdout, or exit 1 with no JSON (an older CLI), is a crash: stop and show stderr.
 
 Nothing in section 2 is retried. `hook-failed`, `error`, a clean `push-aborted`, and a
 `verify-failed` row **without** a `resolution` (a fast-forward — dev itself fails verify — or a

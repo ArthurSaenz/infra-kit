@@ -22,7 +22,8 @@ const DEFAULT_DEPS: ExitForErrorDeps = { exit: process.exit, emit, logger }
  *    failure;
  * 2. a `StructuredRefusalError` emits its payload (stdout, `--json` only), logs its message and exits
  *    with the error's own code;
- * 3. anything else logs its message and exits 1.
+ * 3. anything else emits `{ status: 'error', message }` (stdout, `--json` only), logs its message and
+ *    exits 1.
  *
  * Extracted from `entry/cli.ts` — which runs at import time and so cannot be unit-tested — with the
  * process seams injectable. `deps` exist for the test; production callers pass nothing.
@@ -44,7 +45,12 @@ export const exitForError = (error: unknown, deps: ExitForErrorDeps = DEFAULT_DE
     return deps.exit(error.exitCode)
   }
 
-  deps.logger.error(error instanceof Error ? error.message : String(error))
+  const message = error instanceof Error ? error.message : String(error)
+
+  // A document under `--json` too, like the refusals above. Empty stdout forced a machine reader to
+  // scrape stderr for the reason; `status: 'error'` tells a crash from a refusal by one key.
+  deps.emit({ structuredContent: { status: 'error', message } })
+  deps.logger.error(message)
 
   return deps.exit(1)
 }

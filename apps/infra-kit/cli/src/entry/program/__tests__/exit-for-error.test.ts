@@ -125,15 +125,23 @@ describe('exitForError — the entry/cli.ts catch', () => {
     expect(harness().exitCodeFor(partial)).toBe(1)
   })
 
-  it('a plain OperationError takes the generic branch: exit 1, message on stderr, nothing on stdout', () => {
+  it('a plain OperationError takes the generic branch: exit 1, message on stderr, an error document under --json', () => {
     jsonOutput.enabled = true
 
     const h = harness()
     const plain = new OperationError(undefined, { operation: 'x', remediation: 'y' })
 
     expect(h.exitCodeFor(plain)).toBe(1)
-    expect(h.stdout).toEqual([])
+    expect(h.stdout).toHaveLength(1)
+    expect(JSON.parse(h.stdout[0] as string)).toMatchObject({ status: 'error', message: plain.message })
     expect(h.stderr).toEqual([plain.message])
+  })
+
+  it('the generic branch writes nothing to stdout without --json', () => {
+    const h = harness()
+
+    expect(h.exitCodeFor(new Error('boom'))).toBe(1)
+    expect(h.stdout).toEqual([])
   })
 
   it('a non-Error value is stringified and exits 1', () => {

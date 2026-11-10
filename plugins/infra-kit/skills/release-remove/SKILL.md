@@ -123,8 +123,8 @@ If the human names a different release, build a new preview run with the new `-v
 
 **The other exits.** `{"status": "refused"}` (exit 2) — section 1; relay and stop.
 `{"status": "partial_failure"}` (exit 1) — a step failed after earlier ones ran; the payload is the
-residue report (section 4), relay it whole. Non-JSON stdout, or exit 1 with no JSON, is a crash:
-stop and show stderr.
+residue report (section 4), relay it whole. `{"status": "error", "message"}` (exit 1) is an unexpected failure: relay `message` and stop.
+Non-JSON stdout, or exit 1 with no JSON (an older CLI), is a crash: stop and show stderr.
 
 ## 3. What goes in `-v`
 
