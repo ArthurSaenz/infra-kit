@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetZxFactoryArgs, zxFactoryArgs, zxTagCalls } from 'src/lib/quiet-shell/__tests__/zx-shell-mock'
 
+import type { CheckResult } from '../check-result'
 import { doctor } from '../doctor'
-import type { CheckResult } from '../doctor'
 
 /**
  * The pass/fail contract of the binary-probe checks — the ones whose whole implementation is

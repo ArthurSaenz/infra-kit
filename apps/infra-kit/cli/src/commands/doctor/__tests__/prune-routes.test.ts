@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { pruneStalePortlessRoutes } from '../doctor'
+import { pruneStalePortlessRoutes } from '../checks/portless'
 import { decidePrune, isDevSessionRunning, looksLikeDevRunner } from '../prune-routes'
 
 describe('decidePrune', () => {

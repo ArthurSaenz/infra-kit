@@ -6,8 +6,9 @@ import type { TokenStore } from 'src/lib/env-tokens'
 import type { InfraKitConfig } from 'src/lib/infra-kit-config'
 import { listProjectEnvNames } from 'src/lib/project-envs'
 
-import type { DoctorConfig, EnvTokenCheckDeps } from '../doctor'
-import { checkEnvTokensConfigured, checkTokenStorePerms, checkTokenStorePresent } from '../doctor'
+import type { EnvTokenCheckDeps } from '../checks/env-tokens'
+import { checkEnvTokensConfigured, checkTokenStorePerms, checkTokenStorePresent } from '../checks/env-tokens'
+import type { DoctorConfig } from '../doctor-config'
 
 vi.mock('src/lib/logger', () => {
   return { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }

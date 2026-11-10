@@ -7,8 +7,9 @@ import type { FakeNodeFs, NodeEntry } from 'src/dev/proxy/__tests__/portless-lin
 import type { PortlessNodeSidecar } from 'src/dev/proxy/portless-node'
 import type { NodeVersionProbe } from 'src/dev/proxy/portless-service-target'
 
-import { checkPortless } from '../doctor'
-import type { CheckResult, PortlessCheckDeps } from '../doctor'
+import type { CheckResult } from '../check-result'
+import { checkPortless } from '../checks/portless'
+import type { PortlessCheckDeps } from '../checks/portless'
 
 /**
  * One fixture per row of the plan's §5.5 N-table, driven through the `nodeFs` / `nodeVersionOf` /

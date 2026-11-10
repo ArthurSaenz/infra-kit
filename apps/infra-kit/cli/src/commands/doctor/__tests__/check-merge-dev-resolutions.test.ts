@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { $ } from 'zx'
 
-import { checkMergeDevResolutions } from '../doctor'
+import { checkMergeDevResolutions } from '../checks/agent'
 
 const NOW = Date.parse('2026-09-26T12:00:00Z')
 

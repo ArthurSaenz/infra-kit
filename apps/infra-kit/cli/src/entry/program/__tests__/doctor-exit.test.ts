@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { doctor } from 'src/commands/doctor'
-import { allChecksPassed } from 'src/commands/doctor/doctor'
-import type { CheckResult } from 'src/commands/doctor/doctor'
+import { allChecksPassed } from 'src/commands/doctor/check-result'
+import type { CheckResult } from 'src/commands/doctor/check-result'
 
 import { buildProgram } from '../program'
 

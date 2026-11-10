@@ -6,14 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { commandCatalog } from 'src/entry/command-catalog'
 import { resolvePluginInstall } from 'src/lib/plugin-pointer'
 
-import {
-  checkAgentAllowlist,
-  checkAgentMode,
-  checkClaudeCli,
-  checkClaudePlugin,
-  inspectServedPluginServer,
-} from '../doctor'
+import { checkAgentAllowlist, checkAgentMode } from '../checks/agent'
+import { checkClaudeCli, checkClaudePlugin, inspectServedPluginServer } from '../checks/claude-plugin'
 import { DOCTOR_CHECK_NAMES, groupChecks } from '../report'
+import { readDoctorSource } from './doctor-source'
 
 /**
  * O3 and T4(b) — the doctor rows about the Claude Code plugin.
@@ -300,12 +296,12 @@ describe('plugin version — fetched-but-not-applied advisory', () => {
   /**
    * P6, pinned at the source: the plugin bump is a separate commit after every lockstep release, so
    * served-vs-CLI drifts legitimately for hours at every release. The row must never compare against
-   * the CLI's own version — `packageJson.version` is the one symbol `doctor.ts` reads it through
+   * the CLI's own version — `packageJson.version` is the one symbol the doctor sources read it through
    * (the `CLI version` row and the MCP tool's `cliVersion`), so its absence from the version row and
    * its advisory helper is the whole guarantee.
    */
   it('never compares the served plugin against the CLI version (source guard)', () => {
-    const source = fs.readFileSync(path.join(__dirname, '..', 'doctor.ts'), 'utf-8')
+    const source = readDoctorSource()
 
     const rowSource = /const fetchedNotAppliedAdvisory[\s\S]*?\nconst claudePluginVersionCheck[\s\S]*?\n\}\n/.exec(
       source,
@@ -403,7 +399,7 @@ describe('plugin MCP server — flipped: a served .mcp.json is the stale state',
   })
 
   it('never reads the CLI version and spells no version floor (source guard)', () => {
-    const source = fs.readFileSync(path.join(__dirname, '..', 'doctor.ts'), 'utf-8')
+    const source = readDoctorSource()
     const rowSource = /export type ServedPluginServer[\s\S]*?\nexport const checkClaudePlugin/.exec(source)?.[0]
 
     expect(rowSource).toBeDefined()
@@ -416,7 +412,7 @@ describe('plugin MCP server — flipped: a served .mcp.json is the stale state',
 /** Source guards for the plugin section as a whole, not for any one row. */
 describe('plugin section source guards', () => {
   it('spells no tool prefix at all (source guard)', () => {
-    const source = fs.readFileSync(path.join(__dirname, '..', 'doctor.ts'), 'utf-8')
+    const source = readDoctorSource()
 
     expect(source).not.toMatch(/mcp__/)
     expect(source).not.toMatch(/tool-prefix/)
@@ -428,7 +424,11 @@ describe('plugin section source guards', () => {
    * place the code is set.
    */
   it('never drives the exit code — only plugin installed does (source guard)', () => {
-    const source = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'entry', 'program', 'program.ts'), 'utf-8')
+    const source = fs.readFileSync(
+      path.join(__dirname, '..', '..', '..', 'entry', 'program', 'register', 'diagnostics.ts'),
+      'utf-8',
+    )
+
     const action = /const pluginMissing = [\s\S]*?process\.exitCode = 1/.exec(source)?.[0]
 
     expect(action).toBeDefined()

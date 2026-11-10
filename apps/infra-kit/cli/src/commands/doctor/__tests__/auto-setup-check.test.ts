@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { AutoSetupRecord } from 'src/lib/auto-setup/record'
 
-import { checkAutoSetup } from '../doctor'
+import { checkAutoSetup } from '../checks/agent'
 
 const record = (overrides: Partial<AutoSetupRecord> = {}): AutoSetupRecord => {
   return {

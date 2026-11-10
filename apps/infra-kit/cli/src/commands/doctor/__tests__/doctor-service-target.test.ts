@@ -8,8 +8,9 @@ import { launchdPlist, systemdUnit } from 'src/dev/proxy/__tests__/service-fixtu
 import { DARWIN_SERVICE_PLIST_PATH, LINUX_SERVICE_UNIT_PATH } from 'src/dev/proxy/portless-driver'
 import type { HandshakeResult, PortlessRoute } from 'src/dev/proxy/portless-driver'
 
-import { checkPortless } from '../doctor'
-import type { CheckResult, PortlessCheckDeps } from '../doctor'
+import type { CheckResult } from '../check-result'
+import { checkPortless } from '../checks/portless'
+import type { PortlessCheckDeps } from '../checks/portless'
 
 /**
  * One fixture per row of the plan's §5.5 table, driven entirely through seams: no real disk, no real

@@ -1,4 +1,4 @@
-/* eslint-disable sonarjs/no-os-command-from-path */
+/* eslint-disable sonarjs/no-os-command-from-path -- the test runs the developer's own tools, which only PATH locates */
 import * as esbuild from 'esbuild'
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import type { CheckResult } from 'src/commands/doctor/doctor'
+import type { CheckResult } from 'src/commands/doctor/check-result'
 import { formatDoctorReport } from 'src/commands/doctor/report'
 
 import { buildOptions } from '../../../scripts/build.js'

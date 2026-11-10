@@ -14,7 +14,7 @@ import type {
   RunStatus,
 } from 'src/lib/render/run-report'
 
-import type { CheckResult } from './doctor'
+import type { CheckResult } from './check-result'
 
 /**
  * @fileoverview
@@ -152,8 +152,8 @@ export const DOCTOR_CHECK_NAMES: readonly string[] = SECTION_MEMBERS.flatMap(([,
 
 /**
  * The checks `infra-kit doctor --fix` can actually resolve — stale portless routes
- * ({@link import('./doctor').pruneStalePortlessRoutes}) and loose token-store modes
- * ({@link import('./doctor').checkTokenStorePerms}). The summary's remediation hint is driven by this
+ * ({@link import('./checks/portless').pruneStalePortlessRoutes}) and loose token-store modes
+ * ({@link import('./checks/env-tokens').checkTokenStorePerms}). The summary's remediation hint is driven by this
  * set rather than by matching message text, so it cannot drift from the real `--fix` code paths.
  */
 export const FIXABLE_NAMES: ReadonlySet<string> = new Set(['portless routes', 'tokens.json perms'])

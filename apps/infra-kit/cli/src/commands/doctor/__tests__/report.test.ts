@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { allChecksPassed } from '../doctor'
-import type { CheckResult } from '../doctor'
+import { allChecksPassed } from '../check-result'
+import type { CheckResult } from '../check-result'
 import {
   DOCTOR_CHECK_NAMES,
   FIXABLE_NAMES,
@@ -25,7 +25,7 @@ const skip = (name: string, message = 'not evaluated'): CheckResult => {
 }
 
 /** eslint-disable-next-line no-control-regex — matching ANSI is the point. */
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- ANSI escape sequences start with a control character
 const ANSI = /\[[0-9;]*m/g
 
 const strip = (text: string): string => {

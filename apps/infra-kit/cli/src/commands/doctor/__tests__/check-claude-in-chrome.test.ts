@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { checkClaudeInChrome } from '../doctor'
-import type { ChromeCheckDeps } from '../doctor'
+import { checkClaudeInChrome } from '../checks/claude-plugin'
+import type { ChromeCheckDeps } from '../checks/claude-plugin'
 
 const HOME = '/home/dev'
 const MANIFEST = `${HOME}/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.anthropic.claude_code_browser_extension.json`

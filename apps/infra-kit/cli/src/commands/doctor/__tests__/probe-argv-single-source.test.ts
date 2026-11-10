@@ -1,11 +1,10 @@
-import fs from 'node:fs'
-import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { specFor } from 'src/lib/dependency-registry'
 import type { DependencyId } from 'src/lib/dependency-registry'
 
-import type { DependencyDetail } from '../doctor'
+import type { DependencyDetail } from '../check-result'
+import { readDoctorSource } from './doctor-source'
 
 /**
  * The probe argv for `gh`, `doppler` and `aws` must exist in exactly ONE module — the registry — with
@@ -17,7 +16,7 @@ import type { DependencyDetail } from '../doctor'
  * `tool-command-checks.test.ts` already proves the argv still reach the right binary.
  */
 
-const DOCTOR_SOURCE = fs.readFileSync(path.join(__dirname, '..', 'doctor.ts'), 'utf-8')
+const DOCTOR_SOURCE = readDoctorSource()
 
 /** The five doctor rows whose argv the registry now owns. `brew` and `git` joined them with their own rows. */
 const UNIFIED: DependencyId[] = ['brew', 'git', 'gh', 'doppler', 'aws']
@@ -26,7 +25,7 @@ const UNIFIED: DependencyId[] = ['brew', 'git', 'gh', 'doppler', 'aws']
  * `K extends keyof T` evaluated at COMPILE time. A needle check catches a name; this catches the
  * capability — widening {@link DependencyDetail} to carry the install report's `action` / `commands`
  * would flip one of these to `true` and fail `tsc`, whatever the field ended up being called in
- * `doctor.ts`'s source text.
+ * the doctor sources.
  */
 type HasKey<T, K extends string> = K extends keyof T ? true : false
 

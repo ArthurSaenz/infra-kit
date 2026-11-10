@@ -9,8 +9,8 @@ import { hardlinkNodeFs } from 'src/dev/proxy/__tests__/portless-link-fixtures'
 import { caFingerprintMatches, listRoutes, readCaPath } from 'src/dev/proxy/portless-driver'
 import type { HandshakeResult, PortlessRoute } from 'src/dev/proxy/portless-driver'
 
-import { checkPortless } from '../doctor'
-import type { PortlessCheckDeps } from '../doctor'
+import { checkPortless } from '../checks/portless'
+import type { PortlessCheckDeps } from '../checks/portless'
 
 /** The bin doctor's checks are told to build their remediations from — stands in for the real node_modules. */
 const BIN = '/node_modules/portless/dist/cli.js'
