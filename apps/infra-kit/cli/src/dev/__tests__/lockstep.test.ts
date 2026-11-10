@@ -1,7 +1,7 @@
 import configPackageJson from '@slip-stream-kit/config/package.json' with { type: 'json' }
 import { describe, expect, it } from 'vitest'
 
-import { HELPER_PACKAGES, isBelowVersion } from 'src/dev/dev-server'
+import { HELPER_PACKAGES, isBelowVersion } from 'src/dev/helper-version-floor'
 
 import cliPackageJson from '../../../package.json' with { type: 'json' }
 

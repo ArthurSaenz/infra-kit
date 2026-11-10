@@ -11,7 +11,7 @@ import { pathToFileURL } from 'node:url'
 
 import { formatFault, registerCrashBarrier } from 'src/dev/crash-barrier'
 import { run } from 'src/dev/dev-server'
-import type { CreateDevUi, DevServerOptions, DevServerRunner } from 'src/dev/dev-server'
+import type { CreateDevUi, DevServerRunner } from 'src/dev/dev-server'
 import type { WizardResult } from 'src/dev/dev-wizard-run'
 import { resolveSelfAppName } from 'src/dev/discovery'
 import { rawStdoutWrite } from 'src/dev/log-sink'
@@ -19,6 +19,7 @@ import { killDescendantGroupsNow } from 'src/dev/managed-child'
 import { runOrcaDevServer } from 'src/dev/orca-dev'
 import { explainTargetKey } from 'src/dev/presets'
 import type { DevPreset } from 'src/dev/presets'
+import type { DevServerOptions } from 'src/dev/runner-types'
 import { exitCodeForSignal, registerSignalShutdown } from 'src/dev/signal-shutdown'
 import { installTerminalLiveness } from 'src/dev/terminal-liveness'
 import { isPromptCancellation } from 'src/lib/errors/is-prompt-cancellation'
@@ -293,8 +294,12 @@ export const createFatalHandler = ({
     // carries its own rejection state. `doShutdown()` can reject (`watcher.close`, `turboWatch.kill` and
     // `uiDev.kill` are unguarded), so without this the derived promise rejects unhandled — on the one path
     // where an `unhandledRejection` feeds straight back into the barrier that called us.
+    // A rejected teardown stopped before its reaps, so the detached groups are reaped here instead.
     runner
       .shutdown()
+      .catch(() => {
+        forceReap()
+      })
       .finally(() => {
         cancel()
         exit(FATAL_EXIT_CODE)

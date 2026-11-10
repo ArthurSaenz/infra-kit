@@ -17,7 +17,7 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { DevServerRunner } from 'src/dev/dev-server'
-import type { HealthProbe, ProbeOutcome, ProbeTarget } from 'src/dev/dev-server'
+import type { HealthProbe, ProbeOutcome, ProbeTarget } from 'src/dev/health-probe'
 
 import { getFreePort } from './fixtures'
 

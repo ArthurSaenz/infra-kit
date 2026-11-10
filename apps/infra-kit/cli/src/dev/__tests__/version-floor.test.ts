@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { HELPER_PACKAGES, assertHelperVersionFloor, isBelowVersion } from 'src/dev/dev-server'
+import { HELPER_PACKAGES, assertHelperVersionFloor, isBelowVersion } from 'src/dev/helper-version-floor'
 
 import { createTempTracker } from './fixtures'
 

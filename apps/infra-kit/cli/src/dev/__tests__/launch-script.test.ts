@@ -1,7 +1,7 @@
 import process from 'node:process'
 import { describe, expect, it } from 'vitest'
 
-import { launchScript } from 'src/dev/dev-server'
+import { launchScript } from 'src/dev/launch-script'
 
 /**
  * Regression (B3): the initial build shells out via `exec`, whose default stdout/stderr cap is 1 MB. A

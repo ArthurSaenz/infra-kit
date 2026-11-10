@@ -18,7 +18,6 @@
  * chunk tee) and `watch.log`. Lambda / Powertools logs from handlers still go to stdout.
  */
 import {
-  DEV_CONTEXT_WIRE_VERSION,
   DEV_SERVING_MARKER,
   loadPackageConfig,
   readAppAliasName,
@@ -27,39 +26,22 @@ import {
 } from '@slip-stream-kit/config/internal'
 import chokidar from 'chokidar'
 import type { FSWatcher } from 'chokidar'
-import { exec } from 'node:child_process'
 import * as fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import * as path from 'node:path'
 import process from 'node:process'
-import util from 'node:util'
-import { z } from 'zod'
 
-import { agentMode } from 'src/lib/agent-mode'
 import { readAppRelease } from 'src/lib/app-release'
-import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import { OperationError } from 'src/lib/errors/operation-error'
-import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config'
 
-import { planAppRun } from './app-plan.js'
-import {
-  buildInfoCoversOutputs,
-  findStaleSources,
-  formatBuildErrors,
-  readLatestBuildInfo,
-  readPackageName,
-  summarizeBuildErrors,
-} from './build-freshness.js'
-import type { BuildInfo, StaleSource } from './build-freshness.js'
 import { buildClosureMap, selectPackageRestartTargets } from './dep-closure.js'
 import type { ClosureMap, DryRunner } from './dep-closure.js'
+import { DevContextStore } from './dev-context-store.js'
 import type { DevUi } from './dev-ui.js'
 import {
   classifyDistChange,
-  discoverApiApps as discoverApiAppsBare,
-  discoverUiApps as discoverUiAppsBare,
   findMonorepoRoot,
   getAppDistDirs,
   getPackageDistDirs,
@@ -67,12 +49,17 @@ import {
   usesInfraKitVitePlugin,
 } from './discovery.js'
 import type { DiscoveredUiApp } from './discovery.js'
-import { defaultHealthProbe, describeForeign, isForeign } from './health-probe.js'
-import type { HealthProbe, ProbeOutcome, ProbeTarget } from './health-probe.js'
+import { DistBuildTracker } from './dist-build-tracker.js'
+import { HealthLedger } from './health-ledger.js'
+import { defaultHealthProbe } from './health-probe.js'
+import type { HealthProbe, ProbeTarget } from './health-probe.js'
+import { assertHelperVersionFloor } from './helper-version-floor.js'
+import { launchScript } from './launch-script.js'
 import { findDegradedRoutes, formatPairingRefusal, resolveProxyRoutes } from './local-pairing.js'
 import type { DegradedRoute, LaunchedUi, ResolvedProxyRoute } from './local-pairing.js'
 import { currentService } from './log-attribution.js'
 import { DevLogSink, panelStream } from './log-sink.js'
+import { killDescendantGroupsNow } from './managed-child.js'
 import {
   installModuleGeneration as installGenerationHook,
   isModuleGenerationSupported,
@@ -82,9 +69,9 @@ import {
 import type { ModuleGenerationHandle } from './module-generation.js'
 import { installOutputIntercept } from './output-intercept.js'
 import type { OutputIntercept } from './output-intercept.js'
-import { DEFAULT_PREFIX_URL, findPortConflicts, resolvePreferredPort as resolvePreferredPortPure } from './ports.js'
-import { deriveTargetLabel, resolvePreset } from './presets.js'
-import type { DevPreset, DiscoveredParts, ProxySource } from './presets.js'
+import { findPortConflicts } from './ports.js'
+import { deriveTargetLabel } from './presets.js'
+import type { ProxySource } from './presets.js'
 import {
   createPortlessDriver,
   formatPortlessCommand,
@@ -93,10 +80,13 @@ import {
 } from './proxy/portless-driver.js'
 import type { PortlessDriver } from './proxy/portless-driver.js'
 import { serviceInstallCommand } from './proxy/portless-link.js'
-import type { ServiceInstallSeams } from './proxy/portless-link.js'
 import { describeStaleFiles, isHotReloadableChange } from './reload-scope.js'
 import { DevRenderer, resolveEndpointUrl } from './render.js'
 import type { DegradedRow, EndpointRow, HealthState, ProxyRouteRow, ReadySummary, UiRef } from './render.js'
+import { RestartScheduler } from './restart-scheduler.js'
+import { RowActivity } from './row-activity.js'
+import { resolveRunPlan } from './run-plan.js'
+import type { BuildRunner, DevServerOptions, IApiAppConfig, IAppServer, StartedApp } from './runner-types.js'
 import { ServerlessLocalRun } from './serverless-local-run.js'
 import { defaultTurboWatchFactory } from './turbo-watch.js'
 import type { TurboWatchFactory, TurboWatchHandle } from './turbo-watch.js'
@@ -148,41 +138,6 @@ function packageList(apps: { packageName: string }[]): string {
     .join(', ')
 }
 
-const execFn = util.promisify(exec)
-
-type LogFn = (msg: string, level?: 'info' | 'warn' | 'error' | 'debug') => void
-
-/**
- * Build seam: shells out to turbo by default ({@link launchScript}); injectable so
- * tests can run the orchestrator without a real build. `logFn` is optional so both
- * the verbose initial build and the terse restart builds keep their current output.
- */
-export type BuildRunner = (cmd: string, logFn?: LogFn) => Promise<void>
-
-export { isForeign }
-export type { ForeignAnswer, HealthProbe, ProbeOutcome, ProbeTarget } from './health-probe.js'
-
-export const launchScript = async (script: string, logFn?: LogFn): Promise<void> => {
-  try {
-    // 32 MB (parity with the dep-closure dry-runner) instead of exec's 1 MB default: a failing `turbo run
-    // build` easily emits >1 MB of tsc diagnostics, which would reject with ERR_CHILD_PROCESS_STDIO_MAXBUFFER
-    // and MASK the real compile errors — surfacing a bogus "maxBuffer exceeded" instead of the actual failure.
-    const { stderr } = await execFn(script, { maxBuffer: 32 * 1024 * 1024 })
-
-    if (stderr && logFn) logFn(`   (build) ${stderr.trim()}`, 'debug')
-    if (stderr && !logFn) console.error('stderr:', stderr)
-  } catch (error) {
-    const err = error as { stdout?: string; stderr?: string; message?: string }
-
-    if (logFn && (err.stdout || err.stderr)) {
-      if (err.stdout) logFn(`   stdout: ${err.stdout.trim()}`, 'error')
-      if (err.stderr) logFn(`   stderr: ${err.stderr.trim()}`, 'error')
-    }
-
-    throw error
-  }
-}
-
 /**
  * The process-wide per-service log sink. Created once at construction ({@link DevServerRunner}) and
  * closed in {@link DevServerRunner.shutdown}; module-scoped so the renderer's `appendLog` seam — which
@@ -217,453 +172,6 @@ const getFreePort = (): Promise<number> => {
   })
 }
 
-interface IApiAppConfig {
-  /** App folder name (e.g. backoffice, client) */
-  name: string
-  /** Package name from package.json (e.g. sls-trvl-client) */
-  packageName: string
-  path: string
-  /**
-   * EXPLICITLY-configured preferred port (`{APP}_PORT`/`PORT`), or
-   * `undefined` when unconfigured. Under dynamic allocation this is only a bind hint — the
-   * ACTUAL port is the ephemeral one bound at start time (see {@link IAppServer.boundPort}).
-   */
-  preferredPort: number | undefined
-  /**
-   * The same resolution with the bare `PORT` tier DENIED — `{APP}_PORT` only.
-   *
-   * Both are resolved together in {@link DevServerRunner.discoverApiApps}, but the CHOICE between them
-   * cannot be made there: it depends on how many
-   * apps this run actually launches, and narrowing to the run plan happens later
-   * ({@link DevServerRunner.resolveRunPlan}). A bare `PORT` is not app-scoped, so in a multi-app run it
-   * gives every app the same preferred port and {@link DevServerRunner.assertNoPortConflicts} then
-   * refuses to start over duplicates the environment manufactured. Carrying both values forward is what
-   * lets a single-app run keep honouring `PORT` while a multi-app run ignores it.
-   */
-  appScopedPort: number | undefined
-  prefixUrl: string
-}
-
-/**
- * Runner options, parsed by the CLI entry point (`--watch`, `--app`) and threaded
- * through `run()`. The entry owns flag parsing; the runner never reads `process.argv`
- * itself. App selection is `--app` only; ports come from env (see `resolvePreferredPort`).
- */
-export interface DevServerOptions {
-  /**
-   * Watch mode: start a long-lived `turbo watch build` engine (incremental rebuilds
-   * + dependency fan-out) and restart the affected server(s) when compiled `dist/`
-   * changes. Without it, `dev` builds and serves once and exits on signal.
-   */
-  watch?: boolean
-  /** Only run these app folder names (null/empty = all discovered). Filters BOTH api and ui apps. */
-  include?: string[] | null
-  /**
-   * App folder (`infra-kit dev <app>`): runs that app plus the backends its proxy routes can run
-   * locally ({@link planAppRun}). Unset → run everything (`*`). `include` (`--app`/`--self`) further
-   * narrows the resolved set.
-   */
-  app?: string
-  /**
-   * In-memory run plan, produced by the interactive wizard or `--target`. When set it is used verbatim
-   * — it WINS over `app` and the default `*`. This is how part-level selection (`<app>/ui` without
-   * `<app>/api`) is expressed, which `include` (app-name-only) cannot.
-   */
-  presetDef?: DevPreset
-  /**
-   * Run each discovered API app in its own Orca pane (one tab, N panes), supervised by a
-   * resident process that closes the tab on signal. Falls back to single-process dev when
-   * Orca cannot show the panes. Handled by `runOrcaDevServer`, not the in-process `DevServerRunner`.
-   */
-  orca?: boolean
-  /**
-   * Test-runner mode (`--reuse`), for a caller that needs the apps served and does not care who serves them
-   * — Playwright's `webServer` is the one this exists for:
-   *  - when this worktree already serves any app of the plan, start nothing: announce it and idle until a
-   *    signal, owning nothing a shutdown could tear down;
-   *  - otherwise refuse cloud routes with no `INFRA_KIT_ENV` before anything starts, and exit on the first
-   *    app that fails to boot rather than staying resident half-up.
-   * Either way `DEV_SERVING_MARKER` is printed once everything answers its probe.
-   */
-  reuse?: boolean
-  /**
-   * Infer the single app to run from the current working directory (equivalent to
-   * `--app=<that app>`), so every app can share the identical script
-   * `pnpm exec infra-kit dev --self` instead of hardcoding its own folder name.
-   * Resolved by the entry point (`resolveSelfAppName`) into `include` before this
-   * runner ever sees it; the runner itself does not read `self`.
-   */
-  self?: boolean
-  /**
-   * Print the full boot narration (build/discovery/watch steps) to the terminal. Default false:
-   * the terminal shows only the server panel, warnings, errors, and restart lines. The FULL detail
-   * is written to the per-service logs under `<cacheRoot>/<INFRA_KIT_SESSION>/dev/<pid>/` regardless of
-   * this flag.
-   */
-  verbose?: boolean
-  /**
-   * Print each app's registered `METHOD /path` route table at startup. Default false — the route
-   * dump is opt-in so the calm default screen stays glanceable; the routes are always in the log.
-   */
-  routes?: boolean
-  /**
-   * Interactive TTY (both stdin+stdout). Set by the entry point; gates the Ink boot UI in {@link run}.
-   * When unset, {@link run} falls back to `process.stdout.isTTY`. The runner itself never reads it.
-   */
-  tty?: boolean
-  /**
-   * Structured `--json` / `--agent` mode. When true, {@link run} forces the plain {@link DevRenderer} — Ink
-   * must never seize a machine-readable stream. The runner itself never reads it.
-   */
-  json?: boolean
-  /**
-   * Background liveness-probe interval in ms (default {@link DevServerRunner.LIVENESS_INTERVAL_MS}, 5000).
-   * A test seam only — lets a test drive the monitor loop fast; production never sets it.
-   */
-  livenessIntervalMs?: number
-  /**
-   * Where `~/.infra-kit/portless` is looked up when the daemon-down refusal prints `service install`
-   * (default: the real home + `existsSync`). A test seam only — it lets a test force the link-resolved and
-   * the real-bin rendering without a real `~/.infra-kit` on the author's machine; production never sets it.
-   */
-  portlessLink?: ServiceInstallSeams
-  /**
-   * Probe the frontends' liveness (vite's HMR ping) and give their rows a health dot. Default `true`;
-   * `--no-ui-health` / `INFRA_KIT_NO_UI_HEALTH=1` turns it off, which drops every UI row back to no dot
-   * at all and issues zero UI probes. The escape hatch exists because the ping is an undocumented vite
-   * internal: if a future vite drops it, the dot has to be switchable off without a CLI downgrade.
-   */
-  uiHealth?: boolean
-  /**
-   * Ask the entry point to terminate the process, with the code to exit on.
-   *
-   * The runner has no business calling `process.exit` itself — `shutdown()` deliberately stops at
-   * releasing resources and leaves the process's fate to whoever owns it. But the reload budget's stop
-   * has nowhere else to go: it reaches neither the signal handler nor the fatal handler, and teardown
-   * alone would leave a live terminal with every server already dead. The entry wires this to the SAME
-   * `exit` seam `registerSignalShutdown` receives, so a budget stop and a Ctrl-C end the process
-   * through one path. Absent (tests, embedded callers) the runner tears down and returns.
-   */
-  onExitRequest?: (code: number) => void
-}
-
-/**
- * One row's probe history — the state the 5-arm {@link HealthState} is derived from, keyed by TAG (never
- * by app name: `foo/api` and `foo/ui` are different rows on the same app, and a name-keyed counter
- * collides them).
- */
-interface HealthEntry {
-  kind: ProbeTarget['kind']
-  /** Consecutive `refused` probes. `>= LIVENESS_FAILURE_THRESHOLD` is what "down" MEANS. */
-  failures: number
-  /** Consecutive `foreign` probes — a separate counter, because a foreign answer must never go red. */
-  foreignStreak: number
-  /** Has this row EVER proved it was serving? Until it has, a UI is `starting`, not `down`. */
-  everUp: boolean
-  /** A CERTAINTY of death from outside the probe loop: a thrown restart, a dead UI engine. */
-  dead: boolean
-  /** The port answers, but not with what we asked for — liveness cannot be established either way. */
-  unverified: boolean
-}
-
-/** What a successful {@link DevServerRunner.startOneApp} hands back: a bound server and the alias it took. */
-interface StartedApp {
-  server: ServerlessLocalRun
-  /** The ACTUAL port bound at start (ephemeral or preferred), reported by `server.start()`. */
-  boundPort: number
-  /** Layer-B alias host (`<release>.<package>.<repo>.localhost`) — the app's only address. */
-  alias: string
-}
-
-interface IAppServer {
-  app: IApiAppConfig
-  server: ServerlessLocalRun
-  /** The ACTUAL port bound at start (ephemeral or preferred), reported by `server.start()`. */
-  boundPort: number
-  /** Layer-B alias host (`<release>.<package>.<repo>.localhost`) — the app's only address. */
-  alias: string
-  /** Epoch ms of this server's last (re)start — the source of the panel's `up Xs` field. */
-  startedAt: number
-  /** Watch-triggered restarts so far. */
-  restarts: number
-}
-
-/**
- * One `.infra-kit/dev-context/<app>.json` fragment. `package` (feeds the vite helper's
- * `readLocalSet`) is the app's package name; `port` is the ACTUAL bound port (the writer
- * IS the binder). `release` lets the helper prefer the runner-recorded slug over its own
- * git derivation; `pid`/`writtenAt` are staleness metadata.
- *
- * `alias` is the registered portless hostname, and `origin` is **the authoritative local target** — the
- * exact origin the helper must proxy to, published by the runner rather than re-derived by the helper from
- * a template in a separately-versioned repo. The runner is the only party that knows what it actually
- * registered, so it says so; the helper obeys.
- *
- * `proxyPort` is deliberately NOT written any more.
- */
-// Why `proxyPort` is omitted: the CLI self-updates while `infra-kit/vite` stays pinned per consumer, so a
-// new CLI routinely meets an OLD helper — and that helper's `withProxyPort` grafts any port other than 80
-// onto its target. Writing `proxyPort: 443` would therefore have produced `http://<alias>:443`: plain HTTP
-// into a TLS listener, silently. Omitting the field leaves the old helper's target ungrafted instead.
-// (That is not by itself a loud failure — `:80` is bound by portless's redirect server, so it 302s rather
-// than refusing — which is why the CLI-side version floor, not this omission, is the load-bearing skew
-// guard.)
-interface DevContextFragment {
-  /** Wire version. See {@link DEV_CONTEXT_WIRE_VERSION} — a promise that `origin` is present. */
-  v: number
-  package: string
-  port: number
-  pid: number
-  writtenAt: number
-  release: string
-  alias: string
-  origin: string
-  /** `INFRA_KIT_ENV` this session runs with (`''` when none): its UIs proxy cloud routes to that env. */
-  env: string
-}
-
-/**
- * Every package that can supply the `infraKitDev` helper, with the lowest version of THAT package this CLI
- * can run against, and what an older one gets wrong.
- *
- * A LIST, and each floor is a point on ITS OWN package's version line — never comparable across entries.
- * Keep them all, check whichever the repo actually resolves, and only drop the `infra-kit` entry once no
- * consumer imports `infra-kit/vite` any more. Consumed by {@link assertHelperVersionFloor}.
- */
-// Why the guard exists at all: skew here is GUARANTEED rather than hypothetical. The CLI is installed
-// globally and self-updates silently, while the helper is PINNED in each consumer's `node_modules`, so a
-// new CLI routinely meets an old helper. An old helper ignores `origin` and rebuilds the target from the
-// consumer's `templates.local` — which still says `http://` — and then proxies plain HTTP at a TLS
-// listener. That failure is silent (portless answers :80 with a 302 rather than refusing), so nothing
-// downstream would catch it. Refuse at start instead.
-//
-// Why a list, spelled out: this is the whole subtlety of the `infra-kit` → `@slip-stream-kit/config`
-// split, and getting it wrong fails silently in both directions.
-// - Comparing the new package's version against the OLD package's floor (`0.1.132`) is meaningless. The
-//   two are unrelated version lines; a new package seeded low would throw for every consumer, and one
-//   seeded high would pass vacuously — a dead guard that still looks alive.
-// - Simply RE-KEYING the guard to the new package (rather than adding to it) drops the old entry, and
-//   then a not-yet-migrated consumer — the exact population still running an old helper — silently stops
-//   being checked at all.
-// The packages release in LOCKSTEP, which is what keeps each floor comparable to the CLI's own version as
-// the wire evolves.
-//
-// `@slip-stream-kit/vite` (the plugin) needs its OWN entry even though it only wraps
-// `@slip-stream-kit/config`, and the reason is pnpm's layout rather than style: a consumer on the plugin
-// declares only the plugin, so `config` is a TRANSITIVE dep living in the virtual store — it resolves
-// from neither the app dir nor the repo root, and `assertHelperVersionFloor` would find nothing to check
-// and skip the repo entirely. The plugin's own `dependencies` pin the config version exactly
-// (`workspace:*` publishes as the released version), so checking the plugin checks the pair.
-// 0.15.0 is the first `@slip-stream-kit/config` whose `infraKitE2e()` aims at the repo-scoped
-// `<release>.<package>.<repo>.localhost` alias. An older one points Playwright at the repo-less host, which
-// this CLI no longer registers, or which another repo's older CLI still does: the collision this fixes.
-// The plugin pins config exactly, so it shares the floor. `infra-kit` ships no Playwright helper.
-const REPO_ALIAS_WHY =
-  'dev aliases are now scoped by repo (`<release>.<package>.<repo>.localhost`), and only that helper aims ' +
-  'Playwright at them. An older one would test whatever another repo serves on the old repo-less host.'
-
-const HTTPS_WHY =
-  'dev URLs are now HTTPS, and only that `infraKitDev` helper understands them. An older one would proxy ' +
-  'plain HTTP at a TLS listener, silently.'
-
-export const HELPER_PACKAGES = [
-  { name: '@slip-stream-kit/vite', floor: '0.15.0', why: REPO_ALIAS_WHY },
-  { name: '@slip-stream-kit/config', floor: '0.15.0', why: REPO_ALIAS_WHY },
-  { name: 'infra-kit', floor: '0.1.132', why: HTTPS_WHY },
-] as const
-
-/** `true` when `version` sorts strictly below `floor` (numeric, dot-separated; missing parts are 0). */
-export const isBelowVersion = (version: string, floor: string): boolean => {
-  const parse = (v: string): number[] => {
-    return v.split('.').map((part) => {
-      return Number.parseInt(part, 10) || 0
-    })
-  }
-
-  const a = parse(version)
-  const b = parse(floor)
-
-  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
-    const left = a[i] ?? 0
-    const right = b[i] ?? 0
-
-    if (left !== right) return left < right
-  }
-
-  return false
-}
-
-/** Package dirs whose manifest may declare a helper: the repo root, plus every `apps/<app>/{api,ui}`. */
-const manifestDirs = (repoRoot: string): string[] => {
-  const dirs = [repoRoot]
-
-  try {
-    for (const app of fs.readdirSync(path.join(repoRoot, 'apps'), { withFileTypes: true })) {
-      if (!app.isDirectory()) continue
-      for (const part of ['api', 'ui']) dirs.push(path.join(repoRoot, 'apps', app.name, part))
-    }
-  } catch {
-    // No `apps/` dir — the root manifest alone decides.
-  }
-
-  return dirs
-}
-
-/** Does `<dir>/package.json` declare `name` in dependencies or devDependencies? */
-const declaresPackage = (dir: string, name: string): boolean => {
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf-8')) as Record<
-      string,
-      Record<string, string> | undefined
-    >
-
-    return ['dependencies', 'devDependencies'].some((field) => {
-      return pkg[field]?.[name] != null
-    })
-  } catch {
-    return false
-  }
-}
-
-/**
- * Find the installed `name` by walking `node_modules` UPWARD from `fromDir`, exactly as Node resolves it.
- *
- * Probing `<repoRoot>/node_modules/<name>` alone — which is what this used to do — is wrong under pnpm,
- * and wrong in the direction that hurts. pnpm does NOT hoist a workspace package's dependency to the root:
- * a dep declared in `apps/client/ui/package.json` lands in `apps/client/ui/node_modules/`, and the root has
- * no trace of it. So the root-only probe would (a) fail to find — and therefore never version-check — a
- * helper declared where it is actually USED (next to the `vite.config.ts` that imports it), and (b) once
- * the consumer drops root `infra-kit` for the global CLI, report the correctly-installed helper as
- * "missing" and tell the user to run `pnpm install`, which can never fix it. Resolve it the way Node does.
- */
-const findHelperDir = (repoRoot: string, fromDir: string, name: string): string | undefined => {
-  const segments = name.split('/')
-  let dir = fromDir
-
-  for (;;) {
-    const candidate = path.join(dir, 'node_modules', ...segments)
-
-    if (fs.existsSync(candidate)) return candidate
-
-    const parent = path.dirname(dir)
-
-    if (dir === repoRoot || parent === dir) return undefined
-    dir = parent
-  }
-}
-
-/**
- * `true` when `<repoRoot>/node_modules/<name>` is a workspace link back into this repo rather than a
- * published install.
- *
- * Resolves BOTH sides before comparing: on macOS a temp path realpaths from `/var` to `/private/var`, so
- * an unresolved root would never contain a resolved child and a workspace link would be misread as a
- * published install.
- */
-const isWorkspaceLinked = (repoRoot: string, helperDir: string): boolean => {
-  try {
-    const real = fs.realpathSync(helperDir)
-    const root = fs.realpathSync(repoRoot)
-
-    return real.startsWith(root + path.sep) && !real.includes(`${path.sep}node_modules${path.sep}`)
-  } catch {
-    return false
-  }
-}
-
-/** `realpath`, falling back to the input when it cannot be resolved (used only as a dedupe key). */
-const safeRealpath = (target: string): string => {
-  try {
-    return fs.realpathSync(target)
-  } catch {
-    return target
-  }
-}
-
-/** Enforce one helper package's floor against ONE resolved install directory. */
-const assertFloorAt = (repoRoot: string, helper: (typeof HELPER_PACKAGES)[number], helperDir: string): void => {
-  const { name, floor, why } = helper
-
-  // In this repo `node_modules/@slip-stream-kit/config` symlinks to `apps/infra-kit/config`, whose
-  // version is the unreleased working tree. Enforcing a floor there would brick `infra-kit dev` on the
-  // very repo that develops it.
-  if (isWorkspaceLinked(repoRoot, helperDir)) return
-
-  let version: string
-
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(helperDir, 'package.json'), 'utf-8')) as { version?: string }
-
-    if (typeof pkg.version !== 'string') throw new TypeError('no version field')
-    version = pkg.version
-  } catch {
-    throw new Error(
-      `infra-kit dev: could not read the version of the pinned \`${name}\` helper (${helperDir}). Refusing ` +
-        `to start rather than risk proxying plain HTTP at a TLS listener. Run \`pnpm install\`.`,
-    )
-  }
-
-  if (isBelowVersion(version, floor)) {
-    throw new Error(
-      `infra-kit dev: this repo pins ${name} ${version}; bump ${name} to >=${floor}. From ${floor} on, ${why}\n` +
-        `    pnpm add -D ${name}@^${floor}`,
-    )
-  }
-}
-
-/**
- * Refuse to start against a consumer-pinned `infraKitDev` helper too old to understand the dev-context
- * fragment's `origin` field, or the repo-scoped alias — whichever package that helper comes from (see {@link HELPER_PACKAGES}).
- *
- * Every helper package is checked INDEPENDENTLY, and every place it resolves from is checked (see
- * {@link findHelperDir}). Three outcomes per package:
- * - **Workspace-linked → SKIP** (that install only; every other one is still checked).
- * - **Declared but unresolvable → THROW (fail closed).** The consumer says it uses a helper and we
- *   cannot prove which version; guessing is how the silent case ships.
- * - **Neither installed nor declared → SKIP.** Nothing to be skewed against. (This is also what keeps
- *   bare test fixtures runnable.)
- */
-// Two migration shapes make the per-package, per-location sweep necessary rather than fussy:
-// - A repo mid-migration has BOTH (`@slip-stream-kit/config` added, `infra-kit` not yet dropped), and its
-//   vite configs may still import from either. Stopping at the first helper that passes would hand exactly
-//   that repo a silent HTTP-into-TLS proxy from the other one.
-// - Under pnpm the helper usually resolves NOT from the repo root but from the package that declares it —
-//   `apps/client/ui/node_modules/` sits right next to the `vite.config.ts` that imports it.
-export const assertHelperVersionFloor = (repoRoot: string): void => {
-  const dirs = manifestDirs(repoRoot)
-
-  for (const helper of HELPER_PACKAGES) {
-    const { name } = helper
-
-    const declaredIn = dirs.filter((dir) => {
-      return declaresPackage(dir, name)
-    })
-
-    // Always probe the root too: a helper can be present without being declared (hoisted, or a transitive
-    // of something else), and it would still be the one vite resolves.
-    const resolved = new Map<string, string>()
-
-    for (const dir of [...declaredIn, repoRoot]) {
-      const found = findHelperDir(repoRoot, dir, name)
-
-      // Key by realpath: several packages symlinking into the same pnpm store entry are ONE install, and
-      // re-reading it per app would just multiply identical work (and identical error messages).
-      if (found) resolved.set(safeRealpath(found), found)
-    }
-
-    if (resolved.size === 0) {
-      if (declaredIn.length === 0) continue
-
-      throw new Error(
-        `infra-kit dev: ${declaredIn[0]}/package.json depends on ${name} but it does not resolve from there, ` +
-          `so the \`infraKitDev\` helper version cannot be verified. Run \`pnpm install\`.`,
-      )
-    }
-
-    for (const helperDir of resolved.values()) assertFloorAt(repoRoot, helper, helperDir)
-  }
-}
-
 /**
  * The one-line `reason` for a `● failed` row. Endpoint rows are a single terminal line, so a stack
  * trace cannot go there — it is already in the log tail and the session log. Take the message only,
@@ -681,15 +189,19 @@ const errorReason = (error: unknown): string => {
 
 export class DevServerRunner {
   private readonly monorepoRoot: string
-  /**
-   * `<cwd>/.infra-kit/dev-context` — the fragment directory this runner writes its own
-   * per-app `<app>.json` into. The `infra-kit/vite` helper searches up-tree for this dir and merges
-   * the fragments.
-   */
-  private readonly devContextDir: string
+  /** This runner's own `.infra-kit/dev-context/<app>.json` fragments. */
+  private readonly devContext: DevContextStore
   private readonly appServers: IAppServer[] = []
-  /** Per-app request timestamps, pruned to a 60s window — the panel's `18/min` field. */
-  private readonly reqTimes = new Map<string, number[]>()
+  /** Per-row request rate and error count — the live numbers of the panel besides health. */
+  private readonly rows = new RowActivity({
+    errorsOf: (tag) => {
+      return this.sink.statsFor(tag).errors
+    },
+    onFirstError: (tag) => {
+      this.renderer.log(`⚠️  ${tag} reported its first error → ${homeShorten(this.sink.pathFor(tag))}`, 'warn')
+    },
+  })
+
   /**
    * The last {@link ReadySummary} painted. Kept so {@link refreshStatus} can repaint the panel with
    * fresh live fields without re-deriving the static half (URLs, aliases, watch summary) every tick.
@@ -697,18 +209,6 @@ export class DevServerRunner {
   private lastSummary: ReadySummary | null = null
   /** Epoch ms at which the session went ready — the source of the panel's heartbeat. */
   private readyAt = 0
-  private watchDebounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
-  /**
-   * Changed dist files a pending restart provably CANNOT pick up, keyed by the same debounce key the
-   * restart is scheduled under (see {@link markChanged}).
-   *
-   * Accumulated rather than carried in the scheduled closure because {@link scheduleDebounced} REPLACES
-   * the closure for a key it sees again, and one shared-lib save deliberately produces two events on the
-   * same key: the package's own dist, then moments later the dependent app's. The package event is the
-   * stale one and it arrives FIRST — a closure-carried flag would be overwritten by the app event and the
-   * restart would print a green line for a reload that did not happen.
-   */
-  private pendingChanges: Map<string, Set<string>> = new Map()
   /**
    * Whole-graph ESM invalidation, when available. `null` means restarts re-import handler entries only
    * (the runtime lacks `module.registerHooks`, or `INFRA_KIT_DEV_NO_GENERATION=1` turned it off) — the
@@ -718,18 +218,17 @@ export class DevServerRunner {
   /** Active chokidar watcher in `--watch` mode; closed on {@link shutdown}. */
   private watcher: FSWatcher | null = null
   private static readonly WATCH_DEBOUNCE_MS = 400
-  /** Every dist dir the watcher covers — maps a changed dist file back to the package that built it. */
-  private watchedDistDirs: string[] = []
-  /**
-   * Per package dir, the stale sources (path + current hash) a forced rebuild was already spent on. The
-   * same staleness is never nudged twice, so a source a build legitimately never compiles cannot loop.
-   */
-  private readonly nudgedStaleness = new Map<string, string>()
-  /**
-   * How long a stale build must STAY stale before the runner rebuilds it: a save that simply landed after
-   * the last build is compiled by `turbo watch` itself, and a second concurrent `tsc -b` would race it.
-   */
-  private static readonly STALE_BUILD_GRACE_MS = 1000
+  /** When a restart runs and which changed files it answers for; the runner supplies the restart. */
+  private readonly restarts = new RestartScheduler({
+    debounceMs: DevServerRunner.WATCH_DEBOUNCE_MS,
+    isStopped: () => {
+      return this.shuttingDown
+    },
+    onError: (key, error) => {
+      this.renderer.log(`Restart error (${key}): ${String(error)}`, 'error')
+    },
+  })
+
   /** Serialized restarts so rapid saves never bind :port while the previous server is still shutting down. */
   private restartWorkChain: Promise<void> = Promise.resolve()
   private static readonly PORT_RELEASE_DELAY_MS = 200
@@ -742,31 +241,25 @@ export class DevServerRunner {
   private servingAnnounced = false
   /** The run's label, as the ready header names it; the serving marker repeats it. */
   private targetLabel = ''
-  /**
-   * Probe history per row, keyed by TAG (`<app>/api`, `<app>/ui`) — never by app name, which would
-   * collide an app's two halves into one counter the moment the frontends joined the tick. It survives an
-   * ephemeral-port rebind on restart, because the tag does.
-   */
-  private readonly health = new Map<string, HealthEntry>()
-  /** Tags whose first error has already been announced — the 0 → >0 edge fires once per row, not per tick. */
-  private readonly firstErrorLogged = new Set<string>()
+  /** Probe history and derived state of every endpoint row. */
+  private readonly health = new HealthLedger((message, level) => {
+    this.renderer.log(message, level)
+  })
+
+  /** The row state for a tag — the runner's one read of the ledger, kept as a method for its callers. */
+  private healthOf(tag: string): HealthState {
+    return this.health.stateOf(tag)
+  }
+
   /** `<ui-package>` → `<app>/ui` tag, so {@link uiTargets} can name the rows {@link uiPortMap} keys by package. */
   private readonly uiTagByPackage = new Map<string, string>()
   /** Liveness re-probe cadence. A wedged-but-not-crashed backend is caught within THRESHOLD ticks. */
   private static readonly LIVENESS_INTERVAL_MS = 5000
-  /** Consecutive failures before a row is declared down — the anti-flap / restart-window filter. */
-  private static readonly LIVENESS_FAILURE_THRESHOLD = 2
-  /**
-   * Refused probes a UI that has NEVER been up may take before its `◌ starting` turns `● down` (~30s at
-   * the 5s cadence). Far above the backend threshold on purpose: a cold vite on a big frontend genuinely
-   * takes tens of seconds to bind, and a red dot over a UI that is merely still booting is the one false
-   * red this whole design refuses to ship. A UI that has been up once is not covered by it — its death is
-   * probe-established at the ordinary threshold.
-   */
-  private static readonly NEVER_UP_DOWN_THRESHOLD = 6
   private readonly options: DevServerOptions
   /** Build runner seam — real turbo shell-out by default, injectable for tests. */
   private readonly runBuild: BuildRunner
+  /** Which build wrote a changed dist file, what it emitted through, and the recovery of a save it missed. */
+  private readonly builds: DistBuildTracker
   /** `turbo watch` spawn seam — real detached child by default, injectable for tests. */
   private readonly turboWatchFactory: TurboWatchFactory
   /** Live `turbo watch` engine in `--watch` mode; reaped on {@link shutdown}. */
@@ -893,6 +386,15 @@ export class DevServerRunner {
   ) {
     this.options = options
     this.runBuild = runBuild
+    this.builds = new DistBuildTracker({
+      runBuild,
+      log: (message, level) => {
+        this.renderer.log(message, level)
+      },
+      isStopped: () => {
+        return this.shuttingDown
+      },
+    })
     this.turboWatchFactory = turboWatchFactory
     this.uiDevFactory = uiDevFactory
     this.dryRunner = dryRunner
@@ -928,7 +430,7 @@ export class DevServerRunner {
       renderer ??
       new DevRenderer({ appendLog: appendRunnerLog, verbose: this.options.verbose ?? false, isTTY: ownsTty })
     this.healthProbe = healthProbe
-    this.devContextDir = path.join(process.cwd(), '.infra-kit', 'dev-context')
+    this.devContext = new DevContextStore(path.join(process.cwd(), '.infra-kit', 'dev-context'))
 
     // Walk up from the consumer repo cwd to the monorepo root.
     this.monorepoRoot = findMonorepoRoot(process.cwd())
@@ -938,95 +440,9 @@ export class DevServerRunner {
     }
   }
 
-  /**
-   * Discover API apps and resolve each app's port. Delegates bare filesystem discovery to
-   * {@link discoverApiAppsBare} and per-app resolution to the pure `resolvePreferredPort`.
-   */
-  private discoverApiApps(): IApiAppConfig[] {
-    return discoverApiAppsBare(this.monorepoRoot).map((app) => {
-      return {
-        ...app,
-        preferredPort: this.resolvePreferredPort(app.name),
-        // Resolved alongside, never instead: which of the two wins is decided in `resolveRunPlan`,
-        // once the number of apps this run launches is known. See `IApiAppConfig.appScopedPort`.
-        appScopedPort: this.resolvePreferredPort(app.name, false),
-        prefixUrl: DEFAULT_PREFIX_URL,
-      }
-    })
-  }
-
   /** Thin delegator to the pure {@link normalizeAppIncludePure} over the runner's `--app` list. */
   private normalizeAppInclude(): string[] | null {
     return normalizeAppIncludePure(this.options.include)
-  }
-
-  /** Thin delegator to the pure {@link resolvePreferredPortPure}, threading env. */
-  private resolvePreferredPort(appName: string, allowBarePort = true): number | undefined {
-    return resolvePreferredPortPure(appName, process.env, allowBarePort)
-  }
-
-  /**
-   * The plan to run: the in-memory one (wizard / `--target`), else the app plan for `infra-kit dev <app>`
-   * (see {@link planAppRun}), or an `apps`-less plan when no app was given — which `resolvePreset` expands
-   * to every discovered app + part.
-   */
-  private async resolvePresetDef(apiApps: IApiAppConfig[], uiApps: DiscoveredUiApp[]): Promise<DevPreset> {
-    if (this.options.presetDef != null) {
-      return this.options.presetDef
-    }
-
-    const name = this.options.app
-
-    if (name == null) {
-      return {}
-    }
-
-    const plan = await planAppRun(name, apiApps, uiApps)
-
-    if (plan) {
-      if (plan.unprovided.length > 0) {
-        this.renderer.log(
-          `⚠️  No apps/*/api provides these local-capable routes, so they stay on cloud: ${plan.unprovided.join(', ')}`,
-          'warn',
-        )
-      }
-
-      return plan.preset
-    }
-
-    const [first, ...rest] = [
-      ...new Set(
-        [...apiApps, ...uiApps]
-          .map((app) => {
-            return app.name
-          })
-          .toSorted(),
-      ),
-    ]
-
-    if (first === undefined) {
-      throw new OperationError(undefined, {
-        operation: `run "${name}"`,
-        remediation: 'omit the name to run every app',
-        stderrExcerpt: 'no apps were discovered',
-      })
-    }
-
-    // App names are per-repo, so an agent gets them as choices instead of guessing again.
-    throw new StructuredRefusalError(
-      {
-        status: 'argument_required',
-        argument: 'app',
-        choices: z.toJSONSchema(z.object({ app: z.enum([first, ...rest]) })),
-        agentMode: agentMode.source,
-      },
-      2,
-      {
-        operation: 'pick what infra-kit dev runs',
-        remediation: `pass an app: ${[first, ...rest].join(', ')}`,
-        stderrExcerpt: `"${name}" is not an app`,
-      },
-    )
   }
 
   public async start(): Promise<void> {
@@ -1047,7 +463,16 @@ export class DevServerRunner {
       this.renderer.narrate('👀 Watch mode: will rebuild and restart on file save')
     }
 
-    const { apps, uiApps, apiAppsAll, uiAppsAll, wantedLocalPkgs, presetProxy } = await this.resolveRunPlan(include)
+    const { apps, uiApps, apiAppsAll, uiAppsAll, wantedLocalPkgs, presetProxy } = await resolveRunPlan(
+      {
+        options: this.options,
+        monorepoRoot: this.monorepoRoot,
+        log: (message, level) => {
+          this.renderer.log(message, level)
+        },
+      },
+      include,
+    )
 
     if (await this.endsBeforeBoot(apps, uiApps)) return
 
@@ -1163,106 +588,6 @@ export class DevServerRunner {
     // Over an empty `appServers` the probe half is `Promise.all([])` — free. The timer is `unref`'d, so
     // it cannot hold the loop open on its own.
     this.startLivenessMonitor()
-  }
-
-  /**
-   * Resolve WHAT to run: discover the api/ui app parts, resolve the active plan against them, then
-   * narrow to the `--app`/`--self` include set. Returns both the filtered run sets (`apps`/`uiApps`)
-   * and the full discovered sets (`apiAppsAll`/`uiAppsAll`), which the ready-header target label needs.
-   */
-  private async resolveRunPlan(include: string[] | null): Promise<{
-    apps: IApiAppConfig[]
-    uiApps: DiscoveredUiApp[]
-    apiAppsAll: IApiAppConfig[]
-    uiAppsAll: DiscoveredUiApp[]
-    /**
-     * Backend packages the PLAN promised to serve locally, captured BEFORE `--app`/`--self` narrowing.
-     * Narrowing changes what runs; it does not change what the plan promised, and a backend dropped by
-     * a narrowing flag is never attempted — so it never lands in `failedApps` and a crash-keyed check
-     * would say nothing while its frontend quietly proxied to cloud. See `local-pairing.ts`.
-     */
-    wantedLocalPkgs: Set<string>
-    /** The plan's declared per-route proxy pins (`app → route → source`), for `pinnedLocal`. */
-    presetProxy: Record<string, Record<string, ProxySource>>
-  }> {
-    // The plan is resolved against the discovered app parts (api/ui). No plan → run everything (`*`).
-    // `--app`/`--self` (`include`) further narrow it.
-    const apiAppsAll = this.discoverApiApps()
-    const uiAppsAll = discoverUiAppsBare(this.monorepoRoot)
-    const presetDef = await this.resolvePresetDef(apiAppsAll, uiAppsAll)
-
-    const discovered: DiscoveredParts = {
-      api: apiAppsAll.map((a) => {
-        return a.name
-      }),
-      ui: uiAppsAll.map((a) => {
-        return a.name
-      }),
-    }
-
-    const resolved = resolvePreset(presetDef, discovered)
-
-    if (resolved.unmatched.length > 0) {
-      this.renderer.log(`⚠️  Targets not found (skipped): ${resolved.unmatched.join(', ')}`, 'warn')
-    }
-
-    const apiNames = new Set(
-      resolved.targets
-        .filter((t) => {
-          return t.part === 'api'
-        })
-        .map((t) => {
-          return t.app
-        }),
-    )
-
-    const uiNames = new Set(
-      resolved.targets
-        .filter((t) => {
-          return t.part === 'ui'
-        })
-        .map((t) => {
-          return t.app
-        }),
-    )
-
-    const passesInclude = (name: string): boolean => {
-      return !include || include.includes(name)
-    }
-
-    // Split from the map below so the SURVIVOR COUNT is known before each app's port is chosen. The
-    // choice cannot be made where the ports are resolved (`discoverApiApps`, over the full discovered
-    // set): hulyo has 7 api apps, so a count taken there is never 1 even for `--app=client`.
-    const selected = apiAppsAll.filter((a) => {
-      return apiNames.has(a.name) && passesInclude(a.name)
-    })
-
-    const apps = selected.map((a) => {
-      return {
-        ...a,
-        // One app → today's precedence exactly, bare `PORT` included. Two or more → the shared bare
-        // `PORT` is dropped and each app falls to `{APP}_PORT` or an ephemeral bind, so a stray
-        // `PORT` in the shell can no longer manufacture the conflict that refuses the whole run.
-        preferredPort: selected.length === 1 ? a.preferredPort : a.appScopedPort,
-      }
-    })
-
-    const uiApps = uiAppsAll.filter((a) => {
-      return uiNames.has(a.name) && passesInclude(a.name)
-    })
-
-    // Every api the PLAN names, pre-`passesInclude` — the promise, not the survivors.
-    const wantedLocalPkgs = new Set(
-      apiAppsAll
-        .filter((a) => {
-          return apiNames.has(a.name)
-        })
-        .map((a) => {
-          return a.packageName
-        }),
-    )
-
-    return { apps, uiApps, apiAppsAll, uiAppsAll, wantedLocalPkgs, presetProxy: resolved.proxy }
   }
 
   /**
@@ -1760,11 +1085,7 @@ export class DevServerRunner {
         // The level is DECLARED, not sniffed: fastify already knows the status it returned. A 5xx is an
         // error because the server said so — no regex ever reads this line's bytes to decide.
         this.sink.write(tag, text, { level: status >= 500 ? 'error' : 'info' })
-        // Mutate in place: spreading into a fresh array copied the whole window on every single request.
-        const window = this.reqTimes.get(tag)
-
-        if (window) window.push(Date.now())
-        else this.reqTimes.set(tag, [Date.now()])
+        this.rows.recordRequest(tag, Date.now())
       },
     })
 
@@ -1794,7 +1115,7 @@ export class DevServerRunner {
     // watch-restart refreshes both instead of orphaning a stale fragment (M2). Non-fatal: a
     // fragment-write failure must not down the server.
     try {
-      this.writeDevContextFragment(app, boundPort, alias)
+      this.devContext.write(app, boundPort, alias)
     } catch (error) {
       this.renderer.log(`⚠️  Failed to write dev-context fragment for ${app.name}: ${String(error)}`, 'warn')
     }
@@ -1821,53 +1142,12 @@ export class DevServerRunner {
   private holdFailedBackendsLocal(): void {
     for (const { app } of this.failedApps) {
       try {
-        this.writeDevContextFragment(app, 0, `${readAppAliasName(app.packageName, app.path)}.localhost`)
+        this.devContext.write(app, 0, `${readAppAliasName(app.packageName, app.path)}.localhost`)
         this.heldLocalPkgs.add(app.packageName)
       } catch (error) {
         this.renderer.log(`⚠️  Failed to hold ${app.name}'s routes local: ${String(error)}`, 'warn')
       }
     }
-  }
-
-  /**
-   * Atomically write this runner's `.infra-kit/dev-context/<app>.json` fragment recording the
-   * ACTUAL bound port (REV-5: serialize to a same-dir temp file, then `renameSync` into place, so a
-   * concurrent reader — the vite helper's directory merge — never observes torn JSON). Each runner
-   * writes ONLY its own app's fragment, so Orca panes never clobber each other.
-   */
-  private writeDevContextFragment(app: IApiAppConfig, boundPort: number, alias: string): void {
-    const fragment: DevContextFragment = {
-      // Declares the wire contract this fragment honours, so the helper never has to INFER it from a
-      // package version — which stopped being inferable the moment the helper moved to its own npm
-      // package with its own version line. `v` promises `origin` below is present and authoritative; the
-      // helper refuses rather than guessing a target if that promise is ever broken.
-      v: DEV_CONTEXT_WIRE_VERSION,
-      package: app.packageName,
-      port: boundPort,
-      pid: process.pid,
-      writtenAt: Date.now(),
-      release: readAppRelease(app.path),
-      alias,
-      // The ORIGIN of the hero URL the ready screen prints (`resolveEndpointUrl` appends the app's
-      // `prefixUrl` on top of this same alias). Prefix-free on purpose: this is a proxy target, and the
-      // frontend supplies its own path.
-      origin: `https://${alias}`,
-      // The wizard assigns the picked env onto this process, so this is the session's env even when the
-      // launching shell held another; `infra-kit e2e` compares it with its own before trusting the split.
-      env: process.env[INFRA_KIT_ENV_VAR] ?? '',
-    }
-
-    const target = path.join(this.devContextDir, `${app.name}.json`)
-    const tmp = path.join(this.devContextDir, `${app.name}.json.${process.pid}.tmp`)
-
-    fs.mkdirSync(this.devContextDir, { recursive: true })
-    fs.writeFileSync(tmp, JSON.stringify(fragment, null, 2))
-    fs.renameSync(tmp, target)
-  }
-
-  /** Remove THIS runner's own `<app>.json` fragment on shutdown (never another runner's). */
-  private removeDevContextFragment(app: IApiAppConfig): void {
-    fs.rmSync(path.join(this.devContextDir, `${app.name}.json`), { force: true })
   }
 
   /** Run restart jobs one after another (watch can fire faster than close + listen). */
@@ -1908,7 +1188,7 @@ export class DevServerRunner {
 
       await this.runRestart(apps, staleFiles)
       // Not awaited: the rebuild it may start must not hold the chain the rebuild's own restart queues on.
-      void this.recoverLostSaves(this.triggeringBuilds(staleFiles))
+      void this.builds.recoverLostSaves(this.builds.triggeringBuilds(staleFiles))
     })
   }
 
@@ -1955,7 +1235,7 @@ export class DevServerRunner {
     // a few lines later. The liveness tick can fire in that window, and `healthOf` treats an ABSENT
     // entry as `unknown` — a row with no dot at all for a server that is already serving. A fresh entry is
     // the honest prior instead: never-up, which for a backend reads `● down` until a probe says otherwise.
-    this.healthEntry(tag, 'api')
+    this.health.track(tag, 'api')
     this.appServers.push(entry)
 
     const failedIdx = this.failedApps.findIndex((f) => {
@@ -2013,7 +1293,10 @@ export class DevServerRunner {
       // teardown still exits; the trailing `.catch` because `onExitRequest` runs inside it and a throw
       // there would reject into the crash barrier on the one path meant to end the process cleanly.
       void this.shutdown()
-        .catch(() => {})
+        // A rejected teardown stopped before its reaps; the exit below must not orphan turbo / vite.
+        .catch(() => {
+          killDescendantGroupsNow()
+        })
         .finally(() => {
           this.options.onExitRequest?.(1)
         })
@@ -2112,7 +1395,7 @@ export class DevServerRunner {
         // about. Routed through `markDown`, not the probe path, because the soft path would leave the
         // row one failure short of the threshold, i.e. GREEN, for a server that does not exist.
         if (entry == null) {
-          this.markDown(tag, 'api')
+          this.health.markDown(tag, 'api')
           this.refreshStatus()
 
           return { label: `${app.name} ● down`, healthy: false }
@@ -2123,7 +1406,7 @@ export class DevServerRunner {
         const target: ProbeTarget = { tag, port: entry.boundPort, kind: 'api' }
         const outcome = await this.healthProbe(target)
 
-        this.recordProbe(target, outcome)
+        this.health.record(target, outcome)
         this.refreshStatus()
 
         const healthy = outcome === 'ok'
@@ -2171,7 +1454,7 @@ export class DevServerRunner {
 
     // `tsc -b` emits through a type error, so the new code IS what now runs — restarting onto it is right
     // (blocking would freeze dev on any shared-lib type error). Only the green check would be a lie.
-    const buildErrors = this.describeBuildErrors(this.triggeringBuilds(staleFiles))
+    const buildErrors = this.builds.describeBuildErrors(this.builds.triggeringBuilds(staleFiles))
 
     if (buildErrors !== undefined) {
       this.renderer.log(`⚠️  Restarted ${labels} — ${buildErrors}`, 'warn')
@@ -2180,136 +1463,6 @@ export class DevServerRunner {
     }
 
     this.renderer.log(`${allHealthy ? '✅' : '⚠️ '} Restarted ${labels}`)
-  }
-
-  /**
-   * The packages (a dist dir's parent) whose dist changes triggered this restart, each with the buildinfo
-   * of the build that wrote them — a package whose buildinfo did not write them (see
-   * {@link buildInfoCoversOutputs}) or that has none is left out: nothing trustworthy to say about it.
-   */
-  private triggeringBuilds(changed: string[]): Array<{ pkgDir: string; info: BuildInfo }> {
-    const distFilesByPkg = new Map<string, string[]>()
-
-    for (const file of changed) {
-      const distDir = this.watchedDistDirs.find((dir) => {
-        return file === dir || file.startsWith(dir + path.sep)
-      })
-
-      if (distDir === undefined) continue
-
-      const pkgDir = path.dirname(distDir)
-
-      distFilesByPkg.set(pkgDir, [...(distFilesByPkg.get(pkgDir) ?? []), file])
-    }
-
-    return [...distFilesByPkg].flatMap(([pkgDir, distFiles]) => {
-      const info = readLatestBuildInfo(pkgDir)
-
-      return info && buildInfoCoversOutputs(info, distFiles) ? [{ pkgDir, info }] : []
-    })
-  }
-
-  /** The type errors the triggering builds emitted through, as one clause, or `undefined` when all are clean. */
-  private describeBuildErrors(builds: Array<{ pkgDir: string; info: BuildInfo }>): string | undefined {
-    const clauses = builds.flatMap(({ pkgDir, info }) => {
-      const errors = summarizeBuildErrors(info, pkgDir)
-
-      return errors ? [formatBuildErrors(readPackageName(pkgDir), errors)] : []
-    })
-
-    return clauses.length > 0 ? clauses.join('; ') : undefined
-  }
-
-  /**
-   * Rebuild a package whose last build did not compile its sources' current text, so the save it missed
-   * reaches the server through an ordinary dist change and restart.
-   *
-   * The miss is real: during a save burst `turbo watch` re-runs the build for the last save, but `tsc -b`
-   * judges it up to date because that save's mtime is older than the buildinfo the in-flight run wrote.
-   * turbo then caches that no-op under the last save's hash, so neither a re-save nor `turbo run` without
-   * `--force` recovers — and turbo ignores an mtime-only touch. Hence: touch (so `tsc -b` sees the input as
-   * newer) and a forced single-package `turbo run build` (which also overwrites the poisoned cache entry).
-   */
-  private async recoverLostSaves(builds: Array<{ pkgDir: string; info: BuildInfo }>): Promise<void> {
-    try {
-      for (const { pkgDir, info } of builds) {
-        await this.recoverLostSave(pkgDir, info)
-      }
-    } catch (error) {
-      this.renderer.log(`   Lost-save check failed: ${String(error)}`, 'debug')
-    }
-  }
-
-  private async recoverLostSave(pkgDir: string, info: BuildInfo): Promise<void> {
-    const stale = findStaleSources(info, pkgDir)
-
-    if (stale.length === 0) {
-      this.nudgedStaleness.delete(pkgDir)
-
-      return
-    }
-
-    const staleness = stale
-      .map(({ file, hash }) => {
-        return `${file}:${hash}`
-      })
-      .join('\n')
-
-    if (this.nudgedStaleness.get(pkgDir) === staleness) return
-
-    await new Promise((resolve) => {
-      setTimeout(resolve, DevServerRunner.STALE_BUILD_GRACE_MS)
-    })
-
-    // A build that wrote in the meantime brings its own dist change and restart, which re-checks.
-    if (this.shuttingDown || readLatestBuildInfo(pkgDir)?.mtimeMs !== info.mtimeMs) return
-
-    this.nudgedStaleness.set(pkgDir, staleness)
-    await this.forceRebuild(pkgDir, stale)
-  }
-
-  private async forceRebuild(pkgDir: string, stale: StaleSource[]): Promise<void> {
-    const pkgName = readPackageName(pkgDir)
-
-    const files = stale
-      .map(({ file }) => {
-        return path.relative(pkgDir, file)
-      })
-      .join(', ')
-
-    const now = new Date()
-
-    this.renderer.log(`👀 ${pkgName}: last build missed a save of ${files}; forcing a rebuild`, 'debug')
-
-    for (const { file } of stale) {
-      try {
-        fs.utimesSync(file, now, now)
-      } catch {
-        // Deleted since the hash was taken — nothing left to rebuild for.
-      }
-    }
-
-    try {
-      await this.runBuild(
-        `pnpm exec turbo run build --filter=${pkgName} --env-mode=loose --output-logs=errors-only --no-update-notifier --force`,
-        (message) => {
-          this.renderer.log(message, 'debug')
-        },
-      )
-    } catch (error) {
-      // A type error fails the build yet still emits; the re-read below is the verdict either way.
-      this.renderer.log(`   Forced rebuild of ${pkgName} failed: ${String(error)}`, 'debug')
-    }
-
-    const retry = readLatestBuildInfo(pkgDir)
-
-    if (this.shuttingDown || !retry || findStaleSources(retry, pkgDir).length === 0) return
-
-    this.renderer.log(
-      `⚠️  ${pkgName}: ${files} changed but a forced rebuild still did not compile it — the server may be ` +
-        'serving an older save. Save the file again, or re-run `infra-kit dev`.',
-      'warn',
-    )
   }
 
   /**
@@ -2371,7 +1524,7 @@ export class DevServerRunner {
   /**
    * The `turbo run dev` engine died on its own, so a UI that was NEVER up is never coming up — its vite
    * either never bound or went down with the engine, and no further probe is going to tell us anything the
-   * engine's corpse has not already said. Recorded as `dead`, which {@link neverUpState} reads ONLY in the
+   * engine's corpse has not already said. Recorded as `dead`, which {@link HealthLedger.stateOf} reads ONLY in the
    * never-up branch: a UI that HAS been up keeps its ordinary probe-established death, because turbo does
    * not kill its task process groups and our reap is best-effort — an orphaned vite may well still be
    * serving, and it would be a live, hot-reloading UI we had just painted red.
@@ -2380,7 +1533,7 @@ export class DevServerRunner {
     if (this.shuttingDown) return
 
     for (const { tag, kind } of this.uiTargets()) {
-      this.healthEntry(tag, kind).dead = true
+      this.health.markDead(tag, kind)
     }
     this.refreshStatus()
   }
@@ -2388,7 +1541,7 @@ export class DevServerRunner {
   /**
    * ONE frontend's `dev` task died while the engine — and every sibling frontend — kept running.
    *
-   * Marks the row down hard (via {@link markDown}), not through the soft probe path. Under
+   * Marks the row down hard (via {@link HealthLedger.markDown}), not through the soft probe path. Under
    * `--no-ui-health` the failure is narrated but no dot is invented for it, since the row carries no
    * health entry by the user's own choice.
    */
@@ -2411,7 +1564,7 @@ export class DevServerRunner {
       // Already down (turbo can restate a verdict) — don't narrate the same death twice.
       if (this.healthOf(tag) === 'down') return
 
-      this.markDown(tag, 'ui')
+      this.health.markDown(tag, 'ui')
     }
 
     // Only claim the others survived when there ARE others. When the failing UI is the only one turbo is
@@ -2423,10 +1576,18 @@ export class DevServerRunner {
     this.refreshStatus()
 
     // `--reuse` exits rather than serve a test run a frontend that is not there.
+    // `.finally`, as on the budget stop: a rejecting teardown must still exit, or the test runner's
+    // `webServer` waits forever on a process that serves nothing.
     if (this.options.reuse) {
-      void this.shutdown().then(() => {
-        this.options.onExitRequest?.(1)
-      })
+      void this.shutdown()
+        // A rejected teardown stopped before its reaps; the exit below must not orphan turbo / vite.
+        .catch(() => {
+          killDescendantGroupsNow()
+        })
+        .finally(() => {
+          this.options.onExitRequest?.(1)
+        })
+        .catch(() => {})
     }
   }
 
@@ -2442,9 +1603,12 @@ export class DevServerRunner {
         return a.packageName
       }),
       cwd: process.cwd(),
-      // `turbo watch build` opens this path itself and inherits it as its stdio, so the watch engine
-      // gets its own file rather than interleaving raw child bytes into any service's log.
+      // The watch engine gets its own file rather than interleaving raw child bytes into any service's
+      // log — written THROUGH the sink, so it is under the same byte cap as every other service.
       logFile: this.sink.pathFor(WATCH_SERVICE),
+      appendLog: (text) => {
+        this.sink.write(WATCH_SERVICE, text)
+      },
       // Surface a silently-dead engine: once `turbo watch build` exits, saves no longer rebuild `dist/`,
       // so no restart ever fires and the session looks healthy while being frozen.
       onUnexpectedExit: (detail) => {
@@ -2457,7 +1621,7 @@ export class DevServerRunner {
     const packageDistDirs = getPackageDistDirs(this.monorepoRoot)
     const allDistDirs = [...appDistDirs, ...packageDistDirs]
 
-    this.watchedDistDirs = allDistDirs
+    this.builds.distDirs = allDistDirs
 
     if (allDistDirs.length === 0) {
       this.renderer.log('⚠️  No app or package dist directories found to watch (were they built?)', 'warn')
@@ -2490,7 +1654,7 @@ export class DevServerRunner {
     //
     // Subscribing to all three cannot storm. `ignoreInitial: true` above drops the startup
     // enumeration; a rebuild that rewrites existing output still emits `change`, not `add`; and
-    // `scheduleDebounced` collapses a burst onto one timer per key. `unlink` is safe to route
+    // the `RestartScheduler` collapses a burst onto one timer per key. `unlink` is safe to route
     // through the same classifier because `classifyDistChange` is pure path arithmetic — it
     // never stats the file, so a path that has just stopped existing classifies exactly as it did.
     for (const event of ['add', 'change', 'unlink'] as const) {
@@ -2541,11 +1705,31 @@ export class DevServerRunner {
 
     // Every change is recorded, not just the ones a restart is expected to miss: whether it was really
     // picked up is decided AFTER the restart, from what the generation hook actually re-resolved.
-    this.markChanged(app.name, filePath)
+    // A restart of EVERY app is already pending (the no-closure-map fail-safe below): this app is in
+    // it. A second timer under the app's own key would restart it again moments later — one save,
+    // two restarts, and twice the module generations charged to the reload budget. Fold in instead.
+    if (this.restarts.isAllPending()) {
+      this.scheduleRestartAll(apps, filePath)
 
-    this.scheduleDebounced(app.name, () => {
-      return this.restart([app], this.takeChanged(app.name))
+      return
+    }
+
+    this.restarts.schedule(app.name, filePath, (changed) => {
+      return this.restart([app], changed)
     })
+  }
+
+  /** One debounced restart of every launched app, absorbing the per-app restarts still pending. */
+  private scheduleRestartAll(apps: IApiAppConfig[], filePath: string): void {
+    this.restarts.scheduleAll(
+      apps.map((app) => {
+        return app.name
+      }),
+      filePath,
+      (changed) => {
+        return this.restart(apps, changed)
+      },
+    )
   }
 
   /**
@@ -2560,10 +1744,7 @@ export class DevServerRunner {
     if (targets === null) {
       // Fail-safe: no closure map / no package identity → restart every launched app, so a
       // `turbo --dry` failure never silently drops a needed restart.
-      this.markChanged('__packages__', filePath)
-      this.scheduleDebounced('__packages__', () => {
-        return this.restart(apps, this.takeChanged('__packages__'))
-      })
+      this.scheduleRestartAll(apps, filePath)
 
       return
     }
@@ -2573,24 +1754,23 @@ export class DevServerRunner {
     // Keyed per TARGET APP, not per package dir. `turbo watch build`'s dep-inclusive rebuild cascades a
     // shared-lib edit into the package's own dist AND, moments later, its dependent app's dist — two
     // chokidar `change` events for one save, this branch for the first and the app-dist branch above
-    // for the second. A package-dir key and an app-name key are two different `watchDebounceTimers`
+    // for the second. A package-dir key and an app-name key are two different timers of the `RestartScheduler`
     // entries, so both timers used to elapse independently and fire `restart()` twice for the same app.
-    // Scheduling by app name here collapses both events onto the SAME entry — `scheduleDebounced`
+    // Scheduling by app name here collapses both events onto the SAME entry — `RestartScheduler.debounce`
     // already cancels a pending timer for a key it sees again — so the app restarts once per burst.
+    // Same fold as the app-dist branch: a restart of every app pending from before the map landed
+    // already covers these targets.
+    if (targets.length > 0 && this.restarts.isAllPending()) {
+      this.scheduleRestartAll(apps, filePath)
+
+      return
+    }
+
     for (const target of targets) {
-      this.markChanged(target.name, filePath)
-      this.scheduleDebounced(target.name, () => {
-        return this.restart([target], this.takeChanged(target.name))
+      this.restarts.schedule(target.name, filePath, (changed) => {
+        return this.restart([target], changed)
       })
     }
-  }
-
-  /** Record a file the pending restart under `key` was triggered by. See {@link pendingChanges}. */
-  private markChanged(key: string, filePath: string): void {
-    const existing = this.pendingChanges.get(key)
-
-    if (existing) existing.add(filePath)
-    else this.pendingChanges.set(key, new Set([filePath]))
   }
 
   /**
@@ -2664,38 +1844,6 @@ export class DevServerRunner {
     )
   }
 
-  /** Drain the stale files recorded for `key` — read at FIRE time, so the whole burst is accounted for. */
-  private takeChanged(key: string): string[] {
-    const files = this.pendingChanges.get(key)
-
-    this.pendingChanges.delete(key)
-
-    return files ? [...files] : []
-  }
-
-  /**
-   * Debounce a restart under `key`: cancel any pending timer for the same key and start
-   * a fresh {@link DevServerRunner.WATCH_DEBOUNCE_MS} timer, so a burst of saves collapses
-   * into one restart. Errors from the scheduled work are logged, never thrown.
-   */
-  private scheduleDebounced(key: string, work: () => Promise<void>): void {
-    if (this.shuttingDown) return
-
-    const existing = this.watchDebounceTimers.get(key)
-
-    if (existing) clearTimeout(existing)
-
-    const timer = setTimeout(() => {
-      this.watchDebounceTimers.delete(key)
-      if (this.shuttingDown) return
-      work().catch((err) => {
-        this.renderer.log(`Restart error (${key}): ${String(err)}`, 'error')
-      })
-    }, DevServerRunner.WATCH_DEBOUNCE_MS)
-
-    this.watchDebounceTimers.set(key, timer)
-  }
-
   /** Is the frontend health probe on? `--no-ui-health` / `INFRA_KIT_NO_UI_HEALTH=1` turn it off. */
   private uiHealthEnabled(): boolean {
     return (this.options.uiHealth ?? true) && process.env.INFRA_KIT_NO_UI_HEALTH !== '1'
@@ -2720,109 +1868,6 @@ export class DevServerRunner {
     return Object.entries(this.uiPortMap).map(([pkg, { port }]) => {
       return { tag: this.uiTagByPackage.get(pkg) ?? `${pkg}/ui`, port, kind: 'ui' as const }
     })
-  }
-
-  /** This tag's entry, created on first sight. */
-  private healthEntry(tag: string, kind: ProbeTarget['kind']): HealthEntry {
-    const existing = this.health.get(tag)
-
-    if (existing) return existing
-
-    const fresh: HealthEntry = { kind, failures: 0, foreignStreak: 0, everUp: false, dead: false, unverified: false }
-
-    this.health.set(tag, fresh)
-
-    return fresh
-  }
-
-  /**
-   * Fold one probe outcome into a row's history and fire the edge logs — each exactly once, so a steady
-   * state (healthy OR wedged) says nothing.
-   *
-   * The `foreign` arms are where the two kinds part company. A backend answering non-2xx is OUR fastify
-   * failing, so it counts as a failure like any other. A UI answering something that is not vite's ping is
-   * unverifiable — a squatter, a proxy shadowing the ping, a future vite that dropped it — so it counts
-   * toward nothing and only raises `unverified`, which renders `◍ ?` and never red.
-   */
-  private recordProbe(target: ProbeTarget, outcome: ProbeOutcome): void {
-    const entry = this.healthEntry(target.tag, target.kind)
-    const threshold = DevServerRunner.LIVENESS_FAILURE_THRESHOLD
-
-    if (outcome === 'ok') {
-      const wasDown = entry.failures >= threshold
-
-      entry.everUp = true
-      entry.failures = 0
-      entry.foreignStreak = 0
-      entry.unverified = false
-      if (wasDown) this.renderer.log(`✅ ${target.tag} recovered`)
-
-      return
-    }
-
-    if (isForeign(outcome) && target.kind === 'ui') {
-      entry.foreignStreak += 1
-      entry.unverified = entry.foreignStreak >= threshold
-      if (entry.foreignStreak === threshold) {
-        this.renderer.log(`⚠️  ${target.tag}: ${describeForeign(target.port, outcome)}`, 'warn')
-      }
-
-      return
-    }
-
-    entry.foreignStreak = 0
-    entry.failures += 1
-    // A port that answers SOMETHING is not provably dead — so a UI drops `unverified` only once its refusals
-    // have earned a real `down`, and never on the way there.
-    if (target.kind === 'ui' && entry.failures >= threshold) entry.unverified = false
-    if (entry.failures === threshold) {
-      const why = target.kind === 'api' ? '/__health not responding' : "not answering vite's ping"
-
-      this.renderer.log(`⚠️  ${target.tag} unhealthy (${why})`, 'warn')
-    }
-  }
-
-  /**
-   * Declare a row down WITHOUT a probe — for the two facts the probe loop cannot establish: a restart whose
-   * `startOneApp` threw (there is no server left to probe), and a UI whose engine died before it was ever
-   * up. Routing those through the soft probe path would leave the row one failure short of the threshold,
-   * i.e. GREEN, for something that demonstrably does not exist.
-   */
-  private markDown(tag: string, kind: ProbeTarget['kind']): void {
-    const entry = this.healthEntry(tag, kind)
-
-    entry.dead = true
-    entry.failures = DevServerRunner.LIVENESS_FAILURE_THRESHOLD
-    entry.foreignStreak = 0
-    entry.unverified = false
-  }
-
-  /** The 5-arm row state for a tag. No entry at all → `unknown` (a `UiRef`, or `--no-ui-health`). */
-  private healthOf(tag: string): HealthState {
-    const entry = this.health.get(tag)
-
-    if (entry == null) return 'unknown'
-    if (entry.unverified) return 'unverified'
-    if (!entry.everUp) return this.neverUpState(entry)
-
-    return entry.failures >= DevServerRunner.LIVENESS_FAILURE_THRESHOLD ? 'down' : 'ok'
-  }
-
-  /**
-   * A row that has never proved it was serving. A backend is `down` on sight — it is started in-process and
-   * probed the moment it binds, so "up but never answered" is already a failure. A UI is `starting` until it
-   * has burned the whole never-up budget: vite is spawned AFTER the ready frame and takes real seconds to
-   * bind, and a red dot over a UI that is merely still booting is the one false red this design refuses.
-   *
-   * `dead` is read HERE and nowhere else, and the narrowness is the point: an `everUp` UI's death must stay
-   * probe-established. Turbo puts each task in its OWN process group and reaps none of them on death
-   * (`managed-child.ts`), and our own reap is best-effort — so "the engine exited ⇒ every vite is dead" is
-   * simply false, and believing it would red-dot a live, hot-reloading UI.
-   */
-  private neverUpState(entry: HealthEntry): HealthState {
-    if (entry.kind === 'api' || entry.dead) return 'down'
-
-    return entry.failures >= DevServerRunner.NEVER_UP_DOWN_THRESHOLD ? 'down' : 'starting'
   }
 
   /**
@@ -2880,10 +1925,10 @@ export class DevServerRunner {
     // Prune FIRST, unconditionally, and never inside the argument to `refresh?.()`: an optional call
     // does not evaluate its argument at all when the method is absent, and `DevRenderer` — the renderer
     // on every `--json` / piped run — has no `refresh`. Pruning in there meant the window was never
-    // trimmed off the TTY path, so `reqTimes` grew without bound while `onRequestLog` copied the whole
+    // trimmed off the TTY path, so the request window grew without bound while `onRequestLog` copied the whole
     // array on every request. Unbounded memory and O(n²) CPU, on the runs that live longest (a piped
     // `dev --watch` left up all day) specifically.
-    this.pruneRequestWindow(now)
+    this.rows.prune(now)
 
     this.renderer.refresh?.({
       ...summary,
@@ -2894,7 +1939,7 @@ export class DevServerRunner {
       // A UI with no managed port has no endpoint row — only a reference line. It still gets its error
       // count, or its breakage would be counted into a file with nothing on screen pointing at it.
       uiRefs: summary.uiRefs.map((ref) => {
-        return { ...ref, errors: this.announceFirstError(ref.tag) }
+        return { ...ref, errors: this.rows.errors(ref.tag) }
       }),
       endpoints: summary.endpoints.map((endpoint) => {
         const server = byTag.get(endpoint.tag)
@@ -2909,31 +1954,11 @@ export class DevServerRunner {
           // DOES have an error count, which is the whole reason the panel can report a broken frontend.
           uptimeMs: server ? now - server.startedAt : undefined,
           restarts: server?.restarts,
-          rpm: (this.reqTimes.get(endpoint.tag) ?? []).length,
-          errors: this.announceFirstError(endpoint.tag),
+          rpm: this.rows.requestsPerMinute(endpoint.tag),
+          errors: this.rows.errors(endpoint.tag),
         }
       }),
     })
-  }
-
-  /**
-   * This row's error count, announcing the 0 → >0 EDGE once with a terminal line.
-   *
-   * The counter alone is not enough, and the reason is the honest cost of a liveness dot: a frontend that
-   * fails to compile still serves and still answers vite's ping, so its dot stays a truthful green while
-   * the app is unusable. `⚠ N` is then the only thing on screen that disagrees — and a number quietly
-   * ticking up in a panel corner is not a thing anyone notices. The edge log is; it also reaches a non-TTY
-   * run, which has no panel at all.
-   */
-  private announceFirstError(tag: string): number {
-    const { errors } = this.sink.statsFor(tag)
-
-    if (errors > 0 && !this.firstErrorLogged.has(tag)) {
-      this.firstErrorLogged.add(tag)
-      this.renderer.log(`⚠️  ${tag} reported its first error → ${homeShorten(this.sink.pathFor(tag))}`, 'warn')
-    }
-
-    return errors
   }
 
   /**
@@ -2969,24 +1994,10 @@ export class DevServerRunner {
       })
   }
 
-  /** Drop request timestamps older than the 60s rpm window. Runs on every tick, painting or not. */
-  private pruneRequestWindow(now: number): void {
-    const cutoff = now - 60_000
-
-    for (const [tag, times] of this.reqTimes) {
-      this.reqTimes.set(
-        tag,
-        times.filter((at) => {
-          return at > cutoff
-        }),
-      )
-    }
-  }
-
   /**
    * One liveness sweep over every running backend AND every managed frontend. Edge-triggered per ROW,
    * keyed by tag (so the counter survives an ephemeral-port rebind on restart) with the CURRENT port read
-   * fresh each tick. The verdict rules live in {@link recordProbe}; the threshold is what makes a normal
+   * fresh each tick. The verdict rules live in {@link HealthLedger.record}; the threshold is what makes a normal
    * watch-restart (server down <1s, a single interval) invisible — only a genuinely wedged app stays down
    * across two sweeps.
    *
@@ -3174,7 +2185,7 @@ export class DevServerRunner {
     // top-of-method bail could log a false `unhealthy` during teardown.
     if (this.shuttingDown) return
 
-    this.recordProbe(target, outcome)
+    this.health.record(target, outcome)
   }
 
   /**
@@ -3329,7 +2340,7 @@ export class DevServerRunner {
   private seedUiHealth(tag: string): HealthState {
     if (!this.uiHealthEnabled()) return 'unknown'
 
-    this.healthEntry(tag, 'ui')
+    this.health.track(tag, 'ui')
 
     return this.healthOf(tag)
   }
@@ -3438,7 +2449,7 @@ export class DevServerRunner {
 
   private async doShutdown(): Promise<void> {
     // Latch BEFORE anything else. Everything below assumes no new alias can be registered once
-    // teardown begins; `scheduleDebounced` and `restart` read this flag to honour that.
+    // teardown begins; the `RestartScheduler` and `restart` read this flag to honour that.
     this.shuttingDown = true
     this.stage = 'starting'
 
@@ -3472,10 +2483,7 @@ export class DevServerRunner {
     // removal is not idempotent against a concurrent `startOneApp`: a chokidar event or an armed
     // debounce timer firing after the removal would re-register an alias into a set nothing drains
     // again, stranding it exactly like the force-quit case the removal is there to prevent.
-    for (const timer of this.watchDebounceTimers.values()) {
-      clearTimeout(timer)
-    }
-    this.watchDebounceTimers.clear()
+    this.restarts.clear()
 
     // Stop the liveness monitor BEFORE the servers close, so a final tick can't probe a closing backend and
     // log a false `unhealthy`. The `shuttingDown` latch above also makes an in-flight tick bail and never
@@ -3544,12 +2552,12 @@ export class DevServerRunner {
       }
       // Remove this runner's own dev-context fragment so a stopped app drops out of the
       // helper's localSet (only its own — the directory model keeps runners independent).
-      this.removeDevContextFragment(app)
+      this.devContext.remove(app)
     }
 
     // A backend still down at exit owns a HELD fragment (see `holdFailedBackendsLocal`) and no server.
     for (const { app } of this.failedApps) {
-      if (this.heldLocalPkgs.has(app.packageName)) this.removeDevContextFragment(app)
+      if (this.heldLocalPkgs.has(app.packageName)) this.devContext.remove(app)
     }
 
     // Final terminal-visible confirmation, so Ctrl-C never ends on a bare cursor. `log` (not the

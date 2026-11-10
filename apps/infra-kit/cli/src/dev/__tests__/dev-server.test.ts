@@ -9,11 +9,12 @@ import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { DevServerRunner } from 'src/dev/dev-server'
-import type { DevServerOptions, ProbeOutcome } from 'src/dev/dev-server'
 import type { DevUi } from 'src/dev/dev-ui'
+import type { ProbeOutcome } from 'src/dev/health-probe'
 import { DevLogSink, logFileName } from 'src/dev/log-sink'
 import type { ReadySummary } from 'src/dev/render'
 import { stripAnsi } from 'src/dev/render'
+import type { DevServerOptions } from 'src/dev/runner-types'
 import type { TurboWatchOptions } from 'src/dev/turbo-watch'
 import type { UiDevOptions } from 'src/dev/ui-dev'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
@@ -1409,7 +1410,7 @@ describe('devServerRunner — quiet by default (--verbose)', () => {
  * `git` from PATH in a test fixture — trusted, fixed literal args. Same posture as the dev-server's own
  * `git rev-parse` (readAppRelease) which carries this disable inline.
  */
-/* eslint-disable sonarjs/no-os-command-from-path */
+/* eslint-disable sonarjs/no-os-command-from-path -- the test runs the developer's own tools, which only PATH locates */
 /** Make `root` a git repo checked out on `branch` with one commit (so `rev-parse --abbrev-ref HEAD` resolves). */
 const gitInitOnBranch = (root: string, branch: string): void => {
   execFileSync('git', ['init', '-q'], { cwd: root })
@@ -1420,7 +1421,7 @@ const gitInitOnBranch = (root: string, branch: string): void => {
     { cwd: root },
   )
 }
-/* eslint-enable sonarjs/no-os-command-from-path */
+/* eslint-enable sonarjs/no-os-command-from-path -- closes the block disabled above */
 
 /** The alias's `<repo>` label for a fixture monorepo: its main checkout's directory name. */
 const repoLabel = (root: string): string => {
@@ -3055,7 +3056,7 @@ describe('devServerRunner — shutdown ordering (aliases before the child reap)'
  */
 interface RunnerTeardownPrivates {
   appServers: Array<{ app: unknown }>
-  scheduleDebounced: (key: string, work: () => Promise<void>) => void
+  restarts: { debounce: (key: string, work: () => Promise<void>) => void }
   restart: (apps: unknown[]) => Promise<void>
   registeredAliases: Set<string>
   watcher: unknown
@@ -3170,7 +3171,7 @@ describe('devServerRunner — teardown re-entry (a restart must never resurrect 
     })
 
     // Arm a restart exactly as a `dist/` change would, then tear down before it fires.
-    priv.scheduleDebounced('shop', () => {
+    priv.restarts.debounce('shop', () => {
       return priv.restart(apps)
     })
 
@@ -3462,7 +3463,7 @@ describe('devServerRunner — watch must not claim a reload it did not perform',
     /**
      * The subtle case, and the reason the stale set is accumulated on the runner rather than carried in
      * the debounced closure. One shared-lib save produces TWO events on the same debounce key: the
-     * package's own dist FIRST, then the dependent app's rebuilt dist. `scheduleDebounced` replaces the
+     * package's own dist FIRST, then the dependent app's rebuilt dist. `RestartScheduler.debounce` replaces the
      * closure for a key it sees again, so a closure-carried flag would be overwritten by the second
      * (entry, reloadable) event — and the burst would print green even though the shared lib is stale.
      */
@@ -3995,6 +3996,50 @@ describe('devServerRunner — a shared-package edit without a usable closure map
       await runner.shutdown()
     }
   }, 15000)
+
+  // Regression: `turbo watch` rebuilds the lib AND then the dependent app's own dist — two change
+  // events for one save. The restart-all and the app's own restart ran on separate debounce keys, so
+  // the app restarted twice and its module generation was charged twice against the reload budget.
+  it('restarts each app ONCE when a shared save also rewrites an app dist', async () => {
+    const { root, sharedIndex } = setupShared()
+    const { renderer, messages } = makeLogRenderer()
+
+    const runner = new DevServerRunner(
+      BOTH_APPS,
+      noopBuild,
+      noopTurboChild,
+      undefined,
+      () => {
+        return Promise.reject(new Error('turbo --dry exploded'))
+      },
+      renderer,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    try {
+      await (runner as unknown as RunnerTeardownPrivates).closureBuild
+
+      const beforeX = fragmentWrittenAt(root, 'appx')
+
+      await sleep(1200)
+      fs.writeFileSync(sharedIndex, 'export const v = 2\n')
+      await sleep(100)
+      fs.appendFileSync(path.join(root, 'apps', 'appx', 'api', 'dist', 'handler.js'), '\n')
+
+      await waitFor(() => {
+        return fragmentWrittenAt(root, 'appx') > beforeX
+      })
+      // Past a second debounce window: a stray per-app timer would have fired by now.
+      await sleep(1000)
+
+      expect(messages().filter(isRestartLine)).toEqual(['🔄 Restarting 2 apps...'])
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
 })
 
 describe('devServerRunner — the UI dev child', () => {
@@ -4233,7 +4278,7 @@ describe('devServerRunner — the restart chain', () => {
 /** {@link RunnerRestartPrivates} plus the changed-files argument and the dist dirs the watcher covers. */
 interface RunnerFreshnessPrivates extends RunnerRestartPrivates {
   restart: (apps: unknown[], changed?: string[]) => Promise<void>
-  watchedDistDirs: string[]
+  builds: { distDirs: string[] }
 }
 
 describe('devServerRunner — a build that emitted through errors, or missed the last save', () => {
@@ -4263,7 +4308,7 @@ describe('devServerRunner — a build that emitted through errors, or missed the
     })
 
     const priv = booted.priv as RunnerFreshnessPrivates
-    const appDist = priv.watchedDistDirs[0]!
+    const appDist = priv.builds.distDirs[0]!
 
     return { ...booted, priv, appDir: path.dirname(appDist), changed: [path.join(appDist, 'handler.js')] }
   }

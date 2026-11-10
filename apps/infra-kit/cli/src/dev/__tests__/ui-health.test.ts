@@ -17,11 +17,12 @@ import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { DevServerRunner } from 'src/dev/dev-server'
-import type { DevServerOptions, HealthProbe, ProbeOutcome, ProbeTarget } from 'src/dev/dev-server'
 import type { DevUi } from 'src/dev/dev-ui'
+import type { HealthProbe, ProbeOutcome, ProbeTarget } from 'src/dev/health-probe'
 import type { PortlessDriver } from 'src/dev/proxy/portless-driver'
 import { DevRenderer } from 'src/dev/render'
 import type { HealthState, LogLevel, ReadySummary } from 'src/dev/render'
+import type { DevServerOptions } from 'src/dev/runner-types'
 
 import {
   createTempTracker,

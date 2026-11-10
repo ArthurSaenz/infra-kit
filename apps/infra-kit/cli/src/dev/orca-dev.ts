@@ -15,11 +15,11 @@ import type { OrcaTerminalCreateResult, OrcaTerminalSplitResult } from 'src/inte
 import { getMainRepoRoot } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 
-import type { DevServerOptions } from './dev-server.js'
 import { discoverApiApps, findMonorepoRoot, normalizeAppInclude } from './discovery.js'
 import type { DiscoveredApiApp } from './discovery.js'
 import { buildOrcaSplitPlan } from './orca-split-plan.js'
 import type { OrcaSplitStep } from './orca-split-plan.js'
+import type { DevServerOptions } from './runner-types.js'
 import { registerSignalShutdown } from './signal-shutdown.js'
 
 /** One Orca pane: the app it runs, and (optionally) the exact `<app>/<part>` targets selected for it. */
