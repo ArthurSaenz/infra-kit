@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "runtime-set-node": "pnpm runtime set node 24.21.0 --global",
+    "runtime-set-node": "pnpm runtime set node 24.22.2 --global",
     "setup": "pnpm run runtime-set-node && pnpm install",
     "reinstall": "pnpm run clean-artifacts && pnpm run clean-cache-root && pnpm clean && pnpm store prune && pnpm run runtime-set-node && pnpm install --force",
     "upgrade-pnpm": "pnpm self-update",
@@ -43,12 +43,12 @@
     "@types/react-dom": "catalog:",
     "@wl/prettier-config": "workspace:*",
     "infra-kit": "workspace:*",
-    "turbo": "2.11.7",
+    "turbo": "2.11.10",
     "typescript": "catalog:"
   },
   "engines": {
     "node": ">=24.x",
     "pnpm": ">=10"
   },
-  "packageManager": "pnpm@12.9.1"
+  "packageManager": "pnpm@12.18.0"
 }

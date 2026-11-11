@@ -21,7 +21,7 @@ catalog:
   '@modelcontextprotocol/sdk': ^1.30.0
   '@modelcontextprotocol/server': ^2.0.0
   '@playwright/test': ^1.59.1
-  '@slip-stream-kit/config': ^0.5.0
+  '@slip-stream-kit/config': ^0.45.0
   '@tailwindcss/vite': ^4.2.2
 
   '@tanstack/react-router': ^1.168.10
@@ -189,7 +189,7 @@ catalogs:
   conflicts_conflicts_esbuild_h0_28_1_h0_28_2:
     esbuild: ^0.28.2
   conflicts_@slip-stream-kit/config_h0_9_0:
-    '@slip-stream-kit/config': ^0.9.0
+    '@slip-stream-kit/config': ^0.45.0
   conflicts_conflicts_fastify_h5_12_3_h5_12_4:
     fastify: ^5.12.4
   conflicts_conflicts_zod_h4_4_3_h4_6_2:
