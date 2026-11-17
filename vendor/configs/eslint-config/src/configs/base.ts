@@ -19,6 +19,13 @@ export const publicApiPatterns = [
     group: ['**/services/*/**', '!**/services/*/index', '!**/services/*/index.*'],
     message: "Importing private modules from a service is prohibited. Use the service's public API (index.ts) instead.",
   },
+  {
+    // `\#`: gitignore syntax reads a leading `#` as a comment. Anchored on `#root/` (= src/) because a bare
+    // `**/lib/*/**` would also block package subpaths like `highlight.js/lib/…`.
+    group: ['\\#root/lib/*/**', '!\\#root/lib/*/index', '!\\#root/lib/*/index.*'],
+    message:
+      "Importing private modules from a lib module is prohibited. Use the module's public API (index.ts) instead.",
+  },
 ]
 
 /** Base antfu options shared by every mode. Framework flags (react/svelte) are merged in the factory. */
@@ -35,16 +42,21 @@ export const overrides: TypedFlatConfigItem = {
 
     'react/prefer-shorthand-boolean': 'off',
 
+    // component-hook-factories and unsupported-syntax: "temporary" in the imported config (f9657f1),
+    // reason unrecorded. rules-of-hooks crashes on real code; configs/architecture.ts runs the official
+    // react-hooks plugin's rule instead.
     'react/component-hook-factories': 'off',
     'react/rules-of-hooks': 'off',
     'react/unsupported-syntax': 'off',
 
+    // Re-enabled for `.tsx` outside route shells in configs/architecture.ts.
     'react-refresh/only-export-components': 'off',
 
     'perfectionist/sort-imports': 'off',
     'style/arrow-parens': ['error', 'always'],
     'arrow-body-style': ['error', 'always'],
 
+    // "Temporary" in the imported config (f9657f1), reason unrecorded.
     'ts/no-use-before-define': 'off',
 
     'perfectionist/sort-named-imports': 'off',
@@ -80,6 +92,7 @@ export const overrides: TypedFlatConfigItem = {
     'sonarjs/mouse-events-a11y': 'off',
     'sonarjs/no-array-index-key': 'off',
 
+    // "Temporary, must be enabled" in the imported config (f9657f1).
     'sonarjs/no-commented-code': 'off',
 
     'unicorn/no-new-array': 'off',

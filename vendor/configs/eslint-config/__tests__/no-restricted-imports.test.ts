@@ -112,6 +112,27 @@ describe('no-restricted-imports: service public-API boundary', () => {
   })
 })
 
+describe('no-restricted-imports: lib module public-API boundary', () => {
+  it.each(['#root/lib/navigation/results-url', '#root/lib/navigation/internal/index.js'])(
+    'flags a deep lib import (%s)',
+    async (spec) => {
+      expectFlagged(await lintCase({ source: importing(spec), fileName: 'src/web/x.ts' }), RULE, "module's public API")
+    },
+  )
+
+  it.each([
+    '#root/lib/navigation',
+    '#root/lib/navigation/index',
+    '#root/lib/navigation/index.js',
+    '#root/lib/utils',
+    '../../lib/navigation',
+    './results-url',
+    'highlight.js/lib/languages/xml',
+  ])('allows %s', async (spec) => {
+    expectClean(await lintCase({ source: importing(spec), fileName: 'src/web/x.ts' }), RULE)
+  })
+})
+
 // Self-falsifying guard: a mistyped/ignored virtual path must THROW (not silently report clean).
 // This goes RED if either lintCase silent-false-pass guard is removed.
 it('meta: an ignored/typo virtual path throws, not silently clean', async () => {

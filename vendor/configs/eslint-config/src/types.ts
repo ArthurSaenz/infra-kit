@@ -20,6 +20,8 @@ export interface ConfigOptions {
   components?: boolean
   /** Tailwind design-system rules (@shadcn/lint). Default true. */
   shadcn?: boolean
+  /** Kebab-case file and folder names for source files. Default true. */
+  fileNaming?: boolean
   /** fe-architect layer: rules of hooks, platform access, dumb-component imports. React mode only. Default true. */
   architecture?: boolean
   /** Extra `no-restricted-syntax` entries for frontend code, appended to the shared ones. */
@@ -39,6 +41,7 @@ export interface ResolvedOptions {
   markdown: boolean
   components: boolean
   shadcn: boolean
+  fileNaming: boolean
   architecture: boolean
   restrictedSyntax: RestrictedSyntax[]
   rules: NonNullable<ConfigRules>

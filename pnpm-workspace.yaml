@@ -131,6 +131,11 @@ minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - '@slip-stream-kit/*'
   - infra-kit
+  # Exact versions from the starter sync (3fc421e), younger than the cooldown until 2026-11-18; drop after.
+  - 'eslint-plugin-react-refresh@0.5.8'
+  - 'fumadocs-core@16.19.3'
+  - 'fumadocs-mdx@15.6.2'
+  - 'fumadocs-ui@16.19.3'
   # Exact versions from the starter sync (f5e6f4c), younger than the cooldown until 2026-11-05; drop after.
   - '@boundaries/config@1.0.0'
   - '@boundaries/elements@3.3.1'

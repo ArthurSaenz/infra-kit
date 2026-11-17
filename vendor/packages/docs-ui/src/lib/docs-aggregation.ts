@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { glob, readFile } from 'node:fs/promises'
+import { glob, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 
 import { makeDeriveTitle, makePathToSlugs, toPosix } from './slugs.ts'
@@ -150,7 +150,16 @@ export const createDocsAggregation = (params: { appDir: string; contentRel?: str
     for await (const entry of glob(includeGlobs, { cwd: repoRoot })) {
       const rel = toPosix(entry)
 
-      if (!isIgnoredDocPath(rel)) out.push(rel)
+      // fs.glob also yields directories (`notes.md/`); fumadocs-mdx globs files only, and the
+      // glob descends into the directory on its own. `stat` follows symlinks, as fumadocs does;
+      // a dangling one is not a doc, and must not abort the build.
+      if (isIgnoredDocPath(rel)) continue
+
+      try {
+        if ((await stat(path.join(repoRoot, entry))).isFile()) out.push(rel)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
     }
 
     return [...new Set(out)].sort()
@@ -169,8 +178,12 @@ export const createDocsAggregation = (params: { appDir: string; contentRel?: str
 
     try {
       raw = (await readFile(absPath, 'utf8')).replace(/\r\n/g, '\n')
-    } catch {
-      return null
+    } catch (error) {
+      // Only a vanished file falls back to the path slug; an unreadable one would otherwise be
+      // prerendered at a URL its frontmatter does not ask for.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+
+      throw error
     }
 
     const block = raw.match(/^---\n([\s\S]*?)\n---/)
@@ -191,7 +204,8 @@ export const createDocsAggregation = (params: { appDir: string; contentRel?: str
   }
 
   /**
-   * Every doc URL (`/docs/...`) for prerender seeding.
+   * Every doc URL (`/docs/...`) for prerender seeding. Throws when two docs resolve to the same
+   * URL — one would silently shadow the other.
    *
    * @example
    *     const urls = await getAllDocUrls()
@@ -208,7 +222,21 @@ export const createDocsAggregation = (params: { appDir: string; contentRel?: str
       }),
     )
 
-    return [...new Set(urls)].sort()
+    const owners = new Map<string, string>()
+    const collisions: string[] = []
+
+    for (const [index, url] of urls.entries()) {
+      const owner = owners.get(url)
+
+      if (owner === undefined) owners.set(url, rels[index])
+      else collisions.push(`${url} is claimed by both ${owner} and ${rels[index]}`)
+    }
+
+    if (collisions.length > 0) {
+      throw new Error(`[@wl/docs-ui] Two docs resolve to the same URL:\n  - ${collisions.join('\n  - ')}`)
+    }
+
+    return urls.sort()
   }
 
   return {

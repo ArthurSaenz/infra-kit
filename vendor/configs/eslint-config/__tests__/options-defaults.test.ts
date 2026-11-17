@@ -18,6 +18,7 @@ describe('options: defaults invariant', () => {
       markdown: true,
       components: true,
       shadcn: true,
+      fileNaming: true,
       architecture: true,
       restrictedSyntax: [],
       rules: {},

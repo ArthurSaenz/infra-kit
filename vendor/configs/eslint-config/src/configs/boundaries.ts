@@ -2,7 +2,7 @@ import type { TypedFlatConfigItem } from '@antfu/eslint-config'
 import boundariesPlugin from 'eslint-plugin-boundaries'
 import { fileURLToPath } from 'node:url'
 
-import { GLOB_SRC_ALL } from '../globs.js'
+import { GLOB_SRC_ALL, SRC_EXTENSIONS } from '../globs.js'
 import type { ConfigRules } from '../types.js'
 
 /**
@@ -38,7 +38,7 @@ export const boundaries = (severity: 'warn' | 'error' = 'error'): TypedFlatConfi
     // fallback for plain relative and package specifiers.
     'import/resolver': {
       [ROOT_ALIAS_RESOLVER]: {},
-      node: { extensions: ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'] },
+      node: { extensions: SRC_EXTENSIONS.map((extension) => `.${extension}`) },
     },
     // Do not re-add `mode: 'folder'` — it is the v7 default and passing it explicitly is deprecated.
     //

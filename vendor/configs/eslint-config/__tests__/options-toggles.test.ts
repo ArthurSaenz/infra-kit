@@ -1,5 +1,5 @@
 import type { Linter } from 'eslint'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import config from '../src/index.js'
 
@@ -26,6 +26,8 @@ const ourMarkdown = (flat: Flat) => {
 }
 const wlRule = (flat: Flat) => flat.find((c) => c?.rules?.['@wl/props-destructuring-newline'])
 const ourShadcn = (flat: Flat) => flat.find((c) => c?.name === 'wl/shadcn')
+const ourFileNaming = (flat: Flat) => flat.find((c) => c?.name === 'wl/file-naming')
+const ourArchitecture = (flat: Flat) => flat.filter((c) => c?.name?.startsWith('wl/architecture/'))
 
 describe('options: group toggles drop exactly their contribution', () => {
   it('boundaries:false removes the app and e2e boundaries items only', async () => {
@@ -80,5 +82,56 @@ describe('options: group toggles drop exactly their contribution', () => {
     expect(ourShadcn(base)).toBeDefined()
     expect(ourShadcn(off)).toBeUndefined()
     expect(off.length).toBe(base.length - 1)
+  })
+
+  it('fileNaming:false removes the file-naming item only', async () => {
+    const base = await config()
+    const off = await config({ fileNaming: false })
+
+    expect(ourFileNaming(base)).toBeDefined()
+    expect(ourFileNaming(off)).toBeUndefined()
+    expect(off.length).toBe(base.length - 1)
+  })
+})
+
+describe('options: mode', () => {
+  it('falls back to react for a name inherited from Object.prototype instead of crashing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fallback = await config({ mode: 'constructor' })
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Unknown mode "constructor"'))
+    expect(fallback.length).toBe((await config()).length)
+    warn.mockRestore()
+  })
+
+  it('applies the architecture layer only where the preset asks for it', async () => {
+    expect(ourArchitecture(await config()).length).toBeGreaterThan(0)
+    expect(ourArchitecture(await config({ mode: 'svelte' }))).toHaveLength(0)
+  })
+})
+
+describe('options: calls do not share mutable state', () => {
+  it('a mutation of one returned config does not leak into the next call', async () => {
+    const restricted = (flat: Flat) => {
+      return flat.find((c) => !c.files && c.rules?.['no-restricted-imports'])?.rules?.['no-restricted-imports'] as [
+        string,
+        { patterns: unknown[] },
+      ]
+    }
+    const first = await config()
+    const before = restricted(first)[1].patterns.length
+
+    restricted(first)[1].patterns.push({ group: ['leak'] })
+
+    expect(restricted(await config())[1].patterns).toHaveLength(before)
+  })
+
+  it('blocks that share a glob list get their own copy', async () => {
+    const flat = await config()
+    const maxJsdocLines = flat.find((c) => c.name === 'wl/max-jsdoc-lines-error')
+    const rulesOfHooks = flat.find((c) => c.name === 'wl/architecture/rules-of-hooks')
+
+    expect(maxJsdocLines?.ignores).toEqual(rulesOfHooks?.ignores)
+    expect(maxJsdocLines?.ignores).not.toBe(rulesOfHooks?.ignores)
   })
 })

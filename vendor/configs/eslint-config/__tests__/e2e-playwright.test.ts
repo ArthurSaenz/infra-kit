@@ -111,6 +111,17 @@ describe('e2e playwright rules: expect-expect exemptions', () => {
 })
 
 describe('e2e playwright rules: scoped to Playwright packages', () => {
+  // Component tests (`@playwright/experimental-ct-react`) and JSX helpers are `.tsx`/`.jsx`.
+  it.each(['e2e/src/tests/alpha/card.spec.tsx', 'e2e/src/tests/alpha/card.spec.jsx'])(
+    'applies to %s',
+    async (relPath) => {
+      const source =
+        "import { test } from '@playwright/test'\n\ntest.only('a', async ({ page }) => { await page.goto('/') })\n"
+
+      expect(await ruleIds(relPath, source)).toContain('playwright/no-focused-test')
+    },
+  )
+
   it('does not apply to a non-e2e package', async () => {
     const source =
       "import { test } from '@playwright/test'\n\ntest.only('a', async ({ page }) => { await page.goto('/') })\n"

@@ -3,7 +3,8 @@
  *
  * @see https://prettier.io/docs/en/configuration
  *
- * @type {import("prettier").Options}
+ * @param {{ mode?: string }} [options] `'astro+svelte'` adds the Svelte and Astro plugins; anything else is react.
+ * @returns {import("prettier").Config}
  */
 const config = (options = {}) => {
   const { mode = 'react' } = options
@@ -15,6 +16,7 @@ const config = (options = {}) => {
     basePlugins.push('prettier-plugin-svelte', 'prettier-plugin-astro')
   }
 
+  /** @type {import("prettier").Config} */
   const baseConfig = {
     printWidth: 120,
     tabWidth: 2,

@@ -180,6 +180,18 @@ describe('e2e boundaries: scope', () => {
     )
   })
 
+  it.each(['e2e/src/lib/view.tsx', 'e2e/src/lib/view.jsx'])('checks %s like a .ts file', async (relPath) => {
+    expectFlagged(
+      await lintAt(
+        relPath,
+        code`
+      import { homePage } from '../pages/home.page'
+      export const view = homePage
+    `,
+      ),
+    )
+  })
+
   it('leaves a non-Playwright package with the same folder names alone', async () => {
     expectClean(
       await lintAt(
@@ -190,5 +202,20 @@ describe('e2e boundaries: scope', () => {
     `,
       ),
     )
+  })
+})
+
+// The detector runs as a `files` matcher, where it cannot report a lint message: a bare
+// `JSON.parse` SyntaxError would abort the run without saying which manifest is broken.
+describe('e2e boundaries: malformed package.json', () => {
+  it('fails the lint run with an error naming the manifest', async () => {
+    const manifest = path.join(root, 'broken/package.json')
+    const file = path.join(root, 'broken/src/lib/x.ts')
+
+    mkdirSync(path.dirname(file), { recursive: true })
+    writeFileSync(manifest, '{ "name": "broken", }\n')
+    writeFileSync(file, 'export const x = 1\n')
+
+    await expect(eslint.lintText('export const x = 1\n', { filePath: file })).rejects.toThrow(manifest)
   })
 })

@@ -15,25 +15,28 @@ The package is authored in TypeScript under `src/` and built to `dist/` with `ts
 
 ## Options
 
-All options are optional; the defaults reproduce the historical config **byte-for-byte**, so existing
-consumers calling `config()` / `config({ ignores })` are unaffected.
+All options are optional. The defaults reproduce the historical config, except for `fileNaming`, which is
+on by default and flags every non-kebab-case source file and folder.
 
-| Option        | Type                            | Default   | Effect                                                                                              |
-| ------------- | ------------------------------- | --------- | --------------------------------------------------------------------------------------------------- |
-| `mode`        | `'react' \| 'svelte' \| string` | `'react'` | Framework preset. Unknown values fall back to `react` with a dev-time `console.warn`.               |
-| `ignores`     | `string[]`                      | `[]`      | Extra ignore globs appended to the built-in ignores.                                                |
-| `boundaries`  | `boolean \| 'warn' \| 'error'`  | `'warn'`  | Phase-2 relationship-aware import boundaries. `false` drops the layer; `'error'` enforces strictly. |
-| `jsdoc`       | `boolean`                       | `true`    | Size-gated JSDoc layer (PascalCase components exempt from `@example`/description — see below).      |
-| `markdown`    | `boolean`                       | `true`    | Markdown sonarjs-off layer.                                                                         |
-| `components`  | `boolean`                       | `true`    | White-label component conventions (`@wl`).                                                          |
-| `shadcn`      | `boolean`                       | `true`    | Tailwind design-system rules from [`@shadcn/lint`](https://github.com/shadcn-ui/lint).              |
-| `rules`       | `ConfigRules`                   | `{}`      | Consumer rule overrides, merged **last** (highest precedence). Omitted from the call when empty.    |
-| `userConfigs` | `FlatConfig[]`                  | `[]`      | Arbitrary consumer flat-configs appended **last**.                                                  |
+| Option             | Type                            | Default   | Effect                                                                                                     |
+| ------------------ | ------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------- |
+| `mode`             | `'react' \| 'svelte' \| string` | `'react'` | Framework preset. Unknown values fall back to `react` with a dev-time `console.warn`.                      |
+| `ignores`          | `string[]`                      | `[]`      | Extra ignore globs appended to the built-in ignores.                                                       |
+| `boundaries`       | `boolean \| 'warn' \| 'error'`  | `'error'` | Phase-2 relationship-aware import boundaries. `false` drops the layer; `'warn'` downgrades.                |
+| `jsdoc`            | `boolean`                       | `true`    | JSDoc hygiene layer (see below).                                                                           |
+| `markdown`         | `boolean`                       | `true`    | Markdown sonarjs-off layer.                                                                                |
+| `components`       | `boolean`                       | `true`    | White-label component conventions (`@wl`).                                                                 |
+| `shadcn`           | `boolean`                       | `true`    | Tailwind design-system rules from [`@shadcn/lint`](https://github.com/shadcn-ui/lint).                     |
+| `fileNaming`       | `boolean`                       | `true`    | Kebab-case file and folder names (see [File naming](#file-naming)).                                        |
+| `architecture`     | `boolean`                       | `true`    | React-only layer: rules of hooks, platform access, dumb-component imports (`src/configs/architecture.ts`). |
+| `restrictedSyntax` | `RestrictedSyntax[]`            | `[]`      | Extra `no-restricted-syntax` entries for frontend code, appended to the shared ones.                       |
+| `rules`            | `ConfigRules`                   | `{}`      | Consumer rule overrides, merged **last** (highest precedence). Omitted from the call when empty.           |
+| `userConfigs`      | `FlatConfig[]`                  | `[]`      | Arbitrary consumer flat-configs appended **last**.                                                         |
 
 ```js
-// Opt a package out of a layer, bump boundaries to error, and add a local rule:
+// Opt a package out of a layer, downgrade boundaries to warn, and add a local rule:
 export default config({
-  boundaries: 'error',
+  boundaries: 'warn',
   jsdoc: false,
   rules: { 'no-console': 'error' },
 })
@@ -66,14 +69,15 @@ The package structure makes a new framework a **one-file + one-line** change:
 
 ```ts
 export const frameworks: Record<string, FrameworkPreset> = {
-  react: { antfuFlags: { react: true }, extraConfigs: [] },
+  react: { antfuFlags: { react: true }, extraConfigs: [], architecture: true },
   svelte: { antfuFlags: { svelte: true }, extraConfigs: [svelteConfig] },
   vue: { antfuFlags: { vue: true }, extraConfigs: [vueConfig] }, // <-- new
 }
 ```
 
 The factory looks the preset up by `mode`, merges `antfuFlags` onto the base antfu options, and
-splices `extraConfigs` in at the framework position. Unknown modes fall back to `react`.
+splices `extraConfigs` in at the framework position. `architecture: true` opts the preset into the
+React-only architecture layer. Unknown modes fall back to `react`.
 
 ## Package structure
 
@@ -86,15 +90,44 @@ src/
   globs.ts          # shared glob constants
   configs/
     base.ts         # antfu base options + sonarjs + the project rule overrides (incl. Phase-1)
+    architecture.ts # React-only: rules of hooks, platform access, dumb-component imports
     boundaries.ts   # Phase-2 relationship-aware boundaries (severity-parameterized)
     e2e-boundaries.ts # import direction inside Playwright packages (same toggle)
     e2e-playwright.ts # eslint-plugin-playwright trust rules, Playwright packages only
     components.ts   # @wl component conventions
     shadcn.ts       # @shadcn/lint Tailwind design-system rules
+    file-naming.ts  # kebab-case file and folder names
     docs.ts         # JSDoc + markdown layers
     ignores.ts      # built-in + user ignores
+    temp-disabled.ts # central mute list, appended after every rule layer
     frameworks/     # framework registry (index.ts) + per-framework blocks (svelte.ts)
 ```
+
+## File naming
+
+Source files (`js`/`ts` family and `.svelte`) and every folder above them, up to the directory ESLint
+runs in, must be kebab-case: `user-card.tsx`, `data-source/`. Only the part before the first dot is a
+name; `user-card.test.ts` and `home.page.ts` pass. Files go through `unicorn/filename-case`; folders go
+through `wl-config/folder-case`, a small rule in `src/configs/file-naming.ts`.
+
+Exempt, because a tool or framework fixes the name:
+
+- `index.*`, a leading `_` (`__root.tsx`, `_layout.tsx`) or `$` (`$.tsx`, `$postId.tsx`)
+- TanStack Router: `-` prefixed files and folders, `posts_.$id.tsx`, `(group)/`, `_pathless/`; Vike:
+  `+Page.tsx`, `+config.ts`; bracket params such as `[id]/`
+- dotfolders (`.storybook/`), tooling folders (`__tests__/`, `__mocks__/`, `__fixtures__/`, …) and
+  scoped-package mocks (`__mocks__/@aws-sdk/`)
+- files the layer never reads: Markdown (`README.md`, `CLAUDE.md`) and the built-in ignores
+  (`routeTree.gen.ts`)
+
+A package with names still to rename turns the layer off until it is done:
+
+```js
+export default config({ fileNaming: false })
+```
+
+To keep the folder rule while files are renamed, override one rule instead:
+`rules: { 'unicorn/filename-case': 'off' }`.
 
 ## Architecture import rules (public-API boundaries)
 
@@ -106,6 +139,16 @@ Reaching into their internals is an error:
 - ❌ `import { client } from '#root/services/email/client'` — deep import, blocked
 - ✅ `import { Email } from '#root/services/email'` — barrel (public API)
 - ✅ `import { local } from './local'` — relative intra-element import
+- ❌ `import { toRouterTarget } from '#root/lib/navigation/results-url'` — deep lib import, blocked
+- ✅ `import { toRouterTarget } from '#root/lib/navigation'` — lib module barrel
+
+The React architecture rules (hooks, platform access, dumb-component imports), the component rules and
+the JSDoc layer share one exemption list (`GLOB_TS_DOC_EXCLUDE`): tests, stories, `__stories__/` helpers
+and declaration files are not checked by any of them.
+
+`src/lib/<module>` follows the same rule via `#root/lib/*/**`. The glob is anchored on `#root/`, so
+package subpaths like `highlight.js/lib/languages/xml` stay allowed. Inside a lib module, import
+siblings relatively (`./types`), never through `#root/lib/<same-module>/…`.
 
 This is enforced by `no-restricted-imports` with the globs `**/features/*/**` and
 `**/services/*/**`. The pattern is anchored on the `features/`/`services/` segment, so it
@@ -144,23 +187,25 @@ The type-only escape hatch is granted by the `dependency: { kind: 'type' }` allo
 `src/configs/boundaries.ts`; the shared runtime exception is the
 `to: { type: 'shared', internalPath: 'index.*' }` allow rule. Adjust those rules to change the policy.
 
-These rules run at **`warn`** by default (pass `config({ boundaries: 'error' })` to promote them, or
+These rules run at **`error`** by default (pass `config({ boundaries: 'warn' })` to downgrade them, or
 `config({ boundaries: false })` to drop the layer). They are **dormant** on any package without a
 `features/`/`services/` tree — its files are classified `unknown` and never flagged — so the current
 flat-layout consumers are unaffected. As real feature/service trees land, the rules begin enforcing
 automatically.
 
-**Alias resolution:** boundaries must resolve an import to classify its target. The config
-resolves relative TS imports via the bundled node resolver (extended with TS extensions). A
-consumer that imports via a path alias (e.g. `#root` ⇒ `src`) must add a matching resolver
-(e.g. `eslint-import-resolver-typescript` in its `settings['import/resolver']`); otherwise
-aliased targets resolve as `unknown` and are silently not enforced.
+**Alias resolution:** boundaries must resolve an import to classify its target; an unresolved
+target is `unknown` and silently not enforced. `#root/*` (⇒ `<package>/src/*`) is resolved by the
+bundled `resolvers/root-alias.cjs`, including NodeNext-style `#root/x.js` ⇒ `x.ts`. The same
+resolver maps a relative NodeNext specifier (`./x.js`, `../y/index.mjs`) to its TS source, so those
+imports are checked exactly like extensionless ones. Everything else goes to the node resolver
+(extended with TS extensions).
 
 ## E2E import direction (Playwright packages)
 
 A package whose `package.json` declares `@playwright/test` (the same signal `@wl/package-structure`
 uses) gets its own element set in place of `feature`/`service`/`shared`, so `pages`, `lib` and
-`config` there never collide with the app-code meaning of those folder names:
+`config` there never collide with the app-code meaning of those folder names. A `package.json` that is
+not valid JSON stops the lint run with an error naming it, instead of being guessed as either kind.
 
 ```
 tests/<domain> | visual/<domain> | setup → fixtures → pages → components → mocks → lib → config
@@ -181,7 +226,8 @@ import { HomePage } from '#root/pages/home.page'             // ✅ domain → s
 import { cart } from '../cart/fixtures/cart.fixture'         // ❌ sibling domain
 ```
 
-It follows the `boundaries` toggle and severity. Source: `src/configs/e2e-boundaries.ts`.
+It covers every JS/TS source in the package — `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`,
+`.cjs` — and follows the `boundaries` toggle and severity. Source: `src/configs/e2e-boundaries.ts`.
 
 ## E2E trust rules (Playwright packages)
 
@@ -191,30 +237,16 @@ at `error` for `missing-playwright-await`, `no-focused-test`, `no-wait-for-timeo
 `expect*` / `assert*` / `verify*` (bare or as a method), so page-object assertion helpers count.
 Source: `src/configs/e2e-playwright.ts`.
 
-## JSDoc layer (size-gated)
+## JSDoc layer
 
-Any **non-component** function longer than 15 lines must carry a JSDoc block (`jsdoc/require-jsdoc`)
-that also has a body-style description (`jsdoc/require-description`) and at least one `@example`
-(`jsdoc/require-example`).
+Scope: `**/*.{ts,tsx}` minus tests, stories (including `__stories__/` helpers) and declarations. Enforced (`src/configs/docs.ts`, where
+each rule's reason lives): `tag-lines`, `no-blank-blocks`, `no-multi-asterisks`, `no-types`,
+`check-line-alignment` and `check-param-names` at `error`, `informative-docs` at `warn`, plus
+`@wl/max-jsdoc-lines` at `error` (wired in `src/configs/components.ts`, where the `@wl` plugin loads).
 
-**React components are fully exempt from all three rules** — a component's contract is its props +
-JSX, not prose, a runnable example, or even a doc block. A component is identified by a **PascalCase
-name** (the React convention), implemented via esquery `contexts` shared by all three rules in
-`src/configs/docs.ts`. A component never owes a JSDoc block, regardless of length.
-
-```tsx
-// ✅ component: no JSDoc required, even over 15 lines
-export const UserCard = (props: UserCardProps) => <article>{props.name}</article>
-
-// ❌ non-component > 15 lines: needs a JSDoc block WITH a body description and an @example
-export const formatAddress = (parts: string[]) => {
-  /* …16+ lines… */
-}
-```
-
-> Limitation: the heuristic is **named-declaration-only**. Anonymous / default-export components
-> (`export default () => …`) and HOC-wrapped ones (`memo(...)`, `forwardRef(...)`) are not recognized
-> and remain subject to all three rules.
+Requiring a doc block is **not** enforced today: `jsdoc/require-jsdoc` / `require-description` /
+`require-example` are off because `@wl/require-jsdoc-example` covers the same ground, and that rule is
+muted in `src/configs/temp-disabled.ts` until adoption completes.
 
 ## Component conventions (`@wl/eslint-plugin`)
 

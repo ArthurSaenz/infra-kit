@@ -268,6 +268,24 @@ describe('architecture: component modules', () => {
 
     expectClean(messages, 'react-refresh/only-export-components')
   })
+
+  // Story helpers beside `*.stories.tsx` (seen in travelist ui-kit and nomadream ai-chat-fe) share
+  // demo data and components, exactly like the stories they feed.
+  it('treats a __stories__ helper like a story', async () => {
+    const messages = await lintCase({
+      fileName: 'src/features/a/__stories__/story-fixtures.tsx',
+      source: code`
+        import type { FC } from 'react'
+
+        export const STORY_ORIGIN = 'https://example.test'
+
+        export const Demo: FC = () => <div />
+      `,
+    })
+
+    expectClean(messages, 'react-refresh/only-export-components')
+    expectClean(messages, 'no-restricted-syntax')
+  })
 })
 
 describe('architecture: disable directives', () => {

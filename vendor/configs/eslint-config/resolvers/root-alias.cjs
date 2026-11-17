@@ -14,6 +14,11 @@
  *   resolve(source, file, config) -> { found: boolean, path?: string }
  * Returning `{ found: false }` hands the specifier to the next resolver in the chain, which
  * is how every non-`#root` import still reaches the node resolver.
+ *
+ * It also claims one relative form: a NodeNext specifier (`./x.js`), mapped to its TS source
+ * (`x.ts`) or, when a file by that literal name exists, to that file. The node resolver looks the
+ * name up literally and misses `x.ts`, which leaves the import unclassified and so unpoliced.
+ * Extensionless relative specifiers stay with the node resolver.
  */
 
 const fs = require('node:fs')
@@ -27,8 +32,16 @@ const DEFAULT_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs'
 /** package.json lookups are hot in a lint run over thousands of imports. */
 const packageRootCache = new Map()
 
-/** Same target is imported from many files; resolving it once is the bulk of the win. */
+/**
+ * Same target is imported from many files; resolving it once is the bulk of the win. Hits only: a
+ * long-lived ESLint (editor server) would otherwise keep a miss after the file is created.
+ */
 const resolutionCache = new Map()
+
+/** NodeNext specifiers name the emitted file (`./x.js`); the source on disk is its TS counterpart. */
+const TS_SOURCE_EXTENSIONS = { '.js': ['.ts', '.tsx'], '.jsx': ['.tsx'], '.mjs': ['.mts'], '.cjs': ['.cts'] }
+
+const isRelative = (source) => /^\.\.?\//.test(source)
 
 /** Nearest ancestor directory containing a package.json, or null at the filesystem root. */
 function findPackageRoot(startDir) {
@@ -69,17 +82,25 @@ const isDirectory = (candidate) => statOf(candidate)?.isDirectory() === true
  * at all — so each branch is covered by a test in __tests__/root-alias-resolver.test.ts.
  */
 function resolveWithExtensions(base, extensions) {
-  const cached = resolutionCache.get(base)
+  const key = `${base}\0${extensions.join(',')}`
+  const cached = resolutionCache.get(key)
   if (cached !== undefined) return cached
 
   const resolved = resolveWithExtensionsUncached(base, extensions)
-  resolutionCache.set(base, resolved)
+  if (resolved) resolutionCache.set(key, resolved)
 
   return resolved
 }
 
 function resolveWithExtensionsUncached(base, extensions) {
   if (isFile(base)) return base
+
+  const emitted = path.extname(base)
+
+  for (const extension of TS_SOURCE_EXTENSIONS[emitted] ?? []) {
+    const candidate = `${base.slice(0, -emitted.length)}${extension}`
+    if (isFile(candidate)) return candidate
+  }
 
   for (const extension of extensions) {
     const candidate = `${base}${extension}`
@@ -106,7 +127,17 @@ function resolve(source, file, config) {
   const baseDir = config?.baseDir ?? 'src'
   const extensions = config?.extensions ?? DEFAULT_EXTENSIONS
 
-  if (typeof source !== 'string' || !source.startsWith(alias)) return { found: false }
+  if (typeof source !== 'string') return { found: false }
+
+  if (isRelative(source)) {
+    if (!TS_SOURCE_EXTENSIONS[path.extname(source)]) return { found: false }
+
+    const resolved = resolveWithExtensions(path.resolve(path.dirname(path.resolve(file)), source), [])
+
+    return resolved ? { found: true, path: resolved } : { found: false }
+  }
+
+  if (!source.startsWith(alias)) return { found: false }
 
   const packageRoot = findPackageRoot(path.dirname(path.resolve(file)))
   if (!packageRoot) return { found: false }

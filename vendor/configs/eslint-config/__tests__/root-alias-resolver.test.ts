@@ -89,6 +89,70 @@ describe('root-alias resolver: extension resolution', () => {
   })
 })
 
+describe('root-alias resolver: NodeNext specifiers', () => {
+  it.each([
+    ['#root/features/alpha/next.js', 'src/features/alpha/next.ts'],
+    ['#root/features/alpha/next-view.js', 'src/features/alpha/next-view.tsx'],
+    ['#root/features/alpha/next-modern.mjs', 'src/features/alpha/next-modern.mts'],
+    ['#root/features/alpha/next-common.cjs', 'src/features/alpha/next-common.cts'],
+  ])('resolves %s to its TS source', (specifier, rel) => {
+    const abs = write(rel)
+
+    expect(resolver.resolve(specifier, importer())).toEqual({ found: true, path: abs })
+  })
+
+  it('keeps a real .js file over its TS counterpart', () => {
+    const js = write('src/features/alpha/emitted.js')
+    write('src/features/alpha/emitted.ts')
+
+    expect(resolver.resolve('#root/features/alpha/emitted.js', importer())).toEqual({ found: true, path: js })
+  })
+})
+
+describe('root-alias resolver: relative NodeNext specifiers', () => {
+  it.each([
+    ['./rel-next.js', 'src/features/beta/rel-next.ts'],
+    ['../alpha/rel-view.js', 'src/features/alpha/rel-view.tsx'],
+    ['../alpha/rel-modern.mjs', 'src/features/alpha/rel-modern.mts'],
+  ])('resolves %s against the importing file to its TS source', (specifier, rel) => {
+    const abs = write(rel)
+
+    expect(resolver.resolve(specifier, importer())).toEqual({ found: true, path: abs })
+  })
+
+  it('reports not-found for a relative .js specifier with no counterpart', () => {
+    expect(resolver.resolve('./missing.js', importer())).toEqual({ found: false })
+  })
+
+  it('leaves relative specifiers without an emitted extension to the node resolver', () => {
+    write('src/features/beta/plain.ts')
+
+    expect(resolver.resolve('./plain', importer())).toEqual({ found: false })
+    expect(resolver.resolve('./plain.ts', importer())).toEqual({ found: false })
+  })
+})
+
+describe('root-alias resolver: caching', () => {
+  it('does not remember a miss — a file created later in the same process resolves', () => {
+    expect(resolver.resolve('#root/features/later/index', importer())).toEqual({ found: false })
+
+    const abs = write('src/features/later/index.ts')
+
+    expect(resolver.resolve('#root/features/later/index', importer())).toEqual({ found: true, path: abs })
+  })
+
+  it('keys a hit on the extension list as well as the path', () => {
+    const js = write('src/features/keyed/thing.js')
+    const ts = write('src/features/keyed/thing.ts')
+
+    expect(resolver.resolve('#root/features/keyed/thing', importer(), { extensions: ['.js'] })).toEqual({
+      found: true,
+      path: js,
+    })
+    expect(resolver.resolve('#root/features/keyed/thing', importer())).toEqual({ found: true, path: ts })
+  })
+})
+
 describe('root-alias resolver: directory index', () => {
   it('resolves a directory to its index file — the barrel form the convention uses', () => {
     const abs = write('src/features/gamma/index.ts')

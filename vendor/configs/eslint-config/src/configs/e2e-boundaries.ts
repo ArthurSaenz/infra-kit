@@ -13,13 +13,26 @@ const LAYERS = ['config', 'lib', 'mocks', 'components', 'pages', 'fixtures'] as 
 /** Top-level entry points: nothing imports them, and they may import every shared layer. */
 const DOMAIN_ROOTS = ['tests', 'visual'] as const
 
-const SOURCE_FILE = /\.(?:[cm]?[jt]s)$/
+const SOURCE_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/
 
 // Same signal as `@wl/package-structure` (@slip-stream-kit/config's DEPENDENCY_SIGNALS), which does
 // not export its detector: the nearest package.json declares `@playwright/test`.
 const E2E_DEPENDENCY = '@playwright/test'
 
 const e2eByDir = new Map<string, boolean>()
+
+// Fails loudly rather than guessing: treating a broken manifest as "not e2e" would silently lint a
+// Playwright package with the app layers, and the bare SyntaxError does not say which file it is.
+const readManifest = (manifest: string): Record<string, Record<string, string> | undefined> => {
+  try {
+    return JSON.parse(readFileSync(manifest, 'utf8'))
+  } catch (error) {
+    throw new Error(
+      `[@wl/eslint-config] Cannot parse ${manifest} to tell whether it is a Playwright package: ${(error as Error).message}`,
+      { cause: error },
+    )
+  }
+}
 
 const isE2ePackageDir = (dir: string): boolean => {
   const cached = e2eByDir.get(dir)
@@ -31,7 +44,7 @@ const isE2ePackageDir = (dir: string): boolean => {
   let result: boolean
 
   if (existsSync(manifest)) {
-    const pkg = JSON.parse(readFileSync(manifest, 'utf8')) as Record<string, Record<string, string> | undefined>
+    const pkg = readManifest(manifest)
 
     result = [pkg.dependencies, pkg.devDependencies, pkg.peerDependencies].some((deps) => {
       return deps?.[E2E_DEPENDENCY] !== undefined

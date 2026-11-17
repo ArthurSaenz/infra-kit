@@ -11,34 +11,33 @@ export default (async ({ project, ssm, run, aws, retry }) => {
   const bucketParameter = `/${project}/s3/docs/bucket_name`
   const distributionParameter = `/${project}/cloudfront/docs/id`
   const parameters = await ssm([bucketParameter, distributionParameter])
+  const bucket = parameters[bucketParameter]
+  const distributionId = parameters[distributionParameter]
+
+  // Checked before the build: `s3 sync --delete` must never run against the literal bucket `undefined`.
+  if (!bucket) throw new Error(`SSM parameter ${bucketParameter} has no value`)
+  if (!distributionId) throw new Error(`SSM parameter ${distributionParameter} has no value`)
 
   // Full checkout, never a prune: the docs aggregate MDX from the whole monorepo (src/lib/docs-aggregation.ts).
   await run('pnpm', ['install', '--frozen-lockfile'])
   await run('pnpm', ['exec', 'turbo', 'build', '--filter=@wl/docs-ui', '--env-mode=loose'])
 
   // The SPA shell becomes index.html; without it every route would 404.
-  await fs.copyFile(`${BUILD_DIR}/_shell.html`, `${BUILD_DIR}/index.html`).catch(() => {
-    throw new Error(`${BUILD_DIR}/_shell.html not found — SPA shell missing, aborting deploy`)
+  await fs.copyFile(`${BUILD_DIR}/_shell.html`, `${BUILD_DIR}/index.html`).catch((error: unknown) => {
+    throw new Error(`could not copy ${BUILD_DIR}/_shell.html to index.html, aborting deploy`, { cause: error })
   })
 
   await aws([
     's3',
     'sync',
     BUILD_DIR,
-    `s3://${parameters[bucketParameter]}`,
+    `s3://${bucket}`,
     '--delete',
     '--cache-control',
     'max-age=900',
     '--only-show-errors',
   ])
   await retry('Invalidate CloudFront', () => {
-    return aws([
-      'cloudfront',
-      'create-invalidation',
-      '--distribution-id',
-      parameters[distributionParameter]!,
-      '--paths',
-      '/*',
-    ])
+    return aws(['cloudfront', 'create-invalidation', '--distribution-id', distributionId, '--paths', '/*'])
   })
 }) satisfies DeployScript

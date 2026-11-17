@@ -3,7 +3,8 @@ import type { ConfigOptions, ResolvedOptions } from './types.js'
 
 /** A mode is "known" iff it's in the framework registry (the single source of truth for modes). */
 export const isKnownMode = (mode: string): boolean => {
-  return mode in frameworks
+  // Own keys only: `in` also accepts inherited names (`constructor`, `toString`), which then crash the factory.
+  return Object.hasOwn(frameworks, mode)
 }
 
 /**
@@ -21,6 +22,7 @@ export const resolveOptions = (userOptions: ConfigOptions = {}): ResolvedOptions
     markdown,
     components,
     shadcn,
+    fileNaming,
     architecture,
     restrictedSyntax,
     rules,
@@ -35,6 +37,7 @@ export const resolveOptions = (userOptions: ConfigOptions = {}): ResolvedOptions
     markdown: markdown ?? true,
     components: components ?? true,
     shadcn: shadcn ?? true,
+    fileNaming: fileNaming ?? true,
     architecture: architecture ?? true,
     restrictedSyntax: restrictedSyntax ?? [],
     rules: rules ?? {},

@@ -8,10 +8,12 @@ export interface FrameworkPreset {
   antfuFlags: Partial<OptionsConfig>
   /** Extra flat-configs spliced in at the framework position (after boundaries, before components). */
   extraConfigs: TypedFlatConfigItem[]
+  /** Whether the React-only architecture layer (configs/architecture.ts) applies. */
+  architecture?: boolean
 }
 
 /** Framework registry — the single seam for adding a mode. The factory looks up by `mode`, falling back to `react`. */
 export const frameworks: Record<string, FrameworkPreset> = {
-  react: { antfuFlags: { react: true }, extraConfigs: [] },
+  react: { antfuFlags: { react: true }, extraConfigs: [], architecture: true },
   svelte: { antfuFlags: { svelte: true }, extraConfigs: [svelteConfig] },
 }
