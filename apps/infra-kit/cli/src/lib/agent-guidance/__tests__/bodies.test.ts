@@ -212,12 +212,35 @@ describe('buildRootBody', () => {
     expect(rendered).not.toContain('infra-kit init')
   })
 
-  it('renders exactly 41 lines', () => {
+  // Asserted line by line because the wording is a contract the user approved verbatim: a
+  // fragment match would let a reworded bullet through, and the snapshot's update path is `vitest -u`.
+  it('carries the package / feature / service taxonomy, between Agents and Writing code', () => {
+    const architectureLines = [
+      '## Architecture',
+      'Everything is a package, a feature, or a service — there is no fourth kind.',
+      '- **Repo → packages.** All code lives in a workspace package: `apps/<app>/<role>` (`ui`, `api`, …) or `packages/<name>`. Never add code at the repo root or in a new top-level folder; the only exceptions are infrastructure and tooling in `devops/`, `scripts/` and `.claude/`.',
+      '- **Frontend → features.** Every piece of UI behaviour is a feature in `src/features/<name>/`. Routes/pages and `app/` only compose features; `components/` and `lib/` hold shared, domain-free primitives.',
+      '- **Backend → services.** Every piece of backend behaviour is a service in `src/services/<name>`. Controllers only parse the request and call a service; `lib/` holds shared, domain-free helpers.',
+      '- Before writing code, name the package and the feature or service it belongs to; extend the one that already owns the domain before creating a new one. If it fits none, stop and ask — never invent another kind of folder.',
+      '- The rule governs new code. Do not move existing code to satisfy it unless asked.',
+    ]
+
+    const lines = rendered.split('\n')
+
+    for (const line of architectureLines) {
+      expect(lines).toContain(line)
+    }
+
+    expect(lines.indexOf('## Architecture')).toBeGreaterThan(lines.indexOf('## Agents'))
+    expect(lines.indexOf('## Architecture')).toBeLessThan(lines.indexOf('## Writing code'))
+  })
+
+  it('renders exactly 51 lines', () => {
     // Same net as the per-type counts, extended to the two resources `PACKAGE_TYPES`
     // does not reach. The root body carries no placeholder today, so this count is the
     // ONLY net against the prettier-inserts-a-line class here — the alternative backstop
     // is a snapshot whose update path is `vitest -u`.
-    expect(rendered.split('\n')).toHaveLength(41)
+    expect(rendered.split('\n')).toHaveLength(51)
   })
 
   it('keeps the pre-existing command and convention text', () => {
