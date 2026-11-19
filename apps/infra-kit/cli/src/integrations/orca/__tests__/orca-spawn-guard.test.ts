@@ -4,13 +4,15 @@ import { describe, expect, it } from 'vitest'
 
 /**
  * Structural fences from docs/orca-migration-plan.md §1: one spawn site, no
- * `orca worktree` mutation verbs, and one teardown caller. A sweep, not an
- * allowlist — a new file is covered the moment it exists.
+ * `orca worktree` mutation verbs, and named teardown callers only. Every fence scans all of
+ * `src/`, so a new file is covered the moment it exists; the teardown fence alone allowlists
+ * its callers, because closing a worktree's terminals is a deliberate per-command decision.
  */
 const SRC = resolve(import.meta.dirname, '../../..')
 const SPAWN_SITE = 'integrations/orca/run-orca.ts'
 const LEGACY_DIR = 'integrations/cmux'
-const TEARDOWN_CALLER = 'lib/worktrees/remove-worktrees.ts'
+// `release rename` closes a worktree's terminals before `git worktree move` (.omc/plans/release-rename.md §2 Orca).
+const TEARDOWN_CALLERS = ['lib/worktrees/remove-worktrees.ts', 'commands/release-rename/rename-steps.ts']
 const TEARDOWN_HOME = 'integrations/orca'
 
 // Two template forms: a bare `` $`orca `` tag and a configured `` $({ … })`orca `` tag — the driver's own
@@ -71,12 +73,12 @@ describe('orca driver fences', () => {
     expect(filesContaining(verb, scoped)).toEqual([])
   })
 
-  it('closeOrcaWorktreeTerminals is referenced only by remove-worktrees.ts outside the driver', () => {
+  it('closeOrcaWorktreeTerminals is referenced only by the teardown callers outside the driver', () => {
     const importers = filesContaining('closeOrcaWorktreeTerminals', files).filter((path) => {
-      return !path.startsWith(`${TEARDOWN_HOME}/`) && path !== TEARDOWN_CALLER
+      return !path.startsWith(`${TEARDOWN_HOME}/`) && !TEARDOWN_CALLERS.includes(path)
     })
 
     expect(importers).toEqual([])
-    expect(files).toContain(TEARDOWN_CALLER)
+    expect(filesContaining('closeOrcaWorktreeTerminals', TEARDOWN_CALLERS)).toEqual(TEARDOWN_CALLERS)
   })
 })

@@ -67,6 +67,8 @@ export interface UpdateJiraVersionParams {
   description?: string
   /** Whether the version is archived */
   archived?: boolean
+  /** New name; the version keeps its id, so everything attached to it follows the rename */
+  name?: string
 }
 
 export interface UpdateJiraVersionResult {

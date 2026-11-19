@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import { $ } from 'zx'
@@ -313,4 +314,32 @@ export const deleteRemoteBranch = async (branch: string): Promise<void> => {
   if (refs.stdout.trim().length === 0) return
 
   await $`git push origin --delete ${branch}`
+}
+
+/** Rename a local branch. Git refuses when `to` exists, so an existing branch is never clobbered. */
+export const renameLocalBranch = async (cwd: string, from: string, to: string): Promise<void> => {
+  try {
+    await $({ cwd, quiet: true })`git branch -m ${from} ${to}`
+  } catch (error) {
+    throw new OperationError(error, { operation: `rename local branch ${from} to ${to}` })
+  }
+}
+
+/** Point `branch` at `upstream` (e.g. `origin/<branch>`) as its tracking ref. */
+export const setUpstream = async (cwd: string, branch: string, upstream: string): Promise<void> => {
+  try {
+    await $({ cwd, quiet: true })`git branch --set-upstream-to=${upstream} ${branch}`
+  } catch (error) {
+    throw new OperationError(error, { operation: `set the upstream of ${branch} to ${upstream}` })
+  }
+}
+
+/** Move a linked worktree, creating the parent of `toPath` first because `git worktree move` will not. */
+export const moveWorktree = async (cwd: string, fromPath: string, toPath: string): Promise<void> => {
+  try {
+    await fs.mkdir(path.dirname(toPath), { recursive: true })
+    await $({ cwd, quiet: true })`git worktree move ${fromPath} ${toPath}`
+  } catch (error) {
+    throw new OperationError(error, { operation: `move worktree ${fromPath} to ${toPath}` })
+  }
 }

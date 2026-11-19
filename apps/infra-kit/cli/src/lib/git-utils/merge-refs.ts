@@ -111,3 +111,32 @@ export const pushAtomic = async (cwd: string, refs: AtomicPushRef[]): Promise<At
     }
   }
 }
+
+export interface LeaseDeleteResult {
+  deleted: boolean
+  /** Raw stderr on a refused delete, for the report to quote rather than paraphrase. */
+  stderr?: string
+}
+
+/**
+ * Delete a branch on `origin` only while it still points at `expectedSha`.
+ *
+ * The lease turns "someone pushed to the old branch after we copied it" into a refused delete
+ * instead of silently dropping their commits. A stale lease is a correct outcome, so it is
+ * returned as `deleted: false` rather than thrown.
+ */
+export const deleteRemoteBranchWithLease = async (
+  cwd: string,
+  branch: string,
+  expectedSha: string,
+): Promise<LeaseDeleteResult> => {
+  const lease = `--force-with-lease=refs/heads/${branch}:${expectedSha}`
+
+  try {
+    await $({ cwd, quiet: true })`git push origin --delete ${lease} ${branch}`
+
+    return { deleted: true }
+  } catch (error) {
+    return { deleted: false, stderr: (error as { stderr?: string }).stderr }
+  }
+}

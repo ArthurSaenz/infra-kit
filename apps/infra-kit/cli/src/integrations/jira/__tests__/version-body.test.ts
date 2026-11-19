@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createJiraVersion, updateJiraVersion } from '../api'
+import { createJiraVersion, findVersionById, getMyJiraPermissions, updateJiraVersion } from '../api'
 
 /**
  * The request bodies `release create` / `release edit` put on the wire for a fix version's
@@ -105,5 +105,83 @@ describe('updateJiraVersion — the clear intent', () => {
     await expect(
       updateJiraVersion({ versionId: '42', released: true, releaseDate: '2026-10-28' }, CONFIG),
     ).resolves.toMatchObject({ success: true })
+  })
+})
+
+describe('updateJiraVersion — name', () => {
+  it('sends the name when given', async () => {
+    const fetchSpy = fetchEchoing(version({ name: 'v2.0.0' }))
+
+    vi.stubGlobal('fetch', fetchSpy)
+
+    await updateJiraVersion({ versionId: '42', name: 'v2.0.0' }, CONFIG)
+
+    expect(sentBody(fetchSpy)).toEqual({ name: 'v2.0.0' })
+  })
+
+  it('sends no name key when omitted, so the update stays partial', async () => {
+    const fetchSpy = fetchEchoing(version())
+
+    vi.stubGlobal('fetch', fetchSpy)
+
+    await updateJiraVersion({ versionId: '42', description: 'd' }, CONFIG)
+
+    expect(sentBody(fetchSpy)).toEqual({ description: 'd' })
+  })
+
+  it('throws when Jira echoes a different name', async () => {
+    vi.stubGlobal('fetch', fetchEchoing(version({ name: 'v1.2.3' })))
+
+    await expect(updateJiraVersion({ versionId: '42', name: 'v2.0.0' }, CONFIG)).rejects.toThrow(/v1\.2\.3.*v2\.0\.0/)
+  })
+
+  it('does not compare names when none was requested', async () => {
+    vi.stubGlobal('fetch', fetchEchoing(version({ name: 'anything' })))
+
+    await expect(updateJiraVersion({ versionId: '42', released: true }, CONFIG)).resolves.toMatchObject({
+      success: true,
+    })
+  })
+})
+
+describe('findVersionById', () => {
+  const versions = [version({ id: '41', name: 'v1.2.2' }), version({ id: '42', name: 'v1.2.3' })]
+
+  it('returns the version with that id', async () => {
+    vi.stubGlobal('fetch', fetchEchoing(versions as unknown as Record<string, unknown>))
+
+    await expect(findVersionById('42', CONFIG)).resolves.toMatchObject({ name: 'v1.2.3' })
+  })
+
+  it('returns null when no version has that id', async () => {
+    vi.stubGlobal('fetch', fetchEchoing(versions as unknown as Record<string, unknown>))
+
+    await expect(findVersionById('99', CONFIG)).resolves.toBeNull()
+  })
+})
+
+describe('getMyJiraPermissions', () => {
+  it('queries mypermissions for the project and maps granted, denied and missing keys', async () => {
+    const fetchSpy = fetchEchoing({
+      permissions: {
+        ADMINISTER_PROJECTS: { havePermission: true },
+        ADMINISTER: { havePermission: false },
+      },
+    })
+
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const result = await getMyJiraPermissions(CONFIG, ['ADMINISTER_PROJECTS', 'ADMINISTER', 'OTHER'])
+
+    expect(fetchSpy.mock.calls[0]![0]).toBe(
+      'https://acme.atlassian.net/rest/api/3/mypermissions?projectId=11713&permissions=ADMINISTER_PROJECTS,ADMINISTER,OTHER',
+    )
+    expect(result).toEqual({ ADMINISTER_PROJECTS: true, ADMINISTER: false, OTHER: false })
+  })
+
+  it('treats a response without a permissions object as all denied', async () => {
+    vi.stubGlobal('fetch', fetchEchoing({}))
+
+    await expect(getMyJiraPermissions(CONFIG, ['ADMINISTER'])).resolves.toEqual({ ADMINISTER: false })
   })
 })

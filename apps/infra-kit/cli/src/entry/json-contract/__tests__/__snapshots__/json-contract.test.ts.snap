@@ -2865,6 +2865,132 @@ exports[`--json contract > matches the committed contract snapshot 1`] = `
       ],
       "type": "object",
     },
+    "release rename": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The grouped command path that ran, e.g. \`release create\`",
+          "type": "string",
+        },
+        "followUps": {
+          "description": "Outstanding follow-ups, each a command runnable as printed",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "label",
+              "command",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "install": {
+          "description": "The pnpm install follow-up after a worktree move",
+          "enum": [
+            "ok",
+            "failed",
+            "not-run",
+          ],
+          "type": "string",
+        },
+        "new": {
+          "description": "The new release label",
+          "type": "string",
+        },
+        "newBranch": {
+          "description": "release/<new>",
+          "type": "string",
+        },
+        "newPrNumber": {
+          "description": "The replacement PR",
+          "type": [
+            "number",
+            "null",
+          ],
+        },
+        "old": {
+          "description": "The old release label",
+          "type": "string",
+        },
+        "oldBranch": {
+          "description": "release/<old>",
+          "type": "string",
+        },
+        "oldPrNumber": {
+          "description": "The superseded PR",
+          "type": [
+            "number",
+            "null",
+          ],
+        },
+        "orcaReopened": {
+          "description": "Whether Orca terminals were reopened in the moved worktree",
+          "type": "boolean",
+        },
+        "outcome": {
+          "description": ""already-renamed" when every place already carried the new name",
+          "enum": [
+            "renamed",
+            "already-renamed",
+          ],
+          "type": "string",
+        },
+        "renamedSteps": {
+          "description": "The steps this run performed, in order",
+          "items": {
+            "enum": [
+              "jira",
+              "remote-push",
+              "pr-open",
+              "pr-retarget",
+              "pr-close",
+              "remote-delete",
+              "local-branch",
+              "worktree",
+            ],
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "schemaVersion": {
+          "const": 1,
+          "type": "number",
+        },
+        "worktreePath": {
+          "description": "The worktree path under the new name, or null when there is none",
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "old",
+        "new",
+        "oldBranch",
+        "newBranch",
+        "outcome",
+        "renamedSteps",
+        "oldPrNumber",
+        "newPrNumber",
+        "worktreePath",
+        "install",
+        "orcaReopened",
+        "followUps",
+      ],
+      "type": "object",
+    },
     "setup": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "anyOf": [

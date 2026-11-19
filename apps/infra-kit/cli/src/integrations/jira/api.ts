@@ -150,6 +150,58 @@ export const findVersionByName = async (versionName: string, config: JiraConfig)
 }
 
 /**
+ * Finds a Jira version by id in the project.
+ *
+ * Ids are compared as strings: Jira returns them as strings, while a caller that parsed one out of
+ * a URL may hold a number.
+ *
+ * @param versionId - Id of the version to find
+ * @param config - Jira configuration
+ * @returns JiraVersion if found, null otherwise
+ */
+export const findVersionById = async (versionId: string, config: JiraConfig): Promise<JiraVersion | null> => {
+  const versions = await getProjectVersions(config)
+
+  const version = versions.find((v) => {
+    return String(v.id) === String(versionId)
+  })
+
+  return version || null
+}
+
+/**
+ * Reads which of the given permission keys the calling user holds in the configured project.
+ *
+ * @param config - Jira configuration
+ * @param keys - Permission keys to check (e.g. `ADMINISTER_PROJECTS`)
+ * @returns key to whether it is granted; a key Jira does not echo back counts as not granted
+ */
+export const getMyJiraPermissions = async (config: JiraConfig, keys: string[]): Promise<Record<string, boolean>> => {
+  const { baseUrl, token, email, projectId } = config
+
+  const url = `${baseUrl}/rest/api/3/mypermissions?projectId=${projectId}&permissions=${keys.join(',')}`
+  const credentials = btoa(`${email}:${token}`)
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Basic ${credentials}`,
+    },
+  })
+
+  await assertJiraOk(response, 'Failed to get Jira permissions')
+
+  const body = (await response.json()) as { permissions?: Record<string, { havePermission?: boolean } | undefined> }
+
+  return Object.fromEntries(
+    keys.map((key) => {
+      return [key, body.permissions?.[key]?.havePermission === true]
+    }),
+  )
+}
+
+/**
  * Updates an existing Jira version
  *
  * Callers express a cleared release date as `releaseDate: null` and never learn the wire form: it
@@ -175,6 +227,7 @@ export const updateJiraVersion = async (
   if (params.archived !== undefined) requestBody.archived = params.archived
   if (params.releaseDate !== undefined) requestBody.releaseDate = params.releaseDate
   if (params.description !== undefined) requestBody.description = params.description
+  if (params.name !== undefined) requestBody.name = params.name
 
   const url = `${baseUrl}/rest/api/3/version/${params.versionId}`
   const credentials = btoa(`${email}:${token}`)
@@ -200,6 +253,13 @@ export const updateJiraVersion = async (
   if (params.releaseDate === null && (version.releaseDate || null) !== null) {
     throw new Error(
       `Jira accepted the update (the write happened) but still reports releaseDate=${version.releaseDate}; the clear payload in updateJiraVersion needs revisiting`,
+    )
+  }
+
+  // A rename that Jira ignored still answers 200 with the old name; the echo is the only evidence.
+  if (params.name !== undefined && version.name !== params.name) {
+    throw new Error(
+      `Jira accepted the update but still reports name="${version.name}" instead of "${params.name}"; the rename did not take effect`,
     )
   }
 

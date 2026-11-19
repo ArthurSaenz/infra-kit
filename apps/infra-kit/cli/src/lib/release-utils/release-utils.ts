@@ -90,6 +90,17 @@ export const buildReleasePrBody = (jiraVersionUrl: string, description?: string)
   return (description ?? '').trim() !== '' ? `${jiraVersionUrl}\n\n${description}` : `${jiraVersionUrl} \n`
 }
 
+/**
+ * The Jira fix-version id embedded in a release PR body by {@link buildReleasePrBody}, or `null`.
+ *
+ * CRLF is normalised first because GitHub may rewrite line endings of a body edited in the web UI.
+ */
+export const parseJiraVersionIdFromPrBody = (body: string): string | null => {
+  const normalized = body.replaceAll('\r\n', '\n').trim()
+
+  return /\/versions\/(\d+)\//.exec(normalized)?.[1] ?? null
+}
+
 export interface ReleaseCreationResult {
   version: string
   type: ReleaseType

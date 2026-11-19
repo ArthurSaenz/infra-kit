@@ -48,6 +48,7 @@ const EXPECTED_EXPOSED_TOOLS = [
   'gh-merge-dev',
   'release-create',
   'release-edit',
+  'release-rename',
   'gh-release-deploy-all',
   'gh-release-deploy-selected',
   'gh-release-list',
@@ -88,13 +89,14 @@ const exposedToolNames = (): string[] => {
 }
 
 describe('command catalog — mcpExposed values (historical, pinned)', () => {
-  it('flags exactly the expected 25 rows mcpExposed (set-equal, order-independent)', () => {
+  it('flags exactly the expected 26 rows mcpExposed (set-equal, order-independent)', () => {
     const exposedNames = exposedToolNames().sort()
 
     expect(exposedNames).toEqual([...EXPECTED_EXPOSED_TOOLS].sort())
     // 25: `setup-dependency` and `setup-dependency-status` folded into the single `setup` tool
-    // (26 → 25), then `doctor` was exposed (25 → 26), then `reopen` was removed (26 → 25).
-    expect(exposedNames).toHaveLength(25)
+    // (26 → 25), then `doctor` was exposed (25 → 26), then `reopen` was removed (26 → 25),
+    // then `release-rename` was added (25 → 26).
+    expect(exposedNames).toHaveLength(26)
   })
 
   it('keeps env-token-set / env-token-remove without a tool entirely (no tool object to flip on)', () => {
@@ -251,6 +253,9 @@ describe('command catalog — destructive-op confirm gate (default-deny)', () =>
     // gate plus its MCP narrowing (no `skipJira`, and the irreversible Jira delete behind the gate)
     // contain the residual risk — the same reasoning that exposes `worktrees-remove`.
     'release-remove',
+    // Moves the Jira fix version, both branches, the PR and the worktree, with no rollback: a failed
+    // run is resumable, not undoable, so a human approves the plan first.
+    'release-rename',
   ]
 
   it('gates exactly the expected high-risk destructive tools with requiresHumanConfirm', () => {
@@ -393,6 +398,7 @@ describe('command catalog — CLI/MCP name parity', () => {
     'release-remove': 'release-remove',
     'release-create': 'release-create',
     'release-edit': 'release-edit',
+    'release-rename': 'release-rename',
     'release-deploy-all': 'gh-release-deploy-all',
     'release-deploy-selected': 'gh-release-deploy-selected',
     'release-deliver': 'gh-release-deliver',
@@ -444,6 +450,7 @@ describe('command catalog — menu grouping', () => {
       'release list',
       'release create',
       'release edit',
+      'release rename',
       'release deploy-all',
       'release deploy-selected',
       'release deliver',
@@ -599,6 +606,7 @@ describe('command catalog — the registered argument-form providers', () => {
     'local-deploy-selected',
     'release-create',
     'release-remove',
+    'release-rename',
   ]
 
   const providerFor = (name: string) => {
@@ -607,7 +615,7 @@ describe('command catalog — the registered argument-form providers', () => {
     })?.mcpTool?.formProvider
   }
 
-  it('registers a form provider on exactly the four deploy tools, env-load, release-create and release-remove', () => {
+  it('registers a form provider on exactly the four deploy tools, env-load, release-create, release-remove and release-rename', () => {
     const withForm = commandCatalog
       .flatMap((entry) => {
         return entry.mcpExposed && entry.mcpTool?.formProvider !== undefined ? [entry.mcpTool.name] : []
@@ -629,6 +637,8 @@ describe('command catalog — the registered argument-form providers', () => {
     expect(providerFor('release-create')?.isFormable({ releases: [{ version: 'next', type: 'regular' }] })).toBe(false)
     expect(providerFor('release-remove')?.isFormable({})).toBe(true)
     expect(providerFor('release-remove')?.isFormable({ version: '1.2.5' })).toBe(false)
+    expect(providerFor('release-rename')?.isFormable({})).toBe(true)
+    expect(providerFor('release-rename')?.isFormable({ old: '1.2.5' })).toBe(false)
   })
 
   it('wires env-load with the config picker — formable only while config is missing or blank', () => {

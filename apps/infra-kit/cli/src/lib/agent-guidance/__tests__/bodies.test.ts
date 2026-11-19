@@ -268,7 +268,7 @@ describe('buildRootBody', () => {
     expect(rendered).toContain('`infra-kit <command> --agent --json`')
     expect(rendered).toContain('The `/infra-kit:*` skills are the entry points')
     expect(rendered).toContain(
-      'A confirm-gated command (`release create|remove|edit|merge-dev|deploy-all|deploy-selected`, `release merge-dev --continue|--abort`, `worktrees add|remove|sync`, `vendor sync`) previews its plan',
+      'A confirm-gated command (`release create|remove|edit|rename|merge-dev|deploy-all|deploy-selected`, `release merge-dev --continue|--abort`, `worktrees add|remove|sync`, `vendor sync`) previews its plan',
     )
     expect(rendered).toContain('re-run the same argv with `--yes` to execute')
     expect(rendered).toContain('`env-load`, `env-clear` and `infra-kit setup` have no confirm step and run once')

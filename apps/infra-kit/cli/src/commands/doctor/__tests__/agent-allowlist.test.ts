@@ -121,6 +121,10 @@ describe('mutatingCommandsReachedBy', () => {
     ])
   })
 
+  it('reaches release rename through the release group prefix', () => {
+    expect(mutatingCommandsReachedBy('Bash(infra-kit release:*)', commandCatalog)).toContain('release rename')
+  })
+
   it('reaches the flat cliName spelling as well as the grouped argv', () => {
     expect(mutatingCommandsReachedBy('Bash(ik release-remove:*)', commandCatalog)).toEqual(['release remove'])
   })
@@ -221,6 +225,7 @@ describe('readAllowPatterns / inspectAgentAllowlist', () => {
             'release merge-dev',
             'release create',
             'release edit',
+            'release rename',
             'release deploy-all',
             'release deploy-selected',
             'release deliver',

@@ -8,6 +8,7 @@ import { getReleasePRsWithInfo } from 'src/integrations/gh'
 // from their leaves, so a partial `vi.mock` of the barrel intercepts nothing: the real
 // `gh`/`git`/Jira call runs inside what is supposed to be a mocked test. Precedent and the fuller
 // reasoning: `gh-release-deliver.ts:8-12`.
+import { closePrWithComment } from 'src/integrations/gh/pr-lifecycle'
 import { fetchPRByHead } from 'src/integrations/gh/pr-status'
 import type { PRStatus } from 'src/integrations/gh/pr-status'
 import { buildJiraVersionUrl, findVersionByName, loadJiraConfigOptional } from 'src/integrations/jira'
@@ -641,7 +642,7 @@ const closePrStep = async (plan: ReleaseRemovePlan): Promise<PrStepResult> => {
   // while a worktree holds it.
   const comment = `Closed by \`infra-kit release remove\`: release ${plan.label} was torn down.`
 
-  await $`gh pr close ${String(current.number)} --comment ${comment}`
+  await closePrWithComment(current.number, comment)
 
   return { outcome: 'closed', number: current.number }
 }

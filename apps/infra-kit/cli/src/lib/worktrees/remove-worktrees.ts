@@ -7,6 +7,8 @@ import { OperationError } from 'src/lib/errors/operation-error'
 import { listWorktrees } from 'src/lib/git-utils'
 import { logger } from 'src/lib/logger'
 
+import { classifyLeftover, sweepLeftover } from './sweep-leftover'
+
 export interface RemoveWorktreesArgs {
   branches: string[]
   worktreeDir: string
@@ -29,33 +31,12 @@ export interface RemoveWorktreesResult {
 
 type RemovalOutcome = { branch: string; status: 'removed' } | { branch: string; status: 'failed'; reason: string }
 
-interface LeftoverClassification {
-  kind: 'gone' | 'sweepable' | 'not-sweepable'
-  entries: string[]
-}
-
-/**
- * The only things the post-failure sweep may delete. Measured 2026-09-03: a Claude Code session's
- * oh-my-claudecode SessionEnd hook re-creates `<worktree>/.omc/{state,sessions}` ~2 s after the
- * session exits, racing `git worktree remove`; Finder leaves `.DS_Store`. Anything else (a
- * committable `.omc/skills/**`, user files) makes the leftover NOT sweepable.
- */
-const SWEEPABLE_TOP_LEVEL = new Set(['.omc', '.DS_Store'])
-const SWEEPABLE_OMC_ENTRIES = new Set(['state', 'sessions'])
-
-/** The measured writer burst is ~2 s; one bounded retry covers a sweep that lands mid-burst. */
-const SWEEP_RETRY_DELAY_MS = 2000
-
 const DIRTY_TREE_REMEDIATION = "check 'git worktree list' for the path; uncommitted changes block removal"
 
 const defaultSleep = (ms: number): Promise<void> => {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
-}
-
-const errnoCode = (error: unknown): string | undefined => {
-  return typeof error === 'object' && error !== null ? (error as { code?: string }).code : undefined
 }
 
 const stripTrailingSlashes = (value: string): string => {
@@ -102,71 +83,6 @@ const isWorktreeRegisteredOrUnknown = async (args: RegistrationArgs): Promise<bo
   } catch {
     return true
   }
-}
-
-/**
- * Two-level, name-only classification of what git left behind. Any read error other than ENOENT is
- * treated as not sweepable — the CLI never deletes what it could not inspect.
- */
-const classifyLeftover = async (worktreePath: string): Promise<LeftoverClassification> => {
-  let entries: string[]
-
-  try {
-    entries = await fs.readdir(worktreePath)
-  } catch (error) {
-    return { kind: errnoCode(error) === 'ENOENT' ? 'gone' : 'not-sweepable', entries: [] }
-  }
-
-  const topLevelOk = entries.every((entry) => {
-    return SWEEPABLE_TOP_LEVEL.has(entry)
-  })
-
-  if (!topLevelOk) return { kind: 'not-sweepable', entries }
-  if (!entries.includes('.omc')) return { kind: 'sweepable', entries }
-
-  try {
-    const omcEntries = await fs.readdir(`${worktreePath}/.omc`)
-
-    const omcOk = omcEntries.every((entry) => {
-      return SWEEPABLE_OMC_ENTRIES.has(entry)
-    })
-
-    return { kind: omcOk ? 'sweepable' : 'not-sweepable', entries }
-  } catch (error) {
-    return { kind: errnoCode(error) === 'ENOENT' ? 'sweepable' : 'not-sweepable', entries }
-  }
-}
-
-interface SweepArgs {
-  worktreePath: string
-  sleep: (ms: number) => Promise<void>
-}
-
-type RemoveTreeOutcome = 'removed' | 'busy' | 'failed'
-
-/** One recursive removal attempt; `busy` is ENOTEMPTY — a writer got in between readdir and rmdir. */
-const removeTree = async (worktreePath: string): Promise<RemoveTreeOutcome> => {
-  try {
-    await fs.rm(worktreePath, { recursive: true, force: true })
-
-    return 'removed'
-  } catch (error) {
-    return errnoCode(error) === 'ENOTEMPTY' ? 'busy' : 'failed'
-  }
-}
-
-/** Recursive removal with exactly one retry when a concurrent writer makes it ENOTEMPTY again. */
-const sweepLeftover = async (args: SweepArgs): Promise<boolean> => {
-  const { worktreePath, sleep } = args
-
-  const first = await removeTree(worktreePath)
-
-  // Only a concurrent writer earns the single retry; anything else is final.
-  if (first !== 'busy') return first === 'removed'
-
-  await sleep(SWEEP_RETRY_DELAY_MS)
-
-  return (await removeTree(worktreePath)) === 'removed'
 }
 
 interface RecoverArgs {

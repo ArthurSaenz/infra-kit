@@ -47,6 +47,7 @@ describe('command palette', () => {
           'release list',
           'release create',
           'release edit',
+          'release rename',
           'release deploy-all',
           'release deploy-selected',
           'release deliver',

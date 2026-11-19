@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchOpenPRsByHead, fetchPRByHead, fetchPRByNumber } from '../pr-status'
+import {
+  fetchOpenPRsByHead,
+  fetchPRByHead,
+  fetchPRByNumber,
+  fetchPRComments,
+  fetchPRReviewState,
+  fetchPRsByHeadAllStates,
+} from '../pr-status'
 
 const zx = vi.hoisted(() => {
   return {
@@ -92,5 +99,66 @@ describe('fetchPRByNumber', () => {
       name: 'OperationError',
       operation: 'fetch PR #404',
     })
+  })
+})
+
+describe('fetchOpenPRsByHead fields', () => {
+  it('takes a custom field list in place of the default', async () => {
+    await fetchOpenPRsByHead('release/v1.2.5', 'number,body')
+
+    expect(zx.commands).toEqual(['gh pr list --head release/v1.2.5 --state open --limit 5 --json number,body'])
+  })
+})
+
+describe('fetchPRsByHeadAllStates', () => {
+  it('returns newest first whatever order gh answers in', async () => {
+    const at = (number: number, createdAt: string) => {
+      return { ...RECORD, number, body: '', createdAt }
+    }
+
+    zx.stdout = JSON.stringify([
+      at(2, '2026-01-02T00:00:00Z'),
+      at(1, '2026-01-01T00:00:00Z'),
+      at(4, '2026-01-04T00:00:00Z'),
+      at(3, '2026-01-03T00:00:00Z'),
+    ])
+
+    const prs = await fetchPRsByHeadAllStates('release/v1.2.5')
+
+    expect(
+      prs.map((pr) => {
+        return pr.number
+      }),
+    ).toEqual([4, 3, 2, 1])
+
+    expect(zx.commands).toEqual([
+      'gh pr list --head release/v1.2.5 --state all --limit 20 --json number,state,title,body,baseRefName,headRefName,createdAt',
+    ])
+  })
+})
+
+describe('fetchPRComments', () => {
+  it('returns the comment bodies', async () => {
+    zx.stdout = JSON.stringify({ comments: [{ body: 'a', author: {} }, { body: 'b' }] })
+
+    await expect(fetchPRComments(7)).resolves.toEqual(['a', 'b'])
+
+    expect(zx.commands).toEqual(['gh pr view 7 --json comments'])
+  })
+})
+
+describe('fetchPRReviewState', () => {
+  it('returns requested reviewer logins (skipping teams) and the latest reviews', async () => {
+    zx.stdout = JSON.stringify({
+      reviewRequests: [{ login: 'alice' }, { name: 'team-x' }],
+      latestReviews: [{ author: { login: 'bob' }, state: 'APPROVED' }],
+    })
+
+    await expect(fetchPRReviewState(7)).resolves.toEqual({
+      requestedReviewers: ['alice'],
+      latestReviews: [{ login: 'bob', state: 'APPROVED' }],
+    })
+
+    expect(zx.commands).toEqual(['gh pr view 7 --json reviewRequests,latestReviews'])
   })
 })

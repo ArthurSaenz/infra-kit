@@ -8,6 +8,7 @@ import { buildCliBundle } from 'src/__tests__/helpers/build-cli-bundle'
 import { buildEnvClearLines } from 'src/commands/env-clear/env-clear'
 import { buildEnvLoadFileLines } from 'src/commands/env-load'
 import { createReleaseRemoveFormProvider } from 'src/commands/release-remove/release-remove-form'
+import { createReleaseRenameFormProvider } from 'src/commands/release-rename'
 import { ENV_CLEAR_FILE, ENV_LOAD_FILE } from 'src/lib/constants'
 
 import {
@@ -180,6 +181,32 @@ describe('form-backed refusal', () => {
 
     try {
       const schema = await createReleaseRemoveFormProvider().buildRequestedSchema({})
+
+      expect(schema, 'the form builder found no rows against the fake gh').not.toBeNull()
+      expectedChoices = z.toJSONSchema(schema!)
+    } finally {
+      process.env.PATH = parentPath
+    }
+
+    expect(canonical(json.choices)).toBe(canonical(expectedChoices))
+  }, 45_000)
+
+  it('`release rename --agent --json` (no args) → exit 2, argument_required for `old`, choices = the release-rename form rows', async () => {
+    const run = await cli(['release', 'rename', '--agent', '--json'])
+    const json = expectJson(run)
+
+    expect(run.code).toBe(2)
+    expect(json.status).toBe('argument_required')
+    expect(json.argument).toBe('old')
+    expect(json.agentMode).toBe('flag')
+
+    const parentPath = process.env.PATH
+    let expectedChoices: unknown
+
+    process.env.PATH = fixture.env.PATH
+
+    try {
+      const schema = await createReleaseRenameFormProvider().buildRequestedSchema({})
 
       expect(schema, 'the form builder found no rows against the fake gh').not.toBeNull()
       expectedChoices = z.toJSONSchema(schema!)

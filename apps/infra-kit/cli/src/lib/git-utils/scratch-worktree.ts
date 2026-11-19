@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import { $ } from 'zx'
@@ -77,6 +78,28 @@ export const hasMergeInProgress = async (cwd: string): Promise<boolean> => {
   } catch {
     return false
   }
+}
+
+/**
+ * Whether a rebase, bisect or merge is in progress in `cwd`. Never throws.
+ *
+ * Each marker is resolved with `--git-path` because inside a linked worktree they live under
+ * `.git/worktrees/<name>/`, not `<cwd>/.git/`, so a plain existence check would always say no.
+ */
+export const hasOperationInProgress = async (cwd: string): Promise<boolean> => {
+  for (const marker of ['rebase-merge', 'rebase-apply', 'BISECT_LOG', 'MERGE_HEAD']) {
+    try {
+      const resolved = (await $({ cwd, quiet: true })`git rev-parse --git-path ${marker}`).stdout.trim()
+
+      await fs.access(path.resolve(cwd, resolved))
+
+      return true
+    } catch {
+      // Marker absent (or unresolvable): try the next one.
+    }
+  }
+
+  return false
 }
 
 /**

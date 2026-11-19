@@ -11,6 +11,7 @@ import { ghReleaseDeployAllMcpTool } from 'src/commands/release-deploy/gh-releas
 import { ghReleaseDeploySelectedMcpTool } from 'src/commands/release-deploy/gh-release-deploy-selected'
 import { releaseEdit, releaseEditMcpTool } from 'src/commands/release-edit'
 import { releaseRemove, releaseRemoveMcpTool } from 'src/commands/release-remove'
+import { releaseRename, releaseRenameMcpTool } from 'src/commands/release-rename'
 import type { CommandCatalogEntry } from 'src/entry/command-catalog/catalog-entry'
 import { emit } from 'src/lib/json-output'
 import { InvalidReleaseDateError, assertIsoDate } from 'src/lib/release-date'
@@ -230,6 +231,17 @@ const configureReleaseRemove = (cmd: Command): Command => {
     })
 }
 
+const configureReleaseRename = (cmd: Command): Command => {
+  return cmd
+    .description('Rename one release everywhere its name lives: Jira fix version, branch, PR and worktree')
+    .argument('[old]', 'Release to rename: a version (e.g. 1.2.5) or a name (e.g. checkout-redesign)')
+    .argument('[new]', 'New version or kebab-case name')
+    .option('-y, --yes', 'Skip confirmation prompt')
+    .action(async (old: string | undefined, newArg: string | undefined, options) => {
+      emit(await releaseRename({ old, new: newArg, confirmedCommand: options.yes }))
+    })
+}
+
 /** The `release` group: one grouped leaf per release-flow command. */
 export const registerReleaseCommands = (program: Command): void => {
   const releaseGroup = program.command('release').description('Release management commands')
@@ -238,6 +250,7 @@ export const registerReleaseCommands = (program: Command): void => {
   configureReleaseList(releaseGroup.command('list'))
   configureReleaseCreate(releaseGroup.command('create'))
   configureReleaseEdit(releaseGroup.command('edit'))
+  configureReleaseRename(releaseGroup.command('rename'))
   configureReleaseDeployAll(releaseGroup.command('deploy-all'))
   configureReleaseDeploySelected(releaseGroup.command('deploy-selected'))
   configureReleaseDeliver(releaseGroup.command('deliver'))
@@ -278,6 +291,14 @@ export const releaseCatalog: CommandCatalogEntry[] = [
     mcpExposed: true,
     mutating: true,
     groupPath: ['release', 'edit'],
+  },
+  {
+    cliName: 'release-rename',
+    menuGroup: 'release',
+    mcpTool: releaseRenameMcpTool,
+    mcpExposed: true,
+    mutating: true,
+    groupPath: ['release', 'rename'],
   },
   {
     cliName: 'release-deploy-all',

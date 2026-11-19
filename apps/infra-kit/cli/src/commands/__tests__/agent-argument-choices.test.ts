@@ -12,6 +12,7 @@ import {
   ghReleaseDeploySelectedMcpTool,
 } from 'src/commands/release-deploy/gh-release-deploy-selected'
 import { releaseRemove, releaseRemoveMcpTool } from 'src/commands/release-remove'
+import { releaseRename, releaseRenameMcpTool } from 'src/commands/release-rename'
 import { getReleasePRsWithInfo } from 'src/integrations/gh'
 import { agentMode } from 'src/lib/agent-mode'
 import { commandEcho } from 'src/lib/command-echo'
@@ -219,6 +220,18 @@ describe('argument_required + choices at the form-backed guards', () => {
       status: 'argument_required',
       argument: 'version',
       choices: await expectedChoices(releaseRemoveMcpTool.formProvider, {}),
+      agentMode: 'flag',
+    })
+    expect(JSON.stringify(error.structuredContent.choices)).toContain('1.2.5 [regular] — checkout')
+  })
+
+  it('release rename without <old>: argument `old`, choices = the open release PRs', async () => {
+    const error = await refusalFrom(releaseRename({ confirmedCommand: false }))
+
+    expect(error.structuredContent).toEqual({
+      status: 'argument_required',
+      argument: 'old',
+      choices: await expectedChoices(releaseRenameMcpTool.formProvider, {}),
       agentMode: 'flag',
     })
     expect(JSON.stringify(error.structuredContent.choices)).toContain('1.2.5 [regular] — checkout')

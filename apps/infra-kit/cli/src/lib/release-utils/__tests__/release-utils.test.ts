@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
+import { buildJiraVersionUrl } from 'src/integrations/jira/api'
 import { OperationError } from 'src/lib/errors/operation-error'
 
 import {
+  buildReleasePrBody,
   formatBranchPickerItems,
   getBaseBranch,
   parseBranchChoices,
+  parseJiraVersionIdFromPrBody,
   releaseLabelFromBranch,
   releaseTypeFromBase,
   releaseTypesOf,
@@ -188,5 +191,38 @@ describe('releaseLabelFromBranch', () => {
 
   it('falls back to the raw branch when it does not parse', () => {
     expect(releaseLabelFromBranch('feature/not-a-release')).toBe('feature/not-a-release')
+  })
+})
+
+describe('parseJiraVersionIdFromPrBody', () => {
+  const url = buildJiraVersionUrl(
+    { baseUrl: 'https://acme.atlassian.net', token: 't', email: 'a@b.c', projectId: 11713 },
+    { id: '20481', projectId: 11713 },
+  )
+
+  it('round-trips the body buildReleasePrBody writes, with and without a description', () => {
+    expect(parseJiraVersionIdFromPrBody(buildReleasePrBody(url))).toBe('20481')
+    expect(parseJiraVersionIdFromPrBody(buildReleasePrBody(url, 'Ship it'))).toBe('20481')
+  })
+
+  it('reads a CRLF body', () => {
+    expect(parseJiraVersionIdFromPrBody(buildReleasePrBody(url, 'line one\nline two').replaceAll('\n', '\r\n'))).toBe(
+      '20481',
+    )
+  })
+
+  it('tolerates surrounding whitespace', () => {
+    expect(parseJiraVersionIdFromPrBody(`  \n${url}   \n\n`)).toBe('20481')
+  })
+
+  it('finds the link among other text', () => {
+    expect(parseJiraVersionIdFromPrBody(`Notes first.\n\n${url}\n\nSee also https://example.com/versions/x/`)).toBe(
+      '20481',
+    )
+  })
+
+  it('returns null when the body has no Jira version link', () => {
+    expect(parseJiraVersionIdFromPrBody('Just a description, see https://example.com/pull/7')).toBeNull()
+    expect(parseJiraVersionIdFromPrBody('')).toBeNull()
   })
 })
