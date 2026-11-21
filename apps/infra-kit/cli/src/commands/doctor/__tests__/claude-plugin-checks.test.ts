@@ -7,7 +7,12 @@ import { commandCatalog } from 'src/entry/command-catalog'
 import { resolvePluginInstall } from 'src/lib/plugin-pointer'
 
 import { checkAgentAllowlist, checkAgentMode } from '../checks/agent'
-import { checkClaudeCli, checkClaudePlugin, inspectServedPluginServer } from '../checks/claude-plugin'
+import {
+  checkClaudeCli,
+  checkClaudePlugin,
+  checkEnabledPlugins,
+  inspectServedPluginServer,
+} from '../checks/claude-plugin'
 import { DOCTOR_CHECK_NAMES, groupChecks } from '../report'
 import { readDoctorSource } from './doctor-source'
 
@@ -92,6 +97,69 @@ afterEach(() => {
   vi.unstubAllEnvs()
   fs.rmSync(home, { recursive: true, force: true })
   fs.rmSync(repo, { recursive: true, force: true })
+})
+
+describe('checkEnabledPlugins', () => {
+  const CONTEXT7 = 'context7@claude-plugins-official'
+  const ATLASSIAN = 'atlassian@claude-plugins-official'
+
+  const enable = (file: string, enabledPlugins: Record<string, boolean>): void => {
+    writeJson(path.join(repo, '.claude', file), { enabledPlugins })
+  }
+
+  const record = (plugins: Record<string, unknown[]>): void => {
+    writeJson(path.join(home, '.claude', 'plugins', 'installed_plugins.json'), { version: 2, plugins })
+  }
+
+  it('skips outside a repository', () => {
+    expect(checkEnabledPlugins(null).status).toBe('skip')
+  })
+
+  it('passes when the settings enable nothing but the infra-kit plugin', () => {
+    enable('settings.json', { 'infra-kit@infra-kit': true })
+
+    expect(checkEnabledPlugins(repo).status).toBe('pass')
+  })
+
+  it('warns with a runnable install command for a plugin recorded only for another project', () => {
+    enable('settings.json', { [CONTEXT7]: true, [ATLASSIAN]: true, 'infra-kit@infra-kit': true })
+    record({
+      [CONTEXT7]: [{ scope: 'project', projectPath: repo }],
+      [ATLASSIAN]: [{ scope: 'project', projectPath: path.join(home, 'other-repo') }],
+    })
+
+    const check = checkEnabledPlugins(repo)
+
+    expect(check.status).toBe('warn')
+    expect(check.message).toContain('1 of 2 plugins')
+    expect(check.message).toContain(`Run: claude plugin install ${ATLASSIAN} --scope project`)
+    expect(check.message).not.toContain(`install ${CONTEXT7}`)
+    expect(check.message).not.toContain('install infra-kit@infra-kit')
+  })
+
+  it('counts a user-scope record as installed here', () => {
+    enable('settings.json', { [ATLASSIAN]: true })
+    record({ [ATLASSIAN]: [{ scope: 'user' }] })
+
+    expect(checkEnabledPlugins(repo).status).toBe('pass')
+  })
+
+  it('lets settings.local.json disable a shared plugin and enable its own at local scope', () => {
+    enable('settings.json', { [ATLASSIAN]: true })
+    enable('settings.local.json', { [ATLASSIAN]: false, [CONTEXT7]: true })
+
+    const check = checkEnabledPlugins(repo)
+
+    expect(check.message).toContain(`claude plugin install ${CONTEXT7} --scope local`)
+    expect(check.message).not.toContain(ATLASSIAN)
+  })
+
+  it('reads a malformed settings file as enabling nothing', () => {
+    fs.mkdirSync(path.join(repo, '.claude'), { recursive: true })
+    fs.writeFileSync(path.join(repo, '.claude', 'settings.json'), '{ not json')
+
+    expect(checkEnabledPlugins(repo).status).toBe('pass')
+  })
 })
 
 describe('checkClaudePlugin', () => {
@@ -688,7 +756,7 @@ describe('report placement', () => {
 
   /** `claude CLI` is a report, not a verdict: only `plugin installed` drives doctor's exit code. */
   it('places claude CLI first, ahead of the rows its absence explains', () => {
-    const plugin = DOCTOR_CHECK_NAMES.slice(-10)
+    const plugin = DOCTOR_CHECK_NAMES.slice(-11)
 
     expect(plugin[0]).toBe('claude CLI')
   })

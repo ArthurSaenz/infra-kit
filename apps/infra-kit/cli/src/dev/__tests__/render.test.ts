@@ -1,39 +1,34 @@
 import { describe, expect, it } from 'vitest'
 
 import { DevRenderer, formatElapsed, resolveEndpointUrl, stripAnsi } from 'src/dev/render'
-import type { HealthState, ReadySummary } from 'src/dev/render'
+import type { HealthState, LogLevel, ReadySummary } from 'src/dev/render'
 
 /**
- * The renderer is pure I/O over injected seams: `write` (terminal), `appendLog` (file tee), `isTTY`
- * (gates spinner + ANSI), and `now` (deterministic clocks). Tests capture both sinks and assert the
- * exact emitted frames. `isTTY: false` disables the spinner + color, so every frame is byte-stable.
+ * The renderer is pure I/O over injected seams: `write` (terminal), `appendLog` (file tee) and `isTTY`
+ * (gates spinner + ANSI). Tests capture both sinks and assert the exact emitted frames. `isTTY: false`
+ * disables the spinner + color, so every frame is byte-stable.
  */
-const frozen = new Date('2026-07-08T14:02:11.000Z')
-
-/** A renderer wired to string-array sinks; returns the renderer plus its captured `out`/`log`. */
+/** A renderer wired to array sinks; `log` holds the tee'd text, `tees` each tee call's `(text, level)`. */
 const makeRenderer = (
-  over: Partial<{ isTTY: boolean; verbose: boolean; now: () => Date }> = {},
-): { r: DevRenderer; out: string[]; log: string[] } => {
+  over: Partial<{ isTTY: boolean; verbose: boolean }> = {},
+): { r: DevRenderer; out: string[]; log: string[]; tees: [string, LogLevel][] } => {
   const out: string[] = []
   const log: string[] = []
+  const tees: [string, LogLevel][] = []
 
   const r = new DevRenderer({
     write: (t) => {
       return out.push(t)
     },
-    appendLog: (t) => {
-      return log.push(t)
+    appendLog: (t, level) => {
+      log.push(t)
+      tees.push([t, level])
     },
     isTTY: over.isTTY ?? false,
     verbose: over.verbose ?? false,
-    now:
-      over.now ??
-      ((): Date => {
-        return frozen
-      }),
   })
 
-  return { r, out, log }
+  return { r, out, log, tees }
 }
 
 const baseSummary = (over: Partial<ReadySummary> = {}): ReadySummary => {
@@ -332,24 +327,24 @@ describe('render — verbose narration + file tee', () => {
 
     quiet.r.log('🔐 Doppler', 'debug')
     expect(quiet.out.join('')).toBe('')
-    expect(quiet.log.join('')).toContain('[DEBUG] 🔐 Doppler')
+    expect(quiet.tees).toEqual([['🔐 Doppler', 'debug']])
   })
 
-  it('the file tee carries an ISO timestamp + level for every line (completeness invariant)', () => {
-    const { r, log } = makeRenderer()
+  it('the file tee hands the sink the plain message and its level; the sink stamps the time', () => {
+    const { r, tees } = makeRenderer({ isTTY: true })
 
-    r.log('hello', 'warn')
-    expect(log.join('')).toMatch(/^\[2026-07-08T14:02:11\.000Z\] \[WARN\] hello\n$/)
+    r.log('\x1B[33mhello\x1B[0m', 'warn')
+    expect(tees).toEqual([['hello', 'warn']])
   })
 })
 
 describe('render — DevUi seams (teeOnly, dispose)', () => {
-  it('teeOnly appends the canonical [iso] [LEVEL] line to the file WITHOUT any terminal write', () => {
-    const { r, out, log } = makeRenderer()
+  it('teeOnly passes (message, level) to the file tee WITHOUT any terminal write', () => {
+    const { r, out, tees } = makeRenderer()
 
     r.teeOnly('file only', 'warn')
     expect(out.join('')).toBe('')
-    expect(log.join('')).toMatch(/^\[2026-07-08T14:02:11\.000Z\] \[WARN\] file only\n$/)
+    expect(tees).toEqual([['file only', 'warn']])
   })
 
   it('teeOnly and the log() tee share one format (log() writes the same shape teeOnly does)', () => {
@@ -361,7 +356,7 @@ describe('render — DevUi seams (teeOnly, dispose)', () => {
 
     viaLog.r.log('same message', 'info')
 
-    expect(viaLog.log.join('')).toBe(viaTeeOnly.log.join(''))
+    expect(viaLog.tees).toEqual(viaTeeOnly.tees)
   })
 
   it('dispose() is a no-op for the plain renderer and idempotent', () => {
@@ -699,5 +694,45 @@ describe('render — the panel has a heartbeat for every session shape', () => {
     expect(later).toContain('up 1m05s')
     // The whole point: consecutive frames must DIFFER, or Ink paints nothing and the screen freezes.
     expect(first).not.toBe(later)
+  })
+})
+
+describe('render — atlas line', () => {
+  it('prints the link under the watch line', () => {
+    const { r } = makeRenderer()
+    const lines = r.formatReadyLines(baseSummary({ atlas: { href: 'https://feat-x.client-ui.localhost/__atlas' } }))
+
+    const atlas = lines.filter((l) => {
+      return l.includes('atlas →')
+    })
+
+    expect(atlas).toEqual(['  atlas → https://feat-x.client-ui.localhost/__atlas'])
+  })
+
+  it('wraps the link in an OSC-8 hyperlink on a TTY', () => {
+    const { r } = makeRenderer({ isTTY: true })
+    const lines = r.formatReadyLines(baseSummary({ atlas: { href: 'https://a.localhost/__atlas' } }))
+
+    expect(lines.join('\n')).toContain(
+      '\x1B]8;;https://a.localhost/__atlas\x1B\\https://a.localhost/__atlas\x1B]8;;\x1B\\',
+    )
+  })
+
+  it('prints the runnable update command when the plugin is too old', () => {
+    const { r } = makeRenderer()
+    const update = 'update the vite plugin: pnpm add -D -w @slip-stream-kit/vite@^0.47.0'
+    const lines = r.formatReadyLines(baseSummary({ atlas: { update } }))
+
+    expect(
+      lines.filter((l) => {
+        return l.includes('atlas →')
+      }),
+    ).toEqual([`  atlas → ${update}`])
+  })
+
+  it('prints nothing when there is no atlas', () => {
+    const { r } = makeRenderer()
+
+    expect(r.formatReadyLines(baseSummary()).join('\n')).not.toContain('atlas')
   })
 })

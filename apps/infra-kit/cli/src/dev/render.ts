@@ -10,7 +10,7 @@
  * The panel's live fields are the reason it is a status surface and not a screenshot. With nothing
  * scrolling beside it, a panel whose numbers never move cannot be told apart from a hung process.
  *
- * All I/O is injected (`write` / `appendLog` / `isTTY` / `now`) so every frame is snapshot-testable and
+ * All I/O is injected (`write` / `appendLog` / `isTTY`) so every frame is snapshot-testable and
  * the spinner is deterministically disabled in tests (`isTTY: false`).
  */
 import process from 'node:process'
@@ -48,12 +48,13 @@ export type HealthState = 'ok' | 'down' | 'starting' | 'unverified' | 'unknown'
 export interface DevRendererDeps {
   /** Terminal sink (default: `process.stdout.write`). */
   write: (text: string) => void
-  /** File tee — always receives full detail (default: no-op; the runner passes its log appender). */
-  appendLog: (text: string) => void
+  /**
+   * File tee — always receives full detail, as plain text plus its level (default: no-op; the runner
+   * passes its log appender, whose sink stamps the time and the line shape).
+   */
+  appendLog: (text: string, level: LogLevel) => void
   /** Whether the terminal is a TTY. Gates the spinner + ANSI color; false in CI / when piped. */
   isTTY: boolean
-  /** Clock seam (default: `() => new Date()`), so timestamps + `ready in Xs` are testable. */
-  now: () => Date
   /** When true, boot narration reaches the terminal; otherwise it is file-only. */
   verbose: boolean
 }
@@ -213,6 +214,11 @@ export interface ReadySummary {
    * EVERY session shape. Omitted on the boot frame, where nothing has elapsed yet.
    */
   sessionUptimeMs?: number
+  /**
+   * The `/__atlas` page: a link when the plugin serving it can, the fix to run when the plugin is too old to
+   * forward it. Absent when there is nothing to open (no plugin-wired UI, or the atlas server did not start).
+   */
+  atlas?: { href: string } | { update: string }
 }
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -305,11 +311,6 @@ export class DevRenderer implements DevUi {
         }),
       appendLog: deps.appendLog ?? ((): void => {}),
       isTTY: deps.isTTY ?? Boolean(process.stdout.isTTY),
-      now:
-        deps.now ??
-        ((): Date => {
-          return new Date()
-        }),
       verbose: deps.verbose ?? false,
     }
   }
@@ -336,13 +337,18 @@ export class DevRenderer implements DevUi {
     return `\x1B]8;;file://${uri}\x1B\\${label}\x1B]8;;\x1B\\`
   }
 
+  /** OSC-8 hyperlink to a web URL, labelled with the URL itself; bare when piped (deterministic snapshots). */
+  private webLink(url: string): string {
+    return this.deps.isTTY ? `\x1B]8;;${url}\x1B\\${url}\x1B]8;;\x1B\\` : url
+  }
+
   /**
-   * Append one line to the log file ONLY — the canonical `[iso] [LEVEL] msg` shape, no terminal write.
-   * The single source of the file-tee format: the private {@link tee} and the Ink boot UI both route
-   * here, so the log file stays identical whichever renderer is live.
+   * Append one line to the log file ONLY, no terminal write. The single file-tee seam: the private
+   * {@link tee} and the Ink boot UI both route here, so the log file stays identical whichever renderer
+   * is live.
    */
   teeOnly(message: string, level: LogLevel): void {
-    this.deps.appendLog(`[${this.deps.now().toISOString()}] [${level.toUpperCase()}] ${stripAnsi(message)}\n`)
+    this.deps.appendLog(stripAnsi(message), level)
   }
 
   /** File tee for a line that is ALSO written to the terminal; delegates the format to {@link teeOnly}. */
@@ -556,14 +562,22 @@ export class DevRenderer implements DevUi {
     return `  ${this.color(ANSI.bold, 'infra-kit dev')}  ${this.color(ANSI.dim, meta)}   ${status}`
   }
 
-  /** The static legend tail: watch line + clickable log path, then a separator rule. */
+  /** The static legend tail: watch line + clickable log path, an optional atlas line, then a separator rule. */
   private legendLines(summary: ReadySummary): string[] {
     const watchText = summary.watch && summary.watchSummary ? `watching ${summary.watchSummary}` : 'watch off'
     const logLink = this.hyperlink(summary.logHref, summary.logPath)
     const watchLine = `${watchText}          logs → ${logLink}`
     const rule = '─'.repeat(60)
 
-    return [`  ${this.color(ANSI.dim, watchLine)}`, `  ${this.color(ANSI.dim, rule)}`]
+    const lines = [`  ${this.color(ANSI.dim, watchLine)}`]
+
+    if (summary.atlas != null) {
+      const atlasText = 'href' in summary.atlas ? this.webLink(summary.atlas.href) : summary.atlas.update
+
+      lines.push(this.color(ANSI.dim, `  atlas → ${atlasText}`))
+    }
+
+    return [...lines, `  ${this.color(ANSI.dim, rule)}`]
   }
 
   /**

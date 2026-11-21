@@ -2,7 +2,15 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { HELPER_PACKAGES, assertHelperVersionFloor, isBelowVersion } from 'src/dev/helper-version-floor'
+import {
+  ATLAS_PLUGIN_FLOOR,
+  HELPER_PACKAGES,
+  assertHelperVersionFloor,
+  isBelowVersion,
+  isSourceCheckout,
+  resolveAtlasPluginGate,
+  resolveVitePluginVersion,
+} from 'src/dev/helper-version-floor'
 
 import { createTempTracker } from './fixtures'
 
@@ -235,5 +243,85 @@ describe('assertHelperVersionFloor', () => {
     expect(() => {
       return assertHelperVersionFloor(root)
     }).not.toThrow()
+  })
+})
+
+describe('atlas plugin gate', () => {
+  const uiOf = (root: string): string => {
+    return path.join(root, 'apps', 'client', 'ui')
+  }
+
+  /** The plugin as pnpm lays out a `link:` dependency: a symlink in the UI's node_modules to a tree outside the repo. */
+  const linkFromOutsideRepo = (root: string, version: string): string => {
+    const external = temp.register(fs.mkdtempSync(path.join(fs.realpathSync('/tmp'), 'floor-external-')))
+    const linkPath = path.join(uiOf(root), 'node_modules', '@slip-stream-kit', 'vite')
+
+    fs.writeFileSync(path.join(external, 'package.json'), JSON.stringify({ version }))
+    fs.mkdirSync(path.dirname(linkPath), { recursive: true })
+    fs.symlinkSync(external, linkPath, 'dir')
+
+    return external
+  }
+
+  it('prints the link for an in-repo workspace link, whatever its version', () => {
+    const root = makeRepo({ linked: { [PLUGIN]: '0.0.1' } })
+
+    expect(resolveAtlasPluginGate(root, root)).toEqual({ current: true })
+  })
+
+  it('prints the link for a link: tree OUTSIDE the repo at 0.46.0 — isWorkspaceLinked would miss it', () => {
+    const root = makeRepo({ nested: { declares: [PLUGIN] } })
+    const external = linkFromOutsideRepo(root, '0.46.0')
+
+    expect(isSourceCheckout(path.join(uiOf(root), 'node_modules', '@slip-stream-kit', 'vite'))).toBe(true)
+    expect(resolveVitePluginVersion(root, uiOf(root))?.version).toBe('0.46.0')
+    expect(resolveAtlasPluginGate(root, uiOf(root))).toEqual({ current: true })
+    // The floor guard keeps its old reading of the same tree: not in this repo, so it is checked and refused.
+    fs.writeFileSync(path.join(external, 'package.json'), JSON.stringify({ version: '0.0.1' }))
+    expect(() => {
+      return assertHelperVersionFloor(root)
+    }).toThrow(/bump @slip-stream-kit\/vite to >=/)
+  })
+
+  it('is not a source checkout when installed under node_modules', () => {
+    const root = makeRepo({ installed: { [PLUGIN]: '0.46.0' } })
+
+    expect(isSourceCheckout(path.join(root, 'node_modules', '@slip-stream-kit', 'vite'))).toBe(false)
+  })
+
+  it('answers with the update line for an installed 0.46.0, with -w when the root declares it', () => {
+    const root = makeRepo({ declares: [PLUGIN], installed: { [PLUGIN]: '0.46.0' } })
+
+    expect(resolveAtlasPluginGate(root, uiOf(root))).toEqual({
+      update: `update the vite plugin: pnpm add -D -w ${PLUGIN}@^${ATLAS_PLUGIN_FLOOR}`,
+    })
+  })
+
+  it('prints a --dir command runnable from the root when a nested package declares the plugin', () => {
+    const root = makeRepo({ nested: { declares: [PLUGIN], installed: { [PLUGIN]: '0.46.0' } } })
+
+    expect(resolveAtlasPluginGate(root, uiOf(root))).toEqual({
+      update: `update the vite plugin: pnpm --dir apps/client/ui add -D ${PLUGIN}@^${ATLAS_PLUGIN_FLOOR}`,
+    })
+  })
+
+  it('prints the link for an installed 0.47.0', () => {
+    const root = makeRepo({ nested: { declares: [PLUGIN], installed: { [PLUGIN]: '0.47.0' } } })
+
+    expect(resolveAtlasPluginGate(root, uiOf(root))).toEqual({ current: true })
+  })
+
+  it('asks for the update when the plugin does not resolve at all', () => {
+    const root = makeRepo({ nested: { declares: [PLUGIN] } })
+
+    expect(resolveAtlasPluginGate(root, uiOf(root))).toHaveProperty('update')
+  })
+
+  it('leaves assertFloorAt alone: an installed plugin below the floor still throws', () => {
+    const root = makeRepo({ declares: [PLUGIN], installed: { [PLUGIN]: '0.0.1' } })
+
+    expect(() => {
+      return assertHelperVersionFloor(root)
+    }).toThrow(new RegExp(`bump ${PLUGIN} to >=${floorOf(PLUGIN)}`))
   })
 })

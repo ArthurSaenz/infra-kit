@@ -28,10 +28,23 @@ export {
   vendorCopyItemSchema,
 } from '../lib/vendor/config-schema'
 export type { VendorConfig, VendorCopyItem } from '../lib/vendor/config-schema'
+// The `/__atlas` seam shared by the CLI runner (serves the page and JSON) and the vite plugin
+// (forwards to the runner whose address arrives in `INFRA_KIT_ATLAS`).
+export {
+  ATLAS_ENV,
+  ATLAS_PATH,
+  ATLAS_SERVED_ROUTES_HEADER,
+  ATLAS_SITE_HEADER,
+  ATLAS_TOKEN_HEADER,
+  readAtlasEndpoint,
+  serializeAtlasEndpoint,
+} from '../lib/vite/atlas-endpoint'
+export type { AtlasEndpoint } from '../lib/vite/atlas-endpoint'
 // Dev-context readers + the `dev` config loader. The CLI's dev-server and audit read the SAME
 // fragment files this package's vite helper reads, through the SAME parser — the two sides now ship
 // as separate npm packages, so a second reader here would be a silently version-skewed one.
 export {
+  applyDevEnv,
   describeProxyRoutes,
   DEV_CONTEXT_WIRE_VERSION,
   loadDev,

@@ -1,4 +1,3 @@
-/* eslint-disable sonarjs/no-os-command-from-path */
 import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -73,6 +72,33 @@ export const buildOptions = {
   external: [...Object.keys(packageJson.dependencies), 'react/jsx-runtime', 'react/jsx-dev-runtime'],
 }
 
+const ATLAS_PAGE_DIR = resolve(PKG_DIR, 'atlas-page')
+const ATLAS_OUT_DIR = resolve(OUT_DIR, 'atlas')
+
+/**
+ * The `/__atlas` page: a separate browser bundle served by the runner under `default-src 'self'`.
+ * Everything is inlined (no externals, no source map) because the page may load nothing but its own
+ * `app.js` and `app.css`; the `define` drops React's development build and the last `process.env`.
+ * Exported for the same reason as `buildOptions`.
+ *
+ * @type {import('esbuild').BuildOptions}
+ */
+export const atlasPageBuildOptions = {
+  // `index.html` rides along through the `copy` loader, so these options alone produce all three files.
+  entryPoints: { app: resolve(ATLAS_PAGE_DIR, 'src/main.tsx'), index: resolve(ATLAS_PAGE_DIR, 'index.html') },
+  bundle: true,
+  platform: 'browser',
+  format: 'esm',
+  target: 'es2022',
+  outdir: ATLAS_OUT_DIR,
+  sourcemap: false,
+  minify: true,
+  jsx: 'automatic',
+  loader: { '.css': 'css', '.html': 'copy' },
+  define: { 'process.env.NODE_ENV': '"production"' },
+  legalComments: 'eof',
+}
+
 // Importing this module (from the dist-shebang guard) must not trigger a build.
 const isMain = process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href
 
@@ -87,6 +113,18 @@ if (isMain) {
     const fileName = bundlePath.split('/').pop()
 
     console.log('✅ Build was completed successfully: ', fileName, '-', +(stat.size / 1024 / 1024).toPrecision(3), 'MB')
+  }
+
+  await esbuild.build(atlasPageBuildOptions)
+
+  for (const name of ['index.html', 'app.js', 'app.css']) {
+    console.log(
+      '✅ Atlas page:',
+      name,
+      '-',
+      +(fs.statSync(resolve(ATLAS_OUT_DIR, name)).size / 1024).toPrecision(3),
+      'KB',
+    )
   }
 
   // The tarball carries `dist/` only, and every stamped `infra-kit.json` points its `$schema` at this

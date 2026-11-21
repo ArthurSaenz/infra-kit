@@ -1,4 +1,11 @@
-import { DEV_CONTEXT_WIRE_VERSION, DEV_SERVING_MARKER, slugifyHostLabel } from '@slip-stream-kit/config/internal'
+import {
+  ATLAS_ENV,
+  DEV_CONTEXT_WIRE_VERSION,
+  DEV_SERVING_MARKER,
+  readAtlasEndpoint,
+  slugifyHostLabel,
+} from '@slip-stream-kit/config/internal'
+import type { AtlasEndpoint } from '@slip-stream-kit/config/internal'
 import { infraKitDev } from '@slip-stream-kit/config/vite'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -6,21 +13,26 @@ import * as fs from 'node:fs'
 import os from 'node:os'
 import * as path from 'node:path'
 import process from 'node:process'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { AtlasSnapshot } from 'src/dev/atlas/atlas-contract'
 import { DevServerRunner } from 'src/dev/dev-server'
 import type { DevUi } from 'src/dev/dev-ui'
-import type { ProbeOutcome } from 'src/dev/health-probe'
+import type { HealthLedger } from 'src/dev/health-ledger'
+import { defaultHealthProbe } from 'src/dev/health-probe'
+import type { ProbeOutcome, ProbeTarget } from 'src/dev/health-probe'
 import { DevLogSink, logFileName } from 'src/dev/log-sink'
 import type { ReadySummary } from 'src/dev/render'
 import { stripAnsi } from 'src/dev/render'
 import type { DevServerOptions } from 'src/dev/runner-types'
+import { registerSignalShutdown } from 'src/dev/signal-shutdown'
 import type { TurboWatchOptions } from 'src/dev/turbo-watch'
 import type { UiDevOptions } from 'src/dev/ui-dev'
 import { INFRA_KIT_ENV_VAR } from 'src/lib/constants'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config'
 
+import { atlasRequest } from '../atlas/__tests__/atlas-http'
 import {
   FAKE_PORTLESS_BIN,
   canBind,
@@ -4490,5 +4502,272 @@ describe('devServerRunner — a build that emitted through errors, or missed the
     } finally {
       await runner.shutdown()
     }
+  }, 15000)
+})
+
+describe('devServerRunner — the atlas', () => {
+  interface AtlasRun {
+    runner: DevServerRunner
+    endpoint: AtlasEndpoint | null
+    uiOpts: UiDevOptions | undefined
+  }
+
+  const bootAtlasRun = async (healthProbe?: (target: ProbeTarget) => Promise<ProbeOutcome>): Promise<AtlasRun> => {
+    const root = temp.register(
+      makeMonorepo([
+        {
+          name: 'shop',
+          packageName: 'shop-api',
+          withHandler: true,
+          ui: {
+            packageName: 'shop-ui',
+            proxy: { routes: { '/api': { packageName: 'shop-api', from: ['local', 'cloud'], default: 'cloud' } } },
+          },
+        },
+      ]),
+    )
+
+    let uiOpts: UiDevOptions | undefined
+
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { livenessIntervalMs: 60_000 },
+      noopBuild,
+      noopTurboChild,
+      (opts: UiDevOptions) => {
+        uiOpts = opts
+
+        return noopTurboChild()
+      },
+      undefined,
+      makeLogRenderer().renderer,
+      healthProbe ??
+        ((): Promise<ProbeOutcome> => {
+          return Promise.resolve('ok')
+        }),
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    return { runner, uiOpts, endpoint: readAtlasEndpoint(uiOpts?.env ?? {}) }
+  }
+
+  it('hands the UI child its address in INFRA_KIT_ATLAS, beside the UI ports', async () => {
+    const { runner, uiOpts, endpoint } = await bootAtlasRun()
+
+    try {
+      expect(uiOpts?.env?.[ATLAS_ENV]).toBeDefined()
+      expect(uiOpts?.env?.INFRA_KIT_UI_PORTS).toBeDefined()
+      expect(endpoint?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+      expect((await atlasRequest(endpoint!)).status).toBe(200)
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('closes the atlas port on a plain shutdown()', async () => {
+    const { runner, endpoint } = await bootAtlasRun()
+
+    await runner.shutdown()
+
+    await expect(atlasRequest(endpoint!)).rejects.toMatchObject({ code: 'ECONNREFUSED' })
+  }, 15000)
+
+  it('closes the atlas port on a SIGTERM teardown through registerSignalShutdown', async () => {
+    const { runner, endpoint } = await bootAtlasRun()
+    const handlers = new Map<NodeJS.Signals, () => void>()
+    const exits: number[] = []
+
+    registerSignalShutdown({
+      onSignal: () => {
+        return runner.shutdown()
+      },
+      exit: (code) => {
+        exits.push(code)
+      },
+      register: (signal, handler) => {
+        handlers.set(signal, handler)
+      },
+      unregister: () => {},
+      forceReap: () => {},
+    })
+
+    expect((await atlasRequest(endpoint!)).status).toBe(200)
+    handlers.get('SIGTERM')?.()
+
+    await vi.waitFor(
+      () => {
+        expect(exits).toEqual([143])
+      },
+      { timeout: 10_000 },
+    )
+    await expect(atlasRequest(endpoint!)).rejects.toMatchObject({ code: 'ECONNREFUSED' })
+  }, 15000)
+
+  it('reports health exactly as the HealthLedger holds it after a real probe of a refusing port', async () => {
+    // The default probe, for real: nothing binds the UI's assigned port (the UI child is a no-op).
+    const { runner, endpoint } = await bootAtlasRun(defaultHealthProbe)
+    const ledger = (runner as unknown as { health: HealthLedger }).health
+
+    try {
+      await (runner as unknown as { livenessTick: () => Promise<void> }).livenessTick()
+
+      const snapshot = JSON.parse((await atlasRequest(endpoint!)).body) as AtlasSnapshot
+
+      const backend = snapshot.backends.find((b) => {
+        return b.id === 'shop-api'
+      })
+
+      expect(snapshot.sites[0]?.health).toBe(ledger.stateOf('shop/ui'))
+      expect(snapshot.sites[0]?.health).toBe('starting')
+      expect(backend?.health).toBe(ledger.stateOf('shop/api'))
+    } finally {
+      await runner.shutdown()
+    }
+  }, 15000)
+
+  it('does not start when --reuse finds this worktree already serving', async () => {
+    const root = temp.register(
+      makeMonorepo([
+        {
+          name: 'client',
+          packageName: 'client-api',
+          withHandler: true,
+          ui: {
+            packageName: 'client-ui',
+            proxy: { routes: { '/api': { packageName: 'client-api', from: ['local', 'cloud'], default: 'cloud' } } },
+          },
+        },
+      ]),
+    )
+
+    const fragment = path.join(root, '.infra-kit', 'dev-context', 'client.json')
+
+    fs.mkdirSync(path.dirname(fragment), { recursive: true })
+    fs.writeFileSync(
+      fragment,
+      JSON.stringify({
+        v: 2,
+        package: 'client-api',
+        port: 4321,
+        pid: process.pid,
+        origin: 'https://local.client-api.localhost',
+      }),
+    )
+    process.env.PORTLESS_STATE_DIR = temp.register(fs.mkdtempSync(path.join(os.tmpdir(), 'ik-portless-')))
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    const runner = new DevServerRunner(
+      { app: 'client', reuse: true },
+      noopBuild,
+      noopTurboChild,
+      undefined,
+      undefined,
+      undefined,
+      async (target) => {
+        return target.port === 4321 ? 'ok' : 'refused'
+      },
+      workingProxy(),
+    )
+
+    await runner.start()
+
+    try {
+      expect((runner as unknown as { atlas: unknown }).atlas).toBeNull()
+    } finally {
+      await runner.shutdown()
+    }
+  })
+})
+
+describe('devServerRunner — atlas line on the ready summary', () => {
+  /** One app per entry, in order; `plugin` picks the `infraKit()` plugin over the bare helper for its UI. */
+  const bootAndCapture = async (uis: { name: string; plugin: boolean }[]): Promise<ReadySummary | undefined> => {
+    const root = temp.register(
+      makeMonorepo(
+        uis.map(({ name, plugin }) => {
+          return {
+            name,
+            packageName: `${name}-api`,
+            withHandler: true,
+            ui: { packageName: `${name}-ui`, vitePlugin: plugin },
+          }
+        }),
+      ),
+    )
+
+    for (const { name } of uis) {
+      // A plugin at the floor, so the gate passes and the summary carries a link rather than the update line.
+      const pluginDir = path.join(root, 'apps', name, 'ui', 'node_modules', '@slip-stream-kit', 'vite')
+
+      fs.mkdirSync(pluginDir, { recursive: true })
+      fs.writeFileSync(path.join(pluginDir, 'package.json'), JSON.stringify({ version: '0.47.0' }))
+      process.env[`${name.toUpperCase()}_PORT`] = String(await getFreePort())
+    }
+
+    const fakeRunBuild = async (): Promise<void> => {
+      for (const { name } of uis) {
+        fs.writeFileSync(path.join(root, 'apps', name, 'api', 'dist', 'handler.js'), handlerSource(1))
+      }
+    }
+
+    spyStdoutWrite([])
+    process.chdir(root)
+
+    const painted: ReadySummary[] = []
+
+    const capturing: DevUi = {
+      narrate: () => {},
+      log: () => {},
+      logFn: () => {},
+      bootStep: () => {},
+      ready: (summary) => {
+        painted.push(summary)
+      },
+      dispose: () => {},
+    }
+
+    const runner = new DevServerRunner(
+      {},
+      fakeRunBuild,
+      noopTurboChild,
+      () => {
+        return { kill: async () => {} }
+      },
+      undefined,
+      capturing,
+      undefined,
+      workingProxy(),
+    )
+
+    await runner.start()
+    await runner.shutdown()
+
+    return painted.at(0)
+  }
+
+  it('hands the renderer an atlas link for a plugin-wired UI', async () => {
+    const summary = await bootAndCapture([{ name: 'client', plugin: true }])
+
+    expect(summary?.atlas).toEqual({ href: expect.stringMatching(/^https:\/\/[^/]+\/__atlas$/) })
+  }, 15000)
+
+  it('omits the atlas line for a helper-wired UI, which has no forwarder', async () => {
+    const summary = await bootAndCapture([{ name: 'client', plugin: false }])
+
+    expect(summary).toBeDefined()
+    expect(summary?.atlas).toBeUndefined()
+  }, 15000)
+
+  it('links the SECOND UI when the first is helper-wired and the second uses the plugin', async () => {
+    const summary = await bootAndCapture([
+      { name: 'alpha', plugin: false },
+      { name: 'beta', plugin: true },
+    ])
+
+    expect(summary?.atlas).toEqual({ href: expect.stringMatching(/^https:\/\/[^/]*beta-ui[^/]*\/__atlas$/) })
   }, 15000)
 })

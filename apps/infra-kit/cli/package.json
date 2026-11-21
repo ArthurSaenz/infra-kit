@@ -25,11 +25,11 @@
     "infra-kit-check": "pnpm exec infra-kit audit",
     "clean-artifacts": "rm -rf dist",
     "clean-cache": "rm -rf node_modules/.cache .eslintcache tsconfig.tsbuildinfo .turbo .swc",
-    "prettier-fix": "pnpm exec prettier **/* --write --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
-    "prettier-check": "pnpm exec prettier **/* --check --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
-    "eslint-check": "pnpm exec eslint --cache --report-unused-disable-directives ./src",
-    "eslint-fix": "pnpm exec eslint --cache --quiet --report-unused-disable-directives ./src --fix",
-    "ts-check": "tsc --noEmit",
+    "prettier-fix": "pnpm exec prettier **/* \"atlas-page/**/*.{ts,tsx,css,html}\" --write --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
+    "prettier-check": "pnpm exec prettier **/* \"atlas-page/**/*.{ts,tsx,css,html}\" --check --no-error-on-unmatched-pattern --log-level silent --ignore-path ../../../.prettierignore",
+    "eslint-check": "pnpm exec eslint --cache --report-unused-disable-directives ./src ./atlas-page",
+    "eslint-fix": "pnpm exec eslint --cache --quiet --report-unused-disable-directives ./src ./atlas-page --fix",
+    "ts-check": "tsc --noEmit && tsc -p atlas-page --noEmit",
     "test": "pnpm exec vitest run --reporter=minimal",
     "test-watch": "pnpm exec vitest --watch --silent passed-only",
     "test-ui": "pnpm exec vitest --ui --silent passed-only",
@@ -61,12 +61,18 @@
   },
   "devDependencies": {
     "@slip-stream-kit/eslint-plugin": "workspace:*",
+    "@slip-stream-kit/vite": "workspace:*",
     "@types/aws-lambda": "catalog:",
     "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
     "@wl/eslint-config": "workspace:*",
     "@wl/vitest-config": "workspace:*",
+    "@xyflow/react": "^12.12.1",
     "esbuild": "^0.28.2",
     "ink-testing-library": "^4.0.0",
-    "typescript": "^6.0.3"
+    "jotai": "catalog:",
+    "react-dom": "catalog:",
+    "typescript": "^6.0.3",
+    "vite": "catalog:"
   }
 }

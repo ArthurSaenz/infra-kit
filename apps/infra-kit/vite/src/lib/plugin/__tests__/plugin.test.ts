@@ -160,7 +160,8 @@ describe('infraKit', () => {
           end: vi.fn(),
         }
 
-        ;(fake.middlewares[0] as (req: unknown, res: unknown, next: () => void) => void)(
+        // [0] is the atlas forwarder, installed first and unconditionally; the guard comes right after it.
+        ;(fake.middlewares[1] as (req: unknown, res: unknown, next: () => void) => void)(
           { url: '/orders', method: 'GET', headers: { host, accept: 'text/html' } },
           res,
           () => {},
@@ -183,19 +184,20 @@ describe('infraKit', () => {
 
       const { middlewares, redirectOf } = await boot(SERVE)
 
-      expect(middlewares).toHaveLength(1)
+      expect(middlewares).toHaveLength(2)
       expect(redirectOf('127.0.0.1:5399')).toBe('https://main.client-ui.localhost/orders')
     })
 
     it('guards a bare vite that nothing placed', async () => {
       const { middlewares } = await boot(SERVE)
 
-      expect(middlewares).toHaveLength(1)
+      expect(middlewares).toHaveLength(2)
     })
 
     it('stays out of vitest and of middleware mode', async () => {
-      expect((await boot({ command: 'serve', mode: 'test' })).middlewares).toHaveLength(0)
-      expect((await boot(SERVE, null)).middlewares).toHaveLength(0)
+      // Only the atlas forwarder, which is installed whatever the mode.
+      expect((await boot({ command: 'serve', mode: 'test' })).middlewares).toHaveLength(1)
+      expect((await boot(SERVE, null)).middlewares).toHaveLength(1)
     })
   })
 

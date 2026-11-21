@@ -8,6 +8,7 @@ export type { OrcaRepoLookup, OrcaRepoVisibility } from './ensure-repo'
 export { isOrcaWorktreeListed } from './is-worktree-listed'
 export { listOrcaTerminals } from './list-terminals-by-cwd'
 export type { OrcaTerminal } from './list-terminals-by-cwd'
+export { focusOrcaTerminal, openOrcaLogTerminal } from './open-log-terminal'
 export { createOrcaOpenPoll, openOrcaWorktreeTerminals } from './open-worktree-terminals'
 export type {
   OrcaOpenedLayout,

@@ -81,12 +81,12 @@ const toInstallation = (entry: unknown): PluginInstallation | null => {
   }
 }
 
-const readInstallations = (home?: string): PluginInstallation[] => {
+const readInstallations = (home?: string, pluginKey: string = PLUGIN_KEY): PluginInstallation[] => {
   const parsed = readJsonFile(pluginsPath('installed_plugins.json', home))
 
   if (!isPlainObject(parsed) || !isPlainObject(parsed.plugins)) return []
 
-  const entries = parsed.plugins[PLUGIN_KEY]
+  const entries = parsed.plugins[pluginKey]
 
   if (!Array.isArray(entries)) return []
 
@@ -102,6 +102,8 @@ export interface PluginInstallationQuery {
   home?: string
   /** The project root being asked about. Omitted, only a user-scope entry can count as installed. */
   projectPath?: string
+  /** The `<plugin>@<marketplace>` key asked about. Omitted, the `infra-kit` plugin's own. */
+  pluginKey?: string
 }
 
 /**
@@ -153,7 +155,7 @@ const coversProject = (entry: PluginInstallation, root: string | null): boolean 
  * // => { kind: 'elsewhere', installations: [{ projectPath: '/other', … }] }  // installed, but not here
  */
 export const resolvePluginInstall = (query: PluginInstallationQuery = {}): PluginInstallState => {
-  const installations = readInstallations(query.home)
+  const installations = readInstallations(query.home, query.pluginKey)
 
   if (installations.length === 0) return { kind: 'absent' }
 

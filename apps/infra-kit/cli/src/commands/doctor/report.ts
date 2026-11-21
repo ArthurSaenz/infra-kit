@@ -114,6 +114,7 @@ const SECTION_MEMBERS: ReadonlyArray<readonly [string, readonly string[]]> = [
       'plugin version',
       'plugin MCP server',
       'CLI version',
+      'enabled plugins',
       'background setup',
       'claude in chrome',
       // The two agent rows close the section: how this shell would be classified, and whether the

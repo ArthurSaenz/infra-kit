@@ -1,8 +1,11 @@
 import type { InfraKitDevOptions } from '@slip-stream-kit/config/vite'
 import { infraKitDev } from '@slip-stream-kit/config/vite'
+import fs from 'node:fs'
+import path from 'node:path'
 import process from 'node:process'
 import type { Plugin, ViteDevServer } from 'vite'
 
+import { createAtlasForward } from '../atlas-forward/atlas-forward'
 import type { RestartableServer } from '../dev-context/dev-context'
 import { resolveRestartSignature, watchDevContext } from '../dev-context/dev-context'
 import { mirrorOnIpv6Loopback } from '../ipv6-loopback/ipv6-loopback'
@@ -43,6 +46,16 @@ const asRestartable = (server: ViteDevServer): RestartableServer => {
     warn: (message) => {
       server.config.logger.warn(message)
     },
+  }
+}
+
+const readPackageName = (cwd: string): string | null => {
+  try {
+    const { name } = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf-8')) as { name?: unknown }
+
+    return typeof name === 'string' && name !== '' ? name : null
+  } catch {
+    return null
   }
 }
 
@@ -103,6 +116,7 @@ export const infraKit = (options: InfraKitPluginOptions = {}): Plugin => {
   let signature = ''
   let pinnedPortConflict = false
   let guardMode: LoopbackGuardMode | null = null
+  let emittedProxyKeys: ReadonlySet<string> = new Set()
   let dispose: () => void = () => {}
 
   return {
@@ -117,10 +131,28 @@ export const infraKit = (options: InfraKitPluginOptions = {}): Plugin => {
       pinnedPortConflict = hasPinnedPortConflict(resolved, userConfig.server)
       guardMode = mode === 'test' ? null : resolveGuardMode(resolved)
 
-      return { server: mergeServerConfig(resolved, userConfig.server) }
+      const server = mergeServerConfig(resolved, userConfig.server)
+
+      emittedProxyKeys = new Set(Object.keys(server.proxy ?? {}))
+
+      return { server }
     },
 
     configureServer: (server) => {
+      // First, so neither a `/` proxy key nor the loopback guard can shadow `/__atlas`; and unconditional,
+      // because the page is wanted in middleware mode and outside `infra-kit dev` alike.
+      server.middlewares.use(
+        createAtlasForward({
+          site: readPackageName(cwd),
+          proxy: () => {
+            return server.config.server.proxy
+          },
+          emittedKeys: () => {
+            return emittedProxyKeys
+          },
+        }),
+      )
+
       if (pinnedPortConflict) {
         server.config.logger.warn(
           '[infra-kit] server.port is pinned in this vite config, but `infra-kit dev` assigned this UI a ' +

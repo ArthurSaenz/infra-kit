@@ -10,7 +10,7 @@
  * `turbo watch build` engine for `infra-kit dev --watch`.
  *
  * Spawns ONE long-lived `turbo watch build` child that owns incremental rebuilds and
- * dependency-graph fan-out. Its stdout is teed to the runner log but NEVER parsed for
+ * dependency-graph fan-out. Its output is teed to the watch log but NEVER parsed for
  * control flow: piped `turbo watch` block-buffers stdout and emits no per-task completion
  * marker for `tsc -b` tasks, so the dev-server derives "a build finished" from watching
  * `dist/` output instead (see {@link file://./dev-server.ts} `setupWatch`).
@@ -28,7 +28,6 @@
  * torn down with a process-GROUP signal — verified to fully reap the tree.
  */
 import { spawn } from 'node:child_process'
-import * as fs from 'node:fs'
 
 import { superviseChild } from './managed-child.js'
 import type { ManagedChild, UnexpectedExitHandler } from './managed-child.js'
@@ -53,29 +52,17 @@ export interface TurboWatchOptions {
   depClosure: string[]
   /** Consumer repo cwd the child runs in (turbo resolves the consumer's own pin here). */
   cwd: string
-  /** Runner log file; the child's stdout+stderr are appended to it. */
-  logFile: string
   /**
    * Called if the engine dies on its own (not via `kill()`): incremental rebuilds silently stop, so
    * the runner surfaces it. Optional so the injected test factory can ignore it.
    */
   onUnexpectedExit?: UnexpectedExitHandler
   /**
-   * Test seam: open `logFile` and return its descriptor. Defaults to `fs.openSync(path, 'a')`.
-   *
-   * It exists so a test can HOLD the descriptor the factory is about to close and prove it was closed
-   * (`fstatSync` throws `EBADF`). The alternative — opening a probe fd and asserting the next
-   * allocation reuses its number — silently depends on nothing else in the worker opening a file at
-   * the same moment, which is not a property a test can own.
+   * The child's output as text, in whole lines. The runner passes its log sink here so the engine's
+   * output counts against the per-service byte cap: a descriptor the child wrote to directly was the
+   * one stream no cap could see, and a rebuild loop grew it without bound.
    */
-  openLog?: (path: string) => number
-  /**
-   * Take the child's output as text instead of handing it `logFile`'s descriptor. The runner passes
-   * its log sink here so the engine's output counts against the per-service byte cap: a descriptor
-   * the child writes to directly is the one stream no cap can see, and a rebuild loop grows it
-   * without bound. When set, `logFile` and `openLog` are unused.
-   */
-  appendLog?: (text: string) => void
+  appendLog: (text: string) => void
 }
 
 /**
@@ -99,7 +86,7 @@ export const buildTurboWatchFilters = (depInclusive: string[], depClosure: strin
 
 /**
  * Default factory: spawn `pnpm exec turbo watch build <filters> --continue=dependencies-successful
- * --env-mode=loose` detached, tee output to `logFile`, and reap the process group on `kill()`.
+ * --env-mode=loose` detached, tee its output to `appendLog`, and reap the process group on `kill()`.
  *
  * Filters come from {@link buildTurboWatchFilters}: `...<api>` (dep-inclusive) rebuilds a backend + its
  * closure; `<ui>^...` (dep-closure-only) rebuilds the frontend's shared libs without production-building
@@ -113,9 +100,7 @@ export const defaultTurboWatchFactory: TurboWatchFactory = ({
   depInclusive,
   depClosure,
   cwd,
-  logFile,
   onUnexpectedExit,
-  openLog,
   appendLog,
 }) => {
   const filters = buildTurboWatchFilters(depInclusive, depClosure)
@@ -133,43 +118,29 @@ export const defaultTurboWatchFactory: TurboWatchFactory = ({
     '--log-order=stream',
   ]
 
-  if (appendLog) {
-    const piped = spawn('pnpm', args, { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  const piped = spawn('pnpm', args, { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
 
-    // Both pipes are drained unconditionally: a piped child whose output is never read blocks once
-    // the OS pipe buffer fills, and a blocked watch engine stops rebuilding without saying so.
-    //
-    // Whole lines only: `appendLog` ends every write with a newline, and a pipe chunk ends wherever
-    // the read happened to — forwarded raw, one long `tsc` error became several lines, only the first
-    // of them carrying turbo's `<pkg>:build:` prefix.
-    for (const stream of [piped.stdout, piped.stderr]) {
-      let pending = ''
+  // Both pipes are drained unconditionally: a piped child whose output is never read blocks once
+  // the OS pipe buffer fills, and a blocked watch engine stops rebuilding without saying so.
+  //
+  // Whole lines only: `appendLog` ends every write with a newline, and a pipe chunk ends wherever
+  // the read happened to — forwarded raw, one long `tsc` error became several lines, only the first
+  // of them carrying turbo's `<pkg>:build:` prefix.
+  for (const stream of [piped.stdout, piped.stderr]) {
+    let pending = ''
 
-      stream.setEncoding('utf-8')
-      stream.on('data', (chunk: string) => {
-        const lines = (pending + chunk).split('\n')
+    stream.setEncoding('utf-8')
+    stream.on('data', (chunk: string) => {
+      const lines = (pending + chunk).split('\n')
 
-        pending = lines.pop() ?? ''
+      pending = lines.pop() ?? ''
 
-        if (lines.length > 0) appendLog(`${lines.join('\n')}\n`)
-      })
-      stream.on('end', () => {
-        if (pending !== '') appendLog(pending)
-      })
-    }
-
-    return superviseChild(piped, undefined, onUnexpectedExit)
+      if (lines.length > 0) appendLog(`${lines.join('\n')}\n`)
+    })
+    stream.on('end', () => {
+      if (pending !== '') appendLog(pending)
+    })
   }
 
-  const out = openLog ? openLog(logFile) : fs.openSync(logFile, 'a')
-  const child = spawn('pnpm', args, { cwd, detached: true, stdio: ['ignore', out, out] })
-
-  // `spawn` has already duplicated the descriptor into the child by the time it returns, so the
-  // parent's copy is dead weight — nothing here ever writes through it. It was never closed: neither
-  // `kill()` nor `shutdown()` could, because `ManagedChild` exposes no cleanup hook to hang it
-  // on, which is exactly why the close belongs here rather than there. Holding it pinned the log
-  // file's inode for the whole session even after the file was unlinked.
-  fs.closeSync(out)
-
-  return superviseChild(child, undefined, onUnexpectedExit)
+  return superviseChild(piped, undefined, onUnexpectedExit)
 }

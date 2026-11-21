@@ -42,7 +42,7 @@ import type { AllowlistCatalogEntry } from './agent-allowlist'
 import { allChecksPassed } from './check-result'
 import type { CheckResult, DependencyDetail } from './check-result'
 import { agentAllowlistRow, checkAgentMode, checkAutoSetup, checkMergeDevResolutions } from './checks/agent'
-import { checkClaudeCli, checkClaudePlugin } from './checks/claude-plugin'
+import { checkClaudeCli, checkClaudePlugin, checkEnabledPlugins } from './checks/claude-plugin'
 import type { DoctorOrigin } from './checks/claude-plugin'
 import { checkCommand } from './checks/command'
 import { checkEnvTokensConfigured, checkTokenStorePerms, checkTokenStorePresent } from './checks/env-tokens'
@@ -561,6 +561,7 @@ export const doctor = async (
     // rows whose failure it explains.
     await checkClaudeCli(),
     ...checkClaudePlugin(repoRoot, origin),
+    checkEnabledPlugins(gitRoot),
     checkClaudeInChrome(),
     // `flag` is the resolved source, not a re-parse of argv: `preAction` has already run, and a
     // `--agent` on this very invocation is what set it.

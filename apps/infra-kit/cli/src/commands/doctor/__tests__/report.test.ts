@@ -92,7 +92,7 @@ describe('section coverage', () => {
     expect(unmapped).toEqual([])
   })
 
-  it('covers exactly 38 checks', () => {
+  it('covers exactly 39 checks', () => {
     // 36, up from 34: the two agent rows (`Agent mode`, `Agent allowlist`) joined the plugin section.
     // 37: `portless node` joined the proxy section.
     // 36: `warm cache` and `env token valid` left with the retired env auto-load; `git installed` joined.
@@ -101,13 +101,13 @@ describe('section coverage', () => {
     // 37: `claude in chrome` joined the plugin section.
     // 36: `ide installed` left with the `ide` config key.
     // 37: `background setup` joined the plugin section.
-    // 38: `Guidance version` joined the shell section beside `CLAUDE.md block`.
-    expect(DOCTOR_CHECK_NAMES).toHaveLength(38)
-    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(38)
+    // 39: `enabled plugins` joined the plugin section after `CLI version`.
+    expect(DOCTOR_CHECK_NAMES).toHaveLength(39)
+    expect(new Set(DOCTOR_CHECK_NAMES).size).toBe(39)
   })
 
   it('keeps the Claude Code plugin rows adjacent, in order, followed by the agent rows (O3)', () => {
-    const plugin = DOCTOR_CHECK_NAMES.slice(-10)
+    const plugin = DOCTOR_CHECK_NAMES.slice(-11)
 
     expect(plugin).toEqual([
       'claude CLI',
@@ -116,6 +116,7 @@ describe('section coverage', () => {
       'plugin version',
       'plugin MCP server',
       'CLI version',
+      'enabled plugins',
       'background setup',
       'claude in chrome',
       'Agent mode',

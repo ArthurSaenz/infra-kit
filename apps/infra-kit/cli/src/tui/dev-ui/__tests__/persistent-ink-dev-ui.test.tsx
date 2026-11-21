@@ -6,6 +6,7 @@ import type { ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ReadySummary } from 'src/dev/dev-ui'
+import { stripAnsi } from 'src/dev/render'
 
 import { PersistentInkDevUi } from '../persistent-ink-dev-ui'
 import type { PersistentInkDevUiDeps } from '../persistent-ink-dev-ui'
@@ -21,8 +22,6 @@ import type { PersistentInkDevUiDeps } from '../persistent-ink-dev-ui'
  * emits to wipe a user's scrollback. Anything about what the terminal actually does has to be proven
  * against a real pty.
  */
-const frozen = new Date('2026-07-08T14:02:11.000Z')
-
 const settle = (): Promise<void> => {
   return new Promise((resolve) => {
     setTimeout(resolve, 60)
@@ -53,7 +52,7 @@ const countOf = (haystack: string, needle: string): number => {
 }
 
 const makeUi = (over: { verbose?: boolean } = {}) => {
-  const appendLog: string[] = []
+  const appendLog: [string, string][] = []
   const stdoutWrites: string[] = []
 
   const fakeStdout = {
@@ -73,13 +72,10 @@ const makeUi = (over: { verbose?: boolean } = {}) => {
   }
 
   const ui = new PersistentInkDevUi({
-    appendLog: (text) => {
-      appendLog.push(text)
+    appendLog: (text, level) => {
+      appendLog.push([text, level])
     },
     verbose: over.verbose ?? false,
-    now: () => {
-      return frozen
-    },
     render: renderSeam as unknown as PersistentInkDevUiDeps['render'],
     stdout: fakeStdout,
   })
@@ -133,7 +129,7 @@ describe('persistentInkDevUi — backend-only persistent mode', () => {
     t.ui.log('hello', 'info')
 
     expect(t.frames()).toContain('hello')
-    expect(t.appendLog.join('')).toContain('[INFO] hello')
+    expect(t.appendLog).toContainEqual(['hello', 'info'])
     // The footer still carries live health, and the header is committed exactly once (not reprinted).
     expect(t.frame()).toContain('● ok')
     expect(countOf(t.frame(), 'http://localhost:57076/api/v1')).toBe(1)
@@ -240,9 +236,6 @@ describe('persistentInkDevUi — default stdout is scrollback-safe', () => {
       appendLog: () => {
         return undefined
       },
-      now: () => {
-        return frozen
-      },
       render: renderSeam as unknown as PersistentInkDevUiDeps['render'],
       // deliberately NO `stdout` — exercise the production default
     })
@@ -281,5 +274,32 @@ describe('persistentInkDevUi — default stdout is scrollback-safe', () => {
     // A snapshot/copy would break Ink's resize handling; the proxy must forward through to the real tty.
     expect(stream.columns).toBe(process.stdout.columns)
     expect(typeof stream.on).toBe('function')
+  })
+})
+
+describe('persistentInkDevUi — atlas line', () => {
+  it('commits the atlas link with the header', () => {
+    const t = makeUi()
+
+    t.ui.ready(baseSummary({ atlas: { href: 'https://feat-x.client-ui.localhost/__atlas' } }))
+
+    // Ink paints as a TTY, so the link carries its OSC-8 wrapper; the visible label is what the user reads.
+    expect(stripAnsi(t.frames())).toContain('atlas → https://feat-x.client-ui.localhost/__atlas')
+  })
+
+  it('commits the update line when the plugin is too old', () => {
+    const t = makeUi()
+
+    t.ui.ready(baseSummary({ atlas: { update: 'update the vite plugin: pnpm add -D @slip-stream-kit/vite@^0.47.0' } }))
+
+    expect(t.frames()).toContain('atlas → update the vite plugin: pnpm add -D @slip-stream-kit/vite@^0.47.0')
+  })
+
+  it('shows no atlas line without one', () => {
+    const t = makeUi()
+
+    t.ui.ready(baseSummary())
+
+    expect(t.frames()).not.toContain('atlas')
   })
 })

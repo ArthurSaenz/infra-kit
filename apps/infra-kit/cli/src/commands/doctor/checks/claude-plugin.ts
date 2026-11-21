@@ -12,7 +12,9 @@ import {
   PLUGIN_KEY,
   PLUGIN_UPDATE_COMMAND,
   isMarketplaceRegistered,
+  listUninstalledEnabledPlugins,
   readInstalledPluginVersion,
+  readProjectEnabledPlugins,
   resolvePluginInstall,
 } from 'src/lib/plugin-pointer'
 import type { PluginInstallState } from 'src/lib/plugin-pointer'
@@ -264,6 +266,54 @@ const claudePluginServerCheck = (served: ServedPluginServer): CheckResult => {
     name,
     status: 'pass',
     message: `${describeServedPlugin(served.version)} is skills-only — no ${MCP_FILE_NAME}, as shipped; the /infra-kit:* skills drive the infra-kit CLI`,
+  }
+}
+
+/**
+ * Every OTHER plugin the repo's `.claude/settings.json` (or `settings.local.json`) enables: does an
+ * install record cover this project? Claude Code reports an enabled-but-uninstalled plugin only in
+ * its `/plugin` Errors tab, so a fresh checkout or worktree silently runs without them.
+ *
+ * `warn`, never `fail`: these are third-party plugins the CLI neither ships nor needs, and
+ * `infra-kit@infra-kit` is excluded because `plugin installed` already answers for it.
+ *
+ * @example
+ * checkEnabledPlugins('/repo')
+ * // => { name: 'enabled plugins', status: 'warn', message: '1 of 7 plugins enabled … Run: claude plugin install atlassian@claude-plugins-official --scope project' }
+ */
+export const checkEnabledPlugins = (root: string | null): CheckResult => {
+  const name = 'enabled plugins'
+
+  if (root === null) return { name, status: 'skip', message: 'Not in a git repository — no project settings to read' }
+
+  const enabled = readProjectEnabledPlugins(root).filter((plugin) => {
+    return plugin.key !== PLUGIN_KEY
+  })
+
+  if (enabled.length === 0) {
+    return { name, status: 'pass', message: 'No other plugins are enabled in this project’s .claude settings' }
+  }
+
+  const missing = listUninstalledEnabledPlugins({ projectPath: root }).filter((plugin) => {
+    return plugin.key !== PLUGIN_KEY
+  })
+
+  if (missing.length === 0) {
+    return {
+      name,
+      status: 'pass',
+      message: `All ${enabled.length} other plugins enabled in project settings are installed for this project`,
+    }
+  }
+
+  const commands = missing.map((plugin) => {
+    return `claude plugin install ${plugin.key} --scope ${plugin.scope}`
+  })
+
+  return {
+    name,
+    status: 'warn',
+    message: `${missing.length} of ${enabled.length} plugins enabled in project settings are not installed for this project. Run: ${commands.join(' && ')}`,
   }
 }
 

@@ -242,3 +242,83 @@ export const assertHelperVersionFloor = (repoRoot: string): void => {
     for (const helperDir of resolved.values()) assertFloorAt(repoRoot, helper, helperDir)
   }
 }
+
+/** The package whose `/__atlas` forwarder the ready screen's atlas link depends on. */
+const VITE_PLUGIN_PACKAGE = '@slip-stream-kit/vite'
+
+/**
+ * First plugin release that forwards `/__atlas`. An older one never registers the route, so the path
+ * falls through to the SPA fallback and the printed link would open the app's index page.
+ */
+export const ATLAS_PLUGIN_FLOOR = '0.47.0'
+
+/** The plugin install a UI resolves, as Node would: its directory, and the version it declares (if readable). */
+export const resolveVitePluginVersion = (
+  repoRoot: string,
+  uiDir: string,
+): { helperDir: string; version: string | undefined } | undefined => {
+  const helperDir = findHelperDir(repoRoot, uiDir, VITE_PLUGIN_PACKAGE)
+
+  if (helperDir == null) return undefined
+
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(helperDir, 'package.json'), 'utf-8')) as { version?: unknown }
+
+    return { helperDir, version: typeof pkg.version === 'string' ? pkg.version : undefined }
+  } catch {
+    return { helperDir, version: undefined }
+  }
+}
+
+/**
+ * `true` when `helperDir` is a source tree (a `link:` or workspace dependency) rather than a registry
+ * install: its realpath has no `node_modules` segment. Unlike {@link isWorkspaceLinked} this holds wherever
+ * the tree lives — a consumer linking `../infra-kit/...` from outside its own repo is still a checkout.
+ */
+export const isSourceCheckout = (helperDir: string): boolean => {
+  try {
+    return !fs.realpathSync(helperDir).split(path.sep).includes('node_modules')
+  } catch {
+    return false
+  }
+}
+
+/** The package.json nearest to `uiDir` (walking up to `repoRoot`) that declares the plugin; `uiDir` when none does. */
+const pluginDeclaringDir = (repoRoot: string, uiDir: string): string => {
+  let dir = uiDir
+
+  for (;;) {
+    if (declaresPackage(dir, VITE_PLUGIN_PACKAGE)) return dir
+
+    const parent = path.dirname(dir)
+
+    if (dir === repoRoot || parent === dir) return uiDir
+    dir = parent
+  }
+}
+
+/** The fix for a plugin below {@link ATLAS_PLUGIN_FLOOR}, runnable from the repo root as printed. */
+const atlasUpdateCommand = (repoRoot: string, uiDir: string): string => {
+  const declaringDir = pluginDeclaringDir(repoRoot, uiDir)
+  // Both sides realpath'd: a symlinked or `/var`-vs-`/private/var` root would otherwise never match.
+  const atRoot = safeRealpath(declaringDir) === safeRealpath(repoRoot)
+  const spec = `${VITE_PLUGIN_PACKAGE}@^${ATLAS_PLUGIN_FLOOR}`
+
+  // `ik dev` runs from the repo root, so `--dir` makes the command runnable from there as printed.
+  return atRoot ? `pnpm add -D -w ${spec}` : `pnpm --dir ${path.relative(repoRoot, declaringDir) || '.'} add -D ${spec}`
+}
+
+/**
+ * Whether the UI's plugin can serve `/__atlas`: a source checkout always can, an install only from
+ * {@link ATLAS_PLUGIN_FLOOR}. The `update` text is the line to print instead of a link that would 404.
+ */
+export const resolveAtlasPluginGate = (repoRoot: string, uiDir: string): { current: true } | { update: string } => {
+  const plugin = resolveVitePluginVersion(repoRoot, uiDir)
+
+  if (plugin != null) {
+    if (isSourceCheckout(plugin.helperDir)) return { current: true }
+    if (plugin.version != null && !isBelowVersion(plugin.version, ATLAS_PLUGIN_FLOOR)) return { current: true }
+  }
+
+  return { update: `update the vite plugin: ${atlasUpdateCommand(repoRoot, uiDir)}` }
+}

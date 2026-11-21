@@ -45,11 +45,9 @@ type RenderFn = (tree: ReactElement, options?: unknown) => RenderHandle
 
 export interface PersistentInkDevUiDeps {
   /** File tee — the same appender the runner hands the plain renderer. */
-  appendLog: (text: string) => void
+  appendLog: (text: string, level: LogLevel) => void
   /** Mirrors the renderer's verbose gate: only in verbose does a `debug` log reach the terminal. */
   verbose?: boolean
-  /** Clock seam (for deterministic tee + event timestamps in tests). */
-  now?: () => Date
   /** Render seam (default `ink`'s `render`); tests inject `ink-testing-library`'s `render`. */
   render?: RenderFn
   /**
@@ -68,7 +66,6 @@ export class PersistentInkDevUi implements DevUi {
   private readonly renderFn: RenderFn
   private readonly stdout: NodeJS.WriteStream
   private readonly verbose: boolean
-  private readonly now: () => Date
   /** Live Ink handle, or `null` when not mounted. */
   private instance: RenderHandle | null = null
   /** True once boot is done: never mount the boot region again. */
@@ -89,11 +86,6 @@ export class PersistentInkDevUi implements DevUi {
     // output when `dev` runs as a session-shell child. `createSafeStream` drops that one escape and
     // forwards everything else live.
     this.stdout = deps.stdout ?? createSafeStream(process.stdout as NodeJS.WriteStream)
-    this.now =
-      deps.now ??
-      ((): Date => {
-        return new Date()
-      })
     this.renderer = new DevRenderer({
       appendLog: deps.appendLog,
       verbose: this.verbose,
@@ -101,7 +93,6 @@ export class PersistentInkDevUi implements DevUi {
       write: (text) => {
         this.stdout.write(text)
       },
-      now: this.now,
     })
   }
 

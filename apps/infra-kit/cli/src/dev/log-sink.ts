@@ -19,6 +19,8 @@ import process from 'node:process'
 
 import { INFRA_KIT_SESSION_VAR, getCacheRoot } from 'src/lib/constants'
 
+import { createLogLineFormatter } from './log-format.js'
+import type { LogLineFormatter } from './log-format.js'
 import type { LogLevel } from './render.js'
 import { isTerminalDead } from './terminal-liveness.js'
 
@@ -294,11 +296,17 @@ export const resolveMaxLogBytes = (): number => {
   return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_MAX_LOG_BYTES
 }
 
+/** What `write` lands when no formatter is injected: the caller's text, untouched. */
+const writeVerbatim: LogLineFormatter = (_service, text) => {
+  return text
+}
+
 /**
  * The per-service log sink. One held fd per service, opened lazily on first write.
  *
  * Every routing and counting decision here reads DECLARED provenance — the service the caller named and
- * the level it chose — never the bytes of the line. Content is written, never inspected.
+ * the level it chose — never the bytes of the line. The sink itself never inspects content: the only
+ * reader of the bytes is the injected `format`, and it decides nothing but the file's line shape.
  */
 export class DevLogSink {
   readonly dir: string
@@ -309,11 +317,17 @@ export class DevLogSink {
   /** Services whose cap has been hit; every further line is dropped for them, and only for them. */
   private readonly capped = new Set<string>()
   private readonly maxBytes: number
+  private readonly format: LogLineFormatter
   private closed = false
 
-  constructor(dir: string = resolveLogDir(), maxBytes: number = resolveMaxLogBytes()) {
+  constructor(
+    dir: string = resolveLogDir(),
+    maxBytes: number = resolveMaxLogBytes(),
+    options: { format?: LogLineFormatter } = {},
+  ) {
     this.dir = dir
     this.maxBytes = maxBytes
+    this.format = options.format ?? writeVerbatim
     fs.mkdirSync(this.dir, { recursive: true })
     gcOldLogDirs(path.dirname(this.dir), Date.now())
     gcOtherSessions(this.dir, Date.now())
@@ -370,22 +384,16 @@ export class DevLogSink {
   /**
    * Append `text` to `<service>.log` and fold its DECLARED level into that service's counters.
    *
-   * `text` is written verbatim (a trailing newline is added when absent) — the sink never parses it.
-   * `level` comes from the emitter (the `console` method it chose, the Powertools level it set, the
-   * HTTP status it returned), so the counter reports what the caller declared rather than guessing.
+   * `text` goes through the injected formatter (verbatim by default; a trailing newline is added when
+   * absent). `level` comes from the emitter (the `console` method it chose, the Powertools level it set,
+   * the HTTP status it returned), so the counter reports what the caller declared rather than guessing.
+   * `count: false` files the line without touching the counters — the runner's own tee, whose lines are
+   * not an app's errors.
    */
-  write(service: string, text: string, meta: { level?: LogLevel } = {}): void {
+  write(service: string, text: string, meta: { level?: LogLevel; count?: boolean } = {}): void {
     if (this.closed) return
 
-    const stats = this.counters.get(service) ?? emptyStats()
-
-    if (meta.level === 'error') {
-      stats.errors += 1
-      stats.lastErrorAt = Date.now()
-    } else if (meta.level === 'warn') {
-      stats.warns += 1
-    }
-    this.counters.set(service, stats)
+    if (meta.count !== false) this.count(service, meta.level)
 
     // The cap latch lives HERE — after the counter bump, before the fd. A top-of-function early return (the
     // obvious implementation) would freeze the panel's red error counter for the whole storm, and a cap that
@@ -397,7 +405,7 @@ export class DevLogSink {
 
     if (fd == null) return
 
-    const line = text.endsWith('\n') ? text : `${text}\n`
+    const line = this.terminated(service, text, meta.level)
     const size = Buffer.byteLength(line)
     const written = this.bytes.get(service) ?? 0
 
@@ -408,13 +416,35 @@ export class DevLogSink {
       this.writeRaw(
         fd,
         service,
-        `[capped] ${logFileName(service)} hit ${this.maxBytes} bytes; further lines dropped (likely a logging loop)\n`,
+        this.terminated(
+          service,
+          `[capped] ${logFileName(service)} hit ${this.maxBytes} bytes; further lines dropped (likely a logging loop)`,
+          'warn',
+        ),
       )
 
       return
     }
 
     this.writeRaw(fd, service, line)
+  }
+
+  private count(service: string, level: LogLevel | undefined): void {
+    const stats = this.counters.get(service) ?? emptyStats()
+
+    if (level === 'error') {
+      stats.errors += 1
+      stats.lastErrorAt = Date.now()
+    } else if (level === 'warn') {
+      stats.warns += 1
+    }
+    this.counters.set(service, stats)
+  }
+
+  private terminated(service: string, text: string, level: LogLevel | undefined): string {
+    const line = this.format(service, text, level)
+
+    return line.endsWith('\n') ? line : `${line}\n`
   }
 
   /** The one place bytes reach the disk: write, count what landed, and never throw. */
@@ -448,4 +478,12 @@ export class DevLogSink {
     }
     this.fds.clear()
   }
+}
+
+/**
+ * The runner's sink: {@link DevLogSink} with the shared line format, so every dev log file reads
+ * `time LEVEL service message [extras-json]`. A bare `new DevLogSink()` stays verbatim.
+ */
+export const createDevLogSink = (options: { dir?: string; maxBytes?: number; now?: () => Date } = {}): DevLogSink => {
+  return new DevLogSink(options.dir, options.maxBytes, { format: createLogLineFormatter(options.now) })
 }

@@ -1,0 +1,721 @@
+/*
+ * Atlas: a routing switchboard. Graphite surfaces, one phosphor-green for local traffic, one signal-blue
+ * for cloud, amber only where the plan and the live proxy disagree. No web fonts: the page must make no
+ * network request, so the voice is the platform's monospace, used deliberately rather than as fallback.
+ */
+
+:root {
+  color-scheme: light;
+
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+  --font-ui: ui-sans-serif, -apple-system, 'Segoe UI', system-ui, sans-serif;
+
+  --bg: #eef1ef;
+  --bg-dot: #c9d1cd;
+  --surface: #ffffff;
+  --surface-raised: #f7f9f8;
+  --line: #d3dbd7;
+  --line-strong: #a9b6b0;
+  --text: #13201b;
+  --text-muted: #5b6b64;
+  --text-faint: #8a9792;
+
+  --local: #0d8f5c;
+  --local-soft: #dff3e9;
+  --cloud: #1f63c9;
+  --cloud-soft: #e1ebfa;
+  --warn: #a8620a;
+  --warn-soft: #fbeed8;
+  --down: #c93a2f;
+  --down-soft: #f9e2df;
+  --viewer: #0d8f5c;
+
+  --shadow: 0 1px 0 rgb(19 32 27 / 0.04), 0 6px 18px -10px rgb(19 32 27 / 0.28);
+  --minimap-mask: rgb(238 241 239 / 0.72);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --bg: #0a0e0d;
+    --bg-dot: #1c2522;
+    --surface: #111816;
+    --surface-raised: #16201d;
+    --line: #23302b;
+    --line-strong: #3a4a44;
+    --text: #dbe6e1;
+    --text-muted: #8a9a93;
+    --text-faint: #5e6d67;
+
+    --local: #3ddc97;
+    --local-soft: #0f2a1f;
+    --cloud: #6aa8ff;
+    --cloud-soft: #0f1e33;
+    --warn: #f2b544;
+    --warn-soft: #2e230d;
+    --down: #ff6b5e;
+    --down-soft: #331512;
+    --viewer: #3ddc97;
+
+    --shadow: 0 1px 0 rgb(0 0 0 / 0.4), 0 10px 24px -12px rgb(0 0 0 / 0.8);
+    --minimap-mask: rgb(10 14 13 / 0.7);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#atlas-root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.atlas-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Header ------------------------------------------------------------------------------------------ */
+
+.atlas-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 28px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.atlas-header__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.atlas-mark {
+  width: 22px;
+  height: 22px;
+  fill: var(--local);
+  stroke: var(--local);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.atlas-header__title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.atlas-header__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 0 auto 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend__item::before {
+  content: '';
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 2px solid currentcolor;
+}
+
+.legend__item--local::before {
+  border-color: var(--local);
+}
+
+.legend__item--cloud::before {
+  border-color: var(--cloud);
+}
+
+.legend__item--warn::before {
+  width: 0;
+  height: 0;
+  border-top: 0;
+  border-right: 5px solid transparent;
+  border-bottom: 8px solid var(--warn);
+  border-left: 5px solid transparent;
+}
+
+.legend__item--foreign::before {
+  width: 14px;
+  height: 10px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 3px;
+}
+
+.atlas-header__logs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.atlas-header__logs-label {
+  margin-right: 2px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Links ------------------------------------------------------------------------------------------- */
+
+.log-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  text-decoration: none;
+  transition:
+    border-color 120ms ease,
+    color 120ms ease,
+    background 120ms ease;
+}
+
+a.log-link:hover,
+a.log-link:focus-visible {
+  border-color: var(--local);
+  background: var(--local-soft);
+  color: var(--local);
+  outline: none;
+}
+
+.log-link__arrow {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.log-link.is-disabled {
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+/* Banner ------------------------------------------------------------------------------------------ */
+
+.status-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.status-banner--down {
+  background: var(--down-soft);
+  color: var(--down);
+}
+
+.status-banner--outdated {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.status-banner__pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentcolor;
+  animation: atlas-pulse 1.4s ease-in-out infinite;
+}
+
+/* Canvas ------------------------------------------------------------------------------------------ */
+
+.atlas-main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.atlas-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  margin: 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.atlas-canvas {
+  height: 100%;
+  transition: filter 300ms ease;
+}
+
+.atlas-canvas.is-disconnected {
+  filter: grayscale(1) opacity(0.5);
+}
+
+.edge-markers {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+/* Recolour React Flow's own chrome from the tokens, so its light/dark mode follows the page's. */
+.react-flow {
+  --xy-background-color: var(--bg);
+  --xy-background-pattern-color: var(--bg-dot);
+  --xy-minimap-background-color: var(--surface);
+  --xy-controls-button-background-color: var(--surface);
+  --xy-controls-button-background-color-hover: var(--surface-raised);
+  --xy-controls-button-color: var(--text-muted);
+  --xy-controls-button-color-hover: var(--text);
+  --xy-controls-button-border-color: var(--line);
+  --xy-attribution-background-color: transparent;
+}
+
+.react-flow__controls,
+.react-flow__minimap {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+
+.react-flow__attribution a {
+  color: var(--text-faint);
+}
+
+/* The diagram is read-only: handles anchor the edges but offer nothing to grab. */
+.react-flow__handle {
+  width: 6px;
+  min-width: 0;
+  height: 6px;
+  min-height: 0;
+  border: 0;
+  background: var(--line-strong);
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+/* Nodes ------------------------------------------------------------------------------------------- */
+
+.react-flow__node {
+  cursor: grab;
+}
+
+.react-flow__node.dragging {
+  cursor: grabbing;
+}
+
+.react-flow__node-column {
+  cursor: default;
+}
+
+.column-node {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 300px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.column-node__title {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.column-node__caption {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.atlas-node {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.react-flow__node:hover .atlas-node {
+  border-color: var(--line-strong);
+}
+
+.react-flow__node.dragging .atlas-node {
+  transform: scale(1.015);
+}
+
+.atlas-node__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.atlas-node__name {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atlas-node__host {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atlas-node__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.atlas-node__package {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-node {
+  width: 300px;
+}
+
+.site-node.is-viewer {
+  border-color: var(--viewer);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--viewer) 22%, transparent),
+    var(--shadow);
+}
+
+.site-node__here {
+  position: absolute;
+  top: -9px;
+  left: 12px;
+  padding: 1px 7px;
+  border-radius: 3px;
+  background: var(--viewer);
+  color: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.path-node {
+  width: 340px;
+  padding-left: 15px;
+}
+
+/* The left rail carries the route's source colour, the same colour its edges are drawn in. */
+.path-node::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--local);
+}
+
+.path-node--cloud::before {
+  background: var(--cloud);
+}
+
+.path-node.is-orphan::before {
+  background: var(--down);
+}
+
+.path-node.is-viewer {
+  border-color: color-mix(in srgb, var(--viewer) 45%, var(--line));
+}
+
+.path-node__path {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-node__reason {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.path-node.is-orphan .path-node__reason {
+  color: var(--down);
+}
+
+.path-node__warning {
+  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.source-tag {
+  padding: 0 5px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+
+.source-tag--local {
+  background: var(--local-soft);
+  color: var(--local);
+}
+
+.source-tag--cloud {
+  background: var(--cloud-soft);
+  color: var(--cloud);
+}
+
+.badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.badge--warn {
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.target-node {
+  width: 300px;
+}
+
+.backend-node.health-edge--down {
+  border-color: color-mix(in srgb, var(--down) 55%, var(--line));
+}
+
+.backend-node.is-foreign {
+  border: 1.5px dashed var(--line-strong);
+  background: var(--surface-raised);
+  box-shadow: none;
+}
+
+.cloud-node {
+  border-color: color-mix(in srgb, var(--cloud) 40%, var(--line));
+  background: linear-gradient(135deg, var(--cloud-soft), var(--surface) 70%);
+}
+
+.cloud-node__host {
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+/* Health ------------------------------------------------------------------------------------------ */
+
+.health {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.health__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.health--ok .health__dot {
+  background: var(--local);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--local) 22%, transparent);
+}
+
+.health--ok {
+  color: var(--local);
+}
+
+.health--down .health__dot {
+  background: var(--down);
+}
+
+.health--down {
+  color: var(--down);
+}
+
+.health--starting .health__dot {
+  background: var(--warn);
+  animation: atlas-pulse 1.1s ease-in-out infinite;
+}
+
+.health--unverified .health__dot {
+  border: 1.5px solid var(--warn);
+  background: transparent;
+}
+
+/* Edges ------------------------------------------------------------------------------------------- */
+
+.route-edge .react-flow__edge-path {
+  stroke-width: 1.6;
+  opacity: 0.55;
+}
+
+.route-edge.is-viewer .react-flow__edge-path {
+  stroke-width: 2.2;
+  opacity: 1;
+}
+
+.route-edge--local .react-flow__edge-path {
+  stroke: var(--local);
+}
+
+.route-edge--cloud .react-flow__edge-path {
+  stroke: var(--cloud);
+}
+
+.edge-marker--local {
+  fill: var(--local);
+}
+
+.edge-marker--cloud {
+  fill: var(--cloud);
+}
+
+/* Mini map ---------------------------------------------------------------------------------------- */
+
+.minimap-node {
+  fill: var(--line-strong);
+}
+
+.minimap-node--site {
+  fill: var(--text-muted);
+}
+
+.minimap-node--path {
+  fill: var(--local);
+}
+
+.minimap-node--cloud {
+  fill: var(--cloud);
+}
+
+.minimap-node--column {
+  fill: transparent;
+}
+
+@keyframes atlas-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-banner__pulse,
+  .health--starting .health__dot,
+  .react-flow__edge.animated path {
+    animation: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .atlas-header {
+    padding: 10px 16px;
+  }
+
+  .legend {
+    display: none;
+  }
+
+  .react-flow__minimap {
+    display: none;
+  }
+}

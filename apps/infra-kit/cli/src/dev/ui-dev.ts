@@ -35,8 +35,10 @@ import { spawn } from 'node:child_process'
 import process from 'node:process'
 import type { Readable } from 'node:stream'
 
+import { stripAnsi } from './log-format.js'
 import { superviseChild } from './managed-child.js'
 import type { ManagedChild, UnexpectedExitHandler } from './managed-child.js'
+import { TASK_PREFIX, lastRedraw, turboLineLevel } from './turbo-line.js'
 
 /** Handle to the running `turbo run dev` child; `kill()` reaps the whole process group. */
 export type UiDevHandle = ManagedChild
@@ -54,67 +56,6 @@ export interface TurboDevLine {
   level: 'info' | 'error'
 }
 
-/**
- * Vocabulary a framework uses to announce a failure on turbo's stream.
- *
- * Deliberately small and anchored, because the two errors are not symmetric: a miss costs an uncounted
- * error (the line is still in the log), while a false positive costs a red row over a healthy app. So
- * patterns must be specific, and every addition needs a real line that motivates it.
- */
-// Why this reads the line's TEXT, when nothing else in the design does. Under `--ui=stream` turbo relays
-// each task's stdout AND stderr onto its OWN stdout — measured, not assumed: a task writing one line to
-// each fd yields both lines on turbo's fd 1, and fd 2 carries only turbo's chrome. So the fd that would
-// otherwise DECLARE severity does not survive the relay: `child.stderr` never sees a single framework
-// line, and a level counter built on it would be structurally, permanently zero. The panel would then show
-// a green `client/ui` row over a UI that fails to compile — the one failure mode this whole design exists
-// to prevent.
-//
-// This is not the residual-bucket guess that was rejected. That one asked "what IS this line?" of an
-// unknown channel and promoted whatever it could not identify. This asks a narrower question of a KNOWN,
-// declared format: turbo's `<pkg>:dev:` prefix contract is the same one already relied on to route the
-// line to its package. The rule: classify only within a format you know; never guess about one you don't.
-const ERROR_VOCABULARY = [
-  /^error\b/i,
-  // The glyphs get no `\b`: they are not word characters, so there is NO word boundary between `✘` and
-  // the space that follows it — `✘\b` never matches the esbuild/vite lines it was aimed at. Anchoring
-  // them alone is both correct and safe, since a line can only start with one by way of announcing a
-  // failure.
-  /^[✘✖×]/,
-  /^\[vite\][^\n]*\berror\b/i,
-  // A thrown JS error's first line (`TypeError: x is not a function`). ANCHORED, unlike a bare
-  // `/\berror:/i`, which fires on any line merely containing `error:` — inside a URL, a JSON blob, or a
-  // dev script's own echo.
-  /^\w*Error: /,
-  // `tsc`/`vue-tsc --watch` diagnostics: `src/foo.ts(3,5): error TS2322: …`. Matched explicitly because
-  // NONE of the other patterns reach it — the line starts with a path, and `error` is followed by a
-  // space, not a colon. Without this a `--watch` type-check task can fail to compile while its row on
-  // the panel stays green, which is the exact lie this counter exists to prevent.
-  /\berror TS\d+\b/,
-  // Specific vite/esbuild failures, NOT a bare `^failed to`: that also matches the entirely benign
-  // `Failed to load source map for …`, and a red row over a healthy app costs more trust than an
-  // uncounted error costs information (the line is still in the log either way).
-  /^Failed to (?:resolve|load url|parse|compile)\b/i,
-  /^(?:ENOENT|EADDRINUSE|ECONNREFUSED)\b/,
-  /pre-transform error/i,
-  /\b(?:build|transform|compilation) failed\b/i,
-  // NOTE: stack frames (`    at Module._compile (…)`) are deliberately NOT here. Matching them would
-  // turn one thrown exception into one error per FRAME — a 20-frame stack reading as `⚠ 21`, at which
-  // point the number stops being a count of anything. The throw's first line is already matched above.
-] as const
-
-/**
- * Severity of one framework line, from turbo's own relayed format. `error` when the framework announced
- * a failure in its output; `info` otherwise. See {@link ERROR_VOCABULARY} for why this cannot come from
- * the file descriptor.
- */
-export const turboLineLevel = (text: string): 'info' | 'error' => {
-  return ERROR_VOCABULARY.some((pattern) => {
-    return pattern.test(text)
-  })
-    ? 'error'
-    : 'info'
-}
-
 export interface UiDevOptions {
   /** UI app package names; each becomes an exact `--filter=<pkg>` (turbo runs its `dev` task). */
   packageNames: string[]
@@ -130,7 +71,7 @@ export interface UiDevOptions {
    * `turbo … --env-mode=loose` passes the full env through to each vite `dev` task. Omit → inherit only.
    */
   env?: Record<string, string>
-  /** Raw child output (turbo chrome included, ANSI intact) appended verbatim to the runner log. */
+  /** Raw child output (turbo chrome included, ANSI intact), one write per batch of whole lines. */
   appendLog?: (text: string) => void
   /** One call per framework output line; turbo's own chrome is filtered out first. */
   onLine?: (line: TurboDevLine) => void
@@ -150,30 +91,9 @@ export interface UiDevOptions {
   onUnexpectedExit?: UnexpectedExitHandler
 }
 
-/* eslint-disable no-control-regex, sonarjs/no-control-regex -- terminal escapes and control chars are, by definition, control chars. */
-/** An OSC sequence: ESC `]` ... terminated by BEL or ST. Frameworks emit these for terminal hyperlinks. */
-const OSC_ESCAPE = /\u001B\][\s\S]*?(?:\u0007|\u001B\\)/g
-/** A CSI escape: ESC `[`, parameter bytes, intermediate bytes, final byte. Covers every SGR colour. */
-const CSI_ESCAPE = /\u001B\[[0-9;?]*[\u0020-\u002F]*[\u0040-\u007E]/g
-/**
- * Every remaining C0 control char except TAB. CR is the dangerous one: written straight to a TTY it
- * snaps the cursor to column 0, smearing the row and the pinned footer below it - exactly the corruption
- * that piping the child was meant to end. LF cannot appear here: `pumpLines` already split on it.
- */
-const CONTROL_CHARS = /[\u0000-\u0008\u000B-\u001F\u007F]/g
-/* eslint-enable no-control-regex, sonarjs/no-control-regex -- closes the block disabled above */
-
-/**
- * Make a raw child line safe for the renderer's tail: drop terminal escapes (which would fight the
- * scroll region) and stray control chars (which would move the cursor), leaving plain text the renderer
- * styles itself. Order matters - OSC is matched before the bare-control sweep can eat its leading ESC.
- */
-export const stripAnsi = (text: string): string => {
-  return text.replace(OSC_ESCAPE, '').replace(CSI_ESCAPE, '').replace(CONTROL_CHARS, '')
-}
-
-/** Turbo's per-task line prefix under `--ui=stream`: `<pkg>:dev:`. */
-const TASK_PREFIX = /^([^\s:]+):dev:[ \t]?/
+// The tail and the log files share one strip, and one turbo severity rule; re-exported so this module's
+// surface is unchanged by the moves.
+export { stripAnsi, turboLineLevel }
 
 /**
  * Turbo's OWN verdict on a task, which uses `<pkg>#dev:` — a HASH, not the colon {@link TASK_PREFIX}
@@ -241,7 +161,9 @@ export const parseTurboDevLine = (raw: string): TurboDevLine | null => {
     return null
   }
 
-  const text = line.slice(match[0].length)
+  // Redraws collapse on the RAW text: the strip deletes every CR and would glue them into `10%50%100%`.
+  const redraw = lastRedraw(raw)
+  const text = redraw == null ? line.slice(match[0].length) : stripAnsi(redraw).trimEnd()
 
   if (text.trim() === '' || isTaskChrome(text.trim())) {
     return null
@@ -257,15 +179,17 @@ export const parseTurboDevLine = (raw: string): TurboDevLine | null => {
 const MAX_PENDING_CHARS = 64 * 1024
 
 /**
- * Split a piped stream into lines: tee every chunk verbatim to the log, and route each complete
- * framework line to `onLine`. A trailing partial line is flushed on `end`, so a framework that exits
+ * Split a piped stream into lines: tee each complete raw line to the log, and route each framework
+ * line to `onLine`. The tee is line-aligned because the log formatter prefixes every write: a chunk
+ * ending mid-line would put a second prefix inside the line, split an ANSI escape, and leave a JSON
+ * line unparseable. A trailing partial line is flushed on `end`, so a framework that exits
  * without a final newline never swallows its last (often the most interesting) line.
  *
  * The `data` listener is attached unconditionally — NOT gated on `onLine`/`appendLog` being set. A piped
  * child whose stdout is never read blocks once the OS pipe buffer fills, so draining is the contract
  * here; the sinks are merely optional consumers of what we drain.
  */
-const pumpLines = (
+export const pumpLines = (
   stream: Readable | null,
   opts: Pick<UiDevOptions, 'appendLog' | 'onLine' | 'onTaskFailure'>,
 ): void => {
@@ -294,23 +218,25 @@ const pumpLines = (
 
   stream.setEncoding('utf-8')
   stream.on('data', (chunk: string) => {
-    opts.appendLog?.(chunk)
     pending += chunk
 
     const lines = pending.split('\n')
 
     pending = lines.pop() ?? ''
+    if (lines.length > 0) opts.appendLog?.(`${lines.join('\n')}\n`)
     for (const raw of lines) {
       emit(raw)
     }
 
     if (pending.length > MAX_PENDING_CHARS) {
+      opts.appendLog?.(`${pending}\n`)
       emit(pending)
       pending = ''
     }
   })
   stream.on('end', () => {
     if (pending === '') return
+    opts.appendLog?.(`${pending}\n`)
     emit(pending)
     pending = ''
   })

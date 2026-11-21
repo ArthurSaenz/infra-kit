@@ -1,13 +1,9 @@
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 
 import { buildTurboWatchFilters, defaultTurboWatchFactory } from '../turbo-watch'
 
-// Pass-through by default: the descriptor test below needs a real child to reap; only the argv
-// snapshot swaps in a fake, one call at a time.
+// Pass-through by default; each test swaps in a fake child, one call at a time.
 const { spawnMock, superviseChildMock } = vi.hoisted(() => {
   return { spawnMock: vi.fn(), superviseChildMock: vi.fn() }
 })
@@ -56,8 +52,8 @@ describe('buildTurboWatchFilters', () => {
 })
 
 describe('defaultTurboWatchFactory — spawn argv', () => {
-  it('spawns the exact detached `turbo watch build` command line, log fd on stdout+stderr', () => {
-    const fakeChild = { on: vi.fn(), pid: 123 }
+  it('spawns the exact detached `turbo watch build` command line, piped stdout+stderr', () => {
+    const fakeChild = { on: vi.fn(), pid: 123, stdout: new PassThrough(), stderr: new PassThrough() }
 
     spawnMock.mockClear()
     spawnMock.mockReturnValueOnce(fakeChild)
@@ -65,18 +61,11 @@ describe('defaultTurboWatchFactory — spawn argv', () => {
       return child
     })
 
-    let logFd = -1
-
     defaultTurboWatchFactory({
       depInclusive: ['omega-api'],
       depClosure: ['website-ui'],
       cwd: '/repo',
-      logFile: os.devNull,
-      openLog: (target) => {
-        logFd = fs.openSync(target, 'a')
-
-        return logFd
-      },
+      appendLog: () => {},
     })
 
     expect(spawnMock).toHaveBeenCalledTimes(1)
@@ -93,48 +82,9 @@ describe('defaultTurboWatchFactory — spawn argv', () => {
         '--env-mode=loose',
         '--log-order=stream',
       ],
-      { cwd: '/repo', detached: true, stdio: ['ignore', logFd, logFd] },
+      { cwd: '/repo', detached: true, stdio: ['ignore', 'pipe', 'pipe'] },
     ])
   })
-})
-
-describe('defaultTurboWatchFactory — the watch-log descriptor', () => {
-  it('closes the parent copy once `spawn` has handed the child its own', async () => {
-    /**
-     * `spawn` duplicates the descriptor into the child, so the parent's copy is never written to
-     * again — but nothing closed it, and `ManagedChild` exposes no cleanup hook to close it later.
-     * It stayed open for the whole session, pinning the log file's inode even after an unlink. This
-     * was the only `openSync`/`closeSync` imbalance in `dev/`.
-     */
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ik-turbo-watch-'))
-    const logFile = path.join(dir, 'watch.log')
-    let opened = -1
-
-    const handle = defaultTurboWatchFactory({
-      depInclusive: [],
-      depClosure: [],
-      cwd: dir,
-      logFile,
-      // Hold the very descriptor the factory is about to close, so the assertion is about THIS fd
-      // rather than about whichever number the OS hands out next.
-      openLog: (target) => {
-        opened = fs.openSync(target, 'a')
-
-        return opened
-      },
-    })
-
-    try {
-      expect(opened).toBeGreaterThan(-1)
-      // Closed by the factory: the parent's handle is gone the moment the child owns its own.
-      expect(() => {
-        return fs.fstatSync(opened)
-      }).toThrow(/EBADF/)
-    } finally {
-      await handle.kill()
-      fs.rmSync(dir, { recursive: true, force: true })
-    }
-  }, 20000)
 })
 
 describe('defaultTurboWatchFactory — output through the caller', () => {
@@ -155,10 +105,6 @@ describe('defaultTurboWatchFactory — output through the caller', () => {
       depInclusive: ['omega-api'],
       depClosure: [],
       cwd: '/repo',
-      logFile: os.devNull,
-      openLog: () => {
-        throw new Error('the log file must not be opened when the caller takes the output')
-      },
       appendLog: (text) => {
         chunks.push(text)
       },

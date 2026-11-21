@@ -199,6 +199,15 @@ const noFastRefreshInTui = {
   rules: { 'react-refresh/only-export-components': 'off' },
 }
 
+/**
+ * The `/__atlas` page follows the feature layout, but this package has no Storybook: the page is one screen
+ * bundled by esbuild, and its dumb components are checked in the browser against a fixture snapshot.
+ */
+const noStoriesInAtlasPage = {
+  files: ['atlas-page/**/*.tsx'],
+  rules: { '@wl/require-component-stories': 'off' },
+}
+
 export default config().then((base) => {
   return [
     ...base,
@@ -208,5 +217,6 @@ export default config().then((base) => {
     enableMaxJsdocSummaryLines,
     layerBoundary,
     noFastRefreshInTui,
+    noStoriesInAtlasPage,
   ]
 })

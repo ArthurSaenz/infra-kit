@@ -16,6 +16,7 @@ import { defineMcpTool, textContent } from 'src/types'
 import { e2eRefusal } from './e2e-refusal'
 import { describeCloudTarget, describeLocalTarget, locateE2eTarget } from './e2e-target'
 import type { E2eLocation, E2eTarget, E2eTargetDeps } from './e2e-target'
+import { ensurePlaywrightBrowsers } from './playwright-browsers'
 import { JSON_REPORTER_ARG, callerPicksReporter, jsonReporterEnv, readPlaywrightReport } from './playwright-report'
 import type { E2eAnnotatedFile, E2eFailure, E2eSummary } from './playwright-report'
 import { acquireRunLock } from './run-lock'
@@ -195,7 +196,13 @@ const resolveLocal = async (location: E2eLocation, deps: E2eDeps): Promise<E2eTa
   }
 }
 
-const defaultRunPlaywright = (target: E2eTarget, args: string[], env: Record<string, string>): Promise<number> => {
+const defaultRunPlaywright = async (
+  target: E2eTarget,
+  args: string[],
+  env: Record<string, string>,
+): Promise<number> => {
+  await ensurePlaywrightBrowsers(target.testsDir)
+
   return spawnForwardingSignals('pnpm', ['exec', 'playwright', 'test', ...args], {
     cwd: target.testsDir,
     // Only the mode: the deployed URL stays as loaded, because the dev server a local run starts proxies

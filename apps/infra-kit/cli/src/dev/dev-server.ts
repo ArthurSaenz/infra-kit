@@ -18,6 +18,7 @@
  * chunk tee) and `watch.log`. Lambda / Powertools logs from handlers still go to stdout.
  */
 import {
+  ATLAS_PATH,
   DEV_SERVING_MARKER,
   loadPackageConfig,
   readAppAliasName,
@@ -36,6 +37,8 @@ import { readAppRelease } from 'src/lib/app-release'
 import { OperationError } from 'src/lib/errors/operation-error'
 import { DEFAULT_DEV_PROXY_PORT } from 'src/lib/infra-kit-config'
 
+import { AtlasRuntime } from './atlas/atlas-state.js'
+import type { AtlasUiInput } from './atlas/atlas-state.js'
 import { buildClosureMap, selectPackageRestartTargets } from './dep-closure.js'
 import type { ClosureMap, DryRunner } from './dep-closure.js'
 import { DevContextStore } from './dev-context-store.js'
@@ -53,12 +56,14 @@ import { DistBuildTracker } from './dist-build-tracker.js'
 import { HealthLedger } from './health-ledger.js'
 import { defaultHealthProbe } from './health-probe.js'
 import type { HealthProbe, ProbeTarget } from './health-probe.js'
-import { assertHelperVersionFloor } from './helper-version-floor.js'
+import { assertHelperVersionFloor, resolveAtlasPluginGate } from './helper-version-floor.js'
 import { launchScript } from './launch-script.js'
 import { findDegradedRoutes, formatPairingRefusal, resolveProxyRoutes } from './local-pairing.js'
 import type { DegradedRoute, LaunchedUi, ResolvedProxyRoute } from './local-pairing.js'
 import { currentService } from './log-attribution.js'
-import { DevLogSink, panelStream } from './log-sink.js'
+import { TURBO_SERVICE } from './log-format.js'
+import { createDevLogSink, panelStream } from './log-sink.js'
+import type { DevLogSink } from './log-sink.js'
 import { killDescendantGroupsNow } from './managed-child.js'
 import {
   installModuleGeneration as installGenerationHook,
@@ -82,7 +87,7 @@ import type { PortlessDriver } from './proxy/portless-driver.js'
 import { serviceInstallCommand } from './proxy/portless-link.js'
 import { describeStaleFiles, isHotReloadableChange } from './reload-scope.js'
 import { DevRenderer, resolveEndpointUrl } from './render.js'
-import type { DegradedRow, EndpointRow, HealthState, ProxyRouteRow, ReadySummary, UiRef } from './render.js'
+import type { DegradedRow, EndpointRow, HealthState, LogLevel, ProxyRouteRow, ReadySummary, UiRef } from './render.js'
 import { RestartScheduler } from './restart-scheduler.js'
 import { RowActivity } from './row-activity.js'
 import { resolveRunPlan } from './run-plan.js'
@@ -100,16 +105,7 @@ import type { UiDevFactory, UiDevHandle } from './ui-dev.js'
 const RUNNER_SERVICE = 'runner'
 
 /**
- * The turbo child's RAW chunk tee — turbo's own run chrome plus every framework line, ANSI intact and
- * un-de-multiplexed. Kept as its own file rather than smeared across the per-app UI logs: a raw chunk
- * arrives before `parseTurboDevLine` has attributed it to a package, so there is no honest app to file
- * it under. The per-app `<app>/ui` files get the parsed, attributed lines.
- */
-const TURBO_SERVICE = 'turbo'
-
-/**
- * The `turbo watch build` engine's file. It is spawned with the log fd as its INHERITED stdio
- * (`turbo-watch.ts`), so it writes raw bytes straight into the file — which is exactly why it needs one
+ * The `turbo watch build` engine's file: its piped output, line-buffered in `turbo-watch.ts`, gets one
  * of its own rather than a share of any service's.
  */
 const WATCH_SERVICE = 'watch'
@@ -145,9 +141,12 @@ function packageList(apps: { packageName: string }[]): string {
  */
 let logSink: DevLogSink | null = null
 
-/** Tee a runner-authored line to `runner.log`. The seam {@link DevRenderer} wraps. */
-function appendRunnerLog(text: string): void {
-  logSink?.write(RUNNER_SERVICE, text)
+/**
+ * Tee a runner-authored line to `runner.log`. The seam {@link DevRenderer} wraps. `count: false`: the
+ * level only shapes the line — a runner warning is not an app's, and the runner row has no counter.
+ */
+function appendRunnerLog(text: string, level: LogLevel): void {
+  logSink?.write(RUNNER_SERVICE, text, { level, count: false })
 }
 
 /**
@@ -372,6 +371,8 @@ export class DevServerRunner {
    * the step that wedged — that is the instrument that answers why five orphaned processes never exited.
    */
   private stage = 'idle'
+  /** The `/__atlas` loopback server; `null` until {@link startAtlas}, and for a run that never got that far. */
+  private atlas: AtlasRuntime | null = null
 
   constructor(
     options: DevServerOptions = {},
@@ -402,7 +403,7 @@ export class DevServerRunner {
     // Injectable so a test can drive the REAL `reportFault` against a temp-dir sink and assert on the bytes
     // it actually files. Without the seam the fault-loop regression test can only hand-model the loop it is
     // supposed to be proving — and a hand-modelled loop goes green against the unfixed code.
-    this.sink = sink ?? new DevLogSink()
+    this.sink = sink ?? createDevLogSink()
     logSink = this.sink
 
     // Install EARLY and FILE-ONLY: an app's log line never reaches the terminal, at any point. Early,
@@ -484,6 +485,7 @@ export class DevServerRunner {
     if (watch) this.installModuleGeneration()
 
     await this.bringUpProxy(apps)
+    await this.startAtlas(apps)
     await this.buildAll(apps, uiApps, watch)
 
     if (apps.length > 0) {
@@ -608,6 +610,7 @@ export class DevServerRunner {
     if (uiApps.length === 0) return []
 
     const uis: LaunchedUi[] = []
+    const atlasUis: AtlasUiInput[] = []
 
     for (const ui of uiApps) {
       // A config that throws must not take the run down here: the frontend is about to load the very same
@@ -618,6 +621,15 @@ export class DevServerRunner {
       })
 
       const dev = config?.dev
+
+      atlasUis.push({
+        app: ui.name,
+        path: ui.path,
+        packageName: ui.packageName,
+        proxy: dev?.proxy,
+        devEnv: dev?.env,
+        deployedUrlEnv: config?.deployedUrlEnv,
+      })
 
       if (!dev?.proxy) continue
 
@@ -635,6 +647,7 @@ export class DevServerRunner {
     // Stashed so the ready header's per-app proxy listing resolves off the exact same loaded routes the
     // degraded check does — one read, one source of truth, no chance of the two disagreeing.
     this.launchedUis = uis
+    this.atlas?.setUis(atlasUis)
 
     return findDegradedRoutes({
       uis,
@@ -711,6 +724,35 @@ export class DevServerRunner {
     await this.ensureProxy()
 
     if (apps.length > 0) this.assertNoPortConflicts(apps)
+  }
+
+  /**
+   * Started before any backend boots, so a page opened mid-boot reads `starting` rather than nothing. A bind
+   * failure is not worth the run: the plugin then serves its "runner is not running" page.
+   */
+  private async startAtlas(apps: IApiAppConfig[]): Promise<void> {
+    const atlas = new AtlasRuntime({
+      planned: apps,
+      facts: () => {
+        return {
+          appServers: this.appServers,
+          failedApps: this.failedApps,
+          heldLocalPkgs: this.heldLocalPkgs,
+          uiPortMap: this.uiPortMap,
+          healthOf: (tag) => {
+            return this.healthOf(tag)
+          },
+          sink: this.sink,
+        }
+      },
+    })
+
+    try {
+      await atlas.start()
+      this.atlas = atlas
+    } catch (error) {
+      this.renderer.log(`⚠️  The /__atlas page is unavailable this run: ${String(error)}`, 'warn')
+    }
   }
 
   /**
@@ -818,6 +860,11 @@ export class DevServerRunner {
         ? { NODE_EXTRA_CA_CERTS: readCaPath() }
         : undefined
 
+    const childEnv: Record<string, string> = { ...uiPortEnv, ...caEnv, ...this.atlas?.endpointEnv() }
+
+    // The env `ui-dev` hands turbo, so the atlas resolves each site from what its vite really started with.
+    this.atlas?.captureSpawnEnv({ ...process.env, ...childEnv })
+
     // turbo tags each line with the PACKAGE name; the endpoint rows are keyed by APP name (`client/ui`),
     // so map back onto the exact label the ready header already shows. An unrecognized package degrades
     // to its own name rather than being dropped — a line is never silently lost.
@@ -833,8 +880,8 @@ export class DevServerRunner {
       }),
       cwd: process.cwd(),
       concurrency: Math.max(uiApps.length + 4, 12),
-      env: uiPortEnv || caEnv ? { ...uiPortEnv, ...caEnv } : undefined,
-      // The RAW chunk tee: turbo's chrome plus every framework line, un-de-multiplexed. It arrives
+      env: Object.keys(childEnv).length > 0 ? childEnv : undefined,
+      // The RAW line tee: turbo's chrome plus every framework line, un-de-multiplexed. It arrives
       // before `parseTurboDevLine` has attributed it to a package, so there is no honest app to file it
       // under — it gets its own `turbo.log`. The attributed lines land in `<app>/ui` below.
       appendLog: (text) => {
@@ -1605,7 +1652,6 @@ export class DevServerRunner {
       cwd: process.cwd(),
       // The watch engine gets its own file rather than interleaving raw child bytes into any service's
       // log — written THROUGH the sink, so it is under the same byte cap as every other service.
-      logFile: this.sink.pathFor(WATCH_SERVICE),
       appendLog: (text) => {
         this.sink.write(WATCH_SERVICE, text)
       },
@@ -2253,12 +2299,16 @@ export class DevServerRunner {
     this.uiPortMap = {}
     const uiEndpoints: EndpointRow[] = []
     const uiRefs: UiRef[] = []
+    let atlas: ReadySummary['atlas']
 
     for (const ui of uiApps) {
       const assigned = await this.assignUiPort(ui)
       const tag = `${ui.name}/ui`
 
       if (assigned != null) {
+        // The first PLUGIN-wired UI decides: a helper-wired one has no forwarder, but a later site still does.
+        atlas ??= this.atlasLine(ui, assigned.alias)
+
         uiEndpoints.push({
           tag,
           url: resolveEndpointUrl({ prefixUrl: '', alias: assigned.alias }),
@@ -2280,6 +2330,7 @@ export class DevServerRunner {
       elapsedMs,
       endpoints: [...endpoints, ...uiEndpoints],
       uiRefs,
+      atlas,
       failed: this.failedApps.map(({ app, reason }) => {
         return { tag: `${app.name}/api`, reason }
       }),
@@ -2296,6 +2347,19 @@ export class DevServerRunner {
     this.readyAt = Date.now()
     this.renderer.ready(this.lastSummary)
     this.refreshStatus()
+  }
+
+  /**
+   * The ready screen's atlas line for one managed UI; `undefined` when it is not plugin-wired. `/__atlas` is forwarded by the
+   * vite plugin alone, so a helper-wired UI has no such route, and a plugin older than the forwarder lets the
+   * path fall through to the app's SPA fallback: either way a link would open the wrong page.
+   */
+  private atlasLine(ui: DiscoveredUiApp, alias: string): ReadySummary['atlas'] {
+    if (this.atlas == null || !usesInfraKitVitePlugin(ui.path)) return undefined
+
+    const gate = resolveAtlasPluginGate(this.monorepoRoot, ui.path)
+
+    return 'update' in gate ? gate : { href: `${resolveEndpointUrl({ prefixUrl: '', alias })}${ATLAS_PATH}` }
   }
 
   /**
@@ -2458,6 +2522,14 @@ export class DevServerRunner {
     // plain renderer and idempotent when Ink already unmounted at ready().
     this.renderer.dispose()
 
+    // The first resource released: a page polling it must read "disconnected" while the rest tears down,
+    // never a snapshot of half-removed aliases.
+    if (this.atlas) {
+      this.stage = 'atlas.close'
+      await this.atlas.close()
+      this.atlas = null
+    }
+
     // Hand `console` and the raw streams back HERE — before the first shutdown line, not after the last.
     // `dispose()` drops the panel, so `renderer.log` below falls through to a plain `process.stdout`
     // write; while the interceptor still owned it and was suppressing, that line went to a log file. The
@@ -2601,7 +2673,7 @@ export const ownsTerminal = (options: DevServerOptions): boolean => {
 /** What {@link CreateDevUi} gets from the runner to build the live UI. */
 export interface DevUiInputs {
   /** File tee — the same appender the runner hands the plain renderer. */
-  appendLog: (text: string) => void
+  appendLog: (text: string, level: LogLevel) => void
   verbose: boolean
   /** A stdout whose `write` bypasses the output interceptor, so frames reach the terminal. */
   panel: NodeJS.WriteStream

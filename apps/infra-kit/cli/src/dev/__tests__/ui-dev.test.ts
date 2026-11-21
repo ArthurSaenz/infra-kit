@@ -25,8 +25,10 @@ vi.mock('../managed-child.js', () => {
   }
 })
 
-const { defaultUiDevFactory, parseTurboDevLine, parseTurboTaskFailure, stripAnsi, turboLineLevel } =
+const { defaultUiDevFactory, parseTurboDevLine, parseTurboTaskFailure, pumpLines, stripAnsi, turboLineLevel } =
   await import('../ui-dev.js')
+
+const { sanitizeLine } = await import('../log-format.js')
 
 /** The one recorded `spawn(cmd, args, options)` call, or a hard test failure if turbo never spawned. */
 const spawnOnce = (): { args: string[]; options: { stdio: unknown[] } } => {
@@ -288,8 +290,22 @@ describe('parseTurboDevLine — terminal safety', () => {
   const ESC = String.fromCharCode(27)
   const BEL = String.fromCharCode(7)
 
-  it('strips a bare CR, which would otherwise snap the cursor to column 0', () => {
-    expect(parseTurboDevLine('website-ui:dev: building\rdone')?.text).toBe('buildingdone')
+  it('collapses a bare-CR redraw to its last state, so no CR reaches the cursor and no redraws glue together', () => {
+    expect(parseTurboDevLine('website-ui:dev: building\rdone')?.text).toBe('done')
+    expect(parseTurboDevLine('shop-ui:dev: 10%\r50%\r100%')).toEqual({ pkg: 'shop-ui', text: '100%', level: 'info' })
+    expect(parseTurboDevLine(`shop-ui:dev: 10%\r${ESC}[31merror: boom${ESC}[0m`)).toEqual({
+      pkg: 'shop-ui',
+      text: 'error: boom',
+      level: 'error',
+    })
+  })
+
+  it('reads a trailing lone CR (a CRLF line end) exactly as before: not a redraw', () => {
+    expect(parseTurboDevLine('website-ui:dev: ready in 384 ms\r')).toEqual({
+      pkg: 'website-ui',
+      text: 'ready in 384 ms',
+      level: 'info',
+    })
   })
 
   it('strips an OSC 8 terminal hyperlink, leaving its label', () => {
@@ -310,7 +326,7 @@ describe('parseTurboDevLine — terminal safety', () => {
 })
 
 describe('defaultUiDevFactory — output pump', () => {
-  it('routes framework lines to onLine and tees raw chunks verbatim', async () => {
+  it('routes framework lines to onLine and tees raw lines verbatim', async () => {
     const { stdout, lines, raw } = spawnWithPipes()
 
     stdout.write('• Remote caching disabled\nwebsite-ui:dev: ready in 384 ms\n')
@@ -387,6 +403,79 @@ describe('defaultUiDevFactory — output pump', () => {
 })
 
 /**
+ * The raw tee feeds a formatter that prefixes every write, so it must be line-aligned: a chunk ending
+ * mid-line would get a second prefix inside the line, split an ANSI escape, and leave JSON unparsed.
+ */
+describe('pumpLines — the raw tee is line-buffered', () => {
+  const pump = (): { stream: PassThrough; tee: string[]; lines: string[] } => {
+    const stream = new PassThrough()
+    const tee: string[] = []
+    const lines: string[] = []
+
+    pumpLines(stream, {
+      appendLog: (text) => {
+        tee.push(text)
+      },
+      onLine: ({ text }) => {
+        lines.push(text)
+      },
+    })
+
+    return { stream, tee, lines }
+  }
+
+  it('tees a line split across two chunks as exactly one write', async () => {
+    const { stream, tee } = pump()
+
+    stream.write('a:dev: hel')
+    await flush()
+    expect(tee).toEqual([])
+
+    stream.write('lo\n')
+    await flush()
+    expect(tee).toEqual(['a:dev: hello\n'])
+  })
+
+  it('reassembles a chunk split inside an ESC sequence into one line that sanitizes clean', async () => {
+    const { stream, tee, lines } = pump()
+
+    stream.write('a:dev: \u001B[3')
+    stream.write('1mred\u001B[0m\n')
+    await flush()
+
+    expect(tee).toEqual(['a:dev: \u001B[31mred\u001B[0m\n'])
+    expect(sanitizeLine(tee[0]!)).toBe('a:dev: red\n')
+    expect(lines).toEqual(['red'])
+  })
+
+  it('flushes a trailing partial line on `end`', async () => {
+    const { stream, tee } = pump()
+
+    stream.write('a:dev: done\na:dev: last')
+    await flush()
+    expect(tee).toEqual(['a:dev: done\n'])
+
+    stream.end()
+    await flush()
+    expect(tee).toEqual(['a:dev: done\n', 'a:dev: last\n'])
+  })
+
+  it('flushes 70 KiB with no newline once past MAX_PENDING_CHARS, leaving the buffer empty', async () => {
+    const { stream, tee } = pump()
+    const blob = 'x'.repeat(70 * 1024)
+
+    stream.write(blob)
+    await flush()
+    expect(tee).toEqual([`${blob}\n`])
+
+    // Nothing was left behind: `end` has no partial line to flush.
+    stream.end()
+    await flush()
+    expect(tee).toHaveLength(1)
+  })
+})
+
+/**
  * `turboLineLevel` is the ONLY place in the dev-output design that reads a line's text — and it exists
  * because of a measured fact: under `--ui=stream` turbo relays each task's stderr onto its OWN stdout.
  * A task writing one line to each fd yields both on turbo's fd 1; fd 2 carries only turbo's chrome. So
@@ -431,5 +520,13 @@ describe('turboLineLevel', () => {
     ['watching for file changes...', 'idle watch chatter'],
   ])('leaves %j at info — %s', (line) => {
     expect(turboLineLevel(line)).toBe('info')
+  })
+})
+
+describe('defaultUiDevFactory — the atlas address reaches vite', () => {
+  // Strict env mode would strip INFRA_KIT_ATLAS (and INFRA_KIT_UI_PORTS) on the way through turbo, and the
+  // plugin would then serve "runner is not running" over a live runner.
+  it('keeps --env-mode=loose in the turbo run dev argv', () => {
+    expect(spawnArgs()).toContain('--env-mode=loose')
   })
 })
