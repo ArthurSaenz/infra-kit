@@ -133,7 +133,7 @@ export const style = {
 
 // Agents start dev servers through `ik dev` only: its ports are per-worktree, so a run in a feature
 // worktree never collides with the human's checkout. `pnpm dev` is blocked because consumers' scripts
-// behind it vary per package (`vite`, `vike dev`, a bare turbo run) and skip that port allocation.
+// behind it vary per package (`vite`, a bare turbo run) and skip that port allocation.
 // From a non-TTY Bash `ik dev` skips the wizard and starts every app, and it never exits — hence the
 // advice to name an app and background it.
 // `(?=[\s:]|$)` keeps `dev-status` (the read-only probe) and `devtools` out while `dev:client` stays in.
