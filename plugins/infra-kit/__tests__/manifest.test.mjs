@@ -17,6 +17,7 @@ const FIXTURES_DIR = join(TESTS_DIR, '__fixtures__')
 const EXEMPT_DIRS = new Set([FIXTURES_DIR])
 
 const EXPECTED_SKILLS = [
+  'be-architect',
   'comment-verifier',
   'doctor',
   'e2e-architect',

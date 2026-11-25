@@ -46,10 +46,8 @@ export const DEFAULT_ENTRIES: Partial<Record<PackageType, LayerEntry>> = {
   backend: {
     layers: ['controllers', 'services', 'lib', 'config', '__tests__'],
     segments: {
-      'services/*': ['__tests__'],
+      'services/*': ['__tests__', 'lib'],
     },
-    // The skill does not exist yet; the user adds `plugins/infra-kit/skills/be-architect/SKILL.md`
-    // and accepted the dangling pointer until then.
     skill: '/infra-kit:be-architect',
   },
   e2e: {

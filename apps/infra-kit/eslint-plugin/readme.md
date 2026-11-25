@@ -625,7 +625,7 @@ settled.
 | Type       | Default `layers`                                                                        | Default `segments`                                                                | Default `skill`            |
 | ---------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------- |
 | `frontend` | `app`, `features`, `lib`, `components`, `pages`, `routes`, `__tests__`                  | `features/*` → `containers`, `components`, `services`, `__stories__`, `__tests__` | `/infra-kit:fe-architect`  |
-| `backend`  | `controllers`, `services`, `lib`, `config`, `__tests__`                                 | `services/*` → `__tests__`                                                        | `/infra-kit:be-architect`  |
+| `backend`  | `controllers`, `services`, `lib`, `config`, `__tests__`                                 | `services/*` → `__tests__`, `lib`                                                 | `/infra-kit:be-architect`  |
 | `e2e`      | `tests`, `visual`, `setup`, `pages`, `config`, `lib`, `components`, `mocks`, `fixtures` | `tests/*`, `visual/*` → `pages`, `fixtures`, `mocks`, `data`, `lib`               | `/infra-kit:e2e-architect` |
 | `mobile`   | — (silent)                                                                              | —                                                                                 | —                          |
 | `lib`      | — (silent)                                                                              | —                                                                                 | —                          |
@@ -667,8 +667,6 @@ override restates every type it wants to change — and only those.
 - **`--cache`.** Renaming a directory changes every file path under it, so ESLint's cache already
   misses; editing `infra-kit.config.ts` does not touch the linted files, so a cached result can go
   stale until those files change. Run without `--cache` in CI if you rely on this rule as a gate.
-- **The backend skill is a forward reference.** `/infra-kit:be-architect` is named in the default
-  message ahead of the skill shipping; override `backend.skill` if the pointer should go elsewhere.
 
 ### `test-location`
 
@@ -969,6 +967,123 @@ state — is reported, and so is `fetch`, `httpClient.*` or an analytics call in
 | ---------------- | ---------- | ------- | --------------------------------------------- |
 | `allowHooks`     | `string[]` | `[]`    | Added to the defaults (e.g. `useMediaQuery`). |
 | `paths`/`ignore` | `string[]` | scope   | `paths` replaces the default scope.           |
+
+### `service-files`
+
+`package-structure` judges a backend's folders; this rule judges the files in `src/services/`. Every
+service lives in a **domain folder** `services/<domain>/`, which holds only:
+
+| Entry                      | Notes                                                                    |
+| -------------------------- | ------------------------------------------------------------------------ |
+| `index.ts`                 | Mandatory: the domain's public API and the only entry from outside.      |
+| `<kebab-name>.service.ts`  | Stem in kebab-case: `order-type.service.ts`, not `orderType.service.ts`. |
+| `types.ts`, `constants.ts` | Plain names; `chats.types.ts` is reported.                               |
+| `lib/**`                   | Private helpers, any name.                                               |
+| `__tests__/**`             | Exempt from the name check (`test-location` owns test files).            |
+
+Any extension in `.[cm]?[jt]s` counts. Four message ids:
+
+- `flatFile` — a file directly in `services/`, including `services/index.ts`.
+- `testsOutsideDomain` — `services/__tests__/` is not a domain; tests that span domains go in `src/__tests__/`.
+- `unknownFile` — a domain-root file outside the allowlist.
+- `missingIndex` — any file under `services/<domain>/` (also in `lib/` and `__tests__/`) while the domain has no `index.*`.
+
+```
+`client.ts` is not an allowed file in domain `orders`. Allowed: index.ts, <kebab-name>.service.ts, types.ts, constants.ts; helpers go in `lib/`, tests in `__tests__/`. See /infra-kit:be-architect for the backend service layout.
+```
+
+Only **backend** packages are judged, with the type resolved as `package-structure` resolves it;
+frontend, lib, e2e and mobile packages are silent, and so are `.d.ts` files. `missingIndex` checks the
+disk, so an IDE server can show a stale result until the file is linted again after `index.ts` is
+added. Not in `configs.recommended` yet: enable it per backend app once that app conforms.
+
+```js
+{
+  files: ['src/**/*.{ts,mts,cts,js}'],
+  rules: {
+    '@wl/service-files': 'error',
+  },
+}
+```
+
+#### Options
+
+| Option   | Type       | Default | Description                                    |
+| -------- | ---------- | ------- | ---------------------------------------------- |
+| `ignore` | `string[]` | `[]`    | Globs; the rule is skipped for matching files. |
+
+### `service-public-api`
+
+Hold a **backend** package's imports to its service domains (see [`service-files`](#service-files)):
+
+- `deepImport` — a path into `services/<domain>/` other than `services/<domain>` or
+  `services/<domain>/index.*`, from outside that domain. Type and value imports alike, alias
+  (`#root/services/…`) or relative.
+- `crossDomainRuntime` — a runtime import from a file anywhere in `services/<a>/**` into
+  `services/<b>`. Files in the domain's `__tests__/` are **not** exempt: a test that wires several
+  domains is an integration test and lives in `src/__tests__/`.
+- `libRuntimeImport` — a runtime import from `src/lib/**` into `services/**`. `src/lib/` must stay
+  domain-free; composition roots can be allowed with `libRuntimeAllow`.
+
+A value deep import from a sibling domain is reported under both `deepImport` and
+`crossDomainRuntime`. Controllers may import domains at runtime through `index.ts`: composing
+services is their job.
+
+```
+`../orders/index.js` imports domain `orders` at runtime from domain `payments`. Domains share only types (`import type`); compose services in a controller instead. See /infra-kit:be-architect for the backend import rules.
+```
+
+Checked: import and re-export declarations, dynamic `import()`, `typeof import()` and
+`import x = require()`. Which forms count as type-only:
+
+| Form                                     | Counts as |
+| ---------------------------------------- | --------- |
+| `import type { A } from '…'`             | type      |
+| `export type { A } from '…'`             | type      |
+| `import { type A, type B } from '…'`     | type      |
+| `typeof import('…')`                     | type      |
+| `import { type A, B } from '…'` (mixed)  | runtime   |
+| `import '…'` (side effect)               | runtime   |
+| `import('…')`                            | runtime   |
+| `export * from '…'`, `export { a } from` | runtime   |
+| `import x = require('…')`                | runtime   |
+
+The rule judges **syntax**, not what the compiler emits. With `verbatimModuleSyntax` off (as in the
+shared service tsconfig), tsc elides an unmarked import that is only used as a type, so lint is
+stricter than runtime: mark type imports `import type`.
+
+#### Overlap with config layers
+
+The shared ESLint config already covers part of this, and both reports stay on as defence in depth.
+One fix clears both; a suppression of either is equally banned.
+
+| Violation                                                                        | Reported by                                                                       |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `#root/services/x/y.service.js` / `../services/x/y.service.js` from a controller | `deepImport` **and** `no-restricted-imports` (`**/services/*/**`)                 |
+| `../orders/order.service.js` from a sibling domain                               | `deepImport` (+ `crossDomainRuntime` if value); `no-restricted-imports` misses it |
+| Value import between two domain folders                                          | `crossDomainRuntime` **and** `boundaries/dependencies`                            |
+
+`no-restricted-imports` matches specifier text, so relative deep paths from a sibling domain pass it;
+`boundaries` drops out with `boundaries: false` and does not see flat files. This rule covers both.
+
+Not in `configs.recommended` yet: enable it per backend app once that app conforms.
+
+```js
+{
+  files: ['src/**/*.{ts,mts,cts,js}'],
+  rules: {
+    '@wl/service-public-api': ['error', { libRuntimeAllow: ['**/src/lib/container/**'] }],
+  },
+}
+```
+
+#### Options
+
+| Option            | Type       | Default   | Description                                                        |
+| ----------------- | ---------- | --------- | ------------------------------------------------------------------ |
+| `rootAlias`       | `string`   | `'#root'` | The alias that maps to `src/`.                                     |
+| `libRuntimeAllow` | `string[]` | `[]`      | Globs of `src/lib/**` files allowed to import services at runtime. |
+| `ignore`          | `string[]` | `[]`      | Globs; the rule is skipped for matching files.                     |
 
 ### `e2e-file-layout`
 

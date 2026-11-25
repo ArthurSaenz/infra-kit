@@ -137,6 +137,7 @@ describe('message data', () => {
   it('is clean for an allowed layer', () => {
     expect(lint('frontend', 'features')).toEqual([])
     expect(lint('backend', 'controllers')).toEqual([])
+    expect(lint('backend', 'services/orders/lib')).toEqual([])
     expect(lint('e2e', 'fixtures')).toEqual([])
     expect(lint('e2e', 'tests/checkout/fixtures')).toEqual([])
   })
@@ -148,7 +149,7 @@ describe('message data', () => {
       '`hooks` is not an allowed segment of `features/user` for package type `frontend` (allowed: containers, components, services, __stories__, __tests__). See /infra-kit:fe-architect for the frontend layout.',
     )
     expect(lint('backend', 'services/orders/fixtures')[0]).toBe(
-      '`fixtures` is not an allowed segment of `services/orders` for package type `backend` (allowed: __tests__). See /infra-kit:be-architect for the backend layout.',
+      '`fixtures` is not an allowed segment of `services/orders` for package type `backend` (allowed: __tests__, lib). See /infra-kit:be-architect for the backend layout.',
     )
   })
 

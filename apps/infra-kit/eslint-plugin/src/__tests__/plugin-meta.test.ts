@@ -93,6 +93,19 @@ describe('test-location registration', () => {
   })
 })
 
+describe('service rules registration', () => {
+  it('registers service-files and service-public-api in the rule map', () => {
+    expect(rules['service-files']).toBeDefined()
+    expect(rules['service-public-api']).toBeDefined()
+  })
+
+  // Opt-in ratchet: each backend app enables them once it conforms; 0.49 moves them into the preset.
+  it('keeps service rules out of configs.recommended until the 0.49 flip', () => {
+    expect(presetRuleIds).not.toContain('@wl/service-files')
+    expect(presetRuleIds).not.toContain('@wl/service-public-api')
+  })
+})
+
 // The REAL preset against a real fixture: the rule lives in its own `**/*.{ts,tsx,js,jsx}` block
 // because the components gate is `**/*.tsx` only — a regression that folded it into that block
 // would still pass a unit test on the rule and only show up here, on a `.ts` file.

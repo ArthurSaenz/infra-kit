@@ -71,6 +71,7 @@ mutating command.
 | skill     | `/infra-kit:doctor`           | Runs the CLI health report, then adds the checks only a live session can make (which plugin tree loaded, drift, staleness)               |
 | skill     | `/infra-kit:fe-architect`     | Builds and reviews the inside of a React feature (naming, containers, state, services)                                                   |
 | skill     | `/infra-kit:fe-patterns`      | Cross-feature boundaries, injection patterns, promotion to shared                                                                        |
+| skill     | `/infra-kit:be-architect`     | Backend `services/<domain>/` layout: allowlist, public API, type-only cross-domain imports, migration recipe                             |
 | skill     | `/infra-kit:e2e-architect`    | Per-feature Playwright e2e layout: page object, fixture, specs by axis                                                                   |
 | skill     | `/infra-kit:update-toolchain` | Bumps pnpm, Node, Turbo, @slip-stream-kit and CI infra-kit on `dev`, refreshes generated files, commits, pushes (human-invoked only)     |
 | skill     | `/infra-kit:session`          | Loads a named environment into the terminal that launched Claude Code — the human picks from every known env (human-invoked only)        |

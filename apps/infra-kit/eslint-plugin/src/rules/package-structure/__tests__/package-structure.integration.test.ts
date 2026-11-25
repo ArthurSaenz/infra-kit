@@ -145,12 +145,13 @@ describe('package-structure (real fs)', () => {
     // A unit's own files and anything deeper than its segments are not inspected.
     expect(messagesOf('apps/client/ui/src/features/user/index.ts')).toEqual([])
     expect(messagesOf('apps/client/ui/src/features/user/components/default/a.tsx')).toEqual([])
-    // Backend services mirror features: `__tests__` inside each service, nothing else.
+    // Backend domains hold only `__tests__` and `lib`.
     expect(messagesOf('apps/client/api/src/services/orders/__tests__/a.test.ts')).toEqual([])
+    expect(messagesOf('apps/client/api/src/services/orders/lib/x.ts')).toEqual([])
     expect(messagesOf('apps/client/api/src/services/orders/fixtures/a.json.ts')[0]).toContain(
       '`fixtures` is not an allowed segment of `services/orders`',
     )
-    // A flat `services/__tests__/` is a unit with files only, so it is silent.
+    // A flat `services/__tests__/` is a unit with files only, so it is silent here; `service-files` reports it.
     expect(messagesOf('apps/client/api/src/services/__tests__/a.test.ts')).toEqual([])
   })
 

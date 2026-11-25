@@ -31,6 +31,8 @@ import { propsTypeName } from './props-type-name'
 import { propsTypeReference } from './props-type-reference'
 import { requireComponentStories } from './require-component-stories'
 import { requireJsdocExample } from './require-jsdoc-example'
+import { serviceFiles } from './service-files'
+import { servicePublicApi } from './service-public-api'
 import { servicesNamespaceImport } from './services-namespace-import'
 import { storyTitlePrefix } from './story-title-prefix'
 import { testLocation } from './test-location'
@@ -68,4 +70,6 @@ export const rules: Record<string, Rule.RuleModule> = {
   'component-name-matches-file': componentNameMatchesFile,
   'component-classname': componentClassname,
   'dumb-component-purity': dumbComponentPurity,
+  'service-files': serviceFiles,
+  'service-public-api': servicePublicApi,
 }
