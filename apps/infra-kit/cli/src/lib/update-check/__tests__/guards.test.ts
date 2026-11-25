@@ -14,6 +14,10 @@ const allowed = (overrides: Partial<AutoUpdateGuardInput> = {}): AutoUpdateGuard
     realpath: (p) => {
       return p
     },
+    home: '/Users/me',
+    exists: () => {
+      return false
+    },
     ...overrides,
   }
 }
@@ -56,6 +60,18 @@ describe('autoUpdateSkipReason', () => {
         allowed({
           selfRealPath: '/Users/me/Library/pnpm/global/5/node_modules/infra-kit/dist/cli.js',
           cwd: '/Users/me/some-project',
+        }),
+      ),
+    ).toBeNull()
+  })
+
+  it('permits a global pnpm install run from $HOME, where every global layout is inside the cwd', () => {
+    expect(
+      autoUpdateSkipReason(
+        allowed({
+          selfRealPath: '/Users/me/Library/pnpm/global/5/node_modules/infra-kit/dist/cli.js',
+          env: { PNPM_HOME: '/Users/me/Library/pnpm' },
+          cwd: '/Users/me',
         }),
       ),
     ).toBeNull()

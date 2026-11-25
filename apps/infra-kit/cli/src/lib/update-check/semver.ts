@@ -17,6 +17,13 @@ interface ParsedVersion {
 const RELEASE_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/
 
 /**
+ * The only characters semver allows after the release triple. The version comes from a registry response
+ * and from a cache file, and it ends up in an `install` argv (run through a shell on win32) and in a line
+ * printed to the terminal — so a shell metacharacter or an ANSI escape must read as "not a version".
+ */
+const SUFFIX_PATTERN = /^[\dA-Z.-]*$/i
+
+/**
  * Parse bare semver. Returns null (never throws, never NaNs) for anything that is not
  * `major.minor.patch` with optional `-prerelease` and `+build` — a garbled registry body must read as
  * "no update", not as "update to NaN".
@@ -28,11 +35,18 @@ const RELEASE_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/
  */
 export const parseSemver = (version: string): ParsedVersion | null => {
   // Build metadata is ignored entirely by semver precedence rules.
-  const [withoutBuild = ''] = version.trim().split('+')
+  const [withoutBuild = '', ...buildParts] = version.trim().split('+')
   const [core = '', ...prereleaseParts] = withoutBuild.split('-')
   const match = RELEASE_PATTERN.exec(core)
 
   if (!match) return null
+  if (
+    buildParts.length > 1 ||
+    ![...prereleaseParts, ...buildParts].every((part) => {
+      return SUFFIX_PATTERN.test(part)
+    })
+  )
+    return null
 
   const [major, minor, patch] = [match[1], match[2], match[3]].map(Number) as [number, number, number]
 

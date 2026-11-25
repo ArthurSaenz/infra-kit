@@ -14,6 +14,7 @@ export {
 export { hasSegment, isBrewKegOf, isWithin, npmPrefixOfPackage } from './install-manager'
 export type {
   DetectInstallManagerInput,
+  ExistsFn,
   InstallManager,
   InstallManagerInfo,
   IsGlobalInstallInput,

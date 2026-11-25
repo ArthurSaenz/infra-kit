@@ -11,6 +11,7 @@ export {
   resetInfraKitConfigCache,
   resetMergedConfigCache,
   resolveOrcaLayout,
+  resolveSchemaStamp,
   resolveUserGlobalConfigPath,
   SUPPORTED_CONFIG_VERSION,
   USER_CONFIG_DIR_NAME,

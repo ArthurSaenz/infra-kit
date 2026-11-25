@@ -8,7 +8,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { PLUGIN_UPDATE_ARGV } from 'src/lib/plugin-pointer/claude-cli'
 import type { PluginInstallation } from 'src/lib/plugin-pointer/install-state'
 
-import { PARENT_WAIT_TIMEOUT_MS, pluginStepWithheld, runUpdateCheck } from '../run-update-check'
+import { LOCK_STALE_MS } from '../lock'
+import { INSTALL_TIMEOUT_MS, PARENT_WAIT_TIMEOUT_MS, pluginStepWithheld, runUpdateCheck } from '../run-update-check'
 import type { RunUpdateCheckDeps, UpdateCheckOutcome } from '../run-update-check'
 import type { UpdateCache } from '../update-cache'
 import { PLUGIN_UPDATE_BUDGET_MS, PLUGIN_UPDATE_RUN_TIMEOUT_MS } from '../update-plugin'
@@ -407,6 +408,17 @@ describe('runUpdateCheck', () => {
       updateCommand: ['npm', 'install', '-g', '--prefix', '/usr/local', 'infra-kit@0.1.131'],
       outcome: 'install-failed',
     })
+  })
+
+  it('bounds the install below the lock staleness window, so a hung install never has its live lock reaped', async () => {
+    const { deps, spawnMock } = harness({ parentPid: 4242 })
+
+    await runUpdateCheck('0.1.130', deps)
+
+    const [, , options] = spawnMock.mock.calls[0] as unknown as [string, string[], { timeout: number }]
+
+    expect(options.timeout).toBe(INSTALL_TIMEOUT_MS)
+    expect(PARENT_WAIT_TIMEOUT_MS + INSTALL_TIMEOUT_MS + PLUGIN_UPDATE_BUDGET_MS).toBeLessThan(LOCK_STALE_MS)
   })
 
   it('pins the install cwd to the home dir so a repo-local .npmrc cannot redirect the registry', async () => {

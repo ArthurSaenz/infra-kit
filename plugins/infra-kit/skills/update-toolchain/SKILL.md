@@ -1,10 +1,10 @@
 ---
 name: update-toolchain
-description: Bump pnpm, Node.js, Turbo, the @slip-stream-kit packages, and the infra-kit version the CI deploy workflows run to their latest stable versions on dev, then commit and push
+description: Bump pnpm, Node.js, Turbo, the @slip-stream-kit packages, and the infra-kit version the CI deploy workflows run to their latest stable versions on dev, refresh the infra-kit generated files, then commit and push
 disable-model-invocation: true
 ---
 
-# Update toolchain: pnpm, Node.js, Turbo, @slip-stream-kit, and CI infra-kit
+# Update toolchain: pnpm, Node.js, Turbo, @slip-stream-kit, CI infra-kit, and the generated files
 
 Run every phase in order. Skip a phase when its component is already up-to-date. The run commits and
 pushes to `dev` on its own in Finalize — do not ask for confirmation. The human typing
@@ -94,10 +94,10 @@ pushes to `dev` on its own in Finalize — do not ask for confirmation. The huma
 > Bumping it means re-generating with the latest CLI, never hand-editing the YAML (the file header
 > says a hand edit is overwritten).
 
-1. If the repo root has no `infra-kit.deploy.ts`, there is no generated CI — skip to Finalize.
+1. If the repo root has no `infra-kit.deploy.ts`, there is no generated CI — skip to Phase 6.
 2. Read the OLD version from any `infra-kit-version:` line under `.github/workflows/`.
 3. Run `pnpm view infra-kit version` for the latest (the NEW version). If it matches the OLD
-   version, skip to Finalize.
+   version, skip to Phase 6.
 4. Run `infra-kit version`. If the global CLI is not on the NEW version, run
    `pnpm add -g infra-kit@<new version>` — the exact version, not `@latest`: pnpm resolves the tag
    from a stale metadata cache and can report success while staying on the old version. Re-run
@@ -107,14 +107,31 @@ pushes to `dev` on its own in Finalize — do not ask for confirmation. The huma
 6. Verify: `infra-kit deploy-sync --check` exits 0, and grep `.github/workflows/` for
    `infra-kit-version: <old version>` — expect zero hits.
 
+## Phase 6: Refresh the infra-kit generated files
+
+> `infra-kit audit --fix --root` rewrites the generated block in the root `CLAUDE.md` and stamps
+> `$schema` and `configVersion` into the root `infra-kit.json`; `--all` rewrites the block in every
+> workspace package's `CLAUDE.md`. The CLI that runs them renders the text, and nothing else writes
+> these files — a CLI update alone leaves them stale. So this phase runs on the latest CLI.
+
+1. If the repo root has no `infra-kit.json`, skip to Finalize.
+2. Run `pnpm view infra-kit version` for the latest, then `infra-kit version`. If the global CLI is
+   not on the latest, install it exactly as Phase 5 step 4 does, and stop if it still is not.
+3. Run `infra-kit audit --fix --root`. If it reports a `failed` entry, stop and report it — a human
+   has to decide.
+4. If the repo root has a `pnpm-workspace.yaml`, run `infra-kit audit --fix --all`. Stop and report
+   on a `failed` entry.
+5. Verify: re-run the commands from steps 3 and 4 — each must report `0 created, 0 updated`.
+
 ## Finalize
 
 1. If no phase made changes, report that everything is already up-to-date and stop.
 2. Commit every changed file with the message
-   `Update pnpm <old> → <new>, Node.js <old> → <new>, Turbo <old> → <new>, @slip-stream-kit <old> → <new>, CI infra-kit <old> → <new>`
+   `Update pnpm <old> → <new>, Node.js <old> → <new>, Turbo <old> → <new>, @slip-stream-kit <old> → <new>, CI infra-kit <old> → <new>, infra-kit generated files`
    (omit whichever components were already up-to-date). If a commit hook rejects it, stop and report
    the hook's output — never bypass it with `--no-verify`.
 3. Push to `origin dev`. If the push is rejected because `dev` moved, run `git pull --rebase`, re-run
    `pnpm install`, and push once more; if that also fails, stop and report.
 4. Report the components that changed (old → new), the commit hash, any skipped `vendor/` ranges
-   from Phase 4, the regenerated workflow files from Phase 5, and the push result.
+   from Phase 4, the regenerated workflow files from Phase 5, the files Phase 6 rewrote, and the push
+   result.

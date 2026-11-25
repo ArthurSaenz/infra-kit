@@ -10,9 +10,8 @@ import {
   replaceTopLevelValue,
   writeConfigFileText,
 } from 'src/lib/config-migrations'
-import { SUPPORTED_CONFIG_VERSION, configSchemaUrl } from 'src/lib/infra-kit-config'
+import { SUPPORTED_CONFIG_VERSION, resolveSchemaStamp } from 'src/lib/infra-kit-config'
 import { PACKAGE_CONFIG_FILE, loadAuthoredPackageConfig } from 'src/lib/package-validator/loader'
-import { isNewerVersion } from 'src/lib/update-check/semver'
 
 const PROJECT_CONFIG_FILE = 'infra-kit.json'
 
@@ -116,13 +115,6 @@ export const migrateRootAuditConfig = async (repoRoot: string): Promise<Guidance
   return written
 }
 
-/** The CLI version in a `$schema` this CLI stamped, or null for any other URL. */
-const stampedSchemaVersion = (schema: unknown): string | null => {
-  if (typeof schema !== 'string') return null
-
-  return /^https:\/\/unpkg\.com\/infra-kit@([^/]+)\//.exec(schema)?.[1] ?? null
-}
-
 /**
  * `raw` with each stamp key's value replaced where the key exists, and the missing ones inserted first
  * (so the editor pointer and the version read before anything they describe). Every other byte is kept.
@@ -145,12 +137,11 @@ const stampText = (raw: string, stamp: { $schema: unknown; configVersion: number
  * Stamp `$schema` (a version-pinned URL of this CLI's generated schema) and `configVersion` at the top of
  * the committed `infra-kit.json` — layer 1, the only layer that may carry `configVersion` — changing no
  * other byte of it, so a prettier-formatted file stays formatted. This and
- * `audit --fix --root` are the only writers of either key: the loader only reads them, and `doctor`
+ * `audit --fix --root` are the only writers of either key in this file: the loader only reads them, and `doctor`
  * never writes the file.
  *
- * Left alone: a `$schema` that is not ours (someone pointed it at a schema of their own), one stamped by
- * a newer CLI (stamping it back would hand the editor an older schema than the file was written for),
- * and a file whose `configVersion` is above what this CLI reads.
+ * Left alone: a `$schema` {@link resolveSchemaStamp} keeps, and a file whose `configVersion` is above what
+ * this CLI reads.
  *
  * @example
  * await stampRootConfig('/repo', '0.42.0')
@@ -173,13 +164,7 @@ export const stampRootConfig = async (repoRoot: string, version: string): Promis
       )
     }
 
-    const stampedBy = stampedSchemaVersion(current.$schema)
-
-    const keepSchema =
-      (current.$schema !== undefined && stampedBy === null) ||
-      (stampedBy !== null && isNewerVersion(stampedBy, version))
-
-    const $schema = keepSchema ? current.$schema : configSchemaUrl(version)
+    const $schema = resolveSchemaStamp(current.$schema, version)
 
     if (current.$schema === $schema && current.configVersion === SUPPORTED_CONFIG_VERSION) return []
 

@@ -41,6 +41,7 @@ import {
   migrateLegacyConfig,
   migrateUserGlobalConfigFilename,
 } from './migrate-config'
+import { stampUserGlobalSchema } from './stamp-user-config'
 
 export const MARKER_START = '# -- infra-kit:begin --'
 export const MARKER_END = '# -- infra-kit:end --'
@@ -207,8 +208,10 @@ export const initCore = async (onStep?: InitStepSink): Promise<InitReport> => {
     record(MIGRATIONS_CHECKED)
   })
 
-  await withStep('user-config', () => {
+  await withStep('user-config', async () => {
     record(seedUserGlobalConfig())
+    // After the seed, so a machine's first `setup` leaves its new stub already stamped.
+    await stampUserGlobalSchema(packageJson.version)
   })
 
   // Best-effort, non-fatal, repo-gated, READ-ONLY: report whether the agent-instruction files

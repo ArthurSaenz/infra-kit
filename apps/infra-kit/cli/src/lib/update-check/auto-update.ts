@@ -7,6 +7,7 @@
  */
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import { homedir } from 'node:os'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
@@ -31,6 +32,7 @@ export interface AutoUpdateDeps {
   env?: NodeJS.ProcessEnv
   isTty?: boolean
   cwd?: string
+  home?: string
   nowMs?: number
   /** Realpath of the running `dist/cli.js`. */
   selfRealPath?: string
@@ -56,6 +58,9 @@ export interface AutoUpdateDeps {
  */
 const defaultSpawnChild = (childPath: string): void => {
   const child = spawn(process.execPath, [childPath, '--parent-pid', String(process.pid)], {
+    // Not the caller's directory: the worker outlives this command by minutes, and its `npm root -g`
+    // and `claude --version` probes must not read a repo-local `.npmrc` or hold a worktree open.
+    cwd: homedir(),
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -181,7 +186,10 @@ export const maybeAutoUpdate = (currentVersion: string, deps: AutoUpdateDeps = {
         logger.info(line)
       })
 
-    if (autoUpdateSkipReason({ argv, env, isTty, selfRealPath, cwd, realpath: safeRealpath }) !== null) return
+    const home = deps.home ?? homedir()
+    const guard = { argv, env, isTty, selfRealPath, cwd, realpath: safeRealpath, home, exists: fileExists }
+
+    if (autoUpdateSkipReason(guard) !== null) return
 
     const cache = readCache()
 

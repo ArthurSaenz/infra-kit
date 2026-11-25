@@ -487,5 +487,10 @@ Everything is a package, a feature, or a service — there is no fourth kind.
 
 - Comment the **why**, never the **what**. If a comment would only restate what the code already says (a name, a type, an obvious assignment), delete it — and if code needs a comment to be _understood_, prefer renaming/refactoring until it reads on its own. Reserve comments for the genuinely non-obvious: external quirks, ordering constraints, fail-safe branches, workarounds, business-logic definitions. Keep them compact. When a comment explains a bug, outage, or upstream issue, link the source of truth instead of describing it.
 - Unit tests are \`*.test.ts(x)\` in a \`__tests__/\` folder beside the code they test (\`src/foo/__tests__/foo.test.ts\`), never next to the source file; inside a frontend feature, all of them go in the feature root's \`features/<name>/__tests__/\`. \`*.spec.ts\` is only for Playwright specs in an e2e package. The \`@wl/test-location\` lint rule enforces it.
+
+## Explaining
+
+- Write explanations in the style of ASD-STE100 (Simplified Technical English, the aircraft-maintenance-manual standard), in whatever language the user writes. One idea per sentence, about 20 words at most. Active voice. One term per thing — never a synonym for variety. No preamble, filler or hedging. Start with the conclusion.
+- When the topic is hard to explain (an architecture, a race, a multi-step cause), explain it ELI5 first: plain words, one everyday analogy, no jargon the reader has not been given. Then give the exact detail — names, numbers, file paths. Simple wording never drops a fact.
 "
 `;

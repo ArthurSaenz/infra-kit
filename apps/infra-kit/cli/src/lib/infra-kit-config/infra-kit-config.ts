@@ -11,6 +11,7 @@ import { USER_CONFIG_DIR_NAME } from 'src/lib/constants'
 import { StructuredRefusalError } from 'src/lib/errors/structured-refusal-error'
 import { getMainRepoRoot, getProjectRoot } from 'src/lib/git-utils'
 import { PROTECTED_CHILD_ENV_NAMES } from 'src/lib/mcp-proxy/protected-env'
+import { isNewerVersion } from 'src/lib/update-check/semver'
 
 const INFRA_KIT_CONFIG_FILE = 'infra-kit.json'
 
@@ -296,6 +297,31 @@ export const CONFIG_SCHEMA_FILE = 'dist/infra-kit.schema.json'
  */
 export const configSchemaUrl = (version: string): string => {
   return `https://unpkg.com/infra-kit@${version}/${CONFIG_SCHEMA_FILE}`
+}
+
+/** The CLI version in a `$schema` infra-kit stamped, or null for any other URL. */
+const stampedSchemaVersion = (schema: unknown): string | null => {
+  if (typeof schema !== 'string') return null
+
+  return /^https:\/\/unpkg\.com\/infra-kit@([^/]+)\//.exec(schema)?.[1] ?? null
+}
+
+/**
+ * The `$schema` a stamp by CLI `version` leaves in a file that holds `current`: this CLI's URL, except
+ * that a URL that is not ours (someone pointed it at a schema of their own) and one stamped by a newer
+ * CLI (stamping it back would hand the editor an older schema than the file was written for) are kept.
+ *
+ * @example
+ * resolveSchemaStamp(undefined, '0.42.0') // => 'https://unpkg.com/infra-kit@0.42.0/dist/infra-kit.schema.json'
+ * resolveSchemaStamp('./my.schema.json', '0.42.0') // => './my.schema.json'
+ */
+export const resolveSchemaStamp = (current: unknown, version: string): unknown => {
+  const stampedBy = stampedSchemaVersion(current)
+
+  const keep =
+    (current !== undefined && stampedBy === null) || (stampedBy !== null && isNewerVersion(stampedBy, version))
+
+  return keep ? current : configSchemaUrl(version)
 }
 
 export const infraKitConfigObject = z

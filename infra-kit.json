@@ -1,4 +1,6 @@
 {
+  "$schema": "https://unpkg.com/infra-kit@0.47.0/dist/infra-kit.schema.json",
+  "configVersion": 1,
   "envManagement": {
     "provider": "doppler",
     "config": {

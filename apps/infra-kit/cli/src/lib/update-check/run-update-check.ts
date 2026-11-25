@@ -14,8 +14,8 @@ import { homedir } from 'node:os'
 import process from 'node:process'
 
 import { PACKAGE_NAME, defaultLazyNpmRoot, detectInstallManager, safeRealpath } from 'src/lib/install-manager'
-import { packageManagerInstallEnv } from 'src/lib/pm-env'
 
+import { installChildEnv } from './install-env'
 import { acquireUpdateLock } from './lock'
 import { fetchLatestVersion } from './registry'
 import { isNewerVersion } from './semver'
@@ -63,6 +63,13 @@ export interface RunUpdateCheckDeps extends UpdatePluginDeps {
   selfRealPath: string
   parentPid?: number
 }
+
+/**
+ * Bounds the install. With the parent wait (5 min) and the plugin step (5 min) the whole critical section
+ * stays below `LOCK_STALE_MS` (30 min); an unbounded install that hung had its live lock reaped, and the
+ * next worker started a second install over the same global directory.
+ */
+export const INSTALL_TIMEOUT_MS = 15 * 60 * 1000
 
 /** Bounds the post-install probe; a hung shim must not pin this worker for the parent's 5-minute budget. */
 const VERSION_PROBE_TIMEOUT_MS = 15_000
@@ -218,11 +225,11 @@ export const runUpdateCheck = async (currentVersion: string, deps: RunUpdateChec
  * function wrote, not its outcome name: "a newer CLI exists and this run did not install it" is
  * exactly what a non-null value newer than `currentVersion` encodes.
  *
- * That covers `cannot-self-spawn` (`:300`), `parent-unknown` (`:305`), `parent-still-running` (`:326`),
- * `install-failed` (`:353`) and `install-stale` (`:364`) — each leaves the newer version in the cache —
- * and any outcome added later that does the same, without this list needing to know. `installed` clears
- * `latestVersion` (`:367`) and `up-to-date` writes a non-newer one (`:282`), so both still advance the
- * plugin and a plugin-only bump keeps delivering; `fetch-failed` writes null (`:280`) and cannot be
+ * That covers `cannot-self-spawn`, `parent-unknown`, `parent-still-running`, `install-failed` and
+ * `install-stale` — each leaves the newer version in the cache — and any outcome added later that does
+ * the same, without this list needing to know. `installed` clears `latestVersion` and `up-to-date`
+ * writes a non-newer one, so both still advance the plugin and a plugin-only bump keeps delivering;
+ * `fetch-failed` writes null and cannot be
  * gated — the plugin advances, as before; `already-running` never reaches the wrapper.
  *
  * @example
@@ -349,7 +356,8 @@ const runUpdateCheckLocked = async (currentVersion: string, deps: RunUpdateCheck
   // `npm_config_prefix` and `npm_config_registry`. Using the blunt `withoutPackageManagerEnv` here was a
   // bug: it also erased the prefix that `detectInstallManager` had just matched on, so we would detect a
   // global install at prefix P and then install into the default prefix instead — silently, forever. See
-  // the module doc on `packageManagerInstallEnv`.
+  // the module doc on `packageManagerInstallEnv`. `installChildEnv` adds one cut on top: what `ik env-load`
+  // put in the shell never reaches the install's lifecycle scripts.
   //
   // `cwd` is pinned to the home directory, and this is a SECURITY control, not tidiness: npm resolves
   // `registry=` from an `.npmrc` on disk relative to the cwd. Inheriting the caller's cwd would let any
@@ -360,7 +368,8 @@ const runUpdateCheckLocked = async (currentVersion: string, deps: RunUpdateCheck
     stdio: 'ignore',
     shell: process.platform === 'win32',
     cwd: homedir(),
-    env: packageManagerInstallEnv(env),
+    env: installChildEnv(env),
+    timeout: INSTALL_TIMEOUT_MS,
     windowsHide: true,
   })
 

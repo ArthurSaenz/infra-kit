@@ -20,7 +20,7 @@ import { runUpdateCheck } from 'src/lib/update-check/run-update-check'
 
 import packageJson from '../../package.json' with { type: 'json' }
 
-/** `--parent-pid <pid>`, or undefined when absent/malformed (then we install without waiting). */
+/** `--parent-pid <pid>`, or undefined when absent/malformed (then the worker installs nothing: `parent-unknown`). */
 const parseParentPid = (argv: string[]): number | undefined => {
   const index = argv.indexOf('--parent-pid')
 

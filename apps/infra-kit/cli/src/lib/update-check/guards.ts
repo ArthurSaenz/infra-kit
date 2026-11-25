@@ -2,8 +2,8 @@
  * Whether this invocation may run the background auto-update at all. Pure: every signal is injected,
  * so the whole matrix is table-tested without spawning or touching argv/env globals.
  */
-import { isLocalNodeModulesInstall } from 'src/lib/install-manager'
-import type { RealpathFn } from 'src/lib/install-manager'
+import { shouldWarnLocalInstall } from 'src/lib/install-manager'
+import type { ExistsFn, RealpathFn } from 'src/lib/install-manager'
 
 /** Set any of these to disable the auto-update entirely. `NO_UPDATE_NOTIFIER`/`CI` are ecosystem convention. */
 export const OPT_OUT_ENV_VARS = ['INFRA_KIT_NO_AUTO_UPDATE', 'NO_UPDATE_NOTIFIER', 'CI'] as const
@@ -18,6 +18,9 @@ export interface AutoUpdateGuardInput {
   selfRealPath: string
   cwd: string
   realpath: RealpathFn
+  /** `os.homedir()`. */
+  home: string
+  exists: ExistsFn
 }
 
 /**
@@ -34,11 +37,11 @@ export type SkipReason = 'opt-out' | 'json' | 'not-a-tty' | 'local-install'
  * would be both useless (the project keeps using its pinned copy) and rude.
  *
  * @example
- * autoUpdateSkipReason({ argv: ['node', 'cli.js', 'version', '--json'], env: {}, isTty: true, selfRealPath: '/g/cli.js', cwd: '/p', realpath: (p) => p })
+ * autoUpdateSkipReason({ argv: ['node', 'cli.js', 'version', '--json'], env: {}, isTty: true, selfRealPath: '/g/cli.js', cwd: '/p', realpath: (p) => p, home: '/h', exists: () => false })
  * // => 'json'
  */
 export const autoUpdateSkipReason = (input: AutoUpdateGuardInput): SkipReason | null => {
-  const { argv, env, isTty, selfRealPath, cwd, realpath } = input
+  const { argv, env, isTty } = input
 
   const optedOut = OPT_OUT_ENV_VARS.some((name) => {
     const value = env[name]
@@ -50,7 +53,9 @@ export const autoUpdateSkipReason = (input: AutoUpdateGuardInput): SkipReason | 
   if (argv.includes('--json')) return 'json'
   // Never nag or mutate for piped/scripted runs; a human must be present to see the outcome.
   if (!isTty) return 'not-a-tty'
-  if (isLocalNodeModulesInstall(selfRealPath, cwd, realpath)) return 'local-install'
+  // Not the bare cwd test: every global layout under `$HOME` is "inside the cwd" when the cwd is `$HOME`,
+  // and that skipped the update for each command run from there.
+  if (shouldWarnLocalInstall(input)) return 'local-install'
 
   return null
 }

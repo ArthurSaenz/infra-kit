@@ -23,6 +23,19 @@ describe('parseSemver', () => {
     expect(parseSemver(input)).toBeNull()
   })
 
+  // The version reaches an install argv (a shell on win32) and a line printed to the terminal.
+  it.each([
+    `9.9.9+${String.fromCharCode(27)}[31mEVIL`,
+    '9.9.9-a;touch x',
+    '9.9.9+&calc',
+    '9.9.9-$(id)',
+    '9.9.9-rc\nRun: other',
+    '9.9.9+a+b',
+  ])('returns null for a suffix outside the semver charset: %o', (input) => {
+    expect(parseSemver(input)).toBeNull()
+    expect(isNewerVersion(input, '0.1.0')).toBe(false)
+  })
+
   it('never produces NaN, the failure mode of version-utils.parseVersion on bare versions', () => {
     // `version-utils.parseVersion('0.1.130')` does `.slice(1)` => [NaN, 1, 130]. This must not.
     expect(parseSemver('0.1.130')?.release.some(Number.isNaN)).toBe(false)

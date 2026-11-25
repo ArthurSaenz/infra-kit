@@ -235,12 +235,12 @@ describe('buildRootBody', () => {
     expect(lines.indexOf('## Architecture')).toBeLessThan(lines.indexOf('## Writing code'))
   })
 
-  it('renders exactly 51 lines', () => {
+  it('renders exactly 56 lines', () => {
     // Same net as the per-type counts, extended to the two resources `PACKAGE_TYPES`
     // does not reach. The root body carries no placeholder today, so this count is the
     // ONLY net against the prettier-inserts-a-line class here — the alternative backstop
     // is a snapshot whose update path is `vitest -u`.
-    expect(rendered.split('\n')).toHaveLength(51)
+    expect(rendered.split('\n')).toHaveLength(56)
   })
 
   it('keeps the pre-existing command and convention text', () => {
