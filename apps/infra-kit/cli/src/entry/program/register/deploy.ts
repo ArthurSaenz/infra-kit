@@ -3,7 +3,12 @@ import process from 'node:process'
 
 import { deployRun } from 'src/commands/deploy-run'
 import { deploySync } from 'src/commands/deploy-sync'
-import { localDeployAllMcpTool, localDeploySelectedMcpTool } from 'src/commands/local-deploy'
+import {
+  localDeployAll,
+  localDeployAllMcpTool,
+  localDeploySelected,
+  localDeploySelectedMcpTool,
+} from 'src/commands/local-deploy'
 import { deprecatedLocalDeploy } from 'src/commands/release-deploy'
 import type { CommandCatalogEntry } from 'src/entry/command-catalog/catalog-entry'
 import { emit } from 'src/lib/json-output'
@@ -38,6 +43,7 @@ export const registerDeprecatedLocalCommands = (program: Command): void => {
             printEnv: options.printEnv,
           },
           'all',
+          { all: localDeployAll, selected: localDeploySelected },
         ),
       )
     })
@@ -56,6 +62,7 @@ export const registerDeprecatedLocalCommands = (program: Command): void => {
             printEnv: options.printEnv,
           },
           'selected',
+          { all: localDeployAll, selected: localDeploySelected },
         ),
       )
     })

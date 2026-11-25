@@ -1,8 +1,6 @@
 import { ghReleaseDeployAll } from 'src/commands/release-deploy/gh-release-deploy-all'
 import { ghReleaseDeploySelected } from 'src/commands/release-deploy/gh-release-deploy-selected'
-// import { localDeployAll, localDeploySelected } from 'src/commands/local-deploy'
 import { commandEcho } from 'src/lib/command-echo'
-import { OperationError } from 'src/lib/errors/operation-error'
 import { logger } from 'src/lib/logger'
 import { assertFlagsMatchSource, resolveDeploySource } from 'src/lib/release-deploy'
 
@@ -19,6 +17,22 @@ export interface ReleaseDeployArgs {
 
 type Selection = 'all' | 'selected'
 
+interface LocalDeployArgs {
+  env?: string
+  confirmedCommand?: boolean
+  dryRun?: boolean
+  printEnv?: boolean
+}
+
+/**
+ * The `--from local` runners, passed in by the entry layer: `commands/local-deploy` is a sibling
+ * command folder, which this one may not import (`@ik/layer-imports`).
+ */
+export interface LocalDeployRunners<R = unknown> {
+  all: (args: LocalDeployArgs) => Promise<R>
+  selected: (args: LocalDeployArgs & { service?: string[] }) => Promise<R>
+}
+
 /**
  * The shared body of `release deploy-all` and `release deploy-selected`.
  *
@@ -33,7 +47,12 @@ type Selection = 'all' | 'selected'
  * would turn the palette's bare-path dispatch (which today opens a service checkbox) into a
  * deploy-everything.
  */
-const runReleaseDeploy = async (args: ReleaseDeployArgs, selection: Selection, echoFrom = true) => {
+const runReleaseDeploy = async <R>(
+  args: ReleaseDeployArgs,
+  selection: Selection,
+  local: LocalDeployRunners<R>,
+  echoFrom = true,
+) => {
   const { from, version, env, services, skipTerraform, yes, dryRun, printEnv } = args
 
   const source = await resolveDeploySource(from)
@@ -51,27 +70,15 @@ const runReleaseDeploy = async (args: ReleaseDeployArgs, selection: Selection, e
     '--print-env': printEnv,
   })
 
-  // TEMPORARILY DISABLED: deploys run in CI only. Refusing here, after `--from` is resolved, is the one
-  // choke point every entry path shares — the merged command, the deprecated `local …` aliases and
-  // the palette — so an agent cannot reach the local runner through any of them. Restore the block
-  // below (and the import above + the picker choice in `source-picker.ts`) to re-enable it.
   if (source === 'local') {
-    throw new OperationError(undefined, {
-      operation: 'deploy --from local',
-      remediation: 'use --from ci to dispatch the release workflow',
-      stderrExcerpt: 'local deploys are disabled for now — deploys run in CI only',
-    })
+    // `--services` is the one service flag on the merged surface; the local entrypoints still take
+    // `service`, which is what their tool schemas declare and must keep declaring.
+    // `confirmedCommand: yes`, the same normalization the two `gh` calls below do: `confirmedCommand`
+    // is the one name every handler and every confirm site reads, `yes` is Commander's flag alone.
+    return selection === 'all'
+      ? local.all({ env, confirmedCommand: yes, dryRun, printEnv })
+      : local.selected({ env, service: services, confirmedCommand: yes, dryRun, printEnv })
   }
-
-  // if (source === 'local') {
-  //   // `--services` is the one service flag on the merged surface; the local entrypoints still take
-  //   // `service`, which is what their tool schemas declare and must keep declaring.
-  //   // `confirmedCommand: yes`, the same normalization the two `gh` calls below do: `confirmedCommand`
-  //   // is the one name every handler and every confirm site reads, `yes` is Commander's flag alone.
-  //   return selection === 'all'
-  //     ? localDeployAll({ env, confirmedCommand: yes, dryRun, printEnv })
-  //     : localDeploySelected({ env, service: services, confirmedCommand: yes, dryRun, printEnv })
-  // }
 
   return selection === 'all'
     ? ghReleaseDeployAll({ version, env, skipTerraform, confirmedCommand: yes })
@@ -79,13 +86,13 @@ const runReleaseDeploy = async (args: ReleaseDeployArgs, selection: Selection, e
 }
 
 /** Deploy every service the environment accepts, from a release ref or from this working tree. */
-export const releaseDeployAll = async (args: ReleaseDeployArgs) => {
-  return runReleaseDeploy(args, 'all')
+export const releaseDeployAll = async <R>(args: ReleaseDeployArgs, local: LocalDeployRunners<R>) => {
+  return runReleaseDeploy(args, 'all', local)
 }
 
 /** Deploy a chosen subset of services, from a release ref or from this working tree. */
-export const releaseDeploySelected = async (args: ReleaseDeployArgs) => {
-  return runReleaseDeploy(args, 'selected')
+export const releaseDeploySelected = async <R>(args: ReleaseDeployArgs, local: LocalDeployRunners<R>) => {
+  return runReleaseDeploy(args, 'selected', local)
 }
 
 /**
@@ -95,16 +102,17 @@ export const releaseDeploySelected = async (args: ReleaseDeployArgs) => {
  * but they are gone from the palette (`menuGroup: null`) and say so on every run. They pin
  * `--from local`, which is exactly what they always meant.
  */
-export const deprecatedLocalDeploy = async (
+export const deprecatedLocalDeploy = async <R>(
   // Narrower than `Omit<…, 'from'>`: the aliases register no `--version`/`--skip-terraform`, so
   // admitting them would describe a call no caller can make.
   args: Pick<ReleaseDeployArgs, 'env' | 'services' | 'yes' | 'dryRun' | 'printEnv'>,
   selection: Selection,
+  local: LocalDeployRunners<R>,
 ) => {
   const replacement = `release deploy-${selection} --from local`
 
   logger.warn(`\`local deploy-${selection}\` is deprecated and will be removed — use \`${replacement}\` instead.`)
 
   // `echoFrom: false` — these aliases have no `--from` to print. They pin the runner internally.
-  return runReleaseDeploy({ ...args, from: 'local' }, selection, false)
+  return runReleaseDeploy({ ...args, from: 'local' }, selection, local, false)
 }

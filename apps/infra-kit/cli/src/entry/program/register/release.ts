@@ -5,6 +5,7 @@ import { ghMergeDev, ghMergeDevMcpTool } from 'src/commands/gh-merge-dev'
 import { withRunCleanup } from 'src/commands/gh-merge-dev/run-cleanup'
 import { ghReleaseDeliver, ghReleaseDeliverMcpTool } from 'src/commands/gh-release-deliver'
 import { ghReleaseList, ghReleaseListMcpTool } from 'src/commands/gh-release-list'
+import { localDeployAll, localDeploySelected } from 'src/commands/local-deploy'
 import { releaseCreate, releaseCreateMcpTool } from 'src/commands/release-create'
 import { releaseDeployAll, releaseDeploySelected } from 'src/commands/release-deploy'
 import { ghReleaseDeployAllMcpTool } from 'src/commands/release-deploy/gh-release-deploy-all'
@@ -164,20 +165,25 @@ const withDeploySourceOptions = (cmd: Command): Command => {
     .option('--print-env', 'With --from local: print the resolved build contract')
 }
 
+const LOCAL_RUNNERS = { all: localDeployAll, selected: localDeploySelected }
+
 const configureReleaseDeployAll = (cmd: Command): Command => {
   return withDeploySourceOptions(cmd)
     .description('Deploy every service to any environment, in CI or from this machine')
     .action(async (options) => {
       emit(
-        await releaseDeployAll({
-          from: options.from,
-          version: options.version,
-          env: options.env,
-          skipTerraform: options.skipTerraform,
-          yes: options.yes,
-          dryRun: options.dryRun,
-          printEnv: options.printEnv,
-        }),
+        await releaseDeployAll(
+          {
+            from: options.from,
+            version: options.version,
+            env: options.env,
+            skipTerraform: options.skipTerraform,
+            yes: options.yes,
+            dryRun: options.dryRun,
+            printEnv: options.printEnv,
+          },
+          LOCAL_RUNNERS,
+        ),
       )
     })
 }
@@ -188,16 +194,19 @@ const configureReleaseDeploySelected = (cmd: Command): Command => {
     .option('-s, --services <services...>', 'Specify services to deploy, e.g. client-be client-fe')
     .action(async (options) => {
       emit(
-        await releaseDeploySelected({
-          from: options.from,
-          version: options.version,
-          env: options.env,
-          services: options.services,
-          skipTerraform: options.skipTerraform,
-          yes: options.yes,
-          dryRun: options.dryRun,
-          printEnv: options.printEnv,
-        }),
+        await releaseDeploySelected(
+          {
+            from: options.from,
+            version: options.version,
+            env: options.env,
+            services: options.services,
+            skipTerraform: options.skipTerraform,
+            yes: options.yes,
+            dryRun: options.dryRun,
+            printEnv: options.printEnv,
+          },
+          LOCAL_RUNNERS,
+        ),
       )
     })
 }
