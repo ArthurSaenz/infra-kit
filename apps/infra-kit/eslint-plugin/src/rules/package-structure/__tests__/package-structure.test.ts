@@ -137,6 +137,7 @@ describe('message data', () => {
   it('is clean for an allowed layer', () => {
     expect(lint('frontend', 'features')).toEqual([])
     expect(lint('backend', 'controllers')).toEqual([])
+    expect(lint('backend', 'lambda_controllers')).toEqual([])
     expect(lint('backend', 'services/orders/lib')).toEqual([])
     expect(lint('e2e', 'fixtures')).toEqual([])
     expect(lint('e2e', 'tests/checkout/fixtures')).toEqual([])

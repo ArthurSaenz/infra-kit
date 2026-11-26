@@ -625,7 +625,7 @@ settled.
 | Type       | Default `layers`                                                                        | Default `segments`                                                                | Default `skill`            |
 | ---------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------- |
 | `frontend` | `app`, `features`, `lib`, `components`, `pages`, `routes`, `__tests__`                  | `features/*` → `containers`, `components`, `services`, `__stories__`, `__tests__` | `/infra-kit:fe-architect`  |
-| `backend`  | `controllers`, `services`, `lib`, `config`, `__tests__`                                 | `services/*` → `__tests__`, `lib`                                                 | `/infra-kit:be-architect`  |
+| `backend`  | `lambda_controllers`, `controllers`, `services`, `lib`, `config`, `__tests__`           | `services/*` → `__tests__`, `lib`                                                 | `/infra-kit:be-architect`  |
 | `e2e`      | `tests`, `visual`, `setup`, `pages`, `config`, `lib`, `components`, `mocks`, `fixtures` | `tests/*`, `visual/*` → `pages`, `fixtures`, `mocks`, `data`, `lib`               | `/infra-kit:e2e-architect` |
 | `mobile`   | — (silent)                                                                              | —                                                                                 | —                          |
 | `lib`      | — (silent)                                                                              | —                                                                                 | —                          |
@@ -645,7 +645,7 @@ export default config({
       'error',
       {
         backend: {
-          layers: ['lambda_controllers', 'services', 'libs', 'local'],
+          layers: ['handlers', 'services', 'libs', 'local'],
           segments: { 'services/*': ['__tests__', 'fixtures'] },
           skill: '/infra-kit:be-architect',
         },
@@ -729,10 +729,11 @@ environment (global styles, providers) like an entry point and is not part of th
 A **backend** package (type resolved as `package-structure` resolves it) gets its own default levels:
 
 ```
-lib, config, services → controllers
+lib, config, services → lambda_controllers, controllers
 ```
 
-Nothing imports a controller at runtime: controllers compose services, never the reverse. `lib` and
+Nothing imports a controller at runtime: controllers compose services, never the reverse. The layer is
+`lambda_controllers/`; `controllers/` is accepted as the same level. `lib` and
 `services` share a level because [`service-public-api`](#service-public-api) owns that edge
 (`libRuntimeImport`, with its `libRuntimeAllow` escape). An explicit `layers` replaces these levels too.
 

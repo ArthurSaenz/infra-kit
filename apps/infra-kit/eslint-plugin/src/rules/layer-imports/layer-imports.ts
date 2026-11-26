@@ -44,7 +44,10 @@ export const DEFAULT_LAYERS: string[][] = [
 
 // `lib` and `services` share a level: `service-public-api` owns that edge (`libRuntimeImport`), with
 // its `libRuntimeAllow` escape for composition roots. This rule only keeps controllers on top.
-export const BACKEND_LAYERS: string[][] = [['lib', 'config', 'services'], ['controllers']]
+export const BACKEND_LAYERS: string[][] = [
+  ['lib', 'config', 'services'],
+  ['lambda_controllers', 'controllers'],
+]
 
 /** The built-in levels for the package `filename` lives in, or null where `src/` has no layering (e2e). */
 const defaultLayersOf = (filename: string): string[][] | null => {
@@ -81,7 +84,7 @@ export const layerImports: Rule.RuleModule = {
     type: 'problem',
     docs: {
       description:
-        'Allow imports only to the same or a lower layer of `src/` (lib/components → entities → features → pages/routes → app; in a backend lib/config/services → controllers).',
+        'Allow imports only to the same or a lower layer of `src/` (lib/components → entities → features → pages/routes → app; in a backend lib/config/services → lambda_controllers).',
       recommended: true,
       url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin#layer-imports',
     },

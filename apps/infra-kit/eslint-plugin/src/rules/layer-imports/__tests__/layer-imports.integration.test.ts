@@ -55,6 +55,8 @@ describe('layer-imports by package type', () => {
     ['services/orders/order.service.ts', "import { handler } from '../../controllers/orders.js'"],
     ['lib/a.ts', "import { handler } from '../controllers/orders.js'"],
     ['config/a.ts', "const orders = await import('../controllers/orders.js')"],
+    ['services/orders/order.service.ts', "import { handler } from '#root/lambda_controllers/orders.js'"],
+    ['lib/a.ts', "import { handler } from '../lambda_controllers/orders.js'"],
   ])('reports a backend %s importing a controller', (relPath, code) => {
     expect(
       lint(relPath, code).map((message) => {
@@ -65,12 +67,14 @@ describe('layer-imports by package type', () => {
 
   it('spells out the backend order', () => {
     expect(lint('lib/a.ts', "import { handler } from '../controllers/orders.js'")[0]?.message).toBe(
-      '`lib` cannot import `../controllers/orders.js` from the higher layer `controllers`. Layers import only their own level or below: lib, config, services → controllers. Move the shared code down into a lower layer, or pass it in from above.',
+      '`lib` cannot import `../controllers/orders.js` from the higher layer `controllers`. Layers import only their own level or below: lib, config, services → lambda_controllers, controllers. Move the shared code down into a lower layer, or pass it in from above.',
     )
   })
 
   it.each([
     ['controllers/orders.ts', "import { OrderService } from '../services/orders/index.js'"],
+    ['lambda_controllers/orders.ts', "import { OrderService } from '../services/orders/index.js'"],
+    ['lambda_controllers/orders.ts', "import { shared } from '../controllers/shared.js'"],
     ['controllers/orders.ts', "import { compose } from './composition/orders.js'"],
     ['services/orders/order.service.ts', "import { BaseService } from '../../lib/base-service.js'"],
     ['services/orders/order.service.ts', "import type { Handler } from '../../controllers/orders.js'"],
@@ -82,7 +86,7 @@ describe('layer-imports by package type', () => {
   })
 
   it('lets `layers` replace the backend levels', () => {
-    const options: Options = { layers: [['libs'], ['services'], ['lambda_controllers']] }
+    const options: Options = { layers: [['libs'], ['services'], ['handlers']] }
 
     expect(lint('libs/a.ts', "import { x } from '../services/orders/index.js'", options)).toHaveLength(1)
     expect(lint('lib/a.ts', "import { handler } from '../controllers/orders.js'", options)).toEqual([])

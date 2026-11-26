@@ -26,7 +26,7 @@ Lint messages from `@wl/package-structure`, `@wl/service-files`, `@wl/service-pu
 2. Pick the domain: an existing folder if the business area matches, else a new kebab-case folder.
 3. Put the code in an allowed file ([allowlist](#domain-allowlist)); export what callers need from `index.ts`.
 4. Need another domain at runtime? Do not import it. Take it as a constructor/function argument typed with
-   `import type`, and wire it in the controller (or in `src/controllers/composition/` when several
+   `import type`, and wire it in the controller (or in `src/lambda_controllers/composition/` when several
    controllers share the wiring).
 5. Run the package's `eslint-check` and its unit tests (`pnpm --filter <api-package> run test`).
 
@@ -46,7 +46,7 @@ Follow [Migration recipe](#migration-recipe) — four commits per app. Details, 
 
 ```
 src/
-├── controllers/          # One file per Lambda/route handler; composes services
+├── lambda_controllers/   # One file per Lambda/route handler; composes services (`controllers/` is accepted too)
 │   └── composition/      # Shared factories that wire several domains together
 ├── services/
 │   └── <domain>/         # kebab-case, one business area
@@ -94,7 +94,7 @@ Anything else (`client.ts`, `x.repository.ts`, `helpers.ts`) is either a `*.serv
    `__tests__/` may use the index.
 5. **`src/lib/` does not import `services/**` at runtime** (allowlisted composition roots aside, see
    `libRuntimeAllow` below).
-6. **Nothing imports `controllers/` at runtime.** `lib/`, `config/` and `services/` never reach up into a
+6. **Nothing imports `lambda_controllers/` at runtime.** `lib/`, `config/` and `services/` never reach up into a
    controller; `import type` is fine.
 
 ## Controllers
@@ -102,7 +102,7 @@ Anything else (`client.ts`, `x.repository.ts`, `helpers.ts`) is either a `*.serv
 Controllers are the composition layer. They construct services, pass one domain's function or instance into
 another (typed via `import type` on the receiving side), and adapt the result to the transport. A factory that
 several controllers share (`new OrderService(new CouponService(), …)`) lives in
-`src/controllers/composition/<name>.ts` and imports each domain through its `index`. Composition never lives
+`src/lambda_controllers/composition/<name>.ts` and imports each domain through its `index`. Composition never lives
 in `src/lib/` or in a domain.
 
 ## What may live in `src/lib/`
@@ -132,7 +132,7 @@ need it.
 | `src/lib/**` value-imports a domain                                                           | `@wl/service-public-api` → `libRuntimeImport`   | —                                                            |
 | `export * from` in a domain's `index.ts`                                                      | `@wl/no-public-api-export-all`                  | —                                                            |
 | Domain file value-imports its own `index.ts`                                                  | `@wl/service-public-api` → `selfImport`         | —                                                            |
-| `lib/`, `config/` or `services/` value-imports `controllers/`                                 | `@wl/layer-imports` → `upward`                  | —                                                            |
+| `lib/`, `config/` or `services/` value-imports `lambda_controllers/`                          | `@wl/layer-imports` → `upward`                  | —                                                            |
 
 One fix clears every report on a line. Suppressing any of them — bulk suppression, `eslint-disable`, or an
 `'off'` line — is banned for all of these rule ids.
@@ -173,7 +173,7 @@ package) from the approved grouping first; it drives both `git mv` and the suppr
    passes ts-check and silently mocks nothing). Re-key suppressions. Run the edge census
    ([migration.md](./references/migration.md#edge-census)) and get the grouping approved.
 2. **Fix edges while files are flat.** Remove every cross-domain runtime edge: inject instead of import, move
-   shared factories to `src/controllers/composition/`, move what passes the lib test to `src/lib/`. Behaviour
+   shared factories to `src/lambda_controllers/composition/`, move what passes the lib test to `src/lib/`. Behaviour
    changes only; no moves.
 3. **Pure moves + barrels.** `git mv` into `services/<domain>/` and `services/<domain>/__tests__/` per the
    map, add each `index.ts`, switch importers and `vi.mock` strings to `services/<domain>/index.js`. No logic

@@ -36,7 +36,7 @@ After commit 1, list every cross-domain runtime edge the planned grouping would 
    `boundaries/dependencies` hit.
 
 Iterate the grouping until every remaining edge has a planned fix (inject, compose in
-`src/controllers/composition/`, or move a lib-test-passing helper to `src/lib/`), then show the grouping and
+`src/lambda_controllers/composition/`, or move a lib-test-passing helper to `src/lib/`), then show the grouping and
 the census to the human. Commit 2 starts only after approval.
 
 ## Per-commit checklist
@@ -51,15 +51,15 @@ the census to the human. Commit 2 starts only after approval.
 
 ## Handler and dist checks
 
-Serverless handlers point into `dist/controllers/*`, so moving services does not change them — but a layer
-rename does. After any commit that touches `controllers/`, do a clean build (delete `dist/` **and**
+Serverless handlers point into `dist/lambda_controllers/*`, so moving services does not change them — but a layer
+rename does. After any commit that touches `lambda_controllers/`, do a clean build (delete `dist/` **and**
 `tsconfig.tsbuildinfo`, which otherwise keeps stale outputs alive) and confirm every `handler:` in
 `serverless.yml` resolves to a built `.js` file. Check Dockerfile `CMD` paths the same way.
 
 ## Layer renames
 
-A package whose layers do not match the [tree](../SKILL.md#src-tree) (`lambda_controllers/`,
-`fastify_controllers/`, `libs/`) gets a commit 0 before commit 1: rename the layer directories only, update
+A package whose layers do not match the [tree](../SKILL.md#src-tree) (`fastify_controllers/`,
+`libs/`) gets a commit 0 before commit 1: rename the layer directories only, update
 every reference (`serverless.yml` handlers, imports, docs, specs), re-key suppressions with a directory map
 entry (the `wl-config/folder-case` entries drop), and remove any `'@wl/package-structure': 'off'` line once
 lint is green.

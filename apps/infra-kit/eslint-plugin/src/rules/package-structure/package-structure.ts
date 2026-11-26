@@ -44,7 +44,7 @@ export const DEFAULT_ENTRIES: Partial<Record<PackageType, LayerEntry>> = {
     skill: '/infra-kit:fe-architect',
   },
   backend: {
-    layers: ['controllers', 'services', 'lib', 'config', '__tests__'],
+    layers: ['lambda_controllers', 'controllers', 'services', 'lib', 'config', '__tests__'],
     segments: {
       'services/*': ['__tests__', 'lib'],
     },
