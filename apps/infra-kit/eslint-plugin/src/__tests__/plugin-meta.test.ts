@@ -99,10 +99,16 @@ describe('service rules registration', () => {
     expect(rules['service-public-api']).toBeDefined()
   })
 
-  // Opt-in ratchet: each backend app enables them once it conforms; 0.49 moves them into the preset.
-  it('keeps service rules out of configs.recommended until the 0.49 flip', () => {
-    expect(presetRuleIds).not.toContain('@wl/service-files')
-    expect(presetRuleIds).not.toContain('@wl/service-public-api')
+  it('enables both in the recommended preset', () => {
+    expect(presetRuleIds).toContain('@wl/service-files')
+    expect(presetRuleIds).toContain('@wl/service-public-api')
+  })
+})
+
+describe('no-public-api-export-all registration', () => {
+  it('is registered in the rule map and enabled by the recommended preset', () => {
+    expect(rules['no-public-api-export-all']).toBeDefined()
+    expect(presetRuleIds).toContain('@wl/no-public-api-export-all')
   })
 })
 

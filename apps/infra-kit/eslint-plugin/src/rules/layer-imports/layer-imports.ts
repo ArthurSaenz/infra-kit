@@ -4,11 +4,13 @@ import {
   DEFAULT_ROOT_ALIAS,
   IMPORT_SELECTORS,
   fileDirsUnderSrc,
-  isLayeredFile,
   readImportSource,
   resolveUnderSrc,
   srcDirOf,
 } from '../../utils/import-target'
+import { findPackageRoot } from '../../utils/package-root'
+import { resolvePackageType } from '../../utils/package-type-reader'
+import { matchesAnyGlob } from '../../utils/path-match'
 
 export interface Options {
   /** Folders under `src/`, lowest level first; folders in one inner array share a level. */
@@ -40,6 +42,22 @@ export const DEFAULT_LAYERS: string[][] = [
   ['app', 'renderer', 'mobile'],
 ]
 
+// `lib` and `services` share a level: `service-public-api` owns that edge (`libRuntimeImport`), with
+// its `libRuntimeAllow` escape for composition roots. This rule only keeps controllers on top.
+export const BACKEND_LAYERS: string[][] = [['lib', 'config', 'services'], ['controllers']]
+
+/** The built-in levels for the package `filename` lives in, or null where `src/` has no layering (e2e). */
+const defaultLayersOf = (filename: string): string[][] | null => {
+  const packageRoot = findPackageRoot(filename)
+  const type = packageRoot === null ? null : resolvePackageType(packageRoot)
+
+  if (type === 'e2e') {
+    return null
+  }
+
+  return type === 'backend' ? BACKEND_LAYERS : DEFAULT_LAYERS
+}
+
 const levelIndex = (layers: readonly string[][]): Map<string, number> => {
   return new Map(
     layers.flatMap((level, index) => {
@@ -63,7 +81,7 @@ export const layerImports: Rule.RuleModule = {
     type: 'problem',
     docs: {
       description:
-        'Allow imports only to the same or a lower layer of `src/` (lib/components → entities → features → pages/routes → app).',
+        'Allow imports only to the same or a lower layer of `src/` (lib/components → entities → features → pages/routes → app; in a backend lib/config/services → controllers).',
       recommended: true,
       url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin#layer-imports',
     },
@@ -109,11 +127,19 @@ export const layerImports: Rule.RuleModule = {
     const filename = context.filename.split('\\').join('/')
     const srcDir = srcDirOf(filename)
 
-    if (srcDir === null || isTestFile(filename) || !isLayeredFile(filename, options.ignore ?? [])) {
+    const ignore = options.ignore ?? []
+    const defaultLayers = defaultLayersOf(filename)
+
+    if (
+      srcDir === null ||
+      defaultLayers === null ||
+      isTestFile(filename) ||
+      (ignore.length > 0 && matchesAnyGlob(filename, ignore))
+    ) {
       return {}
     }
 
-    const layers = options.layers ?? DEFAULT_LAYERS
+    const layers = options.layers ?? defaultLayers
     const levels = levelIndex(layers)
     const [fromLayer, fromUnit] = fileDirsUnderSrc(filename, srcDir)
     const fromLevel = fromLayer === undefined ? undefined : levels.get(fromLayer)

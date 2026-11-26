@@ -129,7 +129,8 @@ plugin.configs.recommended = [
     },
   },
   // Import-path rules read where a specifier lands under `src/`, so they reach every source extension.
-  // They gate themselves on the package type (backend and e2e packages have no UI layering).
+  // They gate themselves on the package type: e2e packages are skipped, and in a backend only
+  // `layer-imports` runs, with its own levels.
   {
     files: ['**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}'],
     plugins: {
@@ -139,6 +140,29 @@ plugin.configs.recommended = [
       [`${PLUGIN_NAME}/layer-imports`]: 'error',
       [`${PLUGIN_NAME}/feature-public-api`]: 'error',
       [`${PLUGIN_NAME}/no-feature-self-import`]: 'error',
+    },
+  },
+  // One rule for both kinds of public API: a feature's `index` and a backend domain's `index`.
+  {
+    files: ['**/index.{ts,tsx,js,jsx,mts,cts,mjs,cjs}'],
+    plugins: {
+      [PLUGIN_NAME]: plugin,
+    },
+    rules: {
+      [`${PLUGIN_NAME}/no-public-api-export-all`]: 'error',
+    },
+  },
+  // be-architect service rules. Both gate themselves on the package type, so every non-backend
+  // package is silent. An app with a composition root in `src/lib/` restates `service-public-api`
+  // with `libRuntimeAllow` in a later block.
+  {
+    files: ['**/*.{ts,js,mts,cts,mjs,cjs}'],
+    plugins: {
+      [PLUGIN_NAME]: plugin,
+    },
+    rules: {
+      [`${PLUGIN_NAME}/service-files`]: 'error',
+      [`${PLUGIN_NAME}/service-public-api`]: 'error',
     },
   },
   // fe-architect naming and purity rules. Each gates itself on path and package type (backend and e2e

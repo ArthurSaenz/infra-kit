@@ -180,6 +180,32 @@ describe('service-public-api', () => {
     })
   })
 
+  describe('selfImport', () => {
+    it.each([
+      ['the alias', "import { fee } from '#root/services/payments'"],
+      ['the alias index', "import { fee } from '#root/services/payments/index.js'"],
+      ['a relative index', "import { fee } from './index.js'"],
+      ['a re-export', "export { fee } from './index.js'"],
+      ['a dynamic import', "const payments = await import('./index.js')"],
+    ])('reports a domain file importing its own public API through %s', (_label, code) => {
+      expect(messageIdsOf(PAYMENTS, code)).toEqual(['selfImport'])
+    })
+
+    it('reports the folder path from the domain lib', () => {
+      expect(lint('services/payments/lib/fee.ts', "import { PaymentService } from '..'")[0]?.message).toBe(
+        '`..` imports domain `payments` through its own public API from inside it, which makes an import cycle via `index.ts`. Import the module that defines it with a relative path instead. See /infra-kit:be-architect for the backend import rules.',
+      )
+    })
+
+    it('accepts a type-only self import, which closes no runtime cycle', () => {
+      expect(lint(PAYMENTS, "import type { Payment } from './index.js'")).toEqual([])
+    })
+
+    it('accepts a domain test importing its own public API', () => {
+      expect(lint('services/payments/__tests__/x.test.ts', "import { PaymentService } from '../index.js'")).toEqual([])
+    })
+  })
+
   it('is silent in a frontend package', () => {
     const code = "import { OrderService } from '../orders/order.service.js'"
 

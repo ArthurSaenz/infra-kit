@@ -52,10 +52,11 @@ Instead of asking many questions upfront, **infer from context**:
 1. **Analyze the request** — Determine feature name, whether UI/API/state is needed, and complexity
 2. **Present a brief plan:**
    > "I'll create feature `user-profile` in `apps/client/src/features/` with:
+   >
    > - Dumb component + container (UI needed)
    > - Services folder (3 API endpoints → complex)
    > - Types, tests, stories
-   > Using the feature template."
+   >   Using the feature template."
 3. **Only ask when genuinely ambiguous** — e.g., unclear feature name, unclear whether simple or complex services
 
 ### CREATE: New Features
@@ -123,13 +124,17 @@ features/[feature-name]/
 
 ```typescript
 export { FeatureNameContainer } from './containers/feature-name-container'
-export * as featureNameService from './services'  // [featureName]Service
+export * as featureNameService from './services' // [featureName]Service
 export type { FeatureNameData } from './types'
 ```
+
+Never `export * from` here: name the exports, or publish a module under one name with `export * as`
+(`export type * from './types'` is fine). Lint: `@wl/no-public-api-export-all`.
 
 ### Cross-Feature Communication
 
 Features communicate only at the page level. Three patterns:
+
 - **Element pattern:** `<Container icon={<OtherFeatureIcon />} />` — simple slots
 - **Component pattern:** `<Container SidebarComponent={OtherFeature} />` — parent controls props
 - **Render function:** `<Container renderSection={(props) => <OtherFeature {...props} />} />` — full control
@@ -142,19 +147,19 @@ See [rules.md](./references/core/rules.md) for cross-feature details.
 
 Grep for the search hints rather than reading a whole reference — `cookbook.md` alone is 400+ lines.
 
-| Reference | Content | When to Read | Search Hints |
-|---|---|---|---|
-| [core/rules.md](./references/core/rules.md) | 7 enforcement rules with examples and fix recipes, cross-feature patterns, naming conventions | Rule violations, cross-feature communication | `## 1. No Cross-Feature`, `## 5. Object Arguments`, `## 6. Dumb Component`, `## Naming Conventions` |
-| [core/enforcement.md](./references/core/enforcement.md) | Which layer owns which rule (lint / script / agent-only), how to ask the config what is live, 6-step violation workflow, Rules 6–7 expanded, WHY for Rules 2–6 | Reviewing a feature, deciding whether CI already covers something | `## Enforcement Layers`, `## Who owns each rule`, `## Do not trust a severity`, `## The gap lint cannot close`, `## Rule 6 Expanded`, `## Rule 7 Expanded`, `## Rules 2–6` |
-| [patterns/decisions.md](./references/patterns/decisions.md) | 7 intra-feature decision trees: dumb vs smart, services split, state scope, props interface, component splitting, error strategy, optimistic updates | Architectural decision-making inside a feature | `## 1. Dumb vs Smart`, `## 2. services.ts`, `## 3. State Scope`, `## 6. Error Handling`, `## 7. Optimistic` |
-| [example-style.md](./references/example-style.md) | Length budgets for code examples in these docs, five compression techniques, review checklist | Writing or reviewing this skill's reference docs | `## The rule`, `## Budgets`, `## Five techniques`, `## Review checklist` |
-| [implementation/templates.md](./references/implementation/templates.md) | Complete code templates for all file types | Creating new files | `## Types Template`, `## Dumb Component Template`, `## Smart Component Template`, `## Services Template`, `## Public API Template`, `## Test Templates` |
-| [implementation/api-layer.md](./references/implementation/api-layer.md) | httpClient patterns, error handling, ServerError, Sentry, caching | API integration | `## HTTP Client`, `## Complete Effect Pattern`, `## Error Handling`, `## Query Parameters`, `## Sentry Integration` |
-| [implementation/state-management.md](./references/implementation/state-management.md) | Jotai atom patterns, derived state, async operations | State management questions | `## Atom Types`, `## Basic Patterns`, `## Using Atoms in Components`, `## Atoms vs Local State`, `## Optimistic Updates` |
-| [patterns/cookbook.md](./references/patterns/cookbook.md) | CRUD, lists, forms, async, and advanced patterns | Implementation recipes | `## CRUD Pattern`, `## List with Search`, `## Form with Validation`, `## Multi-Step Wizard`, `## Optimistic UI`, `## Infinite Scroll`, `## Authentication Flow` |
-| [testing/testing.md](./references/testing/testing.md) | Testing + Storybook patterns | Writing tests and stories | `## Dumb Component Tests`, `## Smart Component Tests`, `## Testing Atoms Directly`, `## Mock Patterns`, `## Storybook` |
-| [maintenance/migration.md](./references/maintenance/migration.md) | Refactoring scenarios and migration strategies | Converting legacy code | `## Scenario 1`, `## Scenario 2`, `## Scenario 3`, `## Common Pitfalls` |
-| [maintenance/analytics.md](./references/maintenance/analytics.md) | Analytics tracking (OPTIONAL, client projects only) | Adding analytics | `## When to Add Analytics`, `## Event Naming Conventions`, `## Feature Analytics File` |
+| Reference                                                                             | Content                                                                                                                                                        | When to Read                                                      | Search Hints                                                                                                                                                               |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [core/rules.md](./references/core/rules.md)                                           | 7 enforcement rules with examples and fix recipes, cross-feature patterns, naming conventions                                                                  | Rule violations, cross-feature communication                      | `## 1. No Cross-Feature`, `## 5. Object Arguments`, `## 6. Dumb Component`, `## Naming Conventions`                                                                        |
+| [core/enforcement.md](./references/core/enforcement.md)                               | Which layer owns which rule (lint / script / agent-only), how to ask the config what is live, 6-step violation workflow, Rules 6–7 expanded, WHY for Rules 2–6 | Reviewing a feature, deciding whether CI already covers something | `## Enforcement Layers`, `## Who owns each rule`, `## Do not trust a severity`, `## The gap lint cannot close`, `## Rule 6 Expanded`, `## Rule 7 Expanded`, `## Rules 2–6` |
+| [patterns/decisions.md](./references/patterns/decisions.md)                           | 7 intra-feature decision trees: dumb vs smart, services split, state scope, props interface, component splitting, error strategy, optimistic updates           | Architectural decision-making inside a feature                    | `## 1. Dumb vs Smart`, `## 2. services.ts`, `## 3. State Scope`, `## 6. Error Handling`, `## 7. Optimistic`                                                                |
+| [example-style.md](./references/example-style.md)                                     | Length budgets for code examples in these docs, five compression techniques, review checklist                                                                  | Writing or reviewing this skill's reference docs                  | `## The rule`, `## Budgets`, `## Five techniques`, `## Review checklist`                                                                                                   |
+| [implementation/templates.md](./references/implementation/templates.md)               | Complete code templates for all file types                                                                                                                     | Creating new files                                                | `## Types Template`, `## Dumb Component Template`, `## Smart Component Template`, `## Services Template`, `## Public API Template`, `## Test Templates`                    |
+| [implementation/api-layer.md](./references/implementation/api-layer.md)               | httpClient patterns, error handling, ServerError, Sentry, caching                                                                                              | API integration                                                   | `## HTTP Client`, `## Complete Effect Pattern`, `## Error Handling`, `## Query Parameters`, `## Sentry Integration`                                                        |
+| [implementation/state-management.md](./references/implementation/state-management.md) | Jotai atom patterns, derived state, async operations                                                                                                           | State management questions                                        | `## Atom Types`, `## Basic Patterns`, `## Using Atoms in Components`, `## Atoms vs Local State`, `## Optimistic Updates`                                                   |
+| [patterns/cookbook.md](./references/patterns/cookbook.md)                             | CRUD, lists, forms, async, and advanced patterns                                                                                                               | Implementation recipes                                            | `## CRUD Pattern`, `## List with Search`, `## Form with Validation`, `## Multi-Step Wizard`, `## Optimistic UI`, `## Infinite Scroll`, `## Authentication Flow`            |
+| [testing/testing.md](./references/testing/testing.md)                                 | Testing + Storybook patterns                                                                                                                                   | Writing tests and stories                                         | `## Dumb Component Tests`, `## Smart Component Tests`, `## Testing Atoms Directly`, `## Mock Patterns`, `## Storybook`                                                     |
+| [maintenance/migration.md](./references/maintenance/migration.md)                     | Refactoring scenarios and migration strategies                                                                                                                 | Converting legacy code                                            | `## Scenario 1`, `## Scenario 2`, `## Scenario 3`, `## Common Pitfalls`                                                                                                    |
+| [maintenance/analytics.md](./references/maintenance/analytics.md)                     | Analytics tracking (OPTIONAL, client projects only)                                                                                                            | Adding analytics                                                  | `## When to Add Analytics`, `## Event Naming Conventions`, `## Feature Analytics File`                                                                                     |
 
 ## Validation Tools
 

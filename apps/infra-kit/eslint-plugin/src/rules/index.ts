@@ -24,6 +24,7 @@ import { maxJsdocSummaryLines } from './max-jsdoc-summary-lines'
 import { maxJsxReturnSize } from './max-jsx-return-size'
 import { noFeatureSelfImport } from './no-feature-self-import'
 import { noHooksInServices } from './no-hooks-in-services'
+import { noPublicApiExportAll } from './no-public-api-export-all'
 import { packageStructure } from './package-structure'
 import { propsDestructuringBlankLine } from './props-destructuring-blank-line'
 import { propsDestructuringNewline } from './props-destructuring-newline'
@@ -72,4 +73,5 @@ export const rules: Record<string, Rule.RuleModule> = {
   'dumb-component-purity': dumbComponentPurity,
   'service-files': serviceFiles,
   'service-public-api': servicePublicApi,
+  'no-public-api-export-all': noPublicApiExportAll,
 }

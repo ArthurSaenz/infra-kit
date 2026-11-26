@@ -25,6 +25,7 @@ export interface Options {
 
 const SERVICES = 'services'
 const LIB = 'lib'
+const TESTS = '__tests__'
 const SEE_SKILL = ' See /infra-kit:be-architect for the backend import rules.'
 
 /** The domain a src-relative path sits in (`services/<domain>/…`), or null outside a domain. */
@@ -54,7 +55,7 @@ export const servicePublicApi: Rule.RuleModule = {
     type: 'problem',
     docs: {
       description:
-        'Require backend code to enter a service domain only through its `index.ts`, and forbid runtime imports between domains and from `src/lib/` into services.',
+        'Require backend code to enter a service domain only through its `index.ts`, and forbid runtime imports between domains, from `src/lib/` into services, and from a domain into its own `index.ts`.',
       recommended: true,
       url: 'https://github.com/ArthurSaenz/infra-kit/tree/main/apps/infra-kit/eslint-plugin#service-public-api',
     },
@@ -80,6 +81,7 @@ export const servicePublicApi: Rule.RuleModule = {
     messages: {
       deepImport: `\`{{specifier}}\` reaches into the internals of domain \`{{domain}}\`. Import from its public API \`{{publicApi}}\` instead, exporting what you need from \`services/{{domain}}/index.ts\`.${SEE_SKILL}`,
       crossDomainRuntime: `\`{{specifier}}\` imports domain \`{{domain}}\` at runtime from domain \`{{ownDomain}}\`. Domains share only types (\`import type\`); compose services in a controller instead.${SEE_SKILL}`,
+      selfImport: `\`{{specifier}}\` imports domain \`{{domain}}\` through its own public API from inside it, which makes an import cycle via \`index.ts\`. Import the module that defines it with a relative path instead.${SEE_SKILL}`,
       libRuntimeImport: `\`{{specifier}}\` imports domain \`{{domain}}\` at runtime from \`src/lib/\`, which must stay domain-free. Move the code into the domain, or import only types (\`import type\`).${SEE_SKILL}`,
     },
   },
@@ -103,6 +105,8 @@ export const servicePublicApi: Rule.RuleModule = {
     const rootAlias = options.rootAlias ?? DEFAULT_ROOT_ALIAS
     const dirs = fileDirsUnderSrc(filename, srcDir)
     const ownDomain = domainOf(dirs)
+    // A domain's tests exercise it from outside, so its public API is the right entry for them.
+    const isDomainTest = dirs.includes(TESTS)
     const libRuntimeAllow = options.libRuntimeAllow ?? []
 
     const isGuardedLibFile =
@@ -112,7 +116,7 @@ export const servicePublicApi: Rule.RuleModule = {
       const target = source === null ? null : resolveUnderSrc(filename, srcDir, source.specifier, rootAlias)
       const domain = target === null ? null : domainOf(target)
 
-      if (source === null || domain === null || domain === ownDomain) {
+      if (source === null || domain === null) {
         return
       }
 
@@ -121,6 +125,15 @@ export const servicePublicApi: Rule.RuleModule = {
         domain,
         ownDomain: ownDomain ?? '',
         publicApi: `${rootAlias}/${SERVICES}/${domain}`,
+      }
+
+      if (domain === ownDomain) {
+        // A type-only import is erased at build time, so it closes no runtime cycle.
+        if (!source.typeOnly && !isDomainTest && isFeaturePublicApi(target!)) {
+          context.report({ node: source.node, messageId: 'selfImport', data })
+        }
+
+        return
       }
 
       if (!isFeaturePublicApi(target!)) {

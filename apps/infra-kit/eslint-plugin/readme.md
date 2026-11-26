@@ -722,9 +722,19 @@ A file in `src/features/` may import `lib/`, `components/`, `entities/` and othe
 The target is resolved from `#root/…` (the alias for `src/`) and from relative paths; package
 imports and other aliases are never reported. Static imports, re-exports and `import('…')` are
 checked. Type-only imports (`import type`, `typeof import()`) carry no runtime edge and are allowed
-unless `allowTypeImports: false`. Files directly in `src/`, in an unlisted folder, in a `backend` / `e2e`
+unless `allowTypeImports: false`. Files directly in `src/`, in an unlisted folder, in an `e2e`
 package, and test files (`__tests__/`, `*.test.*`, `*.spec.*`) are skipped: a test sets up its own
 environment (global styles, providers) like an entry point and is not part of the runtime graph.
+
+A **backend** package (type resolved as `package-structure` resolves it) gets its own default levels:
+
+```
+lib, config, services → controllers
+```
+
+Nothing imports a controller at runtime: controllers compose services, never the reverse. `lib` and
+`services` share a level because [`service-public-api`](#service-public-api) owns that edge
+(`libRuntimeImport`, with its `libRuntimeAllow` escape). An explicit `layers` replaces these levels too.
 
 Imports between features are left to `eslint-plugin-boundaries`; this rule only judges direction.
 `isolate` adds one sibling rule for folders whose children are independent units — with
@@ -995,16 +1005,7 @@ Any extension in `.[cm]?[jt]s` counts. Four message ids:
 Only **backend** packages are judged, with the type resolved as `package-structure` resolves it;
 frontend, lib, e2e and mobile packages are silent, and so are `.d.ts` files. `missingIndex` checks the
 disk, so an IDE server can show a stale result until the file is linted again after `index.ts` is
-added. Not in `configs.recommended` yet: enable it per backend app once that app conforms.
-
-```js
-{
-  files: ['src/**/*.{ts,mts,cts,js}'],
-  rules: {
-    '@wl/service-files': 'error',
-  },
-}
-```
+added. The recommended preset enables it.
 
 #### Options
 
@@ -1024,6 +1025,10 @@ Hold a **backend** package's imports to its service domains (see [`service-files
   domains is an integration test and lives in `src/__tests__/`.
 - `libRuntimeImport` — a runtime import from `src/lib/**` into `services/**`. `src/lib/` must stay
   domain-free; composition roots can be allowed with `libRuntimeAllow`.
+- `selfImport` — a runtime import of the domain's own `index.*` from inside it
+  (`#root/services/<own>`, `'..'`, `'./index.js'`). The index re-exports the importing file, so the
+  import closes a cycle and can hand back `undefined` during module evaluation. Type-only imports and
+  files in the domain's `__tests__/` are not reported.
 
 A value deep import from a sibling domain is reported under both `deepImport` and
 `crossDomainRuntime`. Controllers may import domains at runtime through `index.ts`: composing
@@ -1066,7 +1071,8 @@ One fix clears both; a suppression of either is equally banned.
 `no-restricted-imports` matches specifier text, so relative deep paths from a sibling domain pass it;
 `boundaries` drops out with `boundaries: false` and does not see flat files. This rule covers both.
 
-Not in `configs.recommended` yet: enable it per backend app once that app conforms.
+The recommended preset enables it with no options. An app whose `src/lib/` holds a composition root
+restates the rule in a later, scoped block:
 
 ```js
 {
@@ -1084,6 +1090,39 @@ Not in `configs.recommended` yet: enable it per backend app once that app confor
 | `rootAlias`       | `string`   | `'#root'` | The alias that maps to `src/`.                                     |
 | `libRuntimeAllow` | `string[]` | `[]`      | Globs of `src/lib/**` files allowed to import services at runtime. |
 | `ignore`          | `string[]` | `[]`      | Globs; the rule is skipped for matching files.                     |
+
+### `no-public-api-export-all`
+
+Forbid `export * from` in a **public API file**: `src/features/<name>/index.*`, and
+`src/services/<domain>/index.*` in a backend package. A star re-export publishes every export of the
+module, present and future, and two of them can collide on a name. The index names what it exports:
+
+```ts
+// ❌ Incorrect
+export * from './services'
+export * from './order.service.js'
+
+// ✅ Correct
+export { DailyDealContainer } from './containers/daily-deal-container'
+export * as dailyDealsService from './services'
+export { OrderService } from './order.service.js'
+export type * from './types'
+```
+
+```
+`export * from './services'` makes every export of that module part of the public API of feature `daily-deals`. Name the exports (`export { A } from './services'`), or publish the module under one name (`export * as dailyDealsService from './services'`). See /infra-kit:fe-architect for the feature public API.
+```
+
+`export * as name from` passes: one named binding cannot collide. `export type * from` passes too: it is
+erased at build time. Only the index at the root of a feature or domain is judged — a nested barrel
+(`features/<name>/services/index.ts`) is internal. e2e packages are skipped. No autofix: naming the exports
+means reading the target module.
+
+#### Options
+
+| Option   | Type       | Default | Description                                    |
+| -------- | ---------- | ------- | ---------------------------------------------- |
+| `ignore` | `string[]` | `[]`    | Globs; the rule is skipped for matching files. |
 
 ### `e2e-file-layout`
 

@@ -14,7 +14,9 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash(node "${CLAUDE_PLUGIN_ROOT}"/
 - **Controllers compose**: they construct services and inject one domain into another
 - `src/lib/` is domain-free; anything with a domain rule stays in its domain
 
-Lint messages from `@wl/package-structure`, `@wl/service-files` and `@wl/service-public-api` point here.
+Lint messages from `@wl/package-structure`, `@wl/service-files`, `@wl/service-public-api` and
+`@wl/no-public-api-export-all` point here.
+`@wl/layer-imports` is on in every backend through the shared preset.
 
 ## Workflow
 
@@ -70,6 +72,9 @@ a test belongs to a domain or to `src/__tests__/`.
 | `lib/`         | Private helpers; any kebab-case names, any depth                                   |
 | `__tests__/`   | This domain's unit tests; name checks do not apply inside                          |
 
+`index.ts` names what it exports — `export { OrderService } from './order.service.js'` — or publishes a
+module under one name with `export * as`. A bare `export * from` is reported (`export type * from` is fine).
+
 Anything else (`client.ts`, `x.repository.ts`, `helpers.ts`) is either a `*.service.ts`, or moves into
 `lib/`. `.js`/`.mts`/`.cts` variants of the names are accepted.
 
@@ -84,9 +89,13 @@ Anything else (`client.ts`, `x.repository.ts`, `helpers.ts`) is either a `*.serv
    where tsc would elide an unmarked one.
 3. **Tests are not exempt.** `services/a/__tests__/` follows the same rules as `services/a/`. A test that
    needs two real domains is an integration test: `src/__tests__/integration/`, importing each via `index`.
-4. **Within one domain**, files import each other relatively and freely.
+4. **Within one domain**, files import each other relatively and freely — but never through the domain's
+   own `index.ts` at runtime: the index re-exports the importing file, so that closes a cycle. The domain's
+   `__tests__/` may use the index.
 5. **`src/lib/` does not import `services/**` at runtime** (allowlisted composition roots aside, see
    `libRuntimeAllow` below).
+6. **Nothing imports `controllers/` at runtime.** `lib/`, `config/` and `services/` never reach up into a
+   controller; `import type` is fine.
 
 ## Controllers
 
@@ -121,14 +130,18 @@ need it.
 | Deep import from a sibling domain (`../orders/order.service.js`)                              | `deepImport` (+ `crossDomainRuntime` if value)  | none — `no-restricted-imports` misses relative sibling paths |
 | Value import between two domain folders                                                       | `@wl/service-public-api` → `crossDomainRuntime` | `boundaries/dependencies`                                    |
 | `src/lib/**` value-imports a domain                                                           | `@wl/service-public-api` → `libRuntimeImport`   | —                                                            |
+| `export * from` in a domain's `index.ts`                                                      | `@wl/no-public-api-export-all`                  | —                                                            |
+| Domain file value-imports its own `index.ts`                                                  | `@wl/service-public-api` → `selfImport`         | —                                                            |
+| `lib/`, `config/` or `services/` value-imports `controllers/`                                 | `@wl/layer-imports` → `upward`                  | —                                                            |
 
 One fix clears every report on a line. Suppressing any of them — bulk suppression, `eslint-disable`, or an
 `'off'` line — is banned for all of these rule ids.
 
 ### Enabling the rules in an app
 
-Before the rules join the shared preset (plugin 0.49), each migrated app turns them on in its
-`eslint.config.js` with a **scoped** user config block:
+From plugin 0.49 the shared preset turns both rules on for every backend package, so a repo can take
+0.49 only when all its api packages conform. Migrate on 0.48, where each migrated app turns them on in
+its `eslint.config.js` with a **scoped** user config block:
 
 ```js
 export default config({
@@ -143,9 +156,11 @@ export default config({
 ```
 
 Never use the factory's top-level `rules` option for this: it lands unscoped, also matches the JSON/YAML files
-the config lints, and crashes with "rules do not support the language". An app whose `src/lib/` holds a
-composition root passes `['error', { libRuntimeAllow: ['**/src/lib/container/**'] }]` to
-`@wl/service-public-api`. Enable only where the app already conforms — never add an `'off'` line.
+the config lints, and crashes with "rules do not support the language". Enable only where the app already
+conforms — never add an `'off'` line.
+
+On 0.49 drop the block, unless the app's `src/lib/` holds a composition root: that app keeps a scoped block
+passing `['error', { libRuntimeAllow: ['**/src/lib/container/**'] }]` to `@wl/service-public-api`.
 
 ## Migration Recipe
 
@@ -163,7 +178,8 @@ package) from the approved grouping first; it drives both `git mv` and the suppr
 3. **Pure moves + barrels.** `git mv` into `services/<domain>/` and `services/<domain>/__tests__/` per the
    map, add each `index.ts`, switch importers and `vi.mock` strings to `services/<domain>/index.js`. No logic
    changes. Re-key suppressions.
-4. **Enable.** Add the [scoped block](#enabling-the-rules-in-an-app); the app's `eslint-check` is green with
+4. **Enable.** Add the [scoped block](#enabling-the-rules-in-an-app) (plugin 0.48; on 0.49 the preset
+   already enables the rules); the app's `eslint-check` is green with
    zero new suppressions.
 
 Re-key after every rename commit, dry run first:
